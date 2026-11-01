@@ -142,15 +142,15 @@ describe('Counterparty Permission catalog', () => {
   });
 });
 
-describe('Counterparty Commerce Access decisions', () => {
-  const decide = (grants: readonly CounterpartyAccessGrant[], scope: CounterpartyAccessGrant['scope']) =>
-    decideCounterpartyPermission(grants, {
-      counterpartyRef,
-      permission: 'counterparty.purchase.submit',
-      principalRef: recipient,
-      scope,
-    });
+const decide = (grants: readonly CounterpartyAccessGrant[], scope: CounterpartyAccessGrant['scope']) =>
+  decideCounterpartyPermission(grants, {
+    counterpartyRef,
+    permission: 'counterparty.purchase.submit',
+    principalRef: recipient,
+    scope,
+  });
 
+describe('Counterparty Commerce Access decisions', () => {
   it('uses positive scope union and lets a broad active grant cover a storefront', () => {
     expect(decide([grant('broad', 'ACTIVE')], { kind: 'storefront', storefrontKey: 'b2b-eu' })).toBe('ALLOWED');
     expect(

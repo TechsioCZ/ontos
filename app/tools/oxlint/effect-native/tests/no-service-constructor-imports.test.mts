@@ -1793,89 +1793,98 @@ it('requires closed immutable finite-key parameter references rather than litera
   ]);
 });
 
+const legacyReceiverConsumer = (body: string) =>
+  [
+    processImports,
+    "import { createInterface } from 'node:readline';",
+    "import { makeRuntime } from '../../api/index.ts';",
+    body,
+    'makeRuntime();',
+    directRunMain,
+  ].join('\n');
+
 it('recognizes the real legacy receiver process protocol without weakening owner provenance', () => {
-  const consumer = (body: string) =>
-    [
-      processImports,
-      "import { createInterface } from 'node:readline';",
-      "import { makeRuntime } from '../../api/index.ts';",
-      body,
-      'makeRuntime();',
-      directRunMain,
-    ].join('\n');
   inspectBffCases([
     {
-      consumer: consumer(
+      consumer: legacyReceiverConsumer(
         "const input = createInterface({ input: process.stdin }); process.stdin.on('data', () => {}); process.stdin.destroy(new Error('bounded')); void input;",
       ),
       expected: 0,
       name: 'legacy-stdin-protocol',
     },
     {
-      consumer: consumer('const input = channel; input[Symbol.asyncIterator]();'),
+      consumer: legacyReceiverConsumer('const input = channel; input[Symbol.asyncIterator]();'),
       expected: 0,
       name: 'legacy-async-iterator',
     },
-    { consumer: consumer('Effect.catchCause(() => Effect.void);'), expected: 0, name: 'legacy-cause-recovery' },
     {
-      consumer: consumer('const Symbol = source; channel[Symbol.asyncIterator]();'),
+      consumer: legacyReceiverConsumer('Effect.catchCause(() => Effect.void);'),
+      expected: 0,
+      name: 'legacy-cause-recovery',
+    },
+    {
+      consumer: legacyReceiverConsumer('const Symbol = source; channel[Symbol.asyncIterator]();'),
       expected: 1,
       name: 'legacy-symbol-shadow',
     },
     {
-      consumer: consumer('Symbol.asyncIterator = replacement; channel[Symbol.asyncIterator]();'),
+      consumer: legacyReceiverConsumer('Symbol.asyncIterator = replacement; channel[Symbol.asyncIterator]();'),
       expected: 1,
       name: 'legacy-symbol-mutation',
     },
-    { consumer: consumer('channel[key]();'), expected: 1, name: 'legacy-unknown-protocol-key' },
+    { consumer: legacyReceiverConsumer('channel[key]();'), expected: 1, name: 'legacy-unknown-protocol-key' },
 
     {
-      consumer: consumer("Symbol = { asyncIterator: 'constructor' }; channel[Symbol.asyncIterator]();"),
+      consumer: legacyReceiverConsumer("Symbol = { asyncIterator: 'constructor' }; channel[Symbol.asyncIterator]();"),
       expected: 1,
       name: 'legacy-symbol-global-assignment',
     },
     {
-      consumer: consumer('({ Symbol } = replacement); channel[Symbol.asyncIterator]();'),
+      consumer: legacyReceiverConsumer('({ Symbol } = replacement); channel[Symbol.asyncIterator]();'),
       expected: 1,
       name: 'legacy-symbol-destructured-assignment',
     },
     {
-      consumer: consumer('[Symbol] = replacement; channel[Symbol.asyncIterator]();'),
+      consumer: legacyReceiverConsumer('[Symbol] = replacement; channel[Symbol.asyncIterator]();'),
       expected: 1,
       name: 'legacy-symbol-array-assignment',
     },
     {
-      consumer: consumer('for (Symbol of values) {} channel[Symbol.asyncIterator]();'),
+      consumer: legacyReceiverConsumer('for (Symbol of values) {} channel[Symbol.asyncIterator]();'),
       expected: 1,
       name: 'legacy-symbol-loop-assignment',
     },
     {
-      consumer: consumer('const alias = Symbol; mutate(alias); channel[Symbol.asyncIterator]();'),
+      consumer: legacyReceiverConsumer('const alias = Symbol; mutate(alias); channel[Symbol.asyncIterator]();'),
       expected: 1,
       name: 'legacy-symbol-alias-escape',
     },
 
     {
-      consumer: consumer('const input = process.stdin; consume(input);'),
+      consumer: legacyReceiverConsumer('const input = process.stdin; consume(input);'),
       expected: 1,
       name: 'legacy-stdin-alias-escape',
     },
-    { consumer: consumer('process.stdin.constructor;'), expected: 1, name: 'legacy-stdin-reflection' },
+    { consumer: legacyReceiverConsumer('process.stdin.constructor;'), expected: 1, name: 'legacy-stdin-reflection' },
     {
-      consumer: consumer('const recover = Effect.catchCause; recover(program);'),
+      consumer: legacyReceiverConsumer('const recover = Effect.catchCause; recover(program);'),
       expected: 1,
       name: 'legacy-cause-extraction',
     },
-    { consumer: consumer('Effect.catchCause = replacement;'), expected: 1, name: 'legacy-cause-mutation' },
     {
-      consumer: consumer(
+      consumer: legacyReceiverConsumer('Effect.catchCause = replacement;'),
+      expected: 1,
+      name: 'legacy-cause-mutation',
+    },
+    {
+      consumer: legacyReceiverConsumer(
         "import { createRequire } from 'node:module'; const input = createInterface({ input: process.stdin }); void input; void createRequire;",
       ),
       expected: 1,
       name: 'legacy-loader-with-protocol',
     },
     {
-      consumer: consumer('const NodeRuntime = fake;').replace(
+      consumer: legacyReceiverConsumer('const NodeRuntime = fake;').replace(
         'import { NodeRuntime }',
         'import { NodeRuntime as ActualRuntime }',
       ),
@@ -1883,7 +1892,7 @@ it('recognizes the real legacy receiver process protocol without weakening owner
       name: 'legacy-fake-main',
     },
     {
-      consumer: consumer('').replace('../../api/index.ts', '../../../foreign/api/index.ts'),
+      consumer: legacyReceiverConsumer('').replace('../../api/index.ts', '../../../foreign/api/index.ts'),
       expected: 1,
       name: 'legacy-foreign-owner',
     },

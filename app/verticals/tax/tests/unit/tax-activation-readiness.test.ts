@@ -73,6 +73,9 @@ const blockersOf = (readiness: TaxActivationReadiness) =>
 const sellerBlockersOf = (readiness: TaxActivationReadiness) =>
   blockersOf(readiness).filter((blocker) => blocker.includes('@'));
 
+const sellerOutcome = (revisions: readonly RevisionInput[]) =>
+  readinessOf(evidence({ resolvedItems: everyActivationItem, sellerDeclarations: [history('seller-a', revisions)] }));
+
 describe('#964 TAX production activation gate', () => {
   it('#964 BDD fixture is not production evidence: nothing resolved blocks on every item and every undeclared seller', () => {
     const readiness = readinessOf(
@@ -92,11 +95,6 @@ describe('#964 TAX production activation gate', () => {
   });
 
   describe('#964 patched F25 R1 a declaration covering activation, and a Billing DIČ item for payers', () => {
-    const sellerOutcome = (revisions: readonly RevisionInput[]) =>
-      readinessOf(
-        evidence({ resolvedItems: everyActivationItem, sellerDeclarations: [history('seller-a', revisions)] }),
-      );
-
     it('a: VAT_PAYER effective before activation needs only the DIČ item', () => {
       const readiness = sellerOutcome([revision(1, 'VAT_PAYER', BEFORE)]);
       expect(blockersOf(readiness)).toEqual(['BILLING_PAYER_DIC_GATE@seller-a']);

@@ -405,52 +405,50 @@ it.effect('rejects a Cart result bound to another repeat-purchase intent', () =>
   }),
 );
 
-it.effect('rejects a Cart result bound to another source Order or purchasing subject', () =>
-  Effect.gen(function* misboundSource() {
-    const run = (binding: 'ORDER' | 'SUBJECT') => {
-      const collector = collectors(repeatRetailOrderAction);
-      return handleRepeatRetailOrder(
-        { profileRef: retailProfileRef, sourceOrderRef: orderRef },
-        {
-          actionInvocationId: 'source-binding-intent',
-          addDomainEvent: collector.addDomainEvent,
-          addOutboxMessage: collector.addOutboxMessage,
-          compositionRevision: originalCompositionRevision,
-          recordAuditEvidence: collector.recordAuditEvidence,
-          recordDataAccess: collector.recordDataAccess,
-          scope,
-          services: {
-            history: makePorts({ kind: 'RETAIL_PROFILE', profileRef: retailProfileRef }),
-            now: Effect.succeed(now),
-            owners: {
-              carts: {
-                createFromHistoricalIntent: (input) =>
-                  Effect.succeed({
-                    cartRef,
-                    lines: cartLines,
-                    outcome: 'CREATED',
-                    repeatPurchaseIntentId: input.repeatPurchaseIntentId,
-                    sourceOrderRef:
-                      binding === 'ORDER'
-                        ? { ...input.sourceOrderRef, resourceId: 'another-order' }
-                        : input.sourceOrderRef,
-                    subject:
-                      binding === 'SUBJECT'
-                        ? {
-                            kind: 'RETAIL_PROFILE',
-                            profileRef: { ...retailProfileRef, resourceId: 'another-retail-profile' },
-                          }
-                        : input.subject,
-                  }),
-              },
-            },
+const runMisboundCartResult = (binding: 'ORDER' | 'SUBJECT') => {
+  const collector = collectors(repeatRetailOrderAction);
+  return handleRepeatRetailOrder(
+    { profileRef: retailProfileRef, sourceOrderRef: orderRef },
+    {
+      actionInvocationId: 'source-binding-intent',
+      addDomainEvent: collector.addDomainEvent,
+      addOutboxMessage: collector.addOutboxMessage,
+      compositionRevision: originalCompositionRevision,
+      recordAuditEvidence: collector.recordAuditEvidence,
+      recordDataAccess: collector.recordDataAccess,
+      scope,
+      services: {
+        history: makePorts({ kind: 'RETAIL_PROFILE', profileRef: retailProfileRef }),
+        now: Effect.succeed(now),
+        owners: {
+          carts: {
+            createFromHistoricalIntent: (input) =>
+              Effect.succeed({
+                cartRef,
+                lines: cartLines,
+                outcome: 'CREATED',
+                repeatPurchaseIntentId: input.repeatPurchaseIntentId,
+                sourceOrderRef:
+                  binding === 'ORDER' ? { ...input.sourceOrderRef, resourceId: 'another-order' } : input.sourceOrderRef,
+                subject:
+                  binding === 'SUBJECT'
+                    ? {
+                        kind: 'RETAIL_PROFILE',
+                        profileRef: { ...retailProfileRef, resourceId: 'another-retail-profile' },
+                      }
+                    : input.subject,
+              }),
           },
         },
-      );
-    };
+      },
+    },
+  );
+};
 
-    expect(Schema.is(HistoryActionUnavailable)(yield* run('ORDER').pipe(Effect.flip))).toBe(true);
-    expect(Schema.is(HistoryActionUnavailable)(yield* run('SUBJECT').pipe(Effect.flip))).toBe(true);
+it.effect('rejects a Cart result bound to another source Order or purchasing subject', () =>
+  Effect.gen(function* misboundSource() {
+    expect(Schema.is(HistoryActionUnavailable)(yield* runMisboundCartResult('ORDER').pipe(Effect.flip))).toBe(true);
+    expect(Schema.is(HistoryActionUnavailable)(yield* runMisboundCartResult('SUBJECT').pipe(Effect.flip))).toBe(true);
   }),
 );
 

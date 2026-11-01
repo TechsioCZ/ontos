@@ -356,23 +356,23 @@ const validTransition = (
   (current === 'REQUESTED' && next !== 'REQUESTED') ||
   (current === 'INDETERMINATE' && ['INDETERMINATE', 'SUCCEEDED', 'REJECTED'].includes(next));
 
+const verifyExact = (
+  tenantId: string,
+  intent: InventoryEffectLedgerIntent,
+  record: InventoryEffectLedgerRecord,
+): EffectType.Effect<InventoryEffectLedgerRecord, InventoryEffectLedgerConflict | InventoryEffectLedgerRejected> => {
+  if (record.tenantId !== tenantId) {
+    return Effect.fail(rejected(record.effectId, 'TENANT_SCOPE_MISMATCH'));
+  }
+  return sameInventoryEffectIntent(record.intent, intent)
+    ? Effect.succeed(record)
+    : Effect.fail(conflict(record, intent));
+};
+
 export const makeInventoryEffectLedgerService = (
   persistence: InventoryEffectLedgerPersistence,
   now: EffectType.Effect<string>,
 ): InventoryEffectLedgerService => {
-  const verifyExact = (
-    tenantId: string,
-    intent: InventoryEffectLedgerIntent,
-    record: InventoryEffectLedgerRecord,
-  ): EffectType.Effect<InventoryEffectLedgerRecord, InventoryEffectLedgerConflict | InventoryEffectLedgerRejected> => {
-    if (record.tenantId !== tenantId) {
-      return Effect.fail(rejected(record.effectId, 'TENANT_SCOPE_MISMATCH'));
-    }
-    return sameInventoryEffectIntent(record.intent, intent)
-      ? Effect.succeed(record)
-      : Effect.fail(conflict(record, intent));
-  };
-
   const claim: InventoryEffectLedgerService['claim'] = Effect.fn('InventoryEffectLedger.claim')(
     function* claimEffect(tenantId, effectId, intent) {
       const timestamp = yield* now;

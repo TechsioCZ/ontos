@@ -1242,12 +1242,13 @@ it.live(
     ),
 );
 
+const digestOf = (token: string) =>
+  recoveryCrypto.digest('SHA-256', new TextEncoder().encode(token)).pipe(Effect.map(bytesToHex));
+
 it.live('sweeps an aged PostgreSQL dispatch claim to expired and leaves a fresh one alone', () =>
   Effect.scoped(
     Effect.gen(function* postgresResetLedgerDispatchSweep() {
       const { fixture, resetToken, store, tokenDigest } = yield* makeDispatchFixture('reset-sweep');
-      const digestOf = (token: string) =>
-        recoveryCrypto.digest('SHA-256', new TextEncoder().encode(token)).pipe(Effect.map(bytesToHex));
       const freshToken = `sweep-fresh-${randomUUID()}`;
       const sweepingToken = `sweep-trigger-${randomUUID()}`;
       const [freshDigest, sweepingDigest] = yield* Effect.all([digestOf(freshToken), digestOf(sweepingToken)], {

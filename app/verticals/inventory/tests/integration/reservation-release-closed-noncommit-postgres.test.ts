@@ -108,7 +108,7 @@ const forTenant = <S extends Schema.ConstraintDecoder<unknown>>(
   identities: ReadonlyMap<string, string>,
 ) =>
   Schema.decodeUnknownEffect(schema)(
-    JSON.parse(JSON.stringify(value).replace(fixtureUuidPattern, (source) => identities.get(source) ?? source)),
+    JSON.parse(JSON.stringify(value).replaceAll(fixtureUuidPattern, (source) => identities.get(source) ?? source)),
   );
 
 interface ExecutionOptions {

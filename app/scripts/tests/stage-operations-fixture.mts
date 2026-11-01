@@ -39,13 +39,14 @@ export interface FakeFiles {
   readonly writes: Map<string, string>;
 }
 
+const appRelativePath = (path: string) => path.slice(APP_DIRECTORY.length + 1);
+
 /** Reads real repository files unless `overrides` (keyed by app-relative path) replaces them; writes stay in memory. */
 export const fakeFiles = (overrides: Readonly<Record<string, string>> = {}): FakeFiles => {
   const writes = new Map<string, string>();
-  const relative = (path: string) => path.slice(APP_DIRECTORY.length + 1);
-  const read = (path: string) => writes.get(path) ?? overrides[relative(path)] ?? readFileSync(path, 'utf-8');
+  const read = (path: string) => writes.get(path) ?? overrides[appRelativePath(path)] ?? readFileSync(path, 'utf-8');
   const fileSystem = FileSystem.layerNoop({
-    exists: (path) => Effect.sync(() => writes.has(path) || relative(path) in overrides || existsSync(path)),
+    exists: (path) => Effect.sync(() => writes.has(path) || appRelativePath(path) in overrides || existsSync(path)),
     readFileString: (path) => Effect.sync(() => read(path)),
     // Real, removed on scope close: the scripts hand these directories to real processes such as openssl.
     makeTempDirectoryScoped: (options) =>

@@ -492,20 +492,21 @@ Options:
     toConfig: (flags) => Effect.succeed({ vertical: flags.vertical ?? '' }),
   }),
   'microvertical-page': defineCommand({
-    afterGenerate: (result, options, workspaceRoot) =>
-      Effect.gen(function* refreshGeneratedPagesEffect() {
+    afterGenerate: (result, options, workspaceRoot) => {
+      const refresh = (input: RouteRefreshInput) => {
+        if (options.routeRefresh === undefined) {
+          return defaultRouteRefresh(input);
+        }
+        return options.routeRefresh(input);
+      };
+      return Effect.gen(function* refreshGeneratedPagesEffect() {
         if (!('appId' in result) || !Predicate.isString(result.appId)) {
           return yield* failScaffolding('microvertical-page generator returned an invalid result');
         }
-        const refresh = (input: RouteRefreshInput) => {
-          if (options.routeRefresh === undefined) {
-            return defaultRouteRefresh(input);
-          }
-          return options.routeRefresh(input);
-        };
         yield* refresh({ appId: result.appId, workspaceRoot });
         return yield* Effect.void;
-      }),
+      });
+    },
     flags: ['authorization', 'page', 'permission', 'url', 'vertical'],
     generator: microverticalPageGenerator,
     help: `Usage: pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page> --authorization <public|authenticated_principal|context_permission> [--permission <permission>] [--url <url>]

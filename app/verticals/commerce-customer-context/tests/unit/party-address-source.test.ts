@@ -140,11 +140,14 @@ it.effect('validates an exact Current Party postal Contact Point through the pub
   }),
 );
 
+const staleRevisionContactPointDetail = (): ReturnType<typeof executePartyContactPointDetail> =>
+  Effect.succeed({ ...currentPostalContactPoint, revision: 8 });
+
 it.effect('rejects a stale Party source revision before address persistence', () =>
   Effect.gen(function* stalePartyAddress() {
-    const execute = (): ReturnType<typeof executePartyContactPointDetail> =>
-      Effect.succeed({ ...currentPostalContactPoint, revision: 8 });
-    const failure = yield* Effect.flip(partyBackedAddressSourceValidator('address-correlation', execute)(payload));
+    const failure = yield* Effect.flip(
+      partyBackedAddressSourceValidator('address-correlation', staleRevisionContactPointDetail)(payload),
+    );
 
     expect(Schema.is(SavedAddressInvalidSchema)(failure)).toBe(true);
     expect(failure).toMatchObject({
@@ -244,10 +247,15 @@ it.effect('classifies Party authentication and internal HTTP outcomes as depende
   }),
 );
 
+const currentContactPointDetail = (): ReturnType<typeof executePartyContactPointDetail> =>
+  Effect.succeed(currentPostalContactPoint);
+
 it.effect('resolves the Current Party-backed postal snapshot through the public client', () =>
   Effect.gen(function* currentPartyPostalSnapshot() {
-    const execute = (): ReturnType<typeof executePartyContactPointDetail> => Effect.succeed(currentPostalContactPoint);
-    const resolved = yield* partyBackedPostalAddressResolver('address-correlation', execute)(savedPartyAddress);
+    const resolved = yield* partyBackedPostalAddressResolver(
+      'address-correlation',
+      currentContactPointDetail,
+    )(savedPartyAddress);
 
     expect(resolved).toEqual({
       kind: 'FOUND',
@@ -295,17 +303,21 @@ it.effect('accepts a canonical Party alias and carries the corrected Current sou
   }),
 );
 
+const mismatchedContactPointDetail = (): ReturnType<typeof executePartyContactPointDetail> =>
+  Effect.succeed({
+    ...currentPostalContactPoint,
+    contactPointRef: {
+      ...contactPointRef,
+      resourceId: '20000000-0000-4000-8000-000000000099',
+    },
+  });
+
 it.effect('rejects a different same-Tenant Contact Point returned by the dependency', () =>
   Effect.gen(function* mismatchedContactPoint() {
-    const execute = (): ReturnType<typeof executePartyContactPointDetail> =>
-      Effect.succeed({
-        ...currentPostalContactPoint,
-        contactPointRef: {
-          ...contactPointRef,
-          resourceId: '20000000-0000-4000-8000-000000000099',
-        },
-      });
-    const resolved = yield* partyBackedPostalAddressResolver('address-correlation', execute)(savedPartyAddress);
+    const resolved = yield* partyBackedPostalAddressResolver(
+      'address-correlation',
+      mismatchedContactPointDetail,
+    )(savedPartyAddress);
 
     expect(resolved).toEqual({ kind: 'NOT_FOUND' });
   }),
@@ -331,6 +343,14 @@ it.effect('accepts finite future whole-End from the Current Party owner for Add 
     expect(DateTime.formatIso(finite.validTo)).toBe('2031-01-01T00:00:00.000Z');
   }),
 );
+
+const endedFiniteContactPointDetail = (): ReturnType<typeof executePartyContactPointDetail> =>
+  Effect.succeed({
+    ...currentPostalContactPoint,
+    current: false,
+    validTo: DateTime.makeUnsafe('2031-01-01T00:00:00.000Z'),
+  });
+
 it.effect('retains owner Current and exact revision guards for finite postal sources', () =>
   Effect.gen(function* finiteSourceGuards() {
     for (const patch of [{ current: false }, { state: 'ENDED' as const }, { revision: 8 }]) {
@@ -343,13 +363,9 @@ it.effect('retains owner Current and exact revision guards for finite postal sou
       const failure = yield* Effect.flip(partyBackedAddressSourceValidator('finite-denial', execute)(payload));
       expect(Schema.is(SavedAddressInvalidSchema)(failure)).toBe(true);
     }
-    const execute = (): ReturnType<typeof executePartyContactPointDetail> =>
-      Effect.succeed({
-        ...currentPostalContactPoint,
-        current: false,
-        validTo: DateTime.makeUnsafe('2031-01-01T00:00:00.000Z'),
-      });
-    expect(yield* partyBackedPostalAddressResolver('exclusive-end', execute)(savedPartyAddress)).toEqual({
+    expect(
+      yield* partyBackedPostalAddressResolver('exclusive-end', endedFiniteContactPointDetail)(savedPartyAddress),
+    ).toEqual({
       kind: 'NOT_FOUND',
     });
   }),

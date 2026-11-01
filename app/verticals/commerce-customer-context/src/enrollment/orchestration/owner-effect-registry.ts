@@ -650,19 +650,27 @@ type CounterpartyInvitationClaimReconciliationFactory = (
   subject: CounterpartyInvitationClaimReconciliationSubject,
 ) => CommerceEnrollmentOwnerEffect['reconcile'];
 
+const decodeInvitationClaimResolution = (draft: OwnerResolutionDraft) =>
+  decodeOwnerResolution(
+    draft,
+    COUNTERPARTY_INVITATION_CLAIM_UNAVAILABLE_CODE,
+    'The Counterparty Access invitation reconciliation result is not representable',
+  );
+
+const claimabilityFor = (
+  run: CommerceEnrollmentOwnerTransactionRun,
+  subject: CounterpartyInvitationClaimReconciliationSubject,
+) =>
+  run({ legalEntityId: subject.legalEntityId, tenantId: subject.tenantId }, (transaction) =>
+    readCounterpartyInvitationClaimability(transaction, subject.invitationId).pipe(
+      Effect.mapError((failure) => attemptUnavailable(failure.reason, subject.portalEnrollmentAttemptId, failure)),
+    ),
+  ).pipe(Effect.mapError((failure) => claimUnavailable(failure.reason, failure)));
+
 /** Layer construction captures the actual Core checker; owner callbacks remain closed effects. */
 export const counterpartyInvitationClaimReconciliationFactory: Effect.Effect<CounterpartyInvitationClaimReconciliationFactory> =
   Effect.gen(function* makeCounterpartyInvitationClaimReconciliationFactory() {
     const contextAccess = Option.getOrUndefined(yield* Effect.serviceOption(ContextAccess));
-    const claimabilityFor = (
-      run: CommerceEnrollmentOwnerTransactionRun,
-      subject: CounterpartyInvitationClaimReconciliationSubject,
-    ) =>
-      run({ legalEntityId: subject.legalEntityId, tenantId: subject.tenantId }, (transaction) =>
-        readCounterpartyInvitationClaimability(transaction, subject.invitationId).pipe(
-          Effect.mapError((failure) => attemptUnavailable(failure.reason, subject.portalEnrollmentAttemptId, failure)),
-        ),
-      ).pipe(Effect.mapError((failure) => claimUnavailable(failure.reason, failure)));
     const originalClaimFor = (
       run: CommerceEnrollmentOwnerTransactionRun,
       subject: CounterpartyInvitationClaimReconciliationSubject,
@@ -692,12 +700,6 @@ export const counterpartyInvitationClaimReconciliationFactory: Effect.Effect<Cou
         if (verdict.kind === 'UNKNOWN') {
           return yield* claimUnavailable(verdict.reason);
         }
-        const decode = (draft: OwnerResolutionDraft) =>
-          decodeOwnerResolution(
-            draft,
-            COUNTERPARTY_INVITATION_CLAIM_UNAVAILABLE_CODE,
-            'The Counterparty Access invitation reconciliation result is not representable',
-          );
         const reconciliationRef = retailSelfEnrollmentEvidenceReference([
           COUNTERPARTY_INVITATION_CLAIM_RECONCILIATION_PURPOSE,
           subject.tenantId,
@@ -710,7 +712,7 @@ export const counterpartyInvitationClaimReconciliationFactory: Effect.Effect<Cou
             return yield* claimUnavailable('The invitation names no exact original accepted claim');
           }
           if (!accepted.value.current) {
-            return yield* decode({
+            return yield* decodeInvitationClaimResolution({
               actorPrincipalId: input.actorPrincipalId,
               failureCode: OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE,
               failureReason: 'The accepted invitation claim does not yet prove every Current Permission',
@@ -721,7 +723,7 @@ export const counterpartyInvitationClaimReconciliationFactory: Effect.Effect<Cou
               status: 'FAILED',
             });
           }
-          return yield* decode({
+          return yield* decodeInvitationClaimResolution({
             actorPrincipalId: input.actorPrincipalId,
             outcomeCode: COUNTERPARTY_INVITATION_CLAIMED_OUTCOME_CODE,
             reconciliationRef,
@@ -730,7 +732,7 @@ export const counterpartyInvitationClaimReconciliationFactory: Effect.Effect<Cou
           });
         }
         if (verdict.kind === 'OPEN') {
-          return yield* decode({
+          return yield* decodeInvitationClaimResolution({
             actorPrincipalId: input.actorPrincipalId,
             failureCode: COUNTERPARTY_INVITATION_CLAIM_OPEN_FAILURE_CODE,
             failureReason: 'The invitation is still unclaimed, so this claim never committed',
@@ -739,7 +741,7 @@ export const counterpartyInvitationClaimReconciliationFactory: Effect.Effect<Cou
             status: 'FAILED',
           });
         }
-        return yield* decode({
+        return yield* decodeInvitationClaimResolution({
           actorPrincipalId: input.actorPrincipalId,
           failureCode: 'owner_rejected',
           failureReason: verdict.reason,

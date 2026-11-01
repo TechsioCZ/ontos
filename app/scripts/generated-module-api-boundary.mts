@@ -871,6 +871,27 @@ const generatedClientTypeNames = (expectation: GovernedClientExpectation): Gener
   };
 };
 
+const helperExpected = (optionsType: string, explicitString: boolean, trailingComma: boolean) =>
+  [
+    [SyntaxKind.Identifier, 'credential'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.Identifier, 'Redacted'],
+    [SyntaxKind.DotToken],
+    [SyntaxKind.Identifier, 'Redacted'],
+    ...(explicitString
+      ? ([[SyntaxKind.LessThanToken], [SyntaxKind.StringKeyword], [SyntaxKind.GreaterThanToken]] as const)
+      : []),
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.Identifier, 'requestCorrelation'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.StringKeyword],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.Identifier, 'options'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.Identifier, optionsType],
+    ...(trailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
+  ] satisfies readonly ExpectedToken[];
+
 const hasExactGeneratedOperationParameters = (
   tokens: readonly GovernedClientToken[],
   helper: GovernedClientHelper,
@@ -886,26 +907,6 @@ const hasExactGeneratedOperationParameters = (
   const authorizedClose = findClosingParenthesis(tokens, authorizedOpen, authorizedArrow);
   const operationOpen = operation.start + 4;
   const operationClose = findClosingParenthesis(tokens, operationOpen, operationArrow);
-  const helperExpected = (optionsType: string, explicitString: boolean, trailingComma: boolean) =>
-    [
-      [SyntaxKind.Identifier, 'credential'],
-      [SyntaxKind.ColonToken],
-      [SyntaxKind.Identifier, 'Redacted'],
-      [SyntaxKind.DotToken],
-      [SyntaxKind.Identifier, 'Redacted'],
-      ...(explicitString
-        ? ([[SyntaxKind.LessThanToken], [SyntaxKind.StringKeyword], [SyntaxKind.GreaterThanToken]] as const)
-        : []),
-      [SyntaxKind.CommaToken],
-      [SyntaxKind.Identifier, 'requestCorrelation'],
-      [SyntaxKind.ColonToken],
-      [SyntaxKind.StringKeyword],
-      [SyntaxKind.CommaToken],
-      [SyntaxKind.Identifier, 'options'],
-      [SyntaxKind.ColonToken],
-      [SyntaxKind.Identifier, optionsType],
-      ...(trailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
-    ] satisfies readonly ExpectedToken[];
   const authorizedExpected = (trailingComma: boolean) =>
     [
       [SyntaxKind.Identifier, 'payload'],
@@ -1394,6 +1395,14 @@ const clientDispatchCallback = (operation: Expression | null | undefined): Arrow
   return callback;
 };
 
+// A literal-key membership test on the payload selects one union member without changing the call.
+const isMembershipGuard = (expression: Expression): boolean =>
+  expression.type === 'BinaryExpression' &&
+  expression.operator === 'in' &&
+  expression.left.type === 'Literal' &&
+  Predicate.isString(expression.left.value) &&
+  isClientPath(expression.right, ['payload']);
+
 /** Only request-discriminator branches which return the same authorized client call are inert dispatch. */
 const hasClosedRequestDispatch = (source: string, expectation: GovernedClientExpectation): boolean => {
   const parsed = parseSync('governed-client.ts', source, { astType: 'ts', lang: 'ts', sourceType: 'module' });
@@ -1437,13 +1446,6 @@ const hasClosedRequestDispatch = (source: string, expectation: GovernedClientExp
       isClientPath(member.object, [expectation.ownerApiValue.replace(/Api$/u, 'RequestSchema'), 'members'])
     );
   };
-  // A literal-key membership test on the payload selects one union member without changing the call.
-  const isMembershipGuard = (expression: Expression): boolean =>
-    expression.type === 'BinaryExpression' &&
-    expression.operator === 'in' &&
-    expression.left.type === 'Literal' &&
-    Predicate.isString(expression.left.value) &&
-    isClientPath(expression.right, ['payload']);
   const isGuard = (expression: Expression): boolean => {
     if (isMembershipGuard(expression)) {
       return true;

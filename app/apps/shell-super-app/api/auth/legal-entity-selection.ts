@@ -81,6 +81,11 @@ export const resolveAuthorizedLegalEntities = Effect.fn('LegalEntitySelection.re
   },
 );
 
+const failForbiddenSelection = () => Effect.fail(new LegalEntitySelectionForbiddenErrorValue());
+
+const failUnavailableSelection = (failureCause: LegalEntityContextUnavailableError) =>
+  Effect.fail(new LegalEntitySelectionUnavailableErrorValue({ failureCause }));
+
 export const validateAuthorizedLegalEntity = Effect.fn('LegalEntitySelection.validateAuthorizedLegalEntity')(
   function* validateAuthorizedLegalEntityEffect(input: {
     readonly legalEntityId: string;
@@ -93,9 +98,6 @@ export const validateAuthorizedLegalEntity = Effect.fn('LegalEntitySelection.val
   > {
     const legalEntityContext = yield* LegalEntityContext;
     const contextAccess = yield* ContextAccess;
-    const failForbiddenSelection = () => Effect.fail(new LegalEntitySelectionForbiddenErrorValue());
-    const failUnavailableSelection = (failureCause: LegalEntityContextUnavailableError) =>
-      Effect.fail(new LegalEntitySelectionUnavailableErrorValue({ failureCause }));
     const candidate = yield* legalEntityContext.validateSelection(input.tenantId, input.legalEntityId).pipe(
       Effect.catchTags({
         LegalEntityContextAmbiguousError: failForbiddenSelection,

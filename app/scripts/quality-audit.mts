@@ -952,18 +952,20 @@ const writeSummary = Effect.fn('qualityAudit.writeSummary')(function* writeSumma
       'Findings are audit evidence, not accepted debt or a delivery threshold.',
       'These counts overlap and have different units; do not add them into an error total.',
       'Knip counts below exclude only proven modeled consumers. Raw category counts and every corrected issue are retained in report.ndjson and modeled-usages.json.',
-      ...results
-        .filter((result) => result.name === 'knip')
-        .flatMap((result) => [
-          '',
-          '| Knip category | Remaining records |',
-          '| --- | ---: |',
-          ...Object.entries(result.coverage.findingCounts ?? {}).map(
-            ([category, count]) => `| ${category} | ${count} |`,
-          ),
-          '',
-          `Proven modeled usages retained separately: ${result.coverage.modeledUsages ?? 0}.`,
-        ]),
+      ...results.flatMap((result) =>
+        result.name === 'knip'
+          ? [
+              '',
+              '| Knip category | Remaining records |',
+              '| --- | ---: |',
+              ...Object.entries(result.coverage.findingCounts ?? {}).map(
+                ([category, count]) => `| ${category} | ${count} |`,
+              ),
+              '',
+              `Proven modeled usages retained separately: ${result.coverage.modeledUsages ?? 0}.`,
+            ]
+          : [],
+      ),
       'Unused exports describe an unused public binding; they do not establish that the implementation body is unused.',
       'JSCPD implementation counts exclude only complete static import-binding spans proven by parsing both files; raw clones and per-pair evidence remain in jscpd/report.json and jscpd/import-clone-evidence.json.',
       'Fallow strict clones preserve literal differences. Semantic similarity normalizes them and remains advisory; inspect both together with JSCPD before choosing a shared implementation.',

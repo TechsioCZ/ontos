@@ -1137,6 +1137,12 @@ const reviewedPartyCreationMatches = (
     detail.candidate.subjectEvidence ?? [],
   );
 
+const refuse = (outcome: string, reason: string) =>
+  new PreproposalNativeProtocolError({
+    message: `Party setup ${outcome}: ${reason}`,
+    stage: 'registered-party-not-created',
+  });
+
 /** Real public owner setup; review authority is manager-only, never a service grant. */
 export const createRegisteredPreproposalParty = Effect.fn('PreproposalNative.createParty')(
   function* createRegisteredPreproposalParty<Failure, Requirements>(input: {
@@ -1146,11 +1152,6 @@ export const createRegisteredPreproposalParty = Effect.fn('PreproposalNative.cre
     readonly payload: typeof CreatePartyPayloadSchema.Type;
     readonly tenantId: string;
   }) {
-    const refuse = (outcome: string, reason: string) =>
-      new PreproposalNativeProtocolError({
-        message: `Party setup ${outcome}: ${reason}`,
-        stage: 'registered-party-not-created',
-      });
     const initialCreate = yield* createPartyWithAuthorization(
       input.payload,
       Redacted.value(yield* input.authorize(false)),

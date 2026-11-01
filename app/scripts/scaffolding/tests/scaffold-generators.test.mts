@@ -177,16 +177,17 @@ it.effect(
 );
 
 for (const [index, cause] of [undefined, null, 'thrown string', { message: 'not an Error' }].entries()) {
+  const operation = () => {
+    const iterator = (function* thrownValue() {
+      yield cause;
+    })();
+    iterator.next();
+    return iterator.throw(cause);
+  };
+
   it.effect(
     `scaffold error tools use owner fallback for non-error ${index}`,
     Effect.fn(function* nonErrorScaffoldFailure() {
-      const operation = () => {
-        const iterator = (function* thrownValue() {
-          yield cause;
-        })();
-        iterator.next();
-        return iterator.throw(cause);
-      };
       const first = yield* firstScaffoldErrors.trySync(operation).pipe(Effect.flip);
       const second = yield* secondScaffoldErrors.trySync(operation).pipe(Effect.flip);
       expect(first.message).toBe('first update failed');

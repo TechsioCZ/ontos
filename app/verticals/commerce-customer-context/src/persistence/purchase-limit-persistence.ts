@@ -942,6 +942,11 @@ const sameProfileRef = (
   left.resourceType === right.resourceType &&
   left.tenantId === right.tenantId;
 
+const approvalSourceRevisions = (facts: PurchaseLimitEvaluationCurrentFacts) => ({
+  profile: facts.currentSourceRevisions.find(({ source }) => source === PURCHASING_PROFILE_SOURCE)?.revision,
+  proposal: facts.currentSourceRevisions.find(({ source }) => source === PURCHASE_PROPOSAL_SOURCE)?.revision,
+});
+
 /**
  * Re-reads the owner-current profile gate and authoritative proposal facts inside the Action's
  * scoped transaction. No profile, Counterparty, proposal, Tenant, or Storefront identity is
@@ -984,17 +989,11 @@ export const purchaseApprovalTriggerEvidenceSourceForTransaction = (
     trustedContext.storefrontId === scope.trustedStorefrontId &&
     sameCounterpartyRef(trustedContext.counterpartyRef, payload.counterpartyRef);
 
-  // oxlint-disable-next-line unicorn/consistent-function-scoping -- Keep this helper with its factory-local ApprovalEvidenceKind type and evidence branch semantics.
   const evidenceMessage = (
     evidenceKind: ApprovalEvidenceKind,
     candidateMessage: string,
     currentMessage: string,
   ): string => (evidenceKind === 'candidate' ? candidateMessage : currentMessage);
-
-  const approvalSourceRevisions = (facts: PurchaseLimitEvaluationCurrentFacts) => ({
-    profile: facts.currentSourceRevisions.find(({ source }) => source === PURCHASING_PROFILE_SOURCE)?.revision,
-    proposal: facts.currentSourceRevisions.find(({ source }) => source === PURCHASE_PROPOSAL_SOURCE)?.revision,
-  });
 
   const bindingFailure = (
     evidenceKind: ApprovalEvidenceKind,

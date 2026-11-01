@@ -186,6 +186,18 @@ const acceptedAfterSeven: AcceptedCumulativeCorrectionState = {
   stateVersion: 'v1',
 };
 
+const expected = (stateVersion: string): AcceptedCumulativeCorrectionState => ({
+  ...acceptedAfterSeven,
+  stateVersion,
+});
+
+const reductionRequest = (units: readonly TaxCorrectionUnitRequest[]) => ({
+  acceptedTaxTerms: acceptedTaxTermsInput([tenAt9999]),
+  correctionEventRef: 'return-1',
+  correctionReason: 'CUSTOMER_RETURN',
+  units,
+});
+
 describe('Tax Correction Delta', () => {
   it('#948 F17-F23 cumulative partial returns 3, 3, 4 of 10 x 99.99 CZK at 21 % exhaust to exactly 0.00 CZK', () => {
     const terms = acceptedTaxTerms([tenAt9999]);
@@ -417,10 +429,6 @@ describe('Tax Correction Delta', () => {
 
   it('#946 F16-F17 #948 F27 echoes the expected previous state version opaquely and consumes nothing', () => {
     const terms = acceptedTaxTerms([tenAt9999]);
-    const expected = (stateVersion: string): AcceptedCumulativeCorrectionState => ({
-      ...acceptedAfterSeven,
-      stateVersion,
-    });
     const at = (stateVersion: string) =>
       deltaOf(correct(terms, [unitRequest('o-1', quantity('-3'), expected(stateVersion))])).units[0];
 
@@ -476,24 +484,17 @@ describe('Tax Correction Delta', () => {
   });
 
   it('#948 F9-F16 #948 E accepts only reductions, each original unit once per correction', () => {
-    const request = (units: readonly TaxCorrectionUnitRequest[]) => ({
-      acceptedTaxTerms: acceptedTaxTermsInput([tenAt9999]),
-      correctionEventRef: 'return-1',
-      correctionReason: 'CUSTOMER_RETURN',
-      units,
-    });
-
-    expect(decodeRequest(request([unitRequest('o-1', quantity('-1'))])).units).toHaveLength(1);
-    expect(() => decodeRequest(request([unitRequest('o-1', quantity('0'))]))).toThrow();
-    expect(() => decodeRequest(request([unitRequest('o-1', quantity('1'))]))).toThrow();
-    expect(() => decodeRequest(request([unitRequest('o-1', value('99.99'))]))).toThrow();
+    expect(decodeRequest(reductionRequest([unitRequest('o-1', quantity('-1'))])).units).toHaveLength(1);
+    expect(() => decodeRequest(reductionRequest([unitRequest('o-1', quantity('0'))]))).toThrow();
+    expect(() => decodeRequest(reductionRequest([unitRequest('o-1', quantity('1'))]))).toThrow();
+    expect(() => decodeRequest(reductionRequest([unitRequest('o-1', value('99.99'))]))).toThrow();
     // Two unitRequest entries for the same unit are still rejected: each original unit appears once.
     expect(() =>
-      decodeRequest(request([unitRequest('o-1', quantity('-1')), unitRequest('o-1', value('-1'))])),
+      decodeRequest(reductionRequest([unitRequest('o-1', quantity('-1')), unitRequest('o-1', value('-1'))])),
     ).toThrow();
     // A-6 (the flip): a quantity change and a shipping change for the same unit, in one correction, now decode.
     expect(
-      decodeRequest(request([unitRequest('o-1', [quantity('-1'), value('-1', 'SHIPPING_ALLOCATION')])])).units,
+      decodeRequest(reductionRequest([unitRequest('o-1', [quantity('-1'), value('-1', 'SHIPPING_ALLOCATION')])])).units,
     ).toHaveLength(1);
   });
 

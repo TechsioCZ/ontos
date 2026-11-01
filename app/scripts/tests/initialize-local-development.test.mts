@@ -169,18 +169,17 @@ it.effect('module-state reconciliation preserves migrated IDs and rejects identi
   }),
 );
 
+const deriveVerticalCoreContract = ({ vertical }: { readonly vertical: string }) =>
+  Effect.succeed(moduleContract(`${vertical}.core`));
+
 it.effect('derives the fixed local commerce launch modules through generated owner contracts', () =>
   Effect.gen(function* testEffect5() {
     const root = yield* Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), LOCAL_MODULES_DIRECTORY_PREFIX)));
     yield* Effect.tryPromise(() => mkdir(path.join(root, TOPOLOGY_DIRECTORY), { recursive: true }));
     yield* Effect.tryPromise(() => writeFile(path.join(root, TOPOLOGY_PATH), topology, 'utf-8'));
-    const deriveContract = ({ vertical }: { readonly vertical: string }) =>
-      Effect.succeed(moduleContract(`${vertical}.core`));
-    expect(yield* deriveActivatedModuleIds(root, deriveContract).pipe(Effect.provide(NodeServices.layer))).toEqual([
-      'commerce-customer-context.core',
-      'commerce-market-catalog.core',
-      'party-registry.core',
-    ]);
+    expect(
+      yield* deriveActivatedModuleIds(root, deriveVerticalCoreContract).pipe(Effect.provide(NodeServices.layer)),
+    ).toEqual(['commerce-customer-context.core', 'commerce-market-catalog.core', 'party-registry.core']);
     expect(LOCAL_DEVELOPMENT_VERTICALS).toEqual([
       PARTY_REGISTRY_VERTICAL_ID,
       MARKET_CATALOG_VERTICAL_ID,
@@ -260,16 +259,17 @@ it.effect('fails Czech Launch activation closed without every current owner proo
   }),
 );
 
+const deriveDuplicateContract = () => Effect.succeed(moduleContract('duplicate.core'));
+
 it.effect('rejects duplicate module IDs derived from different verticals', () =>
   Effect.gen(function* testEffect6() {
     const root = yield* Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), LOCAL_MODULES_DIRECTORY_PREFIX)));
     yield* Effect.tryPromise(() => mkdir(path.join(root, TOPOLOGY_DIRECTORY), { recursive: true }));
     yield* Effect.tryPromise(() => writeFile(path.join(root, TOPOLOGY_PATH), topology, 'utf-8'));
-    const deriveContract = () => Effect.succeed(moduleContract('duplicate.core'));
     expect(
       Schema.is(LocalDevelopmentInitializationError)(
         yield* Effect.flip(
-          deriveActivatedModuleIds(root, deriveContract, ['party-registry', 'inventory']).pipe(
+          deriveActivatedModuleIds(root, deriveDuplicateContract, ['party-registry', 'inventory']).pipe(
             Effect.provide(NodeServices.layer),
           ),
         ),

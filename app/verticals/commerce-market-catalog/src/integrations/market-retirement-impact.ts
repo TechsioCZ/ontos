@@ -264,6 +264,9 @@ const finishedReservationMatches = (
   result.reservationToken === assessment.reservation.token &&
   result.reservationVersion === assessment.reservation.version + 1;
 
+const unavailableReservation = () =>
+  Effect.fail(unavailable('The Customer Context Market retirement reservation authority is unavailable'));
+
 export const makeMarketRetirementImpactAuthority = <AssessmentFailure, ReservationFailure = never>(
   executeAssessment: ExecuteMarketAffectedUseAssessment<AssessmentFailure>,
   executeReservation?: ExecuteMarketRetirementReservation<ReservationFailure>,
@@ -288,8 +291,6 @@ export const makeMarketRetirementImpactAuthority = <AssessmentFailure, Reservati
       Effect.flatMap((response) => toVerifiedAssessment(request, response)),
     );
   };
-  const unavailableReservation = () =>
-    Effect.fail(unavailable('The Customer Context Market retirement reservation authority is unavailable'));
   const finishReservation = (
     operation: 'COMMIT' | 'RELEASE',
     input: {

@@ -60,6 +60,15 @@ const reject = (
   retryable = false,
 ) => new ReservePaymentTermRetirementRejected({ code, reason, retryable });
 
+const paymentTermRetirementReservationInvalidRequest = ({ reason }: { readonly reason: string }) =>
+  Effect.fail(reject('INVALID_REQUEST', reason));
+
+const paymentTermRetirementReservationNotFound = ({ reason }: { readonly reason: string }) =>
+  Effect.fail(reject('RETIREMENT_RESERVATION_NOT_FOUND', reason));
+
+const paymentTermRetirementReservationUnavailable = ({ reason }: { readonly reason: string }) =>
+  Effect.fail(reject('PERSISTENCE_UNAVAILABLE', reason, true));
+
 const handleReservePaymentTermRetirement = Effect.fn('ReservePaymentTermRetirementAction.handle')(function* handle(
   payload: ReservePaymentTermRetirementPayload,
   context: ActionHandlerContext<typeof domainEvents, ReservePaymentTermRetirementActionServices>,
@@ -80,12 +89,6 @@ const handleReservePaymentTermRetirement = Effect.fn('ReservePaymentTermRetireme
         reason,
       ),
     );
-  const paymentTermRetirementReservationInvalidRequest = ({ reason }: { readonly reason: string }) =>
-    Effect.fail(reject('INVALID_REQUEST', reason));
-  const paymentTermRetirementReservationNotFound = ({ reason }: { readonly reason: string }) =>
-    Effect.fail(reject('RETIREMENT_RESERVATION_NOT_FOUND', reason));
-  const paymentTermRetirementReservationUnavailable = ({ reason }: { readonly reason: string }) =>
-    Effect.fail(reject('PERSISTENCE_UNAVAILABLE', reason, true));
   const result = yield* context.services
     .execute(payload, {
       actionInvocationId: context.actionInvocationId,

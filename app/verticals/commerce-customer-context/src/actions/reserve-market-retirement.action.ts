@@ -55,6 +55,24 @@ const reject = (
   retryable = false,
 ) => new ReserveMarketRetirementRejected({ code, reason, retryable });
 
+const marketRetirementReservationInvalidRequest = ({ reason }: { readonly reason: string }) =>
+  Effect.fail(reject('INVALID_REQUEST', reason));
+
+const marketRetirementReservationNotFound = ({ reason }: { readonly reason: string }) =>
+  Effect.fail(reject('RETIREMENT_RESERVATION_NOT_FOUND', reason));
+
+const marketRetirementReservationUnavailable = ({ reason }: { readonly reason: string }) =>
+  Effect.fail(reject('PERSISTENCE_UNAVAILABLE', reason, true));
+
+const marketRetirementAssessmentStale = ({ reason }: { readonly reason: string }) =>
+  Effect.fail(reject('ASSESSMENT_STALE', reason));
+
+const marketRetirementLiveReferenceConflict = ({ reason }: { readonly reason: string }) =>
+  Effect.fail(reject('LIVE_REFERENCE_CONFLICT', reason));
+
+const marketRetirementAssessmentUnavailable = ({ reason }: { readonly reason: string }) =>
+  Effect.fail(reject('ASSESSMENT_UNAVAILABLE', reason, true));
+
 const handleReserveMarketRetirement = Effect.fn('ReserveMarketRetirementAction.handle')(function* handle(
   payload: ReserveMarketRetirementPayload,
   context: ActionHandlerContext<typeof domainEvents, MarketRetirementReservationService>,
@@ -69,18 +87,6 @@ const handleReserveMarketRetirement = Effect.fn('ReserveMarketRetirementAction.h
         reason,
       ),
     );
-  const marketRetirementReservationInvalidRequest = ({ reason }: { readonly reason: string }) =>
-    Effect.fail(reject('INVALID_REQUEST', reason));
-  const marketRetirementReservationNotFound = ({ reason }: { readonly reason: string }) =>
-    Effect.fail(reject('RETIREMENT_RESERVATION_NOT_FOUND', reason));
-  const marketRetirementReservationUnavailable = ({ reason }: { readonly reason: string }) =>
-    Effect.fail(reject('PERSISTENCE_UNAVAILABLE', reason, true));
-  const marketRetirementAssessmentStale = ({ reason }: { readonly reason: string }) =>
-    Effect.fail(reject('ASSESSMENT_STALE', reason));
-  const marketRetirementLiveReferenceConflict = ({ reason }: { readonly reason: string }) =>
-    Effect.fail(reject('LIVE_REFERENCE_CONFLICT', reason));
-  const marketRetirementAssessmentUnavailable = ({ reason }: { readonly reason: string }) =>
-    Effect.fail(reject('ASSESSMENT_UNAVAILABLE', reason, true));
   const result: ReserveMarketRetirementResult = yield* context.services
     .execute(payload, {
       actionInvocationId: context.actionInvocationId,
