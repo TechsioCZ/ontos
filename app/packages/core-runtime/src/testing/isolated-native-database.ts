@@ -115,6 +115,8 @@ const readFingerprint = Effect.fn('IsolatedNativeDatabase.readFingerprint')(func
 
 const schemaOnly = 'schema-only' as const;
 const exactDeadlinePurpose = 'stabilization-1271-exact-obligation-deadline';
+const shellAuthPurpose = 'stabilization-1287-shell-auth';
+const retainedPrivacyPurpose = 'stabilization-1258-privacy-drain';
 type IsolatedNativeDatabaseInput = (
   | {
       readonly compositionSnapshot: ActiveApplicationCompositionSnapshot;
@@ -130,6 +132,7 @@ type IsolatedNativeDatabaseInput = (
         | 'stabilization-1266-quantity-profile-admission'
         | 'stabilization-1230-preference-period'
         | 'stabilization-1267-party-gateway'
+        | typeof shellAuthPurpose
         | 'stabilization-1268-address-plan'
         | 'stabilization-1261-retained-purpose-withdrawal'
         | 'stabilization-1247-set-component-current-closure'
@@ -168,7 +171,7 @@ type IsolatedNativeDatabaseInput = (
         | 'stabilization-1237-protection-intent'
         | 'stabilization-1260-privacy-legacy'
         | 'stabilization-1264-terminal-protection-health'
-        | 'stabilization-1258-privacy-drain'
+        | typeof retainedPrivacyPurpose
         | 'stabilization-1257-approval-fresh-proof'
         | 'stabilization-1274-media-ordering'
         | 'stabilization-1270-set-effective-revision'
@@ -194,6 +197,7 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
         'stabilization-1266-quantity-profile-admission',
         'stabilization-1230-preference-period',
         'stabilization-1267-party-gateway',
+        shellAuthPurpose,
         'stabilization-1268-address-plan',
         'stabilization-1261-retained-purpose-withdrawal',
         'stabilization-1247-set-component-current-closure',
@@ -231,7 +235,7 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
         'stabilization-1237-protection-intent',
         'stabilization-1260-privacy-legacy',
         'stabilization-1264-terminal-protection-health',
-        'stabilization-1258-privacy-drain',
+        retainedPrivacyPurpose,
         'stabilization-1257-approval-fresh-proof',
         'stabilization-1274-media-ordering',
         'stabilization-1270-set-effective-revision',
@@ -240,6 +244,10 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
         'stabilization-1281-party-legacy',
         exactDeadlinePurpose,
       ].includes(input.purpose);
+
+const supportsOwnedReplacement = (input: IsolatedNativeDatabaseInput): boolean =>
+  (input.mode === 'empty' && (input.purpose === exactDeadlinePurpose || input.purpose === retainedPrivacyPurpose)) ||
+  (input.mode === schemaOnly && input.purpose === shellAuthPurpose);
 
 /** A fresh schema-only database; it never drains, copies, or deletes the source database's data. */
 export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDatabase.make')(
@@ -443,9 +451,8 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
         .pipe(Effect.mapError((cause) => unavailable('Unable to initialize isolated trust configuration', cause)));
       yield* assertClonedSchema();
     }
-    const retainedOriginalEnabled = input.mode === 'empty' && input.purpose === 'stabilization-1258-privacy-drain';
-    const replacementEnabled =
-      input.mode === 'empty' && (input.purpose === exactDeadlinePurpose || retainedOriginalEnabled);
+    const retainedOriginalEnabled = input.mode === 'empty' && input.purpose === retainedPrivacyPurpose;
+    const replacementEnabled = supportsOwnedReplacement(input);
     const retainedReplacementRevision = yield* Ref.make<string | null>(null);
     const replacementState = yield* Ref.make<'unused' | 'pending' | 'published' | 'failed'>('unused');
     const controllerClosed = yield* Ref.make(false);

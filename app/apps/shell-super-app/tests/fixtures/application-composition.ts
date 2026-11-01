@@ -4,6 +4,7 @@ import {
   ApplicationCompositionSchema,
   canonicalizeApplicationComposition,
   OntosModuleDeploymentContractSchema,
+  OntosShellRuntimeContractSchema,
   ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION,
   ONTOS_SHELL_CONTRIBUTION_ABI,
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
@@ -39,8 +40,10 @@ export const sealComposition = (composition: ApplicationComposition): Applicatio
   revision: contentDigest(canonicalizeApplicationComposition({ ...composition, revision: '0'.repeat(64) })),
 });
 
-const compositionModule = (contract: OntosModuleDeploymentContract): ApplicationCompositionModule => {
-  const contractDocument = JSON.stringify(contract);
+const compositionModule = (
+  contract: OntosModuleDeploymentContract,
+  contractDocument: string,
+): ApplicationCompositionModule => {
   const digest = contentDigest(contractDocument);
   const { components, shellContributions } = contract.manifest.publicSurface;
   const [component] = components;
@@ -54,7 +57,7 @@ const compositionModule = (contract: OntosModuleDeploymentContract): Application
       url: `https://${contract.deployment.appId}.example.test/.well-known/ontos-module-manifest.json`,
     },
     contractDocument,
-    dependencies: [],
+    dependencies: (contract.manifest.requirements?.intrinsic ?? []).map(({ moduleId }) => moduleId).toSorted(),
     deployment: contract.deployment,
     federation:
       component === undefined
@@ -70,7 +73,7 @@ const compositionModule = (contract: OntosModuleDeploymentContract): Application
           },
     moduleId: contract.manifest.module.id,
     publicContract: { id: contract.manifest.module.id, sha256: digest, version: contract.schemaVersion },
-    requiredCoreCapabilities: [],
+    requiredCoreCapabilities: contract.manifest.requirements?.coreCapabilities ?? [],
     requiredShellAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
     sharedSingletons: [],
   };
@@ -79,26 +82,39 @@ const compositionModule = (contract: OntosModuleDeploymentContract): Application
 export const makeCompositionSnapshot = (
   contractInputs: readonly unknown[],
   validityMs = 60_000,
+  publishedShellRuntimeDocument?: string,
 ): Effect.Effect<ActiveApplicationCompositionSnapshot> =>
   Effect.gen(function* makeSnapshot() {
-    const contracts = contractInputs.map((input) =>
-      Schema.decodeUnknownSync(OntosModuleDeploymentContractSchema)(input),
+    const modules = contractInputs.map((input) => {
+      const document = Schema.is(Schema.String)(input) ? input : JSON.stringify(input);
+      const contract = Schema.decodeUnknownSync(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(document);
+      return compositionModule(contract, document);
+    });
+    const runtimeDocument = publishedShellRuntimeDocument ?? shellRuntimeContractDocument;
+    const runtimeContract = Schema.decodeUnknownSync(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+      runtimeDocument,
     );
+    if (
+      runtimeContract.deployment.appId !== shellDeployment.appId ||
+      runtimeContract.deployment.buildMarker !== shellDeployment.buildMarker
+    ) {
+      throw new Error('The actual Shell runtime document must match the compiled fixture receiver');
+    }
     const composition = sealComposition(
       Schema.decodeUnknownSync(ApplicationCompositionSchema)({
-        modules: contracts.map(compositionModule),
+        modules,
         revision: '0'.repeat(64),
         schemaVersion: ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION,
         shell: {
           contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
-          coreCapabilities: [],
+          coreCapabilities: runtimeContract.coreCapabilities,
           deployment: shellDeployment,
           federationManifest: {
             sha256: contentDigest(shellFederationManifestDocument),
             url: new URL('mf-manifest.json', shellReleaseUrl).href,
           },
           runtimeContract: {
-            sha256: contentDigest(shellRuntimeContractDocument),
+            sha256: contentDigest(runtimeDocument),
             url: new URL(ONTOS_SHELL_RUNTIME_CONTRACT_PATH.slice(1), shellReleaseUrl).href,
           },
           sharedSingletons: [],

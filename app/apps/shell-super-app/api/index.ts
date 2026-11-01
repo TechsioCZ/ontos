@@ -18,6 +18,7 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import type {
   ActionCoreError,
   ActiveApplicationCompositionServiceContract,
+  DatabaseConnectionPair,
   ContextAccess,
   PrincipalManagementError,
   PrincipalResolutionError,
@@ -32,6 +33,7 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
+  DatabaseConfig,
   GatewayScopeGrantRegistrarLive,
   LegalEntityContextLive,
   legalEntityDetailRead,
@@ -128,7 +130,8 @@ import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
 // @ontos-codesmith-core-read-server-imports:end
 import type { ApiKeyProviderError } from './auth/api-key-service.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-namespace-registry.ts';
-import { AuthConfigLive } from './auth/config.ts';
+import { AuthConfig, AuthConfigLive } from './auth/config.ts';
+import { AuthDatabaseFromDatabaseConfigLive } from './auth/db/client.ts';
 import {
   CommerceExternalIdentityContextAccessLive,
   CommerceExternalIdentityDeploymentLive,
@@ -1911,6 +1914,7 @@ type ShellAuthenticationApiRuntimeArguments = readonly [
   scopedModuleStateFactory?: ShellScopedModuleStateFactory,
   externalIdentityDeploymentLayer?: ExternalIdentityDeploymentLayer,
   shellReadAuthority?: ActiveApplicationCompositionServiceContract,
+  runtimeDatabase?: DatabaseConnectionPair,
 ];
 
 export const makeShellAuthenticationApiRuntime = (
@@ -1919,7 +1923,7 @@ export const makeShellAuthenticationApiRuntime = (
   const [
     authenticationLayer,
     issuerLayer,
-    moduleStateLayer = tenantModuleStateServiceLive,
+    moduleStateLayer,
     loadInstalledModuleCatalog,
     enableInstalledOutboxMatcher = false,
     contextAccessLayer = defaultContextAccessLive,
@@ -1927,7 +1931,58 @@ export const makeShellAuthenticationApiRuntime = (
     scopedModuleStateFactory = defaultScopedModuleStateFactory,
     externalIdentityDeploymentLayer = ExternalIdentityNotInstalledLive,
     shellReadAuthority,
+    runtimeDatabase,
   ] = args;
+  const runtimeCorePersistenceLive =
+    runtimeDatabase === undefined
+      ? corePersistenceLive
+      : CorePersistenceLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, runtimeDatabase.runtime)));
+  const runtimeAuthConfigLive =
+    runtimeDatabase === undefined
+      ? AuthConfigLive
+      : Layer.effect(
+          AuthConfig,
+          AuthConfig.pipe(
+            Effect.map((configuration) => ({
+              ...configuration,
+              connectionString: runtimeDatabase.runtime.connectionString,
+            })),
+          ),
+        ).pipe(Layer.provide(AuthConfigLive));
+  const runtimeAuthPersistenceLive =
+    runtimeDatabase === undefined
+      ? authPersistenceLive
+      : Layer.mergeAll(
+          runtimeAuthConfigLive,
+          AuthDatabaseFromDatabaseConfigLive.pipe(
+            Layer.provide(Layer.succeed(DatabaseConfig, runtimeDatabase.runtime)),
+          ),
+        );
+  const runtimePrincipalResolverLive =
+    runtimeDatabase === undefined
+      ? principalResolverLive
+      : PrincipalResolverLive({
+          authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+        }).pipe(Layer.provide(runtimeCorePersistenceLive));
+  const runtimeLegalEntityContextLive =
+    runtimeDatabase === undefined
+      ? legalEntityContextLive
+      : LegalEntityContextLive.pipe(Layer.provide(runtimeCorePersistenceLive));
+  const runtimeApiKeyServiceLive =
+    runtimeDatabase === undefined
+      ? apiKeyServiceLive
+      : ApiKeyServiceLive.pipe(Layer.provide(runtimeAuthPersistenceLive));
+  const runtimeSupportRecoveryPrincipalLive =
+    runtimeDatabase === undefined
+      ? supportRecoveryPrincipalLive
+      : SupportRecoveryPrincipalContextResolverLive({
+          authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+        }).pipe(Layer.provide(runtimeCorePersistenceLive));
+  const selectedModuleStateLayer =
+    moduleStateLayer ??
+    (runtimeDatabase === undefined
+      ? tenantModuleStateServiceLive
+      : TenantModuleStateServiceLive.pipe(Layer.provide(runtimeCorePersistenceLive)));
   const shellReadAuthorityLayer =
     shellReadAuthority === undefined
       ? activeApplicationCompositionLive
@@ -1938,13 +1993,13 @@ export const makeShellAuthenticationApiRuntime = (
       : Layer.succeed(ShellInstalledModuleCatalog, {
           load: loadInstalledModuleCatalog,
         });
-  const moduleStateGateLayer = ModuleStateGateLive.pipe(Layer.provide(moduleStateLayer));
+  const moduleStateGateLayer = ModuleStateGateLive.pipe(Layer.provide(selectedModuleStateLayer));
   const moduleEntrypointGatewayLayer = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLayer));
   const operationalScopeResolverLayer = OperationalScopeResolverLive.pipe(
-    Layer.provide(Layer.mergeAll(corePersistenceLive, contextAccessLayer)),
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, contextAccessLayer)),
   );
   const sharedOperationLayers = Layer.mergeAll(
-    corePersistenceLive,
+    runtimeCorePersistenceLive,
     contextAccessLayer,
     moduleStateGateLayer,
     moduleEntrypointGatewayLayer,
@@ -1963,7 +2018,7 @@ export const makeShellAuthenticationApiRuntime = (
     ),
   );
   const identityLifecycleLayer = IdentityLifecycleLive.pipe(
-    Layer.provide(Layer.mergeAll(actionRuntimeLayer, apiKeyServiceLive, principalResolverLive)),
+    Layer.provide(Layer.mergeAll(actionRuntimeLayer, runtimeApiKeyServiceLive, runtimePrincipalResolverLive)),
   );
   const shellGovernedReadsLayer = Layer.unwrap(
     GatewayIssuer.pipe(
@@ -2066,7 +2121,7 @@ export const makeShellAuthenticationApiRuntime = (
       Layer.mergeAll(
         sharedOperationLayers,
         shellReadAuthorityLayer,
-        moduleStateLayer,
+        selectedModuleStateLayer,
         moduleCatalogLayer,
         contextAccessLayer,
         ShellCompositionFactoryLive,
@@ -2078,37 +2133,39 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provide(
       Layer.mergeAll(
         authenticationLayer,
-        authPersistenceLive,
+        runtimeAuthPersistenceLive,
         actionRuntimeLayer,
         contextAccessLayer,
-        principalResolverLive,
-        supportRecoveryPrincipalLive,
+        runtimePrincipalResolverLive,
+        runtimeSupportRecoveryPrincipalLive,
       ),
     ),
   );
   const outboxMatcherLayer = enableInstalledOutboxMatcher
     ? InstalledOutboxMatcherLive.pipe(
-        Layer.provide(OutboxRuntimeLive.pipe(Layer.provide(OutboxRepositoryLive), Layer.provide(corePersistenceLive))),
+        Layer.provide(
+          OutboxRuntimeLive.pipe(Layer.provide(OutboxRepositoryLive), Layer.provide(runtimeCorePersistenceLive)),
+        ),
       )
     : Layer.empty;
   const relayScopeResolverLayer = OperationalScopeResolverLive.pipe(
-    Layer.provide(Layer.mergeAll(corePersistenceLive, contextAccessLayer)),
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, contextAccessLayer)),
   );
-  const relayLedgerLayer = GatewayRelayExchangeLedgerLive.pipe(Layer.provide(authPersistenceLive));
+  const relayLedgerLayer = GatewayRelayExchangeLedgerLive.pipe(Layer.provide(runtimeAuthPersistenceLive));
   const handlerDependenciesLive = Layer.mergeAll(
     relayScopeResolverLayer,
     relayLedgerLayer,
     GatewayRelayVerificationLive,
     authenticationLayer,
-    authPersistenceLive,
+    runtimeAuthPersistenceLive,
     actionRuntimeLayer,
-    apiKeyServiceLive,
+    runtimeApiKeyServiceLive,
     identityLifecycleLayer,
     supportImpersonationServiceLive,
-    principalResolverLive,
-    legalEntityContextLive,
+    runtimePrincipalResolverLive,
+    runtimeLegalEntityContextLive,
     issuerLayer,
-    moduleStateLayer,
+    selectedModuleStateLayer,
     moduleCatalogLayer,
     contextAccessLayer,
     shellGovernedReadsLayer,
