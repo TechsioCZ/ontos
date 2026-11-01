@@ -155,21 +155,23 @@ it('stages the symlinked setup apart from its owner setup', () => {
   expect(foreign).not.toBe(link);
 });
 
+// Later entries overwrite earlier ones when the workspace is written.
+const latest = (logicalPath: string) => entries.findLast((candidate) => candidate.path === logicalPath);
+
+const sourceOf = (file: string): string => {
+  const entry = latest(file);
+  const resolved = entry?.symlinkTo === undefined ? entry : latest(entry.symlinkTo);
+  if (resolved?.source === undefined) {
+    throw new Error(`No staged source for ${file}`);
+  }
+  return resolved.source;
+};
+
 // The rule reads each owner's manifest and Rstest configuration and resolves physical paths.
 describeWorkspace(
   'admits only registered native Rstest setup roots and retains owner, config and runtime-shape diagnostics',
   entries,
   (workspace) => {
-    const sourceOf = (file: string): string => {
-      // Later entries overwrite earlier ones when the workspace is written.
-      const latest = (logicalPath: string) => entries.findLast((candidate) => candidate.path === logicalPath);
-      const entry = latest(file);
-      const resolved = entry?.symlinkTo === undefined ? entry : latest(entry.symlinkTo);
-      if (resolved?.source === undefined) {
-        throw new Error(`No staged source for ${file}`);
-      }
-      return resolved.source;
-    };
     const toCase = (file: string) => ({ code: sourceOf(file), filename: workspace.file(file), name: file });
     ruleTester.run(`effect-native/${ruleName}`, effectNativeRule(ruleName), {
       // Every unproven setup run reports once; `multiple` contains two runs.
