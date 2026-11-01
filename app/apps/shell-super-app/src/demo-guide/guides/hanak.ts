@@ -135,7 +135,7 @@ export const hanakGuide: DemoGuide = {
         },
         {
           click:
-            'Obnovit seznam → otevřete čekající dávku AI agenta C a u každé změny ukažte pole před a po. Když žádná dávka nečeká, požádejte AI agenta C v ChatGPT nebo Claude o nový návrh změny kontaktu a pak stránku obnovte. Dávku teď neschvalujte.',
+            'Otevřete čekající dávku AI agenta C a u každé změny ukažte pole před a po. Když žádná dávka nečeká, požádejte AI agenta C v ChatGPT nebo Claude o nový návrh změny kontaktu; nová dávka se v seznamu objeví sama. Dávku teď neschvalujte.',
           id: 'hanak-ai-navrh',
           persona: vedouci,
           say: 'AI agent úrovně C poslal přes MCP konkrétní návrh. Dokud ho člověk neschválí, data klienta se nemění.',

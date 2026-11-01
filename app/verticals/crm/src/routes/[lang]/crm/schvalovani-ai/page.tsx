@@ -321,11 +321,6 @@ const AiApprovalsContent = () => {
   return (
     <>
       <PageHeader
-        actions={
-          <Button disabled={busy} onClick={load} size="sm" theme="outlined" variant="secondary">
-            Obnovit seznam
-          </Button>
-        }
         description="AI připraví návrh. Vy porovnáte údaje a rozhodnete. Bez vašeho souhlasu se nic nezmění."
         meta={<Badge variant="secondary">Úroveň C</Badge>}
         title={t('crm.pages.ai.title')}
