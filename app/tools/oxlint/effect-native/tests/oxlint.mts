@@ -1,5 +1,4 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -106,24 +105,6 @@ export function runOxlint(configPath: string, paths: readonly string[], cwd: str
       cause: result.error,
     });
   return parseOxlintOutput(result.stdout ?? '', result.stderr ?? '', result.status);
-}
-
-export function listFixtureRules(): readonly string[] {
-  if (!existsSync(fixturesDirectory)) return [];
-  return readdirSync(fixturesDirectory)
-    .filter((entry) => statSync(join(fixturesDirectory, entry)).isDirectory())
-    .sort();
-}
-
-export function listFilesRecursively(directory: string): readonly string[] {
-  if (!existsSync(directory)) return [];
-  const files: string[] = [];
-  for (const entry of readdirSync(directory)) {
-    const full = join(directory, entry);
-    if (statSync(full).isDirectory()) files.push(...listFilesRecursively(full));
-    else if (!entry.startsWith('.')) files.push(full);
-  }
-  return files.sort();
 }
 
 export function fixtureConfigPath(rule: string): string {

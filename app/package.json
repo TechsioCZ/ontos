@@ -41,6 +41,7 @@
     "lint": "oxlint apps verticals packages scripts tools/oxlint/effect-native/tests/*.test.mts",
     "lint:fix": "oxlint apps verticals packages scripts tools/oxlint/effect-native/tests/*.test.mts --fix",
     "lint:suppressions": "node ./scripts/lint-suppression-ratchet.mts",
+    "lint:repository-policy": "node tools/oxlint/effect-native/repository-policy.mts",
     "skills:install": "ultramodern-create ultramodern skills install",
     "skills:check": "ultramodern-create ultramodern skills check",
     "agents:refs:install": "node ./scripts/setup-agent-reference-repos.mts",

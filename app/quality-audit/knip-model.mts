@@ -2444,7 +2444,7 @@ const sourceEvidence = (
   const recordLintConfig = (node: Extract<Node, { type: 'CallExpression' }>) => {
     const consumers = new Map([
       ['tools/oxlint/effect-native/report.mts', 'report.config.ts'],
-      ['tools/oxlint/effect-native/tests/repository-policy.test.mts', 'repository-policy.config.ts'],
+      ['tools/oxlint/effect-native/repository-policy.mts', 'repository-policy.config.ts'],
     ]);
     const config = consumers.get(facts.file);
     const [joined] = node.arguments;
