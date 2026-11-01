@@ -18,6 +18,7 @@ import {
   hasGeneratedActionRegistrationBinding,
   hasGeneratedActionClientPublication,
   hasOwnerLocalReadServiceFactory,
+  hasOwnerLocalReadServiceFactoryResult,
   hasNativeHttpActionMount,
   ownerActionClientPublication,
   hasPublishedGeneratedContractShim,
@@ -3920,6 +3921,7 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
   Effect.gen(function* actualNamedCustomerContextRecovery() {
     const root = path.resolve(import.meta.dirname, '../..');
     const owner = 'verticals/commerce-customer-context';
+    const deployment = path.posix.basename(owner);
     const [trees, metadata] = yield* Effect.all([
       Effect.all(
         [
@@ -3953,11 +3955,54 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
     const inlineType = `${MODULE_API_HEADER}// @ontos-public-contract ${contractSpecifier}\nexport { MarketRetirementReservationRecoveryApi, type MarketRetirementReservationRecoveryRequest } from '${contractSpecifier}';\n`;
     expect(hasPublishedGeneratedContractShim(sources, contractFile, inlineType)).toBe(true);
     const diagnostics: string[] = [];
-    expect(
-      hasCompleteGeneratedModuleApiSeam(sources, shared, 'commerce-customer-context', diagnostics),
-      diagnostics.join('\n'),
-    ).toBe(true);
+    expect(hasCompleteGeneratedModuleApiSeam(sources, shared, deployment, diagnostics), diagnostics.join('\n')).toBe(
+      true,
+    );
 
+    const manifestFile = `${owner}/vertical.manifest.ts`;
+    const manifest = sources.get(manifestFile) ?? '';
+    const actionEntry = "'reserve-market-retirement-action': ReserveMarketRetirementActionApi,";
+    const invalidActionMetadata = [
+      manifest.replace(actionEntry, ''),
+      manifest.replace(actionEntry, `${actionEntry}\n${actionEntry}`),
+      manifest.replace(actionEntry, "'reserve-market-retirement-action': UnownedActionApi,"),
+      manifest.replace(
+        "operationKey: 'reserveMarketRetirementAction.execute'",
+        "operationKey: 'foreignAction.execute'",
+      ),
+      manifest.replace(
+        'registration: reserveMarketRetirementAction,',
+        'registration: reservePaymentTermRetirementAction,',
+      ),
+      manifest.replace(
+        "from './shared/apis/reserve-market-retirement-action.ts'",
+        "from './shared/apis/foreign-action.ts'",
+      ),
+      manifest.replace("apiKey: 'reserve-market-retirement-action'", "apiKey: 'unpublished-action'"),
+    ];
+    for (const invalid of invalidActionMetadata) {
+      expect(invalid).not.toBe(manifest);
+      expect(
+        hasCompleteGeneratedModuleApiSeam(
+          new Map([...sources, [manifestFile, invalid]]),
+          shared,
+          'commerce-customer-context',
+        ),
+      ).toBe(false);
+    }
+    const registrationFile = `${owner}/vertical.registration.ts`;
+    const registration = sources.get(registrationFile) ?? '';
+    const withActionBrowserClient = registration.replace(
+      '// <generated-module-registration-apis>',
+      "// <generated-module-registration-apis>\n'reserve-market-retirement-action': () => import('./src/api/reserve-market-retirement-action-client.ts'),",
+    );
+    expect(
+      hasCompleteGeneratedModuleApiSeam(
+        new Map([...sources, [registrationFile, withActionBrowserClient]]),
+        shared,
+        'commerce-customer-context',
+      ),
+    ).toBe(false);
     const marker = `${MODULE_API_HEADER}// @ontos-public-contract ${contractSpecifier}\n`;
     for (const invalid of [
       contract.replaceAll(`from '${contractSpecifier}'`, "from '@app/wrong-contracts/recovery'"),
@@ -3983,7 +4028,7 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
     ]) {
       expect(invalid).not.toBe(sources.get(file));
       const changed = new Map([...sources, [file, invalid]]);
-      expect(hasCompleteGeneratedModuleApiSeam(changed, shared, 'commerce-customer-context')).toBe(false);
+      expect(hasCompleteGeneratedModuleApiSeam(changed, shared, deployment)).toBe(false);
     }
   }),
 );
@@ -4026,6 +4071,80 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
     expect(hasCompleteGeneratedModuleApiSeam(sources, shared, 'pricing', diagnostics), diagnostics.join('\n')).toBe(
       true,
     );
+    const pricingReadFile = 'verticals/pricing/src/api/current-pricing-decision.read.ts';
+    const requirementsFile = 'verticals/pricing/src/integrations/pricing-operation-requirements.ts';
+    const read = sources.get(pricingReadFile) ?? '';
+    const requirements = sources.get(requirementsFile) ?? '';
+    const option = '{ requirements: currentPricingDecisionRequirements }';
+    const acceptsFactory = (changed: ReadonlyMap<string, string>) =>
+      hasOwnerLocalReadServiceFactoryResult(
+        changed,
+        pricingReadFile,
+        'verticals/pricing',
+        'currentPricingDecisionReadServiceFactory',
+      );
+    expect(acceptsFactory(sources)).toBe(true);
+    const invalidOptions: readonly (readonly [string, string])[] = [
+      [
+        pricingReadFile,
+        read.replace(option, '{ ...suppliedOptions, requirements: currentPricingDecisionRequirements }'),
+      ],
+      [pricingReadFile, read.replace(option, '{ [optionKey]: currentPricingDecisionRequirements }')],
+      [
+        pricingReadFile,
+        read.replace(option, '{ requirements: currentPricingDecisionRequirements, extra: capability }'),
+      ],
+      [
+        pricingReadFile,
+        read.replace(
+          option,
+          '{ pricingOwnerFinalFenceForScope: pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope }',
+        ),
+      ],
+      [
+        pricingReadFile,
+        read.replace(
+          'readonly requirements?: PricingWholeEvaluationRequirements',
+          'requirements: PricingWholeEvaluationRequirements',
+        ),
+      ],
+      [
+        pricingReadFile,
+        read.replace(
+          "from '../integrations/pricing-operation-requirements.ts'",
+          "from '../../../foreign/pricing-operation-requirements.ts'",
+        ),
+      ],
+      [
+        requirementsFile,
+        requirements.replace(
+          'export const currentPricingDecisionRequirements',
+          'export let currentPricingDecisionRequirements',
+        ),
+      ],
+      [requirementsFile, requirements.replace('assignedGroupCompatibility:', '[computedRequirement]:')],
+      [
+        requirementsFile,
+        requirements.replace(
+          "assignedGroupCompatibility: 'commerce.pricing.requirement.current-pricing-decision-assigned-group-compatibility'",
+          'assignedGroupCompatibility: () => capability',
+        ),
+      ],
+      [
+        requirementsFile,
+        requirements.replace(
+          'export const currentPricingDecisionRequirements = {',
+          'export const currentPricingDecisionRequirements = { ...unproven,',
+        ),
+      ],
+      [requirementsFile, requirements.replace('} as const;', '};')],
+      [requirementsFile, `${requirements}\nconst escaped = currentPricingDecisionRequirements;`],
+      [requirementsFile, `${requirements}\ncapture(currentPricingDecisionRequirements);`],
+    ];
+    for (const [file, invalid] of invalidOptions) {
+      expect(invalid).not.toBe(sources.get(file));
+      expect(acceptsFactory(new Map([...sources, [file, invalid]])), invalid).toBe(false);
+    }
     const invalidSources: readonly (readonly [string, string])[] = [
       [shimFile, `${shim}\nexport const runtime = true;`],
       [shimFile, shim.replace('@app/pricing-contracts/quotation-verification', '@app/pricing/src/private')],

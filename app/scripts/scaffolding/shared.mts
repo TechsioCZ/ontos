@@ -1551,7 +1551,7 @@ const matchesOwnerModuleIdentity = (
   );
 };
 
-const validRuntimeDeclarationViews = (
+export const validRuntimeDeclarationViews = (
   content: string,
   manifestContent: string,
   registrationContent: string,
