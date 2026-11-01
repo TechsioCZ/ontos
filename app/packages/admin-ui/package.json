@@ -10,6 +10,7 @@
     "./visible-text": "./src/visible-text.ts"
   },
   "scripts": {
+    "test:component": "rstest --project component",
     "test:unit": "rstest --project unit",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
@@ -24,10 +25,12 @@
   "devDependencies": {
     "@rstest/core": "0.11.12",
     "@techsio/ui-kit": "catalog:",
+    "@testing-library/react": "16.3.2",
     "@types/node": "^26.4.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
+    "happy-dom": "21.0.4",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   }

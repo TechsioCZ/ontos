@@ -13,10 +13,9 @@ export default defineConfig({
       },
     },
     {
-      include: ['tests/unit/**/*.test.{ts,tsx}'],
+      include: ['tests/unit/**/*.test.ts'],
       name: 'unit',
       testEnvironment: 'node',
-      tools: { swc: { jsc: { transform: { react: { runtime: 'automatic' } } } } },
     },
   ],
 });

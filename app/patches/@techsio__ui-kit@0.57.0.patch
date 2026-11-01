@@ -400,7 +400,17 @@ diff --git a/dist/molecules/dialog.js b/dist/molecules/dialog.js
 index 676e8e2..0605b52 100644
 --- a/dist/molecules/dialog.js
 +++ b/dist/molecules/dialog.js
-@@ -224,7 +224,7 @@ const dialogVariants = tv({
+@@ -86,7 +86,8 @@ const dialogVariants = tv({
+         },
+         behavior: {
+             modal: {
+-                backdrop: "bg-dialog-backdrop-bg-modal"
++                backdrop: "bg-dialog-backdrop-bg-modal",
++                positioner: "pointer-events-auto"
+             },
+             modeless: {
+                 backdrop: "bg-transparent",
+@@ -224,7 +225,7 @@ const dialogVariants = tv({
          position: "fixed"
      }
  });
@@ -409,7 +419,7 @@ index 676e8e2..0605b52 100644
      const generatedId = useId();
      const uniqueId = id || generatedId;
      const service = useMachine(__rspack_external__zag_js_dialog_5c81bb31.machine, {
-@@ -263,6 +263,8 @@ function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role = "
+@@ -263,6 +264,8 @@ function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role = "
                              className
                          }),
                          ...api.getContentProps(),
@@ -418,7 +428,7 @@ index 676e8e2..0605b52 100644
                          children: [
                              !hideCloseButton && /*#__PURE__*/ jsx(ActionIcon, {
                                  className: closeTrigger(),
-@@ -270,7 +272,7 @@ function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role = "
+@@ -270,7 +273,7 @@ function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role = "
                                  size: "md",
                                  tone: "neutral",
                                  ...api.getCloseTriggerProps(),
@@ -427,6 +437,18 @@ index 676e8e2..0605b52 100644
                              }),
                              title && /*#__PURE__*/ jsx("h2", {
                                  className: titleSlot(),
+diff --git a/dist/molecules/drawer.js b/dist/molecules/drawer.js
+--- a/dist/molecules/drawer.js
++++ b/dist/molecules/drawer.js
+@@ -73,7 +73,7 @@ Drawer.Backdrop = function({ className, ref, ...props }) {
+     return /*#__PURE__*/ jsx("div", {
+         ...mergedProps,
+         className: styles.backdrop({
+-            className
++            className: [api.modal && "pointer-events-auto", className]
+         }),
+         ref: composedRef
+     });
 diff --git a/dist/molecules/switch.js b/dist/molecules/switch.js
 index dc835f3..a9bb0c3 100644
 --- a/dist/molecules/switch.js
