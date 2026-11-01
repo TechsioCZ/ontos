@@ -2355,12 +2355,34 @@ const prepareTenantPartyArtifacts = Effect.fn('TenantPartyGatewayTest.artifacts'
       { concurrency: 3 },
     );
     expect(shellBundleExit).toBe(0);
+    const shellDescription = yield* ChildProcess.make(process.execPath, [shellArtifact, '--describe'], {
+      cwd: appRoot,
+      env: toolchainEnvironment,
+      extendEnv: false,
+      stderr: 'pipe',
+      stdout: 'pipe',
+    });
+    const [shellMarkerLines, shellDescriptionExit] = yield* Effect.all(
+      [
+        shellDescription.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runCollect),
+        shellDescription.exitCode,
+        Stream.runDrain(shellDescription.stderr),
+      ],
+      { concurrency: 3 },
+    );
+    expect(shellDescriptionExit).toBe(0);
+    const shellReceiverDeployment = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(ShellOwnerReadySchema.fields.marker),
+    )(shellMarkerLines[0]);
+    expect(shellReceiverDeployment).toEqual(shellRuntimeContract.deployment);
+    expect(shellReceiverDeployment.buildMarker).toBe(shellIdentity.buildMarker);
     return {
       artifact,
       marker,
       partyContractSha256,
       partyDocument,
       shellArtifact,
+      shellReceiverDeployment,
       shellRuntimeDocument,
       shellRuntimeSha256,
       toolchainEnvironment,
@@ -2383,13 +2405,17 @@ const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(f
     partyContractSha256,
     partyDocument,
     shellArtifact,
+    shellReceiverDeployment,
     shellRuntimeDocument,
     shellRuntimeSha256,
     toolchainEnvironment,
   } = yield* TenantPartyArtifacts;
   const crypto = yield* Crypto.Crypto;
   const suffix = yield* crypto.randomUUIDv4();
-  const snapshot = yield* makeCompositionSnapshot([partyDocument], 3_600_000, shellRuntimeDocument);
+  const snapshot = yield* makeCompositionSnapshot([partyDocument], 3_600_000, {
+    document: shellRuntimeDocument,
+    receiverDeployment: shellReceiverDeployment,
+  });
   expect(snapshot.composition.modules[0]?.contract.sha256).toBe(partyContractSha256);
   expect(snapshot.composition.modules[0]?.contractDocument).toBe(partyDocument);
   expect(snapshot.composition.shell.runtimeContract.sha256).toBe(shellRuntimeSha256);

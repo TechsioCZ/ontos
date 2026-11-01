@@ -25,7 +25,6 @@ const shellDeployment = {
   appId: ultramodernDeliveryUnit.appId,
   buildMarker: ultramodernDeliveryUnit.buildMarker,
 };
-const shellReleaseUrl = `https://${shellDeployment.appId}.example.test/releases/${shellDeployment.buildMarker}/`;
 const shellFederationManifestDocument = JSON.stringify({ exposes: [], name: 'shellSuperApp', shared: [] });
 const shellRuntimeContractDocument = JSON.stringify({
   contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
@@ -82,7 +81,10 @@ const compositionModule = (
 export const makeCompositionSnapshot = (
   contractInputs: readonly unknown[],
   validityMs = 60_000,
-  publishedShellRuntimeDocument?: string,
+  publishedShellRuntime?: {
+    readonly document: string;
+    readonly receiverDeployment: ApplicationComposition['shell']['deployment'];
+  },
 ): Effect.Effect<ActiveApplicationCompositionSnapshot> =>
   Effect.gen(function* makeSnapshot() {
     const modules = contractInputs.map((input) => {
@@ -90,13 +92,15 @@ export const makeCompositionSnapshot = (
       const contract = Schema.decodeUnknownSync(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(document);
       return compositionModule(contract, document);
     });
-    const runtimeDocument = publishedShellRuntimeDocument ?? shellRuntimeContractDocument;
+    const receiverDeployment = publishedShellRuntime?.receiverDeployment ?? shellDeployment;
+    const receiverReleaseUrl = `https://${receiverDeployment.appId}.example.test/releases/${receiverDeployment.buildMarker}/`;
+    const runtimeDocument = publishedShellRuntime?.document ?? shellRuntimeContractDocument;
     const runtimeContract = Schema.decodeUnknownSync(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
       runtimeDocument,
     );
     if (
-      runtimeContract.deployment.appId !== shellDeployment.appId ||
-      runtimeContract.deployment.buildMarker !== shellDeployment.buildMarker
+      runtimeContract.deployment.appId !== receiverDeployment.appId ||
+      runtimeContract.deployment.buildMarker !== receiverDeployment.buildMarker
     ) {
       throw new Error('The actual Shell runtime document must match the compiled fixture receiver');
     }
@@ -108,14 +112,14 @@ export const makeCompositionSnapshot = (
         shell: {
           contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
           coreCapabilities: runtimeContract.coreCapabilities,
-          deployment: shellDeployment,
+          deployment: receiverDeployment,
           federationManifest: {
             sha256: contentDigest(shellFederationManifestDocument),
-            url: new URL('mf-manifest.json', shellReleaseUrl).href,
+            url: new URL('mf-manifest.json', receiverReleaseUrl).href,
           },
           runtimeContract: {
             sha256: contentDigest(runtimeDocument),
-            url: new URL(ONTOS_SHELL_RUNTIME_CONTRACT_PATH.slice(1), shellReleaseUrl).href,
+            url: new URL(ONTOS_SHELL_RUNTIME_CONTRACT_PATH.slice(1), receiverReleaseUrl).href,
           },
           sharedSingletons: [],
         },
