@@ -151,6 +151,7 @@ const EshopsPageContent = ({ context }: PageContextProps) => {
   }
   const overview = eshopsOverview({
     associations: catalog.value.associations,
+    legalEntityId,
     markets: catalog.value.markets,
     settings: settingsValue?.markets ?? [],
     storefronts: storefronts.state === 'ready' ? storefronts.value.applications : [],

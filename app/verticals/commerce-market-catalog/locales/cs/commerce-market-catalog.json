@@ -156,7 +156,8 @@
           "impact_assessment_unavailable": "dopad vyřazení nebylo možné ověřit",
           "revision_conflict": "trh se mezitím změnil",
           "invalid_lifecycle_transition": "trh v tomto stavu vyřadit nelze"
-        }
+        },
+        "action": "Vyřadit"
       },
       "purpose": "Název",
       "channels": "Kanály",

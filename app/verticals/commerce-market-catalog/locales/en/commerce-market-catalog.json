@@ -156,7 +156,8 @@
           "impact_assessment_unavailable": "the impact could not be checked",
           "revision_conflict": "the market changed in the meantime",
           "invalid_lifecycle_transition": "the market cannot be retired in its current state"
-        }
+        },
+        "action": "Retire"
       },
       "purpose": "Name",
       "channels": "Channels",

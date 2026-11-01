@@ -173,7 +173,7 @@ const HeaderActions = ({
             theme={action === 'retire' ? 'outlined' : 'solid'}
             variant={action === 'retire' ? 'danger' : 'secondary'}
           >
-            {text(`detail.${action}`)}
+            {text(action === 'retire' ? 'detail.retire.action' : `detail.${action}`)}
           </Button>
         );
       })}

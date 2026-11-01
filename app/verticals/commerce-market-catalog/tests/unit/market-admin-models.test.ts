@@ -159,6 +159,7 @@ describe('E-shops overview model', () => {
         association('akros-storefront', sk, '88888888-8888-4888-8888-888888888881'),
         association('akros-storefront', cz, '88888888-8888-4888-8888-888888888882'),
       ],
+      legalEntityId: '71000000-0000-4000-8000-000000000023',
       markets: [sk, cz, pl],
       settings: [eurSettings],
       storefronts: [kavarna, akros, other],
@@ -173,6 +174,18 @@ describe('E-shops overview model', () => {
     expect(akrosCard?.url).toBe('https://ontos-stage-akros.web-revolution.cz/cs');
     expect(overview.unassigned.map((chip) => chip.code)).toEqual(['AKROS-PL']);
     expect(overview.unassigned[0]?.url).toBeUndefined();
+  });
+
+  it("hides another company's e-shop none of the company's markets sells in", () => {
+    const overview = eshopsOverview({
+      associations: [],
+      legalEntityId: '71000000-0000-4000-8000-000000000023',
+      markets: [],
+      settings: [],
+      storefronts: [kavarna, akros],
+      unnamed: (position) => `E-shop ${String(position)}`,
+    });
+    expect(overview.eshops.map((eshop) => eshop.name)).toEqual(['Kavárna doma e-shop']);
   });
 });
 
