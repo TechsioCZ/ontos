@@ -24,6 +24,7 @@ import { loadSpiceDbConfig } from '../permissions/config.ts';
 import { PrincipalRefSchema } from '../permissions/principal-ref.ts';
 import { fromScopedRoleObjectId } from '../permissions/scoped-role.ts';
 import { openSpiceDbRpc } from '../permissions/spicedb-transaction-guard.ts';
+import { isSystemServiceRoleKey } from './system-service-roles.ts';
 import type { SpiceDbRpc } from '../permissions/spicedb-rpc.ts';
 import type { ReadFinishContext, ReadLoadContext } from '../reads/context.ts';
 import { defineRead } from '../reads/definition.ts';
@@ -143,6 +144,7 @@ const peopleDirectoryServices = (transaction: ScopedTransactionExecutor) => ({
 type PeopleServices = ReturnType<typeof peopleDirectoryServices>;
 type LoadedPeople = Effect.Success<ReturnType<PeopleServices['list']>>;
 
+/** None for a system service account (see isSystemServiceRoleKey), which people administration never lists. */
 const rolesOf = Effect.fn('PeopleDirectory.rolesOf')(function* rolesOf(
   client: SpiceDbRpc,
   input: { readonly legalEntityId?: string; readonly principalId: string; readonly tenantId: string },
@@ -157,7 +159,7 @@ const rolesOf = Effect.fn('PeopleDirectory.rolesOf')(function* rolesOf(
       },
     }),
   );
-  const roles = yield* Effect.forEach(
+  const held = yield* Effect.forEach(
     relationships,
     Effect.fn(function* readRole(response: v1.ReadRelationshipsResponse) {
       const edge = response.relationship;
@@ -174,22 +176,28 @@ const rolesOf = Effect.fn('PeopleDirectory.rolesOf')(function* rolesOf(
       if (Option.isNone(role) || role.value.tenantId !== input.tenantId) {
         return yield* unavailable('Role relationship has a malformed or foreign-tenant identity');
       }
-      if (role.value.legalEntityId !== input.legalEntityId) {
-        return [];
-      }
-      const decoded = yield* Schema.decodeEffect(ScopedRoleMembershipRoleSchema)({
-        roleKey: role.value.roleKey,
-        scope:
-          role.value.legalEntityId === undefined
-            ? { _tag: 'tenant' }
-            : { _tag: 'company', legalEntityId: role.value.legalEntityId },
-        tenantId: role.value.tenantId,
-      });
-      return [decoded];
+      return role.value;
     }),
     { concurrency: 1 },
   );
-  return roles.flat().toSorted((left, right) => left.roleKey.localeCompare(right.roleKey));
+  // A system account is hidden in every scope, also where it holds no role of its own.
+  if (held.some((role) => isSystemServiceRoleKey(role.roleKey))) {
+    return Option.none();
+  }
+  const roles = yield* Effect.forEach(
+    held.filter((role) => role.legalEntityId === input.legalEntityId),
+    (role) =>
+      Schema.decodeEffect(ScopedRoleMembershipRoleSchema)({
+        roleKey: role.roleKey,
+        scope:
+          role.legalEntityId === undefined
+            ? { _tag: 'tenant' }
+            : { _tag: 'company', legalEntityId: role.legalEntityId },
+        tenantId: role.tenantId,
+      }),
+    { concurrency: 1 },
+  );
+  return Option.some(roles.toSorted((left, right) => left.roleKey.localeCompare(right.roleKey)));
 });
 
 const membershipProjection = Effect.fn('PeopleDirectory.membershipProjection')(function* membershipProjection(
@@ -268,41 +276,47 @@ const finish = Effect.fn('PeopleDirectory.finish')(function* finish(
         Effect.fn(function* enrichPerson(row: LoadedPeople['rows'][number]) {
           const principalRef = { principalId: row.principalId, tenantId };
           const identity = legalEntityId === undefined ? principalRef : { ...principalRef, legalEntityId };
-          const [roleAssignments, selectedCompanyMembershipProjection] = yield* Effect.all(
+          const [roles, selectedCompanyMembershipProjection] = yield* Effect.all(
             [rolesOf(client, identity), membershipProjection(client, row, tenantId)],
             { concurrency: 2 },
           );
-          return {
-            displayName: row.displayName,
-            invitationDelivery:
-              row.invitationId === null
-                ? null
-                : invitationDeliveryFromLedger({
-                    errorTag: row.invitationErrorTag,
-                    expired: row.invitationExpired,
-                    status: row.invitationStatus,
-                  }),
-            kind: row.kind,
-            principalRef,
-            principalStatus: row.principalStatus,
-            roleAssignments,
-            selectedCompanyMembership:
-              row.companyId === null
-                ? null
-                : {
-                    affiliation: row.affiliation,
-                    legalEntityId: row.companyId,
-                    principalRef,
-                    revision: row.membershipRevision,
-                    status: row.membershipStatus,
-                  },
-            selectedCompanyMembershipProjection,
-          };
+          if (Option.isNone(roles)) {
+            return [];
+          }
+          const roleAssignments = roles.value;
+          return [
+            {
+              displayName: row.displayName,
+              invitationDelivery:
+                row.invitationId === null
+                  ? null
+                  : invitationDeliveryFromLedger({
+                      errorTag: row.invitationErrorTag,
+                      expired: row.invitationExpired,
+                      status: row.invitationStatus,
+                    }),
+              kind: row.kind,
+              principalRef,
+              principalStatus: row.principalStatus,
+              roleAssignments,
+              selectedCompanyMembership:
+                row.companyId === null
+                  ? null
+                  : {
+                      affiliation: row.affiliation,
+                      legalEntityId: row.companyId,
+                      principalRef,
+                      revision: row.membershipRevision,
+                      status: row.membershipStatus,
+                    },
+              selectedCompanyMembershipProjection,
+            },
+          ];
         }),
         { concurrency: 4 },
       );
       const result = yield* Schema.decodeUnknownEffect(PeopleDirectoryResultSchema)({
-        items,
+        items: items.flat(),
         nextOffset: context.loaded.nextOffset,
         scope: legalEntityId === undefined ? { _tag: 'tenant' } : { _tag: 'company', legalEntityId },
         tenantId,

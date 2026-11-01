@@ -1,7 +1,9 @@
+import { matchesSearch } from '@app/admin-ui';
 import { Match, Schema } from 'effect';
 import { PeopleScopeSchema } from '../../../shared/people-api.ts';
 import type {
   PeopleList,
+  PeopleRoleCatalog,
   Person,
   SetPeopleCompanyMembershipResponse,
   SetPeopleRoleResponse,
@@ -31,6 +33,110 @@ export const personKindLabel = (person: Person): string => {
     return 'Externí osoba';
   }
   return 'Člověk';
+};
+
+export const PersonKindKeySchema = Schema.Literals(['agent', 'employee', 'external', 'human']);
+export type PersonKindKey = typeof PersonKindKeySchema.Type;
+export const PeopleEditKindSchema = Schema.Literals(['membership', 'role']);
+export type PeopleEditKind = typeof PeopleEditKindSchema.Type;
+export const PeopleAdminScopeSchema = Schema.Literals(['company', 'tenant']);
+export type PeopleAdminScope = typeof PeopleAdminScopeSchema.Type;
+export const personKindKey = (person: Person): PersonKindKey => {
+  if (person.kind === 'agent') {
+    return 'agent';
+  }
+  return person.selectedCompanyMembership?.affiliation ?? 'human';
+};
+export const personKindOptions = [
+  { label: 'Zaměstnanec', value: 'employee' },
+  { label: 'Externí osoba', value: 'external' },
+  { label: 'AI agent', value: 'agent' },
+  { label: 'Člověk bez zařazení', value: 'human' },
+] as const satisfies readonly { readonly label: string; readonly value: PersonKindKey }[];
+
+/**
+ * One status per row. The colour tone is decorative: the label always carries the meaning (WCAG 1.4.1).
+ * Login state wins over membership, because a blocked or archived login cannot act in any company.
+ */
+export const PersonStatusKeySchema = Schema.Literals([
+  'active',
+  'invited',
+  'deactivated',
+  'blocked',
+  'departed',
+  'archived',
+]);
+export type PersonStatusKey = typeof PersonStatusKeySchema.Type;
+export const PersonStatusToneSchema = Schema.Literals(['danger', 'neutral', 'success', 'warning']);
+export type PersonStatusTone = typeof PersonStatusToneSchema.Type;
+export const personStatusPresentation = {
+  active: { label: 'Aktivní', rank: 0, tone: 'success' },
+  archived: { label: 'Archivovaný', rank: 5, tone: 'neutral' },
+  blocked: { label: 'Zablokovaný', rank: 3, tone: 'danger' },
+  deactivated: { label: 'Deaktivovaný', rank: 2, tone: 'neutral' },
+  departed: { label: 'Ukončený', rank: 4, tone: 'neutral' },
+  invited: { label: 'Pozvaný', rank: 1, tone: 'warning' },
+} as const satisfies Record<
+  PersonStatusKey,
+  { readonly label: string; readonly rank: number; readonly tone: PersonStatusTone }
+>;
+export const personStatusKey = (person: Person): PersonStatusKey => {
+  if (person.principalStatus === 'disabled') {
+    return 'blocked';
+  }
+  if (person.principalStatus === 'archived') {
+    return 'archived';
+  }
+  return Match.value(person.selectedCompanyMembership?.status ?? 'active').pipe(
+    Match.when('active', (): PersonStatusKey => 'active'),
+    Match.when('invited', (): PersonStatusKey => 'invited'),
+    Match.when('disabled', (): PersonStatusKey => 'deactivated'),
+    Match.when('departed', (): PersonStatusKey => 'departed'),
+    Match.exhaustive,
+  );
+};
+
+/** Roles missing from the catalog are technical workloads, never assignable people profiles. */
+export const roleName = (catalog: PeopleRoleCatalog | undefined, roleKey: string): string =>
+  catalog?.items.find((role) => role.roleKey === roleKey)?.name ?? 'Technická role';
+export const roleNames = (catalog: PeopleRoleCatalog | undefined, person: Person): readonly string[] =>
+  person.roleAssignments.map((role) => roleName(catalog, role.roleKey)).toSorted((a, b) => a.localeCompare(b, 'cs'));
+
+/** `current` hides ended memberships and archived logins, which stay available on request for history. */
+export const PeopleStatusFilterSchema = Schema.Literals(['current', 'all', ...PersonStatusKeySchema.literals]);
+export type PeopleStatusFilter = typeof PeopleStatusFilterSchema.Type;
+export interface PeopleFilters {
+  readonly kind: PersonKindKey | 'all';
+  readonly query: string;
+  readonly roleKey: string;
+  readonly status: PeopleStatusFilter;
+}
+export const defaultPeopleFilters: PeopleFilters = { kind: 'all', query: '', roleKey: 'all', status: 'current' };
+export const allPeopleFilters: PeopleFilters = { ...defaultPeopleFilters, status: 'all' };
+const matchesStatus = (filter: PeopleStatusFilter, status: PersonStatusKey) => {
+  if (filter === 'all') {
+    return true;
+  }
+  if (filter === 'current') {
+    return status !== 'departed' && status !== 'archived';
+  }
+  return filter === status;
+};
+export const filterPeople = (
+  people: readonly Person[],
+  filters: PeopleFilters,
+  catalog: PeopleRoleCatalog | undefined,
+): readonly Person[] => {
+  const { query } = filters;
+  return people.filter(
+    (person) =>
+      (filters.kind === 'all' || personKindKey(person) === filters.kind) &&
+      (filters.roleKey === 'all' || person.roleAssignments.some((role) => role.roleKey === filters.roleKey)) &&
+      matchesStatus(filters.status, personStatusKey(person)) &&
+      [person.displayName, personKindLabel(person), ...roleNames(catalog, person)].some((text) =>
+        matchesSearch(text, query),
+      ),
+  );
 };
 
 export type PendingPeopleChange =
