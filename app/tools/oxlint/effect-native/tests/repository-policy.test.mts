@@ -4,8 +4,13 @@ import nodePath from 'node:path';
 
 import { expect, it } from 'effect-rstest';
 
-import { ignorePatternFlag, managedAssetSha256, managedSkillAssetPaths, policyConfig } from '../repository-policy.mts';
-import { appRoot, runOxlint } from './oxlint.mts';
+import {
+  ignorePatternFlag,
+  managedAssetSha256,
+  managedSkillAssetPaths,
+  runRepositoryPolicy,
+} from '../repository-policy.mts';
+import { appRoot } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
 const skillsLockPath = '.agents/skills-lock.json';
@@ -47,7 +52,7 @@ it('supports missing optional output and omits only the immutable installed prov
       expect(paths).toEqual(bytes === undefined ? [] : [asset]);
       const flags = paths.flatMap((filename) => [ignorePatternFlag, nodePath.relative(appRoot, filename)]);
       const inputs = bytes === undefined ? neighbors : [asset, ...neighbors];
-      const run = runOxlint(policyConfig, [...inputs, ...flags], appRoot);
+      const run = runRepositoryPolicy([...inputs, ...flags]);
       expect(run.exitCode).toBe(1);
       expect(run.numberOfFiles).toBe(neighbors.length);
       expect(run.diagnostics.every(({ code }) => code === instanceOfRule)).toBe(true);
@@ -56,7 +61,7 @@ it('supports missing optional output and omits only the immutable installed prov
       );
       writeFileSync(asset, firstPartyInstanceof);
       expect(managedSkillAssetPaths(directory)).toEqual([]);
-      const changed = runOxlint(policyConfig, [asset], appRoot);
+      const changed = runRepositoryPolicy([asset]);
       expect(changed.exitCode).toBe(1);
       expect(changed.diagnostics.map(({ code }) => code)).toEqual([instanceOfRule]);
       if (bytes !== undefined) {
@@ -71,7 +76,7 @@ it('supports missing optional output and omits only the immutable installed prov
           writeFileSync(nodePath.join(directory, skillsLockPath), invalidLock);
           expect(managedSkillAssetPaths(directory)).toEqual([]);
         }
-        const unowned = runOxlint(policyConfig, [asset], appRoot);
+        const unowned = runRepositoryPolicy([asset]);
         expect(unowned.exitCode).toBe(1);
         expect(unowned.diagnostics).toHaveLength(3);
       }
@@ -100,7 +105,7 @@ it('does not exempt managed-looking paths through file or directory symlinks', (
         symlinkSync(escaped, nodePath.dirname(asset));
       }
       expect(managedSkillAssetPaths(directory)).toEqual([]);
-      const run = runOxlint(policyConfig, [asset], appRoot);
+      const run = runRepositoryPolicy([asset]);
       expect(run.exitCode).toBe(1);
       expect(run.diagnostics.every(({ code }) => code === instanceOfRule)).toBe(true);
       expect(run.diagnostics).toHaveLength(pinned ? 3 : 1);
