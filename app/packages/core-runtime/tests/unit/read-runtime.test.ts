@@ -7,6 +7,15 @@ import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
 import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
 import type { VerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
+import {
+  freshOutboxWorkerCompositionSnapshot,
+  makeOutboxWorkerComposition,
+} from '../support/outbox-worker-composition.ts';
+import {
+  legalEntityDetailRead,
+  LegalEntityDetailRequestSchema,
+} from '../../src/generated-reads/legal-entity-detail.ts';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
 /* oxlint-disable sonarjs/use-type-alias, typescript/no-unsafe-type-assertion -- Existing compatibility boundary; expires: 2026-12-31. */
 import { expect, it } from 'effect-rstest';
@@ -115,6 +124,7 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly contextPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly failEvidence?: boolean;
     readonly failTransactionTimestamp?: boolean;
+    readonly legalEntityRows?: readonly { readonly legalName: string; readonly status: string }[];
     readonly modulePermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly omitOwnerAuthorizationOverlay?: boolean;
     readonly omitOwnerRegistration?: boolean;
@@ -139,6 +149,10 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly resourcePermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly resultPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly resultTenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
+    readonly runtimeAdmission?: Pick<
+      ReadRuntimeOptions,
+      'applicationComposition' | 'expectedDeployment' | 'ownerRegistration'
+    >;
     readonly sqlEvents?: string[];
     readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly transactionEvents?: string[];
@@ -149,6 +163,7 @@ const makeHarness = Effect.fn(function* makeHarness(
   const assortmentPermissionChecks: unknown[] = [];
   let contextPermissionChecks = 0;
   let evidence = 0;
+  let legalEntityReads = 0;
   let authorityLocks = 0;
   let authorityReads = 0;
   let scopeInstalls = 0;
@@ -157,8 +172,12 @@ const makeHarness = Effect.fn(function* makeHarness(
   let tenantPermissionChecks = 0;
   const evidenceRows: EvidenceRow[] = [];
   const evidenceParameterRows: unknown[][] = [];
-  const query = (text: string, values: readonly unknown[]) =>
-    Effect.gen(function* executeReadQuery() {
+  const query = (text: string, values: readonly unknown[]) => {
+    if (text.includes('legal_entities')) {
+      legalEntityReads += 1;
+      return Effect.succeed(options.legalEntityRows ?? []);
+    }
+    return Effect.gen(function* executeReadQuery() {
       if (/^(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE SAVEPOINT)/u.test(text)) {
         options.sqlEvents?.push(text);
       }
@@ -224,6 +243,7 @@ const makeHarness = Effect.fn(function* makeHarness(
           ]
         : [];
     });
+  };
   const database = {
     executor: yield* makeTestDatabase((text, values) => {
       if (text === 'COMMIT' && options.transactionSettlementFailure !== undefined) {
@@ -255,6 +275,7 @@ const makeHarness = Effect.fn(function* makeHarness(
   let ownedRuntimeOptions: ReadRuntimeOptions = {
     onStage: (stage) => stages.push(stage),
     ...ownerAuthorizationOptions,
+    ...options.runtimeAdmission,
   };
   if (options.applicationComposition !== undefined) {
     ownedRuntimeOptions = { ...ownedRuntimeOptions, applicationComposition: options.applicationComposition };
@@ -371,7 +392,7 @@ const makeHarness = Effect.fn(function* makeHarness(
   };
   const baseRuntime = constructRuntime();
   const runRead: typeof baseRuntime.runRead = (input) =>
-    options.omitOwnerRegistration === true
+    options.omitOwnerRegistration === true || options.runtimeAdmission !== undefined
       ? baseRuntime.runRead(input)
       : constructRuntime(historicalFixtureOwner(input.registration.descriptor.owningModuleKey)).runRead(input);
   const runtime = { runRead };
@@ -381,6 +402,7 @@ const makeHarness = Effect.fn(function* makeHarness(
     evidence: () => evidence,
     evidenceParameterRows: () => evidenceParameterRows,
     evidenceRows: () => evidenceRows,
+    legalEntityReads: () => legalEntityReads,
     permissionChecks: () => ({
       businessPermissionChecks,
       contextPermissionChecks,
@@ -2998,5 +3020,175 @@ it.effect('does not turn a partial authority plus inbound revision into a requir
     expect(Schema.is(ModuleOperationRequirementError)(failure)).toBe(true);
     expect(authorityLoads).toBe(0);
     expect(harness.evidence()).toBe(0);
+  }),
+);
+
+/** Synthetic host metadata; the operation itself is the exact production Core Legal Entity Read. */
+const coreReadHost = (metadata: 'matching' | 'intrinsic' | 'core' | 'required' | 'provided' = 'matching') => {
+  const base = makeModuleContractFixture({ appId: 'core-read-host', moduleId: 'test.core-read-host.module' }).manifest;
+  const moduleId = base.module.id;
+  const ownRead = defineRead(
+    {
+      ...registration().descriptor,
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'read',
+        authorization: { kind: 'authenticated_principal' },
+        entrypointKey: `${moduleId}.api.host-read`,
+        moduleKey: moduleId,
+        role: 'api',
+      }),
+      legalEntityScope: 'required',
+      owningModuleKey: moduleId,
+      readKey: `${moduleId}.api.host-read`,
+    },
+    () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
+    () => Effect.succeed({}),
+    () => ({ kind: 'module', moduleId }),
+  );
+  const manifest = defineOntosModuleManifest({
+    ...base,
+    publicSurface: {
+      ...base.publicSurface,
+      actions: [],
+      api:
+        metadata === 'provided'
+          ? { host: HttpApi.make('Host').add(HttpApiGroup.make('host').add(HttpApiEndpoint.get('detail', '/detail'))) }
+          : {},
+      components: {},
+      operationContracts:
+        metadata === 'provided' ? [{ apiKey: 'host', operationKey: 'host.detail', registration: ownRead }] : [],
+    },
+    requirements: {
+      coreCapabilities: metadata === 'core' ? [{ id: 'ontos.host-unpublished', version: '1' }] : [],
+      intrinsic: metadata === 'intrinsic' ? [{ moduleId: 'test.provider', requiredOperations: [] }] : [],
+      operations:
+        metadata === 'required'
+          ? [
+              {
+                condition: `${moduleId}.condition.provider`,
+                entrypointKey: ownRead.descriptor.entrypoint.entrypointKey,
+                evidence: ['test.provider.fact'],
+                key: `${moduleId}.requires.provider`,
+                provider: { entrypointKey: 'test.provider.api.detail', moduleId: 'test.provider', schemaVersion: '1' },
+              },
+            ]
+          : [],
+      schemaVersion: '1',
+    },
+  });
+  return defineVerticalRuntimeRegistration({ actions: [], manifest, outboxWorkers: [], reads: [ownRead] });
+};
+
+const coreLegalEntityInput = () =>
+  Schema.decodeUnknownSync(LegalEntityDetailRequestSchema)({
+    legalEntityRef: {
+      moduleId: 'core.identity',
+      resourceId: '00000000-0000-4000-8000-000000000004',
+      resourceType: 'core.identity.legal-entity',
+      tenantId: scope.tenantId,
+    },
+  });
+
+it.effect('runs the exact Core Legal Entity Read in a genuine vertical-bound receiver without Party', () =>
+  Effect.gen(function* genuineCoreReadInVerticalReceiver() {
+    const snapshot = yield* freshOutboxWorkerCompositionSnapshot(
+      makeOutboxWorkerComposition([
+        { appId: 'core-read-host', buildMarker: 'actual-host-build', moduleId: 'test.core-read-host.module' },
+      ]),
+    );
+    const harness = yield* makeHarness({
+      compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
+      legalEntityRows: [{ legalName: 'Managed Legal Entity', status: 'active' }],
+      permissionDecision: 'allowed',
+      runtimeAdmission: {
+        applicationComposition: { load: Effect.succeed(snapshot) },
+        expectedDeployment: { appId: 'core-read-host', buildMarker: 'actual-host-build' },
+        ownerRegistration: coreReadHost(),
+      },
+    });
+    const input = coreLegalEntityInput();
+    const result = yield* harness.runtime.runRead({
+      input,
+      principal: scope,
+      registration: legalEntityDetailRead,
+      transport: { correlationId: scope.correlationId },
+    });
+    expect(result).toEqual({ ...input, legalName: 'Managed Legal Entity', status: 'active' });
+    expect(harness.legalEntityReads()).toBe(1);
+    expect(harness.evidence()).toBe(1);
+    expect(harness.authorityCounts().authorityLocks).toBe(1);
+  }),
+);
+
+it.effect('rejects recreated Core Reads, wrong receiver builds and every mismatched host contract block', () =>
+  Effect.gen(function* coreReadHostAdmissionRemainsExact() {
+    const snapshot = yield* freshOutboxWorkerCompositionSnapshot(
+      makeOutboxWorkerComposition([
+        { appId: 'core-read-host', buildMarker: 'actual-host-build', moduleId: 'test.core-read-host.module' },
+      ]),
+    );
+    let recreatedCalls = 0;
+    const recreated = defineRead(
+      { ...legalEntityDetailRead.descriptor },
+      (input) => {
+        recreatedCalls += 1;
+        return Effect.succeed({
+          evidence: { resultCount: 1 },
+          result: { ...input, legalName: 'Forged', status: 'active' as const },
+        });
+      },
+      () => Effect.succeed({}),
+      (input) => ({ kind: 'legal_entity', legalEntityId: input.legalEntityRef.resourceId, permission: 'access' }),
+    );
+    for (const control of [
+      'recreated',
+      'unknown-host',
+      'wrong-build',
+      'intrinsic',
+      'core',
+      'required',
+      'provided',
+      'denied',
+    ] as const) {
+      let runtimeAdmission: Pick<
+        ReadRuntimeOptions,
+        'applicationComposition' | 'expectedDeployment' | 'ownerRegistration'
+      > = {
+        applicationComposition: { load: Effect.succeed(snapshot) },
+        expectedDeployment: {
+          appId: 'core-read-host',
+          buildMarker: control === 'wrong-build' ? 'other-build' : 'actual-host-build',
+        },
+      };
+      if (control !== 'unknown-host') {
+        runtimeAdmission = {
+          ...runtimeAdmission,
+          ownerRegistration: coreReadHost(
+            control === 'recreated' || control === 'wrong-build' || control === 'denied' ? 'matching' : control,
+          ),
+        };
+      }
+      const harness = yield* makeHarness({
+        compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
+        legalEntityRows: [{ legalName: 'Managed Legal Entity', status: 'active' }],
+        permissionDecision: control === 'denied' ? 'denied' : 'allowed',
+        runtimeAdmission,
+      });
+      const readInput = {
+        input: coreLegalEntityInput(),
+        principal: scope,
+        transport: { correlationId: scope.correlationId },
+      };
+      const failure =
+        control === 'recreated'
+          ? yield* Effect.flip(harness.runtime.runRead({ ...readInput, registration: recreated }))
+          : yield* Effect.flip(harness.runtime.runRead({ ...readInput, registration: legalEntityDetailRead }));
+      expect(
+        Predicate.isTagged(failure, control === 'denied' ? 'ReadPermissionDenied' : 'ReadHandlerUnavailable'),
+      ).toBe(true);
+      expect(harness.legalEntityReads()).toBe(0);
+      expect(harness.evidence()).toBe(control === 'denied' ? 1 : 0);
+    }
+    expect(recreatedCalls).toBe(0);
   }),
 );

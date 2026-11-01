@@ -208,6 +208,40 @@ export const isGenuineCoreOperation = (registration: ModuleOperationRegistration
   isGenuineCoreAction(registration) ||
   (isReadRegistration(registration) && coreReads.some((read) => read === registration));
 
+const canonicalEmptyRequirements = { coreCapabilities: [], intrinsic: [], operations: [], schemaVersion: '1' } as const;
+const requirementsJson = Schema.fromJsonString(OntosModuleRequirementsSchema);
+const operationsJson = Schema.fromJsonString(Schema.Array(OntosOperationContractSchema));
+
+const validateOwnerContractProjection = Effect.fn('ModuleOperation.validateOwnerContractProjection')(
+  function* validateOwnerProjection(
+    owner: ReturnType<typeof extractVerticalRuntimeSafeDescriptors>,
+    catalog: InstalledModuleCatalog,
+  ) {
+    const observed = catalog.getByModuleId(owner.moduleId);
+    if (observed === undefined) {
+      return yield* unavailable();
+    }
+    const authoredRequirements = yield* Schema.encodeEffect(requirementsJson)(
+      copyOntosModuleRequirements(owner.requirements ?? canonicalEmptyRequirements),
+    ).pipe(Effect.mapError(unavailable));
+    const observedRequirements = yield* Schema.encodeEffect(requirementsJson)(
+      copyOntosModuleRequirements(observed.manifest.requirements ?? canonicalEmptyRequirements),
+    ).pipe(Effect.mapError(unavailable));
+    const authoredOperations = yield* Schema.encodeEffect(operationsJson)(
+      owner.operationContracts.toSorted((a, b) => a.entrypoint.entrypointKey.localeCompare(b.entrypoint.entrypointKey)),
+    ).pipe(Effect.mapError(unavailable));
+    const observedOperations = yield* Schema.encodeEffect(operationsJson)(
+      (observed.manifest.publicSurface.operationContracts ?? []).toSorted((a, b) =>
+        a.entrypoint.entrypointKey.localeCompare(b.entrypoint.entrypointKey),
+      ),
+    ).pipe(Effect.mapError(unavailable));
+    if (authoredRequirements !== observedRequirements || authoredOperations !== observedOperations) {
+      return yield* unavailable();
+    }
+    return yield* Effect.void;
+  },
+);
+
 interface ModuleOperationAdmission {
   readonly catalog?: InstalledModuleCatalog;
   readonly revision: string;
@@ -218,21 +252,28 @@ export const loadModuleOperationAdmission = Effect.fn('ModuleOperation.loadAdmis
   expectedDeployment: typeof OntosDeploymentIdentitySchema.Type,
   registration: ModuleOperationRegistration,
   principal: TrustedPrincipalContext,
+  hostRegistration?: VerticalRuntimeRegistration,
 ): Effect.fn.Return<ModuleOperationAdmission, ModuleOperationRequirementError> {
   const snapshot = yield* authority.load.pipe(
     Effect.flatMap(validateActiveApplicationCompositionSnapshot),
     Effect.mapError(unavailable),
   );
-  const { moduleKey } = registration.descriptor.entrypoint;
+  const genuineCore = isGenuineCoreOperation(registration);
+  const host =
+    genuineCore && hostRegistration !== undefined
+      ? yield* Effect.try({ catch: unavailable, try: () => extractVerticalRuntimeSafeDescriptors(hostRegistration) })
+      : undefined;
+  const hostModuleId = host?.moduleId ?? registration.descriptor.entrypoint.moduleKey;
   const selected = snapshot.composition.modules.find(
     ({ deployment, moduleId }) =>
-      moduleId === moduleKey &&
+      moduleId === hostModuleId &&
       deployment.appId === expectedDeployment.appId &&
       deployment.buildMarker === expectedDeployment.buildMarker,
   );
   const shell = snapshot.composition.shell.deployment;
   const selectedCore =
-    isGenuineCoreOperation(registration) &&
+    genuineCore &&
+    host === undefined &&
     shell.appId === expectedDeployment.appId &&
     shell.buildMarker === expectedDeployment.buildMarker;
   const requestedRevision = readVerifiedGatewayCompositionRevision(principal);
@@ -246,12 +287,15 @@ export const loadModuleOperationAdmission = Effect.fn('ModuleOperation.loadAdmis
     return Object.freeze({ revision: snapshot.composition.revision });
   }
   const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition).pipe(Effect.mapError(unavailable));
+  if (genuineCore) {
+    if (host === undefined) {
+      return yield* unavailable();
+    }
+    yield* validateOwnerContractProjection(host, catalog);
+    return Object.freeze({ revision: snapshot.composition.revision });
+  }
   return Object.freeze({ catalog, revision: snapshot.composition.revision });
 });
-
-const canonicalEmptyRequirements = { coreCapabilities: [], intrinsic: [], operations: [], schemaVersion: '1' } as const;
-const requirementsJson = Schema.fromJsonString(OntosModuleRequirementsSchema);
-const operationsJson = Schema.fromJsonString(Schema.Array(OntosOperationContractSchema));
 
 export const validateBoundOperationOwner = Effect.fn('ModuleOperation.validateBoundOwner')(function* validateBoundOwner(
   registration: ModuleOperationRegistration,
@@ -259,31 +303,7 @@ export const validateBoundOperationOwner = Effect.fn('ModuleOperation.validateBo
   ownerRegistration?: VerticalRuntimeRegistration,
 ) {
   const owner = yield* readBoundOperationOwner(registration, ownerRegistration);
-  if (owner === undefined) {
-    return yield* Effect.void;
-  }
-  const observed = catalog.getByModuleId(owner.moduleId);
-  if (observed === undefined) {
-    return yield* unavailable();
-  }
-  const authoredRequirements = yield* Schema.encodeEffect(requirementsJson)(
-    copyOntosModuleRequirements(owner.requirements ?? canonicalEmptyRequirements),
-  ).pipe(Effect.mapError(unavailable));
-  const observedRequirements = yield* Schema.encodeEffect(requirementsJson)(
-    copyOntosModuleRequirements(observed.manifest.requirements ?? canonicalEmptyRequirements),
-  ).pipe(Effect.mapError(unavailable));
-  const authoredOperations = yield* Schema.encodeEffect(operationsJson)(
-    owner.operationContracts.toSorted((a, b) => a.entrypoint.entrypointKey.localeCompare(b.entrypoint.entrypointKey)),
-  ).pipe(Effect.mapError(unavailable));
-  const observedOperations = yield* Schema.encodeEffect(operationsJson)(
-    (observed.manifest.publicSurface.operationContracts ?? []).toSorted((a, b) =>
-      a.entrypoint.entrypointKey.localeCompare(b.entrypoint.entrypointKey),
-    ),
-  ).pipe(Effect.mapError(unavailable));
-  if (authoredRequirements !== observedRequirements || authoredOperations !== observedOperations) {
-    return yield* unavailable();
-  }
-  return yield* Effect.void;
+  return owner === undefined ? yield* Effect.void : yield* validateOwnerContractProjection(owner, catalog);
 });
 
 export const operationIntrinsicDependencies = Effect.fn('ModuleOperation.intrinsicDependencies')(
@@ -323,12 +343,12 @@ export const prepareOperationIntrinsicState = Effect.fn('ModuleOperation.prepare
     principal: TrustedPrincipalContext,
     binding: OperationRuntimeBinding,
   ): Effect.fn.Return<OperationIntrinsicState, ModuleOperationRequirementError> {
-    const owner = yield* readBoundOperationOwner(registration, binding.ownerRegistration);
     const empty = { intrinsicDependencies: new Map<string, readonly string[]>() };
-    if (
-      isGenuineCoreOperation(registration) ||
-      (owner !== undefined && (owner.requirements?.intrinsic.length ?? 0) === 0)
-    ) {
+    if (isGenuineCoreOperation(registration)) {
+      return empty;
+    }
+    const owner = yield* readBoundOperationOwner(registration, binding.ownerRegistration);
+    if (owner !== undefined && (owner.requirements?.intrinsic.length ?? 0) === 0) {
       return empty;
     }
     if (binding.applicationComposition === undefined || binding.expectedDeployment === undefined) {

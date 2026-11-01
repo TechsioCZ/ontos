@@ -1445,6 +1445,7 @@ const readRuntimeFromDependencies = <
               options.expectedDeployment,
               input.registration,
               principal,
+              options.ownerRegistration,
             ).pipe(Effect.mapError(unavailableReadComposition))
           : undefined;
       const admittedCompositionRevision = admission?.revision ?? compositionRevision;

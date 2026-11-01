@@ -1,5 +1,5 @@
-import { NodeRuntime, NodeSocket } from '@effect/platform-node';
-import { Config, Effect, Layer, Stream, Schema } from 'effect';
+import { NodeRuntime, NodeSocket, NodeServices } from '@effect/platform-node';
+import { Cause, Config, Effect, FileSystem, Layer, Path, Stream, Schema } from 'effect';
 import { Socket } from 'effect/socket';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import {
@@ -21,6 +21,128 @@ class MarketRevisionNativeChildError extends Schema.TaggedError<MarketRevisionNa
   {},
 ) {}
 const unavailable = () => new MarketRevisionNativeChildError({});
+
+// Test-only closed startup receipt. Do not serialize error messages, actual schema values or configuration.
+const StartupPhaseSchema = Schema.Literals(['services', 'backend', 'ready_decode', 'command']);
+const StartupErrorCategorySchema = Schema.Literals([
+  'MarketRevisionNativeUnavailable',
+  'MarketRevisionNativeChildError',
+  'SchemaError',
+  'PlatformError',
+  'FileSystemError',
+  'ConfigError',
+  'ApplicationCompositionValidationError',
+  'ActiveApplicationCompositionUnavailableError',
+  'SqlError',
+  'ReferenceError',
+  'TypeError',
+  'UNKNOWN',
+]);
+const StartupErrorCodeSchema = Schema.Literals([
+  'ENOENT',
+  'EACCES',
+  'ECONNREFUSED',
+  'application_composition_invalid',
+  'NotFound',
+  'PermissionDenied',
+  'BadArgument',
+  'SystemError',
+  'UNKNOWN',
+]);
+const StartupSchemaIssueSchema = Schema.Literals([
+  'Filter',
+  'Encoding',
+  'Pointer',
+  'MissingKey',
+  'UnexpectedKey',
+  'Composite',
+  'InvalidType',
+  'InvalidValue',
+  'Forbidden',
+  'AnyOf',
+  'OneOf',
+  'UNKNOWN',
+]);
+const StartupSchemaFieldSchema = Schema.Literals([
+  'composition',
+  'modules',
+  'requirements',
+  'coreCapabilities',
+  'operationContracts',
+  'deployment',
+  'appId',
+  'buildMarker',
+  'moduleId',
+  'contractDocument',
+  'schemaVersion',
+  'shell',
+  'publicSurface',
+  'intrinsic',
+  'requiredOperations',
+  'manifest',
+  'publicContract',
+  'entrypoint',
+  'entrypointKey',
+  'id',
+  'version',
+]);
+const StartupDiagnosticSchema = Schema.Struct({
+  causes: Schema.Array(
+    Schema.Struct({
+      category: StartupErrorCategorySchema,
+      code: StartupErrorCodeSchema,
+      schemaIssue: StartupSchemaIssueSchema,
+      schemaPath: Schema.Array(StartupSchemaFieldSchema),
+    }),
+  ).check(Schema.isMaxLength(3)),
+  phase: StartupPhaseSchema,
+});
+const startupErrorCategory = Schema.Struct({ _tag: StartupErrorCategorySchema });
+const startupErrorName = Schema.Struct({ name: StartupErrorCategorySchema });
+const startupErrorCode = Schema.Struct({ code: StartupErrorCodeSchema });
+const startupPlatformReason = Schema.Struct({ reason: Schema.Struct({ _tag: StartupErrorCodeSchema }) });
+const startupSchemaIssue = Schema.Struct({ _tag: StartupSchemaIssueSchema });
+const startupSchemaPath = Schema.Struct({ path: Schema.Array(StartupSchemaFieldSchema).check(Schema.isMaxLength(16)) });
+const hiddenStartupCause = Schema.Struct({ cause: Schema.Unknown });
+const observeStartupFailure =
+  (phase: typeof StartupPhaseSchema.Type) =>
+  <Value, Failure, Requirements>(program: Effect.Effect<Value, Failure, Requirements>) =>
+    program.pipe(
+      Effect.tapCause((cause) =>
+        Effect.gen(function* writeClosedStartupDiagnostic() {
+          const causes: (typeof StartupDiagnosticSchema.Type)['causes'][number][] = [];
+          let current: unknown = Cause.squash(cause);
+          for (let depth = 0; depth < 3 && current !== undefined; depth += 1) {
+            const issue = Schema.isSchemaError(current) ? current.issue : undefined;
+            let category: typeof StartupErrorCategorySchema.Type = 'UNKNOWN';
+            if (Schema.is(startupErrorCategory)(current)) {
+              category = current._tag;
+            } else if (Schema.is(startupErrorName)(current)) {
+              category = current.name;
+            }
+            let code: typeof StartupErrorCodeSchema.Type = 'UNKNOWN';
+            if (Schema.is(startupErrorCode)(current)) {
+              ({ code } = current);
+            } else if (Schema.is(startupPlatformReason)(current)) {
+              code = current.reason._tag;
+            }
+            causes.push({
+              category,
+              code,
+              schemaIssue: Schema.is(startupSchemaIssue)(issue) ? issue._tag : 'UNKNOWN',
+              schemaPath: Schema.is(startupSchemaPath)(issue) ? issue.path : [],
+            });
+            current = Schema.is(hiddenStartupCause)(current) ? current.cause : undefined;
+          }
+          const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(StartupDiagnosticSchema))({ causes, phase });
+          const filesystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const directory = path.join(process.cwd(), '.cache', 'ontos-1250');
+          yield* filesystem.makeDirectory(directory, { recursive: true });
+          yield* filesystem.writeFileString(path.join(directory, `startup-diagnostic-${process.pid}.json`), encoded);
+        }).pipe(Effect.exit, Effect.asVoid),
+      ),
+    );
 const serve = Effect.scoped(
   Effect.gen(function* serveOwnerNativeMarket() {
     const socketPath = yield* Config.String(marketRevisionNativeSocketEnvironment).pipe(Effect.mapError(unavailable));
@@ -38,13 +160,13 @@ const serve = Effect.scoped(
       Effect.flatMap(Schema.decodeUnknownEffect(Schema.Literals(['allowed', 'denied']))),
       Effect.mapError(unavailable),
     );
-    const owner = yield* marketRevisionNativeBackend(managementExecutor);
+    const owner = yield* marketRevisionNativeBackend(managementExecutor).pipe(observeStartupFailure('backend'));
     let original: typeof CreateMarketResultSchema.Type | undefined;
     let revised = false;
     const ready = yield* Schema.decodeUnknownEffect(Schema.toType(MarketRevisionNativeResponseSchema))({
       ...owner,
       type: 'READY',
-    });
+    }).pipe(observeStartupFailure('ready_decode'));
     yield* send(ready);
     yield* marketRevisionNativeLines(pull).pipe(
       Stream.mapEffect((line) =>
@@ -96,6 +218,7 @@ const serve = Effect.scoped(
           return yield* unavailable();
         }),
       ),
+      observeStartupFailure('command'),
     );
   }),
 );
@@ -110,9 +233,9 @@ NodeRuntime.runMain(
       if (process.argv.includes('--describe')) {
         return yield* describe;
       }
-      const services = yield* Layer.build(marketRevisionNativeServices);
+      const services = yield* Layer.build(marketRevisionNativeServices).pipe(observeStartupFailure('services'));
       return yield* serve.pipe(Effect.provideContext(services));
     }),
-  ),
+  ).pipe(Effect.provide(NodeServices.layer)),
   { disableErrorReporting: true },
 );
