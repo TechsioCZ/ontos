@@ -2142,7 +2142,8 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
     );
     expect(Schema.is(Schema.Struct({ status: Schema.Literal(401) }))(expiredRead)).toBe(true);
     yield* input.priceGroupCatalog.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
-    yield* input.priceGroupCatalog.child.exitCode;
+    // Intentional SIGTERM is a typed process-exit failure in the Node adapter; stopped state is asserted below.
+    yield* Effect.exit(input.priceGroupCatalog.child.exitCode);
     expect(yield* input.priceGroupCatalog.child.isRunning).toBe(false);
     expect(yield* input.customerContext.child.isRunning).toBe(true);
     expect(yield* input.shell.isRunning).toBe(true);
@@ -2180,7 +2181,7 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
     });
     const issuerDownProof = yield* issueNativeApiKeyGatewayAuthorization(input.personal);
     yield* input.shell.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
-    yield* input.shell.exitCode;
+    yield* Effect.exit(input.shell.exitCode);
     expect(yield* input.shell.isRunning).toBe(false);
     expect(yield* input.customerContext.child.isRunning).toBe(true);
     expect(yield* restoredPriceGroupCatalog.child.isRunning).toBe(true);
