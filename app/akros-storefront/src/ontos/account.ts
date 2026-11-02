@@ -3,6 +3,8 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { OntosError, ownerRequest } from "./gateway";
 import { getConfig } from "./config";
+import type { Dictionary } from "@/i18n";
+import { cs } from "@/i18n/cs";
 import { RequestError } from "./http";
 import { marketHref } from "./active-market";
 
@@ -78,22 +80,22 @@ export const portalRequest = async (
   }
 };
 
-export const accountMessage = (status: number, code?: string): string => {
-  if (code === "verification_required")
-    return "Nejprve potvrďte e-mail odkazem, který jsme vám poslali.";
-  if (status === 401) return "Nesprávný e-mail nebo heslo.";
-  if (status === 429) return "Příliš mnoho pokusů. Zkuste to prosím později.";
-  if (status === 400) return "Zkontrolujte zadané údaje. Heslo musí mít 12 až 128 znaků.";
-  if (status === 403)
-    return "Účet nelze přihlásit nebo vytvořit. Zkontrolujte údaje a zkuste to znovu.";
-  return "Spojení s účtem je dočasně nedostupné. Zkuste to prosím znovu.";
+/** The account message for an owner status, in the request's language (`t`: `requestDictionary`). */
+export const accountMessage = (t: Dictionary, status: number, code?: string): string => {
+  const messages = t.server.account;
+  if (code === "verification_required") return messages.verificationRequired;
+  if (status === 401) return messages.wrongCredentials;
+  if (status === 429) return messages.tooManyAttempts;
+  if (status === 400) return messages.invalidInput;
+  if (status === 403) return messages.refused;
+  return messages.unavailable;
 };
 
 const text = (value: unknown, maximum: number): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= maximum;
 
 /** Passwords are never included in an idempotency key, digest, log or browser storage. */
-export const registrationInput = (input: Record<string, unknown>) => {
+export const registrationInput = (input: Record<string, unknown>, t: Dictionary = cs) => {
   if (
     !text(input.firstName, 100) ||
     !input.firstName.trim() ||
@@ -107,7 +109,7 @@ export const registrationInput = (input: Record<string, unknown>) => {
     input.password !== input.passwordConfirmation ||
     input.termsAccepted !== true
   )
-    throw new RequestError(400, "Zkontrolujte údaje, souhlas a shodu hesel (12 až 128 znaků).");
+    throw new RequestError(400, t.server.account.invalidRegistration);
   return {
     displayName: `${input.firstName.trim()} ${input.lastName.trim()}`.trim(),
     email: input.email.trim().toLowerCase(),

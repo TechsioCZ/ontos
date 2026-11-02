@@ -138,7 +138,7 @@ function MobileNavigation({ pathname }: { pathname: string }) {
                 </section>
                 <section>
                   <h3 className="sf-mobile-menu__section-title">{cs.header.information}</h3>
-                  <nav aria-label="Mobilní navigace" className="sf-mobile-menu__links">
+                  <nav aria-label={cs.header.mobileNavigation} className="sf-mobile-menu__links">
                     {utilityLinks(cs).map((item) => (
                       <LinkButton
                         key={item.href}
@@ -175,7 +175,7 @@ export function SiteHeader() {
     <header className="sf-header">
       <div className="sf-header__utility-bar">
         <div className="sf-header__utility">
-          <nav className="sf-header__utility-links" aria-label="Pomocná navigace">
+          <nav className="sf-header__utility-links" aria-label={cs.header.utilityNavigation}>
             {utilityLinks(cs).map((item) => (
               <LinkButton
                 key={item.href}

@@ -1,6 +1,13 @@
 import "server-only";
 import { accountMessage, portalRequest } from "@/ontos/account";
-import { guard, jsonBody, problem, RequestError, requestOrigin } from "@/ontos/http";
+import {
+  guard,
+  jsonBody,
+  problem,
+  RequestError,
+  requestDictionary,
+  requestOrigin,
+} from "@/ontos/http";
 
 const noStore = { "cache-control": "no-store" };
 const states = [
@@ -13,21 +20,22 @@ const states = [
 ];
 
 async function progress(request: Request, operation: "read" | "resume" | "restart") {
+  const t = requestDictionary(request);
   try {
     const url = new URL(request.url);
-    if (url.search) throw new RequestError(400, "Požadavek nesmí obsahovat identifikátor účtu.");
+    if (url.search) throw new RequestError(400, t.server.request.noAccountIdentifier);
     if (operation !== "read") {
-      guard(request);
+      guard(request, t);
       if (request.headers.get("origin") !== requestOrigin(request))
-        throw new RequestError(403, "Požadavek musí pocházet z tohoto obchodu.");
-      const body: unknown = await jsonBody(request);
+        throw new RequestError(403, t.server.request.foreignOrigin);
+      const body: unknown = await jsonBody(request, t);
       if (
         !body ||
         typeof body !== "object" ||
         Array.isArray(body) ||
         Object.keys(body).length !== 0
       )
-        throw new RequestError(400, "Požadavek nesmí obsahovat identifikátor účtu.");
+        throw new RequestError(400, t.server.request.noAccountIdentifier);
     }
     const cookie = request.headers.get("cookie");
     // A created provider session is not customer admission. Recheck the real account each time.
@@ -38,7 +46,7 @@ async function progress(request: Request, operation: "read" | "resume" | "restar
         return Response.json({ state: "ADMITTED" }, { headers: noStore });
     } else if (admitted.status !== 401 && admitted.status !== 403) {
       return Response.json(
-        { message: accountMessage(admitted.status) },
+        { message: accountMessage(t, admitted.status) },
         { status: admitted.status, headers: noStore },
       );
     }
@@ -53,10 +61,10 @@ async function progress(request: Request, operation: "read" | "resume" | "restar
         {
           message:
             response.status === 404
-              ? "Pro tento účet není dostupná registrace v tomto obchodě."
+              ? t.server.account.enrollmentNotFound
               : response.status === 401
-                ? "Pro zobrazení registrace se přihlaste ověřeným účtem."
-                : accountMessage(response.status),
+                ? t.server.account.enrollmentSignIn
+                : accountMessage(t, response.status),
         },
         { status: response.status, headers: noStore },
       );
@@ -66,7 +74,7 @@ async function progress(request: Request, operation: "read" | "resume" | "restar
     // Never forward Attempt/Party/provider identifiers or private owner failure evidence.
     return Response.json({ state: result.state, revision: result.revision }, { headers: noStore });
   } catch (error) {
-    return problem(error, accountMessage(503));
+    return problem(error, accountMessage(t, 503));
   }
 }
 

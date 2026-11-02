@@ -3,18 +3,15 @@ import { getBrand } from "@/brand";
 import { createHash } from "node:crypto";
 import { readProducts } from "@/ontos/catalog-server";
 import { callAction, OntosError, readRecords } from "@/ontos/gateway";
-import { guard, jsonBody, problem, RequestError } from "@/ontos/http";
+import { guard, jsonBody, problem, RequestError, requestDictionary } from "@/ontos/http";
 import { inquiryTaskTitle, parseInquirySubmission } from "@/ontos/inquiry-model";
 
 export async function POST(request: Request) {
+  const t = requestDictionary(request);
   try {
-    guard(request);
-    const inquiry = parseInquirySubmission(await jsonBody(request));
-    if (inquiry === null)
-      throw new RequestError(
-        400,
-        "Zkontrolujte jméno, e-mail, předmět a zprávu (nejvýše 1 500 znaků).",
-      );
+    guard(request, t);
+    const inquiry = parseInquirySubmission(await jsonBody(request, t));
+    if (inquiry === null) throw new RequestError(400, t.server.inquiry.invalid);
     // Resolve product identity now: a stale browser label or a caller-supplied URL is never persisted.
     let product: { productId: string; productSlug: string; productName: string } | undefined;
     if (inquiry.productId !== undefined) {
@@ -24,8 +21,7 @@ export async function POST(request: Request) {
         true,
       );
       const record = page.products.find((item) => item.id === inquiry.productId);
-      if (record === undefined)
-        throw new RequestError(404, "Produkt již není v nabídce. Odešlete prosím obecný dotaz.");
+      if (record === undefined) throw new RequestError(404, t.server.inquiry.productGone);
       product = { productId: record.id, productSlug: record.slug, productName: record.name };
     }
     const command = {
@@ -75,15 +71,10 @@ export async function POST(request: Request) {
       console.error("[AKROS] Inquiry owner authorization denied");
       const { contact } = getBrand();
       return Response.json(
-        {
-          message: `Kontaktní formulář je dočasně nedostupný. Dotaz nebyl odeslán. Napište nám prosím na ${contact.email}${contact.phone ? ` nebo zavolejte na ${contact.phone.display}` : ""}.`,
-        },
+        { message: t.server.inquiry.formUnavailable(contact.email, contact.phone?.display) },
         { status: 503, headers: { "cache-control": "no-store" } },
       );
     }
-    return problem(
-      error,
-      "Přijetí dotazu se nepodařilo potvrdit. Údaje zachovejte a zkuste odeslání znovu.",
-    );
+    return problem(error, t.server.inquiry.unconfirmed);
   }
 }

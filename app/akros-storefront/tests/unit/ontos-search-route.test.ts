@@ -160,3 +160,39 @@ describe("header search BFF", () => {
     expect((await ask("šroub", "https://evil.example")).status).toBe(403);
   });
 });
+
+describe("search messages follow the market language", () => {
+  const askIn = (locale: string | undefined, origin?: string) =>
+    POST(
+      new Request("http://localhost:3070/api/ontos/search", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(origin === undefined ? {} : { origin }),
+          ...(locale === undefined ? {} : { "x-akros-market-locale": locale }),
+        },
+        body: JSON.stringify({ q: "šroub" }),
+      }),
+    );
+  it.each([
+    [undefined, "Požadavek musí pocházet z tohoto obchodu."],
+    ["sk", "Požiadavka musí pochádzať z tohto obchodu."],
+    ["en", "The request must come from this shop."],
+    ["de", "The request must come from this shop."],
+  ])("refuses a cross-origin call for locale %s", async (locale, message) => {
+    const response = await askIn(locale, "https://evil.example");
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ message });
+  });
+  it.each([
+    [undefined, "Vyhledávání v OntOS je teď nedostupné. Zkuste to prosím za chvíli."],
+    ["sk", "Vyhľadávanie v OntOS je teraz nedostupné. Skúste to prosím o chvíľu."],
+    ["en", "Search in OntOS is unavailable right now. Please try again shortly."],
+  ])("answers an outage for locale %s", async (locale, message) => {
+    vi.mocked(getCatalogPage).mockRejectedValue(new Error("down"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = await askIn(locale);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ message });
+  });
+});

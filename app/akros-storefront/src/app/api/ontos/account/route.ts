@@ -7,7 +7,14 @@ import {
   registrationInput,
 } from "@/ontos/account";
 import type { AccountSubmissionResponse } from "@/ontos/account";
-import { guard, jsonBody, problem, RequestError, requestOrigin } from "@/ontos/http";
+import {
+  guard,
+  jsonBody,
+  problem,
+  RequestError,
+  requestDictionary,
+  requestOrigin,
+} from "@/ontos/http";
 
 const noStore = { "cache-control": "no-store" };
 
@@ -16,7 +23,7 @@ export async function GET(request: Request) {
     const account = await readAccount(requestOrigin(request), request.headers.get("cookie"));
     return Response.json({ account }, { headers: noStore });
   } catch (error) {
-    return problem(error, accountMessage(503));
+    return problem(error, accountMessage(requestDictionary(request), 503));
   }
 }
 
@@ -35,26 +42,27 @@ export async function POST(request: Request) {
       },
     });
   }
+  const t = requestDictionary(request);
   try {
-    guard(request);
+    guard(request, t);
     const origin = requestOrigin(request);
     if (request.headers.get("origin") !== origin)
-      throw new RequestError(403, "Požadavek musí pocházet z tohoto obchodu.");
-    const input: unknown = await jsonBody(request);
+      throw new RequestError(403, t.server.request.foreignOrigin);
+    const input: unknown = await jsonBody(request, t);
     if (!input || typeof input !== "object" || Array.isArray(input))
-      throw new RequestError(400, "Neplatný požadavek.");
+      throw new RequestError(400, t.server.request.invalid);
     const data = input as Record<string, unknown>;
     let path: string;
     let body: unknown;
     let idempotencyKey: string | undefined;
     if (data.operation === "register") {
       path = "/enrollment/start";
-      body = registrationInput(data);
+      body = registrationInput(data, t);
       if (
         typeof data.requestId !== "string" ||
         !/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(data.requestId)
       )
-        throw new RequestError(400, "Chybí identifikátor registrace.");
+        throw new RequestError(400, t.server.account.missingRegistrationId);
       idempotencyKey = `storefront-enrollment:${data.requestId}`;
     } else if (data.operation === "login") {
       if (
@@ -62,7 +70,7 @@ export async function POST(request: Request) {
         typeof data.password !== "string" ||
         data.password.length > 128
       )
-        throw new RequestError(400, "Zadejte e-mail a heslo.");
+        throw new RequestError(400, t.server.account.missingCredentials);
       path = "/sign-in/email";
       body = {
         email: data.email.trim().toLowerCase(),
@@ -76,13 +84,13 @@ export async function POST(request: Request) {
         data.email.trim().length > 320 ||
         !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email.trim())
       )
-        throw new RequestError(400, "Zadejte platnou e-mailovou adresu.");
+        throw new RequestError(400, t.server.account.invalidEmail);
       path = "/send-verification-email";
       body = { email: data.email.trim().toLowerCase() };
     } else if (data.operation === "logout") {
       path = "/sign-out";
       body = {};
-    } else throw new RequestError(400, "Neznámý požadavek.");
+    } else throw new RequestError(400, t.server.request.unknown);
     const response = await portalRequest(
       path,
       origin,
@@ -94,7 +102,7 @@ export async function POST(request: Request) {
     if (!response.ok)
       return Response.json(
         {
-          message: accountMessage(response.status, result.code),
+          message: accountMessage(t, response.status, result.code),
           ...(data.operation === "login" && result.code === "verification_required"
             ? { code: "verification_required" as const }
             : {}),
@@ -116,7 +124,7 @@ export async function POST(request: Request) {
     }
     if (data.operation === "login" && result.outcome !== "SESSION_CREATED")
       return Response.json(
-        { message: "Účet vyžaduje dvoufázové ověření v zákaznickém portálu." },
+        { message: t.server.account.twoFactorRequired },
         { status: 403, headers: noStore },
       );
     if (
@@ -133,6 +141,6 @@ export async function POST(request: Request) {
       { headers },
     );
   } catch (error) {
-    return problem(error, accountMessage(503));
+    return problem(error, accountMessage(t, 503));
   }
 }

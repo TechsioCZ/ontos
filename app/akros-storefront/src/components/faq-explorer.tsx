@@ -6,7 +6,7 @@ import { Button } from "@techsio/ui-kit/atoms/button";
 import { Input } from "@techsio/ui-kit/atoms/input";
 import { Accordion } from "@techsio/ui-kit/molecules/accordion";
 
-import type { FaqGroupId, FaqGroups } from "@/content/editorial";
+import type { FaqCopy, FaqGroupId } from "@/content/editorial";
 
 const normalize = (value: string) =>
   value
@@ -21,8 +21,9 @@ const faqGroupIcons: Record<FaqGroupId, string> = {
   reklamace: "🔄",
 };
 
-/** `faqGroups`: the shop FAQ with the brand's contact (server page: `faqGroups(inquiryEmail)`). */
-export function FaqExplorer({ faqGroups }: { faqGroups: FaqGroups }) {
+/** The shop FAQ in the page's language (server page: `faqCopy[locale](inquiryEmail)`). */
+export function FaqExplorer({ faq }: { faq: FaqCopy }) {
+  const { chrome, groups: faqGroups } = faq;
   const [activeGroupId, setActiveGroupId] = useState<FaqGroupId>(faqGroups[0].id);
   const [query, setQuery] = useState("");
   const normalizedQuery = normalize(query.trim());
@@ -31,8 +32,10 @@ export function FaqExplorer({ faqGroups }: { faqGroups: FaqGroups }) {
     if (!normalizedQuery) return activeGroup.items;
 
     return faqGroups.flatMap((group) =>
-      group.items.filter(([question, answer, details]) =>
-        normalize(`${question} ${answer} ${details.join(" ")}`).includes(normalizedQuery),
+      group.items.filter((item) =>
+        normalize(`${item.question} ${item.answer} ${item.details.join(" ")}`).includes(
+          normalizedQuery,
+        ),
       ),
     );
   }, [activeGroup, faqGroups, normalizedQuery]);
@@ -41,17 +44,17 @@ export function FaqExplorer({ faqGroups }: { faqGroups: FaqGroups }) {
     <>
       <header className="sf-faq-hero">
         <Badge size="md" variant="primary">
-          ZÁKAZNICKÁ PODPORA
+          {chrome.badge}
         </Badge>
-        <h1>Jak vám můžeme dnes pomoci?</h1>
+        <h1>{chrome.heading}</h1>
         <div className="sf-faq-search">
           <span aria-hidden="true" className="sf-faq-search__icon">
             🔍
           </span>
           <Input
-            aria-label="Hledat v často kladených otázkách"
+            aria-label={chrome.searchLabel}
             onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="Hledejte v často kladených otázkách (např. normy, dodání, certifikáty)…"
+            placeholder={chrome.searchPlaceholder}
             size="md"
             type="search"
             value={query}
@@ -59,8 +62,8 @@ export function FaqExplorer({ faqGroups }: { faqGroups: FaqGroups }) {
         </div>
       </header>
       <div className="sf-faq-layout">
-        <nav aria-label="Kategorie často kladených otázek" className="sf-faq-categories">
-          <h2>Kategorie témat</h2>
+        <nav aria-label={chrome.categoriesLabel} className="sf-faq-categories">
+          <h2>{chrome.categoriesHeading}</h2>
           {faqGroups.map((group) => (
             <Button
               aria-current={!normalizedQuery && group.id === activeGroup.id ? "page" : undefined}
@@ -83,25 +86,31 @@ export function FaqExplorer({ faqGroups }: { faqGroups: FaqGroups }) {
         <section className="sf-faq-results" aria-live="polite">
           <h2>
             <span aria-hidden="true">{normalizedQuery ? "🔍" : faqGroupIcons[activeGroup.id]}</span>
-            {normalizedQuery ? "Výsledky hledání" : activeGroup.title}
+            {normalizedQuery ? chrome.resultsHeading : activeGroup.title}
           </h2>
           {visibleItems.length > 0 ? (
             <div className="sf-faq-accordion-list">
-              {visibleItems.map(([question, answer, details]) => (
-                <Accordion collapsible key={question} shadow="none" size="sm" variant="default">
-                  <Accordion.Item value={question}>
+              {visibleItems.map((item) => (
+                <Accordion
+                  collapsible
+                  key={item.question}
+                  shadow="none"
+                  size="sm"
+                  variant="default"
+                >
+                  <Accordion.Item value={item.question}>
                     <Accordion.Header>
                       <Accordion.Title>
-                        {question}
+                        {item.question}
                         <Accordion.Subtitle className="sf-faq-answer-summary">
-                          {answer}
+                          {item.answer}
                         </Accordion.Subtitle>
                       </Accordion.Title>
                       <Accordion.Indicator />
                     </Accordion.Header>
                     <Accordion.Content>
                       <div className="sf-faq-answer-details">
-                        {details.map((paragraph) => (
+                        {item.details.map((paragraph) => (
                           <p key={paragraph}>{paragraph}</p>
                         ))}
                       </div>
@@ -111,7 +120,7 @@ export function FaqExplorer({ faqGroups }: { faqGroups: FaqGroups }) {
               ))}
             </div>
           ) : (
-            <p className="sf-empty-state">Pro zadaný výraz jsme nenašli žádnou odpověď.</p>
+            <p className="sf-empty-state">{chrome.noResults}</p>
           )}
         </section>
       </div>

@@ -379,3 +379,53 @@ it("lets the owner apply Party phone rules and preserves invalid-number rejectio
   expect(ownerRequest).toHaveBeenCalledOnce();
   expect(JSON.parse(String(vi.mocked(ownerRequest).mock.calls[0]![2].body)).phone).toBe("---");
 });
+
+describe("account messages follow the market language", () => {
+  const submitIn = (locale: string | undefined, body: object) =>
+    POST(
+      new Request(`${origin}/api/ontos/account`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin,
+          ...(locale === undefined ? {} : { "x-akros-market-locale": locale }),
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+  it.each([
+    [undefined, "Nesprávný e-mail nebo heslo."],
+    ["sk", "Nesprávny e-mail alebo heslo."],
+    ["en", "Incorrect e-mail or password."],
+  ])("words rejected credentials for locale %s", async (locale, message) => {
+    vi.mocked(ownerRequest).mockResolvedValue(
+      Response.json({ code: "invalid_credentials" }, { status: 401 }),
+    );
+    const response = await submitIn(locale, {
+      operation: "login",
+      email: "a@example.test",
+      password: "wrong-password",
+    });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ message });
+  });
+  it.each([
+    [undefined, "Zkontrolujte údaje, souhlas a shodu hesel (12 až 128 znaků)."],
+    ["sk", "Skontrolujte údaje, súhlas a zhodu hesiel (12 až 128 znakov)."],
+    ["en", "Check your details, consent and that the passwords match (12 to 128 characters)."],
+  ])("refuses an invalid registration for locale %s", async (locale, message) => {
+    const response = await submitIn(locale, { ...registration, passwordConfirmation: "other" });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ message });
+    expect(ownerRequest).not.toHaveBeenCalled();
+  });
+  it.each([
+    [undefined, "Neznámý požadavek."],
+    ["sk", "Neznáma požiadavka."],
+    ["en", "Unknown request."],
+  ])("refuses an unknown operation for locale %s", async (locale, message) => {
+    const response = await submitIn(locale, { operation: "nope" });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ message });
+  });
+});

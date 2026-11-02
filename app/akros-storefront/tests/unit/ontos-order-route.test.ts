@@ -259,3 +259,55 @@ describe("real order boundary", () => {
     expect((await GET(new Request("http://localhost:3070/api/ontos/orders"))).status).toBe(503);
   });
 });
+
+describe("order messages follow the market language", () => {
+  const postIn = (locale: string | undefined, body: object) =>
+    POST(
+      new Request("http://localhost:3070/api/ontos/orders", {
+        method: "POST",
+        headers: {
+          origin: "http://localhost:3070",
+          "content-type": "application/json",
+          ...(locale === undefined ? {} : { "x-akros-market-locale": locale }),
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+  const cart = { version: 3, lines: [{ productId: "product-1", quantity: 5, priceMinor: 105 }] };
+  it.each([
+    [undefined, "Neplatné dodací údaje."],
+    ["sk", "Neplatné dodacie údaje."],
+    ["en", "Invalid delivery details."],
+  ])("refuses invalid delivery details for locale %s", async (locale, message) => {
+    const response = await postIn(locale, { cart, draft: {}, clientRequestId });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ message });
+    expect(callAction).not.toHaveBeenCalled();
+  });
+  it.each([
+    [undefined, "Neplatná položka košíku."],
+    ["sk", "Neplatná položka košíka."],
+    ["en", "Invalid cart item."],
+  ])("refuses an invalid cart line for locale %s", async (locale, message) => {
+    const response = await postIn(locale, {
+      cart: { version: 3, lines: [{ productId: "product-1", quantity: 0, priceMinor: 105 }] },
+      draft: {},
+      clientRequestId,
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ message });
+  });
+  it.each([
+    [undefined, "Přihlaste se ke svému účtu."],
+    ["en", "Sign in to your account."],
+  ])("asks an anonymous visitor to sign in for locale %s", async (locale, message) => {
+    vi.mocked(readAccount).mockResolvedValue(null);
+    const response = await GET(
+      new Request("http://localhost:3070/api/ontos/orders", {
+        headers: locale === undefined ? {} : { "x-akros-market-locale": locale },
+      }),
+    );
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ message });
+  });
+});

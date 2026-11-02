@@ -1,6 +1,13 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { guard, jsonBody, problem, RequestError, requestOrigin } from "@/ontos/http";
+import {
+  guard,
+  jsonBody,
+  problem,
+  RequestError,
+  requestDictionary,
+  requestOrigin,
+} from "@/ontos/http";
 import { assertCart } from "@/ontos/quote";
 import { readProducts } from "@/ontos/catalog-server";
 import { callAction, OntosError } from "@/ontos/gateway";
@@ -13,17 +20,18 @@ const isOntosError = (value: unknown): value is OntosError =>
   value !== null && value !== undefined && OntosError.prototype.isPrototypeOf(value);
 
 export async function GET(request: Request) {
+  const t = requestDictionary(request);
   try {
     const account = await readAccount(requestOrigin(request), request.headers.get("cookie"));
     if (!account)
       return Response.json(
-        { message: "Přihlaste se ke svému účtu." },
+        { message: t.server.orders.signIn },
         { status: 401, headers: { "cache-control": "no-store" } },
       );
     const url = new URL(request.url);
     const offset = Number(url.searchParams.get("offset") ?? 0);
     if (!Number.isSafeInteger(offset) || offset < 0)
-      throw new RequestError(400, "Neplatná stránka.");
+      throw new RequestError(400, t.server.orders.invalidPage);
     const result = await readCustomerOrders(
       account,
       url.searchParams.get("order") ?? undefined,
@@ -31,7 +39,7 @@ export async function GET(request: Request) {
     );
     return Response.json(result, { headers: { "cache-control": "no-store" } });
   } catch (error) {
-    return problem(error, "Objednávky se nepodařilo načíst z OntOS.");
+    return problem(error, t.server.outage.orders);
   }
 }
 import {
@@ -41,15 +49,16 @@ import {
   getDeliveryAddress,
 } from "@/features/checkout/checkout-state";
 export async function POST(request: Request) {
+  const t = requestDictionary(request);
   try {
-    guard(request);
+    guard(request, t);
     // The browser's path locale only selects the market; the owners resolve it again for this order.
     const market = await getActiveMarket();
     // A signed-in order is bound to the admitted portal subject and Party; without a session it is a guest order.
     const account = await readAccount(requestOrigin(request), request.headers.get("cookie"));
     const options = await readCheckoutOptions();
-    const { cart, draft, clientRequestId } = await jsonBody(request);
-    assertCart(cart);
+    const { cart, draft, clientRequestId } = await jsonBody(request, t);
+    assertCart(cart, t);
     if (
       typeof clientRequestId !== "string" ||
       !/^sf-[a-f0-9-]{36}$/.test(clientRequestId) ||
@@ -57,7 +66,7 @@ export async function POST(request: Request) {
       Object.keys(validateAddresses(draft)).length ||
       Object.keys(validateMethods(draft, options.shippingMethods)).length
     )
-      throw new RequestError(400, "Neplatné dodací údaje.");
+      throw new RequestError(400, t.server.orders.invalidDelivery);
     const address = getDeliveryAddress(draft);
     const delivery = options.shippingMethods.find((method) => method.id === draft.deliveryId)!;
     const command = {
@@ -131,9 +140,7 @@ export async function POST(request: Request) {
         if (order?.outcome === "REJECTED")
           return Response.json(
             {
-              message:
-                order.issues?.map((i) => i.message).join(" ") ||
-                "Košík se změnil. Zkontrolujte ceny a dostupnost.",
+              message: order.issues?.map((i) => i.message).join(" ") || t.server.orders.cartChanged,
               issues: order.issues,
             },
             { status: 409 },
@@ -151,6 +158,6 @@ export async function POST(request: Request) {
     }
     throw new Error("Systém je zaneprázdněný.");
   } catch (e) {
-    return problem(e);
+    return problem(e, t.server.outage.cart);
   }
 }

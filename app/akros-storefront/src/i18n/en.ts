@@ -35,6 +35,8 @@ export const en: Dictionary = {
     menu: "Menu",
     information: "Information",
     breadcrumbs: "Breadcrumb",
+    mobileNavigation: "Mobile navigation",
+    utilityNavigation: "Utility navigation",
   },
   search: {
     placeholder: "search the shop...",
@@ -48,6 +50,10 @@ export const en: Dictionary = {
     query: (query: string) => `Query: “${query}”`,
     variantMatch: (label: string, sku: string) => `Variant: ${label} · SKU ${sku}`,
     matchingVariants: (matches: number) => `${count(matches)} matching variants`,
+    unavailable: "OntOS search is unavailable right now.",
+    loading: "Searching the OntOS catalogue…",
+    failed: "Search failed.",
+    retry: "Try again",
   },
   pagination: {
     label: "Product pages",
@@ -60,6 +66,8 @@ export const en: Dictionary = {
     specialCategories: "Special categories",
     categoryDescription: "Choose a subcategory or continue straight to the products.",
     emptyCategory: "There are currently no products in this category.",
+    noFilteredProducts: "No products found. Adjust or clear the filters.",
+    categoryImageUnavailable: (name: string) => `Photo of the category ${name} is not available`,
     recommendations: "You may also like…",
     firstSteps: "Getting started",
   },
@@ -164,6 +172,13 @@ export const en: Dictionary = {
     buyItem: (label: string) => `Buy ${label}`,
     buyPackageOf: (label: string) => `Buy a whole package of ${label}`,
     priceUnavailableTitle: (reason: string) => `Price unavailable: ${reason}`,
+    priceReason: {
+      unsupportedCurrency: (currency: string, symbol: string) =>
+        `The price is in an unsupported currency (${currency}); the shop sells only in ${symbol}.`,
+      missingCurrency: "OntOS returned no price currency for this item.",
+      missingPrice: "OntOS returned no price for this item.",
+      zeroPrice: "The price in OntOS is zero, so this item cannot be ordered.",
+    },
     availabilityUnknownTitle: "Availability cannot be verified right now.",
     code: "Code",
     table: {
@@ -328,6 +343,28 @@ export const en: Dictionary = {
     defaultCarts: {
       default: "Default cart",
       commission: "Commission cart",
+    },
+    add: {
+      notReady: "The cart is not ready.",
+      verifyFailed:
+        "Price and stock cannot be verified in OntOS right now. The goods were not added.",
+      priceChanged:
+        "The price has changed. Reload the page or check your current cart and add the goods at the current price.",
+      notConfirmed: "OntOS did not confirm the goods are available. The goods were not added.",
+      cartChanged: "The cart changed during verification. Add the item again.",
+    },
+    toast: {
+      limitedTitle: "No more can be added",
+      restoredTitle: "Item restored",
+      addedTitle: "Added to cart",
+      alreadyAtMaximum: "You already have the available quantity in your cart.",
+      checkAvailability: "Check the product's availability and minimum order quantity.",
+      restored: (quantity: string, unit: string) => `Restored ${quantity} ${unit}.`,
+      added: (quantity: string, unit: string) => `Added ${quantity} ${unit}.`,
+      partiallyAdded: "The stock limit allowed only part of the requested quantity to be added.",
+      viewCart: "View cart",
+      removedTitle: "Item removed",
+      undo: "Undo",
     },
     itemsTitle: "Cart contents",
     itemsLabel: "Order items",
@@ -567,6 +604,20 @@ export const en: Dictionary = {
       priceChanged: "The price has changed – accept the new price in the cart check and try again.",
       cartUnverifiable: (issues: string) =>
         `The cart cannot be verified right now. ${issues} Go back to the cart and check availability and quantities.`,
+      saveUnconfirmed:
+        "We could not confirm that the order was saved. Your cart has been kept. Try again; sending it again will not create another order.",
+      ownerPriceChanged:
+        "The price of the goods or delivery has changed. Go back to the cart, check the current prices and send the order again.",
+      marketClosed:
+        "This market is not accepting orders right now. Your cart has been kept; please try again later.",
+      notOfferedInMarket:
+        "Some items are not offered in this market. Remove them from the cart and send the order again.",
+      stockAdjust: (messages: string) =>
+        `${messages} Adjust the quantities in your cart and send the order again.`,
+      stockUnavailable:
+        "The goods are no longer available in the requested quantity. Adjust your cart and send the order again.",
+      ownerRejected:
+        "OntOS rejected the order. Check the items, quantities and current prices in your cart and send the order again.",
     },
     placed: {
       title: "Order confirmation",
@@ -939,6 +990,118 @@ export const en: Dictionary = {
       logIn: "Sign in with a verified account",
     },
   },
+  /** Messages the storefront server (route handlers, cart quote) sends to the browser. */
+  server: {
+    request: {
+      foreignOrigin: "The request must come from this shop.",
+      invalidFormat: "Invalid request format.",
+      tooLarge: "The request is too large.",
+      invalid: "Invalid request.",
+      unknown: "Unknown request.",
+      noAccountIdentifier: "The request must not contain an account identifier.",
+    },
+    market: {
+      unknown: "This market does not exist.",
+      unavailable: "This market is temporarily unavailable.",
+    },
+    outage: {
+      cart: "We could not reach OntOS. Your cart has been kept. Please try again.",
+      orderStatus:
+        "The order status could not be loaded from OntOS right now. Please try again shortly.",
+      search: "Search in OntOS is unavailable right now. Please try again shortly.",
+      catalog: "The OntOS catalogue is unavailable right now. Please try again shortly.",
+      shipping: "Delivery options could not be loaded from OntOS.",
+      orders: "Orders could not be loaded from OntOS.",
+    },
+    cart: {
+      invalid: "Invalid cart.",
+      invalidLine: "Invalid cart item.",
+      fallbackItem: "Item",
+      notAvailable: (label: string) => `${label}: this item is no longer offered in this market.`,
+      priceUnavailable: (label: string, reason: string) =>
+        `${label}: price not available. ${reason}`.trim(),
+      availabilityUnknown: (label: string) =>
+        `${label}: availability cannot be verified right now, so the order cannot be completed. Remove the item or try again later.`,
+      outOfStock: (label: string) => `${label}: currently out of stock.`,
+      insufficientStock: (label: string, stock: number, unit: string) =>
+        `${label}: only ${count(stock)} ${unit} available.`,
+      minimumQuantity: (label: string, minimum: number, unit: string) =>
+        `${label}: the minimum quantity is ${minimum} ${unit}.`,
+      packageQuantity: (label: string, step: number, unit: string) =>
+        `${label}: order whole packs of ${step} ${unit}.`,
+    },
+    orders: {
+      signIn: "Sign in to your account.",
+      invalidPage: "Invalid page.",
+      invalidDelivery: "Invalid delivery details.",
+      cartChanged: "Your cart has changed. Check prices and availability.",
+    },
+    orderStatus: {
+      invalid: "Invalid order status request.",
+      notYet: "The order status is not available yet.",
+    },
+    orderEmails: {
+      invalidNumber: "Invalid order number.",
+      missingEmail: "The e-mail address the order was placed with is missing.",
+      unavailable: "The e-mail status could not be verified.",
+    },
+    inquiry: {
+      invalid: "Check your name, e-mail, subject and message (at most 1,500 characters).",
+      productGone: "The product is no longer offered. Please send a general enquiry.",
+      formUnavailable: (email: string, phone?: string) =>
+        `The contact form is temporarily unavailable. Your enquiry was not sent. Please e-mail us at ${email}${phone ? ` or call ${phone}` : ""}.`,
+      unconfirmed:
+        "We could not confirm that your enquiry was received. Keep your details and try sending it again.",
+    },
+    reorder: {
+      missingOrder: "The order is missing.",
+      signIn: "Please sign in to repeat the order.",
+      notFound: "The order was not found.",
+      unavailable: "The order could not be loaded from OntOS right now. Please try again.",
+    },
+    productVariants: {
+      invalid: "Invalid product.",
+      notFound: "The product was not found.",
+    },
+    account: {
+      verificationRequired: "First confirm your e-mail using the link we sent you.",
+      wrongCredentials: "Incorrect e-mail or password.",
+      tooManyAttempts: "Too many attempts. Please try again later.",
+      invalidInput:
+        "Check the details you entered. The password must be 12 to 128 characters long.",
+      refused: "The account cannot be signed in or created. Check your details and try again.",
+      unavailable: "The account service is temporarily unavailable. Please try again.",
+      invalidRegistration:
+        "Check your details, consent and that the passwords match (12 to 128 characters).",
+      missingRegistrationId: "The registration identifier is missing.",
+      missingCredentials: "Enter your e-mail and password.",
+      invalidEmail: "Enter a valid e-mail address.",
+      twoFactorRequired: "This account requires two-factor verification in the customer portal.",
+      enrollmentNotFound: "No registration in this shop is available for this account.",
+      enrollmentSignIn: "Sign in with a verified account to view the registration.",
+    },
+    consent: {
+      signIn: "Please sign in to manage the newsletter.",
+      changed: "The consent information has changed. Load the current wording again.",
+      unconfirmed:
+        "OntOS cannot confirm the consent status right now. Try loading the current status again.",
+      loadFailed: "The newsletter consent could not be loaded from OntOS.",
+      invalid: "Confirm the current consent information and your choice.",
+      saveFailed:
+        "The consent change cannot be confirmed. Load the current status from OntOS again.",
+    },
+    profile: {
+      signIn: "Please sign in to edit your details.",
+      loadFailed: "Your account details could not be loaded from OntOS. Please try again later.",
+      invalid: "Check your name, phone and contact e-mail.",
+      conflict:
+        "Someone else has changed the details in the meantime. Refresh the page and try again.",
+      refused:
+        "OntOS refused the change. Check the details and permissions, then try saving again.",
+      saveUncertain:
+        "Saving could not be completed. Some changes may have been saved. Refresh the page and check your details in OntOS.",
+    },
+  },
   errorPages: {
     notFoundHeading: "Looks like you got lost in our warehouse...",
     notFoundText:
@@ -955,6 +1118,24 @@ export const en: Dictionary = {
       "The connection to OntOS failed. We do not replace prices or stock with sample data. Your cart remains saved in your browser.",
     retry: "Try again",
     demoNote: "DEMO – the order will not be delivered.",
+  },
+  tracking: {
+    title: "Order status",
+    noOrders: "You have no orders yet.",
+    details: "Order details",
+    historyHeading: "Order history in OntOS",
+    historyNote:
+      "OntOS does not provide carrier tracking, courier location or delivery estimates. Below are the actual saved changes to the order status.",
+    noHistory: "No change history is saved for this order.",
+    dateLocale: "en-GB",
+    statuses: {
+      NEW: "New",
+      CONFIRMED: "Being processed",
+      PACKING: "Ready for dispatch",
+      SHIPPED: "Handed to carrier",
+      DELIVERED: "Completed",
+      CANCELLED: "Cancelled",
+    },
   },
   confirmation: {
     title: "The demo order is complete",

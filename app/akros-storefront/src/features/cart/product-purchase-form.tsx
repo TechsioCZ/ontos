@@ -9,6 +9,7 @@ import { ProductVariantLink } from "@/components/product-variant-link";
 import { useCart } from "@/features/cart/cart-provider";
 import { useDictionary, useFormatPrice, useMoney } from "@/ontos/market-context";
 import type { Dictionary } from "@/i18n";
+import { priceUnavailableText } from "@/lib/format";
 import { getVariantRangeFilters, type NumericRange } from "@/lib/product-variant-filters";
 import { VariantRangeFilter } from "./variant-range-filter";
 import {
@@ -171,6 +172,7 @@ export function ProductPurchaseForm({
 }: ProductPurchaseFormProps) {
   const { addItem, adding } = useCart();
   const cs = useDictionary();
+  const money = useMoney();
   const formatPrice = useFormatPrice();
   const sourceVariants = variants ?? noVariants;
   // Only dimensions read reliably from the source labels/parameters become filters; they apply live.
@@ -277,7 +279,9 @@ export function ProductPurchaseForm({
           }
           title={
             purchaseItem.priceUnavailableReason
-              ? cs.product.priceUnavailableTitle(purchaseItem.priceUnavailableReason)
+              ? cs.product.priceUnavailableTitle(
+                  priceUnavailableText(purchaseItem.priceUnavailableReason, cs, money),
+                )
               : purchaseItem.availabilityUnknown
                 ? cs.product.availabilityUnknownTitle
                 : undefined
@@ -513,7 +517,7 @@ export function ProductPurchaseForm({
                                 {cs.product.priceUnavailable}
                               </strong>
                               <small className="whitespace-normal! text-xs font-normal text-fg-secondary">
-                                {item.priceUnavailableReason}
+                                {priceUnavailableText(item.priceUnavailableReason, cs, money)}
                               </small>
                             </span>
                           ) : (

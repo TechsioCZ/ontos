@@ -1,5 +1,8 @@
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
+import type { Dictionary } from "@/i18n";
+import { cs } from "@/i18n/cs";
+import { priceUnavailableText } from "@/lib/format";
 import { RequestError } from "./http";
 import { purchaseConstraints } from "./purchase-constraints";
 import type { CartState, CartLine } from "@/features/cart/cart-state";
@@ -7,7 +10,7 @@ import { createCatalog } from "./catalog-model";
 import { readCartProducts } from "./catalog-server";
 import { getActiveMarket } from "./active-market";
 import { callAction } from "./gateway";
-export function assertCart(value: unknown): asserts value is CartState {
+export function assertCart(value: unknown, t: Dictionary = cs): asserts value is CartState {
   const cart = value as CartState;
   if (
     cart?.version !== 3 ||
@@ -15,7 +18,7 @@ export function assertCart(value: unknown): asserts value is CartState {
     cart.lines.length < 1 ||
     cart.lines.length > 50
   )
-    throw new RequestError(400, "Neplatný košík.");
+    throw new RequestError(400, t.server.cart.invalid);
   const seen = new Set<string>();
   for (const l of cart.lines) {
     const key = `${l.productId}:${l.variantId ?? ""}`;
@@ -29,7 +32,7 @@ export function assertCart(value: unknown): asserts value is CartState {
       !Number.isSafeInteger(l.priceMinor) ||
       l.priceMinor < 0
     )
-      throw new RequestError(400, "Neplatná položka košíku.");
+      throw new RequestError(400, t.server.cart.invalidLine);
     seen.add(key);
   }
 }
@@ -139,7 +142,13 @@ async function ownerDryRun(
   return { order, shippingIncluded: method !== undefined };
 }
 
-export async function quoteCart(cart: CartState, deliveryId?: unknown): Promise<CartQuote> {
+/** `t`: the request's dictionary (`requestDictionary`); the line issues are worded in its language. */
+export async function quoteCart(
+  cart: CartState,
+  deliveryId?: unknown,
+  t: Dictionary = cs,
+): Promise<CartQuote> {
+  const messages = t.server.cart;
   const market = await getActiveMarket();
   // Only products offered in this market are returned, priced in its currency.
   const snapshot = await readCartProducts(cart.lines);
@@ -153,13 +162,13 @@ export async function quoteCart(cart: CartState, deliveryId?: unknown): Promise<
     };
     const p = model.getProductById(line.productId);
     const v = p?.detail.variants.find((v) => v.id === line.variantId);
-    const fallbackLabel = `${line.name || "Položka"}${line.variantLabel ? ` (${line.variantLabel})` : ""}`;
+    const fallbackLabel = `${line.name || messages.fallbackItem}${line.variantLabel ? ` (${line.variantLabel})` : ""}`;
     // The read carries only the cart's variants, so a group is recognised by its variant summary.
     if (!p || (line.variantId ? !v : p.variantSummary.count > 0)) {
       lineIssues.push({
         ...ids,
         code: "NOT_AVAILABLE",
-        message: `${fallbackLabel}: zboží již není v nabídce tohoto trhu.`,
+        message: messages.notAvailable(fallbackLabel),
       });
       return line;
     }
@@ -169,7 +178,15 @@ export async function quoteCart(cart: CartState, deliveryId?: unknown): Promise<
       lineIssues.push({
         ...ids,
         code: "PRICE_UNAVAILABLE",
-        message: `${label}: cena není dostupná. ${item.priceUnavailableReason ?? ""}`.trim(),
+        message: messages.priceUnavailable(
+          label,
+          item.priceUnavailableReason
+            ? priceUnavailableText(item.priceUnavailableReason, t, {
+                currency: market.currency,
+                locale: market.formatLocale,
+              })
+            : "",
+        ),
       });
       return line;
     }
@@ -182,32 +199,32 @@ export async function quoteCart(cart: CartState, deliveryId?: unknown): Promise<
       lineIssues.push({
         ...ids,
         code: "AVAILABILITY_UNKNOWN",
-        message: `${label}: dostupnost nyní nelze ověřit, objednávku proto nelze dokončit. Položku odeberte nebo to zkuste později.`,
+        message: messages.availabilityUnknown(label),
       });
     else if (item.stockCount <= 0)
       lineIssues.push({
         ...ids,
         code: "OUT_OF_STOCK",
-        message: `${label}: momentálně není skladem.`,
+        message: messages.outOfStock(label),
       });
     else if (line.quantity > item.stockCount)
       lineIssues.push({
         ...ids,
         code: "INSUFFICIENT_STOCK",
-        message: `${label}: k dispozici je jen ${item.stockCount.toLocaleString("cs-CZ")} ${item.unit}.`,
+        message: messages.insufficientStock(label, item.stockCount, item.unit),
       });
     if (line.quantity < item.minimumQuantity)
       lineIssues.push({
         ...ids,
         code: "MINIMUM_QUANTITY",
-        message: `${label}: minimální množství je ${item.minimumQuantity} ${item.unit}.`,
+        message: messages.minimumQuantity(label, item.minimumQuantity, item.unit),
       });
     const step = item.packageQuantity;
     if (step && Math.abs(line.quantity / step - Math.round(line.quantity / step)) > 0.000001)
       lineIssues.push({
         ...ids,
         code: "PACKAGE_QUANTITY",
-        message: `${label}: objednejte celé balení po ${step} ${item.unit}.`,
+        message: messages.packageQuantity(label, step, item.unit),
       });
     const { unitWeightKg: _clientWeight, ...verifiedLine } = line;
     // Fresh kg per sales unit from the projection (source feed index); unknown stays absent.

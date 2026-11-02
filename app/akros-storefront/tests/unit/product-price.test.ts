@@ -25,7 +25,7 @@ describe("catalog price label", () => {
     ).toEqual({
       kind: "unavailable",
       label: "Price unavailable",
-      reason: "Cena v OntOS je nulová, položku proto nelze objednat.",
+      reason: "The price in OntOS is zero, so this item cannot be ordered.",
     });
     expect(
       describeCatalogPrice({ priceIsFrom: false, priceMinor: 500, currency: "CZK" }, sk, eur).kind,

@@ -13,7 +13,7 @@ import { StorefrontShell } from "@/components/storefront-shell";
 import { CategoryBranch } from "@/ontos/category-branch";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
 import { FavoriteButton } from "@/features/favorites/favorite-button";
-import { formatPrice, formatWeight } from "@/lib/format";
+import { formatPrice, formatWeight, priceUnavailableText } from "@/lib/format";
 import { getProductDescriptionParagraphs } from "@/lib/product-description";
 import { parseVariantIds, resolveVariantSelection } from "@/lib/product-variant-links";
 import {
@@ -93,9 +93,11 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
   ).length;
   const number = (value: number, maximumFractionDigits = 0) =>
     value.toLocaleString(money.locale, { maximumFractionDigits });
-  const priceUnavailableReason =
-    purchaseItem.priceUnavailableReason ??
-    (purchaseItem.priceMinor > 0 ? undefined : cs.product.noValidPrice);
+  const priceUnavailableReason = purchaseItem.priceUnavailableReason
+    ? priceUnavailableText(purchaseItem.priceUnavailableReason, cs, money)
+    : purchaseItem.priceMinor > 0
+      ? undefined
+      : cs.product.noValidPrice;
   const variantSearch = Array.isArray(requestedVariantSearch)
     ? requestedVariantSearch[0]
     : requestedVariantSearch;

@@ -1,7 +1,6 @@
 "use client";
 import {
   CheckoutRejectionError,
-  checkoutSaveError,
   readCheckoutQuote,
   readOrderResponse,
 } from "@/ontos/checkout-response";
@@ -290,7 +289,7 @@ function CheckoutCartProvider({
           headers: { "content-type": "application/json", ...marketRequestHeaders() },
           body: JSON.stringify({ cart, deliveryId: draft.deliveryId }),
         });
-        const check = await readCheckoutQuote(checkResponse);
+        const check = await readCheckoutQuote(checkResponse, errors);
         if (!check.canCheckout)
           throw new CartCheckError(
             check.priceChanged
@@ -307,7 +306,7 @@ function CheckoutCartProvider({
         headers: { "content-type": "application/json", ...marketRequestHeaders() },
         body: pending.body,
       });
-      const result = await readOrderResponse(response).catch((error: unknown) => {
+      const result = await readOrderResponse(response, errors).catch((error: unknown) => {
         if (isCheckoutRejectionError(error)) {
           // An explicit rejection is not an uncertain commit; edits may start a new request.
           pending.sent = false;
@@ -335,7 +334,7 @@ function CheckoutCartProvider({
         error:
           isCheckoutRejectionError(error) || isCartCheckError(error)
             ? error.message
-            : checkoutSaveError,
+            : errors.saveUnconfirmed,
       });
       return null;
     } finally {

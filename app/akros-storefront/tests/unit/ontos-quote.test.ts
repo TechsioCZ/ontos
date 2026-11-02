@@ -3,6 +3,7 @@ import { projectProducts as project } from "@/ontos/catalog-projection";
 import { readCartProducts } from "@/ontos/catalog-server";
 import { callAction } from "@/ontos/gateway";
 import { quoteCart } from "@/ontos/quote";
+import { POST as quoteRoute } from "@/app/api/ontos/cart/route";
 import { testMarket } from "../support/market-fixture";
 
 vi.mock("server-only", () => ({}));
@@ -156,5 +157,55 @@ describe("server cart quote", () => {
     });
     expect(quote.canCheckout).toBe(false);
     expect(quote.lineIssues[0]?.code).toBe("NOT_OFFERED_IN_MARKET");
+  });
+});
+
+describe("cart quote messages follow the market language", () => {
+  const ask = (body: unknown, locale?: string) =>
+    quoteRoute(
+      new Request("http://localhost:3070/api/ontos/cart", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(locale === undefined ? {} : { "x-akros-market-locale": locale }),
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+  it.each([
+    [undefined, "Vruty (3,5 × 16): dostupnost nyní nelze ověřit, objednávku proto nelze dokončit."],
+    ["sk", "Vruty (3,5 × 16): dostupnosť teraz nemožno overiť, objednávku preto nemožno dokončiť."],
+    [
+      "en",
+      "Vruty (3,5 × 16): availability cannot be verified right now, so the order cannot be completed.",
+    ],
+    ["de", "Vruty (3,5 × 16): availability cannot be verified right now"],
+  ])("words a blocked line for locale %s", async (locale, expected) => {
+    vi.mocked(readCartProducts).mockResolvedValue(
+      project({ revision: 3, products: [product({ availability: "UNKNOWN" })] }),
+    );
+    const response = await ask({ cart: cart(10, 121) }, locale);
+    expect(response.status).toBe(200);
+    expect((await response.json()).issues[0]).toContain(expected);
+  });
+  it.each([
+    [undefined, "Neplatný košík."],
+    ["sk", "Neplatný košík."],
+    ["en", "Invalid cart."],
+  ])("refuses an invalid cart for locale %s with the same validation", async (locale, message) => {
+    const response = await ask({ cart: { version: 3, lines: [] } }, locale);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ message });
+  });
+  it("words a package-quantity issue in Slovak and English", async () => {
+    vi.mocked(readCartProducts).mockResolvedValue(
+      project({ revision: 3, products: [product({ packageQuantity: 50 })] }),
+    );
+    const sk = await (await ask({ cart: cart(10, 121) }, "sk")).json();
+    expect(sk.issues).toContain("Vruty (3,5 × 16): objednajte celé balenie po 50 ks.");
+    const en = await (await ask({ cart: cart(10, 121) }, "en")).json();
+    expect(en.issues).toContain("Vruty (3,5 × 16): order whole packs of 50 ks.");
+    const cs = await (await ask({ cart: cart(10, 121) })).json();
+    expect(cs.issues).toContain("Vruty (3,5 × 16): objednejte celé balení po 50 ks.");
   });
 });

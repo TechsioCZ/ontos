@@ -8,6 +8,8 @@ import { StorefrontShell } from "@/components/storefront-shell";
 import { getDictionary } from "@/ontos/active-market";
 import { readProducts } from "@/ontos/catalog-server";
 import { getBrand } from "@/brand";
+import { branchText } from "@/brand/types";
+import { contentLocale } from "@/content/locale";
 
 export async function generateMetadata(): Promise<Metadata> {
   return { title: (await getDictionary()).header.contacts };
@@ -60,6 +62,7 @@ export default async function ContactsPage({
       ].join("\n")
     : undefined;
   const { branches } = getBrand().pages;
+  const locale = await contentLocale();
   return (
     <StorefrontShell>
       <StorefrontBreadcrumbs
@@ -95,7 +98,7 @@ export default async function ContactsPage({
 
         {branches.map((branch) => (
           <section className="sf-branch" id={branch.id} key={branch.id}>
-            <h2>{branch.title}</h2>
+            <h2>{branchText(branch.title, locale)}</h2>
             <div className="sf-branch__body">
               {branch.mapSrc && (
                 <Image
@@ -108,8 +111,8 @@ export default async function ContactsPage({
                 />
               )}
               <address>
-                <span>{branch.address}</span>
-                {branch.details && <span>{branch.details}</span>}
+                <span>{branchText(branch.address, locale)}</span>
+                {branch.details && <span>{branchText(branch.details, locale)}</span>}
                 {branch.phone && (
                   <a href={`tel:+420${branch.phone.replaceAll(" ", "")}`}>
                     {contact.page.phone}: {branch.phone}

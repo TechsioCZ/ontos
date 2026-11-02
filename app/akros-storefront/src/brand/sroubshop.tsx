@@ -28,7 +28,43 @@ const warehouseGallery: readonly GalleryImage[] = [
   },
 ];
 
-const about = (
+const warehouseGallerySk: readonly GalleryImage[] = [
+  {
+    src: "/storefront/content/about-fastener-warehouse.png",
+    alt: "Regály so spojovacím materiálom v sklade",
+    caption: "Sklad spojovacieho materiálu",
+  },
+  {
+    src: "/storefront/content/about-steel-warehouse.png",
+    alt: "Nerezové rúry a profily v sklade",
+    caption: "Nerezový materiál na sklade",
+  },
+  {
+    src: "/storefront/content/about-railing.png",
+    alt: "Nainštalované nerezové zábradlie",
+    caption: "Nerez pre vonkajšie použitie",
+  },
+];
+
+const warehouseGalleryEn: readonly GalleryImage[] = [
+  {
+    src: "/storefront/content/about-fastener-warehouse.png",
+    alt: "Shelves of fasteners in the warehouse",
+    caption: "Fastener warehouse",
+  },
+  {
+    src: "/storefront/content/about-steel-warehouse.png",
+    alt: "Stainless tubes and profiles in the warehouse",
+    caption: "Stainless steel in stock",
+  },
+  {
+    src: "/storefront/content/about-railing.png",
+    alt: "Installed stainless steel railing",
+    caption: "Stainless for outdoor use",
+  },
+];
+
+const aboutCs = (
   <>
     <header className="sf-content-page__heading">
       <h1>O nás</h1>
@@ -68,6 +104,88 @@ const about = (
   </>
 );
 
+const aboutSk = (
+  <>
+    <header className="sf-content-page__heading">
+      <h1>O nás</h1>
+      <p>
+        {NAME} je ukážkový e-shop so spojovacím a nerezovým materiálom. Slúži na predvedenie
+        platformy OntOS: sortiment, ceny aj sklad sú skutočné dáta z OntOS, firma a jej kontakty sú
+        vymyslené.
+      </p>
+    </header>
+
+    <section className="sf-content-panel" aria-labelledby="company-history-title">
+      <h2 id="company-history-title">{LEGAL_NAME}</h2>
+      <p>
+        Šroubárna Vysočina s.r.o. je fiktívna firma vytvorená pre prezentácie. Neexistuje, nemá
+        sídlo, IČO ani telefón a neprijíma skutočné objednávky.
+      </p>
+      <p>
+        V ukážke predáva skrutky, matice, podložky, závitové tyče a ďalší spojovací materiál z
+        nerezu A2 a A4 aj nerezový hutnícky materiál pre dielne, stavby a technické projekty.
+      </p>
+    </section>
+
+    <section className="sf-content-section" aria-labelledby="warehouse-title">
+      <h2 id="warehouse-title">Sklad a sortiment</h2>
+      <p>Ilustračné fotografie skladu a výrobkov.</p>
+      <ContentGallery items={warehouseGallerySk} />
+    </section>
+
+    <section className="sf-content-panel" aria-labelledby="demo-contact-title">
+      <h2 id="demo-contact-title">Kontakt (demo)</h2>
+      <p>
+        Otázky z ukážkového e-shopu spracúva tím {NAME} v OntOS. Napíšte nám cez{" "}
+        <StoreLink href="/kontakty">kontaktný formulár</StoreLink> alebo na adresu {EMAIL} (iba
+        ukážková adresa).
+      </p>
+    </section>
+  </>
+);
+
+const aboutEn = (
+  <>
+    <header className="sf-content-page__heading">
+      <h1>About us</h1>
+      <p>
+        {NAME} is a demo online shop for fasteners and stainless materials. It shows the OntOS
+        platform: the range, prices and stock are real OntOS data, while the company and its
+        contacts are fictional.
+      </p>
+    </header>
+
+    <section className="sf-content-panel" aria-labelledby="company-history-title">
+      <h2 id="company-history-title">{LEGAL_NAME}</h2>
+      <p>
+        Šroubárna Vysočina s.r.o. is a fictional company created for presentations. It does not
+        exist, has no registered office, company ID or telephone number, and does not accept real
+        orders.
+      </p>
+      <p>
+        In this demo it sells screws, nuts, washers, threaded rods and other fasteners in A2 and A4
+        stainless steel, as well as stainless steel products for workshops, construction and
+        technical projects.
+      </p>
+    </section>
+
+    <section className="sf-content-section" aria-labelledby="warehouse-title">
+      <h2 id="warehouse-title">Warehouse and range</h2>
+      <p>Illustrative photos of the warehouse and products.</p>
+      <ContentGallery items={warehouseGalleryEn} />
+    </section>
+
+    <section className="sf-content-panel" aria-labelledby="demo-contact-title">
+      <h2 id="demo-contact-title">Contact (demo)</h2>
+      <p>
+        Enquiries from this demo shop are handled by the {NAME} team in OntOS. Write to us through
+        the <StoreLink href="/kontakty">contact form</StoreLink> or at {EMAIL} (a sample address
+        only).
+      </p>
+    </section>
+  </>
+);
+
 export const sroubshop: Brand = {
   id: "sroubshop",
   name: NAME,
@@ -76,8 +194,16 @@ export const sroubshop: Brand = {
   contact: { email: EMAIL, inquiryEmail: "poptavky@sroubarna.demo" },
   production: null,
   metadata: {
-    defaultTitle: `${NAME} | Spojovací a nerezový materiál`,
-    description: `Ukázkový e-shop ${NAME} fiktivní firmy ${LEGAL_NAME} se spojovacím a nerezovým materiálem v prezentačním prostředí OntOS.`,
+    defaultTitle: {
+      cs: `${NAME} | Spojovací a nerezový materiál`,
+      sk: `${NAME} | Spojovací a nerezový materiál`,
+      en: `${NAME} | Fasteners and stainless steel`,
+    },
+    description: {
+      cs: `Ukázkový e-shop ${NAME} fiktivní firmy ${LEGAL_NAME} se spojovacím a nerezovým materiálem v prezentačním prostředí OntOS.`,
+      sk: `Ukážkový e-shop ${NAME} fiktívnej firmy ${LEGAL_NAME} so spojovacím a nerezovým materiálom v prezentačnom prostredí OntOS.`,
+      en: `Demo shop ${NAME} of the fictional company ${LEGAL_NAME}, selling fasteners and stainless steel in the OntOS presentation environment.`,
+    },
     icon: "/sroubshop/icon.svg",
   },
   copy: {
@@ -191,31 +317,55 @@ export const sroubshop: Brand = {
     {
       id: "assortment",
       src: "/sroubshop/home/assortment.svg",
-      alt: "Nerezový spojovací materiál: šrouby, matice a podložky skladem. Ukázkový e-shop fiktivní firmy Šroubárna Vysočina s.r.o.",
+      alt: {
+        cs: "Nerezový spojovací materiál: šrouby, matice a podložky skladem. Ukázkový e-shop fiktivní firmy Šroubárna Vysočina s.r.o.",
+        sk: "Nerezový spojovací materiál: skrutky, matice a podložky na sklade. Ukážkový e-shop fiktívnej firmy Šroubárna Vysočina s.r.o.",
+        en: "Stainless fasteners: bolts, nuts and washers in stock. Demo shop of the fictional company Šroubárna Vysočina s.r.o.",
+      },
       href: "/kategorie/nerezovy-spojovaci-material",
     },
     {
       id: "partner-program",
       src: "/sroubshop/home/partner-program.svg",
-      alt: "Partnerský program: výhody pro firemní zákazníky, individuální ceny a rychlejší nákup. Pouze ukázka.",
+      alt: {
+        cs: "Partnerský program: výhody pro firemní zákazníky, individuální ceny a rychlejší nákup. Pouze ukázka.",
+        sk: "Partnerský program: výhody pre firemných zákazníkov, individuálne ceny a rýchlejší nákup. Iba ukážka.",
+        en: "Partner programme: benefits for business customers, individual prices and faster ordering. Demo only.",
+      },
       href: "/partnersky-program",
     },
     {
       id: "delivery",
       src: "/sroubshop/home/delivery.svg",
-      alt: "Doprava a platba přehledně na jednom místě. Ukázkové objednávky se nedoručují.",
+      alt: {
+        cs: "Doprava a platba přehledně na jednom místě. Ukázkové objednávky se nedoručují.",
+        sk: "Doprava a platba prehľadne na jednom mieste. Ukážkové objednávky sa nedoručujú.",
+        en: "Delivery and payment clearly in one place. Demo orders are not delivered.",
+      },
       href: "/doprava-a-platba",
     },
   ],
   pages: {
-    about,
+    about: { cs: aboutCs, sk: aboutSk, en: aboutEn },
     branches: [
       {
         id: "vysocina",
         city: "Vysočina",
-        title: `${LEGAL_NAME} – ukázková provozovna`,
-        address: "Fiktivní firma bez skutečné adresy (DEMO)",
-        details: "Kontakty jsou smyšlené a slouží pouze pro ukázku.",
+        title: {
+          cs: `${LEGAL_NAME} – ukázková provozovna`,
+          sk: `${LEGAL_NAME} – ukážková prevádzka`,
+          en: `${LEGAL_NAME} – demo branch`,
+        },
+        address: {
+          cs: "Fiktivní firma bez skutečné adresy (DEMO)",
+          sk: "Fiktívna firma bez skutočnej adresy (DEMO)",
+          en: "Fictional company without a real address (DEMO)",
+        },
+        details: {
+          cs: "Kontakty jsou smyšlené a slouží pouze pro ukázku.",
+          sk: "Kontakty sú vymyslené a slúžia iba na ukážku.",
+          en: "The contact details are fictional and for demonstration only.",
+        },
         email: EMAIL,
       },
     ],

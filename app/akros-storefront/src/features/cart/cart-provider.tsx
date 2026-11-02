@@ -38,6 +38,11 @@ import {
 
 const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
+/** A cart-add refusal worded for the shopper; any other failure (network, timeout, bad JSON) gets the generic text. */
+class CartAddError extends Error {
+  static readonly errorName = "CartAddError";
+  override name = CartAddError.errorName;
+}
 
 const storageKey = "akros-demo-cart-v3";
 /** Browser storage key of one market's carts (`akros-demo-carts-v1:AKROS-SK`); unscoped outside a market. */
@@ -319,7 +324,7 @@ export function CartProvider({
       const current = stateRef.current;
       try {
         if (!current.ready || !Number.isFinite(quantity) || quantity <= 0)
-          throw new Error("Košík není připravený.");
+          throw new CartAddError(cs.cart.add.notReady);
         const previous = current.cart.lines.find(
           (line) => line.productId === item.productId && line.variantId === item.variantId,
         );
@@ -347,30 +352,26 @@ export function CartProvider({
           signal: AbortSignal.timeout(8_000),
         });
         const quote = await response.json();
-        if (!response.ok)
-          throw new Error("Cenu a sklad nyní nelze ověřit v OntOS. Zboží nebylo přidáno.");
-        if (quote.priceChanged)
-          throw new Error(
-            "Cena se změnila. Obnovte stránku nebo ověřte stávající košík a přidejte zboží za aktuální cenu.",
-          );
+        if (!response.ok) throw new CartAddError(cs.cart.add.verifyFailed);
+        if (quote.priceChanged) throw new CartAddError(cs.cart.add.priceChanged);
         if (!quote.canCheckout || !Array.isArray(quote.cart?.lines))
-          throw new Error(
+          throw new CartAddError(
             Array.isArray(quote.issues) && quote.issues.length
               ? quote.issues.join(" ")
-              : "OntOS nepotvrdil dostupnost zboží. Zboží nebylo přidáno.",
+              : cs.cart.add.notConfirmed,
           );
         if (
           stateRef.current.cart !== current.cart ||
           stateRef.current.activeCartId !== current.activeCartId
         )
-          throw new Error("Košík se během ověření změnil. Přidejte položku znovu.");
+          throw new CartAddError(cs.cart.add.cartChanged);
         providerDispatch({ type: "verified-add", cart: quote.cart, item, quantity });
         return true;
       } catch (error) {
         setPurchaseError(
-          isError(error) && error.name !== "TypeError"
+          isError(error) && error.name === CartAddError.errorName
             ? error.message
-            : "Cenu a sklad nyní nelze ověřit v OntOS. Zboží nebylo přidáno.",
+            : cs.cart.add.verifyFailed,
         );
         return false;
       } finally {
@@ -378,7 +379,7 @@ export function CartProvider({
         setAdding(false);
       }
     },
-    [],
+    [cs],
   );
 
   const carts = useMemo(() => snapshotCartCollection(state, cart).carts, [state, cart]);

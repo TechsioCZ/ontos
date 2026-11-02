@@ -1,19 +1,28 @@
 import type { Metadata } from "next";
 import { StorefrontWideShell } from "@/components/storefront-shell";
+import { contentLocale } from "@/content/locale";
+import { shippingCopy } from "@/content/pages";
 import { readCheckoutOptions } from "@/ontos/checkout-options";
 import { formatPrice } from "@/lib/format";
 import { getMoney } from "@/ontos/active-market";
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Doprava a platba" };
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: shippingCopy[await contentLocale()].metadataTitle };
+}
 export default async function ShippingPage() {
-  const [options, money] = await Promise.all([readCheckoutOptions(), getMoney()]);
+  const [locale, options, money] = await Promise.all([
+    contentLocale(),
+    readCheckoutOptions(),
+    getMoney(),
+  ]);
+  const copy = shippingCopy[locale];
   return (
     <StorefrontWideShell>
       <article className="sf-landing-page py-8">
-        <h1>Informace o dopravě a možnostech platby</h1>
+        <h1>{copy.title}</h1>
         <div className="sf-shipping-layout">
           <section aria-labelledby="shipping-methods-title">
-            <h2 id="shipping-methods-title">Způsoby dopravy</h2>
+            <h2 id="shipping-methods-title">{copy.methodsHeading}</h2>
             <div className="sf-option-list">
               {options.shippingMethods.map((method) => (
                 <article key={method.id}>
@@ -21,20 +30,15 @@ export default async function ShippingPage() {
                     <h3>{method.title}</h3>
                     <strong>{formatPrice(method.priceMinor, money)}</strong>
                   </div>
-                  <p>
-                    Aktuální ceník OntOS. Termín doručení ani rezervace dopravce nejsou dostupné.
-                  </p>
+                  <p>{copy.methodNote}</p>
                 </article>
               ))}
             </div>
-            {!options.shippingMethods.length && <p>Žádný způsob dopravy není dostupný.</p>}
+            {!options.shippingMethods.length && <p>{copy.noMethods}</p>}
           </section>
           <section aria-labelledby="payment-methods-title">
-            <h2 id="payment-methods-title">Platba</h2>
-            <p>
-              Objednávku předáme obchodu k vyřízení. Její stav najdete ve svém účtu. E-shop nyní
-              nenabízí online platbu; odesláním objednávky neprovádíte úhradu.
-            </p>
+            <h2 id="payment-methods-title">{copy.paymentHeading}</h2>
+            <p>{copy.paymentText}</p>
           </section>
         </div>
       </article>

@@ -1,5 +1,5 @@
 import "server-only";
-import { guard, jsonBody, outageMessage, problem } from "@/ontos/http";
+import { guard, jsonBody, problem, requestDictionary } from "@/ontos/http";
 import { getCatalogPage } from "@/ontos/catalog-server";
 import {
   matchCategories,
@@ -11,9 +11,10 @@ import { readSearchVariantMatches, SUGGESTION_VARIANT_GROUPS } from "@/ontos/sea
 
 const noStore = { "cache-control": "no-store" };
 export async function POST(request: Request) {
+  const t = requestDictionary(request);
   try {
-    guard(request);
-    const { q } = (await jsonBody(request)) as { q?: unknown };
+    guard(request, t);
+    const { q } = (await jsonBody(request, t)) as { q?: unknown };
     const term = typeof q === "string" ? q.trim().slice(0, 200) : "";
     if (term.length < 2)
       return Response.json({ items: [], total: 0, categories: [] } satisfies RemoteSearchResponse, {
@@ -39,6 +40,6 @@ export async function POST(request: Request) {
       },
     );
   } catch (e) {
-    return problem(e, outageMessage.search);
+    return problem(e, t.server.outage.search);
   }
 }

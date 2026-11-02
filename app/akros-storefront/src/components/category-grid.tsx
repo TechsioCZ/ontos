@@ -2,15 +2,23 @@ import Image from "next/image";
 import StoreLink from "@/components/store-link";
 
 import { categoryImage } from "@/lib/category-presentation";
+import type { Dictionary } from "@/i18n";
 import type { CatalogCategory } from "@/ontos/catalog-types";
 
-export function CategoryGrid({ categories }: { categories: CatalogCategory[] }) {
+export function CategoryGrid({
+  categories,
+  dictionary,
+}: {
+  categories: CatalogCategory[];
+  /** The page's market dictionary (server component: no client context). */
+  dictionary?: Dictionary;
+}) {
   if (categories.length === 0) return null;
 
   return (
     <div className="sf-category-grid">
       {categories.map((category) => {
-        const image = categoryImage(category);
+        const image = categoryImage(category, dictionary);
         return (
           <StoreLink
             className="sf-category-card"

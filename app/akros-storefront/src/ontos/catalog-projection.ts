@@ -1,6 +1,6 @@
 import {
   CZK_MONEY,
-  currencySymbol,
+  priceUnavailableCode,
   isStoreCurrency,
   type MoneyFormat,
   type StoreCurrency,
@@ -137,24 +137,10 @@ const paragraphsOf = (record: Raw): string[] => {
 
 /**
  * Prices are sold only in the market currency (`storefrontCatalog.market.currency`, CZK without a market);
- * a product priced in anything else is shown as „cena není dostupná“.
+ * a product priced in anything else is shown as „cena není dostupná“. The reason is a language-neutral code
+ * (`priceUnavailableCode`), worded at render time in the request's language (`priceUnavailableText`).
  */
-const priceUnavailableReason = (
-  gross: number | undefined,
-  net: number | undefined,
-  currency: unknown,
-  money: MoneyFormat,
-): string | undefined => {
-  if (
-    typeof currency === "string" &&
-    currency.trim() &&
-    currency.trim().toUpperCase() !== money.currency
-  )
-    return `Cena je v nepodporované měně (${currency.trim().toUpperCase()}); e-shop prodává jen v ${currencySymbol(money)}.`;
-  if (gross === undefined || net === undefined) return "OntOS pro tuto položku nevrátil cenu.";
-  if (gross <= 0 || net <= 0) return "Cena v OntOS je nulová, položku proto nelze objednat.";
-  return undefined;
-};
+const priceUnavailableReason = priceUnavailableCode;
 /** Owner availability: UNKNOWN, untracked stock or a missing value is never shown as „skladem“. */
 const isAvailabilityUnknown = (availability: unknown, stockTracked: unknown): boolean =>
   stockTracked === false || !["IN_STOCK", "LOW_STOCK", "OUT_OF_STOCK"].includes(text(availability));

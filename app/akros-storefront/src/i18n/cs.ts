@@ -33,6 +33,8 @@ export const cs = {
     menu: "Menu",
     information: "Informace",
     breadcrumbs: "Drobečková navigace",
+    mobileNavigation: "Mobilní navigace",
+    utilityNavigation: "Pomocná navigace",
   },
   search: {
     placeholder: "hledat na stránce...",
@@ -46,6 +48,10 @@ export const cs = {
     query: (query: string) => `Dotaz: „${query}“`,
     variantMatch: (label: string, sku: string) => `Varianta: ${label} · SKU ${sku}`,
     matchingVariants: (matches: number) => `${count(matches)} odpovídajících variant`,
+    unavailable: "Vyhledávání v OntOS je teď nedostupné.",
+    loading: "Hledám v katalogu OntOS…",
+    failed: "Vyhledávání se nepodařilo.",
+    retry: "Zkusit znovu",
   },
   pagination: {
     label: "Stránkování produktů",
@@ -58,6 +64,8 @@ export const cs = {
     specialCategories: "Speciální kategorie",
     categoryDescription: "Vyberte podkategorii nebo pokračujte rovnou k produktům.",
     emptyCategory: "V této kategorii momentálně nejsou žádné produkty.",
+    noFilteredProducts: "Nenalezeny žádné produkty. Upravte nebo vymažte filtry.",
+    categoryImageUnavailable: (name: string) => `Fotografie kategorie ${name} není k dispozici`,
     recommendations: "Mohlo by vás zajímat…",
     firstSteps: "První kroky v e-shopu",
   },
@@ -162,6 +170,13 @@ export const cs = {
     buyItem: (label: string) => `Koupit ${label}`,
     buyPackageOf: (label: string) => `Koupit celé balení ${label}`,
     priceUnavailableTitle: (reason: string) => `Cena není dostupná: ${reason}`,
+    priceReason: {
+      unsupportedCurrency: (currency: string, symbol: string) =>
+        `Cena je v nepodporované měně (${currency}); e-shop prodává jen v ${symbol}.`,
+      missingCurrency: "OntOS pro tuto položku nevrátil měnu ceny.",
+      missingPrice: "OntOS pro tuto položku nevrátil cenu.",
+      zeroPrice: "Cena v OntOS je nulová, položku proto nelze objednat.",
+    },
     availabilityUnknownTitle: "Dostupnost nyní nelze ověřit.",
     code: "Kód",
     table: {
@@ -325,6 +340,27 @@ export const cs = {
     defaultCarts: {
       default: "Výchozí košík",
       commission: "Komisní košík",
+    },
+    add: {
+      notReady: "Košík není připravený.",
+      verifyFailed: "Cenu a sklad nyní nelze ověřit v OntOS. Zboží nebylo přidáno.",
+      priceChanged:
+        "Cena se změnila. Obnovte stránku nebo ověřte stávající košík a přidejte zboží za aktuální cenu.",
+      notConfirmed: "OntOS nepotvrdil dostupnost zboží. Zboží nebylo přidáno.",
+      cartChanged: "Košík se během ověření změnil. Přidejte položku znovu.",
+    },
+    toast: {
+      limitedTitle: "Nelze přidat další množství",
+      restoredTitle: "Položka obnovena",
+      addedTitle: "Přidáno do košíku",
+      alreadyAtMaximum: "Dostupné množství už máte v košíku.",
+      checkAvailability: "Zkontrolujte dostupnost a minimální odběr produktu.",
+      restored: (quantity: string, unit: string) => `Obnoveno ${quantity} ${unit}.`,
+      added: (quantity: string, unit: string) => `Přidáno ${quantity} ${unit}.`,
+      partiallyAdded: "Skladový limit umožnil přidat jen část požadovaného množství.",
+      viewCart: "Zobrazit košík",
+      removedTitle: "Položka odebrána",
+      undo: "Obnovit",
     },
     itemsTitle: "Obsah košíku",
     itemsLabel: "Položky objednávky",
@@ -564,6 +600,20 @@ export const cs = {
       priceChanged: "Cena se změnila – přijmout novou cenu v ověření košíku a zkusit znovu.",
       cartUnverifiable: (issues: string) =>
         `Košík nyní nelze ověřit. ${issues} Vraťte se do košíku a zkontrolujte dostupnost a množství.`,
+      saveUnconfirmed:
+        "Uložení objednávky se nepodařilo potvrdit. Košík zůstává zachovaný. Zkuste to znovu; opakované odeslání nevytvoří další objednávku.",
+      ownerPriceChanged:
+        "Cena zboží nebo dopravy se změnila. Vraťte se do košíku, ověřte aktuální ceny a odešlete objednávku znovu.",
+      marketClosed:
+        "Tento trh teď objednávky nepřijímá. Košík zůstává zachovaný, zkuste to prosím později.",
+      notOfferedInMarket:
+        "Některé zboží není v nabídce tohoto trhu. Odeberte ho z košíku a objednávku odešlete znovu.",
+      stockAdjust: (messages: string) =>
+        `${messages} Upravte množství v košíku a objednávku odešlete znovu.`,
+      stockUnavailable:
+        "Zboží již není dostupné v požadovaném množství. Upravte košík a objednávku odešlete znovu.",
+      ownerRejected:
+        "OntOS objednávku odmítl. Zkontrolujte položky, množství a aktuální ceny v košíku a odešlete objednávku znovu.",
     },
     placed: {
       title: "Potvrzení objednávky",
@@ -932,6 +982,111 @@ export const cs = {
       logIn: "Přihlásit se ověřeným účtem",
     },
   },
+  /** Messages the storefront server (route handlers, cart quote) sends to the browser. */
+  server: {
+    request: {
+      foreignOrigin: "Požadavek musí pocházet z tohoto obchodu.",
+      invalidFormat: "Neplatný formát požadavku.",
+      tooLarge: "Požadavek je příliš velký.",
+      invalid: "Neplatný požadavek.",
+      unknown: "Neznámý požadavek.",
+      noAccountIdentifier: "Požadavek nesmí obsahovat identifikátor účtu.",
+    },
+    market: {
+      unknown: "Tento trh neexistuje.",
+      unavailable: "Tento trh je dočasně nedostupný.",
+    },
+    outage: {
+      cart: "Spojení s OntOS se nepodařilo. Košík zůstává zachovaný. Zkuste to prosím znovu.",
+      orderStatus: "Stav objednávky se teď nepodařilo z OntOS načíst. Zkuste to prosím za chvíli.",
+      search: "Vyhledávání v OntOS je teď nedostupné. Zkuste to prosím za chvíli.",
+      catalog: "Katalog OntOS je teď nedostupný. Zkuste to prosím za chvíli.",
+      shipping: "Možnosti dopravy se nepodařilo načíst z OntOS.",
+      orders: "Objednávky se nepodařilo načíst z OntOS.",
+    },
+    cart: {
+      invalid: "Neplatný košík.",
+      invalidLine: "Neplatná položka košíku.",
+      fallbackItem: "Položka",
+      notAvailable: (label: string) => `${label}: zboží již není v nabídce tohoto trhu.`,
+      priceUnavailable: (label: string, reason: string) =>
+        `${label}: cena není dostupná. ${reason}`.trim(),
+      availabilityUnknown: (label: string) =>
+        `${label}: dostupnost nyní nelze ověřit, objednávku proto nelze dokončit. Položku odeberte nebo to zkuste později.`,
+      outOfStock: (label: string) => `${label}: momentálně není skladem.`,
+      insufficientStock: (label: string, stock: number, unit: string) =>
+        `${label}: k dispozici je jen ${count(stock)} ${unit}.`,
+      minimumQuantity: (label: string, minimum: number, unit: string) =>
+        `${label}: minimální množství je ${minimum} ${unit}.`,
+      packageQuantity: (label: string, step: number, unit: string) =>
+        `${label}: objednejte celé balení po ${step} ${unit}.`,
+    },
+    orders: {
+      signIn: "Přihlaste se ke svému účtu.",
+      invalidPage: "Neplatná stránka.",
+      invalidDelivery: "Neplatné dodací údaje.",
+      cartChanged: "Košík se změnil. Zkontrolujte ceny a dostupnost.",
+    },
+    orderStatus: {
+      invalid: "Neplatný dotaz na stav objednávky.",
+      notYet: "Stav objednávky zatím není k dispozici.",
+    },
+    orderEmails: {
+      invalidNumber: "Neplatné číslo objednávky.",
+      missingEmail: "Chybí e-mail, se kterým byla objednávka odeslána.",
+      unavailable: "Stav e-mailů se nepodařilo ověřit.",
+    },
+    inquiry: {
+      invalid: "Zkontrolujte jméno, e-mail, předmět a zprávu (nejvýše 1 500 znaků).",
+      productGone: "Produkt již není v nabídce. Odešlete prosím obecný dotaz.",
+      formUnavailable: (email: string, phone?: string) =>
+        `Kontaktní formulář je dočasně nedostupný. Dotaz nebyl odeslán. Napište nám prosím na ${email}${phone ? ` nebo zavolejte na ${phone}` : ""}.`,
+      unconfirmed:
+        "Přijetí dotazu se nepodařilo potvrdit. Údaje zachovejte a zkuste odeslání znovu.",
+    },
+    reorder: {
+      missingOrder: "Chybí objednávka.",
+      signIn: "Pro opakování objednávky se prosím přihlaste.",
+      notFound: "Objednávka nebyla nalezena.",
+      unavailable: "Objednávku se teď nepodařilo načíst z OntOS. Zkuste to prosím znovu.",
+    },
+    productVariants: {
+      invalid: "Neplatný produkt.",
+      notFound: "Produkt nebyl nalezen.",
+    },
+    account: {
+      verificationRequired: "Nejprve potvrďte e-mail odkazem, který jsme vám poslali.",
+      wrongCredentials: "Nesprávný e-mail nebo heslo.",
+      tooManyAttempts: "Příliš mnoho pokusů. Zkuste to prosím později.",
+      invalidInput: "Zkontrolujte zadané údaje. Heslo musí mít 12 až 128 znaků.",
+      refused: "Účet nelze přihlásit nebo vytvořit. Zkontrolujte údaje a zkuste to znovu.",
+      unavailable: "Spojení s účtem je dočasně nedostupné. Zkuste to prosím znovu.",
+      invalidRegistration: "Zkontrolujte údaje, souhlas a shodu hesel (12 až 128 znaků).",
+      missingRegistrationId: "Chybí identifikátor registrace.",
+      missingCredentials: "Zadejte e-mail a heslo.",
+      invalidEmail: "Zadejte platnou e-mailovou adresu.",
+      twoFactorRequired: "Účet vyžaduje dvoufázové ověření v zákaznickém portálu.",
+      enrollmentNotFound: "Pro tento účet není dostupná registrace v tomto obchodě.",
+      enrollmentSignIn: "Pro zobrazení registrace se přihlaste ověřeným účtem.",
+    },
+    consent: {
+      signIn: "Pro správu newsletteru se prosím přihlaste.",
+      changed: "Informace o souhlasu se změnily. Načtěte aktuální znění znovu.",
+      unconfirmed: "OntOS teď nemůže potvrdit stav souhlasu. Zkuste načíst aktuální stav znovu.",
+      loadFailed: "Souhlas s newsletterem se nepodařilo načíst z OntOS.",
+      invalid: "Potvrďte aktuální informace o souhlasu a svou volbu.",
+      saveFailed: "Změnu souhlasu nelze potvrdit. Načtěte aktuální stav z OntOS znovu.",
+    },
+    profile: {
+      signIn: "Pro úpravu údajů se prosím přihlaste.",
+      loadFailed: "Údaje účtu se nepodařilo načíst z OntOS. Zkuste to prosím později.",
+      invalid: "Zkontrolujte jméno, telefon a kontaktní e-mail.",
+      conflict: "Údaje mezitím někdo změnil. Obnovte stránku a zkuste to znovu.",
+      refused: "OntOS změnu odmítl. Zkontrolujte údaje a oprávnění, potom zkuste uložení znovu.",
+      saveUncertain:
+        "Uložení se nepodařilo dokončit. Část změn mohla být uložena. Obnovte stránku a zkontrolujte údaje v OntOS.",
+    },
+  },
   errorPages: {
     notFoundHeading: "Vypadá to, že jste se ztratili v našem skladu...",
     notFoundText:
@@ -948,6 +1103,24 @@ export const cs = {
       "Spojení s OntOS se nepodařilo. Ceny ani sklad nenahrazujeme ukázkovými daty. Váš košík zůstává uložený v prohlížeči.",
     retry: "Zkusit znovu",
     demoNote: "DEMO – objednávka nebude doručena.",
+  },
+  tracking: {
+    title: "Stav objednávky",
+    noOrders: "Zatím nemáte žádnou objednávku.",
+    details: "Detail objednávky",
+    historyHeading: "Historie objednávky v OntOS",
+    historyNote:
+      "OntOS neposkytuje sledování dopravce, polohu kurýra ani odhad doručení. Níže jsou skutečné uložené změny stavu objednávky.",
+    noHistory: "Historie změn není u této objednávky uložená.",
+    dateLocale: "cs-CZ",
+    statuses: {
+      NEW: "Nová",
+      CONFIRMED: "Zpracovává se",
+      PACKING: "Připravená k předání",
+      SHIPPED: "Předáno dopravci",
+      DELIVERED: "Dokončená",
+      CANCELLED: "Stornovaná",
+    },
   },
   confirmation: {
     title: "Ukázková objednávka je hotová",

@@ -1,4 +1,7 @@
 import "server-only";
+import { dictionaryFor, type Dictionary } from "@/i18n";
+import { cs } from "@/i18n/cs";
+import { MARKET_LOCALE_HEADER } from "./market-locale";
 
 const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
@@ -27,31 +30,35 @@ export function requestOrigin(request: Request) {
     request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || url.protocol.slice(0, -1);
   return `${protocol}://${request.headers.get("host") ?? url.host}`;
 }
-export function guard(request: Request) {
+/**
+ * Dictionary of a market locale for server messages: no locale (a request without the market header) keeps the
+ * Czech wording, an unknown locale gets English (`dictionaryFor`). The locale only picks wording, never a market.
+ */
+export const localeDictionary = (locale: string | null | undefined): Dictionary =>
+  locale ? dictionaryFor(locale) : cs;
+/** Dictionary for the messages of this request: the browser sends the market locale with every API call. */
+export const requestDictionary = (request: Request): Dictionary =>
+  localeDictionary(request.headers.get(MARKET_LOCALE_HEADER));
+export function guard(request: Request, t: Dictionary = requestDictionary(request)) {
   const origin = request.headers.get("origin");
   if (origin && origin !== requestOrigin(request))
-    throw new RequestError(403, "Požadavek musí pocházet z tohoto obchodu.");
+    throw new RequestError(403, t.server.request.foreignOrigin);
   if (!request.headers.get("content-type")?.startsWith("application/json"))
-    throw new RequestError(415, "Neplatný formát požadavku.");
+    throw new RequestError(415, t.server.request.invalidFormat);
   if (Number(request.headers.get("content-length") ?? 0) > 100_000)
-    throw new RequestError(413, "Požadavek je příliš velký.");
+    throw new RequestError(413, t.server.request.tooLarge);
 }
-export async function jsonBody(request: Request) {
+export async function jsonBody(request: Request, t: Dictionary = requestDictionary(request)) {
   const text = await request.text();
-  if (text.length > 100_000) throw new RequestError(413, "Požadavek je příliš velký.");
+  if (text.length > 100_000) throw new RequestError(413, t.server.request.tooLarge);
   try {
     return JSON.parse(text);
   } catch {
-    throw new RequestError(400, "Neplatný formát požadavku.");
+    throw new RequestError(400, t.server.request.invalidFormat);
   }
 }
-/** Fallback texts for a real OntOS failure, per route (only the cart routes talk about the cart). */
-export const outageMessage = {
-  cart: "Spojení s OntOS se nepodařilo. Košík zůstává zachovaný. Zkuste to prosím znovu.",
-  orderStatus: "Stav objednávky se teď nepodařilo z OntOS načíst. Zkuste to prosím za chvíli.",
-  search: "Vyhledávání v OntOS je teď nedostupné. Zkuste to prosím za chvíli.",
-} as const;
-export function problem(error: unknown, message: string = outageMessage.cart) {
+/** `message`: the route's localized fallback text for a real OntOS failure (`t.server.outage.*`). */
+export function problem(error: unknown, message: string) {
   if (RequestError.is(error))
     return Response.json(
       { message: error.message },

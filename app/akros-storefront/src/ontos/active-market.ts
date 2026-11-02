@@ -3,7 +3,7 @@ import { headers } from "next/headers";
 import { cache } from "react";
 import { dictionaryFor } from "@/i18n";
 import type { MoneyFormat } from "@/lib/format";
-import { RequestError } from "./http";
+import { localeDictionary, RequestError } from "./http";
 import { resolveStorefrontMarket, type ActiveMarket, type MarketResolution } from "./market";
 import type { ClientMarket } from "./market-context";
 import { localizeHref, MARKET_LOCALE_HEADER, STORE_PATH_HEADER } from "./market-locale";
@@ -21,10 +21,10 @@ export const getMarketResolution = cache(
 /** The live market of this request; an unknown, missing or inactive market is refused (4xx). */
 export async function getActiveMarket(): Promise<ActiveMarket> {
   const resolution = await getMarketResolution();
-  if (resolution.kind === "unknown") throw new RequestError(404, "Tento trh neexistuje.");
-  if (resolution.kind === "not-active")
-    throw new RequestError(409, "Tento trh je dočasně nedostupný.");
-  return resolution.market;
+  if (resolution.kind === "live") return resolution.market;
+  const t = localeDictionary((await headers()).get(MARKET_LOCALE_HEADER));
+  if (resolution.kind === "unknown") throw new RequestError(404, t.server.market.unknown);
+  throw new RequestError(409, t.server.market.unavailable);
 }
 
 /** Currency and locale of the request market's prices (server components). */

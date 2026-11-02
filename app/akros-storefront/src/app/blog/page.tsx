@@ -6,18 +6,25 @@ import { Input } from "@techsio/ui-kit/atoms/input";
 import { PrimaryLinkButton } from "@/components/primary-link-button";
 import { ContentLink } from "@/components/content-link";
 import { StorefrontWideShell } from "@/components/storefront-shell";
-import { getBrand } from "@/brand";
+import { brandLocale, getBrand } from "@/brand";
+import { contentLocale } from "@/content/locale";
+import { blogCopy } from "@/content/pages";
 
-export const metadata: Metadata = { title: "Blog" };
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: blogCopy[await contentLocale()].title };
+}
 
-export default function BlogPage() {
+export default async function BlogPage() {
+  const locale = await contentLocale();
   const { blog } = getBrand().pages;
+  const copy = blogCopy[locale];
+  const articles = blog.articles[brandLocale(locale)];
   return (
     <StorefrontWideShell>
       <article className="sf-blog-page">
         <section className="sf-blog-featured" aria-labelledby="featured-article-title">
           <Image
-            alt="Nerezové šrouby třídy A2 a A4"
+            alt={copy.featuredAlt}
             height={800}
             loading="eager"
             priority
@@ -28,30 +35,24 @@ export default function BlogPage() {
           <div>
             <p className="sf-blog-meta">
               <Badge size="sm" variant="primary">
-                NÁVODY A RADY
+                {copy.badge}
               </Badge>
-              <span>12. února 2026</span>
+              <span>{copy.date}</span>
             </p>
-            <h1 id="featured-article-title">
-              Nerezová ocel A2 vs A4: Kompletní průvodce pro správnou volbu
-            </h1>
-            <p>
-              Často se setkáváme s otázkou, který nerezový spojovací materiál zvolit. Je pro
-              venkovní terasu lepší A2, nebo kyselinovzdorná A4? Podíváme se na odolnost vůči solím
-              a praktické příklady z praxe.
-            </p>
+            <h1 id="featured-article-title">{copy.featuredTitle}</h1>
+            <p>{copy.featuredExcerpt}</p>
             <div className="sf-blog-featured__actions">
-              <PrimaryLinkButton href="#nejnovejsi">Přečíst celý článek</PrimaryLinkButton>
-              <span>Doba čtení: 6 min</span>
+              <PrimaryLinkButton href="#nejnovejsi">{copy.readFull}</PrimaryLinkButton>
+              <span>{copy.readingTime}</span>
             </div>
           </div>
         </section>
 
         <div className="sf-blog-layout" id="nejnovejsi">
           <section aria-labelledby="latest-posts-title">
-            <h2 id="latest-posts-title">Nejnovější příspěvky</h2>
+            <h2 id="latest-posts-title">{copy.latest}</h2>
             <div className="sf-blog-grid">
-              {blog.articles.map((article) => (
+              {articles.map((article) => (
                 <article className="sf-blog-card" key={article.title}>
                   <Image
                     alt=""
@@ -77,29 +78,28 @@ export default function BlogPage() {
                       size="current"
                       className="inline"
                     >
-                      Číst více →
+                      {copy.readMore}
                     </ContentLink>
                   </div>
                 </article>
               ))}
             </div>
           </section>
-          <aside className="sf-blog-sidebar" aria-label="Nástroje blogu">
+          <aside className="sf-blog-sidebar" aria-label={copy.toolsLabel}>
             <section>
-              <h2>Hledat v článcích</h2>
+              <h2>{copy.searchHeading}</h2>
               <Input
-                aria-label="Hledat v článcích"
-                placeholder="Zadejte hledané slovo…"
+                aria-label={copy.searchLabel}
+                placeholder={copy.searchPlaceholder}
                 type="search"
               />
             </section>
             <section>
-              <h2>Populární témata</h2>
+              <h2>{copy.popularHeading}</h2>
               <ul>
-                <li># nerez-a2-vs-a4</li>
-                <li># fotovoltaika-montaz</li>
-                <li># utahovaci-momenty</li>
-                <li># normy-din-iso</li>
+                {copy.tags.map((tag) => (
+                  <li key={tag}>{tag}</li>
+                ))}
               </ul>
             </section>
           </aside>

@@ -93,3 +93,47 @@ describe("persisted storefront inquiries", () => {
     });
   });
 });
+
+describe("inquiry messages follow the market language", () => {
+  const submitIn = (locale: string | undefined, body: object = inquiry) =>
+    POST(
+      new Request("http://localhost:3070/api/ontos/inquiries", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(locale === undefined ? {} : { "x-akros-market-locale": locale }),
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+  it.each([
+    [undefined, "Zkontrolujte jméno, e-mail, předmět a zprávu (nejvýše 1 500 znaků)."],
+    ["sk", "Skontrolujte meno, e-mail, predmet a správu (najviac 1 500 znakov)."],
+    ["en", "Check your name, e-mail, subject and message (at most 1,500 characters)."],
+  ])("refuses an invalid inquiry for locale %s", async (locale, message) => {
+    const response = await submitIn(locale, { ...inquiry, email: "nope" });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ message });
+    expect(callAction).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["sk", "Dopyt nebol odoslaný"],
+    ["en", "Your enquiry was not sent"],
+  ])("words the unavailable form for locale %s", async (locale, text) => {
+    vi.mocked(readRecords).mockRejectedValue(new OntosError("Denied", 403));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = await submitIn(locale);
+    expect(response.status).toBe(503);
+    expect((await response.json()).message).toContain(text);
+  });
+  it.each([
+    ["sk", "Prijatie dopytu sa nepodarilo potvrdiť."],
+    ["en", "We could not confirm that your enquiry was received."],
+  ])("words an unconfirmed outcome for locale %s", async (locale, text) => {
+    vi.mocked(callAction).mockRejectedValue(new OntosError("Timeout", 503));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = await submitIn(locale);
+    expect(response.status).toBe(503);
+    expect((await response.json()).message).toContain(text);
+  });
+});

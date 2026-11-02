@@ -23,7 +23,7 @@ export function describeCatalogPrice(
   money: MoneyFormat = CZK_MONEY,
 ): CatalogPrice {
   if (product.priceIsFrom) return { kind: "variant", label: dictionary.product.variantPrice };
-  const price = describeOfferPrice({ ...product, priceIsFrom: false }, money);
+  const price = describeOfferPrice({ ...product, priceIsFrom: false }, money, dictionary);
   return price.available
     ? { kind: "exact", label: price.label }
     : { kind: "unavailable", label: dictionary.product.priceUnavailable, reason: price.reason };

@@ -1,28 +1,24 @@
 import type { Metadata } from "next";
 import { getBrand } from "@/brand";
 import { SimpleContentPage } from "@/components/simple-content-page";
+import { contentLocale } from "@/content/locale";
+import { partnerPage } from "@/content/pages";
+import { getDictionary } from "@/ontos/active-market";
 
-export const metadata: Metadata = { title: "Partnerský program" };
+export async function generateMetadata(): Promise<Metadata> {
+  const page = partnerPage[await contentLocale()](getBrand().name);
+  return { title: page.title };
+}
 
-export default function PartnerPage() {
+export default async function PartnerPage() {
+  const [locale, { header }] = await Promise.all([contentLocale(), getDictionary()]);
+  const page = partnerPage[locale](getBrand().name);
   return (
     <SimpleContentPage
-      title={`Partnerský program ${getBrand().name}`}
-      lead="Výhody pro pravidelné odběratele a firemní zákazníky."
-      sections={[
-        {
-          title: "Individuální podmínky",
-          paragraphs: [
-            "Partnerský program v prototypu představuje budoucí přístup k individuálním cenám, historii objednávek a rychlejšímu nákupu.",
-          ],
-        },
-        {
-          title: "Jak se zapojit",
-          paragraphs: [
-            "Pro demonstraci použijte registrační formulář. Registrace se zpracuje pouze lokálně a nic neodesílá.",
-          ],
-        },
-      ]}
+      homeLabel={header.home}
+      title={page.title}
+      lead={page.lead}
+      sections={page.sections}
     />
   );
 }

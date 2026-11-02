@@ -6,6 +6,7 @@ import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Toaster, toaster } from "@techsio/ui-kit/molecules/toast";
 import { formatQuantity, getMaximumOrderQuantity } from "@/features/cart/cart-state";
+import { useDictionary } from "@/ontos/market-context";
 import { useCart } from "./cart-provider";
 
 export function CartNotifications() {
@@ -13,6 +14,7 @@ export function CartNotifications() {
   const feedbackId = `sf-cart-feedback-${owner}`;
   const removalId = `sf-cart-removal-${owner}`;
   const { purchaseError, feedback, removedItem, undoRemove, dismissRemove } = useCart();
+  const toast = useDictionary().cart.toast;
 
   useEffect(() => {
     let active = true;
@@ -29,10 +31,10 @@ export function CartNotifications() {
         type: kind === "limited" || limited ? "warning" : "success",
         title:
           kind === "limited"
-            ? "Nelze přidat další množství"
+            ? toast.limitedTitle
             : kind === "restored"
-              ? "Položka obnovena"
-              : "Přidáno do košíku",
+              ? toast.restoredTitle
+              : toast.addedTitle,
         duration: 6000,
         description: (
           <div data-sf-cart-notification className="grid gap-3">
@@ -40,13 +42,14 @@ export function CartNotifications() {
             <p>
               {kind === "limited"
                 ? getMaximumOrderQuantity(line) > 0
-                  ? "Dostupné množství už máte v košíku."
-                  : "Zkontrolujte dostupnost a minimální odběr produktu."
-                : `${kind === "restored" ? "Obnoveno" : "Přidáno"} ${formatQuantity(quantity)} ${line.unit}.`}
+                  ? toast.alreadyAtMaximum
+                  : toast.checkAvailability
+                : (kind === "restored" ? toast.restored : toast.added)(
+                    formatQuantity(quantity),
+                    line.unit,
+                  )}
             </p>
-            {kind !== "limited" && limited && (
-              <p>Skladový limit umožnil přidat jen část požadovaného množství.</p>
-            )}
+            {kind !== "limited" && limited && <p>{toast.partiallyAdded}</p>}
             <LinkButton
               as={StoreLink}
               href="/kosik"
@@ -54,7 +57,7 @@ export function CartNotifications() {
               variant="primary"
               onClick={() => toaster.dismiss(feedbackId)}
             >
-              Zobrazit košík
+              {toast.viewCart}
             </LinkButton>
           </div>
         ),
@@ -63,7 +66,7 @@ export function CartNotifications() {
     return () => {
       active = false;
     };
-  }, [feedback, feedbackId]);
+  }, [feedback, feedbackId, toast]);
 
   useEffect(() => {
     let active = true;
@@ -77,7 +80,7 @@ export function CartNotifications() {
       toaster.create({
         id: removalId,
         type: "info",
-        title: "Položka odebrána",
+        title: toast.removedTitle,
         // Undo remains available until explicitly dismissed or replaced by another removal.
         duration: Infinity,
         onStatusChange: ({ status, src }) => {
@@ -90,7 +93,7 @@ export function CartNotifications() {
               {formatQuantity(line.quantity)} {line.unit}
             </p>
             <Button size="sm" variant="primary" onClick={() => undoRemove(id)}>
-              Obnovit
+              {toast.undo}
             </Button>
           </div>
         ),
@@ -99,7 +102,7 @@ export function CartNotifications() {
     return () => {
       active = false;
     };
-  }, [removedItem, removalId, undoRemove, dismissRemove]);
+  }, [removedItem, removalId, undoRemove, dismissRemove, toast]);
 
   useEffect(
     () => () => {

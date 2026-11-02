@@ -7,16 +7,21 @@ import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { ProductGrid } from "@/components/product-grid";
 import { PrimaryLinkButton } from "@/components/primary-link-button";
 import { StorefrontWideShell } from "@/components/storefront-shell";
+import { contentLocale } from "@/content/locale";
+import { newsCopy } from "@/content/pages";
 import { getCatalog, getCatalogPage, type CatalogModel } from "@/ontos/catalog-server";
 
 const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
 
-export const metadata: Metadata = { title: "Novinky a akce" };
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: newsCopy[await contentLocale()].title };
+}
 
 const isGenericPromotionGroup = (name: string) => name.trim().toLocaleUpperCase("cs-CZ") === "AKCE";
 
 export default async function NewsPage() {
+  const copy = newsCopy[await contentLocale()];
   const baseCatalog = await getCatalog();
   // One flagged owner page (cards) per section; the model below still filters isNew/isAction/isSale locally.
   const flagged = async (flag: "new" | "promotion"): Promise<CatalogModel> => {
@@ -52,7 +57,7 @@ export default async function NewsPage() {
       <article className="sf-news-page">
         <header className="sf-news-hero">
           <Image
-            alt="Imbusové šrouby v automatizované výrobě"
+            alt={copy.heroAlt}
             fill
             loading="eager"
             priority
@@ -62,14 +67,11 @@ export default async function NewsPage() {
           <div className="sf-news-hero__overlay">
             <div>
               <Badge size="sm" variant="danger">
-                NABÍDKA Z KATALOGU
+                {copy.badge}
               </Badge>
-              <h1>Novinky a akce</h1>
-              <p>
-                Prohlédněte si výběr novinek a produkty označené v katalogu jako akční. Zobrazené
-                prodejní ceny vycházejí z katalogu OntOS.
-              </p>
-              <PrimaryLinkButton href="#action-products">Zobrazit akční nabídku</PrimaryLinkButton>
+              <h1>{copy.heading}</h1>
+              <p>{copy.intro}</p>
+              <PrimaryLinkButton href="#action-products">{copy.heroAction}</PrimaryLinkButton>
             </div>
           </div>
         </header>
@@ -78,8 +80,8 @@ export default async function NewsPage() {
           aria-labelledby="new-products-title"
         >
           <div className="sf-section__heading">
-            <h2 id="new-products-title">Nové nerezové produkty v nabídce</h2>
-            <StoreLink href="/vyhledavani?q=novinka">Zobrazit všechny novinky</StoreLink>
+            <h2 id="new-products-title">{copy.newHeading}</h2>
+            <StoreLink href="/vyhledavani?q=novinka">{copy.newAll}</StoreLink>
           </div>
           <ProductGrid action="detail" products={newProducts.map(toProductSummary)} />
         </section>
@@ -89,8 +91,8 @@ export default async function NewsPage() {
           aria-labelledby="sale-products-title"
         >
           <div className="sf-section__heading">
-            <h2 id="sale-products-title">Akční nabídky a výprodej</h2>
-            <StoreLink href="/vyhledavani?q=akce">Zobrazit celou akční nabídku</StoreLink>
+            <h2 id="sale-products-title">{copy.saleHeading}</h2>
+            <StoreLink href="/vyhledavani?q=akce">{copy.saleAll}</StoreLink>
           </div>
           <ProductGrid products={promotionProducts} />
         </section>

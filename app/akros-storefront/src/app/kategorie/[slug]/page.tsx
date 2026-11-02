@@ -109,7 +109,7 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
           <h1 id="category-title">{category.name}</h1>
           {description && <p>{description}</p>}
         </div>
-        {hasVisualChildCategories && <CategoryGrid categories={childCategories} />}
+        {hasVisualChildCategories && <CategoryGrid categories={childCategories} dictionary={cs} />}
       </section>
 
       <CategoryFilters
@@ -134,9 +134,7 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
         </section>
       ) : (
         <p className="sf-empty-state">
-          {filtersActive
-            ? "Nenalezeny žádné produkty. Upravte nebo vymažte filtry."
-            : cs.catalog.emptyCategory}
+          {filtersActive ? cs.catalog.noFilteredProducts : cs.catalog.emptyCategory}
         </p>
       )}
 

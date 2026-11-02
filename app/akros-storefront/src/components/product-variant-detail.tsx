@@ -9,7 +9,7 @@ import { Dialog } from "@techsio/ui-kit/molecules/dialog";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
 import { FavoriteButton } from "@/features/favorites/favorite-button";
 import { buildVariantDetailHref } from "@/lib/product-variant-links";
-import { formatWeight } from "@/lib/format";
+import { formatWeight, priceUnavailableText } from "@/lib/format";
 import { getProductDescriptionParagraphs } from "@/lib/product-description";
 import { describeVariantAvailability } from "@/lib/variant-availability";
 import type { CatalogPurchaseProduct, CatalogPurchaseVariant } from "@/ontos/catalog-types";
@@ -155,7 +155,11 @@ export function ProductVariantDetail({
               {variant.priceUnavailableReason || variant.priceMinor <= 0 ? (
                 <>
                   <strong>{cs.product.priceUnavailable}</strong>
-                  <span>{variant.priceUnavailableReason ?? cs.product.noValidPrice}</span>
+                  <span>
+                    {variant.priceUnavailableReason
+                      ? priceUnavailableText(variant.priceUnavailableReason, cs, money)
+                      : cs.product.noValidPrice}
+                  </span>
                 </>
               ) : (
                 <>

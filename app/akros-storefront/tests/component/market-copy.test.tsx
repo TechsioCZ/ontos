@@ -8,6 +8,11 @@ import { AddressStep } from "@/features/checkout/address-step";
 import { ProductDetailActions } from "@/components/product-detail-actions";
 import { CartProvider } from "@/features/cart/cart-provider";
 import { CartContent } from "@/features/cart/cart-content";
+import { CartNotifications } from "@/features/cart/cart-notifications";
+import { AddToCartButton } from "@/features/cart/add-to-cart-button";
+import { toaster } from "@techsio/ui-kit/molecules/toast";
+import { cs } from "@/i18n/cs";
+import { CZK_MONEY, priceUnavailableText } from "@/lib/format";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
 import { CheckoutProvider } from "@/features/checkout/checkout-provider";
 import { FavoriteButton } from "@/features/favorites/favorite-button";
@@ -137,7 +142,11 @@ beforeEach(() => {
   );
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  toaster.remove();
+  vi.unstubAllGlobals();
+});
 
 describe("market copy outside the product cards", () => {
   it("shows the Slovak category filters", () => {
@@ -397,5 +406,78 @@ describe("market copy outside the product cards", () => {
     expect(screen.getByRole("button", { name: "Order summary" })).not.toBeNull();
     expect(screen.getByRole("link", { name: "Back to shipping and payment" })).not.toBeNull();
     vi.unstubAllGlobals();
+  });
+  it("words the price-unavailable reason code in Slovak and English, Czech unchanged", () => {
+    const priced = (reason: string) =>
+      variants.map((variant, index) =>
+        index === 0 ? { ...variant, priceUnavailableReason: reason } : variant,
+      );
+    render(
+      <MarketProvider market={skMarket}>
+        <CartProvider storage={window.localStorage}>
+          <ProductPurchaseForm product={product} variants={priced("currency:CZK")} />
+        </CartProvider>
+      </MarketProvider>,
+    );
+    expect(
+      screen.getByText("Cena je v nepodporovanej mene (CZK); e-shop predáva len v €."),
+    ).not.toBeNull();
+    expect(screen.queryByText(/nepodporované měně/)).toBeNull();
+    cleanup();
+
+    render(
+      <MarketProvider market={enMarket}>
+        <CartProvider storage={window.localStorage}>
+          <ProductPurchaseForm product={product} variants={priced("zero-price")} />
+        </CartProvider>
+      </MarketProvider>,
+    );
+    expect(
+      screen.getByText("The price in OntOS is zero, so this item cannot be ordered."),
+    ).not.toBeNull();
+    expect(screen.queryByText(/nulová/)).toBeNull();
+
+    expect(priceUnavailableText("currency:EUR", cs, CZK_MONEY)).toBe(
+      "Cena je v nepodporované měně (EUR); e-shop prodává jen v Kč.",
+    );
+    expect(priceUnavailableText("missing-price", cs)).toBe("OntOS pro tuto položku nevrátil cenu.");
+  });
+
+  it("shows the cart toasts and add failures in the market's language", async () => {
+    const item = { ...cartLine, productId: "product-washer", slug: "washer", name: "Washer" };
+    const renderAdd = (localeMarket: ClientMarket) =>
+      render(
+        <MarketProvider market={localeMarket}>
+          <CartProvider storage={window.localStorage}>
+            <AddToCartButton item={item} quantity={3} />
+            <CartNotifications />
+          </CartProvider>
+        </MarketProvider>,
+      );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const { cart } = JSON.parse(String(init.body));
+        return Response.json({ cart, priceChanged: false, issues: [], canCheckout: true });
+      }),
+    );
+    renderAdd(enMarket);
+    fireEvent.click(await screen.findByRole("button", { name: /Washer/ }));
+    expect(await screen.findByText("Added to cart")).not.toBeNull();
+    expect(screen.getByText("Added 3 ks.")).not.toBeNull();
+    expect(screen.getByRole("link", { name: "View cart" })).not.toBeNull();
+    expect(screen.queryByText("Přidáno do košíku")).toBeNull();
+    cleanup();
+    toaster.remove();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ error: "down" }, { status: 503 })),
+    );
+    renderAdd(skMarket);
+    fireEvent.click(await screen.findByRole("button", { name: /Washer/ }));
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Cenu a sklad teraz nemožno overiť v OntOS. Tovar nebol pridaný.",
+    );
   });
 });

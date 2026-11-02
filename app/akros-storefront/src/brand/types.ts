@@ -7,6 +7,9 @@ export type BrandId = (typeof BRAND_IDS)[number];
 /** Chrome languages a brand writes its own copy in; any other market locale uses English. */
 export type BrandLocale = "cs" | "sk" | "en";
 
+/** Brand content in each brand language (`brandLocale(market.locale)` picks the entry). */
+export type PerLocale<T> = Readonly<Record<BrandLocale, T>>;
+
 /** A paragraph with emphasized parts (`{ strong }`), as the home page renders it. */
 export interface RichParagraph {
   id: string;
@@ -32,18 +35,26 @@ export interface CarouselSlide {
   href?: string;
 }
 
+/** A home banner as the brand defines it; `alt` is per language, `CarouselSlide` is the resolved one. */
+export interface BrandCarouselSlide extends Omit<CarouselSlide, "alt"> {
+  alt: PerLocale<string>;
+}
+
 export interface GalleryImage {
   src: string;
   alt: string;
   caption: string;
 }
 
+/** Brand data (names, addresses) stays as written; demo disclaimers may be given per language. */
+export type BranchText = string | PerLocale<string>;
+
 export interface Branch {
   id: string;
   city: string;
-  title: string;
-  address: string;
-  details?: string;
+  title: BranchText;
+  address: BranchText;
+  details?: BranchText;
   phone?: string;
   email?: string;
   mapSrc?: string;
@@ -73,17 +84,25 @@ export interface Brand {
     inquiryEmail: string;
   };
   /** The brand's manufacturing page (`/kategorie/akroscz-vyroba`) and external site; null hides both. */
-  production: { externalUrl: string; title: string; page: ReactNode } | null;
-  metadata: { defaultTitle: string; description: string; icon: string };
+  production: {
+    externalUrl: string;
+    /** Page title and body per language. */
+    pages: PerLocale<{ title: string; page: ReactNode }>;
+  } | null;
+  metadata: {
+    defaultTitle: PerLocale<string>;
+    description: PerLocale<string>;
+    icon: string;
+  };
   copy: Readonly<Record<BrandLocale, BrandCopy>>;
-  carousel: readonly CarouselSlide[];
+  carousel: readonly BrandCarouselSlide[];
   pages: {
     /** `/o-nas` body (inside the content article). */
-    about: ReactNode;
+    about: PerLocale<ReactNode>;
     /** `/kontakty` locations. */
     branches: readonly Branch[];
     /** `/blog` articles and the featured story image. */
-    blog: { featuredImage: string; articles: readonly BlogArticle[] };
+    blog: { featuredImage: string; articles: PerLocale<readonly BlogArticle[]> };
     /** `/novinky-a-akce` hero image. */
     newsHero: string;
   };
@@ -102,3 +121,7 @@ export interface ClientBrand {
     sidebarLabel: string;
   } | null;
 }
+
+/** The text of a branch field in `locale` (a plain string is brand data, the same in every language). */
+export const branchText = (value: BranchText, locale: BrandLocale): string =>
+  typeof value === "string" ? value : value[locale];

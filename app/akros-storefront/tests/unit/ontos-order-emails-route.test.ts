@@ -78,3 +78,38 @@ describe("order e-mail status route", () => {
     expect(await response.json()).toEqual({ message: "Stav e-mailů se nepodařilo ověřit." });
   });
 });
+
+describe("order e-mail status messages follow the market language", () => {
+  const getIn = (
+    locale: string | undefined,
+    orderNumber: string,
+    email = "pavel@zakaznik.example",
+  ) =>
+    GET(
+      new Request(
+        `http://localhost:3070/api/ontos/order-emails?${new URLSearchParams({ orderNumber, email }).toString()}`,
+        { headers: locale === undefined ? {} : { "x-akros-market-locale": locale } },
+      ),
+    );
+  it.each([
+    [undefined, "Neplatné číslo objednávky."],
+    ["sk", "Neplatné číslo objednávky."],
+    ["en", "Invalid order number."],
+  ])("rejects a malformed number for locale %s", async (locale, message) => {
+    const response = await getIn(locale, "x");
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ message });
+  });
+  it.each([
+    [undefined, "Stav e-mailů se nepodařilo ověřit."],
+    ["sk", "Stav e-mailov sa nepodarilo overiť."],
+    ["en", "The e-mail status could not be verified."],
+  ])("answers an outage for locale %s", async (locale, message) => {
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockRejectedValue(new Error("down"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = await getIn(locale, "OBJ-2026-0026");
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ message });
+  });
+});

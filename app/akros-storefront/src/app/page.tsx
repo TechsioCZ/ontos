@@ -12,10 +12,12 @@ export default async function HomePage() {
     getActiveMarket(),
   ]);
   const brand = getBrand();
-  const copy = brand.copy[brandLocale(market.locale)];
+  const locale = brandLocale(market.locale);
+  const copy = brand.copy[locale];
+  const slides = brand.carousel.map(({ alt, ...slide }) => ({ ...slide, alt: alt[locale] }));
   return (
     <StorefrontShell>
-      <HomeCarousel slides={brand.carousel} title={copy.companyTitle} />
+      <HomeCarousel slides={slides} title={copy.companyTitle} />
 
       <section className="grid gap-4" aria-labelledby="featured-title">
         <div className="flex min-h-(--dimension-48) items-center bg-base-dark px-(--dimension-20) py-(--dimension-8) text-base-light">

@@ -83,7 +83,7 @@ export function HeaderSearch() {
             throw new Error(
               typeof body.message === "string" && body.message
                 ? body.message
-                : "Vyhledávání v OntOS je teď nedostupné.",
+                : cs.search.unavailable,
             );
           return body;
         })
@@ -105,7 +105,7 @@ export function HeaderSearch() {
             error:
               isError(error) && error.name !== "TypeError" && error.message
                 ? error.message
-                : "Vyhledávání v OntOS je teď nedostupné.",
+                : cs.search.unavailable,
           });
         });
     }, 200);
@@ -113,7 +113,7 @@ export function HeaderSearch() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [ready, trimmedQuery, searchAttempt]);
+  }, [ready, trimmedQuery, searchAttempt, cs]);
   const remoteCurrent = remote.query === trimmedQuery;
   const searchError = remoteCurrent ? remote.error : undefined;
   const searchLoading = ready && !remoteCurrent;
@@ -207,15 +207,15 @@ export function HeaderSearch() {
             }}
             noResultsMessage={cs.search.noSuggestions}
             loading={searchLoading}
-            loadingMessage="Hledám v katalogu OntOS…"
+            loadingMessage={cs.search.loading}
             error={
               searchError ? (
                 <span data-sf-search-error="">
-                  <strong>Vyhledávání se nepodařilo.</strong> {searchError}
+                  <strong>{cs.search.failed}</strong> {searchError}
                 </span>
               ) : undefined
             }
-            retryLabel="Zkusit znovu"
+            retryLabel={cs.search.retry}
             onRetry={() => {
               setRemote((current) => ({ ...current, query: "", error: undefined }));
               setSearchAttempt((attempt) => attempt + 1);

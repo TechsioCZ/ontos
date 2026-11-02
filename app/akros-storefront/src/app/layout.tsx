@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 
 import "./globals.css";
 
-import { getBrand, toClientBrand } from "@/brand";
+import { brandLocale, getBrand, toClientBrand } from "@/brand";
 import { BrandProvider } from "@/brand/brand-context";
 
 import { CartProvider } from "@/features/cart/cart-provider";
@@ -50,13 +50,14 @@ export async function generateMetadata(): Promise<Metadata> {
     headers(),
   ]);
   const brand = getBrand();
+  const locale = resolution.kind === "live" ? resolution.market.locale : resolution.locale;
   const base: Metadata = {
     title: {
-      default: brand.metadata.defaultTitle,
+      default: brand.metadata.defaultTitle[brandLocale(locale)],
       template: `%s | ${brand.name}`,
     },
     robots: { index: false, follow: false, nocache: true },
-    description: brand.metadata.description,
+    description: brand.metadata.description[brandLocale(locale)],
     icons: { icon: { url: brand.metadata.icon, type: "image/svg+xml", sizes: "any" } },
   };
   if (resolution.kind !== "live") {

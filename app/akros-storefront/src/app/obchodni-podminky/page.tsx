@@ -1,29 +1,24 @@
 import type { Metadata } from "next";
 import { getBrand } from "@/brand";
 import { SimpleContentPage } from "@/components/simple-content-page";
+import { contentLocale } from "@/content/locale";
+import { termsPage } from "@/content/pages";
+import { getDictionary } from "@/ontos/active-market";
 
-export const metadata: Metadata = { title: "Obchodní podmínky" };
+export async function generateMetadata(): Promise<Metadata> {
+  const page = termsPage[await contentLocale()](getBrand().name);
+  return { title: page.title };
+}
 
-export default function TermsPage() {
-  const { name } = getBrand();
+export default async function TermsPage() {
+  const [locale, { header }] = await Promise.all([contentLocale(), getDictionary()]);
+  const page = termsPage[locale](getBrand().name);
   return (
     <SimpleContentPage
-      title="Obchodní podmínky"
-      lead={`Zkrácené informace pro prezentační e-shop ${name}.`}
-      sections={[
-        {
-          title: "Objednávka a cena",
-          paragraphs: [
-            "DEMO objednávka se uloží do odděleného prezentačního prostředí. Nevzniká platební závazek, nic neplatíte a zboží nebude odesláno ani doručeno. Ceny a dostupnost přebíráme z OntOS.",
-          ],
-        },
-        {
-          title: "Odstoupení a reklamace",
-          paragraphs: [
-            `Kontaktní formulář předává podnět týmu ${name} jako úkol v OntOS. Podnět k reklamaci není automaticky veden jako reklamační případ. Úplná pravidla pro objednávky, odstoupení a reklamace musí před produkčním provozem dodat provozovatel.`,
-          ],
-        },
-      ]}
+      homeLabel={header.home}
+      title={page.title}
+      lead={page.lead}
+      sections={page.sections}
     />
   );
 }

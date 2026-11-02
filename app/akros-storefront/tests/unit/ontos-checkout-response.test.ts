@@ -7,6 +7,8 @@ import {
   readCheckoutQuote,
   readOrderResponse,
 } from "@/ontos/checkout-response";
+import { en } from "@/i18n/en";
+import { sk } from "@/i18n/sk";
 
 const valid = {
   outcome: "PLACED",
@@ -129,5 +131,29 @@ describe("connected checkout response boundary", () => {
     { canCheckout: true, priceChanged: false, issues: ["blocked"] },
   ])("rejects invalid quotes %j", async (body) => {
     await expect(readCheckoutQuote(Response.json(body))).rejects.toThrow(checkoutSaveError);
+  });
+});
+
+describe("checkout response errors follow the market dictionary", () => {
+  it("words an unconfirmed save in the market language", async () => {
+    await expect(
+      readOrderResponse(Response.json({}, { status: 503 }), en.checkout.errors),
+    ).rejects.toThrow(en.checkout.errors.saveUnconfirmed);
+    await expect(
+      readCheckoutQuote(Response.json({}, { status: 503 }), sk.checkout.errors),
+    ).rejects.toThrow(sk.checkout.errors.saveUnconfirmed);
+  });
+  it("words owner rejections in English", async () => {
+    const reject = (code: string, message = "Owner text") =>
+      readOrderResponse(
+        Response.json({ issues: [{ code, message }] }, { status: 409 }),
+        en.checkout.errors,
+      );
+    await expect(reject("PRICE_CHANGED")).rejects.toThrow(en.checkout.errors.ownerPriceChanged);
+    await expect(reject("MARKET_UNAVAILABLE")).rejects.toThrow(en.checkout.errors.marketClosed);
+    await expect(reject("OUT_OF_STOCK", "Vruty: only 3 ks available.")).rejects.toThrow(
+      "Vruty: only 3 ks available. Adjust the quantities in your cart and send the order again.",
+    );
+    await expect(reject("NOT_FOUND")).rejects.toThrow(en.checkout.errors.ownerRejected);
   });
 });

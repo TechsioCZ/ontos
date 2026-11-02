@@ -1,5 +1,11 @@
-export const checkoutSaveError =
-  "Uložení objednávky se nepodařilo potvrdit. Košík zůstává zachovaný. Zkuste to znovu; opakované odeslání nevytvoří další objednávku.";
+import type { Dictionary } from "@/i18n";
+import { cs } from "@/i18n/cs";
+
+/** Checkout errors of the current market (`useDictionary().checkout.errors`); Czech by default. */
+type CheckoutErrors = Dictionary["checkout"]["errors"];
+
+/** The Czech wording of `errors.saveUnconfirmed`. */
+export const checkoutSaveError = cs.checkout.errors.saveUnconfirmed;
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -28,7 +34,7 @@ const rejectionCodes = new Set([
 ]);
 
 /** Only bounded owner-authored stock messages are shown; other upstream text stays hidden. */
-const stockMessage = (value: unknown): string | undefined => {
+const stockMessage = (value: unknown, errors: CheckoutErrors): string | undefined => {
   if (!record(value) || !Array.isArray(value.issues)) return undefined;
   const messages = value.issues
     .filter(
@@ -40,12 +46,10 @@ const stockMessage = (value: unknown): string | undefined => {
         issue.message.length <= 300,
     )
     .map((issue) => issue.message);
-  return messages.length > 0
-    ? `${messages.join(" ")} Upravte množství v košíku a objednávku odešlete znovu.`
-    : undefined;
+  return messages.length > 0 ? errors.stockAdjust(messages.join(" ")) : undefined;
 };
 
-async function json(response: Response): Promise<unknown> {
+async function json(response: Response, errors: CheckoutErrors): Promise<unknown> {
   // Never display an arbitrary upstream body, JSON parser or browser/network exception.
   if (response.status === 409) {
     const value = await response.json().catch(() => undefined);
@@ -60,41 +64,33 @@ async function json(response: Response): Promise<unknown> {
           ["PRICE_CHANGED", "SHIPPING_PRICE_CHANGED"].includes(String(issue.code)),
         )
       )
-        throw new CheckoutPriceError(
-          "Cena zboží nebo dopravy se změnila. Vraťte se do košíku, ověřte aktuální ceny a odešlete objednávku znovu.",
-        );
+        throw new CheckoutPriceError(errors.ownerPriceChanged);
       if (value.issues.some((issue) => String(issue.code) === "MARKET_UNAVAILABLE"))
-        throw new CheckoutRejectionError(
-          "Tento trh teď objednávky nepřijímá. Košík zůstává zachovaný, zkuste to prosím později.",
-        );
+        throw new CheckoutRejectionError(errors.marketClosed);
       if (value.issues.some((issue) => String(issue.code) === "NOT_OFFERED_IN_MARKET"))
-        throw new CheckoutRejectionError(
-          "Některé zboží není v nabídce tohoto trhu. Odeberte ho z košíku a objednávku odešlete znovu.",
-        );
+        throw new CheckoutRejectionError(errors.notOfferedInMarket);
       if (
         value.issues.some((issue) =>
           ["OUT_OF_STOCK", "INSUFFICIENT_STOCK"].includes(String(issue.code)),
         )
       )
-        throw new CheckoutStockError(
-          stockMessage(value) ??
-            "Zboží již není dostupné v požadovaném množství. Upravte košík a objednávku odešlete znovu.",
-        );
-      throw new CheckoutRejectionError(
-        "OntOS objednávku odmítl. Zkontrolujte položky, množství a aktuální ceny v košíku a odešlete objednávku znovu.",
-      );
+        throw new CheckoutStockError(stockMessage(value, errors) ?? errors.stockUnavailable);
+      throw new CheckoutRejectionError(errors.ownerRejected);
     }
   }
-  if (!response.ok) throw new Error(checkoutSaveError);
+  if (!response.ok) throw new Error(errors.saveUnconfirmed);
   try {
     return await response.json();
   } catch {
-    throw new Error(checkoutSaveError);
+    throw new Error(errors.saveUnconfirmed);
   }
 }
 
-export async function readOrderResponse(response: Response) {
-  const value = await json(response);
+export async function readOrderResponse(
+  response: Response,
+  errors: CheckoutErrors = cs.checkout.errors,
+) {
+  const value = await json(response, errors);
   if (
     !record(value) ||
     !["PLACED", "REPLAYED"].includes(String(value.outcome)) ||
@@ -106,7 +102,7 @@ export async function readOrderResponse(response: Response) {
     !minor(value.totalVatMinor) ||
     value.totalVatMinor > value.totalMinor
   )
-    throw new Error(checkoutSaveError);
+    throw new Error(errors.saveUnconfirmed);
   return {
     orderId: value.orderId,
     orderNumber: value.orderNumber,
@@ -115,8 +111,11 @@ export async function readOrderResponse(response: Response) {
   };
 }
 
-export async function readCheckoutQuote(response: Response) {
-  const value = await json(response);
+export async function readCheckoutQuote(
+  response: Response,
+  errors: CheckoutErrors = cs.checkout.errors,
+) {
+  const value = await json(response, errors);
   if (
     !record(value) ||
     typeof value.canCheckout !== "boolean" ||
@@ -125,6 +124,6 @@ export async function readCheckoutQuote(response: Response) {
     !value.issues.every((issue) => typeof issue === "string") ||
     (value.canCheckout && (value.priceChanged || value.issues.length > 0))
   )
-    throw new Error(checkoutSaveError);
+    throw new Error(errors.saveUnconfirmed);
   return value as { canCheckout: boolean; priceChanged: boolean; issues: string[] };
 }

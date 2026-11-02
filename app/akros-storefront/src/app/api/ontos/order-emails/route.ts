@@ -1,5 +1,6 @@
 import "server-only";
 import { getConfig } from "@/ontos/config";
+import { requestDictionary } from "@/ontos/http";
 import { shellFetch } from "@/ontos/shell-fetch";
 
 const isError = (value: unknown): value is Error =>
@@ -21,17 +22,15 @@ function toReceipt(value: unknown): Receipt | null {
   };
 }
 export async function GET(request: Request) {
+  const t = requestDictionary(request).server.orderEmails;
   const query = new URL(request.url).searchParams;
   const orderNumber = query.get("orderNumber") ?? "";
   // Only the buyer sees receipts: the dispatcher matches the order number AND the e-mail it was placed with.
   const email = (query.get("email") ?? "").trim();
   if (!/^[A-Z0-9][A-Z0-9-]{2,39}$/.test(orderNumber))
-    return Response.json({ message: "Neplatné číslo objednávky." }, { status: 400 });
+    return Response.json({ message: t.invalidNumber }, { status: 400 });
   if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
-    return Response.json(
-      { message: "Chybí e-mail, se kterým byla objednávka odeslána." },
-      { status: 400 },
-    );
+    return Response.json({ message: t.missingEmail }, { status: 400 });
   try {
     const params = new URLSearchParams({
       source: "sf-order",
@@ -53,6 +52,6 @@ export async function GET(request: Request) {
     return Response.json({ deliveries }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     console.error("[AKROS] order e-mail status", isError(error) ? error.message : "failed");
-    return Response.json({ message: "Stav e-mailů se nepodařilo ověřit." }, { status: 503 });
+    return Response.json({ message: t.unavailable }, { status: 503 });
   }
 }

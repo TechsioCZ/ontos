@@ -232,7 +232,7 @@ describe("OntOS source-of-truth boundary", () => {
           ? { count: 0, minGrossPriceMinor: null, stockOnHand: 0, units: [] }
           : { ...p.variantSummary, minGrossPriceMinor: null };
       const [product] = project({ products: [p] }).catalog.products;
-      expect(product.priceUnavailableReason).toBe("OntOS pro tuto položku nevrátil cenu.");
+      expect(product.priceUnavailableReason).toBe("missing-price");
       expect(product.detail.variants[0]).toMatchObject({ priceMinor: 0, priceTiers: [] });
     }
   });
@@ -241,12 +241,12 @@ describe("OntOS source-of-truth boundary", () => {
     zero.variantRecords[0].grossPriceMinor = 0;
     zero.variantRecords[0].priceMinor = 0;
     zero.variantSummary.minGrossPriceMinor = 0;
-    expect(project({ products: [zero] }).catalog.products[0].priceUnavailableReason).toMatch(
-      /nulová/,
+    expect(project({ products: [zero] }).catalog.products[0].priceUnavailableReason).toBe(
+      "zero-price",
     );
     const eur = { ...live(), currency: "EUR" };
-    expect(project({ products: [eur] }).catalog.products[0].priceUnavailableReason).toMatch(
-      /nepodporované měně \(EUR\)/,
+    expect(project({ products: [eur] }).catalog.products[0].priceUnavailableReason).toBe(
+      "currency:EUR",
     );
   });
   it("never derives 'skladem' from the raw ledger: UNKNOWN or untracked availability is not sellable", () => {
@@ -350,7 +350,7 @@ describe("OntOS source-of-truth boundary", () => {
     }).catalog.products[0];
     expect(unpriced).toMatchObject({
       priceMinor: 0,
-      priceUnavailableReason: "OntOS pro tuto položku nevrátil cenu.",
+      priceUnavailableReason: "missing-price",
     });
   });
   it("serves variant photos from the parent product's gallery and keeps /obrazky category images", () => {
