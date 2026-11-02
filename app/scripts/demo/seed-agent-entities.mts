@@ -87,7 +87,7 @@ const SEEDS: readonly SeedAgent[] = [
     writePolicy: 'direct',
   },
   {
-    adminEmail: 'eshop@akros.demo',
+    adminEmail: 'eshop@sroubarna.demo',
     description: 'Odpovídá na dotazy k produktům, skladu a objednávkám e-shopu. Nic nemění.',
     displayName: 'Asistent e-shopu',
     legalEntityId: '71000000-0000-4000-8000-000000000024',
@@ -96,8 +96,8 @@ const SEEDS: readonly SeedAgent[] = [
       { access: grantRead, moduleId: 'party.registry' },
       { access: grantRead, moduleId: tasksModule },
     ],
-    operatorPrincipalIds: [demoId(principalNamespace, 'akros-eshop')],
-    ownerPrincipalId: demoId(principalNamespace, 'akros-eshop'),
+    operatorPrincipalIds: [demoId(principalNamespace, 'sroubarna-eshop')],
+    ownerPrincipalId: demoId(principalNamespace, 'sroubarna-eshop'),
     writePolicy: 'read_only',
   },
 ];

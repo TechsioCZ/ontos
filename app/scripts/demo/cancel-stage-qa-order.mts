@@ -73,7 +73,7 @@ const command = Command.make(
         Config.withDefault('.scratch/demo-seed'),
       );
       const checkpoint = seedWriteCheckpoint(fs, seedCheckpointDirectory({ ...target, shellUrl: origin }, root));
-      const email = yield* Config.String('ONTOS_DEMO_SEED_EMAIL').pipe(Config.withDefault('eshop@akros.demo'));
+      const email = yield* Config.String('ONTOS_DEMO_SEED_EMAIL').pipe(Config.withDefault('eshop@sroubarna.demo'));
       const password = yield* Config.Redacted('ONTOS_DEMO_SEED_PASSWORD');
       const client = yield* connectSeedClient(target, email, password, checkpoint);
       yield* cancelStageQaOrder(client, apply);

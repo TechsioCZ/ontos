@@ -295,13 +295,14 @@ it.effect('installs missing Privacy before deriving its exact scoped Action topo
         }),
       ),
     );
-    // All named grants are exact: operational permissions, the customer-group read and only two Privacy reads.
+    // All named grants are exact: operational permissions, customer-group/market-impact reads and two Privacy reads.
     const operatorPermissions = rows.filter(
       (row) =>
         row.subjectId === operatorRole && row.resourceType === 'context_permission' && row.relation === 'role_grantee',
     );
     const expectedPermissions = [
       [commerceModule, 'customer.group.read'],
+      [commerceModule, 'market.catalog.read'],
       [merchandiseModule, 'demo.merchandise.read_all'],
       [merchandiseModule, 'demo.merchandise.write_all'],
       ['work.tasks', 'work.tasks.read_all'],
@@ -1154,8 +1155,8 @@ it('uses only explicitly linked organizational names for demo logins and preserv
     ['obchodnik.a@hanak.demo', 'Jan Novák'],
     ['obchodnik.b@hanak.demo', 'Petra Svobodová'],
     ['eshop@kavarna.demo', 'Tereza Malá'],
-    ['eshop@akros.demo', 'Správce e-shopu AKROS'],
-    ['expedice@akros.demo', 'Expedice AKROS'],
+    ['eshop@sroubarna.demo', 'Správce e-shopu ŠroubShop'],
+    ['expedice@sroubarna.demo', 'Expedice ŠroubShop'],
     ['expedice@kavarna.demo', 'Ondřej Kříž'],
   ]);
 });

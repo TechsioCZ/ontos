@@ -107,7 +107,7 @@ if (import.meta.main) {
         const password = yield* Config.Redacted('ONTOS_DEMO_SEED_PASSWORD').pipe(
           Config.withDefault(Redacted.make('password1234')),
         );
-        const email = yield* Config.String('ONTOS_DEMO_SEED_EMAIL').pipe(Config.withDefault('eshop@akros.demo'));
+        const email = yield* Config.String('ONTOS_DEMO_SEED_EMAIL').pipe(Config.withDefault('eshop@sroubarna.demo'));
         const client = yield* connectSeedClient(target, email, password, checkpoint);
         yield* seedAkrosStock(client, apply);
       }),

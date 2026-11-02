@@ -294,8 +294,6 @@ const relationshipKey = (relationship: DemoRelationship) =>
  */
 export const demoPrincipalRoleKey = (principalId: string): string => {
   const humanProfiles = {
-    'akros-eshop': 'eshop-administration',
-    'akros-expedice': 'fulfilment',
     'hanak-obchodnik-a': 'crm-sales',
     'hanak-obchodnik-b': 'crm-sales',
     'hanak-spravce': 'crm-administration',
@@ -305,6 +303,8 @@ export const demoPrincipalRoleKey = (principalId: string): string => {
     obchod: 'sales-leadership',
     obchodnik: 'sales',
     sklad: 'warehouse',
+    'sroubarna-eshop': 'eshop-administration',
+    'sroubarna-expedice': 'fulfilment',
     ucetni: 'accounting',
   };
   const literalProfiles = new Map(
@@ -806,11 +806,11 @@ const persona = (key: string, email: string, displayName: string, legalEntityId:
   role,
 });
 
-/** Existing AKROS human administrator: exact company-only Privacy catalog setup operator. */
+/** Pseudonymous human administrator: exact company-only Privacy catalog setup operator. */
 export const privacyMarketingOperator = persona(
-  'akros-eshop',
-  'eshop@akros.demo',
-  'Správce e-shopu AKROS',
+  'sroubarna-eshop',
+  'eshop@sroubarna.demo',
+  'Správce e-shopu ŠroubShop',
   akrosDemoLegalEntityId,
   'akrosAdmin',
 );
@@ -823,7 +823,7 @@ export const companyHumanAccounts = [
   persona('hanak-obchodnik-b', 'obchodnik.b@hanak.demo', 'Petra Svobodová', crmDemoLegalEntityId, 'crmRep'),
   persona('kavarna-eshop', 'eshop@kavarna.demo', 'Tereza Malá', eshopDemoLegalEntityId, 'eshopAdmin'),
   privacyMarketingOperator,
-  persona('akros-expedice', 'expedice@akros.demo', 'Expedice AKROS', akrosDemoLegalEntityId, 'fulfilment'),
+  persona('sroubarna-expedice', 'expedice@sroubarna.demo', 'Expedice ŠroubShop', akrosDemoLegalEntityId, 'fulfilment'),
   persona('kavarna-expedice', 'expedice@kavarna.demo', 'Ondřej Kříž', eshopDemoLegalEntityId, 'fulfilment'),
 ] as const;
 

@@ -2,7 +2,7 @@
 /**
  * Stage-only, reviewed e-shop market grants: plan (read-only) → apply (exact reviewed plan) → verify.
  *
- * Additive SpiceDB policy for the e-shop personas, the AKROS storefront BFF and the Market owner gateway, plus the
+ * Additive SpiceDB policy for the e-shop personas, the ŠroubShop storefront BFF and the Market owner gateway, plus the
  * static containment edges the Market and Storefront Registry resource permissions need (each company's Market
  * catalogue root and the two registered storefront applications). Runs inside the stage app container with the
  * supervisor environment; identity, membership and other modules stay owned by their installers.
@@ -71,9 +71,9 @@ export const eshopStorefronts = [
 ] as const;
 
 export const eshopPersonaEmails = [
-  'eshop@akros.demo',
+  'eshop@sroubarna.demo',
   'eshop@kavarna.demo',
-  'expedice@akros.demo',
+  'expedice@sroubarna.demo',
   'expedice@kavarna.demo',
 ] as const;
 
@@ -216,9 +216,9 @@ const marketRoot = (legalEntityId: string) => ({
 });
 
 export const eshopMarketPermissionChecks = (): readonly EshopPermissionCheck[] => {
-  const akrosAdmin = principalIdOf('eshop@akros.demo');
+  const akrosAdmin = principalIdOf('eshop@sroubarna.demo');
   const kavarnaAdmin = principalIdOf('eshop@kavarna.demo');
-  const akrosFulfilment = principalIdOf('expedice@akros.demo');
+  const akrosFulfilment = principalIdOf('expedice@sroubarna.demo');
   const storefront = akrosStorefrontPrincipal.principalId;
   const kavarnaGateway = kavarnaMarketAuthorityPrincipal.principalId;
   const create = 'commerce.market-catalog.create-market';
@@ -232,42 +232,42 @@ export const eshopMarketPermissionChecks = (): readonly EshopPermissionCheck[] =
     },
     {
       expected: false,
-      label: "Kavárna's Market gateway stays out of AKROS storefronts",
+      label: "Kavárna's Market gateway stays out of ŠroubShop storefronts",
       permission: 'access',
       principalId: kavarnaGateway,
       resource: moduleObject(akrosDemoLegalEntityId, storefrontRegistryModule),
     },
     {
       expected: true,
-      label: 'AKROS admin opens Market',
+      label: 'ŠroubShop admin opens Market',
       permission: 'access',
       principalId: akrosAdmin,
       resource: moduleObject(akrosDemoLegalEntityId, marketModule),
     },
     {
       expected: true,
-      label: 'AKROS admin creates Markets',
+      label: 'ŠroubShop admin creates Markets',
       permission: 'execute',
       principalId: akrosAdmin,
       resource: actionObject(create, akrosDemoLegalEntityId),
     },
     {
       expected: true,
-      label: 'AKROS admin writes its Market root',
+      label: 'ŠroubShop admin writes its Market root',
       permission: 'write',
       principalId: akrosAdmin,
       resource: marketRoot(akrosDemoLegalEntityId),
     },
     {
       expected: false,
-      label: 'AKROS admin cannot write the Kavárna Market root',
+      label: 'ŠroubShop admin cannot write the Kavárna Market root',
       permission: 'write',
       principalId: akrosAdmin,
       resource: marketRoot(eshopDemoLegalEntityId),
     },
     {
       expected: false,
-      label: 'AKROS admin cannot create Kavárna Markets',
+      label: 'ŠroubShop admin cannot create Kavárna Markets',
       permission: 'execute',
       principalId: akrosAdmin,
       resource: actionObject(create, eshopDemoLegalEntityId),
@@ -288,35 +288,35 @@ export const eshopMarketPermissionChecks = (): readonly EshopPermissionCheck[] =
     },
     {
       expected: true,
-      label: 'AKROS fulfilment reads Market',
+      label: 'ŠroubShop fulfilment reads Market',
       permission: 'access',
       principalId: akrosFulfilment,
       resource: moduleObject(akrosDemoLegalEntityId, marketModule),
     },
     {
       expected: false,
-      label: 'AKROS fulfilment cannot retire Markets',
+      label: 'ŠroubShop fulfilment cannot retire Markets',
       permission: 'execute',
       principalId: akrosFulfilment,
       resource: actionObject('commerce.market-catalog.retire-market', akrosDemoLegalEntityId),
     },
     {
       expected: true,
-      label: 'AKROS storefront resolves Markets',
+      label: 'ŠroubShop storefront resolves Markets',
       permission: 'access',
       principalId: storefront,
       resource: moduleObject(akrosDemoLegalEntityId, marketModule),
     },
     {
       expected: false,
-      label: 'AKROS storefront cannot create Markets',
+      label: 'ŠroubShop storefront cannot create Markets',
       permission: 'execute',
       principalId: storefront,
       resource: actionObject(create, akrosDemoLegalEntityId),
     },
     {
       expected: true,
-      label: 'AKROS admin sees the Market retirement impact',
+      label: 'ŠroubShop admin sees the Market retirement impact',
       permission: 'access',
       principalId: akrosAdmin,
       resource: {

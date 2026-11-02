@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** LOCAL ONLY: restore the existing AKROS company-admin role; never grant tenant administration. */
+/** LOCAL ONLY: restore the existing ŠroubShop company-admin role; never grant tenant administration. */
 import { NodeServices } from '@effect/platform-node';
 import { Console, Effect } from 'effect';
 
@@ -10,7 +10,7 @@ import { principalRelationships } from './permissions.mts';
 const program = Effect.gen(function* repairAkrosCompanyAdministrator() {
   const relationships = yield* Effect.try(() =>
     principalRelationships(
-      demoId('core.principal', 'akros-eshop'),
+      demoId('core.principal', 'sroubarna-eshop'),
       { companyRole: 'admin', label: 'Company administrator', modules: {} },
       [],
       akrosDemoLegalEntityId,
@@ -19,7 +19,7 @@ const program = Effect.gen(function* repairAkrosCompanyAdministrator() {
     ),
   );
   yield* repairAdministratorRelationships(relationships);
-  yield* Console.log('AKROS company-admin role restored; no tenant-admin grant, identities or records reset.');
+  yield* Console.log('ŠroubShop company-admin role restored; no tenant-admin grant, identities or records reset.');
 }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 if (import.meta.main) {

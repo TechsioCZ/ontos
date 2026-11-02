@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Additive workforce fixtures for the Hanák/AKROS pitch. Never resets an agenda or grants permissions.
+/** Additive workforce fixtures for the Hanák/ŠroubShop pitch. Never resets an agenda or grants permissions.
  * Usage: node scripts/demo/seed-company-employees.mts <hanak|akros> [--apply]
  * Without --apply, validates existing bindings and reports missing employees without writing.
  */
@@ -17,20 +17,20 @@ import { seedCheckpointDirectory, seedWriteCheckpoint } from './seed-checkpoint.
 
 const companies = {
   akros: {
-    email: 'eshop@akros.demo',
+    email: 'eshop@sroubarna.demo',
     employees: [
       {
         department: 'E-shop',
-        email: 'eshop@akros.demo',
-        fullName: 'Správce e-shopu AKROS',
-        key: 'akros-eshop',
+        email: 'eshop@sroubarna.demo',
+        fullName: 'Správce e-shopu ŠroubShop',
+        key: 'sroubarna-eshop',
         role: 'SUPPORT',
       },
       {
         department: 'Sklad a expedice',
-        email: 'expedice@akros.demo',
-        fullName: 'Expedice AKROS',
-        key: 'akros-expedice',
+        email: 'expedice@sroubarna.demo',
+        fullName: 'Expedice ŠroubShop',
+        key: 'sroubarna-expedice',
         role: 'WAREHOUSE',
       },
     ],

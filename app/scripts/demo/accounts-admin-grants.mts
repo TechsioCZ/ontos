@@ -29,7 +29,7 @@ export const administrators = [
   { legalEntityId: rentalDemoLegalEntityId, principalId: '72000000-0000-4000-8000-000000000021' },
   { legalEntityId: crmDemoLegalEntityId, principalId: demoId(principalResource, 'hanak-spravce') },
   { legalEntityId: eshopDemoLegalEntityId, principalId: demoId(principalResource, 'kavarna-eshop') },
-  { legalEntityId: akrosDemoLegalEntityId, principalId: demoId(principalResource, 'akros-eshop') },
+  { legalEntityId: akrosDemoLegalEntityId, principalId: demoId(principalResource, 'sroubarna-eshop') },
 ] as const;
 
 export const administratorRelationships = (): readonly BootstrapRelationship[] =>
