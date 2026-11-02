@@ -9,8 +9,15 @@ import { associateStorefrontAction } from './src/actions/associate-storefront.ac
 import { completeMarketRetirementWorker } from './src/workers/complete-market-retirement.worker.ts';
 import { createMarketAction } from './src/actions/create-market.action.ts';
 import { projectAssociationContainmentWorker } from './src/workers/project-association-containment.worker.ts';
+import { projectMarketActivatedToSearchWorker } from './src/workers/project-market-activated-to-search.worker.ts';
 import { projectMarketContainmentWorker } from './src/workers/project-market-containment.worker.ts';
+import { projectMarketCreatedToSearchWorker } from './src/workers/project-market-created-to-search.worker.ts';
+import { projectMarketDefinitionRevisedToSearchWorker } from './src/workers/project-market-definition-revised-to-search.worker.ts';
+import { projectMarketRetiredToSearchWorker } from './src/workers/project-market-retired-to-search.worker.ts';
+import { projectMarketSuspendedToSearchWorker } from './src/workers/project-market-suspended-to-search.worker.ts';
+import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
 import { removeStorefrontAssociationAction } from './src/actions/remove-storefront-association.action.ts';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 import { retireMarketAction } from './src/actions/retire-market.action.ts';
 import { reviseMarketDefinitionAction } from './src/actions/revise-market-definition.action.ts';
 import { reviseStorefrontAssociationAction } from './src/actions/revise-storefront-association.action.ts';
@@ -24,6 +31,7 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
     associateStorefrontAction,
     createMarketAction,
     removeStorefrontAssociationAction,
+    requestSearchRebuildAction,
     retireMarketAction,
     reviseMarketDefinitionAction,
     reviseStorefrontAssociationAction,
@@ -59,6 +67,7 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
     },
     search: {
       // <generated-module-registration-search>
+      markets: () => import('./src/api/markets-search-client.ts'),
       // </generated-module-registration-search>
     },
   },
@@ -67,7 +76,13 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
     // <generated-module-registration-workers>
     completeMarketRetirementWorker,
     projectAssociationContainmentWorker,
+    projectMarketActivatedToSearchWorker,
     projectMarketContainmentWorker,
+    projectMarketCreatedToSearchWorker,
+    projectMarketDefinitionRevisedToSearchWorker,
+    projectMarketRetiredToSearchWorker,
+    projectMarketSuspendedToSearchWorker,
+    rebuildSearchWorker,
     // </generated-module-registration-workers>
   ],
 });

@@ -50,6 +50,11 @@ export {
 export type { ReviseStorefrontAssociationActionClientOptions } from './revise-storefront-association-action-client.ts';
 export { executeSuspendMarket, executeSuspendMarketWithAuthorization } from './suspend-market-action-client.ts';
 export type { SuspendMarketActionClientOptions } from './suspend-market-action-client.ts';
+export {
+  executeRequestSearchRebuild,
+  executeRequestSearchRebuildWithAuthorization,
+} from './request-search-rebuild-action-client.ts';
+export type { RequestSearchRebuildActionClientOptions } from './request-search-rebuild-action-client.ts';
 // </generated-action-http-client-exports>
 export {
   CurrentMarketCatalogApi,

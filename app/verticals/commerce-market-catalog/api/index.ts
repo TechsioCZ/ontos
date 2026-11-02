@@ -6,6 +6,8 @@ import {
   ActionRuntime,
   ContextAccessLive,
   CorePersistenceLive,
+  CoreSearchQueryRuntimeLive,
+  CoreSearchProjectionStoreLive,
   DatabaseConfigLive,
   GatewayAssertionRedemptionService,
   ReadRuntime,
@@ -45,8 +47,10 @@ import { eligibleMarketTuplesReadApiLive } from './eligible-market-tuples-read-s
 import { marketAdministrationReadApiLive } from './market-administration-read-server.ts';
 import { marketHistoryReadApiLive } from './market-history-read-server.ts';
 import { marketRetirementStatusReadApiLive } from './market-retirement-status-read-server.ts';
+import { marketsReadApiLive } from './markets-search-server.ts';
 import { pricingCurrentMarketEvidenceReadApiLive } from './pricing-current-market-evidence-read-server.ts';
 import { removeStorefrontAssociationActionApiLive } from './remove-storefront-association-action-server.ts';
+import { requestSearchRebuildActionApiLive } from './request-search-rebuild-action-server.ts';
 import { resolveCommerceMarketReadApiLive } from './resolve-commerce-market-read-server.ts';
 import { retireMarketActionApiLive } from './retire-market-action-server.ts';
 import { reviseMarketDefinitionActionApiLive } from './revise-market-definition-action-server.ts';
@@ -141,6 +145,13 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(databaseIdentitiesLive),
 );
 
+const marketSearchQueryRuntimeLive = CoreSearchQueryRuntimeLive.pipe(
+  Layer.provide(CoreSearchProjectionStoreLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
+);
+
 const productionGatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
   Layer.provide(GatewayAssertionRedemptionDatabaseLive),
   Layer.provide(DatabaseConfigLive),
@@ -173,8 +184,13 @@ export const makeCommerceMarketCatalogApiRuntime = (
     marketAdministrationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     marketHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     marketRetirementStatusReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    marketsReadApiLive.pipe(
+      GovernedReadLayer.provide(governedReadRuntimeLive),
+      GovernedReadLayer.provide(marketSearchQueryRuntimeLive),
+    ),
     pricingCurrentMarketEvidenceReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     removeStorefrontAssociationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    requestSearchRebuildActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     resolveCommerceMarketReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     retireMarketActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     reviseMarketDefinitionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

@@ -369,6 +369,7 @@ describe('Commerce Market public contracts', () => {
       { actionKey: 'commerce.market-catalog.associate-storefront', provisioning: 'explicit' },
       { actionKey: 'commerce.market-catalog.create-market', provisioning: 'explicit' },
       { actionKey: 'commerce.market-catalog.remove-storefront-association', provisioning: 'explicit' },
+      { actionKey: 'commerce.market-catalog.request-search-rebuild', provisioning: 'explicit' },
       { actionKey: 'commerce.market-catalog.retire-market', provisioning: 'explicit' },
       { actionKey: 'commerce.market-catalog.revise-market-definition', provisioning: 'explicit' },
       { actionKey: 'commerce.market-catalog.revise-storefront-association', provisioning: 'explicit' },

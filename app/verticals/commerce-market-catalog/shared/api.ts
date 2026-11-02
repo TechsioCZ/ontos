@@ -16,8 +16,10 @@ import { EligibleMarketTuplesApi } from './apis/eligible-market-tuples.ts';
 import { MarketAdministrationApi } from './apis/market-administration.ts';
 import { MarketHistoryApi } from './apis/market-history.ts';
 import { MarketRetirementStatusApi } from './apis/market-retirement-status.ts';
+import { MarketsSearchApi } from './apis/markets-search.ts';
 import { PricingCurrentMarketEvidenceApi } from './apis/pricing-current-market-evidence.ts';
 import { RemoveStorefrontAssociationActionApi } from './apis/remove-storefront-association-action.ts';
+import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
 import { ResolveCommerceMarketApi } from './apis/resolve-commerce-market.ts';
 import { RetireMarketActionApi } from './apis/retire-market-action.ts';
 import { ReviseMarketDefinitionActionApi } from './apis/revise-market-definition-action.ts';
@@ -60,8 +62,10 @@ export const commerceMarketCatalogApi = HttpApi.make('CommerceMarketCatalogApi')
   .addHttpApi(MarketAdministrationApi)
   .addHttpApi(MarketHistoryApi)
   .addHttpApi(MarketRetirementStatusApi)
+  .addHttpApi(MarketsSearchApi)
   .addHttpApi(PricingCurrentMarketEvidenceApi)
   .addHttpApi(RemoveStorefrontAssociationActionApi)
+  .addHttpApi(RequestSearchRebuildActionApi)
   .addHttpApi(ResolveCommerceMarketApi)
   .addHttpApi(RetireMarketActionApi)
   .addHttpApi(ReviseMarketDefinitionActionApi)

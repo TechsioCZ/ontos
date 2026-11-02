@@ -10,12 +10,14 @@
     "./api/pricing-current-market-evidence-client": "./src/api/pricing-current-market-evidence-client.ts",
     "./api/verify-market-eligibility-v1": "./shared/apis/verify-market-eligibility-v1.ts",
     "./api/verify-market-eligibility-v1/client": "./src/api/verify-market-eligibility-v1-client.ts",
+    "./outbox-worker-host": "./src/worker-host/entry.ts",
     "./outbox/commerce-market-catalog-market-activated-v1": "./shared/outbox/commerce-market-catalog-market-activated-v1.ts",
     "./outbox/commerce-market-catalog-market-created-v1": "./shared/outbox/commerce-market-catalog-market-created-v1.ts",
     "./outbox/commerce-market-catalog-market-definition-revised-v1": "./shared/outbox/commerce-market-catalog-market-definition-revised-v1.ts",
     "./outbox/commerce-market-catalog-market-retired-v1": "./shared/outbox/commerce-market-catalog-market-retired-v1.ts",
     "./outbox/commerce-market-catalog-market-retirement-requested-v1": "./shared/outbox/commerce-market-catalog-market-retirement-requested-v1.ts",
     "./outbox/commerce-market-catalog-market-suspended-v1": "./shared/outbox/commerce-market-catalog-market-suspended-v1.ts",
+    "./outbox/commerce-market-catalog-search-rebuild-requested-v1": "./shared/outbox/commerce-market-catalog-search-rebuild-requested-v1.ts",
     "./outbox/commerce-market-catalog-storefront-associated-v1": "./shared/outbox/commerce-market-catalog-storefront-associated-v1.ts",
     "./outbox/commerce-market-catalog-storefront-association-removed-v1": "./shared/outbox/commerce-market-catalog-storefront-association-removed-v1.ts",
     "./outbox/commerce-market-catalog-storefront-association-revised-v1": "./shared/outbox/commerce-market-catalog-storefront-association-revised-v1.ts",
@@ -24,8 +26,7 @@
     "./resources/market-definition-revision": "./shared/resources/market-definition-revision.ts",
     "./resources/storefront-association": "./shared/resources/storefront-association.ts",
     "./Route": "./src/federation-entry.tsx",
-    "./testing/market-revision-native": "./tests/fixtures/market-revision-native.ts",
-    "./outbox-worker-host": "./src/worker-host/entry.ts"
+    "./testing/market-revision-native": "./tests/fixtures/market-revision-native.ts"
   },
   "scripts": {
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical commerce-market-catalog --target dist && ultramodern-create ultramodern public-surface --app commerce-market-catalog --target dist && modern deploy --skip-build --deploy-target node",

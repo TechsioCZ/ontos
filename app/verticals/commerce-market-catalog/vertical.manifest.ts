@@ -5,6 +5,7 @@ import {
   defineOntosModuleManifest,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
+  ShellSearchContributionSchema,
 } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
@@ -24,6 +25,7 @@ import { marketResourceDescriptor } from './shared/resources/market.ts';
 import { MarketRetirementStatusApi } from './shared/apis/market-retirement-status.ts';
 import { PricingCurrentMarketEvidenceApi } from './shared/apis/pricing-current-market-evidence.ts';
 import { removeStorefrontAssociationAction } from './src/actions/remove-storefront-association.action.ts';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 import { ResolveCommerceMarketApi } from './shared/apis/resolve-commerce-market.ts';
 import { retireMarketAction } from './src/actions/retire-market.action.ts';
 import { reviseMarketDefinitionAction } from './src/actions/revise-market-definition.action.ts';
@@ -41,15 +43,18 @@ const navigationContribution = (value: NavigationContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellNavigationContributionSchema)(value));
 const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
+const searchContribution = (value: typeof ShellSearchContributionSchema.Encoded) =>
+  Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
 
 const moduleKey = 'commerce.market-catalog';
+const moduleAccessPermission = 'module.access';
 const eshopsPageKey = 'commerce.market-catalog.page.eshops';
 const marketDetailPageKey = 'commerce.market-catalog.page.market-detail';
 
 /** The E-shopy page, reached from the navigation: open with module access; reads and Actions decide the rest. */
 const eshopsEntrypoint: PageContributionInput['entrypoint'] = {
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'context_permission', permission: moduleAccessPermission },
   entrypointKey: eshopsPageKey,
   moduleKey,
   role: 'page',
@@ -77,6 +82,7 @@ export const commerceMarketCatalogManifest: OntosModuleManifestInput = defineOnt
       associateStorefrontAction,
       createMarketAction,
       removeStorefrontAssociationAction,
+      requestSearchRebuildAction,
       retireMarketAction,
       reviseMarketDefinitionAction,
       reviseStorefrontAssociationAction,
@@ -121,6 +127,12 @@ export const commerceMarketCatalogManifest: OntosModuleManifestInput = defineOnt
     ],
     search: [
       // <generated-module-manifest-search>
+      {
+        accessFiltering: 'resource_permission',
+        key: 'commerce.market-catalog.markets',
+        owningModuleId: moduleKey,
+        resourceType: 'commerce.market-catalog.market',
+      },
       // </generated-module-manifest-search>
     ],
     shellContributions: {
@@ -152,7 +164,7 @@ export const commerceMarketCatalogManifest: OntosModuleManifestInput = defineOnt
           contributionKey: marketDetailPageKey,
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
             entrypointKey: marketDetailPageKey,
             moduleKey,
             role: 'page',
@@ -174,6 +186,18 @@ export const commerceMarketCatalogManifest: OntosModuleManifestInput = defineOnt
       resourceDetails: [],
       search: [
         // <generated-module-shell-search>
+        searchContribution({
+          contributionKey: 'commerce.market-catalog.search.markets',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
+            entrypointKey: 'commerce.market-catalog.search.markets',
+            moduleKey,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'commerce.market-catalog.markets',
+        }),
         // </generated-module-shell-search>
       ],
       timelines: [],
