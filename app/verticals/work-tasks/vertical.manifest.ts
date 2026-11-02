@@ -5,6 +5,7 @@ import {
   defineOntosModuleManifest,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
+  ShellSearchContributionSchema,
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
@@ -12,6 +13,7 @@ import { AgentReviewApi } from './shared/apis/agent-review.ts';
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
 import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/ukoly/page.tsx';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 import { taskCollectionResourceDescriptor } from './shared/resources/task-collection.ts';
 import { taskResourceDescriptor } from './shared/resources/task.ts';
 import { workTasksReadAllPermission } from './shared/permissions/work-tasks-read-all.ts';
@@ -27,7 +29,12 @@ const navigationContribution = (value: NavigationContributionInput) =>
 const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
 
+const searchContribution = (value: typeof ShellSearchContributionSchema.Encoded) =>
+  Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
+
+const moduleAccessPermission = 'module.access';
 const moduleKey = 'work.tasks';
+const searchEntrypointKey = 'work.tasks.search.tasks';
 const recordsPageKey = 'work.tasks.page.records';
 
 export const workTasksManifest = defineOntosModuleManifest({
@@ -48,6 +55,7 @@ export const workTasksManifest = defineOntosModuleManifest({
     actions: [
       // <generated-module-manifest-actions>
       applyCommandAction,
+      requestSearchRebuildAction,
       // </generated-module-manifest-actions>
     ],
     api: {
@@ -81,6 +89,12 @@ export const workTasksManifest = defineOntosModuleManifest({
     ],
     search: [
       // <generated-module-manifest-search>
+      {
+        accessFiltering: 'resource_permission',
+        key: 'work.tasks.tasks',
+        owningModuleId: moduleKey,
+        resourceType: 'work.tasks.task',
+      },
       // </generated-module-manifest-search>
     ],
     shellContributions: {
@@ -91,7 +105,7 @@ export const workTasksManifest = defineOntosModuleManifest({
           contributionKey: 'work.tasks.navigation.records',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
             entrypointKey: recordsPageKey,
             moduleKey,
             role: 'page',
@@ -113,7 +127,7 @@ export const workTasksManifest = defineOntosModuleManifest({
           contributionKey: recordsPageKey,
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
             entrypointKey: recordsPageKey,
             moduleKey,
             role: 'page',
@@ -135,6 +149,18 @@ export const workTasksManifest = defineOntosModuleManifest({
       resourceDetails: [],
       search: [
         // <generated-module-shell-search>
+        searchContribution({
+          contributionKey: searchEntrypointKey,
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
+            entrypointKey: searchEntrypointKey,
+            moduleKey,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'work.tasks.tasks',
+        }),
         // </generated-module-shell-search>
       ],
       timelines: [],

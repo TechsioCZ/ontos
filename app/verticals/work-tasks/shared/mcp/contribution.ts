@@ -2,6 +2,7 @@
 import { OntosMcpHidden, defineOntosMcpContribution } from '@app/core-runtime';
 
 export const workTasksMcpContribution = defineOntosMcpContribution({
+  actions: { 'request-search-rebuild': 'hidden' },
   approvalReview: { read: 'agent-review' },
   approvals: true,
   commandFieldLabels: {

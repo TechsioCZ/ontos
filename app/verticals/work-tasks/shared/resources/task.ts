@@ -22,7 +22,7 @@ export const taskResourceDescriptor = {
     graphVisible: false,
     linkable: false,
     mediaAttachable: false,
-    searchable: false,
+    searchable: true,
     timelineVisible: false,
   },
   description: 'Task resource.',
