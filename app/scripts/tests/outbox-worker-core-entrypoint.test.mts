@@ -46,6 +46,15 @@ it('routes hosted worker enrollment through its owning subpath, not the focused 
     ...['commerce-customer-context', 'price-group-catalog', 'privacy', 'finance-billing', 'inventory'].map(
       (owner) => `verticals/${owner}/src/worker-host/entry.ts`,
     ),
+    ...[
+      'crm',
+      'facility-operations',
+      'legal-agreements',
+      'property-leasing',
+      'property-portfolio',
+      'sales-pipeline',
+      'work-tasks',
+    ].map((owner) => `verticals/${owner}/src/worker-host/layer.ts`),
   ];
   for (const filename of workerRoots) {
     const source = readFileSync(new URL(`../../${filename}`, import.meta.url), 'utf-8');
@@ -65,6 +74,8 @@ it('routes hosted worker enrollment through its owning subpath, not the focused 
     }
   }
   expect(entrypoint.has('makeDatabaseIdentityEnrollmentLive')).toBe(true);
+  expect(entrypoint.has('CoreSearchQueryRuntime')).toBe(true);
+  expect(entrypoint.has('CoreSearchProjectionInvalid')).toBe(true);
   expect(entrypoint.has('defineDatabaseIdentityEnrollment')).toBe(false);
 });
 

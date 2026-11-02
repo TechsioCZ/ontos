@@ -61,6 +61,12 @@ import {
   withExactDependencies,
 } from '../shared.mts';
 import { governedApiBinding, hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
+import {
+  governedReadSupport,
+  governedSupportImportOwner,
+  governedSupportImports,
+  isGovernedSupportLayer,
+} from './runtime-support.mts';
 import { planActionBoundaryScaffold, renderActionGatewayClient } from '../microvertical-action-boundary/scaffold.mts';
 import {
   hasGeneratedOperationGatewayContract,
@@ -160,45 +166,6 @@ const directTokenStringProperty = (tokens: readonly GovernedToken[], property: s
 };
 
 const identityTokenKinds = new Set([SyntaxKind.Identifier, SyntaxKind.StringLiteral]);
-
-const governedPrincipalImport =
-  "import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';";
-const governedRedemptionImport =
-  "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';";
-const governedRedemptionDatabaseImport =
-  "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive, GatewayAssertionRedemptionDatabaseLive } from './auth/gateway-assertion-redemption.ts';";
-const governedRedemptionPgClientImport =
-  "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive, GatewayAssertionRedemptionDatabaseLive, GatewayAssertionPgClientLive } from './auth/gateway-assertion-redemption.ts';";
-const governedSupportImports = [governedPrincipalImport, governedRedemptionImport] as const;
-type GovernedSupportImport = (typeof governedSupportImports)[number];
-/** Each supported entry and the generated owner import it satisfies. */
-const supportedGovernedImports = [
-  [governedPrincipalImport, governedPrincipalImport],
-  [governedRedemptionImport, governedRedemptionImport],
-  [governedRedemptionDatabaseImport, governedRedemptionImport],
-  [governedRedemptionPgClientImport, governedRedemptionImport],
-] as const;
-
-/** Formatter output may wrap or reorder bindings; the module and exact binding set stay fixed. */
-const supportImportIdentity = (candidate: string): string | undefined => {
-  const match = /^import\s*\{(?<bindings>[^}]+)\}\s*from\s*'(?<module>[^']+)'\s*;$/u.exec(candidate);
-  if (match?.groups === undefined) {
-    return undefined;
-  }
-  const bindings = (match.groups['bindings'] ?? '')
-    .split(',')
-    .map((binding) => binding.trim().replaceAll(/\s+/gu, ' '))
-    .filter(Boolean)
-    .toSorted();
-  return `${match.groups['module']}:${bindings.join(',')}`;
-};
-
-const governedSupportImportOwner = (candidate: string): GovernedSupportImport | undefined => {
-  const identity = supportImportIdentity(candidate);
-  return supportedGovernedImports.find(
-    ([entry]) => identity !== undefined && supportImportIdentity(entry) === identity,
-  )?.[1];
-};
 
 const compositionIdentity = (source: string): string | undefined => {
   for (const pattern of [
@@ -951,13 +918,23 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
         }
       }
       if (next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START)) {
-        next = insertSortedSlotIdempotently(
+        const supportLayers = readGeneratedSlotEntries(
           next,
           GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
           GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
-          'GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive)),',
-          (candidate) => candidate.startsWith('GovernedReadLayer.provide(') && candidate.endsWith('),'),
         );
+        if (supportLayers.length > 1 || supportLayers.some((entry) => !isGovernedSupportLayer(entry))) {
+          return raiseScaffoldFailure('generated owner slot contains unsupported governed runtime support layers');
+        }
+        if (supportLayers.length === 0) {
+          next = insertSortedSlotIdempotently(
+            next,
+            GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+            GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+            governedReadSupport,
+            isGovernedSupportLayer,
+          );
+        }
       }
       return next;
     });

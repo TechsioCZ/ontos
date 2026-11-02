@@ -56,6 +56,7 @@ export {
 export { CoreSearchProjectionStoreLive } from '../search/persistence.ts';
 export {
   CoreSearchProjectionDocumentSchema,
+  CoreSearchProjectionInvalid,
   CoreSearchProjectionMutationSchema,
   CoreSearchProjectionStore,
   CoreSearchResourceRefSchema,

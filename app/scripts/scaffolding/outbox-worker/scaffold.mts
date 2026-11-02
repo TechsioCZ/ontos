@@ -2,6 +2,7 @@ import { Effect, FileSystem, Match, Option, Predicate, Schema } from 'effect';
 import { parseSync } from 'oxc-parser';
 
 import { createCodesmithGenerator } from '../generator-adapter.mts';
+import { planCorePeopleSearchWorker } from '../core-people/scaffold.mts';
 import {
   MODULE_REGISTRATION_IMPORT_SLOT_END,
   MODULE_REGISTRATION_IMPORT_SLOT_START,
@@ -24,6 +25,7 @@ import {
   requireCanonicalSlug,
   requireTopic,
   resolveContainedPath,
+  scaffoldFailure,
   toCamelCase,
   toPascalCase,
   topicToSlug,
@@ -288,7 +290,8 @@ export const outboxWorkers = Object.freeze([
 const renderWorkerHostLayer = (consumer: OntosVerticalMetadata): string => `${OUTBOX_WORKER_HOST_HEADER}
 // @ontos-outbox-worker-host-owner ${consumer.moduleId}
 import { Layer } from 'effect';
-import { defineDatabaseIdentityEnrollment, makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
+import { makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import { OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
 
 export { CorePersistenceLive as outboxWorkerCorePersistenceLive } from '@app/core-runtime/outbox/worker';
@@ -733,4 +736,10 @@ const planOutboxWorkerScaffoldEffect = (
     return { mutations, result: { registryPath, workerPath } };
   });
 
-export default createCodesmithGenerator(planOutboxWorkerScaffoldEffect);
+export default createCodesmithGenerator((workspaceRoot: string, config: OutboxWorkerScaffoldConfig) =>
+  config.vertical === 'core'
+    ? planCorePeopleSearchWorker(workspaceRoot, config).pipe(
+        Effect.mapError((cause) => scaffoldFailure('Core people worker generation failed', cause)),
+      )
+    : planOutboxWorkerScaffoldEffect(workspaceRoot, config),
+);

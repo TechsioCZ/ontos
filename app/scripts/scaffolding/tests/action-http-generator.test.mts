@@ -20,9 +20,11 @@ import {
   renderActionHttpContract,
   renderActionHttpProblems,
 } from '../action-http/scaffold.mts';
+import { governedDatabaseSupport, governedPgClientSupport } from '../governed-contribution/runtime-support.mts';
 import {
   GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
   GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
+  GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
   GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
   GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
   GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
@@ -65,6 +67,7 @@ const vertical = {
   topologyEntry: {},
 } satisfies OntosVerticalMetadata;
 const appRoot = path.resolve(import.meta.dirname, '../../..');
+const normalizeFormatting = (source: string) => source.replaceAll(/\s+/gu, '').replaceAll(/,(?=\))/gu, '');
 
 it('accepts Schema.Never as an Action with no domain errors without accepting untagged error values', () => {
   expect(collectDomainErrors(Schema.Never.ast)).toEqual([]);
@@ -509,6 +512,59 @@ const withPublishedClientFixture = (shared: boolean) => (run: (root: string) => 
   withCreatedFixture(Effect.promise(() => mkdtemp(path.join(tmpdir(), 'ontos-published-action-client-'))))((root) =>
     initializePublishedClientFixture(root, shared).pipe(Effect.andThen(run(root))),
   );
+
+for (const [bindings, durableSupport] of [
+  ['GatewayAssertionRedemptionDatabaseLive', governedDatabaseSupport],
+  ['GatewayAssertionRedemptionDatabaseLive, GatewayAssertionPgClientLive', governedPgClientSupport],
+] as const) {
+  it.live(
+    `Action and read generation preserve durable authentication support: ${bindings}`,
+    Effect.fn(function* preserveDurableAuthenticationSupport() {
+      yield* withPublishedClientFixture(false)(
+        Effect.fn(function* durableAuthenticationFixture(root) {
+          yield* scaffoldHttp(root);
+          const runtimePath = path.join(root, OWNER_DIRECTORY, RUNTIME_ROOT_PATH);
+          const runtime = yield* Effect.promise(() => readFile(runtimePath, 'utf-8'));
+          const canonicalImport =
+            "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';";
+          const mergedImport = `import { ${bindings}, GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';`;
+          expect(runtime).toContain(canonicalImport);
+          const layerStart = runtime.indexOf(GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START);
+          const layerEnd = runtime.indexOf(GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END);
+          const durable = `${runtime.slice(0, layerStart + GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START.length)}
+${durableSupport}
+${runtime.slice(layerEnd)}`.replace(canonicalImport, mergedImport);
+          yield* Effect.promise(() => writeFile(runtimePath, durable));
+          yield* scaffoldFixture(root, 'module-api', [
+            VERTICAL_FLAG,
+            OWNER_SLUG,
+            '--name',
+            'durable-read',
+            AUTHORIZATION_FLAG,
+            'authenticated_principal',
+          ]);
+          yield* scaffoldHttp(root);
+          const updated = yield* Effect.promise(() => readFile(runtimePath, 'utf-8'));
+          expect(
+            generatedSlotContainsExactEntry(
+              updated,
+              GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+              GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+              mergedImport,
+            ),
+          ).toBe(true);
+          const supportLayers = readGeneratedSlotEntries(
+            updated,
+            GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+            GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+          );
+          expect(supportLayers).toHaveLength(1);
+          expect(normalizeFormatting(supportLayers[0] ?? '')).toBe(normalizeFormatting(durableSupport));
+        }),
+      );
+    }),
+  );
+}
 
 it.live(
   'Action HTTP composes a complete API-only module with one real Action runtime binding',

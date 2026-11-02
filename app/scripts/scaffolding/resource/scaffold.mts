@@ -29,13 +29,24 @@ const renderResource = (vertical: Pick<OntosVerticalMetadata, 'moduleId'>, resou
   const type = toPascalCase(resource);
   const descriptor = `${toCamelCase(resource)}ResourceDescriptor`;
   const resourceType = `${vertical.moduleId}.${resource}`;
+  let resourceIdValidation = 'Schema.isMinLength(1), Schema.isMaxLength(300)';
+  let resourceIdBrand = '';
+  if (core) {
+    resourceIdValidation = 'Schema.isUUID()';
+    resourceIdBrand = ".pipe(Schema.brand('LegalEntityId'))";
+    if (resource === 'person') {
+      resourceIdValidation =
+        "Schema.makeFilter((value) => value.split('.').length === 2 && value.split('.').every(Schema.is(Schema.String.check(Schema.isUUID()))) ? undefined : 'Expected company and principal UUIDs')";
+      resourceIdBrand = ".pipe(Schema.brand('PersonResourceId'))";
+    }
+  }
   return `${RESOURCE_GENERATOR_HEADER}
 // @ontos-resource-owner ${vertical.moduleId}
 // @ontos-resource-slug ${resource}
 import type { OntosResourceType } from '${core ? '../modules/manifest.ts' : '@app/core-runtime'}';
 import { Schema } from 'effect';
 
-const ResourceIdSchema = Schema.String.check(${core ? 'Schema.isUUID()' : 'Schema.isMinLength(1), Schema.isMaxLength(300)'})${core ? ".pipe(Schema.brand('LegalEntityId'))" : ''};
+const ResourceIdSchema = Schema.String.check(${resourceIdValidation})${resourceIdBrand};
 const TenantIdSchema = Schema.String.check(Schema.isUUID())${core ? ".pipe(Schema.brand('TenantId'))" : ''};
 
 export const ${type}RefSchema = Schema.Struct({
@@ -64,7 +75,7 @@ export const ${descriptor} = {
 
 const isResourceDescriptor = (candidate: string): boolean => /^[a-z][A-Za-z0-9]*ResourceDescriptor,$/u.test(candidate);
 const CorePackageSchema = Schema.Struct({
-  exports: Schema.Record(Schema.String, Schema.String),
+  exports: Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.String)])),
   name: Schema.Literal('@app/core-runtime'),
 });
 
@@ -120,8 +131,8 @@ const planResourceScaffold = Effect.fn('ResourceScaffold.plan')(function* planRe
     requireCanonicalSlug(config.resource, 'resource'),
   );
   if (config.vertical === 'core') {
-    if (resource !== 'legal-entity') {
-      return yield* scaffoldFailure('Core Resource generation currently supports only legal-entity');
+    if (resource !== 'legal-entity' && resource !== 'person') {
+      return yield* scaffoldFailure('Core Resource generation supports only legal-entity and person');
     }
     return yield* planCoreResourceScaffold(workspaceRoot, resource);
   }

@@ -1,5 +1,13 @@
+import { planCorePeopleRebuildHttp } from '../core-people/scaffold.mts';
 import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
+import {
+  governedActionSupport,
+  governedReadSupport,
+  governedSupportImportOwner,
+  governedSupportImports,
+  isGovernedSupportLayer,
+} from '../governed-contribution/runtime-support.mts';
 import { Effect, FileSystem, Option, Predicate, Schema, SchemaAST } from 'effect';
 import {
   GOVERNED_HTTP_API_ADDITION_SLOT_END,
@@ -1003,27 +1011,14 @@ const patchCanonicalActionRuntime = (content: string, vertical: OntosVerticalMet
   let nextContent = content;
   // module-contract roots assemble governed Reads directly, rather than exposing the legacy runtime argument tuple.
   if (nextContent.includes('const governedReadRuntimeDependenciesLive = GovernedReadLayer.mergeAll(')) {
-    const supportImports = [
-      "import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';",
-      "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';",
-    ];
-    const oldSupport =
-      'GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive)),';
-    const actionSupport =
-      'GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)), GovernedGatewayAssertionRedemptionLive)),';
+    const oldSupport = governedReadSupport;
+    const actionSupport = governedActionSupport;
     const importEntries = readGeneratedSlotEntries(
       nextContent,
       GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
       GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
     );
-    const recognizedImports = supportImports.filter((entry) =>
-      generatedSlotContainsExactEntry(
-        nextContent,
-        GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
-        GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
-        entry,
-      ),
-    );
+    const recognizedImports = importEntries.map(governedSupportImportOwner);
     const layerEntries = readGeneratedSlotEntries(
       nextContent,
       GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
@@ -1035,15 +1030,11 @@ const patchCanonicalActionRuntime = (content: string, vertical: OntosVerticalMet
       GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
       oldSupport,
     );
-    const hasActionSupport = generatedSlotContainsExactEntry(
-      nextContent,
-      GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
-      GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
-      actionSupport,
-    );
     if (
-      importEntries.length !== recognizedImports.length ||
-      (layerEntries.length > 0 && (layerEntries.length !== 1 || (!hasOldSupport && !hasActionSupport)))
+      recognizedImports.includes(undefined) ||
+      governedSupportImports.some((expected) => recognizedImports.filter((owner) => owner === expected).length > 1) ||
+      layerEntries.length > 1 ||
+      layerEntries.some((entry) => !isGovernedSupportLayer(entry))
     ) {
       return raiseScaffoldFailure(`vertical ${vertical.slug} API root has unsupported Action runtime support content`);
     }
@@ -1103,7 +1094,7 @@ const patchCanonicalActionRuntime = (content: string, vertical: OntosVerticalMet
         );
     }
     // The complete parsed slots were validated above; every addition below is a fixed canonical owner entry.
-    for (const supportImport of supportImports) {
+    for (const supportImport of governedSupportImports) {
       if (!recognizedImports.includes(supportImport)) {
         nextContent = insertSortedSlot(
           nextContent,
@@ -1295,6 +1286,9 @@ const plan = Effect.fn('ActionHttpScaffold.plan')(function* planActionHttp(
   workspaceRoot: string,
   config: ActionHttpScaffoldConfig,
 ) {
+  if (config.vertical === 'core') {
+    return yield* planCorePeopleRebuildHttp(workspaceRoot, config);
+  }
   const action = yield* tryScaffold('Action name is invalid', () => requireCanonicalSlug(config.action, 'action'));
   const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
   const type = toPascalCase(action);
