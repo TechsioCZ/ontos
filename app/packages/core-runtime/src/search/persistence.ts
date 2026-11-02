@@ -31,6 +31,8 @@ import {
   CoreSearchResourceRefSchema,
   CoreSearchTemporalFacetSchema,
   CoreSearchTemporalSearchableTextSchema,
+  CORE_SEARCH_MAX_SEARCHABLE_TERMS,
+  CORE_SEARCH_MAX_TERM_LENGTH,
   coreSearchReplacementFingerprint,
   createCoreSearchQueryRuntime,
   decodeCoreSearchProjectionMutation,
@@ -40,14 +42,16 @@ import {
 
 import { coreSearchQueryMatchesScope } from './projection-store.ts';
 
-const PersistedDocumentPayloadSchema = Schema.Struct({
+/** Private storage format. Version 1 rows must be retired by migration before deploying this codec. */
+export const CoreSearchPersistedPayloadSchema = Schema.Struct({
   aliases: Schema.optionalKey(Schema.Array(CoreSearchAliasSchema).check(Schema.isMaxLength(100))),
   archived: Schema.Boolean,
   facets: Schema.Array(CoreSearchFacetSchema),
   matchedRef: Schema.optionalKey(CoreSearchResourceRefSchema),
   matchedSubjectRef: Schema.optionalKey(CoreSearchResourceRefSchema),
   metadata: Schema.Array(CoreSearchMetadataFieldSchema),
-  schemaVersion: Schema.Literal('1'),
+  schemaVersion: Schema.Literal('2'),
+  searchableText: CoreSearchProjectionDocumentSchema.fields.searchableText,
   subjectRef: Schema.optionalKey(CoreSearchResourceRefSchema),
   temporalFacets: Schema.optionalKey(Schema.Array(CoreSearchTemporalFacetSchema)),
   temporalSearchableText: Schema.optionalKey(
@@ -56,7 +60,7 @@ const PersistedDocumentPayloadSchema = Schema.Struct({
 });
 const ProjectionUnitKeySchema = Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.String]));
 
-type PersistedDocumentPayload = typeof PersistedDocumentPayloadSchema.Type;
+type PersistedDocumentPayload = typeof CoreSearchPersistedPayloadSchema.Type;
 type MutablePersistedDocumentPayload = {
   -readonly [Key in keyof PersistedDocumentPayload]: PersistedDocumentPayload[Key];
 };
@@ -112,14 +116,30 @@ const unavailable = (cause?: CoreSearchPersistenceCause) =>
       });
 
 const normalize = (value: string): string => value.normalize('NFKC').toLocaleLowerCase('und');
-const bodyText = (document: CoreSearchProjectionDocument): string =>
-  [document.title, ...document.searchableText].map(normalize).join('\n');
-const payload = (document: CoreSearchProjectionDocument): PersistedDocumentPayload => {
+// NFKC followed by und lowercase expands one UTF-16 input unit by at most 18.
+// U+FDFA reaches 18; this was checked over every Unicode 17 scalar on the managed Node runtime.
+const normalizedTextExpansion = 18;
+export const CORE_SEARCH_BODY_TEXT_MAX_LENGTH =
+  (CORE_SEARCH_MAX_SEARCHABLE_TERMS + 1) * CORE_SEARCH_MAX_TERM_LENGTH * normalizedTextExpansion +
+  CORE_SEARCH_MAX_SEARCHABLE_TERMS;
+export const CoreSearchBodyTextSchema = Schema.String.check(Schema.isMaxLength(CORE_SEARCH_BODY_TEXT_MAX_LENGTH));
+const decodeBodyText = Schema.decodeUnknownResult(CoreSearchBodyTextSchema);
+
+/** Private codec seam shared by the SQL adapter and its storage round-trip tests. */
+export const coreSearchDocumentBodyText = (
+  document: CoreSearchProjectionDocument,
+): Result.Result<string, CoreSearchProjectionInvalid> =>
+  decodeBodyText([document.title, ...document.searchableText].map(normalize).join('\n')).pipe(
+    Result.mapError((cause) => invalid('Core Search normalized body exceeds its supported aggregate bound', cause)),
+  );
+
+export const coreSearchDocumentPayload = (document: CoreSearchProjectionDocument): PersistedDocumentPayload => {
   const persisted: MutablePersistedDocumentPayload = {
     archived: document.archived,
     facets: document.facets,
     metadata: document.metadata,
-    schemaVersion: '1',
+    schemaVersion: '2',
+    searchableText: document.searchableText,
   };
   if (document.aliases !== undefined) {
     persisted.aliases = document.aliases;
@@ -142,8 +162,8 @@ const payload = (document: CoreSearchProjectionDocument): PersistedDocumentPaylo
   return persisted;
 };
 
-const persistedPayloadEquivalence = Schema.toEquivalence(PersistedDocumentPayloadSchema);
-const decodePersistedPayload = Schema.decodeUnknownResult(PersistedDocumentPayloadSchema, {
+const persistedPayloadEquivalence = Schema.toEquivalence(CoreSearchPersistedPayloadSchema);
+const decodePersistedPayload = Schema.decodeUnknownResult(CoreSearchPersistedPayloadSchema, {
   onExcessProperty: 'error',
 });
 const encodeProjectionUnitKey = Schema.encodeUnknownResult(ProjectionUnitKeySchema);
@@ -159,16 +179,91 @@ const rowMatchesDocument = (
   row: SearchIndexEntry,
   document: CoreSearchProjectionDocument,
 ): Result.Result<boolean, CoreSearchProjectionInvalid> =>
-  decodePersistedPayload(row.facetsJson).pipe(
+  Result.all([decodePersistedPayload(row.facetsJson), coreSearchDocumentBodyText(document)]).pipe(
     Result.map(
-      (persistedPayload) =>
+      ([persistedPayload, normalizedBody]) =>
         !row.deleted &&
         row.legalEntityId === (document.selectedLegalEntityId ?? null) &&
         row.title === document.title &&
-        row.bodyText === bodyText(document) &&
-        persistedPayloadEquivalence(persistedPayload, payload(document)),
+        row.bodyText === normalizedBody &&
+        persistedPayloadEquivalence(persistedPayload, coreSearchDocumentPayload(document)),
     ),
     Result.mapError((cause) => invalid('Core Search persisted payload is invalid', cause)),
+  );
+
+type PersistedSearchDocumentRow = Pick<
+  SearchIndexEntry,
+  | 'facetsJson'
+  | 'bodyText'
+  | 'legalEntityId'
+  | 'projectionVersion'
+  | 'sourceModuleKey'
+  | 'sourceResourceId'
+  | 'sourceResourceType'
+  | 'tenantId'
+  | 'title'
+>;
+
+/** Strict v2 storage decoding; legacy projections are retired by migration, never guessed from normalized text. */
+export const decodeCoreSearchDocumentRow = (
+  row: PersistedSearchDocumentRow,
+): Result.Result<CoreSearchProjectionDocument, CoreSearchProjectionInvalid> =>
+  decodePersistedPayload(row.facetsJson).pipe(
+    Result.mapError((cause) => invalid('Core Search persisted payload is invalid', cause)),
+    Result.flatMap((decoded) => {
+      const document: PersistedDocumentInput = {
+        archived: decoded.archived,
+        facets: decoded.facets,
+        metadata: decoded.metadata,
+        projectionVersion: row.projectionVersion.toString(),
+        ref: {
+          moduleId: row.sourceModuleKey,
+          resourceId: row.sourceResourceId,
+          resourceType: row.sourceResourceType,
+          tenantId: row.tenantId,
+        },
+        searchableText: decoded.searchableText,
+        title: row.title,
+      };
+      if (decoded.aliases !== undefined) {
+        document.aliases = decoded.aliases;
+      }
+      if (decoded.matchedRef !== undefined) {
+        document.matchedRef = decoded.matchedRef;
+      }
+      if (decoded.matchedSubjectRef !== undefined) {
+        document.matchedSubjectRef = decoded.matchedSubjectRef;
+      }
+      if (row.legalEntityId !== null) {
+        document.selectedLegalEntityId = row.legalEntityId;
+      }
+      if (decoded.subjectRef !== undefined) {
+        document.subjectRef = decoded.subjectRef;
+      }
+      if (decoded.temporalFacets !== undefined) {
+        document.temporalFacets = decoded.temporalFacets;
+      }
+      if (decoded.temporalSearchableText !== undefined) {
+        document.temporalSearchableText = decoded.temporalSearchableText;
+      }
+      return Result.try({
+        catch: (cause) => invalid('Core Search persisted document is invalid', cause),
+        try: () => decodeCoreSearchProjectionMutation({ document, kind: 'upsert' }),
+      }).pipe(
+        Result.flatMap((mutation) => {
+          if (mutation.kind !== 'upsert') {
+            return Result.fail(invalid('Core Search persisted document is invalid'));
+          }
+          return coreSearchDocumentBodyText(mutation.document).pipe(
+            Result.flatMap((normalizedBody) =>
+              normalizedBody === row.bodyText
+                ? Result.succeed(mutation.document)
+                : Result.fail(invalid('Core Search persisted body does not match its exact searchable terms')),
+            ),
+          );
+        }),
+      );
+    }),
   );
 
 const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollment) => {
@@ -256,6 +351,7 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
     document: CoreSearchProjectionDocument,
     updatedAt: Date,
   ) {
+    const normalizedBody = yield* Effect.fromResult(coreSearchDocumentBodyText(document));
     const current = yield* currentRow(transaction, document.ref);
     const version = BigInt(document.projectionVersion);
     if (Option.isSome(current)) {
@@ -264,7 +360,8 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
         return yield* Effect.void;
       }
       if (existing.projectionVersion === version) {
-        if (!Result.getOrThrow(rowMatchesDocument(existing, document))) {
+        const matches = yield* Effect.fromResult(rowMatchesDocument(existing, document));
+        if (!matches) {
           return yield* invalid('Core Search mutation reuses a version for different content');
         }
         return yield* Effect.void;
@@ -272,9 +369,9 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
       const query = transaction
         .update(searchIndexEntries)
         .set({
-          bodyText: bodyText(document),
+          bodyText: normalizedBody,
           deleted: false,
-          facetsJson: payload(document),
+          facetsJson: coreSearchDocumentPayload(document),
           legalEntityId: document.selectedLegalEntityId ?? null,
           projectionVersion: version,
           title: document.title,
@@ -285,9 +382,9 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
       return yield* Effect.void;
     }
     const query = transaction.insert(searchIndexEntries).values({
-      bodyText: bodyText(document),
+      bodyText: normalizedBody,
       deleted: false,
-      facetsJson: payload(document),
+      facetsJson: coreSearchDocumentPayload(document),
       legalEntityId: document.selectedLegalEntityId ?? null,
       projectionVersion: version,
       sourceModuleKey: document.ref.moduleId,
@@ -320,7 +417,7 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
       const query = transaction.insert(searchIndexEntries).values({
         bodyText: '',
         deleted: true,
-        facetsJson: { schemaVersion: '1' },
+        facetsJson: { schemaVersion: '2' },
         projectionVersion: version,
         sourceModuleKey: mutation.ref.moduleId,
         sourceResourceId: mutation.ref.resourceId,
@@ -336,7 +433,7 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
       .set({
         bodyText: '',
         deleted: true,
-        facetsJson: { schemaVersion: '1' },
+        facetsJson: { schemaVersion: '2' },
         legalEntityId: null,
         projectionVersion: version,
         title: '',
@@ -451,57 +548,6 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
     yield* persistRebuildFloor(transaction, replacement, fingerprint, updatedAt);
   });
 
-  const decodeRow = (row: SearchIndexEntry): CoreSearchProjectionDocument => {
-    const decoded = Result.getOrThrow(
-      decodePersistedPayload(row.facetsJson).pipe(
-        Result.mapError((cause) => invalid('Core Search persisted payload is invalid', cause)),
-      ),
-    );
-    const document: PersistedDocumentInput = {
-      archived: decoded.archived,
-      facets: decoded.facets,
-      metadata: decoded.metadata,
-      projectionVersion: row.projectionVersion.toString(),
-      ref: {
-        moduleId: row.sourceModuleKey,
-        resourceId: row.sourceResourceId,
-        resourceType: row.sourceResourceType,
-        tenantId: row.tenantId,
-      },
-      searchableText: [row.bodyText],
-      title: row.title,
-    };
-    if (decoded.aliases !== undefined) {
-      document.aliases = decoded.aliases;
-    }
-    if (decoded.matchedRef !== undefined) {
-      document.matchedRef = decoded.matchedRef;
-    }
-    if (decoded.matchedSubjectRef !== undefined) {
-      document.matchedSubjectRef = decoded.matchedSubjectRef;
-    }
-    if (row.legalEntityId !== null) {
-      document.selectedLegalEntityId = row.legalEntityId;
-    }
-    if (decoded.subjectRef !== undefined) {
-      document.subjectRef = decoded.subjectRef;
-    }
-    if (decoded.temporalFacets !== undefined) {
-      document.temporalFacets = decoded.temporalFacets;
-    }
-    if (decoded.temporalSearchableText !== undefined) {
-      document.temporalSearchableText = decoded.temporalSearchableText;
-    }
-    const mutation = decodeCoreSearchProjectionMutation({
-      document,
-      kind: 'upsert',
-    });
-    if (mutation.kind !== 'upsert') {
-      throw invalid('Core Search persisted document is invalid');
-    }
-    return mutation.document;
-  };
-
   const decodeMutation = (input: CoreSearchProjectionInput) =>
     Effect.try({
       catch: (error) =>
@@ -574,7 +620,9 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
       if (rows.length > 10_000) {
         return yield* unavailable();
       }
-      return rows.map(decodeRow);
+      return yield* Effect.fromResult(Result.all(rows.map(decodeCoreSearchDocumentRow))).pipe(
+        Effect.mapError(unavailable),
+      );
     },
   );
 

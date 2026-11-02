@@ -22,6 +22,7 @@
     "./agent-access": "./src/agent-access.ts",
     "./oauth-connections": "./src/oauth-connections.ts",
     "./page-data": "./src/page-data.ts",
+    "./resource-identity": "./src/resource-identity.ts",
     "./calendar-date": "./src/calendar-date.ts",
     "./credential-url": "./src/credential-url.ts"
   },

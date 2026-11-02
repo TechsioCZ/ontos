@@ -1134,7 +1134,7 @@ export const searchIndexEntries = enableCoreGovernedRls(
       }).onDelete('restrict'),
       check(
         'core_search_index_entries_document_ck',
-        sql`${table.deleted} or (length(btrim(${table.title})) > 0 and length(${table.title}) <= 300 and length(${table.bodyText}) <= 40000)`,
+        sql`${table.deleted} or (coalesce(${table.facetsJson}->'schemaVersion' = '"2"'::jsonb, false) and length(btrim(${table.title})) > 0 and length(${table.title}) <= 300 and length(${table.bodyText}) <= 10818202)`,
       ),
       check('core_search_index_entries_version_ck', sql`${table.projectionVersion} > 0`),
     ],

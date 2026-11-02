@@ -120,6 +120,9 @@ const encodeJsonValue = <Value,>(value: Value) => Result.getOrThrow(jsonValueEnc
 export const sortCopyValues = <Value,>(values: readonly Value[], key: (value: Value) => string) =>
   List.sort(values, Order.mapInput(Order.String, key));
 export const canonicalCopyJson = <Value,>(value: Value): string => {
+  if (value === undefined) {
+    return 'null';
+  }
   if (Array.isArray(value)) {
     return `[${value.map(canonicalCopyJson).join(',')}]`;
   }

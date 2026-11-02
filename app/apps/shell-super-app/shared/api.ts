@@ -1,3 +1,4 @@
+import { ResourceIdentitySchema } from '@app/shared-contracts/resource-identity';
 import { GatewayContextApiGroup } from '@app/shared-contracts';
 import { EmailReceiptsApi } from '@app/email-delivery/receipt-api';
 import { ExternalIdentityApiGroup } from '@app/shared-contracts/external-identity';
@@ -95,9 +96,7 @@ export const EntrypointKeySchema = Schema.String.check(
   Schema.isMaxLength(200),
   Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
 ).pipe(Schema.brand('EntrypointKey'));
-export const ResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
-  Schema.brand('ResourceId'),
-);
+export const ResourceIdSchema = ResourceIdentitySchema.pipe(Schema.brand('ResourceId'));
 export const TimelineEntryIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
   Schema.brand('TimelineEntryId'),
 );

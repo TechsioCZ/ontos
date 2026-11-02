@@ -3,6 +3,7 @@ import { Effect, Predicate, Schema } from 'effect';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import type { OperationContextUnavailable } from '../operations/errors.ts';
+import { ResourceIdentitySchema } from '../resources/scoped-resource-id.ts';
 import type { ReadEvidenceCaptureMode } from './definition.ts';
 import { ReadEvidenceValidationError } from './errors.ts';
 import type { ReadHandlerExecutionError, ReadHandlerUnavailable } from './errors.ts';
@@ -98,9 +99,7 @@ const invalidEvidence = (cause?: unknown): ReadEvidenceValidationError => {
         writable: false,
       });
 };
-const ReadEvidenceResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
-  Schema.brand('ReadEvidenceResourceId'),
-);
+const ReadEvidenceResourceIdSchema = ResourceIdentitySchema.pipe(Schema.brand('ReadEvidenceResourceId'));
 const ReadEvidenceCandidateSchema = Schema.Struct({
   queryHash: Schema.optional(Schema.Unknown),
   resultCount: Schema.Unknown,

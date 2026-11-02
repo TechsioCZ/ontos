@@ -22,10 +22,12 @@ import {
   readCopyOffers,
   readCopyProducts,
   validateCopyPlan,
+  sameCopyValue,
 } from '../demo/akros-playground-copy.mts';
 import { demoId } from '../demo/fixture-ids.mts';
 import { checkCopyBootstrap } from '../demo/seed-akros-playground.mts';
 import { bootstrapFrozenCatalog } from '../demo/akros-playground-bootstrap.mts';
+import { DemoSeedError } from '../demo/seed-client.mts';
 
 const at = '2026-11-02T10:00:00.000Z';
 const checkpointDirectory = '/owned/revision-42';
@@ -146,6 +148,12 @@ const snapshotInput = () => ({
   storefront: { applications: [], observedAt: at },
 });
 const snapshot = () => Schema.decodeUnknownEffect(CopySnapshotSchema)(snapshotInput());
+it('compares absent optional stock/detail fields without a JSON encoder defect', () => {
+  const absent = Schema.decodeUnknownSync(CopySnapshotSchema)(snapshotInput()).products.at(0)?.variantRecords;
+  expect(canonicalCopyJson(absent)).toBe('null');
+  expect(sameCopyValue(absent, absent)).toBe(true);
+  expect(sameCopyValue(absent, [])).toBe(false);
+});
 const reader = (respond: (payload: typeof RecordsRequest.Type) => object) => ({
   call: <P extends Schema.Top, R extends Schema.Top>(
     _audience: string,
@@ -175,6 +183,19 @@ const response = (products: readonly unknown[], totalProducts: number, revision 
   revision,
   totalProducts,
 });
+
+it.effect(
+  'preserves a bootstrap read outage for bounded reconnect instead of converting it to a catalog mismatch',
+  () =>
+    Effect.gen(function* bootstrapReadOutage() {
+      const outage = new DemoSeedError({ reason: '/reads/records: HTTP 503' });
+      const failure = yield* checkCopyBootstrap({ call: () => Effect.fail(outage) }, yield* snapshot()).pipe(
+        Effect.flip,
+      );
+      expect(failure).toBe(outage);
+      expect(Schema.is(AkrosPlaygroundCopyError)(failure)).toBe(false);
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+);
 
 it.effect('refuses a different frozen bootstrap manifest before any destination call', () =>
   Effect.gen(function* frozenBoundaryTest() {
@@ -210,7 +231,10 @@ it.effect('refuses an empty destination before dispatching any catalog, gallery 
       },
     };
     const failure = yield* checkCopyBootstrap(client, source).pipe(Effect.flip);
-    expect(failure.reason).toContain('bootstrap');
+    expect(Schema.is(AkrosPlaygroundCopyError)(failure)).toBe(true);
+    if (Schema.is(AkrosPlaygroundCopyError)(failure)) {
+      expect(failure.reason).toContain('bootstrap');
+    }
     expect(routes.every((route) => route === '/reads/records')).toBe(true);
   }).pipe(Effect.provide(FetchHttpClient.layer)),
 );

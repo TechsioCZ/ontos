@@ -189,16 +189,7 @@ export const checkCopyBootstrap = (client: CopyClient, snapshot: CopySnapshot) =
       });
     }
     return yield* Effect.void;
-  }).pipe(
-    Effect.mapError((failure) =>
-      Schema.is(AkrosPlaygroundCopyError)(failure)
-        ? failure
-        : new AkrosPlaygroundCopyError({
-            reason:
-              'The approved empty-target catalog bootstrap could not be verified. Ensure it is present and readable; no copy writes were dispatched.',
-          }),
-    ),
-  );
+  });
 
 const writeCommand = (client: CopyClient, command: (typeof Payload.Type)['command']) =>
   readCopyRecords(client, { limit: 0, ordersLimit: 0, summary: true }).pipe(
@@ -694,6 +685,7 @@ if (import.meta.main) {
               : `AKROS copy stopped (${failure._tag}); credentials and response bodies are not logged.`,
           ),
         ),
+        Effect.tapDefect(() => Console.error('Unexpected copy defect; checkpoints retained and raw details withheld.')),
       ),
   );
   NodeRuntime.runMain(

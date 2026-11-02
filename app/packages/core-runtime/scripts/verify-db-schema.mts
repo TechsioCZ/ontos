@@ -8,6 +8,7 @@ import { Effect, Redacted, Schema } from 'effect';
 import type { CatalogEntry } from '../src/db/catalog.ts';
 import { compareApplicationCatalog } from '../src/db/catalog.ts';
 import { CoreDatabase } from '../src/db/client.ts';
+import { coreSearchDocumentConstraintMatches } from '../src/db/search-document-constraint.ts';
 import { loadDatabaseConnectionPair } from '../src/db/config.ts';
 import { SHARED_RUNTIME_IDENTITY } from '../src/db/database-identity-manifest.ts';
 import type { DatabaseIdentityEnrollment } from '../src/db/database-identity-manifest.ts';
@@ -242,6 +243,33 @@ const verifySearchIsolation = (expectedCorePolicies: ExpectedCorePolicies) =>
           reason: 'Core Search must enforce forced tenant RLS with complete owner-operation policies',
         });
       }
+    }
+    const documentChecks = yield* database.executor
+      .execute<{ definition: string; validated: boolean }>(
+        sql`select pg_get_constraintdef(oid) as definition, convalidated as validated
+        from pg_catalog.pg_constraint
+        where conrelid = 'core.search_index_entries'::regclass
+          and conname = 'core_search_index_entries_document_ck' and contype = 'c'`,
+        'objects',
+      )
+      .pipe(
+        Effect.mapError(
+          () =>
+            new DatabaseVerificationError({
+              reason: 'Unable to verify the Core Search v2 document constraint',
+            }),
+        ),
+      );
+    const [documentCheck] = documentChecks;
+    if (
+      documentChecks.length !== 1 ||
+      documentCheck === undefined ||
+      !documentCheck.validated ||
+      !coreSearchDocumentConstraintMatches(documentCheck.definition)
+    ) {
+      return yield* new DatabaseVerificationError({
+        reason: 'Core Search requires the exact active-v2 document and bounded aggregate constraint',
+      });
     }
     return yield* Effect.void;
   });

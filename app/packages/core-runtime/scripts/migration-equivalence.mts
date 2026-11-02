@@ -4,6 +4,7 @@ export const CORE_MIGRATION_MANIFEST = {
   folder: fileURLToPath(new URL('../drizzle/', import.meta.url)),
   history: 'core',
   snapshots: [
+    ['20261102133620_search-projection-v2-cutover', 'a1888384cf5a2f95808956080e967053a7583948c667f9a187ea0093b1121765'],
     ['20261020062648_trusted-gateway-scope', 'dfe987ef68fd964bd8d80bc4ac7fe57e6fa150344a7915c712a6e406779a6b77'],
     [
       '20261020063004_dedicated-identity-core-policies',

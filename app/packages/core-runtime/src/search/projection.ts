@@ -6,6 +6,7 @@ import { Hex } from 'effect/encoding';
 import type { OperationalScope } from '../operations/context.ts';
 import { isVerifiedOutboxWorkerHandlerContext } from '../outbox/definition.ts';
 import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
+import { ResourceIdentitySchema } from '../resources/scoped-resource-id.ts';
 
 import { CoreSearchProjectionStore, coreSearchQueryMatchesScope } from './projection-store.ts';
 import type { CoreSearchProjectionStoreService } from './projection-store.ts';
@@ -16,14 +17,16 @@ export { CoreSearchQueryRuntime } from './query-runtime.ts';
 export type { CoreSearchProjectionStoreService } from './projection-store.ts';
 export type { CoreSearchQueryRuntimeService } from './query-runtime.ts';
 
-const boundedText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+export const CORE_SEARCH_MAX_TERM_LENGTH = 300;
+export const CORE_SEARCH_MAX_SEARCHABLE_TERMS = 2002;
+const boundedText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(CORE_SEARCH_MAX_TERM_LENGTH));
 const stableKey = Schema.String.check(
   Schema.isMinLength(3),
   Schema.isMaxLength(200),
   Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
 );
 const moduleId = stableKey.pipe(Schema.brand('ModuleId'));
-const resourceId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(Schema.brand('ResourceId'));
+const resourceId = ResourceIdentitySchema.pipe(Schema.brand('ResourceId'));
 const resourceType = stableKey.pipe(Schema.brand('ResourceType'));
 const selectedLegalEntityId = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SelectedLegalEntityId'));
 const tenantId = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
@@ -96,7 +99,8 @@ export const CoreSearchProjectionDocumentSchema = Schema.Struct({
   metadata: Schema.Array(CoreSearchMetadataFieldSchema).check(Schema.isMaxLength(50)),
   projectionVersion,
   ref: CoreSearchResourceRefSchema,
-  searchableText: Schema.Array(boundedText).check(Schema.isMaxLength(100)),
+  // Merchandise supports 1,000 active variant SKU/name pairs plus the parent SKU/name.
+  searchableText: Schema.Array(boundedText).check(Schema.isMaxLength(CORE_SEARCH_MAX_SEARCHABLE_TERMS)),
   selectedLegalEntityId: Schema.optionalKey(selectedLegalEntityId),
   subjectRef: Schema.optionalKey(CoreSearchResourceRefSchema),
   temporalFacets: Schema.optionalKey(Schema.Array(CoreSearchTemporalFacetSchema).check(Schema.isMaxLength(100))),
