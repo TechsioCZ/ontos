@@ -28,9 +28,11 @@ const core: DemoAction = {
   owningModuleKey: 'core.identity',
   provisioning: 'explicit',
 };
+const portfolioModule = 'property.portfolio';
+const leasingModule = 'property.leasing';
 const moduleAction = (owningModuleKey: string): DemoAction => ({
   actionKey: `${owningModuleKey}.request-search-rebuild`,
-  legalEntityScope: 'required',
+  legalEntityScope: owningModuleKey === portfolioModule || owningModuleKey === leasingModule ? 'required' : 'optional',
   owningModuleKey,
   provisioning: 'explicit',
 });
@@ -41,7 +43,18 @@ const catalog = [
   moduleAction('commerce.market-catalog'),
   moduleAction('finance.billing'),
   moduleAction('legal.agreements'),
+  moduleAction(portfolioModule),
+  moduleAction(leasingModule),
+  moduleAction('facility.operations'),
+  moduleAction('demo.sales-pipeline'),
+  moduleAction('work.tasks'),
 ];
+const party: DemoAction = {
+  actionKey: 'party.registry.request-search-rebuild',
+  legalEntityScope: 'optional',
+  owningModuleKey: 'party.registry',
+  provisioning: 'tenant_membership_default',
+};
 const revision = 'a'.repeat(64);
 const key = (relationship: v1.Relationship) => v1.Relationship.toJsonString(relationship);
 const parse = (items: readonly string[]) => items.map((item) => v1.Relationship.fromJsonString(item));
@@ -255,8 +268,13 @@ it.effect('rejects missing, duplicate, foreign-owner, unknown and mis-scoped reb
       [core, moduleAction('unreviewed.owner')],
       [core, { ...moduleAction('demo.crm'), actionKey: 'demo.merchandise.request-search-rebuild' }],
       [{ ...core, legalEntityScope: 'required' as const }],
-      [core, { ...moduleAction('demo.crm'), legalEntityScope: 'optional' as const }],
+      [core, { ...moduleAction('demo.crm'), legalEntityScope: 'required' as const }],
+      [core, { ...moduleAction(portfolioModule), legalEntityScope: 'optional' as const }],
+      [core, { ...moduleAction(leasingModule), legalEntityScope: 'optional' as const }],
       [core, { ...moduleAction('demo.crm'), provisioning: 'tenant_membership_default' as const }],
+      [core, { ...party, provisioning: 'explicit' as const }],
+      [core, { ...party, legalEntityScope: 'required' as const }],
+      [core, party, party],
       [core, { ...core, actionKey: 'other.identity.request-people-search-rebuild' }],
     ];
     for (const actions of cases) {
@@ -271,6 +289,24 @@ it.effect('rejects missing, duplicate, foreign-owner, unknown and mis-scoped reb
     ]);
     expect(selected).toHaveLength(catalog.length);
     expect(yield* searchStageSource(EffectArray.reverse(catalog))).toEqual(yield* searchStageSource(catalog));
+  }),
+);
+
+it.effect('supports a module-only deployment and leaves the existing Party rebuild policy untouched', () =>
+  Effect.gen(function* incrementalCatalog() {
+    const modules = catalog.filter(({ actionKey }) => actionKey !== core.actionKey);
+    expect(yield* searchRebuildActions([...modules, party])).toEqual(yield* searchRebuildActions(modules));
+    expect(yield* searchStageSource([...modules, party])).toEqual(yield* searchStageSource(modules));
+    const source = yield* searchStageSource([...modules, party]);
+    expect(source.actions).toHaveLength(modules.length);
+    expect(
+      source.actions.every((action) => !action.includes(core.actionKey) && !action.includes(party.actionKey)),
+    ).toBe(true);
+    const state = memory(source.prerequisites);
+    const plan = yield* planSearchStagePolicy(state.rpc, source, revision);
+    expect(plan.checks.length).toBeGreaterThan(0);
+    expect(state.writes).toHaveLength(0);
+    expect(yield* searchStageSource([...catalog, party])).toEqual(yield* searchStageSource(catalog));
   }),
 );
 

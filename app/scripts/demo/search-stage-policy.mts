@@ -53,7 +53,6 @@ import {
   agentBotPrincipal,
   companyPermissionRelationships,
   demoHumanAccounts,
-  demoModuleIds,
   demoRoles,
   principalRelationships,
   rentalPermissionRelationships,
@@ -67,6 +66,42 @@ export class SearchStagePolicyError extends Schema.TaggedError<SearchStagePolicy
 const fail = (reason: string) => new SearchStagePolicyError({ reason });
 const origin = 'https://ontos-stage.web-revolution.cz';
 const peopleAction = 'core.identity.request-people-search-rebuild';
+const partyAction = 'party.registry.request-search-rebuild';
+const rebuildDescriptors: readonly DemoAction[] = [
+  {
+    actionKey: peopleAction,
+    legalEntityScope: 'forbidden',
+    owningModuleKey: 'core.identity',
+    provisioning: 'explicit',
+  },
+  {
+    actionKey: partyAction,
+    legalEntityScope: 'optional',
+    owningModuleKey: 'party.registry',
+    provisioning: 'tenant_membership_default',
+  },
+  ...[
+    'demo.crm',
+    'demo.sales-pipeline',
+    'demo.merchandise',
+    'work.tasks',
+    'finance.billing',
+    'legal.agreements',
+    'facility.operations',
+    'commerce.market-catalog',
+  ].map((owningModuleKey): DemoAction => ({
+    actionKey: `${owningModuleKey}.request-search-rebuild`,
+    legalEntityScope: 'optional',
+    owningModuleKey,
+    provisioning: 'explicit',
+  })),
+  ...['property.portfolio', 'property.leasing'].map((owningModuleKey): DemoAction => ({
+    actionKey: `${owningModuleKey}.request-search-rebuild`,
+    legalEntityScope: 'required',
+    owningModuleKey,
+    provisioning: 'explicit',
+  })),
+];
 // Synthetic negative controls are never provisioned or treated as real operator identities.
 const negativePrincipalId = demoId('core.principal', 'search-stage-policy-negative-control');
 const negativeTenantId = demoId('core.tenant', 'search-stage-policy-negative-control');
@@ -107,23 +142,26 @@ export const searchRebuildActions = (actions: readonly DemoAction[]) =>
         actionKey.endsWith('.request-search-rebuild') || actionKey.endsWith('.request-people-search-rebuild'),
     );
     if (
-      !selected.some(({ actionKey }) => actionKey === peopleAction) ||
+      selected.length === 0 ||
       new Set(selected.map(({ actionKey }) => actionKey)).size !== selected.length ||
       selected.some((action) => {
-        const core = action.actionKey === peopleAction;
+        const descriptor = rebuildDescriptors.find(({ actionKey }) => actionKey === action.actionKey);
         return (
-          action.provisioning !== 'explicit' ||
-          (core
-            ? action.owningModuleKey !== 'core.identity' || action.legalEntityScope !== 'forbidden'
-            : !demoModuleIds.some((moduleId) => moduleId === action.owningModuleKey) ||
-              action.actionKey !== `${action.owningModuleKey}.request-search-rebuild` ||
-              action.legalEntityScope !== 'required')
+          descriptor === undefined ||
+          action.provisioning !== descriptor.provisioning ||
+          action.owningModuleKey !== descriptor.owningModuleKey ||
+          action.legalEntityScope !== descriptor.legalEntityScope
         );
       })
     ) {
-      return yield* fail('Missing Core people rebuild or unknown/invalid rebuild owner, Action, scope or provisioning');
+      return yield* fail('Missing rebuilds or unknown/invalid rebuild owner, Action, scope or provisioning');
     }
-    return EffectArray.sortWith(selected, ({ actionKey }) => actionKey, Order.String);
+    // Party's existing tenant-membership policy is already installed. Never replace it with explicit grants.
+    return EffectArray.sortWith(
+      selected.filter(({ actionKey }) => actionKey !== partyAction),
+      ({ actionKey }) => actionKey,
+      Order.String,
+    );
   });
 
 const ObjectId = Schema.String.pipe(Schema.brand('SearchStageActionObjectId'));
@@ -199,11 +237,14 @@ export const searchStageSource = (catalog: readonly DemoAction[]) =>
         item.subjectRelation === 'member',
     );
     const core = actions.find(({ actionKey }) => actionKey === peopleAction);
-    if (core === undefined || administrators.length === 0) {
+    if (core !== undefined && administrators.length === 0) {
       return yield* fail('The current policy has no explicit tenant administrator membership for Core rebuild');
     }
     const people: DemoRelationship[] = [];
     for (const administrator of administrators) {
+      if (core === undefined) {
+        continue;
+      }
       const role = fromScopedRoleObjectId(administrator.subjectId);
       if (Option.isNone(role) || role.value.tenantId !== demoTenantId || role.value.legalEntityId !== undefined) {
         return yield* fail('Tenant administrator source role is not tenant-scoped');
