@@ -10,6 +10,7 @@ import { createCatalog } from "./catalog-model";
 import { readCartProducts } from "./catalog-server";
 import { getActiveMarket } from "./active-market";
 import { callAction } from "./gateway";
+import { ownerIssueText, type OwnerIssue } from "./owner-issues";
 export function assertCart(value: unknown, t: Dictionary = cs): asserts value is CartState {
   const cart = value as CartState;
   if (
@@ -95,7 +96,7 @@ interface OwnerDryRun {
     totalMinor?: number;
     totalVatMinor?: number;
     shippingPriceMinor?: number;
-    issues?: { code?: string; message?: string; productId?: string; variantId?: string }[];
+    issues?: OwnerIssue[];
   };
 }
 
@@ -252,9 +253,34 @@ export async function quoteCart(
       deliveryId,
       market.marketId,
     );
+    const money = { currency: market.currency, locale: market.formatLocale };
     for (const issue of order.issues ?? []) {
-      if (typeof issue.message !== "string" || !issue.message || issue.message.length > 300)
-        continue;
+      if (typeof issue !== "object" || issue === null || typeof issue.code !== "string") continue;
+      // The owner's `message` is Czech: the issue is worded from its code in the request's language.
+      const p = issue.productId ? model.getProductById(issue.productId) : undefined;
+      const v = p?.detail.variants.find((v) => v.id === issue.variantId);
+      const cartLine = cart.lines.find(
+        (l) => l.productId === issue.productId && (l.variantId ?? "") === (issue.variantId ?? ""),
+      );
+      const item = v ?? p;
+      const label = p
+        ? v
+          ? `${p.name} (${v.label})`
+          : p.name
+        : cartLine
+          ? `${cartLine.name || messages.fallbackItem}${cartLine.variantLabel ? ` (${cartLine.variantLabel})` : ""}`
+          : messages.fallbackItem;
+      const message = ownerIssueText(
+        issue,
+        {
+          label,
+          unit: item?.unit ?? cartLine?.unit,
+          minimumQuantity: item?.minimumQuantity ?? cartLine?.minimumQuantity,
+          packageQuantity: item?.packageQuantity ?? cartLine?.quantityStep,
+        },
+        t,
+        money,
+      );
       const code = ownerCodes.has(issue.code as QuoteLineIssue["code"])
         ? (issue.code as QuoteLineIssue["code"])
         : "OWNER_REJECTED";
@@ -263,7 +289,7 @@ export async function quoteCart(
         productId: issue.productId ?? "",
         ...(issue.variantId ? { variantId: issue.variantId } : {}),
         code,
-        message: issue.message,
+        message,
       });
     }
     if (

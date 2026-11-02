@@ -15,6 +15,7 @@ import { readAccount } from "@/ontos/account";
 import { readCustomerOrders } from "@/ontos/customer-orders";
 import { readCheckoutOptions } from "@/ontos/checkout-options";
 import { getActiveMarket } from "@/ontos/active-market";
+import { ownerIssueText, type OwnerIssue } from "@/ontos/owner-issues";
 
 const isOntosError = (value: unknown): value is OntosError =>
   value !== null && value !== undefined && OntosError.prototype.isPrototypeOf(value);
@@ -133,18 +134,44 @@ export async function POST(request: Request) {
             orderNumber?: string;
             totalMinor?: number;
             totalVatMinor?: number;
-            issues?: { message: string }[];
+            issues?: OwnerIssue[];
           };
         };
         const order = result.storefrontOrder;
-        if (order?.outcome === "REJECTED")
+        if (order?.outcome === "REJECTED") {
+          // The owner's messages are Czech: each issue is worded from its code in the request's language.
+          const money = { currency: market.currency, locale: market.formatLocale };
+          const issues = (order.issues ?? [])
+            .filter((issue) => typeof issue === "object" && issue !== null)
+            .map((issue) => {
+              const line = cart.lines.find(
+                (l) =>
+                  l.productId === issue.productId &&
+                  (l.variantId ?? "") === (issue.variantId ?? ""),
+              );
+              return {
+                ...issue,
+                message: ownerIssueText(
+                  issue,
+                  line && {
+                    label: `${line.name || t.server.cart.fallbackItem}${line.variantLabel ? ` (${line.variantLabel})` : ""}`,
+                    unit: line.unit,
+                    minimumQuantity: line.minimumQuantity,
+                    packageQuantity: line.quantityStep,
+                  },
+                  t,
+                  money,
+                ),
+              };
+            });
           return Response.json(
             {
-              message: order.issues?.map((i) => i.message).join(" ") || t.server.orders.cartChanged,
-              issues: order.issues,
+              message: issues.map((i) => i.message).join(" ") || t.server.orders.cartChanged,
+              issues,
             },
             { status: 409 },
           );
+        }
         if (!order?.orderNumber || !["PLACED", "REPLAYED"].includes(order.outcome))
           throw new Error("Uložení objednávky nebylo potvrzeno.");
         return Response.json(order, { headers: { "cache-control": "no-store" } });

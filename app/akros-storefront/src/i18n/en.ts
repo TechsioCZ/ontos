@@ -410,6 +410,7 @@ export const en: Dictionary = {
       priceChangedHint:
         "Prices incl. VAT. We apply the new prices only after you agree; the order has not been submitted.",
       priceChangeLine: (quantity: string, unit: string) => `Per ${quantity} ${unit}:`,
+      unitPriceLine: (unit: string) => `Per ${unit}:`,
       goodsTotal: "Goods total",
       acceptPrices: "Accept the new prices",
       verified: "Prices, quantities and availability were verified in OntOS.",
@@ -742,6 +743,21 @@ export const en: Dictionary = {
       contactDetails: "Contact details",
       ordersText: "Your purchase history and order details.",
       showOrders: "View orders",
+      latestTitle: "Latest order",
+      itemCount: "Number of items",
+      total: "Total price",
+      latestUnavailable: "Your latest order could not be loaded from OntOS right now.",
+      editAccount: "Edit my account",
+      shortcutsLabel: "Account shortcuts",
+      shortcuts: {
+        ordersText: "Purchase history and order details.",
+        favoritesText: "Quick access to the goods you buy often.",
+        favoritesAction: "Open products",
+        contactText: "E-mail, phone and newsletter settings.",
+        contactAction: "Edit contact",
+        claimsText: "What to prepare for a complaint and how to reach support.",
+        claimsAction: "Open complaints",
+      },
     },
     profile: {
       loginEmailValue: (email: string) => `Sign-in e-mail: ${email}`,
@@ -1032,6 +1048,17 @@ export const en: Dictionary = {
         `${label}: the minimum quantity is ${count(minimum)} ${unit}.`,
       packageQuantity: (label: string, step: number, unit: string) =>
         `${label}: order whole packages of ${count(step)} ${unit}.`,
+      variantRequired: (label: string) => `${label}: choose a specific variant.`,
+      stockShort: (label: string) => `${label}: the requested quantity is not in stock.`,
+      quantityRejected: (label: string) =>
+        `${label}: the quantity does not match the minimum order or package size.`,
+      priceChanged: (label: string, previous: string, current: string) =>
+        `${label}: the price changed from ${previous} to ${current}. Please confirm the new price.`,
+      priceChangedPlain: (label: string) =>
+        `${label}: the price changed. Please confirm the new price.`,
+      shippingPriceChanged: (price: string) => `The shipping price changed to ${price}.`,
+      marketUnavailable: "Orders cannot be placed in this market right now.",
+      ownerRejected: (label: string) => `${label}: OntOS did not accept this item right now.`,
     },
     orders: {
       signIn: "Sign in to your account.",

@@ -405,6 +405,7 @@ export const cs = {
       priceChangedHint:
         "Ceny s DPH. Nové ceny použijeme až po vašem souhlasu; objednávka se zatím neodeslala.",
       priceChangeLine: (quantity: string, unit: string) => `Za ${quantity} ${unit}:`,
+      unitPriceLine: (unit: string) => `Za ${unit}:`,
       goodsTotal: "Celkem za zboží",
       acceptPrices: "Přijmout nové ceny",
       verified: "Ceny, množství a dostupnost byly ověřeny v OntOS.",
@@ -735,6 +736,21 @@ export const cs = {
       contactDetails: "Kontaktní údaje",
       ordersText: "Historie nákupů a podrobnosti vašich objednávek.",
       showOrders: "Zobrazit objednávky",
+      latestTitle: "Poslední objednávka",
+      itemCount: "Počet položek",
+      total: "Celková cena",
+      latestUnavailable: "Poslední objednávku se teď nepodařilo načíst z OntOS.",
+      editAccount: "Upravit můj účet",
+      shortcutsLabel: "Rychlé odkazy účtu",
+      shortcuts: {
+        ordersText: "Historie nákupů a detaily objednávek.",
+        favoritesText: "Rychlý přístup k často nakupovanému zboží.",
+        favoritesAction: "Otevřít produkty",
+        contactText: "E-mail, telefon a nastavení odběru novinek.",
+        contactAction: "Upravit kontakt",
+        claimsText: "Podklady k reklamaci a kontakt na podporu.",
+        claimsAction: "Otevřít reklamace",
+      },
     },
     profile: {
       loginEmailValue: (email: string) => `Přihlašovací e-mail: ${email}`,
@@ -1020,6 +1036,17 @@ export const cs = {
         `${label}: minimální množství je ${minimum} ${unit}.`,
       packageQuantity: (label: string, step: number, unit: string) =>
         `${label}: objednejte celé balení po ${step} ${unit}.`,
+      variantRequired: (label: string) => `${label}: vyberte konkrétní variantu.`,
+      stockShort: (label: string) => `${label}: požadované množství není skladem.`,
+      quantityRejected: (label: string) =>
+        `${label}: množství neodpovídá minimálnímu odběru nebo balení.`,
+      priceChanged: (label: string, previous: string, current: string) =>
+        `${label}: cena se změnila z ${previous} na ${current}. Potvrďte prosím novou cenu.`,
+      priceChangedPlain: (label: string) =>
+        `${label}: cena se změnila. Potvrďte prosím novou cenu.`,
+      shippingPriceChanged: (price: string) => `Cena dopravy se změnila na ${price}.`,
+      marketUnavailable: "V tomto trhu nyní nelze objednávat.",
+      ownerRejected: (label: string) => `${label}: OntOS položku teď nepřijal.`,
     },
     orders: {
       signIn: "Přihlaste se ke svému účtu.",

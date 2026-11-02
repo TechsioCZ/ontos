@@ -155,8 +155,9 @@ unchanged.
   `LinkButton` from the ui-kit always attaches an `onClick`, and a server component cannot pass a function, so the page
   failed with "Event handlers cannot be passed to Client Component props". The same pattern already exists in your
   server components `src/features/account/account-overview.tsx`, `src/app/novinky-a-akce/page.tsx` and
-  `src/app/blog/page.tsx` (not touched by the markets change); those pages log the same error when they render a
-  `LinkButton`.
+  `src/app/blog/page.tsx` (not touched by the markets change); those pages logged the same error when they rendered a
+  `LinkButton`. Resolved since: your `PrimaryLinkButton` / `ContentLink` client boundaries and the client
+  `AccountOverview` are in (see "Storefront leftovers" at the end).
 - Product cards (`src/components/product-grid.tsx`) take their remaining fixed Czech strings from the market dictionary:
   stock states (`product.stockStatus`, moved from `productStockLabels` in `src/lib/product-stock.ts`), the product code
   prefix (`product.sku`), „Cena není dostupná“ (`product.priceUnavailable`), „Více variant“ (`product.moreVariants`)
@@ -456,3 +457,53 @@ search incl. exact SKU, variant modal, contacts, login, favourites; add to cart 
 the OntOS-verified line and „Celková hmotnost“. No console errors. Remaining Czech on `/sk` `/en` was product data and
 AKROS branch addresses; the ŠroubShop contact disclaimer was translated afterwards. On the shop host the only „akros“ in
 HTML are product photo URLs on www.akros.cz (OntOS product data, moved to Core Media by the pseudonymisation operator).
+
+## Storefront leftovers (2026-11-02)
+
+### Cart quote problems speak the market language
+
+The long sentences of a blocked cart (OntOS verification panel, the line tooltip, the add-to-cart error and the
+checkout's stock message) were the owner's Czech `message` on `/sk` and `/en`. Merchandise already returns a
+language-neutral `code` plus structured fields on every `PlaceStorefrontOrder` issue (`availableQuantity`,
+`expectedUnitPriceMinor`, `currentUnitPriceMinor`), so no API change was needed. Same pattern as the price-unavailable
+reason codes: the storefront words the code at the edge.
+
+- `src/ontos/owner-issues.ts` (new): `ownerIssueText(issue, line, t, money)` maps every owner code
+  (`NOT_FOUND`, `NOT_AVAILABLE`, `NOT_OFFERED_IN_MARKET`, `VARIANT_REQUIRED`, `OUT_OF_STOCK`, `INSUFFICIENT_STOCK`,
+  `AVAILABILITY_UNKNOWN`, `MINIMUM_QUANTITY`, `PACKAGE_QUANTITY`, `PRICE_UNAVAILABLE`, `PRICE_CHANGED`,
+  `SHIPPING_PRICE_CHANGED`, `MARKET_UNAVAILABLE`, anything new → `ownerRejected`) to `t.server.cart.*`. Prices are
+  formatted in the market currency; the line label, unit, minimum and package come from the fresh catalog item
+  (quote) or the cart line (order). The owner's `message` is never shown.
+- `src/ontos/quote.ts`: the dry-run issues use it (the BFF's own checks were already localized).
+- `src/app/api/ontos/orders/route.ts`: a 409 rejection rewrites each `issues[].message` and the joined `message`, so
+  `checkout-response.ts` (`errors.stockAdjust(...)`) shows the market language too.
+- `src/ontos/cart-revalidation.tsx`: the last literal of the price-change panel („Za {unit}:“) is
+  `cart.quote.unitPriceLine(unit)`.
+- Dictionaries: `server.cart.{variantRequired, stockShort, quantityRejected, priceChanged, priceChangedPlain,
+shippingPriceChanged, marketUnavailable, ownerRejected}` and `cart.quote.unitPriceLine` in cs/sk/en. Czech output for
+  the owner codes reads like before (the owner's own Czech sentences, now from `cs.ts`).
+- Tests: `tests/unit/ontos-owner-issues.test.ts` (every code in sk/en without Czech, numbers kept, English dry run,
+  Slovak 409 order).
+- Units (`ks`, `m`) and product names stay as stored in OntOS (product data).
+
+### Your three LinkButton pages, checked against your Vercel build
+
+`novinky-a-akce`, `blog` and the account overview were the server pages that once passed `LinkButton` handlers
+across the server/client boundary. Measured side by side with
+https://akros-l1k8fzuvl-kaiuweczes-projects.vercel.app (1440 and 390 px, computed styles of every link button):
+
+- `blog` and `novinky-a-akce`: identical (`PrimaryLinkButton` uppercase primary 263×44 / 299×44, `ContentLink`
+  read-more links, no server render error). No change.
+- **Account overview (`/muj-ucet/prehled`)**: the OntOS port had cut your page down to two small panels. It is your
+  layout again on OntOS data (`src/features/account/account-overview.tsx`, `src/app/muj-ucet/prehled/page.tsx`):
+  - „Poslední objednávka“: newest saved OntOS order (number, date, status, item count, total in the order's
+    currency) with your two buttons: primary „Sledovat zásilku“ (`/sledovani-zasilky?order=<id>`, „Stav
+    objednávky“ until the order is shipped) and outlined „Detail objednávky“. No order yet: „Zatím nemáte žádné
+    objednávky.“ + „Prohlédnout produkty“. If OntOS cannot be read, the panel says so and the rest of the page
+    still renders.
+  - „Váš účet“: name and login e-mail of the portal account + outlined „Upravit můj účet“. OntOS has no billing
+    address on the customer, so that line is not shown.
+  - Your four shortcut cards with the unstyled underlined `LinkButton`: Objednávky, Oblíbené produkty, Kontaktní
+    údaje (→ `/muj-ucet`) and **Reklamace** instead of „Fakturační údaje“ (no billing profile in OntOS yet).
+  - Customer number („Zákazník č. …“) is not shown: the portal account has none.
+  - Copy in `account.overview.*` (cs/sk/en). Test: `tests/component/account-overview.test.tsx`.

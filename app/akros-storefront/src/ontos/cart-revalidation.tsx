@@ -223,8 +223,8 @@ export function CartRevalidation() {
                         {next.variantLabel ? ` – ${next.variantLabel}` : ""}
                       </p>
                       <p>
-                        Za {next.unit}: {formatPrice(previous.priceMinor)} →{" "}
-                        <strong>{formatPrice(next.priceMinor)}</strong>
+                        {cs.cart.quote.unitPriceLine(next.unit)} {formatPrice(previous.priceMinor)}{" "}
+                        → <strong>{formatPrice(next.priceMinor)}</strong>
                       </p>
                       <p>
                         {cs.cart.quote.priceChangeLine(formatQuantity(next.quantity), next.unit)}{" "}
