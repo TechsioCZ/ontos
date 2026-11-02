@@ -7,7 +7,11 @@ import type {
   RentReminderInput,
   StorefrontInquiryTaskInput,
 } from './contract.ts';
-import { AGENDA_MANDATORY_EMAIL_CATEGORIES, AGENDA_OPTIONAL_EMAIL_CATEGORIES } from './contract.ts';
+import {
+  AGENDA_MANDATORY_EMAIL_CATEGORIES,
+  AGENDA_OPTIONAL_EMAIL_CATEGORIES,
+  AKROS_LEGAL_ENTITY_ID,
+} from './contract.ts';
 import type { AkrosOrderEmailEvent } from './templates.ts';
 import {
   agendaNotificationEmail,
@@ -247,7 +251,7 @@ export const planStorefrontInquiryEmail = (
     legalEntityId: options.legalEntityId,
     recipient: options.recipient.trim(),
     source: 'storefront-inquiry',
-    subject: `AKROS: ${inquiry.subject}`,
+    subject: `${options.legalEntityId === AKROS_LEGAL_ENTITY_ID ? 'ŠroubShop' : 'E-shop'}: ${inquiry.subject}`,
     subjectId: task.ref.resourceId,
     subjectNumber: '',
     tenantId: options.tenantId,

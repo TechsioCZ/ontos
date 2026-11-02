@@ -10,6 +10,7 @@ import { legalEntities, tenantModuleStates } from '../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import {
   additionalDemoCompanies,
+  akrosDemoCompany,
   commercialDemoCompany,
   demoCompanyTenantId,
   rentalDemoCompany,
@@ -17,6 +18,9 @@ import {
 import { demoCompanyActiveModuleKeys } from './demo-seed/demo-company-modules.ts';
 import { rebrandRentalDemoPrincipals } from './demo-rental-principal-brand.ts';
 
+const legacyScrewSellerName = 'AKROS (demo)';
+const legacyScrewSellerRegistration = 'DEMO-AKROS';
+const screwSellerRegistration = 'DEMO-SROUBARNA';
 const rentalRegistrationNumber = 'DEMO-NAJEMPARK-RENTAL';
 const rentalLegacyLegalName = 'Siampark';
 const commercialRegistrationNumber = 'DEMO-NAJEMPARK';
@@ -47,6 +51,7 @@ export interface DemoCompanyConfigurationPersistence {
   readonly createRental: Effect.Effect<void, IdentityPersistenceUnavailableError>;
   readonly ensureModules: Effect.Effect<void, IdentityPersistenceUnavailableError>;
   readonly load: Effect.Effect<readonly DemoCompanyRecord[], IdentityPersistenceUnavailableError>;
+  readonly pseudonymizeScrewSeller: Effect.Effect<void, IdentityPersistenceUnavailableError>;
   readonly renameCommercial: Effect.Effect<void, IdentityPersistenceUnavailableError>;
   readonly renameRental: Effect.Effect<void, IdentityPersistenceUnavailableError>;
 }
@@ -85,8 +90,14 @@ export const configureDemoCompanies = Effect.fn('DemoCompanyConfiguration.config
     rows.some((row) => !knownCompanyIds.has(row.legalEntityId)) ||
     additionalDemoCompanies.some((company) => {
       const row = rows.find((candidate) => candidate.legalEntityId === company.legalEntityId);
+      const legacyScrewSeller =
+        company.legalEntityId === akrosDemoCompany.legalEntityId &&
+        row !== undefined &&
+        validCompany(row, akrosDemoCompany.legalEntityId, legacyScrewSellerRegistration) &&
+        row.legalName === legacyScrewSellerName;
       return (
         row !== undefined &&
+        !legacyScrewSeller &&
         (!validCompany(row, company.legalEntityId, company.registrationNumber) || row.legalName !== company.legalName)
       );
     }) ||
@@ -106,6 +117,11 @@ export const configureDemoCompanies = Effect.fn('DemoCompanyConfiguration.config
     yield* persistence.createRental;
   } else if (rental.legalName !== rentalDemoCompany.legalName) {
     yield* persistence.renameRental;
+  }
+  if (
+    rows.some((row) => row.legalEntityId === akrosDemoCompany.legalEntityId && row.legalName === legacyScrewSellerName)
+  ) {
+    yield* persistence.pseudonymizeScrewSeller;
   }
   yield* Effect.forEach(
     additionalDemoCompanies.filter((company) => !rows.some((row) => row.legalEntityId === company.legalEntityId)),
@@ -182,6 +198,25 @@ const persistenceFromTransaction = (
     )
     .for('update')
     .pipe(Effect.mapError(persistenceFailure)),
+  pseudonymizeScrewSeller: DateTime.nowAsDate.pipe(
+    Effect.flatMap((now) =>
+      transaction
+        .update(legalEntities)
+        .set({ legalName: akrosDemoCompany.legalName, registrationNumber: screwSellerRegistration, updatedAt: now })
+        .where(
+          and(
+            eq(legalEntities.tenantId, demoCompanyTenantId),
+            eq(legalEntities.legalEntityId, akrosDemoCompany.legalEntityId),
+            eq(legalEntities.registrationCountry, 'CZ'),
+            eq(legalEntities.registrationNumber, legacyScrewSellerRegistration),
+            eq(legalEntities.status, 'active'),
+            eq(legalEntities.legalName, legacyScrewSellerName),
+          ),
+        )
+        .pipe(Effect.mapError(persistenceFailure)),
+    ),
+    Effect.asVoid,
+  ),
   renameCommercial: DateTime.nowAsDate.pipe(
     Effect.flatMap((now) =>
       transaction

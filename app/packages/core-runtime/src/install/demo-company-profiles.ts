@@ -22,11 +22,11 @@ export const eshopDemoCompany = {
 } as const;
 export const akrosDemoCompany = {
   legalEntityId: '71000000-0000-4000-8000-000000000024',
-  legalName: 'AKROS (demo)',
+  legalName: 'Šroubárna Vysočina s.r.o.',
 } as const;
 /** Every fixed synthetic company with its synthetic registration number. */
 export const additionalDemoCompanies = [
   { ...crmDemoCompany, registrationNumber: 'DEMO-HANAK-CRM' },
   { ...eshopDemoCompany, registrationNumber: 'DEMO-KAVARNA-ESHOP' },
-  { ...akrosDemoCompany, registrationNumber: 'DEMO-AKROS' },
+  { ...akrosDemoCompany, registrationNumber: 'DEMO-SROUBARNA' },
 ] as const;

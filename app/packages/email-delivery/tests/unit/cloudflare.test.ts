@@ -21,7 +21,7 @@ import { agendaSenderFor, senderFor } from '../../src/dispatcher/senders.ts';
 
 type BindingRequest = EmailMessage | EmailMessageBuilder;
 type BindingReceipt = Awaited<ReturnType<CloudflareEmailBinding['send']>>;
-const from = 'AKROS e-shop <noreply@ontos-stage.web-revolution.cz>';
+const from = 'ŠroubShop e-shop <noreply@ontos-stage.web-revolution.cz>';
 const message = {
   html: Redacted.make('<p>Text</p>'),
   subject: 'Objednávka',

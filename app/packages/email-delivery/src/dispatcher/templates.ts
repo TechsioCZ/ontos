@@ -79,15 +79,15 @@ export const orderEventLabel = (order: AkrosOrderInput, event: AkrosOrderEmailEv
 
 const subjectOf = (event: AkrosOrderEmailEvent, number: string, pickup: boolean): string =>
   Match.value(event).pipe(
-    Match.when('ORDER_CREATED', () => `AKROS – přijali jsme vaši objednávku ${number}`),
-    Match.when('CONFIRMED', () => `AKROS – objednávka ${number} se zpracovává`),
+    Match.when('ORDER_CREATED', () => `ŠroubShop – přijali jsme vaši objednávku ${number}`),
+    Match.when('CONFIRMED', () => `ŠroubShop – objednávka ${number} se zpracovává`),
     Match.when('SHIPPED', () =>
       pickup
-        ? `AKROS – objednávka ${number} je připravena k vyzvednutí`
-        : `AKROS – objednávka ${number} byla předána dopravci`,
+        ? `ŠroubShop – objednávka ${number} je připravena k vyzvednutí`
+        : `ŠroubShop – objednávka ${number} byla předána dopravci`,
     ),
-    Match.when('DELIVERED', () => `AKROS – objednávka ${number} je dokončená`),
-    Match.when('CANCELLED', () => `AKROS – objednávka ${number} byla stornována`),
+    Match.when('DELIVERED', () => `ŠroubShop – objednávka ${number} je dokončená`),
+    Match.when('CANCELLED', () => `ŠroubShop – objednávka ${number} byla stornována`),
     Match.exhaustive,
   );
 
@@ -146,8 +146,8 @@ export const akrosOrderEmail = (
     ['Shrnutí objednávky', ...lines.map((l) => `${l.name}\nMnožství: ${l.quantity}\n${l.price}`)].join('\n\n'),
     `Doprava – ${shippingLabel}: ${shippingPrice}\nCelkem vč. DPH: ${total}\nz toho DPH: ${vat}`,
     ...(address === undefined ? [] : [`Doručovací adresa\n${address.street}\n${address.postalCode} ${address.city}`]),
-    'S pozdravem\nTým e-shopu AKROS',
-    `${demoNote}\nObchod AKROS: ${storefrontUrl}`,
+    'S pozdravem\nTým e-shopu ŠroubShop',
+    `${demoNote}\nObchod ŠroubShop: ${storefrontUrl}`,
   ].join('\n\n');
 
   const rows = lines
@@ -176,12 +176,12 @@ export const akrosOrderEmail = (
     `</tr></thead><tbody>${rows}</tbody></table>` +
     `<p style="margin:12px 0 0">Doprava – ${escapeHtml(shippingLabel)}: ${escapeHtml(shippingPrice)}<br>` +
     `Celkem vč. DPH: <strong>${escapeHtml(total)}</strong><br>` +
-    `z toho DPH: ${escapeHtml(vat)}</p>${deliveryAddress}<p>S pozdravem<br>Tým e-shopu AKROS</p>`;
+    `z toho DPH: ${escapeHtml(vat)}</p>${deliveryAddress}<p>S pozdravem<br>Tým e-shopu ŠroubShop</p>`;
   const footer =
     `<p style="margin:0 0 8px">${escapeHtml(demoNote)}</p>` +
-    `<p style="margin:0">Obchod AKROS: <a href="${escapeHtml(storefrontUrl)}">${escapeHtml(storefrontUrl)}</a></p>`;
+    `<p style="margin:0">Obchod ŠroubShop: <a href="${escapeHtml(storefrontUrl)}">${escapeHtml(storefrontUrl)}</a></p>`;
 
-  return { html: layout('AKROS', '#c8102e', subject, body, footer), subject, text };
+  return { html: layout('ŠroubShop', '#c8102e', subject, body, footer), subject, text };
 };
 
 /** Display name of the issuing company: legal name without the „(demo)“ suffix. */

@@ -8,6 +8,7 @@ import type {
 } from '../../src/install/demo-company-configuration.ts';
 import {
   additionalDemoCompanies,
+  akrosDemoCompany,
   commercialDemoCompany,
   demoCompanyTenantId,
   rentalDemoCompany,
@@ -60,6 +61,14 @@ const fixture = (initial: readonly DemoCompanyRecord[]) => {
     load: Effect.sync(() => {
       calls.push('load');
       return [...rows];
+    }),
+    pseudonymizeScrewSeller: Effect.sync(() => {
+      calls.push('pseudonymize-screw-seller');
+      for (const [index, row] of rows.entries()) {
+        if (row.legalEntityId === akrosDemoCompany.legalEntityId) {
+          rows[index] = { ...row, legalName: akrosDemoCompany.legalName, registrationNumber: 'DEMO-SROUBARNA' };
+        }
+      }
     }),
     renameCommercial: Effect.sync(() => {
       calls.push('rename');
@@ -146,6 +155,51 @@ it.effect('renames the exact legacy rental once at the same UUID and leaves cano
   }),
 );
 
+it.effect('pseudonymizes only the exact synthetic company once; rejects partial or foreign identities', () =>
+  Effect.gen(function* pseudonymizeCompany() {
+    const canonicalCommercial = { ...commercial, legalName: commercialDemoCompany.legalName };
+    const legacy = {
+      ...akrosDemoCompany,
+      legalName: 'AKROS (demo)',
+      registrationCountry: 'CZ',
+      registrationNumber: 'DEMO-AKROS',
+      status: 'active',
+      tenantId: demoCompanyTenantId,
+    };
+    for (const changed of [
+      { legalName: 'AKROS' },
+      { registrationNumber: 'OTHER' },
+      { registrationCountry: 'SK' },
+      { status: 'disabled' },
+      { tenantId: '11111111-1111-4111-8111-111111111111' },
+    ]) {
+      const invalidState = fixture([canonicalCommercial, { ...legacy, ...changed }]);
+      const error = yield* configureDemoCompanies(demoCompanyTenantId, invalidState.persistence).pipe(Effect.flip);
+      expect(Predicate.isTagged(error, 'IdentityLifecycleConflictError')).toBe(true);
+      expect(invalidState.calls).toEqual(['load']);
+    }
+    const state = fixture([
+      canonicalCommercial,
+      rental,
+      ...additionalDemoCompanies.slice(0, 2).map((company) => ({
+        ...company,
+        registrationCountry: 'CZ',
+        status: 'active',
+        tenantId: demoCompanyTenantId,
+      })),
+      legacy,
+    ]);
+    yield* configureDemoCompanies(demoCompanyTenantId, state.persistence);
+    yield* configureDemoCompanies(demoCompanyTenantId, state.persistence);
+    expect(state.rows.at(-1)).toEqual({
+      ...legacy,
+      legalName: akrosDemoCompany.legalName,
+      registrationNumber: 'DEMO-SROUBARNA',
+    });
+    expect(state.calls).toEqual(['load', 'pseudonymize-screw-seller', 'modules', 'load', 'modules']);
+  }),
+);
+
 it.effect(
   'renames only the commercial name, creates one rental entity and preserves existing module states on repeat',
   () =>
@@ -159,7 +213,7 @@ it.effect(
       expect(state.rows.map((row) => row.legalName).slice(2)).toEqual([
         'Velkoobchod Hanák s.r.o.',
         'Kavárna Doma s.r.o.',
-        'AKROS (demo)',
+        'Šroubárna Vysočina s.r.o.',
       ]);
       expect(state.calls).toEqual([
         'load',
@@ -167,7 +221,7 @@ it.effect(
         'create',
         'create:DEMO-HANAK-CRM',
         'create:DEMO-KAVARNA-ESHOP',
-        'create:DEMO-AKROS',
+        'create:DEMO-SROUBARNA',
         'modules',
         'load',
         'modules',

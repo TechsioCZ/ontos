@@ -47,7 +47,7 @@ const baseOrder: AkrosOrderInput = {
   ],
   number: 'OBJ-2026-0030',
   pricesIncludeVat: true,
-  shipping: { label: 'Osobní odběr – AKROS (simulace)', method: 'OSOBNI_ODBER', priceMinor: 0 },
+  shipping: { label: 'Osobní odběr – ŠroubShop (simulace)', method: 'OSOBNI_ODBER', priceMinor: 0 },
   status: 'DELIVERED',
   totalMinor: 54_000,
   totalVatMinor: 9372,
@@ -69,7 +69,18 @@ const reminder: RentReminderInput = {
   tenantId: '70000000-0000-4000-8000-000000000001',
 };
 
-describe('AKROS order e-mail planning', () => {
+describe('ŠroubShop order e-mail planning', () => {
+  test('uses the pseudonym in every subject, signature and HTML header for the fixed demo company', () => {
+    for (const event of ['ORDER_CREATED', 'CONFIRMED', 'SHIPPED', 'DELIVERED', 'CANCELLED'] as const) {
+      const rendered = akrosOrderEmail(baseOrder, event, {
+        storefrontUrl: 'https://ontos-stage-shop.web-revolution.cz',
+      });
+      expect(rendered.subject).toContain('ŠroubShop');
+      expect(rendered.text).toContain('Tým e-shopu ŠroubShop');
+      expect(`${rendered.subject}${rendered.html}${rendered.text}`).not.toMatch(/akros/iu);
+    }
+  });
+
   test('derives the lifecycle events from history in order', () => {
     const events = orderEmailEvents(baseOrder).map((e) => e.event);
     expect(events).toEqual(['ORDER_CREATED', 'CONFIRMED', 'SHIPPED', 'DELIVERED']);
@@ -96,7 +107,7 @@ describe('AKROS order e-mail planning', () => {
     const emails = planAkrosOrderEmails(order, planOptions);
     const cancelled = emails.find((e) => e.event === 'CANCELLED');
     expect(cancelled?.text.includes('Důvod: Zákazník zrušil')).toBe(true);
-    expect(cancelled?.subject).toBe('AKROS – objednávka OBJ-2026-0030 byla stornována');
+    expect(cancelled?.subject).toBe('ŠroubShop – objednávka OBJ-2026-0030 byla stornována');
   });
 
   test('plans one e-mail per event with stable dedupe keys and recipient', () => {
@@ -108,7 +119,7 @@ describe('AKROS order e-mail planning', () => {
       `akros-order:${orderId}:SHIPPED`,
       `akros-order:${orderId}:DELIVERED`,
     ]);
-    expect(emails[0]?.subject).toBe('AKROS – přijali jsme vaši objednávku OBJ-2026-0030');
+    expect(emails[0]?.subject).toBe('ŠroubShop – přijali jsme vaši objednávku OBJ-2026-0030');
     expect(emails[0]?.recipient).toBe('pavel@zakaznik.example');
   });
 
@@ -157,14 +168,14 @@ describe('AKROS order e-mail planning', () => {
 
   test('renders the order e-mail directly with the storefront link in the footer', () => {
     const rendered = akrosOrderEmail(baseOrder, 'SHIPPED', { storefrontUrl: 'http://localhost:3070' });
-    expect(rendered.text.includes('Obchod AKROS: http://localhost:3070')).toBe(true);
+    expect(rendered.text.includes('Obchod ŠroubShop: http://localhost:3070')).toBe(true);
   });
 
   test('a personal-pickup order is „připravena k vyzvednutí“, never „předána dopravci“, and no „simulace“', () => {
     const shipped = planAkrosOrderEmails(baseOrder, planOptions).find((e) => e.event === 'SHIPPED');
-    expect(shipped?.subject).toBe('AKROS – objednávka OBJ-2026-0030 je připravena k vyzvednutí');
+    expect(shipped?.subject).toBe('ŠroubShop – objednávka OBJ-2026-0030 je připravena k vyzvednutí');
     expect(shipped?.eventLabel).toBe('Připraveno k vyzvednutí');
-    expect(shipped?.text.includes('je připravena k vyzvednutí (Osobní odběr – AKROS)')).toBe(true);
+    expect(shipped?.text.includes('je připravena k vyzvednutí (Osobní odběr – ŠroubShop)')).toBe(true);
     expect(shipped?.text.includes('dopravci (')).toBe(false);
     for (const email of planAkrosOrderEmails(baseOrder, planOptions)) {
       expect(email.text.includes('simulace')).toBe(false);
@@ -178,7 +189,7 @@ describe('AKROS order e-mail planning', () => {
       shipping: { label: 'PPL – doručení na adresu (simulace)', method: 'PPL', priceMinor: 12_900 },
     };
     const shipped = planAkrosOrderEmails(order, planOptions).find((e) => e.event === 'SHIPPED');
-    expect(shipped?.subject).toBe('AKROS – objednávka OBJ-2026-0030 byla předána dopravci');
+    expect(shipped?.subject).toBe('ŠroubShop – objednávka OBJ-2026-0030 byla předána dopravci');
     expect(shipped?.eventLabel).toBe('Předáno dopravci');
     expect(shipped?.text.includes('jsme předali dopravci (PPL – doručení na adresu).')).toBe(true);
   });
@@ -238,7 +249,7 @@ describe('reminders in the name of the issuing company', () => {
           'Nájempark – finanční oddělení <finance@najempark.demo>',
         );
         expect(yield* senderFor({ legalEntityId: '71000000-0000-4000-8000-000000000024' }, 'AKROS', {})).toBe(
-          'AKROS e-shop <eshop@akros.demo>',
+          'ŠroubShop e-shop <eshop@sroubarna.demo>',
         );
         expect(
           yield* senderFor(reminder, 'Nájempark', { SIAMPARK_EMAIL_FROM: 'Nájempark <fakturace@najempark.demo>' }),
@@ -281,7 +292,7 @@ describe('AKROS status label in e-mails', () => {
     });
     expect(email.text).toContain('Aktuální stav: Zpracovává se');
     expect(email.text).not.toContain('Potvrzená');
-    expect(email.subject).toBe('AKROS – objednávka OBJ-2026-0030 se zpracovává');
+    expect(email.subject).toBe('ŠroubShop – objednávka OBJ-2026-0030 se zpracovává');
   });
 });
 

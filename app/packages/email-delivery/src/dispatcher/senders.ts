@@ -19,7 +19,7 @@ interface KnownSender {
 const knownSenders = new Map<string, KnownSender>([
   [
     AKROS_LEGAL_ENTITY_ID,
-    { defaultAddress: 'eshop@akros.demo', displayName: 'AKROS e-shop', envKey: 'AKROS_EMAIL_FROM' },
+    { defaultAddress: 'eshop@sroubarna.demo', displayName: 'ŠroubShop e-shop', envKey: 'AKROS_EMAIL_FROM' },
   ],
   [
     OBCHODNI_FIRMA_LEGAL_ENTITY_ID,
