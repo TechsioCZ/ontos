@@ -1,7 +1,7 @@
 import "server-only";
 // Storefront market resolution (owner: commerce.market-catalog; offer/currency: merchandise).
-//   1. `current-market-catalog {at}` (cached 60 s): associations of this storefront, channel B2C, effective now,
-//      sold by the pinned AKROS legal entity → the market whose primary locale (supportedLocales[0]) is the path.
+//   1. `current-market-catalog {at}` (cached 60 s): associations of this storefront (configured app id), channel B2C,
+//      effective now, sold by the configured legal entity → the market whose primary locale (supportedLocales[0]) is the path.
 //   2. The market's own definition decides: ACTIVE and effective now = live market, SUSPENDED or outside its validity =
 //      „dočasně nedostupný“, a locale without an association = unknown (404). (`resolve-commerce-market` needs a
 //      trusted-storefront gateway context that the Shell gateway does not issue to the storefront service key.)
@@ -15,7 +15,6 @@ import { OntosError, readRecords } from "./gateway";
 import { isLocaleSegment } from "./market-locale";
 import { isStoreCurrency, type StoreCurrency } from "@/lib/format";
 
-export const STOREFRONT_APP_ID = "akros-storefront";
 const MARKET_CATALOG_AUDIENCE = "commerce-market-catalog";
 const CHANNEL = "B2C";
 export const MARKET_CACHE_MS = 60_000;
@@ -64,6 +63,12 @@ export interface ActiveMarket {
   configured: boolean;
 }
 
+/** Which storefront this instance is in the market catalog (`getConfig()`: app id and selling legal entity). */
+export interface StorefrontIdentity {
+  appId: string;
+  legalEntityId: string;
+}
+
 export type MarketResolution =
   | { kind: "live"; market: ActiveMarket; live: LiveMarket[] }
   | { kind: "not-active"; locale: string; marketCode: string; live: LiveMarket[] }
@@ -86,13 +91,13 @@ const labelOf = (market: Raw, locale: string): string => {
 
 /**
  * Markets of this storefront from a `current-market-catalog` response: active associations of
- * `akros-storefront`, channel B2C, effective at `now`, sold by `legalEntityId`; retired markets are excluded.
+ * `identity.appId`, channel B2C, effective at `now`, sold by `identity.legalEntityId`; retired markets are excluded.
  * Two markets with the same path locale: an ACTIVE one wins, then the lower market code.
  */
 export function storefrontMarkets(
   catalog: unknown,
   now: number,
-  legalEntityId: string,
+  { appId, legalEntityId }: StorefrontIdentity,
 ): StorefrontMarketEntry[] {
   const body = isRaw(catalog) ? catalog : {};
   const markets = new Map(
@@ -112,7 +117,7 @@ export function storefrontMarkets(
     const market = markets.get(text(marketRef.resourceId));
     if (
       market === undefined ||
-      text(storefront.appId) !== STOREFRONT_APP_ID ||
+      text(storefront.appId) !== appId ||
       association.channel !== CHANNEL ||
       text(seller.resourceId) !== legalEntityId ||
       !effectiveAt(association.effectivePeriod, now) ||
@@ -151,10 +156,13 @@ export function storefrontMarkets(
 }
 
 /**
- * Whether the market catalog knows any market of `legalEntityId` (any lifecycle) or any association of this
- * storefront. Without either, the storefront runs as one Czech CZK market (see UNMARKETED_MARKET).
+ * Whether the market catalog knows any market of `identity.legalEntityId` (any lifecycle) or any association of
+ * this storefront. Without either, the storefront runs as one Czech CZK market (see UNMARKETED_MARKET).
  */
-export function hasMarketData(catalog: unknown, legalEntityId: string): boolean {
+export function hasMarketData(
+  catalog: unknown,
+  { appId, legalEntityId }: StorefrontIdentity,
+): boolean {
   const body = isRaw(catalog) ? catalog : {};
   return (
     rows(body.markets).some(
@@ -164,8 +172,7 @@ export function hasMarketData(catalog: unknown, legalEntityId: string): boolean 
     ) ||
     rows(body.associations).some(
       (association) =>
-        isRaw(association.storefrontRef) &&
-        text(association.storefrontRef.appId) === STOREFRONT_APP_ID,
+        isRaw(association.storefrontRef) && text(association.storefrontRef.appId) === appId,
     )
   );
 }
@@ -253,7 +260,8 @@ const offerCache = ttlCache<MarketOffer>(MARKET_CACHE_MS, 20);
 export const readMarketDirectory = (): Promise<MarketDirectory> =>
   directoryCache("", async () => {
     const now = Date.now();
-    const { legalEntityId } = getConfig();
+    const { appId, legalEntityId } = getConfig();
+    const identity: StorefrontIdentity = { appId, legalEntityId };
     let body: unknown;
     try {
       body = await readRecords(MARKET_CATALOG_AUDIENCE, "current-market-catalog", {
@@ -267,8 +275,8 @@ export const readMarketDirectory = (): Promise<MarketDirectory> =>
       return { entries: [], unmarketed: true };
     }
     return {
-      entries: storefrontMarkets(body, now, legalEntityId),
-      unmarketed: !hasMarketData(body, legalEntityId),
+      entries: storefrontMarkets(body, now, identity),
+      unmarketed: !hasMarketData(body, identity),
     };
   });
 

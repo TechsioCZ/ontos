@@ -2,14 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as MarketModule from "@/ontos/market";
 
 // Shared across `vi.resetModules()`: every fresh market module reads through this mock.
-const { AKROS, readRecords } = vi.hoisted(() => ({
+const { AKROS, identity, readRecords } = vi.hoisted(() => ({
   AKROS: "71000000-0000-4000-8000-000000000024",
+  identity: { appId: "akros-storefront", legalEntityId: "71000000-0000-4000-8000-000000000024" },
   readRecords: vi.fn<(audience: string, readName: string, query: unknown) => Promise<unknown>>(),
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/ontos/config", () => ({
-  getConfig: () => ({ legalEntityId: AKROS, apiKey: "test", shellUrl: "http://shell.test" }),
+  getConfig: () => ({ ...identity, apiKey: "test", shellUrl: "http://shell.test" }),
 }));
+const AKROS_STOREFRONT = { appId: "akros-storefront", legalEntityId: AKROS };
 vi.mock("@/ontos/gateway", async (original) => ({
   ...(await original<typeof import("@/ontos/gateway")>()),
   readRecords,
@@ -107,11 +109,17 @@ const catalog = {
   observedAt: "2026-11-02T10:00:00Z",
 };
 
-const currencies: Record<string, string> = { "m-cz": "CZK", "m-sk": "EUR", "m-eu": "EUR" };
+const currencies: Record<string, string> = {
+  "m-cz": "CZK",
+  "m-sk": "EUR",
+  "m-eu": "EUR",
+  "m-kav": "CZK",
+};
 
 let market$: typeof MarketModule;
 beforeEach(async () => {
   vi.resetModules();
+  Object.assign(identity, AKROS_STOREFRONT);
   vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
   readRecords.mockReset();
   readRecords.mockImplementation(async (audience, readName, query) => {
@@ -138,7 +146,7 @@ afterEach(() => vi.useRealTimers());
 
 describe("storefront market directory", () => {
   it("keeps only this storefront's B2C associations of the AKROS seller that are effective now", () => {
-    const entries = market$.storefrontMarkets(catalog, NOW, AKROS);
+    const entries = market$.storefrontMarkets(catalog, NOW, AKROS_STOREFRONT);
     expect(
       entries.map((entry) => [entry.marketCode, entry.locale, entry.lifecycle, entry.label]),
     ).toEqual([
@@ -159,11 +167,33 @@ describe("storefront market directory", () => {
         associations: [association("m-de-old"), association("m-de")],
       },
       NOW,
-      AKROS,
+      AKROS_STOREFRONT,
     );
     expect(entries).toEqual([
       expect.objectContaining({ marketCode: "AKROS-DE", locale: "de", formatLocale: "de-DE" }),
     ]);
+  });
+});
+
+describe("configured storefront identity", () => {
+  it("selects the markets of the configured app id and selling legal entity", async () => {
+    Object.assign(identity, { appId: "kavarna-doma-eshop", legalEntityId: KAVARNA });
+    const resolution = await market$.resolveStorefrontMarket("cs");
+    expect(resolution.kind === "live" && resolution.market.marketCode).toBe("KAVARNA-CZ");
+    expect(resolution.live.map((entry) => entry.marketCode)).toEqual(["KAVARNA-CZ"]);
+    expect(await market$.storefrontMarketKind("sk")).toBe("unknown");
+  });
+
+  it("ignores this seller's markets associated with another storefront application", () => {
+    expect(
+      market$.storefrontMarkets(catalog, NOW, { appId: "other-storefront", legalEntityId: AKROS }),
+    ).toEqual([]);
+    expect(
+      market$.hasMarketData(
+        { markets: [], associations: [association("m-cz")] },
+        { appId: "other-storefront", legalEntityId: AKROS },
+      ),
+    ).toBe(false);
   });
 });
 
