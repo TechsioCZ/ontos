@@ -116,6 +116,7 @@ const readFingerprint = Effect.fn('IsolatedNativeDatabase.readFingerprint')(func
 const schemaOnly = 'schema-only' as const;
 const exactDeadlinePurpose = 'stabilization-1271-exact-obligation-deadline';
 const shellAuthPurpose = 'stabilization-1287-shell-auth';
+const assortmentAuthorizationPurpose = 'implementation-1290-assortment-authorization';
 const retainedPrivacyPurpose = 'stabilization-1258-privacy-drain';
 type IsolatedNativeDatabaseInput = (
   | {
@@ -133,6 +134,7 @@ type IsolatedNativeDatabaseInput = (
         | 'stabilization-1230-preference-period'
         | 'stabilization-1267-party-gateway'
         | typeof shellAuthPurpose
+        | typeof assortmentAuthorizationPurpose
         | 'stabilization-1268-address-plan'
         | 'stabilization-1261-retained-purpose-withdrawal'
         | 'stabilization-1247-set-component-current-closure'
@@ -198,6 +200,7 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
         'stabilization-1230-preference-period',
         'stabilization-1267-party-gateway',
         shellAuthPurpose,
+        assortmentAuthorizationPurpose,
         'stabilization-1268-address-plan',
         'stabilization-1261-retained-purpose-withdrawal',
         'stabilization-1247-set-component-current-closure',
