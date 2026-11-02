@@ -231,9 +231,8 @@ export const prepareMarkets = Effect.fn('Pseudonym.prepareMarkets')(function* pr
   return yield* Effect.void;
 });
 
-const retireMarketAndPricing = Effect.fn('Pseudonym.retireMarket')(function* retireMarketAndPricing(
+const retireLegacyMarket = Effect.fn('Pseudonym.retireMarket')(function* retireLegacyMarket(
   client: SeedClient,
-  baseline: Snapshot,
   source: MarketDefinition,
   reason: string,
 ) {
@@ -254,9 +253,6 @@ const retireMarketAndPricing = Effect.fn('Pseudonym.retireMarket')(function* ret
     marketRef: source.marketRef,
     reason,
   });
-  if (baseline.settings.some(({ marketId }) => marketId === source.marketRef.resourceId)) {
-    yield* merchandiseAction(client, { _tag: 'RemoveMarket', marketId: source.marketRef.resourceId });
-  }
   return yield* Effect.void;
 });
 
@@ -280,7 +276,13 @@ export const retireLegacyCatalog = Effect.fn('Pseudonym.retireLegacyCatalog')(fu
   }
   for (const source of baseline.markets) {
     if (source.marketCode.startsWith(legacyMarketPrefix) && source.lifecycle !== 'RETIRED') {
-      yield* retireMarketAndPricing(client, baseline, source, reason);
+      yield* retireLegacyMarket(client, source, reason);
+    }
+  }
+  // Pricing of every legacy market goes, including already retired QA markets, so no legacy code stays visible.
+  for (const setting of baseline.settings) {
+    if (setting.marketCode.startsWith(legacyMarketPrefix)) {
+      yield* merchandiseAction(client, { _tag: 'RemoveMarket', marketId: setting.marketId });
     }
   }
   const application = baseline.applications.find(({ storefrontAppId }) => storefrontAppId === legacyStorefront);

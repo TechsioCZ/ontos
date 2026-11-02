@@ -20,6 +20,8 @@ export const pseudonymMarketPairs = ['CZ', 'SK', 'EU', 'PL', 'CZ-B2B'].map((suff
   sourceCode: `${legacyMarketPrefix}${suffix}`,
   targetCode: `SROUB-${suffix}`,
 }));
+/** Throwaway Market lifecycle QA markets: no replacement; the retire phase retires them and removes their pricing. */
+export const isLegacyQaMarket = (code: string) => /^AKROS-QA-[0-9A-Z]+$/u.test(code);
 /** Container-local private handoff of the newly issued key, relative to the operator's home directory. */
 export const keyHandoffDirectory = '.ontos-operator-handoff';
 export const keyHandoffFile = 'sroubshop-storefront-api-key';

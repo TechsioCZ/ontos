@@ -27,6 +27,7 @@ import { eshopMarketSeed } from './seed-eshop-markets.mts';
 
 const at = '2026-10-01T00:00:00.000Z';
 const marketModule = 'commerce.market-catalog';
+const marketResource = 'commerce.market-catalog.market';
 const seller = {
   moduleId: 'core.identity',
   resourceId: akrosDemoLegalEntityId,
@@ -36,7 +37,7 @@ const seller = {
 const marketRefOf = (id: string) => ({
   moduleId: marketModule,
   resourceId: id,
-  resourceType: 'commerce.market-catalog.market',
+  resourceType: marketResource,
   tenantId: demoTenantId,
 });
 const sources = pseudonymMarketPairs.map((pair) => {
@@ -56,7 +57,7 @@ const sources = pseudonymMarketPairs.map((pair) => {
     jurisdictions: [definition.jurisdiction],
     lifecycle: definition.lifecycle,
     marketCode: pair.sourceCode,
-    marketRef: marketRefOf(demoId('commerce.market-catalog.market', pair.sourceCode.toLowerCase())),
+    marketRef: marketRefOf(demoId(marketResource, pair.sourceCode.toLowerCase())),
     purpose: definition.purpose,
     revision: 1,
     sellingLegalEntityRef: seller,
@@ -145,37 +146,47 @@ const preparedSnapshot = (baseline: Snapshot): Snapshot =>
       ],
       associations: [
         ...baseline.associations,
-        ...baseline.associations.map((association) => ({
-          ...association,
-          marketRef: { ...association.marketRef, resourceId: targetIdOf(baseline, association.marketRef.resourceId) },
-          storefrontRef: { ...association.storefrontRef, appId: pseudonymStorefront },
-        })),
+        ...baseline.associations
+          .filter(({ marketRef }) => targetIdOf(baseline, marketRef.resourceId) !== '')
+          .map((association) => ({
+            ...association,
+            marketRef: { ...association.marketRef, resourceId: targetIdOf(baseline, association.marketRef.resourceId) },
+            storefrontRef: { ...association.storefrontRef, appId: pseudonymStorefront },
+          })),
       ],
       companyName: 'Šroubárna Vysočina s.r.o.',
       exceptions: {
         ...baseline.exceptions,
         ...Object.fromEntries(
-          Object.entries(baseline.exceptions).map(([id, items]) => [targetIdOf(baseline, id), items]),
+          Object.entries(baseline.exceptions)
+            .filter(([id]) => targetIdOf(baseline, id) !== '')
+            .map(([id, items]) => [targetIdOf(baseline, id), items]),
         ),
       },
       markets: [
         ...baseline.markets,
-        ...baseline.markets.map((source) => {
+        ...baseline.markets.flatMap((source) => {
           const pair = pseudonymMarketPairs.find(({ sourceCode }) => sourceCode === source.marketCode);
-          return {
-            ...source,
-            marketCode: pair?.targetCode ?? '',
-            marketRef: { ...source.marketRef, resourceId: pair?.marketId ?? '' },
-          };
+          return pair === undefined
+            ? []
+            : [
+                {
+                  ...source,
+                  marketCode: pair.targetCode,
+                  marketRef: { ...source.marketRef, resourceId: pair.marketId },
+                },
+              ];
         }),
       ],
       settings: [
         ...baseline.settings,
-        ...baseline.settings.map((setting) => ({
-          ...setting,
-          marketCode: setting.marketCode.replace('AKROS-', 'SROUB-'),
-          marketId: targetIdOf(baseline, setting.marketId),
-        })),
+        ...baseline.settings
+          .filter(({ marketId }) => targetIdOf(baseline, marketId) !== '')
+          .map((setting) => ({
+            ...setting,
+            marketCode: setting.marketCode.replace('AKROS-', 'SROUB-'),
+            marketId: targetIdOf(baseline, setting.marketId),
+          })),
       ],
     },
   }).baseline;
@@ -297,6 +308,54 @@ it('reports every retirement gap until associations, markets, pricing, applicati
   };
   expect(retirementGaps(retired)).toEqual([]);
 });
+
+it.effect('includes retired QA markets without a replacement and removes their pricing on retirement', () =>
+  Effect.gen(function* qaMarkets() {
+    const { baseline } = plan();
+    const [template] = baseline.markets;
+    const [setting] = baseline.settings;
+    const [association] = baseline.associations;
+    if (template === undefined || setting === undefined || association === undefined) {
+      return expect.unreachable('Fixture missing');
+    }
+    const qaId = demoId(marketResource, 'akros-qa-test');
+    const qa = {
+      ...template,
+      lifecycle: 'RETIRED' as const,
+      marketCode: 'AKROS-QA-MVYJJQ52',
+      marketRef: { ...template.marketRef, resourceId: qaId },
+    };
+    const withQa: Snapshot = {
+      ...baseline,
+      markets: [...baseline.markets, qa],
+      settings: [...baseline.settings, { ...setting, marketCode: qa.marketCode, marketId: qaId }],
+    };
+    yield* validatePseudonymSnapshot(withQa);
+    yield* failsClosed(
+      validatePseudonymSnapshot({
+        ...withQa,
+        associations: [
+          ...withQa.associations,
+          {
+            ...association,
+            marketRef: qa.marketRef,
+            storefrontRef: { ...association.storefrontRef, appId: 'kavarna-doma-eshop' },
+          },
+        ],
+      }),
+    );
+    const after = preparedSnapshot(withQa);
+    const retired: Snapshot = {
+      ...after,
+      associations: after.associations.filter(({ storefrontRef }) => storefrontRef.appId !== legacyStorefront),
+      markets: after.markets.map((market) =>
+        market.marketCode.startsWith('AKROS-') ? { ...market, lifecycle: 'RETIRED' as const } : market,
+      ),
+    };
+    expect(retirementGaps(retired)).toEqual(['legacy market pricing']);
+    return yield* Effect.void;
+  }),
+);
 
 it('retires the old principal only after the deployed startup reconciler stopped installing it', () => {
   expect(deployedServiceSliceReady([pseudonymPrincipalId, demoId('core.principal', 'commerce-portal')])).toBe(true);

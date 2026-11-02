@@ -346,7 +346,7 @@ const main = (mode: Mode, phase: Phase, planPath: string, reviewed: Option.Optio
 const command = Command.make(
   'pseudonymize-akros-demo',
   {
-    issueKey: Flag.Boolean('issue-key'),
+    issueKey: Flag.Boolean('issue-key').pipe(Flag.withDefault(false)),
     mode: Flag.Literals('mode', modes),
     phase: Flag.Literals('phase', ['prepare', 'retire']),
     plan: Flag.String('plan'),

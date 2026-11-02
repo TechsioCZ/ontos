@@ -24,6 +24,7 @@ import { DemoSeedError } from './seed-client.mts';
 import type { SeedClient } from './seed-client.mts';
 import {
   containsLegacyBrand,
+  isLegacyQaMarket,
   legacyMarketPrefix,
   legacyStorefront,
   legacyStorefrontPrincipalId,
@@ -94,6 +95,7 @@ export const pseudonymPlanMatches = (saved: Plan, current: Plan, reviewed: Optio
   });
 
 const relevantCode = (code: string) =>
+  isLegacyQaMarket(code) ||
   pseudonymMarketPairs.some(({ sourceCode, targetCode }) => code === sourceCode || code === targetCode);
 export const isActiveKey = (service: typeof ManagedServiceSchema.Type) =>
   service.keyStatus === 'active' && service.enabled;
@@ -294,6 +296,18 @@ export const validatePseudonymSnapshot = Effect.fn('Pseudonym.validateSnapshot')
     ) {
       return yield* fail('Legacy market has another storefront; review manually');
     }
+  }
+  const qaMarkets = new Set(
+    snapshot.markets
+      .filter(({ marketCode }) => isLegacyQaMarket(marketCode))
+      .map(({ marketRef }) => marketRef.resourceId),
+  );
+  if (
+    snapshot.associations.some(
+      ({ marketRef, storefrontRef }) => qaMarkets.has(marketRef.resourceId) && storefrontRef.appId !== legacyStorefront,
+    )
+  ) {
+    return yield* fail('A QA market has another storefront; review manually');
   }
   return snapshot;
 });
