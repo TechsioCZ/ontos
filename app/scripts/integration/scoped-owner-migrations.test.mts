@@ -68,6 +68,15 @@ const command = (requirementsFile: string, env: Environment, verifyOnly: boolean
     { cwd: workspaceRoot, env, extendEnv: false, stderr: 'pipe', stdin: 'ignore', stdout: 'pipe' },
   );
 
+const verifyMarket = (env: Environment) =>
+  collectToolingProcess(
+    ChildProcess.make(
+      process.execPath,
+      [path.join(workspaceRoot, 'verticals/commerce-market-catalog/scripts/verify-db-schema.mts')],
+      { cwd: workspaceRoot, env, extendEnv: false, stderr: 'pipe', stdin: 'ignore', stdout: 'pipe' },
+    ),
+  ).pipe(Effect.scoped, Effect.timeout('30 seconds'));
+
 // The runner emits this only after real selected verifiers succeed and the readiness server listens.
 // Port zero avoids a shared fixed port; this tests that actual listening event, not an invented receipt.
 const runToReadiness = Effect.fn('ScopedOwnerMigrations.actualRunner')(function* actualRunner(
@@ -321,6 +330,33 @@ it.live(
       });
       expect(rebuilt.units.providers).toContain('tax');
       expect(rebuilt.migrationPlan?.owners.every(({ pendingMigrations }) => pendingMigrations.length === 0)).toBe(true);
+      // Closed metadata-only corruptions inside the owned database must be rejected by the public verifier.
+      for (const control of [
+        {
+          grant: 'grant DELETE on commerce_market_catalog.market_retirement_admissions to ontos_runtime',
+          revoke: 'revoke DELETE on commerce_market_catalog.market_retirement_admissions from ontos_runtime',
+        },
+        {
+          grant: 'grant SELECT on commerce_market_catalog.markets to ontos_runtime',
+          revoke: 'revoke SELECT on commerce_market_catalog.markets from ontos_runtime',
+        },
+      ]) {
+        yield* Effect.acquireUseRelease(
+          native.client.unsafe(control.grant),
+          () =>
+            verifyMarket(native.selectedEnvironment).pipe(
+              Effect.tap((result) =>
+                Effect.sync(() => {
+                  expect(result.status).not.toBe(0);
+                  expect(`${result.stdout}${result.stderr}`).toContain('CommerceMarketCatalogVerificationError');
+                }),
+              ),
+            ),
+          () => native.client.unsafe(control.revoke).pipe(Effect.orDie),
+        );
+        const restored = yield* verifyMarket(native.selectedEnvironment);
+        expect(restored.status).toBe(0);
+      }
       return yield* Console.info(
         'SCOPED_OWNER_NATIVE_METADATA',
         JSON.stringify({ after, baseline, pending: pending.plan, selected: completed.plan }),
