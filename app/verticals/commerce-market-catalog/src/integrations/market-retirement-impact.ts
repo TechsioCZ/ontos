@@ -34,6 +34,7 @@ import type {
   MarketRetirementReserveRequest,
 } from '../services/market-retirement-impact-authority.ts';
 import { MarketRetirementImpactAuthorityService } from '../services/market-retirement-impact-authority.ts';
+import { ownerGatewayApiKey } from './owner-gateway-api-key.ts';
 
 type ExecuteMarketAffectedUseAssessment<Failure> = (
   payload: MarketAffectedUseAssessmentRequest,
@@ -66,10 +67,11 @@ const httpUrl = Schema.URLFromString.check(
       : 'Service URL must be an HTTP(S) URL without credentials, query, or fragment',
   ),
 );
-const productionClientConfiguration = Config.all({
-  apiKey: Config.Redacted('ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY'),
-  shellGatewayBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
-});
+const productionClientConfiguration = (legalEntityId: string) =>
+  Config.all({
+    apiKey: ownerGatewayApiKey(legalEntityId),
+    shellGatewayBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
+  });
 const GatewayFailureSchema = Schema.Struct({
   code: Schema.optionalKey(Schema.String),
   message: Schema.optionalKey(Schema.String),
@@ -432,7 +434,7 @@ const withCustomerContextCredential = <A, E, R>(
   context: MarketRetirementOwnerCallContext,
   call: (issued: GatewayContextResponse, baseUrl: URL) => Effect.Effect<A, E, R>,
 ) =>
-  productionClientConfiguration.pipe(
+  productionClientConfiguration(context.legalEntityId).pipe(
     Effect.flatMap(({ apiKey, shellGatewayBaseUrl }) =>
       issueApiKeyGatewayContext(
         {

@@ -8,6 +8,7 @@ import { Config, Effect, Schema } from 'effect';
 import type { Option } from 'effect';
 
 import type { PurchasingSubjectRefSchema } from '../../shared/market-contracts.ts';
+import { ownerGatewayApiKey } from './owner-gateway-api-key.ts';
 
 type PurchasingSubject = typeof PurchasingSubjectRefSchema.Type;
 type OwnerCurrentRestrictions = Extract<
@@ -26,10 +27,11 @@ const httpUrl = Schema.URLFromString.check(
       : 'Service URL must be an HTTP(S) URL without credentials, query, or fragment',
   ),
 );
-const configuration = Config.all({
-  apiKey: Config.Redacted('ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY'),
-  shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
-});
+const configuration = (legalEntityId: string) =>
+  Config.all({
+    apiKey: ownerGatewayApiKey(legalEntityId),
+    shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
+  });
 
 export class MarketSubjectRestrictionsUnavailable extends Schema.TaggedError<MarketSubjectRestrictionsUnavailable>()(
   'MarketSubjectRestrictionsUnavailable',
@@ -119,7 +121,7 @@ export const makeServerMarketSubjectRestrictionsReader = ({
       Effect.mapError(unavailable),
     );
     const response = yield* Effect.gen(function* executeCustomerOwnerRead() {
-      const configured = yield* configuration;
+      const configured = yield* configuration(legalEntityId);
       const issued = yield* issueApiKeyGatewayContext(
         { audience: 'commerce-customer-context', compositionRevision, legalEntityId },
         { apiKey: configured.apiKey, baseUrl: configured.shellBaseUrl, requestCorrelation },
