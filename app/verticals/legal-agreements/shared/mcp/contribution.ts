@@ -1,6 +1,11 @@
 import { defineOntosMcpContribution } from '@app/core-runtime';
 
 export const legalAgreementsMcpContribution = defineOntosMcpContribution({
+  actions: {
+    'request-search-rebuild': {
+      title: { cs: 'Vyžádat obnovu vyhledávacího indexu smluv', en: 'Request a contracts search index rebuild' },
+    },
+  },
   approvals: true,
   commandFieldLabels: {
     contractRef: 'Smlouva',

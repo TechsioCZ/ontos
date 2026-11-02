@@ -1,6 +1,11 @@
 import { defineOntosMcpContribution } from '@app/core-runtime';
 
 export const financeBillingMcpContribution = defineOntosMcpContribution({
+  actions: {
+    'request-search-rebuild': {
+      title: { cs: 'Vyžádat obnovu vyhledávacího indexu financí', en: 'Request a finance search index rebuild' },
+    },
+  },
   approvals: true,
   commandFieldLabels: {
     amountMinor: 'Částka',

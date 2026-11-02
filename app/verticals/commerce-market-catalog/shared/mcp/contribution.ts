@@ -26,6 +26,9 @@ export const commerceMarketCatalogMcpContribution = defineOntosMcpContribution({
         en: 'Remove a storefront market association',
       },
     },
+    'request-search-rebuild': {
+      title: { cs: 'Vyžádat obnovu vyhledávacího indexu trhů', en: 'Request a market search index rebuild' },
+    },
     'retire-market': {
       description: {
         cs: 'Požádá o vyřazení trhu. Výsledek je obvykle „pending“: vyřazení dokončí OntOS na pozadí po potvrzení dopadu v zákaznickém kontextu. Konečný stav (completed nebo failed s důvodem) ukáže čtení „Stav vyřazení obchodního trhu“ s vráceným retirementIntentId.',
