@@ -145,10 +145,9 @@ const partyDescriptionSchema = Schema.Struct({
   runtime: runtimeDescriptionSchema,
   subscriptions: Schema.Array(OntosOutboxSubscriptionContractSchema),
 });
-const exactPartyAcknowledgement = (
+const exactConsumerAcknowledgement = (
   expectedWorkerKeys: readonly string[],
   deliveries: readonly (typeof outboxDeliveries.$inferSelect)[],
-  remainingDebtCount: number,
 ) => {
   const [delivery] = deliveries;
   if (
@@ -156,8 +155,7 @@ const exactPartyAcknowledgement = (
     deliveries.length !== 1 ||
     delivery === undefined ||
     delivery.workerKey !== expectedWorkerKeys[0] ||
-    delivery.status !== 'done' ||
-    remainingDebtCount !== 0
+    delivery.status !== 'done'
   ) {
     return Option.none();
   }
@@ -1113,8 +1111,8 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
           )
           .map(({ workerKey }) => workerKey);
         const partyDeliveries = deliveries.filter(({ consumerModuleKey }) => consumerModuleKey === partyModuleKey);
-        const partyAcknowledgement = exactPartyAcknowledgement(expectedWorkerKeys, partyDeliveries, remaining.length);
-        if (Option.isNone(partyAcknowledgement)) {
+        const partyAcknowledgement = exactConsumerAcknowledgement(expectedWorkerKeys, partyDeliveries);
+        if (Option.isNone(partyAcknowledgement) || remaining.length !== 0) {
           yield* Effect.logError('Actual public completion delivery settlement differs from the required boundary', {
             deliveryCount: deliveries.length,
             deliveryStatuses: deliveries.slice(0, 8).map(({ status, workerKey }) => ({ status, workerKey })),
@@ -1131,6 +1129,41 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
             .filter(({ consumerModuleKey }) => consumerModuleKey !== partyModuleKey)
             .slice(0, 8)
             .map(({ consumerModuleKey, status, workerKey }) => ({ consumerModuleKey, status, workerKey })),
+        });
+        const watchdogResponse = yield* Effect.tryPromise({
+          catch: () => failure('The actual Privacy watchdog test transport failed'),
+          try: async (signal) =>
+            await fetch(`${privacyUrl}/__1258/dispatch-watchdog/complete`, { method: 'POST', signal }),
+        }).pipe(Effect.timeout('30 seconds'));
+        if (watchdogResponse.status !== 204) {
+          return yield* failure('The actual Privacy watchdog did not complete its cycle');
+        }
+        const privacyDeliveries = yield* database.executor
+          .select()
+          .from(outboxDeliveries)
+          .where(
+            and(
+              eq(outboxDeliveries.outboxMessageId, message.outboxMessageId),
+              eq(outboxDeliveries.consumerModuleKey, privacyModuleKey),
+            ),
+          );
+        const expectedPrivacyWorkerKeys = privacyDescription.runtime.outboxSubscriptions
+          .filter(
+            ({ consumerModuleKey, producerModuleKey, topic }) =>
+              consumerModuleKey === privacyModuleKey &&
+              producerModuleKey === message.producerModuleKey &&
+              topic === message.topic,
+          )
+          .map(({ workerKey }) => workerKey);
+        const privacyAcknowledgement = exactConsumerAcknowledgement(expectedPrivacyWorkerKeys, privacyDeliveries);
+        if (Option.isNone(privacyAcknowledgement)) {
+          return yield* failure('The actual Privacy watchdog did not ACK its exact intended delivery');
+        }
+        yield* Effect.logInfo('Both intended consumers completed their actual deliveries', {
+          partyStatus: partyAcknowledgement.value.status,
+          partyWorkerKey: partyAcknowledgement.value.workerKey,
+          privacyStatus: privacyAcknowledgement.value.status,
+          privacyWorkerKey: privacyAcknowledgement.value.workerKey,
         });
         const [event] = yield* database.executor
           .select()
