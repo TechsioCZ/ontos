@@ -6,6 +6,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Match } from 'effect';
 
 import type { ShellSearchResult } from '../../../../shared/api.ts';
+import { searchHitState } from '../../search-hit-state.ts';
 import { buildShellNavigation, ShellRouteLink } from '../../shell-frame.tsx';
 import { SignInRedirect } from '../../sign-in-redirect.tsx';
 import { ShellContentLayout } from '../../shell-content-layout.tsx';
@@ -37,6 +38,7 @@ const SearchResultItem = ({ result }: { readonly result: ShellSearchResult }) =>
           resourceId: result.ref.resourceId,
           resourceType: result.ref.resourceType,
         }}
+        state={searchHitState(result.title)}
         to="/resources/$moduleId/$resourceType/$resourceId"
         variant="secondary"
       >

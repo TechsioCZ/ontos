@@ -1,6 +1,6 @@
 /* eslint-disable no-negated-condition, unicorn/no-negated-condition -- Closed route states read most clearly as error-versus-ready branches. expires: 2026-12-31. */
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useLoaderData, useParams } from '@modern-js/plugin-tanstack/runtime';
+import { useLoaderData, useParams, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -11,6 +11,7 @@ import { ShellReloadRequiredProblemSchema } from '../../../../../../../shared/ap
 import { attachResourceMedia } from '../../../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime.ts';
 import type { ShellNavigationItem } from '../../../../../../../shared/api.ts';
+import { searchHitTitleOf } from '../../../../../search-hit-state.ts';
 import { ShellContentLayout } from '../../../../../shell-content-layout.tsx';
 import { buildShellNavigation, ShellRouteLink } from '../../../../../shell-frame.tsx';
 import { ShellStatusPanel, shellStatusTitleKey } from '../../../../../shell-status-panel.tsx';
@@ -153,6 +154,7 @@ const ResourcePage = () => {
   const [mediaState, setMediaState] = useState<MediaState>('idle');
   const [attachmentReloadRequired, setAttachmentReloadRequired] = useState(false);
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
+  const searchHitTitle = useRouterState({ select: ({ location }) => searchHitTitleOf(location.state) });
   const handleMediaAttachment = (ref: ReadyResourceModel['resource']['ref']) => {
     if (
       model.shell.state !== 'authenticated' ||
@@ -204,8 +206,19 @@ const ResourcePage = () => {
       </main>
     );
   }
-  const content =
-    model.state !== 'ready' ? (
+  // A record just found by search exists: when the Shell has no detail view for it, name it and open its agenda.
+  const foundElsewhere =
+    searchHitTitle !== undefined && (model.state === 'not_found' || model.state === 'unavailable')
+      ? searchHitTitle
+      : null;
+  const closedContent =
+    foundElsewhere !== null ? (
+      // The page title already names the record; only the way to its details is missing here.
+      <>
+        <StatusText status="default">{t('shell.resource.found_in_agenda')}</StatusText>
+        <OwningAgendaLinks moduleId={moduleId} navigation={model.shell.navigation.items} />
+      </>
+    ) : (
       // Distinct states: forbidden (lock), not found (search), temporarily unavailable (retry).
       <>
         <ShellStatusPanel messageKey={`shell.resource.${model.state}`} status={model.state} />
@@ -213,6 +226,10 @@ const ResourcePage = () => {
           <OwningAgendaLinks moduleId={moduleId} navigation={model.shell.navigation.items} />
         )}
       </>
+    );
+  const content =
+    model.state !== 'ready' ? (
+      closedContent
     ) : (
       <ResourceDetails
         mediaState={mediaState}
@@ -226,7 +243,9 @@ const ResourcePage = () => {
       shell={model.shell}
       {...(model.state === 'ready' ? { currentModuleId: model.resource.ref.moduleId } : {})}
       title={
-        model.state === 'ready' ? model.resource.detail.title : t(shellStatusTitleKey(model.state, 'recordMissing'))
+        model.state === 'ready'
+          ? model.resource.detail.title
+          : (foundElsewhere ?? t(shellStatusTitleKey(model.state, 'recordMissing')))
       }
     >
       {content}

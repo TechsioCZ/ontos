@@ -13,6 +13,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
 
+import { searchHitState } from './search-hit-state.ts';
 import type { ShellSearchSuggestion, ShellSearchSuggestionsState } from './shell-search-suggestions.ts';
 
 type SuggestionLinkProps = ComponentProps<typeof LocalizedLink>;
@@ -75,6 +76,7 @@ const SuggestionRow = ({
           resourceId: suggestion.ref.resourceId,
           resourceType: suggestion.ref.resourceType,
         }}
+        state={searchHitState(suggestion.title)}
         to="/resources/$moduleId/$resourceType/$resourceId"
       >
         <span className="min-w-0 truncate">{suggestion.title}</span>

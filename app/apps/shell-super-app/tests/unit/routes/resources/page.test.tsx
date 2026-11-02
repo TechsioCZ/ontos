@@ -31,6 +31,7 @@ const {
   browserRunPromiseMock,
   dashboardRenders,
   navigateMock,
+  routerHistoryState,
   shellControlsMock,
   useLoaderDataMock,
 } = rstest.hoisted(() => {
@@ -40,6 +41,7 @@ const {
     browserRunPromiseMock: rstest.fn(),
     dashboardRenders: renders,
     navigateMock: rstest.fn(),
+    routerHistoryState: { searchHitTitle: '' },
     shellControlsMock: rstest.fn(),
     useLoaderDataMock: rstest.fn(),
   };
@@ -51,6 +53,7 @@ const translations = new Map(
     'shell.dashboard.unavailable': 'The dashboard is unavailable',
     'shell.moduleTarget.reload_required': 'Reload this page to continue',
     'shell.resource.forbidden': 'You cannot open this resource',
+    'shell.resource.found_in_agenda': 'Its details are in the agenda it belongs to.',
     'shell.resource.media.absent': 'This resource has no media',
     'shell.resource.media.attach': 'Attach media',
     'shell.resource.media.failed': 'Attaching the media failed',
@@ -83,6 +86,11 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   useLoaderData: useLoaderDataMock,
   useNavigate: () => navigateMock,
   useParams: () => ({ moduleId: 'billing.invoices' }),
+  useRouterState: ({
+    select,
+  }: {
+    readonly select: (state: { location: { state: typeof routerHistoryState } }) => string | undefined;
+  }) => select({ location: { state: routerHistoryState } }),
 }));
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
@@ -341,6 +349,34 @@ it('offers the owning module agendas when the Shell cannot show the record itsel
   expect([...agendas.querySelectorAll('a')].map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
     ['Invoices', '/en/finance/invoices'],
   ]);
+});
+
+it('names a record opened from search and points to its agenda instead of calling it missing', () => {
+  routerHistoryState.searchHitTitle = 'Petr Dvořák';
+  try {
+    renderResourcePage({
+      shell: {
+        ...authenticatedShellFixture(),
+        navigation: {
+          deniedAppIds: [],
+          items: Schema.decodeUnknownSync(Schema.Array(ShellNavigationItemSchema))([
+            navigationItem('billing.invoices', 'Invoices', '/en/finance/invoices'),
+          ]),
+          moduleIds: [],
+          state: 'available',
+          unavailableDeployments: [],
+        },
+      },
+      state: 'not_found',
+    });
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Petr Dvořák' })).toBeTruthy();
+    expect(screen.getByText('Its details are in the agenda it belongs to.')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Invoices' }).getAttribute('href')).toBe('/en/finance/invoices');
+    expect(screen.queryByText('This resource does not exist')).toBeNull();
+  } finally {
+    routerHistoryState.searchHitTitle = '';
+  }
 });
 
 it('titles the dashboard from the resource and scopes it to the owning module', () => {

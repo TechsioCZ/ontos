@@ -333,6 +333,7 @@
       "placeholder": "Hledat zákazníky a dodavatele…"
     },
     "resource": {
+      "found_in_agenda": "Podrobnosti tohoto záznamu najdete v agendě, ke které patří.",
       "open_in_agenda": "Otevřít v agendě",
       "forbidden": "K zobrazení tohoto zdroje nemáte oprávnění.",
       "media": {
