@@ -18,6 +18,8 @@ import type { ReactElement } from 'react';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
 import { formatWholeKc, opportunityStages, stageRank } from './pipeline-model.ts';
 import type { EmployeeId } from './pipeline-model.ts';
+import { referenceText, resolveReference } from './pipeline-reference-labels.ts';
+import type { ReferenceStatus, ReferenceTexts } from './pipeline-reference-labels.ts';
 import type { CustomerOption, EmployeeOption } from './pipeline-references.ts';
 
 const K = 'sales-pipeline.pages.records';
@@ -27,18 +29,27 @@ type Translate = ReturnType<typeof useModernI18n>['t'];
 /** Lookups the table needs to turn ids into names and tags. */
 export interface PipelineLookups {
   readonly customerById: ReadonlyMap<string, CustomerOption>;
-  readonly customersReady: boolean;
+  readonly customersStatus: ReferenceStatus;
   readonly employeeById: ReadonlyMap<string, EmployeeOption>;
-  readonly employeesReady: boolean;
+  readonly employeesStatus: ReferenceStatus;
   /** `null` for a role that may not read tags: the table then has no Štítky column. */
   readonly tagsBySubject: ReadonlyMap<string, readonly Tag[]> | null;
 }
 
+const secondary = (text: string): ReactElement => <span className="text-fg-secondary">{text}</span>;
+
+const referenceTexts = (t: Translate, unknown: string): ReferenceTexts => ({
+  loading: '—',
+  unavailable: t(`${K}.referenceUnavailable`),
+  unknown,
+});
+
 const customerCell = (lookups: PipelineLookups, t: Translate, partyId: string): ReactElement => {
-  const customer = lookups.customerById.get(partyId);
-  if (customer === undefined) {
-    return <span className="text-fg-secondary">{lookups.customersReady ? t(`${K}.create.unknownCustomer`) : '—'}</span>;
+  const reference = resolveReference(lookups.customerById, lookups.customersStatus, partyId);
+  if (reference.kind !== 'found') {
+    return secondary(referenceText(reference, () => '', referenceTexts(t, t(`${K}.create.unknownCustomer`))));
   }
+  const customer = reference.item;
   return (
     <span className="flex min-w-0 flex-col">
       <span className="truncate">{customer.name ?? t(`${K}.create.unknownCustomer`)}</span>
@@ -54,13 +65,13 @@ const customerSortKey = (lookups: PipelineLookups, partyId: string): string =>
 
 const ownerCell = (lookups: PipelineLookups, t: Translate, owner: EmployeeId | undefined): ReactElement => {
   if (owner === undefined) {
-    return <span className="text-fg-secondary">{t(`${K}.owner.none`)}</span>;
+    return secondary(t(`${K}.owner.none`));
   }
-  const employee = lookups.employeeById.get(owner);
-  if (employee === undefined) {
-    return <span className="text-fg-secondary">{lookups.employeesReady ? t(`${K}.unknownOwner`) : '—'}</span>;
+  const reference = resolveReference(lookups.employeeById, lookups.employeesStatus, owner);
+  if (reference.kind !== 'found') {
+    return secondary(referenceText(reference, () => '', referenceTexts(t, t(`${K}.unknownOwner`))));
   }
-  return <span className="block truncate">{employee.fullName}</span>;
+  return <span className="block truncate">{reference.item.fullName}</span>;
 };
 
 const ownerSortKey = (lookups: PipelineLookups, owner: EmployeeId | undefined): string =>

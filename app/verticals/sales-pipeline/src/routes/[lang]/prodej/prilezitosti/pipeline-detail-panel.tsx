@@ -21,6 +21,7 @@ import type { ReactNode } from 'react';
 import type { Opportunity, OpportunityLine } from '../../../../../shared/model/opportunity.ts';
 import { isOpenStage } from '../../../../../shared/model/opportunity.ts';
 import { formatWholeKc } from './pipeline-model.ts';
+import { referenceText, resolveReference } from './pipeline-reference-labels.ts';
 import type { PipelineLookups } from './pipeline-table.tsx';
 import type { RelatedContract, RelatedOrder, RelatedSection, RelatedTask } from './pipeline-related.ts';
 import { useOpportunityRelated } from './pipeline-related.ts';
@@ -109,8 +110,24 @@ export const PipelineDetailPanel = ({
   if (opportunity === undefined) {
     return null;
   }
-  const owner =
-    opportunity.ownerEmployeeId === undefined ? undefined : lookups.employeeById.get(opportunity.ownerEmployeeId);
+  const texts = (unknown: string) => ({
+    loading: '—',
+    unavailable: t('sales-pipeline.pages.records.referenceUnavailable'),
+    unknown,
+  });
+  const customerFallback = referenceText(
+    resolveReference(lookups.customerById, lookups.customersStatus, opportunity.partyId),
+    () => '',
+    texts(t('sales-pipeline.pages.records.create.unknownCustomer')),
+  );
+  const ownerValue =
+    opportunity.ownerEmployeeId === undefined
+      ? 'Nepřiřazeno'
+      : referenceText(
+          resolveReference(lookups.employeeById, lookups.employeesStatus, opportunity.ownerEmployeeId),
+          (employee) => employee.fullName,
+          texts(t('sales-pipeline.pages.records.unknownOwner')),
+        );
   const open = isOpenStage(opportunity.stage);
   const anyRelated = [related.tasks, related.contracts, related.orders].some((section) => section.status !== 'absent');
   const workHref = (task: RelatedTask) => `/${language}/ukoly?resourceId=${encodeURIComponent(task.id)}`;
@@ -167,7 +184,7 @@ export const PipelineDetailPanel = ({
                 label: 'Zákazník',
                 value:
                   customer === undefined ? (
-                    '—'
+                    customerFallback
                   ) : (
                     <span>
                       {customer.name ?? '—'}
@@ -175,7 +192,7 @@ export const PipelineDetailPanel = ({
                     </span>
                   ),
               },
-              { label: 'Obchodník', value: owner?.fullName ?? 'Nepřiřazeno' },
+              { label: 'Obchodník', value: ownerValue },
               { label: 'Odhadovaná hodnota (bez DPH)', value: formatWholeKc(opportunity.amountMinor) },
               { label: 'Termín uzavření', value: formatDate(opportunity.expectedCloseDate) },
               { label: 'Založeno', value: formatDateTime(DateTime.formatIso(opportunity.createdAt)) },

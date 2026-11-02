@@ -257,7 +257,8 @@
           "description": "Obchodníka měňte akcí Přiřadit obchodníka. Položky si zachovají ceny zafixované při přidání.",
           "close": "Zavřít"
         },
-        "unknownOwner": "Neznámý obchodník"
+        "unknownOwner": "Neznámý obchodník",
+        "referenceUnavailable": "Nedostupné"
       },
       "ai": {
         "title": "AI změny ke schválení",

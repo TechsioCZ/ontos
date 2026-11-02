@@ -257,7 +257,8 @@
           "description": "Change the owner with the Assign owner action. Lines keep the prices fixed when they were added.",
           "close": "Close"
         },
-        "unknownOwner": "Unknown owner"
+        "unknownOwner": "Unknown owner",
+        "referenceUnavailable": "Unavailable"
       },
       "ai": {
         "title": "AI changes to approve",

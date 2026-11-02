@@ -46,6 +46,7 @@ import {
 import type { PipelineLookups } from './pipeline-table.tsx';
 import { initialRecordsInput, pipelineRecords, usePipelineRecords } from './pipeline-records.ts';
 import type { RecordsLoadError } from './pipeline-records.ts';
+import { referenceStatusOf } from './pipeline-reference-labels.ts';
 import type { CustomerOption, EmployeeOption, LoadState } from './pipeline-references.ts';
 import { toSubjectIds, usePipelineReferences, useSubjectIdsWithTag } from './pipeline-references.ts';
 
@@ -289,11 +290,11 @@ const buildLookups = ({
   customerById: new Map<string, CustomerOption>(
     customers.status === 'ready' ? customers.items.map((item) => [item.id, item]) : [],
   ),
-  customersReady: customers.status === 'ready',
+  customersStatus: referenceStatusOf(customers),
   employeeById: new Map<string, EmployeeOption>(
     employees.status === 'ready' ? employees.items.map((item) => [item.id, item]) : [],
   ),
-  employeesReady: employees.status === 'ready',
+  employeesStatus: referenceStatusOf(employees),
   tagsBySubject,
 });
 
