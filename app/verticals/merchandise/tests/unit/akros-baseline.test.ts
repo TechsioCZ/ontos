@@ -1,17 +1,17 @@
-// The bundled AKROS baseline (src/services/akros-baseline.generated.ts) must match what `demo:seed:akros --reset`
-// builds from the storefront feed. Regenerate with `node scripts/generate-akros-baseline.mts` when this fails.
+// The bundled demo-company baseline (src/services/akros-baseline.generated.ts) must match what `demo:seed:akros --reset`
+// builds: the neutral ŠroubShop copy of the storefront feed. Regenerate with `node scripts/generate-akros-baseline.mts` when this fails.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { akrosBaselineParts } from '../../scripts/akros-baseline-parts.ts';
-import { buildAkrosEncoded } from '../../scripts/akros-catalog.mts';
+import { buildSroubshopEncoded } from '../../scripts/akros-catalog.mts';
 import { AKROS_BASELINE_SOURCE_BYTES, renderAkrosBaselineModules } from '../../scripts/generate-akros-baseline.mts';
 import { loadAkrosBaselineParts } from '../../src/services/akros-baseline.generated.ts';
 import { computeProductRecords } from '../../src/services/stock-levels.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
-import { decodeAkrosBaselinePart } from '../../src/services/akros-demo-reset.ts';
+import { decodeAkrosBaselinePart, keepLinkedPhotos, linkedPhotosOf } from '../../src/services/akros-demo-reset.ts';
 
 // A case that rebuilds the whole AKROS catalogue takes seconds on a shared CI runner.
 const CATALOGUE_BUILD_TIMEOUT = 30_000;
@@ -21,7 +21,7 @@ it.effect(
   'bundled baseline parts equal the seed baseline built from the storefront feed',
   () =>
     Effect.gen(function* sameBundledBaseline() {
-      const built = yield* buildAkrosEncoded();
+      const built = yield* buildSroubshopEncoded();
       const parts = yield* akrosBaselineParts(built);
       const expected = parts.map((part) => JSON.stringify(part));
       const nativeJson = yield* Effect.forEach(
@@ -38,6 +38,8 @@ it.effect(
       expect(decodedBundled).toEqual(decodedExpected);
       expect(bundled.every((part, index) => part === expected[index])).toBe(true);
       expect(hash(bundled)).toBe(hash(expected));
+      // The demo reset must never bring the source brand back (texts, photo URLs, categories, orders).
+      expect(bundled.some((part) => /akros/iu.test(part))).toBe(false);
     }),
   CATALOGUE_BUILD_TIMEOUT,
 );
@@ -82,7 +84,7 @@ it.effect(
   'parts cover the whole baseline: every product once, every movement with its product',
   () =>
     Effect.gen(function* completeBaselineParts() {
-      const built = yield* buildAkrosEncoded();
+      const built = yield* buildSroubshopEncoded();
       const parts = yield* akrosBaselineParts(built);
       expect(parts.flatMap((part) => part.products.map((product) => product.id))).toEqual(
         built.products.map((product) => product.id),
@@ -103,7 +105,7 @@ it.effect(
   'every bundled part decodes through the runtime path (Web streams, no filesystem)',
   () =>
     Effect.gen(function* decodeAllParts() {
-      const built = yield* buildAkrosEncoded();
+      const built = yield* buildSroubshopEncoded();
       const expected = yield* akrosBaselineParts(built);
       let products = 0;
       for (const [index, part] of loadAkrosBaselineParts().entries()) {
@@ -124,7 +126,7 @@ it.effect(
   'catalogue-only products have no replenishment minimum, with only a handful of genuine shortages',
   () =>
     Effect.gen(function* catalogueStockMinimums() {
-      const built = yield* buildAkrosEncoded();
+      const built = yield* buildSroubshopEncoded();
       const records = computeProductRecords(yield* Schema.decodeEffect(MerchandiseStateSchema)(built));
       expect(records).toHaveLength(1289);
       expect(
@@ -135,6 +137,48 @@ it.effect(
       const shortages = records.filter((record) => record.lowStock);
       expect(shortages.length).toBeGreaterThan(0);
       expect(shortages.length).toBeLessThan(10);
+    }),
+  CATALOGUE_BUILD_TIMEOUT,
+);
+
+const uploaded = 'media:0b8f8f8e-2f4c-4d3a-9a51-6f1d2c3b4a5e';
+const secondUpload = 'media:1c9f8f8e-2f4c-4d3a-9a51-6f1d2c3b4a5e';
+const storefrontPhoto = (productId: string, reference: string) =>
+  `/obrazky/${encodeURIComponent(productId)}/${reference.slice('media:'.length)}`;
+
+it.effect(
+  'the reset keeps photos already uploaded to Core Media and nothing else',
+  () =>
+    Effect.gen(function* keepUploadedPhotos() {
+      const [head, part] = yield* Effect.forEach(loadAkrosBaselineParts().slice(0, 2), decodeAkrosBaselinePart);
+      const headPart = yield* Effect.fromNullishOr(head);
+      const productPart = yield* Effect.fromNullishOr(part);
+      const product = yield* Effect.fromNullishOr(productPart.products[0]);
+      const untouched = yield* Effect.fromNullishOr(productPart.products[1]);
+      const category = yield* Effect.fromNullishOr(headPart.categories?.[0]);
+      const other = yield* Effect.fromNullishOr(headPart.categories?.[1]);
+      const variants = (product.variants ?? []).map((variant, index) => ({
+        ...variant,
+        imageSrc: index === 0 ? secondUpload : 'https://example.test/stale.jpg',
+      }));
+      const previous = { ...product, images: [uploaded, secondUpload, '/legacy.jpg'], imageSrc: uploaded, variants };
+      const linked = linkedPhotosOf(
+        [previous, { ...untouched, images: ['https://example.test/a.jpg'] }],
+        [
+          { ...category, imageSrc: storefrontPhoto(product.id, uploaded) },
+          { ...other, imageSrc: storefrontPhoto('someone-else', uploaded) },
+        ],
+      );
+      const { products } = keepLinkedPhotos(productPart, linked);
+      const kept = products.find(({ id }) => id === product.id);
+      expect(kept?.images).toEqual([uploaded, secondUpload]);
+      expect(kept?.imageSrc).toBe(uploaded);
+      expect(kept?.variants?.[0]?.imageSrc).toBe(secondUpload);
+      expect(kept?.variants?.slice(1)).toEqual(product.variants?.slice(1));
+      expect(products.find(({ id }) => id === untouched.id)).toEqual(untouched);
+      const categories = keepLinkedPhotos(headPart, linked).categories ?? [];
+      expect(categories.find(({ id }) => id === category.id)?.imageSrc).toBe(storefrontPhoto(product.id, uploaded));
+      expect(categories.find(({ id }) => id === other.id)).toEqual(other);
     }),
   CATALOGUE_BUILD_TIMEOUT,
 );
