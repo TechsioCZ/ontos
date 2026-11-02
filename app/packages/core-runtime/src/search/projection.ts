@@ -587,11 +587,12 @@ const matchDocument = (
     }
     return active;
   };
-  if (matches([document.title, ...document.searchableText, ...activeValues(document.temporalSearchableText)])) {
+  // Static evidence already proves a match; only evaluate periods when it does not.
+  if (matches([document.title, ...document.searchableText]) || matches(activeValues(document.temporalSearchableText))) {
     return hit;
   }
-  const alias = document.aliases?.find((candidate) =>
-    matches([...candidate.searchableText, ...activeValues(candidate.temporalSearchableText)]),
+  const alias = document.aliases?.find(
+    (candidate) => matches(candidate.searchableText) || matches(activeValues(candidate.temporalSearchableText)),
   );
   if (alias === undefined) {
     return undefined;
