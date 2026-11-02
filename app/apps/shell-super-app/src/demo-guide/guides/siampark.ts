@@ -38,7 +38,7 @@ export const siamparkGuide: DemoGuide = {
           id: 'siampark-budova',
           persona: management,
           say: 'Budova má vlastní kartu s jednotkami a jejich obsazeností.',
-          target: { kind: 'app', path: '/nemovitosti?resourceId=6a0197b3-4b13-46c5-a3ab-8dbb46dda58e' },
+          target: { kind: 'app', path: '/nemovitosti?resourceId=528cd143-ef28-4b23-bebf-340ab530af8d' },
           title: 'Budova Riverside Office Park',
         },
         {
@@ -46,7 +46,7 @@ export const siamparkGuide: DemoGuide = {
           id: 'siampark-r101',
           persona: management,
           say: 'Obsazenost jednotky R101 má dohledatelný nájem, nejde o samostatně přepisovanou tabulku.',
-          target: { kind: 'app', path: '/nemovitosti?resourceId=bf65f06e-fe64-4787-813f-6a62bad12409' },
+          target: { kind: 'app', path: '/nemovitosti?resourceId=51d80e08-7be9-4f00-a1cb-6cc562df499a' },
           title: 'Jednotka R101',
         },
         {
@@ -66,11 +66,11 @@ export const siamparkGuide: DemoGuide = {
           title: 'Smlouva k nájmu',
         },
         {
-          click: 'Sekce Úhrady. Tato faktura je zatím koncept bez úhrad.',
+          click: 'Otevře se faktura FV-2026-0001 za R101, sekce Úhrady. Tato faktura je zatím koncept bez úhrad.',
           id: 'siampark-faktura',
           persona: management,
           say: 'Jednotka, nájemce, smlouva a doklad jsou propojené. Ukazujeme skutečně uloženou evidenci, ne slib napojení banky nebo podpisové služby.',
-          target: { kind: 'app', path: '/finance?resourceId=23e891be-5ab3-462c-84fd-d628605a068b' },
+          target: { kind: 'app', path: '/finance?resourceId=8fdfcb33-7ec0-4402-b7cd-aafa1c34eb80' },
           title: 'Navázaná faktura',
         },
       ],
@@ -154,7 +154,7 @@ export const siamparkGuide: DemoGuide = {
         },
         {
           click:
-            'Seznam Klienti: jen tři svěření zájemci a štítek Vidíte pouze klienty přidělené vám. Otevřete jednoho z nich.',
+            'Stránka Mí klienti: jen tři svěření zájemci a popis Klienti, které máte přidělené. Otevřete jednoho z nich.',
           id: 'siampark-externista-klienti',
           persona: external,
           say: 'Externí obchodník čte jen svěřené kontakty a jejich jednání. Ostatní zájemce ani finance nevidí a hlídá to server, ne skryté menu.',

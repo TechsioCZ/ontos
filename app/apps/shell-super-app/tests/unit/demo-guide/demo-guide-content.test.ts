@@ -77,7 +77,7 @@ it('uses Nájempark consistently in displayed copy and every rental persona logi
   ]);
 });
 
-it('keeps the rental guide identity and seeded resource links unchanged by the rebrand', () => {
+it('keeps the rental guide identity and links the current stage records', () => {
   const guide = demoGuideFor(legalEntities.siampark);
   expect(guide?.id).toBe('siampark');
   expect(guide?.legalEntityId).toBe('71000000-0000-4000-8000-000000000021');
@@ -85,11 +85,11 @@ it('keeps the rental guide identity and seeded resource links unchanged by the r
   expect(
     targets.flatMap((target) => (target.kind === 'app' && target.path.includes('?') ? [target.path] : [])),
   ).toEqual([
-    '/nemovitosti?resourceId=6a0197b3-4b13-46c5-a3ab-8dbb46dda58e',
-    '/nemovitosti?resourceId=bf65f06e-fe64-4787-813f-6a62bad12409',
+    '/nemovitosti?resourceId=528cd143-ef28-4b23-bebf-340ab530af8d',
+    '/nemovitosti?resourceId=51d80e08-7be9-4f00-a1cb-6cc562df499a',
     '/najmy?resourceId=d2197c66-25a6-5113-86bf-14cb3c3c1b3e',
     '/smlouvy?resourceId=a0ac0359-d251-5b37-bed2-b9a0db201a77',
-    '/finance?resourceId=23e891be-5ab3-462c-84fd-d628605a068b',
+    '/finance?resourceId=8fdfcb33-7ec0-4402-b7cd-aafa1c34eb80',
     '/provoz/majetek?asset=siampark-asset-002',
     '/finance?resourceId=c9f16710-c669-43ca-91d6-8e9f0bd70a4b',
     '/provoz/majetek?asset=siampark-asset-001',
