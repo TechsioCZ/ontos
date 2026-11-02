@@ -12,19 +12,25 @@ const assortmentPhrase = (preposition: string, noun: string) => {
   }
   return `${preposition} našem sortimentu`;
 };
+const SENTENCE_START = /(?:^|[.!?:…])[\s\u200B]*$/u;
+/** A rewritten phrase starts with a capital letter only where a sentence starts. */
+const sentenceCase =
+  (phrase: string) =>
+  (_match: string, offset: number, text: string): string =>
+    SENTENCE_START.test(text.slice(0, offset)) ? `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}` : phrase;
 export const neutralCatalogText = (text: string): string =>
   text
     .replaceAll(
       /\b(?<preposition>v|z)\s+(?<noun>nabídce|nabídky|sortimentu)\s+akros(?:u|\.cz)?\b/giu,
       (_match, preposition: string, noun: string) => assortmentPhrase(preposition, noun),
     )
-    .replaceAll(/\bna\s+(?:webu|e-shopu)\s+akros(?:\.cz)?\b/giu, 'V našem obchodě')
-    .replaceAll(/\bv\s+akros\s+nabídce\b/giu, 'V naší nabídce')
-    .replaceAll(/\bv\s+akros\b/giu, 'V našem obchodě')
-    .replaceAll(/\bu\s+akrosu\b/giu, 'u nás')
-    .replaceAll(/\b(?:z|od)\s+akrosu?\b/giu, 'z naší nabídky')
-    .replaceAll(/\bakros(?:\.cz)?\s+nabízí(?!\p{L})/giu, 'Nabízíme')
-    .replaceAll(/\bakros\s+kovovýroba\b/giu, 'Naše kovovýroba')
+    .replaceAll(/\bna\s+(?:webu|e-shopu)\s+akros(?:\.cz)?\b/giu, sentenceCase('v našem obchodě'))
+    .replaceAll(/\bv\s+akros\s+nabídce\b/giu, sentenceCase('v naší nabídce'))
+    .replaceAll(/\bv\s+akros\b/giu, sentenceCase('v našem obchodě'))
+    .replaceAll(/\bu\s+akros(?:u|\.cz)?\b/giu, sentenceCase('u nás'))
+    .replaceAll(/\b(?:z|od)\s+akrosu?\b/giu, sentenceCase('z naší nabídky'))
+    .replaceAll(/\bakros(?:\.cz)?\s+nabízí(?!\p{L})/giu, sentenceCase('nabízíme'))
+    .replaceAll(/\bakros\s+kovovýroba\b/giu, sentenceCase('naše kovovýroba'))
     .replaceAll(/\bs\s+akrosem\b/giu, 'se ŠroubShopem')
     .replaceAll(/\bakrosem\b/giu, 'ŠroubShopem')
     .replaceAll(/\bakrosu\b/giu, 'ŠroubShopu')

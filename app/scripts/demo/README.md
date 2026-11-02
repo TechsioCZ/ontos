@@ -393,15 +393,17 @@ with `--approved <fingerprint>` (storefront on http://localhost:3070). Only the 
 Every run stops starting new records after 200 s, so one `run-remote.sh` call (300 s limit) never times out; repeat
 a mode until it prints `complete=true`. Never run two batches at once. The checkpoint lives in the app container
 (`/var/www/ontos-pseudonym-catalog-v2`), which **every deploy replaces**: after each batch copy it back, and before a
-batch restore it when the container is new (after a deploy, re-pin the SSH host key first).
+batch restore it when the container is new (after a deploy, re-pin the SSH host key first). A deploy during a batch
+kills it without output; restore and rerun, the plan resumes from the last backup. macOS tar must not add
+AppleDouble (`._*`) files to the archive (flags below).
 
 ```sh
 REMOTE=/Users/satan/workspace/techsio/agent-scratch/eshop-markets/run-remote.sh
 KNOWN=/Users/satan/workspace/techsio/agent-scratch/eshop-markets/known_hosts.app
 LOCAL=/Users/satan/workspace/techsio/agent-scratch/akros-pseudonym/p-b/checkpoint   # owner-only copy
 SSH="ssh -o UserKnownHostsFile=$KNOWN -o StrictHostKeyChecking=yes -o BatchMode=yes app"
-restore() { [ ! -d "$LOCAL" ] || $SSH test -d /var/www/ontos-pseudonym-catalog-v2 || tar -C "$LOCAL" -cf - . | $SSH 'mkdir -m 700 -p /var/www/ontos-pseudonym-catalog-v2 && tar -C /var/www/ontos-pseudonym-catalog-v2 -xf -'; }
-backup() { mkdir -m 700 -p "$LOCAL" && $SSH tar -C /var/www/ontos-pseudonym-catalog-v2 -cf - . | tar -C "$LOCAL" -xf -; }
+restore() { [ ! -d "$LOCAL" ] || $SSH test -d /var/www/ontos-pseudonym-catalog-v2 || COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C "$LOCAL" -cf - . | $SSH 'mkdir -m 700 -p /var/www/ontos-pseudonym-catalog-v2 && tar -C /var/www/ontos-pseudonym-catalog-v2 -xf -'; }
+backup() { mkdir -m 700 -p "$LOCAL" && $SSH tar -C /var/www/ontos-pseudonym-catalog-v2 -cf - . | tar --no-xattrs -C "$LOCAL" -xf -; }
 # 1. Plan (read-only), repeat until complete=true and the summary JSON is printed:
 restore; "$REMOTE" scripts/demo/pseudonymize-akros-catalog.mts --mode plan; backup
 # Review "$LOCAL/summary.json"; only the lane P parent authorizes apply.

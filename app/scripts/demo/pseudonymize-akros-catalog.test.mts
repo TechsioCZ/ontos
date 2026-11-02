@@ -91,6 +91,12 @@ describe('pseudonymous demo catalog', () => {
       'společně se ŠroubShopem, z naší nabídky, u nás',
     );
     expect(neutralCatalogText('AKROS nabízí šrouby.')).toBe('Nabízíme šrouby.');
+    expect(neutralCatalogText('Pokud hledáte L profil, AKROS nabízí výběr. Na webu Akros.cz najdete více.')).toBe(
+      'Pokud hledáte L profil, nabízíme výběr. V našem obchodě najdete více.',
+    );
+    expect(neutralCatalogText('Výhody nákupu u AKROS: rychlost.​ V Akros nabídce je vše.')).toBe(
+      'Výhody nákupu u nás: rychlost.​ V naší nabídce je vše.',
+    );
     const once = neutralCatalogText('Akros šroub z nabídky Akrosu');
     expect(neutralCatalogText(once)).toBe(once);
   });
