@@ -1087,6 +1087,15 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
           .from(applicationCompositionDurableWork)
           .where(eq(applicationCompositionDurableWork.workId, debtId));
         if (deliveries.length !== 1 || deliveries[0]?.status !== 'done' || remaining.length !== 0) {
+          yield* Effect.logError('Actual public completion delivery settlement differs from the required boundary', {
+            deliveryCount: deliveries.length,
+            deliveryStatuses: deliveries.slice(0, 8).map(({ status, workerKey }) => ({ status, workerKey })),
+            remainingDebtCount: remaining.length,
+            remainingDebtRows: remaining.slice(0, 8).map(({ originalRevision, ownerModuleKey }) => ({
+              matchesCurrentRevision: originalRevision === snapshot.composition.revision,
+              ownerModuleKey,
+            })),
+          });
           return yield* failure('Public ACK did not settle exact Core delivery debt');
         }
         const [event] = yield* database.executor
