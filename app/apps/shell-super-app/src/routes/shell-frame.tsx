@@ -560,7 +560,7 @@ const DashboardAccountMenu = ({
           theme="unstyled"
           variant="secondary"
         >
-          <span className="hidden md:inline">{identity.displayName}</span>
+          <span className="hidden lg:inline">{identity.displayName}</span>
         </Button>
       }
       items={accountItems}
@@ -603,7 +603,7 @@ const DashboardTrail = ({ model }: { readonly model: ShellNavigationModel }) => 
   return (
     <nav
       aria-label={t('shell.dashboard.breadcrumb.label')}
-      className="hidden min-w-0 items-center gap-100 text-fg-secondary text-sm md:flex"
+      className="hidden min-w-0 items-center gap-100 text-fg-secondary text-sm lg:flex"
     >
       <span className="truncate">{model.current.group.label}</span>
       <Icon icon="icon-[mdi--chevron-right]" size="sm" />
@@ -713,7 +713,7 @@ const DashboardHeaderSearch = ({ compositionRevision, hidden, onSearch }: Dashbo
   const [value, setValue] = useState('');
   const suggestions = useShellSearchSuggestions(compositionRevision);
   return hidden ? null : (
-    <Header.Container className="flex w-auto min-w-0 flex-1 justify-center md:flex-[2]" position="center">
+    <Header.Container className="flex w-auto min-w-0 flex-1 justify-center lg:flex-[2]" position="center">
       <div className="w-full max-w-xl">
         <ShellSearchBar
           onDismissSuggestions={suggestions.handleDismiss}
@@ -931,15 +931,16 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
           style={{ height: 'var(--spacing-700)' }}
         >
           <Header.Container
-            className="flex w-auto shrink-0 flex-nowrap items-center gap-200 md:min-w-0 md:flex-1 md:basis-0"
+            className="flex w-auto shrink-0 flex-nowrap items-center gap-200 lg:min-w-0 lg:flex-1 lg:basis-0"
             position="start"
           >
             {/* Once sign-out has started, navigation, search and the page are hidden; only the account stays. */}
             {props.logoutPending ? null : (
               <Sidebar.Trigger aria-label={t(navigationToggleKey)} side="start" tooltip={t(navigationToggleKey)} />
             )}
-            {/* The brand is not a navigation item: the router would mark it current on every page. */}
-            <ShellRouteLink aria-current={false} className="hidden no-underline md:flex" to="/">
+            {/* The brand is not a navigation item: the router would mark it current on every page. Brand, trail and
+                account name wait for the desktop width; on a tablet they would run under the search field. */}
+            <ShellRouteLink aria-current={false} className="hidden no-underline lg:flex" to="/">
               <DashboardBrand />
             </ShellRouteLink>
             {props.logoutPending ? null : <DashboardTrail model={model} />}
@@ -949,7 +950,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
             hidden={props.logoutPending}
             onSearch={props.onSearch}
           />
-          <Header.Container className="flex w-auto shrink-0 justify-end md:flex-1 md:basis-0" position="end">
+          <Header.Container className="flex w-auto shrink-0 justify-end lg:flex-1 lg:basis-0" position="end">
             <Header.Actions>
               {guide === undefined || props.logoutPending ? null : (
                 <Header.ActionItem>
