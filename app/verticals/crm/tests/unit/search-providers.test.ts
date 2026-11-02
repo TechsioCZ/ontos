@@ -7,7 +7,7 @@ import {
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
-import { Context, Effect, Exit, Layer, Schema } from 'effect';
+import { Context, DateTime, Effect, Exit, Layer, Schema } from 'effect';
 import type { ContextAccessService } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { CrmStateSchema } from '../../shared/domain/state.ts';
@@ -90,10 +90,22 @@ it.effect('requires tenant/company on raw hits and drops forged, archived, wrong
 interface ReaderScenario {
   readonly assigned: boolean;
   readonly broad: boolean;
-  readonly decision: 'allowed' | 'denied' | 'unavailable';
   readonly entrypointAllowed?: boolean;
   readonly expectedCount: number | null;
   readonly indexCount?: number;
+  readonly ownerSnapshot?:
+    | 'missing'
+    | 'deleted'
+    | 'archived-client'
+    | 'client-archived-at'
+    | 'archived-contact'
+    | 'contact-archived-at'
+    | 'contact-withdrawn'
+    | 'orphan-contact'
+    | 'assignment-removed'
+    | 'missing-salesperson'
+    | 'inactive-salesperson'
+    | 'different-principal';
   readonly query?: string;
   readonly readable?: boolean;
   readonly resourceType: 'demo.crm.client' | 'demo.crm.contact';
@@ -107,11 +119,7 @@ const checkResult = (result: ClientsProviderResponse | ContactsProviderResponse)
   return result.length;
 };
 
-const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGovernedProvider(
-  scenario: ReaderScenario,
-) {
-  const selectedCompanyId = scenario.selectedCompanyId ?? companyId;
-  const encoded = yield* Schema.encodeEffect(CrmStateSchema)(state);
+const ownerStateFor = (encoded: typeof CrmStateSchema.Encoded, scenario: ReaderScenario, actorPrincipalId: string) => {
   const stored = {
     ...encoded,
     clients: {
@@ -121,8 +129,48 @@ const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGov
         ownerSalespersonId: scenario.assigned ? 'rep-1' : 'another-rep',
       })),
     },
-    salespeople: [{ active: true, id: 'rep-1', name: 'Assigned salesperson', principalId: scope.principalId }],
+    salespeople: [{ active: true, id: 'rep-1', name: 'Assigned salesperson', principalId: actorPrincipalId }],
   };
+  if (scenario.ownerSnapshot === 'deleted') {
+    stored.clients.items = [];
+  } else if (scenario.ownerSnapshot === 'assignment-removed') {
+    for (const client of stored.clients.items) {
+      Reflect.deleteProperty(client, 'ownerSalespersonId');
+    }
+  } else if (scenario.ownerSnapshot === 'archived-client') {
+    stored.clients.items = stored.clients.items.map((client) => ({ ...client, status: 'archived' }));
+  } else if (scenario.ownerSnapshot === 'client-archived-at') {
+    stored.clients.items = stored.clients.items.map((client) => ({
+      ...client,
+      archivedAt: '2026-01-02T00:00:00.000Z',
+    }));
+  } else if (scenario.ownerSnapshot === 'archived-contact') {
+    stored.clients.contacts = stored.clients.contacts.map((contact) => ({ ...contact, status: 'archived' }));
+  } else if (scenario.ownerSnapshot === 'contact-archived-at') {
+    stored.clients.contacts = stored.clients.contacts.map((contact) => ({
+      ...contact,
+      archivedAt: '2026-01-02T00:00:00.000Z',
+    }));
+  } else if (scenario.ownerSnapshot === 'contact-withdrawn') {
+    stored.clients.contacts = [];
+  } else if (scenario.ownerSnapshot === 'orphan-contact') {
+    stored.clients.contacts = stored.clients.contacts.map((contact) => ({ ...contact, clientId: 'missing-parent' }));
+  } else if (scenario.ownerSnapshot === 'missing-salesperson') {
+    stored.salespeople = [];
+  } else if (scenario.ownerSnapshot === 'inactive-salesperson') {
+    stored.salespeople = stored.salespeople.map((person) => ({ ...person, active: false }));
+  } else if (scenario.ownerSnapshot === 'different-principal') {
+    stored.salespeople = stored.salespeople.map((person) => ({ ...person, principalId: 'foreign-principal' }));
+  }
+  return stored;
+};
+
+const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGovernedProvider(
+  scenario: ReaderScenario,
+) {
+  const selectedCompanyId = scenario.selectedCompanyId ?? companyId;
+  const encoded = yield* Schema.encodeEffect(CrmStateSchema)(state);
+  const stored = ownerStateFor(encoded, scenario, scope.principalId);
   const docs = yield* buildSearchDocuments(snapshot);
   const store = makeInMemoryCoreSearchProjectionStore();
   for (const document of docs) {
@@ -153,22 +201,24 @@ const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGov
   );
   expect(indexed.length).toBe(scenario.indexCount ?? (selectedCompanyId === companyId ? 1 : 0));
   expect(JSON.stringify(indexed)).not.toMatch(/@|777111|606333|private/u);
+  let ownerLoads = 0;
   const harness = yield* makeReadTestHarness({
     compositionRevision: 'a'.repeat(64),
     executeOwnerQuery: ({ scope: sqlScope, sql }) => {
       expect(sqlScope).toEqual({ legalEntityId: selectedCompanyId, tenantId: scope.tenantId });
-      return sql.includes('"demo_crm"."crm_states"')
-        ? Effect.succeed([{ revision: 1, state: stored }])
-        : Effect.die(`Unexpected owner query: ${sql}`);
+      ownerLoads += 1;
+      expect(sql).toContain('"demo_crm"."crm_states"');
+      return Effect.succeed(
+        scenario.ownerSnapshot === 'missing' || selectedCompanyId !== companyId ? [] : [{ revision: 1, state: stored }],
+      );
     },
-    operationTime: new Date('2026-01-01T00:00:00.000Z'),
+    operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
     ownerAuthorizationDecision: 'allowed',
     permissionDecision: scenario.entrypointAllowed === false ? 'denied' : 'allowed',
     scope: principal,
   });
   const services = yield* Layer.build(harness.layer);
   const access = Context.get(services, ContextAccess);
-  let rowChecks = 0;
   // Mutate only this harness's boundary fake; its real ReadRuntime retains the exact same object.
   const decisions: Pick<ContextAccessService, 'contextPermissions' | 'resources'> = {
     contextPermissions: ({ targets }) =>
@@ -182,14 +232,7 @@ const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGov
           key: `${moduleId}:${permission}`,
         })),
       ),
-    resources: ({ resources }) =>
-      Effect.sync(() => {
-        rowChecks += resources.length;
-        return resources.map((resource) => ({
-          decision: scenario.decision,
-          key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-        }));
-      }),
+    resources: () => Effect.die('Canonical CRM records visibility must not add generic resource.read'),
   };
   Object.assign(access, decisions);
   const input = { input: { query }, principal, transport: { correlationId: scope.correlationId } };
@@ -197,12 +240,20 @@ const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGov
     scenario.resourceType === 'demo.crm.client'
       ? harness.runtime.runRead({ ...input, registration: clientsRead }).pipe(Effect.map(checkResult))
       : harness.runtime.runRead({ ...input, registration: contactsRead }).pipe(Effect.map(checkResult));
+  let indexReads = 0;
   const outcome = yield* run.pipe(
     Effect.provide(harness.layer),
-    Effect.provideService(CoreSearchQueryRuntime, search),
+    Effect.provideService(CoreSearchQueryRuntime, {
+      search: (searchInput, trustedScope) => {
+        indexReads += 1;
+        expect(harness.snapshot().statements.some((statement) => /^commit$/iu.test(statement))).toBe(true);
+        return search.search(searchInput, trustedScope);
+      },
+    }),
     Effect.exit,
   );
-  expect(rowChecks).toBe(scenario.expectedCount === 0 || scenario.entrypointAllowed === false ? 0 : 1);
+  expect(ownerLoads).toBe(scenario.entrypointAllowed === false ? 0 : 1);
+  expect(indexReads).toBe(scenario.entrypointAllowed === false ? 0 : 1);
   expect(Exit.isSuccess(outcome)).toBe(scenario.expectedCount !== null);
   if (Exit.isSuccess(outcome)) {
     expect(outcome.value).toBe(scenario.expectedCount);
@@ -215,34 +266,65 @@ const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGov
   }
 });
 
-it.effect(
-  'governed providers allow broad readers but deny assigned rows without an available resource entitlement',
-  () =>
-    Effect.forEach(
-      [
-        { assigned: true, broad: true, decision: 'allowed', expectedCount: 1 },
-        { assigned: true, broad: false, decision: 'allowed', expectedCount: 1 },
-        { assigned: true, broad: false, decision: 'allowed', expectedCount: 0, readable: false },
-        {
-          assigned: true,
-          broad: true,
-          decision: 'allowed',
-          entrypointAllowed: false,
-          expectedCount: null,
-        },
-        { assigned: true, broad: false, decision: 'denied', expectedCount: null },
-        { assigned: true, broad: false, decision: 'unavailable', expectedCount: null },
-        { assigned: false, broad: false, decision: 'allowed', expectedCount: 0 },
-      ] as const,
-      (scenario) =>
-        Effect.forEach(
-          ['demo.crm.client', 'demo.crm.contact'] as const,
-          (resourceType) => runGovernedProvider({ ...scenario, resourceType }),
-          { concurrency: 1, discard: true },
-        ),
-      { concurrency: 1, discard: true },
-    ).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
+it.effect('canonical owner projection authorizes broad and assigned-only search without generic resource.read', () =>
+  Effect.forEach(
+    [
+      { assigned: true, broad: true, expectedCount: 1 },
+      { assigned: true, broad: false, expectedCount: 1 },
+      { assigned: true, broad: false, expectedCount: 0, readable: false },
+      {
+        assigned: true,
+        broad: true,
+        entrypointAllowed: false,
+        expectedCount: null,
+      },
+      { assigned: false, broad: false, expectedCount: 0 },
+    ] as const,
+    (scenario) =>
+      Effect.forEach(
+        ['demo.crm.client', 'demo.crm.contact'] as const,
+        (resourceType) => runGovernedProvider({ ...scenario, resourceType }),
+        { concurrency: 1, discard: true },
+      ),
+    { concurrency: 1, discard: true },
+  ).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
 );
+
+for (const resourceType of ['demo.crm.client', 'demo.crm.contact'] as const) {
+  for (const ownerSnapshot of [
+    'missing',
+    'deleted',
+    'archived-client',
+    'client-archived-at',
+    'assignment-removed',
+    'missing-salesperson',
+    'inactive-salesperson',
+    'different-principal',
+  ] as const) {
+    it.effect(`${resourceType}: positive index cannot outlive canonical owner visibility (${ownerSnapshot})`, () =>
+      runGovernedProvider({ assigned: true, broad: false, expectedCount: 0, ownerSnapshot, resourceType }).pipe(
+        Effect.scoped,
+        Effect.provide(NodeCrypto.layer),
+      ),
+    );
+  }
+}
+for (const ownerSnapshot of [
+  'archived-contact',
+  'contact-archived-at',
+  'contact-withdrawn',
+  'orphan-contact',
+] as const) {
+  it.effect(`contact: current active parent and contact are required (${ownerSnapshot})`, () =>
+    runGovernedProvider({
+      assigned: true,
+      broad: false,
+      expectedCount: 0,
+      ownerSnapshot,
+      resourceType: 'demo.crm.contact',
+    }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
+  );
+}
 
 it.effect('governed email/phone lookup keeps company isolation and returns no matched-value evidence', () =>
   Effect.forEach(
@@ -289,8 +371,7 @@ it.effect('governed email/phone lookup keeps company isolation and returns no ma
             (selectedCompanyId) =>
               runGovernedProvider({
                 assigned: true,
-                broad: true,
-                decision: 'allowed',
+                broad: false,
                 expectedCount: selectedCompanyId === companyId ? 1 : 0,
                 query,
                 resourceType,
@@ -323,7 +404,6 @@ it.effect('governed lookup never searches notes or strips arbitrary free text in
           runGovernedProvider({
             assigned: true,
             broad: true,
-            decision: 'allowed',
             expectedCount: 0,
             indexCount: 0,
             query,

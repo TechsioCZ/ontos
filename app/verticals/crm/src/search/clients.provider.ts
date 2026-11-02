@@ -108,11 +108,15 @@ export const clientsRead = defineRead(
     permissionTarget: 'module',
     policies: [],
     readKey: 'demo.crm.search.clients',
+    resultAuthorization: {
+      accessFiltering: 'legal_entity_scope',
+      kind: 'owner-legal-entity-scope',
+      requiredModuleAccess: true,
+    } as const,
     resultSchema: ClientsProviderResponseSchema,
     schemaVersion: '1',
   },
   { finish, load, prepare },
   (transaction, scope) => persistenceService(transaction, { scope }),
   () => ({ kind: 'module', moduleId: 'demo.crm' }),
-  (result) => result.map(({ ref }) => ref),
 );

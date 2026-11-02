@@ -121,13 +121,13 @@ export const crmManifest = defineOntosModuleManifest({
     search: [
       // <generated-module-manifest-search>
       {
-        accessFiltering: 'resource_permission',
+        accessFiltering: 'legal_entity_scope',
         key: 'demo.crm.clients',
         owningModuleId: 'demo.crm',
         resourceType: 'demo.crm.client',
       },
       {
-        accessFiltering: 'resource_permission',
+        accessFiltering: 'legal_entity_scope',
         key: 'demo.crm.contacts',
         owningModuleId: 'demo.crm',
         resourceType: 'demo.crm.contact',

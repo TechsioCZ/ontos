@@ -54,11 +54,15 @@ export const contactsRead = defineRead(
     permissionTarget: 'module',
     policies: [],
     readKey: 'demo.crm.search.contacts',
+    resultAuthorization: {
+      accessFiltering: 'legal_entity_scope',
+      kind: 'owner-legal-entity-scope',
+      requiredModuleAccess: true,
+    } as const,
     resultSchema: ContactsProviderResponseSchema,
     schemaVersion: '1',
   },
   { finish, load, prepare },
   (transaction, scope) => persistenceService(transaction, { scope }),
   () => ({ kind: 'module', moduleId: 'demo.crm' }),
-  (result) => result.map(({ ref }) => ref),
 );
