@@ -1,14 +1,11 @@
 import "server-only";
 // OntOS client for the storefront BFF: the same nonhuman-principal path as tools/ontos-agent-mcp.
-//   1. The first read authenticates the scoped API key and reads the owner in one Shell invocation.
-//      Its private response header carries the assertion (valid 300 s) and approved apiBaseUrl. The receiving
-//      gateway accepts an assertion again until it expires, so the isolate keeps one per audience and
-//      composition revision in memory and mints the next one shortly before expiry.
-//   2. Reads:   POST {shell}{apiBaseUrl}/reads/{readName}
-//      Actions: POST {shell}{apiBaseUrl}/{vertical}/actions/{slug} with an `idempotency-key`.
+//   Reads authenticate the scoped API key and read the owner in one Shell invocation.
+//   Actions mint their own assertion, then POST to the approved owner URL with an `idempotency-key`.
+//   Gateway assertions are single-use, including the one already redeemed by a combined read.
+//   Never cache or share them between invocations, even within the same server render.
 // Core evaluates permissions and legal-entity scope on every call; the key is never sent to the browser.
 import { randomUUID } from "node:crypto";
-import { cache } from "react";
 import { getConfig } from "./config";
 import { shellFetch } from "./shell-fetch";
 
@@ -39,15 +36,7 @@ interface GatewayContext {
   readonly apiBaseUrl: string;
   readonly compositionRevision: string;
   readonly token: string;
-  /** Epoch ms after which this isolate stops presenting the assertion. */
-  readonly reuseUntil: number;
 }
-
-/** Mint the next assertion this long before the current one expires (clock skew, slow calls). */
-const ASSERTION_RENEW_MARGIN_MS = 60_000;
-const ASSERTION_TTL_MS = 300_000;
-// In-memory only: the isolate's assertion per audience (one storefront principal and legal entity).
-const assertions = new Map<string, GatewayContext>();
 
 /** fetch that reports an unreachable shell as a retryable 503 instead of a TypeError. */
 const reach = async (url: string, init: RequestInit): Promise<Response> => {
@@ -96,10 +85,7 @@ const parseProblem = (text: string): { code?: string; detail?: string; title?: s
   }
 };
 
-const parseContext = (
-  body: Partial<GatewayContext> & { expiresAt?: unknown },
-  requestedAt: number,
-): GatewayContext => {
+const parseContext = (body: Partial<GatewayContext> & { expiresAt?: unknown }): GatewayContext => {
   if (
     body === null ||
     typeof body !== "object" ||
@@ -118,13 +104,10 @@ const parseContext = (
     apiBaseUrl: body.apiBaseUrl,
     compositionRevision: body.compositionRevision,
     token: body.token,
-    reuseUntil:
-      Math.min(body.expiresAt * 1000, requestedAt + ASSERTION_TTL_MS) - ASSERTION_RENEW_MARGIN_MS,
   };
 };
 
 const mintContext = async (audience: string): Promise<GatewayContext> => {
-  const requestedAt = Date.now();
   const payload = { audience, legalEntityId: getConfig().legalEntityId };
   let response = await credentialRequest(GATEWAY_CONTEXT_PATH, payload);
   // A publish between release admission and issuance can reject the revision. Rebind server-side.
@@ -133,36 +116,7 @@ const mintContext = async (audience: string): Promise<GatewayContext> => {
     response = await credentialRequest(GATEWAY_CONTEXT_PATH, payload);
   }
   const body = await parseResponse(response, GATEWAY_CONTEXT_PATH);
-  return parseContext(body as Partial<GatewayContext>, requestedAt);
-};
-
-// React owns this map for one server render only. Never share pending I/O across Worker requests;
-// outside a render `cache` does not retain it, so API routes keep independent request-owned mints.
-const requestMints = cache(() => new Map<string, Promise<GatewayContext>>());
-
-/** The isolate's current assertion for `audience`, minted when missing, outdated or close to expiry. */
-const gatewayContext = async (audience: string): Promise<GatewayContext> => {
-  const held = assertions.get(audience);
-  if (held !== undefined && Date.now() < held.reuseUntil) return held;
-  const pending = requestMints();
-  let issuance = pending.get(audience);
-  if (issuance === undefined) {
-    issuance = mintContext(audience);
-    pending.set(audience, issuance);
-  }
-  try {
-    const context = await issuance;
-    assertions.set(audience, context);
-    return context;
-  } finally {
-    // A failed mint must not poison retries, nor may a rejected assertion reuse a settled promise.
-    if (pending.get(audience) === issuance) pending.delete(audience);
-  }
-};
-
-/** Drops a rejected or outdated assertion, so the next call mints a new one. */
-const forgetContext = (audience: string, context: GatewayContext) => {
-  if (assertions.get(audience)?.token === context.token) assertions.delete(audience);
+  return parseContext(body as Partial<GatewayContext>);
 };
 
 const segment = (value: string): string => {
@@ -218,7 +172,7 @@ const parseResponse = async (response: Response, path: string): Promise<unknown>
   return JSON.parse(text) as unknown;
 };
 
-/** Governed records read of a vertical (the isolate's assertion for that vertical). */
+/** Governed records read, with a fresh assertion issued and redeemed inside the combined gateway. */
 export const readRecords = async (
   vertical: string,
   readName: string,
@@ -227,55 +181,34 @@ export const readRecords = async (
   // Reads are safe to repeat: ride out a shell/vertical restart (503) or a just-published composition (409).
   for (let attempt = 0; ; attempt += 1) {
     try {
-      let firstResponse: Response | undefined;
       const path = `/reads/${segment(readName)}`;
-      // A combined gateway-read returns the assertion only after its owner finishes. Waiting for another
-      // read's issuance would serialize otherwise independent owner reads (category + recommendations).
-      // Cold reads therefore each authenticate and dispatch in parallel; only settled assertions are reused.
-      const held = assertions.get(vertical);
-      const context =
-        held !== undefined && Date.now() < held.reuseUntil
-          ? held
-          : await (async () => {
-              const requestedAt = Date.now();
-              firstResponse = await credentialRequest(GATEWAY_READ_PATH, {
-                audience: vertical,
-                legalEntityId: getConfig().legalEntityId,
-                readName: segment(readName),
-                query,
-              });
-              const encoded = firstResponse.headers.get(GATEWAY_CONTEXT_HEADER);
-              if (encoded === null) {
-                if (!firstResponse.ok) await parseResponse(firstResponse, path);
-                throw new OntosError(
-                  "Gateway read response has no assertion",
-                  502,
-                  "gateway_context_malformed",
-                );
-              }
-              let decoded: Partial<GatewayContext>;
-              try {
-                decoded = JSON.parse(encoded) as Partial<GatewayContext>;
-              } catch {
-                throw new OntosError(
-                  "Gateway context response is malformed",
-                  502,
-                  "gateway_context_malformed",
-                );
-              }
-              const issued = parseContext(decoded, requestedAt);
-              assertions.set(vertical, issued);
-              return issued;
-            })();
-      try {
-        return firstResponse === undefined
-          ? await post(context, path, query)
-          : await parseResponse(firstResponse, path);
-      } catch (error) {
-        if (OntosError.is(error) && [400, 401, 403, 409].includes(error.status))
-          forgetContext(vertical, context);
-        throw error;
+      const response = await credentialRequest(GATEWAY_READ_PATH, {
+        audience: vertical,
+        legalEntityId: getConfig().legalEntityId,
+        readName: segment(readName),
+        query,
+      });
+      const encoded = response.headers.get(GATEWAY_CONTEXT_HEADER);
+      if (encoded === null) {
+        if (!response.ok) await parseResponse(response, path);
+        throw new OntosError(
+          "Gateway read response has no assertion",
+          502,
+          "gateway_context_malformed",
+        );
       }
+      let decoded: Partial<GatewayContext>;
+      try {
+        decoded = JSON.parse(encoded) as Partial<GatewayContext>;
+      } catch {
+        throw new OntosError(
+          "Gateway context response is malformed",
+          502,
+          "gateway_context_malformed",
+        );
+      }
+      parseContext(decoded);
+      return await parseResponse(response, path);
     } catch (error) {
       const retryable =
         OntosError.is(error) &&
@@ -324,14 +257,8 @@ export const callAction = async (
   payload: unknown,
   idempotencyKey: string,
 ): Promise<unknown> => {
-  const context = await gatewayContext(vertical);
-  try {
-    return await post(context, `/${segment(vertical)}/actions/${segment(actionSlug)}`, payload, {
-      "idempotency-key": idempotencyKey,
-    });
-  } catch (error) {
-    if (OntosError.is(error) && [400, 401, 403, 409].includes(error.status))
-      forgetContext(vertical, context);
-    throw error;
-  }
+  const context = await mintContext(vertical);
+  return await post(context, `/${segment(vertical)}/actions/${segment(actionSlug)}`, payload, {
+    "idempotency-key": idempotencyKey,
+  });
 };
