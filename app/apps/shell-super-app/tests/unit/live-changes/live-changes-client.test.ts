@@ -74,7 +74,7 @@ it.effect('coalesces pushed changes into one revalidation of the named apps, at 
   }),
 );
 
-it.effect('revalidates everything after a reset and once after the stream reconnects', () =>
+it.effect('revalidates everything after a reset, and nothing for a stream the browser resumed by itself', () =>
   Effect.gen(function* resets() {
     const { loop, revalidations, source } = yield* startChannel;
     source(0).emit('open');
@@ -83,11 +83,11 @@ it.effect('revalidates everything after a reset and once after the stream reconn
     source(0).emit('reset');
     yield* advance(300);
     expect(revalidations).toEqual(['all']);
-    // The server ended the stream (maximum age): the browser reconnects by itself, then the page revalidates once.
+    // A proxy cut the stream: the browser resumes it with Last-Event-ID and the server covers the gap itself.
     source(0).emit('error');
     source(0).emit('open');
     yield* advance(1000);
-    expect(revalidations).toEqual(['all', 'all']);
+    expect(revalidations).toEqual(['all']);
     yield* Fiber.interrupt(loop);
   }),
 );

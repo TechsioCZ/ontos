@@ -60,9 +60,9 @@ const recordingHub = () => {
   return { layer, sink, starts };
 };
 
-const open = (connectionScope: LiveScope) =>
+const open = (connectionScope: LiveScope, lastEventId: Option.Option<string> = Option.none()) =>
   LiveChangeHub.pipe(
-    Effect.flatMap((hub) => hub.subscribe(connectionScope)),
+    Effect.flatMap((hub) => hub.subscribe(connectionScope, lastEventId)),
     Effect.map(Option.getOrElse(() => Stream.empty)),
   );
 
@@ -81,8 +81,8 @@ it.effect('coalesces changes per connection into one frame without data', () => 
     yield* sink().publish({ legalEntityId: otherLegalEntityId, moduleKeys: ['finance.billing'], tenantId });
     yield* advance(300);
     const output = [...(yield* Fiber.join(collected))];
-    expect(output[0]).toMatch(/^retry: \d+\n: connected\n\n$/u);
-    expect(output[1]).toBe('event: change\ndata: crm,sales-pipeline\n\n');
+    expect(output[0]).toMatch(/^retry: \d+\n(?:id: [0-9a-z]+\.0\n)?: connected\n\n$/u);
+    expect(output[1]).toMatch(/^id: [0-9a-z]+\.3\nevent: change\ndata: crm,sales-pipeline\n\n$/u);
   }).pipe(Effect.provide(layer));
 });
 
@@ -97,7 +97,39 @@ it.effect('sends one reset after missed notifications and a heartbeat while idle
     yield* advance(300);
     yield* advance(25_000);
     const output = [...(yield* Fiber.join(collected))];
-    expect(output.slice(1)).toEqual(['event: reset\ndata: all\n\n', ': ping\n\n']);
+    expect(output.slice(1).map((frame) => frame.replace(/^id: [0-9a-z]+\./u, 'id: '))).toEqual([
+      'id: 2\nevent: reset\ndata: all\n\n',
+      'id: 2\n: ping\n\n',
+    ]);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect('resumes a cut stream from its Last-Event-ID, and resets one it cannot account for', () => {
+  const { layer, sink } = recordingHub();
+  return Effect.gen(function* resume() {
+    const first = yield* open(scope()).pipe(
+      Effect.flatMap((frames) => frames.pipe(Stream.take(1), Stream.runCollect, Effect.forkChild)),
+    );
+    yield* advance(1);
+    const [connected] = [...(yield* Fiber.join(first))];
+    const lastEventId = /id: (?<id>\S+)/u.exec(connected ?? '')?.groups?.['id'] ?? '';
+    expect(lastEventId).toMatch(/^[0-9a-z]+\.0$/u);
+    // While the stream is down: one change it may see, one it may not.
+    yield* sink().publish({ legalEntityId, moduleKeys: ['crm'], tenantId });
+    yield* sink().publish({ legalEntityId, moduleKeys: ['finance.billing'], tenantId });
+    const resumed = yield* open(scope(), Option.some(lastEventId)).pipe(
+      Effect.flatMap((frames) => frames.pipe(Stream.take(2), Stream.runCollect, Effect.forkChild)),
+    );
+    yield* advance(1);
+    yield* advance(300);
+    expect([...(yield* Fiber.join(resumed))].at(1)).toMatch(/^id: [0-9a-z]+\.2\nevent: change\ndata: crm\n\n$/u);
+    // Another process (a deploy) or an id older than the remembered changes: the page revalidates everything once.
+    const foreign = yield* open(scope(), Option.some('other.1')).pipe(
+      Effect.flatMap((frames) => frames.pipe(Stream.take(2), Stream.runCollect, Effect.forkChild)),
+    );
+    yield* advance(1);
+    yield* advance(300);
+    expect([...(yield* Fiber.join(foreign))].at(1)).toMatch(/event: reset\ndata: all/u);
   }).pipe(Effect.provide(layer));
 });
 

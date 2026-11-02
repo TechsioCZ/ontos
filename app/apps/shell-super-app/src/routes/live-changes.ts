@@ -13,9 +13,10 @@ import { staffRoutePreloads } from './route-preload-scheduler.ts';
  * `reset` when it may have missed some. Each batch drops the cached reads of those apps and dispatches
  * `moduleChangeEvent`, so page-data stores revalidate only what is on screen; everything else is merely stale and
  * reloads on navigation. Batches are coalesced (300 ms) and at most one revalidation per second runs. A hidden tab
- * closes its stream after a minute and revalidates once when it is shown again; a stream that was down revalidates
- * once when it is open again. While the stream is open, focusing the tab needs no reload: the server has reported
- * every change. Nothing polls.
+ * closes its stream after a minute and revalidates once when it is shown again, as does a stream the server refused.
+ * A stream cut by a proxy or a deploy is resumed by the browser itself with `Last-Event-ID`; the server then replays
+ * what it missed or sends `reset`, so a reconnect alone reloads nothing. While the stream is open, focusing the tab
+ * needs no reload: the server has reported every change. Nothing polls.
  */
 
 export const LIVE_CHANGES_URL = '/shell-super-app-api/live-changes';
@@ -65,7 +66,6 @@ export const LiveChannel = Context.Reference<LiveChannelService>(
 export type LiveSignal =
   | { readonly apps: LiveRevalidation; readonly kind: 'change' }
   | { readonly kind: 'closed'; readonly source: LiveSource }
-  | { readonly kind: 'error'; readonly source: LiveSource }
   | { readonly kind: 'flush' }
   | { readonly kind: 'hidden' }
   | { readonly kind: 'hidden-timeout' }
@@ -100,8 +100,10 @@ const listen = (source: LiveSource, signals: Queue.Queue<LiveSignal>) => {
     signal(signals, { kind: 'reset' });
   });
   source.addEventListener('error', () => {
-    // CONNECTING: the browser reconnects by itself after the server's `retry`. CLOSED: the server refused.
-    signal(signals, source.readyState === CLOSED ? { kind: 'closed', source } : { kind: 'error', source });
+    // CONNECTING: the browser resumes by itself after the server's `retry`, and the server covers the gap.
+    if (source.readyState === CLOSED) {
+      signal(signals, { kind: 'closed', source });
+    }
   });
 };
 
@@ -224,9 +226,6 @@ export const runLiveChanges = Effect.fn('LiveChanges.run')(function* runLiveChan
     }
     return interrupt(hidden).pipe(Effect.andThen(connect));
   });
-  const onError = Effect.sync(() => {
-    state.missed = true;
-  });
   const onOnline = Effect.suspend(() => {
     state.refusals = 0;
     return connect;
@@ -240,7 +239,6 @@ export const runLiveChanges = Effect.fn('LiveChanges.run')(function* runLiveChan
       Match.discriminatorsExhaustive('kind')({
         change: ({ apps }) => queue(apps),
         closed: ({ source }) => onRefused(source),
-        error: () => onError,
         flush: () => flush,
         hidden: () => onHidden,
         'hidden-timeout': () => onHiddenTimeout,

@@ -19,7 +19,8 @@ const serveLiveChanges = Effect.fn('LiveChanges.serve')(
     const resolver = yield* LiveScopeResolver;
     const hub = yield* LiveChangeHub;
     const scope = yield* resolver.resolve(request);
-    const frames = yield* hub.subscribe(scope);
+    // The browser resumes a cut stream with the id of the last frame it received.
+    const frames = yield* hub.subscribe(scope, Option.fromNullishOr(request.headers['last-event-id']));
     if (Option.isNone(frames)) {
       return refusal(503);
     }
