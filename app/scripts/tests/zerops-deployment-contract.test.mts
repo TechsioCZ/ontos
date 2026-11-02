@@ -16,6 +16,7 @@ import { readZeropsDeploymentYaml } from './zerops-deployment.fixture.mts';
 const SETUPS = ['spicedb', 'storefront', 'app'];
 const runtimeDatabaseUrl = `DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
 const zeropsImportPath = new URL('../../zerops-import.yaml', import.meta.url);
+const stageWorkflowPath = new URL('../../../.github/workflows/zerops-stage.yml', import.meta.url);
 
 const ZeropsYamlSchema = Schema.Struct({
   zerops: Schema.Array(Schema.Struct({ run: Schema.Struct({ base: Schema.String }), setup: Schema.String })),
@@ -155,7 +156,7 @@ it('fails the application build whose Zephyr upload fails', () => {
 
 it('excludes compressed asset copies from both CI archives and the final Zerops package', () => {
   const deployIgnore = readFileSync(new URL('../../../.deployignore', import.meta.url), 'utf-8');
-  const workflow = readFileSync(new URL('../../../.github/workflows/zerops-stage.yml', import.meta.url), 'utf-8');
+  const workflow = readFileSync(stageWorkflowPath, 'utf-8');
   for (const extension of ['br', 'gz']) {
     expect(deployIgnore).toContain(`app/apps/*/dist/**/*.${extension}`);
     expect(deployIgnore).toContain(`app/verticals/*/dist/**/*.${extension}`);
@@ -311,7 +312,7 @@ it('references each identity password only from the application container', () =
   }
 });
 
-it('declares the import list of the data plane, the migrator secrets, the app and the storefront only', () => {
+it('declares the import list of the data plane, the migrator secrets, the app and the two storefronts only', () => {
   const { services } = Schema.decodeUnknownSync(ZeropsImportSchema)(parse(readFileSync(zeropsImportPath, 'utf-8')));
 
   expect(
@@ -324,6 +325,7 @@ it('declares the import list of the data plane, the migrator secrets, the app an
     'migrator nodejs@24 false',
     'app nodejs@24 true',
     'storefront nodejs@24 true',
+    'shop nodejs@24 true',
   ]);
   for (const { hostname } of services) {
     expect(hostname).toMatch(/^[a-z0-9]{1,25}$/u);
@@ -353,6 +355,21 @@ it('reserves the application working set and one dedicated CPU while preserving 
   expect(app.get('maxContainers')).toBe(1);
 });
 
+it('runs the pseudonymous demo e-shop on shared CPU and pushes it from the storefront setup', () => {
+  const services = Schema.decodeUnknownSync(Schema.instanceOf(YAMLSeq))(
+    parseDocument(readFileSync(zeropsImportPath, 'utf-8')).get('services', true),
+  );
+  const shop = Schema.decodeUnknownSync(Schema.instanceOf(YAMLMap))(
+    services.items.find((service) => isMap(service) && service.get('hostname') === 'shop'),
+  );
+  const workflow = readFileSync(stageWorkflowPath, 'utf-8');
+
+  expect(shop.getIn(['verticalAutoscaling', 'cpuMode'])).toBe('SHARED');
+  expect(shop.getIn(['verticalAutoscaling', 'maxRam'])).toBe(1);
+  expect(shop.get('maxContainers')).toBe(1);
+  expect(workflow).toContain('push-service.sh "$ZEROPS_SHOP_STOREFRONT_SERVICE_ID" storefront "$GITHUB_SHA"');
+});
+
 it('declares no project-level variable that could carry a database credential', () => {
   const deployment = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))(
     parse(readZeropsDeploymentYaml()),
@@ -376,7 +393,7 @@ it('installs Chromium for the warm-up client before running its bounded browser 
         }),
       }),
     }),
-  )(parse(readFileSync(new URL('../../../.github/workflows/zerops-stage.yml', import.meta.url), 'utf-8')));
+  )(parse(readFileSync(stageWorkflowPath, 'utf-8')));
   const { steps } = workflow.jobs.verify;
   const install = steps.findIndex(({ run }) => run?.includes('pnpm exec playwright-core install chromium') === true);
   const warmup = steps.findIndex(({ run }) => run?.includes('node scripts/ops/stage-warmup.mts') === true);

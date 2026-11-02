@@ -25,3 +25,19 @@ services:
   - hostname: storefront
     type: nodejs@24
     enableSubdomainAccess: true
+  # The pseudonymous demo e-shop (ontos-stage-shop): the same `storefront` setup with its own key and brand in the
+  # service variables (STOREFRONT_BRAND, ONTOS_AKROS_STOREFRONT_API_KEY, ONTOS_STOREFRONT_APP_ID,
+  # ONTOS_STOREFRONT_LEGAL_ENTITY_ID). Shared CPU and the smallest memory: it serves demo traffic only.
+  - hostname: shop
+    type: nodejs@24
+    enableSubdomainAccess: true
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 1
+      minRam: 0.5
+      maxRam: 1
+      minDisk: 1
+      maxDisk: 2
+    minContainers: 1
+    maxContainers: 1
