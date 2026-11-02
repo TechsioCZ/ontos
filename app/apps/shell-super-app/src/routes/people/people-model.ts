@@ -102,7 +102,21 @@ export const roleName = (catalog: PeopleRoleCatalog | undefined, roleKey: string
 export const roleNames = (catalog: PeopleRoleCatalog | undefined, person: Person): readonly string[] =>
   person.roleAssignments.map((role) => roleName(catalog, role.roleKey)).toSorted((a, b) => a.localeCompare(b, 'cs'));
 
-/** `current` hides ended memberships and archived logins, which stay available on request for history. */
+/**
+ * A blocked login that no longer belongs anywhere in the current view: its membership in the selected company has
+ * ended (or it has none), and on the Tenant view it holds no role. Such a retired account is history, not a person
+ * to manage, while a blocked login that still holds a membership or a role stays visible so it can be unblocked.
+ */
+const isRetired = (person: Person): boolean =>
+  person.principalStatus === 'disabled' &&
+  (person.selectedCompanyMembership === null
+    ? person.roleAssignments.length === 0
+    : person.selectedCompanyMembership.status === 'departed');
+
+/**
+ * `current` hides ended memberships, archived logins and retired accounts, which stay available on request for
+ * history.
+ */
 export const PeopleStatusFilterSchema = Schema.Literals(['current', 'all', ...PersonStatusKeySchema.literals]);
 export type PeopleStatusFilter = typeof PeopleStatusFilterSchema.Type;
 export interface PeopleFilters {
@@ -133,6 +147,7 @@ export const filterPeople = (
       (filters.kind === 'all' || personKindKey(person) === filters.kind) &&
       (filters.roleKey === 'all' || person.roleAssignments.some((role) => role.roleKey === filters.roleKey)) &&
       matchesStatus(filters.status, personStatusKey(person)) &&
+      (filters.status !== 'current' || !isRetired(person)) &&
       [person.displayName, personKindLabel(person), ...roleNames(catalog, person)].some((text) =>
         matchesSearch(text, query),
       ),

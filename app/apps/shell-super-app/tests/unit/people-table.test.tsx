@@ -171,6 +171,25 @@ describe('filters', () => {
     expect(names({ status: 'departed' })).toEqual(['Eva Odešlá']);
   });
 
+  it('hides retired accounts (blocked login without a current membership or role) by default, never a merely blocked one', () => {
+    const retired = person('Bývalý účet', { principalStatus: 'disabled', status: 'departed' });
+    const tenantRetired = {
+      ...person('Bývalý účet firmy', { principalStatus: 'disabled' }),
+      selectedCompanyMembership: null,
+    };
+    const tenantBlocked = {
+      ...person('Blokovaný s rolí', { principalStatus: 'disabled', roles: ['crm-sales'] }),
+      selectedCompanyMembership: null,
+    };
+    const visible = (status: PeopleFilters['status']) =>
+      filterPeople([blocked, retired, tenantRetired, tenantBlocked], { ...defaultPeopleFilters, status }, catalog).map(
+        ({ displayName }) => displayName,
+      );
+    expect(visible('current')).toEqual(['Karel Blokovaný', 'Blokovaný s rolí']);
+    expect(visible('all')).toEqual(['Karel Blokovaný', 'Bývalý účet', 'Bývalý účet firmy', 'Blokovaný s rolí']);
+    expect(visible('blocked')).toEqual(['Karel Blokovaný', 'Bývalý účet', 'Bývalý účet firmy', 'Blokovaný s rolí']);
+  });
+
   it('filters by type, role and status, and searches names, types and role names without diacritics', () => {
     expect(names({ kind: 'agent' })).toEqual(['Asistent provozu']);
     expect(names({ kind: 'external' })).toEqual(['Petr Dvořák']);
