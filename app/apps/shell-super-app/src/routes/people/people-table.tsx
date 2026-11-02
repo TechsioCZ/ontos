@@ -164,7 +164,7 @@ const FilterSelect = ({
   readonly onChange: (value: string) => void;
   readonly value: string;
 }) => (
-  <div className="min-w-36 flex-1 sm:w-44 sm:flex-none">
+  <div className="min-w-36 flex-1 sm:w-40 sm:flex-none">
     <SelectTemplate
       items={items.map((item) => option(item.value, item.label))}
       label={label}
@@ -206,7 +206,7 @@ export const PeopleToolbar = ({
     <div className="flex flex-wrap items-end gap-150">
       <Input
         aria-label="Hledat podle jména, typu nebo role"
-        className="w-full sm:w-64"
+        className="w-full sm:w-56"
         onChange={(event) => onFiltersChange({ ...filters, query: event.target.value })}
         placeholder="Hledat jméno, typ nebo roli"
         size="sm"
