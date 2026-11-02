@@ -7,7 +7,7 @@ it.effect('links to the configured stage storefront without localhost destinatio
   Effect.gen(function* stageStorefrontGuide() {
     yield* Effect.acquireRelease(
       Effect.sync(() => {
-        rs.stubGlobal('ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT', 'https://ontos-stage-akros.web-revolution.cz');
+        rs.stubGlobal('ULTRAMODERN_PUBLIC_URL_SHOP_STOREFRONT', 'https://ontos-stage-shop.web-revolution.cz');
         rs.resetModules();
       }),
       () =>
@@ -16,11 +16,11 @@ it.effect('links to the configured stage storefront without localhost destinatio
           rs.resetModules();
         }),
     );
-    const { akrosGuide } = yield* Effect.promise(() => import('../../../src/demo-guide/guides/akros.ts'));
-    for (const chapter of akrosGuide.chapters) {
+    const { sroubshopGuide } = yield* Effect.promise(() => import('../../../src/demo-guide/guides/sroubshop.ts'));
+    for (const chapter of sroubshopGuide.chapters) {
       for (const step of chapter.steps) {
         if (step.target.kind === 'external') {
-          expect(step.target.url.startsWith('https://ontos-stage-akros.web-revolution.cz/')).toBe(true);
+          expect(step.target.url.startsWith('https://ontos-stage-shop.web-revolution.cz/')).toBe(true);
         }
       }
     }
@@ -29,17 +29,17 @@ it.effect('links to the configured stage storefront without localhost destinatio
 
 /** Demo accounts of each company; a guide may only send the presenter to its own company's accounts. */
 const personaDomains = new Map([
-  ['akros', '@akros.demo'],
   ['hanak', '@hanak.demo'],
   ['obchod', '@demo.ontos'],
   ['siampark', '@najempark.demo'],
+  ['sroubshop', '@sroubarna.demo'],
 ]);
 
 const legalEntities = {
-  akros: '71000000-0000-4000-8000-000000000024',
   hanak: '71000000-0000-4000-8000-000000000022',
   obchod: '71000000-0000-4000-8000-000000000020',
   siampark: '71000000-0000-4000-8000-000000000021',
+  sroubshop: '71000000-0000-4000-8000-000000000024',
 } as const;
 
 it('selects the guide of the current company only', () => {
@@ -160,8 +160,8 @@ it.each(demoGuides.map((guide) => [guide.id, guide] as const))('guide %s is comp
       expect(step.target.path.startsWith('/cs')).toBe(false);
       expect(step.target.path.includes('localhost')).toBe(false);
     } else {
-      // Only the AKROS storefront is an external destination.
-      expect(id).toBe('akros');
+      // Only the ŠroubShop storefront is an external destination.
+      expect(id).toBe('sroubshop');
       expect(step.target.url.startsWith('http://localhost:3070/')).toBe(true);
     }
   }
@@ -190,9 +190,9 @@ it('has a Připojení ChatGPT / Claude chapter for every company', () => {
 });
 
 it('describes guest or account owner-backed checkout without unsupported payment or local-only promises', () => {
-  const guide = demoGuideFor(legalEntities.akros);
+  const guide = demoGuideFor(legalEntities.sroubshop);
   const steps = guide?.chapters.flatMap((chapter) => chapter.steps) ?? [];
-  const checkout = steps.find((step) => step.id === 'akros-objednavka');
+  const checkout = steps.find((step) => step.id === 'sroubshop-objednavka');
   expect(checkout?.click).toContain('Objednat bez registrace');
   expect(checkout?.click).toContain('PPL nebo Českou poštu');
   expect(checkout?.target).toEqual(expect.objectContaining({ kind: 'external', url: 'http://localhost:3070/kosik' }));
@@ -213,4 +213,10 @@ it('describes real operations without simulated service promises', () => {
   }
   const rentalGuide = demoGuideFor(legalEntities.siampark);
   expect(JSON.stringify(rentalGuide)).not.toMatch(/podepsan[áéý]|s podpisem/iu);
+});
+
+it('names neither the source brand nor its accounts or host anywhere in the ŠroubShop guide', () => {
+  const guide = demoGuideFor(legalEntities.sroubshop);
+  expect(guide?.companyName).toBe('Šroubárna Vysočina');
+  expect(JSON.stringify(guide)).not.toMatch(/akros/iu);
 });

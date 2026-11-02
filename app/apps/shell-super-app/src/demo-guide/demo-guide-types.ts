@@ -6,7 +6,7 @@ import { Schema } from 'effect';
  */
 
 /** Demo company guides; one per legal entity. */
-export const DemoGuideIdSchema = Schema.Literals(['akros', 'hanak', 'obchod', 'siampark']);
+export const DemoGuideIdSchema = Schema.Literals(['hanak', 'obchod', 'siampark', 'sroubshop']);
 export type DemoGuideId = typeof DemoGuideIdSchema.Type;
 
 /** Public demo account the presenter signs in with for a step; never an authentication default. */

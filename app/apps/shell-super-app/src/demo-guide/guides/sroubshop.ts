@@ -3,20 +3,24 @@ import type { DemoGuide, DemoGuidePersona } from '../demo-guide-types.ts';
 const ordersPath = '/prodej/objednavky';
 const productPath = '/provoz/produkty/product-16732';
 
-const eshop: DemoGuidePersona = { email: 'eshop@akros.demo', role: 'Správce e-shopu' };
-const expedice: DemoGuidePersona = { email: 'expedice@akros.demo', role: 'Expedice' };
+const eshop: DemoGuidePersona = { email: 'eshop@sroubarna.demo', role: 'Správce e-shopu' };
+const expedice: DemoGuidePersona = { email: 'expedice@sroubarna.demo', role: 'Expedice' };
 
-/** Kai Uwe's standalone storefront uses its own customer account, separate from the staff sign-in. */
+/** The demo company's own storefront (ŠroubShop) uses its own customer account, separate from the staff sign-in. */
 declare global {
-  var ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT: string | undefined;
+  var ULTRAMODERN_PUBLIC_URL_SHOP_STOREFRONT: string | undefined;
 }
-const storefront = globalThis.ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT ?? 'http://localhost:3070';
+const storefront =
+  globalThis.ULTRAMODERN_PUBLIC_URL_SHOP_STOREFRONT === undefined ||
+  globalThis.ULTRAMODERN_PUBLIC_URL_SHOP_STOREFRONT === ''
+    ? 'http://localhost:3070'
+    : globalThis.ULTRAMODERN_PUBLIC_URL_SHOP_STOREFRONT;
 const productUrl = `${storefront}/produkt/srouby-s-valcovou-hlavou-s-vnitrnim-sestihranem-din-912-a2?variant=10091200010004`;
 
-export const akrosGuide: DemoGuide = {
+export const sroubshopGuide: DemoGuide = {
   boundaries: {
     live: [
-      'Katalog, varianty, ceny, dostupnost a vyhledávání e-shopu AKROS čte server e-shopu přímo z OntOS; klíč k OntOS nikdy nepřijde do prohlížeče.',
+      'Katalog, varianty, ceny, dostupnost a vyhledávání e-shopu ŠroubShop čte server e-shopu přímo z OntOS; klíč k OntOS nikdy nepřijde do prohlížeče.',
       'Objednávka se skutečně uloží do OntOS, sníží sklad varianty a vidí ji správce i expedice; přihlášený zákazník sleduje stav ve svém účtu, host v e-mailech.',
       'E-shop načítá aktuální ceny a dostupnost z OntOS při otevření stránky i při odeslání objednávky.',
       'Přihlášení a registrace používají zákaznický účet napojený na OntOS. Pokladna nabízí objednávku bez registrace, přihlášení nebo vytvoření účtu; volí zákazník.',
@@ -41,15 +45,15 @@ export const akrosGuide: DemoGuide = {
         {
           click:
             'Tlačítko otevře e-shop v nové kartě. Katalog je veřejný; objednat lze bez registrace, nebo se zákaznickým účtem e-shopu (nikoli účtem správce OntOS).',
-          id: 'akros-katalog',
+          id: 'sroubshop-katalog',
           persona: null,
-          say: 'Tohle je zákaznický e-shop AKROS se zachovaným vlastním designem. Katalog, ceny a dostupnost mu dodává OntOS.',
-          target: { kind: 'external', label: 'e-shop AKROS', url: `${storefront}/` },
-          title: 'E-shop AKROS',
+          say: 'Tohle je zákaznický e-shop ŠroubShop s vlastním designem. Katalog, ceny a dostupnost mu dodává OntOS.',
+          target: { kind: 'external', label: 'e-shop ŠroubShop', url: `${storefront}/` },
+          title: 'E-shop ŠroubShop',
         },
         {
           click: 'U SKU 10091200010004 vložte do košíku minimální balení 500 ks.',
-          id: 'akros-varianta',
+          id: 'sroubshop-varianta',
           persona: null,
           say: 'Zákazník vybírá konkrétní variantu a minimum i balení se řídí zdrojovými daty. Množstevní slevy neslibujeme, zdroj je nemá.',
           target: { kind: 'external', label: 'produkt v e-shopu', url: productUrl },
@@ -57,7 +61,7 @@ export const akrosGuide: DemoGuide = {
         },
         {
           click: 'Počkejte na hlášku „Ceny, množství a dostupnost byly ověřeny v OntOS.“',
-          id: 'akros-kosik',
+          id: 'sroubshop-kosik',
           persona: null,
           say: 'Před objednáním si e-shop ceny, množství a dostupnost znovu ověří přímo v OntOS.',
           target: { kind: 'external', label: 'košík', url: `${storefront}/kosik` },
@@ -66,14 +70,14 @@ export const akrosGuide: DemoGuide = {
         {
           click:
             'V košíku zvolte Objednat bez registrace (nebo se přihlaste či vytvořte účet). Vyberte PPL nebo Českou poštu → Dodací údaje včetně e-mailu a telefonu → Souhrn objednávky → jednou Odeslat objednávku → opište číslo objednávky.',
-          id: 'akros-objednavka',
+          id: 'sroubshop-objednavka',
           persona: null,
           say: 'Objednávka se skutečně uloží a dostane číslo. Host vidí stav na potvrzení a v e-mailech, registrovaný zákazník i ve svém účtu; odesláním neproběhne online platba ani objednání přepravy.',
           target: { kind: 'external', label: 'pokladnu', url: `${storefront}/kosik` },
           title: 'Dokončení objednávky',
         },
       ],
-      summary: 'Zákazník nakupuje v původním e-shopu AKROS, OntOS dodává varianty, ceny a dostupnost.',
+      summary: 'Zákazník nakupuje ve vlastním e-shopu ŠroubShop, OntOS dodává varianty, ceny a dostupnost.',
       title: 'Zákaznický nákup v e-shopu',
     },
     {
@@ -82,7 +86,7 @@ export const akrosGuide: DemoGuide = {
         {
           click:
             'Do pole Hledat podle čísla nebo zákazníka… vložte opsané číslo → otevřete řádek → porovnejte variantu, 500 ks a součet.',
-          id: 'akros-objednavka-sprava',
+          id: 'sroubshop-objednavka-sprava',
           persona: eshop,
           say: 'Správce vidí stejnou objednávku, kterou zákazník právě odeslal, včetně varianty, množství a součtu.',
           target: { kind: 'app', path: ordersPath },
@@ -91,7 +95,7 @@ export const akrosGuide: DemoGuide = {
         {
           click:
             'Varianty a ceny → hledat 10091200010004 → opište původní cenu → zvyšte ji o 0,01 Kč bez DPH → Uložit varianty.',
-          id: 'akros-cena',
+          id: 'sroubshop-cena',
           persona: eshop,
           say: 'Cenu spravuje oprávněný pracovník v OntOS. Potvrzená objednávka má uložený cenový snímek, takže se zpětně nepřecení.',
           target: { kind: 'app', path: productPath },
@@ -99,7 +103,7 @@ export const akrosGuide: DemoGuide = {
         },
         {
           click: 'Po nejvýše deseti sekundách obnovte kartu s produktem v e-shopu.',
-          id: 'akros-cena-eshop',
+          id: 'sroubshop-cena-eshop',
           persona: null,
           say: 'E-shop načte cenu s DPH z OntOS; před objednáním ji ještě znovu ověří.',
           target: { kind: 'external', label: 'produkt v e-shopu', url: productUrl },
@@ -115,7 +119,7 @@ export const akrosGuide: DemoGuide = {
         {
           click:
             'Vyhledejte stejné číslo → detail → Začít zpracovávat → Připraveno k předání → Předat dopravci → Dokončit.',
-          id: 'akros-expedice-stavy',
+          id: 'sroubshop-expedice-stavy',
           persona: expedice,
           say: 'Expedice posouvá skutečný stav objednávky, ale nemění její obsah ani ceny. Tento krok zatím nezajišťuje rezervaci přepravy ani štítek.',
           target: { kind: 'app', path: ordersPath },
@@ -123,7 +127,7 @@ export const akrosGuide: DemoGuide = {
         },
         {
           click: 'Ukažte, že ceny jsou jen ke čtení a Skladový pohyb varianty je dostupný. Pohyb neukládejte.',
-          id: 'akros-expedice-sklad',
+          id: 'sroubshop-expedice-sklad',
           persona: expedice,
           say: 'Expedice vidí ceny jen pro čtení, skladové pohyby ale může skutečně zapisovat.',
           target: { kind: 'app', path: productPath },
@@ -138,7 +142,7 @@ export const akrosGuide: DemoGuide = {
       steps: [
         {
           click: 'Otevřete stejnou objednávku → Historie změn.',
-          id: 'akros-historie',
+          id: 'sroubshop-historie',
           persona: eshop,
           say: 'Každý přechod objednávky má autora a čas, nic se tiše nepřepisuje.',
           target: { kind: 'app', path: ordersPath },
@@ -146,7 +150,7 @@ export const akrosGuide: DemoGuide = {
         },
         {
           click: 'Varianty a ceny → hledat 10091200010004 → vraťte přesně opsanou původní cenu → Uložit varianty.',
-          id: 'akros-vratit-cenu',
+          id: 'sroubshop-vratit-cenu',
           persona: eshop,
           say: 'I úklid po ukázce je řízená změna s historií cen.',
           target: { kind: 'app', path: productPath },
@@ -155,7 +159,7 @@ export const akrosGuide: DemoGuide = {
         {
           click:
             'Otevřete právě vytvořenou objednávku → Odstranit DEMO objednávku → uveďte důvod → Potvrdit odstranění DEMO.',
-          id: 'akros-odstranit-demo',
+          id: 'sroubshop-odstranit-demo',
           persona: eshop,
           say: 'Objednávka zmizí jen z prezentačního seznamu; doklad, historie i audit zůstávají.',
           target: { kind: 'app', path: ordersPath },
@@ -170,7 +174,7 @@ export const akrosGuide: DemoGuide = {
       steps: [
         {
           click: 'Menu účtu › Můj profil › Připojené aplikace › Jak připojit › Kopírovat adresu.',
-          id: 'akros-mcp-adresa',
+          id: 'sroubshop-mcp-adresa',
           persona: expedice,
           say: 'Do ChatGPT nebo Claude se vkládá jen adresa serveru, žádný klíč ani token. Přihlášení a souhlas proběhnou v OntOS.',
           target: { kind: 'app', path: '/profil' },
@@ -179,7 +183,7 @@ export const akrosGuide: DemoGuide = {
         {
           click:
             'V Claude Code: claude mcp add --transport http ontos <adresa>, pak /mcp › Authenticate. Přihlaste se a na obrazovce Připojit zvolte firmu, Za mě a Navrhovat změny ke schválení.',
-          id: 'akros-mcp-souhlas',
+          id: 'sroubshop-mcp-souhlas',
           persona: expedice,
           say: 'Člověk sám zvolí firmu, za koho aplikace jedná, k jakým modulům má přístup a jestli změny jen navrhuje ke schválení.',
           target: { kind: 'app', path: '/profil' },
@@ -187,7 +191,7 @@ export const akrosGuide: DemoGuide = {
         },
         {
           click: 'U připojení Upravit přístup: zúžit moduly nebo přepnout na Jen čtení. Potom Odpojit.',
-          id: 'akros-mcp-upravit',
+          id: 'sroubshop-mcp-upravit',
           persona: expedice,
           say: 'Přístup jde kdykoli zúžit nebo odebrat bez nového přihlášení. Aplikace ztratí přístup hned při dalším požadavku.',
           target: { kind: 'app', path: '/profil' },
@@ -195,7 +199,7 @@ export const akrosGuide: DemoGuide = {
         },
         {
           click: 'Nastavení › Připojené aplikace: dlaždice, filtry a u připojení Odpojit s důvodem.',
-          id: 'akros-mcp-prehled',
+          id: 'sroubshop-mcp-prehled',
           persona: eshop,
           say: 'Správce vidí všechna připojení ve firmě a jedním kliknutím je odpojí. Odpojení i důvod se zapíšou do auditu.',
           target: { kind: 'app', path: '/sprava/pripojene-aplikace' },
@@ -207,9 +211,9 @@ export const akrosGuide: DemoGuide = {
       title: 'Připojení ChatGPT / Claude',
     },
   ],
-  companyName: 'AKROS',
-  id: 'akros',
+  companyName: 'Šroubárna Vysočina',
+  id: 'sroubshop',
   intro:
-    'Zákaznický e-shop AKROS napojený na OntOS: nákup konkrétní varianty, změna ceny v administraci a zpracování objednávky expedicí.',
+    'Zákaznický e-shop ŠroubShop napojený na OntOS: nákup konkrétní varianty, změna ceny v administraci a zpracování objednávky expedicí.',
   legalEntityId: '71000000-0000-4000-8000-000000000024',
 };

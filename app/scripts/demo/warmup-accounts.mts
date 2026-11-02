@@ -75,7 +75,7 @@ export const warmupProfiles = [
   },
   ...[
     { company: 'kavarna', legalEntityId: eshopDemoLegalEntityId },
-    { company: 'akros', legalEntityId: akrosDemoLegalEntityId },
+    { company: 'sroubarna', legalEntityId: akrosDemoLegalEntityId },
   ].map((company) => ({
     ...company,
     role: {

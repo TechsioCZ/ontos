@@ -107,10 +107,16 @@ const companyRoles = {
   },
   '71000000-0000-4000-8000-000000000024': {
     roles: [
-      role('akrosAdmin', 'Správce e-shopu', 'eshop@akros.demo', 'Katalog, objednávky, zákazníci a správa lidí.', true),
-      role('fulfilment', 'Expedice', 'expedice@akros.demo', 'Vyřizování a odesílání objednávek.'),
+      role(
+        'akrosAdmin',
+        'Správce e-shopu',
+        'eshop@sroubarna.demo',
+        'Katalog, objednávky, zákazníci a správa lidí.',
+        true,
+      ),
+      role('fulfilment', 'Expedice', 'expedice@sroubarna.demo', 'Vyřizování a odesílání objednávek.'),
     ],
-    seeded: { 'eshop@akros.demo': 'akrosAdmin', 'expedice@akros.demo': 'fulfilment' },
+    seeded: { 'eshop@sroubarna.demo': 'akrosAdmin', 'expedice@sroubarna.demo': 'fulfilment' },
   },
 } satisfies Readonly<Record<string, CompanyRoles>>;
 

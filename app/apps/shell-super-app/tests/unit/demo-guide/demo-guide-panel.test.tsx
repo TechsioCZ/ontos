@@ -49,7 +49,7 @@ const guide: DemoGuide = {
           id: 'hanak-test-b',
           persona: null,
           say: 'Druhá věta.',
-          target: { kind: 'external', label: 'e-shop AKROS', url: 'http://localhost:3070/' },
+          target: { kind: 'external', label: 'e-shop ŠroubShop', url: 'http://localhost:3070/' },
           title: 'E-shop',
         },
       ],
@@ -76,7 +76,7 @@ it('renders chapters, steps, persona state and both kinds of links', () => {
   expect(screen.getByText('Jste přihlášeni')).toBeTruthy();
   expect(screen.getByText('Další krok')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Otevřít obrazovku' }).getAttribute('href')).toBe('/cs/crm/klienti?tab=1');
-  const external = screen.getByRole('link', { name: 'Otevřít e-shop AKROS' });
+  const external = screen.getByRole('link', { name: 'Otevřít e-shop ŠroubShop' });
   expect(external.getAttribute('href')).toBe('http://localhost:3070/');
   expect(external.getAttribute('target')).toBe('_blank');
 });
@@ -94,7 +94,7 @@ it.each([undefined, 'vedouci@hanak.demo', 'obchodnik@hanak.demo'])(
     expect(screen.getByText('Co kliknout:')).toBeTruthy();
     expect(screen.getByText('Ukažte nadpis.')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Otevřít obrazovku' }).getAttribute('href')).toBe('/cs/crm/klienti?tab=1');
-    expect(screen.getByRole('link', { name: 'Otevřít e-shop AKROS' }).getAttribute('href')).toBe(
+    expect(screen.getByRole('link', { name: 'Otevřít e-shop ŠroubShop' }).getAttribute('href')).toBe(
       'http://localhost:3070/',
     );
   },
