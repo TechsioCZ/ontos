@@ -4,6 +4,7 @@ import { Effect, FileSystem, Schema } from 'effect';
 import { demoId } from '../../../scripts/demo/fixture-ids.mts';
 import { AkrosCatalogSchema, CategorySchema, buildAkrosEncodedFrom } from './akros-baseline.ts';
 import type { AkrosSource } from './akros-baseline.ts';
+import { buildSroubshopEncodedFrom } from './akros-pseudonym.ts';
 
 const readSource = Effect.gen(function* readSource() {
   const fs = yield* FileSystem.FileSystem;
@@ -28,3 +29,5 @@ const readSource = Effect.gen(function* readSource() {
 const source = await Effect.runPromise(readSource.pipe(Effect.provide(NodeFileSystem.layer)));
 // Import every source group; never silently curate the live owner catalog.
 export const buildAkrosEncoded = () => buildAkrosEncodedFrom(source, demoId);
+/** Demo-only, neutral copy; original source and real-AKROS builder stay unchanged. */
+export const buildSroubshopEncoded = () => buildSroubshopEncodedFrom(source, demoId);

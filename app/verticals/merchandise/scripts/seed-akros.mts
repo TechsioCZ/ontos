@@ -8,7 +8,7 @@ import { MerchandiseStateSchema } from '../shared/apis/records.ts';
 import type { MerchandiseState } from '../shared/apis/records.ts';
 import { readCompanySnapshot, writeCompanySnapshot } from './company-snapshot.ts';
 
-import { buildAkrosEncoded } from './akros-catalog.mts';
+import { buildSroubshopEncoded } from './akros-catalog.mts';
 import { mergeSeed, restoreCatalog } from './akros-merge.ts';
 import { refreshAkrosOrderPresentation } from './order-presentation.ts';
 
@@ -18,7 +18,7 @@ class AkrosSeedInputError extends Schema.TaggedError<AkrosSeedInputError>()('Akr
 
 export const akrosLegalEntityId = '71000000-0000-4000-8000-000000000024';
 export const buildAkrosState = () =>
-  buildAkrosEncoded().pipe(Effect.flatMap(Schema.decodeEffect(MerchandiseStateSchema)));
+  buildSroubshopEncoded().pipe(Effect.flatMap(Schema.decodeEffect(MerchandiseStateSchema)));
 
 const AdminDatabaseLive = Layer.effect(
   PgClient.PgClient,
