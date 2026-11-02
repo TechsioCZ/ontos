@@ -1,4 +1,4 @@
-import { formatPercent, StatCard, StatRow, statusPresentation } from '@app/admin-ui';
+import { formatPercent, StatCard, statusPresentation } from '@app/admin-ui';
 import type { OpportunityIndicators } from '../../../../../shared/apis/records.ts';
 import {
   EmployeeIdSchema,
@@ -12,6 +12,7 @@ import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { Option, Schema } from 'effect';
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import {
   filterItemsByQuery,
   firstValue,
@@ -50,10 +51,21 @@ interface KpiProps {
 const Kpi = ({ hint, label, value }: KpiProps) =>
   hint === undefined ? <StatCard label={label} value={value} /> : <StatCard hint={hint} label={label} value={value} />;
 
+/**
+ * The KPI grid follows the width the page content really has, not the viewport: with the demo guide open the content
+ * is about half the screen, and four columns there clip whole-crown amounts. One column on phones, two from 36rem,
+ * four only from 64rem of content width.
+ */
+export const PipelineStatsGrid = ({ children }: { children: ReactNode }) => (
+  <div className="@container">
+    <div className="grid grid-cols-1 gap-200 @min-[36rem]:grid-cols-2 @min-[64rem]:grid-cols-4">{children}</div>
+  </div>
+);
+
 export const PipelineStats = ({ indicators }: { indicators: OpportunityIndicators | undefined }) => {
   const { t } = useModernI18n();
   return (
-    <StatRow>
+    <PipelineStatsGrid>
       <Kpi
         hint={indicators === undefined ? undefined : opportunityCount(indicators.openCount)}
         label={t(`${K}.stats.open`)}
@@ -76,7 +88,7 @@ export const PipelineStats = ({ indicators }: { indicators: OpportunityIndicator
             : Option.match(indicators.winRate, { onNone: () => '—', onSome: formatPercent })
         }
       />
-    </StatRow>
+    </PipelineStatsGrid>
   );
 };
 

@@ -15,6 +15,9 @@
 --tag-outline
 --target-account
 -mx-100
+@container
+@min-[36rem]:grid-cols-2
+@min-[64rem]:grid-cols-4
 [&_label]:text-label-sm
 block
 blur
@@ -35,6 +38,7 @@ gap-200
 gap-250
 gap-50
 grid
+grid-cols-1
 grid-cols-2
 grid-cols-[minmax(0,1fr)_7rem]
 hidden
