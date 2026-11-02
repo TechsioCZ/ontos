@@ -4,8 +4,20 @@ import { createHash, randomUUID } from 'node:crypto';
 import { NodeServices } from '@effect/platform-node';
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, inArray } from 'drizzle-orm';
-import { Array as EffectArray, Config, Console, Effect, FileSystem, Option, Order, Result, Schema } from 'effect';
+import {
+  Array as EffectArray,
+  Config,
+  Console,
+  Effect,
+  FileSystem,
+  Option,
+  Order,
+  Result,
+  Schema,
+  Stream,
+} from 'effect';
 import { Command, Flag } from 'effect/cli';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
 import { principals, principalCompanyMemberships } from '../../packages/core-runtime/src/db/schema.ts';
 import { openDemoAccountGrants } from '../../packages/core-runtime/src/install/demo-account-administration.ts';
@@ -19,6 +31,7 @@ import { ActionPermission, toSpiceDbActionGrantObjectId } from '../../packages/c
 import { agentScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import {
   AgentProfileReadDatabase,
+  AgentProfileSetupError,
   AgentProfileSetupInputSchema,
   readProfile,
   runAgentProfileSetup,
@@ -89,6 +102,46 @@ const AuditPlanSchema = Schema.Struct({
 });
 type AuditPlan = typeof AuditPlanSchema.Type;
 const reason = (text: string) => new DemoSeedError({ reason: text });
+/** Run the unfiltered native list CLI after EACH Action/materialization, outside the completed transaction. */
+const refuseDeadAfterWrite = Effect.gen(function* checkAllDeadAfterWrite() {
+  const result = yield* Effect.gen(function* runDeadList() {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make(
+        process.execPath,
+        [new URL('../outbox-dead-delivery.mts', import.meta.url).pathname, 'list', '--limit', '500'],
+        { extendEnv: true, stderr: 'pipe', stdin: 'ignore', stdout: 'pipe' },
+      ),
+    );
+    const [code, stdout, stderr] = yield* Effect.all(
+      [
+        handle.exitCode,
+        handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
+        handle.stderr.pipe(Stream.decodeText(), Stream.mkString),
+      ],
+      { concurrency: 3 },
+    );
+    return { code: Number(code), stderr, stdout };
+  }).pipe(
+    Effect.scoped,
+    Effect.timeout('90 seconds'),
+    Effect.mapError(
+      () => new AgentProfileSetupError({ reason: 'All-dead Outbox CLI failed after a write; stop, do not continue' }),
+    ),
+  );
+  if (result.code !== 0) {
+    yield* Console.error(result.stderr);
+    return yield* new AgentProfileSetupError({ reason: 'All-dead Outbox CLI failed after a write; stop' });
+  }
+  if (result.stdout.trim() !== 'No dead Outbox deliveries match.') {
+    yield* Console.error(result.stdout);
+    return yield* new AgentProfileSetupError({
+      reason: 'Dead Outbox delivery detected after a write; stop and report, never release automatically',
+    });
+  }
+  yield* Console.log('No dead Outbox deliveries match.');
+  return yield* Effect.void;
+});
 const sourcePaths = [
   '../../packages/core-runtime/src/install/agent-entity-grants.ts',
   '../../packages/core-runtime/src/permissions/agent-profile-lifecycle.ts',
@@ -531,7 +584,9 @@ const run = (mode: 'plan' | 'apply' | 'verify', path: string, reviewed: Option.O
       const bounds = current.agents.flatMap((row) =>
         row.policy === undefined || row.policy.missing.length === 0 ? [] : [row.policy],
       );
-      yield* Console.log(yield* runAgentProfileSetup(operator.principal, inputs, 'apply', reviewed.value, bounds));
+      yield* Console.log(
+        yield* runAgentProfileSetup(operator.principal, inputs, 'apply', reviewed.value, bounds, refuseDeadAfterWrite),
+      );
     }
     const after = yield* inspect(operator.principal);
     yield* validatePlan(after);

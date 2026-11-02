@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { v1 } from '@authzed/authzed-node';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { Array as EffectArray, Context, Effect, FileSystem, Order, Schema } from 'effect';
+import type { ChildProcessSpawner } from 'effect/process';
 
 import { ActionPermission } from '../../packages/core-runtime/src/permissions/service.ts';
 import { ActionRuntime } from '../../packages/core-runtime/src/actions/runtime.ts';
@@ -229,6 +230,11 @@ export const runAgentProfileSetup = Effect.fn('AgentProfileSetup.run')(function*
   mode: AgentProfileSetupMode,
   sourceFingerprint: string,
   reviewedPolicy?: readonly ReviewedAgentPolicyRepair[],
+  afterWrite?: Effect.Effect<
+    void,
+    InstanceType<typeof AgentProfileSetupError>,
+    ChildProcessSpawner.ChildProcessSpawner
+  >,
 ) {
   const runtime = yield* ActionRuntime;
   const permission = yield* ActionPermission;
@@ -420,6 +426,9 @@ export const runAgentProfileSetup = Effect.fn('AgentProfileSetup.run')(function*
         transport: { correlationId: randomUUID(), idempotencyKey },
       })
       .pipe(Effect.catchTag('ActionAlreadyCommitted', () => Effect.void));
+    if (afterWrite !== undefined) {
+      yield* afterWrite;
+    }
     // A prior idempotent commit must still be current; never restore an older reviewed profile over a later admin edit.
     if (!profileMatches(yield* readProfile(input), input)) {
       return yield* fail(
@@ -432,6 +441,9 @@ export const runAgentProfileSetup = Effect.fn('AgentProfileSetup.run')(function*
       principalId: input.principalId,
       tenantId: input.tenantId,
     });
+    if (afterWrite !== undefined) {
+      yield* afterWrite;
+    }
     applied += 1;
   }
   return { applied, mode, rows: prepared.length, verified: true };

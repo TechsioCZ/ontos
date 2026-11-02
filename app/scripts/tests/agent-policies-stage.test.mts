@@ -1,4 +1,5 @@
 import { v1 } from '@authzed/authzed-node';
+import { readFileSync } from 'node:fs';
 import { Array as EffectArray, Effect, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { agentGrantRelationships } from '../../packages/core-runtime/src/install/agent-entity-grants.ts';
@@ -168,4 +169,21 @@ it('keeps unknown, assigned, source-declared or privileged orphans blocked, and 
   ]) {
     expect(reviewedUnscopedAgentExclusion(changed)).toBeUndefined();
   }
+});
+it('checks the native all-dead list between every governed Action and grant write, without releasing deliveries', () => {
+  const setup = readFileSync(new URL('../demo/agent-profile-setup.mts', import.meta.url), 'utf-8');
+  const operator = readFileSync(new URL('../demo/agent-policies-stage.mts', import.meta.url), 'utf-8');
+  const action = setup.indexOf('.runAction({');
+  const firstCheck = setup.indexOf('yield* afterWrite;', action);
+  const grants = setup.indexOf('yield* grants.replaceAgentGrants(', firstCheck);
+  const secondCheck = setup.indexOf('yield* afterWrite;', grants);
+  expect(action).toBeGreaterThan(-1);
+  expect(firstCheck).toBeGreaterThan(action);
+  expect(grants).toBeGreaterThan(firstCheck);
+  expect(secondCheck).toBeGreaterThan(grants);
+  expect(operator).toContain(
+    "new URL('../outbox-dead-delivery.mts', import.meta.url).pathname, 'list', '--limit', '500'",
+  );
+  expect(operator).toContain('bounds, refuseDeadAfterWrite');
+  expect(operator).not.toContain('resolveDeadOutboxDelivery');
 });
