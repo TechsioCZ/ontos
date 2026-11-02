@@ -195,7 +195,7 @@ export function projectProducts(body: Raw): ProductPage {
       const gross = number(v.grossPriceMinor);
       const net = number(v.priceMinor);
       // Same default as the owner order rules (merchandise order-quantity: minimumQuantity ?? 1).
-      const minimum = number(v.minimumQuantity) ?? number(p.minimumQuantity) ?? 1;
+      const minimum = number(v.minimumQuantity) ?? 1;
       if (!text(v.id)) return null;
       const priceIssue = priceUnavailableReason(gross, net, p.currency, money);
       const availabilityUnknown = isAvailabilityUnknown(v.availability, p.stockTracked);
@@ -208,7 +208,7 @@ export function projectProducts(body: Raw): ProductPage {
               priceExcludingVatMinor: number(t.priceExcludingVatMinor)!,
             }))
             .filter((t) => Object.values(t).every(Number.isFinite) && t.priceMinor > 0);
-      const packageQuantity = number(v.packageQuantity) ?? number(p.packageQuantity);
+      const packageQuantity = number(v.packageQuantity);
       const unit = text(v.sourceUnit, text(v.unit, text(p.sourceUnit, text(p.unit, "ks"))));
       const sourceNetWeight = sourceUnitWeightKg(text(v.sku), unit);
       return {
@@ -306,9 +306,9 @@ export function projectProducts(body: Raw): ProductPage {
       ...(productPriceIssue ? { priceUnavailableReason: productPriceIssue } : {}),
       ...purchaseConstraints(
         first?.minimumQuantity ?? minimum,
-        first?.packageQuantity ?? number(p.packageQuantity),
+        first ? first.packageQuantity : number(p.packageQuantity),
       ),
-      packageQuantity: first?.packageQuantity ?? number(p.packageQuantity),
+      packageQuantity: first ? first.packageQuantity : number(p.packageQuantity),
       stockCount: productAvailabilityUnknown
         ? 0
         : isGroup

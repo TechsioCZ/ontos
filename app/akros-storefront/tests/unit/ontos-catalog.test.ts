@@ -52,6 +52,32 @@ const live = () => ({
   ],
 });
 describe("OntOS source-of-truth boundary", () => {
+  it("does not impose parent minimum or packaging on an unpackaged variant", () => {
+    const product = live();
+    const {
+      minimumQuantity: _minimum,
+      packageQuantity: _pack,
+      ...ownVariant
+    } = product.variantRecords[0];
+    const projected = projectProducts({
+      products: [
+        {
+          ...product,
+          minimumQuantity: 20,
+          packageQuantity: 10,
+          variantRecords: [{ ...ownVariant, stockOnHand: 5 }],
+        },
+      ],
+    }).products[0];
+    expect(projected.detail.variants[0]).toMatchObject({
+      minimumQuantity: 1,
+      quantityStep: 1,
+      stockCount: 5,
+    });
+    expect(projected.detail.variants[0].packageQuantity).toBeUndefined();
+    expect(projected.minimumQuantity).toBe(1);
+    expect(projected.packageQuantity).toBeUndefined();
+  });
   it("sends only purchase fields to the form without losing authoritative price or stock constraints", () => {
     const product = projectProducts({ products: [live()] }).products[0];
     const purchase = purchaseProductOf(product);

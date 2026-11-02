@@ -67,6 +67,42 @@ beforeEach(() => {
 });
 
 describe("server cart quote", () => {
+  it("quotes an unpackaged variant without inheriting its parent's package constraint", async () => {
+    vi.mocked(readCartProducts).mockResolvedValue(
+      project({
+        revision: 3,
+        products: [
+          {
+            ...product({ minimumQuantity: 1, stockOnHand: 5 }),
+            minimumQuantity: 10,
+            packageQuantity: 10,
+          },
+        ],
+      }),
+    );
+    const quote = await quoteCart(cart(5, 121));
+    expect(quote.canCheckout).toBe(true);
+    expect(quote.lineIssues).toEqual([]);
+    expect(quote.cart.lines[0]).toMatchObject({
+      minimumQuantity: 1,
+      quantityStep: 1,
+      quantity: 5,
+    });
+    expect(callAction).toHaveBeenCalledOnce();
+  });
+  it("quotes a quantity above an unpackaged minimum without rounding it to a multiple", async () => {
+    vi.mocked(readCartProducts).mockResolvedValue(
+      project({ revision: 3, products: [product({ minimumQuantity: 10, stockOnHand: 15 })] }),
+    );
+    const quote = await quoteCart(cart(15, 121));
+    expect(quote.canCheckout).toBe(true);
+    expect(quote.lineIssues).toEqual([]);
+    expect(quote.cart.lines[0]).toMatchObject({
+      minimumQuantity: 10,
+      quantityStep: 1,
+      quantity: 15,
+    });
+  });
   it("blocks an item whose owner availability is UNKNOWN, naming the variant, without asking OntOS to order", async () => {
     vi.mocked(readCartProducts).mockResolvedValue(
       project({ revision: 3, products: [product({ availability: "UNKNOWN" })] }),
