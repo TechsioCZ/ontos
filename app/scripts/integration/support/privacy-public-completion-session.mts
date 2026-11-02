@@ -145,6 +145,24 @@ const partyDescriptionSchema = Schema.Struct({
   runtime: runtimeDescriptionSchema,
   subscriptions: Schema.Array(OntosOutboxSubscriptionContractSchema),
 });
+const exactPartyAcknowledgement = (
+  expectedWorkerKeys: readonly string[],
+  deliveries: readonly (typeof outboxDeliveries.$inferSelect)[],
+  remainingDebtCount: number,
+) => {
+  const [delivery] = deliveries;
+  if (
+    expectedWorkerKeys.length !== 1 ||
+    deliveries.length !== 1 ||
+    delivery === undefined ||
+    delivery.workerKey !== expectedWorkerKeys[0] ||
+    delivery.status !== 'done' ||
+    remainingDebtCount !== 0
+  ) {
+    return Option.none();
+  }
+  return Option.some(delivery);
+};
 const cycleSchema = Schema.Struct({
   cycle: Schema.Struct({
     claimed: Schema.Int,
@@ -1086,7 +1104,17 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
           .select()
           .from(applicationCompositionDurableWork)
           .where(eq(applicationCompositionDurableWork.workId, debtId));
-        if (deliveries.length !== 1 || deliveries[0]?.status !== 'done' || remaining.length !== 0) {
+        const expectedWorkerKeys = party.runtime.outboxSubscriptions
+          .filter(
+            ({ consumerModuleKey, producerModuleKey, topic }) =>
+              consumerModuleKey === partyModuleKey &&
+              producerModuleKey === message.producerModuleKey &&
+              topic === message.topic,
+          )
+          .map(({ workerKey }) => workerKey);
+        const partyDeliveries = deliveries.filter(({ consumerModuleKey }) => consumerModuleKey === partyModuleKey);
+        const partyAcknowledgement = exactPartyAcknowledgement(expectedWorkerKeys, partyDeliveries, remaining.length);
+        if (Option.isNone(partyAcknowledgement)) {
           yield* Effect.logError('Actual public completion delivery settlement differs from the required boundary', {
             deliveryCount: deliveries.length,
             deliveryStatuses: deliveries.slice(0, 8).map(({ status, workerKey }) => ({ status, workerKey })),
@@ -1098,6 +1126,12 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
           });
           return yield* failure('Public ACK did not settle exact Core delivery debt');
         }
+        yield* Effect.logInfo('Other consumers retain their actual delivery state after the Party ACK', {
+          deliveries: deliveries
+            .filter(({ consumerModuleKey }) => consumerModuleKey !== partyModuleKey)
+            .slice(0, 8)
+            .map(({ consumerModuleKey, status, workerKey }) => ({ consumerModuleKey, status, workerKey })),
+        });
         const [event] = yield* database.executor
           .select()
           .from(domainEvents)
@@ -1112,7 +1146,7 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
           creatorPid: process.pid,
           databaseOid: capability.databaseOid,
           debtId,
-          deliveryId: deliveries[0].outboxDeliveryId,
+          deliveryId: partyAcknowledgement.value.outboxDeliveryId,
           domainEventId: message.domainEventId,
           invocationId: event.actionInvocationId,
           measureId: handoff.measureId,
