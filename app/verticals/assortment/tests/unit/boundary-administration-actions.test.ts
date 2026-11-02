@@ -1,3 +1,8 @@
+import {
+  toAssortmentPermissionAccessKey,
+  toAssortmentPermissionAccessObjectId,
+  toAssortmentPermissionAccessObjectIdForTargets,
+} from '@app/core-runtime';
 import type {
   DomainEvent,
   DomainEventReference,
@@ -305,6 +310,71 @@ it('emits ordered end then create targets for replacement', () => {
   const targets = replaceBoundaryPermissionTargets(replacement, scope);
   expect(targets[0]?.permission).toStrictEqual('assortment.boundary.end');
   expect(targets[1]?.permission).toStrictEqual('assortment.boundary.create');
+  expect({
+    conjunction: toAssortmentPermissionAccessObjectIdForTargets(scope.tenantId, scope.legalEntityId, targets),
+    reversed: toAssortmentPermissionAccessObjectIdForTargets(scope.tenantId, scope.legalEntityId, [
+      targets[1],
+      targets[0],
+    ]),
+    targets: targets.map((target) => ({
+      key: toAssortmentPermissionAccessKey(scope.tenantId, scope.legalEntityId, target),
+      objectId: toAssortmentPermissionAccessObjectId(scope.tenantId, scope.legalEntityId, target),
+      target,
+    })),
+  }).toMatchInlineSnapshot(`
+    {
+      "conjunction": "asp_a07a475709ca09b2febea45793a233ddb250f37d6c22a8c38c824a8d291c0427",
+      "reversed": "asp_2a9916cd05993744f1719366b15d317b173ea98a9ebec64c61d64a189cd33eb3",
+      "targets": [
+        {
+          "key": "10000000-0000-4000-8000-000000000001:legal_entity:30000000-0000-4000-8000-000000000001:assortment.boundary.end:assortment_boundary:end:commerce.assortment:commerce.assortment.closed-assortment-boundary:boundary-1",
+          "objectId": "asp_2c84b492526bc9c49e0457bbfa7200b44c6925c4d5f5ed19ae43e95d370ca070",
+          "target": {
+            "boundary": {
+              "moduleId": "commerce.assortment",
+              "resourceId": "boundary-1",
+              "resourceType": "commerce.assortment.closed-assortment-boundary",
+            },
+            "kind": "assortment_boundary",
+            "mode": "end",
+            "permission": "assortment.boundary.end",
+          },
+        },
+        {
+          "key": "10000000-0000-4000-8000-000000000001:legal_entity:30000000-0000-4000-8000-000000000001:assortment.boundary.create:assortment_boundary:create:PURCHASE:RETAIL_CUSTOMER_PROFILE:commerce.customer-context:commerce.customer-context.retail-customer-profile:profile-1:channel:commerce.channel:commerce.channel.channel:channel-1:market:none:storefront:none:2026-09-22T10:00:00.000Z:EMPTY:0:d801aa1fb7ddcc330a5e3173372ea6af4a3d08ec58074478e85aa5603e926658",
+          "objectId": "asp_62393326e4eb64a56cbe18ed637d09a6c04f40ac5c34ad63bf22333d1559e502",
+          "target": {
+            "admissionSet": {
+              "contentHash": "d801aa1fb7ddcc330a5e3173372ea6af4a3d08ec58074478e85aa5603e926658",
+              "entries": [],
+              "memberCount": 0,
+              "setKind": "EMPTY",
+            },
+            "commercialScope": {
+              "channel": {
+                "moduleId": "commerce.channel",
+                "resourceId": "channel-1",
+                "resourceType": "commerce.channel.channel",
+              },
+            },
+            "effectiveFrom": "2026-09-22T10:00:00.000Z",
+            "kind": "assortment_boundary",
+            "mode": "create",
+            "permission": "assortment.boundary.create",
+            "purpose": "PURCHASE",
+            "subject": {
+              "kind": "RETAIL_CUSTOMER_PROFILE",
+              "ref": {
+                "moduleId": "commerce.customer-context",
+                "resourceId": "profile-1",
+                "resourceType": "commerce.customer-context.retail-customer-profile",
+              },
+            },
+          },
+        },
+      ],
+    }
+  `);
   expect(() =>
     Schema.decodeUnknownSync(ReplaceClosedAssortmentBoundaryPayloadSchema)({
       ...Schema.encodeSync(ReplaceClosedAssortmentBoundaryPayloadSchema)(replacement),

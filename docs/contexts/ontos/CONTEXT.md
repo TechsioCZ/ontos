@@ -20,6 +20,13 @@ permission holder without resolving the Principal.
 governed read against a Resource and scope. A Party Relationship, Counterparty Role, selected
 context, profile membership, account session, or Business Policy result is not a Permission.
 
+**Business Permission Definition** — Owner-published meaning of a business Permission and its
+permitted authorization targets and scopes. Publishing a definition grants no Principal a Permission.
+
+**Authorization Target** — The exact object or scope against which an operation requires Current
+Permission, including an ordered conjunction when several targets are independently required.
+Deployment and build identity do not replace this target.
+
 **Business Policy** — Module-owned condition or decision evaluated from trusted context and business
 facts after authentication and authorization boundaries. It may allow, deny, require approval, or
 select a typed business outcome; it never creates identity, authentication, or Permission.

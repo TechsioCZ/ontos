@@ -175,6 +175,21 @@ it('uses tenant scope for Rule lineage and requires Legal Entity scope for bindi
   expect(toAssortmentPermissionAccessObjectId(tenantId, undefined, ruleTarget)).toBeDefined();
   expect(toAssortmentPermissionAccessKey(tenantId, undefined, assortmentEndTarget)).toBeUndefined();
   expect(toAssortmentPermissionAccessObjectId(tenantId, undefined, assortmentEndTarget)).toBeUndefined();
+  expect({
+    bindingKey: toAssortmentPermissionAccessKey(tenantId, legalEntityId, assortmentEndTarget),
+    bindingObjectId: toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, assortmentEndTarget),
+    ruleKey: toAssortmentPermissionAccessKey(tenantId, undefined, ruleTarget),
+    ruleObjectId: toAssortmentPermissionAccessObjectId(tenantId, undefined, ruleTarget),
+    selectedLegalEntityRuleObjectId: toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, ruleTarget),
+  }).toMatchInlineSnapshot(`
+    {
+      "bindingKey": "10000000-0000-4000-8000-000000000001:legal_entity:20000000-0000-4000-8000-000000000001:assortment.binding.end:assortment_binding:end:commerce.assortment:commerce.assortment.applicability-binding:binding-1",
+      "bindingObjectId": "asp_8c96c0bcfaa64fd77def9d8a0bf460af9df9efc83d8bcfadd1ff4b47d7c51e11",
+      "ruleKey": "10000000-0000-4000-8000-000000000001:tenant:assortment.rule.create:assortment_rule:create:PURCHASE:ALLOW:rule-1:ALL:none",
+      "ruleObjectId": "asp_f68c2de924a061e3d6938d39204d2dbbd8987aa63dc6b2a4e6bc90c25bab0fa0",
+      "selectedLegalEntityRuleObjectId": "asp_f68c2de924a061e3d6938d39204d2dbbd8987aa63dc6b2a4e6bc90c25bab0fa0",
+    }
+  `);
 });
 
 it.effect('derives configuration scope from the exact canonical resource type and rejects unknown types', () =>
