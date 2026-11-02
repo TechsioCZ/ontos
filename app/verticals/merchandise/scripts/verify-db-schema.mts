@@ -38,6 +38,7 @@ const TABLES = [
   'market_product_offers',
 ] as const;
 const CatalogSchema = Schema.Struct({
+  bootstrap_checkpoint: Schema.Boolean,
   enabled: Schema.Boolean,
   forced: Schema.Boolean,
   no_external_fk: Schema.Boolean,
@@ -68,6 +69,7 @@ const SnapshotSchema = Schema.Struct({
 const demoTenant = '70000000-0000-4000-8000-000000000020';
 const demoCompany = '71000000-0000-4000-8000-000000000020';
 const catalogMatches = (row: typeof CatalogSchema.Type) =>
+  row.bootstrap_checkpoint &&
   row.enabled &&
   row.forced &&
   row.policies === 4 &&
@@ -130,6 +132,7 @@ const verification = Effect.fn('Merchandise.verifyDatabase')(function* verifyOwn
   const catalog = yield* client
     .unsafe(
       `select c.relname,
+    (c.relname <> 'catalog_heads' or exists(select 1 from pg_catalog.pg_attribute a where a.attrelid=c.oid and a.attname='bootstrap_checkpoint' and a.atttypid='jsonb'::regtype and not a.attnotnull and not a.attisdropped)) as bootstrap_checkpoint,
     c.relrowsecurity as enabled, c.relforcerowsecurity as forced,
     (select count(*)::int from pg_catalog.pg_policy where polrelid=c.oid) as policies,
     exists(select 1 from pg_catalog.pg_constraint where conrelid=c.oid and contype='p' and pg_get_constraintdef(oid) like '%tenant_id, legal_entity_id%') as primary_key,

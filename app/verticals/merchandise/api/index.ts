@@ -35,6 +35,7 @@ import type { OperationContext } from '../shared/api.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
+import { bootstrapPlaygroundCatalogActionApiLive } from './bootstrap-playground-catalog-action-server.ts';
 import { agentReviewReadApiLive } from './agent-review-read-server.ts';
 import { applyCommandActionApiLive } from './apply-command-action-server.ts';
 import { mediaReadApiLive } from './media-read-server.ts';
@@ -84,6 +85,7 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit)
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
+  bootstrapPlaygroundCatalogActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   agentReviewReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   mediaReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

@@ -8,6 +8,7 @@ import type { MicroVerticalReadiness, MicroVerticalOperationContext } from '@mod
 import { identity } from 'effect';
 
 // <generated-governed-http-api-imports>
+import { BootstrapPlaygroundCatalogActionApi } from './apis/bootstrap-playground-catalog-action.ts';
 import { AgentReviewApi } from './apis/agent-review.ts';
 import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
 import { MediaApi } from './apis/media.ts';
@@ -36,6 +37,7 @@ export const merchandiseFoundationApi = HttpApi.make('MerchandiseApiFoundation')
 export const merchandiseApi = HttpApi.make('MerchandiseApi')
   .addHttpApi(merchandiseFoundationApi)
   // <generated-governed-http-api-additions>
+  .addHttpApi(BootstrapPlaygroundCatalogActionApi)
   .addHttpApi(AgentReviewApi)
   .addHttpApi(ApplyCommandActionApi)
   .addHttpApi(MediaApi)

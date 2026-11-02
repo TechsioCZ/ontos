@@ -4,12 +4,14 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { merchandiseManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
+import { bootstrapPlaygroundCatalogAction } from './src/actions/bootstrap-playground-catalog.action.ts';
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
 // </generated-module-registration-imports>
 
 export const merchandiseRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
+    bootstrapPlaygroundCatalogAction,
     applyCommandAction,
     // </generated-module-registration-actions>
   ],

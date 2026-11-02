@@ -169,7 +169,9 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
         input.catalogHead === true
           ? sql<StorefrontHeadEncoded | null>`(select json_build_object(
             'revision', ${catalogHeads.revision}, 'homepageFeaturedProductIds', ${catalogHeads.homepageFeaturedProductIds})
-          from ${catalogHeads} where ${whereScope(catalogHeads, scope)})`.as('head')
+          from ${catalogHeads} where ${whereScope(catalogHeads, scope)}
+            and (${catalogHeads.bootstrapCheckpoint} is null
+              or ${catalogHeads.bootstrapCheckpoint}->>'status' = 'VERIFIED'))`.as('head')
           : sql<StorefrontHeadEncoded | null>`null::json`.as('head'),
       total: sql<number>`count(*)::int`.as('total'),
     })

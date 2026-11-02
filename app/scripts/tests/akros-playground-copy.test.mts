@@ -25,6 +25,7 @@ import {
 } from '../demo/akros-playground-copy.mts';
 import { demoId } from '../demo/fixture-ids.mts';
 import { checkCopyBootstrap } from '../demo/seed-akros-playground.mts';
+import { bootstrapFrozenCatalog } from '../demo/akros-playground-bootstrap.mts';
 
 const at = '2026-11-02T10:00:00.000Z';
 const checkpointDirectory = '/owned/revision-42';
@@ -174,6 +175,22 @@ const response = (products: readonly unknown[], totalProducts: number, revision 
   revision,
   totalProducts,
 });
+
+it.effect('refuses a different frozen bootstrap manifest before any destination call', () =>
+  Effect.gen(function* frozenBoundaryTest() {
+    let calls = 0;
+    const base = reader(() => {
+      calls += 1;
+      return response([], 0);
+    });
+    const failure = yield* bootstrapFrozenCatalog(base, copyPlanFromSnapshot(yield* snapshot())).pipe(Effect.flip);
+    expect(Schema.is(AkrosPlaygroundCopyError)(failure)).toBe(true);
+    if (Schema.is(AkrosPlaygroundCopyError)(failure)) {
+      expect(failure.reason).toContain('manifest');
+    }
+    expect(calls).toBe(0);
+  }).pipe(Effect.provide(FetchHttpClient.layer)),
+);
 
 it.effect('refuses an empty destination before dispatching any catalog, gallery or market write', () =>
   Effect.gen(function* missingBootstrapTest() {

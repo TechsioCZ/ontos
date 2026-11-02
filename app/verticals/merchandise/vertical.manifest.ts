@@ -8,6 +8,7 @@ import {
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
+import { bootstrapPlaygroundCatalogAction } from './src/actions/bootstrap-playground-catalog.action.ts';
 import { AgentReviewApi } from './shared/apis/agent-review.ts';
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
 import { merchandiseReadAllPermission } from './shared/permissions/merchandise-read-all.ts';
@@ -50,6 +51,7 @@ export const merchandiseManifest = defineOntosModuleManifest({
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
+      bootstrapPlaygroundCatalogAction,
       applyCommandAction,
       // </generated-module-manifest-actions>
     ],

@@ -57,6 +57,7 @@ import type { CopyPlan, CopyProduct, CopySnapshot } from './akros-playground-cop
 import { connectSeedClient, validateSeedTarget } from './seed-client.mts';
 import type { SeedClient } from './seed-client.mts';
 import { seedWriteCheckpoint } from './seed-checkpoint.mts';
+import { bootstrapFrozenCatalog } from './akros-playground-bootstrap.mts';
 
 type CopyClient = Pick<SeedClient, 'call'>;
 export {
@@ -597,7 +598,7 @@ export const applyCopyAfterBootstrap = (client: CopyClient, plan: CopyPlan) =>
     return yield* verifyCopy(client, plan);
   });
 
-const main = (mode: 'plan' | 'apply' | 'verify', file: string, fingerprint: string) =>
+const main = (mode: 'plan' | 'bootstrap' | 'apply' | 'verify', file: string, fingerprint: string) =>
   Effect.gen(function* runAkrosPlaygroundCopy() {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -646,11 +647,20 @@ const main = (mode: 'plan' | 'apply' | 'verify', file: string, fingerprint: stri
         { ...akrosCopyDestination, shellUrl: origin },
         akrosPlaygroundAccounts.admin,
         password,
-        checkpoint,
+        mode === 'bootstrap' ? undefined : checkpoint,
       ),
       (session) => session.signOut.pipe(Effect.ignore),
     );
-    const stats = yield* mode === 'apply' ? applyCopyAfterBootstrap(client, plan) : verifyCopy(client, plan);
+    const execute = () => {
+      if (mode === 'bootstrap') {
+        return bootstrapFrozenCatalog(client, plan);
+      }
+      if (mode === 'apply') {
+        return applyCopyAfterBootstrap(client, plan);
+      }
+      return verifyCopy(client, plan);
+    };
+    const stats = yield* execute();
     return yield* Console.log(canonicalCopyJson({ fingerprint, mode, stats }));
   }).pipe(Effect.scoped);
 
@@ -660,7 +670,7 @@ if (import.meta.main) {
     {
       file: Flag.String('file'),
       fingerprint: Flag.String('fingerprint').pipe(Flag.withDefault('')),
-      mode: Flag.Literals('mode', ['plan', 'apply', 'verify']).pipe(Flag.withDefault('plan')),
+      mode: Flag.Literals('mode', ['plan', 'bootstrap', 'apply', 'verify']).pipe(Flag.withDefault('plan')),
     },
     ({ file, fingerprint, mode }) =>
       main(mode, file, fingerprint).pipe(

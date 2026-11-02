@@ -126,7 +126,12 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
           expect(params).toContain(catalogScope.legalEntityId);
           if (sql.includes('from "demo_merchandise"."catalog_heads"')) {
             return Effect.succeed([
-              { aiChanges: null, homepageFeaturedProductIds: ['private-product-id'], revision: 7 },
+              {
+                aiChanges: null,
+                bootstrapCheckpoint: null,
+                homepageFeaturedProductIds: ['private-product-id'],
+                revision: 7,
+              },
             ]);
           }
           if (sql.includes('from "demo_merchandise"."categories"')) {
@@ -245,6 +250,33 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
         executeOwnerQuery: ({ sql }) => {
           expect(sql).toContain('from "demo_merchandise"."catalog_heads"');
           return Effect.succeed([]);
+        },
+        operationTime,
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope: catalogScope,
+      });
+      const failure = yield* harness.runtime
+        .runRead(catalogInvocation({ mode: 'categories' }))
+        .pipe(Effect.provide(harness.layer), Effect.flip);
+      expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
+      expect(harness.snapshot().ownerQueries).toHaveLength(1);
+      expect(harness.snapshot().evidenceWrites).toBe(0);
+    }),
+  );
+  suite.effect('unfinished bootstrap rejects category reads before any partial category data escapes', () =>
+    Effect.gen(function* unfinishedBootstrap() {
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: ({ sql }) => {
+          expect(sql).toContain('from "demo_merchandise"."catalog_heads"');
+          return Effect.succeed([
+            {
+              aiChanges: null,
+              bootstrapCheckpoint: { status: 'IMPORTING' },
+              homepageFeaturedProductIds: [],
+              revision: 0,
+            },
+          ]);
         },
         operationTime,
         ownerAuthorizationDecision: 'allowed',

@@ -642,6 +642,7 @@ export const loadHead = Effect.fn('MerchandiseStore.loadHead')(function* loadHea
   const base = db
     .select({
       aiChanges: options.aiChanges === true ? history : sql<null>`null`,
+      bootstrapCheckpoint: catalogHeads.bootstrapCheckpoint,
       homepageFeaturedProductIds: catalogHeads.homepageFeaturedProductIds,
       revision: catalogHeads.revision,
     })
@@ -652,6 +653,12 @@ export const loadHead = Effect.fn('MerchandiseStore.loadHead')(function* loadHea
   const [row] = rows;
   if (row === undefined) {
     return yield* Effect.succeed(Option.getOrUndefined(Option.none<CatalogHead>()));
+  }
+  if (
+    row.bootstrapCheckpoint !== null &&
+    !Schema.is(Schema.Struct({ status: Schema.Literal('VERIFIED') }))(row.bootstrapCheckpoint)
+  ) {
+    return yield* new MerchandiseStoreFailure({ reason: 'Catalog initialization has not been verified' });
   }
   const [aiChanges, homepageFeaturedProductIds] = yield* Effect.all(
     [
