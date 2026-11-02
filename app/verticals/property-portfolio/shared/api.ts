@@ -9,7 +9,10 @@ import { identity } from 'effect';
 
 // <generated-governed-http-api-imports>
 import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
+import { PropertiesSearchApi } from './apis/properties-search.ts';
 import { RecordsApi } from './apis/records.ts';
+import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
+import { UnitsSearchApi } from './apis/units-search.ts';
 // </generated-governed-http-api-imports>
 
 export type OperationContext = MicroVerticalOperationContext;
@@ -32,7 +35,10 @@ export const propertyPortfolioApi = HttpApi.make('PropertyPortfolioApi')
   .addHttpApi(propertyPortfolioFoundationApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(ApplyCommandActionApi)
+  .addHttpApi(PropertiesSearchApi)
   .addHttpApi(RecordsApi)
+  .addHttpApi(RequestSearchRebuildActionApi)
+  .addHttpApi(UnitsSearchApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

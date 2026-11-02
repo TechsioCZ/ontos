@@ -1,6 +1,7 @@
 import { defineOntosMcpContribution } from '@app/core-runtime';
 
 export const propertyPortfolioMcpContribution = defineOntosMcpContribution({
+  actions: { 'request-search-rebuild': 'hidden' },
   approvals: true,
   commandFieldLabels: {
     address: 'Adresa',

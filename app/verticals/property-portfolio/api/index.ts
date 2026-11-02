@@ -1,5 +1,7 @@
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
+  CoreSearchQueryRuntimeLive,
+  CoreSearchProjectionStoreLive,
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
   ContextAccessLive as GovernedContextAccessLive,
@@ -31,7 +33,10 @@ import {
 
 // <generated-governed-http-handler-imports>
 import { applyCommandActionApiLive } from './apply-command-action-server.ts';
+import { propertiesReadApiLive } from './properties-search-server.ts';
 import { recordsReadApiLive } from './records-read-server.ts';
+import { requestSearchRebuildActionApiLive } from './request-search-rebuild-action-server.ts';
+import { unitsReadApiLive } from './units-search-server.ts';
 // </generated-governed-http-handler-imports>
 
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
@@ -88,7 +93,10 @@ const governedApplicationCompositionSourceLive = GovernedApplicationCompositionS
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
   applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  propertiesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  requestSearchRebuildActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  unitsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   // <generated-governed-http-handler-support-layers>
@@ -145,6 +153,8 @@ const propertyPortfolioReadinessLayer = HttpApiBuilder.group(propertyPortfolioAp
 
 const apiHandlersLive = propertyPortfolioReadinessLayer;
 const governedResolvedApiHandlersLive = GovernedReadLayer.mergeAll(apiHandlersLive, governedReadApiHandlersLive).pipe(
+  GovernedReadLayer.provide(CoreSearchQueryRuntimeLive.pipe(GovernedReadLayer.provide(CoreSearchProjectionStoreLive))),
+  GovernedReadLayer.provide(GovernedCorePersistenceLive),
   GovernedReadLayer.provide(ActiveApplicationCompositionConfigLive),
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),

@@ -5,6 +5,7 @@ import {
   defineOntosModuleManifest,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
+  ShellSearchContributionSchema,
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
@@ -14,6 +15,7 @@ import { OverviewPage } from './src/routes/[lang]/nemovitosti/prehled/page.tsx';
 import { propertyResourceDescriptor } from './shared/resources/property.ts';
 import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/nemovitosti/page.tsx';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 import { unitResourceDescriptor } from './shared/resources/unit.ts';
 // </generated-module-manifest-imports>
 import { propertyPortfolioMcpContribution } from './shared/mcp/contribution.ts';
@@ -25,6 +27,9 @@ const navigationContribution = (value: NavigationContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellNavigationContributionSchema)(value));
 const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
+
+const searchContribution = (value: typeof ShellSearchContributionSchema.Encoded) =>
+  Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
 
 const moduleKey = 'property.portfolio';
 const accessPermission = 'module.access';
@@ -49,6 +54,7 @@ export const propertyPortfolioManifest = defineOntosModuleManifest({
     actions: [
       // <generated-module-manifest-actions>
       applyCommandAction,
+      requestSearchRebuildAction,
       // </generated-module-manifest-actions>
     ],
     api: {
@@ -81,6 +87,20 @@ export const propertyPortfolioManifest = defineOntosModuleManifest({
     ],
     search: [
       // <generated-module-manifest-search>
+      {
+        accessFiltering: 'resource_permission',
+        key: 'property.portfolio.properties',
+        owningModuleId: moduleKey,
+        requestFilters: ['includeArchived'],
+        resourceType: 'property.portfolio.property',
+      },
+      {
+        accessFiltering: 'resource_permission',
+        key: 'property.portfolio.units',
+        owningModuleId: moduleKey,
+        requestFilters: ['includeArchived'],
+        resourceType: 'property.portfolio.unit',
+      },
       // </generated-module-manifest-search>
     ],
     shellContributions: {
@@ -165,6 +185,30 @@ export const propertyPortfolioManifest = defineOntosModuleManifest({
       resourceDetails: [],
       search: [
         // <generated-module-shell-search>
+        searchContribution({
+          contributionKey: 'property.portfolio.search.properties',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: accessPermission },
+            entrypointKey: 'property.portfolio.search.properties',
+            moduleKey,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'property.portfolio.properties',
+        }),
+        searchContribution({
+          contributionKey: 'property.portfolio.search.units',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: accessPermission },
+            entrypointKey: 'property.portfolio.search.units',
+            moduleKey,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'property.portfolio.units',
+        }),
         // </generated-module-shell-search>
       ],
       timelines: [],

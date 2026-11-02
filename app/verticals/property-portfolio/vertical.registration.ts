@@ -5,12 +5,16 @@ import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { propertyPortfolioManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
+import { refreshSearchWorker } from './src/workers/refresh-search.worker.ts';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 // </generated-module-registration-imports>
 
 export const propertyPortfolioRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
     applyCommandAction,
+    requestSearchRebuildAction,
     // </generated-module-registration-actions>
   ],
   entrypoints: {
@@ -35,12 +39,16 @@ export const propertyPortfolioRegistration = defineVerticalRuntimeRegistration({
     },
     search: {
       // <generated-module-registration-search>
+      properties: () => import('./src/api/properties-search-client.ts'),
+      units: () => import('./src/api/units-search-client.ts'),
       // </generated-module-registration-search>
     },
   },
   manifest: propertyPortfolioManifest,
   outboxWorkers: [
     // <generated-module-registration-workers>
+    rebuildSearchWorker,
+    refreshSearchWorker,
     // </generated-module-registration-workers>
   ],
 });

@@ -14,11 +14,15 @@ import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts'
 import { persistenceService } from '../services/persistence.service.ts';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
+import { OutboxPayloadSchema } from '../../shared/outbox/property-portfolio-search-refresh-requested-v1.ts';
+import { createApplyCommandPropertyPortfolioSearchRefreshRequestedV1OutboxMessage } from './apply-command-property-portfolio-search-refresh-requested-v1.outbox-message.ts';
+
+const domainEvents = { 'property.portfolio.search-refresh-requested.v1': OutboxPayloadSchema } as const;
 const owningModuleKey = 'property.portfolio';
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 const handleApplyCommand = Effect.fn('Property.Action.applyCommand')(function* handlePropertyCommand(
   payload: ApplyCommandPayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
+  context: ActionHandlerContext<typeof domainEvents, Services>,
 ) {
   const { command } = payload;
   if (isStaffOnlyPropertyCommand(command)) {
@@ -44,11 +48,25 @@ const handleApplyCommand = Effect.fn('Property.Action.applyCommand')(function* h
     resultCount: 1,
     servingModuleKey: owningModuleKey,
   });
-  return yield* context.services.apply({
+  const result = yield* context.services.apply({
     ...payload,
     now: DateTime.formatIso(DateTime.makeUnsafe(milliseconds)),
     resourceId: context.actionInvocationId,
   });
+  const refresh = { requestId: context.actionInvocationId };
+  const event = yield* context.addDomainEvent({
+    eventType: 'property.portfolio.search-refresh-requested.v1',
+    payloadJson: refresh,
+    producerModuleKey: owningModuleKey,
+    subjectModuleKey: 'core.identity',
+    subjectResourceId: context.scope.tenantId,
+    subjectResourceType: 'tenant',
+  });
+  yield* context.addOutboxMessage(
+    event,
+    createApplyCommandPropertyPortfolioSearchRefreshRequestedV1OutboxMessage(refresh),
+  );
+  return result;
 });
 
 export const applyCommandAction = defineAction(
@@ -60,7 +78,7 @@ export const applyCommandAction = defineAction(
     actionKey: 'property.portfolio.apply-command',
     auditProfile: 'standard',
     domainErrorSchema: PropertyErrorSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'action_execution', provisioning: 'explicit' },
@@ -81,4 +99,9 @@ export const applyCommandAction = defineAction(
 );
 
 // <generated-outbox-message-exports>
+export { ApplyCommandPropertyPortfolioSearchRefreshRequestedV1OutboxPayloadSchema } from './apply-command-property-portfolio-search-refresh-requested-v1.outbox-message.ts';
+export { ApplyCommandPropertyPortfolioSearchRefreshRequestedV1OutboxProducerModuleKey } from './apply-command-property-portfolio-search-refresh-requested-v1.outbox-message.ts';
+export { ApplyCommandPropertyPortfolioSearchRefreshRequestedV1OutboxTopic } from './apply-command-property-portfolio-search-refresh-requested-v1.outbox-message.ts';
+export { createApplyCommandPropertyPortfolioSearchRefreshRequestedV1OutboxMessage } from './apply-command-property-portfolio-search-refresh-requested-v1.outbox-message.ts';
+export type { ApplyCommandPropertyPortfolioSearchRefreshRequestedV1OutboxPayload } from './apply-command-property-portfolio-search-refresh-requested-v1.outbox-message.ts';
 // </generated-outbox-message-exports>
