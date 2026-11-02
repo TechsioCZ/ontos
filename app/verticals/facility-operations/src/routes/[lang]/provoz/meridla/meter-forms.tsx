@@ -1,31 +1,33 @@
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Meter master-data form and reading form (ops-meters lane). Both write through the governed apply-command Action.
-import { formatDate } from '@app/admin-ui';
+import { AutosaveStatus, formatDate, useAutosave } from '@app/admin-ui';
+import type { AutosaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
-import { DateTime, Effect, Result, Schema } from 'effect';
+import { DateTime, Effect, Option, Result, Schema } from 'effect';
 import { useReducer, useRef, useState } from 'react';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import { optionalField } from '../../../../../shared/domain/common.ts';
 import type { PropertyRef } from '../../../../../shared/domain/common.ts';
 import { MeterMediumSchema, meterMedia, readingProblem, readingRows } from '../../../../../shared/domain/meters.ts';
-import type { Meter, MeterMedium, MeterPhoto, MeterReadingSchema } from '../../../../../shared/domain/meters.ts';
+import type { Meter, MeterPhoto, MeterReadingSchema } from '../../../../../shared/domain/meters.ts';
 import { usePropertyOptions } from '../../../../ui/property-options.ts';
 import { MAX_UPLOAD_BYTES, uploadFile } from '../../../../ui/use-agenda.ts';
 import type { CommandOutcome, FailureReason } from '../../../../ui/use-agenda.ts';
 import { defaultUnitOf, formatChange, formatQuantity } from './meters-view.ts';
+import { meterCreateCommandOf, meterDraftOf, meterUpdateCommandOf, sameMeterDraft } from './meter-draft.ts';
+import type { MeterDraft } from './meter-draft.ts';
+import { facilityAutosaveOutcome } from '../../../../ui/facility-autosave.ts';
 
 const k = 'facility-operations.meters';
 const CANCEL_LABEL = 'facility-operations.common.cancel';
 const NONE = 'none';
 
 export type RunCommand = (command: OpsCommand) => Effect.Effect<CommandOutcome>;
-type MeterFields = Omit<Extract<OpsCommand, { readonly _tag: 'MeterCreate' }>, '_tag'>;
-type MutableMeterFields = { -readonly [Key in keyof MeterFields]: MeterFields[Key] };
 type ReadingCommand = Extract<OpsCommand, { readonly _tag: 'MeterReadingRecord' }>;
 type MutableReadingCommand = { -readonly [Key in keyof ReadingCommand]: ReadingCommand[Key] };
 
@@ -54,89 +56,6 @@ const optional = <Key extends string>(key: Key, value: string) =>
 // Meter master data
 // ---------------------------------------------------------------------------------------------------------------
 
-interface MeterDraft {
-  consumer: string;
-  contract: string;
-  location: string;
-  medium: MeterMedium;
-  note: string;
-  retired: boolean;
-  serialNumber: string;
-  supplier: string;
-  supplyPoint: string;
-  unit: string;
-}
-
-const draftOf = (meter: Meter | undefined): MeterDraft => ({
-  consumer: meter?.consumer ?? '',
-  contract: meter?.contract ?? '',
-  location: meter?.location === undefined ? '' : `${meter.location.kind}:${meter.location.id}`,
-  medium: meter?.medium ?? 'ELECTRICITY',
-  note: meter?.note ?? '',
-  retired: meter?.status === 'RETIRED',
-  serialNumber: meter?.serialNumber ?? '',
-  supplier: meter?.supplier ?? '',
-  supplyPoint: meter?.supplyPoint ?? '',
-  unit: meter?.unit ?? defaultUnitOf.ELECTRICITY,
-});
-
-/** Create (no `meter`) or edit form. Calls `onSaved` after the change is persisted. */
-interface SubmitMeterFormInput {
-  readonly draft: MeterDraft;
-  readonly meter: Meter | undefined;
-  readonly onSaved: (meterId: string | undefined) => void;
-  readonly pickedLocation: () => PropertyRef | undefined;
-  readonly run: RunCommand;
-  readonly setBusy: (busy: boolean) => void;
-  readonly setError: (error: FailureReason | 'required' | undefined) => void;
-}
-
-const submitMeterForm = Effect.fn('Facility.submitMeterForm')(function* submitMeterForm({
-  draft,
-  meter,
-  onSaved,
-  pickedLocation,
-  run,
-  setBusy,
-  setError,
-}: SubmitMeterFormInput) {
-  if (draft.serialNumber.trim() === '' || draft.unit.trim() === '') {
-    setError('required');
-    return;
-  }
-  const location = pickedLocation();
-  const fields: MutableMeterFields = {
-    medium: draft.medium,
-    serialNumber: draft.serialNumber.trim(),
-    unit: draft.unit.trim(),
-    ...optional('supplyPoint', draft.supplyPoint),
-    ...optional('supplier', draft.supplier),
-    ...optional('consumer', draft.consumer),
-    ...optional('contract', draft.contract),
-    ...optional('note', draft.note),
-  };
-  if (location !== undefined) {
-    fields.location = location;
-  }
-  setBusy(true);
-  const outcome = yield* run(
-    meter === undefined
-      ? { _tag: 'MeterCreate', ...fields }
-      : {
-          _tag: 'MeterUpdate',
-          ...fields,
-          meterId: meter.id,
-          status: draft.retired ? 'RETIRED' : 'ACTIVE',
-        },
-  );
-  setBusy(false);
-  if (outcome.ok) {
-    onSaved(outcome.result.entityIds[0]);
-  } else {
-    setError(outcome.reason);
-  }
-});
-
 export const MeterForm = ({
   meter,
   onCancel,
@@ -150,29 +69,76 @@ export const MeterForm = ({
 }) => {
   const { t } = useModernI18n();
   const properties = usePropertyOptions();
-  const [draft, setDraft] = useState<MeterDraft>(() => draftOf(meter));
+  const [draft, setDraft] = useState<MeterDraft>(() => meterDraftOf(meter));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<FailureReason | 'required' | undefined>();
   const set = <Key extends keyof MeterDraft>(key: Key, value: MeterDraft[Key]) =>
     setDraft((current) => ({ ...current, [key]: value }));
 
-  const pickedLocation = (): PropertyRef | undefined => {
-    if (draft.location === '') {
+  /** The stored location of a draft: the picked property, or the one the meter already has. */
+  const pickedLocationOf = (value: MeterDraft): PropertyRef | undefined => {
+    if (value.location === '') {
       return undefined;
     }
     if (properties.status === 'ready') {
-      const found = properties.options.find((option) => option.value === draft.location)?.ref;
+      const found = properties.options.find((option) => option.value === value.location)?.ref;
       if (found !== undefined) {
         return found;
       }
     }
     // Keep the existing snapshot when the property read is unavailable.
-    return meter?.location !== undefined && draft.location === `${meter.location.kind}:${meter.location.id}`
+    return meter?.location !== undefined && value.location === `${meter.location.kind}:${meter.location.id}`
       ? meter.location
       : undefined;
   };
 
-  const submit = () => submitMeterForm({ draft, meter, onSaved, pickedLocation, run, setBusy, setError });
+  // An edit saves itself; a new meter card is submitted on "Založit měřidlo" only.
+  const autosave = useAutosave<MeterDraft, never>({
+    equals: sameMeterDraft,
+    isValid: (value) =>
+      meter !== undefined && Option.isSome(meterUpdateCommandOf(value, meter, pickedLocationOf(value))),
+    runtime: browserRuntime,
+    save: (value) =>
+      meter === undefined
+        ? Effect.succeed<AutosaveOutcome>('failed')
+        : Option.match(meterUpdateCommandOf(value, meter, pickedLocationOf(value)), {
+            onNone: () => Effect.succeed<AutosaveOutcome>('failed'),
+            onSome: (command) => facilityAutosaveOutcome(run(command)),
+          }),
+    value: draft,
+  });
+  const close = () => {
+    autosave.flush();
+    onCancel();
+  };
+  const handleRetry = autosave.retry;
+  const handleReloadLatest = () => {
+    const current = meterDraftOf(meter);
+    autosave.adopt(current);
+    setDraft(current);
+    setError(undefined);
+  };
+
+  const submit = () => {
+    const command = meterCreateCommandOf(draft, pickedLocationOf(draft));
+    if (Option.isNone(command)) {
+      setError('required');
+      return Effect.void;
+    }
+    setBusy(true);
+    return run(command.value).pipe(
+      Effect.tap((outcome) =>
+        Effect.sync(() => {
+          setBusy(false);
+          if (outcome.ok) {
+            onSaved(outcome.result.entityIds[0]);
+          } else {
+            setError(outcome.reason);
+          }
+        }),
+      ),
+    );
+  };
 
   const locationItems = [
     {
@@ -310,21 +276,30 @@ export const MeterForm = ({
           {t(`${k}.edit.retire`)}
         </label>
       )}
-      <div className="flex flex-wrap justify-end gap-100">
-        <Button onClick={onCancel} theme="outlined" variant="secondary">
-          {t(CANCEL_LABEL)}
-        </Button>
-        <Button
-          isLoading={busy}
-          loadingText={t('facility-operations.common.saving')}
-          onClick={() => {
-            void browserRuntime.runPromise(submit());
-          }}
-          variant="primary"
-        >
-          {meter === undefined ? t(`${k}.create.submit`) : t(`${k}.edit.submit`)}
-        </Button>
-      </div>
+      {meter === undefined ? (
+        <div className="flex flex-wrap justify-end gap-100">
+          <Button onClick={onCancel} theme="outlined" variant="secondary">
+            {t(CANCEL_LABEL)}
+          </Button>
+          <Button
+            isLoading={busy}
+            loadingText={t('facility-operations.common.saving')}
+            onClick={() => {
+              void browserRuntime.runPromise(submit());
+            }}
+            variant="primary"
+          >
+            {t(`${k}.create.submit`)}
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center justify-end gap-100">
+          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <Button onClick={close} theme="outlined" variant="secondary">
+            {t('facility-operations.common.close')}
+          </Button>
+        </div>
+      )}
     </div>
   );
 };
