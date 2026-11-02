@@ -130,7 +130,7 @@ export const InvitePersonButton = ({
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button onClick={() => setOpen(true)} variant="primary">
+      <Button icon="icon-[mdi--account-plus-outline]" onClick={() => setOpen(true)} size="sm" variant="primary">
         Pozvat člověka
       </Button>
       {open ? <InvitePersonForm onClose={() => setOpen(false)} onCommitted={onCommitted} /> : null}

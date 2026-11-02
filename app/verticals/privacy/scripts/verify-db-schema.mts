@@ -16,6 +16,7 @@ const IMMUTABLE_TABLES = [
   'applicability_decisions',
   'applicability_policies',
   'consent_decisions',
+  'consent_scope_bindings',
   'disposition_decisions',
   'dsr_deadlines',
   'dsr_delivery_evidence',
@@ -26,6 +27,7 @@ const IMMUTABLE_TABLES = [
   'eligibility_evidence',
   'legal_basis_assignments',
   'legal_holds',
+  'notice_acknowledgements',
   'notice_provisions',
   'notice_versions',
   'owner_contributions',
@@ -46,6 +48,8 @@ const EXPECTED_IMMUTABLE_TRIGGERS = [
   'applicability_decisions:privacy_applicability_decisions_immutable',
   'applicability_policies:privacy_applicability_policies_immutable',
   'consent_decisions:privacy_consent_decisions_immutable',
+  'consent_decisions:privacy_consent_subject_binding_guard',
+  'consent_scope_bindings:privacy_consent_scope_bindings_immutable',
   'disposition_decisions:privacy_disposition_decisions_immutable',
   'dsr_deadlines:privacy_dsr_deadlines_immutable',
   'dsr_delivery_evidence:privacy_dsr_delivery_evidence_immutable',
@@ -56,6 +60,7 @@ const EXPECTED_IMMUTABLE_TRIGGERS = [
   'eligibility_evidence:privacy_eligibility_evidence_immutable',
   'legal_basis_assignments:privacy_legal_basis_assignments_immutable',
   'legal_holds:privacy_legal_holds_immutable',
+  'notice_acknowledgements:privacy_notice_acknowledgements_immutable',
   'notice_provisions:privacy_notice_provisions_immutable',
   'notice_versions:privacy_notice_versions_immutable',
   'owner_contributions:privacy_owner_contributions_immutable',
@@ -71,6 +76,7 @@ const EXPECTED_IMMUTABLE_TRIGGERS = [
 
 const EXPECTED_FOREIGN_KEYS = [
   'privacy_activity_lifecycle_activity_fk',
+  'privacy_consent_scope_bindings_subject_fk',
   'privacy_disposition_rule_fk',
   'privacy_dsr_deadlines_case_fk',
   'privacy_dsr_delivery_evidence_access_fk',
@@ -80,6 +86,8 @@ const EXPECTED_FOREIGN_KEYS = [
   'privacy_dsr_substantive_decisions_case_fk',
   'privacy_dsr_verifications_case_fk',
   'privacy_external_obligations_measure_fk',
+  'privacy_notice_ack_notice_fk',
+  'privacy_notice_ack_subject_fk',
   'privacy_owner_outcomes_measure_fk',
   'privacy_purpose_versions_purpose_fk',
   'privacy_retention_work_rule_fk',
@@ -141,6 +149,22 @@ interface PolicyRow {
   readonly with_check_expression: string | null;
 }
 
+interface ReplayLedgerRow {
+  readonly expiry_index_count: number;
+  readonly identity_constraint_count: number;
+  readonly identity_unique_count: number;
+  readonly public_privilege_count: number;
+  readonly required_column_count: number;
+}
+
+/** The owner migration's replay ledger: five required columns, one named identity, its expiry index, no PUBLIC grant. */
+const replayLedgerMatchesMigration = (row: ReplayLedgerRow | undefined): boolean =>
+  row?.required_column_count === 5 &&
+  row.identity_constraint_count === 1 &&
+  row.identity_unique_count === 1 &&
+  row.expiry_index_count === 1 &&
+  row.public_privilege_count === 0;
+
 interface RoleRow {
   readonly runtime_bypass_rls: boolean;
   readonly runtime_create: boolean;
@@ -177,6 +201,52 @@ const policyHasExactScope = (policy: PolicyRow): boolean => {
   }
   return scopedExpression(policy.using_expression) && policy.with_check_expression === null;
 };
+
+/** The replay ledger keeps its owner migration shape; it is checked apart from the RLS-protected tables. */
+const verifyReplayLedger = Effect.fn('PrivacySchema.verifyReplayLedger')(function* verifyReplayLedger(
+  connected: Pick<PgClient.PgClient, 'unsafe'>,
+) {
+  const [replayLedger] = yield* connected
+    .unsafe<ReplayLedgerRow>(
+      `select (select count(*)::integer
+                 from information_schema.columns
+                where table_schema = $1 and table_name = 'gateway_assertion_redemptions'
+                  and is_nullable = 'NO'
+                  and ((column_name = 'jti' and data_type = 'uuid')
+                    or (column_name = 'redeemed_at' and column_default = 'now()')
+                    or column_name in ('audience', 'expires_at', 'issuer'))) as required_column_count,
+              (select count(*)::integer
+                 from pg_catalog.pg_constraint as constraint_record
+                 join pg_catalog.pg_class as relation on relation.oid = constraint_record.conrelid
+                 join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+                where namespace.nspname = $1 and relation.relname = 'gateway_assertion_redemptions'
+                  and constraint_record.contype in ('p', 'u')) as identity_constraint_count,
+              (select count(*)::integer
+                 from pg_catalog.pg_constraint as constraint_record
+                 join pg_catalog.pg_class as relation on relation.oid = constraint_record.conrelid
+                 join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+                where namespace.nspname = $1 and relation.relname = 'gateway_assertion_redemptions'
+                  and constraint_record.conname = 'privacy_gateway_redemptions_identity_uk'
+                  and constraint_record.contype = 'u') as identity_unique_count,
+              (select count(*)::integer
+                 from pg_catalog.pg_indexes
+                where schemaname = $1 and tablename = 'gateway_assertion_redemptions'
+                  and indexname = 'privacy_gateway_redemptions_expiry_idx') as expiry_index_count,
+              (select count(*)::integer
+                 from pg_catalog.pg_class as relation
+                 join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+                cross join lateral pg_catalog.aclexplode(
+                  coalesce(relation.relacl, pg_catalog.acldefault('r', relation.relowner))
+                ) as privilege
+                where namespace.nspname = $1 and relation.relname = 'gateway_assertion_redemptions'
+                  and privilege.grantee = 0) as public_privilege_count`,
+      [PRIVACY_SCHEMA_NAME],
+    )
+    .pipe(Effect.mapError((cause) => failure('Unable to inspect the Privacy replay ledger', cause)));
+  if (!replayLedgerMatchesMigration(replayLedger)) {
+    yield* failure('Privacy gateway assertion replay ledger does not match its owner migration shape');
+  }
+});
 
 const verify = Effect.gen(function* verifyPrivacyDatabase() {
   if (!sameStrings(EXPECTED_TABLES, PRIVACY_TABLE_INVENTORY)) {
@@ -234,6 +304,8 @@ const verify = Effect.gen(function* verifyPrivacyDatabase() {
           .join(',')}]`,
       );
     }
+
+    yield* verifyReplayLedger(connected);
 
     const policies = yield* connected
       .unsafe<PolicyRow>(

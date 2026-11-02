@@ -3,7 +3,7 @@
 import { Effect, Random } from 'effect';
 import type { Duration } from 'effect';
 import { useEffect, useState } from 'react';
-import { executeRecords } from '../../../../api/records-client.ts';
+import { executeRecords } from '../../../../api/records-consumer.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { RecordsRequestEncoded, ProductRecord } from '../../../../../shared/apis/records.ts';
 import { CATEGORY_RESULT_LIMIT } from '../../../../../shared/domain/category-search.ts';

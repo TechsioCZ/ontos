@@ -14,7 +14,11 @@ import { RecordsApi } from './apis/records.ts';
 // </generated-governed-http-api-imports>
 
 export type FacilityOperationsReadiness = MicroVerticalReadiness;
-export const facilityOperationsMarkerSchema = Schema.Struct({ ...MicroVerticalBuildMarkerSchema.fields });
+export const facilityOperationsMarkerSchema = Schema.Struct({
+  ...MicroVerticalBuildMarkerSchema.fields,
+  kind: Schema.Literal('microvertical-delivery-unit'),
+  schemaVersion: Schema.Literal(1),
+});
 export const facilityOperationsReadinessSchema = Schema.Struct({
   ...MicroVerticalReadinessSchema.fields,
   marker: facilityOperationsMarkerSchema,

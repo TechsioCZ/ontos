@@ -5,6 +5,7 @@ import {
   formatDateTime,
   formatMoney,
   formatPercent,
+  ScrollRegion,
   SectionCard,
   SidePanel,
   StatusBadge,
@@ -247,9 +248,7 @@ export const PipelineDetailPanel = ({
               Případ zatím nemá položky nabídky. Doplníte je přes Upravit.
             </p>
           ) : (
-            /* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Pending scoped exception approval: this named scroll region preserves keyboard access to horizontal table scrolling. */
-            <section aria-label={t('sales-pipeline.detail.offerLinesLabel')} className="overflow-x-auto" tabIndex={0}>
-              {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
+            <ScrollRegion label={t('sales-pipeline.detail.offerLinesLabel')}>
               <Table size="sm" variant="line">
                 <Table.Header>
                   <Table.Row>
@@ -270,7 +269,7 @@ export const PipelineDetailPanel = ({
                   ))}
                 </Table.Body>
               </Table>
-            </section>
+            </ScrollRegion>
           )}
         </SectionCard>
 

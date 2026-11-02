@@ -8,7 +8,11 @@ import {
   CatalogSelectionSchema,
   CatalogSelectionValidEvidenceSchema,
 } from './catalog-selection-evidence.ts';
-import type { CatalogSelection, CatalogSelectionEvidence } from './catalog-selection-evidence.ts';
+import type {
+  CatalogSelectionMembership,
+  CatalogSelection,
+  CatalogSelectionEvidence,
+} from './catalog-selection-evidence.ts';
 import type { CatalogResourceRef } from './catalog-revision-reference.ts';
 import {
   CatalogResourceRefSchema,
@@ -431,6 +435,12 @@ const catalogResourceRef = (resourceType: string, resourceId: string, tenantId: 
   tenantId,
 });
 
+// Observation identity remains on the returned evidence, outside material replay identity.
+const materialMembership = (membership: CatalogSelectionMembership) => {
+  const { attestationId: _attestationId, observedAt: _observedAt, ...material } = membership;
+  return material;
+};
+
 const quantityOwnerMetadata = (input: {
   readonly basis: CatalogQuantityHandoffBasisFacts;
   readonly current: CatalogSelectionCurrentFacts;
@@ -456,7 +466,7 @@ const quantityOwnerMetadata = (input: {
     encodeIdentity({
       basis: input.current.basis,
       hierarchyRevision,
-      membership: input.current.status === 'OBSERVED' ? input.current.membership : null,
+      membership: input.current.status === 'OBSERVED' ? materialMembership(input.current.membership) : null,
       quantity: input.quantity,
       selectionKey,
       unit: input.basis.unit,

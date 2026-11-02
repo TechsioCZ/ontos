@@ -8,7 +8,7 @@ export function Unavailable({ reset }: { reset: () => void }) {
         placeItems: "center",
         padding: 24,
         background: "var(--color-base,#f3f4f6)",
-        fontFamily: "var(--font-akros,Arial),sans-serif",
+        fontFamily: "var(--font-akros-ext),var(--font-akros,Arial),sans-serif",
       }}
     >
       <section

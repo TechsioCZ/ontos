@@ -339,7 +339,7 @@ const compositionEvidenceBindsCandidate = (
   decision.tenantId === currentnessEvidence.currencySupport.tenantId &&
   decision.tenantId === currentnessEvidence.subjectEvidence.subject.tenantId &&
   decision.currencyCode === currentnessEvidence.currencySupport.currencyCode &&
-  decision.operationTime === currentnessEvidence.currencySupport.observedAt &&
+  decision.operationTime <= currentnessEvidence.currencySupport.observedAt &&
   decision.operationTime === currentnessEvidence.subjectEvidence.revalidatedAt &&
   decision.operationTime === currentnessEvidence.ownerEvidence.currentness.evaluatedAt &&
   completedPricingAllocationRefs.includes(currentnessEvidence.pricingCompositionRef);
@@ -416,7 +416,10 @@ export const PricingPromotionCompositionReadySchema = Schema.Struct(readyBase).c
       ) {
         return 'Applied Promotion evidence must bind the original request and exact Pricing recipients';
       }
-      const prePromotionTotal = decimalSum(lines.map((line) => line.prePromotionValue.amount));
+      const eligibleIds = new Set(promotion.target.occurrenceIds);
+      const prePromotionTotal = decimalSum(
+        lines.flatMap((line) => (eligibleIds.has(line.occurrenceId) ? [line.prePromotionValue.amount] : [])),
+      );
       if (prePromotionTotal.coefficient <= 0n) {
         return 'A zero or non-positive eligible pre-Promotion basis must remain on the parked owner path';
       }

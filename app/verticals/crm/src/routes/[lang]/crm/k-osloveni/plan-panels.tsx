@@ -127,7 +127,6 @@ export const PlanContactPanel = ({
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description="Ruční plán obchodníka. Systém sám nic neplánuje ani nedoporučuje."
       onOpenChange={(next) => {
         if (!next) {
@@ -299,7 +298,6 @@ export const CompletePlanPanel = ({
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description={`${clientLabel(records, item.clientId)} · plánováno na ${formatDay(item.dueDate)}`}
       onOpenChange={(next) => {
         if (!next) {

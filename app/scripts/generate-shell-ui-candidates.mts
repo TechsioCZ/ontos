@@ -7,7 +7,7 @@ import path from 'node:path';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { __unstable__loadDesignSystem, compile, optimize, Polyfills } from '@tailwindcss/node';
 import { Scanner } from '@tailwindcss/oxide';
-import { Console, Effect, FileSystem, Layer, Option, Schema } from 'effect';
+import { Array as EffectArray, Console, Effect, FileSystem, Layer, Option, Order, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
 const WORKSPACE = path.resolve(import.meta.dirname, '..');
@@ -81,20 +81,59 @@ const renderStylesheet = Effect.fn('renderStylesheet')(function* render(css: str
   });
 });
 
-const projectCandidates = Effect.fn('projectCandidates')(function* project(
-  design: Awaited<ReturnType<typeof __unstable__loadDesignSystem>>,
-  directory: string,
-) {
+type DesignSystem = Awaited<ReturnType<typeof __unstable__loadDesignSystem>>;
+
+const VERTICAL_STYLESHEET = 'src/routes/index.css';
+const VERTICAL_PREFIX = /@import\s+'tailwindcss'\s+prefix\((?<prefix>\w+)\)/u;
+const NAMED_SPACING_TOKEN = /var\(--spacing-/u;
+
+const projectCandidates = Effect.fn('projectCandidates')(function* project(design: DesignSystem, directory: string) {
   return yield* Effect.try({
     catch: compilerError,
     try: () => {
       const scanner = new Scanner({
         sources: ['src/**/*', 'vertical.manifest.ts'].map((pattern) => ({ base: directory, negated: false, pattern })),
       });
-      const candidates = [...new Set(scanner.scan())].toSorted();
+      const candidates = EffectArray.sort(new Set(scanner.scan()), Order.String);
       const accepted = design.candidatesToCss(candidates);
-      return candidates.filter((candidate, index) => candidate.startsWith('--') || accepted[index] !== null);
+      return {
+        candidates,
+        projected: candidates.filter((candidate, index) => candidate.startsWith('--') || accepted[index] !== null),
+      };
     },
+  });
+});
+
+/**
+ * A vertical's own stylesheet compiles its prefixed utilities against Tailwind's default theme only. A ui-kit utility
+ * written with that prefix either emits nothing (unknown ui-kit colour or text token) or falls back to the bare
+ * spacing multiplier, so `p-300` becomes 75rem instead of `--spacing-300`. ui-kit utilities stay unprefixed; the Shell
+ * compiles them from this projection.
+ */
+const findPrefixedUiKitUtilities = Effect.fn('findPrefixedUiKitUtilities')(function* find(
+  uiKit: DesignSystem,
+  tailwind: DesignSystem,
+  directory: string,
+  candidates: readonly string[],
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const stylesheet = path.join(directory, VERTICAL_STYLESHEET);
+  if (!(yield* fs.exists(stylesheet))) {
+    return [];
+  }
+  const prefix = VERTICAL_PREFIX.exec(yield* fs.readFileString(stylesheet))?.groups?.prefix;
+  if (prefix === undefined) {
+    return [];
+  }
+  const prefixed = candidates.filter((candidate) => candidate.startsWith(`${prefix}:`));
+  const bare = prefixed.map((candidate) => candidate.slice(prefix.length + 1));
+  const [kitCss, tailwindCss] = yield* Effect.try({
+    catch: compilerError,
+    try: () => [uiKit.candidatesToCss(bare), tailwind.candidatesToCss(bare)] as const,
+  });
+  return prefixed.filter((_, index) => {
+    const kit = kitCss[index];
+    return kit !== null && (tailwindCss[index] === null || NAMED_SPACING_TOKEN.test(kit));
   });
 });
 
@@ -136,7 +175,7 @@ const listVerticals = Effect.fn('listProjectionVerticals')(function* list(worksp
       verticals.push(directory);
     }
   }
-  return verticals.toSorted();
+  return EffectArray.sort(verticals, Order.String);
 });
 
 const generate = Effect.fn('generateShellUiCandidates')(function* generate(options: ProjectionOptions) {
@@ -160,6 +199,10 @@ const generate = Effect.fn('generateShellUiCandidates')(function* generate(optio
     try: async () =>
       await __unstable__loadDesignSystem(css.replace(PROJECTION_SOURCE, ''), { base: path.dirname(cssFile) }),
   });
+  const tailwind = yield* Effect.tryPromise({
+    catch: compilerError,
+    try: async () => await __unstable__loadDesignSystem("@import 'tailwindcss';", { base: path.dirname(cssFile) }),
+  });
   const verticals = yield* listVerticals(workspace);
   const requested = Option.match(options.vertical, { onNone: () => verticals, onSome: (vertical) => [vertical] });
   if (requested.some((vertical) => !verticals.includes(vertical))) {
@@ -170,8 +213,11 @@ const generate = Effect.fn('generateShellUiCandidates')(function* generate(optio
     yield* fs.makeDirectory(output, { recursive: true });
   }
   const stale: string[] = [];
+  const misprefixed: string[] = [];
   for (const vertical of requested) {
-    const projected = yield* projectCandidates(design, path.join(workspace, 'verticals', vertical));
+    const directory = path.join(workspace, 'verticals', vertical);
+    const { candidates, projected } = yield* projectCandidates(design, directory);
+    misprefixed.push(...(yield* findPrefixedUiKitUtilities(design, tailwind, directory, candidates)));
     const contents = projected.length === 0 ? '' : `${projected.join('\n')}\n`;
     const roundTrip = yield* Effect.try({
       catch: compilerError,
@@ -188,6 +234,11 @@ const generate = Effect.fn('generateShellUiCandidates')(function* generate(optio
     } else {
       yield* fs.writeFileString(file, contents);
     }
+  }
+  if (misprefixed.length > 0) {
+    return yield* new CandidateProjectionError({
+      message: `ui-kit utilities must stay unprefixed so the Shell compiles them: ${misprefixed.join(', ')}`,
+    });
   }
   if (options.all) {
     stale.push(...(yield* reconcileFiles(output, verticals, options.check)));

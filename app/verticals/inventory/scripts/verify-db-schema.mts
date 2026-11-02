@@ -28,7 +28,6 @@ interface InfrastructureRow extends Readonly<Record<string, boolean | number>> {
   readonly journal_count: number;
   readonly policy_count: number;
   readonly private_trigger_function_executable: boolean;
-  readonly redemption_safe: boolean;
   readonly required_index_count: number;
   readonly required_trigger_count: number;
   readonly role_bypass_rls: boolean;
@@ -98,16 +97,40 @@ const verification = Effect.gen(function* verifyDatabase() {
     return yield* new VerificationError({ reason: 'Inventory column inventory mismatch' });
   }
 
+  const [gateway] = yield* database.executor.execute<{ readonly valid: boolean }>(
+    sql`select (
+  (select count(*) = 1 from pg_catalog.pg_class relation join pg_catalog.pg_namespace ns on ns.oid=relation.relnamespace
+    where ns.nspname='inventory' and relation.relname='gateway_assertion_redemptions' and relation.relkind='r'
+      and not relation.relrowsecurity and not relation.relforcerowsecurity)
+  and (select count(*) = 5 from information_schema.columns where table_schema='inventory' and table_name='gateway_assertion_redemptions'
+    and is_nullable='NO' and ((column_name in ('issuer','audience') and data_type='text')
+      or (column_name='jti' and data_type='uuid')
+      or (column_name in ('expires_at','redeemed_at') and data_type='timestamp with time zone')))
+  and (select count(*) = 1 from pg_catalog.pg_constraint c join pg_catalog.pg_class t on t.oid=c.conrelid
+    join pg_catalog.pg_namespace ns on ns.oid=t.relnamespace where ns.nspname='inventory' and t.relname='gateway_assertion_redemptions'
+      and c.contype='u' and pg_catalog.pg_get_constraintdef(c.oid)='UNIQUE (issuer, audience, jti)')
+  and (select count(*) = 1 from pg_catalog.pg_indexes where schemaname='inventory' and tablename='gateway_assertion_redemptions'
+    and indexdef like '% USING btree (expires_at)')
+  and has_table_privilege('ontos_runtime','inventory.gateway_assertion_redemptions','SELECT')
+  and has_table_privilege('ontos_runtime','inventory.gateway_assertion_redemptions','INSERT')
+  and has_table_privilege('ontos_runtime','inventory.gateway_assertion_redemptions','DELETE')
+  and not has_table_privilege('ontos_runtime','inventory.gateway_assertion_redemptions','UPDATE')
+  and not has_table_privilege('ontos_runtime','inventory.gateway_assertion_redemptions','REFERENCES')
+  and not has_table_privilege('ontos_runtime','inventory.gateway_assertion_redemptions','TRUNCATE')
+  and not has_table_privilege('ontos_runtime','inventory.gateway_assertion_redemptions','TRIGGER')
+  and not exists(select 1 from pg_catalog.pg_class t join pg_catalog.pg_namespace ns on ns.oid=t.relnamespace,
+    lateral pg_catalog.aclexplode(coalesce(t.relacl,pg_catalog.acldefault('r',t.relowner))) acl
+    where ns.nspname='inventory' and t.relname='gateway_assertion_redemptions' and acl.grantee=0)
+) as valid`,
+    'objects',
+  );
+  if (!gateway?.valid) {
+    return yield* new VerificationError({
+      reason: 'Gateway assertion redemption shape, replay identity, expiry index or exact privileges mismatch',
+    });
+  }
   const [infrastructure] = yield* database.executor.execute<InfrastructureRow>(
     sql`select
-      exists (select 1 from pg_catalog.pg_class redemption
-        join pg_catalog.pg_namespace redemption_namespace on redemption_namespace.oid = redemption.relnamespace
-        where redemption_namespace.nspname = 'inventory' and redemption.relname = 'gateway_assertion_redemptions'
-          and not redemption.relrowsecurity and not redemption.relforcerowsecurity
-          and has_table_privilege('ontos_runtime', redemption.oid, 'SELECT')
-          and has_table_privilege('ontos_runtime', redemption.oid, 'INSERT')
-          and has_table_privilege('ontos_runtime', redemption.oid, 'DELETE')
-          and not has_table_privilege('ontos_runtime', redemption.oid, 'UPDATE')) as redemption_safe,
       count(distinct relation.oid)::integer as table_count,
       count(distinct relation.oid) filter (where relation.relrowsecurity and relation.relforcerowsecurity)::integer as force_rls_count,
       count(distinct relation.oid) filter (where pg_catalog.pg_get_userbyid(relation.relowner) <> ${connections.admin.user})::integer as wrong_owner_count,
@@ -218,7 +241,6 @@ const verification = Effect.gen(function* verifyDatabase() {
   );
   if (
     infrastructure === undefined ||
-    !infrastructure.redemption_safe ||
     !infrastructure.effect_ledger_contract_current ||
     infrastructure.table_count !== INVENTORY_TABLES.length ||
     infrastructure.force_rls_count !== INVENTORY_TABLES.length - 1 ||

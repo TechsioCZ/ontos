@@ -1,7 +1,8 @@
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Create / edit / amendment form for the documents agenda (S12). Upload goes through the governed FileUpload command
 // first; the returned file snapshot becomes version 1 of the new document.
-import { SidePanel, surfaceTileClassName } from '@app/admin-ui';
+import { AutosaveStatus, SidePanel, surfaceTileClassName, useAutosave } from '@app/admin-ui';
+import type { AutosaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -16,12 +17,24 @@ import { optionalField } from '../../../../../shared/domain/common.ts';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type {
   ContractStatus,
-  ContractTerms,
   DocumentRecord,
   SubjectRef,
   StoredFileRef,
 } from '../../../../../shared/domain/documents.ts';
 import { ContractStatusSchema, documentLinks, sameSubject } from '../../../../../shared/domain/documents.ts';
+import {
+  NONE,
+  contractDraftOf,
+  contractOf,
+  documentEditDraftOf,
+  documentEditProblems,
+  documentUpdateCommandOf,
+  emptyContract,
+  isContractCategory,
+  sameDocumentEditDraft,
+} from './document-draft.ts';
+import type { ContractDraft, DocumentEditDraft } from './document-draft.ts';
+import { facilityAutosaveOutcome } from '../../../../ui/facility-autosave.ts';
 import {
   documentCategories,
   FileTypeIcon,
@@ -36,79 +49,15 @@ import type { CommandOutcome, FailureReason } from '../../../../ui/use-agenda.ts
 import { MAX_UPLOAD_BYTES, uploadFile } from '../../../../ui/use-agenda.ts';
 
 const k = 'facility-operations.documents';
-const NONE = '__none__';
+const closeLabelKey = 'facility-operations.common.close';
 const statuses: readonly ContractStatus[] = ['draft', 'active', 'terminated', 'expired'];
 
 export type DocumentFormMode =
   | { readonly kind: 'create' }
   | { readonly document: DocumentRecord; readonly kind: 'edit' }
   | { readonly kind: 'amend'; readonly original: DocumentRecord };
-
-interface ContractDraft {
-  readonly amountTerms: string;
-  readonly contractType: string;
-  readonly noticeDateInput: string;
-  readonly noticePeriod: string;
-  readonly owner: string;
-  readonly parties: string;
-  readonly status: ContractStatus;
-  readonly subject: string;
-  readonly validFromInput: string;
-  readonly validToInput: string;
-}
-
-const emptyContract: ContractDraft = {
-  amountTerms: '',
-  contractType: '',
-  noticeDateInput: '',
-  noticePeriod: '',
-  owner: '',
-  parties: '',
-  status: 'draft',
-  subject: '',
-  validFromInput: '',
-  validToInput: '',
-};
-
-const contractDraftOf = (terms: ContractTerms | undefined): ContractDraft =>
-  terms === undefined
-    ? emptyContract
-    : {
-        amountTerms: terms.amountTerms ?? '',
-        contractType: terms.contractType,
-        noticeDateInput: terms.noticeDate ?? '',
-        noticePeriod: terms.noticePeriod ?? '',
-        owner: terms.owner,
-        parties: terms.parties.join('\n'),
-        status: terms.status,
-        subject: terms.subject ?? '',
-        validFromInput: terms.validFrom ?? '',
-        validToInput: terms.validTo ?? '',
-      };
-
-const contractOf = (draft: ContractDraft): ContractTerms | undefined => {
-  const parties = draft.parties
-    .split('\n')
-    .map((party) => party.trim())
-    .filter((party) => party !== '');
-  if (draft.contractType.trim() === '' || draft.owner.trim() === '' || parties.length === 0) {
-    return undefined;
-  }
-  return {
-    contractType: draft.contractType.trim(),
-    owner: draft.owner.trim(),
-    parties,
-    status: draft.status,
-    ...optionalField('subject', draft.subject.trim() === '' ? undefined : draft.subject.trim()),
-    ...optionalField('validFrom', draft.validFromInput.trim() === '' ? undefined : draft.validFromInput.trim()),
-    ...optionalField('validTo', draft.validToInput.trim() === '' ? undefined : draft.validToInput.trim()),
-    ...optionalField('amountTerms', draft.amountTerms.trim() === '' ? undefined : draft.amountTerms.trim()),
-    ...optionalField('noticePeriod', draft.noticePeriod.trim() === '' ? undefined : draft.noticePeriod.trim()),
-    ...optionalField('noticeDate', draft.noticeDateInput.trim() === '' ? undefined : draft.noticeDateInput.trim()),
-  };
-};
-
-const isContractCategory = (category: string) => category === 'contract' || category === 'amendment';
+/** Modes the create panel handles; an edit is autosaved by the edit panel instead. */
+type CreateDocumentFormMode = Exclude<DocumentFormMode, { readonly kind: 'edit' }>;
 
 export const documentFormKey = (mode: DocumentFormMode): string => {
   if (mode.kind === 'edit') {
@@ -119,17 +68,7 @@ export const documentFormKey = (mode: DocumentFormMode): string => {
   }
   return 'create';
 };
-const initialDocumentForm = (mode: DocumentFormMode, contracts: readonly DocumentRecord[]) => {
-  if (mode.kind === 'edit') {
-    return {
-      amends: mode.document.amendsDocumentId ?? NONE,
-      category: mode.document.category,
-      contract: contractDraftOf(mode.document.contract),
-      description: mode.document.description ?? '',
-      links: documentLinks(mode.document),
-      title: mode.document.title,
-    };
-  }
+const initialDocumentForm = (mode: CreateDocumentFormMode, contracts: readonly DocumentRecord[]) => {
   if (mode.kind === 'amend') {
     const count = contracts.filter((entry) => entry.amendsDocumentId === mode.original.id).length;
     return {
@@ -180,7 +119,6 @@ const persistDocument = Effect.fn('Documents.persist')(function* persistDocument
   description,
   file,
   links,
-  mode,
   onBusy,
   onFailure,
   onPersisted,
@@ -193,7 +131,6 @@ const persistDocument = Effect.fn('Documents.persist')(function* persistDocument
   readonly description: string;
   readonly file: File | undefined;
   readonly links: readonly SubjectRef[];
-  readonly mode: DocumentFormMode;
   readonly onBusy: (busy?: 'upload' | 'save') => void;
   readonly onFailure: (failure?: FailureReason | 'required' | 'upload') => void;
   readonly onPersisted: (documentId: string | undefined, action: 'created' | 'updated') => void;
@@ -217,17 +154,6 @@ const persistDocument = Effect.fn('Documents.persist')(function* persistDocument
     ...optionalField('description', description.trim() === '' ? undefined : description.trim()),
     ...optionalField('contract', terms),
   };
-  if (mode.kind === 'edit') {
-    onBusy('save');
-    const outcome = yield* run({ _tag: 'DocumentUpdate', documentId: mode.document.id, ...common });
-    onBusy();
-    if (outcome.ok) {
-      onPersisted(mode.document.id, 'updated');
-    } else {
-      onFailure(outcome.reason);
-    }
-    return;
-  }
   let stored: StoredFileRef | undefined;
   if (file !== undefined) {
     onBusy('upload');
@@ -471,6 +397,7 @@ const DocumentLinkFields = ({
 
 const DocumentContractFields = ({
   amends,
+  amendsLocked,
   category,
   contract,
   contracts,
@@ -479,10 +406,13 @@ const DocumentContractFields = ({
   onTermChange,
 }: {
   readonly amends: string;
+  /** An existing document keeps the document it amends: the picker only belongs to a new amendment. */
+  readonly amendsLocked?: boolean | undefined;
   readonly category: string;
   readonly contract: ContractDraft;
   readonly contracts: readonly DocumentRecord[];
-  readonly onAmendsChange: (value: string) => void;
+  /** Given only when the picker is shown; a stored document keeps the document it amends. */
+  readonly onAmendsChange?: ((value: string) => void) | undefined;
   readonly onStatusChange: (status: ContractStatus) => void;
   readonly onTermChange: (key: keyof ContractDraft) => (value: string) => void;
 }) => {
@@ -490,7 +420,7 @@ const DocumentContractFields = ({
   return (
     <fieldset className={`${surfaceTileClassName} facility-document-fieldset flex flex-col gap-150 p-200`}>
       <legend className="px-50 font-semibold text-sm">{t(`${k}.contract.section`)}</legend>
-      {category === 'amendment' && (
+      {category === 'amendment' && amendsLocked !== true && onAmendsChange !== undefined && (
         <Select
           items={[
             {
@@ -600,7 +530,195 @@ const DocumentContractFields = ({
   );
 };
 
-export const DocumentFormPanel = ({
+/** The fields both panels share: title, category and description. */
+const DocumentTextFields = ({
+  category,
+  description,
+  onBlur,
+  onCategoryChange,
+  onDescriptionChange,
+  onTitleChange,
+  problems,
+  title,
+}: {
+  readonly category: string;
+  readonly description: string;
+  readonly onBlur?: (() => void) | undefined;
+  readonly onCategoryChange: (category: string) => void;
+  readonly onDescriptionChange: (description: string) => void;
+  readonly onTitleChange: (title: string) => void;
+  readonly problems: { readonly title: boolean } | undefined;
+  readonly title: string;
+}) => {
+  const { t } = useModernI18n();
+  const categoryLabel = useCategoryLabel();
+  return (
+    <>
+      <FormInput
+        autoComplete="off"
+        id="document-title"
+        label={t(`${k}.fields.title`)}
+        maxLength={300}
+        onBlur={onBlur}
+        onChange={(event) => onTitleChange(event.target.value)}
+        required
+        value={title}
+        {...(problems?.title === true
+          ? { helpText: t('facility-operations.common.required'), validateStatus: 'error' as const }
+          : {})}
+      />
+      <Select
+        items={documentCategories.map((value) => ({
+          displayValue: categoryLabel(value),
+          label: categoryLabel(value),
+          value,
+        }))}
+        label={t(`${k}.fields.category`)}
+        name="document-category"
+        onValueChange={({ value }) => onCategoryChange(value[0] ?? 'other')}
+        size="md"
+        value={[category]}
+      />
+      <FormTextarea
+        id="document-description"
+        label={t(`${k}.fields.description`)}
+        maxLength={4000}
+        onBlur={onBlur}
+        onChange={(event) => onDescriptionChange(event.target.value)}
+        rows={2}
+        value={description}
+      />
+    </>
+  );
+};
+
+/**
+ * Edit one stored document. Changes save themselves (debounced, on blur and on Zavřít): the title, the category, the
+ * description, the links and the contract terms. A category without its required fields stays local until it is valid.
+ */
+const DocumentEditPanel = ({
+  contracts,
+  document,
+  onClose,
+  open,
+  run,
+  tasks,
+}: {
+  readonly contracts: readonly DocumentRecord[];
+  readonly document: DocumentRecord;
+  readonly onClose: () => void;
+  readonly open: boolean;
+  readonly run: (command: OpsCommand) => Effect.Effect<CommandOutcome>;
+  readonly tasks: TaskOptionsState;
+}) => {
+  const { t } = useModernI18n();
+  const properties = usePropertyOptions();
+  const contacts = useContactOptions();
+  const invoices = useInvoiceOptions();
+  const [draft, setDraft] = useState<DocumentEditDraft>(() => documentEditDraftOf(document));
+  const problems = documentEditProblems(draft);
+  const autosave = useAutosave<DocumentEditDraft, never>({
+    equals: sameDocumentEditDraft,
+    isValid: (value) => Option.isSome(documentUpdateCommandOf(document.id, value)),
+    runtime: browserRuntime,
+    save: (value) =>
+      Option.match(documentUpdateCommandOf(document.id, value), {
+        onNone: () => Effect.succeed<AutosaveOutcome>('failed'),
+        onSome: (command) => facilityAutosaveOutcome(run(command)),
+      }),
+    value: draft,
+  });
+  const update = (patch: Partial<DocumentEditDraft>) => setDraft((current) => ({ ...current, ...patch }));
+  const setTerm = (key: keyof ContractDraft) => (value: string) =>
+    setDraft((current) => ({ ...current, contract: { ...current.contract, [key]: value } }));
+  const addLink = (link: SubjectRef) =>
+    setDraft((current) =>
+      current.links.some((entry) => sameSubject(entry, link))
+        ? current
+        : { ...current, links: [...current.links, link] },
+    );
+  const removeLink = (link: SubjectRef) =>
+    setDraft((current) => ({ ...current, links: current.links.filter((entry) => !sameSubject(entry, link)) }));
+  const close = () => {
+    autosave.flush();
+    onClose();
+  };
+  const handleBlur = autosave.flush;
+  const handleRetry = autosave.retry;
+  const handleReloadLatest = () => {
+    const current = documentEditDraftOf(document);
+    autosave.adopt(current);
+    setDraft(current);
+  };
+  const showErrors = autosave.status === 'invalid';
+  const linkableContracts = contracts.filter((entry) => entry.id !== document.id);
+  return (
+    <SidePanel
+      actions={
+        <>
+          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <Button onClick={close} theme="outlined" variant="secondary">
+            {t(closeLabelKey)}
+          </Button>
+        </>
+      }
+      onOpenChange={(next) => {
+        if (!next) {
+          close();
+        }
+      }}
+      open={open}
+      resizeLabel={t(closeLabelKey)}
+      size="lg"
+      title={t(`${k}.create.editTitle`)}
+    >
+      <div className="flex flex-col gap-250 py-200">
+        {problems.contract && showErrors && (
+          <StatusText showIcon status="error">
+            {t(`${k}.contract.required`)}
+          </StatusText>
+        )}
+        <DocumentTextFields
+          category={draft.category}
+          description={draft.description}
+          onBlur={handleBlur}
+          onCategoryChange={(category) => update({ category })}
+          onDescriptionChange={(description) => update({ description })}
+          onTitleChange={(title) => update({ title })}
+          problems={showErrors ? problems : undefined}
+          title={draft.title}
+        />
+        <DocumentLinkFields
+          category={draft.category}
+          contacts={contacts}
+          invoices={invoices}
+          linkableContracts={linkableContracts}
+          links={draft.links}
+          onAddLink={addLink}
+          onRemoveLink={removeLink}
+          properties={properties}
+          tasks={tasks}
+        />
+        {isContractCategory(draft.category) && (
+          <DocumentContractFields
+            amends={NONE}
+            amendsLocked
+            category={draft.category}
+            contract={draft.contract}
+            contracts={contracts}
+            onStatusChange={(status) =>
+              setDraft((current) => ({ ...current, contract: { ...current.contract, status } }))
+            }
+            onTermChange={setTerm}
+          />
+        )}
+      </div>
+    </SidePanel>
+  );
+};
+
+/** Create (or amend) one document: an explicit "Uložit" submits it once, together with its file. */
+const DocumentCreatePanel = ({
   contracts,
   mode,
   onClose,
@@ -610,7 +728,7 @@ export const DocumentFormPanel = ({
   tasks,
 }: {
   readonly contracts: readonly DocumentRecord[];
-  readonly mode: DocumentFormMode;
+  readonly mode: CreateDocumentFormMode;
   readonly onClose: () => void;
   readonly onSaved: (documentId: string | undefined) => void;
   readonly open: boolean;
@@ -619,7 +737,6 @@ export const DocumentFormPanel = ({
 }) => {
   const { t } = useModernI18n();
   const toast = useToast();
-  const categoryLabel = useCategoryLabel();
   const properties = usePropertyOptions();
   const contacts = useContactOptions();
   const invoices = useInvoiceOptions();
@@ -664,7 +781,6 @@ export const DocumentFormPanel = ({
     description,
     file,
     links,
-    mode,
     onBusy: setBusy,
     onFailure: setError,
     onPersisted: (documentId, action) => {
@@ -679,7 +795,7 @@ export const DocumentFormPanel = ({
   const heading = t(documentHeadingKey(mode));
   const setTerm = (key: keyof ContractDraft) => (value: string) =>
     setContract((current) => ({ ...current, [key]: value }));
-  const linkableContracts = contracts.filter((entry) => !(mode.kind === 'edit' && entry.id === mode.document.id));
+  const linkableContracts = contracts;
 
   return (
     <SidePanel
@@ -696,18 +812,17 @@ export const DocumentFormPanel = ({
             }}
             variant="primary"
           >
-            {mode.kind === 'edit' ? t(`${k}.create.editSubmit`) : t(`${k}.create.submit`)}
+            {t(`${k}.create.submit`)}
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       onOpenChange={(next) => {
         if (!next) {
           onClose();
         }
       }}
       open={open}
-      resizeLabel={t('facility-operations.common.close')}
+      resizeLabel={t(closeLabelKey)}
       size="lg"
       title={heading}
     >
@@ -717,40 +832,17 @@ export const DocumentFormPanel = ({
             {errorText}
           </StatusText>
         )}
-        {mode.kind !== 'edit' && <DocumentFilePicker file={file} onFilePicked={pickFile} />}
-        {mode.kind !== 'edit' && file === undefined && (
-          <p className="-mt-150 text-fg-secondary text-xs">{t(`${k}.create.noFile`)}</p>
-        )}
-        <FormInput
-          autoComplete="off"
-          id="document-title"
-          label={t(`${k}.fields.title`)}
-          maxLength={300}
-          onChange={(event) => setTitle(event.target.value)}
-          required
-          value={title}
+        <DocumentFilePicker file={file} onFilePicked={pickFile} />
+        {file === undefined && <p className="-mt-150 text-fg-secondary text-xs">{t(`${k}.create.noFile`)}</p>}
+        <DocumentTextFields
+          category={category}
+          description={description}
+          onCategoryChange={setCategory}
+          onDescriptionChange={setDescription}
+          onTitleChange={setTitle}
+          problems={undefined}
+          title={title}
         />
-        <Select
-          items={documentCategories.map((value) => ({
-            displayValue: categoryLabel(value),
-            label: categoryLabel(value),
-            value,
-          }))}
-          label={t(`${k}.fields.category`)}
-          name="document-category"
-          onValueChange={({ value }) => setCategory(value[0] ?? 'other')}
-          size="md"
-          value={[category]}
-        />
-        <FormTextarea
-          id="document-description"
-          label={t(`${k}.fields.description`)}
-          maxLength={4000}
-          onChange={(event) => setDescription(event.target.value)}
-          rows={2}
-          value={description}
-        />
-
         <DocumentLinkFields
           category={category}
           contacts={contacts}
@@ -762,7 +854,6 @@ export const DocumentFormPanel = ({
           properties={properties}
           tasks={tasks}
         />
-
         {isContractCategory(category) && (
           <DocumentContractFields
             amends={amends}
@@ -778,3 +869,45 @@ export const DocumentFormPanel = ({
     </SidePanel>
   );
 };
+
+/**
+ * Create one document (and upload its file) or a new amendment on "Uložit", or edit a stored one, which saves itself
+ * while the panel is open.
+ */
+export const DocumentFormPanel = ({
+  contracts,
+  mode,
+  onClose,
+  onSaved,
+  open,
+  run,
+  tasks,
+}: {
+  readonly contracts: readonly DocumentRecord[];
+  readonly mode: DocumentFormMode;
+  readonly onClose: () => void;
+  readonly onSaved: (documentId: string | undefined) => void;
+  readonly open: boolean;
+  readonly run: (command: OpsCommand) => Effect.Effect<CommandOutcome>;
+  readonly tasks: TaskOptionsState;
+}) =>
+  mode.kind === 'edit' ? (
+    <DocumentEditPanel
+      contracts={contracts}
+      document={mode.document}
+      onClose={onClose}
+      open={open}
+      run={run}
+      tasks={tasks}
+    />
+  ) : (
+    <DocumentCreatePanel
+      contracts={contracts}
+      mode={mode}
+      onClose={onClose}
+      onSaved={onSaved}
+      open={open}
+      run={run}
+      tasks={tasks}
+    />
+  );

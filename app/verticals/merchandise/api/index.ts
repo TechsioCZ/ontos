@@ -1,4 +1,4 @@
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
@@ -37,6 +37,7 @@ import type { OperationContext } from '../shared/api.ts';
 // <generated-governed-http-handler-imports>
 import { agentReviewReadApiLive } from './agent-review-read-server.ts';
 import { applyCommandActionApiLive } from './apply-command-action-server.ts';
+import { mediaReadApiLive } from './media-read-server.ts';
 import { recordsReadApiLive } from './records-read-server.ts';
 // </generated-governed-http-handler-imports>
 
@@ -83,23 +84,21 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit)
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
-  agentReviewReadApiLive,
-  applyCommandActionApiLive,
-  recordsReadApiLive,
+  agentReviewReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  mediaReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>
-);
-
-/** What the handlers resolve when they run: built for each request on Workers, once on Node. */
-const governedRequestServicesLive = GovernedReadLayer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive).pipe(
+).pipe(
   // <generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provideMerge(
+  GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
-      GovernedActionPrincipalVerifierLive,
+      GovernedActionPrincipalVerifierLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
       GovernedGatewayAssertionRedemptionLive.pipe(GovernedReadLayer.provide(GatewayAssertionRedemptionDatabaseLive)),
     ),
   ),
   // </generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provideMerge(governedReadRuntimeDependenciesLive),
+  GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
 );
 
 const operationAttributes = (operationContext: OperationContext) => ({
@@ -136,20 +135,19 @@ const runtimeObservabilityLive = GovernedReadLayer.mergeAll(
   GovernedReadLayer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
   GovernedReadLayer.succeed(References.MinimumLogLevel, 'Info'),
 );
-const governedResolvedRequestServicesLive = governedRequestServicesLive.pipe(
-  GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive),
-  GovernedReadLayer.provideMerge(GovernedDatabaseConfigLive),
-  GovernedReadLayer.provideMerge(databaseIdentitiesLive),
-  GovernedReadLayer.provideMerge(NodeCrypto.layer),
-  GovernedReadLayer.provideMerge(runtimeObservabilityLive),
+const governedResolvedApiHandlersLive = GovernedReadLayer.mergeAll(apiHandlersLive, governedReadApiHandlersLive).pipe(
+  GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
+  GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provide(databaseIdentitiesLive),
+  GovernedReadLayer.provide(nodeCryptoLayer),
+  GovernedReadLayer.provide(runtimeObservabilityLive),
   GovernedReadLayer.orDie,
 );
 
 export const makeMerchandiseApiRuntime = () =>
   assembleEffectBffRuntime({
     api: merchandiseApi,
-    handlers: GovernedReadLayer.mergeAll(apiHandlersLive, governedReadApiHandlersLive),
-    services: governedResolvedRequestServicesLive,
+    handlers: governedResolvedApiHandlersLive,
   });
 const apiRuntime = makeMerchandiseApiRuntime();
 

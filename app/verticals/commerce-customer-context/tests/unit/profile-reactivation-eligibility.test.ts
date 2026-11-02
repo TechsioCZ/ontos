@@ -1,15 +1,18 @@
 import { ScopedRoutineInvocationError, scopedRoutineInvokerFromTransaction } from '@app/core-runtime';
 import type { ScopedRoutineDefinition, ScopedRoutineParameter } from '@app/core-runtime';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
   ProfileReactivationEligibilityEvaluatorFactory,
   ProfileReconfirmationPolicy,
   makeProfileReactivationEligibilityEvaluator,
+  observeProfileReactivation,
   profileReactivationEligibilityEvaluatorFactoryLive,
   profileReconfirmationPolicyUnavailable,
 } from '../../src/integrations/profile-reactivation-eligibility.ts';
+import { sameReactivationOwnerFacts } from '../../src/actions/reactivate-customer-profile.action.ts';
+import { ReactivationProfileFactsSchema } from '../../src/integrations/profile-reconfirmation-policy.ts';
 import { ProfilePersistenceDependencyFailure } from '../../src/persistence/profile-persistence.ts';
 import type {
   CounterpartyRoleEligibility,
@@ -529,3 +532,52 @@ for (const { name, reason, rows } of invalidNativeRows) {
     }),
   );
 }
+
+it.effect('observes role and reconfirmation from the exact released owner facts without an executor', () =>
+  Effect.gen(function* releasedObservation() {
+    const facts = yield* Schema.decodeUnknownEffect(ReactivationProfileFactsSchema)(counterpartyProfileRow().payload);
+    let reconfirmationCalls = 0;
+    const observation = yield* observeProfileReactivation(
+      facts,
+      scope,
+      (selector) => {
+        expect(selector).toEqual({ counterpartyResourceId: 'counterparty-1', tenantId });
+        return Effect.succeed({ outcome: 'INELIGIBLE' });
+      },
+      (actual) => {
+        expect(actual).toEqual(facts);
+        reconfirmationCalls += 1;
+        return Effect.succeed(true);
+      },
+    );
+    expect(observation).toEqual({
+      dependenciesSatisfied: false,
+      reconfirmationSatisfied: true,
+      role: { outcome: 'INELIGIBLE' },
+    });
+    expect(reconfirmationCalls).toBe(1);
+    const unavailable = yield* Effect.result(
+      observeProfileReactivation(
+        facts,
+        scope,
+        () => Effect.succeed({ outcome: 'INDETERMINATE' }),
+        noReconfirmationRequired,
+      ),
+    );
+    expect(Result.isFailure(unavailable)).toBe(true);
+  }),
+);
+
+it.effect('detects a changed owner revision or Counterparty subject before reactivation', () =>
+  Effect.gen(function* ownerSnapshotComparison() {
+    const facts = yield* Schema.decodeUnknownEffect(ReactivationProfileFactsSchema)(counterpartyProfileRow().payload);
+    const anotherRevision = { ...facts, revision: facts.revision + 1 };
+    const anotherSubject = yield* Schema.decodeUnknownEffect(ReactivationProfileFactsSchema)({
+      ...counterpartyProfileRow().payload,
+      subject: { ...counterpartyProfileRow().payload.subject, counterpartyResourceId: 'different-counterparty' },
+    });
+    expect(sameReactivationOwnerFacts(facts, structuredClone(facts))).toBe(true);
+    expect(sameReactivationOwnerFacts(facts, anotherRevision)).toBe(false);
+    expect(sameReactivationOwnerFacts(facts, anotherSubject)).toBe(false);
+  }),
+);

@@ -14,6 +14,7 @@ import { sameSku } from '../../../../../shared/domain/merchandise-model.ts';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import type { FailureReason } from './products-api.ts';
+import { selectItem } from '../../../../ui/select-item.ts';
 import { ProductSearchCombobox } from './product-search.tsx';
 
 export interface FormDialogProps {
@@ -287,7 +288,6 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
             submit={k('create.submit')}
           />
         }
-        closeOnInteractOutside={!dirty}
         onOpenChange={requestClose}
         open={open}
         resizeLabel={t(RESIZE_LABEL_KEY)}
@@ -334,7 +334,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
           />
           <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
             <SelectTemplate
-              items={UNITS.map((value) => ({ label: value, value }))}
+              items={UNITS.map((value) => selectItem(value, value))}
               label={k('fields.unit')}
               name="unit"
               onValueChange={(details) => {
@@ -348,7 +348,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
               value={[unit]}
             />
             <SelectTemplate
-              items={VAT_RATES.map((rate) => ({ label: `${rate} %`, value: String(rate) }))}
+              items={VAT_RATES.map((rate) => selectItem(String(rate), `${rate} %`))}
               label={k('fields.vat')}
               name="vat"
               onValueChange={(details) => {
@@ -493,7 +493,6 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
             submit={k('receipt.submit')}
           />
         }
-        closeOnInteractOutside={!dirty}
         description={k('receipt.description')}
         onOpenChange={requestClose}
         open={open}

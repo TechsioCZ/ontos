@@ -254,7 +254,6 @@ export const CreateEventPanel = ({
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description={t(`${k}.create.description`)}
       onOpenChange={(next) => {
         if (!next) {
@@ -534,7 +533,6 @@ export const DeadlinePanel = (props: Parameters<typeof useDeadlinePanel>[0]) => 
   return (
     <SidePanel
       actions={renderDeadlineActions(model)}
-      closeOnInteractOutside
       onOpenChange={(next) => {
         if (!next) {
           onClose();

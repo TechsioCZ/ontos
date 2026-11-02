@@ -3,21 +3,17 @@
 // @ontos-action-slug create-product
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 
 import { CreateProductPayloadSchema, CreateProductResultSchema } from '../../shared/actions/create-product.ts';
 import type { CreateProductPayload, CreateProductResult } from '../../shared/actions/create-product.ts';
-import { ProductAuditEvidenceSchema } from '../../shared/domain/product.ts';
+import { CreateProductAuditEvidenceSchema } from '../../shared/domain/product.ts';
 import { completeProductCreationClassification } from '../../shared/domain/product-change-classification.ts';
 import { ProductCorrectionRequired, ProductPersistenceConflict } from '../../shared/domain/product-errors.ts';
 import { CatalogPersistenceConflict } from '../persistence/errors.ts';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
-import {
-  ProductActionErrorSchema,
-  catalogPersistenceServiceFactory,
-  recordProductAccess,
-  recordProductEvent,
-} from './product-action-support.ts';
+import { ProductActionErrorSchema, recordProductAccess, recordProductEvent } from './product-action-support.ts';
+import { catalogPersistenceForScope } from '../persistence/catalog-persistence.ts';
 import type { CatalogPersistence } from '../persistence/catalog-persistence.ts';
 
 export { CreateProductPayloadSchema } from '../../shared/actions/create-product.ts';
@@ -37,10 +33,11 @@ type CreateProductServices = CatalogPersistence & {
 };
 
 const createProductServiceFactory = (
-  transaction: Parameters<typeof catalogPersistenceServiceFactory>[0],
-  scope: Parameters<typeof catalogPersistenceServiceFactory>[1],
+  transaction: Parameters<typeof catalogPersistenceForScope>[0],
+  scope: Parameters<typeof catalogPersistenceForScope>[1],
 ) =>
-  catalogPersistenceServiceFactory(transaction, scope).pipe(
+  // Creation and predecessor identity do not require Current purchase readiness.
+  catalogPersistenceForScope(transaction, scope).pipe(
     Effect.map((services): CreateProductServices => ({
       ...services,
       captureResult: (actionInvocationId, result) =>
@@ -80,16 +77,37 @@ export const handleCreateProduct = Effect.fn('CreateProductAction.handle')(funct
   payload: CreateProductPayload,
   context: ActionHandlerContext<typeof domainEvents, CreateProductServices>,
 ) {
+  const creationClassification = payload.classification ?? { kind: 'INDEPENDENT_PRODUCT' as const };
   if (
-    payload.classification.kind === 'NEW_PRODUCT' &&
-    (payload.classification.previousProductRef.tenantId !== context.scope.tenantId ||
-      payload.classification.reason !== payload.reason)
+    creationClassification.kind === 'NEW_PRODUCT' &&
+    (creationClassification.previousProductRef.tenantId !== context.scope.tenantId ||
+      creationClassification.reason !== payload.reason)
   ) {
     return yield* new ProductCorrectionRequired({
       code: 'product_correction_required',
-      productRef: payload.classification.previousProductRef,
+      productRef: creationClassification.previousProductRef,
       reason: 'Product successor classification must retain the trusted Tenant and Action reason',
     });
+  }
+  if (creationClassification.kind === 'NEW_PRODUCT') {
+    const predecessorRef = creationClassification.previousProductRef;
+    const predecessor = yield* context.services.getCurrent(predecessorRef.resourceId);
+    yield* context.recordDataAccess({
+      accessKind: 'read',
+      queryHash: `catalog-product:${predecessorRef.resourceId}`,
+      resultCount: Option.isSome(predecessor) ? 1 : 0,
+      servingModuleKey: MODULE_KEY,
+      targetModuleKey: MODULE_KEY,
+      targetResourceId: predecessorRef.resourceId,
+      targetResourceType: predecessorRef.resourceType,
+    });
+    if (Option.isNone(predecessor)) {
+      return yield* new ProductCorrectionRequired({
+        code: 'product_correction_required',
+        productRef: predecessorRef,
+        reason: 'Product successor classification must identify an existing predecessor in the trusted Tenant',
+      });
+    }
   }
   const outcome = yield* context.services
     .create({
@@ -120,7 +138,7 @@ export const handleCreateProduct = Effect.fn('CreateProductAction.handle')(funct
     Match.exhaustive,
   );
   const classification = yield* completeProductCreationClassification(
-    payload.classification,
+    creationClassification,
     created.product.productRef,
   ).pipe(
     Effect.mapError(
@@ -128,18 +146,19 @@ export const handleCreateProduct = Effect.fn('CreateProductAction.handle')(funct
         new ProductCorrectionRequired({
           code: 'product_correction_required',
           productRef:
-            payload.classification.kind === 'NEW_PRODUCT'
-              ? payload.classification.previousProductRef
+            creationClassification.kind === 'NEW_PRODUCT'
+              ? creationClassification.previousProductRef
               : created.product.productRef,
           reason: error.reason,
         }),
     ),
   );
   const result = { ...created, classification };
+  const reasonEvidence = payload.reason === undefined ? {} : { reason: payload.reason };
   yield* context.recordAuditEvidence(
     classification.kind === 'INDEPENDENT_PRODUCT'
-      ? { reason: payload.reason }
-      : { evidenceRefs: classification.evidenceRefs, reason: payload.reason },
+      ? reasonEvidence
+      : { ...reasonEvidence, evidenceRefs: classification.evidenceRefs },
   );
   yield* recordProductAccess(context, result.product.productRef.resourceId);
   yield* recordProductEvent(
@@ -158,7 +177,7 @@ export const createProductAction = defineAction(
       policyKey: 'commerce.catalog.create-product.access.v1',
     },
     actionKey: 'commerce.catalog.create-product',
-    auditEvidenceSchema: ProductAuditEvidenceSchema,
+    auditEvidenceSchema: CreateProductAuditEvidenceSchema,
     auditProfile: 'standard',
     domainErrorSchema: ProductActionErrorSchema,
     domainEvents,

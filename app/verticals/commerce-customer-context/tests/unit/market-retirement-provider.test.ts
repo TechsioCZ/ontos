@@ -1,5 +1,6 @@
 import type { OperationalScope, ReadLoadContext, ScopedRoutineInvoker } from '@app/core-runtime';
 import {
+  ReadHandlerNotFound,
   ReadHandlerUnavailable,
   ReadPermissionDenied,
   ScopedRoutineInvocationError,
@@ -23,6 +24,7 @@ import {
   handleMarketAffectedUseAssessment,
   makeMarketAffectedUseAssessmentServices,
 } from '../../src/api/market-affected-use-assessment.read.ts';
+import { handleMarketRetirementReservation } from '../../src/api/market-retirement-reservation.read.ts';
 import type {
   MarketAffectedUseAssessmentServices,
   MarketReferenceOwnerDeploymentStateAuthority,
@@ -31,6 +33,7 @@ import {
   MarketRetirementReservationConflictError,
   marketAffectedUseAssessmentRepositoryForInvoker,
   marketRetirementReservationForTransaction,
+  marketRetirementReservationServicesForInvoker,
   marketRetirementRoutineAllowlist,
 } from '../../src/persistence/market-retirement-persistence.ts';
 import type { MarketAffectedUseAssessmentRepository as MarketAffectedUseAssessmentRepositoryContract } from '../../src/persistence/market-retirement-persistence.ts';
@@ -228,6 +231,7 @@ it('declares only the scoped affected-use and reservation routines', () => {
   expect(marketRetirementRoutineAllowlist.map(({ name, routineKey }) => [name, routineKey])).toEqual([
     ['assess_market_retirement_affected_use', 'market-retirement.assess-affected-use'],
     ['reserve_market_retirement', 'market-retirement.reserve'],
+    ['read_market_retirement_reservation', 'market-retirement.read-reservation'],
   ]);
   for (const routine of marketRetirementRoutineAllowlist) {
     expect(Object.isFrozen(routine)).toBe(true);
@@ -790,5 +794,44 @@ it.effect('rejects a cross-Tenant reservation before invoking owner persistence'
     expect(failure).toMatchObject({ code: 'SCOPE_MISMATCH' });
     expect(ownerCalls).toBe(0);
     expect(harness.snapshot().committed).toHaveLength(0);
+  }),
+);
+
+it.effect('recovers only the reservation created by the exact committed RESERVE invocation', () =>
+  Effect.gen(function* reservationRecoveryRead() {
+    const reservationInvocationId = '99999999-9999-4999-8999-999999999999';
+    const input = { marketRef, reservationInvocationId, tenantId } as const;
+    const calls: unknown[] = [];
+    const repository = marketRetirementReservationServicesForInvoker({
+      invoke: (routine, values) => {
+        calls.push({ name: routine.name, values });
+        return Schema.decodeUnknownEffect(routine.resultSchema)({ result: reservationResult }).pipe(
+          Effect.map((row) => [row]),
+          Effect.orDie,
+        );
+      },
+    });
+    const readContext = {
+      readKey: 'commerce.customer-context.api.market-retirement-reservation',
+      scope,
+      services: repository,
+    };
+    const found = yield* handleMarketRetirementReservation(input, readContext);
+    expect(found).toEqual({ evidence: { resultCount: 1 }, result: reservationResult });
+    expect(calls).toEqual([
+      { name: 'read_market_retirement_reservation', values: [marketRef.resourceId, reservationInvocationId] },
+    ]);
+
+    const missing = yield* handleMarketRetirementReservation(input, {
+      ...readContext,
+      services: marketRetirementReservationServicesForInvoker(invokerReturning()),
+    }).pipe(Effect.flip);
+    expect(missing).toBeInstanceOf(ReadHandlerNotFound);
+
+    const foreign = yield* handleMarketRetirementReservation(
+      { ...input, marketRef: { ...marketRef, tenantId: legalEntityId }, tenantId: legalEntityId },
+      readContext,
+    ).pipe(Effect.flip);
+    expect(foreign).toBeInstanceOf(ReadPermissionDenied);
   }),
 );

@@ -750,6 +750,114 @@
           ]
         }
       }
+    },
+    {
+      "id": "commerce-cart",
+      "package": "@app/commerce-cart",
+      "path": "verticals/commerce-cart",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/commerce-cart.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-cart",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#commerce-cart"
+          ]
+        }
+      }
+    },
+    {
+      "id": "catalog-selection-contracts",
+      "package": "@app/catalog-selection-contracts",
+      "path": "packages/catalog-selection-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/catalog.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#catalog",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#catalog"
+          ]
+        }
+      }
+    },
+    {
+      "id": "commerce-cart-contracts",
+      "package": "@app/commerce-cart-contracts",
+      "path": "packages/commerce-cart-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/commerce-cart.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-cart",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#commerce-cart"
+          ]
+        }
+      }
+    },
+    {
+      "id": "commerce-order",
+      "package": "@app/commerce-order",
+      "path": "verticals/commerce-order",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/commerce-order.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-order",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#commerce-order"
+          ]
+        }
+      }
+    },
+    {
+      "id": "commerce-cart-finalization-contracts",
+      "package": "@app/commerce-cart-finalization-contracts",
+      "path": "packages/commerce-cart-finalization-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/commerce-cart.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-cart",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#commerce-cart"
+          ]
+        }
+      }
+    },
+    {
+      "id": "commerce-order-contracts",
+      "package": "@app/commerce-order-contracts",
+      "path": "packages/commerce-order-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/commerce-order.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-order",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#commerce-order"
+          ]
+        }
+      }
     }
   ]
 }

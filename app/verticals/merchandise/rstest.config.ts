@@ -1,6 +1,6 @@
 import { defineConfig } from '@rstest/core';
 
-const swc = { jsc: { parser: { syntax: 'typescript' } } } as const;
+const swc = { jsc: { parser: { syntax: 'typescript' }, transform: { react: { runtime: 'automatic' } } } } as const;
 
 export default defineConfig({
   projects: [

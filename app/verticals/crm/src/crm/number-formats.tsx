@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
 
 interface CrmMoneyFormats {
@@ -23,7 +23,10 @@ const currencyFormatter = (formats: Map<string, Intl.NumberFormat>, options: Cur
   return format;
 };
 
-/** Each mounted CRM page owns its formatters; currencies are cached only after they are displayed. */
+/**
+ * Each CRM page frame render owns its formatters; currencies are cached only after they are displayed. Page state
+ * lives below the frame, so its updates keep the cache; a frame re-render only starts a fresh, equivalent cache.
+ */
 const createMoneyFormats = (): CrmMoneyFormats => {
   const importFormats = new Map<string, Intl.NumberFormat>();
   const reportIntegerFormats = new Map<string, Intl.NumberFormat>();
@@ -59,8 +62,7 @@ class CrmMoneyFormatsProviderMissing extends Schema.TaggedError<CrmMoneyFormatsP
 ) {}
 
 export const CrmMoneyFormatsProvider = ({ children }: { readonly children: ReactNode }) => {
-  // oxlint-disable-next-line react/hook-use-state -- Pending scoped exception approval: the mount-owned cache needs no setter.
-  const [formats] = useState(createMoneyFormats);
+  const formats = createMoneyFormats();
   return <CrmMoneyFormatsContext.Provider value={formats}>{children}</CrmMoneyFormatsContext.Provider>;
 };
 

@@ -81,11 +81,10 @@ export const OutboxWorkerOwnerStatusSchema = Schema.Struct({
 export type OutboxWorkerOwnerStatus = typeof OutboxWorkerOwnerStatusSchema.Type;
 
 /**
- * The deployed host artifact and every hosted owner's admission, so a release can confirm that the
- * host it expects runs and that each owner admitted the composition it published. No configuration values.
+ * Every hosted owner's admission, so a release can confirm that each owner admitted the composition it
+ * published. No configuration values.
  */
 export const OutboxWorkerHostStatusSchema = Schema.Struct({
-  artifactDigest: Schema.OptionFromNullOr(Schema.String),
   owners: Schema.Array(OutboxWorkerOwnerStatusSchema),
 });
 export type OutboxWorkerHostStatus = typeof OutboxWorkerHostStatusSchema.Type;

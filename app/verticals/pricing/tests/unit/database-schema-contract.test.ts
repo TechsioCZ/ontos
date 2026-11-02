@@ -450,7 +450,7 @@ describe('Pricing historical Action receipt attribution contract', () => {
 
 describe('Pricing Price database contract', () => {
   it('owns stable Price roots and immutable versioned schedules', () => {
-    expect(PRICING_TABLE_INVENTORY).toHaveLength(66);
+    expect(PRICING_TABLE_INVENTORY).toHaveLength(67);
     expect(new Set(PRICING_TABLE_INVENTORY).size).toBe(PRICING_TABLE_INVENTORY.length);
     expect(PRICING_TABLE_INVENTORY.toSorted()).toEqual(PRICING_TABLES.map(getTableName).toSorted());
     expect(
@@ -593,14 +593,14 @@ describe('Pricing Price database contract', () => {
       .filter(({ privileges }) => privileges.every((privilege) => privilege === 'select'))
       .map(({ table }) => table);
 
-    expect([...routineGrantBlock.matchAll(/^\s*'pricing\.[^']+',?$/gmu)]).toHaveLength(90);
-    expect(tableGrants).toHaveLength(61);
+    expect([...routineGrantBlock.matchAll(/^\s*'pricing\.[^']+',?$/gmu)]).toHaveLength(91);
+    expect(tableGrants).toHaveLength(62);
     expect({
       delete: tableGrants.filter(({ privileges }) => privileges.some((privilege) => privilege === 'delete')).length,
       insert: tableGrants.filter(({ privileges }) => privileges.some((privilege) => privilege === 'insert')).length,
       select: tableGrants.filter(({ privileges }) => privileges.some((privilege) => privilege === 'select')).length,
       update: tableGrants.filter(({ privileges }) => privileges.some((privilege) => privilege === 'update')).length,
-    }).toEqual({ delete: 1, insert: 34, select: 61, update: 5 });
+    }).toEqual({ delete: 1, insert: 35, select: 62, update: 5 });
     expect(governedTables).toEqual([
       'contractual_discount_action_invocation_receipts',
       'contractual_discount_revisions',

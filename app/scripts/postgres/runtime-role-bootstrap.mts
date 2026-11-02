@@ -211,14 +211,6 @@ export const grantSharedRuntimeRole = (
               client,
               `grant select, insert, update, delete on all tables in schema ${schema} to ontos_runtime`,
             );
-            // Replay receipts allow insertion and expiry pruning, never alteration of a redeemed assertion.
-            const redemptions = `${schema}.gateway_assertion_redemptions`;
-            if (yield* exists(client, tableExistsQuery, redemptions)) {
-              yield* query(
-                client,
-                `revoke update on table ${qualifiedRelation(redemptions)} from public, ontos_runtime`,
-              );
-            }
             yield* query(client, `grant usage, select on all sequences in schema ${schema} to ontos_runtime`);
             yield* query(
               client,
@@ -239,6 +231,23 @@ export const grantSharedRuntimeRole = (
         Effect.gen(function* revokeDedicatedSchemaEffect() {
           if (yield* exists(client, schemaExistsQuery, schema)) {
             yield* runStatements(client, sharedRuntimeSchemaRevokeStatements(entry, schema));
+          }
+        }),
+      { concurrency: 1, discard: true },
+    );
+    // Restore every shared owner's redemption ledger to its owner migration grants after broad shared-schema grants:
+    // replay receipts allow insertion and expiry pruning, never alteration of a redeemed assertion.
+    yield* Effect.forEach(
+      sharedRuntimeGrantedSchemas(entry),
+      (schema) =>
+        Effect.gen(function* restoreRedemptionLedgerGrantsEffect() {
+          const redemptions = `${schema}.gateway_assertion_redemptions`;
+          if (yield* exists(client, tableExistsQuery, redemptions)) {
+            yield* query(client, `revoke all on table ${qualifiedRelation(redemptions)} from public, ontos_runtime`);
+            yield* query(
+              client,
+              `grant select, insert, delete on table ${qualifiedRelation(redemptions)} to ontos_runtime`,
+            );
           }
         }),
       { concurrency: 1, discard: true },
@@ -268,6 +277,11 @@ export const grantSharedRuntimeRole = (
     if (yield* exists(client, tableExistsQuery, 'core.application_composition_durable_work')) {
       yield* query(client, 'revoke all on table core.application_composition_durable_work from public, ontos_runtime');
       yield* query(client, 'grant select on table core.application_composition_durable_work to ontos_runtime');
+    }
+    // The operator-only dead-delivery resolution ledger stays readable but never writable by runtimes.
+    if (yield* exists(client, tableExistsQuery, 'core.outbox_delivery_resolutions')) {
+      yield* query(client, 'revoke all on table core.outbox_delivery_resolutions from public, ontos_runtime');
+      yield* query(client, 'grant select on table core.outbox_delivery_resolutions to ontos_runtime');
     }
     if (
       yield* exists(

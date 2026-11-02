@@ -335,7 +335,7 @@ const AgreementsDraftForm = ({ state }: { readonly state: ReturnType<typeof useR
     (record) => record.kind === 'LONG_TERM_LEASE' && record.state === 'CONFIRMED',
   );
   const commercialCustomers = state.customers.flatMap((item) =>
-    item.status === 'ACTIVE' ? [{ label: item.displayName ?? item.partyId, value: item.partyId }] : [],
+    item.status === 'ACTIVE' ? [{ label: item.displayName ?? 'Zákazník bez názvu', value: item.partyId }] : [],
   );
   const customerValues = state.customerId.length === 0 ? [] : [state.customerId];
   const formLabel = editingDraft ? 'legal-agreements.demo.editDraft' : LABEL_CREATE;
@@ -357,7 +357,6 @@ const AgreementsDraftForm = ({ state }: { readonly state: ReturnType<typeof useR
         </>
       }
       closeLabel={t('legal-agreements.detail.close')}
-      closeOnInteractOutside={false}
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#contract-start-date')}
       onOpenChange={(open) => {
         if (!open && !busy) {
@@ -491,7 +490,7 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
     busy,
     expiringOnly,
     feedback,
-    refresh,
+    retry,
     setExpiringOnly,
 
     snapshot,
@@ -561,9 +560,11 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
                   {t('legal-agreements.demo.expiring')}
                 </Button>
               </div>
-              <Button disabled={busy} onClick={refresh} size="sm" theme="outlined" variant="secondary">
-                {t('legal-agreements.demo.refresh')}
-              </Button>
+              {(feedback === 'unavailable' || feedback === 'forbidden') && (
+                <Button disabled={busy} onClick={retry} size="sm" theme="outlined" variant="secondary">
+                  {t('legal-agreements.demo.retry')}
+                </Button>
+              )}
             </div>
             {snapshot !== undefined && visible.length === 0 && (
               <p

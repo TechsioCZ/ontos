@@ -1,3 +1,19 @@
+import { NodeCrypto } from '@effect/platform-node';
+import {
+  ContextAccess,
+  OperationContextDenied,
+  ReadHandlerExecutionError,
+  ReadHandlerNotFound,
+  ReadInputValidationError,
+  ReadPermissionDenied,
+  ReadPermissionUnavailable,
+  TrustedPrincipalContextSchema,
+  defineRead,
+  toContextPermissionAccessKey,
+} from '@app/core-runtime';
+import type { ContextPermissionAccessTarget, ReadRuntimeService, TrustedPrincipalContext } from '@app/core-runtime';
+import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
+import { Context, DateTime, Effect, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { catalogAuthorityBundles, catalogPublicOperationContracts } from '../../shared/api.ts';
@@ -393,4 +409,387 @@ it('keeps read, ordinary edit, shared-definition, and high-impact lifecycle auth
   expect(bundles.PRODUCT_EDITOR).not.toContain('commerce.catalog.retire-package-option');
   expect(bundles.CATALOG_DEFINITION_MANAGER).not.toContain('commerce.catalog.retire-product');
   expect(bundles.CATALOG_READER).not.toContain('commerce.catalog.create-product');
+});
+
+const targetTenantId = '11111111-1111-4111-8111-111111111111';
+const targetProductId = '22222222-2222-4222-8222-222222222222';
+const targetVariantId = '33333333-3333-4333-8333-333333333333';
+const targetUnitId = '44444444-4444-4444-8444-444444444444';
+const targetEffectiveAt = '2026-09-27T12:00:00.000Z';
+const targetScope = {
+  ...Schema.decodeSync(TrustedPrincipalContextSchema)({
+    authBindingId: '55555555-5555-4555-8555-555555555555',
+    authContextRef: 'better-auth-session:catalog-resource-targets',
+    authMethod: 'session',
+    legalEntityId: '66666666-6666-4666-8666-666666666666',
+    principalId: '77777777-7777-4777-8777-777777777777',
+    tenantId: targetTenantId,
+  }),
+  correlationId: 'catalog-resource-targets',
+};
+
+// Encoded inputs are decoded by the actual registrations, including the malformed-kind controls.
+const resourceTargetInputs = (tenantId = targetTenantId, productType = 'commerce.catalog.product') => {
+  const productRef = { moduleId: 'commerce.catalog', resourceId: targetProductId, resourceType: productType, tenantId };
+  const variantRef = {
+    moduleId: 'commerce.catalog',
+    resourceId: targetVariantId,
+    resourceType: 'commerce.catalog.variant',
+    tenantId,
+  };
+  const unitRef = {
+    moduleId: 'commerce.catalog',
+    resourceId: targetUnitId,
+    resourceType: 'commerce.catalog.product-unit',
+    tenantId,
+  };
+  const selection = { productRef, variantRef };
+  const quantityBasis = { targetDivisibilityRevision: 3, targetRef: variantRef, unitRef, unitRuleRevision: 7 };
+  const handoff = {
+    completeness: {
+      observedAt: targetEffectiveAt,
+      ownerRevision: 'commerce.catalog.quantity:owner-1',
+      scope: { kind: 'EXACT_PREDICATE', predicateRef: 'commerce.catalog.quantity:resource-targets' },
+    },
+    divisible: false,
+    equivalentSelectionKey: 'commerce.catalog.selection:exact-1',
+    evidence: {
+      assessedAt: targetEffectiveAt,
+      basis: [
+        { role: 'PRODUCT', source: { resourceRef: productRef, revision: 2 } },
+        { role: 'VARIANT', source: { resourceRef: variantRef, revision: 4 } },
+        {
+          provenance: 'CATALOG_OWNER_CONFIRMED_UNTYPED_DECISION',
+          role: 'PRODUCT_TYPE_UNTYPED_DECISION',
+          source: { resourceRef: productRef, revision: 2 },
+        },
+      ],
+      membership: {
+        attestationId: 'catalog-resource-targets',
+        observedAt: targetEffectiveAt,
+        productRef,
+        source: 'CATALOG_OWNER_CURRENT_READ',
+        variant: { resourceRef: variantRef, revision: 4 },
+      },
+      purpose: 'PRICING',
+      selection,
+      status: 'VALID',
+    },
+    hierarchyRevision: 'commerce.catalog.hierarchy:hierarchy-1',
+    ownerRevision: 'commerce.catalog.quantity:owner-1',
+    quantity: {
+      changed: false,
+      notice: null,
+      requested: '2',
+      resulting: '2',
+      rounding: 'UP',
+      status: 'VALID',
+      step: '1',
+      targetId: targetVariantId,
+      tenantId,
+      unitId: targetUnitId,
+      unitRuleRevision: 7,
+    },
+    quantityBasis,
+    selection,
+    status: 'READY',
+    unitRef,
+  };
+  return {
+    compatibility: { effectiveAt: targetEffectiveAt, handoff, price: { quantity: '1', quantityBasis } },
+    equivalence: {
+      anchorSelection: selection,
+      effectiveAt: targetEffectiveAt,
+      members: [{ handoff, occurrenceId: 'single-member' }],
+    },
+    media: { target: productRef },
+    preparation: { amount: '2', purpose: 'PRICING', selection },
+  };
+};
+
+const targetReadCases = [
+  {
+    name: 'quantity preparation',
+    run: (
+      runtime: ReadRuntimeService,
+      principal: TrustedPrincipalContext,
+      inputs: ReturnType<typeof resourceTargetInputs>,
+    ) =>
+      runtime
+        .runRead({
+          input: inputs.preparation,
+          principal,
+          registration: quantityPreparationRead,
+          transport: { correlationId: targetScope.correlationId },
+        })
+        .pipe(Effect.asVoid),
+  },
+  {
+    name: 'basis compatibility',
+    run: (
+      runtime: ReadRuntimeService,
+      principal: TrustedPrincipalContext,
+      inputs: ReturnType<typeof resourceTargetInputs>,
+    ) =>
+      runtime
+        .runRead({
+          input: inputs.compatibility,
+          principal,
+          registration: quantityBasisCompatibilityRead,
+          transport: { correlationId: targetScope.correlationId },
+        })
+        .pipe(Effect.asVoid),
+  },
+  {
+    name: 'pricing equivalence N=1',
+    run: (
+      runtime: ReadRuntimeService,
+      principal: TrustedPrincipalContext,
+      inputs: ReturnType<typeof resourceTargetInputs>,
+    ) =>
+      runtime
+        .runRead({
+          input: inputs.equivalence,
+          principal,
+          registration: pricingPurposeEquivalenceRead,
+          transport: { correlationId: targetScope.correlationId },
+        })
+        .pipe(Effect.asVoid),
+  },
+  {
+    name: 'current media',
+    run: (
+      runtime: ReadRuntimeService,
+      principal: TrustedPrincipalContext,
+      inputs: ReturnType<typeof resourceTargetInputs>,
+    ) =>
+      runtime
+        .runRead({
+          input: inputs.media,
+          principal,
+          registration: catalogMediaCurrentRead,
+          transport: { correlationId: targetScope.correlationId },
+        })
+        .pipe(Effect.asVoid),
+  },
+];
+
+const allowTargetReadContextPermissions = ({
+  targets,
+}: {
+  readonly targets: readonly ContextPermissionAccessTarget[];
+}) =>
+  Effect.succeed(
+    targets.map((target) => ({ decision: 'allowed' as const, key: toContextPermissionAccessKey(target) })),
+  );
+
+it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suite) => {
+  for (const read of targetReadCases) {
+    suite.effect(`${read.name} reaches its original owner handler and commits governed evidence`, () =>
+      Effect.gen(function* registeredResourceRead() {
+        const harness = yield* makeReadTestHarness({
+          executeOwnerQuery: (query) => {
+            expect(query.scope).toEqual({ legalEntityId: targetScope.legalEntityId, tenantId: targetTenantId });
+            if (query.sql.includes('"catalog"."catalog_media_assignment_sets"')) {
+              return Effect.succeed([]);
+            }
+            expect(query.sql).toContain('"catalog"."products"');
+            expect(query.params).toContain(targetTenantId);
+            expect(query.params).toContain(targetProductId);
+            // The real media owner sees an existing Product with no assignments. Quantity owners
+            // see no Current revision and must retain their business-negative result.
+            return Effect.succeed(query.sql.startsWith('select "product_id"') ? [{ productId: targetProductId }] : []);
+          },
+          operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
+          ownerAuthorizationDecision: 'allowed',
+          permissionDecision: 'allowed',
+          scope: targetScope,
+        });
+        Object.assign(Context.get(yield* Layer.build(harness.layer), ContextAccess), {
+          contextPermissions: allowTargetReadContextPermissions,
+        });
+        yield* read.run(harness.runtime, targetScope, resourceTargetInputs());
+        expect(harness.snapshot().stages).toContain('handler_executed');
+        expect(harness.snapshot().evidenceWrites).toBe(1);
+        expect(harness.snapshot().statements.at(-1)).toBe('COMMIT');
+      }),
+    );
+
+    for (const decision of ['denied', 'unavailable'] as const) {
+      suite.effect(`${read.name} keeps resource ${decision} fail-closed despite module access`, () =>
+        Effect.gen(function* resourcePermissionFailure() {
+          const harness = yield* makeReadTestHarness({
+            executeOwnerQuery: () => Effect.die('No owner SQL is authorized'),
+            operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
+            ownerAuthorizationDecision: 'allowed',
+            permissionDecision: 'allowed',
+            scope: targetScope,
+          });
+          const access = Context.get(yield* Layer.build(harness.layer), ContextAccess);
+          const requested: object[] = [];
+          // Override only the test permission transport; real Core resolution and gates remain.
+          Object.assign(access, {
+            contextPermissions: allowTargetReadContextPermissions,
+            resources: ({ resources }: Parameters<typeof access.resources>[0]) => {
+              requested.push(...resources);
+              return Effect.succeed(
+                resources.map((resource) => ({
+                  decision,
+                  key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
+                })),
+              );
+            },
+          });
+          const failure = yield* read.run(harness.runtime, targetScope, resourceTargetInputs()).pipe(Effect.flip);
+          expect(Schema.is(decision === 'denied' ? ReadPermissionDenied : ReadPermissionUnavailable)(failure)).toBe(
+            true,
+          );
+          expect(requested).toEqual([resourceTargetInputs().media.target, resourceTargetInputs().media.target]);
+          expect(harness.snapshot().ownerQueries).toEqual([]);
+          expect(harness.snapshot().stages).not.toContain('handler_executed');
+        }),
+      );
+    }
+
+    suite.effect(`${read.name} rejects a malformed resource kind before owner SQL`, () =>
+      Effect.gen(function* wrongResourceKind() {
+        const harness = yield* makeReadTestHarness({
+          executeOwnerQuery: () => Effect.die('No owner SQL is authorized'),
+          operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
+          ownerAuthorizationDecision: 'allowed',
+          permissionDecision: 'allowed',
+          scope: targetScope,
+        });
+        const failure = yield* read
+          .run(harness.runtime, targetScope, resourceTargetInputs(targetTenantId, 'commerce.catalog.product-unit'))
+          .pipe(Effect.flip);
+        expect(Schema.is(ReadInputValidationError)(failure)).toBe(true);
+        expect(harness.snapshot().ownerQueries).toEqual([]);
+      }),
+    );
+
+    suite.effect(`${read.name} rejects a foreign Tenant before owner SQL`, () =>
+      Effect.gen(function* foreignResourceTenant() {
+        const harness = yield* makeReadTestHarness({
+          executeOwnerQuery: () => Effect.die('No owner SQL is authorized'),
+          operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
+          ownerAuthorizationDecision: 'allowed',
+          permissionDecision: 'allowed',
+          scope: targetScope,
+        });
+        Object.assign(Context.get(yield* Layer.build(harness.layer), ContextAccess), {
+          contextPermissions: allowTargetReadContextPermissions,
+        });
+        const failure = yield* read
+          .run(harness.runtime, targetScope, resourceTargetInputs('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'))
+          .pipe(Effect.flip);
+        expect(Schema.is(ReadHandlerNotFound)(failure)).toBe(true);
+        expect(harness.snapshot().ownerQueries).toEqual([]);
+        expect(harness.snapshot().stages).toContain('scope_installed');
+        expect(harness.snapshot().stages).not.toContain('handler_executed');
+      }),
+    );
+
+    suite.effect(`${read.name} requires a selected Legal Entity before permission or owner resolution`, () =>
+      Effect.gen(function* missingLegalEntity() {
+        const harness = yield* makeReadTestHarness({
+          executeOwnerQuery: () => Effect.die('No owner SQL is authorized'),
+          operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
+          ownerAuthorizationDecision: 'allowed',
+          permissionDecision: 'allowed',
+          scope: targetScope,
+        });
+        const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
+          authBindingId: targetScope.authBindingId,
+          authContextRef: targetScope.authContextRef,
+          authMethod: targetScope.authMethod,
+          principalId: targetScope.principalId,
+          tenantId: targetScope.tenantId,
+        });
+        const failure = yield* read.run(harness.runtime, principal, resourceTargetInputs()).pipe(Effect.flip);
+        expect(Schema.is(OperationContextDenied)(failure)).toBe(true);
+        expect(harness.snapshot().ownerQueries).toEqual([]);
+        expect(harness.snapshot().stages).not.toContain('permission_checked');
+      }),
+    );
+  }
+
+  suite.effect('current media authorizes the exact Variant target through both resource checks', () =>
+    Effect.gen(function* exactMediaVariant() {
+      const target = {
+        moduleId: 'commerce.catalog',
+        resourceId: targetVariantId,
+        resourceType: 'commerce.catalog.variant',
+        tenantId: targetTenantId,
+      };
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: (query) => {
+          expect(query.scope).toEqual({ legalEntityId: targetScope.legalEntityId, tenantId: targetTenantId });
+          if (query.sql.includes('"catalog"."product_variants"')) {
+            expect(query.params).toContain(targetVariantId);
+            return Effect.succeed([{ productId: targetProductId }]);
+          }
+          expect(query.sql).toContain('"catalog"."catalog_media_assignment_sets"');
+          return Effect.succeed([]);
+        },
+        operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope: targetScope,
+      });
+      const access = Context.get(yield* Layer.build(harness.layer), ContextAccess);
+      const requested: object[] = [];
+      Object.assign(access, {
+        contextPermissions: allowTargetReadContextPermissions,
+        resources: ({ resources }: Parameters<typeof access.resources>[0]) => {
+          requested.push(...resources);
+          return Effect.succeed(
+            resources.map((resource) => ({
+              decision: 'allowed' as const,
+              key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
+            })),
+          );
+        },
+      });
+      const result = yield* harness.runtime.runRead({
+        input: { target },
+        principal: targetScope,
+        registration: catalogMediaCurrentRead,
+        transport: { correlationId: targetScope.correlationId },
+      });
+      expect(result.target).toEqual(target);
+      expect(requested).toEqual([target, target]);
+      expect(harness.snapshot().stages).toContain('handler_executed');
+      expect(harness.snapshot().evidenceWrites).toBe(1);
+    }),
+  );
+
+  suite.effect('preserves the Core descriptor/resolver mismatch guard', () =>
+    Effect.gen(function* mismatchControl() {
+      const mismatched = defineRead(
+        quantityPreparationRead.descriptor,
+        () => Effect.die('Mismatch must fail before handler'),
+        () => Effect.succeed({}),
+        () => ({ kind: 'module', moduleId: 'commerce.catalog' }),
+      );
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: () => Effect.die('No owner SQL is authorized'),
+        operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope: targetScope,
+      });
+      const failure = yield* harness.runtime
+        .runRead({
+          input: resourceTargetInputs().preparation,
+          principal: targetScope,
+          registration: mismatched,
+          transport: { correlationId: targetScope.correlationId },
+        })
+        .pipe(Effect.flip);
+      expect(Schema.is(ReadHandlerExecutionError)(failure)).toBe(true);
+      expect(failure).toMatchObject({ reason: 'The declared read permission target is invalid' });
+      expect(harness.snapshot().ownerQueries).toEqual([]);
+    }),
+  );
 });

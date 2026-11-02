@@ -21,6 +21,36 @@ import { executeResolveCommerceMarket } from './resolve-commerce-market-client.t
 
 // oxlint-disable-next-line effect-native/no-scattered-browser-effect-run -- This generated public compatibility surface remains until the vertical adds a centralized browser runtime.
 export { Effect, runEffectRequest } from '@modern-js/bff-effect/effect-client';
+// <generated-action-http-client-exports>
+export { executeActivateMarket, executeActivateMarketWithAuthorization } from './activate-market-action-client.ts';
+export type { ActivateMarketActionClientOptions } from './activate-market-action-client.ts';
+export {
+  executeAssociateStorefront,
+  executeAssociateStorefrontWithAuthorization,
+} from './associate-storefront-action-client.ts';
+export type { AssociateStorefrontActionClientOptions } from './associate-storefront-action-client.ts';
+export { executeCreateMarket, executeCreateMarketWithAuthorization } from './create-market-action-client.ts';
+export type { CreateMarketActionClientOptions } from './create-market-action-client.ts';
+export {
+  executeRemoveStorefrontAssociation,
+  executeRemoveStorefrontAssociationWithAuthorization,
+} from './remove-storefront-association-action-client.ts';
+export type { RemoveStorefrontAssociationActionClientOptions } from './remove-storefront-association-action-client.ts';
+export { executeRetireMarket, executeRetireMarketWithAuthorization } from './retire-market-action-client.ts';
+export type { RetireMarketActionClientOptions } from './retire-market-action-client.ts';
+export {
+  executeReviseMarketDefinition,
+  executeReviseMarketDefinitionWithAuthorization,
+} from './revise-market-definition-action-client.ts';
+export type { ReviseMarketDefinitionActionClientOptions } from './revise-market-definition-action-client.ts';
+export {
+  executeReviseStorefrontAssociation,
+  executeReviseStorefrontAssociationWithAuthorization,
+} from './revise-storefront-association-action-client.ts';
+export type { ReviseStorefrontAssociationActionClientOptions } from './revise-storefront-association-action-client.ts';
+export { executeSuspendMarket, executeSuspendMarketWithAuthorization } from './suspend-market-action-client.ts';
+export type { SuspendMarketActionClientOptions } from './suspend-market-action-client.ts';
+// </generated-action-http-client-exports>
 export {
   CurrentMarketCatalogApi,
   CurrentMarketCatalogAuthenticationProblemSchema,

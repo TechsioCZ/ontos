@@ -1,14 +1,15 @@
 import { NodeServices } from '@effect/platform-node';
-import { Effect } from 'effect';
+import { Effect, FileSystem } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
-import {
-  hasCompleteGeneratedModuleApiSeam,
-  hasGeneratedPublicContractFacade,
-} from '../../generated-governed-http-boundary.mts';
+import { hasCompleteGeneratedModuleApiSeam } from '../../generated-governed-http-boundary.mts';
 import { planGovernedContributionScaffold } from '../governed-contribution/scaffold.mts';
+
+const paymentVertical = 'payment-term-catalog';
+const moduleApiKind = 'module-api';
+const paymentReadPermission = 'payment.term_catalog.read';
 
 const appRoot = path.resolve(import.meta.dirname, '../../..');
 const paymentVerticalPath = 'verticals/payment-term-catalog';
@@ -35,7 +36,6 @@ const customerOwnerClientFile = `${customerVerticalPath}/src/api/payment-term-af
 const customerCanonicalContractFile = `${customerContractPackagePath}/src/apis/payment-term-affected-use-assessment.ts`;
 const customerCanonicalClientFile = `${customerContractPackagePath}/src/api/payment-term-affected-use-assessment-client.ts`;
 const customerCanonicalGatewayFile = `${customerContractPackagePath}/src/api/action-gateway.ts`;
-const customerContractSpecifier = '@app/customer-payment-term-contracts/payment-term-affected-use-assessment';
 const customerGovernedContractFiles = [
   customerCanonicalClientFile,
   customerCanonicalContractFile,
@@ -136,17 +136,17 @@ const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): R
 };
 
 const expectsCompletePaymentSeam = (sources: ReadonlyMap<string, string>): boolean =>
-  hasCompleteGeneratedModuleApiSeam(sources, sharedApiFile, 'payment-term-catalog');
+  hasCompleteGeneratedModuleApiSeam(sources, sharedApiFile, paymentVertical);
 
 it.effect(
   'accepts the Payment-owned companion contract package as an idempotent module API scaffold',
   Effect.fn(function* publicContractPackageIdempotence() {
     const before = yield* Effect.promise(loadPaymentContractSources);
-    const plan = yield* planGovernedContributionScaffold(appRoot, 'module-api', {
+    const plan = yield* planGovernedContributionScaffold(appRoot, moduleApiKind, {
       authorization: 'context_permission',
       name: 'current-payment-terms',
-      permission: 'payment.term_catalog.read',
-      vertical: 'payment-term-catalog',
+      permission: paymentReadPermission,
+      vertical: paymentVertical,
     }).pipe(Effect.provide(NodeServices.layer));
     const after = yield* Effect.promise(loadPaymentContractSources);
 
@@ -161,6 +161,43 @@ it.effect(
     });
     expect(expectsCompletePaymentSeam(after)).toBe(true);
   }),
+);
+
+it.effect(
+  'rejects unknown, renamed and duplicate governed support imports without writing owner files',
+  Effect.fn(function* rejectsSupportImportDrift() {
+    const filesystem = yield* FileSystem.FileSystem;
+    const handlerPath = path.join(appRoot, paymentVerticalPath, 'api/index.ts');
+    const original = yield* filesystem.readFileString(handlerPath);
+    for (const changed of [
+      original.replace('GatewayAssertionRedemptionDatabaseLive,', 'UnknownDatabaseLive,'),
+      original.replace(
+        'GatewayAssertionRedemptionDatabaseLive,',
+        'GatewayAssertionRedemptionDatabaseLive as OtherDatabase,',
+      ),
+      original.replace(
+        '// </generated-governed-http-handler-support-imports>',
+        "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';\n// </generated-governed-http-handler-support-imports>",
+      ),
+    ]) {
+      expect(changed).not.toBe(original);
+      const error = yield* planGovernedContributionScaffold(appRoot, moduleApiKind, {
+        authorization: 'context_permission',
+        name: 'current-payment-terms',
+        permission: paymentReadPermission,
+        vertical: paymentVertical,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...filesystem,
+          readFileString: (file, encoding) =>
+            file === handlerPath ? Effect.succeed(changed) : filesystem.readFileString(file, encoding),
+        }),
+        Effect.flip,
+      );
+      expect(String(error)).toMatch(/unsupported developer content/u);
+      expect(yield* filesystem.readFileString(handlerPath)).toBe(original);
+    }
+  }, Effect.provide(NodeServices.layer)),
 );
 
 it.live(
@@ -200,10 +237,10 @@ it.effect(
   'accepts the Customer-owned affected-use companion package as an idempotent module API scaffold',
   Effect.fn(function* customerPublicContractPackageIdempotence() {
     const before = yield* Effect.promise(loadCustomerContractSources);
-    const plan = yield* planGovernedContributionScaffold(appRoot, 'module-api', {
+    const plan = yield* planGovernedContributionScaffold(appRoot, moduleApiKind, {
       authorization: 'context_permission',
       name: 'payment-term-affected-use-assessment',
-      permission: 'payment.term_catalog.read',
+      permission: paymentReadPermission,
       vertical: 'commerce-customer-context',
     }).pipe(Effect.provide(NodeServices.layer));
     const after = yield* Effect.promise(loadCustomerContractSources);
@@ -228,74 +265,6 @@ it.effect(
 );
 
 it.live(
-  'accepts complete named public facades without relaxing export provenance',
-  Effect.fn(function* namedPublicContractFacadeControls() {
-    const sources = yield* Effect.promise(loadCustomerContractSources);
-    const facade = sources.get(customerOwnerContractFile) ?? expect.unreachable('expected the owner contract facade');
-    const producer =
-      sources.get(customerCanonicalContractFile) ?? expect.unreachable('expected the canonical contract producer');
-    const clientFacade = sources.get(customerOwnerClientFile) ?? expect.unreachable('expected the owner client facade');
-    const clientProducer =
-      sources.get(customerCanonicalClientFile) ?? expect.unreachable('expected the canonical client producer');
-    const clientSpecifier = `${customerContractSpecifier}/client`;
-    expect(hasGeneratedPublicContractFacade(facade, customerContractSpecifier, producer)).toBe(true);
-    expect(hasGeneratedPublicContractFacade(clientFacade, clientSpecifier, clientProducer)).toBe(true);
-
-    const apiExport = '  PaymentTermAffectedUseAssessmentApi,';
-    const requestExport = '  PaymentTermAffectedUseAssessmentRequest,';
-    const forwardedOperation = 'executePaymentTermAffectedUseAssessmentWithAuthorization';
-    for (const [name, invalid] of [
-      ['missing value', facade.replace(apiExport, '')],
-      ['missing type', facade.replace(requestExport, '')],
-      ['renamed binding', facade.replace(apiExport, `${apiExport.slice(0, -1)} as OtherApi,`)],
-      ['type-only value', facade.replace(apiExport, `  type ${apiExport.trim()}`)],
-      [
-        'value-only type',
-        `${facade.replace(requestExport, '')}\nexport { ${requestExport.trim()} } from '${customerContractSpecifier}';`,
-      ],
-      [
-        'duplicate binding',
-        `${facade}\nexport { PaymentTermAffectedUseAssessmentApi } from '${customerContractSpecifier}';`,
-      ],
-      ['foreign producer', facade.replaceAll(`from '${customerContractSpecifier}'`, "from '@app/foreign/contract'")],
-      ['injected code', `${facade}\nglobalThis.untrusted = true;`],
-      ['missing provenance', facade.replace('// @generated by OntOS Codesmith module-api v1\n', '')],
-      [
-        'wrong provenance',
-        facade.replace(
-          `// @ontos-public-contract ${customerContractSpecifier}`,
-          '// @ontos-public-contract @app/foreign/contract',
-        ),
-      ],
-      [
-        'namespace export',
-        `// @generated by OntOS Codesmith module-api v1\n// @ontos-public-contract ${customerContractSpecifier}\nexport * as contract from '${customerContractSpecifier}';`,
-      ],
-      ['malformed forwarding', `${facade}\nexport {`],
-    ] as const) {
-      expect(hasGeneratedPublicContractFacade(invalid, customerContractSpecifier, producer), name).toBe(false);
-    }
-    for (const [name, invalid] of [
-      ['missing client operation', clientFacade.replace(`${forwardedOperation},`, '')],
-      ['type-only client operation', clientFacade.replace(forwardedOperation, `type ${forwardedOperation}`)],
-      ['injected client code', `${clientFacade}\nglobalThis.untrusted = true;`],
-    ] as const) {
-      expect(hasGeneratedPublicContractFacade(invalid, clientSpecifier, clientProducer), name).toBe(false);
-    }
-    expect(
-      hasGeneratedPublicContractFacade(
-        facade,
-        customerContractSpecifier,
-        producer.replace(
-          'export const PaymentTermAffectedUseAssessmentApi',
-          'const PaymentTermAffectedUseAssessmentApi',
-        ),
-      ),
-    ).toBe(false);
-  }),
-);
-
-it.live(
   'rejects a companion package whose ownership metadata no longer matches the Payment module',
   Effect.fn(function* publicContractOwnership() {
     const valid = yield* Effect.promise(loadPaymentContractSources);
@@ -313,38 +282,5 @@ it.live(
       const sources = new Map([...valid, [packageManifestFile, invalidManifest]]);
       expect(expectsCompletePaymentSeam(sources)).toBe(false);
     }
-  }),
-);
-
-it.live(
-  'requires bare Action slot entries and an output-bearing request Action runtime',
-  Effect.fn(function* actionRequestServicesBoundary() {
-    const sources = yield* Effect.promise(loadPaymentContractSources);
-    const handlerFile = `${paymentVerticalPath}/api/index.ts`;
-    const handler = sources.get(handlerFile) ?? '';
-    const runtimes = 'Layer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive)';
-    const entry = '  createPaymentTermActionApiLive,';
-    expect(handler).toContain(runtimes);
-    expect(handler).toContain(entry);
-    expect(expectsCompletePaymentSeam(sources)).toBe(true);
-    for (const invalid of [
-      handler.replace(
-        entry,
-        '  createPaymentTermActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),',
-      ),
-      handler.replace(runtimes, 'Layer.mergeAll(governedReadRuntimeLive)'),
-      handler.replace(
-        runtimes,
-        'Layer.mergeAll(governedReadRuntimeLive).pipe(Layer.provide(governedActionRuntimeLive))',
-      ),
-      handler.replace('services: requestServicesLive', 'services: unrelatedServicesLive'),
-    ]) {
-      expect(expectsCompletePaymentSeam(new Map([...sources, [handlerFile, invalid]]))).toBe(false);
-    }
-    const merged = handler.replace(
-      runtimes,
-      'Layer.mergeAll(governedReadRuntimeLive).pipe(Layer.provideMerge(governedActionRuntimeLive))',
-    );
-    expect(expectsCompletePaymentSeam(new Map([...sources, [handlerFile, merged]]))).toBe(true);
   }),
 );

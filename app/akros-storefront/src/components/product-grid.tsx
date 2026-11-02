@@ -8,9 +8,9 @@ import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 
 import { AddToCartButton } from "@/features/cart/add-to-cart-button";
 import { FavoriteButton } from "@/features/favorites/favorite-button";
-import { cs } from "@/i18n/cs";
+import { useDictionary, useMoney } from "@/ontos/market-context";
 import { formatPrice } from "@/lib/format";
-import { productStockLabels, productStockTone } from "@/lib/product-stock";
+import { productStockTone } from "@/lib/product-stock";
 import type { CatalogProductSummary, CatalogPriceTier } from "@/ontos/catalog-types";
 
 export interface ProductGridItem extends CatalogProductSummary {
@@ -32,6 +32,8 @@ export function ProductGrid({
   action?: "purchase" | "detail";
   columns?: "catalog" | "checkout" | "featured" | "related";
 }) {
+  const cs = useDictionary();
+  const money = useMoney();
   const isListing = columns === "catalog" || columns === "featured";
   const imageSizes = isListing
     ? "(max-width: 359px) 100vw, (max-width: 1100px) 50vw, 234px"
@@ -58,9 +60,9 @@ export function ProductGrid({
         const priceLabel = product.hasVariants
           ? cs.product.variantPrice
           : priceUnavailable
-            ? "Cena není dostupná"
-            : formatPrice(product.priceMinor, product.currency);
-        const supportingText = product.description.trim() || `Kód produktu: ${product.sku}`;
+            ? cs.product.priceUnavailable
+            : formatPrice(product.priceMinor, money);
+        const supportingText = product.description.trim() || `${cs.product.sku}: ${product.sku}`;
         const comparisonPrice = product.originalPriceMinor;
         const hasDiscount =
           !product.priceIsFrom &&
@@ -148,11 +150,11 @@ export function ProductGrid({
                   className="akros-catalog-product-card__stock m-0 uppercase"
                   status={productStockTone(product.stock.status)}
                 >
-                  {productStockLabels[product.stock.status]}
+                  {cs.product.stockStatus[product.stock.status]}
                 </ProductCard.Stock>
                 {product.hasVariants && (
                   <Badge className="whitespace-nowrap" size="sm" variant="secondary">
-                    Více variant
+                    {cs.product.moreVariants}
                   </Badge>
                 )}
               </div>
@@ -174,7 +176,7 @@ export function ProductGrid({
                       <span>{priceLabel}</span>
                       <del className="akros-product-card__original-price">
                         <span className="sr-only">{cs.product.originalPrice}: </span>
-                        {formatPrice(comparisonPrice, product.currency)}
+                        {formatPrice(comparisonPrice, money)}
                       </del>
                     </span>
                   </>
@@ -227,7 +229,7 @@ export function ProductGrid({
                     uppercase
                     variant="primary"
                   >
-                    {product.hasVariants ? "Vybrat variantu" : cs.actions.viewDetail}
+                    {product.hasVariants ? cs.product.chooseVariant : cs.actions.viewDetail}
                   </LinkButton>
                 )}
               </ProductCard.Actions>

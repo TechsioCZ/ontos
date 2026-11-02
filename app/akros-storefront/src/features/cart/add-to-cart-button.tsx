@@ -3,13 +3,13 @@
 import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 
 import { useCart } from "./cart-provider";
-import { cs } from "@/i18n/cs";
+import { useDictionary } from "@/ontos/market-context";
 import type { CartItemSnapshot } from "@/features/cart/cart-state";
 import type { CatalogPriceTier } from "@/ontos/catalog-types";
 
 export function AddToCartButton({
   item,
-  label = cs.actions.addToCart,
+  label,
   quantity = 1,
   priceTiers,
 }: {
@@ -19,17 +19,19 @@ export function AddToCartButton({
   priceTiers?: CatalogPriceTier[];
 }) {
   const { addItem, adding } = useCart();
+  const dictionary = useDictionary();
+  const text = label ?? dictionary.actions.addToCart;
 
   return (
     <ProductCard.Button
-      aria-label={`${label}: ${item.variantLabel ?? item.name}`}
+      aria-label={`${text}: ${item.variantLabel ?? item.name}`}
       buttonVariant="cart"
       aria-disabled={adding}
       onClick={() => {
         void addItem(item, quantity, priceTiers);
       }}
     >
-      {label}
+      {text}
     </ProductCard.Button>
   );
 }

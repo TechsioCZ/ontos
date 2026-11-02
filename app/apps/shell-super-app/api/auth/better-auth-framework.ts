@@ -1,3 +1,4 @@
+import process from 'node:process';
 import { PrincipalResolver } from '@app/core-runtime';
 import type { PrincipalResolutionError } from '@app/core-runtime';
 import { apiKey } from '@better-auth/api-key';
@@ -6,17 +7,18 @@ import { mcp } from '@better-auth/mcp';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { APIError } from 'better-auth';
 import type { Session as BetterAuthSession } from 'better-auth';
+import { verifyPassword } from 'better-auth/crypto';
 import { betterAuth } from 'better-auth/minimal';
 import { admin } from 'better-auth/plugins/admin';
 import { jwt } from 'better-auth/plugins/jwt';
-import { Context, Data, Effect, Function as Fn, Layer, Predicate, Redacted, Schema } from 'effect';
+import { Clock, Context, Data, Effect, Function as Fn, Layer, Predicate, Redacted, Schema } from 'effect';
 
 import { mcpResourceUrlOf } from '../../shared/mcp-resource.ts';
 import { fetchClientMetadataResource as fetchClientMetadataOnNode } from './cimd-transport.node.ts';
 import { fetchClientMetadataResource as fetchClientMetadataOnWorkerd } from './cimd-transport.workerd.ts';
 import { AuthConfig } from './config.ts';
 import type { AuthConfigValue } from './config.ts';
-import { AUTH_OPERATION_TIMEOUT_MS } from './observability.ts';
+import { AUTH_OPERATION_TIMEOUT_MS, observeSignInPhase } from './observability.ts';
 import type {
   OAuthAccessTokenClaimsInput,
   OAuthConnectionHooksContract,
@@ -94,6 +96,8 @@ interface BetterAuthRequestBindings {
   readonly databaseAdapter: ShellBetterAuthAdapter;
   readonly oauthHooks: OAuthConnectionHooksContract;
   readonly runResolverEffect: typeof Effect.runPromise;
+  readonly sessionCreated: Effect.Effect<void>;
+  readonly sessionCreation: { startedAt: bigint | null };
 }
 
 const betterAuthRequest = new AsyncLocalStorage<BetterAuthRequestBindings>();
@@ -192,6 +196,13 @@ const makeShellBetterAuth = (configuration: AuthConfigValue, allowFixtureSignUp:
     databaseHooks: {
       session: {
         create: {
+          after: Fn.flow(() => {
+            const bindings = requestBindings();
+            return (bindings.runResolverEffect<
+              Effect.Success<typeof bindings.sessionCreated>,
+              Effect.Error<typeof bindings.sessionCreated>
+            >).bind(undefined, bindings.sessionCreated);
+          }, Fn.apply({})),
           before: Fn.flow((session: BetterAuthSession) => {
             const bindings = requestBindings();
             return (bindings.runResolverEffect<Effect.Success<ReturnType<ShellSessionCreateHook>>, APIError>).bind(
@@ -206,6 +217,19 @@ const makeShellBetterAuth = (configuration: AuthConfigValue, allowFixtureSignUp:
       autoSignIn: !allowFixtureSignUp,
       disableSignUp: !allowFixtureSignUp,
       enabled: true,
+      password: {
+        verify: Fn.flow((input: Parameters<typeof verifyPassword>[0]) => {
+          const bindings = requestBindings();
+          const verification = Effect.tryPromise(verifyPassword.bind(undefined, input)).pipe(
+            Effect.timeout(AUTH_OPERATION_TIMEOUT_MS),
+            observeSignInPhase('credential-verify'),
+          );
+          return (bindings.runResolverEffect<
+            Effect.Success<typeof verification>,
+            Effect.Error<typeof verification>
+          >).bind(undefined, verification);
+        }, Fn.apply({})),
+      },
     },
     logger: {
       disabled: true,
@@ -403,6 +427,15 @@ const makeBetterAuthFramework = Effect.fn('BetterAuthFramework.make')(function* 
         },
       })),
       Effect.mapError(mapResolverApiError),
+      observeSignInPhase('session-principal-resolution'),
+      Effect.tap(() =>
+        Clock.monotonicTimeNanos.pipe(
+          Effect.map((now) => {
+            requestBindings().sessionCreation.startedAt = now;
+            return now;
+          }),
+        ),
+      ),
     );
   let adapter: BetterAuthAdapterInstance | undefined;
   const bindings: BetterAuthRequestBindings = {
@@ -413,6 +446,21 @@ const makeBetterAuthFramework = Effect.fn('BetterAuthFramework.make')(function* 
     },
     oauthHooks,
     runResolverEffect: Effect.runPromiseWith(effectContext),
+    sessionCreated: Effect.gen(function* recordSessionCreated() {
+      const timing = requestBindings().sessionCreation;
+      const finished = yield* Clock.monotonicTimeNanos;
+      if (timing.startedAt !== null) {
+        yield* Effect.logInfo('Shell sign-in phase').pipe(
+          Effect.annotateLogs({
+            durationMs: Number(finished - timing.startedAt) / 1_000_000,
+            phase: 'session-create',
+            pid: process.pid,
+          }),
+        );
+        timing.startedAt = null;
+      }
+    }),
+    sessionCreation: { startedAt: null },
   };
   const cacheKey = yield* Schema.encodeEffect(BetterAuthCacheKey)([
     allowFixtureSignUp,
@@ -434,11 +482,16 @@ const makeBetterAuthFramework = Effect.fn('BetterAuthFramework.make')(function* 
     const nativeOperation = () => operation(getAuth());
     return Effect.withFiber((fiber) =>
       Effect.callback(function dispatchNativeAuth(resume, signal) {
-        betterAuthRequest.run(bindings, Effect.runCallbackWith(fiber.context), Effect.suspend(nativeOperation), {
-          onExit: resume,
-          scheduler: this,
-          signal,
-        });
+        betterAuthRequest.run(
+          { ...bindings, sessionCreation: { startedAt: null } },
+          Effect.runCallbackWith(fiber.context),
+          Effect.suspend(nativeOperation),
+          {
+            onExit: resume,
+            scheduler: this,
+            signal,
+          },
+        );
       }),
     );
   };

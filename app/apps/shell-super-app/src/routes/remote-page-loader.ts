@@ -181,12 +181,12 @@ export const modulePageProps = (
 export const peekRemotePage = (target: RemotePage): Option.Option<ReadyRemotePage> =>
   MutableHashMap.get(readyPages, remotePageIdentity(target));
 
-const preloadPageData = (remote: RemoteState, props: ModulePageProps) => {
+const preloadPageData = (remote: RemoteState, props: ModulePageProps, pathname: string) => {
   if (remote.state !== 'ready' || remote.preloadPage === undefined) {
     return Effect.void;
   }
   const { preloadPage } = remote;
-  return withoutRecordedPageReads(() => preloadPage(props)).pipe(Effect.ignore);
+  return withoutRecordedPageReads(() => preloadPage(props), `${pathname}${props.search}`).pipe(Effect.ignore);
 };
 
 /**
@@ -207,7 +207,7 @@ export const prepareModulePage = (
           const { load, prefetch } = yield* RemotePagePreparation;
           const remote = yield* load(target);
           yield* remote.state === 'ready' && remote.preloadPage !== undefined
-            ? preloadPageData(remote, props)
+            ? preloadPageData(remote, props, pathname)
             : prefetch(pathname);
           return remote;
         }).pipe(Effect.timeoutOption(budget), (work) => withPrimaryModulePreparation(pathname, work))

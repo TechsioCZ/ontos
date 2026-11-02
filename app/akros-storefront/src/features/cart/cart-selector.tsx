@@ -9,15 +9,17 @@ import { Dialog } from "@techsio/ui-kit/molecules/dialog";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { type NamedCart } from "@/features/cart/cart-collection";
 import { useCart } from "./cart-provider";
+import { useDictionary } from "@/ontos/market-context";
 
 export function CartSelector() {
+  const cs = useDictionary();
   const { carts, activeCartId, selectCart, addCart, removeCart, ready } = useCart();
   const [dialog, setDialog] = useState<"create" | NamedCart | null>(null);
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const create = () => {
     if (!name.trim()) {
-      setError("Zadejte název košíku.");
+      setError(cs.checkout.selector.nameMissing);
       return;
     }
     if (
@@ -25,7 +27,7 @@ export function CartSelector() {
         (cart) => cart.name.toLocaleLowerCase("cs-CZ") === name.trim().toLocaleLowerCase("cs-CZ"),
       )
     ) {
-      setError("Košík s tímto názvem již existuje.");
+      setError(cs.checkout.selector.nameTaken);
       return;
     }
     addCart(name);
@@ -44,7 +46,7 @@ export function CartSelector() {
         <span className="flex size-(--dimension-45) shrink-0 items-center justify-center text-(length:--akros-checkout-cart-glyph-size)">
           <Icon icon="token-icon-akros-checkout-cart" size="current" />
         </span>
-        Vaše košíky
+        {cs.checkout.selector.title}
       </h2>
       <RadioGroup
         name="active-cart"
@@ -54,7 +56,7 @@ export function CartSelector() {
         }}
         size="sm"
       >
-        <RadioGroup.Label className="sr-only">Aktivní košík</RadioGroup.Label>
+        <RadioGroup.Label className="sr-only">{cs.checkout.selector.active}</RadioGroup.Label>
         <RadioGroup.ItemGroup>
           {carts.map((cart) => (
             <div
@@ -72,7 +74,7 @@ export function CartSelector() {
               </RadioGroup.Item>
               <ActionIcon
                 icon="token-icon-akros-checkout-remove"
-                aria-label={`Odstranit košík ${cart.name}`}
+                aria-label={cs.checkout.selector.removeAria(cart.name)}
                 disabled={!ready || carts.length === 1}
                 onClick={() => setDialog(cart)}
                 size="md"
@@ -95,7 +97,7 @@ export function CartSelector() {
           setDialog("create");
         }}
       >
-        Přidat košík
+        {cs.checkout.selector.add}
       </Button>
       <Dialog
         customTrigger
@@ -105,16 +107,16 @@ export function CartSelector() {
         }}
         size="sm"
         role={dialog === "create" ? "dialog" : "alertdialog"}
-        title={dialog === "create" ? "Přidat košík" : "Odstranit košík?"}
+        title={dialog === "create" ? cs.checkout.selector.add : cs.checkout.selector.removeTitle}
         description={
           dialog && dialog !== "create"
-            ? `Košík „${dialog.name}“ a jeho položky budou odstraněny.`
+            ? cs.checkout.selector.removeDescription(dialog.name)
             : undefined
         }
         actions={
           <>
             <Button variant="secondary" theme="outlined" onClick={() => setDialog(null)}>
-              Zrušit
+              {cs.checkout.selector.cancel}
             </Button>
             <Button
               variant={dialog === "create" ? "primary" : "danger"}
@@ -126,7 +128,7 @@ export function CartSelector() {
                 }
               }}
             >
-              {dialog === "create" ? "Přidat košík" : "Odstranit košík"}
+              {dialog === "create" ? cs.checkout.selector.add : cs.checkout.selector.remove}
             </Button>
           </>
         }
@@ -134,7 +136,7 @@ export function CartSelector() {
         {dialog === "create" && (
           <FormInput
             id="new-cart-name"
-            label="Název košíku"
+            label={cs.checkout.selector.name}
             required
             maxLength={80}
             value={name}

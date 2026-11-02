@@ -24,9 +24,18 @@ import {
   recordOwnerExecutionOutcomeAction,
 } from '../../src/actions/record-owner-execution-outcome.action.ts';
 import type { RecordOwnerExecutionOutcomeServices } from '../../src/actions/record-owner-execution-outcome.action.ts';
-import { ownerExecutionAuthorityUnavailable } from '../../src/actions/privacy-owner-execution-authority.ts';
+import {
+  OwnerExecutionAuthority,
+  ownerExecutionAuthorityUnavailable,
+  observeOwnerExecutionPreparation,
+  ownerExecutionPreparationScopeMatches,
+  preparedOwnerExecutionAuthority,
+} from '../../src/actions/privacy-owner-execution-authority.ts';
 import type { OwnerExecutionAuthorityService } from '../../src/actions/privacy-owner-execution-authority.ts';
-import { antiResurrectionEnforcementAuthorityUnavailable } from '../../src/actions/privacy-anti-resurrection-enforcement-authority.ts';
+import {
+  antiResurrectionEnforcementAuthorityUnavailable,
+  preparedAntiResurrectionAuthority,
+} from '../../src/actions/privacy-anti-resurrection-enforcement-authority.ts';
 import type { AntiResurrectionEnforcementAuthorityService } from '../../src/actions/privacy-anti-resurrection-enforcement-authority.ts';
 import { PrivacyActionRejected } from '../../src/actions/privacy-operation-action-support.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-repository.ts';
@@ -174,8 +183,178 @@ const trustedAuthority: OwnerExecutionAuthorityService = {
 const trustedEnforcementAuthority: AntiResurrectionEnforcementAuthorityService = {
   resolve: () => Effect.succeed(enforcementReceipt),
 };
+const preparationContext = { actionInvocationId, compositionRevision: 'test-composition', scope };
+const prepareUnitOwnerObservation = (
+  input: Parameters<typeof observeOwnerExecutionPreparation>[0],
+  owner: OwnerExecutionAuthorityService,
+) => observeOwnerExecutionPreparation(input).pipe(Effect.provideService(OwnerExecutionAuthority, owner));
 
 describe('Owner execution authority-bound Actions', () => {
+  it.effect('copies the request, handoff and receipt before retaining invocation evidence', () =>
+    Effect.gen(function* immutablePreparedReceipt() {
+      const request = structuredClone(ownerRequest.request);
+      const originalHandoff = structuredClone(handoff);
+      const receipt = structuredClone(authority);
+      const prepared = yield* prepareUnitOwnerObservation(
+        { context: preparationContext, handoff: originalHandoff, request },
+        {
+          resolve: (providerRequest, providerContext) =>
+            Effect.sync(() => {
+              Reflect.set(providerRequest, 'attempt', 9);
+              Reflect.set(providerContext.handoff.resourceRefs, 0, 'provider-mutated-resource');
+              return receipt;
+            }),
+        },
+      );
+      Reflect.set(request, 'attempt', 2);
+      Reflect.set(originalHandoff.resourceRefs, 0, 'caller-mutated-resource');
+      Reflect.set(receipt.outcome, 'status', 'TECHNICAL_FAILED');
+      expect(prepared.request).toEqual(ownerRequest.request);
+      expect(prepared.handoff).toEqual(handoff);
+      expect(prepared.authority).toEqual(authority);
+    }),
+  );
+
+  it.effect(
+    'prepares one owner observation then reloads the immutable handoff without live authority during persistence',
+    () =>
+      Effect.gen(function* preparedOutcome() {
+        let businessPhase = false;
+        let authorityCalls = 0;
+        let handoffReads = 0;
+        const prepared = yield* prepareUnitOwnerObservation(
+          { context: preparationContext, handoff, request: ownerRequest.request },
+          {
+            resolve: () =>
+              Effect.sync(() => {
+                expect(businessPhase).toBe(false);
+                authorityCalls += 1;
+                return authority;
+              }),
+          },
+        );
+        businessPhase = true;
+        const { context } = ownerContext({
+          authority: preparedOwnerExecutionAuthority(prepared),
+          getPrivacyMeasureHandoff: () =>
+            Effect.sync(() => {
+              handoffReads += 1;
+              return Option.some(handoff);
+            }),
+          recordOwnerOutcome: () => Effect.succeed(authority.outcome),
+        });
+        expect(yield* handleRecordOwnerExecutionOutcome(ownerRequest, context)).toEqual(authority.outcome);
+        expect(authorityCalls).toBe(1);
+        expect(handoffReads).toBe(1);
+      }),
+  );
+
+  it.effect('refuses a changed final handoff and exact invocation, principal, scope or attempt substitutions', () =>
+    Effect.gen(function* preparedOutcomeBindings() {
+      const prepared = yield* prepareUnitOwnerObservation(
+        { context: preparationContext, handoff, request: ownerRequest.request },
+        trustedAuthority,
+      );
+      const selected = preparedOwnerExecutionAuthority(prepared);
+      const requestContext = {
+        actionInvocationId,
+        handoff,
+        legalEntityId,
+        principalId: scope.principalId,
+        tenantId,
+      };
+      for (const changed of [
+        { ...requestContext, actionInvocationId: 'another-invocation' },
+        { ...requestContext, principalId: 'another-principal' },
+        { ...requestContext, tenantId: 'another-tenant' },
+        { ...requestContext, legalEntityId: 'another-entity' },
+        { ...requestContext, handoff: { ...handoff, sourceDecisionRevision: 2 } },
+      ]) {
+        expect((yield* selected.resolve(ownerRequest.request, changed).pipe(Effect.flip)).code).toBe(
+          'privacy_action_rejected',
+        );
+      }
+      expect(
+        (yield* selected.resolve({ ...ownerRequest.request, attempt: 2 }, requestContext).pipe(Effect.flip)).code,
+      ).toBe('privacy_action_rejected');
+      for (const changed of [
+        { ...scope, principalId: 'another-principal' },
+        { ...scope, legalEntityId: 'another-entity' },
+        { ...scope, correlationId: 'another-correlation' },
+        { ...scope, traceId: 'another-trace' },
+      ]) {
+        expect(ownerExecutionPreparationScopeMatches(prepared, changed, preparationContext.compositionRevision)).toBe(
+          false,
+        );
+      }
+      expect(ownerExecutionPreparationScopeMatches(prepared, scope, 'another-composition')).toBe(false);
+      const { context } = ownerContext({
+        authority: selected,
+        getPrivacyMeasureHandoff: () => Effect.succeed(Option.some({ ...handoff, requestedResult: 'changed' })),
+        recordOwnerOutcome: () => Effect.die('must not persist a changed handoff'),
+      });
+      expect((yield* handleRecordOwnerExecutionOutcome(ownerRequest, context).pipe(Effect.flip)).code).toBe(
+        'privacy_action_rejected',
+      );
+    }),
+  );
+
+  it.effect('preserves a prepared BUSINESS_REJECTED receipt rather than converting it to success', () =>
+    Effect.gen(function* preparedBusinessRejection() {
+      const rejectedAuthority = {
+        ...authority,
+        outcome: {
+          ...authority.outcome,
+          includedResourceRefs: [],
+          remainingResourceRefs: handoff.resourceRefs,
+          status: 'BUSINESS_REJECTED' as const,
+        },
+      };
+      const prepared = yield* prepareUnitOwnerObservation(
+        { context: preparationContext, handoff, request: ownerRequest.request },
+        { resolve: () => Effect.succeed(rejectedAuthority) },
+      );
+      const { collector, context } = ownerContext({
+        authority: preparedOwnerExecutionAuthority(prepared),
+        getPrivacyMeasureHandoff: () => Effect.succeed(Option.some(handoff)),
+        recordOwnerOutcome: (_tenant, _entity, _invocation, _request, selected) => Effect.succeed(selected.outcome),
+      });
+      const result = yield* handleRecordOwnerExecutionOutcome(ownerRequest, context);
+      expect(result).toEqual(rejectedAuthority.outcome);
+      expect(result.status).toBe('BUSINESS_REJECTED');
+      expect(collector.snapshot().auditEvidence.recordId).toBe(rejectedAuthority.outcome.outcomeId);
+    }),
+  );
+
+  it.effect('uses a prepared enforcement receipt only for its exact owner observation and final handoff', () =>
+    Effect.gen(function* preparedEnforcement() {
+      const prepared = yield* prepareUnitOwnerObservation(
+        { context: preparationContext, handoff, request: ownerRequest.request },
+        trustedAuthority,
+      );
+      const enforcement = preparedAntiResurrectionAuthority(prepared, enforcementReceipt);
+      const { context } = antiResurrectionContext({
+        authority: preparedOwnerExecutionAuthority(prepared),
+        enforcementAuthority: enforcement,
+        getPrivacyMeasureHandoff: () => Effect.succeed(Option.some(handoff)),
+        recordAntiResurrectionProtection: () => Effect.succeed(protection),
+      });
+      expect(yield* handleRecordAntiResurrectionProtection(antiResurrectionRequest, context)).toEqual(protection);
+      const mismatch = yield* enforcement
+        .resolve({
+          actionInvocationId,
+          authority: { ...authority, authorityRef: 'another-owner-receipt' },
+          handoff,
+          legalEntityId,
+          principalId: scope.principalId,
+          request: antiResurrectionRequest.request,
+          tenantId,
+        })
+        .pipe(Effect.flip);
+      expect(mismatch.code).toBe('privacy_action_rejected');
+    }),
+  );
+
   it('rejects caller-supplied owner success and protection facts at the public schemas', () => {
     expect(() =>
       Schema.decodeUnknownSync(RecordOwnerExecutionOutcomePayloadSchema)({ outcome: authority.outcome }),

@@ -4,12 +4,14 @@ import { CatalogPagination } from "@/components/catalog-pagination";
 import { ProductGrid, type ProductGridItem } from "@/components/product-grid";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
-import { cs } from "@/i18n/cs";
+import { getDictionary } from "@/ontos/active-market";
 import { getCatalogPage, type CatalogModel } from "@/ontos/catalog-server";
 import { placeholdersLast } from "@/ontos/search-suggestions";
 import type { CatalogProduct } from "@/ontos/catalog-types";
 
-export const metadata: Metadata = { title: cs.search.results };
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getDictionary()).search.results };
+}
 const productsPerPage = 24;
 
 // Listing cards carry no variant records: a variant group opens with its variant table filtered by the query.
@@ -30,6 +32,7 @@ export default async function SearchPage({
   searchParams: Promise<{ page?: string; q?: string }>;
 }) {
   const { page = "1", q = "" } = await searchParams;
+  const cs = await getDictionary();
   const requestedPage = Number.parseInt(page, 10);
   const requested = Math.max(Number.isFinite(requestedPage) ? requestedPage : 1, 1);
   const term = q.trim();

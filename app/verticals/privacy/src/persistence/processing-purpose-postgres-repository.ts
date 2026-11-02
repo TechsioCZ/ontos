@@ -1,6 +1,7 @@
 import { ProcessingPurposeRepository } from './processing-purpose-repository.ts';
 import type { ProcessingPurposeRepositoryService } from './processing-purpose-repository.ts';
-import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
+import type { DataAccessEventInput, OperationalScope, ReadServiceFactory } from '@app/core-runtime';
+import { capturePrivacyRead } from './privacy-read-evidence.ts';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { and, asc, eq } from 'drizzle-orm';
 import { flow, Crypto, DateTime, Effect, Option, Schema } from 'effect';
@@ -16,6 +17,7 @@ import {
   PurposeNotFound,
   PurposeVersionConflict,
   PurposeVersionMaterialScopeSchema,
+  resolvePurposeVersionTimeline,
 } from '../../shared/domain/processing-purpose.ts';
 import { PrivacyMaterialChangeAssessmentSchema } from '../../shared/domain/privacy-material-change.ts';
 import type { ProcessingPurposeRef } from '../../shared/resources/processing-purpose.ts';
@@ -68,12 +70,13 @@ const decodeRequiredConsentDimensions = flow(
   Effect.mapError((cause) => unavailable('Stored required consent dimensions could not be decoded', cause)),
 );
 
-const loadVersions = Effect.fn('ProcessingPurposePostgresRepository.loadVersions')(
+export const loadPurposeVersions = Effect.fn('ProcessingPurposePostgresRepository.loadVersions')(
   Effect.fn('loadPurposeVersions')(function* loadPurposeVersions(
     transaction: ScopedTransaction,
     tenantId: string,
     legalEntityId: string,
     processingPurposeId: string,
+    readEvidence?: DataAccessEventInput[],
   ) {
     const rows = yield* transaction
       .select()
@@ -87,7 +90,12 @@ const loadVersions = Effect.fn('ProcessingPurposePostgresRepository.loadVersions
       )
       .orderBy(asc(purposeVersions.versionNumber))
       .pipe(Effect.mapError((cause) => unavailable(PERSISTENCE_UNAVAILABLE, cause)));
-    return yield* Effect.forEach(
+    yield* capturePrivacyRead(readEvidence, {
+      accessKind: 'list',
+      queryHash: 'privacy.purpose-versions.for-scope.v1',
+      resultCount: rows.length,
+    });
+    const versions = yield* Effect.forEach(
       rows,
       Effect.fn('decodePurposeVersion')(function* decodePurposeVersion(row: (typeof rows)[number]) {
         const materialChangeAssessment =
@@ -110,13 +118,20 @@ const loadVersions = Effect.fn('ProcessingPurposePostgresRepository.loadVersions
       }),
       { concurrency: 1 },
     );
+    return yield* resolvePurposeVersionTimeline(versions).pipe(
+      Effect.mapError((cause) => unavailable('Stored Purpose Version timeline is incoherent', cause)),
+    );
   }),
 );
 
 const makeRepository = Effect.fn('ProcessingPurposePostgresRepository.make')(function* makeRepositoryEffect(
   transaction: ScopedTransaction,
-  trustedScope: Readonly<{ legalEntityId: string; tenantId: string }>,
+  configuration: Readonly<{
+    readEvidence?: DataAccessEventInput[] | undefined;
+    scope: Readonly<{ legalEntityId: string; tenantId: string }>;
+  }>,
 ): Effect.fn.Return<ProcessingPurposeRepositoryService, never, Crypto.Crypto> {
+  const { readEvidence, scope: trustedScope } = configuration;
   const crypto = yield* Crypto.Crypto;
   const nextIdentifier = (reason: string) =>
     crypto.randomUUIDv4().pipe(Effect.mapError((cause) => unavailable(reason, cause)));
@@ -140,11 +155,22 @@ const makeRepository = Effect.fn('ProcessingPurposePostgresRepository.make')(fun
         )
         .limit(1)
         .pipe(Effect.mapError((cause) => unavailable(PERSISTENCE_UNAVAILABLE, cause)));
+      yield* capturePrivacyRead(readEvidence, {
+        accessKind: 'read',
+        queryHash: 'privacy.processing-purpose.for-scope.v1',
+        resultCount: rows.length,
+      });
       const [row] = rows;
       if (row === undefined) {
         return Option.none<ProcessingPurpose>();
       }
-      const versions = yield* loadVersions(transaction, tenantId, legalEntityId, processingPurposeId);
+      const versions = yield* loadPurposeVersions(
+        transaction,
+        tenantId,
+        legalEntityId,
+        processingPurposeId,
+        readEvidence,
+      );
       return Option.some({
         businessCode: row.businessCode,
         createdAt: iso(row.createdAt),
@@ -175,12 +201,6 @@ const makeRepository = Effect.fn('ProcessingPurposePostgresRepository.make')(fun
       });
     }
     const previous = current.versions.at(-1);
-    if (previous !== undefined && input.effectiveFrom <= previous.effectiveFrom) {
-      return yield* new PurposeVersionConflict({
-        code: 'privacy_purpose_version_conflict',
-        reason: 'Purpose Version effective time must follow the latest retained version',
-      });
-    }
     const nowDateTime = yield* DateTime.now;
     const now = DateTime.toDateUtc(nowDateTime);
     const version: PurposeVersion = {
@@ -194,20 +214,7 @@ const makeRepository = Effect.fn('ProcessingPurposePostgresRepository.make')(fun
       versionId,
       versionNumber: (previous?.versionNumber ?? 0) + 1,
     };
-    if (previous !== undefined) {
-      yield* transaction
-        .update(purposeVersions)
-        .set({ effectiveTo: DateTime.toDateUtc(DateTime.makeUnsafe(input.effectiveFrom)) })
-        .where(
-          and(
-            eq(purposeVersions.tenantId, tenantId),
-            eq(purposeVersions.legalEntityId, legalEntityId),
-            eq(purposeVersions.processingPurposeId, processingPurposeId),
-            eq(purposeVersions.purposeVersionId, previous.versionId),
-          ),
-        )
-        .pipe(Effect.mapError((cause) => unavailable('Previous Purpose Version could not be closed', cause)));
-    }
+    const versions = yield* resolvePurposeVersionTimeline([...current.versions, version]);
     yield* transaction
       .insert(purposeVersions)
       .values({
@@ -226,7 +233,7 @@ const makeRepository = Effect.fn('ProcessingPurposePostgresRepository.make')(fun
         versionNumber: version.versionNumber,
       })
       .pipe(Effect.mapError((cause) => unavailable('Processing Purpose version could not be recorded', cause)));
-    return { ...current, versions: [...current.versions, version] };
+    return { ...current, versions };
   });
 
   return {
@@ -234,6 +241,25 @@ const makeRepository = Effect.fn('ProcessingPurposePostgresRepository.make')(fun
       ...args: Parameters<ProcessingPurposeRepositoryService['addVersion']>
     ) {
       const [tenantId, legalEntityId, processingPurposeId, actionInvocationId, input] = args;
+      yield* assertScope(tenantId, legalEntityId);
+      const roots = yield* transaction
+        .select({ processingPurposeId: processingPurposes.processingPurposeId })
+        .from(processingPurposes)
+        .where(
+          and(
+            eq(processingPurposes.tenantId, tenantId),
+            eq(processingPurposes.legalEntityId, legalEntityId),
+            eq(processingPurposes.processingPurposeId, processingPurposeId),
+          ),
+        )
+        .for('update')
+        .pipe(Effect.mapError((cause) => unavailable('Processing Purpose append could not be serialized', cause)));
+      if (roots.length !== 1) {
+        return yield* new PurposeNotFound({
+          code: 'privacy_purpose_not_found',
+          reason: 'Processing Purpose was not found',
+        });
+      }
       const current = yield* get(tenantId, legalEntityId, processingPurposeId);
       if (Option.isNone(current)) {
         return yield* new PurposeNotFound({
@@ -247,6 +273,7 @@ const makeRepository = Effect.fn('ProcessingPurposePostgresRepository.make')(fun
           materialChangeAssessment: purposeVersions.materialChangeAssessment,
           materialScope: purposeVersions.materialScope,
           meaning: purposeVersions.meaning,
+          processingPurposeId: purposeVersions.processingPurposeId,
           requiredConsentDimensions: purposeVersions.requiredConsentDimensions,
         })
         .from(purposeVersions)
@@ -283,7 +310,11 @@ const makeRepository = Effect.fn('ProcessingPurposePostgresRepository.make')(fun
                 meaning: replay.meaning,
                 requiredConsentDimensions: replayRequiredConsentDimensions,
               };
-        if (replayInput === null || !versionInputEquivalent(replayInput, input)) {
+        if (
+          replay.processingPurposeId !== processingPurposeId ||
+          replayInput === null ||
+          !versionInputEquivalent(replayInput, input)
+        ) {
           return yield* new PurposeVersionConflict({
             code: 'privacy_purpose_version_conflict',
             reason: 'Purpose Version Action invocation was replayed with different input',
@@ -392,7 +423,18 @@ export const processingPurposeRepositoryForScope = (
   const { legalEntityId, tenantId } = scope;
   return legalEntityId === undefined
     ? Effect.fail(scopeUnavailable())
-    : makeRepository(transaction, { legalEntityId, tenantId }).pipe(
+    : makeRepository(transaction, { scope: { legalEntityId, tenantId } }).pipe(
         Effect.map((repository) => ProcessingPurposeRepository.of(repository)),
       );
+};
+
+/** The same scoped owner reads, with invocation-local result metadata. */
+export const processingPurposeRepositoryWithReadEvidence = (
+  transaction: ScopedTransaction,
+  input: { readonly readEvidence: DataAccessEventInput[]; readonly scope: OperationalScope },
+): Effect.Effect<ProcessingPurposeRepositoryService, OperationContextUnavailable, Crypto.Crypto> => {
+  const { legalEntityId, tenantId } = input.scope;
+  return legalEntityId === undefined
+    ? Effect.fail(scopeUnavailable())
+    : makeRepository(transaction, { readEvidence: input.readEvidence, scope: { legalEntityId, tenantId } });
 };

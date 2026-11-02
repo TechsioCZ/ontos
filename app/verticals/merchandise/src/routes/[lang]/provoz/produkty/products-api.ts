@@ -3,7 +3,7 @@ import type { PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { Effect, Match, Option, Random, Schema } from 'effect';
 import type { Cause } from 'effect';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
-import { executeRecords } from '../../../../api/records-client.ts';
+import { executeRecords } from '../../../../api/records-consumer.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import { ApplyCommandPayloadSchema } from '../../../../../shared/actions/apply-command.ts';
@@ -37,7 +37,7 @@ export type LoadOutcome =
   | { readonly ok: false; readonly reason: FailureReason };
 
 export type CommandOutcome =
-  | { readonly ok: true; readonly revision: number }
+  | { readonly image?: string; readonly ok: true; readonly revision: number }
   | { readonly ok: false; readonly reason: FailureReason };
 
 type RecordsFailure = Effect.Error<ReturnType<typeof executeRecords>>;
@@ -267,7 +267,10 @@ export const runCommand = (
       ),
       Effect.match({
         onFailure: (error): CommandOutcome => ({ ok: false, reason: commandReason(error) }),
-        onSuccess: (result): CommandOutcome => ({ ok: true, revision: result.revision }),
+        onSuccess: (result): CommandOutcome =>
+          result.image === undefined
+            ? { ok: true, revision: result.revision }
+            : { image: result.image, ok: true, revision: result.revision },
       }),
       Effect.map(onOutcome),
     ),

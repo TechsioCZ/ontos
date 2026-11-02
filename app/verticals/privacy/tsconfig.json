@@ -20,7 +20,10 @@
     "server",
     "api",
     "vertical.manifest.ts",
-    "vertical.registration.ts"
+    "vertical.registration.ts",
+    "scripts/legacy-completion-publication.ts",
+    "scripts/legacy-completion-connections.ts",
+    "scripts/legacy-completion-runtime-pair.ts"
   ],
   "references": [
     {

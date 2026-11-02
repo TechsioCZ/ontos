@@ -16,7 +16,8 @@
     "./permissions/pricing.price_group.revision.create": "./shared/permissions/pricing-price-group-revision-create.ts",
     "./resources/price-group": "./shared/resources/price-group.ts",
     "./resources/price-group-catalog-root": "./shared/resources/price-group-catalog-root.ts",
-    "./outbox-worker-host": "./src/worker-host/entry.ts"
+    "./outbox-worker-host": "./src/worker-host/entry.ts",
+    "./testing/price-group-current-receiver": "./tests/support/price-group-current-receiver.fixture.ts"
   },
   "scripts": {
     "dev": "node ../../scripts/prepare-dev-module-contract.mts price-group-catalog && modern dev",
@@ -37,9 +38,9 @@
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/price-group-catalog-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
-    "@effect/opentelemetry": "4.0.5",
-    "@effect/platform-node": "4.0.5",
-    "@effect/sql-pg": "4.0.5",
+    "@effect/opentelemetry": "4.0.7",
+    "@effect/platform-node": "4.0.7",
+    "@effect/sql-pg": "4.0.7",
     "@modern-js/backend-federation-contracts": "catalog:ultramodern",
     "@modern-js/bff-effect": "catalog:ultramodern",
     "@modern-js/federation-runtime": "catalog:ultramodern",
@@ -49,7 +50,7 @@
     "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.4",
     "@module-federation/runtime": "npm:@bleedingdev/mf-runtime@2.9.3",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "effect": "4.0.5"
+    "effect": "4.0.7"
   },
   "devDependencies": {
     "@modern-js/app-tools": "catalog:ultramodern",

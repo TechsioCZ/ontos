@@ -6,7 +6,10 @@ import { commerceMarketCatalogManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { activateMarketAction } from './src/actions/activate-market.action.ts';
 import { associateStorefrontAction } from './src/actions/associate-storefront.action.ts';
+import { completeMarketRetirementWorker } from './src/workers/complete-market-retirement.worker.ts';
 import { createMarketAction } from './src/actions/create-market.action.ts';
+import { projectAssociationContainmentWorker } from './src/workers/project-association-containment.worker.ts';
+import { projectMarketContainmentWorker } from './src/workers/project-market-containment.worker.ts';
 import { removeStorefrontAssociationAction } from './src/actions/remove-storefront-association.action.ts';
 import { retireMarketAction } from './src/actions/retire-market.action.ts';
 import { reviseMarketDefinitionAction } from './src/actions/revise-market-definition.action.ts';
@@ -32,7 +35,9 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
       // <generated-module-registration-apis>
       'current-market-catalog': () => import('./src/api/current-market-catalog-client.ts'),
       'eligible-market-tuples': () => import('./src/api/eligible-market-tuples-client.ts'),
+      'market-administration': () => import('./src/api/market-administration-client.ts'),
       'market-history': () => import('./src/api/market-history-client.ts'),
+      'market-retirement-status': () => import('./src/api/market-retirement-status-client.ts'),
       'pricing-current-market-evidence': () => import('./src/api/pricing-current-market-evidence-client.ts'),
       'resolve-commerce-market': () => import('./src/api/resolve-commerce-market-client.ts'),
       'verify-market-eligibility-v1': () => import('./src/api/verify-market-eligibility-v1-client.ts'),
@@ -44,6 +49,8 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
     },
     pages: {
       // <generated-module-registration-pages>
+      'page-eshops': () => import('./src/routes/[lang]/prodej/eshopy/page.tsx'),
+      'page-market-detail': () => import('./src/routes/[lang]/prodej/eshopy/trhy/[marketId]/page.tsx'),
       // </generated-module-registration-pages>
     },
     reports: {
@@ -58,6 +65,9 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
   manifest: commerceMarketCatalogManifest,
   outboxWorkers: [
     // <generated-module-registration-workers>
+    completeMarketRetirementWorker,
+    projectAssociationContainmentWorker,
+    projectMarketContainmentWorker,
     // </generated-module-registration-workers>
   ],
 });

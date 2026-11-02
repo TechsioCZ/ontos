@@ -3,20 +3,15 @@
 // @ontos-resource-slug product-unit
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
+
+export { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
+export type { ProductUnitRef } from '@app/catalog-selection-contracts/resources/product-unit';
 
 /** Identity is allocated once within a Tenant; changing a rule never creates a new Unit. */
 const checkedUuid = Schema.String.check(Schema.isUUID(), Schema.isTrimmed());
-const ResourceIdSchema = checkedUuid.pipe(Schema.brand('CatalogProductUnitResourceId'), Schema.decodeTo(checkedUuid));
 const TenantIdSchema = checkedUuid.pipe(Schema.brand('CatalogTenantId'), Schema.decodeTo(checkedUuid));
 const TargetIdSchema = checkedUuid.pipe(Schema.brand('CatalogPurchaseTargetId'), Schema.decodeTo(checkedUuid));
-
-export const ProductUnitRefSchema = Schema.Struct({
-  moduleId: Schema.Literal('commerce.catalog'),
-  resourceId: ResourceIdSchema,
-  resourceType: Schema.Literal('commerce.catalog.product-unit'),
-  tenantId: TenantIdSchema,
-});
-export type ProductUnitRef = typeof ProductUnitRefSchema.Type;
 
 /** A human-readable description is not an identity or an implicit conversion factor. */
 export const ProductUnitMeaningSchema = Schema.Struct({

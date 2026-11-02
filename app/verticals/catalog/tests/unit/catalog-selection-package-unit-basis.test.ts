@@ -4,6 +4,8 @@ import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
+  configurationUnitRevisions,
+  configurationUnits,
   packageContentRevisions,
   packageDefinitions,
   packageOptionRoleRevisions,
@@ -21,6 +23,9 @@ import {
   productVariants,
   products,
   variantUnitDivisibility,
+  setCompositions,
+  setCompositionRevisions,
+  setCompositionComponents,
 } from '../../src/database/schema.ts';
 import { catalogSelectionPackageUnitBasisForScope } from '../../src/persistence/catalog-selection-package-unit-basis.ts';
 import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
@@ -107,6 +112,11 @@ const rows = new Map<unknown, unknown>([
   [productUnitRuleRevisions, { lifecycleState: 'ACTIVE', revision: 6, rounding: 'UP', step: '1' }],
 ]);
 type ReadTable =
+  | typeof setCompositions
+  | typeof setCompositionRevisions
+  | typeof setCompositionComponents
+  | typeof configurationUnits
+  | typeof configurationUnitRevisions
   | typeof products
   | typeof productVariants
   | typeof packageDefinitions
@@ -140,19 +150,52 @@ const contentRows = (overrides: Map<unknown, unknown>) => {
   return Effect.succeed(Array.isArray(result) ? result : [result]);
 };
 const makeLimit = (table: ReadTable, overrides: Map<unknown, unknown>) => () => queryResult(table, overrides);
+const setFixtureWhere = (table: ReadTable, overrides: Map<unknown, unknown>, condition?: SQL) => {
+  const scripted = overrides.get(table);
+  const candidate = Array.isArray(scripted) && Array.isArray(scripted[0]) ? scripted.shift() : scripted;
+  let entries: readonly object[] = [];
+  if (Array.isArray(candidate)) {
+    entries = candidate;
+  } else if (candidate !== undefined && candidate !== null) {
+    entries = [candidate];
+  }
+  const bound =
+    condition?.toQuery({
+      escapeName: (name) => name,
+      escapeParam: () => '?',
+      escapeString: (text) => text,
+    }).params ?? [];
+  const matched = entries.filter(
+    (entry) =>
+      (!('tenantId' in entry) || bound.includes(entry.tenantId)) &&
+      (!('compositionId' in entry) || bound.includes(entry.compositionId)) &&
+      (!('revision' in entry) ||
+        !bound.some((value) => Schema.is(Schema.Number)(value)) ||
+        bound.includes(entry.revision)),
+  );
+  return Object.assign(Effect.succeed(matched), { limit: () => Effect.succeed(matched.slice(0, 1)) });
+};
 const makeWhere = (table: ReadTable, overrides: Map<unknown, unknown>, projected: boolean) => (condition?: SQL) => {
+  if ([setCompositions, setCompositionRevisions, setCompositionComponents].some((candidate) => candidate === table)) {
+    return setFixtureWhere(table, overrides, condition);
+  }
+  if (table === configurationUnitRevisions) {
+    return { orderBy: () => Effect.succeed(overrides.get(table) ?? []) };
+  }
   if (table === packageContentRevisions) {
     return contentRows(overrides);
   }
   if (
-    table === productConfigurationDefinitions ||
-    table === productConfigurationRevisionActivations ||
-    table === productConfigurationDefinitionRevisions ||
-    table === productConfigurationChoices ||
-    table === productConfigurationChoiceOptions ||
-    table === productConfigurationOptionAllowances ||
-    table === productConfigurationMeasuredRules ||
-    table === productConfigurationCompatibilityRules
+    [
+      productConfigurationDefinitions,
+      productConfigurationRevisionActivations,
+      productConfigurationDefinitionRevisions,
+      productConfigurationChoices,
+      productConfigurationChoiceOptions,
+      productConfigurationOptionAllowances,
+      productConfigurationMeasuredRules,
+      productConfigurationCompatibilityRules,
+    ].some((candidate) => candidate === table)
   ) {
     const value = overrides.get(table);
     let entries: readonly object[] = [];
@@ -186,11 +229,542 @@ const transactionFor = (overrides = new Map<unknown, unknown>()) => ({
     from: makeFrom(overrides, projection !== undefined),
   }),
 });
-const read = (overrides = new Map<unknown, unknown>()) =>
+const read = (overrides = new Map<unknown, unknown>(), requested = selection, at = now) =>
   // @ts-expect-error The mock supplies only the read chains exercised here.
-  catalogSelectionPackageUnitBasisForScope(transactionFor(overrides), scope).read(selection, now);
+  catalogSelectionPackageUnitBasisForScope(transactionFor(overrides), scope).read(requested, at);
+
+const optionalConfigurationRows = (optionalKeys: readonly string[] = ['finish'], requiredMount = true) => {
+  const evidenceRefs = ['owner:optional-configuration'];
+  const choiceKeys = ['mount', ...optionalKeys];
+  const publication = {
+    actingPrincipalId: scope.principalId,
+    actionInvocationId: '88888888-8888-4888-8888-888888888888',
+    definitionId: packageId,
+    evidenceRefs,
+    productId,
+    reason: 'Required mount and optional finish',
+    revision: 1,
+  };
+  return new Map<unknown, unknown>([
+    [productConfigurationDefinitions, [{ currentRevision: 1, definitionId: packageId, productId }]],
+    [
+      productConfigurationRevisionActivations,
+      [{ ...publication, effectiveAt: content.effectiveAt, supersededRevision: null }],
+    ],
+    [
+      productConfigurationDefinitionRevisions,
+      [{ ...publication, effectiveFrom: content.effectiveAt, state: 'ACTIVE' }],
+    ],
+    [
+      productConfigurationChoices,
+      choiceKeys.map((choiceKey) => ({
+        choiceKey,
+        definitionId: packageId,
+        label: choiceKey,
+        meaning: choiceKey,
+        required: choiceKey === 'mount' && requiredMount,
+        unitId: null,
+        valueKind: 'SINGLE_CHOICE',
+      })),
+    ],
+    [
+      productConfigurationChoiceOptions,
+      choiceKeys.flatMap((choiceKey) =>
+        ['A', 'NONE'].map((optionKey) => ({
+          choiceKey,
+          definitionId: packageId,
+          label: optionKey,
+          meaning: `Explicit ${optionKey}`,
+          optionKey,
+        })),
+      ),
+    ],
+    [
+      productConfigurationOptionAllowances,
+      choiceKeys.flatMap((choiceKey) =>
+        ['A', 'NONE'].map((optionKey) => ({
+          allowed: true,
+          choiceKey,
+          definitionId: packageId,
+          evidenceRefs,
+          optionKey,
+          packageDefinitionId: null,
+          variantId: null,
+        })),
+      ),
+    ],
+    [variantUnitDivisibility, { currentRevision: 5, divisible: false, unitId }],
+  ]);
+};
+
+it.effect('preserves complete definition evidence when an optional choice is omitted (#1263)', () =>
+  Effect.gen(function* omittedOptionalConfiguration() {
+    const requested = yield* Schema.decodeUnknownEffect(CatalogSelectionSchema)({
+      configuration: {
+        choices: [{ choiceKey: 'mount', value: 'A' }],
+        definition: { resourceRef: ref('commerce.catalog.configuration-definition', packageId), revision: 1 },
+        productRef: selection.productRef,
+        variantRef: selection.variantRef,
+      },
+      productRef: selection.productRef,
+      variantRef: selection.variantRef,
+    });
+    const result = yield* read(optionalConfigurationRows(), requested);
+    expect(result).not.toHaveProperty('reason');
+    expect(result).toMatchObject({
+      configuration: {
+        choiceRevisions: [
+          { choiceKey: 'mount', required: true },
+          { choiceKey: 'finish', required: false },
+        ],
+        status: 'VALID',
+      },
+      status: 'CURRENT',
+    });
+    expect(requested.configuration?.choices).toEqual([{ choiceKey: 'mount', value: 'A' }]);
+  }),
+);
+
+it.effect('accepts complete selections, multiple optional omissions and an all-optional empty subset (#1263)', () =>
+  Effect.gen(function* optionalSubsets() {
+    for (const scenario of [
+      {
+        choices: [
+          { choiceKey: 'mount', value: 'A' },
+          { choiceKey: 'finish', value: 'A' },
+        ],
+        optional: ['finish'],
+        required: true,
+      },
+      { choices: [{ choiceKey: 'mount', value: 'A' }], optional: ['finish', 'paint', 'trim'], required: true },
+      { choices: [], optional: ['finish'], required: false },
+    ]) {
+      const requested = yield* Schema.decodeUnknownEffect(CatalogSelectionSchema)({
+        configuration: {
+          choices: scenario.choices,
+          definition: { resourceRef: ref('commerce.catalog.configuration-definition', packageId), revision: 1 },
+          productRef: selection.productRef,
+          variantRef: selection.variantRef,
+        },
+        productRef: selection.productRef,
+        variantRef: selection.variantRef,
+      });
+      const result = yield* read(optionalConfigurationRows(scenario.optional, scenario.required), requested);
+      expect(result.status).toBe('CURRENT');
+      if (result.status === 'CURRENT') {
+        expect(result.configuration?.choiceRevisions).toHaveLength(1 + scenario.optional.length);
+      }
+      expect(requested.configuration?.choices).toEqual(scenario.choices);
+    }
+  }),
+);
+
+it.effect('keeps required, unknown value, unknown choice and stale definition failures (#1263)', () =>
+  Effect.gen(function* invalidOptionalSelections() {
+    for (const scenario of [
+      { choices: [], reason: 'Configuration Current proof: REQUIRED_CHOICE_MISSING', revision: 1, status: 'INVALID' },
+      {
+        choices: [{ choiceKey: 'mount', value: 'X' }],
+        reason: 'Configuration Current proof: UNKNOWN_OPTION',
+        revision: 1,
+        status: 'INVALID',
+      },
+      {
+        choices: [
+          { choiceKey: 'mount', value: 'A' },
+          { choiceKey: 'foreign', value: 'A' },
+        ],
+        reason: 'Configuration Current proof: UNKNOWN_CHOICE',
+        revision: 1,
+        status: 'INVALID',
+      },
+      {
+        choices: [{ choiceKey: 'mount', value: 'A' }],
+        reason: 'Configuration proof does not match exact target, choices, or Unit revisions',
+        revision: 2,
+        status: 'INDETERMINATE',
+      },
+    ]) {
+      const requested = yield* Schema.decodeUnknownEffect(CatalogSelectionSchema)({
+        configuration: {
+          choices: scenario.choices,
+          definition: {
+            resourceRef: ref('commerce.catalog.configuration-definition', packageId),
+            revision: scenario.revision,
+          },
+          productRef: selection.productRef,
+          variantRef: selection.variantRef,
+        },
+        productRef: selection.productRef,
+        variantRef: selection.variantRef,
+      });
+      expect(yield* read(optionalConfigurationRows(), requested)).toMatchObject({
+        reason: scenario.reason,
+        status: scenario.status,
+      });
+    }
+  }),
+);
+
+it.effect('requires complete measured Unit evidence even when its optional value is omitted (#1263)', () =>
+  Effect.gen(function* optionalMeasuredUnit() {
+    for (const scenario of [
+      { expected: 'CURRENT', selected: false, selectedRevision: 1, unitPresent: true },
+      { expected: 'CURRENT', selected: true, selectedRevision: 1, unitPresent: true },
+      { expected: 'INDETERMINATE', selected: true, selectedRevision: 2, unitPresent: true },
+      { expected: 'INDETERMINATE', selected: false, selectedRevision: 1, unitPresent: false },
+    ]) {
+      const ownerRows = optionalConfigurationRows([]);
+      ownerRows.set(productConfigurationChoices, [
+        {
+          choiceKey: 'mount',
+          definitionId: packageId,
+          label: 'Mount',
+          meaning: 'Mount',
+          required: true,
+          unitId: null,
+          valueKind: 'SINGLE_CHOICE',
+        },
+        {
+          choiceKey: 'length',
+          definitionId: packageId,
+          label: 'Length',
+          meaning: 'Length',
+          required: false,
+          unitId,
+          unitRevision: 1,
+          valueKind: 'MEASURED_VALUE',
+        },
+      ]);
+      ownerRows.set(productConfigurationMeasuredRules, [
+        {
+          choiceKey: 'length',
+          definitionId: packageId,
+          evidenceRefs: ['owner:optional-length'],
+          maximum: null,
+          maximumInclusive: null,
+          minimum: null,
+          minimumInclusive: null,
+          packageDefinitionId: null,
+          step: null,
+          stepBase: null,
+          variantId: null,
+        },
+      ]);
+      ownerRows.set(configurationUnits, scenario.unitPresent ? { unitId } : null);
+      ownerRows.set(configurationUnitRevisions, [
+        {
+          dimension: 'length',
+          effectiveFrom: content.effectiveAt,
+          effectiveTo: null,
+          evidenceRefs: ['owner:length-unit'],
+          lifecycleState: 'ACTIVE',
+          meaning: 'Centimetre',
+          revision: 1,
+        },
+      ]);
+      const requested = yield* Schema.decodeUnknownEffect(CatalogSelectionSchema)({
+        configuration: {
+          choices: [
+            { choiceKey: 'mount', value: 'A' },
+            ...(scenario.selected
+              ? [
+                  {
+                    choiceKey: 'length',
+                    unit: { resourceRef: ref('commerce.catalog.unit', unitId), revision: scenario.selectedRevision },
+                    value: '10',
+                  },
+                ]
+              : []),
+          ],
+          definition: { resourceRef: ref('commerce.catalog.configuration-definition', packageId), revision: 1 },
+          productRef: selection.productRef,
+          variantRef: selection.variantRef,
+        },
+        productRef: selection.productRef,
+        variantRef: selection.variantRef,
+      });
+      const result = yield* read(ownerRows, requested);
+      expect(result.status).toBe(scenario.expected);
+      if (result.status === 'CURRENT') {
+        expect(result.configuration?.unitRevisions).toMatchObject([
+          { ref: ref('commerce.catalog.unit', unitId), revision: 1 },
+        ]);
+      }
+    }
+  }),
+);
+
+it.effect('keeps optional Configuration target, time and value-kind guards (#1263)', () =>
+  Effect.gen(function* optionalProofBoundaries() {
+    const requested = yield* Schema.decodeUnknownEffect(CatalogSelectionSchema)({
+      configuration: {
+        choices: [{ choiceKey: 'mount', value: 'A' }],
+        definition: { resourceRef: ref('commerce.catalog.configuration-definition', packageId), revision: 1 },
+        productRef: selection.productRef,
+        variantRef: selection.variantRef,
+      },
+      productRef: selection.productRef,
+      variantRef: selection.variantRef,
+    });
+    const beforePublication = new Date(content.effectiveAt.getTime() - 1);
+    expect((yield* read(optionalConfigurationRows(), requested, beforePublication)).status).not.toBe('CURRENT');
+    expect((yield* read(optionalConfigurationRows(), requested, new Date(Number.NaN))).status).not.toBe('CURRENT');
+    const wrongTarget = yield* Schema.decodeUnknownEffect(CatalogSelectionSchema)({
+      ...requested,
+      configuration: { ...requested.configuration, variantRef: { ...selection.variantRef, resourceId: unitId } },
+    }).pipe(Effect.flip);
+    expect(wrongTarget).toBeDefined();
+    const foreignValue = yield* Schema.decodeUnknownEffect(CatalogSelectionSchema)({
+      ...requested,
+      configuration: {
+        ...requested.configuration,
+        choices: [
+          {
+            choiceKey: 'mount',
+            unit: { resourceRef: { ...ref('commerce.catalog.unit', unitId), tenantId: unitId }, revision: 1 },
+            value: 'A',
+          },
+        ],
+      },
+    }).pipe(Effect.flip);
+    expect(foreignValue).toBeDefined();
+    const wrongKind = yield* Schema.decodeUnknownEffect(CatalogSelectionSchema)({
+      ...requested,
+      configuration: {
+        ...requested.configuration,
+        choices: [
+          { choiceKey: 'mount', unit: { resourceRef: ref('commerce.catalog.unit', unitId), revision: 1 }, value: 'A' },
+        ],
+      },
+    });
+    expect((yield* read(optionalConfigurationRows(), wrongKind)).status).not.toBe('CURRENT');
+  }),
+);
+
+it.effect('does not treat a supplied optional value as unrestricted (#1263)', () =>
+  Effect.gen(function* forbiddenOptionalValue() {
+    const ownerRows = optionalConfigurationRows();
+    ownerRows.set(
+      productConfigurationOptionAllowances,
+      ['mount', 'finish'].flatMap((choiceKey) =>
+        ['A', 'NONE'].map((optionKey) => ({
+          allowed: choiceKey !== 'finish' || optionKey !== 'A',
+          choiceKey,
+          definitionId: packageId,
+          evidenceRefs: ['owner:optional-configuration'],
+          optionKey,
+          packageDefinitionId: null,
+          variantId: null,
+        })),
+      ),
+    );
+    const requested = yield* Schema.decodeUnknownEffect(CatalogSelectionSchema)({
+      configuration: {
+        choices: [
+          { choiceKey: 'mount', value: 'A' },
+          { choiceKey: 'finish', value: 'A' },
+        ],
+        definition: { resourceRef: ref('commerce.catalog.configuration-definition', packageId), revision: 1 },
+        productRef: selection.productRef,
+        variantRef: selection.variantRef,
+      },
+      productRef: selection.productRef,
+      variantRef: selection.variantRef,
+    });
+    expect(yield* read(ownerRows, requested)).toMatchObject({
+      reason: 'Configuration Current proof: OPTION_NOT_ALLOWED',
+      status: 'INVALID',
+    });
+  }),
+);
+
+it.effect('retains explicit none as a different Selection from optional omission and rejects duplicates (#1263)', () =>
+  Effect.gen(function* distinctOptionalMeaning() {
+    const base = {
+      configuration: {
+        choices: [{ choiceKey: 'mount', value: 'A' }],
+        definition: { resourceRef: ref('commerce.catalog.configuration-definition', packageId), revision: 1 },
+        productRef: selection.productRef,
+        variantRef: selection.variantRef,
+      },
+      productRef: selection.productRef,
+      variantRef: selection.variantRef,
+    };
+    const omitted = yield* Schema.decodeUnknownEffect(CatalogSelectionSchema)(base);
+    const explicit = yield* Schema.decodeUnknownEffect(CatalogSelectionSchema)({
+      ...base,
+      configuration: {
+        ...base.configuration,
+        choices: [...base.configuration.choices, { choiceKey: 'finish', value: 'NONE' }],
+      },
+    });
+    expect((yield* read(optionalConfigurationRows(), omitted)).status).toBe('CURRENT');
+    expect((yield* read(optionalConfigurationRows(), explicit)).status).toBe('CURRENT');
+    expect(Schema.toEquivalence(CatalogSelectionSchema)(omitted, explicit)).toBe(false);
+    expect(
+      Schema.is(CatalogSelectionSchema)({
+        ...base,
+        configuration: {
+          ...base.configuration,
+          choices: [...base.configuration.choices, ...base.configuration.choices],
+        },
+      }),
+    ).toBe(false);
+  }),
+);
+
+const compositionId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const successorAt = new Date('2026-09-18T00:00:00.000Z');
+const setSelection = (revision: number) =>
+  Schema.decodeUnknownSync(CatalogSelectionSchema)({
+    productRef: selection.productRef,
+    setComposition: { resourceRef: ref('commerce.catalog.set-composition', compositionId), revision },
+    variantRef: selection.variantRef,
+  });
+const setRevisionRows = () =>
+  [1, 2].map((revision) => ({
+    actingPrincipalId: scope.principalId,
+    actionInvocationId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+    changeKind: revision === 1 ? 'INITIAL' : 'MATERIAL_CHANGE',
+    compositionId,
+    effectiveFrom: revision === 1 ? content.effectiveAt : successorAt,
+    effectiveTo: null,
+    evidenceRefs: ['catalog:verified-set'],
+    lifecycleState: 'ACTIVE',
+    predecessorRevision: revision === 1 ? null : 1,
+    productId,
+    reason: 'Publish exact fixed components',
+    revision,
+    tenantId,
+    variantId,
+  }));
+const setComponents = () =>
+  [1, 2].flatMap((revision) =>
+    ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'].map((componentId) => ({
+      componentId,
+      componentProductId: componentId,
+      componentVariantId: componentId,
+      compositionId,
+      configuration: null,
+      packageContentRevision: null,
+      packageDefinitionId: null,
+      quantityAmount: '1',
+      quantityUnitId: unitId,
+      revision,
+      tenantId,
+    })),
+  );
+const setRows = () =>
+  new Map<unknown, unknown>([
+    [setCompositions, { compositionId, currentRevision: 2, productId, tenantId, variantId }],
+    [setCompositionRevisions, setRevisionRows()],
+    [setCompositionComponents, setComponents()],
+    [variantUnitDivisibility, { currentRevision: 5, divisible: false, unitId }],
+  ]);
 
 describe('Catalog Selection package and Unit owner basis', () => {
+  it.effect('keeps the selected effective Set revision Current while its published successor is future', () =>
+    Effect.gen(function* effectiveSetRevision() {
+      const before = yield* read(setRows(), setSelection(1));
+      expect(before.status).toBe('CURRENT');
+      if (before.status === 'CURRENT') {
+        expect(before.setCompositionRevision).toBe(1);
+      }
+      expect((yield* read(setRows(), setSelection(2))).status).toBe('INVALID');
+      for (const at of [successorAt, new Date(successorAt.getTime() + 1)]) {
+        expect((yield* read(setRows(), setSelection(1), at)).status).toBe('INVALID');
+        const successor = yield* read(setRows(), setSelection(2), at);
+        expect(successor.status).toBe('CURRENT');
+        if (successor.status === 'CURRENT') {
+          expect(successor.setCompositionRevision).toBe(2);
+        }
+      }
+    }),
+  );
+
+  it.effect('rejects an old Set when effective authority advances between the actual selected and Current reads', () =>
+    Effect.gen(function* setChangesDuringRead() {
+      const initial = setRevisionRows();
+      const successor = initial.map((row) => (row.revision === 2 ? { ...row, effectiveFrom: now } : row));
+      const scriptedRevisions = [initial, successor, successor];
+      const overrides = setRows();
+      overrides.set(setCompositionRevisions, scriptedRevisions);
+      expect((yield* read(overrides, setSelection(1))).status).toBe('INVALID');
+      expect(scriptedRevisions).toHaveLength(0);
+    }),
+  );
+
+  it.effect('never resurrects a superseded Active Set behind a Draft or ended successor', () =>
+    Effect.gen(function* successorState() {
+      for (const state of ['DRAFT', 'RETIRED', 'ENDED']) {
+        const overrides = setRows();
+        overrides.set(
+          setCompositionRevisions,
+          setRevisionRows().map((row) =>
+            row.revision === 2
+              ? {
+                  ...row,
+                  effectiveTo: state === 'ENDED' ? successorAt : null,
+                  lifecycleState: state === 'ENDED' ? 'ACTIVE' : state,
+                }
+              : row,
+          ),
+        );
+        for (const revision of [1, 2]) {
+          expect((yield* read(overrides, setSelection(revision), successorAt)).status).toBe('INVALID');
+        }
+      }
+    }),
+  );
+  it.effect('retains missing Set owner, selected row, identity, interval and Unit failures', () =>
+    Effect.gen(function* setGuards() {
+      for (const table of [setCompositions, setCompositionRevisions]) {
+        const overrides = setRows();
+        overrides.set(table, []);
+        expect((yield* read(overrides, setSelection(1))).status).toBe('INDETERMINATE');
+      }
+      for (const [field, wrong] of [
+        ['productId', unitId],
+        ['variantId', unitId],
+        ['lifecycleState', 'DRAFT'],
+        ['effectiveFrom', successorAt],
+        ['effectiveTo', now],
+      ] as const) {
+        const overrides = setRows();
+        overrides.set(
+          setCompositionRevisions,
+          setRevisionRows().map((row) => (row.revision === 1 ? { ...row, [field]: wrong } : row)),
+        );
+        expect((yield* read(overrides, setSelection(1))).status).toBe('INVALID');
+      }
+      for (const [field, value] of [
+        ['tenantId', unitId],
+        ['resourceType', 'commerce.catalog.product'],
+      ]) {
+        const requested = setSelection(1);
+        Object.defineProperty(requested.setComposition?.resourceRef, field, { value });
+        expect((yield* read(setRows(), requested)).status).toBe('INVALID');
+      }
+      const noUnit = setRows();
+      noUnit.set(variantUnitDivisibility, null);
+      expect((yield* read(noUnit, setSelection(1))).status).toBe('INDETERMINATE');
+    }),
+  );
+  it.effect('does not fabricate Current when reconstructed Set components or head consistency are unavailable', () =>
+    Effect.gen(function* invalidOwnerProof() {
+      const noComponents = setRows();
+      noComponents.set(setCompositionComponents, []);
+      expect((yield* read(noComponents, setSelection(1)).pipe(Effect.flip)).code).toBe(
+        'catalog_persistence_unavailable',
+      );
+      const behindHead = setRows();
+      behindHead.set(setCompositions, { compositionId, currentRevision: 1, productId, tenantId, variantId });
+      expect((yield* read(behindHead, setSelection(2), successorAt).pipe(Effect.flip)).code).toBe(
+        'catalog_persistence_unavailable',
+      );
+    }),
+  );
   it.effect('rejects a non-Unit Configuration reference even when its Unit ID and revision match', () =>
     Effect.gen(function* wrongUnitRef() {
       for (const [field, value] of [

@@ -10,7 +10,10 @@ import {
   getActionResourcePermissionTargetResolver,
 } from '../../../../packages/core-runtime/src/actions/definition.ts';
 
-import { CorrectCatalogToStockBindingPayloadSchema } from '../../shared/actions/correct-catalog-to-stock-binding.ts';
+import {
+  CorrectCatalogToStockBindingPayloadSchema,
+  StockItemReplacementCorrectionCandidateSchema,
+} from '../../shared/actions/correct-catalog-to-stock-binding.ts';
 import { EndCatalogToStockBindingPayloadSchema } from '../../shared/actions/end-catalog-to-stock-binding.ts';
 import { EstablishCatalogToStockBindingPayloadSchema } from '../../shared/actions/establish-catalog-to-stock-binding.ts';
 import { CatalogToStockBindingUnavailable } from '../../shared/domain/catalog-to-stock-binding-unavailable.ts';
@@ -111,6 +114,36 @@ const actions = [
 ] as const;
 
 describe('Catalog-to-Stock Binding Actions', () => {
+  it('accepts explicit same-meaning replacement intent without accepting caller-created Item state', () => {
+    const replacementCandidate = {
+      _tag: 'REPLACE_CURRENT_STOCK_ITEM',
+      catalogSelection: selection,
+      exactSelectionMeaning,
+      expectedBindingRevision: 1,
+      expectedStockItemRef: stockItem.stockItemRef,
+      expectedStockItemRevision: 1,
+    };
+    const decode = Schema.decodeUnknownSync(CorrectCatalogToStockBindingPayloadSchema, { onExcessProperty: 'error' });
+    const replacement = decode({ ...correctPayload, candidate: replacementCandidate });
+    expect(Schema.is(StockItemReplacementCorrectionCandidateSchema)(replacement.candidate)).toBe(true);
+    expect(decode(correctPayload)).toEqual(correctPayload);
+    for (const invalid of [
+      { ...replacementCandidate, expectedBindingRevision: 0 },
+      { ...replacementCandidate, expectedStockItemRevision: 0 },
+      {
+        ...replacementCandidate,
+        expectedStockItemRef: { ...stockItem.stockItemRef, tenantId: '99999999-9999-4999-8999-999999999999' },
+      },
+      { ...replacementCandidate, stockItem },
+      { ...replacementCandidate, replacementStockItemId: '99999999-9999-4999-8999-999999999999' },
+    ]) {
+      expect(() => decode({ ...correctPayload, candidate: invalid })).toThrow();
+    }
+    expect(getActionBusinessPermissionTargetResolver(correctCatalogToStockBindingAction)?.(replacement, scope)).toEqual(
+      getActionBusinessPermissionTargetResolver(correctCatalogToStockBindingAction)?.(correctPayload, scope),
+    );
+  });
+
   it('publishes three explicit, tenant-scoped, idempotent owner lifecycle operations', () => {
     expect(actions.map(([action]) => action.descriptor.actionKey)).toEqual([
       'commerce.inventory.establish-catalog-to-stock-binding',
@@ -189,133 +222,165 @@ describe('Catalog-to-Stock Binding Actions', () => {
     }
   });
 
-  it.effect('propagates the correction to affected owner obligations before returning the corrected binding', () =>
-    Effect.gen(function* propagateCorrection() {
-      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-25T10:05:00.000Z')));
-      const correctedItem = Schema.decodeUnknownSync(StockItemSchema)({
-        ...stockItem,
-        stockItemRef: {
-          ...stockItem.stockItemRef,
-          resourceId: '67666666-6666-4666-8666-666666666666',
-        },
-      });
-      const correction = Schema.decodeUnknownSync(CorrectCatalogToStockBindingPayloadSchema)({
-        ...correctPayload,
-        candidate: { ...correctPayload.candidate, stockItem: correctedItem },
-      });
-      let stored = Schema.decodeUnknownSync(correctCatalogToStockBindingAction.descriptor.resultSchema)({
-        bindingRef,
-        catalogSelection: selection,
-        effectiveFrom: '2026-09-24T10:00:00.000Z',
-        exactSelectionMeaning,
-        revision: 1,
-        stockItemRef: stockItem.stockItemRef,
-        unitRef,
-      });
-      const impactCalls = yield* Ref.make<readonly unknown[]>([]);
-      const lineage = yield* buildInventoryOwnerAcceptanceBindingCorrectionLineage;
-      const observation = {
-        _tag: 'BINDING_CORRECTION' as const,
-        correctionEvidenceRef: evidence.ownerEvidenceRef,
-        effectiveAt: '2026-09-25T10:05:00.000Z',
-      };
-      const confirmationAtRisk = yield* advanceReservationConfirmationHealth(lineage.confirmation, observation);
-      const protectionAtRisk = yield* markCommitmentProtectionAtRisk(lineage.protection, observation);
-      const services: CorrectCatalogToStockBindingServices = {
-        bindings: {
-          endCurrent: () => Effect.die('not used'),
-          findCurrentByExactSelectionMeaning: () => Effect.succeed([stored]),
-          findCurrentByStockItem: (ref) =>
-            Effect.succeed(ref.resourceId === stored.stockItemRef.resourceId ? Option.some(stored) : Option.none()),
-          insertCurrent: () => Effect.die('not used'),
-          readHistory: () => Effect.succeed([]),
-          replaceCurrent: ({ next }) => {
-            stored = next;
-            return Effect.succeed(next);
-          },
-        },
-        impacts: {
-          apply: (input) =>
-            Ref.update(impactCalls, (calls) => [...calls, input]).pipe(
-              Effect.as({
-                affectedRequirements: 1,
-                committedReconciliationChanges: [
-                  {
-                    bindingId: bindingRef.resourceId,
-                    bindingRevision: 2,
-                    correctedAt: observation.effectiveAt,
-                    correctionEvidenceRef: observation.correctionEvidenceRef,
-                    currentStockItemId: correctedItem.stockItemRef.resourceId,
-                    historicalStockItemId: stockItem.stockItemRef.resourceId,
-                    obligationId: lineage.reservation.ref.resourceId,
-                    purchaseDemandOccurrenceId: 'binding-correction-demand-1',
-                    subjectResourceType: 'commerce.inventory.inventory-reservation' as const,
-                    tenantId,
-                  },
-                ],
-                committedReconciliations: 1,
-                confirmationChanges: [confirmationAtRisk],
-                confirmationsAtRisk: 1,
-                protectionChanges: [protectionAtRisk],
-                protectionsAtRisk: 1,
-              }),
-            ),
-        },
-      };
-      const collector = createActionCollector(
-        correctCatalogToStockBindingAction.descriptor.domainEvents,
-        'commerce.inventory',
-        correctCatalogToStockBindingAction.descriptor.accessEvidencePolicy,
-        correctCatalogToStockBindingAction.descriptor.auditEvidenceSchema,
-      );
+  for (const useReplacementIntent of [false, true]) {
+    it.effect(
+      `propagates ${useReplacementIntent ? 'atomic Item replacement' : 'existing-target correction'} to affected owner obligations`,
+      () =>
+        Effect.gen(function* propagateCorrection() {
+          yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-25T10:05:00.000Z')));
+          const correctedItem = Schema.decodeUnknownSync(StockItemSchema)({
+            ...stockItem,
+            stockItemRef: {
+              ...stockItem.stockItemRef,
+              resourceId: '67666666-6666-4666-8666-666666666666',
+            },
+          });
+          const correction = Schema.decodeUnknownSync(CorrectCatalogToStockBindingPayloadSchema)({
+            ...correctPayload,
+            candidate: useReplacementIntent
+              ? {
+                  _tag: 'REPLACE_CURRENT_STOCK_ITEM',
+                  catalogSelection: selection,
+                  exactSelectionMeaning,
+                  expectedBindingRevision: 1,
+                  expectedStockItemRef: stockItem.stockItemRef,
+                  expectedStockItemRevision: 1,
+                }
+              : { ...correctPayload.candidate, stockItem: correctedItem },
+          });
+          let stored = Schema.decodeUnknownSync(correctCatalogToStockBindingAction.descriptor.resultSchema)({
+            bindingRef,
+            catalogSelection: selection,
+            effectiveFrom: '2026-09-24T10:00:00.000Z',
+            exactSelectionMeaning,
+            revision: 1,
+            stockItemRef: stockItem.stockItemRef,
+            unitRef,
+          });
+          const impactCalls = yield* Ref.make<readonly unknown[]>([]);
+          const lineage = yield* buildInventoryOwnerAcceptanceBindingCorrectionLineage;
+          const observation = {
+            _tag: 'BINDING_CORRECTION' as const,
+            correctionEvidenceRef: evidence.ownerEvidenceRef,
+            effectiveAt: '2026-09-25T10:05:00.000Z',
+          };
+          const confirmationAtRisk = yield* advanceReservationConfirmationHealth(lineage.confirmation, observation);
+          const protectionAtRisk = yield* markCommitmentProtectionAtRisk(lineage.protection, observation);
+          const services: CorrectCatalogToStockBindingServices = {
+            bindings: {
+              endCurrent: () => Effect.die('not used'),
+              findCurrentByExactSelectionMeaning: () => Effect.succeed([stored]),
+              findCurrentByStockItem: (ref) =>
+                Effect.succeed(ref.resourceId === stored.stockItemRef.resourceId ? Option.some(stored) : Option.none()),
+              insertCurrent: () => Effect.die('not used'),
+              readHistory: () => Effect.succeed([]),
+              replaceCurrent: ({ next }) => {
+                stored = next;
+                return Effect.succeed(next);
+              },
+            },
+            impacts: {
+              apply: (input) =>
+                Ref.update(impactCalls, (calls) => [...calls, input]).pipe(
+                  Effect.as({
+                    affectedRequirements: 1,
+                    committedReconciliationChanges: [
+                      {
+                        bindingId: bindingRef.resourceId,
+                        bindingRevision: 2,
+                        correctedAt: observation.effectiveAt,
+                        correctionEvidenceRef: observation.correctionEvidenceRef,
+                        currentStockItemId: correctedItem.stockItemRef.resourceId,
+                        historicalStockItemId: stockItem.stockItemRef.resourceId,
+                        obligationId: lineage.reservation.ref.resourceId,
+                        purchaseDemandOccurrenceId: 'binding-correction-demand-1',
+                        subjectResourceType: 'commerce.inventory.inventory-reservation' as const,
+                        tenantId,
+                      },
+                    ],
+                    committedReconciliations: 1,
+                    confirmationChanges: [confirmationAtRisk],
+                    confirmationsAtRisk: 1,
+                    protectionChanges: [protectionAtRisk],
+                    protectionsAtRisk: 1,
+                  }),
+                ),
+            },
+            replaceStockItemAndCorrect: (current, intent) => {
+              expect(useReplacementIntent).toBe(true);
+              expect(current.stockItemRef).toEqual(intent.expectedStockItemRef);
+              stored = {
+                ...current,
+                effectiveFrom: observation.effectiveAt,
+                revision: current.revision + 1,
+                stockItemRef: correctedItem.stockItemRef,
+              };
+              return Effect.succeed(stored);
+            },
+          };
+          const collector = createActionCollector(
+            correctCatalogToStockBindingAction.descriptor.domainEvents,
+            'commerce.inventory',
+            correctCatalogToStockBindingAction.descriptor.accessEvidencePolicy,
+            correctCatalogToStockBindingAction.descriptor.auditEvidenceSchema,
+          );
 
-      const result = yield* handleCorrectCatalogToStockBinding(correction, {
-        actionInvocationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        addDomainEvent: collector.addDomainEvent,
-        addOutboxMessage: collector.addOutboxMessage,
-        compositionRevision,
-        recordAuditEvidence: collector.recordAuditEvidence,
-        recordDataAccess: collector.recordDataAccess,
-        scope,
-        services,
-      });
-      const calls = yield* Ref.get(impactCalls);
-      const events = collector.snapshot();
+          const result = yield* handleCorrectCatalogToStockBinding(correction, {
+            actionInvocationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            addDomainEvent: collector.addDomainEvent,
+            addOutboxMessage: collector.addOutboxMessage,
+            compositionRevision,
+            recordAuditEvidence: collector.recordAuditEvidence,
+            recordDataAccess: collector.recordDataAccess,
+            scope,
+            services,
+          });
+          const calls = yield* Ref.get(impactCalls);
+          const events = collector.snapshot();
 
-      expect(result.revision).toBe(2);
-      expect(calls).toHaveLength(1);
-      expect(calls[0]).toMatchObject({
-        correctedBinding: { revision: 2 },
-        correctionEvidenceRef: evidence.ownerEvidenceRef,
-        previousBinding: { revision: 1, stockItemRef: stockItem.stockItemRef },
-      });
-      expect(events.domainEvents.map(({ eventType }) => eventType)).toEqual([
-        'commerce.inventory.reservation-guarantee-changed.v1',
-        'commerce.inventory.commitment-protection-changed.v1',
-        'commerce.inventory.committed-obligation-changed.v1',
-      ]);
-      expect(events.outboxMessages.map(({ message }) => message.topic)).toEqual([
-        'commerce.inventory.reservation-guarantee-changed.v1',
-        'commerce.inventory.commitment-protection-changed.v1',
-        'commerce.inventory.committed-obligation-changed.v1',
-      ]);
-      expect(events.outboxMessages.map(({ message }) => message.payloadJson)).toMatchObject([
-        {
-          ordering: { _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY' },
-          state: 'AT_RISK',
-          subjectRef: lineage.reservation.ref,
-        },
-        {
-          ordering: { _tag: 'OWNER_AGGREGATE_REVISION', revision: 2 },
-          state: 'AT_RISK',
-          subjectRef: lineage.protection.ref,
-        },
-        {
-          ordering: { _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY' },
-          state: 'RECONCILIATION_REQUIRED',
-          subjectRef: lineage.reservation.ref,
-        },
-      ]);
-    }),
-  );
+          expect(result.revision).toBe(2);
+          if (useReplacementIntent) {
+            expect(events.auditEvidence).toMatchObject({
+              replacedStockItemRef: stockItem.stockItemRef,
+              replacedStockItemRevision: 1,
+            });
+          } else {
+            expect(Object.hasOwn(events.auditEvidence, 'replacedStockItemRef')).toBe(false);
+          }
+          expect(calls).toHaveLength(1);
+          expect(calls[0]).toMatchObject({
+            correctedBinding: { revision: 2 },
+            correctionEvidenceRef: evidence.ownerEvidenceRef,
+            previousBinding: { revision: 1, stockItemRef: stockItem.stockItemRef },
+          });
+          expect(events.domainEvents.map(({ eventType }) => eventType)).toEqual([
+            'commerce.inventory.reservation-guarantee-changed.v1',
+            'commerce.inventory.commitment-protection-changed.v1',
+            'commerce.inventory.committed-obligation-changed.v1',
+          ]);
+          expect(events.outboxMessages.map(({ message }) => message.topic)).toEqual([
+            'commerce.inventory.reservation-guarantee-changed.v1',
+            'commerce.inventory.commitment-protection-changed.v1',
+            'commerce.inventory.committed-obligation-changed.v1',
+          ]);
+          expect(events.outboxMessages.map(({ message }) => message.payloadJson)).toMatchObject([
+            {
+              ordering: { _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY' },
+              state: 'AT_RISK',
+              subjectRef: lineage.reservation.ref,
+            },
+            {
+              ordering: { _tag: 'OWNER_AGGREGATE_REVISION', revision: 2 },
+              state: 'AT_RISK',
+              subjectRef: lineage.protection.ref,
+            },
+            {
+              ordering: { _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY' },
+              state: 'RECONCILIATION_REQUIRED',
+              subjectRef: lineage.reservation.ref,
+            },
+          ]);
+        }),
+    );
+  }
 });

@@ -6,19 +6,9 @@ import { Button } from "@techsio/ui-kit/atoms/button";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { Select } from "@techsio/ui-kit/molecules/select";
+import { currencySymbol } from "@/lib/format";
 import type { CategoryFilters as Filters } from "@/ontos/category-filters";
-import { cs } from "@/i18n/cs";
-
-const availabilityOptions = [
-  { value: "all", label: "Všechny produkty" },
-  { value: "in-stock", label: "Skladem" },
-  { value: "out-of-stock", label: "Není skladem" },
-];
-const sortOptions = [
-  { value: "name", label: "Název A–Z" },
-  { value: "price-asc", label: "Cena od nejnižší" },
-  { value: "price-desc", label: "Cena od nejvyšší" },
-];
+import { useDictionary, useMoney, useStoreHref } from "@/ontos/market-context";
 
 export function CategoryFilters({
   filters,
@@ -29,6 +19,19 @@ export function CategoryFilters({
   pathname: string;
   count: number;
 }) {
+  const cs = useDictionary();
+  const symbol = currencySymbol(useMoney());
+  const href = useStoreHref();
+  const availabilityOptions = [
+    { value: "all", label: cs.filters.availabilityAll },
+    { value: "in-stock", label: cs.filters.availabilityInStock },
+    { value: "out-of-stock", label: cs.filters.availabilityOutOfStock },
+  ];
+  const sortOptions = [
+    { value: "name", label: cs.filters.sortName },
+    { value: "price-asc", label: cs.filters.sortPriceAsc },
+    { value: "price-desc", label: cs.filters.sortPriceDesc },
+  ];
   const [availability, setAvailability] = useState(filters.availability || "all");
   const [sort, setSort] = useState(filters.sort);
   const invalidRange =
@@ -38,41 +41,41 @@ export function CategoryFilters({
   return (
     <form
       data-akros-category-filters
-      action={pathname}
+      action={href(pathname)}
       method="get"
-      aria-label="Filtrování produktů"
+      aria-label={cs.filters.formLabel}
       className="mb-6 grid min-w-0 gap-6 rounded-sm border-(length:--border-sm) border-base-dark bg-base p-6"
     >
       <div className="grid min-w-0 items-end gap-4 sm:grid-cols-2">
         <FormInput
           id="category-query"
           name="q"
-          label="Název nebo SKU"
+          label={cs.filters.query}
           defaultValue={filters.q}
           size="sm"
-          placeholder="Hledat v kategorii"
+          placeholder={cs.filters.queryPlaceholder}
         />
         <fieldset className="grid min-w-0 grid-cols-2 gap-3">
-          <legend className="sr-only">Cena za jednotku s DPH</legend>
+          <legend className="sr-only">{cs.filters.priceLegend}</legend>
           <FormInput
             id="category-min"
             name="min"
-            label="Cena od (Kč)"
+            label={cs.filters.priceFrom(symbol)}
             inputMode="decimal"
             pattern="[0-9]+([.,][0-9]{1,2})?"
             defaultValue={filters.min}
             size="sm"
-            placeholder="Bez omezení"
+            placeholder={cs.filters.pricePlaceholder}
           />
           <FormInput
             id="category-max"
             name="max"
-            label="Cena do (Kč)"
+            label={cs.filters.priceTo(symbol)}
             inputMode="decimal"
             pattern="[0-9]+([.,][0-9]{1,2})?"
             defaultValue={filters.max}
             size="sm"
-            placeholder="Bez omezení"
+            placeholder={cs.filters.pricePlaceholder}
           />
         </fieldset>
         <div className="grid min-w-0 grid-cols-1 gap-4 sm:col-span-2 sm:grid-cols-2">
@@ -84,7 +87,7 @@ export function CategoryFilters({
             onValueChange={({ value }) => setAvailability(value[0] ?? "all")}
             size="sm"
           >
-            <Select.Label>Dostupnost</Select.Label>
+            <Select.Label>{cs.filters.availability}</Select.Label>
             <Select.Control>
               <Select.Trigger>
                 <Select.ValueText />
@@ -109,7 +112,7 @@ export function CategoryFilters({
             onValueChange={({ value }) => setSort(value[0] ?? "name")}
             size="sm"
           >
-            <Select.Label>Řazení</Select.Label>
+            <Select.Label>{cs.filters.sort}</Select.Label>
             <Select.Control>
               <Select.Trigger>
                 <Select.ValueText />
@@ -132,20 +135,20 @@ export function CategoryFilters({
       <input type="hidden" name="sort" value={sort} />
       <div className="flex flex-wrap items-center justify-between gap-4 border-t border-base-dark pt-4">
         <p className="text-sm text-(--color-fg-secondary)">
-          Nalezeno produktů: <strong>{count}</strong>. {cs.catalog.filters.priceInformation}
+          {cs.filters.found}: <strong>{count}</strong>. {cs.catalog.filters.priceInformation}
         </p>
         <div className="flex flex-wrap items-center gap-4">
           <Link as={StoreLink} href={pathname}>
-            Vymazat filtry
+            {cs.filters.clear}
           </Link>
           <Button type="submit" variant="primary" size="sm" uppercase>
-            Filtrovat
+            {cs.filters.submit}
           </Button>
         </div>
       </div>
       {invalidRange && (
         <p role="alert" className="text-sm text-(--color-danger)">
-          Cena od nesmí být vyšší než cena do. Upravte rozsah nebo vymažte filtry.
+          {cs.filters.invalidRange}
         </p>
       )}
     </form>

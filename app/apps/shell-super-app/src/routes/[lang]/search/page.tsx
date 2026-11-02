@@ -6,18 +6,13 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Match } from 'effect';
 
 import type { ShellSearchResult } from '../../../../shared/api.ts';
+import { searchHitState } from '../../search-hit-state.ts';
 import { buildShellNavigation, ShellRouteLink } from '../../shell-frame.tsx';
 import { SignInRedirect } from '../../sign-in-redirect.tsx';
 import { ShellContentLayout } from '../../shell-content-layout.tsx';
 import { useShellControls } from '../../use-shell-controls.ts';
 
-const SearchResultItem = ({
-  currentTenantId,
-  result,
-}: {
-  readonly currentTenantId: string;
-  readonly result: ShellSearchResult;
-}) => {
+const SearchResultItem = ({ result }: { readonly result: ShellSearchResult }) => {
   const { t } = useModernI18n();
   const party = Match.value(result).pipe(
     Match.when({ kind: 'resource' }, () => null),
@@ -43,6 +38,7 @@ const SearchResultItem = ({
           resourceId: result.ref.resourceId,
           resourceType: result.ref.resourceType,
         }}
+        state={searchHitState(result.title)}
         to="/resources/$moduleId/$resourceType/$resourceId"
         variant="secondary"
       >
@@ -75,19 +71,6 @@ const SearchResultItem = ({
           </Badge>
         ) : null}
       </div>
-      <p className="shell:text-body-sm">
-        {`${result.ref.tenantId ?? currentTenantId}:${result.ref.moduleId}:${result.ref.resourceType}:${result.ref.resourceId}`}
-      </p>
-      {result.kind === 'counterparty' ? (
-        <>
-          <p className="shell:text-body-sm">
-            {`${t('shell.search.party')}: ${result.party.ref.tenantId}:${result.party.ref.moduleId}:${result.party.ref.resourceType}:${result.party.ref.resourceId}`}
-          </p>
-          <p className="shell:text-body-sm">
-            {`${t('shell.search.legal_entity')}: ${result.legalEntity.legalEntityId}`}
-          </p>
-        </>
-      ) : null}
     </li>
   );
 };
@@ -117,7 +100,6 @@ const SearchPage = () => {
       </main>
     );
   }
-  const currentTenantId = model.shell.identity.tenantId;
   const agendaLinks = buildShellNavigation(
     { language: language ?? '', navigation: model.shell.navigation.items, unavailableDeployments: [] },
     t,
@@ -163,7 +145,6 @@ const SearchPage = () => {
           <ul className="shell:grid shell:gap-3">
             {ready.response.results.map((result) => (
               <SearchResultItem
-                currentTenantId={currentTenantId}
                 key={`${result.ref.moduleId}:${result.ref.resourceType}:${result.ref.resourceId}`}
                 result={result}
               />

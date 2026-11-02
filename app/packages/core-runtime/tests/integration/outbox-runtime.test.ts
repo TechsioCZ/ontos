@@ -1,10 +1,10 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Deferred, Effect, Exit, Fiber, Option, Schema, pipe } from 'effect';
+import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
+import { Clock, Crypto, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Schema, pipe } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import { makeCoreDatabase } from '../../src/db/client.ts';
-import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import {
   applicationCompositionAuthority,
   domainEvents,
@@ -24,8 +24,12 @@ import {
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { defineOutboxWorker, extractOutboxWorkerSubscriptions } from '../../src/outbox/definition.ts';
 import type { AnyOutboxWorkerRegistration, OutboxWorkerSubscription } from '../../src/outbox/definition.ts';
+import type { OutboxClaim, OutboxRepositoryService } from '../../src/outbox/repository.ts';
 import { OutboxClaimLostError } from '../../src/outbox/errors.ts';
 import { makeOutboxRepository } from '../../src/outbox/repository.ts';
+import { makeOutboxRuntime } from '../../src/outbox/runtime.ts';
+import { makeIsolatedNativeDatabaseFixture } from '../../src/testing/isolated-native-database.ts';
+import { makeApplicationCompositionSnapshotFixture } from '../../src/testing/module-contract.ts';
 import { purgeFixtureRows } from '../support/fixture-cleanup.ts';
 
 const MessageKeySchema = Schema.String.pipe(Schema.brand('MessageKey'));
@@ -110,7 +114,12 @@ const activateConsumer = (database: CoreDatabaseExecutor, tenantId: string, stat
     state,
     tenantId,
   });
-const insertMessage = (database: CoreDatabaseExecutor, tenantId: string, topic = 'producer.fixture.message-created') =>
+const insertMessage = (
+  database: CoreDatabaseExecutor,
+  tenantId: string,
+  topic = 'producer.fixture.message-created',
+  invalidPayload = false,
+) =>
   Effect.gen(function* insertMessageEffect() {
     const messageKey = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
     const event = Option.getOrThrow(
@@ -119,7 +128,7 @@ const insertMessage = (database: CoreDatabaseExecutor, tenantId: string, topic =
           .insert(domainEvents)
           .values({
             eventType: topic,
-            payloadJson: { messageKey },
+            payloadJson: { messageKey: invalidPayload ? 42 : messageKey },
             producerModuleKey: 'producer.fixture',
             subjectModuleKey: 'producer.fixture',
             subjectResourceId: messageKey,
@@ -139,7 +148,7 @@ const insertMessage = (database: CoreDatabaseExecutor, tenantId: string, topic =
           .insert(outboxMessages)
           .values({
             domainEventId: event.domainEventId,
-            payloadJson: { messageKey },
+            payloadJson: { messageKey: invalidPayload ? 42 : messageKey },
             producerModuleKey: 'producer.fixture',
             tenantId,
             topic,
@@ -178,7 +187,15 @@ const cleanupTenant = (database: CoreDatabaseExecutor, tenantId: string) =>
   });
 /** Each test owns the database and tenant until its scoped finalizers complete. */
 const tenantFixture = Effect.gen(function* tenantFixture() {
-  const configuration = yield* loadDatabaseConnectionPair();
+  const isolated = yield* makeIsolatedNativeDatabaseFixture({
+    mode: 'empty',
+    purpose: 'stabilization-1234-outbox-clock',
+  });
+  yield* isolated.migrateCoreSchema();
+  yield* isolated.publishInitialComposition(
+    yield* makeApplicationCompositionSnapshotFixture([], 'outbox-clock-fixture'),
+  );
+  const configuration = isolated.connections;
   const { executor: database } = yield* makeCoreDatabase(configuration.runtime);
   const { executor: adminDatabase } = yield* makeCoreDatabase(configuration.admin);
   yield* Effect.acquireRelease(Effect.void, () =>
@@ -190,7 +207,7 @@ const tenantFixture = Effect.gen(function* tenantFixture() {
   const tenantId = yield* Effect.acquireRelease(insertTenant(database), (id) =>
     cleanupTenant(database, id).pipe(Effect.orDie),
   );
-  return { adminDatabase, database, tenantId };
+  return { adminDatabase, configuration, database, tenantId };
 });
 
 /** Seed and match one worker against a clock advanced beyond its pending rows. */
@@ -200,12 +217,18 @@ const matchedWorker = Effect.fn(function* matchedWorker(
   tenantId: string,
   workerKey: string,
   options: Parameters<typeof makeWorker>[1] & {
+    readonly invalidLastPayload?: boolean;
     readonly messages?: number;
   } = {},
 ) {
   yield* activateConsumer(database, tenantId);
-  const messages = yield* Effect.forEach(Array.from({ length: options.messages ?? 1 }), () =>
-    insertMessage(database, tenantId),
+  const messages = yield* Effect.forEach(Array.from({ length: options.messages ?? 1 }), (_value, index) =>
+    insertMessage(
+      database,
+      tenantId,
+      'producer.fixture.message-created',
+      options.invalidLastPayload === true && index === (options.messages ?? 1) - 1,
+    ),
   );
   const registration = makeWorker(workerKey, options);
   const repository = makeOutboxRepository(database, yield* Crypto.Crypto);
@@ -215,7 +238,23 @@ const matchedWorker = Effect.fn(function* matchedWorker(
   return { messages, now, registration, repository };
 });
 
-it.layer(NodeCrypto.layer, { excludeTestServices: true })('outbox runtime', (suite) => {
+const observeClaims = (
+  repository: OutboxRepositoryService,
+  entered: Deferred.Deferred<OutboxClaim>,
+): OutboxRepositoryService => ({
+  ...repository,
+  claimNext: (...args) =>
+    repository
+      .claimNext(...args)
+      .pipe(Effect.tap((option) => (Option.isSome(option) ? Deferred.succeed(entered, option.value) : Effect.void))),
+});
+
+const nativeServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(NodeCrypto.layer),
+);
+
+it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite) => {
   suite.effect('matches zero, one, or multiple exact workers once without historical backfill', () =>
     Effect.gen(function* matchesZeroOneOrMultiple() {
       const { adminDatabase, database, tenantId } = yield* tenantFixture;
@@ -816,6 +855,284 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('outbox runtime', (sui
         ).toEqual([]);
       }),
   );
+  suite.effect('a long sequential production cycle persists each full lease and completion instant', () =>
+    Effect.gen(function* sequentialNativeClock() {
+      const { adminDatabase, configuration, database, tenantId } = yield* tenantFixture;
+      const {
+        messages,
+        now,
+        registration: descriptorWorker,
+        repository,
+      } = yield* matchedWorker(adminDatabase, database, tenantId, 'consumer.fixture.operation-clock', { messages: 5 });
+      const clock = yield* TestClock.make();
+      yield* clock.setTime(now.getTime());
+      const { executor: competitorExecutor } = yield* makeCoreDatabase(configuration.runtime);
+      const competitor = makeOutboxRuntime(makeOutboxRepository(competitorExecutor, yield* Crypto.Crypto));
+      const originalMessages = yield* database
+        .select()
+        .from(outboxMessages)
+        .where(eq(outboxMessages.tenantId, tenantId));
+      const originalEvents = yield* database.select().from(domainEvents).where(eq(domainEvents.tenantId, tenantId));
+      let handled = 0;
+      const registration = defineOutboxWorker(
+        { ...descriptorWorker.descriptor, leaseDurationMs: 30_000 },
+        (_payload, context) =>
+          Effect.gen(function* timedNativeHandler() {
+            const claimedAt = yield* clock.currentTimeMillis;
+            const [delivery] = yield* database
+              .select()
+              .from(outboxDeliveries)
+              .where(eq(outboxDeliveries.outboxDeliveryId, context.deliveryId));
+            expect(delivery?.claimedAt?.getTime()).toBe(claimedAt);
+            expect(delivery?.updatedAt.getTime()).toBe(claimedAt);
+            expect(delivery?.claimExpiresAt?.getTime()).toBe(claimedAt + 30_000);
+            handled += 1;
+            if (handled === 5) {
+              const competing = yield* competitor
+                .runCycle({
+                  claimOwner: 'same-owner-instance-b',
+                  compositionRevision,
+                  maxDeliveries: 1,
+                  registrations: [descriptorWorker],
+                  subscriptions: [descriptorWorker.descriptor],
+                })
+                .pipe(Effect.provideService(Clock.Clock, clock));
+              expect(competing.claimed).toBe(0);
+            }
+            yield* clock.adjust('8 seconds');
+          }),
+      );
+      const result = yield* makeOutboxRuntime(repository)
+        .runCycle({
+          claimOwner: 'same-owner-instance-a',
+          compositionRevision,
+          maxDeliveries: 5,
+          registrations: [registration],
+          subscriptions: [registration.descriptor],
+        })
+        .pipe(Effect.provideService(Clock.Clock, clock));
+      expect(result.succeeded).toBe(5);
+      expect(yield* database.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId))).toEqual(
+        originalMessages,
+      );
+      expect(yield* database.select().from(domainEvents).where(eq(domainEvents.tenantId, tenantId))).toEqual(
+        originalEvents,
+      );
+      const attempts = yield* database
+        .select()
+        .from(outboxAttempts)
+        .innerJoin(outboxDeliveries, eq(outboxDeliveries.outboxDeliveryId, outboxAttempts.outboxDeliveryId))
+        .innerJoin(outboxMessages, eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId))
+        .where(eq(outboxMessages.tenantId, tenantId))
+        .orderBy(asc(outboxAttempts.startedAt));
+      expect(attempts.map((row) => row.outbox_attempts.startedAt.getTime() - now.getTime())).toEqual([
+        0, 8000, 16_000, 24_000, 32_000,
+      ]);
+      expect(attempts.map((row) => row.outbox_attempts.finishedAt?.getTime())).toEqual(
+        [8000, 16_000, 24_000, 32_000, 40_000].map((offset) => now.getTime() + offset),
+      );
+      expect(attempts.map((row) => row.outbox_deliveries.updatedAt.getTime())).toEqual(
+        [8000, 16_000, 24_000, 32_000, 40_000].map((offset) => now.getTime() + offset),
+      );
+      const [checkpoint] = yield* database
+        .select()
+        .from(workerCheckpoints)
+        .where(eq(workerCheckpoints.tenantId, tenantId));
+      expect(checkpoint?.lastTenantSequenceNo).toBe(messages.at(-1)?.tenantSequenceNo);
+      expect(checkpoint?.lastProcessedAt?.getTime()).toBe(now.getTime() + 40_000);
+      expect(checkpoint?.updatedAt.getTime()).toBe(now.getTime() + 40_000);
+    }),
+  );
+
+  for (const outcome of ['declared', 'defect', 'decode'] as const) {
+    suite.effect(`a later production ${outcome} failure schedules native retry from failure time`, () =>
+      Effect.gen(function* failureNativeClock() {
+        const { adminDatabase, database, tenantId } = yield* tenantFixture;
+        const {
+          now,
+          registration: descriptorWorker,
+          repository,
+        } = yield* matchedWorker(adminDatabase, database, tenantId, 'consumer.fixture.failure-clock', {
+          invalidLastPayload: outcome === 'decode',
+          maxAttempts: 2,
+          messages: 2,
+        });
+        const clock = yield* TestClock.make();
+        yield* clock.setTime(now.getTime());
+        let handled = 0;
+        const registration = defineOutboxWorker(descriptorWorker.descriptor, () =>
+          Effect.gen(function* delayedNativeFailure() {
+            handled += 1;
+            yield* clock.adjust(handled === 1 ? '8 seconds' : '1 second');
+            if (handled === 2) {
+              return yield* outcome === 'defect'
+                ? Effect.die(new Error('private handler detail'))
+                : Effect.fail(
+                    new OutboxClaimLostError({ code: 'outbox_claim_lost', reason: 'private handler detail' }),
+                  );
+            }
+            return yield* Effect.void;
+          }),
+        );
+        const result = yield* makeOutboxRuntime(repository)
+          .runCycle({
+            claimOwner: 'failure-runtime',
+            compositionRevision,
+            maxDeliveries: 2,
+            registrations: [registration],
+            subscriptions: [registration.descriptor],
+          })
+          .pipe(Effect.provideService(Clock.Clock, clock));
+        expect(result).toMatchObject({ failed: 1, retried: 1, succeeded: 1 });
+        expect(handled).toBe(outcome === 'decode' ? 1 : 2);
+        const failureOffset = outcome === 'decode' ? 8000 : 9000;
+        const retryOffset = failureOffset + 1000;
+        const [failed] = yield* database.select().from(outboxDeliveries).where(eq(outboxDeliveries.status, 'pending'));
+        expect(failed?.updatedAt.getTime()).toBe(now.getTime() + failureOffset);
+        expect(failed?.availableAt.getTime()).toBe(now.getTime() + retryOffset);
+        expect(
+          Option.isNone(
+            yield* repository.claimNext(
+              [registration],
+              'retry-too-soon',
+              advanceDate(now, retryOffset - 1),
+              compositionRevision,
+            ),
+          ),
+        ).toBe(true);
+        const retried = Option.getOrThrow(
+          yield* repository.claimNext(
+            [registration],
+            'retry-boundary',
+            advanceDate(now, retryOffset),
+            compositionRevision,
+          ),
+        );
+        expect(retried.attemptNumber).toBe(2);
+        expect(yield* repository.fail(retried, 'safe terminal failure', advanceDate(now, 11_000))).toBe('dead');
+        const attempts = yield* database
+          .select()
+          .from(outboxAttempts)
+          .where(eq(outboxAttempts.outboxDeliveryId, retried.deliveryId))
+          .orderBy(asc(outboxAttempts.startedAt));
+        expect(attempts[0]?.startedAt.getTime()).toBe(now.getTime() + 8000);
+        expect(attempts[0]?.finishedAt?.getTime()).toBe(now.getTime() + failureOffset);
+        const expectedReasons = {
+          declared: 'The Outbox Worker handler returned a declared failure',
+          decode: 'The Outbox Message payload does not match its published schema',
+          defect: 'The Outbox Worker handler failed unexpectedly',
+        };
+        expect(attempts[0]?.errorMessage).toBe(expectedReasons[outcome]);
+        expect(attempts[1]?.finishedAt?.getTime()).toBe(now.getTime() + 11_000);
+      }),
+    );
+  }
+
+  suite.effect('runtime restart reclaims exactly at expiry and rejects both stale finalizers', () =>
+    Effect.gen(function* nativeClockRestart() {
+      const { adminDatabase, configuration, database, tenantId } = yield* tenantFixture;
+      const {
+        now,
+        registration: descriptorWorker,
+        repository,
+      } = yield* matchedWorker(adminDatabase, database, tenantId, 'consumer.fixture.restart-clock');
+      const clock = yield* TestClock.make();
+      yield* clock.setTime(now.getTime());
+      const entered = yield* Deferred.make<Parameters<typeof repository.complete>[0]>();
+      const effects = new Set<string>();
+      const handlerEntered = yield* Deferred.make<null>();
+      const registration = defineOutboxWorker(descriptorWorker.descriptor, (_payload, context) =>
+        Effect.gen(function* restartableHandler() {
+          effects.add(context.deliveryId);
+          const stale = yield* Deferred.await(entered);
+          expect(context.claimId).not.toBe(stale.claimId);
+          const finishedAt = yield* DateTime.nowAsDate;
+          expect(Schema.is(OutboxClaimLostError)(yield* Effect.flip(repository.complete(stale, finishedAt)))).toBe(
+            true,
+          );
+          expect(
+            Schema.is(OutboxClaimLostError)(yield* Effect.flip(repository.fail(stale, 'stale failure', finishedAt))),
+          ).toBe(true);
+          const [owned] = yield* database
+            .select()
+            .from(outboxDeliveries)
+            .where(eq(outboxDeliveries.outboxDeliveryId, context.deliveryId));
+          expect(owned?.status).toBe('processing');
+          expect(owned?.claimedBy).toBe(context.claimId);
+          const [attempt] = yield* database
+            .select()
+            .from(outboxAttempts)
+            .where(eq(outboxAttempts.outboxDeliveryId, context.deliveryId))
+            .orderBy(asc(outboxAttempts.startedAt));
+          expect(attempt).toBeDefined();
+        }),
+      );
+      const interruptedRegistration = defineOutboxWorker(registration.descriptor, (_payload, context) =>
+        Effect.gen(function* interruptedNativeHandler() {
+          effects.add(context.deliveryId);
+          yield* Deferred.succeed(handlerEntered, null);
+          return yield* Effect.never;
+        }),
+      );
+      const first = yield* Effect.scoped(
+        Effect.gen(function* firstRuntimeScope() {
+          const { executor } = yield* makeCoreDatabase(configuration.runtime);
+          const originalRepository = makeOutboxRepository(executor, yield* Crypto.Crypto);
+          const probeRepository = observeClaims(originalRepository, entered);
+          const running = yield* makeOutboxRuntime(probeRepository)
+            .runCycle({
+              claimOwner: 'before-restart',
+              compositionRevision,
+              maxDeliveries: 1,
+              registrations: [interruptedRegistration],
+              subscriptions: [interruptedRegistration.descriptor],
+            })
+            .pipe(Effect.provideService(Clock.Clock, clock), Effect.forkChild);
+          const claimed = yield* Deferred.await(entered);
+          yield* Deferred.await(handlerEntered);
+          yield* Fiber.interrupt(running);
+          return claimed;
+        }),
+      );
+      yield* clock.setTime(now.getTime() + 999);
+      const { executor: restartedExecutor } = yield* makeCoreDatabase(configuration.runtime);
+      const restarted = makeOutboxRepository(restartedExecutor, yield* Crypto.Crypto);
+      const input = {
+        claimOwner: 'after-restart',
+        compositionRevision,
+        maxDeliveries: 1,
+        registrations: [registration],
+        subscriptions: [registration.descriptor],
+      };
+      expect(
+        (yield* makeOutboxRuntime(restarted).runCycle(input).pipe(Effect.provideService(Clock.Clock, clock))).claimed,
+      ).toBe(0);
+      yield* clock.setTime(now.getTime() + 1000);
+      const result = yield* makeOutboxRuntime(restarted)
+        .runCycle(input)
+        .pipe(Effect.provideService(Clock.Clock, clock));
+      expect(result.succeeded).toBe(1);
+      expect(
+        Schema.is(OutboxClaimLostError)(yield* Effect.flip(repository.complete(first, advanceDate(now, 1001)))),
+      ).toBe(true);
+      expect(
+        Schema.is(OutboxClaimLostError)(
+          yield* Effect.flip(repository.fail(first, 'stale failure', advanceDate(now, 1001))),
+        ),
+      ).toBe(true);
+      const attempts = yield* database
+        .select()
+        .from(outboxAttempts)
+        .where(eq(outboxAttempts.outboxDeliveryId, first.deliveryId))
+        .orderBy(asc(outboxAttempts.startedAt));
+      expect(attempts).toHaveLength(2);
+      expect(attempts[0]?.finishedAt?.getTime()).toBe(now.getTime() + 1000);
+      expect(attempts[1]?.startedAt.getTime()).toBe(now.getTime() + 1000);
+      expect(attempts[1]?.finishedAt?.getTime()).toBe(now.getTime() + 1000);
+      expect(effects.size).toBe(1);
+    }),
+  );
+
   it('keeps test descriptor arrays compatible with the erased startup registry surface', () => {
     const registry: readonly AnyOutboxWorkerRegistration[] = [makeWorker('consumer.fixture.registry-proof')];
     expect(registry[0]?.descriptor.workerKey).toBe('consumer.fixture.registry-proof');

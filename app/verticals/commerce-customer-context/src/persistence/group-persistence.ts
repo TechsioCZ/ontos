@@ -28,10 +28,12 @@ const MODULE_KEY = 'commerce.customer-context';
 const JsonObjectSchema = Schema.Record(Schema.String, Schema.Unknown);
 type JsonObject = typeof JsonObjectSchema.Type;
 
+// SQL object rows reach Core before transformations. Keep their wire shape here;
+// decode exact public owner documents only after the raw scoped result is validated.
 const GroupRowSchema = Schema.Struct({
   actual_revision: Schema.Int,
   changed: Schema.Boolean,
-  group_json: Schema.OptionFromNullOr(JsonObjectSchema),
+  group_json: Schema.toEncoded(Schema.OptionFromNullOr(JsonObjectSchema)),
   outcome: Schema.String,
 });
 type GroupRow = typeof GroupRowSchema.Type;
@@ -41,21 +43,21 @@ const ArchiveRowSchema = Schema.Struct({
   cancelled_count: Schema.Int,
   changed: Schema.Boolean,
   ended_count: Schema.Int,
-  group_json: Schema.OptionFromNullOr(JsonObjectSchema),
+  group_json: Schema.toEncoded(Schema.OptionFromNullOr(JsonObjectSchema)),
   outcome: Schema.String,
 });
 
 const MembershipRowSchema = Schema.Struct({
   changed: Schema.Boolean,
-  membership_json: Schema.OptionFromNullOr(JsonObjectSchema),
+  membership_json: Schema.toEncoded(Schema.OptionFromNullOr(JsonObjectSchema)),
   outcome: Schema.String,
-  profile_state: Schema.OptionFromNullOr(Schema.String),
+  profile_state: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
 });
 
 const MembershipPageRowSchema = Schema.Struct({
-  group_json: Schema.OptionFromNullOr(JsonObjectSchema),
+  group_json: Schema.toEncoded(Schema.OptionFromNullOr(JsonObjectSchema)),
   items_json: Schema.Array(JsonObjectSchema),
-  next_cursor: Schema.OptionFromNullOr(Schema.String),
+  next_cursor: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
   outcome: Schema.String,
 });
 
@@ -271,7 +273,7 @@ const unavailable = (failure: ScopedRoutineInvocationError | string): CustomerGr
 const decodeGroup = (
   value: JsonObject,
 ): Effect.Effect<CommerceCustomerGroup, CustomerGroupPersistenceUnavailableError> =>
-  Schema.decodeUnknownEffect(CommerceCustomerGroupSchema)(value).pipe(
+  Schema.decodeUnknownEffect(CommerceCustomerGroupSchema, { onExcessProperty: 'error' })(value).pipe(
     Effect.mapError((cause) => {
       const error = unavailable('The Customer Group routine returned an invalid group');
       Object.defineProperty(error, 'cause', { configurable: true, value: cause });
@@ -282,7 +284,7 @@ const decodeGroup = (
 const decodeMembership = (
   value: JsonObject,
 ): Effect.Effect<CommerceCustomerGroupMembership, CustomerGroupPersistenceUnavailableError> =>
-  Schema.decodeUnknownEffect(CommerceCustomerGroupMembershipSchema)(value).pipe(
+  Schema.decodeUnknownEffect(CommerceCustomerGroupMembershipSchema, { onExcessProperty: 'error' })(value).pipe(
     Effect.mapError((cause) => {
       const error = unavailable('The Customer Group routine returned an invalid membership');
       Object.defineProperty(error, 'cause', { configurable: true, value: cause });
@@ -312,9 +314,9 @@ const requireRow = <Row>(
 };
 
 const requireGroup = (row: GroupRow) =>
-  Option.isNone(row.group_json)
+  row.group_json === null
     ? Effect.fail(unavailable('The Customer Group routine omitted its group result'))
-    : decodeGroup(row.group_json.value);
+    : decodeGroup(row.group_json);
 
 const profileKind = (command: AssignCustomerGroupCommand | RemoveCustomerGroupCommand) => command.profile.profileKind;
 
@@ -344,10 +346,10 @@ const mapArchiveRow = (
   if (row.outcome === 'LIFECYCLE_CONFLICT') {
     return Effect.succeed({ _tag: 'lifecycle_conflict' });
   }
-  if (row.outcome !== 'ARCHIVED' || Option.isNone(row.group_json)) {
+  if (row.outcome !== 'ARCHIVED' || row.group_json === null) {
     return Effect.fail(unavailable('The Customer Group archive outcome is invalid'));
   }
-  return decodeGroup(row.group_json.value).pipe(
+  return decodeGroup(row.group_json).pipe(
     Effect.map((group) => ({
       _tag: 'archived' as const,
       cancelledCount: row.cancelled_count,
@@ -372,7 +374,7 @@ const mapAssignRow = (
     return Effect.succeed({ _tag: 'group_inactive' });
   }
   if (row.outcome === 'PROFILE_INELIGIBLE') {
-    const encodedProfileState = Option.getOrNull(row.profile_state);
+    const encodedProfileState = row.profile_state;
     const profileState =
       encodedProfileState === 'SUSPENDED' ||
       encodedProfileState === 'ARCHIVED' ||
@@ -381,10 +383,10 @@ const mapAssignRow = (
         : 'ARCHIVED';
     return Effect.succeed({ _tag: 'profile_ineligible', profileState });
   }
-  if (Option.isNone(row.membership_json)) {
+  if (row.membership_json === null) {
     return Effect.fail(unavailable('The Customer Group assignment omitted its membership'));
   }
-  return decodeMembership(row.membership_json.value).pipe(
+  return decodeMembership(row.membership_json).pipe(
     Effect.flatMap((membership) => {
       if (row.outcome === 'ASSIGNED') {
         return Effect.succeed<AssignCustomerGroupPersistenceOutcome>({
@@ -452,10 +454,10 @@ const mapRemoveRow = (
   if (row.outcome === 'NOT_FOUND') {
     return Effect.succeed({ _tag: 'not_found' });
   }
-  if (Option.isNone(row.membership_json)) {
+  if (row.membership_json === null) {
     return Effect.fail(unavailable('The Customer Group removal omitted its membership'));
   }
-  return decodeMembership(row.membership_json.value).pipe(
+  return decodeMembership(row.membership_json).pipe(
     Effect.flatMap((membership) => {
       if (row.outcome === 'REMOVAL_CONFLICT') {
         return Effect.succeed<RemoveCustomerGroupPersistenceOutcome>({
@@ -629,7 +631,7 @@ export const customerGroupPersistenceForTransaction = (
         Effect.mapError(unavailable),
         Effect.flatMap((rows) => requireRow(rows, effectiveMembershipsRoutine.routineKey)),
         Effect.flatMap((row) => {
-          if (Option.isSome(row.next_cursor)) {
+          if (row.next_cursor !== null) {
             return Effect.fail(unavailable('The effective Customer Group Membership routine returned a partial set'));
           }
           if (row.outcome === 'PROFILE_NOT_FOUND') {
@@ -649,12 +651,12 @@ export const customerGroupPersistenceForTransaction = (
       Effect.mapError(unavailable),
       Effect.flatMap((rows) => requireRow(rows, historyRoutine.routineKey)),
       Effect.flatMap((row) => {
-        if (row.outcome === 'NOT_FOUND' || Option.isNone(row.group_json)) {
+        if (row.outcome === 'NOT_FOUND' || row.group_json === null) {
           return Effect.succeed(Option.none<CustomerGroupHistoryResult>());
         }
         return Effect.all(
           {
-            group: decodeGroup(row.group_json.value),
+            group: decodeGroup(row.group_json),
             memberships: decodeMemberships(row.items_json),
           },
           { concurrency: 2 },
@@ -664,7 +666,7 @@ export const customerGroupPersistenceForTransaction = (
               asOf: query.asOf,
               group,
               memberships,
-              nextCursor: Option.getOrNull(row.next_cursor),
+              nextCursor: row.next_cursor,
             }),
           ),
         );
@@ -695,7 +697,7 @@ export const customerGroupPersistenceForTransaction = (
                     effectiveAt: query.effectiveAt,
                     groupRef: query.groupRef,
                     items,
-                    nextCursor: Option.getOrNull(row.next_cursor),
+                    nextCursor: row.next_cursor,
                   }),
                 ),
               ),

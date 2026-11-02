@@ -1,6 +1,5 @@
 import { ConnectionModuleIdSchema } from '@app/shared-contracts/oauth-connections';
 // Effective authority for an agent connection pure module: no database or SpiceDB imports.
-import type { AgentModuleGrant } from '@app/shared-contracts/agent-access';
 import type {
   ConnectionModule,
   ConnectionModulesRequest,
@@ -91,6 +90,3 @@ export const isModulesRequestWithin = (
       const module = offered.find((entry) => entry.moduleId === grant.moduleId);
       return module !== undefined && (grant.access === 'read' || module.write);
     }));
-
-export const contextModulesOf = (modules: readonly ConnectionModule[]): readonly AgentModuleGrant[] =>
-  modules.map((module) => ({ access: module.write ? 'write' : 'read', moduleId: module.moduleId }));

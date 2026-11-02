@@ -15,8 +15,23 @@ import {
   stageServicePrincipals,
 } from '../demo/reconcile-stage-service-grants.mts';
 import type { ServiceGrantRpc } from '../demo/reconcile-stage-service-grants.mts';
+import { marketRetirementPrincipal, marketRetirementRelationships } from '../demo/permissions.mts';
+import { marketRetirementSourceAction } from './market-retirement-contract.fixture.mts';
+
+const marketActions = [marketRetirementSourceAction];
+const marketGrants = marketRetirementRelationships(marketActions).map((item) =>
+  v1.Relationship.create({
+    relation: item.relation,
+    resource: { objectId: item.resourceId, objectType: item.resourceType },
+    subject: {
+      object: { objectId: item.subjectId, objectType: item.subjectType },
+      optionalRelation: item.subjectRelation ?? '',
+    },
+  }),
+);
 
 const desired = desiredServiceGrants([
+  ...marketActions,
   {
     actionKey: 'work.tasks.apply-command',
     legalEntityScope: 'required',
@@ -153,7 +168,7 @@ it.effect('check reports initially absent service memberships without blocking a
       expect(error.reason).toContain('membership is missing');
     }
     expect(state.writes).toHaveLength(0);
-    expect(stageServicePrincipals()).toHaveLength(3);
+    expect(stageServicePrincipals()).toHaveLength(4);
     expect(
       stageServicePrincipals().every(
         ({ legalEntityId, tenantId }) =>
@@ -166,6 +181,111 @@ it.effect('check reports initially absent service memberships without blocking a
     ).toBe(true);
   }),
 );
+
+it('bootstraps the dedicated Market service and reconciles its exact policy through the same principal set', () => {
+  expect(stageServicePrincipals()).toContainEqual({
+    displayName: marketRetirementPrincipal.displayName,
+    legalEntityId: marketRetirementPrincipal.legalEntityId,
+    principalId: marketRetirementPrincipal.principalId,
+    tenantId: '70000000-0000-4000-8000-000000000020',
+  });
+  expect(serviceGrantMemberships()).toHaveLength(stageServicePrincipals().length);
+  expect(serviceGrantMemberships().map((row) => row.subject?.object?.objectId)).toEqual(
+    stageServicePrincipals().map(({ principalId }) => principalId),
+  );
+  for (const grant of marketGrants) {
+    expect(desired).toContainEqual(grant);
+  }
+  expect(
+    marketGrants.filter((row) => row.resource?.objectType === 'action_grant' && row.relation === 'role'),
+  ).toHaveLength(1);
+  expect(marketGrants.some((row) => row.relation === 'reader_role')).toBe(true);
+});
+
+it.effect('plans a missing Market membership read-only but refuses apply and verify before grant writes', () =>
+  Effect.gen(function* missingMarketMembership() {
+    const state = memoryRelationships(
+      desired.filter(
+        (row) =>
+          row.resource?.objectType !== 'legal_entity' ||
+          row.relation !== 'member' ||
+          row.subject?.object?.objectId !== marketRetirementPrincipal.principalId,
+      ),
+    );
+    expect((yield* reconcileServiceGrants(state.rpc, desired, 'check')).missing).toBe(1);
+    for (const mode of ['apply', 'verify'] as const) {
+      const error = yield* reconcileServiceGrants(state.rpc, desired, mode).pipe(Effect.flip);
+      expect(Schema.is(ServiceGrantError)(error)).toBe(true);
+      if (Schema.is(ServiceGrantError)(error)) {
+        expect(error.reason).toContain(marketRetirementPrincipal.principalId);
+      }
+    }
+    expect(state.writes).toHaveLength(0);
+  }),
+);
+
+it.effect('plans and reconciles Market-only policy, verifies readback and preserves other services', () =>
+  Effect.gen(function* marketPolicyLifecycle() {
+    const marketKeys = new Set(marketGrants.map((row) => v1.Relationship.toJsonString(row)));
+    const existing = [
+      ...desired.filter((row) => !marketKeys.has(v1.Relationship.toJsonString(row))),
+      ...serviceGrantMemberships(),
+    ];
+    const existingKeys = new Set(existing.map((row) => v1.Relationship.toJsonString(row)));
+    const missing = marketGrants.filter((row) => !existingKeys.has(v1.Relationship.toJsonString(row)));
+    const state = memoryRelationships(existing);
+    expect(yield* readMissingServiceGrants(state.rpc, marketGrants)).toEqual(missing);
+    expect(yield* reconcileServiceGrants(state.rpc, marketGrants, 'check')).toEqual({
+      applied: 0,
+      desired: marketGrants.length,
+      missing: missing.length,
+    });
+    expect(state.writes).toHaveLength(0);
+    expect(
+      Schema.is(ServiceGrantError)(yield* reconcileServiceGrants(state.rpc, marketGrants, 'verify').pipe(Effect.flip)),
+    ).toBe(true);
+    expect(state.writes).toHaveLength(0);
+    expect(yield* reconcileServiceGrants(state.rpc, marketGrants, 'apply')).toEqual({
+      applied: missing.length,
+      desired: marketGrants.length,
+      missing: 0,
+    });
+    expect(state.writes).toHaveLength(1);
+    expect(state.writes[0].updates.map((update) => update.relationship)).toEqual(missing);
+    expect((yield* reconcileServiceGrants(state.rpc, marketGrants, 'verify')).missing).toBe(0);
+    expect((yield* reconcileServiceGrants(state.rpc, marketGrants, 'apply')).applied).toBe(0);
+    expect(state.writes).toHaveLength(1);
+  }),
+);
+
+for (const constraint of ['caveat', 'expiration'] as const) {
+  it.effect(`preserves an existing Market membership ${constraint} before bootstrap or policy writes`, () =>
+    Effect.gen(function* constrainedMarketMembership() {
+      const state = memoryRelationships(
+        serviceGrantMemberships().map((membership) => {
+          if (membership.subject?.object?.objectId !== marketRetirementPrincipal.principalId) {
+            return membership;
+          }
+          return v1.Relationship.create({
+            ...membership,
+            ...(constraint === 'caveat'
+              ? { optionalCaveat: { caveatName: 'market-constraint' } }
+              : { optionalExpiresAt: { seconds: '1' } }),
+          });
+        }),
+      );
+      expect(Schema.is(ServiceGrantError)(yield* assertServiceMembershipsCompatible(state.rpc).pipe(Effect.flip))).toBe(
+        true,
+      );
+      for (const mode of ['check', 'apply', 'verify'] as const) {
+        expect(
+          Schema.is(ServiceGrantError)(yield* reconcileServiceGrants(state.rpc, desired, mode).pipe(Effect.flip)),
+        ).toBe(true);
+      }
+      expect(state.writes).toHaveLength(0);
+    }),
+  );
+}
 
 it.effect(
   'allows missing memberships but rejects caveated membership before native provisioning can overwrite it',

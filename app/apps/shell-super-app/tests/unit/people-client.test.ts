@@ -6,7 +6,7 @@ import {
   changeCompanyMembership,
   changeScopedRole,
   loadPeople,
-  loadPeopleForPerson,
+  loadAllPeople,
   invitePerson,
 } from '../../src/routes/people/people-client.ts';
 
@@ -133,7 +133,7 @@ it.layer(FetchHttpClient.layer)((test) => {
     }),
   );
 
-  test.effect('resolves person deep links on later pages using only the governed scoped directory', () =>
+  test.effect('collects every page of the governed scoped directory for local search and deep links', () =>
     Effect.gen(function* deepLinkedPerson() {
       const first = {
         items: [],
@@ -153,20 +153,21 @@ it.layer(FetchHttpClient.layer)((test) => {
       };
       fetch.mockResolvedValueOnce(Response.json(first));
       fetch.mockResolvedValueOnce(Response.json({ ...first, items: [person], nextOffset: null }));
-      const outcome = yield* loadPeopleForPerson('company', principalRef.principalId);
+      const outcome = yield* loadAllPeople('company');
       expect(outcome.status).toBe('ok');
       if (outcome.status === 'ok') {
         expect(outcome.value.items).toEqual([person]);
+        expect(outcome.value.nextOffset).toBeNull();
       }
       expect(fetch).toHaveBeenCalledTimes(2);
       expect(yield* requestBody(fetch.mock.calls[1]?.[1])).toEqual({ limit: 100, offset: 100 });
     }),
   );
 
-  test.effect('stops a deep-link lookup on denied access instead of inventing a person', () =>
+  test.effect('stops on denied access instead of inventing people', () =>
     Effect.gen(function* deniedPersonLink() {
       fetch.mockResolvedValue(new Response(null, { status: 403 }));
-      expect((yield* loadPeopleForPerson('company', principalRef.principalId)).status).toBe('failed');
+      expect((yield* loadAllPeople('company')).status).toBe('failed');
       expect(fetch).toHaveBeenCalledTimes(1);
     }),
   );

@@ -38,11 +38,10 @@ artifact="$(cd "$artifact" && pwd)"
 port="${OUTBOX_WORKER_HEALTH_PORT:-4100}"
 start="node $runtime/worker.mjs"
 
-# The digest a source materialization compiles in.
-proof_digest="$(node --eval "process.stdout.write(require('node:crypto').createHash('sha256').update('outbox-worker-host-artifact-proof').digest('hex'))")"
+# Materialize the host as scripts/zerops/build-app.sh does, with every hosted owner built from this checkout.
 (
   cd "$app_directory"
-  ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" ONTOS_OUTBOX_HOST_DIGEST="$proof_digest" \
+  ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" \
     pnpm run zerops:materialize --app "$setup" --package 'app' --package-dir '.' --worker
 )
 mkdir -p "$artifact/$(dirname "$runtime")"
@@ -134,12 +133,26 @@ until [ -s "$source_url_file" ]; do
 done
 source_url="$(cat "$source_url_file")"
 
+# The app host (scripts/zerops/app-host.mts derivedEnvironment) derives the Shell gateway and portal origins from
+# its loopback ports and public origins, and hands the Outbox Worker host every hosted owner's secrets. Customer
+# Context's worker requires its portal realm, Core identity transport and enrollment recovery credentials before it
+# starts. The proof supplies proof-only credentials; with an empty journal the workers present them to nobody.
+shell_gateway_base_url='http://127.0.0.1:3020/shell-super-app-api'
+storefront_origin='http://127.0.0.1:3070'
+proof_secret='outbox-worker-host-proof-secret-of-at-least-32-characters'
 log="$artifact/outbox-worker-host.log"
 (
   cd "$artifact"
   exec env \
     NODE_ENV=production \
     ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="$source_url" \
+    COMMERCE_CORE_IDENTITY_API_KEY="$proof_secret" \
+    COMMERCE_CORE_IDENTITY_BASE_URL="$shell_gateway_base_url" \
+    COMMERCE_PORTAL_AUTH_SECRET="$proof_secret" \
+    COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS="$storefront_origin" \
+    COMMERCE_PORTAL_AUTH_URL="$storefront_origin" \
+    ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY="$proof_secret" \
+    ONTOS_SHELL_GATEWAY_BASE_URL="$shell_gateway_base_url" \
     OUTBOX_WORKER_HEALTH_PORT="$port" \
     OUTBOX_WORKER_POLL_INTERVAL_MS=250 \
     sh -c "exec $start"

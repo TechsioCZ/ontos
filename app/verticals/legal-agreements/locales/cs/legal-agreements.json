@@ -25,14 +25,15 @@
     },
     "demo": {
       "feedback": {
+        "ready": "Připraveno",
         "loading": "Načítání…",
         "saving": "Ukládání…",
         "forbidden": "Pro tuto oblast nemáte oprávnění.",
-        "conflict": "Stav se změnil. Obnovte data a zkuste operaci znovu.",
+        "conflict": "Stav se mezitím změnil. Zobrazujeme aktuální údaje, zkuste operaci znovu.",
         "validation": "Zkontrolujte vstupní údaje a povolený přechod stavu.",
-        "unavailable": "Služba je dočasně nedostupná. Zkuste obnovit data."
+        "unavailable": "Služba je dočasně nedostupná."
       },
-      "refresh": "Obnovit",
+      "retry": "Zkusit znovu",
       "empty": "Žádné záznamy pro zvolený filtr.",
       "unit": "Smlouva / jednotka",
       "period": "Období",
@@ -127,7 +128,8 @@
       "currency": "Měna",
       "notProvided": "neuvedeno",
       "edit": "Upravit podmínky",
-      "save": "Uložit podmínky",
+      "invalidAmount": "Zadejte částku v Kč, např. 12500 nebo 12 500,50.",
+      "invalidPaymentDay": "Zadejte den v měsíci od 1 do 31.",
       "formHint": "Podmínky lze měnit u návrhu i platné smlouvy. Částky v Kč za kalendářní měsíc; prázdné nájemné znamená smlouvu bez sjednané částky.",
       "monthlyRentInput": "Měsíční nájemné (Kč)",
       "serviceChargesInput": "Služby a zálohy (Kč)",

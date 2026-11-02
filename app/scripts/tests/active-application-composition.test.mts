@@ -396,3 +396,9 @@ it('serves the Shell runtime contract without a locale redirect', () => {
   const ignored = /ignoreRedirectRoutes: \[(?<routes>[^\]]*)\]/u.exec(shellConfig)?.groups?.routes ?? '';
   expect(ignored).toContain("'/.well-known'");
 });
+
+it('keeps implicit browser favicon requests out of localized module-page routing', () => {
+  const shellConfig = readFileSync(new URL('../../apps/shell-super-app/modern.config.ts', import.meta.url), 'utf-8');
+  const ignored = /ignoreRedirectRoutes: \[(?<routes>[^\]]*)\]/u.exec(shellConfig)?.groups?.routes ?? '';
+  expect(ignored).toContain("'/favicon.ico'");
+});

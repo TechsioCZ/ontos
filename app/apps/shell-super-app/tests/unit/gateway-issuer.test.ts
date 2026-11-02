@@ -278,7 +278,7 @@ it.effect('admits a document once and signs each available audience independentl
   }),
 );
 
-it.effect('rereads document admission after revocation and revision changes before reusing assertions', () =>
+it.effect('rereads document admission after revocation and revision changes before issuing assertions', () =>
   Effect.gen(function* documentAdmissionChanges() {
     const { configuration } = yield* makeConfiguration();
     let admissionLoads = 0;
@@ -858,78 +858,28 @@ it.effect('rejects stale document revisions before signing and reads admission f
   }),
 );
 
-it.effect('reuses one assertion per principal context, audience and revision until shortly before expiry', () =>
-  Effect.gen(function* reuseIssuedAssertions() {
+it.effect('mints a distinct assertion for every sequential and concurrent downstream request', () =>
+  Effect.gen(function* freshAssertions() {
     const { configuration } = yield* makeConfiguration();
-    let now = 1_700_000_000;
-    let revision = compositionRevision;
     let minted = 0;
     const layer = makeGatewayIssuerLayer(
       dependencies(configuration, {
-        currentTimeSeconds: Effect.sync(() => now),
         generateJti: Effect.sync(() => {
           minted += 1;
           return `60000000-0000-4000-8000-${String(minted).padStart(12, '0')}`;
         }),
-        loadAdmission: Effect.sync(() => ({
-          audiences: new Map([
-            ['property-registry', 'property-registry-build'],
-            ['tagging', 'tagging-build'],
-          ]),
-          revision,
-        })),
       }),
     ).pipe(Layer.provide(scopeGrantRegistrarLayer()));
-    const otherLegalEntity = { ...principal, legalEntityId: '30000000-0000-4000-8000-000000000002' };
-    const otherPrincipal = {
-      ...principal,
-      authContextRef: 'better-auth-session:other-principal-reference',
-      principalId: '40000000-0000-4000-8000-000000000002',
-    };
-    const otherSession = { ...principal, authContextRef: 'better-auth-session:other-reference' };
-    yield* Effect.gen(function* reuseSequence() {
-      const gatewayIssuer = yield* GatewayIssuer;
-      const issue = (input: { readonly audience?: string; readonly principal?: typeof principal }) =>
-        gatewayIssuer
-          .issue({
-            audience: input.audience ?? 'property-registry',
-            compositionRevision: revision,
-            principal: input.principal ?? principal,
-          })
-          .pipe(Effect.map(({ token }) => decodeJwt(token).jti));
-
-      const first = yield* issue({});
-      now = 1_700_000_100;
-      expect(yield* issue({})).toBe(first);
-      expect(minted).toBe(1);
-
-      // Every other principal, session, context or audience receives its own assertion.
-      const otherPrincipalAssertion = yield* issue({ principal: otherPrincipal });
-      const otherSessionAssertion = yield* issue({ principal: otherSession });
-      const otherAudienceAssertion = yield* issue({ audience: 'tagging' });
-      expect(new Set([first, otherPrincipalAssertion, otherSessionAssertion, otherAudienceAssertion]).size).toBe(4);
-      expect(yield* issue({})).toBe(first);
-
-      // A legal-entity switch on the same session retires the earlier context's assertion.
-      const switched = yield* issue({ principal: otherLegalEntity });
-      expect(switched).not.toBe(first);
-      const switchedBack = yield* issue({});
-      expect(switchedBack).not.toBe(first);
-
-      // Sign-out forgets the session's assertions without touching another session.
-      yield* gatewayIssuer.forgetAuthContext(principal.authContextRef);
-      expect(yield* issue({})).not.toBe(switchedBack);
-      expect(yield* issue({ principal: otherSession })).toBe(otherSessionAssertion);
-
-      // A composition revision change retires every earlier assertion.
-      const beforeRevision = yield* issue({});
-      revision = 'b'.repeat(64);
-      expect(yield* issue({})).not.toBe(beforeRevision);
-
-      // Never reused within the final 15 seconds before expiry.
-      const nearExpiry = yield* issue({});
-      now = 1_700_000_100 + 300 - 15;
-      expect(yield* issue({})).not.toBe(nearExpiry);
+    yield* Effect.gen(function* issueSequence() {
+      const gateway = yield* GatewayIssuer;
+      const input = { audience: 'property-registry', compositionRevision, principal };
+      const first = yield* gateway.issue(input);
+      const second = yield* gateway.issue(input);
+      const parallel = yield* Effect.forEach([1, 2, 3, 4], () => gateway.issue(input), { concurrency: 'unbounded' });
+      const issued = [first, second, ...parallel];
+      expect(new Set(issued.map(({ token }) => token)).size).toBe(6);
+      expect(new Set(issued.map(({ token }) => decodeJwt(token).jti)).size).toBe(6);
+      expect(minted).toBe(6);
     }).pipe(Effect.provide(layer));
   }),
 );

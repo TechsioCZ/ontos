@@ -11,7 +11,7 @@ export const obchodGuide: DemoGuide = {
       id: 'prehled',
       steps: [
         {
-          click: 'Ukažte pět karet na úvodní stránce a klikněte na Obnovit údaje.',
+          click: 'Ukažte pět karet na úvodní stránce. Údaje se po každé změně aktualizují samy.',
           id: 'obchod-prehled',
           persona: vedeni,
           say: 'Vedení vidí otevřené příležitosti, jejich hodnotu, neuhrazené faktury a otevřené i zpožděné úkoly. Každé číslo vychází z uložených záznamů.',

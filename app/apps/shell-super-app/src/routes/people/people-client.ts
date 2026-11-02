@@ -94,28 +94,39 @@ export const changeScopedRole = (scope: 'company' | 'tenant', request: SetPeople
     true,
   );
 
-/** A deep link searches only the same governed scope, never a legacy or ungoverned identity read. */
-export const loadPeopleForPerson = (scope: 'company' | 'tenant', principalId: string) => {
-  const page: (offset: number) => Effect.Effect<PeopleOutcome<PeopleList>, never, HttpClient.HttpClient> = Effect.fn(
-    'People.findPersonPage',
-  )(function* findPersonPage(offset: number) {
-    const outcome = yield* loadPeople(scope, { limit: 100, offset });
-    if (
-      outcome.status === 'failed' ||
-      outcome.value.items.some((person) => person.principalRef.principalId === principalId) ||
-      outcome.value.nextOffset === null
-    ) {
-      return outcome;
-    }
-    if (outcome.value.nextOffset <= offset) {
-      return { message: 'Správa lidí vrátila neplatné stránkování.', status: 'failed' as const };
-    }
-    return yield* page(outcome.value.nextOffset);
-  });
-  return Effect.suspend(() => page(0)).pipe(
+/** Hard stop for a runaway cursor; a company directory this large needs server-side search, not more pages. */
+const MAX_PEOPLE_PAGES = 20;
+
+/**
+ * The whole governed scoped directory, page by page, so the table can search, filter and sort locally and a deep
+ * link finds its person on any page. It never falls back to a legacy or ungoverned identity read.
+ */
+export const loadAllPeople = (scope: 'company' | 'tenant') => {
+  const page: (
+    offset: number,
+    before: readonly PeopleList['items'][number][],
+    pages: number,
+  ) => Effect.Effect<PeopleOutcome<PeopleList>, never, HttpClient.HttpClient> = Effect.fn('People.loadAllPage')(
+    function* loadAllPage(offset, before, pages) {
+      const outcome = yield* loadPeople(scope, { limit: 100, offset });
+      if (outcome.status === 'failed') {
+        return outcome;
+      }
+      const items = [...before, ...outcome.value.items];
+      const { nextOffset } = outcome.value;
+      if (nextOffset === null) {
+        return { status: 'ok' as const, value: { ...outcome.value, items } };
+      }
+      if (nextOffset <= offset || pages + 1 >= MAX_PEOPLE_PAGES) {
+        return { message: 'Správa lidí vrátila neplatné stránkování.', status: 'failed' as const };
+      }
+      return yield* page(nextOffset, items, pages + 1);
+    },
+  );
+  return Effect.suspend(() => page(0, [], 0)).pipe(
     Effect.timeout('30 seconds'),
     Effect.orElseSucceed(() => ({
-      message: 'Detail osoby je nedostupný. Obnovte stránku.',
+      message: 'Seznam lidí je nedostupný. Zkusíme ho načíst znovu automaticky.',
       status: 'failed' as const,
     })),
   );

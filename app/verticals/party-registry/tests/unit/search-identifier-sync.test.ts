@@ -111,6 +111,7 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
     },
     makeCoreSearchIngestion(store, partySearchIngestionRegistrations),
     store,
+    { touch: () => Effect.void },
   );
   const replaceIdentifiers = (values: readonly PartySearchSourceValue[]) =>
     Effect.sync(() => {

@@ -8,6 +8,10 @@ import { PricingDecisionSchema } from '@app/pricing-contracts/pricing-decision';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import { composePricingDiscounts } from '../../src/services/discount-composition.service.ts';
+import { publishPricingPromotionCurrentEvaluation } from '../../src/services/promotion-composition-result.service.ts';
+import { makeIssue779Scenario } from './support/issue-779-line-value.fixture.ts';
+
 import { composePricingDiscountFeeAllocations } from '../../src/services/discount-fee-allocation-composition.service.ts';
 import type {
   PricingPromotionCompositionFailure,
@@ -336,6 +340,121 @@ const expectFailure = Effect.fn('test.expectIssue776PromotionFailure')(function*
 });
 
 describe('issue #776 Pricing Promotion composition acceptance', () => {
+  it.effect('retains a producer-derived native-negative unrelated line through eligible-subset publication', () =>
+    Effect.gen(function* publishesEligibleSubset() {
+      // Catalog and Price inputs are schema-valid unit preconditions. Actual native
+      // owner receipts and floor governance are proved by the separate integration case.
+      const a = yield* makeIssue779Scenario({
+        discounts: ['0', '0', '0'],
+        feeAmount: '0',
+        occurrenceId: 'line-a',
+        priceAmount: '100',
+      });
+      const b = yield* makeIssue779Scenario({
+        discounts: ['200', '0', '0'],
+        feeAmount: '0',
+        occurrenceId: 'line-b',
+        priceAmount: '100',
+      });
+      const completeDecision = {
+        ...a.compositionRequest.decision,
+        lines: [...a.compositionRequest.decision.lines, ...b.compositionRequest.decision.lines],
+      };
+      const discounts = yield* composePricingDiscounts({
+        ...a.compositionRequest.discountComposition.request,
+        candidates: b.compositionRequest.discountComposition.request.candidates,
+        decision: completeDecision,
+        lineBases: [
+          ...a.compositionRequest.discountComposition.request.lineBases,
+          ...b.compositionRequest.discountComposition.request.lineBases,
+        ],
+      });
+      if (discounts.outcome !== 'DISCOUNT_COMPOSITION_READY') {
+        return yield* Effect.die('Expected unambiguous line Discount composition');
+      }
+      const feeResults = [...a.compositionRequest.feeResults, ...b.compositionRequest.feeResults].flatMap((fee) =>
+        fee.outcome === 'COMMERCIAL_FEES_APPLIED'
+          ? [{ ...fee, input: { ...fee.input, decision: completeDecision } }]
+          : [],
+      );
+      const pricingComposition = yield* composePricingDiscountFeeAllocations({
+        discountComposition: discounts,
+        feeResults,
+        precision,
+        recipientClassifications: [
+          { occurrenceId: 'line-a', recipientKind: 'MERCHANDISE' },
+          { occurrenceId: 'line-b', recipientKind: 'MERCHANDISE' },
+        ],
+      });
+      if (pricingComposition.outcome !== 'ALLOCATION_COMPOSITION_READY') {
+        return yield* Effect.die('Expected real Discount producer composition');
+      }
+      expect(
+        pricingComposition.composedLines.map(({ rawPostAllocationValue }) => rawPostAllocationValue.amount),
+      ).toEqual(['100', '-100']);
+      const base = makeInput(pricingComposition);
+      const input = {
+        ...base,
+        currencyCompatibility: {
+          ...base.currencyCompatibility,
+          observedAt: completeDecision.operationTime,
+          tenantId: completeDecision.tenantId,
+        },
+        decision: completeDecision,
+        subjectEvidence: {
+          ...base.subjectEvidence,
+          observedAt: completeDecision.operationTime,
+          revalidatedAt: completeDecision.operationTime,
+          subject: { ...base.subjectEvidence.subject, tenantId: completeDecision.tenantId },
+        },
+      };
+      const seenRequests: PromotionContributionRequest[] = [];
+      const composition = makePricingPromotionCompositionService(
+        source((request) => {
+          seenRequests.push(request);
+          return {
+            ...appliedOutcome(request),
+            allocations: [
+              {
+                amount: money('-10'),
+                catalogSelection: a.unitPrice.input.line.catalog.selection,
+                occurrenceId: 'line-a',
+                recipientKind: 'MERCHANDISE',
+              },
+            ],
+            contribution: money('-10'),
+            ownerEvidence: {
+              ...ownerEvidence(request),
+              completenessEvidence: {
+                observedAt: completeDecision.operationTime,
+                ownerRevision: 'promotion-current-r776',
+                scope: { kind: 'EXACT_PREDICATE', predicateRef: request.exactPredicateRef },
+              },
+              currentness: {
+                evaluatedAt: completeDecision.operationTime,
+                observedAt: completeDecision.operationTime,
+                revalidatedAt: completeDecision.operationTime,
+                status: 'CURRENT',
+              },
+            },
+            target: { kind: 'MERCHANDISE_ONLY', occurrenceIds: ['line-a'] },
+          };
+        }),
+      );
+      const current = makePricingPromotionCurrentEvaluationService(composition.compose, {
+        revalidate: ({ expectedOwnerEvidence }) =>
+          Effect.succeed({ _tag: 'PROMOTION_OWNER_EVIDENCE_CURRENT', ownerEvidence: expectedOwnerEvidence }),
+      });
+      const evaluation = yield* current.evaluate({ loadFresh: () => Effect.succeed(input) });
+      const published = yield* publishPricingPromotionCurrentEvaluation(evaluation);
+      expect(seenRequests[0]?.prePromotionBasis.lines.map(({ amount }) => amount.amount)).toEqual(['100', '-100']);
+      expect(published.lines.map(({ occurrenceId }) => occurrenceId)).toEqual(['line-a', 'line-b']);
+      expect(published.lines.map(({ rawPreTaxValue }) => rawPreTaxValue.amount)).toEqual(['90', '-100']);
+      expect(published.promotion).toMatchObject({ contribution: money('-10'), target: { occurrenceIds: ['line-a'] } });
+      return yield* Effect.void;
+    }),
+  );
+
   it.effect(
     'composes independent Group and Counterparty line layers, one whole-purchase benefit, then owner allocations exactly once',
     () =>
@@ -565,6 +684,7 @@ describe('issue #776 Pricing Promotion composition acceptance', () => {
             ownerEvidence: ownerEvidence(request),
             reason: 'NON_POSITIVE_ELIGIBLE_PRE_PROMOTION_BASIS_REQUIRES_OWNER_DECISION',
             request,
+            target: { kind: 'MERCHANDISE_ONLY' as const, occurrenceIds: ['line-a', 'line-b'] },
           })),
           Schema.is(PricingPromotionParked),
         );

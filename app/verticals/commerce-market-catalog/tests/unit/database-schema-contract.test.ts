@@ -6,16 +6,18 @@ import {
   COMMERCE_MARKET_CATALOG_SCHEMA_NAME,
   COMMERCE_MARKET_CATALOG_TABLE_INVENTORY,
   COMMERCE_MARKET_CATALOG_TABLES,
+  gatewayAssertionRedemptions,
   marketCatalogCompletenessGenerations,
   marketDefinitionRevisions,
   marketLifecyclePeriods,
+  marketRetirementIntents,
   markets,
   storefrontAssociationRevisions,
   storefrontAssociations,
 } from '../../src/database/schema.ts';
 
 describe('Commerce Market Catalog database contract', () => {
-  it('owns the Market administration tables and pre-scope replay evidence', () => {
+  it('owns exactly the canonical Market administration tables', () => {
     const qualifiedNames = EffectArray.sort(
       COMMERCE_MARKET_CATALOG_TABLES.map((table) => {
         const config = getTableConfig(table);
@@ -29,17 +31,51 @@ describe('Commerce Market Catalog database contract', () => {
     );
   });
 
-  it('enables Tenant-scoped RLS on business tables so eligible sellers remain discoverable before seller selection', () => {
-    for (const table of COMMERCE_MARKET_CATALOG_TABLES) {
-      if (getTableConfig(table).name === 'gateway_assertion_redemptions') {
-        continue;
-      }
+  it('preserves Tenant-scoped RLS on all seven business tables so eligible sellers remain discoverable before seller selection', () => {
+    const businessTables = [
+      marketCatalogCompletenessGenerations,
+      marketDefinitionRevisions,
+      marketLifecyclePeriods,
+      marketRetirementIntents,
+      markets,
+      storefrontAssociationRevisions,
+      storefrontAssociations,
+    ];
+    expect(businessTables.map((table) => getTableConfig(table).name)).toEqual([
+      'market_catalog_completeness_generations',
+      'market_definition_revisions',
+      'market_lifecycle_periods',
+      'market_retirement_intents',
+      'markets',
+      'storefront_association_revisions',
+      'storefront_associations',
+    ]);
+    expect(COMMERCE_MARKET_CATALOG_TABLES).toEqual([gatewayAssertionRedemptions, ...businessTables]);
+    for (const table of businessTables) {
       const config = getTableConfig(table);
       expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
       expect(config.columns.some(({ name, notNull }) => name === 'tenant_id' && notNull)).toBe(true);
       expect(config.policies.map((policy) => policy.for)).toEqual(['select', 'insert', 'update', 'delete']);
       expect(config.policies.every((policy) => policy.to === 'ontos_runtime')).toBe(true);
     }
+  });
+
+  it('keeps pre-authentication assertion replay identities global and separate from business RLS', () => {
+    const config = getTableConfig(gatewayAssertionRedemptions);
+    expect(config.schema).toBe(COMMERCE_MARKET_CATALOG_SCHEMA_NAME);
+    expect(config.name).toBe('gateway_assertion_redemptions');
+    expect(config.enableRLS).toBe(false);
+    expect(config.policies).toEqual([]);
+    expect(config.columns.map(({ name, notNull }) => ({ name, notNull }))).toEqual([
+      { name: 'audience', notNull: true },
+      { name: 'expires_at', notNull: true },
+      { name: 'issuer', notNull: true },
+      { name: 'jti', notNull: true },
+      { name: 'redeemed_at', notNull: true },
+    ]);
+    expect(
+      config.uniqueConstraints.map(({ columns, name }) => ({ columns: columns.map((column) => column.name), name })),
+    ).toEqual([{ columns: ['issuer', 'audience', 'jti'], name: 'market_catalog_gateway_redemptions_identity_uk' }]);
   });
 
   it('declares Tenant-wide business-code uniqueness and immutable revision/history keys', () => {
@@ -188,20 +224,53 @@ describe('Commerce Market Catalog database contract', () => {
     expect(migration).toContain('then v_retirement_impact else null end');
     expect(migration).not.toContain("v_retirement_impact->>'reservationToken'");
   });
-});
 
-it('owns pre-scope replay evidence with an atomic issuer/audience/jti identity', () => {
-  const table = COMMERCE_MARKET_CATALOG_TABLES.find(
-    (candidate) => getTableConfig(candidate).name === 'gateway_assertion_redemptions',
-  );
-  expect(table).toBeDefined();
-  if (table === undefined) {
-    throw new Error('Missing gateway assertion redemption table');
-  }
-  const config = getTableConfig(table);
-  expect(config.schema).toBe('commerce_market_catalog');
-  expect(config.enableRLS).toBe(false);
-  expect(config.policies).toEqual([]);
-  expect(config.primaryKeys.map((key) => key.columns.map(({ name }) => name))).toEqual([['issuer', 'audience', 'jti']]);
-  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['commerce_market_catalog_redemption_expiry']);
+  it('persists one open durable retirement intent per Market behind compare-and-set owner routines', () => {
+    const intents = getTableConfig(marketRetirementIntents);
+    expect(intents.indexes.map((index) => index.config.name)).toContain(
+      'commerce_market_catalog_retirement_intents_open_market_uk',
+    );
+    expect(intents.checks.map(({ name }) => name)).toEqual(
+      expect.arrayContaining([
+        'commerce_market_catalog_retirement_intents_stage_ck',
+        'commerce_market_catalog_retirement_intents_failure_ck',
+        'commerce_market_catalog_retirement_intents_reservation_ck',
+      ]),
+    );
+    const migration = readFileSync(
+      new URL('../../drizzle/20261031091616_market-retirement-intents/migration.sql', import.meta.url),
+      'utf-8',
+    );
+    for (const routine of [
+      'request_market_retirement',
+      'read_market_retirement_intent',
+      'advance_market_retirement_intent',
+    ]) {
+      expect(migration).toContain(`grant execute on function commerce_market_catalog.${routine}(uuid, uuid, jsonb)`);
+      expect(migration).toContain(
+        `revoke all on function commerce_market_catalog.${routine}(uuid, uuid, jsonb) from public`,
+      );
+    }
+    expect(migration).toContain('FORCE ROW LEVEL SECURITY');
+    expect(migration).toContain("if v_intent.stage is distinct from p_payload->>'expectedStage' then");
+    expect(migration).toContain('commerce_market_catalog.transition_market_lifecycle(p_tenant_id, p_legal_entity_id');
+    expect(migration).not.toMatch(/grant\s+(?:select|insert|update|delete)\s+on/iu);
+  });
+
+  it('exposes the Market administration state only through one scoped owner routine', () => {
+    const migration = readFileSync(
+      new URL('../../drizzle/20261101230822_market-administration-state/migration.sql', import.meta.url),
+      'utf-8',
+    );
+    const routine = 'commerce_market_catalog.read_market_administration_state(uuid, uuid, jsonb)';
+    expect(migration).toContain('security definer');
+    expect(migration).toContain('set search_path = pg_catalog, pg_temp');
+    expect(migration).toContain(
+      'perform commerce_market_catalog.assert_operation_scope(p_tenant_id, p_legal_entity_id)',
+    );
+    expect(migration).toContain(`revoke all on function ${routine} from public`);
+    expect(migration).toContain(`grant execute on function ${routine} to ontos_runtime`);
+    expect(migration).toContain('market.selling_legal_entity_id = p_legal_entity_id');
+    expect(migration).not.toMatch(/grant\s+(?:select|insert|update|delete)\s+on/iu);
+  });
 });

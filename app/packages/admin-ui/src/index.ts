@@ -1,9 +1,29 @@
+export {
+  AUTOSAVE_DELAY_MS,
+  type Autosave,
+  type AutosaveDraft,
+  AutosaveController,
+  type AutosaveOptions,
+  type AutosaveOutcome,
+  AutosaveOutcomeSchema,
+  type AutosaveState,
+  type RevisionedSaveResult,
+  AutosaveStateSchema,
+  autosavePending,
+  startAutosave,
+  useAutosave,
+  useAutosaveDraft,
+  type UseAutosaveDraftOptions,
+  type UseAutosaveOptions,
+} from './autosave.ts';
+export { AutosaveStatus, type AutosaveStatusProps } from './autosave-status.tsx';
 export { BulkActionBar, type BulkActionBarProps } from './bulk-action-bar.tsx';
 export { DetailList, type DetailListItem } from './detail-list.tsx';
 export { EmptyState, type EmptyStateProps } from './empty-state.tsx';
 export { formatDate, formatDateTime, formatMoney, formatNumber, formatPercent } from './format.ts';
 export { PageHeader, type PageHeaderProps } from './page-header.tsx';
 export { foldSearchText, matchesSearch } from './search-text.ts';
+export { ScrollRegion, type ScrollRegionProps } from './scroll-region.tsx';
 export { SectionCard, type SectionCardProps } from './section-card.tsx';
 export { SidePanel, type SidePanelProps, type SidePanelSize } from './side-panel.tsx';
 export { StatCard, type StatCardProps, type StatTrend } from './stat-card.tsx';

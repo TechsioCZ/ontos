@@ -51,6 +51,8 @@ export interface ExportPartnerReference extends ExportPartnerIdentity {
  * the issuer name from Core's legal entity of the request scope, partners from the party registry.
  */
 export interface ExportReferences {
+  /** Core display name of the authenticated principal who creates the export. */
+  readonly authorName?: string;
   readonly issuerName: string;
   /** Keyed by both the counterparty id and the party id, so an invoice resolves whichever one it stores. */
   readonly partners: ReadonlyMap<string, ExportPartnerReference>;
@@ -973,8 +975,8 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
   const exports = state.accountingExports ?? [];
   const version = exports.length + 1;
   const batchNumber = `UP-${DateTime.formatIsoDateUtc(input.now).slice(0, 4)}-${String(version).padStart(3, '0')}`;
-  // The file names the authenticated principal; the readable label stays a display hint in the history only.
-  const createdBy = input.principalId === undefined ? 'neznámý uživatel' : `uživatel OntOS ${input.principalId}`;
+  // The file names the authenticated principal by Core's display name; the browser label stays a history hint only.
+  const createdBy = references.authorName ?? 'uživatel OntOS';
   // Issuer = the selected legal entity: its name from Core, its accounting identity from the setup.
   const setup = state.accountingSetup ?? {};
   let issuer: ExportIssuer = { name: references.issuerName };
@@ -1024,7 +1026,7 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
         : [
             {
               counterpartyName:
-                invoice.counterpartyName ?? registryPartner(invoice)?.displayName ?? invoice.counterpartyRef.resourceId,
+                invoice.counterpartyName ?? registryPartner(invoice)?.displayName ?? 'Neznámý odběratel',
               // Stable shell route: authentication, company scope and finance permissions are checked on opening.
               documentLink: `${shellOrigin}/cs/finance?resourceId=${encodeURIComponent(invoice.ref.resourceId)}`,
               invoice,

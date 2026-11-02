@@ -1,6 +1,6 @@
 import { pipe, DateTime, Schema } from 'effect';
 import { orderDateText, isOpenDuplicate, needsReview, openReviewEvents } from '../../../../../shared/domain/imports.ts';
-import type { ImportRowOutcome, ImportedOrder } from '../../../../../shared/domain/imports.ts';
+import type { ImportRowOutcome, ImportedOrder, PairingChange } from '../../../../../shared/domain/imports.ts';
 // AREA: imports — owned by the crm-imports lane. Display helpers shared by /crm/importy, /crm/parovani and the
 // client-card "Objednávky" tab.
 
@@ -83,7 +83,7 @@ export const principalLabel = (records: RecordsResponse, principalId: string): s
   if (principalId === records.viewer.principalId) {
     return name === undefined ? 'Vy' : `${name} (vy)`;
   }
-  return name ?? `Uživatel ${principalId.slice(0, 8)}`;
+  return name ?? 'Uživatel';
 };
 
 export const clientLabel = (records: RecordsResponse, clientId: string | undefined) =>
@@ -102,7 +102,11 @@ export const useFormatAmount = () => {
   };
 };
 
-export const orderTitle = (order: ImportedOrder) => order.number ?? order.externalId;
+/** An approved-link assignment carries a generated reason; older ones named the source key, so it is never shown. */
+export const pairingReason = (change: PairingChange) =>
+  change.via === 'customer_link' ? 'Schválená vazba zákazníka ze zdroje' : change.reason;
+
+export const orderTitle = (order: ImportedOrder) => order.number ?? NOT_PROVIDED;
 export const orderDate = (order: ImportedOrder) =>
   order.orderedAt === undefined ? NOT_PROVIDED : pipe(order.orderedAt, orderDateText, formatDate);
 export const lastChange = (order: ImportedOrder) =>

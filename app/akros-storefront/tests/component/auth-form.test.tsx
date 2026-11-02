@@ -1,6 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LoginForm, RegistrationForm } from "@/components/auth-form";
+import { VerificationResendForm } from "@/components/verification-resend-form";
+import { renderToString } from "react-dom/server";
 
 const router = vi.hoisted(() => ({
   push: vi.fn<(path: string) => void>(),
@@ -40,6 +42,15 @@ function register(confirmation = "real-long-password") {
 }
 
 describe("real customer forms", () => {
+  it.each([LoginForm, RegistrationForm, VerificationResendForm])(
+    "keeps the SSR credential and verification forms POST-only with a fixed same-origin action",
+    (Component) => {
+      const document = new DOMParser().parseFromString(renderToString(<Component />), "text/html");
+      const form = document.querySelector("form");
+      expect(form?.getAttribute("method")).toBe("post");
+      expect(form?.getAttribute("action")).toBe("/api/ontos/account");
+    },
+  );
   it("does not navigate or store a profile when real authentication rejects the password", async () => {
     fetchAccount.mockResolvedValue(
       Response.json({ message: "Nesprávný e-mail nebo heslo." }, { status: 401 }),

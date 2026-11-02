@@ -1,6 +1,7 @@
 import { PricingMaterialEvidenceUnverifiableFailure } from '@app/pricing-contracts/domain/material-evidence';
 import {
   PricingSourceEvidenceResultSchema,
+  PricingSourceEvidenceVerifiedAbsentSchema,
   PricingSourceEvidenceVerifiedPresentSchema,
 } from '@app/pricing-contracts/domain/source-revision-evidence';
 import { Effect, Schema } from 'effect';
@@ -175,6 +176,66 @@ const externalSource = (input: {
     request,
   });
 };
+
+const discountAbsenceBoundary = '2026-09-28T12:00:10.000Z';
+const discountPredicateRef = 'pricing:contractual-discount-predicate:counterparty-786';
+
+/** A verified-empty Counterparty Discount set whose first scheduled Discount starts at the boundary. */
+const scheduledDiscountAbsence = Schema.decodeSync(PricingSourceEvidenceVerifiedAbsentSchema, {
+  onExcessProperty: 'error',
+})({
+  _tag: 'VERIFIED_ABSENT',
+  completeness: {
+    completenessEvidence: {
+      nextApplicabilityBoundary: discountAbsenceBoundary,
+      observedAt: evidenceObservedAt,
+      ownerRevision: 'contractual-discount-set-revision-a',
+      scope: { kind: 'EXACT_PREDICATE', predicateRef: discountPredicateRef },
+    },
+    currencyCode: 'EUR',
+    family: 'DISCOUNT',
+    ownerScope: {
+      ownerModuleId: 'commerce.pricing',
+      ownerRootRef: 'pricing:contractual-discount-set:tenant-786',
+      predicateRef: discountPredicateRef,
+      tenantId: 'tenant-786',
+    },
+    ownerSetRevisionRef: 'contractual-discount-set-revision-a',
+    temporal: {
+      effectiveAt: '2026-09-28T12:00:00.000Z',
+      evaluatedAt: '2026-09-28T12:00:00.000Z',
+      evaluationMode: 'HISTORICAL_AS_OF',
+      nextMaterialBoundary: discountAbsenceBoundary,
+      observedAt: evidenceObservedAt,
+      requestedAt: '2026-09-28T12:00:00.000Z',
+    },
+    verification: {
+      kind: 'OWNER_VERIFIABLE_OPAQUE_REFERENCE',
+      verificationRef: 'owner-proof:contractual-discount-set:counterparty-786',
+    },
+  },
+  request: {
+    currencyCode: 'EUR',
+    effectiveAt: '2026-09-28T12:00:00.000Z',
+    family: 'DISCOUNT',
+    ownerScope: {
+      ownerModuleId: 'commerce.pricing',
+      ownerRootRef: 'pricing:contractual-discount-set:tenant-786',
+      predicateRef: discountPredicateRef,
+      tenantId: 'tenant-786',
+    },
+    requestedAt: '2026-09-28T12:00:00.000Z',
+  },
+});
+
+const unchangedFenceAt = (fenceObservedAt: string): PricingMaterialEvidenceOwnerFencePort => ({
+  verifyImmediatelyBeforePublication: ({ sources }) =>
+    Effect.succeed({
+      fenceRef: `pricing-owner-fence:786:${fenceObservedAt}`,
+      observedAt: fenceObservedAt,
+      sources: sources.map((expectation) => unchangedObservation(expectation, fenceObservedAt)),
+    }),
+});
 
 const ownerFence = (
   observe: (expectation: PricingMaterialEvidenceFenceExpectation) => ReturnType<typeof unchangedObservation>,
@@ -368,3 +429,91 @@ describe('Pricing material-evidence final owner fence #786', () => {
     }),
   );
 });
+
+describe('Verified-empty Counterparty Discount boundary at the final owner fence #1257', () => {
+  it.effect('authorizes the unchanged empty set while the final fence completes before its boundary', () =>
+    Effect.gen(function* beforeBoundary() {
+      const fenceObservedAt = '2026-09-28T12:00:09.999Z';
+      const result = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', [scheduledDiscountAbsence]).pipe(
+        Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, unchangedFenceAt(fenceObservedAt)),
+      );
+
+      expect(result.observedAt).toBe(fenceObservedAt);
+      expect(result.sources.map(({ family }) => family)).toEqual(['DISCOUNT']);
+    }),
+  );
+
+  it.effect('rejects the unchanged empty set once the final fence observes its boundary', () =>
+    Effect.gen(function* atBoundary() {
+      for (const fenceObservedAt of [discountAbsenceBoundary, '2026-09-28T12:00:10.001Z']) {
+        const failure = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', [
+          scheduledDiscountAbsence,
+        ]).pipe(
+          Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, unchangedFenceAt(fenceObservedAt)),
+          Effect.flip,
+        );
+
+        expect(failure).toBeInstanceOf(PricingMaterialEvidenceChangedAtFinalFence);
+        expect(failure).toMatchObject({ family: 'DISCOUNT', predicateRef: discountPredicateRef, retryable: true });
+      }
+    }),
+  );
+});
+
+it.effect('keeps raw proof-reference conflicts across Catalog and another owner blocked #1225', () =>
+  Effect.gen(function* rejectsCrossOwnerCollision() {
+    const catalogSource = externalSource({
+      family: 'COMMERCIAL_CONTEXT',
+      observedAt: evidenceObservedAt,
+      ownerModuleId: 'commerce.catalog',
+      suffix: '1225-collision',
+    });
+    const colliding = yield* Schema.decodeEffect(PricingSourceEvidenceVerifiedPresentSchema)({
+      ...catalogSource,
+      completeness: {
+        ...catalogSource.completeness,
+        verification: sourceAtRevisionA.completeness.verification,
+      },
+    });
+    let invoked = false;
+    const fence: PricingMaterialEvidenceOwnerFencePort = {
+      verifyImmediatelyBeforePublication: () => {
+        invoked = true;
+        return Effect.die('A cross-owner proof collision must fail before replay');
+      },
+    };
+    const failure = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', [
+      sourceAtRevisionA,
+      colliding,
+    ]).pipe(Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, fence), Effect.flip);
+    expect(failure).toBeInstanceOf(PricingMaterialEvidenceUnverifiableFailure);
+    expect(invoked).toBe(false);
+  }),
+);
+
+it.effect('keeps legacy no-typed Catalog proof deduplication unchanged #1225', () =>
+  Effect.gen(function* legacyCatalogDuplicates() {
+    const catalogSource = externalSource({
+      family: 'COMMERCIAL_CONTEXT',
+      observedAt: evidenceObservedAt,
+      ownerModuleId: 'commerce.catalog',
+      suffix: '1225-legacy',
+    });
+    let count = 0;
+    const fence: PricingMaterialEvidenceOwnerFencePort = {
+      verifyImmediatelyBeforePublication: ({ sources }) => {
+        count = sources.length;
+        return Effect.succeed({
+          fenceRef: 'test:1225:legacy',
+          observedAt: finalOwnerObservedAt,
+          sources: sources.map((source) => unchangedObservation(source)),
+        });
+      },
+    };
+    const result = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', [catalogSource, catalogSource]).pipe(
+      Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, fence),
+    );
+    expect(count).toBe(1);
+    expect(result.sources).toHaveLength(1);
+  }),
+);

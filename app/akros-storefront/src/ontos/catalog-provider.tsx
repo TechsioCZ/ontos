@@ -3,6 +3,7 @@ import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { createCatalog } from "./catalog-model";
 import type { CatalogCategory } from "@/ontos/catalog-types";
 import type { CatalogSnapshot } from "./catalog-server";
+import { useDictionary } from "./market-context";
 const Context = createContext<CatalogSnapshot | null>(null);
 export function CatalogProvider({
   snapshot,
@@ -11,10 +12,11 @@ export function CatalogProvider({
   snapshot: CatalogSnapshot;
   children: ReactNode;
 }) {
+  const dictionary = useDictionary();
   return (
     <Context.Provider value={snapshot}>
       <p role="note" className="bg-base-dark p-2 text-center text-sm text-base-light">
-        DEMO – objednávky se ukládají do OntOS, ale v tomto prostředí se neplatí ani nedoručují.
+        {dictionary.demoBanner}
       </p>
       {children}
     </Context.Provider>

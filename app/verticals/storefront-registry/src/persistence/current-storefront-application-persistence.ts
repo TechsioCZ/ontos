@@ -20,7 +20,7 @@ const SnapshotPayloadSchema = Schema.Union([
   Schema.TaggedStruct('found', { current: StoredCurrentSchema }),
   Schema.TaggedStruct('not_found', { generation, observedAt: instant }),
 ]);
-const SnapshotRowSchema = Schema.Struct({ payload: SnapshotPayloadSchema });
+const SnapshotRowSchema = Schema.Struct({ payload: Schema.Unknown });
 
 const readCurrentStorefrontApplicationRoutine = defineScopedRoutine({
   name: 'read_current_storefront_application',
@@ -91,9 +91,9 @@ const decodeCurrentSnapshot = Effect.fn('CurrentStorefrontApplicationPersistence
   },
 );
 
-const decodeRow = Effect.fn('CurrentStorefrontApplicationPersistence.decodeRow')(function* decodeSnapshot(
-  row: typeof SnapshotRowSchema.Type,
-): Effect.fn.Return<CurrentStorefrontApplicationPersistenceResult, PersistenceFailure> {
+const decodeRow = Effect.fn('CurrentStorefrontApplicationPersistence.decodeRow')(function* decodeSnapshot(row: {
+  readonly payload: typeof SnapshotPayloadSchema.Type;
+}): Effect.fn.Return<CurrentStorefrontApplicationPersistenceResult, PersistenceFailure> {
   return yield* Match.value(row.payload).pipe(
     Match.tag('not_found', ({ generation: currentGeneration, observedAt }) =>
       canonicalInstant(observedAt).pipe(
@@ -125,7 +125,10 @@ export const currentStorefrontApplicationPersistence = (
             return Effect.fail(unavailable('The Storefront Registry owner routine returned no snapshot'));
           }
           if (input.tenantId === tenantId) {
-            return decodeRow(row);
+            return Schema.decodeUnknownEffect(SnapshotPayloadSchema)(row.payload).pipe(
+              Effect.mapError(unavailable),
+              Effect.flatMap((payload) => decodeRow({ payload })),
+            );
           }
           return Effect.fail(unavailable('The Storefront Registry request Tenant does not match the trusted scope'));
         }),

@@ -10,6 +10,13 @@ Also follow:
 
 Do not introduce React Server Components unless the developer explicitly requests them.
 
+## Browser support
+
+OntOS supports Chrome 144+ and Safari 27+, including Safari on iOS. Older browsers are unsupported.
+The Shell and every MicroVertical use the same JavaScript and CSS browser targets in
+[`createWorkspaceModernConfig`](../../packages/shared-contracts/tooling/modern-config.ts).
+Keep browser targets there rather than relying on the framework defaults or adding per-app overrides.
+
 ## Frontend Module Structure
 
 Separate frontend code by responsibility:

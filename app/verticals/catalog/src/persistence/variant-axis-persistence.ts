@@ -388,18 +388,34 @@ const validateAllowedValuesSnapshot = (
       readonly normalized: readonly AttributeValue[];
       readonly valid: true;
     } => {
-  const checked = validateAttributeValues(definition, values);
-  if (!checked.valid || checked.normalized.length !== values.length) {
-    return { reason: checked.reasons.join('; ') || 'Allowed values are not permissible for this axis', valid: false };
+  const definitionCheck = validateAttributeValues(definition, []);
+  if (!definitionCheck.valid) {
+    return {
+      reason: definitionCheck.reasons.join('; ') || 'Allowed-value definition cannot be verified',
+      valid: false,
+    };
   }
-  const hashes = checked.normalized.map(allowedValueKeyHash);
+  // The allowance is a universe of alternatives, not one subject's assignment.
+  // Each alternative still passes the unchanged strict per-subject validator.
+  const normalized: AttributeValue[] = [];
+  for (const value of values) {
+    const checked = validateAttributeValues(definition, [value]);
+    if (!checked.valid || checked.normalized.length !== 1) {
+      return { reason: checked.reasons.join('; ') || 'Allowed value is not permissible for this axis', valid: false };
+    }
+    normalized.push(...checked.normalized);
+  }
+  if (normalized.length !== values.length) {
+    return { reason: 'Allowed-value normalization did not preserve the complete input', valid: false };
+  }
+  const hashes = normalized.map(allowedValueKeyHash);
   if (new Set(hashes).size !== hashes.length) {
     return { reason: 'Allowed values repeat the same value identity', valid: false };
   }
-  if (checked.normalized.some((value) => value.kind === 'SPECIAL' && value.state === 'UNKNOWN')) {
+  if (normalized.some((value) => value.kind === 'SPECIAL' && value.state === 'UNKNOWN')) {
     return { reason: 'An unknown special state cannot be a permissible Current value', valid: false };
   }
-  return { hashes, normalized: checked.normalized, valid: true };
+  return { hashes, normalized, valid: true };
 };
 
 const invalidAxisDefinitionPointer = (

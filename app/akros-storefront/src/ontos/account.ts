@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { OntosError, ownerRequest } from "./gateway";
 import { getConfig } from "./config";
 import { RequestError } from "./http";
+import { marketHref } from "./active-market";
 
 /** Public account transport; provider internals never reach the browser. */
 export type AccountSubmissionResponse =
@@ -157,6 +158,6 @@ export const readRequestAccount = async (): Promise<CustomerAccount | null> => {
 /** Server pages require a fresh owner admission. No browser-storage or email-based identity fallback. */
 export const requireCustomerAccount = async (): Promise<CustomerAccount> => {
   const account = await readRequestAccount();
-  if (!account) redirect("/prihlaseni");
+  if (!account) redirect(await marketHref("/prihlaseni"));
   return account;
 };

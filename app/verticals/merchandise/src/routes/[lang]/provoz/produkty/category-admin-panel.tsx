@@ -4,12 +4,21 @@ import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { SidePanel, formatDateTime } from '@app/admin-ui';
-import { DateTime, Option } from 'effect';
+import { AutosaveStatus, SidePanel, formatDateTime, useAutosaveDraft } from '@app/admin-ui';
+import type { RevisionedSaveResult } from '@app/admin-ui';
+import { DateTime, Effect, Match, Option } from 'effect';
 import { useState } from 'react';
 import type { CategoryNode } from '../../../../../shared/domain/merchandise-model.ts';
-import { loadCategoryDetail, loadCategoryTree, runCommand } from './products-api.ts';
-import { useCommandFailure } from './product-forms.tsx';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { loadCategoryDetail, loadCategoryTree } from './products-api.ts';
+import {
+  autosaveCategoryEdit,
+  categoryDraftErrors,
+  draftOf,
+  sameCategoryDraft,
+  savedCategory,
+} from './category-autosave.ts';
+import type { CategoryDraft } from './category-autosave.ts';
 
 type Loaded =
   | { readonly status: 'idle' | 'loading' | 'error' }
@@ -20,29 +29,11 @@ type Selected =
   | { readonly id: string; readonly status: 'loading' | 'error' }
   | { readonly category: CategoryNode; readonly id: string; readonly revision: number; readonly status: 'ready' };
 
-interface CategoryDraft {
-  readonly description: string;
-  readonly heading: string;
-  readonly longDescription: string;
-  readonly name: string;
-  readonly positionText: string;
-  readonly published: boolean;
-}
-
 const NO_CATEGORIES: readonly CategoryNode[] = [];
 
 /** The storefront's own order: position, then Czech name. */
 const byStorefrontOrder = (a: CategoryNode, b: CategoryNode) =>
   a.position - b.position || a.name.localeCompare(b.name, 'cs');
-
-const draftOf = (c: CategoryNode): CategoryDraft => ({
-  description: c.description ?? '',
-  heading: c.heading ?? '',
-  longDescription: c.longDescription ?? '',
-  name: c.name,
-  positionText: String(c.position),
-  published: c.published !== false,
-});
 
 const loadCategories = (onLoaded: (next: Loaded) => void): void =>
   loadCategoryTree((outcome) =>
@@ -64,32 +55,12 @@ const categoryListFor = (categories: readonly CategoryNode[], search: string) =>
   return matches.slice(0, 40);
 };
 
-const validateCategoryDraft = (draft: CategoryDraft | null) => {
-  const position = Number(draft?.positionText ?? '');
-  return {
-    nameInvalid: draft !== null && (draft.name.trim() === '' || draft.name.trim().length > 200),
-    position,
-    positionInvalid:
-      draft !== null && (draft.positionText.trim() === '' || !Number.isInteger(position) || position < 0),
-  };
-};
 const categoryParentId = (selected: CategoryNode | undefined) => Option.getOrNull(selected?.parentId ?? Option.none());
 const categoryParentName = (categories: readonly CategoryNode[], parentId: string | null) =>
   parentId === null ? undefined : categories.find((c) => c.id === parentId)?.name;
 
 interface CategoryAdminButtonProps {
   readonly onCommitted: (message: string) => void;
-}
-
-interface CategoryEditorProps {
-  readonly draft: CategoryDraft | null;
-  readonly nameInvalid: boolean;
-  readonly parentName: string | undefined;
-  readonly patchDraft: (patch: Partial<CategoryDraft>) => void;
-  readonly positionInvalid: boolean;
-  readonly selected: CategoryNode | undefined;
-  readonly serverError: string | null;
-  readonly siblings: readonly CategoryNode[];
 }
 
 const CategoryHistory = ({ selected }: { readonly selected: CategoryNode }) => (
@@ -111,25 +82,41 @@ const CategoryHistory = ({ selected }: { readonly selected: CategoryNode }) => (
   </>
 );
 
+interface CategoryEditorProps {
+  readonly draft: CategoryDraft;
+  readonly nameError: 'required' | 'tooLong' | undefined;
+  readonly onBlur: () => void;
+  readonly parentName: string | undefined;
+  readonly patchDraft: (patch: Partial<CategoryDraft>) => void;
+  readonly positionError: 'negative' | 'notWhole' | 'required' | undefined;
+  readonly selected: CategoryNode;
+  readonly siblings: readonly CategoryNode[];
+}
+
+/** The category's own fields. A category exists already, so every field saves itself. */
 const CategoryEditor = ({
   draft,
-  nameInvalid,
+  nameError,
+  onBlur,
   parentName,
   patchDraft,
-  positionInvalid,
+  positionError,
   selected,
-  serverError,
   siblings,
 }: CategoryEditorProps) => {
   const { t } = useModernI18n();
-  if (selected === undefined || draft === null) {
-    return null;
-  }
   const siblingNames = siblings
     .slice(0, 6)
     .map((c) => `${c.name} (${c.position})`)
     .join(', ');
   const parentDescription = parentName === undefined ? '' : ` · nadřazená kategorie: ${parentName}`;
+  const nameMessage = nameError === 'required' ? 'Zadejte název kategorie' : 'Název může mít nejvýše 200 znaků';
+  const positionMessage = Match.value(positionError).pipe(
+    Match.when('required', () => 'Zadejte pořadí'),
+    Match.when('negative', () => 'Pořadí musí být 0 nebo větší'),
+    Match.when('notWhole', () => 'Pořadí musí být celé číslo'),
+    Match.orElse(() => ''),
+  );
   return (
     <>
       <p className="text-fg-secondary text-sm">{`Adresa v e-shopu: /${selected.slug}${parentDescription}`}</p>
@@ -145,16 +132,18 @@ const CategoryEditor = ({
         label={t('merchandise.ui.name')}
         maxLength={200}
         name="name"
+        onBlur={onBlur}
         onChange={(event) => patchDraft({ name: event.target.value })}
         required
         value={draft.name}
-        {...(nameInvalid ? { helpText: 'Zadejte název (nejvýše 200 znaků)', validateStatus: 'error' as const } : {})}
+        {...(nameError === undefined ? {} : { helpText: nameMessage, validateStatus: 'error' as const })}
       />
       <FormInput
         id="category-heading"
         label={t('merchandise.ui.categoryPageHeading')}
         maxLength={300}
         name="heading"
+        onBlur={onBlur}
         onChange={(event) => patchDraft({ heading: event.target.value })}
         value={draft.heading}
       />
@@ -163,6 +152,7 @@ const CategoryEditor = ({
         label={t('merchandise.ui.shortDescription')}
         maxLength={5000}
         name="description"
+        onBlur={onBlur}
         onChange={(event) => patchDraft({ description: event.target.value })}
         value={draft.description}
       />
@@ -171,6 +161,7 @@ const CategoryEditor = ({
         label={t('merchandise.ui.categoryDescription')}
         maxLength={50_000}
         name="longDescription"
+        onBlur={onBlur}
         onChange={(event) => patchDraft({ longDescription: event.target.value })}
         value={draft.longDescription}
       />
@@ -179,9 +170,10 @@ const CategoryEditor = ({
         inputMode="numeric"
         label={t('merchandise.ui.siblingPosition')}
         name="position"
+        onBlur={onBlur}
         onChange={(event) => patchDraft({ positionText: event.target.value })}
         value={draft.positionText}
-        {...(positionInvalid ? { helpText: 'Zadejte celé číslo 0 nebo větší', validateStatus: 'error' as const } : {})}
+        {...(positionError === undefined ? {} : { helpText: positionMessage, validateStatus: 'error' as const })}
       />
       {siblings.length > 0 && (
         <div className="flex flex-col gap-100">
@@ -210,27 +202,99 @@ const CategoryEditor = ({
           </div>
         </div>
       )}
-      {serverError !== null && (
-        <StatusText showIcon status="error">
-          {serverError}
-        </StatusText>
-      )}
       <CategoryHistory selected={selected} />
     </>
+  );
+};
+
+interface CategoryEditPanelProps {
+  readonly category: CategoryNode;
+  readonly onBack: () => void;
+  readonly onSaved: (next: CategoryNode, revision: number) => void;
+  readonly parentName: string | undefined;
+  readonly revision: number;
+  readonly siblings: readonly CategoryNode[];
+}
+
+/**
+ * Edit an existing category. Changes save themselves (debounced, on blur and on Zavřít) against the revision the
+ * draft builds on; when someone else changed the category, the panel offers the version they saved instead.
+ */
+const CategoryEditPanel = ({ category, onBack, onSaved, parentName, revision, siblings }: CategoryEditPanelProps) => {
+  const { t } = useModernI18n();
+  const autosave = useAutosaveDraft<CategoryDraft, never>({
+    equals: sameCategoryDraft,
+    isValid: (value) => Object.keys(categoryDraftErrors(value)).length === 0,
+    revision,
+    runtime: browserRuntime,
+    save: (value, expectedRevision): Effect.Effect<RevisionedSaveResult> =>
+      autosaveCategoryEdit(value, category, expectedRevision).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            if (result !== 'conflict' && result !== 'failed' && result !== 'saved') {
+              onSaved(savedCategory(category, value), result);
+            }
+          }),
+        ),
+      ),
+    server: draftOf(category),
+  });
+  const { draft } = autosave;
+  const errors = categoryDraftErrors(draft);
+  const patchDraft = (patch: Partial<CategoryDraft>) => autosave.setDraft((current) => ({ ...current, ...patch }));
+  const close = () => {
+    autosave.flush();
+    onBack();
+  };
+  const handleBlur = autosave.flush;
+  const handleRetry = autosave.retry;
+  const handleReloadLatest = autosave.reloadLatest;
+  return (
+    <SidePanel
+      actions={
+        <>
+          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <Button onClick={close} theme="outlined" variant="secondary">
+            Zpět na seznam
+          </Button>
+        </>
+      }
+      onOpenChange={(open) => {
+        if (!open) {
+          close();
+        }
+      }}
+      open
+      resizeLabel={t('merchandise.sidePanel.resize')}
+      size="md"
+      title={t('merchandise.ui.storefrontCategories')}
+    >
+      <div className="flex flex-col gap-200 py-200">
+        <p className="text-fg-secondary text-sm">Úpravy se ukládají samy; změnu uvidí zákazník v e-shopu.</p>
+        <CategoryEditor
+          draft={draft}
+          nameError={errors.name}
+          onBlur={handleBlur}
+          parentName={parentName}
+          patchDraft={patchDraft}
+          positionError={errors.position}
+          selected={category}
+          siblings={siblings}
+        />
+      </div>
+    </SidePanel>
   );
 };
 
 /** Side panel for the storefront category tree: rename, heading, descriptions and sibling order. */
 const useCategoryAdmin = ({ onCommitted }: CategoryAdminButtonProps) => {
   const { t } = useModernI18n();
-  const failure = useCommandFailure();
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState<Loaded>({ status: 'idle' });
   const [search, setSearch] = useState('');
   const [selection, setSelection] = useState<Selected | null>(null);
-  const [draft, setDraft] = useState<CategoryDraft | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
+  /** Whether a save landed while the panel is open: the list refreshes once, when the user leaves the editor. */
+  const [savedOnce, setSavedOnce] = useState(false);
 
   const categories = loaded.status === 'ready' ? loaded.categories : NO_CATEGORIES;
   const selected = selection?.status === 'ready' ? selection.category : undefined;
@@ -251,8 +315,6 @@ const useCategoryAdmin = ({ onCommitted }: CategoryAdminButtonProps) => {
   /** Reads the category's content and history; the draft starts from that fresh copy. */
   const select = (id: string) => {
     setSelection({ id, status: 'loading' });
-    setDraft(null);
-    setServerError(null);
     loadCategoryDetail(id, (outcome) => {
       const category = outcome.ok ? outcome.response.categories?.find((c) => c.id === id) : undefined;
       if (!outcome.ok || category === undefined) {
@@ -262,83 +324,53 @@ const useCategoryAdmin = ({ onCommitted }: CategoryAdminButtonProps) => {
       setSelection((current) =>
         current?.id === id ? { category, id, revision: outcome.response.revision, status: 'ready' } : current,
       );
-      setDraft(draftOf(category));
     });
   };
   const openPanel = () => {
     setOpen(true);
     setSelection(null);
-    setDraft(null);
     reload();
   };
 
   const list = categoryListFor(categories, search);
 
-  const patchDraft = (patch: Partial<CategoryDraft>) =>
-    setDraft((current) => (current === null ? current : { ...current, ...patch }));
-
-  const { nameInvalid, position, positionInvalid } = validateCategoryDraft(draft);
-
-  const save = () => {
-    if (selection?.status !== 'ready' || draft === null || busy || positionInvalid || nameInvalid) {
-      return;
-    }
-    const { category, revision } = selection;
-    setBusy(true);
-    setServerError(null);
-    runCommand(
-      {
-        _tag: 'UpdateCategory',
-        id: category.id,
-        patch: {
-          description: draft.description.trim(),
-          heading: draft.heading.trim(),
-          longDescription: draft.longDescription.trim(),
-          name: draft.name.trim(),
-          position,
-          published: draft.published,
-        },
-      },
-      revision,
-      (outcome) => {
-        setBusy(false);
-        if (!outcome.ok) {
-          setServerError(failure(outcome.reason, () => select(category.id)));
-          return;
-        }
-        onCommitted('Kategorie uložena. Změnu uvidí zákazník v e-shopu po obnovení stránky.');
-        reload();
-        select(category.id);
-      },
+  /** A saved draft: the panel continues from the revision the server confirmed, the list shows the new values. */
+  const commitSaved = (next: CategoryNode, revision: number) => {
+    setSelection({ category: next, id: next.id, revision, status: 'ready' });
+    setLoaded((current) =>
+      current.status === 'ready'
+        ? {
+            ...current,
+            categories: current.categories.map((c) => (c.id === next.id ? { ...c, ...next } : c)),
+            revision,
+          }
+        : current,
     );
+    setSavedOnce(true);
   };
 
   const backToList = () => {
     setSelection(null);
-    setDraft(null);
-    setServerError(null);
+    if (savedOnce) {
+      setSavedOnce(false);
+      onCommitted('Kategorie uložena. Změnu uvidí zákazník v e-shopu po obnovení stránky.');
+    }
   };
 
   return {
     backToList,
-    busy,
     categories,
-    draft,
+    commitSaved,
     list,
     loaded,
-    nameInvalid,
     open,
     openPanel,
     parentName,
-    patchDraft,
-    positionInvalid,
     reload,
-    save,
     search,
     select,
     selected,
     selection,
-    serverError,
     setOpen,
     setSearch,
     siblings,
@@ -346,33 +378,28 @@ const useCategoryAdmin = ({ onCommitted }: CategoryAdminButtonProps) => {
   };
 };
 
-const categoryListState = ({ categories, loaded, selection }: ReturnType<typeof useCategoryAdmin>) => ({
+const categoryListState = ({ categories, loaded }: ReturnType<typeof useCategoryAdmin>) => ({
   empty: loaded.status === 'ready' && categories.length === 0,
   failed: loaded.status === 'error',
   loading: loaded.status === 'idle' || loaded.status === 'loading',
-  visible: loaded.status === 'ready' && categories.length > 0 && selection === null,
+  visible: loaded.status === 'ready' && categories.length > 0,
 });
 
 export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
   const model = useCategoryAdmin(props);
   const {
     backToList,
-    busy,
-    draft,
+    commitSaved,
     list,
-    nameInvalid,
+    loaded,
     open,
     openPanel,
     parentName,
-    patchDraft,
-    positionInvalid,
     reload,
-    save,
     search,
     select,
     selected,
     selection,
-    serverError,
     setOpen,
     setSearch,
     siblings,
@@ -385,102 +412,92 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
       <Button icon="icon-[mdi--file-tree-outline]" onClick={openPanel} size="sm" theme="outlined" variant="secondary">
         Kategorie e-shopu
       </Button>
-      <SidePanel
-        actions={
-          selection === null ? (
+      {selection?.status === 'ready' && selected !== undefined ? (
+        <CategoryEditPanel
+          category={selected}
+          key={selection.id}
+          onBack={backToList}
+          onSaved={commitSaved}
+          parentName={parentName}
+          revision={selection.revision}
+          siblings={siblings}
+        />
+      ) : (
+        <SidePanel
+          actions={
             <Button onClick={() => setOpen(false)} theme="outlined" variant="secondary">
               Zavřít
             </Button>
-          ) : (
-            <>
-              <Button onClick={backToList} theme="outlined" variant="secondary">
-                Zpět
-              </Button>
-              <Button isLoading={busy} loadingText="Ukládám…" onClick={save} variant="primary">
-                Uložit
-              </Button>
-            </>
-          )
-        }
-        onOpenChange={setOpen}
-        open={open}
-        resizeLabel={t('merchandise.sidePanel.resize')}
-        size="md"
-        title={t('merchandise.ui.storefrontCategories')}
-      >
-        <div className="flex flex-col gap-200 py-200">
-          {listState.loading && <StatusText>Načítám kategorie…</StatusText>}
-          {listState.failed && (
-            <>
-              <StatusText showIcon status="error">
-                Kategorie se nepodařilo načíst.
-              </StatusText>
-              <Button onClick={reload} variant="secondary">
-                Zkusit znovu
-              </Button>
-            </>
-          )}
-          {listState.empty && <p className="text-fg-secondary text-sm">Tato firma nemá kategorie e-shopu.</p>}
-          {listState.visible && (
-            <>
-              <FormInput
-                id="category-admin-search"
-                label={t('merchandise.ui.searchCategories')}
-                name="categorySearch"
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder={t('merchandise.ui.categorySearchPlaceholder')}
-                size="sm"
-                value={search}
-              />
-              <p className="text-fg-secondary text-sm">
-                {search.trim() === ''
-                  ? 'Hlavní kategorie podle pořadí v e-shopu. Pro podkategorie použijte hledání.'
-                  : `Nalezeno: ${list.length}`}
-              </p>
-              <ul className="flex flex-col gap-100">
-                {list.map((c) => (
-                  <li key={c.id}>
-                    <Button
-                      className="h-auto w-full justify-start whitespace-normal text-left"
-                      onClick={() => select(c.id)}
-                      size="sm"
-                      theme="borderless"
-                      type="button"
-                      variant="secondary"
-                    >
-                      <span
-                        className="block w-full text-left"
-                        style={{ textAlign: 'left' }}
-                      >{`${c.name} · /${c.slug} · pořadí ${c.position}${c.published === false ? ' · Skryto' : ' · Zveřejněno'}`}</span>
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          {selection?.status === 'loading' && <StatusText>Načítám kategorii…</StatusText>}
-          {selection?.status === 'error' && (
-            <>
-              <StatusText showIcon status="error">
-                Kategorii se nepodařilo načíst.
-              </StatusText>
-              <Button onClick={() => select(selection.id)} variant="secondary">
-                Zkusit znovu
-              </Button>
-            </>
-          )}
-          <CategoryEditor
-            draft={draft}
-            nameInvalid={nameInvalid}
-            parentName={parentName}
-            patchDraft={patchDraft}
-            positionInvalid={positionInvalid}
-            selected={selected}
-            serverError={serverError}
-            siblings={siblings}
-          />
-        </div>
-      </SidePanel>
+          }
+          onOpenChange={setOpen}
+          open={open}
+          resizeLabel={t('merchandise.sidePanel.resize')}
+          size="md"
+          title={t('merchandise.ui.storefrontCategories')}
+        >
+          <div className="flex flex-col gap-200 py-200">
+            {listState.loading && <StatusText>Načítám kategorie…</StatusText>}
+            {listState.failed && (
+              <>
+                <StatusText showIcon status="error">
+                  Kategorie se nepodařilo načíst.
+                </StatusText>
+                <Button onClick={reload} variant="secondary">
+                  Zkusit znovu
+                </Button>
+              </>
+            )}
+            {listState.empty && <p className="text-fg-secondary text-sm">Tato firma nemá kategorie e-shopu.</p>}
+            {listState.visible && loaded.status === 'ready' && (
+              <>
+                <FormInput
+                  id="category-admin-search"
+                  label={t('merchandise.ui.searchCategories')}
+                  name="categorySearch"
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder={t('merchandise.ui.categorySearchPlaceholder')}
+                  size="sm"
+                  value={search}
+                />
+                <p className="text-fg-secondary text-sm">
+                  {search.trim() === ''
+                    ? 'Hlavní kategorie podle pořadí v e-shopu. Pro podkategorie použijte hledání.'
+                    : `Nalezeno: ${list.length}`}
+                </p>
+                <ul className="flex flex-col gap-100">
+                  {list.map((c) => (
+                    <li key={c.id}>
+                      <Button
+                        className="h-auto w-full justify-start whitespace-normal text-left"
+                        onClick={() => select(c.id)}
+                        size="sm"
+                        theme="borderless"
+                        type="button"
+                        variant="secondary"
+                      >
+                        <span className="block w-full text-left" style={{ textAlign: 'left' }}>
+                          {`${c.name} · /${c.slug} · pořadí ${c.position}${c.published === false ? ' · Skryto' : ' · Zveřejněno'}`}
+                        </span>
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {selection?.status === 'loading' && <StatusText>Načítám kategorii…</StatusText>}
+            {selection?.status === 'error' && (
+              <>
+                <StatusText showIcon status="error">
+                  Kategorii se nepodařilo načíst.
+                </StatusText>
+                <Button onClick={() => select(selection.id)} variant="secondary">
+                  Zkusit znovu
+                </Button>
+              </>
+            )}
+          </div>
+        </SidePanel>
+      )}
     </>
   );
 };

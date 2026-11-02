@@ -55,6 +55,31 @@ const installReadScopeSql =
 const installFencedReadScopeSql = `${installReadScopeSql}, current_setting('transaction_isolation') as isolation, case when current_setting('transaction_isolation') = $3 then pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0)) end as publication_lock`;
 const readFenceValuesSchema = Schema.Tuple([Schema.Literal(readCommittedIsolation)]);
 
+const guardedPublicationLockSql =
+  "select current_setting('transaction_isolation') as isolation, case when current_setting('transaction_isolation') = $1 then pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0)) end as publication_lock";
+
+/** Composition-authority isolation and shared publication lock statements, including the guarded combined form. */
+const compositionPublicationLockRows = (
+  text: string,
+  params: readonly unknown[],
+): Option.Option<Effect.Effect<readonly object[]>> => {
+  if (text === "select current_setting('transaction_isolation') as isolation") {
+    return Option.some(Effect.succeed([{ isolation: readCommittedIsolation }]));
+  }
+  if (text === "select pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0))") {
+    return Option.some(Effect.succeed([]));
+  }
+  // The guarded shared publication lock taken before a Read's admitted evidence write (for example, a denial).
+  return text === guardedPublicationLockSql
+    ? Option.some(
+        Schema.decodeUnknownEffect(readFenceValuesSchema)(params).pipe(
+          Effect.orDie,
+          Effect.as([{ isolation: readCommittedIsolation, publication_lock: null }]),
+        ),
+      )
+    : Option.none();
+};
+
 /**
  * Scripted SQL transport for the real Core Read lifecycle and the registration's original owner
  * factory/handler. No service substitution. Drizzle mapping, scope installation (session settings or a
@@ -98,13 +123,9 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       if (/^(?:begin|commit|rollback|savepoint|release savepoint)(?:\s|$)/u.test(text)) {
         return [];
       }
-      if (text === "select current_setting('transaction_isolation') as isolation") {
-        return [{ isolation: readCommittedIsolation }];
-      }
-      if (
-        text === "select pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0))"
-      ) {
-        return [];
+      const publicationLock = compositionPublicationLockRows(text, params);
+      if (Option.isSome(publicationLock)) {
+        return yield* publicationLock.value;
       }
       // Read and write admissions (the unlocked precheck and the locked fence) select only the fence columns;
       // matching also reads the approved subscriptions.

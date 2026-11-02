@@ -7,6 +7,7 @@ import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { useCart } from "@/features/cart/cart-provider";
 import type { CartItemSnapshot } from "@/features/cart/cart-state";
 import type { CatalogPriceTier } from "@/ontos/catalog-types";
+import { marketRequestHeaders } from "@/ontos/market-locale";
 
 export function ReorderAction({ orderId, children }: { orderId: string; children?: ReactNode }) {
   const { addItem, adding, activeCartId } = useCart();
@@ -28,7 +29,7 @@ export function ReorderAction({ orderId, children }: { orderId: string; children
     try {
       const response = await fetch(
         `/api/ontos/orders/reorder?${new URLSearchParams({ order: orderId })}`,
-        { cache: "no-store" },
+        { cache: "no-store", headers: marketRequestHeaders() },
       );
       const result = (await response.json()) as {
         items?: { item: CartItemSnapshot; quantity: number; priceTiers: CatalogPriceTier[] }[];

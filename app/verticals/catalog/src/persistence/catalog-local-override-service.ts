@@ -78,6 +78,7 @@ export type CatalogLocalOverrideOperationResult<Value> =
 export interface CatalogLocalOverrideWiring<Value> {
   readonly admission: CatalogFactAdmissionPorts<Value>;
   readonly events: CatalogResolvedCurrentEventPorts<Value>;
+  readonly productExists: (scope: CatalogFactScope) => Effect.Effect<boolean, CatalogSourceResolutionUnavailable>;
   readonly store: CatalogSourceResolutionPorts<Value>;
   readonly valuesEqual: (left: Value, right: Value) => boolean;
 }
@@ -163,6 +164,33 @@ const acceptedBaseRevisionFor = <Value>(input: {
  * a released override never remains secretly active and a mere base update never claims a change.
  */
 export const makeCatalogLocalOverrideService = <Value>(wiring: CatalogLocalOverrideWiring<Value>) => {
+  const validateOverrideTargetAndValue = Effect.fn('CatalogLocalOverride.validateTargetAndValue')(
+    function* validateOverrideTargetAndValue(
+      input: {
+        readonly operation: CatalogLocalOverrideOperation;
+        readonly principalId: string;
+        readonly scope: CatalogFactScope;
+      },
+      value: Value,
+    ) {
+      if (input.operation === 'RELEASE') {
+        return null;
+      }
+      if (input.scope.targetKind === 'PRODUCT') {
+        const exists = yield* wiring.productExists(input.scope);
+        if (!exists) {
+          return 'The Product target does not exist in the trusted Tenant';
+        }
+      }
+      const valid = yield* wiring.admission.isOverrideValueValid({
+        principalId: input.principalId,
+        scope: input.scope,
+        value,
+      });
+      return valid ? null : 'Local Override value is not valid for the Catalog fact';
+    },
+  );
+
   const runOperation = Effect.fn('CatalogLocalOverride.runOperation')(function* runOperation(input: {
     readonly at: Date;
     readonly classification: ProductChangeClassification | null;
@@ -203,15 +231,9 @@ export const makeCatalogLocalOverrideService = <Value>(wiring: CatalogLocalOverr
     if (value === null) {
       return { reason: 'Local Override requires a value for this exact Catalog fact', status: 'INVALID' };
     }
-    if (input.operation !== 'RELEASE') {
-      const valueValid = yield* wiring.admission.isOverrideValueValid({
-        principalId: input.principalId,
-        scope: input.scope,
-        value,
-      });
-      if (!valueValid) {
-        return { reason: 'Local Override value is not valid for the Catalog fact', status: 'INVALID' };
-      }
+    const invalidReason = yield* validateOverrideTargetAndValue(input, value);
+    if (invalidReason !== null) {
+      return { reason: invalidReason, status: 'INVALID' };
     }
     const override: CatalogLocalOverride<Value> = {
       actorPrincipalId: input.principalId,

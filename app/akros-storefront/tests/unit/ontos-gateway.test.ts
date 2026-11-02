@@ -36,16 +36,14 @@ const json = (status: number, body: unknown, headers: Record<string, string> = {
 
 let gateway: Gateway;
 let minted = 0;
-let rejectToken: string | undefined;
-let rejectionStatus = 401;
 let revision = "a".repeat(64);
+let redeemed: Set<string>;
 beforeEach(async () => {
   vi.resetModules();
   vi.useRealTimers();
   gateway = await vi.importActual<Gateway>("@/ontos/gateway");
   minted = 0;
-  rejectToken = undefined;
-  rejectionStatus = 401;
+  redeemed = new Set();
   revision = "a".repeat(64);
   vi.mocked(shellFetch).mockReset();
   vi.mocked(shellFetch).mockImplementation(async (url, init) => {
@@ -61,6 +59,7 @@ beforeEach(async () => {
         expiresAt: Math.floor(Date.now() / 1000) + 300,
         token: `t${minted}`,
       };
+      if (url.endsWith("gateway-read")) redeemed.add(`Bearer ${context.token}`);
       return url.endsWith("gateway-read")
         ? json(
             200,
@@ -70,8 +69,9 @@ beforeEach(async () => {
         : json(200, context);
     }
     const authorization = new Headers(init.headers).get("authorization");
-    if (authorization === `Bearer ${rejectToken}`)
-      return json(rejectionStatus, { code: "assertion_rejected" });
+    if (authorization === null || redeemed.has(authorization))
+      return json(401, { code: "gateway_assertion_replay" });
+    redeemed.add(authorization);
     return json(200, { ok: authorization, query: JSON.parse(String(init.body)) });
   });
 });
@@ -97,21 +97,15 @@ describe("OntOS gateway assertions", () => {
     expect(new Headers(init.headers).get("authorization")).toBeNull();
   });
 
-  it("reuses only the assertion, never a read result, until shortly before expiry", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
+  it("authenticates every read without replaying the combined read's redeemed assertion", async () => {
     await read({ product: "one" });
-    expect(await read({ product: "two" })).toEqual({ ok: "Bearer t1", query: { product: "two" } });
-    expect(minted).toBe(1);
-    const [url, init] = vi.mocked(shellFetch).mock.calls[1]!;
-    expect(url).toContain("/module-api/merchandise/r1/merchandise-api/reads/records");
-    expect(new Headers(init.headers).get("x-api-key")).toBeNull();
-    expect(new Headers(init.headers).get("x-ontos-composition-revision")).toBe(revision);
-    vi.advanceTimersByTime(239_000);
-    await read();
-    vi.advanceTimersByTime(2_000);
-    expect(await read()).toEqual({ ok: "Bearer t2", query: {} });
+    expect(await read({ product: "two" })).toEqual({ ok: "Bearer t2", query: { product: "two" } });
     expect(minted).toBe(2);
-    expect(shellFetch).toHaveBeenCalledTimes(4);
+    const [url, init] = vi.mocked(shellFetch).mock.calls[1]!;
+    expect(url).toBe("https://shell.test/shell-super-app-api/auth/api-key/gateway-read");
+    expect(new Headers(init.headers).get("x-api-key")).toBe("key");
+    expect(new Headers(init.headers).get("authorization")).toBeNull();
+    expect(shellFetch).toHaveBeenCalledTimes(2);
   });
 
   it("starts cold owner reads in parallel without waiting for another read's dispatch", async () => {
@@ -171,17 +165,17 @@ describe("OntOS gateway assertions", () => {
     ).toBe("one");
   });
 
-  it("drops a failed mint so the same render can retry", async () => {
+  it("does not share a failed mint with another action in the same render", async () => {
     vi.mocked(shellFetch).mockResolvedValueOnce(json(503, { code: "gateway_unavailable" }));
     await renderCache.run(new Map(), async () => {
       const results = await Promise.allSettled([
         gateway.callAction("merchandise", "order", {}, "one"),
         gateway.callAction("merchandise", "order", {}, "two"),
       ]);
-      expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
-      expect(shellFetch).toHaveBeenCalledTimes(1);
-      await gateway.callAction("merchandise", "order", {}, "retry");
+      expect(results.map((result) => result.status)).toEqual(["rejected", "fulfilled"]);
       expect(shellFetch).toHaveBeenCalledTimes(3);
+      await gateway.callAction("merchandise", "order", {}, "retry");
+      expect(shellFetch).toHaveBeenCalledTimes(5);
     });
   });
 
@@ -189,17 +183,11 @@ describe("OntOS gateway assertions", () => {
     "replaces a rejected assertion (HTTP %s) and rebinds to the current revision",
     async (status) => {
       await renderCache.run(new Map(), async () => {
-        await read();
-        rejectToken = "t1";
-        rejectionStatus = status;
         revision = "b".repeat(64);
-        expect(await read()).toEqual({ ok: "Bearer t2", query: {} });
+        vi.mocked(shellFetch).mockResolvedValueOnce(json(status, { code: "assertion_rejected" }));
+        expect(await read()).toEqual({ ok: "Bearer t1", query: {} });
         await read();
-        expect(
-          new Headers(vi.mocked(shellFetch).mock.calls.at(-1)![1].headers).get(
-            "x-ontos-composition-revision",
-          ),
-        ).toBe(revision);
+        expect(vi.mocked(shellFetch).mock.calls.at(-1)![0]).toContain("/auth/api-key/gateway-read");
         expect(minted).toBe(2);
       });
     },
@@ -207,9 +195,59 @@ describe("OntOS gateway assertions", () => {
 
   it("does not retry forbidden reads or serve an earlier result", async () => {
     await read();
-    rejectToken = "t1";
-    rejectionStatus = 403;
+    vi.mocked(shellFetch).mockResolvedValueOnce(json(403, { code: "forbidden" }));
     await expect(read()).rejects.toMatchObject({ status: 403 });
+    expect(shellFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("mints a fresh action assertion after the cart product read", async () => {
+    await read({ productIds: ["real-product"] });
+    const payload = { command: { _tag: "PlaceStorefrontOrder", dryRun: true } };
+    expect(await gateway.callAction("merchandise", "apply-command", payload, "quote-one")).toEqual({
+      ok: "Bearer t2",
+      query: payload,
+    });
+    expect(minted).toBe(2);
+    expect(shellFetch).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(shellFetch).mock.calls[1]![0]).toContain("/auth/api-key/gateway-context");
+  });
+
+  it("never lends an action assertion to sequential or concurrent actions or a later read", async () => {
+    await renderCache.run(new Map(), async () => {
+      await gateway.callAction("merchandise", "apply-command", { first: true }, "first");
+      const actions = await Promise.all([
+        gateway.callAction("merchandise", "apply-command", { second: true }, "second"),
+        gateway.callAction("merchandise", "apply-command", { third: true }, "third"),
+      ]);
+      expect(actions).toEqual([
+        { ok: "Bearer t2", query: { second: true } },
+        { ok: "Bearer t3", query: { third: true } },
+      ]);
+      expect(await read()).toEqual({ ok: "Bearer t4", query: {} });
+      const calls = vi
+        .mocked(shellFetch)
+        .mock.calls.filter(([url]) => url.endsWith("/actions/apply-command"));
+      expect(calls.map(([, init]) => new Headers(init.headers).get("idempotency-key"))).toEqual([
+        "first",
+        "second",
+        "third",
+      ]);
+      expect(minted).toBe(4);
+    });
+  });
+
+  it("never retries an action after an authentication rejection", async () => {
+    const original = vi.mocked(shellFetch).getMockImplementation()!;
+    vi.mocked(shellFetch).mockImplementation((url, init) =>
+      url.endsWith("/actions/apply-command")
+        ? Promise.resolve(json(401, { code: "assertion_rejected" }))
+        : original(url, init),
+    );
+    await expect(
+      gateway.callAction("merchandise", "apply-command", {}, "once"),
+    ).rejects.toMatchObject({
+      status: 401,
+    });
     expect(shellFetch).toHaveBeenCalledTimes(2);
   });
 

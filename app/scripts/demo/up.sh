@@ -34,6 +34,9 @@ BUILD_JOBS="${DEMO_BUILD_JOBS:-2}"
 DOCKER=(docker --context orbstack)
 COMPOSE=("${DOCKER[@]}" compose -f docker-compose.yml -f scripts/demo/compose.demo.yml)
 mkdir -p "$LOG_DIR" "$PID_DIR" "$STAMP_DIR" "$STUB_DIR"
+# The composition publisher retains native legacy completion evidence for every authority transition.
+export ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY="$SCRATCH/legacy-completion-evidence"
+install -d -m 700 "$ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY"
 
 say() { printf '\033[1m[demo]\033[0m %s\n' "$*"; }
 die() {
@@ -319,6 +322,9 @@ if [ "${DEMO_RESET:-1}" != 0 ]; then
   # S00: Nájempark business cases; the three owned by „Externí obchodník“ are entrusted to external@najempark.demo.
   step demo-seed-siampark-cases env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" \
     node scripts/demo/seed-siampark-cases.mts
+  # Štítky and Úkoly of Nájempark and Velkoobchod Hanák through the public Actions (adds missing names/titles only).
+  step demo-seed-company-content env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" \
+    node scripts/demo/seed-company-content.mts --apply
 fi
 # AKROS remains an independent Next.js app. Its helper owns :3070 and registers the PID for down.sh.
 step akros-storefront "$APP/akros-storefront/scripts/demo-restart.sh"

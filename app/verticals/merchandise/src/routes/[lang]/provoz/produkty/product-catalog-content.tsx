@@ -5,7 +5,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { formatDateTime, SectionCard } from '@app/admin-ui';
+import { formatDateTime, ScrollRegion, SectionCard } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import { useRef, useState } from 'react';
 import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
@@ -293,9 +293,7 @@ export const CatalogContentPanel = ({
         {history.length === 0 ? (
           <p className="text-fg-secondary text-sm">Zatím žádné změny obsahu.</p>
         ) : (
-          /* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Pending scoped exception approval: this named overflow viewport needs keyboard scrolling. */
-          <section aria-label={t('merchandise.ui.contentChangeHistory')} style={{ overflowX: 'auto' }} tabIndex={0}>
-            {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
+          <ScrollRegion label={t('merchandise.ui.contentChangeHistory')}>
             <Table size="sm" variant="line">
               <Table.Header>
                 <Table.Row>
@@ -316,7 +314,7 @@ export const CatalogContentPanel = ({
                 ))}
               </Table.Body>
             </Table>
-          </section>
+          </ScrollRegion>
         )}
       </SectionCard>
     </div>

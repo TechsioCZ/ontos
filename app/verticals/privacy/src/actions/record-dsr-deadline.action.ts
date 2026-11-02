@@ -22,6 +22,13 @@ import {
   requirePrivacyActionScope,
 } from './privacy-operation-action-support.ts';
 
+const DsrDeadlineAuditIdentitySchema = Schema.Struct({
+  caseRef: Schema.String,
+  controllerRef: Schema.String,
+  deadlineAt: PrivacyIsoTimestampSchema,
+  obligationRef: Schema.String,
+});
+
 const DsrDeadlineAuthorityEvidenceSchema = Schema.Struct({
   caseRef: Schema.String,
   controllerRef: Schema.String,
@@ -74,7 +81,8 @@ export const handleRecordDsrDeadline = Effect.fn('RecordDsrDeadlineAction.handle
     });
   }
   const obligation = caseResult.value.controllerObligations.find(
-    ({ controllerRef }) => controllerRef === payload.controllerRef,
+    ({ controllerRef, obligationRef }) =>
+      controllerRef === payload.controllerRef && obligationRef === payload.obligationRef,
   );
   if (obligation === undefined) {
     return yield* new PrivacyActionRejected({
@@ -104,6 +112,7 @@ export const handleRecordDsrDeadline = Effect.fn('RecordDsrDeadlineAction.handle
   const deadline = calculateDsrDeadline({
     caseRef: payload.caseRef,
     controllerRef: payload.controllerRef,
+    obligationRef: obligation.obligationRef,
     originalReceivedAt: authoritative.receivedAt,
     policy: authoritative.policy,
     receiptBasisRef: authoritative.receiptBasisRef,
@@ -114,10 +123,22 @@ export const handleRecordDsrDeadline = Effect.fn('RecordDsrDeadlineAction.handle
     context.actionInvocationId,
     deadline,
   );
-  yield* context.recordAuditEvidence({
-    operationKind: 'record-dsr-deadline',
-    recordId: `${result.caseRef}:${result.controllerRef}:${result.deadlineAt}`,
-  });
+  const recordId = yield* Schema.encodeEffect(Schema.fromJsonString(DsrDeadlineAuditIdentitySchema))({
+    caseRef: result.caseRef,
+    controllerRef: result.controllerRef,
+    deadlineAt: result.deadlineAt,
+    obligationRef: result.obligationRef,
+  }).pipe(
+    Effect.mapError((cause) => {
+      const error = new PrivacyOperationPersistenceError({
+        code: 'privacy_operation_persistence_unavailable',
+        reason: 'DSR Deadline audit identity could not be encoded',
+      });
+      Object.defineProperty(error, 'cause', { configurable: true, value: cause });
+      return error;
+    }),
+  );
+  yield* context.recordAuditEvidence({ operationKind: 'record-dsr-deadline', recordId });
   return result;
 });
 export const recordDsrDeadlineAction = defineAction(
@@ -141,7 +162,7 @@ export const recordDsrDeadlineAction = defineAction(
     payloadSchema: RecordDsrDeadlinePayloadSchema,
     policies: [],
     resultSchema: RecordDsrDeadlineResultSchema,
-    schemaVersion: '1',
+    schemaVersion: '2',
   },
   handleRecordDsrDeadline,
   (transaction, scope) =>

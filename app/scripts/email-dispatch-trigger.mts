@@ -1,3 +1,4 @@
+import { observeRuntimeJob } from '../packages/core-runtime/src/observability/runtime-jobs.ts';
 import { Clock, Config, Console, Context, Duration, Effect, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 
@@ -77,6 +78,7 @@ export const startEmailDispatchTrigger = () =>
         yield* Console.error(`[email-trigger] dispatch HTTP ${response.status}`);
       }
     }).pipe(
+      observeRuntimeJob('email-dispatch-trigger'),
       Effect.scoped,
       Effect.timeout('30 seconds'),
       Effect.catchTags({

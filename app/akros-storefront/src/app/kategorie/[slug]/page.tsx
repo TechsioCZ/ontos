@@ -13,7 +13,7 @@ import { ProductGrid } from "@/components/product-grid";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { CategoryBranch } from "@/ontos/category-branch";
-import { cs } from "@/i18n/cs";
+import { getDictionary } from "@/ontos/active-market";
 import {
   CATEGORY_PAGE_SIZE,
   getCatalog,
@@ -32,6 +32,7 @@ const productsPerPage = CATEGORY_PAGE_SIZE;
 export async function generateMetadata({ params }: CategoryPageProps): Promise<Metadata> {
   const { slug } = await params;
   const category = (await getCatalog(slug)).getCategoryBySlug(slug);
+  const cs = await getDictionary();
 
   return { title: category?.name ?? cs.catalog.title };
 }
@@ -39,6 +40,7 @@ export async function generateMetadata({ params }: CategoryPageProps): Promise<M
 export default async function CategoryPage({ params, searchParams }: CategoryPageProps) {
   const { slug } = await params;
   const query = await searchParams;
+  const cs = await getDictionary();
   const filters = parseCategoryFilters(query);
   const requestedPage = Number.parseInt(String(query.page ?? "1"), 10);
   const requested = Math.max(Number.isFinite(requestedPage) ? requestedPage : 1, 1);

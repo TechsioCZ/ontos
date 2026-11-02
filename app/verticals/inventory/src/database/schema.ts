@@ -1,7 +1,7 @@
 import { defineRelations } from 'drizzle-orm';
 import type { EmptyRelations, ExtractTablesFromSchema, ExtractTablesWithRelations } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
-import { index, primaryKey, text, timestamp } from 'drizzle-orm/pg-core';
+import { index, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { inventorySchema } from './inventory-schema.ts';
 
 import { inventoryBackendConfigurations } from '../persistence/inventory-backend-configuration-table.ts';
@@ -113,18 +113,19 @@ export {
   inventoryStockSharingEligibilityHistory,
 } from '../persistence/stock-sharing-eligibility-table.ts';
 
-// Replay evidence is consumed before tenant/business scope is installed.
+/** Global pre-authentication replay identities, independent of Tenant/SLE business rows. */
 export const gatewayAssertionRedemptions = inventorySchema.table(
   'gateway_assertion_redemptions',
   {
     audience: text('audience').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     issuer: text('issuer').notNull(),
-    jti: text('jti').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.issuer, table.audience, table.jti] }),
-    index('inventory_redemption_expiry').on(table.expiresAt),
+    unique('inventory_gateway_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
+    index('inventory_gateway_redemptions_expiry_idx').on(table.expiresAt),
   ],
 );
 

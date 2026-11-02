@@ -13,7 +13,11 @@ import { RecordsApi } from './apis/records.ts';
 // </generated-governed-http-api-imports>
 
 export type OperationContext = MicroVerticalOperationContext;
-export const propertyPortfolioMarkerSchema = Schema.Struct({ ...MicroVerticalBuildMarkerSchema.fields });
+export const propertyPortfolioMarkerSchema = Schema.Struct({
+  ...MicroVerticalBuildMarkerSchema.fields,
+  kind: Schema.Literal('microvertical-delivery-unit'),
+  schemaVersion: Schema.Literal(1),
+});
 export const propertyPortfolioReadinessSchema = Schema.Struct({
   ...MicroVerticalReadinessSchema.fields,
   marker: propertyPortfolioMarkerSchema,

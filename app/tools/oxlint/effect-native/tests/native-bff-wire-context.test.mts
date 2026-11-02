@@ -71,7 +71,13 @@ it('proves published native BFF wire context while retaining internal correlatio
         source: `${source}\nexport const operation = (traceparent: string) => perform(traceparent);`,
       },
     ];
-    const folder = path.join(directory, 'packages/fixture/src');
+    // The rule scopes fixture inputs by the path below their fixture root, as for its checked-in fixtures.
+    const folder = path.join(
+      directory,
+      'tools/oxlint/effect-native/tests/fixtures',
+      ruleName,
+      'invalid/packages/fixture/src',
+    );
     mkdirSync(folder, { recursive: true });
     const files = cases.map((entry) => {
       const filename = path.join(folder, `${entry.name}.ts`);

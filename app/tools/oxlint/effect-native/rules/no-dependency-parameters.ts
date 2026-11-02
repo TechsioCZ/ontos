@@ -6,6 +6,8 @@
  * local type aliases, transparent built-in utility wrappers, and inline service records.
  * A Layer used only once as ManagedRuntime.make's input is the A1 root composition target,
  * not hidden library dependency provisioning. Pure local Resolver callbacks are definition data.
+ * Type-only make signatures joining local Context.Service-backed contracts describe owner
+ * composition; runtime implementation parameters are still checked.
  * Limitations: suffix matching is a heuristic for unknown/imported application types; no type
  * checker proves that every named Service/Repository is a collaborator. Local type expansion
  * is bounded at 12 levels; no cross-file aliases. Diagnostics describe syntax, not runtime fate.
@@ -14,7 +16,7 @@
 import { defineRule } from '@oxlint/plugins';
 import type { ESTree } from '@oxlint/plugins';
 
-import { keyName as staticKeyName, unwrapBinding, unwrapType as unwrapSharedType } from '../shared/ast.ts';
+import { asNode, keyName as staticKeyName, unwrapBinding, unwrapType as unwrapSharedType } from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
 import { booleanOption as boolean, compile, stringList } from '../shared/options.ts';
 import { isSourceRuleInScope } from '../shared/source-rule-scope.ts';
@@ -255,6 +257,44 @@ export const rule = defineRule({
           ['TSTypeAliasDeclaration', 'TSInterfaceDeclaration'].includes(d.node.type),
         )?.node ?? null
       );
+    };
+
+    // A Context.Service-backed factory contract describes composition; its type-only
+    // make signature cannot yield collaborators. Keep implementation parameters blocking.
+    const taggedContracts = new Set<AnyNode>();
+    for (const statement of context.sourceCode.ast.body) {
+      const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+      if (declaration?.type !== 'ClassDeclaration') continue;
+      let base = declaration.superClass;
+      for (let depth = 0; depth < 3 && base?.type === 'CallExpression'; depth += 1) {
+        if (/^(?:root\.)?Context\.Service$/u.test(importedPath(base.callee) ?? '')) {
+          const arguments_ = base.typeArguments?.params;
+          const contract =
+            arguments_?.length === 2 && arguments_[1].type === 'TSTypeReference'
+              ? asNode(localType(arguments_[1].typeName))
+              : null;
+          if (contract?.type === 'TSInterfaceDeclaration') taggedContracts.add(contract);
+          break;
+        }
+        base = base.callee;
+      }
+    }
+
+    const isTaggedFactorySignature = (node: AnyNode): boolean => {
+      if (node.type !== 'TSFunctionType') return false;
+      let property = node.parent;
+      if (property?.type === 'TSTypeAnnotation') property = property.parent;
+      if (
+        property?.type !== 'TSPropertySignature' ||
+        keyName(property.key, property.computed) !== 'make' ||
+        property.parent?.type !== 'TSInterfaceBody' ||
+        !taggedContracts.has(property.parent.parent)
+      )
+        return false;
+      const returned = unwrapType(node.returnType);
+      if (returned.type !== 'TSTypeReference') return false;
+      const result = asNode(localType(returned.typeName));
+      return result !== null && result !== property.parent.parent && taggedContracts.has(result);
     };
 
     /** A `TSFunctionType` / `TSMethodSignature` whose return type is `Effect.Effect<…>`. */
@@ -511,6 +551,7 @@ export const rule = defineRule({
     };
 
     const inspectParameters = (node: AnyNode): void => {
+      if (isTaggedFactorySignature(node)) return;
       for (const param of (node as { params?: readonly AnyNode[] }).params ?? []) {
         const binding = unwrapBinding(param);
         const annotation =

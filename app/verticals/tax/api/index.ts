@@ -19,7 +19,7 @@ import {
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
@@ -30,8 +30,8 @@ import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramo
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
-  GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+  GatewayAssertionRedemptionDatabaseLive,
 } from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
@@ -103,7 +103,6 @@ const readRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(readRuntimeDependenciesLive),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
-  Layer.provide(NodeCrypto.layer),
 );
 /** Read runtime bound by generated governed HTTP handlers mounted in the slot below. */
 export const governedReadRuntimeLive = readRuntimeLive;
@@ -126,7 +125,6 @@ const actionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
   ),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
-  Layer.provide(NodeCrypto.layer),
 );
 /** Action runtime bound by generated governed Action HTTP handlers mounted in the slot below. */
 export const governedActionRuntimeLive = actionRuntimeLive;
@@ -134,43 +132,40 @@ export const governedActionRuntimeLive = actionRuntimeLive;
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   taxReadinessLayer,
   // <generated-governed-http-handler-layers>
-  applicableTaxRuleSetReadApiLive,
-  correctTaxRuleRevisionActionApiLive,
-  createTaxRuleActionApiLive,
-  createTaxRuleRevisionActionApiLive,
-  declareSellerVatRegimeActionApiLive,
-  endTaxRuleRevisionActionApiLive,
-  finalizeOrderTaxActionApiLive,
-  finalOrderTaxReadApiLive,
-  importSellerVatRegimeDeclarationsActionApiLive,
-  sellerVatRegimeAtInstantReadApiLive,
-  sellerVatRegimeHistoryReadApiLive,
-  taxCorrectionPreviewReadApiLive,
-  taxEvaluationReadApiLive,
-  taxMaterialityComparisonReadApiLive,
-  taxPrivacyOwnerCoverageReadApiLive,
-  taxRuleHistoryReadApiLive,
+  applicableTaxRuleSetReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  correctTaxRuleRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  createTaxRuleActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  createTaxRuleRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  declareSellerVatRegimeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  endTaxRuleRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  finalizeOrderTaxActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  finalOrderTaxReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  importSellerVatRegimeDeclarationsActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  sellerVatRegimeAtInstantReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  sellerVatRegimeHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  taxCorrectionPreviewReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  taxEvaluationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  taxMaterialityComparisonReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  taxPrivacyOwnerCoverageReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  taxRuleHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>
-);
-const requestServicesLive = Layer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive).pipe(
+).pipe(
   // <generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provideMerge(
+  GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, productionGatewayAssertionRedemptionLive),
   ),
   // </generated-governed-http-handler-support-layers>
-  Layer.provideMerge(compositionSourceLive),
-  Layer.provideMerge(runtimeObservabilityLive),
-  Layer.provideMerge(databaseIdentitiesLive),
-  Layer.provideMerge(NodeCrypto.layer),
-  Layer.orDie,
+  Layer.provide(compositionSourceLive),
+  Layer.provide(
+    Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nodeCryptoLayer, databaseIdentitiesLive),
+  ),
 );
-const resolvedApiHandlersLive = governedReadApiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));
+const resolvedApiHandlersLive = governedReadApiHandlersLive.pipe(Layer.orDie);
 
 export const makeTaxApiRuntime = (): EffectBffDefinition<typeof taxApi> & EffectBffRuntime<typeof taxApi> =>
   assembleEffectBffRuntime({
     api: taxApi,
     handlers: resolvedApiHandlersLive,
-    services: requestServicesLive,
   });
 
 const apiRuntime: EffectBffDefinition<typeof taxApi> & EffectBffRuntime<typeof taxApi> = makeTaxApiRuntime();

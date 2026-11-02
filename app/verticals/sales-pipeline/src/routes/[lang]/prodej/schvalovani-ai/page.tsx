@@ -732,11 +732,6 @@ const AiApprovalsContent = ({ legalEntityId }: { readonly legalEntityId: string 
         <meta content="noindex, nofollow" name="robots" />
       </Helmet>
       <PageHeader
-        actions={
-          <Button disabled={busy} onClick={refresh} size="sm" theme="outlined" variant="secondary">
-            Obnovit seznam
-          </Button>
-        }
         description="AI připraví návrh změn příležitostí a objednávek. Vy porovnáte údaje a rozhodnete. Bez vašeho souhlasu se nic nezmění."
         meta={<Badge variant="secondary">Úroveň C</Badge>}
         title={t('sales-pipeline.pages.ai.title')}
@@ -744,7 +739,7 @@ const AiApprovalsContent = ({ legalEntityId }: { readonly legalEntityId: string 
       {loading ? <p className="text-fg-secondary text-sm">Načítám návrhy AI…</p> : null}
       {!loading && noAccess && (
         <EmptyState
-          description="Schvalovat změny AI může uživatel s právem zápisu do příležitostí nebo objednávek. Zkuste seznam obnovit."
+          description="Schvalovat změny AI může uživatel s právem zápisu do příležitostí nebo objednávek. Jakmile oprávnění získáte, seznam se zobrazí sám."
           title={t('sales-pipeline.aiReview.unavailableTitle')}
         />
       )}
@@ -759,10 +754,14 @@ const AiApprovalsContent = ({ legalEntityId }: { readonly legalEntityId: string 
             </p>
           </div>
           {(opportunities.status === 'error' || orders.status === 'error') && (
-            <p className="text-sm" role="alert">
-              Část návrhů se nepodařilo načíst ({opportunities.status === 'error' ? 'Příležitosti' : 'Objednávky'}).
-              Zkuste seznam obnovit.
-            </p>
+            <div className="flex flex-wrap items-center gap-150" role="alert">
+              <p className="text-sm">
+                Část návrhů se nepodařilo načíst ({opportunities.status === 'error' ? 'Příležitosti' : 'Objednávky'}).
+              </p>
+              <Button disabled={busy} onClick={refresh} size="sm" theme="outlined" variant="secondary">
+                Zkusit znovu
+              </Button>
+            </div>
           )}
           <fieldset aria-label={t('sales-pipeline.aiReview.batchDisplayLabel')} className="sp-ai-review-actions">
             <Button

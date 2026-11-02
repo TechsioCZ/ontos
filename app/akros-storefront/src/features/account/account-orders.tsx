@@ -8,7 +8,7 @@ import { DataTable, type ColumnDef } from "@techsio/ui-kit/organisms/data-table"
 import { AccountHeading } from "./account-content";
 import { CheckoutSelect } from "@/features/checkout/checkout-select";
 import { formatPrice } from "@/lib/format";
-import { orderHref, orderStatusLabels, type CustomerOrder } from "@/ontos/order-model";
+import { orderHref, orderMoney, orderStatusLabels, type CustomerOrder } from "@/ontos/order-model";
 import { ReorderAction } from "./reorder-action";
 
 const columns: ColumnDef<CustomerOrder>[] = [
@@ -39,7 +39,7 @@ const columns: ColumnDef<CustomerOrder>[] = [
     meta: { align: "end" },
     cell: ({ row }) => (
       <strong className="whitespace-nowrap tabular-nums">
-        {formatPrice(row.original.totalMinor)}
+        {formatPrice(row.original.totalMinor, orderMoney(row.original))}
       </strong>
     ),
   },
@@ -139,7 +139,9 @@ export function AccountOrders({
                   </div>
                   <div className="flex flex-wrap justify-between gap-(--dimension-8)">
                     <dt>Cena celkem</dt>
-                    <dd className="font-bold tabular-nums">{formatPrice(order.totalMinor)}</dd>
+                    <dd className="font-bold tabular-nums">
+                      {formatPrice(order.totalMinor, orderMoney(order))}
+                    </dd>
                   </div>
                   <div className="flex flex-wrap justify-between gap-(--dimension-8)">
                     <dt>Stav</dt>

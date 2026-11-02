@@ -3,6 +3,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import {
   Cause,
   Context,
+  ConfigProvider,
   Crypto,
   DateTime,
   Deferred,
@@ -18,7 +19,7 @@ import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError, UnknownError } from 'effect/sql/SqlError';
 import { commitActionThenReject } from '../../src/actions/context.ts';
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
-import { defineAction } from '../../src/actions/definition.ts';
+import { defineAction, getActionHandler, getActionServiceFactory } from '../../src/actions/definition.ts';
 import {
   ActionInvocationPersistenceError,
   ActionPolicyDenied,
@@ -29,6 +30,7 @@ import { createDomainEventReference } from '../../src/actions/events.ts';
 import type { ActionPolicy } from '../../src/actions/policy.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
+import { OpenDatabaseTransaction, refuseInsideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
 import {
@@ -2136,6 +2138,143 @@ const testCompositionTransactionFence = () =>
     }),
   );
 
+const testGuardedActionRemoteIo = Effect.fn('ActionRuntimeIntegration.refuseRemoteIo')(function* refuseRemoteIo(
+  configuration: Readonly<Record<string, boolean>>,
+) {
+  const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
+  const key =
+    configuration['ONTOS_ACTION_TRANSACTION_IO_GUARD'] === false
+      ? 'guarded-remote-io-disabled'
+      : 'guarded-remote-io-default';
+  const moduleStateKey = `test.${key}.${tenantId}`;
+  let preflightSawNoTransaction = false;
+  let handlerSawTransaction = false;
+  const prepareRemoteWork = Effect.gen(function* prepareRemoteWorkEffect() {
+    preflightSawNoTransaction = Option.isNone(yield* OpenDatabaseTransaction);
+    return { outcome: 'not_applicable' } as const;
+  });
+  const forbiddenRemoteWork = Effect.gen(function* forbiddenRemoteWorkEffect() {
+    handlerSawTransaction = Option.isSome(yield* OpenDatabaseTransaction);
+    yield* refuseInsideDatabaseTransaction('outbound-fetch', 'https://owner.fixture.invalid/read');
+  });
+  yield* withDatabase((database) =>
+    Effect.gen(function* guardedAction() {
+      const runtime = makeActionRuntime(
+        database,
+        makeActionRepository(crypto),
+        allowedPermission,
+        testOperationalScopeResolver,
+        {
+          ...openActionRuntimeOptions,
+          authorizationPreflight: { prepare: () => prepareRemoteWork },
+        },
+      );
+      const action = makeRegistration({
+        actionKey: 'shell.test.guarded-remote-io',
+        moduleStateKey,
+        onExecuteEffect: forbiddenRemoteWork,
+      });
+      const exit = yield* runtime
+        .runAction({
+          payload: { value: 'must-not-commit' },
+          principal,
+          registration: action,
+          transport: transport(key, moduleStateKey),
+        })
+        .pipe(
+          Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(configuration)),
+          Effect.exit,
+        );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(preflightSawNoTransaction).toBe(true);
+      expect(handlerSawTransaction).toBe(true);
+      expect(Option.isNone(yield* OpenDatabaseTransaction)).toBe(true);
+      const [states] = yield* persistedActionEvidence(database, key, moduleStateKey);
+      expect(states).toHaveLength(0);
+    }),
+  );
+});
+
+const ownerSnapshotUnavailable = () =>
+  new OperationContextUnavailable({
+    code: 'operation_context_unavailable',
+    reason: 'Owner snapshot unavailable',
+  });
+
+const testActionServicePreparation = Effect.fn('ActionRuntimeIntegration.prepareServices')(function* prepareServices() {
+  const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
+  const key = 'prepared-owner-services';
+  const moduleStateKey = `test.${key}.${tenantId}`;
+  const phases: string[] = [];
+  const base = makeRegistration({ actionKey: 'shell.test.prepared-owner-services', moduleStateKey });
+  const action = defineAction(base.descriptor, getActionHandler(base), getActionServiceFactory(base), {
+    prepareServices: Effect.fn('ActionRuntimeIntegration.prepareOwnerServices')(
+      function* prepareOwnerServices(payload, context) {
+        expect(Option.isNone(yield* OpenDatabaseTransaction)).toBe(true);
+        const before = yield* context.transaction((transaction) =>
+          Effect.gen(function* loadSnapshot() {
+            expect(Option.isSome(yield* OpenDatabaseTransaction)).toBe(true);
+            phases.push('snapshot');
+            const rows = yield* transaction
+              .select({ tenantId: tenants.tenantId })
+              .from(tenants)
+              .where(eq(tenants.tenantId, tenantId))
+              .pipe(Effect.mapError(() => new TestPersistenceError({ reason: 'snapshot unavailable' })));
+            return rows[0]?.tenantId;
+          }),
+        );
+        yield* refuseInsideDatabaseTransaction('outbound-fetch', 'https://owner.fixture.invalid/read');
+        phases.push('remote');
+        const capturedValue = payload.value;
+        return (transaction, scope, revision) =>
+          Effect.gen(function* revalidateSnapshot() {
+            expect(Option.isSome(yield* OpenDatabaseTransaction)).toBe(true);
+            const rows = yield* transaction
+              .select({ tenantId: tenants.tenantId })
+              .from(tenants)
+              .where(eq(tenants.tenantId, tenantId))
+              .pipe(Effect.mapError(ownerSnapshotUnavailable));
+            expect(rows[0]?.tenantId).toBe(before);
+            expect(capturedValue).toBe('prepared-value');
+            expect(context.compositionRevision).toBe(revision);
+            expect(context.scope.principalId).toBe(scope.principalId);
+            phases.push('commit');
+            return { transaction };
+          });
+      },
+    ),
+  });
+  yield* withDatabase((database) =>
+    Effect.gen(function* preparedAction() {
+      const runtime = makeActionRuntime(
+        database,
+        makeActionRepository(crypto),
+        allowedPermission,
+        testOperationalScopeResolver,
+        openActionRuntimeOptions,
+      );
+      const result = yield* runtime
+        .runAction({
+          payload: { value: 'prepared-value' },
+          principal,
+          registration: action,
+          transport: transport(key, moduleStateKey),
+        })
+        .pipe(
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromUnknown({
+              ONTOS_ACTION_TRANSACTION_IO_GUARD: true,
+            }),
+          ),
+        );
+      expect(result.value).toBe('prepared-value');
+      expect(phases).toEqual(['snapshot', 'remote', 'commit']);
+      expect(Option.isNone(yield* OpenDatabaseTransaction)).toBe(true);
+    }),
+  );
+});
+
 it.layer(
   Layer.merge(
     Layer.effectDiscard(Effect.acquireRelease(prepare, () => cleanup.pipe(Effect.orDie))).pipe(
@@ -2148,6 +2287,16 @@ it.layer(
     excludeTestServices: true,
   },
 )('Action runtime', (suite) => {
+  suite.effect(
+    'prepares invocation-local remote facts between guarded owner transactions',
+    testActionServicePreparation,
+  );
+  suite.effect('guards every Action transaction by default and leaves preflight outside it', () =>
+    testGuardedActionRemoteIo({}),
+  );
+  suite.effect('does not let the retired rollout flag disable Action transaction protection', () =>
+    testGuardedActionRemoteIo({ ONTOS_ACTION_TRANSACTION_IO_GUARD: false }),
+  );
   suite.effect(
     'fences release draining behind committed owner writes and their Outbox evidence',
     testCompositionTransactionFence,

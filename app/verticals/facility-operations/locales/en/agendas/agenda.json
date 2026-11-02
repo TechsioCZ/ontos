@@ -355,7 +355,6 @@
   "overview": {
     "title": "Operations overview",
     "description": "Key figures from governed sources, upcoming deadlines and search across the records you may read.",
-    "refresh": "Refresh data",
     "openCalendar": "Calendar",
     "dataAt": "Data as of {{time}}",
     "greeting": {

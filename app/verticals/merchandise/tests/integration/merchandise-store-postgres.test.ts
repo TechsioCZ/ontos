@@ -94,8 +94,16 @@ const decodeWorkingCommand = (input: typeof MerchandiseCommandSchema.Encoded) =>
   Schema.decodeEffect(MerchandiseCommandSchema)(input).pipe(
     Effect.flatMap((command) =>
       Match.value(command).pipe(
-        Match.tag('AiDecideChanges', 'AiProposeChanges', 'AiRevertBatch', 'ResetDemoData', () =>
-          Effect.die('This fixture only runs working-set commands'),
+        Match.tag(
+          'AiDecideChanges',
+          'AiProposeChanges',
+          'AiRevertBatch',
+          'ConfigureMarket',
+          'RemoveMarket',
+          'ResetDemoData',
+          'SetMarketProductOffers',
+          'SetProductMarketOffer',
+          () => Effect.die('This fixture only runs working-set commands'),
         ),
         Match.orElse((supported) => Effect.succeed(supported)),
       ),

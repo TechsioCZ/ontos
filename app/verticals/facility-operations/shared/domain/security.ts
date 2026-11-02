@@ -30,7 +30,6 @@ export const securitySeverities = SecuritySeveritySchema.literals;
 
 export const SecurityIncidentStateSchema = Schema.Literals(['reported', 'in_progress', 'resolved']);
 export type SecurityIncidentState = typeof SecurityIncidentStateSchema.Type;
-export const securityIncidentStates = SecurityIncidentStateSchema.literals;
 
 export const SecurityAttachmentSchema = Schema.Struct({
   addedAt: Schema.DateTimeUtcFromString,

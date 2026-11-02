@@ -971,6 +971,35 @@ it.effect('supports empty batches and exact resource filtering', () =>
   }),
 );
 
+it.effect('omits unbounded transport codes and raw error data from permission diagnostics', () =>
+  Effect.gen(function* boundedTransportStatus() {
+    const entries: string[] = [];
+    const diagnostics = Logger.layer([
+      Logger.make((options) => {
+        entries.push(JSON.stringify(Logger.formatStructured.log(options)));
+      }),
+    ]);
+    yield* Effect.forEach(
+      [-1, 17, 14.5, Number.NaN, undefined],
+      (code) =>
+        makeContextAccess(
+          makeClient(() => Effect.fail(spiceDbPermissionClientError({ message: 'secret-message' }, code))),
+        )
+          .legalEntities({ legalEntityIds: [legalEntityId], principalId, tenantId })
+          .pipe(Effect.tap((result) => Effect.sync(() => expect(result[0]?.decision).toBe('unavailable')))),
+      { concurrency: 1 },
+    ).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
+      Effect.provide(diagnostics),
+    );
+    expect(entries).toHaveLength(5);
+    for (const entry of entries) {
+      expect(entry).toContain('"rpcCode":"unknown"');
+      expect(entry).not.toContain('secret');
+    }
+  }),
+);
+
 it.effect('classifies client, partial, duplicate, malformed, and conditional results as unavailable', () =>
   Effect.gen(function* classifiesUnavailableResults() {
     const input = { legalEntityIds: [legalEntityId], principalId, tenantId };
@@ -982,7 +1011,7 @@ it.effect('classifies client, partial, duplicate, malformed, and conditional res
     ]);
     const failures = [
       makeClient(() => Effect.fail(spiceDbPermissionClientError(new Cause.TimeoutError('secret timeout diagnostic')))),
-      makeClient(() => Effect.fail(spiceDbPermissionClientError(new Error('secret SpiceDB diagnostic')))),
+      makeClient(() => Effect.fail(spiceDbPermissionClientError(new Error('secret SpiceDB diagnostic'), 14))),
       makeClient(() => Effect.succeed(v1.CheckBulkPermissionsResponse.create({ pairs: [] }))),
       makeClient((request) =>
         Effect.succeed(responseFor(request, [v1.CheckPermissionResponse_Permissionship.CONDITIONAL_PERMISSION])),
@@ -1027,6 +1056,7 @@ it.effect('classifies client, partial, duplicate, malformed, and conditional res
       expect(entries[index]).toContain('"requestCount":1');
     }
     const logged = entries.join('\n');
+    expect(entries[1]).toContain('"rpcCode":14');
     for (const sensitive of [tenantId, legalEntityId, principalId, 'secret', 'cause', 'resourceId']) {
       expect(logged).not.toContain(sensitive);
     }

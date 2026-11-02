@@ -4,6 +4,10 @@ app/**/.output
 app/**/cloudflare-dist
 app/**/dist-cloudflare
 app/**/*.map
+app/apps/*/dist/**/*.br
+app/apps/*/dist/**/*.gz
+app/verticals/*/dist/**/*.br
+app/verticals/*/dist/**/*.gz
 app/**/@mf-types.zip
 app/.zerops/build-logs
 app/.zerops/unit-cache

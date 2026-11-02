@@ -181,7 +181,13 @@ const encodeProjectionUnitKey = Schema.encodeUnknownResult(projectionUnitKeyCode
 const projectionUnitKey = (tenant: string, module: string, type: string): string =>
   Result.getOrThrow(encodeProjectionUnitKey([tenant, module, type]));
 const documentKey = ({ ref }: CoreSearchProjectionDocument): string => ref.resourceId;
-const normalize = (value: string): string => value.normalize('NFKC').toLocaleLowerCase('und');
+/** Case- and diacritics-insensitive matching form: "Dvořáková" and "dvorakova" meet. */
+const normalize = (value: string): string =>
+  value
+    .normalize('NFKD')
+    .replaceAll(/\p{M}+/gu, '')
+    .normalize('NFKC')
+    .toLocaleLowerCase('und');
 
 const invalid = (reason: string, cause?: unknown): CoreSearchProjectionInvalid => {
   if (cause === undefined) {

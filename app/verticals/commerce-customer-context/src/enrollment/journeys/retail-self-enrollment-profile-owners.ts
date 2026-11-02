@@ -42,8 +42,8 @@ import {
  * then activate the Retail Portal Profile Binding.
  *
  * This vertical has no separate retail grant Action, so the binding Action's staged Permission
- * mutations are the retail grant path: a binding that commits without the complete reviewed
- * baseline is a partially completed grant, recorded as `retail_portal_grants_incomplete` so the
+ * mutations are the retail grant path: a binding whose required baseline is not yet Current
+ * is a partially completed grant, recorded as `retail_portal_grants_incomplete` so the
  * journey halts rather than reporting portal access that does not exist.
  *
  * Both dispatch under the immutable owner invocation as idempotency key; a timeout after commit
@@ -119,6 +119,10 @@ export interface RetailPortalBindingOwnerExecutors {
     options: { readonly idempotencyKey: string },
   ) => Effect.Effect<RetailPortalBindingResult, BindProfileError>;
   readonly commitResolution: CommerceActionCommitResolution<RetailPortalBindingResult>;
+  /** A terminal owner row is conjunctive with the exact live Permission baseline. Missing fails closed. */
+  readonly confirmCurrentBinding?: (
+    result: RetailPortalBindingResult,
+  ) => Effect.Effect<boolean, CommerceActionCommitResolutionFailed>;
 }
 
 /** The journey's reading of one Commerce Action result, before it becomes an Attempt outcome. */
@@ -225,19 +229,19 @@ const ensureVerdict = (result: EnsureRetailCustomerProfileResult): CommerceOwner
         reason: `The Commerce Retail Customer Profile is ${result.state} and cannot carry portal access`,
       };
 
-/**
- * The reviewed baseline must be staged exactly: same permissions, all staged, one grant
- * operation.  Anything else is a partially completed grant, not a bound portal profile.
- */
+/** Staging is progress; only terminal authorization can qualify for a Current access observation. */
 export const retailPortalGrantsAreComplete = (result: RetailPortalBindingResult): boolean => {
-  const { permissionMutations } = result;
-  if (permissionMutations === undefined) {
+  if (result.authorizationOperation !== 'grant' || result.authorizationState !== 'ACTIVE') {
     return false;
+  }
+  const { permissionMutations } = result;
+  // Recovery reads the aggregate authorization that the owner finalizes from its exact intent set.
+  if (permissionMutations === undefined) {
+    return true;
   }
   const permissions: readonly string[] = permissionMutations.map(({ permission }) => permission);
   const expected = new Set<string>(RETAIL_PORTAL_SELF_SERVICE_BASELINE);
   return (
-    result.authorizationOperation === 'grant' &&
     permissions.length === expected.size &&
     new Set(permissions).size === permissions.length &&
     permissions.every((permission) => expected.has(permission)) &&
@@ -245,29 +249,7 @@ export const retailPortalGrantsAreComplete = (result: RetailPortalBindingResult)
   );
 };
 
-/**
- * A reconciliation reads grant completeness from the durable authorization state, because the owner
- * keeps no copy of the Action's staged mutation list to republish once that response is gone.
- *
- * `PENDING_GRANT` is the state the binding Action itself leaves behind after staging the reviewed
- * baseline — dispatch calls that complete — and `ACTIVE` is the state the owner moves to only once
- * every baseline Permission is terminal. `RECONCILIATION_REQUIRED` is the owner's own record of the
- * partially completed grant, which is the halt the dispatch path records too.
- */
-const reconciledGrantsAreComplete = (result: RetailPortalBindingResult): boolean => {
-  if (result.permissionMutations !== undefined) {
-    return retailPortalGrantsAreComplete(result);
-  }
-  return (
-    result.authorizationOperation === 'grant' &&
-    (result.authorizationState === 'ACTIVE' || result.authorizationState === 'PENDING_GRANT')
-  );
-};
-
-const bindingVerdictFor = (
-  result: RetailPortalBindingResult,
-  grantsAreComplete: (result: RetailPortalBindingResult) => boolean,
-): CommerceOwnerVerdict => {
+const bindingVerdictFor = (result: RetailPortalBindingResult, currentBaseline: boolean): CommerceOwnerVerdict => {
   if (result.outcome !== 'BINDING_ACTIVATED' || result.state !== 'ACTIVE') {
     return {
       kind: 'REJECTED',
@@ -275,7 +257,7 @@ const bindingVerdictFor = (
       reason: 'The Retail Portal Profile Binding did not activate for this enrollment',
     };
   }
-  return grantsAreComplete(result)
+  return retailPortalGrantsAreComplete(result) && currentBaseline
     ? {
         kind: 'SUCCEEDED',
         outcomeCode: RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE,
@@ -288,11 +270,18 @@ const bindingVerdictFor = (
       };
 };
 
-const bindingVerdict = (result: RetailPortalBindingResult): CommerceOwnerVerdict =>
-  bindingVerdictFor(result, retailPortalGrantsAreComplete);
-
-const reconciledBindingVerdict = (result: RetailPortalBindingResult): CommerceOwnerVerdict =>
-  bindingVerdictFor(result, reconciledGrantsAreComplete);
+const bindingVerdict = (
+  result: RetailPortalBindingResult,
+  executors: RetailPortalBindingOwnerExecutors,
+): Effect.Effect<CommerceOwnerVerdict, CommerceEnrollmentOwnerEffectError> => {
+  if (!retailPortalGrantsAreComplete(result) || executors.confirmCurrentBinding === undefined) {
+    return Effect.succeed(bindingVerdictFor(result, false));
+  }
+  return executors.confirmCurrentBinding(result).pipe(
+    Effect.map((current) => bindingVerdictFor(result, current)),
+    Effect.mapError((cause) => unavailable('The Retail Portal Current access observation is unavailable', cause)),
+  );
+};
 
 const ENSURE_OWNER_KEY = 'commerce.customer-context.ensure-retail-customer-profile';
 const BIND_OWNER_KEY = 'commerce.customer-context.bind-retail-portal-profile';
@@ -382,7 +371,7 @@ export const retailPortalBindingOwnerEffect = (
     const result = yield* executors
       .bindProfile(request, input.requestCorrelation, { idempotencyKey: transition.ownerInvocationId })
       .pipe(Effect.mapError((cause) => unavailable('The Retail Portal Binding Action is unavailable', cause)));
-    return yield* outcomeOf(bindingVerdict(result));
+    return yield* outcomeOf(yield* bindingVerdict(result, executors));
   });
 
   const reconcile = Effect.fn('RetailPortalBindingOwnerEffect.reconcile')(function* reconcileBinding(
@@ -407,13 +396,18 @@ export const retailPortalBindingOwnerEffect = (
       const result = yield* executors
         .bindProfile(yield* payload(), input.requestCorrelation, { idempotencyKey: reconciliation.ownerInvocationId })
         .pipe(Effect.mapError((cause) => unavailable('The original Commerce Action retry is unavailable', cause)));
-      return yield* resolutionOf(reconciliation, BIND_OWNER_KEY, result.bindingRef.resourceId, bindingVerdict(result));
+      return yield* resolutionOf(
+        reconciliation,
+        BIND_OWNER_KEY,
+        result.bindingRef.resourceId,
+        yield* bindingVerdict(result, executors),
+      );
     }
     return yield* resolutionOf(
       reconciliation,
       BIND_OWNER_KEY,
       resolved.result.bindingRef.resourceId,
-      reconciledBindingVerdict(resolved.result),
+      yield* bindingVerdict(resolved.result, executors),
     );
   });
 

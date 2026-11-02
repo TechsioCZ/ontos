@@ -13,6 +13,15 @@ import type {
 import type { ProductRef } from '../../shared/resources/product.ts';
 import type { ProductTypeRef } from '../../shared/resources/product-type.ts';
 import type { VariantRef } from '../../shared/resources/variant.ts';
+import type { CatalogSelection } from '../../shared/domain/catalog-selection-evidence.ts';
+import {
+  CatalogSelectionBasisSchema,
+  sameCatalogSelectionBasis,
+} from '../../shared/domain/catalog-selection-evidence.ts';
+import type { CatalogSelectionCurrentFacts } from '../../shared/domain/catalog-selection-assessment.ts';
+import { CatalogRevisionNumberSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { effectiveValueItemKeyHash, variantAxisPersistenceForScope } from './variant-axis-persistence.ts';
+import type { CurrentVariantAxes, CurrentVariantAxisValue } from './variant-axis-persistence.ts';
 import { evaluateCurrentProductTypeReadiness } from './product-type-readiness-evaluator.ts';
 import type { ProductTypeReadinessEvaluation } from './product-type-readiness-evaluator.ts';
 import {
@@ -29,6 +38,7 @@ import {
 import { CatalogPersistenceUnavailable } from './errors.ts';
 import { effectiveAttributeValueReadsForScope } from './effective-attribute-value-reads.ts';
 import type {
+  AttributeValueSetValidityEntry,
   AttributeValueSetValidityBasis,
   EffectiveAttributeValueReads,
 } from './effective-attribute-value-reads.ts';
@@ -128,9 +138,10 @@ const inventoryProblem = (
   if (variants.some((row) => row.tenantId !== productRef.tenantId || row.productId !== productRef.resourceId)) {
     return 'Current Variant inventory is foreign';
   }
-  const currentVariants = variants.filter((row) => row.lifecycleState !== 'RETIRED');
-  const ids = new Set(currentVariants.map((row) => row.variantId));
-  return ids.size !== currentVariants.length ||
+  // Retained direct sets belong to the full owner inventory, including retired siblings.
+  // Current applicability is evaluated separately below.
+  const ids = new Set(variants.map((row) => row.variantId));
+  return ids.size !== variants.length ||
     inventory.entries.some((entry) => entry.variantId !== null && !ids.has(entry.variantId))
     ? 'Current Variant value inventory is incomplete or inconsistent'
     : null;
@@ -520,5 +531,365 @@ export const productTypeReadinessSourceForScope = (
       rulesRevision,
       status: 'VERIFIED',
     } as const;
+  }),
+});
+
+const appendAxisValueBasis = (
+  basis: CatalogSelectionCurrentFacts['basis'][number][],
+  values: readonly CurrentVariantAxisValue[],
+  tenantId: string,
+): string | null => {
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value.attributeDefinitionId)) {
+      return 'Current Variant axes repeat an Attribute Definition';
+    }
+    seen.add(value.attributeDefinitionId);
+    const definitionRevision = Schema.decodeOption(CatalogRevisionNumberSchema)(value.definitionRevision);
+    if (Option.isNone(definitionRevision)) {
+      return 'Current axis Attribute Definition revision is unavailable';
+    }
+    basis.push({
+      role: 'ATTRIBUTE_DEFINITION',
+      source: {
+        resourceRef: {
+          moduleId: catalogModuleId,
+          resourceId: value.attributeDefinitionId,
+          resourceType: attributeDefinitionResourceType,
+          tenantId,
+        },
+        revision: definitionRevision.value,
+      },
+    });
+    if (value.source === 'MISSING') {
+      if (value.sourceRevision !== null || value.sourceValueSetRef !== null) {
+        return 'Missing Current axis value has a contradictory owner source';
+      }
+      continue;
+    }
+    const valueRevision = Schema.decodeUnknownOption(CatalogRevisionNumberSchema)(value.sourceRevision);
+    if (
+      Option.isNone(valueRevision) ||
+      value.sourceValueSetRef === null ||
+      value.sourceValueSetRef.tenantId !== tenantId
+    ) {
+      return 'Current axis value has no owner-qualified revision';
+    }
+    basis.push({
+      role: value.source === 'PRODUCT' ? 'INHERITED_VALUE' : 'OTHER_CATALOG_FACT',
+      source: {
+        resourceRef: {
+          moduleId: catalogModuleId,
+          resourceId: value.sourceValueSetRef.attributeValueSetId,
+          resourceType: 'commerce.catalog.attribute-value-set',
+          tenantId,
+        },
+        revision: valueRevision.value,
+      },
+    });
+  }
+  return null;
+};
+
+const readProductValueValidity = Effect.fn('CatalogSelectionCurrentBasis.readProductValueValidity')(
+  function* readProductValueValidity(
+    transaction: ScopedTransaction,
+    scope: OperationalScope,
+    productId: string,
+    variantId: string,
+  ) {
+    const reads = yield* effectiveAttributeValueReadsForScope(transaction, scope);
+    const validity = yield* reads.readProductTypeValidity([productId]).pipe(Effect.orElseSucceed(() => null));
+    if (validity === null || !validity.complete || validity.tenantId !== scope.tenantId) {
+      return { reason: 'Current Product Attribute value inventory is unavailable', status: 'INDETERMINATE' as const };
+    }
+    if (validity.entries.some((entry) => entry.productId !== productId)) {
+      return {
+        reason: 'Current Product Attribute inventory contains a foreign Product',
+        status: 'INDETERMINATE' as const,
+      };
+    }
+    if (validity.entries.some((entry) => (entry.variantId === null || entry.variantId === variantId) && !entry.valid)) {
+      return { reason: 'Current Product Attribute value is invalid', status: 'INVALID' as const };
+    }
+    return validity.entries.filter((entry) => entry.variantId === null || entry.variantId === variantId);
+  },
+);
+
+const appendProductValueBasis = (
+  basis: CatalogSelectionCurrentFacts['basis'][number][],
+  entries: readonly AttributeValueSetValidityEntry[],
+  tenantId: string,
+): string | null => {
+  for (const entry of entries) {
+    const revision = Schema.decodeOption(CatalogRevisionNumberSchema)(entry.revision);
+    const definitionRevision = Schema.decodeOption(CatalogRevisionNumberSchema)(entry.definitionRevision);
+    if (Option.isNone(revision) || Option.isNone(definitionRevision)) {
+      return 'Current Attribute value or definition revision is unavailable';
+    }
+    basis.push(
+      {
+        role: entry.variantId === null ? 'INHERITED_VALUE' : 'OTHER_CATALOG_FACT',
+        source: {
+          resourceRef: {
+            moduleId: catalogModuleId,
+            resourceId: entry.attributeValueSetId,
+            resourceType: 'commerce.catalog.attribute-value-set',
+            tenantId,
+          },
+          revision: revision.value,
+        },
+      },
+      {
+        role: 'ATTRIBUTE_DEFINITION',
+        source: {
+          resourceRef: {
+            moduleId: catalogModuleId,
+            resourceId: entry.attributeDefinitionId,
+            resourceType: attributeDefinitionResourceType,
+            tenantId,
+          },
+          revision: definitionRevision.value,
+        },
+      },
+    );
+  }
+  return null;
+};
+
+const verifyProductTypeReadiness = Effect.fn('CatalogSelectionCurrentBasis.verifyProductTypeReadiness')(
+  function* verifyProductTypeReadiness(
+    transaction: ScopedTransaction,
+    scope: OperationalScope,
+    selection: CatalogSelection,
+    now: DateTime.Utc,
+    source: { readonly rulesRevision: number; readonly status: 'VERIFIED' } | { readonly status: 'UNTYPED' },
+  ) {
+    const readiness = yield* productTypeReadinessSourceForScope(transaction, scope)
+      .evaluate(selection.productRef, now, selection.variantRef)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (readiness === null || readiness.status === 'INDETERMINATE') {
+      return { reason: 'Current Product Type readiness cannot be proved', status: 'INDETERMINATE' as const };
+    }
+    if (readiness.status === 'INVALID') {
+      return { reason: 'Current Product Type requirements are invalid', status: 'INVALID' as const };
+    }
+    if (source.status === 'UNTYPED') {
+      if (readiness.status !== 'CONFIRMED_UNTYPED_MINIMUM') {
+        return {
+          reason: 'Current confirmed-untyped decision is not completely attested',
+          status: 'INDETERMINATE' as const,
+        };
+      }
+      const revision = Schema.decodeOption(CatalogRevisionNumberSchema)(readiness.decisionRevision);
+      return Option.isNone(revision)
+        ? { reason: 'Current untyped decision revision is unavailable', status: 'INDETERMINATE' as const }
+        : { decisionRevision: revision.value, reason: null };
+    }
+    if (readiness.status !== 'VERIFIED_TYPE_MINIMUM' || readiness.rulesRevision !== source.rulesRevision) {
+      return {
+        reason: 'Current Product Type requirements are not completely attested',
+        status: 'INDETERMINATE' as const,
+      };
+    }
+    const revision = Schema.decodeOption(CatalogRevisionNumberSchema)(readiness.assignmentRevision);
+    return Option.isNone(revision)
+      ? { reason: 'Current Product Type assignment revision is unavailable', status: 'INDETERMINATE' as const }
+      : { reason: null };
+  },
+);
+
+const exactAxisValueInventory = (
+  axes: CurrentVariantAxes,
+  values: readonly Pick<CurrentVariantAxisValue, 'attributeDefinitionId' | 'definitionRevision'>[],
+): boolean =>
+  values.length === axes.axes.length &&
+  axes.axes.every((axis) =>
+    values.some(
+      (value) =>
+        value.attributeDefinitionId === axis.attributeDefinitionId &&
+        value.definitionRevision === axis.definitionRevision,
+    ),
+  );
+
+const readSelectionAxisAllowances = Effect.fn('ProductTypeReadinessSource.readSelectionAxisAllowances')(
+  function* readSelectionAxisAllowances(
+    axisReader: ReturnType<typeof variantAxisPersistenceForScope>,
+    axes: CurrentVariantAxes,
+    axisValues: readonly CurrentVariantAxisValue[],
+    productRef: ProductRef,
+    basis: CatalogSelectionCurrentFacts['basis'][number][],
+  ) {
+    const allowances = yield* axisReader
+      .readCurrentAllowedValues(productRef, axes)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (allowances === null || !exactAxisValueInventory(axes, allowances)) {
+      return {
+        reason: 'Current Product-specific axis allowances are unavailable or incomplete',
+        status: 'INDETERMINATE' as const,
+      };
+    }
+    const axisProof = yield* Schema.decodeUnknownEffect(CatalogSelectionBasisSchema)({
+      axisAllowances: allowances.map((allowed) => ({
+        allowanceRevision: allowed.allowanceRevision,
+        attributeDefinition: {
+          resourceRef: {
+            moduleId: catalogModuleId,
+            resourceId: allowed.attributeDefinitionId,
+            resourceType: attributeDefinitionResourceType,
+            tenantId: productRef.tenantId,
+          },
+          revision: allowed.definitionRevision,
+        },
+      })),
+      role: 'VARIANT_AXIS',
+      source: { resourceRef: productRef, revision: axes.axisRevision },
+    }).pipe(Effect.orElseSucceed(() => null));
+    if (axisProof === null) {
+      return {
+        reason: 'Current Product-specific axis allowance proof is malformed',
+        status: 'INDETERMINATE' as const,
+      };
+    }
+    basis.push(axisProof);
+    const allowedByDefinition = new Map(
+      allowances.map((allowed) => [allowed.attributeDefinitionId, new Set(allowed.valueKeys)]),
+    );
+    for (const value of axisValues) {
+      if (value.source === 'MISSING' || value.items.length === 0) {
+        return { reason: 'Current Variant axis value is missing', status: 'INVALID' as const };
+      }
+      const allowed = allowedByDefinition.get(value.attributeDefinitionId);
+      if (allowed === undefined) {
+        return { reason: 'Current Product-specific axis allowance is unavailable', status: 'INDETERMINATE' as const };
+      }
+      if (value.items.some((item) => !allowed.has(effectiveValueItemKeyHash(item)))) {
+        return { reason: 'Current Variant axis value is not permitted for this Product', status: 'INVALID' as const };
+      }
+    }
+    return null;
+  },
+);
+
+const readSelectionAxisBasis = Effect.fn('ProductTypeReadinessSource.readSelectionAxisBasis')(
+  function* readSelectionAxisBasis(
+    transaction: ScopedTransaction,
+    scope: OperationalScope,
+    selection: CatalogSelection,
+    typeSource: ProductTypeReadinessSource,
+    basis: CatalogSelectionCurrentFacts['basis'][number][],
+  ) {
+    const axisReader = variantAxisPersistenceForScope(transaction, scope);
+    const axes = yield* axisReader.readCurrent(selection.productRef).pipe(Effect.orElseSucceed(() => null));
+    if (axes === null || axes.productId !== selection.productRef.resourceId) {
+      return { reason: 'Current Variant axes are unavailable', status: 'INDETERMINATE' as const };
+    }
+    if (typeSource.status === 'VERIFIED') {
+      if (axes.productTypeRevision !== typeSource.basis.revision) {
+        return { reason: 'Current Variant axes are stale against Product Type', status: 'INDETERMINATE' as const };
+      }
+      if (!Number.isSafeInteger(axes.axisRevision) || axes.axisRevision < 1) {
+        return { reason: 'Current Variant axis revision is not owner-attested', status: 'INDETERMINATE' as const };
+      }
+      const axisValues = yield* axisReader
+        .readEffectiveValues(selection.productRef, selection.variantRef, axes)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (axisValues === null || !exactAxisValueInventory(axes, axisValues)) {
+        return {
+          reason: 'Current Variant axis values are unavailable or incomplete',
+          status: 'INDETERMINATE' as const,
+        };
+      }
+      const axisValueProblem = appendAxisValueBasis(basis, axisValues, scope.tenantId);
+      if (axisValueProblem !== null) {
+        return { reason: axisValueProblem, status: 'INDETERMINATE' as const };
+      }
+      return yield* readSelectionAxisAllowances(axisReader, axes, axisValues, selection.productRef, basis);
+    } else if (axes.productTypeRevision !== null || axes.axes.length !== 0) {
+      return { reason: 'Current untyped Product has contradictory Variant axes', status: 'INDETERMINATE' as const };
+    }
+
+    return null;
+  },
+);
+
+/** Type, structured-value and Axis facts for one exact selected Variant in Core's snapshot. */
+export const productSelectionTypeValueAxisBasisForScope = (
+  transaction: ScopedTransaction,
+  scope: OperationalScope,
+) => ({
+  read: Effect.fn('ProductTypeReadinessSource.readSelectionBasis')(function* readSelectionBasis(
+    selection: CatalogSelection,
+    now: DateTime.Utc,
+  ) {
+    const basis: CatalogSelectionCurrentFacts['basis'][number][] = [];
+    const unknown = (reason: string) => ({ basis, reason, status: 'INDETERMINATE' as const });
+    const typeSource = yield* productTypeReadinessSourceForScope(transaction, scope)
+      .load(selection.productRef, now)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (typeSource === null) {
+      return unknown('Current Product Type assignment or untyped decision is not owner-attested');
+    }
+    if (typeSource.status === 'VERIFIED') {
+      const typeRevision = yield* Schema.decodeEffect(CatalogRevisionNumberSchema)(typeSource.basis.revision).pipe(
+        Effect.mapError(unavailable),
+      );
+      basis.push({
+        role: 'PRODUCT_TYPE',
+        source: {
+          resourceRef: typeSource.basis.productTypeRef,
+          revision: typeRevision,
+          revisionId: typeSource.basis.revisionId,
+        },
+      });
+    }
+    const productValues = yield* readProductValueValidity(
+      transaction,
+      scope,
+      selection.productRef.resourceId,
+      selection.variantRef.resourceId,
+    );
+    if (productValues !== null && !Array.isArray(productValues)) {
+      return { basis, ...productValues };
+    }
+    const valueProblem = appendProductValueBasis(basis, productValues, scope.tenantId);
+    if (valueProblem !== null) {
+      return unknown(valueProblem);
+    }
+    const axisProblem = yield* readSelectionAxisBasis(transaction, scope, selection, typeSource, basis);
+    if (axisProblem !== null) {
+      return { basis, ...axisProblem };
+    }
+
+    if (typeSource.status === 'UNTYPED') {
+      const readiness = yield* verifyProductTypeReadiness(transaction, scope, selection, now, { status: 'UNTYPED' });
+      if (readiness.reason !== null) {
+        return { basis, reason: readiness.reason, status: readiness.status };
+      }
+      if (!('decisionRevision' in readiness)) {
+        return unknown('Current untyped decision revision is unavailable');
+      }
+      basis.push({
+        provenance: 'CATALOG_OWNER_CONFIRMED_UNTYPED_DECISION',
+        role: 'PRODUCT_TYPE_UNTYPED_DECISION',
+        source: { resourceRef: selection.productRef, revision: readiness.decisionRevision },
+      });
+    }
+
+    if (typeSource.status === 'VERIFIED') {
+      const readiness = yield* verifyProductTypeReadiness(transaction, scope, selection, now, {
+        rulesRevision: typeSource.basis.revision,
+        status: 'VERIFIED',
+      });
+      if (readiness.reason !== null) {
+        return { basis, reason: readiness.reason, status: readiness.status };
+      }
+    }
+    return {
+      basis: basis.filter(
+        (fact, index) => !basis.slice(0, index).some((prior) => sameCatalogSelectionBasis(prior, fact)),
+      ),
+      reason: null,
+    };
   }),
 });

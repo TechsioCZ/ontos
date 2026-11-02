@@ -78,6 +78,7 @@ const establishSupport = (supportedCurrencies: readonly string[]) =>
   });
 const supportServices = (onSet: () => void) => ({
   loadCurrent: () => Effect.die('The Currency Support Action must not call its read service'),
+  loadForCanonicalAdmission: () => Effect.die('The Currency Support Action must not call its read service'),
   setCurrent: () => {
     onSet();
     return Effect.succeed({ outcome: 'CREATED' as const, result: supportResult });

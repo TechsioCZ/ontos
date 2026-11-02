@@ -113,8 +113,6 @@ export interface RunOutboxWorkerHostInput<
   LayerErrors extends readonly { readonly _tag: string }[],
   StartupError = never,
 > {
-  /** Digest of the deployed host artifact, compiled into its bundle; /status reports it. Source runs have none. */
-  readonly artifactDigest?: Option.Option<string>;
   readonly entries: { readonly [Index in keyof LayerErrors]: OutboxWorkerEntry<LayerErrors[Index]> };
   readonly health?: boolean;
   /** Additional process services share the host Scope and its existing runtime adapter. */
@@ -308,10 +306,7 @@ const admissionReport = (admission: Ref.Ref<LoopAdmission>): AdmissionReport => 
 });
 
 /** Each owner's admission in host order; readiness is that loop's own health, never the combined host's. */
-const hostStatus = (
-  artifactDigest: Option.Option<string>,
-  loops: readonly HostedLoop<unknown>[],
-): Effect.Effect<OutboxWorkerHostStatus> =>
+const hostStatus = (loops: readonly HostedLoop<unknown>[]): Effect.Effect<OutboxWorkerHostStatus> =>
   Effect.forEach(
     loops,
     ({ admission, health }) =>
@@ -331,7 +326,7 @@ const hostStatus = (
         })),
       ),
     { concurrency: 1 },
-  ).pipe(Effect.map((owners) => ({ artifactDigest, owners })));
+  ).pipe(Effect.map((owners) => ({ owners })));
 
 /**
  * Runs every entry's polling loop in one process behind one signal handler and one readiness
@@ -365,7 +360,7 @@ export const runOutboxWorkerHost = <
         if (Option.isSome(configuredHealthPort)) {
           yield* healthApi.serveOutboxWorkerHealth(
             healthApi.combineOutboxWorkerHealth(loops.flatMap(({ health }) => Option.toArray(health))),
-            { port: configuredHealthPort.value, status: hostStatus(input.artifactDigest ?? Option.none(), loops) },
+            { port: configuredHealthPort.value, status: hostStatus(loops) },
           );
         }
       }
@@ -405,6 +400,8 @@ export const runOutboxWorkerHost = <
     }),
   );
 
+const isTaggedWorkerFailure = Schema.is(Schema.Struct({ _tag: Schema.String }));
+
 /**
  * Name every failure reason by its tag only, so a defect raised beside a typed failure (for example
  * by a finalizer) stays visible. A raw cause can carry database diagnostics or credentials, and
@@ -415,7 +412,12 @@ const describeWorkerFailure = <E extends { readonly _tag: string }>(cause: Cause
     if (Cause.isFailReason(reason)) {
       return reason.error._tag;
     }
-    return Cause.isDieReason(reason) ? 'Defect' : 'Interrupted';
+    if (!Cause.isDieReason(reason)) {
+      return 'Interrupted';
+    }
+    // A failing finalizer promotes the original tagged, yieldable failure to Die in Effect 4.0.7.
+    const { defect } = reason;
+    return isTaggedWorkerFailure(defect) && Effect.isEffect(defect) ? defect._tag : 'Defect';
   });
   return [...new Set(names)].join(', ');
 };

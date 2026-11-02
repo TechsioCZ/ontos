@@ -1,17 +1,18 @@
 import { NodeSocketServer } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Context, Effect, Layer, Match, Predicate, Redacted, Stream } from 'effect';
+import { Context, Effect, Exit, Layer, Match, Predicate, Redacted, Schema, Stream } from 'effect';
 import { sql } from 'drizzle-orm';
 import { expect, it } from 'effect-rstest';
 import { NetAddress } from 'effect/net';
 import { Reactivity } from 'effect/reactivity';
 import { Socket } from 'effect/socket';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import { DatabaseConfigLive, loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/config.ts';
-import { CoreAdminDatabaseLive, CoreDatabase, CoreDatabaseLive, makeCoreDatabase } from '../../src/db/client.ts';
+import { CoreAdminDatabaseLive, CoreDatabase, CoreDatabaseLive } from '../../src/db/client.ts';
 import { SHARED_RUNTIME_IDENTITY, SHELL_GATEWAY_ISSUER_IDENTITY } from '../../src/db/database-identities.ts';
 import { configureDatabasePool } from '../../src/db/pool-configuration.ts';
-import { verifyDatabaseSessionRole } from '../../src/db/session-identity.ts';
+import { SESSION_ROLE_MISMATCH_REASON, verifySessionRoleOnFirstUse } from '../../src/db/session-identity.ts';
 
 class RuntimeDatabaseIdentity extends Context.Service<RuntimeDatabaseIdentity, string>()(
   '@app/core-runtime/tests/integration/pool-deadlines.test/RuntimeDatabaseIdentity',
@@ -41,35 +42,37 @@ it.live('keeps administrator and runtime identities distinct in one memoized ope
   }),
 );
 
-it.live('refuses a database service when the authenticated session has the wrong enrolled role', () =>
-  Effect.gen(function* refuseWrongDatabaseRole() {
-    const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
-    const failure = yield* Effect.flip(
-      makeCoreDatabase({ ...configuration, expectedRole: SHELL_GATEWAY_ISSUER_IDENTITY.role }),
-    );
+const nativeSessionClient = Effect.gen(function* nativeSessionClient() {
+  const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
+  const poolConfiguration = yield* configureDatabasePool(Redacted.make(configuration.connectionString));
+  const reactivity = yield* Reactivity.make;
+  const client = yield* PgClient.makeClient(poolConfiguration).pipe(
+    Effect.provideService(Reactivity.Reactivity, reactivity),
+  );
+  return { client, configuration };
+});
 
-    expect(Predicate.isTagged(failure, 'DatabaseConnectionError')).toBe(true);
-    expect(failure.reason).toBe('The PostgreSQL session does not match the required database identity');
-    expect(failure.cause).toBeUndefined();
+it.live('builds a database service without a connection and refuses the first use under a foreign role', () =>
+  Effect.gen(function* refuseWrongDatabaseRole() {
+    const { client } = yield* nativeSessionClient;
+    const verified = verifySessionRoleOnFirstUse(client, SHELL_GATEWAY_ISSUER_IDENTITY.role);
+    const failure = yield* Effect.flip(verified.unsafe('select 1'));
+
+    expect(Schema.is(SqlError)(failure)).toBe(true);
+    expect(Schema.is(ConnectionError)(failure.reason)).toBe(true);
+    expect(failure.reason.message).toBe(SESSION_ROLE_MISMATCH_REASON);
   }),
 );
 
-it.live('refuses a failed PostgreSQL role query without exposing the driver failure', () =>
-  Effect.gen(function* refuseFailedRoleQuery() {
-    const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
-    const poolConfiguration = yield* configureDatabasePool(Redacted.make(configuration.connectionString));
-    const reactivity = yield* Reactivity.make;
-    const client = yield* PgClient.makeClient(poolConfiguration).pipe(
-      Effect.provideService(Reactivity.Reactivity, reactivity),
-    );
+it.live('fails a use whose role query fails and verifies again on the next use', () =>
+  Effect.gen(function* retryFailedRoleQuery() {
+    const { client, configuration } = yield* nativeSessionClient;
+    const verified = verifySessionRoleOnFirstUse(client, configuration.expectedRole);
     yield* client.unsafe('begin');
     yield* Effect.flip(client.unsafe('select 1 / 0'));
-    const failure = yield* Effect.flip(verifyDatabaseSessionRole(client, configuration.expectedRole));
-
-    expect(Predicate.isTagged(failure, 'DatabaseConnectionError')).toBe(true);
-    expect(failure.reason).toBe('Unable to verify the PostgreSQL session role');
-    expect(failure.cause).toBeUndefined();
+    expect(Exit.isFailure(yield* Effect.exit(verified.unsafe('select 1')))).toBe(true);
     yield* client.unsafe('rollback');
+    expect(yield* verified.unsafe<{ value: number }>('select 1 as value')).toEqual([{ value: 1 }]);
   }),
 );
 

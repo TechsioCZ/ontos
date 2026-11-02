@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
 import { Slider } from "@techsio/ui-kit/molecules/slider";
+import { useDictionary } from "@/ontos/market-context";
 import type {
   NumericRange,
   VariantRangeFilter as FilterDefinition,
@@ -19,6 +20,13 @@ export function VariantRangeFilter({
   value: NumericRange;
   onChange: (value: NumericRange) => void;
 }) {
+  const cs = useDictionary();
+  const label =
+    filter.id === "diameter"
+      ? cs.product.diameter
+      : filter.id === "length"
+        ? cs.product.length
+        : filter.label;
   // Controlled strings preserve empty/trailing-decimal text and accept both separators.
   const [inputs, setInputs] = useState(() => value.map((number) => formatter.format(number)));
   const [sliderRevision, setSliderRevision] = useState(0);
@@ -64,7 +72,7 @@ export function VariantRangeFilter({
         >
           <NumericInput.Control>
             <NumericInput.Input
-              aria-label={`Minimum – ${filter.label}`}
+              aria-label={`${cs.filters.minimum} – ${label}`}
               onBeforeInput={validateDecimalInput}
             />
           </NumericInput.Control>
@@ -72,7 +80,7 @@ export function VariantRangeFilter({
         <Slider
           className="[&>div:first-child]:justify-center [&_label]:whitespace-nowrap [&_label]:text-(length:--akros-variant-filter-label-font-size) [&_label]:leading-(--akros-variant-filter-label-line-height) [&_[data-part=control]]:min-h-(--height-form-control-sm)"
           formatValue={(next) => formatter.format(next)}
-          label={filter.label}
+          label={label}
           max={filter.bounds[1]}
           min={filter.bounds[0]}
           minStepsBetweenThumbs={0}
@@ -102,7 +110,7 @@ export function VariantRangeFilter({
         >
           <NumericInput.Control>
             <NumericInput.Input
-              aria-label={`Maximum – ${filter.label}`}
+              aria-label={`${cs.filters.maximum} – ${label}`}
               onBeforeInput={validateDecimalInput}
             />
           </NumericInput.Control>

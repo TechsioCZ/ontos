@@ -14,6 +14,7 @@ export { Effect, runEffectRequest } from '@modern-js/bff-effect/effect-client';
 // <generated-action-http-client-exports>
 export * from './define-commercial-fee-action-client.ts';
 export * from './define-price-action-client.ts';
+export * from './manage-commitment-confirmation-action-client.ts';
 export * from './manage-contractual-discount-action-client.ts';
 export * from './manage-product-commercial-fees-bulk-action-client.ts';
 export * from './manage-product-prices-bulk-action-client.ts';

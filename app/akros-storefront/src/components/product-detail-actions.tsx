@@ -4,6 +4,7 @@ import { Button } from "@techsio/ui-kit/atoms/button";
 import { FavoriteButton } from "@/features/favorites/favorite-button";
 import { ProductShare } from "./product-share";
 import { ProductVariantActions } from "./product-variant-actions";
+import { useDictionary } from "@/ontos/market-context";
 
 interface ProductDetailActionsProps {
   productId: string;
@@ -17,10 +18,11 @@ export function ProductFavoriteButton(props: ProductDetailActionsProps) {
 }
 
 export function ProductDetailActions(props: ProductDetailActionsProps) {
+  const cs = useDictionary();
   return (
     <div
       className="akros-product-actions flex flex-wrap items-center gap-x-(--akros-product-actions-column-gap) gap-y-(--dimension-8)"
-      aria-label="Další akce produktu"
+      aria-label={cs.product.otherActions}
     >
       <FavoriteButton {...props} placement="action" />
       <ProductVariantActions {...props} />
@@ -34,7 +36,7 @@ export function ProductDetailActions(props: ProductDetailActionsProps) {
         iconSize="sm"
         onClick={() => window.print()}
       >
-        Tisk
+        {cs.product.print}
       </Button>
     </div>
   );

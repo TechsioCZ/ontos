@@ -278,105 +278,110 @@ describe('Product Price bulk management acceptance', () => {
       if (secondIntent === undefined) {
         throw new Error('The replay fixture requires a mismatched fixed snapshot target');
       }
-      const operation = yield* Schema.decodeEffect(ManageProductPriceOperationSchema)({
-        kind: 'REVISE_PRICE',
-        payload: {
-          expectedCurrent: {
-            effectivePeriod: { effectiveFrom: capturedAt, effectiveTo: null },
-            priceRef: firstOperation.payload.priceRef,
-            revision: 1,
-            revisionId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
-            scheduleRevision: 1,
-          },
-          intent: 'VALUE_ONLY_CURRENT',
-          monetaryAmount: firstOperation.payload.monetaryAmount,
-          priceRef: firstOperation.payload.priceRef,
-          reason: 'Retry the exact original target only',
-          sourceAssertion: firstOperation.payload.sourceAssertion,
-        },
-      });
-      const mismatchedIdentity = {
-        ...firstOperation.payload.identityKey,
-        catalogSelection: secondIntent.identity.target,
-      };
-      const mismatchedRevision = {
-        definition: {
-          identityKey: mismatchedIdentity,
-          priceRef: firstOperation.payload.priceRef,
-          revision: {
-            effectiveFrom: capturedAt,
+      for (const originalIntentMatches of [true, false]) {
+        const operation = yield* Schema.decodeEffect(ManageProductPriceOperationSchema)({
+          kind: 'REVISE_PRICE',
+          payload: {
+            expectedCurrent: {
+              effectivePeriod: { effectiveFrom: capturedAt, effectiveTo: null },
+              priceRef: firstOperation.payload.priceRef,
+              revision: 1,
+              revisionId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+              scheduleRevision: 1,
+            },
+            intent: 'VALUE_ONLY_CURRENT',
             monetaryAmount: firstOperation.payload.monetaryAmount,
-            monetaryBoundary: 'PRE_TAX' as const,
-            revision: 2,
-            revisionId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+            priceRef: firstOperation.payload.priceRef,
+            reason: 'Retry the exact original target only',
+            sourceAssertion: firstOperation.payload.sourceAssertion,
           },
-        },
-        effectivePeriod: { effectiveFrom: capturedAt, effectiveTo: null },
-        lineage: {
-          correctedRevisionId: null,
-          kind: 'VALUE_ONLY_CURRENT' as const,
-          previousRevisionId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
-        },
-      };
-      const mismatchedProvenance = yield* Schema.decodeUnknownEffect(PriceSourceProvenanceSchema)({
-        canonicalLink: {
-          effectiveFrom: capturedAt,
-          identityKey: mismatchedIdentity,
-          monetaryAmount: firstOperation.payload.monetaryAmount,
-          monetaryBoundary: 'PRE_TAX',
-          priceRef: firstOperation.payload.priceRef,
-          revision: 2,
-          revisionId: mismatchedRevision.definition.revision.revisionId,
-        },
-        evidence: {
-          lineage: firstOperation.payload.sourceAssertion.lineage,
-          recordedAt: capturedAt,
-          sourceAssertion: firstOperation.payload.sourceAssertion,
-          sourceFactFingerprint: priceSourceFactFingerprint(firstOperation.payload.sourceAssertion),
-          tenantId,
-        },
-        provenanceRef: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
-      });
-      const mismatchedResult = yield* Schema.decodeEffect(PriceActionResultLookupOutcomeSchema)({
-        actionInvocationId: 'dddddddd-dddd-5ddd-8ddd-dddddddddddd',
-        outcome: 'PRICE_ACTION_RESULT_FOUND',
-        result: {
-          outcome: 'REVISED',
-          provenance: mismatchedProvenance,
-          revision: mismatchedRevision,
-        },
-      });
-      const dependencies = {
-        defineServices: {
-          assessCatalogSelection: () => Effect.die('unused Catalog assessment'),
-          assessCommercialContext: () => Effect.die('unused commercial-context assessment'),
-          assessExternalPriceInput: () => Effect.die('unused external Price input assessment'),
-          define: () => Effect.die('unused Price definition'),
-          loadCurrencySupport: () => Effect.die('unused Currency Support read'),
-        },
-        persistence: {
-          define: () => Effect.die('unused Price definition'),
-          lookupResult: () => Effect.succeed(mismatchedResult),
-          readCurrent: () => Effect.die('unused Current Price read'),
-          readSchedule: () => Effect.die('unused Price schedule read'),
-          revise: () => Effect.die('unused Price revision'),
-        },
-        reviseServices: {
-          assessExternalPriceInput: () => Effect.die('unused external Price input assessment'),
-          readSchedule: () => Effect.die('unused Price schedule read'),
-          revise: () => Effect.die('unused Price revision'),
-        },
-      } satisfies ProductPriceBulkCommandOptions;
-      const reconciliation = yield* makeProductPriceBulkCommandPort(dependencies).reconcileAuthorizedExactPriceAction({
-        ...firstIntent,
-        operation,
-        trusted,
-      });
+        });
+        const mismatchedIdentity = {
+          ...firstOperation.payload.identityKey,
+          catalogSelection: originalIntentMatches ? secondIntent.identity.target : firstIntent.identity.target,
+        };
+        const mismatchedRevision = {
+          definition: {
+            identityKey: mismatchedIdentity,
+            priceRef: firstOperation.payload.priceRef,
+            revision: {
+              effectiveFrom: capturedAt,
+              monetaryAmount: firstOperation.payload.monetaryAmount,
+              monetaryBoundary: 'PRE_TAX' as const,
+              revision: 2,
+              revisionId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+            },
+          },
+          effectivePeriod: { effectiveFrom: capturedAt, effectiveTo: null },
+          lineage: {
+            correctedRevisionId: null,
+            kind: 'VALUE_ONLY_CURRENT' as const,
+            previousRevisionId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+          },
+        };
+        const mismatchedProvenance = yield* Schema.decodeUnknownEffect(PriceSourceProvenanceSchema)({
+          canonicalLink: {
+            effectiveFrom: capturedAt,
+            identityKey: mismatchedIdentity,
+            monetaryAmount: firstOperation.payload.monetaryAmount,
+            monetaryBoundary: 'PRE_TAX',
+            priceRef: firstOperation.payload.priceRef,
+            revision: 2,
+            revisionId: mismatchedRevision.definition.revision.revisionId,
+          },
+          evidence: {
+            lineage: firstOperation.payload.sourceAssertion.lineage,
+            recordedAt: capturedAt,
+            sourceAssertion: firstOperation.payload.sourceAssertion,
+            sourceFactFingerprint: priceSourceFactFingerprint(firstOperation.payload.sourceAssertion),
+            tenantId,
+          },
+          provenanceRef: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+        });
+        const mismatchedResult = yield* Schema.decodeEffect(PriceActionResultLookupOutcomeSchema)({
+          actionInvocationId: 'dddddddd-dddd-5ddd-8ddd-dddddddddddd',
+          outcome: 'PRICE_ACTION_RESULT_FOUND',
+          result: {
+            outcome: 'REVISED',
+            provenance: mismatchedProvenance,
+            revision: mismatchedRevision,
+          },
+        });
+        const dependencies = {
+          defineServices: {
+            assessCatalogSelection: () => Effect.die('unused Catalog assessment'),
+            assessCommercialContext: () => Effect.die('unused commercial-context assessment'),
+            assessExternalPriceInput: () => Effect.die('unused external Price input assessment'),
+            define: () => Effect.die('unused Price definition'),
+            loadCurrencySupport: () => Effect.die('unused Currency Support read'),
+          },
+          persistence: {
+            define: () => Effect.die('unused Price definition'),
+            lookupOriginalResult: () => Effect.succeed({ ...mismatchedResult, originalIntentMatches }),
+            lookupResult: () => Effect.succeed(mismatchedResult),
+            readCurrent: () => Effect.die('unused Current Price read'),
+            readSchedule: () => Effect.die('unused Price schedule read'),
+            revise: () => Effect.die('unused Price revision'),
+          },
+          reviseServices: {
+            assessExternalPriceInput: () => Effect.die('unused external Price input assessment'),
+            readSchedule: () => Effect.die('unused Price schedule read'),
+            revise: () => Effect.die('unused Price revision'),
+          },
+        } satisfies ProductPriceBulkCommandOptions;
+        const reconciliation = yield* makeProductPriceBulkCommandPort(dependencies).reconcileAuthorizedExactPriceAction(
+          {
+            ...firstIntent,
+            operation,
+            trusted,
+          },
+        );
 
-      expect(reconciliation).toEqual({
-        outcome: { outcome: 'CONFLICT', reasonCode: 'IDEMPOTENCY_CONFLICT' },
-        status: 'RESOLVED',
-      });
+        expect(reconciliation).toEqual({
+          outcome: { outcome: 'CONFLICT', reasonCode: 'IDEMPOTENCY_CONFLICT' },
+          status: 'RESOLVED',
+        });
+      }
     }),
   );
 

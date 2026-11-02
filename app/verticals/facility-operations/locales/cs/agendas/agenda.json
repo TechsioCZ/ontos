@@ -373,7 +373,6 @@
   "overview": {
     "title": "Přehled provozu",
     "description": "Klíčové ukazatele z řízených zdrojů, nejbližší termíny a vyhledávání napříč záznamy, ke kterým máte oprávnění.",
-    "refresh": "Obnovit data",
     "openCalendar": "Kalendář",
     "dataAt": "Data k {{time}}",
     "greeting": {

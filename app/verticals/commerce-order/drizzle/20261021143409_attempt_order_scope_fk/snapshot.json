@@ -1,0 +1,1095 @@
+{
+  "version": "8",
+  "dialect": "postgres",
+  "id": "0d0d6847-d0ba-429b-8f99-ad0fb3efc0f2",
+  "prevIds": [
+    "f88ddd31-36ea-40e8-82d6-c7250d3655d4"
+  ],
+  "ddl": [
+    {
+      "name": "commerce_order",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "acceptance_bundles",
+      "entityType": "tables",
+      "schema": "commerce_order"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "commitment_attempts",
+      "entityType": "tables",
+      "schema": "commerce_order"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "commitment_history",
+      "entityType": "tables",
+      "schema": "commerce_order"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "committed_orders",
+      "entityType": "tables",
+      "schema": "commerce_order"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "consumption_obligations",
+      "entityType": "tables",
+      "schema": "commerce_order"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "acceptance_bundles"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "acceptance_bundles"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "bundle_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "acceptance_bundles"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "buyer_principal_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "acceptance_bundles"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "approval_request_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "acceptance_bundles"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "bundle_hash",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "acceptance_bundles"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "snapshot",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "acceptance_bundles"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "attempt_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "bundle_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "bundle_hash",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "buyer_principal_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "commitment_correlation_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_history"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_history"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "attempt_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_history"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_history"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "operation_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_history"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "kind",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_history"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "proof_resource_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_history"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "at",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "commitment_history"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "committed_orders"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "committed_orders"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "committed_orders"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "attempt_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "committed_orders"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "approval_request_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "committed_orders"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "snapshot",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "committed_orders"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "consumption_obligations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "consumption_obligations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "order_id",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "consumption_obligations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "consumption_intent",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "consumption_obligations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "completed_at",
+      "entityType": "columns",
+      "schema": "commerce_order",
+      "table": "consumption_obligations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "bundle_id",
+        "bundle_hash"
+      ],
+      "schemaTo": "commerce_order",
+      "tableTo": "acceptance_bundles",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "bundle_id",
+        "bundle_hash"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "order_attempts_bundle_fk",
+      "entityType": "fks",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "order_id"
+      ],
+      "schemaTo": "commerce_order",
+      "tableTo": "committed_orders",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "order_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "order_attempts_order_fk",
+      "entityType": "fks",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "attempt_id"
+      ],
+      "schemaTo": "commerce_order",
+      "tableTo": "commitment_attempts",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "attempt_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "order_history_attempt_fk",
+      "entityType": "fks",
+      "schema": "commerce_order",
+      "table": "commitment_history"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "attempt_id"
+      ],
+      "schemaTo": "commerce_order",
+      "tableTo": "commitment_attempts",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "attempt_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "order_orders_attempt_fk",
+      "entityType": "fks",
+      "schema": "commerce_order",
+      "table": "committed_orders"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "order_id"
+      ],
+      "schemaTo": "commerce_order",
+      "tableTo": "committed_orders",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "order_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "order_consumption_order_fk",
+      "entityType": "fks",
+      "schema": "commerce_order",
+      "table": "consumption_obligations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "bundle_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "order_bundles_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "commerce_order",
+      "table": "acceptance_bundles"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "bundle_id",
+        "bundle_hash"
+      ],
+      "nullsNotDistinct": false,
+      "name": "order_bundles_binding_uk",
+      "entityType": "uniques",
+      "schema": "commerce_order",
+      "table": "acceptance_bundles"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "attempt_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "order_attempts_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "buyer_principal_id",
+        "commitment_correlation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "order_attempts_correlation_uk",
+      "entityType": "uniques",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "attempt_id",
+        "revision"
+      ],
+      "nullsNotDistinct": false,
+      "name": "order_history_revision_uk",
+      "entityType": "uniques",
+      "schema": "commerce_order",
+      "table": "commitment_history"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "attempt_id",
+        "operation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "order_history_operation_uk",
+      "entityType": "uniques",
+      "schema": "commerce_order",
+      "table": "commitment_history"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "order_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "order_orders_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "commerce_order",
+      "table": "committed_orders"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "attempt_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "order_orders_attempt_uk",
+      "entityType": "uniques",
+      "schema": "commerce_order",
+      "table": "committed_orders"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "approval_request_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "order_orders_approval_request_uk",
+      "entityType": "uniques",
+      "schema": "commerce_order",
+      "table": "committed_orders"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "order_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "order_consumption_order_uk",
+      "entityType": "uniques",
+      "schema": "commerce_order",
+      "table": "consumption_obligations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "consumption_intent"
+      ],
+      "nullsNotDistinct": false,
+      "name": "order_consumption_intent_uk",
+      "entityType": "uniques",
+      "schema": "commerce_order",
+      "table": "consumption_obligations"
+    },
+    {
+      "value": "\"bundle_hash\" ~ '^[a-f0-9]{64}$'",
+      "name": "order_bundles_hash_ck",
+      "entityType": "checks",
+      "schema": "commerce_order",
+      "table": "acceptance_bundles"
+    },
+    {
+      "value": "\"revision\" > 0",
+      "name": "order_attempts_revision_ck",
+      "entityType": "checks",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "value": "\"status\" in ('READY', 'PRECOMMIT_FAILED', 'CANCELLED', 'COMMITTED')",
+      "name": "order_attempts_state_ck",
+      "entityType": "checks",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "value": "(\"status\" = 'COMMITTED') = (\"order_id\" is not null)",
+      "name": "order_attempts_order_ck",
+      "entityType": "checks",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "value": "\"revision\" > 0",
+      "name": "order_history_revision_ck",
+      "entityType": "checks",
+      "schema": "commerce_order",
+      "table": "commitment_history"
+    },
+    {
+      "value": "\"kind\" in ('PREPARED','PRECOMMIT_FAILED','CANCELLED','COMMITTED','APPROVAL_CONSUMED')",
+      "name": "order_history_kind_ck",
+      "entityType": "checks",
+      "schema": "commerce_order",
+      "table": "commitment_history"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_order\".\"acceptance_bundles\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"acceptance_bundles\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "order_bundles_select",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "acceptance_bundles"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_order\".\"acceptance_bundles\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"acceptance_bundles\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "order_bundles_insert",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "acceptance_bundles"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_order\".\"acceptance_bundles\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"acceptance_bundles\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_order\".\"acceptance_bundles\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"acceptance_bundles\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "order_bundles_update",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "acceptance_bundles"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_order\".\"acceptance_bundles\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"acceptance_bundles\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "order_bundles_delete",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "acceptance_bundles"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_order\".\"commitment_attempts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"commitment_attempts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "order_attempts_select",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_order\".\"commitment_attempts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"commitment_attempts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "order_attempts_insert",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_order\".\"commitment_attempts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"commitment_attempts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_order\".\"commitment_attempts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"commitment_attempts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "order_attempts_update",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_order\".\"commitment_attempts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"commitment_attempts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "order_attempts_delete",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "commitment_attempts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_order\".\"commitment_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"commitment_history\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "order_history_select",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "commitment_history"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_order\".\"commitment_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"commitment_history\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "order_history_insert",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "commitment_history"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_order\".\"commitment_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"commitment_history\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_order\".\"commitment_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"commitment_history\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "order_history_update",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "commitment_history"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_order\".\"commitment_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"commitment_history\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "order_history_delete",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "commitment_history"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_order\".\"committed_orders\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"committed_orders\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "order_orders_select",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "committed_orders"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_order\".\"committed_orders\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"committed_orders\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "order_orders_insert",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "committed_orders"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_order\".\"committed_orders\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"committed_orders\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_order\".\"committed_orders\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"committed_orders\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "order_orders_update",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "committed_orders"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_order\".\"committed_orders\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"committed_orders\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "order_orders_delete",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "committed_orders"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_order\".\"consumption_obligations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"consumption_obligations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "order_consumption_select",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "consumption_obligations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_order\".\"consumption_obligations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"consumption_obligations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "order_consumption_insert",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "consumption_obligations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_order\".\"consumption_obligations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"consumption_obligations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_order\".\"consumption_obligations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"consumption_obligations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "order_consumption_update",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "consumption_obligations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_order\".\"consumption_obligations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_order\".\"consumption_obligations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "order_consumption_delete",
+      "entityType": "policies",
+      "schema": "commerce_order",
+      "table": "consumption_obligations"
+    }
+  ],
+  "renames": []
+}

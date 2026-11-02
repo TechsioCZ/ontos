@@ -682,7 +682,6 @@ const RecurringTemplateEditor = (model: ReturnType<typeof useRecurringPanel>) =>
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description="Pravidelná měsíční faktura, např. nájemné za jednotku."
       onOpenChange={setCreating}
       open={creating}
@@ -709,8 +708,8 @@ const RecurringTemplateEditor = (model: ReturnType<typeof useRecurringPanel>) =>
         )}
         <SelectTemplate
           items={customers.map((customer) => ({
-            displayValue: customer.displayName ?? customer.partyId,
-            label: customer.displayName ?? customer.partyId,
+            displayValue: customer.displayName ?? t('finance-billing.faktury.unknownCustomer'),
+            label: customer.displayName ?? t('finance-billing.faktury.unknownCustomer'),
             value: customer.partyId,
           }))}
           label={t('finance-billing.financeUi.recurring.tenant')}

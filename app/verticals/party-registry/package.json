@@ -31,7 +31,9 @@
     "./resources/party": "./shared/resources/party.ts",
     "./resources/party-contact-point": "./shared/resources/party-contact-point.ts",
     "./resources/party-official-identifier": "./shared/resources/party-official-identifier.ts",
-    "./outbox-worker-host": "./src/worker-host/entry.ts"
+    "./outbox-worker-host": "./src/worker-host/entry.ts",
+    "./testing/tenant-party-http": "./tests/support/tenant-party-http.ts",
+    "./testing/current-owner-schema": "./tests/support/current-owner-schema.fixture.ts"
   },
   "scripts": {
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical party-registry --target dist && ultramodern-create ultramodern public-surface --app party-registry --target dist && modern deploy --skip-build --deploy-target node",
@@ -47,17 +49,19 @@
     "test:unit": "rstest --project unit",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts",
+    "test:integration:reconciliation": "rstest run --config tests/support/party-reconciliation.rstest.config.ts --project integration",
     "test:integration:shared": "rstest --project integration",
     "test:integration:worker-cycle": "rstest --project integration-worker-cycle"
   },
   "dependencies": {
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
+    "@app/privacy": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
-    "@effect/opentelemetry": "4.0.5",
-    "@effect/platform-node": "4.0.5",
-    "@effect/sql-pg": "4.0.5",
+    "@effect/opentelemetry": "4.0.7",
+    "@effect/platform-node": "4.0.7",
+    "@effect/sql-pg": "4.0.7",
     "@modern-js/backend-federation-contracts": "catalog:ultramodern",
     "@modern-js/bff-effect": "catalog:ultramodern",
     "@modern-js/federation-runtime": "catalog:ultramodern",
@@ -74,7 +78,7 @@
     "@noble/hashes": "2.2.0",
     "@tanstack/react-router": "1.170.39",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "effect": "4.0.5",
+    "effect": "4.0.7",
     "i18next": "26.4.2",
     "react": "19.3.1",
     "react-dom": "19.3.1",
@@ -85,7 +89,7 @@
     "@app/party-registry-identity-contracts": "workspace:*"
   },
   "devDependencies": {
-    "@effect/tsgo": "0.53.1",
+    "@effect/tsgo": "0.63.0",
     "@modern-js/adapter-rstest": "catalog:ultramodern",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
@@ -101,12 +105,13 @@
     "@typescript/native": "npm:typescript@7.0.2",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
-    "happy-dom": "20.8.3",
+    "happy-dom": "21.0.4",
     "jose": "6.2.5",
     "pg": "8.22.0",
     "tailwindcss": "^4.3.3",
     "typescript": "7.0.2",
-    "zephyr-rspack-plugin": "1.2.4"
+    "zephyr-rspack-plugin": "1.2.4",
+    "tsrs": "0.20.1-ts7.1.0-beta"
   },
   "modernjs": {
     "preset": "presetUltramodern",

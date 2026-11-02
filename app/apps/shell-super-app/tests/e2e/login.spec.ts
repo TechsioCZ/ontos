@@ -8,15 +8,15 @@ import type { AuthenticationFixture } from './auth-fixture.ts';
 
 const hydratedLoginForm = (page: Page) => page.locator('form[data-e2e-hydrated-login="true"]');
 
-// SSR already exposes a visible trigger. Zag's menu becomes interactive after hydration
-// installs React props and moves its matching content portal to document.body.
+// SSR already exposes a visible trigger. Zag's menu becomes interactive after its account action item
+// reports hydration and the matching content portal has moved to document.body.
 const waitForInteractiveAccountMenu = async (page: Page) => {
   await page.waitForFunction(() => {
     const trigger = document.querySelector<HTMLButtonElement>('button[data-scope="menu"][data-part="trigger"]');
     if (trigger === null) {
       return false;
     }
-    if (!Object.keys(trigger).some((key) => key.startsWith('__reactProps$'))) {
+    if (trigger.closest('[data-hydrated]') === null) {
       return false;
     }
     const positioner = document.querySelector('[data-scope="menu"][data-part="positioner"]');
@@ -36,7 +36,7 @@ const gotoHydratedLogin = async (page: Page, language: 'cs' | 'en') => {
     );
     let hydratedForm: HTMLFormElement | undefined;
     for (const form of forms) {
-      if (Object.keys(form).some((key) => key.startsWith('__reactProps$'))) {
+      if (Object.hasOwn(form.dataset, 'hydrated')) {
         hydratedForm = form;
       }
     }
@@ -119,6 +119,18 @@ const test = base.extend<Record<never, never>, { authentication: AuthenticationF
     },
     { scope: 'worker', timeout: 0 },
   ],
+});
+
+test('preserves a validated return destination query and fragment after sign-in', async ({ authentication, page }) => {
+  const returnTo = encodeURIComponent('/cs/profile?q=100%25#matched');
+  await page.goto(`/cs/login?returnTo=${returnTo}`);
+  const form = page.locator('form[data-hydrated="true"]');
+  await form.locator('input[name="login"]').fill(authentication.credentials.email);
+  await form.locator('input[name="password"]').fill(authentication.credentials.password);
+  await form.locator('button[type="submit"]').click();
+  await expect(page).toHaveURL(
+    (url) => url.pathname === '/cs/profile' && url.searchParams.get('q') === '100%' && url.hash === '#matched',
+  );
 });
 
 test('redirects anonymous English and Czech home requests to localized login without dashboard chrome', async ({
@@ -269,7 +281,7 @@ test('loads localized English and Czech Contacts pages only after login', async 
     await expect(page.getByText(content.empty)).toHaveCount(0);
   };
   await expectContacts({
-    description: 'Party Registry uchovává kanonické strany, protistrany a jejich profily zapojení v jednom modulu.',
+    description: 'Kanonické strany, protistrany a jejich profily zapojení v jednom modulu.',
     empty: 'Zatím zde není žádný obsah.',
     heading: 'Kontakty',
     module: 'Modul',
@@ -305,6 +317,14 @@ test('keeps authenticated Shell chrome on search and guarded direct-target route
   page,
 }) => {
   await login(page, 'en', authentication.credentials);
+
+  // The top-bar search is controlled: typed text reaches the query only through the renderer's change event.
+  await waitForInteractiveAccountMenu(page);
+  const header = page.locator('header[aria-label="Dashboard header"]');
+  const searchbox = header.getByRole('searchbox', { exact: true, name: 'Search' });
+  await searchbox.fill('Unit 1');
+  await searchbox.press('Enter');
+  await expect(page).toHaveURL(/\/en\/search\?q=Unit%201$/u);
 
   const expectPersistentShell = async (path: string, status: string) => {
     await page.goto(path);
@@ -375,6 +395,27 @@ test('persists an English session, logs out, invalidates the session, and stays 
       await expect(page).toHaveURL(/\/en\/login(?:\?.*)?$/u);
       await expect(page.getByRole('button', { name: 'E2E user' })).toHaveCount(0);
     }));
+
+test('ends the Home another tab of the same browser shows when the account signs out', async ({
+  authentication,
+  context,
+  page,
+}) => {
+  await login(page, 'en', authentication.credentials);
+  const otherTab = await context.newPage();
+  await otherTab.goto('/en/');
+  await expect(otherTab.getByRole('button', { name: 'E2E user' })).toBeVisible();
+
+  await waitForInteractiveAccountMenu(page);
+  await page.getByRole('button', { name: 'E2E user' }).click();
+  await page.getByRole('menuitem', { name: 'Logout' }).click();
+  await expect(page).toHaveURL(/\/en\/login\/?$/u);
+
+  // The open tab reloads to the sign-in page: it never keeps showing the account that just signed out.
+  await expect(otherTab).toHaveURL(/\/en\/login(?:\?.*)?$/u);
+  await expect(otherTab.getByRole('button', { name: 'E2E user' })).toHaveCount(0);
+  await otherTab.close();
+});
 
 test('switches tenant by pointer, fully reloads, and persists the selected context', async ({
   authentication,

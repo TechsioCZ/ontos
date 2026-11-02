@@ -25,14 +25,15 @@
     },
     "demo": {
       "feedback": {
+        "ready": "Ready",
         "loading": "Loading…",
         "saving": "Saving…",
         "forbidden": "You do not have permission for this area.",
-        "conflict": "The state has changed. Refresh data and try the operation again.",
+        "conflict": "The state changed in the meantime. The current data is shown; try the operation again.",
         "validation": "Check the input and the allowed state transition.",
-        "unavailable": "The service is temporarily unavailable. Refresh and try again."
+        "unavailable": "The service is temporarily unavailable."
       },
-      "refresh": "Refresh",
+      "retry": "Try again",
       "empty": "No records match the filter.",
       "unit": "Contract / unit",
       "period": "Period",
@@ -127,7 +128,8 @@
       "currency": "Currency",
       "notProvided": "not provided",
       "edit": "Edit terms",
-      "save": "Save terms",
+      "invalidAmount": "Enter an amount in CZK, e.g. 12500 or 12,500.50.",
+      "invalidPaymentDay": "Enter a day of the month from 1 to 31.",
       "formHint": "Terms can be changed on draft and active contracts. Amounts in CZK per month; an empty rent means no agreed amount.",
       "monthlyRentInput": "Monthly rent (CZK)",
       "serviceChargesInput": "Service charges (CZK)",

@@ -1,7 +1,21 @@
 import { createHash, randomUUID } from 'node:crypto';
 
+import { NodeServices } from '@effect/platform-node';
 import { eq, inArray, sql } from 'drizzle-orm';
-import { DateTime, Deferred, Effect, Exit, Fiber, Ref, Schedule, Schema } from 'effect';
+import {
+  Config,
+  ConfigProvider,
+  DateTime,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Ref,
+  Schedule,
+  Schema,
+} from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
@@ -21,12 +35,35 @@ import {
   publishApplicationCompositionAuthoritySnapshot,
   runApplicationCompositionMigration,
 } from '../application-composition-authority-publication.mts';
+import { ApplicationCompositionLegacyOwnersLive } from '../application-composition-legacy-owners.mts';
+
+const nativeLegacyOwners = Layer.unwrap(
+  Effect.gen(function* nativeLegacyPublicationEvidence() {
+    const filesystem = yield* FileSystem.FileSystem;
+    const directory = yield* filesystem.makeTempDirectoryScoped({ prefix: 'ontos-lane15-evidence-' });
+    yield* filesystem.chmod(directory, 0o700);
+    const adminUrl = yield* Config.String('DATABASE_ADMIN_URL');
+    const runtimeUrl = yield* Config.String('DATABASE_URL');
+    return ApplicationCompositionLegacyOwnersLive.pipe(
+      Layer.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromUnknown({
+            DATABASE_ADMIN_URL: adminUrl,
+            DATABASE_URL: runtimeUrl,
+            ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY: directory,
+          }),
+        ),
+      ),
+    );
+  }),
+).pipe(Layer.provide(NodeServices.layer));
 
 // Run with the existing root integration project against an otherwise empty, migrated parity DB.
 // This proves the publication protocol, not an owner effect or the deployable recovery host.
 // The owner-local companion owns those journal/provider assertions. No private owner imports here.
 const owner = 'lane15.lifecycle';
-const initialCutoverMustNotRun = Effect.die('Lane 15 seeded an existing authority');
+// Every authority transition re-observes retired executables; one Zerops app host retires none.
+const retiredExecutablesAbsent = Effect.void;
 
 it.live('lane15 preserves the fence across cancellation, seal failure, retry and replacement publication', () =>
   Effect.scoped(
@@ -67,7 +104,7 @@ it.live('lane15 preserves the fence across cancellation, seal failure, retry and
       yield* track(workId, true);
       const migrationCalls = yield* Ref.make(0);
       const migration = Ref.update(migrationCalls, (calls) => calls + 1);
-      const blocked = yield* runApplicationCompositionMigration(migration, initialCutoverMustNotRun).pipe(
+      const blocked = yield* runApplicationCompositionMigration(migration, retiredExecutablesAbsent).pipe(
         Effect.forkChild,
       );
       yield* authority.pipe(
@@ -107,7 +144,7 @@ it.live('lane15 preserves the fence across cancellation, seal failure, retry and
       const enteredAfterSeal = yield* Deferred.make<boolean>();
       const interrupted = yield* runApplicationCompositionMigration(
         Deferred.succeed(enteredAfterSeal, true).pipe(Effect.andThen(Effect.never)),
-        initialCutoverMustNotRun,
+        retiredExecutablesAbsent,
       ).pipe(Effect.forkChild);
       yield* Deferred.await(enteredAfterSeal).pipe(Effect.timeout('5 seconds'));
       expect((yield* authority)[0]).toMatchObject({
@@ -122,18 +159,18 @@ it.live('lane15 preserves the fence across cancellation, seal failure, retry and
         reason: 'lane15 failure after seal before completion',
       });
       expect(
-        yield* runApplicationCompositionMigration(Effect.fail(injectedFailure), initialCutoverMustNotRun).pipe(
+        yield* runApplicationCompositionMigration(Effect.fail(injectedFailure), retiredExecutablesAbsent).pipe(
           Effect.flip,
         ),
       ).toBe(injectedFailure);
       expect((yield* authority)[0]?.phase).toBe('sealed');
       // This retry also proves both interrupted invocations released the publication lock.
-      yield* runApplicationCompositionMigration(migration, initialCutoverMustNotRun).pipe(Effect.timeout('5 seconds'));
+      yield* runApplicationCompositionMigration(migration, retiredExecutablesAbsent).pipe(Effect.timeout('5 seconds'));
       expect(yield* Ref.get(migrationCalls)).toBe(1);
       expect((yield* authority)[0]).toMatchObject({ durableWorkAdmission: 'closed', phase: 'migrated' });
       expect(
         Exit.isFailure(
-          yield* runApplicationCompositionMigration(migration, initialCutoverMustNotRun).pipe(Effect.exit),
+          yield* runApplicationCompositionMigration(migration, retiredExecutablesAbsent).pipe(Effect.exit),
         ),
       ).toBe(true);
       expect(yield* Ref.get(migrationCalls)).toBe(1);
@@ -177,7 +214,7 @@ it.live('lane15 preserves the fence across cancellation, seal failure, retry and
       yield* publishApplicationCompositionAuthoritySnapshot(
         replacement,
         Ref.update(pointerCalls, (calls) => calls + 1),
-        initialCutoverMustNotRun,
+        retiredExecutablesAbsent,
       ).pipe(Effect.timeout('5 seconds'));
       expect(yield* Ref.get(pointerCalls)).toBe(1);
       expect((yield* authority)[0]).toMatchObject({
@@ -193,5 +230,9 @@ it.live('lane15 preserves the fence across cancellation, seal failure, retry and
         lockApplicationCompositionAuthority(transaction, replacement.composition.revision, 'write'),
       );
     }).pipe(Effect.timeout('25 seconds')),
-  ).pipe(Effect.provide(ApplicationCompositionAuthorityAdminDatabaseLive)),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(ApplicationCompositionAuthorityAdminDatabaseLive, nativeLegacyOwners, NodeServices.layer),
+    ),
+  ),
 );

@@ -84,5 +84,5 @@ export const quantityPreparationRead = defineRead(
     }),
   },
   (transaction, scope) => Effect.succeed(catalogQuantityHandoffForScope(transaction, scope)),
-  () => ({ kind: 'module', moduleId: moduleKey }),
+  ({ selection }) => ({ kind: 'resource', resource: selection.productRef }),
 );

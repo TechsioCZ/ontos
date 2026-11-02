@@ -1,5 +1,6 @@
 import { CalendarDateSchema } from '@app/shared-contracts';
-import { SidePanel, formatNumber, statusPresentation } from '@app/admin-ui';
+import { AutosaveStatus, SidePanel, formatNumber, statusPresentation, useAutosaveDraft } from '@app/admin-ui';
+import type { RevisionedSaveResult } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -7,7 +8,7 @@ import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { Option, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { useEffect, useId, useRef, useState } from 'react';
 import { OpportunityNoteSchema, OpportunityTitleSchema } from '../../../../../shared/model/opportunity.ts';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
@@ -28,7 +29,15 @@ import {
 import type { EmployeeId, OpportunityStage } from './pipeline-model.ts';
 import { PickerCombobox } from './pipeline-combobox.tsx';
 import { LinesEditor } from './pipeline-line-editor.tsx';
-import type { LineEntry } from './pipeline-line-editor.tsx';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import {
+  draftFrom,
+  emptyDraft,
+  opportunityUnchangedSince,
+  sameOpportunityDraft,
+  updateCommandOf,
+} from './opportunity-draft.ts';
+import type { FormDraft, UpdateCommand } from './opportunity-draft.ts';
 import type { CustomerOption, EmployeeOption, LoadState, ProductOption } from './pipeline-references.ts';
 
 const RESIZE_LABEL_KEY = 'sales-pipeline.sidePanel.resize';
@@ -41,8 +50,6 @@ const isValidTitle = Schema.is(OpportunityTitleSchema);
 const isValidNote = Schema.is(OpportunityNoteSchema);
 
 export type CreateCommand = Extract<PipelineCommand, { _tag: 'CreateOpportunity' }>;
-export type UpdateCommand = Extract<PipelineCommand, { _tag: 'UpdateOpportunity' }>;
-export type FormCommand = CreateCommand | UpdateCommand;
 
 type Translate = ReturnType<typeof useModernI18n>['t'];
 
@@ -50,14 +57,6 @@ const statusOf = (message: string | undefined) => (message === undefined ? 'defa
 
 /** ui-kit's Select label takes no size, so it is set here to match the FormInput and Combobox labels. */
 const formLabelProps = { className: 'text-label-md' } as const;
-
-interface FormDraft {
-  readonly customerId: string | null;
-  readonly lines: readonly LineEntry[];
-  readonly note: string;
-  readonly ownerId: string | null;
-  readonly title: string;
-}
 
 interface FormErrors {
   readonly close: string | undefined;
@@ -68,7 +67,7 @@ interface FormErrors {
   readonly title: string | undefined;
 }
 
-const formErrors = (draft: FormDraft, closeText: string, t: Translate): FormErrors => {
+const formErrors = (draft: FormDraft, t: Translate): FormErrors => {
   let lines: string | undefined;
   if (
     draft.lines.some((entry) => entry.invalidAmount === true) ||
@@ -79,7 +78,7 @@ const formErrors = (draft: FormDraft, closeText: string, t: Translate): FormErro
     lines = t(`${K}.create.errors.quantityRange`, { max: formatNumber(MAX_LINE_QUANTITY) });
   }
   return {
-    close: Option.isNone(Schema.decodeOption(CalendarDateSchema)(closeText))
+    close: Option.isNone(Schema.decodeOption(CalendarDateSchema)(draft.closeText))
       ? t(`${K}.create.errors.dateRequired`)
       : undefined,
     customer:
@@ -92,80 +91,41 @@ const formErrors = (draft: FormDraft, closeText: string, t: Translate): FormErro
   };
 };
 
-const emptyDraft: FormDraft = { customerId: null, lines: [], note: '', ownerId: null, title: '' };
-
-const draftFrom = (opportunity: Opportunity): FormDraft => ({
-  customerId: opportunity.partyId,
-  lines: opportunity.lines.map((line, index) => ({ key: `init-${index}`, line })),
-  note: opportunity.note ?? '',
-  ownerId: opportunity.ownerEmployeeId ?? null,
-  title: opportunity.title,
-});
+const hasFormErrors = (errors: FormErrors) => Object.values(errors).some((error) => error !== undefined);
 
 const customerLabel = (customer: CustomerOption, unknownName: string): string => {
   const name = customer.name ?? unknownName;
   return customer.companyId === null ? name : `${name} (IČO ${customer.companyId})`;
 };
 
-interface OpportunityFormDialogProps {
-  readonly busy: boolean;
+interface OpportunityReferences {
   readonly customers: LoadState<readonly CustomerOption[]>;
   readonly employees: LoadState<readonly EmployeeOption[]>;
-  /** Present for edit; absent for create. */
-  readonly initial?: Opportunity | undefined;
-  readonly onOpenChange: (open: boolean) => void;
-  readonly onSubmit: (command: FormCommand) => void;
   readonly products: LoadState<readonly ProductOption[]>;
-  readonly serverError?: string | undefined;
 }
 
-/** Create or edit an opportunity. The owner is set on create; on edit it changes through the owner action. */
-export const OpportunityFormDialog = ({
-  busy,
+/** The fields of one opportunity, shared by the create panel and the autosaving edit panel. */
+const OpportunityFields = ({
   customers,
+  draft,
   employees,
-  initial,
-  onOpenChange,
-  onSubmit,
+  isEdit,
+  onBlur,
+  onChange,
   products,
-  serverError,
-}: OpportunityFormDialogProps) => {
+  showErrors,
+}: OpportunityReferences & {
+  readonly draft: FormDraft;
+  readonly isEdit: boolean;
+  readonly onBlur: () => void;
+  readonly onChange: (patch: Partial<FormDraft>) => void;
+  /** Inline field errors show after the first create attempt and always while editing. */
+  readonly showErrors: boolean;
+}) => {
   const { t } = useModernI18n();
-  const isEdit = initial !== undefined;
-  const [draft, setDraft] = useState<FormDraft>(() => (initial === undefined ? emptyDraft : draftFrom(initial)));
-  /** Calendar date as typed; decoded to a CalendarDate only on submit. */
-  const [closeText, setCloseText] = useState<string>(() => initial?.expectedCloseDate ?? '');
-  const [submitted, setSubmitted] = useState(false);
   const [customerQuery, setCustomerQuery] = useState('');
-  /** Set on the first edit. A dirty form asks before Escape, the close button or Zrušit drops the draft. */
-  const dirty = useRef(false);
-  const [discardOpen, setDiscardOpen] = useState(false);
-  /** Bumped on a rejected submit, so the first invalid field takes focus. */
-  const [invalidAttempt, setInvalidAttempt] = useState(0);
-  const formRef = useRef<HTMLFormElement>(null);
-  const formId = useId();
-
-  const errors = formErrors(draft, closeText, t);
-  const visible = (message: string | undefined) => (submitted ? message : undefined);
-  const patch = (next: Partial<FormDraft>) => {
-    dirty.current = true;
-    setDraft((current) => ({ ...current, ...next }));
-  };
-  const requestClose = (open: boolean) => {
-    if (open) {
-      return;
-    }
-    if (dirty.current) {
-      setDiscardOpen(true);
-      return;
-    }
-    onOpenChange(false);
-  };
-  useEffect(() => {
-    if (invalidAttempt > 0) {
-      formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
-    }
-  }, [invalidAttempt]);
+  const errors = formErrors(draft, t);
+  const visible = (message: string | undefined) => (showErrors ? message : undefined);
   const unknownCustomer = t(`${K}.create.unknownCustomer`);
   const unknownOwner = t(`${K}.unknownOwner`);
 
@@ -196,6 +156,128 @@ export const OpportunityFormDialog = ({
       : []),
   ];
 
+  return (
+    <>
+      <PickerCombobox
+        error={customers.status === 'error' ? t(`${K}.create.customersFailed`) : undefined}
+        filterBehavior="external"
+        helpText={visible(errors.customer) ?? ''}
+        items={shownCustomerItems}
+        label={t(`${K}.create.fields.customer`)}
+        loading={customers.status === 'loading'}
+        loadingMessage={t('sales-pipeline.loading')}
+        name="partyId"
+        noResultsMessage={t(`${K}.create.noCustomerMatch`)}
+        onChange={(values) => {
+          const next = firstValue(values);
+          onChange({ customerId: next === undefined || next === '' ? null : next });
+        }}
+        onInputValueChange={setCustomerQuery}
+        placeholder={t(`${K}.create.customerPlaceholder`)}
+        required
+        validateStatus={statusOf(visible(errors.customer))}
+        value={draft.customerId === null ? [] : [draft.customerId]}
+      />
+      <FormInput
+        autoComplete="off"
+        helpText={visible(errors.title)}
+        id="opportunity-title"
+        label={t(`${K}.create.fields.title`)}
+        name="title"
+        onBlur={onBlur}
+        onChange={(event) => onChange({ title: event.target.value })}
+        required
+        validateStatus={statusOf(visible(errors.title))}
+        value={draft.title}
+      />
+      {/* A Select, like the Obchodník filter, so a click anywhere on the field opens the list. */}
+      <div className="flex flex-col gap-50">
+        <SelectTemplate
+          disabled={isEdit}
+          items={ownerItems}
+          label={t(`${K}.create.fields.assignee`)}
+          labelProps={formLabelProps}
+          name="ownerEmployeeId"
+          onValueChange={({ value: [next] }) => {
+            onChange({ ownerId: next === undefined || next === NONE ? null : next });
+          }}
+          placeholder={t(SELECT_PLACEHOLDER)}
+          size="md"
+          value={[draft.ownerId ?? NONE]}
+        />
+        {isEdit && <p className="text-fg-secondary text-xs">{t(`${K}.create.ownerEditHint`)}</p>}
+      </div>
+      <FormInput
+        helpText={visible(errors.close)}
+        id="opportunity-close-date"
+        label={t(`${K}.create.fields.expectedClose`)}
+        name="expectedCloseDate"
+        onBlur={onBlur}
+        onChange={(event) => onChange({ closeText: event.target.value })}
+        required
+        type="date"
+        validateStatus={statusOf(visible(errors.close))}
+        value={draft.closeText}
+      />
+      <FormTextarea
+        autoComplete="off"
+        helpText={visible(errors.note)}
+        id="opportunity-note"
+        label={t(`${K}.create.fields.note`)}
+        name="note"
+        onBlur={onBlur}
+        onChange={(event) => onChange({ note: event.target.value })}
+        rows={3}
+        validateStatus={statusOf(visible(errors.note))}
+        value={draft.note}
+      />
+      <LinesEditor lines={draft.lines} onChange={(lines) => onChange({ lines })} products={products} />
+    </>
+  );
+};
+
+/** The scrolling form inside a panel. The small inline padding keeps focus rings from being clipped by its edge. */
+const formClassName = '-mx-100 flex min-h-0 flex-1 flex-col gap-200 overflow-y-auto px-100 py-200';
+
+const noBlur = () => {
+  // Creating sends only on "Vytvořit příležitost".
+};
+
+interface CreatePanelProps extends OpportunityReferences {
+  readonly busy: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onSubmit: (command: CreateCommand) => void;
+  readonly serverError?: string | undefined;
+}
+
+/** Create an opportunity; the owner is chosen here. Closing a dirty form asks before it drops the draft. */
+const OpportunityCreatePanel = ({ busy, onOpenChange, onSubmit, serverError, ...references }: CreatePanelProps) => {
+  const { t } = useModernI18n();
+  const [draft, setDraft] = useState<FormDraft>(emptyDraft);
+  const [submitted, setSubmitted] = useState(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  /** Bumped on a rejected submit, so the first invalid field takes focus. */
+  const [invalidAttempt, setInvalidAttempt] = useState(0);
+  const formRef = useRef<HTMLFormElement>(null);
+  const formId = useId();
+  const errors = formErrors(draft, t);
+  const handleChange = (next: Partial<FormDraft>) => setDraft((current) => ({ ...current, ...next }));
+  const requestClose = (open: boolean) => {
+    if (open) {
+      return;
+    }
+    if (!sameOpportunityDraft(draft, emptyDraft)) {
+      setDiscardOpen(true);
+      return;
+    }
+    onOpenChange(false);
+  };
+  useEffect(() => {
+    if (invalidAttempt > 0) {
+      formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    }
+  }, [invalidAttempt]);
+
   const submit = () => {
     // Enter in a field submits the form even while the save button shows its spinner.
     if (busy) {
@@ -204,33 +286,18 @@ export const OpportunityFormDialog = ({
     setSubmitted(true);
     const partyOption =
       draft.customerId === null ? Option.none() : Schema.decodeOption(PartyIdSchema)(draft.customerId);
-    const dateOption = Schema.decodeOption(CalendarDateSchema)(closeText);
-    if (Object.values(errors).some((error) => error !== undefined)) {
+    const dateOption = Schema.decodeOption(CalendarDateSchema)(draft.closeText);
+    if (hasFormErrors(errors) || Option.isNone(partyOption) || Option.isNone(dateOption)) {
       setInvalidAttempt((count) => count + 1);
-      return;
-    }
-    if (Option.isNone(partyOption) || Option.isNone(dateOption)) {
-      setInvalidAttempt((count) => count + 1);
-      return;
-    }
-    const title = draft.title.trim();
-    const note = draft.note.trim();
-    const lines = draft.lines.map((entry) => entry.line);
-    if (initial !== undefined) {
-      onSubmit({
-        _tag: 'UpdateOpportunity',
-        id: initial.id,
-        patch: { expectedCloseDate: dateOption.value, lines, note, partyId: partyOption.value, title },
-      });
       return;
     }
     const base: CreateCommand = {
       _tag: 'CreateOpportunity',
       expectedCloseDate: dateOption.value,
-      lines,
-      note,
+      lines: draft.lines.map((entry) => entry.line),
+      note: draft.note.trim(),
       partyId: partyOption.value,
-      title,
+      title: draft.title.trim(),
     };
     const owner = draft.ownerId === null ? Option.none() : Schema.decodeOption(EmployeeIdSchema)(draft.ownerId);
     onSubmit(Option.isSome(owner) ? { ...base, ownerEmployeeId: owner.value } : base);
@@ -244,7 +311,7 @@ export const OpportunityFormDialog = ({
             <Button onClick={() => requestClose(false)} theme="outlined" type="button" variant="secondary">
               {t(`${K}.create.cancel`)}
             </Button>
-            {/* Submits the form below, so Enter in a text field saves the opportunity too. */}
+            {/* Submits the form below, so Enter in a text field creates the opportunity too. */}
             <Button
               form={formId}
               isLoading={busy}
@@ -252,24 +319,20 @@ export const OpportunityFormDialog = ({
               type="submit"
               variant="primary"
             >
-              {isEdit ? t(`${K}.edit.submit`) : t(`${K}.create.submit`)}
+              {t(`${K}.create.submit`)}
             </Button>
           </>
         }
-        // The form holds unsaved input, and the date control opens a picker layered outside the drawer. A stray
-        // pointer or focus move outside must not discard the draft; Escape, the close button and Zrušit still close.
-        closeOnInteractOutside={false}
-        description={isEdit ? t(`${K}.edit.description`) : t(`${K}.create.description`)}
+        description={t(`${K}.create.description`)}
         onOpenChange={requestClose}
         open
         resizeLabel={t(RESIZE_LABEL_KEY)}
         size="xl"
-        title={isEdit ? t(`${K}.edit.title`) : t(`${K}.create.title`)}
+        title={t(`${K}.create.title`)}
       >
-        {/* The form scrolls on its own, so the footer with Zrušit and the submit button stays at the panel bottom.
-            The small inline padding keeps focus rings from being clipped by the scroll edge. */}
+        {/* The form scrolls on its own, so the footer with Zrušit and the submit button stays at the panel bottom. */}
         <form
-          className="-mx-100 flex min-h-0 flex-1 flex-col gap-200 overflow-y-auto px-100 py-200"
+          className={formClassName}
           id={formId}
           noValidate
           onSubmit={(event) => {
@@ -283,80 +346,14 @@ export const OpportunityFormDialog = ({
               {serverError}
             </StatusText>
           )}
-          <PickerCombobox
-            error={customers.status === 'error' ? t(`${K}.create.customersFailed`) : undefined}
-            filterBehavior="external"
-            helpText={visible(errors.customer) ?? ''}
-            items={shownCustomerItems}
-            label={t(`${K}.create.fields.customer`)}
-            loading={customers.status === 'loading'}
-            loadingMessage={t('sales-pipeline.loading')}
-            name="partyId"
-            noResultsMessage={t(`${K}.create.noCustomerMatch`)}
-            onChange={(values) => {
-              const next = firstValue(values);
-              patch({ customerId: next === undefined || next === '' ? null : next });
-            }}
-            onInputValueChange={setCustomerQuery}
-            placeholder={t(`${K}.create.customerPlaceholder`)}
-            required
-            validateStatus={statusOf(visible(errors.customer))}
-            value={draft.customerId === null ? [] : [draft.customerId]}
+          <OpportunityFields
+            {...references}
+            draft={draft}
+            isEdit={false}
+            onBlur={noBlur}
+            onChange={handleChange}
+            showErrors={submitted}
           />
-          <FormInput
-            autoComplete="off"
-            helpText={visible(errors.title)}
-            id="opportunity-title"
-            label={t(`${K}.create.fields.title`)}
-            name="title"
-            onChange={(event) => patch({ title: event.target.value })}
-            required
-            validateStatus={statusOf(visible(errors.title))}
-            value={draft.title}
-          />
-          {/* A Select, like the Obchodník filter, so a click anywhere on the field opens the list. */}
-          <div className="flex flex-col gap-50">
-            <SelectTemplate
-              disabled={isEdit}
-              items={ownerItems}
-              label={t(`${K}.create.fields.assignee`)}
-              labelProps={formLabelProps}
-              name="ownerEmployeeId"
-              onValueChange={({ value: [next] }) => {
-                patch({ ownerId: next === undefined || next === NONE ? null : next });
-              }}
-              placeholder={t(SELECT_PLACEHOLDER)}
-              size="md"
-              value={[draft.ownerId ?? NONE]}
-            />
-            {isEdit && <p className="text-fg-secondary text-xs">{t(`${K}.create.ownerEditHint`)}</p>}
-          </div>
-          <FormInput
-            helpText={visible(errors.close)}
-            id="opportunity-close-date"
-            label={t(`${K}.create.fields.expectedClose`)}
-            name="expectedCloseDate"
-            onChange={(event) => {
-              dirty.current = true;
-              setCloseText(event.target.value);
-            }}
-            required
-            type="date"
-            validateStatus={statusOf(visible(errors.close))}
-            value={closeText}
-          />
-          <FormTextarea
-            autoComplete="off"
-            helpText={visible(errors.note)}
-            id="opportunity-note"
-            label={t(`${K}.create.fields.note`)}
-            name="note"
-            onChange={(event) => patch({ note: event.target.value })}
-            rows={3}
-            validateStatus={statusOf(visible(errors.note))}
-            value={draft.note}
-          />
-          <LinesEditor lines={draft.lines} onChange={(lines) => patch({ lines })} products={products} />
         </form>
       </SidePanel>
       <Dialog
@@ -382,6 +379,148 @@ export const OpportunityFormDialog = ({
     </>
   );
 };
+
+/** Saves one edit against the revision its draft builds on; `unchanged` decides whether a revision race is resent. */
+export type OpportunityAutosave = (
+  command: UpdateCommand,
+  expectedRevision: number,
+  unchanged: (items: readonly Opportunity[]) => boolean,
+) => Effect.Effect<RevisionedSaveResult>;
+
+interface EditPanelProps extends OpportunityReferences {
+  readonly onAutosave: OpportunityAutosave;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly opportunity: Opportunity;
+  readonly revision: number;
+  readonly serverError?: string | undefined;
+}
+
+/**
+ * Edit an existing opportunity; the owner changes through the owner action. Changes save themselves (debounced, on
+ * blur and on Zavřít) against the revision the draft builds on; when someone else changed this opportunity, the
+ * panel offers the current version instead of overwriting it.
+ */
+const OpportunityEditPanel = ({
+  onAutosave,
+  onOpenChange,
+  opportunity,
+  revision,
+  serverError,
+  ...references
+}: EditPanelProps) => {
+  const { t } = useModernI18n();
+  const server = draftFrom(opportunity);
+  /** The version of the opportunity the draft builds on: what it opened with, last saved or reloaded. */
+  const base = useRef(server);
+  const rememberSaved = (value: FormDraft, result: RevisionedSaveResult) => {
+    if (result !== 'conflict' && result !== 'failed') {
+      base.current = value;
+    }
+  };
+  const sendCommand = (value: FormDraft, expectedRevision: number, command: UpdateCommand) =>
+    onAutosave(command, expectedRevision, opportunityUnchangedSince(opportunity.id, base.current)).pipe(
+      Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))),
+    );
+  const saveDraft = (value: FormDraft, expectedRevision: number) =>
+    Option.match(updateCommandOf(opportunity.id, value), {
+      onNone: () => Effect.succeed<RevisionedSaveResult>('failed'),
+      onSome: (command) => sendCommand(value, expectedRevision, command),
+    });
+  const autosave = useAutosaveDraft<FormDraft, never>({
+    equals: sameOpportunityDraft,
+    isValid: (value) => Option.isSome(updateCommandOf(opportunity.id, value)),
+    revision,
+    runtime: browserRuntime,
+    save: (value, expectedRevision) => saveDraft(value, expectedRevision),
+    server,
+  });
+  const settledOnServer = !autosave.pending && sameOpportunityDraft(autosave.draft, server);
+  useEffect(() => {
+    if (settledOnServer) {
+      base.current = server;
+    }
+  }, [base, server, settledOnServer]);
+  const close = () => {
+    autosave.flush();
+    onOpenChange(false);
+  };
+  const handleBlur = autosave.flush;
+  const handleChange = (next: Partial<FormDraft>) => autosave.setDraft((current) => ({ ...current, ...next }));
+  const handleRetry = autosave.retry;
+  const handleReloadLatest = autosave.reloadLatest;
+  return (
+    <SidePanel
+      actions={
+        <>
+          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <Button onClick={close} theme="outlined" type="button" variant="secondary">
+            {t(`${K}.edit.close`)}
+          </Button>
+        </>
+      }
+      description={t(`${K}.edit.description`)}
+      onOpenChange={(open) => {
+        if (!open) {
+          close();
+        }
+      }}
+      open
+      resizeLabel={t(RESIZE_LABEL_KEY)}
+      size="xl"
+      title={t(`${K}.edit.title`)}
+    >
+      <form
+        className={formClassName}
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          autosave.flush();
+        }}
+      >
+        {serverError !== undefined && (
+          <StatusText showIcon status="error">
+            {serverError}
+          </StatusText>
+        )}
+        <OpportunityFields
+          {...references}
+          draft={autosave.draft}
+          isEdit
+          onBlur={handleBlur}
+          onChange={handleChange}
+          showErrors
+        />
+      </form>
+    </SidePanel>
+  );
+};
+
+interface OpportunityFormDialogProps extends OpportunityReferences {
+  readonly busy: boolean;
+  /** Present for edit; absent for create. */
+  readonly initial?: Opportunity | undefined;
+  readonly onAutosave: OpportunityAutosave;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onSubmit: (command: CreateCommand) => void;
+  /** Revision of the records the edited opportunity comes from. */
+  readonly revision: number;
+  readonly serverError?: string | undefined;
+}
+
+/** Create an opportunity, or edit one with autosave. */
+export const OpportunityFormDialog = ({
+  busy,
+  initial,
+  onAutosave,
+  onSubmit,
+  revision,
+  ...rest
+}: OpportunityFormDialogProps) =>
+  initial === undefined ? (
+    <OpportunityCreatePanel {...rest} busy={busy} onSubmit={onSubmit} />
+  ) : (
+    <OpportunityEditPanel {...rest} onAutosave={onAutosave} opportunity={initial} revision={revision} />
+  );
 
 interface StageDialogProps {
   readonly busy: boolean;
@@ -450,7 +589,6 @@ export const StageDialog = ({
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description={description}
       onOpenChange={onOpenChange}
       open
@@ -571,7 +709,6 @@ export const OwnerDialog = ({
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description={description}
       onOpenChange={onOpenChange}
       open

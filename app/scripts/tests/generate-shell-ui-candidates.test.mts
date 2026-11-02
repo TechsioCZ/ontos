@@ -87,6 +87,23 @@ it.live('checks unreleased availability and new/deleted verticals instead of tru
   }),
 );
 
+it.live('fails closed when a vertical writes ui-kit token utilities with its own Tailwind prefix', () =>
+  fixture((root) => {
+    write(root, 'verticals/alpha/src/routes/index.css', "@import 'tailwindcss' prefix(alpha) source(none);\n");
+    write(root, ALPHA_VIEW, '<div className="alpha:flex alpha:p-4 alpha:w-full alpha:rounded-full p-300" />');
+    succeeds(root, ALL);
+    write(
+      root,
+      ALPHA_VIEW,
+      '<div className="alpha:p-300 alpha:gap-250 alpha:border-border-primary alpha:text-md alpha:p-4" />',
+    );
+    const output = outputOf(run(root, ALL));
+    expect(output).toContain('ui-kit utilities must stay unprefixed');
+    expect(output).toContain('alpha:border-border-primary, alpha:gap-250, alpha:p-300, alpha:text-md');
+    expect(output).not.toContain('alpha:p-4');
+  }),
+);
+
 it.live(
   'the webpack compiler emits byte-identical production CSS from the committed projection and original globs',
   () => Effect.sync(() => succeeds(workspace, CHECK, ALL, GOLDEN)),

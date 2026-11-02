@@ -1,5 +1,22 @@
+import { ContextAccess } from '@app/core-runtime';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+import { profileCounterpartyRoleEligibilityResolverFactoryLive } from '../../src/profile-counterparty-role-eligibility.ts';
+import {
+  profileReactivationEligibilityEvaluatorFactoryLive,
+  profileReconfirmationPolicyUnavailableLive,
+} from '../../src/integrations/profile-reactivation-eligibility.ts';
+import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
+import { partyRegistryGuestResolverFactoryLive } from '../../src/integrations/party-registry-guest-resolver.ts';
+import { partyRegistryRetailPartyResolverFactoryLive } from '../../src/integrations/party-registry-retail-party-resolver.ts';
+import { readFile } from 'node:fs/promises';
+import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
+import { makeEnrollmentFailureTracer } from '../support/enrollment-current-access-receiver.fixture.ts';
+import { mapCreateCounterpartyPurchasingProfileActionProblem } from '../../api/create-counterparty-purchasing-profile-action-problems.ts';
+import { CreateCounterpartyPurchasingProfileActionUnavailableProblemSchema } from '../../shared/apis/create-counterparty-purchasing-profile-action.ts';
 import { describe, expect, it } from 'effect-rstest';
-import { Effect, Schema } from 'effect';
+import { Effect, Layer, Redacted, Schema, Tracer } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { archiveCustomerProfileAction } from '../../src/actions/archive-customer-profile.action.ts';
@@ -19,7 +36,12 @@ import { reactivateCustomerProfileAction } from '../../src/actions/reactivate-cu
 import { recoverRetailPortalProfileBindingAction } from '../../src/actions/recover-retail-portal-profile-binding.action.ts';
 import { resolveProfileReconciliationAction } from '../../src/actions/resolve-profile-reconciliation.action.ts';
 import { revokeRetailPortalProfileBindingAction } from '../../src/actions/revoke-retail-portal-profile-binding.action.ts';
+import { ProfileLifecycleActionRejected } from '../../shared/actions/suspend-customer-profile.ts';
 import { suspendCustomerProfileAction } from '../../src/actions/suspend-customer-profile.action.ts';
+import {
+  ProfilePersistenceDependencyFailure,
+  profilePersistenceServicesForTransaction,
+} from '../../src/persistence/profile-persistence.ts';
 
 const originalCompositionRevision = 'a'.repeat(64);
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -50,6 +72,81 @@ describe('customer profile Actions', () => {
       });
     }
   });
+
+  it.effect('projects native Counterparty scope metadata before the strict Domain Event collector', () =>
+    Effect.gen(function* projectsCounterpartyPublicResult() {
+      const legalEntityId = '20000000-0000-4000-8000-000000000002';
+      const principalId = '30000000-0000-4000-8000-000000000003';
+      const nativeResult = {
+        outcome: 'PROFILE_CREATED' as const,
+        profileRef: {
+          moduleId: 'commerce.customer-context' as const,
+          resourceId: '40000000-0000-4000-8000-000000000004',
+          resourceType: 'commerce.customer-context.counterparty-purchasing-profile' as const,
+          tenantId,
+        },
+        revision: 1,
+        scopeLegalEntityId: legalEntityId,
+        state: 'ACTIVE' as const,
+      };
+      const registration = createCounterpartyPurchasingProfileAction.descriptor;
+      const collector = createActionCollector(
+        registration.domainEvents,
+        'commerce.customer-context',
+        registration.accessEvidencePolicy,
+        registration.auditEvidenceSchema,
+      );
+      const services = profilePersistenceServicesForTransaction(
+        { invoke: () => Effect.succeed([{ outcome: nativeResult.outcome, payload: nativeResult }]) },
+        { legalEntityId, principalId, tenantId },
+        {
+          resolveCounterpartyRole: () =>
+            Effect.succeed({
+              managedLegalEntityId: legalEntityId,
+              outcome: 'ELIGIBLE' as const,
+              roleResourceId: '60000000-0000-4000-8000-000000000006',
+              roleResourceRevision: '7',
+            }),
+        },
+      ).createCounterpartyPurchasingProfile;
+      const payload = Schema.decodeUnknownSync(registration.payloadSchema)({
+        effectiveAt: '2026-09-09T10:00:00.000Z',
+        subject: {
+          counterpartyRef: {
+            moduleId: 'party.registry',
+            resourceId: '50000000-0000-4000-8000-000000000005',
+            resourceType: 'party.registry.counterparty',
+            tenantId,
+          },
+          kind: 'COUNTERPARTY',
+        },
+        trigger: 'AUTHORIZED_ONBOARDING',
+      });
+      const result = yield* services.create(payload, {
+        actionInvocationId: '70000000-0000-4000-8000-000000000007',
+        scope: { legalEntityId, tenantId },
+      });
+      const event = {
+        eventType: 'commerce.customer-context.counterparty-purchasing-profile-created.v1' as const,
+        producerModuleKey: 'commerce.customer-context',
+        subjectModuleKey: 'commerce.customer-context',
+        subjectResourceId: nativeResult.profileRef.resourceId,
+        subjectResourceType: nativeResult.profileRef.resourceType,
+      };
+      // The native-only scope remains present internally, while the actual collector stays strict.
+      const rawFailure = yield* collector.addDomainEvent({ ...event, payloadJson: nativeResult }).pipe(Effect.flip);
+      expect(rawFailure.code).toBe('action_collector_invalid');
+      expect(result).toEqual({
+        outcome: nativeResult.outcome,
+        profileRef: nativeResult.profileRef,
+        revision: nativeResult.revision,
+        state: nativeResult.state,
+      });
+      yield* collector.addDomainEvent({ ...event, payloadJson: result });
+      expect(nativeResult.scopeLegalEntityId).toBe(legalEntityId);
+      expect(collector.snapshot().domainEvents).toHaveLength(1);
+    }),
+  );
 
   it('accepts only an explicit tenant-consistent retail subject and create trigger', () => {
     const payload = Schema.decodeUnknownSync(EnsureRetailCustomerProfilePayloadSchema)({
@@ -235,4 +332,245 @@ describe('customer profile Actions', () => {
       expect(snapshot.outboxMessages).toHaveLength(1);
     }),
   );
+
+  it.effect('retains native lifecycle discriminators and rejects untagged or inconsistent profile kinds', () =>
+    Effect.gen(function* verifiesLifecycleWireContracts() {
+      const legalEntityId = '20000000-0000-4000-8000-000000000002';
+      const principalId = '30000000-0000-4000-8000-000000000003';
+      const effectiveAt = '2026-09-09T10:00:00.000Z';
+      const scope = { legalEntityId, principalId, tenantId };
+      const context = {
+        actionInvocationId: '70000000-0000-4000-8000-000000000007',
+        scope: { legalEntityId, tenantId },
+      };
+      const transitions = [
+        {
+          outcome: 'PROFILE_SUSPENDED',
+          previousState: 'ACTIVE',
+          service: 'suspendCustomerProfile',
+          state: 'SUSPENDED',
+        },
+        {
+          outcome: 'PROFILE_ARCHIVED',
+          previousState: 'SUSPENDED',
+          service: 'archiveCustomerProfile',
+          state: 'ARCHIVED',
+        },
+        {
+          outcome: 'PROFILE_REACTIVATED',
+          previousState: 'ARCHIVED',
+          service: 'reactivateCustomerProfile',
+          state: 'ACTIVE',
+        },
+      ] as const;
+      const profiles = [
+        { kind: 'RETAIL', resourceType: 'commerce.customer-context.retail-customer-profile' },
+        { kind: 'COUNTERPARTY', resourceType: 'commerce.customer-context.counterparty-purchasing-profile' },
+      ] as const;
+      for (const profile of profiles) {
+        const profileRef = {
+          ...profile,
+          moduleId: 'commerce.customer-context',
+          resourceId: '40000000-0000-4000-8000-000000000004',
+          tenantId,
+        };
+        for (const transition of transitions) {
+          const nativeResult = {
+            effectiveAt,
+            outcome: transition.outcome,
+            previousState: transition.previousState,
+            profileRef,
+            revision: 2,
+            state: transition.state,
+          };
+          const { kind, ...untaggedRef } = profileRef;
+          const wrongKind = kind === 'RETAIL' ? 'COUNTERPARTY' : 'RETAIL';
+          const wireResults = [
+            { accepted: true, payload: nativeResult },
+            { accepted: false, payload: { ...nativeResult, profileRef: untaggedRef } },
+            { accepted: false, payload: { ...nativeResult, profileRef: { ...profileRef, kind: wrongKind } } },
+          ];
+          for (const wire of wireResults) {
+            const services = profilePersistenceServicesForTransaction(
+              { invoke: () => Effect.succeed([{ outcome: nativeResult.outcome, payload: wire.payload }]) },
+              scope,
+              {
+                evaluateReactivation: () =>
+                  Effect.succeed({ dependenciesSatisfied: true, reconfirmationSatisfied: true }),
+              },
+            );
+            const payload = Schema.decodeUnknownSync(suspendCustomerProfileAction.descriptor.payloadSchema)({
+              effectiveAt,
+              expectedRevision: 1,
+              expectedState: transition.previousState,
+              profileRef,
+              reason: 'Lifecycle wire result contract',
+            });
+            const result = services[transition.service].transition(payload, context);
+            if (wire.accepted) {
+              expect(yield* result).toEqual(nativeResult);
+            } else {
+              const failure = yield* result.pipe(Effect.flip);
+              expect(yield* Schema.decodeUnknownEffect(ProfileLifecycleActionRejected)(failure)).toMatchObject({
+                code: 'OUTCOME_INDETERMINATE',
+                retryable: false,
+              });
+            }
+          }
+        }
+      }
+    }),
+  );
 });
+
+// Execute the exact existing API-root observation layer without initializing its DB/service graph.
+const actualObservationLayer = Effect.gen(function* readActualObservationLayer() {
+  const source = yield* Effect.tryPromise(() => readFile(new URL('../../api/index.ts', import.meta.url), 'utf-8'));
+  const start = source.indexOf('const runtimeObservabilityLive =');
+  const end = source.indexOf('const tenantModuleStateServiceLive', start);
+  const moduleSource = `import { Layer, Logger, References, Tracer } from ${JSON.stringify(pathToFileURL(createRequire(new URL('../../package.json', import.meta.url)).resolve('effect')).href)};\n${source.slice(start, end)}\nexport default runtimeObservabilityLive;`;
+  const loaded: { readonly default: Layer.Layer<Tracer.Tracer> } = yield* Effect.promise(
+    async () => await import(`data:text/javascript,${encodeURIComponent(moduleSource)}`),
+  );
+  return loaded.default;
+});
+
+it.effect('the actual API observation layer retains a supplied tracer and has a native default', () =>
+  Effect.gen(function* observationLayerInheritance() {
+    const layer = yield* actualObservationLayer;
+    const supplied = makeEnrollmentFailureTracer([], () => {});
+    expect(yield* Tracer.Tracer.pipe(Effect.provide(layer), Effect.provideService(Tracer.Tracer, supplied))).toBe(
+      supplied,
+    );
+    const fallback = yield* Tracer.Tracer.pipe(Effect.provide(layer));
+    expect(fallback).toBe(Tracer.nativeTracer);
+  }),
+);
+
+const unusedPermission = () => Effect.die(new Error('Unused Retail permission dependency'));
+
+it.live('observes the original profile handler cause before mapping while public HTTP stays safe', () =>
+  Effect.gen(function* observeRealProfileFailure() {
+    const legalEntityId = '20000000-0000-4000-8000-000000000002';
+    const principalId = '30000000-0000-4000-8000-000000000003';
+    const secret = 'unit-private-profile-api-key';
+    const jwt = `eyJ${'a'.repeat(20_000)}.unit-payload.unit-signature`;
+    const original = new Error(`actual unknown owner failure ${secret} ${jwt}`);
+    const dependency = Object.defineProperty(
+      new ProfilePersistenceDependencyFailure({ reason: 'Original typed dependency stage' }),
+      'cause',
+      { value: original },
+    );
+    const registration = createCounterpartyPurchasingProfileAction.descriptor;
+    const payload = Schema.decodeUnknownSync(registration.payloadSchema)({
+      effectiveAt: '2026-09-09T10:00:00.000Z',
+      subject: {
+        counterpartyRef: {
+          moduleId: 'party.registry',
+          resourceId: '50000000-0000-4000-8000-000000000005',
+          resourceType: 'party.registry.counterparty',
+          tenantId,
+        },
+        kind: 'COUNTERPARTY',
+      },
+      trigger: 'AUTHORIZED_ONBOARDING',
+    });
+    const services = profilePersistenceServicesForTransaction(
+      { invoke: () => Effect.die('No persistence allowed after dependency failure') },
+      { legalEntityId, principalId, tenantId },
+      { resolveCounterpartyRole: () => Effect.fail(dependency) },
+    ).createCounterpartyPurchasingProfile;
+    const collector = createActionCollector(
+      registration.domainEvents,
+      'commerce.customer-context',
+      registration.accessEvidencePolicy,
+      registration.auditEvidenceSchema,
+    );
+    const handler = getActionHandler(createCounterpartyPurchasingProfileAction)(payload, {
+      actionInvocationId: '70000000-0000-4000-8000-000000000007',
+      addDomainEvent: collector.addDomainEvent,
+      addOutboxMessage: collector.addOutboxMessage,
+      compositionRevision: originalCompositionRevision,
+      recordAuditEvidence: collector.recordAuditEvidence,
+      recordDataAccess: collector.recordDataAccess,
+      scope: { authMethod: 'system', correlationId: 'unit-profile-failure', legalEntityId, principalId, tenantId },
+      services,
+    }).pipe(
+      Effect.flatMap((value) =>
+        Schema.is(registration.resultSchema)(value)
+          ? Effect.succeed(value)
+          : Effect.die(new Error('Unexpected profile success outcome')),
+      ),
+      Effect.mapError(mapCreateCounterpartyPurchasingProfileActionProblem),
+      Effect.mapError(Schema.decodeUnknownSync(CreateCounterpartyPurchasingProfileActionUnavailableProblemSchema)),
+      Effect.provide(
+        Layer.mergeAll(
+          profileCounterpartyRoleEligibilityResolverFactoryLive,
+          profileReactivationEligibilityEvaluatorFactoryLive.pipe(
+            Layer.provide(profileReconfirmationPolicyUnavailableLive),
+          ),
+          profileRetailPermissionReaderFactoryLive.pipe(
+            Layer.provide(
+              Layer.succeed(ContextAccess, {
+                assortmentPermissions: unusedPermission,
+                businessPermissions: unusedPermission,
+                contextPermissions: unusedPermission,
+                identityNamespaces: unusedPermission,
+                legalEntities: unusedPermission,
+                modules: unusedPermission,
+                resources: unusedPermission,
+                tenantResources: unusedPermission,
+                tenants: unusedPermission,
+              }),
+            ),
+          ),
+          partyRegistryGuestResolverFactoryLive,
+          partyRegistryRetailPartyResolverFactoryLive,
+        ),
+      ),
+    );
+    const api = HttpApi.make('ProfileFailureObservation').add(
+      HttpApiGroup.make('profile').add(
+        HttpApiEndpoint.get('create', '/profile', {
+          error: CreateCounterpartyPurchasingProfileActionUnavailableProblemSchema,
+          success: registration.resultSchema,
+        }),
+      ),
+    );
+    const layer = yield* actualObservationLayer;
+    const diagnostics: string[] = [];
+    const tracer = makeEnrollmentFailureTracer([Redacted.make(secret)], (text) => {
+      diagnostics.push(text);
+    });
+    const handlers = HttpApiBuilder.group(api, 'profile', (group) => group.handle('create', () => handler)).pipe(
+      Layer.provide(layer),
+    );
+    const runtime = assembleEffectBffRuntime({
+      api,
+      handlers: handlers.pipe(Layer.provide(Layer.succeed(Tracer.Tracer, tracer))),
+    });
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() => runtime.createHandler()),
+      (value) => Effect.promise(() => value.dispose()),
+    );
+    const response = yield* Effect.promise(() => server.handler(new Request('https://unit.invalid/profile')));
+    const problem: unknown = yield* Effect.promise(() => response.json());
+    expect(response.status).toBe(503);
+    expect(problem).toMatchObject({
+      code: 'DEPENDENCY_UNAVAILABLE',
+      detail: 'The Action capability is temporarily unavailable.',
+    });
+    expect(JSON.stringify(problem)).not.toContain('cause');
+    expect(JSON.stringify(problem)).not.toContain('Original typed');
+    const diagnostic = diagnostics.join('');
+    expect(diagnostic).toContain('Original typed dependency stage');
+    expect(diagnostic).toContain('actual unknown owner failure');
+    expect(diagnostic).toContain('Error:');
+    expect(diagnostic).toContain('at ');
+    expect(diagnostic).not.toContain(secret);
+    expect(diagnostic).not.toContain(jwt);
+    expect(diagnostic).not.toContain('unit-signature');
+    expect(diagnostic.length).toBeLessThanOrEqual(16_385);
+    expect(collector.snapshot().domainEvents).toHaveLength(0);
+  }).pipe(Effect.scoped),
+);

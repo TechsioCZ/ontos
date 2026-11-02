@@ -7,6 +7,7 @@
 --key-variant
 --office-building-outline
 --receipt-text-outline
+blur
 hidden
 icon-[mdi--arrow-left]
 icon-[mdi--clipboard-check-outline]
@@ -16,4 +17,5 @@ icon-[mdi--key-variant]
 icon-[mdi--office-building-outline]
 icon-[mdi--receipt-text-outline]
 outline
+transition
 visible

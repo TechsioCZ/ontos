@@ -3,6 +3,7 @@ import type { I18nInstance } from '@modern-js/plugin-i18n/runtime';
 import { ModernI18nProvider } from '@modern-js/plugin-i18n/runtime/consumer';
 import { cleanup, render as renderView, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { Effect } from 'effect';
 import { afterEach, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
 import type { PropsWithChildren, ReactElement } from 'react';
@@ -31,7 +32,6 @@ const { commands } = rstest.hoisted(() => ({
   commands: {
     catalog: rstest.fn(),
     invite: rstest.fn(),
-    linked: rstest.fn(),
     list: rstest.fn(),
     membership: rstest.fn(),
     role: rstest.fn(),
@@ -41,8 +41,7 @@ rstest.mock('../../src/routes/people/people-client.ts', () => ({
   changeCompanyMembership: commands.membership,
   changeScopedRole: commands.role,
   invitePerson: commands.invite,
-  loadPeople: commands.list,
-  loadPeopleForPerson: commands.linked,
+  loadAllPeople: commands.list,
   loadRoleCatalog: commands.catalog,
 }));
 
@@ -85,8 +84,14 @@ beforeEach(() => {
     }),
   );
   commands.list.mockReturnValue(Effect.succeed({ status: 'ok', value: list }));
-  commands.linked.mockReturnValue(Effect.succeed({ status: 'ok', value: list }));
 });
+
+/** Row actions live in the compact ⋯ menu of each row. */
+const chooseRowAction = (user: ReturnType<typeof userEvent.setup>, name: string, action: string) =>
+  Effect.gen(function* rowAction() {
+    yield* Effect.promise(async () => await user.click(await screen.findByRole('button', { name: `Akce: ${name}` })));
+    yield* Effect.promise(async () => await user.click(await screen.findByRole('menuitem', { name: action })));
+  });
 
 it.live('invites a person by email and explicit affiliation, never by principal ID or agent kind', () =>
   Effect.gen(function* invitePerson() {
@@ -134,7 +139,7 @@ it.live('opens the real person from a governed deep link in the same Shell page'
   Effect.gen(function* openLinkedPerson() {
     render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
     yield* Effect.promise(() => screen.findByRole('dialog', { name: 'Jana Nováková' }));
-    expect(commands.linked).toHaveBeenCalledWith('company', principalRef.principalId);
+    expect(commands.list).toHaveBeenCalledWith('company');
     expect(screen.getByRole('button', { name: 'Spravovat role' })).toBeDefined();
   }),
 );
@@ -147,10 +152,7 @@ it.live('keeps committed membership changes processing while the actual projecti
       Effect.succeed({ status: 'ok', value: { membership: departed, projection: 'pending' } }),
     );
     render(<PeoplePanel companyId={companyId} />);
-    yield* Effect.flatMap(
-      Effect.promise(() => screen.findByRole('button', { name: 'Upravit členství' })),
-      (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
-    );
+    yield* chooseRowAction(user, person.displayName, 'Upravit členství');
     yield* Effect.promise(() => user.selectOptions(screen.getByLabelText('Stav členství'), 'departed'));
     yield* Effect.promise(() => user.type(screen.getByLabelText(/Důvod změny/u), 'Odchod z firmy'));
     commands.list.mockReturnValue(
@@ -168,9 +170,27 @@ it.live('keeps committed membership changes processing while the actual projecti
         },
       }),
     );
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Potvrdit změnu' })));
+    // The audited membership change saves itself once the reason is filled in: there is no confirm button.
+    expect(screen.queryByRole('button', { name: 'Potvrdit změnu' })).toBeNull();
+    yield* Effect.promise(() =>
+      waitFor(
+        () =>
+          expect(commands.membership).toHaveBeenCalledWith({
+            affiliation: 'external',
+            expectedRevision: 1,
+            principalRef,
+            reason: 'Odchod z firmy',
+            status: 'departed',
+          }),
+        { timeout: 4000 },
+      ),
+    );
     yield* Effect.promise(() => screen.findByText(/Zpracovává se 1 změna\./u));
-    expect(screen.getByText(/Osoba odešla z firmy/u)).toBeDefined();
+    // An ended membership leaves the default view of current members, but stays one filter away.
+    yield* Effect.promise(() => screen.findByText('Filtrům nikdo neodpovídá.'));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Zrušit filtry' })));
+    const table = yield* Effect.promise(() => screen.findByRole('table'));
+    yield* Effect.promise(() => within(table).findByText('Ukončený'));
   }),
 );
 
@@ -189,10 +209,7 @@ it.live('selects a named role from the governed catalog without exposing identif
       }),
     );
     render(<PeoplePanel companyId={companyId} />);
-    yield* Effect.flatMap(
-      Effect.promise(() => screen.findByRole('button', { name: 'Spravovat role' })),
-      (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
-    );
+    yield* chooseRowAction(user, person.displayName, 'Spravovat role');
     expect(screen.queryByLabelText('Klíč role')).toBeNull();
     expect(screen.queryByText(/SpiceDB/u)).toBeNull();
     yield* Effect.promise(() => user.selectOptions(screen.getByRole('combobox', { name: 'Role' }), 'crm-sales'));
@@ -224,7 +241,7 @@ it.live('renders role chips with Czech names rather than internal keys', () =>
       }),
     );
     render(<PeoplePanel companyId={companyId} />);
-    yield* Effect.promise(() => screen.findByText('Obchodník'));
+    yield* Effect.promise(() => screen.findAllByText('Obchodník'));
     expect(screen.queryByText(/crm-sales/u)).toBeNull();
     expect(screen.queryByText(/00000000/u)).toBeNull();
   }),
@@ -248,10 +265,7 @@ it.live('uses Czech cardinal forms as pending changes accumulate', () =>
     yield* Effect.forEach(
       ['1 změna.', '2 změny.', '3 změny.', '4 změny.', '5 změn.'],
       Effect.fn(function* advancePendingCount(expected: string) {
-        yield* Effect.flatMap(
-          Effect.promise(() => screen.findByRole('button', { name: 'Spravovat role' })),
-          (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
-        );
+        yield* chooseRowAction(user, person.displayName, 'Spravovat role');
         yield* Effect.promise(() => user.selectOptions(screen.getByRole('combobox', { name: 'Role' }), 'crm-sales'));
         yield* Effect.promise(() => user.type(screen.getByLabelText(/Důvod změny/u), 'Převzetí agendy'));
         yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Potvrdit změnu' })));
@@ -267,11 +281,8 @@ it.live('stacks full-width person-detail actions on narrow screens without fixed
   Effect.gen(function* renderResponsiveActions() {
     const user = userEvent.setup();
     render(<PeoplePanel companyId={companyId} />);
-    yield* Effect.flatMap(
-      Effect.promise(() => screen.findByRole('button', { name: person.displayName })),
-      (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
-    );
-    const dialog = screen.getByRole('dialog');
+    yield* Effect.promise(async () => await user.click(await screen.findByText(person.displayName)));
+    const dialog = yield* Effect.promise(() => screen.findByRole('dialog'));
     const roles = within(dialog).getByRole('button', { name: 'Spravovat role' });
     const membershipAction = within(dialog).getByRole('button', { name: 'Upravit členství' });
     expect(roles.parentElement).toBe(membershipAction.parentElement);
@@ -284,7 +295,7 @@ it.live('stacks full-width person-detail actions on narrow screens without fixed
   }),
 );
 
-it.live('refreshes a person detail from waiting to the native undeliverable receipt', () =>
+it.live('updates an open person detail from waiting to the native undeliverable receipt without a refresh button', () =>
   Effect.gen(function* refreshInvitationReceipt() {
     const user = userEvent.setup();
     commands.list.mockReturnValue(
@@ -297,10 +308,8 @@ it.live('refreshes a person detail from waiting to the native undeliverable rece
       }),
     );
     render(<PeoplePanel companyId={companyId} />);
-    yield* Effect.flatMap(
-      Effect.promise(() => screen.findByRole('button', { name: person.displayName })),
-      (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
-    );
+    expect(screen.queryByRole('button', { name: 'Obnovit seznam' })).toBeNull();
+    yield* Effect.promise(async () => await user.click(await screen.findByText(person.displayName)));
     yield* Effect.promise(() => screen.findByText('E-mail s pozvánkou: čeká na odeslání.'));
     commands.list.mockReturnValue(
       Effect.succeed({
@@ -311,12 +320,8 @@ it.live('refreshes a person detail from waiting to the native undeliverable rece
         },
       }),
     );
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Zavřít' })));
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Obnovit seznam' })));
-    yield* Effect.flatMap(
-      Effect.promise(() => screen.findByRole('button', { name: person.displayName })),
-      (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
-    );
+    // Returning to the tab reloads the list in place; the open detail follows the new receipt.
+    document.dispatchEvent(new Event('visibilitychange'));
     yield* Effect.promise(() =>
       screen.findByText('E-mail s pozvánkou: nelze doručit. Na tuto e-mailovou adresu nelze odesílat zprávy.'),
     );
@@ -328,7 +333,7 @@ it.live('refreshes a person detail from waiting to the native undeliverable rece
 
 it.live('loads the terminal invitation receipt on a fresh person deep link without local invite state', () =>
   Effect.gen(function* loadTerminalInvitationReceipt() {
-    commands.linked.mockReturnValue(
+    commands.list.mockReturnValue(
       Effect.succeed({
         status: 'ok',
         value: {
@@ -351,7 +356,7 @@ it.live('distinguishes accepted mail from an unconfirmed interrupted delivery', 
     ] as const,
     ({ delivery, expected }) =>
       Effect.gen(function* displayDeliveryStatus() {
-        commands.linked.mockReturnValue(
+        commands.list.mockReturnValue(
           Effect.succeed({
             status: 'ok',
             value: {
@@ -367,4 +372,22 @@ it.live('distinguishes accepted mail from an unconfirmed interrupted delivery', 
       }),
     { concurrency: 1, discard: true },
   ),
+);
+
+it.live('reloads on a live change of Core-owned people data, not on other modules or a timer', () =>
+  Effect.gen(function* followLiveChanges() {
+    render(<PeoplePanel companyId={companyId} />);
+    yield* Effect.promise(() => screen.findByText(person.displayName));
+    const reads = () => commands.list.mock.calls.length;
+    const before = reads();
+    globalThis.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['crm'] } }));
+    yield* Effect.sleep('50 millis');
+    expect(reads()).toBe(before);
+    commands.list.mockReturnValue(
+      Effect.succeed({ status: 'ok', value: { ...list, items: [{ ...person, displayName: 'Jana Svobodová' }] } }),
+    );
+    globalThis.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['shell'] } }));
+    yield* Effect.promise(() => screen.findByText('Jana Svobodová'));
+    expect(reads()).toBe(before + 1);
+  }),
 );

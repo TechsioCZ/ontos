@@ -2,10 +2,10 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { NodeServices } from '@effect/platform-node';
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { CodeSmith, FsMaterial, GeneratorCore } from '@modern-js/codesmith';
 import type { GeneratorContext } from '@modern-js/codesmith';
-import { Console, Effect, Option, Predicate, Schema } from 'effect';
+import { Console, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { Argument, CliConfig, Command, Flag, GlobalFlag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import actionHttpGenerator from './action-http/scaffold.mts';
@@ -1130,11 +1130,13 @@ const [, entryPath] = process.argv;
 if (entryPath !== undefined && import.meta.url === pathToFileURL(path.resolve(entryPath)).href) {
   const cliProgram = Effect.updateService(
     Effect.matchEffect(Command.run(cliRoot, { version: '0.1.0' }), {
-      onFailure: (error) => Effect.logError(`Scaffold failed: ${String(error)}`),
+      onFailure: (error) =>
+        Effect.logError(`Scaffold failed: ${String(error)}`).pipe(Effect.andThen(Effect.fail(error))),
       onSuccess: () => Effect.void,
     }),
     CliConfig.CliConfig,
     () => CliConfig.make({ builtIns: [customHelp] }),
   );
-  await Effect.runPromise(cliProgram.pipe(Effect.provide(NodeServices.layer)));
+  const cliLayer = Layer.effectDiscard(cliProgram).pipe(Layer.provide(NodeServices.layer));
+  NodeRuntime.runMain(Effect.scoped(Layer.build(cliLayer)), { disableErrorReporting: true });
 }

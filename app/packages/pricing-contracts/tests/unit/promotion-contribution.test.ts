@@ -280,6 +280,58 @@ describe('Promotion owner-issued contribution contract (#775)', () => {
     expect(Schema.is(PromotionContributionAppliedSchema)(decodeApplied(explicitShipping))).toBe(true);
   });
 
+  it('measures only the explicit eligible target while retaining every original occurrence', () => {
+    const target = { kind: 'MERCHANDISE_ONLY' as const, occurrenceIds: ['line-a'] };
+    const subset = {
+      ...applied,
+      allocations: [merchandiseAllocation('line-a', '-10')],
+      contribution: money('-10'),
+      target,
+    };
+    for (const [eligible, unrelated, positive] of [
+      ['100', '-100', true],
+      ['100', '100', true],
+      ['0', '100', false],
+      ['-100', '200', false],
+    ] as const) {
+      const exactRequest = {
+        ...request,
+        prePromotionBasis: {
+          ...request.prePromotionBasis,
+          lines: [
+            { amount: money(eligible), catalogSelection: selection, occurrenceId: 'line-a' },
+            { amount: money(unrelated), catalogSelection: selection, occurrenceId: 'line-b' },
+          ],
+        },
+      };
+      expect(Schema.is(PromotionContributionAppliedSchema)({ ...subset, request: exactRequest })).toBe(positive);
+      const parked = {
+        _tag: 'PROMOTION_CONTRIBUTION_PARKED_NON_POSITIVE_BASIS',
+        applicationIdentity,
+        ownerEvidence,
+        reason: 'NON_POSITIVE_ELIGIBLE_PRE_PROMOTION_BASIS_REQUIRES_OWNER_DECISION',
+        request: exactRequest,
+        target,
+      };
+      expect(Schema.is(PromotionContributionParkedSchema)(parked)).toBe(!positive);
+      const { target: _target, ...missingTarget } = parked;
+      expect(Schema.is(PromotionContributionParkedSchema)(missingTarget)).toBe(false);
+      expect(Schema.is(PromotionContributionParkedSchema)({ ...parked, target: null })).toBe(false);
+      expect(
+        Schema.is(PromotionContributionParkedSchema)({
+          ...parked,
+          target: { ...target, occurrenceIds: ['foreign-line'] },
+        }),
+      ).toBe(false);
+    }
+    expect(() =>
+      decodeApplied({
+        ...subset,
+        target: { ...target, occurrenceIds: ['line-b'] },
+      }),
+    ).toThrow();
+  });
+
   it('keeps zero and non-positive eligible basis on the explicit parked owner path', () => {
     const parkedRequest = {
       ...request,
@@ -297,6 +349,7 @@ describe('Promotion owner-issued contribution contract (#775)', () => {
       ownerEvidence,
       reason: 'NON_POSITIVE_ELIGIBLE_PRE_PROMOTION_BASIS_REQUIRES_OWNER_DECISION' as const,
       request: parkedRequest,
+      target: { kind: 'MERCHANDISE_ONLY' as const, occurrenceIds: ['line-a', 'line-b'] },
     };
     expect(Schema.is(PromotionContributionParkedSchema)(decodeParked(parked))).toBe(true);
     expect(() => decodeApplied({ ...applied, request: parkedRequest })).toThrow();

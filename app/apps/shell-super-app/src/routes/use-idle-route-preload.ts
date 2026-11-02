@@ -11,6 +11,8 @@ import { isModuleDestination } from '../../shared/shell-platform-navigation.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { prepareCanonicalTargets } from './[lang]/modules/[moduleId]/module-page-model.ts';
 import { awaitPrimaryModuleReads, forgetRecordedPageReads, withoutRecordedPageReads } from './browser-request-cache.ts';
+import { useLiveChanges } from './live-changes.ts';
+import { staffRoutePreloads } from './route-preload-scheduler.ts';
 
 export const StaffRoutePreloadContext = createContext({ enabled: false, generation: 0 });
 
@@ -22,9 +24,18 @@ interface PreloadableNavigationItem {
 
 /** Long enough for a preloaded route chunk to resolve its lazy component. */
 const LAZY_WARM_WINDOW = '2 seconds';
+/** How long writes must pause before the menu prefetch starts over. */
+const PREFETCH_RESTART_QUIET = '20 seconds';
 const ignoreRenderError = () => {
   // The warm-up render is expected to fail once the component needs its route context.
 };
+
+/** Keep one measurement per phase, so long-lived staff sessions do not accumulate navigation marks. */
+const markPreparation = (name: string, href: string) =>
+  Effect.sync(() => {
+    performance.clearMarks(name);
+    performance.mark(name, { detail: { href } });
+  });
 
 /**
  * Route components are `React.lazy`. A lazy component that has never rendered suspends on its first render even
@@ -68,7 +79,12 @@ const pageRouteComponents = (router: ReturnType<typeof useRouter>, language: str
 const preloadDestinations = (router: ReturnType<typeof useRouter>, language: string, hrefs: readonly string[]) =>
   Effect.forEach(
     hrefs,
-    (href) => withoutRecordedPageReads(() => router.preloadRoute({ to: `/${language}${href}` })).pipe(Effect.ignore),
+    (href) =>
+      staffRoutePreloads.schedule(
+        `/${language}${href}`,
+        'background',
+        withoutRecordedPageReads(() => router.preloadRoute({ to: `/${language}${href}` })).pipe(Effect.ignore),
+      ),
     { concurrency: 64, discard: true },
   );
 
@@ -119,6 +135,8 @@ export const useIdleRoutePreload = (
   const [preparedKey, setPreparedKey] = useState<string>();
   const [generation, setGeneration] = useState(0);
   const previousContext = useRef(contextKey);
+  // Changes committed elsewhere reach the pages shown under this company context without any reload.
+  useLiveChanges(!disabled && navigation.some((item) => item.enabled && isModuleDestination(item)));
   const key = [contextKey, currentHref, generation].join('\n');
   const hrefs = navigation.flatMap((item) => (item.enabled && item.href !== undefined ? [item.href] : [])).join('\n');
   const moduleHrefs = navigation
@@ -126,17 +144,31 @@ export const useIdleRoutePreload = (
     .join('\n');
 
   useEffect(() => {
+    // A write drops cached reads and the router cache at once, but the menu prefetch starts over only once the
+    // writes are quiet: autosave writes every few seconds while someone types and must not re-read every module.
+    let pending: Fiber.Fiber<void> | undefined;
+    const prefetchAgain = Effect.sync(() => setGeneration((previous) => previous + 1));
     const restart = () => {
+      browserRuntime.runSync(staffRoutePreloads.invalidate);
       router.clearCache();
-      setGeneration((previous) => previous + 1);
+      if (pending !== undefined) {
+        browserRuntime.runFork(Fiber.interrupt(pending));
+      }
+      pending = browserRuntime.runFork(Effect.sleep(PREFETCH_RESTART_QUIET).pipe(Effect.andThen(prefetchAgain)));
     };
     globalThis.addEventListener(moduleWriteEvent, restart);
-    return () => globalThis.removeEventListener(moduleWriteEvent, restart);
+    return () => {
+      globalThis.removeEventListener(moduleWriteEvent, restart);
+      if (pending !== undefined) {
+        browserRuntime.runFork(Fiber.interrupt(pending));
+      }
+    };
   }, [router]);
 
   useEffect(() => {
     if (previousContext.current !== contextKey) {
       previousContext.current = contextKey;
+      browserRuntime.runSync(staffRoutePreloads.invalidate);
       router.clearCache();
       browserRuntime.runSync(forgetRecordedPageReads);
     }
@@ -152,7 +184,9 @@ export const useIdleRoutePreload = (
       awaitPrimaryModuleReads.pipe(
         Effect.flatMap((ready) =>
           ready
-            ? Effect.sync(() => setPreparedKey(key)).pipe(
+            ? markPreparation('ontos:visible-reads-complete', currentHref).pipe(
+                Effect.andThen(staffRoutePreloads.resume),
+                Effect.andThen(Effect.sync(() => setPreparedKey(key))),
                 Effect.andThen(
                   Effect.all(
                     [
@@ -162,12 +196,15 @@ export const useIdleRoutePreload = (
                     { concurrency: 2, discard: true },
                   ),
                 ),
+                Effect.andThen(staffRoutePreloads.awaitIdle),
+                Effect.andThen(markPreparation('ontos:menu-prefetch-complete', currentHref)),
               )
             : Effect.void,
         ),
       ),
     );
     return () => {
+      browserRuntime.runSync(staffRoutePreloads.pause);
       browserRuntime.runFork(Fiber.interrupt(fiber));
     };
   }, [currentHref, disabled, hrefs, key, language, moduleHrefs, router, settledHref]);
@@ -176,6 +213,7 @@ export const useIdleRoutePreload = (
     enabled: !disabled && currentHref === settledHref && preparedKey === key,
     generation,
     suspend: () => {
+      browserRuntime.runSync(staffRoutePreloads.invalidate);
       router.clearCache();
       browserRuntime.runSync(forgetRecordedPageReads);
     },

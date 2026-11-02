@@ -955,3 +955,87 @@ it.effect('whole ADDRESS end preserves an earlier purpose end and its independen
     }
   }),
 );
+
+const scheduledPostalEndEvidence = {
+  endEvidenceRefs: ['evidence:postal-exclusive-end'],
+  endProvenanceMethod: 'MANUAL_CONFIRMATION',
+  endProvenanceSource: 'USER_ASSERTION',
+  endReason: 'Scheduled postal assertion End',
+  endedByActionInvocationId: actionInvocationId,
+  endedByPrincipalId: principalId,
+  endedRecordedAt: instantAsDate('2026-09-03T12:00:00.000Z'),
+};
+
+it.effect('projects a scheduled whole ADDRESS End as Current strictly before its exact exclusive boundary', () =>
+  Effect.gen(function* exactWholeAddressBoundary() {
+    const end = '2026-09-04T12:00:00.000Z';
+    const boundary = DateTime.toEpochMillis(DateTime.makeUnsafe(end));
+    const address = contactRow({
+      ...scheduledPostalEndEvidence,
+      addressLine1: '1 Boundary Street',
+      city: 'Prague',
+      contactPointType: 'ADDRESS',
+      countryCode: 'CZ',
+      postalCode: '11000',
+      revision: 2,
+      validTo: instantAsDate(end),
+    });
+    const purpose = purposeRow({ ...scheduledPostalEndEvidence, revision: 2, validTo: instantAsDate(end) });
+    for (const [offset, expected] of [
+      [-1, true],
+      [0, false],
+      [1, false],
+    ] as const) {
+      yield* TestClock.setTime(boundary + offset);
+      const harness = transactionHarness([[address], [purpose]]);
+      const projected = yield* findPartyContactPointRecord(harness.transaction, scope, contactPointId, directAliases);
+      const detail = Option.getOrThrow(projected);
+      expect(detail.current).toBe(expected);
+      expect(detail.revision).toBe(2);
+      expect(detail.validTo === null ? null : DateTime.formatIso(detail.validTo)).toBe(end);
+      expect(detail.value.type).toBe('ADDRESS');
+      if (detail.value.type === 'ADDRESS') {
+        expect(detail.value.purposes[0]?.current).toBe(expected);
+        expect(detail.value.purposes[0]?.revision).toBe(2);
+      }
+      expect(harness.updateSets).toEqual([]);
+      expect(harness.insertValues).toEqual([]);
+    }
+  }),
+);
+
+it.effect('projects an open-ended ADDRESS as non-Current at the exact End of its final owner purpose', () =>
+  Effect.gen(function* exactFinalAddressPurposeBoundary() {
+    const end = '2026-09-04T12:00:00.000Z';
+    const boundary = DateTime.toEpochMillis(DateTime.makeUnsafe(end));
+    const address = contactRow({
+      addressLine1: '1 Purpose Boundary Street',
+      city: 'Prague',
+      contactPointType: 'ADDRESS',
+      countryCode: 'CZ',
+      postalCode: '11000',
+      validTo: null,
+    });
+    const purpose = purposeRow({ ...scheduledPostalEndEvidence, revision: 2, validTo: instantAsDate(end) });
+    for (const [offset, expected] of [
+      [-1, true],
+      [0, false],
+      [1, false],
+    ] as const) {
+      yield* TestClock.setTime(boundary + offset);
+      const harness = transactionHarness([[address], [purpose]]);
+      const projected = yield* findPartyContactPointRecord(harness.transaction, scope, contactPointId, directAliases);
+      const detail = Option.getOrThrow(projected);
+      expect(detail.current).toBe(expected);
+      expect(detail.validTo).toBe(null);
+      expect(detail.value.type).toBe('ADDRESS');
+      if (detail.value.type === 'ADDRESS') {
+        expect(detail.value.purposes[0]?.current).toBe(expected);
+        const purposeEnd = detail.value.purposes[0]?.validTo;
+        expect(purposeEnd === null || purposeEnd === undefined ? null : DateTime.formatIso(purposeEnd)).toBe(end);
+      }
+      expect(harness.updateSets).toEqual([]);
+      expect(harness.insertValues).toEqual([]);
+    }
+  }),
+);

@@ -11,6 +11,7 @@ import {
   catalogAcceptedSourceAssertions,
   catalogLocalOverrideHeads,
   catalogLocalOverrideRevisions,
+  products,
 } from '../database/schema.ts';
 import { CatalogSourceResolutionUnavailable } from './catalog-source-resolution-ports.ts';
 
@@ -33,11 +34,16 @@ const CatalogPersistedDecimalSchema = Schema.String.check(
   Schema.isPattern(/^(?:0|[1-9]\d*)(?:\.\d+)?$/u),
   Schema.isMaxLength(100),
 );
+const CatalogPersistedUuidSchema = Schema.String.check(Schema.isUUID());
+const CatalogPersistedUnitIdSchema = CatalogPersistedUuidSchema.pipe(
+  Schema.brand('CatalogSourceUnitId'),
+  Schema.decodeTo(CatalogPersistedUuidSchema),
+);
 const CatalogPersistedSourceFactValueSchema = Schema.Union([
   CatalogPersistedTextValueSchema,
   Schema.Struct({
     amount: CatalogPersistedDecimalSchema,
-    unitId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('CatalogSourceUnitId')),
+    unitId: CatalogPersistedUnitIdSchema,
   }),
 ]);
 const CatalogFactTargetKindSchema = Schema.Literals(['PRODUCT', 'VARIANT', 'PACKAGE_DEFINITION']);
@@ -60,11 +66,30 @@ const acceptedScopeWhere = (scope: CatalogFactScope) =>
     eq(catalogAcceptedSourceAssertions.factKey, scope.factKey),
   );
 
+/** Exact owner identity lookup; mutation callers retain the Product key lock until Core commits. */
+export const catalogProductExistsForScope = (
+  transaction: ScopedTransactionExecutor,
+  operationalScope: OperationalScope,
+  lockForMutation: boolean,
+) =>
+  Effect.fn('CatalogSourceResolutionReadStore.productExists')(function* productExists(scope: CatalogFactScope) {
+    if (scope.tenantId !== operationalScope.tenantId || scope.targetKind !== 'PRODUCT') {
+      return yield* unavailable();
+    }
+    const query = transaction
+      .select({ productId: products.productId })
+      .from(products)
+      .where(and(eq(products.tenantId, operationalScope.tenantId), eq(products.productId, scope.targetId)));
+    const rows = yield* (lockForMutation ? query.for('key share') : query).pipe(Effect.mapError(unavailable));
+    return rows.length === 1;
+  });
+
 /** Read-only source evidence projection. Override history is joined through its latest CAS head. */
 export const catalogSourceResolutionReadStoreForScope = (
   transaction: ScopedTransactionExecutor,
   operationalScope: OperationalScope,
 ) => ({
+  productExists: catalogProductExistsForScope(transaction, operationalScope, false),
   readAcceptedBases: Effect.fn('CatalogSourceResolutionReadStore.readAcceptedBases')(function* readAcceptedBases(
     scope: CatalogFactScope,
   ) {

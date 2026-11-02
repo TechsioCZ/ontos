@@ -7,6 +7,7 @@ import { callAction, OntosError } from "@/ontos/gateway";
 import { readAccount } from "@/ontos/account";
 import { readCustomerOrders } from "@/ontos/customer-orders";
 import { readCheckoutOptions } from "@/ontos/checkout-options";
+import { getActiveMarket } from "@/ontos/active-market";
 
 const isOntosError = (value: unknown): value is OntosError =>
   value !== null && value !== undefined && OntosError.prototype.isPrototypeOf(value);
@@ -42,6 +43,8 @@ import {
 export async function POST(request: Request) {
   try {
     guard(request);
+    // The browser's path locale only selects the market; the owners resolve it again for this order.
+    const market = await getActiveMarket();
     // A signed-in order is bound to the admitted portal subject and Party; without a session it is a guest order.
     const account = await readAccount(requestOrigin(request), request.headers.get("cookie"));
     const options = await readCheckoutOptions();
@@ -60,6 +63,7 @@ export async function POST(request: Request) {
     const command = {
       _tag: "PlaceStorefrontOrder",
       clientRequestId,
+      ...(market.marketId === undefined ? {} : { marketId: market.marketId }),
       ...(account ? { customerAccountId: account.id, partyId: account.partyId } : {}),
       contact: {
         name: `${draft.billing.firstName} ${draft.billing.lastName}`,

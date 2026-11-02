@@ -32,7 +32,7 @@ import { assetKinds, isActiveAsset, isArchivedAsset, upcomingServiceDue } from '
 import { AgendaFrame, AgendaGate } from '../../../../ui/agenda-frame.tsx';
 import { preloadAgendaRecords, useAgendaRecords } from '../../../../ui/use-agenda.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import { AssetCardForm, FollowUpForm, InventoryCreateForm, TemplateForm } from './asset-forms.tsx';
+import { AssetCardCreateForm, FollowUpForm, InventoryCreateForm, TemplateForm } from './asset-forms.tsx';
 import { AssetDetailPanel, KindBadge, StatusBadge } from './asset-detail.tsx';
 import {
   dueBadgeVariant,
@@ -323,12 +323,7 @@ const useAssetsViewModel = () => {
       registered.flatMap((asset) =>
         asset.propertyId === undefined || asset.location === undefined
           ? []
-          : [
-              [
-                asset.propertyId,
-                asset.location.label.split(' › ')[0]?.replace(/ \([^)]*\)$/u, '') ?? asset.propertyId,
-              ] as const,
-            ],
+          : [[asset.propertyId, asset.location.label.split(' › ')[0]?.replace(/ \([^)]*\)$/u, '') ?? '—'] as const],
       ),
     ).entries(),
   ];
@@ -824,7 +819,6 @@ const AssetsCreatePanel = ({ vm }: { readonly vm: AssetsViewModel }) => {
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       onOpenChange={(next) => {
         if (!next) {
           setPanel(undefined);
@@ -835,7 +829,7 @@ const AssetsCreatePanel = ({ vm }: { readonly vm: AssetsViewModel }) => {
       size="lg"
       title={createTitle}
     >
-      {panel?.kind === 'asset' && <AssetCardForm formId={CREATE_FORM_ID} onSubmit={submitCreate} state={state} />}
+      {panel?.kind === 'asset' && <AssetCardCreateForm formId={CREATE_FORM_ID} onSubmit={submitCreate} state={state} />}
       {panel?.kind === 'inventory' && (
         <InventoryCreateForm formId={CREATE_FORM_ID} onSubmit={submitCreate} state={state} />
       )}
@@ -887,6 +881,7 @@ const AssetsView = () => {
           onClose={() => setOpenId(undefined)}
           onOpenAsset={(asset) => setOpenId(asset.id)}
           onSubmit={submit}
+          run={ops.run}
           state={state}
         />
       )}

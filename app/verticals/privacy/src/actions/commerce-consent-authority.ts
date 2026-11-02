@@ -28,7 +28,7 @@ import {
   ConsentSelfServiceAuthorizationError,
   resolveAndAuthorizeConsentSelfService,
 } from '../../shared/domain/privacy-consent-self-service.ts';
-import type { ConsentSelfServiceAuthorityService } from './consent-self-service.action.ts';
+import type { ConsentSelfServiceAuthorityService } from './consent-self-service-authority.ts';
 
 // Keep only an allowlisted failure category: transport errors can contain bearer headers and bodies.
 const failureCategory = (cause: unknown): string => {

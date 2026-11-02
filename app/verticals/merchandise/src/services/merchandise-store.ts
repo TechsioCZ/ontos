@@ -3,7 +3,7 @@ import type { AgentHistoryRequest } from '@app/shared-contracts/agent-proposals'
 // Row mapping between the merchandise domain values and the normalized tables (src/database/schema.ts), plus the
 // three write paths: replace a company snapshot (seeds, demo reset), load a command's working set, and persist
 // only the rows a command changed. Bounded reads live in merchandise-queries.ts.
-import type { ScopedTransactionExecutor } from '@app/core-runtime';
+import type { ReadServiceFactory } from '@app/core-runtime';
 import { and, asc, desc, eq, inArray, like, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
@@ -40,7 +40,8 @@ export class MerchandiseStoreFailure extends Data.TaggedError('MerchandiseStoreF
   readonly reason: string;
 }> {}
 
-export type MerchandiseDb = Pick<ScopedTransactionExecutor, 'delete' | 'insert' | 'select' | 'update'>;
+type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
+export type MerchandiseDb = Pick<ScopedTransaction, 'delete' | 'insert' | 'select' | 'update'>;
 
 export interface StoreScope {
   readonly legalEntityId: string;

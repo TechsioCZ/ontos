@@ -3,15 +3,6 @@ import { POHODA_DATAPACK_VERSION } from '../apis/records.ts';
 import type { ExportIssuer, ExportMeta, ExportPartnerIdentity, ExportRow } from './finance-planning.ts';
 import { computeInvoiceTotals, lineBaseMinor, lineGrossMinor, lineVatMinor } from './invoice-totals.ts';
 
-/** Official STORMWARE namespaces of POHODA XML version 2 (https://www.stormware.cz/xml/schema/version_2/). */
-/* oxlint-disable sonarjs/no-clear-text-protocols -- Pending scoped exception approval: official XML namespace URIs require exact byte identity. */
-export const POHODA_NAMESPACES = {
-  dat: 'http://www.stormware.cz/schema/version_2/data.xsd',
-  inv: 'http://www.stormware.cz/schema/version_2/invoice.xsd',
-  typ: 'http://www.stormware.cz/schema/version_2/type.xsd',
-} as const;
-/* oxlint-enable sonarjs/no-clear-text-protocols */
-
 /** Written to the POHODA internal note of a received invoice that has no VAT breakdown in OntOS. */
 export const POHODA_NO_VAT_BREAKDOWN_NOTE =
   'Rozpis DPH není v OntOS evidován – účetní doplní členění DPH podle originálu dokladu.';
@@ -290,8 +281,11 @@ ${invoiceXml(row, issuer, meta)}
   </dat:dataPackItem>`;
     })
     .join('\n');
+  // The root declares the official STORMWARE namespaces of POHODA XML version 2
+  // (https://www.stormware.cz/xml/schema/version_2/). Namespace names are opaque identifiers matched by exact
+  // characters and never dereferenced, so they stay part of the fixed document text.
   return `<?xml version="1.0" encoding="UTF-8"?>
-<dat:dataPack xmlns:dat="${POHODA_NAMESPACES.dat}" xmlns:inv="${POHODA_NAMESPACES.inv}" xmlns:typ="${POHODA_NAMESPACES.typ}" version="${POHODA_DATAPACK_VERSION}" id="${text(packId, 64)}"${icoAttribute} application="OntOS" note="${text(note, 4000)}">
+<dat:dataPack xmlns:dat="http://www.stormware.cz/schema/version_2/data.xsd" xmlns:inv="http://www.stormware.cz/schema/version_2/invoice.xsd" xmlns:typ="http://www.stormware.cz/schema/version_2/type.xsd" version="${POHODA_DATAPACK_VERSION}" id="${text(packId, 64)}"${icoAttribute} application="OntOS" note="${text(note, 4000)}">
 ${items}
 </dat:dataPack>
 `;

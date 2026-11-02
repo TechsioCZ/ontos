@@ -195,6 +195,9 @@ export const selectSmallestCompleteCatalogSelectionBasis = (input: {
     if (fact.subject !== undefined) {
       return subjectBelongsToSelection(fact, selection);
     }
+    if (fact.axisAllowances !== undefined && purpose !== 'ORDER_HISTORY') {
+      return true;
+    }
     if (fact.role === 'PRODUCT') {
       return sameRef(fact.source.resourceRef, selection.productRef);
     }

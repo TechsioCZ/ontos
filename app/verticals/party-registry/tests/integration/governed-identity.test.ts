@@ -23,7 +23,7 @@ import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/sys
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, Effect, Exit, Layer, Redacted, Predicate, Schema } from 'effect';
+import { Crypto, Effect, Layer, Redacted, Predicate, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
@@ -143,20 +143,12 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const fixture = yield* Effect.acquireRelease(
             makeLiveOperationFixture({
               databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-              legalEntityManagerRelations: ['counterparty_manager'],
-              tenantManagerRelations: [
-                'party_identity_manager',
-                'party_identity_reader',
-                'party_identity_reviewer',
-                'party_relationship_manager',
-              ],
               actionKeys,
               legalEntityOnlyActionKeys,
+              legalEntityOnlyCounterpartyRead: false,
               adminConnectionString: Redacted.make(connections.admin.connectionString),
-              audience: 'party-registry',
               authenticationNamespaceId: testAuthenticationNamespaceId,
               compositionRevision: compositionSnapshot.composition.revision,
-              moduleKey: 'party.registry',
               runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
             }).pipe(Effect.orDie),
             (resource) => resource.close().pipe(Effect.orDie),
@@ -164,17 +156,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const other = yield* Effect.acquireRelease(
             makeLiveOperationFixture({
               databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-              legalEntityManagerRelations: ['counterparty_manager'],
-              tenantManagerRelations: [
-                'party_identity_manager',
-                'party_identity_reader',
-                'party_identity_reviewer',
-                'party_relationship_manager',
-              ],
               actionKeys,
-              audience: 'party-registry',
               authenticationNamespaceId: testAuthenticationNamespaceId,
-              moduleKey: 'party.registry',
               compositionRevision: compositionSnapshot.composition.revision,
               runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
             }).pipe(Effect.orDie),
@@ -551,9 +534,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 ),
               ),
             );
-          // Owning a business Counterparty does not itself grant resource permission.
-          const forbiddenCounterpartyRead = yield* Effect.exit(readCounterparty());
-          assert.isOk(Exit.isFailure(forbiddenCounterpartyRead));
+          // Without the Legal Entity read grant, Counterparty creation does not grant resource read permission.
+          const forbiddenCounterpartyRead = yield* Effect.flip(readCounterparty());
+          assert.isOk(Predicate.isTagged(forbiddenCounterpartyRead, 'ReadPermissionDenied'));
 
           yield* fixture.grantResourceAccess(counterpartyRef, legalEntityOnlyPrincipal.principalId);
           const projection = yield* readCounterparty();

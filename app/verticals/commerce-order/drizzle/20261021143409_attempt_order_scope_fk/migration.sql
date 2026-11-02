@@ -1,0 +1,1 @@
+ALTER TABLE "commerce_order"."commitment_attempts" ADD CONSTRAINT "order_attempts_order_fk" FOREIGN KEY ("tenant_id","legal_entity_id","order_id") REFERENCES "commerce_order"."committed_orders"("tenant_id","legal_entity_id","order_id") ON DELETE RESTRICT;

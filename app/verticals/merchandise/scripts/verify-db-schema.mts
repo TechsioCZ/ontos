@@ -8,10 +8,13 @@ import { Cause, Console, Effect, Layer, Match, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { Reactivity } from 'effect/reactivity';
 import { OrderSchema } from '../shared/apis/records.ts';
+import { MarketIdSchema } from '../shared/domain/market-offers.ts';
 import { ProductIdSchema } from '../shared/domain/merchandise-model.ts';
 import {
   catalogHeads,
   categories,
+  marketProductOffers,
+  marketSettings,
   merchandiseRelations,
   orders,
   priceTiers,
@@ -31,6 +34,8 @@ const TABLES = [
   'categories',
   'stock_movements',
   'orders',
+  'market_settings',
+  'market_product_offers',
 ] as const;
 const CatalogSchema = Schema.Struct({
   enabled: Schema.Boolean,
@@ -52,6 +57,8 @@ const CatalogSchema = Schema.Struct({
 const SnapshotSchema = Schema.Struct({
   categories: Schema.Array(Schema.Struct({ id: Schema.String })),
   heads: Schema.Array(Schema.Struct({ revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)) })),
+  marketOffers: Schema.Array(Schema.Struct({ marketId: MarketIdSchema })),
+  markets: Schema.Array(Schema.Struct({ marketId: MarketIdSchema })),
   movements: Schema.Array(Schema.Struct({ productId: ProductIdSchema })),
   orders: Schema.Array(Schema.Struct({ document: OrderSchema })),
   products: Schema.Array(Schema.Struct({ id: Schema.String })),
@@ -78,6 +85,8 @@ const catalogMatches = (row: typeof CatalogSchema.Type) =>
 interface CatalogSnapshot {
   readonly categories: readonly Pick<typeof categories.$inferSelect, 'id'>[];
   readonly heads: readonly Pick<typeof catalogHeads.$inferSelect, 'revision'>[];
+  readonly marketOffers: readonly Pick<typeof marketProductOffers.$inferSelect, 'marketId'>[];
+  readonly markets: readonly Pick<typeof marketSettings.$inferSelect, 'marketId'>[];
   readonly movements: readonly Pick<typeof stockMovements.$inferSelect, 'productId'>[];
   readonly orders: readonly Pick<typeof orders.$inferSelect, 'document'>[];
   readonly products: readonly Pick<typeof products.$inferSelect, 'id'>[];
@@ -92,12 +101,14 @@ export const verifySnapshot = Effect.fn('Merchandise.verifySnapshot')(function* 
   const snapshot = yield* Schema.decodeUnknownEffect(SnapshotSchema)(rows);
   const hasRows = Object.values(snapshot).some((values) => values.length > 0);
   const productIds = new Set(snapshot.products.map((product) => product.id));
+  const marketIds = new Set(snapshot.markets.map((market) => market.marketId));
   if (
     snapshot.heads.length > 1 ||
     (hasRows && snapshot.heads.length !== 1) ||
     (requireSeed && (snapshot.heads.length !== 1 || snapshot.products.length === 0)) ||
     [...snapshot.movements, ...snapshot.variants, ...snapshot.tiers].some((row) => !productIds.has(row.productId)) ||
-    snapshot.orders.some((order) => order.document.lines.some((line) => !productIds.has(line.productId)))
+    snapshot.orders.some((order) => order.document.lines.some((line) => !productIds.has(line.productId))) ||
+    snapshot.marketOffers.some((offer) => !marketIds.has(offer.marketId))
   ) {
     return yield* new OwnerVerificationError({
       reason: 'Existing scoped catalog is inconsistent or the explicitly required seed is absent',
@@ -142,7 +153,17 @@ const verification = Effect.fn('Merchandise.verifyDatabase')(function* verifyOwn
       reason: `RLS or runtime grants incomplete on: ${TABLES.filter((table) => !catalog.some((row) => row.relname === table && catalogMatches(row))).join(', ')}`,
     });
   }
-  const ownerTables = [catalogHeads, products, productVariants, priceTiers, categories, stockMovements, orders];
+  const ownerTables = [
+    catalogHeads,
+    products,
+    productVariants,
+    priceTiers,
+    categories,
+    stockMovements,
+    orders,
+    marketSettings,
+    marketProductOffers,
+  ];
   const countVisible = (tenantId: string, legalEntityId: string) =>
     client.withTransaction(
       Effect.gen(function* countScopedVisibility() {
@@ -187,6 +208,8 @@ const verification = Effect.fn('Merchandise.verifyDatabase')(function* verifyOwn
       return {
         categories: yield* db.select({ id: categories.id }).from(categories),
         heads: yield* db.select({ revision: catalogHeads.revision }).from(catalogHeads),
+        marketOffers: yield* db.select({ marketId: marketProductOffers.marketId }).from(marketProductOffers),
+        markets: yield* db.select({ marketId: marketSettings.marketId }).from(marketSettings),
         movements: yield* db.select({ productId: stockMovements.productId }).from(stockMovements),
         orders: yield* db.select({ document: orders.document }).from(orders),
         products: yield* db.select({ id: products.id }).from(products),

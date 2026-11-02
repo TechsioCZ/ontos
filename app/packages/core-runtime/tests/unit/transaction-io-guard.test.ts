@@ -61,8 +61,8 @@ it('reaches module releases only through the guarded module transport', () => {
 it('creates the Core connection pool only behind the pool guard', () => {
   expect(
     sourcesMatching(['packages/core-runtime/src'], 'packages/core-runtime/src/db/client.ts', (source) =>
-      /\bPgClient\.make\(/u.test(source),
-    ),
+      /\b(?:PgClient\.make|openDatabaseClient)\(/u.test(source),
+    ).filter((file) => file !== 'packages/core-runtime/src/db/database-client.ts'),
   ).toEqual([]);
 });
 

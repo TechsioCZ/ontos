@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import nodePath from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { expect, it } from 'effect-rstest';
 
@@ -59,4 +60,29 @@ it('early and partially initialized failures retain their cause and clean owned 
       expect(readdirSync(root)).toEqual([callerOwned]);
     }
   });
+});
+
+it('uses ignored application-local fixtures by default without an environment override', () => {
+  const helper = new URL('temporary-workspace.mts', import.meta.url).href;
+  const expectedRoot = fileURLToPath(new URL('../../../../.codex/reports/lint-rule-workspaces/', import.meta.url));
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `import { withTemporaryWorkspace } from ${JSON.stringify(helper)}; withTemporaryWorkspace((directory) => console.log(directory));`,
+    ],
+    {
+      encoding: 'utf-8',
+      env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'EFFECT_NATIVE_TEST_TMPDIR')),
+      timeout: 5000,
+    },
+  );
+  expect(result.error).toBe(undefined);
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stderr).toBe('');
+  const created = result.stdout.trim();
+  expect(nodePath.dirname(created)).toBe(nodePath.resolve(expectedRoot));
+  expect(nodePath.basename(created).startsWith('effect-policy-')).toBe(true);
+  expect(existsSync(created)).toBe(false);
 });

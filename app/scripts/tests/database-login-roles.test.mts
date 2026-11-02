@@ -79,6 +79,7 @@ const makeClient = (statements: string[], respond: Respond) =>
     const sql = yield* SqlClient.make({
       acquirer: Effect.succeed(connection),
       compiler: PgClient.makeCompiler(),
+      driver: 'pg',
       spanAttributes: [],
     });
     const client: actualPgClient.PgClient = Object.assign(sql, {

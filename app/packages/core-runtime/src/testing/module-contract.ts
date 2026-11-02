@@ -89,14 +89,18 @@ const fixtureUnavailable = (cause: unknown): ActiveApplicationCompositionUnavail
 
 const buildCompositionSnapshotFixture = function* buildCompositionSnapshotFixture(
   appIds: readonly string[] = [],
-  buildMarker = 'fixture-build',
+  buildMarker: string | Readonly<Record<string, string>> = 'fixture-build',
 ) {
   const modules = yield* Effect.forEach(
     appIds,
     Effect.fnUntraced(function* createModuleFixture(appId: string) {
       const moduleId = `${appId.replaceAll('-', '.')}.module`;
+      const selectedBuildMarker = Schema.is(Schema.String)(buildMarker) ? buildMarker : buildMarker[appId];
+      if (selectedBuildMarker === undefined) {
+        return yield* fixtureUnavailable('Missing exact Application Composition fixture build marker');
+      }
       const document = yield* Schema.decodeEffect(OntosModuleDeploymentContractSchema)(
-        makeModuleContractFixture({ appId, buildMarker, moduleId }),
+        makeModuleContractFixture({ appId, buildMarker: selectedBuildMarker, moduleId }),
       );
       const contractDocument = yield* Schema.encodeEffect(contractJsonSchema)(document);
       const contractSha256 = digest(contractDocument);

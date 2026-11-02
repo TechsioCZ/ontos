@@ -73,12 +73,11 @@ const vocabulary = {
 } satisfies Record<StatusKind, Record<string, StatusPresentation>>;
 
 /**
- * Maps a domain status value to its Czech label and Badge variant. Unknown
- * values fall back to the raw value on an outline badge rather than rendering
- * `undefined`.
+ * Maps a domain status value to its Czech label and Badge variant.
+ * An unknown wire value has no user-facing meaning.
  */
 export const statusPresentation = (kind: StatusKind, value: string): StatusPresentation => {
-  const fallback: StatusPresentation = { label: value, variant: 'outline' };
+  const fallback: StatusPresentation = { label: '—', variant: 'outline' };
   const entries: Partial<Record<string, StatusPresentation>> = vocabulary[kind];
   return Object.hasOwn(entries, value) ? (entries[value] ?? fallback) : fallback;
 };

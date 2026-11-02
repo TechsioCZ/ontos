@@ -48,7 +48,7 @@ const dependencyFailure = (reason: string, cause?: unknown): ProfilePersistenceD
   return failure;
 };
 
-const readExactProfileFacts = (
+export const readExactProfileFacts = (
   transaction: ProfileScopedRoutineInvoker,
   scope: ProfilePersistenceScope,
   payload: ProfileLifecyclePayload,
@@ -94,43 +94,64 @@ const counterpartyDependenciesSatisfied = (
   return Effect.succeed(true);
 };
 
-/**
- * Builds the transaction-bound reactivation decision input. The profile subject is re-read from
- * CCC-owned durable state. The transition routine remains responsible for the final reconciliation
- * and expected-state/revision checks, so a concurrent change cannot be authorized by this read.
- */
-export const makeProfileReactivationEligibilityEvaluator = (
-  options: Readonly<{
-    readonly evaluateReconfirmation: ReconfirmationEvaluator;
-    readonly resolveCounterpartyRole: ResolveCounterpartyRole;
-    readonly scope: ProfilePersistenceScope;
-    readonly transaction: ProfileScopedRoutineInvoker;
-  }>,
-): ReactivationEligibilityEvaluator => {
-  const { scope, transaction } = options;
-  return (payload) =>
-    readExactProfileFacts(transaction, scope, payload).pipe(
-      Effect.flatMap((facts) => {
-        const dependenciesSatisfied =
-          facts.subject.kind === 'RETAIL'
-            ? Effect.succeed(true)
-            : options
-                .resolveCounterpartyRole({
-                  counterpartyResourceId: facts.subject.counterpartyResourceId,
-                  tenantId: scope.tenantId,
-                })
-                .pipe(
-                  Effect.mapError((cause) =>
-                    dependencyFailure('Current Counterparty customer-role eligibility is unavailable', cause),
-                  ),
-                  Effect.flatMap((eligibility) => counterpartyDependenciesSatisfied(eligibility, scope)),
-                );
-        const reconfirmationSatisfied = options.evaluateReconfirmation(facts);
+export interface PreparedReactivationObservation {
+  readonly dependenciesSatisfied: boolean;
+  readonly reconfirmationSatisfied: boolean;
+  readonly role: CounterpartyRoleEligibility | null;
+}
 
-        return Effect.all({ dependenciesSatisfied, reconfirmationSatisfied }, { concurrency: 2 });
-      }),
-    );
+/** Observe external authority using only the immutable owner facts, never a SQL executor. */
+export const observeProfileReactivation = (
+  facts: ReactivationProfileFacts,
+  scope: ProfilePersistenceScope,
+  resolveCounterpartyRole: ResolveCounterpartyRole,
+  evaluateReconfirmation: ReconfirmationEvaluator,
+): Effect.Effect<PreparedReactivationObservation, ProfilePersistenceDependencyFailure> => {
+  const role =
+    facts.subject.kind === 'RETAIL'
+      ? Effect.succeed(null)
+      : resolveCounterpartyRole({
+          counterpartyResourceId: facts.subject.counterpartyResourceId,
+          tenantId: scope.tenantId,
+        }).pipe(
+          Effect.mapError((cause) =>
+            dependencyFailure('Current Counterparty customer-role eligibility is unavailable', cause),
+          ),
+        );
+  return Effect.all({ reconfirmationSatisfied: evaluateReconfirmation(facts), role }, { concurrency: 2 }).pipe(
+    Effect.flatMap(({ reconfirmationSatisfied, role: resolvedRole }) =>
+      (resolvedRole === null ? Effect.succeed(true) : counterpartyDependenciesSatisfied(resolvedRole, scope)).pipe(
+        Effect.map((dependenciesSatisfied) => ({ dependenciesSatisfied, reconfirmationSatisfied, role: resolvedRole })),
+      ),
+    ),
+  );
 };
+
+/** Compatibility evaluator for direct owner callers; Actions use the released observation path. */
+export const makeProfileReactivationEligibilityEvaluator =
+  (
+    options: Readonly<{
+      readonly evaluateReconfirmation: ReconfirmationEvaluator;
+      readonly resolveCounterpartyRole: ResolveCounterpartyRole;
+      readonly scope: ProfilePersistenceScope;
+      readonly transaction: ProfileScopedRoutineInvoker;
+    }>,
+  ): ReactivationEligibilityEvaluator =>
+  (payload) =>
+    readExactProfileFacts(options.transaction, options.scope, payload).pipe(
+      Effect.flatMap((facts) =>
+        observeProfileReactivation(
+          facts,
+          options.scope,
+          options.resolveCounterpartyRole,
+          options.evaluateReconfirmation,
+        ),
+      ),
+      Effect.map(({ dependenciesSatisfied, reconfirmationSatisfied }) => ({
+        dependenciesSatisfied,
+        reconfirmationSatisfied,
+      })),
+    );
 
 export interface ProfileReactivationEligibilityEvaluatorFactoryInput {
   readonly resolveCounterpartyRole: ResolveCounterpartyRole;
@@ -138,8 +159,17 @@ export interface ProfileReactivationEligibilityEvaluatorFactoryInput {
   readonly transaction: ProfileScopedRoutineInvoker;
 }
 
+export interface ProfileReactivationObservationInput {
+  readonly facts: ReactivationProfileFacts;
+  readonly resolveCounterpartyRole: ResolveCounterpartyRole;
+  readonly scope: ProfilePersistenceScope;
+}
+
 export interface ProfileReactivationEligibilityEvaluatorFactoryService {
   readonly make: (input: ProfileReactivationEligibilityEvaluatorFactoryInput) => ReactivationEligibilityEvaluator;
+  readonly observe: (
+    input: ProfileReactivationObservationInput,
+  ) => Effect.Effect<PreparedReactivationObservation, ProfilePersistenceDependencyFailure>;
 }
 
 /**
@@ -164,6 +194,8 @@ export const profileReactivationEligibilityEvaluatorFactoryLive = Layer.effect(
           ...input,
           evaluateReconfirmation: policy.evaluate,
         }),
+      observe: ({ facts, resolveCounterpartyRole, scope }: ProfileReactivationObservationInput) =>
+        observeProfileReactivation(facts, scope, resolveCounterpartyRole, policy.evaluate),
     });
   }),
 );

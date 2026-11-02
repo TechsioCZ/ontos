@@ -17,6 +17,7 @@ import type {
 import type { LegalEntityPermissionKey, TenantPermissionKey } from '../permissions/context-permissions.ts';
 import type {
   ReadFinishContext,
+  ReadHandlerContext,
   ReadHandlerResult,
   ReadLoadContext,
   ReadOwnerTransaction,
@@ -234,7 +235,9 @@ const hasValidConditionalBranch = (branch: {
   branch.requiredKinds.length > 0 &&
   branch.requiredKinds.length <= 3 &&
   branch.requiredKinds[0] !== 'resource_read' &&
-  new Set(branch.requiredKinds).size === branch.requiredKinds.length &&
+  branch.requiredKinds.every(
+    (kind, index) => kind === 'resource_read' || branch.requiredKinds.indexOf(kind) === index,
+  ) &&
   branch.requiredKinds.every((kind) => READ_CONDITIONAL_PERMISSION_REQUIREMENTS.includes(kind)) &&
   Predicate.isFunction(branch.resolve);
 
@@ -376,6 +379,18 @@ export type ReadPrepare<Input, Prepared, Failure = never, Requirements = never> 
 ) => Effect.Effect<Prepared, Failure, Requirements>;
 
 /** Owner work inside the scoped transaction: database reads only. */
+/** A Read whose owner work is one scoped database step; equivalent to the pipeline `{ load: handler }`. */
+export type ReadHandler<
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  Services,
+  Error,
+  Requirements = never,
+> = (
+  input: InputSchema['Type'],
+  context: ReadHandlerContext<Services>,
+) => Effect.Effect<ReadHandlerResult<ResultSchema['Type']>, Error, Requirements>;
+
 export type ReadLoad<Input, Services, Prepared, Loaded, Failure = never, Requirements = never> = (
   input: Input,
   context: ReadLoadContext<Services, Prepared>,
@@ -1057,6 +1072,24 @@ export function defineRead<
   Requirements | FinishRequirements,
   DomainErrorSchema
 >;
+/** Defines a governed Read whose owner work is one handler inside the Read's short scoped transaction. */
+export function defineRead<
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  const Owner extends string,
+  Services,
+  Failure,
+  Requirements,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{
+    readonly _tag: string;
+  }> = typeof Schema.Never,
+>(
+  descriptor: ReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema>,
+  ...definition: readonly [
+    handler: ReadHandler<InputSchema, ResultSchema, Services, Failure, Requirements>,
+    ...ReadDefinitionTail<InputSchema, ResultSchema, Owner, Services, Requirements>,
+  ]
+): ReadRegistration<InputSchema, ResultSchema, Owner, Services, Failure, Requirements, DomainErrorSchema>;
 export function defineRead<
   InputSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
@@ -1076,19 +1109,21 @@ export function defineRead<
 >(
   descriptor: ReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema>,
   ...definition: readonly [
-    pipeline: AnyReadPipeline<
-      InputSchema['Type'],
-      ResultSchema['Type'],
-      Services,
-      Prepared,
-      Loaded,
-      Failure,
-      Requirements,
-      PrepareError,
-      PrepareRequirements,
-      FinishError,
-      FinishRequirements
-    >,
+    pipeline:
+      | AnyReadPipeline<
+          InputSchema['Type'],
+          ResultSchema['Type'],
+          Services,
+          Prepared,
+          Loaded,
+          Failure,
+          Requirements,
+          PrepareError,
+          PrepareRequirements,
+          FinishError,
+          FinishRequirements
+        >
+      | ReadHandler<InputSchema, ResultSchema, Services, Failure, Requirements>,
     ...ReadDefinitionTail<InputSchema, ResultSchema, Owner, Services, Requirements>,
   ]
 ): ReadRegistration<
@@ -1100,8 +1135,21 @@ export function defineRead<
   Requirements | PrepareRequirements | FinishRequirements,
   DomainErrorSchema
 > {
-  const [pipeline, serviceFactory, permissionTargetResolver, resultPermissionTargetResolver, executablePolicies = []] =
+  const [ownerWork, serviceFactory, permissionTargetResolver, resultPermissionTargetResolver, executablePolicies = []] =
     definition;
+  const pipeline: AnyReadPipeline<
+    InputSchema['Type'],
+    ResultSchema['Type'],
+    Services,
+    Prepared,
+    Loaded,
+    Failure,
+    Requirements,
+    PrepareError,
+    PrepareRequirements,
+    FinishError,
+    FinishRequirements
+  > = Predicate.isFunction(ownerWork) ? { load: ownerWork } : ownerWork;
   if (
     !Predicate.isFunction(pipeline.load) ||
     !(pipeline.prepare === undefined || Predicate.isFunction(pipeline.prepare))

@@ -1,5 +1,6 @@
 import { OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
+import type { RetailPortalPermissionCode } from '../shared/domain/profile-contracts.ts';
 import { Effect, Option } from 'effect';
 import { RetailEnrollmentBindingCapability } from './integrations/retail-enrollment-binding.ts';
 
@@ -149,7 +150,11 @@ export const profileServicesForVerifiedScope = Effect.fn('ProfileServiceFactory.
  * transaction. Without a trusted Legal Entity there is nothing to read; the Read fails closed inside.
  */
 export const prepareRetailPermissions = Effect.fn('ProfileServiceFactory.prepareRetailPermissions')(
-  function* prepareRetailPermissionSnapshot(scope: OperationalScope, profileId: string) {
+  function* prepareRetailPermissionSnapshot(
+    scope: OperationalScope,
+    profileId: string,
+    requestedPermissions: readonly RetailPortalPermissionCode[] = [],
+  ) {
     if (scope.legalEntityId === undefined) {
       return unreadRetailPermissions;
     }
@@ -159,6 +164,11 @@ export const prepareRetailPermissions = Effect.fn('ProfileServiceFactory.prepare
       principalId: scope.principalId,
       tenantId: scope.tenantId,
     };
-    return yield* prefetchRetailPermissions(readerFactory.make(readerScope), readerScope, [profileId]);
+    return yield* prefetchRetailPermissions(
+      readerFactory.make(readerScope),
+      readerScope,
+      [profileId],
+      requestedPermissions,
+    );
   },
 );

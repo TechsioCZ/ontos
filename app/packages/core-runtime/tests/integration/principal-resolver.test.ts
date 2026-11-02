@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { DateTime, Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -6,7 +6,7 @@ import { makePrincipalResolver } from '../../src/auth/principal-resolver.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
-import { principalAuthBindings, principals, tenants } from '../../src/db/schema.ts';
+import { auditEvents, principalAuthBindings, principals, tenants } from '../../src/db/schema.ts';
 
 const tenantOne = '10000000-0000-4000-8000-000000000001';
 const tenantTwo = '10000000-0000-4000-8000-000000000002';
@@ -28,6 +28,8 @@ it.live('lists and selects multiple tenant-scoped principals and fails closed af
       { authenticationNamespaceId: staffAuthenticationNamespaceId },
     );
     const cleanup = Effect.gen(function* cleanPrincipalResolverFixtures() {
+      // A rejected request of a disabled principal leaves its audited denial ahead of the binding.
+      yield* database.delete(auditEvents).where(inArray(auditEvents.tenantId, [tenantOne, tenantTwo]));
       yield* database.delete(principalAuthBindings).where(eq(principalAuthBindings.providerSubjectId, subject));
       yield* database.delete(principalAuthBindings).where(eq(principalAuthBindings.providerSubjectId, apiKeySubject));
       yield* database
@@ -174,6 +176,12 @@ it.live('lists and selects multiple tenant-scoped principals and fails closed af
     yield* database.update(principals).set({ status: 'disabled' }).where(eq(principals.principalId, principalOne));
     const inactivePrincipal = yield* Effect.flip(resolver.resolveBetterAuthUserForTenant(subject, tenantOne));
     expect(Predicate.isTagged(inactivePrincipal, 'PrincipalInactiveError')).toBe(true);
+    expect(
+      yield* database
+        .select({ eventType: auditEvents.eventType, outcomeCode: auditEvents.outcomeCode })
+        .from(auditEvents)
+        .where(and(eq(auditEvents.tenantId, tenantOne), eq(auditEvents.principalId, principalOne))),
+    ).toEqual([{ eventType: 'authn.rejected', outcomeCode: 'principal_inactive' }]);
 
     yield* database.update(principals).set({ status: 'active' }).where(eq(principals.principalId, principalOne));
     yield* database.update(tenants).set({ status: 'suspended' }).where(eq(tenants.tenantId, tenantOne));

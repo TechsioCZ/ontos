@@ -1,5 +1,5 @@
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
-import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
+import { Effect, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import {
   CurrentPricingDecisionApi,
   CurrentPricingDecisionAuthenticationProblemSchema,
@@ -70,7 +70,6 @@ const makeRuntime = (response: Effect.Effect<CurrentPricingDecisionResponse, Pub
     handlers: HttpApiBuilder.group(CurrentPricingDecisionApi, 'currentPricingDecision', (handlers) =>
       handlers.handle('execute', () => response),
     ),
-    services: Layer.empty,
   });
 
 const requestFor = (payload: CurrentPricingDecisionRequest) =>

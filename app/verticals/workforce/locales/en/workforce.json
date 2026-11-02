@@ -75,6 +75,7 @@
           "active": "Active",
           "cancel": "Cancel",
           "create": "Create employee",
+          "close": "Close",
           "createTitle": "New employee",
           "department": "Department",
           "editTitle": "Edit employee",
@@ -85,7 +86,6 @@
           "principalHelp": "Invite the person in People first. Employment and job roles grant no permissions; activate company membership and grant Tasks access before assigning tasks.",
           "managePeople": "Invite a person and manage membership and permissions",
           "role": "Job role",
-          "save": "Save changes",
           "saving": "Saving…"
         },
         "bulk": {
@@ -140,7 +140,6 @@
         "aiActivity": {
           "title": "AI activity",
           "description": "What AI agents and integrations did in this company: every allowed and denied write attempt from the Core audit. Level A may only read, level B may also create tasks, and level C proposes data changes (e.g. CRM clients) that a person must approve in the app and that can be reverted in bulk.",
-          "refresh": "Refresh",
           "executed_one": "Executed: {{count}}",
           "executed_other": "Executed: {{count}}",
           "denied_one": "Denied: {{count}}",

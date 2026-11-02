@@ -7,7 +7,7 @@ import type { Connection } from 'effect/sql/SqlConnection';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import type { ActionRegistration, ActionServiceFactory, AnyActionRegistration } from '../actions/definition.ts';
-import { getActionServiceFactory } from '../actions/definition.ts';
+import { getActionServiceFactory, getActionServicePreflight } from '../actions/definition.ts';
 import {
   ActionInvocationNotFound,
   ActionInvocationPersistenceError,
@@ -43,6 +43,12 @@ import { OperationContextUnavailable } from '../operations/errors.ts';
 import { ActionAuthorizationPreflight } from '../permissions/action-authorization-preflight.ts';
 import type { ContextAccessDecision, ContextAccessService } from '../permissions/context-access.ts';
 import { scriptedPgClientLayer } from './scripted-pg-client.ts';
+
+/** Test-only: bind the existing issuer registrar to an explicitly scoped fixture pool. */
+export { makeGatewayScopeGrantRegistrar } from '../auth/gateway-scope-grant.ts';
+
+/** Test-only: owner fixtures bind routines to the package's single scoped-transaction implementation. */
+export { installOperationalScope } from '../db/scoped-transaction.ts';
 
 const actionTestServiceBinding: unique symbol = Symbol('test-action-service-binding');
 const querySchema = Schema.Union([Schema.String, Schema.Struct({ text: Schema.String })]);
@@ -518,6 +524,10 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
       },
       resolveCompositionRevision: () => Effect.succeed(options.compositionRevision ?? 'a'.repeat(64)),
       resolveServiceFactory,
+      // Explicit lifecycle-only service bindings replace both acquisition phases.
+      // Unbound registrations still execute the real preparation and guarded factory.
+      resolveServicePreflight: (registration) =>
+        bindings.has(registration) ? undefined : getActionServicePreflight(registration),
     };
     if (Option.isSome(authorizationPreflight)) {
       runtimeOptions = { ...runtimeOptions, authorizationPreflight: authorizationPreflight.value };
@@ -558,4 +568,12 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
 
 export const makeActionTestHarness: typeof actionTestHarness = actionTestHarness;
 
-export { makeLiveOperationFixture } from './live-operations.ts';
+export {
+  makeLiveOperationFixture,
+  makeLiveOperationFixtureRuntime,
+  makeLiveOperationFixtureBootstrap,
+  LiveOperationFixtureRuntimeHandoffSchema,
+  LiveOperationFixtureBootstrapRequestSchema,
+  LiveOperationFixtureBootstrapResponseSchema,
+} from './live-operations.ts';
+export type { LiveOperationFixtureRuntimeHandoff, LiveOperationFixtureBootstrapRequest } from './live-operations.ts';

@@ -227,3 +227,69 @@ it.effect('enforces Action-declared event payloads and producer ownership', () =
     expect(collector.snapshot().domainEvents.length).toBe(0);
   }),
 );
+
+it.effect('captures immutable message-bound completion using only the trusted admitted revision', () =>
+  Effect.gen(function* messageBoundCompletion() {
+    const collector = createActionCollector(
+      domainEventContracts,
+      'shell.core',
+      {
+        captureMode: 'metadata_only',
+        policyKey: 'counter.read.v1',
+      },
+      undefined,
+      'approved-original-release',
+    );
+    const reference = yield* collector.addDomainEvent(event('completion'));
+    const completion = { consumerModuleKey: 'party.registry' };
+    yield* collector.addOutboxMessage(reference, message('counter.project'), completion);
+    completion.consumerModuleKey = 'mutated.owner';
+    expect(collector.snapshot().outboxMessages[0]?.completion).toEqual({
+      consumerModuleKey: 'party.registry',
+      originalRevision: 'approved-original-release',
+    });
+    expect(Object.isFrozen(collector.snapshot().outboxMessages[0]?.completion)).toBe(true);
+    yield* collector.addOutboxMessage(reference, message('counter.notify'));
+    expect(collector.snapshot().outboxMessages[1]?.completion).toBeUndefined();
+  }),
+);
+
+it.effect('rejects completion without trusted revision and refuses caller revision or unknown fields', () =>
+  Effect.gen(function* invalidMessageBoundCompletion() {
+    const untrusted = makeCollector();
+    const reference = yield* untrusted.addDomainEvent(event('completion'));
+    const missingRevision = yield* Effect.flip(
+      untrusted.addOutboxMessage(reference, message('counter.project'), {
+        consumerModuleKey: 'party.registry',
+      }),
+    );
+    expect(Predicate.isTagged(missingRevision, 'ActionCollectorError')).toBe(true);
+    expect(untrusted.snapshot().outboxMessages).toEqual([]);
+    const trusted = createActionCollector(
+      domainEventContracts,
+      'shell.core',
+      {
+        captureMode: 'metadata_only',
+        policyKey: 'counter.read.v1',
+      },
+      undefined,
+      'approved-original-release',
+    );
+    const own = yield* trusted.addDomainEvent(event('own'));
+    for (const declaration of [
+      { consumerModuleKey: '' },
+      { consumerModuleKey: 'party.registry', originalRevision: 'forged' },
+      { consumerModuleKey: 'party.registry', extra: true },
+    ]) {
+      const error = yield* Effect.flip(trusted.addOutboxMessageInput(own, message('counter.project'), declaration));
+      expect(Predicate.isTagged(error, 'ActionCollectorError')).toBe(true);
+    }
+    const foreign = yield* Effect.flip(
+      trusted.addOutboxMessage(reference, message('counter.project'), {
+        consumerModuleKey: 'party.registry',
+      }),
+    );
+    expect(Predicate.isTagged(foreign, 'ActionCollectorError')).toBe(true);
+    expect(trusted.snapshot().outboxMessages).toEqual([]);
+  }),
+);

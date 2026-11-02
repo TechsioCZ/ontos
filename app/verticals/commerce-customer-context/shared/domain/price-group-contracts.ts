@@ -36,6 +36,26 @@ const PriceGroupInstantSchema = Schema.String.check(
 export const PriceGroupInstantJsonSchema = Schema.toEncoded(PriceGroupInstantSchema);
 export type PriceGroupInstant = typeof PriceGroupInstantJsonSchema.Type;
 
+/** Immutable intent for this successful invocation; absence of an end means an open request. */
+export const CustomerPriceGroupAssignedAuditEvidenceSchema = Schema.Struct({
+  assignmentId: CustomerPriceGroupAssignmentRefSchema.fields.resourceId,
+  assignmentRevision: PriceGroupRevisionSchema,
+  changed: Schema.Boolean,
+  operation: Schema.Literal('ASSIGN'),
+  replacedAssignmentId: Schema.optionalKey(CustomerPriceGroupAssignmentRefSchema.fields.resourceId),
+  requestedEffectiveFrom: PriceGroupInstantJsonSchema,
+  requestedEffectiveTo: Schema.optionalKey(PriceGroupInstantJsonSchema),
+});
+
+/** Removal preserves the requested instant, including cancellation at/before a future start. */
+export const CustomerPriceGroupRemovedAuditEvidenceSchema = Schema.Struct({
+  assignmentId: CustomerPriceGroupAssignmentRefSchema.fields.resourceId,
+  assignmentRevision: PriceGroupRevisionSchema,
+  changed: Schema.Boolean,
+  operation: Schema.Literal('REMOVE'),
+  requestedEffectiveAt: PriceGroupInstantJsonSchema,
+});
+
 export const isPriceGroupInstantBefore = (requested: PriceGroupInstant, trustedNow: PriceGroupInstant): boolean =>
   DateTime.toEpochMillis(DateTime.makeUnsafe(requested)) < DateTime.toEpochMillis(DateTime.makeUnsafe(trustedNow));
 

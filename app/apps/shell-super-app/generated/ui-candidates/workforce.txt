@@ -1,6 +1,5 @@
 --badge-account-horizontal-outline
 --plus
---refresh
 --spacing-100
 --spacing-700
 -mt-100
@@ -8,6 +7,7 @@ align-top
 bg-base
 bg-surface
 block
+blur
 border-b
 border-border-primary
 border-collapse
@@ -26,7 +26,6 @@ h-40
 hidden
 icon-[mdi--badge-account-horizontal-outline]
 icon-[mdi--plus]
-icon-[mdi--refresh]
 inline
 items-center
 items-end

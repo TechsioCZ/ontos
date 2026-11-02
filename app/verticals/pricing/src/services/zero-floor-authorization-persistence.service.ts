@@ -92,6 +92,15 @@ export const readCurrentZeroFloorAuthorizationSetRoutine = defineScopedRoutine({
   schema,
 });
 
+export const readCurrentZeroFloorAuthorizationSetForQueryRoutine = defineScopedRoutine({
+  name: 'read_current_zero_floor_authorization_set_for_query_v1',
+  ownerModuleKey,
+  parameters: [...scopeParameters, { source: 'input', type: 'jsonb' }],
+  resultSchema: ZeroFloorRoutineRowSchema,
+  routineKey: 'pricing.read-current-zero-floor-authorization-set-for-query-v1',
+  schema,
+});
+
 export const readCurrentZeroFloorAuthorizationGovernanceProofRoutine = defineScopedRoutine({
   name: 'read_current_zero_floor_authorization_governance_proof_v1',
   ownerModuleKey,
@@ -355,6 +364,12 @@ export interface ReadCurrentZeroFloorAuthorizationSetPersistenceQuery {
   readonly query: PricingZeroFloorAuthorizationQuery;
 }
 
+export interface ReadCurrentZeroFloorAuthorizationSetBootstrapInput {
+  readonly query: Omit<PricingZeroFloorAuthorizationQuery, 'exactPredicateRef'> & {
+    readonly exactPredicateRef?: string;
+  };
+}
+
 export interface ReadCurrentZeroFloorAuthorizationGovernanceProofQuery {
   readonly authorization: PricingZeroFloorAuthorization;
   readonly effectiveAt: typeof PricingInstantSchema.Type;
@@ -396,7 +411,7 @@ export interface ZeroFloorAuthorizationPersistence {
     command: ManageZeroFloorAuthorizationPersistenceCommand,
   ) => Effect.Effect<ManageZeroFloorAuthorizationPersistenceOutcome, ZeroFloorAuthorizationPersistenceUnavailable>;
   readonly readCurrentSet: (
-    query: ReadCurrentZeroFloorAuthorizationSetPersistenceQuery,
+    query: ReadCurrentZeroFloorAuthorizationSetBootstrapInput,
   ) => Effect.Effect<
     ReadCurrentZeroFloorAuthorizationSetPersistenceOutcome,
     ZeroFloorAuthorizationPersistenceUnavailable
@@ -468,10 +483,17 @@ export const zeroFloorAuthorizationPersistenceForScope = (
         Effect.flatMap((rows) => decodePayload(ManageZeroFloorAuthorizationPersistenceOutcomeSchema, rows)),
       ),
     readCurrentSet: (query) =>
-      transaction.invoke(readCurrentZeroFloorAuthorizationSetRoutine, [query]).pipe(
-        Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause)),
-        Effect.flatMap((rows) => decodePayload(ReadCurrentZeroFloorAuthorizationSetPersistenceOutcomeSchema, rows)),
-      ),
+      transaction
+        .invoke(
+          query.query.exactPredicateRef === undefined
+            ? readCurrentZeroFloorAuthorizationSetForQueryRoutine
+            : readCurrentZeroFloorAuthorizationSetRoutine,
+          [query],
+        )
+        .pipe(
+          Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause)),
+          Effect.flatMap((rows) => decodePayload(ReadCurrentZeroFloorAuthorizationSetPersistenceOutcomeSchema, rows)),
+        ),
     readGovernanceProof: (query) =>
       transaction.invoke(readCurrentZeroFloorAuthorizationGovernanceProofRoutine, [query]).pipe(
         Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause)),

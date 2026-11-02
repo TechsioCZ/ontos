@@ -2,35 +2,62 @@
 // @ontos-action-boundary-owner party-registry
 // @ontos-action-boundary-audience party-registry
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
-import { staffAuthenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/staff-authentication-namespace';
+import { authenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/external-identity-admission';
+import { AuthenticationNamespaceRegistrationSchema } from '@app/core-runtime/auth/external-identity-contracts';
+import { staffAuthenticationNamespaceRegistration } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeMicroverticalHttpPrincipalAuthentication } from '@app/core-runtime/http/principal-authentication';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { GatewayPrincipalVerifierLive, bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Schema } from 'effect';
 import type { Redacted } from 'effect';
 
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
-type PrincipalVerifierLayer =
-  | typeof GatewayPrincipalVerifierLive
-  | typeof ActiveApplicationCompositionConfigLive
-  | ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>;
-
 const ACTION_GATEWAY_AUDIENCE = 'party-registry' as const;
-/**
- * What this runtime needs to accept a Shell-issued assertion for its audience: the gateway
- * verification material, and the staff namespace registration Core revalidates the asserted
- * principal's binding against (without it every governed route answers
- * `operation_context_unavailable`).
+
+/** Owner-local trusted receiving configuration; gateway assertions keep their actual namespace.
+ * Commerce provider admission remains upstream, matching the canonical CCC receiving registry.
+ * This registry grants no business permission and accepts only this deployment's audience.
  */
+export const PartyRegistryAuthenticationNamespaceRegistryLive = authenticationNamespaceRegistryLayer(
+  Effect.all(
+    [
+      Schema.decodeEffect(AuthenticationNamespaceRegistrationSchema)({
+        allowedAudiences: [ACTION_GATEWAY_AUDIENCE],
+        // CCC-owned canonical protocol/config value, explicitly approved as Party deployment data.
+        authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1',
+        provider: 'commerce-portal-better-auth',
+        requiresOperationAdmission: false,
+        reservationPrincipalKind: 'human',
+        subjectTypes: ['user'],
+        trustedAttesterPrincipalIds: [],
+      }),
+      staffAuthenticationNamespaceRegistration([ACTION_GATEWAY_AUDIENCE]),
+    ],
+    { concurrency: 2 },
+  ),
+);
+/** Gateway verification, current composition, and the single owner receiving registry. */
 export const ActionPrincipalVerifierLive: Layer.Layer<
-  Layer.Success<PrincipalVerifierLayer>,
-  Layer.Error<PrincipalVerifierLayer>,
-  Layer.Services<PrincipalVerifierLayer>
+  Layer.Success<
+    | typeof GatewayPrincipalVerifierLive
+    | typeof ActiveApplicationCompositionConfigLive
+    | typeof PartyRegistryAuthenticationNamespaceRegistryLive
+  >,
+  Layer.Error<
+    | typeof GatewayPrincipalVerifierLive
+    | typeof ActiveApplicationCompositionConfigLive
+    | typeof PartyRegistryAuthenticationNamespaceRegistryLive
+  >,
+  Layer.Services<
+    | typeof GatewayPrincipalVerifierLive
+    | typeof ActiveApplicationCompositionConfigLive
+    | typeof PartyRegistryAuthenticationNamespaceRegistryLive
+  >
 > = Layer.mergeAll(
   GatewayPrincipalVerifierLive,
   ActiveApplicationCompositionConfigLive,
-  staffAuthenticationNamespaceRegistryLayer([ACTION_GATEWAY_AUDIENCE]),
+  PartyRegistryAuthenticationNamespaceRegistryLive,
 );
 
 const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE, ultramodernApiMarker);

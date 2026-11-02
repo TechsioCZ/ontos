@@ -355,7 +355,6 @@ export const PurchaseDocumentPanel = ({
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description={k(kind === 'order' ? 'orders.createDescription' : 'quotes.createDescription')}
       onOpenChange={(open) => {
         if (!open) {
@@ -533,7 +532,6 @@ export const SupplierPanel = ({ onClose, run }: { readonly onClose: () => void; 
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       onOpenChange={(open) => {
         if (!open) {
           onClose();
@@ -709,7 +707,6 @@ export const ItemCreatePanel = ({
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       onOpenChange={(open) => {
         if (!open) {
           onClose();

@@ -30,6 +30,8 @@ import {
   commercePortalRelationships,
   privacyConsentAuthorityRelationships,
   privacyConsentPrincipal,
+  marketRetirementPrincipal,
+  marketRetirementRelationships,
   akrosStorefrontPrincipal,
   eshopDemoRoles,
   principalRelationships,
@@ -177,7 +179,7 @@ const isPresent = (rows: readonly v1.ReadRelationshipsResponse[], expected: v1.R
   );
 
 export const stageServicePrincipals = () =>
-  [akrosStorefrontPrincipal, commercePortalPrincipal, privacyConsentPrincipal].map(
+  [akrosStorefrontPrincipal, commercePortalPrincipal, privacyConsentPrincipal, marketRetirementPrincipal].map(
     ({ displayName, legalEntityId, principalId }) => ({
       displayName,
       legalEntityId,
@@ -186,15 +188,13 @@ export const stageServicePrincipals = () =>
     }),
   );
 
-export const serviceGrantMemberships = (): readonly v1.Relationship[] => {
-  const legalEntity = toLegalEntityAccessObjectId(demoTenantId, akrosDemoLegalEntityId);
-  if (legalEntity === undefined) {
-    return [];
-  }
-  return [akrosStorefrontPrincipal, commercePortalPrincipal, privacyConsentPrincipal].map(({ principalId }) =>
-    relationshipFrom('legal_entity', legalEntity, 'member', 'principal', principalId),
-  );
-};
+export const serviceGrantMemberships = (): readonly v1.Relationship[] =>
+  stageServicePrincipals().flatMap(({ legalEntityId, principalId, tenantId }) => {
+    const legalEntity = toLegalEntityAccessObjectId(tenantId, legalEntityId);
+    return legalEntity === undefined
+      ? []
+      : [relationshipFrom('legal_entity', legalEntity, 'member', 'principal', principalId)];
+  });
 /** Missing memberships may be provisioned; conditional/expiring memberships must never be overwritten. */
 export const assertServiceMembershipsCompatible = Effect.fn('Stage.assertServiceMembershipsCompatible')(
   function* assertServiceMembershipsCompatible(rpc: ServiceGrantRpc) {
@@ -227,6 +227,7 @@ export const desiredServiceGrants = (actions: readonly DemoAction[]): readonly v
     ),
     ...commercePortalRelationships(actions),
     ...privacyConsentAuthorityRelationships(actions),
+    ...marketRetirementRelationships(actions),
   ];
   return [
     ...new Map(
@@ -364,7 +365,7 @@ export const reconcileServiceGrants = Effect.fn('Stage.reconcileServiceGrants')(
 ) {
   yield* assertServiceMembershipsCompatible(rpc);
   const memberships = serviceGrantMemberships();
-  if (memberships.length !== 3) {
+  if (memberships.length !== stageServicePrincipals().length) {
     return yield* new ServiceGrantError({ reason: 'Invalid service company scope' });
   }
   // Check reports gaps so a first deployment can reach native provisioning in apply.

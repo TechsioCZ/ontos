@@ -6,22 +6,24 @@ import { useCartQuote } from "@/ontos/cart-revalidation";
 import { useCart } from "./cart-provider";
 import { CartItemsTable } from "@/features/checkout/cart-items-table";
 import { CartServices } from "@/features/checkout/cart-services";
+import { useDictionary } from "@/ontos/market-context";
 
 export function CartContent() {
+  const cs = useDictionary();
   const { cart, ready } = useCart();
-  if (!ready) return <output>Načítám košík…</output>;
+  if (!ready) return <output>{cs.cart.loading}</output>;
   if (!cart.lines.length)
     return (
       <section className="grid justify-items-center gap-6 rounded-sm bg-(--color-base) px-6 py-12 text-center">
-        <h1 className="text-lg font-medium">Nákupní košík</h1>
-        <p>Košík je zatím prázdný.</p>
+        <h1 className="text-lg font-medium">{cs.cart.title}</h1>
+        <p>{cs.cart.empty}</p>
         <LinkButton
           as={StoreLink}
           href="/kategorie/nerezovy-spojovaci-material"
           size="sm"
           variant="primary"
         >
-          Zpět do katalogu
+          {cs.actions.backToCatalog}
         </LinkButton>
       </section>
     );
@@ -34,7 +36,7 @@ export function CartContent() {
         id="cart-title"
         className="mb-(--dimension-32) text-(length:--akros-checkout-heading-size) leading-(--akros-checkout-heading-leading) font-medium"
       >
-        Obsah košíku
+        {cs.cart.itemsTitle}
       </h1>
       <CartItemsTable />
       <CartServices />
@@ -43,6 +45,7 @@ export function CartContent() {
 }
 
 export function CartNavigation() {
+  const cs = useDictionary();
   const quote = useCartQuote();
   const blocked = quote ? !quote.canContinue : false;
   return (
@@ -58,7 +61,7 @@ export function CartNavigation() {
         className="w-full sm:w-(--akros-checkout-back-width)"
         uppercase
       >
-        Zpět do obchodu
+        {cs.cart.backToShop}
       </LinkButton>
       {blocked ? (
         <div className="grid w-full gap-2 sm:w-(--akros-checkout-continue-width)">
@@ -71,7 +74,7 @@ export function CartNavigation() {
             disabled
             aria-describedby="cart-continue-blocked"
           >
-            Vybrat dopravu a platbu
+            {cs.cart.chooseDelivery}
           </Button>
           <p id="cart-continue-blocked" className="text-xs text-(--color-fg-secondary)">
             {quote?.blockedReason}
@@ -86,7 +89,7 @@ export function CartNavigation() {
           className="w-full sm:w-(--akros-checkout-continue-width)"
           uppercase
         >
-          Vybrat dopravu a platbu
+          {cs.cart.chooseDelivery}
         </LinkButton>
       )}
     </div>

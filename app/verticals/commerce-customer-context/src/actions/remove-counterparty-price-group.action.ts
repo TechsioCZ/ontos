@@ -6,6 +6,7 @@ import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
+  CustomerPriceGroupRemovedAuditEvidenceSchema,
   CounterpartyPriceGroupRemovedEventSchema,
   isPriceGroupInstantBefore,
 } from '../../shared/domain/price-group-contracts.ts';
@@ -130,6 +131,14 @@ const handleRemoveCounterpartyPriceGroup = Effect.fn(
     });
   }
 
+  yield* context.recordAuditEvidence({
+    assignmentId: result.assignment.assignmentRef.resourceId,
+    assignmentRevision: result.assignment.revision,
+    changed: result.changed,
+    operation: 'REMOVE',
+    requestedEffectiveAt: payload.effectiveAt,
+  });
+
   yield* context.recordDataAccess({
     accessKind: 'read',
     queryHash: `counterparty-price-group-remove:${payload.counterpartyRef.resourceId}:${payload.assignmentRef.resourceId}:${payload.expectedRevision}`,
@@ -175,6 +184,7 @@ export const removeCounterpartyPriceGroupAction = defineAction(
       policyKey: 'commerce.customer-context.remove-counterparty-price-group.access.v1',
     },
     actionKey: 'commerce.customer-context.remove-counterparty-price-group',
+    auditEvidenceSchema: CustomerPriceGroupRemovedAuditEvidenceSchema,
     auditProfile: 'sensitive',
     businessPermission: defineActionBusinessPermission<RemoveCounterpartyPriceGroupPayload>((payload, scope) => ({
       permission: 'counterparty.settings.price_group.manage',

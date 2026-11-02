@@ -5,7 +5,6 @@ import type { Invoice } from '@app/finance-billing/contracts/records';
 import type { executeRecords as readProperty } from '@app/property-portfolio/clients/records';
 import type { Task } from '@app/work-tasks/contracts/records';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
-import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { Option } from 'effect';
 import type { Effect } from 'effect';
@@ -498,17 +497,3 @@ export const InvoicesCard = ({
     </SectionCard>
   );
 };
-
-export const RentEditButton = ({
-  disabled,
-  label,
-  onClick,
-}: {
-  readonly disabled: boolean;
-  readonly label: string;
-  readonly onClick: () => void;
-}) => (
-  <Button disabled={disabled} onClick={onClick} size="sm" theme="outlined" variant="secondary">
-    {label}
-  </Button>
-);

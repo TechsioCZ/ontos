@@ -63,9 +63,13 @@ interface ChartBodyProps {
   readonly loading: boolean;
   /** Accessible name of the loading skeleton; ui-kit's default is English. */
   readonly loadingLabel: string;
+  /** UI language, for the tooltip's default number and date formatting. */
+  readonly locale: string;
   readonly otherLabel: string;
   readonly series: readonly MetricPoint[];
   readonly unit: MetricUnit;
+  /** Human series name in the tooltip (the metric, e.g. "Tržby z faktur"), never the raw `value` field. */
+  readonly valueLabel: string;
   readonly warning: string | undefined;
 }
 
@@ -120,9 +124,11 @@ const ChartBody = ({
   emptyText,
   loading,
   loadingLabel,
+  locale,
   otherLabel,
   series,
   unit,
+  valueLabel,
   warning,
 }: ChartBodyProps) => {
   if (loading) {
@@ -154,10 +160,13 @@ const ChartBody = ({
         <Chart
           ariaLabel={ariaLabel}
           data={points.map((point) => ({ key: point.key, label: point.label, value: point.value / scale }))}
+          formatTooltipValue={(value) => formatMetricValue(value * scale, unit)}
           formatValue={(value) => formatAxisValue(value * scale, unit)}
           height={280}
+          locale={locale}
           points={chart === 'line'}
           type={chart}
+          valueLabel={valueLabel}
           x="label"
           y="value"
         />
@@ -232,7 +241,7 @@ export const StatisticsResults = ({
   query,
   result,
 }: StatisticsResultsProps) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const unit = metric?.unit ?? 'count';
   const title = metric?.label ?? '';
   const from = formatPeriodDay(query.from);
@@ -283,9 +292,11 @@ export const StatisticsResults = ({
             emptyText={blocked ? t(`${key}.noAccessMetric`) : t(`${key}.empty`)}
             loading={loading || (result === undefined && !blocked)}
             loadingLabel={t('sales-insights.loadingContent')}
+            locale={language}
             otherLabel={t(`${key}.other`)}
             series={series}
             unit={unit}
+            valueLabel={title}
             warning={pieWarning === undefined ? undefined : t(`${key}.${pieWarning}`)}
           />
         </div>

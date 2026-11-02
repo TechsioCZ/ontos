@@ -6,6 +6,7 @@ import {
   defaultTaskTab,
   filterTasks,
   initialTaskFilters,
+  selectOption,
 } from '../../src/routes/[lang]/ukoly/tasks-model.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
@@ -94,4 +95,15 @@ it('opens available company work when there is no personal open work, without ch
   expect(defaultTaskTab([task, owned], { principalId: tenantId, tenantId })).toBe('mine');
   expect(defaultTaskTab([{ ...owned, state: 'DONE' }], { principalId: tenantId, tenantId })).toBe('all');
   expect(filterTasks([task], { filters: initialTaskFilters, tab: 'mine' })).toEqual([]);
+});
+
+it('keeps task filter sentinels and states labeled in native options', () => {
+  for (const [value, label] of [
+    ['all', 'Všechny úkoly'],
+    ['none', 'Nepřiřazeno'],
+    ['NEW', 'Nový'],
+    ['IN_PROGRESS', 'Probíhá'],
+  ] as const) {
+    expect(selectOption(label, value)).toEqual({ displayValue: label, label, value });
+  }
 });

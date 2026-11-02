@@ -2,7 +2,7 @@ import { NodeCrypto } from '@effect/platform-node';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
@@ -24,6 +24,7 @@ import type { CreateProductResult } from '../../shared/actions/create-product.ts
 import type { createProductAction } from '../../src/actions/create-product.action.ts';
 import { handleCreateProduct, recordCreateProductResultSnapshot } from '../../src/actions/create-product.action.ts';
 import type { CatalogPersistence } from '../../src/persistence/catalog-persistence.ts';
+import { CatalogPersistenceUnavailable } from '../../src/persistence/errors.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const principalId = '44444444-4444-4444-8444-444444444444';
@@ -130,28 +131,38 @@ const context = <Events extends typeof correctProductAction.descriptor.domainEve
 
 const decodeClassification = Schema.decodeUnknownSync(ProductChangeClassificationSchema);
 
-const createContext = () =>
+const createContext = (overrides: Partial<CatalogPersistence> = {}) =>
   Effect.gen(function* makeCreateContext() {
     const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
     const events: { eventType: string; payloadJson: unknown }[] = [];
     const audit: AuditEvidence[] = [];
+    const writes: string[] = [];
+    const reads: string[] = [];
     const services = {
       captureResult: () => Effect.void,
       correct: unexpected,
       create: () =>
-        Effect.succeed({
-          _tag: 'created' as const,
-          product: successorProduct,
-          variantId: replacementVariantRef.resourceId,
+        Effect.sync(() => {
+          writes.push('create');
+          return {
+            _tag: 'created' as const,
+            product: successorProduct,
+            variantId: replacementVariantRef.resourceId,
+          };
         }),
       getCreatedByInvocation: unexpected,
-      getCurrent: unexpected,
+      getCurrent: (productId: string) =>
+        Effect.sync(() => {
+          reads.push(productId);
+          return Option.some(product(1, 'Previous Product'));
+        }),
       getHistory: unexpected,
       reactivate: unexpected,
       recoverCreateProduct: unexpected,
       recoverUpdateProduct: unexpected,
       retire: unexpected,
       update: unexpected,
+      ...overrides,
     };
     const value: ActionHandlerContext<typeof createProductAction.descriptor.domainEvents, typeof services> = {
       actionInvocationId: '55555555-5555-4555-8555-555555555555',
@@ -170,7 +181,7 @@ const createContext = () =>
       scope,
       services,
     };
-    return { audit, events, value };
+    return { audit, events, reads, value, writes };
   });
 
 describe('Catalog Correction versus new Product realization (#415)', () => {
@@ -303,6 +314,8 @@ describe('Catalog Correction versus new Product realization (#415)', () => {
         },
         state.value,
       );
+      expect(state.reads).toEqual([productRef.resourceId]);
+      expect(state.writes).toEqual(['create']);
       expect(result.classification).toMatchObject({
         kind: 'NEW_PRODUCT',
         newProductRef: replacementProductRef,
@@ -326,6 +339,95 @@ describe('Catalog Correction versus new Product realization (#415)', () => {
         },
       });
       expect(captured?.classification).toEqual(result.classification);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('refuses a same-Tenant missing predecessor before any creation or successful evidence', () =>
+    Effect.gen(function* missingPredecessor() {
+      const state = yield* createContext({ getCurrent: () => Effect.succeed(Option.none()) });
+      const reason = 'A distinct good succeeds an existing Product';
+      const outcome = yield* handleCreateProduct(
+        {
+          classification: {
+            affectsOpenSelection: true,
+            evidenceRefs: ['urn:evidence:successor-product'],
+            kind: 'NEW_PRODUCT',
+            previousProductRef: productRef,
+            reason,
+          },
+          reason,
+        },
+        state.value,
+      ).pipe(Effect.result);
+      expect(state.writes).toEqual([]);
+      expect(state.audit).toEqual([]);
+      expect(state.events).toEqual([]);
+      expect(outcome).toMatchObject({
+        failure: { code: 'product_correction_required', productRef },
+      });
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('preserves typed predecessor lookup uncertainty without creating a successor', () =>
+    Effect.gen(function* unavailablePredecessor() {
+      const unavailable = new CatalogPersistenceUnavailable({
+        code: 'catalog_persistence_unavailable',
+        reason: 'Owner lookup is unavailable',
+      });
+      const state = yield* createContext({ getCurrent: () => Effect.fail(unavailable) });
+      const reason = 'A distinct good succeeds an existing Product';
+      const outcome = yield* handleCreateProduct(
+        {
+          classification: {
+            affectsOpenSelection: true,
+            evidenceRefs: ['urn:evidence:successor-product'],
+            kind: 'NEW_PRODUCT',
+            previousProductRef: productRef,
+            reason,
+          },
+          reason,
+        },
+        state.value,
+      ).pipe(Effect.result);
+      expect(state.writes).toEqual([]);
+      expect(state.audit).toEqual([]);
+      expect(state.events).toEqual([]);
+      expect(outcome).toMatchObject({ failure: unavailable });
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('accepts existing draft and retired predecessors without requiring Catalog readiness', () =>
+    Effect.gen(function* retainedPredecessorIdentity() {
+      for (const lifecycle of ['DRAFT', 'RETIRED'] as const) {
+        const existing = { ...product(1, 'Previous Product'), catalogReady: false, lifecycle };
+        const state = yield* createContext({ getCurrent: () => Effect.succeed(Option.some(existing)) });
+        const reason = 'A distinct good succeeds an existing Product';
+        const result = yield* handleCreateProduct(
+          {
+            classification: {
+              affectsOpenSelection: true,
+              evidenceRefs: ['urn:evidence:successor-product'],
+              kind: 'NEW_PRODUCT',
+              previousProductRef: productRef,
+              reason,
+            },
+            reason,
+          },
+          state.value,
+        );
+        expect(result.classification).toMatchObject({ kind: 'NEW_PRODUCT', previousProductRef: productRef });
+        expect(state.writes).toEqual(['create']);
+      }
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('keeps independent creation free of predecessor lookup', () =>
+    Effect.gen(function* independentCreate() {
+      const state = yield* createContext({ getCurrent: unexpected });
+      const result = yield* handleCreateProduct({}, state.value);
+      expect(result.classification).toEqual({ kind: 'INDEPENDENT_PRODUCT' });
+      expect(state.writes).toEqual(['create']);
+      expect(state.reads).toEqual([]);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 

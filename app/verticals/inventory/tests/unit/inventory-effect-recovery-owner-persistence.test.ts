@@ -11,13 +11,18 @@ import {
   CommitmentProtectionEffectRequestSchema,
   CommitmentProtectionSchema,
   establishCommitmentProtection,
+  markCommitmentProtectionAtRisk,
+  CommitmentProtectionUnavailable,
 } from '../../shared/domain/commitment-protection.ts';
 import type {
   InventoryEffectLedgerIntent,
   InventoryEffectLedgerRecord,
   InventoryEffectLedgerResolution,
 } from '../../shared/domain/inventory-effect-ledger.ts';
-import { InventoryEffectLedgerEffectIdSchema } from '../../shared/domain/inventory-effect-ledger.ts';
+import {
+  InventoryEffectLedgerEffectIdSchema,
+  InventoryEffectLedgerRecordSchema,
+} from '../../shared/domain/inventory-effect-ledger.ts';
 import {
   AlreadyTerminalInventoryEffectResultSchema,
   InventoryEffectRecoveryRejected,
@@ -78,6 +83,7 @@ import {
 } from '../../src/services/inventory-effect-ledger.service.ts';
 import type { ReservationCreateEffectPersistence } from '../../src/services/inventory-reservation-create.service.ts';
 import type { ReservationReleaseEffectPersistence } from '../../src/services/inventory-reservation-release.service.ts';
+import { buildInventoryOwnerAcceptanceBindingCorrectionLineage } from '../support/inventory-owner-acceptance-binding-correction.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -349,8 +355,9 @@ const unusedReleasePersistence: Pick<ReservationReleaseEffectPersistence, 'read'
   read: () => Effect.die('unexpected release recovery'),
   save: () => Effect.die('unexpected release recovery'),
 };
-const unusedProtectionPersistence: Pick<CommitmentProtectionPersistence, 'createOrRead'> = {
+const unusedProtectionPersistence: Pick<CommitmentProtectionPersistence, 'createOrRead' | 'readHistory'> = {
   createOrRead: () => Effect.die('unexpected Protection recovery'),
+  readHistory: () => Effect.die('unexpected Protection history recovery'),
 };
 const unusedPhysicalPersistence: Pick<PhysicalStockEffectPersistence, 'read' | 'saveTerminal'> = {
   read: () => Effect.die('unexpected physical recovery'),
@@ -448,6 +455,277 @@ const physicalScenario = (kind: 'ISSUE' | 'RECEIPT', effectIdValue: string) => {
   });
   return { intent: physicalStockLedgerIntent({ _tag: 'REQUESTED', request }), terminal };
 };
+
+const terminalProtectionScenario = Effect.gen(function* terminalProtectionScenario() {
+  const { protection } = yield* buildInventoryOwnerAcceptanceBindingCorrectionLineage;
+  const request = yield* Schema.decodeUnknownEffect(CommitmentProtectionEffectRequestSchema)({
+    confirmation: protection.confirmation,
+    effectId: protection.authorityEvidence.effectId,
+    legalEntityId,
+    mutationId: '17171717-1717-4717-8717-171717171717',
+    protectionRef: protection.ref,
+    requestedAt: protection.establishedAt,
+    sourceActionInvocationId: '18181818-1818-4818-8818-181818181818',
+  });
+  const record = yield* Schema.decodeUnknownEffect(InventoryEffectLedgerRecordSchema)({
+    currentState: 'SUCCEEDED',
+    effectId: request.effectId,
+    intent: commitmentProtectionLedgerIntent(request),
+    requestedAt: request.requestedAt,
+    resolution: commitmentProtectionLedgerResolution({ _tag: 'PROTECTED', protection, request }),
+    revision: 3,
+    tenantId,
+    updatedAt: '2026-09-25T10:02:00.000Z',
+  });
+  const current = yield* markCommitmentProtectionAtRisk(protection, {
+    _tag: 'BINDING_CORRECTION',
+    correctionEvidenceRef: 'binding-correction:X-to-Y',
+    effectiveAt: '2026-09-25T10:05:00.000Z',
+  });
+  return { current, protection, record };
+});
+
+const terminalProtectionRecovery = (
+  record: InventoryEffectLedgerRecord,
+  current: CommitmentProtection,
+  history: readonly CommitmentProtection[],
+) =>
+  Effect.gen(function* recoverHistoricalProtection() {
+    const protections = yield* makeProtectionPersistence();
+    yield* Ref.set(protections.current, Option.some(current));
+    const service = yield* makeInventoryEffectRecoveryService({
+      authority: { recoverOriginal: () => Effect.die('Terminal recovery must not contact the authority') },
+      ledger: {
+        claim: () => Effect.die('Terminal recovery must not claim an effect'),
+        recover: () => Effect.die('Terminal recovery must not recover the ledger'),
+        transition: () => Effect.die('Terminal recovery must not rewrite the ledger'),
+      },
+      owners: makeRecoveryOwners({
+        protections: { ...protections.persistence, readHistory: () => Effect.succeed(history) },
+      }),
+      records: { read: () => Effect.succeedSome(record) },
+    });
+    const result = yield* service.recover({
+      effectId: record.effectId,
+      expectedKind: 'ESTABLISH_COMMITMENT_PROTECTION',
+      tenantId,
+    });
+    return { current: yield* Ref.get(protections.current), result };
+  });
+
+it.effect('acknowledges historical terminal Protection success after an authentic AT_RISK health revision', () =>
+  Effect.gen(function* terminalProtectionHealth() {
+    const scenario = yield* terminalProtectionScenario;
+    const recovered = yield* terminalProtectionRecovery(scenario.record, scenario.current, [
+      scenario.protection,
+      scenario.current,
+    ]);
+    expect(Schema.is(AlreadyTerminalInventoryEffectResultSchema)(recovered.result)).toBe(true);
+    expect(recovered.result.record).toEqual(scenario.record);
+    expect(recovered.result.effectId).toBe(scenario.record.effectId);
+    expect(recovered.current).toEqual(Option.some(scenario.current));
+    expect(scenario.current.health.state).toBe('AT_RISK');
+    expect(scenario.current.health.reconciliationRequired).toBe(true);
+  }),
+);
+
+it.effect(
+  'retains exact terminal recovery and accepts a later legitimate history append without claiming readiness',
+  () =>
+    Effect.gen(function* terminalHealthHistory() {
+      const scenario = yield* terminalProtectionScenario;
+      const unchanged = yield* terminalProtectionRecovery(scenario.record, scenario.protection, []);
+      expect(unchanged.result.record).toEqual(scenario.record);
+      const latest = yield* markCommitmentProtectionAtRisk(scenario.current, {
+        _tag: 'MATERIAL_IMPAIRMENT',
+        effectiveAt: '2026-09-25T10:06:00.000Z',
+        ownerEvidenceRef: 'later-original-fence-impairment',
+      });
+      const history = [scenario.protection, scenario.current, latest];
+      for (const observed of [scenario.current, latest]) {
+        const recovered = yield* terminalProtectionRecovery(scenario.record, observed, history);
+        expect(Schema.is(AlreadyTerminalInventoryEffectResultSchema)(recovered.result)).toBe(true);
+        expect(recovered.result.record).toEqual(scenario.record);
+        expect(recovered.current).toEqual(Option.some(observed));
+      }
+    }),
+);
+
+it.effect('rejects forged, incomplete or non-monotonic Protection health lineage', () =>
+  Effect.gen(function* invalidTerminalHealthHistory() {
+    const scenario = yield* terminalProtectionScenario;
+    const later = yield* markCommitmentProtectionAtRisk(scenario.current, {
+      _tag: 'MATERIAL_IMPAIRMENT',
+      effectiveAt: '2026-09-25T10:06:00.000Z',
+      ownerEvidenceRef: 'later-health-evidence',
+    });
+    const backward = yield* markCommitmentProtectionAtRisk(scenario.current, {
+      _tag: 'MATERIAL_IMPAIRMENT',
+      effectiveAt: '2026-09-25T10:04:00.000Z',
+      ownerEvidenceRef: 'invalid-backward-observation',
+    });
+    const changedFoundation = {
+      ...scenario.current,
+      authorityEvidence: {
+        ...scenario.current.authorityEvidence,
+        effectId: ReservationAuthorityEffectIdSchema.make('other-effect'),
+      },
+    };
+    const cases: readonly {
+      readonly current: CommitmentProtection;
+      readonly history: readonly CommitmentProtection[];
+    }[] = [
+      { current: scenario.current, history: [] },
+      { current: scenario.current, history: [scenario.current] },
+      { current: scenario.current, history: [scenario.protection, scenario.current, scenario.current] },
+      { current: later, history: [scenario.protection, later] },
+      { current: later, history: [scenario.protection, changedFoundation, later] },
+      { current: backward, history: [scenario.protection, scenario.current, backward] },
+      { current: scenario.current, history: [scenario.protection, { ...scenario.current, health: later.health }] },
+      { current: { ...scenario.current, revision: 50 }, history: [scenario.protection, scenario.current] },
+      {
+        current: { ...scenario.current, health: { ...scenario.current.health, state: 'PROTECTED' } },
+        history: [scenario.protection, scenario.current],
+      },
+    ];
+    for (const candidate of cases) {
+      const failure = yield* terminalProtectionRecovery(scenario.record, candidate.current, candidate.history).pipe(
+        Effect.flip,
+      );
+      expect(Schema.is(InventoryEffectRecoveryRejected)(failure)).toBe(true);
+      expect(failure).toMatchObject({ reason: 'OWNER_STATE_CONFLICT' });
+    }
+  }),
+);
+
+it.effect('requires every immutable Protection foundation field rather than only its UUID', () =>
+  Effect.gen(function* wrongTerminalProtectionFoundation() {
+    const scenario = yield* terminalProtectionScenario;
+    const original = scenario.protection;
+    const foreign = [
+      {
+        ...original,
+        ref: {
+          ...original.ref,
+          resourceId: CommitmentProtectionRefSchema.fields.resourceId.make('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+        },
+      },
+      {
+        ...original,
+        confirmation: {
+          ...original.confirmation,
+          ref: {
+            ...original.confirmation.ref,
+            resourceId: ReservationConfirmationRefSchema.fields.resourceId.make('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),
+          },
+        },
+      },
+      {
+        ...original,
+        authorityEvidence: {
+          ...original.authorityEvidence,
+          issuer: { ...original.authorityEvidence.issuer, backendId: 'other-backend' },
+        },
+      },
+      {
+        ...original,
+        authorityEvidence: {
+          ...original.authorityEvidence,
+          evidence: { ...original.authorityEvidence.evidence, ownerEvidenceRef: 'different-original-proof' },
+        },
+        health: {
+          ...original.health,
+          observation: {
+            _tag: 'ESTABLISHED',
+            effectiveAt: original.establishedAt,
+            ownerEvidenceRef: 'different-original-proof',
+          },
+        },
+      },
+      {
+        ...original,
+        authorityEvidence: {
+          ...original.authorityEvidence,
+          evidence: { ...original.authorityEvidence.evidence, validFrom: '2026-09-25T10:02:00.000Z' },
+        },
+        establishedAt: '2026-09-25T10:02:00.000Z',
+        health: {
+          ...original.health,
+          observation: {
+            _tag: 'ESTABLISHED',
+            effectiveAt: '2026-09-25T10:02:00.000Z',
+            ownerEvidenceRef: original.authorityEvidence.evidence.ownerEvidenceRef,
+          },
+        },
+      },
+    ];
+    const reservationRef = original.confirmation.reservation.ref;
+    const { authority } = original.confirmation.reservation;
+    const scopeChanges = [
+      [original.ref.tenantId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'],
+      [reservationRef.resourceId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2'],
+      [original.confirmation.reservation.origin.attemptId, 'unrelated-attempt'],
+      [authority.configurationId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3'],
+    ] as const;
+    for (const [before, after] of scopeChanges) {
+      const candidate = JSON.parse(JSON.stringify(original).replaceAll(before, after));
+      const foundation = yield* Schema.decodeUnknownEffect(CommitmentProtectionSchema)(candidate);
+      const current = yield* markCommitmentProtectionAtRisk(foundation, {
+        _tag: 'BINDING_CORRECTION',
+        correctionEvidenceRef: 'foreign-foundation-correction',
+        effectiveAt: '2026-09-25T10:05:00.000Z',
+      });
+      const failure = yield* terminalProtectionRecovery(scenario.record, current, [foundation, current]).pipe(
+        Effect.flip,
+      );
+      expect(failure.reason).toBe('OWNER_STATE_CONFLICT');
+    }
+    for (const candidate of foreign) {
+      const foundation = yield* Schema.decodeUnknownEffect(CommitmentProtectionSchema)(candidate);
+      const current = yield* markCommitmentProtectionAtRisk(foundation, {
+        _tag: 'BINDING_CORRECTION',
+        correctionEvidenceRef: 'binding-correction:X-to-Y',
+        effectiveAt: '2026-09-25T10:05:00.000Z',
+      });
+      const failure = yield* terminalProtectionRecovery(scenario.record, current, [foundation, current]).pipe(
+        Effect.flip,
+      );
+      expect(failure).toMatchObject({ reason: 'OWNER_STATE_CONFLICT' });
+    }
+  }),
+);
+
+it.effect('does not relax nonterminal owner application or hide unavailable owner history', () =>
+  Effect.gen(function* nonterminalProtectionReconciliation() {
+    const scenario = yield* terminalProtectionScenario;
+    const protections = yield* makeProtectionPersistence();
+    yield* Ref.set(protections.current, Option.some(scenario.current));
+    const owners = makeRecoveryOwners({
+      protections: {
+        ...protections.persistence,
+        readHistory: () =>
+          Effect.fail(
+            new CommitmentProtectionUnavailable({
+              code: 'commitment_protection_unavailable',
+              effectId: scenario.protection.authorityEvidence.effectId,
+              reason: 'Fixture history unavailable',
+              retryable: true,
+            }),
+          ),
+      },
+    });
+    expect(scenario.record.resolution).not.toBe(null);
+    if (scenario.record.resolution !== null) {
+      const nonterminal = yield* owners
+        .apply({ ...scenario.record, currentState: 'INDETERMINATE', resolution: null }, scenario.record.resolution)
+        .pipe(Effect.flip);
+      expect(nonterminal.reason).toBe('OWNER_STATE_CONFLICT');
+      const unavailable = yield* owners.apply(scenario.record, scenario.record.resolution).pipe(Effect.flip);
+      expect(unavailable.reason).toBe('OWNER_PERSISTENCE_UNAVAILABLE');
+    }
+    expect(Option.getOrThrow(yield* Ref.get(protections.current))).toEqual(scenario.current);
+  }),
+);
 
 describe('Inventory recovery owner persistence', () => {
   it.effect('CAS-applies authoritative create and release outcomes before closing the ledger', () =>

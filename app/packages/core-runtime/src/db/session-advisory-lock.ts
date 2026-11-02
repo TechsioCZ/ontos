@@ -23,7 +23,9 @@ export const withPostgresSessionAdvisoryLock = <Value, Failure, Requirements>(
 ) =>
   Effect.scoped(
     Effect.gen(function* sessionAdvisoryLock() {
-      const context = yield* Layer.build(guardedPgClientLayer(connectionString, 1)).pipe(
+      const context = yield* Layer.build(
+        guardedPgClientLayer(connectionString, { maxConnections: 1, pooling: 'private' }),
+      ).pipe(
         Effect.mapError(
           (cause) =>
             new SessionAdvisoryLockUnavailable({ cause, reason: 'Unable to acquire the advisory-lock session' }),

@@ -93,5 +93,5 @@ export const quantityBasisCompatibilityRead = defineRead(
     }),
   },
   (transaction, scope) => Effect.succeed(catalogQuantityHandoffForScope(transaction, scope)),
-  () => ({ kind: 'module', moduleId: 'commerce.catalog' }),
+  ({ handoff }) => ({ kind: 'resource', resource: handoff.selection.productRef }),
 );

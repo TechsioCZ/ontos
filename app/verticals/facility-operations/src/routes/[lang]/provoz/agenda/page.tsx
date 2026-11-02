@@ -160,6 +160,10 @@ const useAgendaView = ({ context }: { readonly context: ModulePageContext | unde
       deliverNotifications(false, deliveryContext).pipe(
         Effect.tap((result) =>
           Effect.sync(() => {
+            if (result.failed === true) {
+              toast.create({ title: t('facility-operations.common.errors.unavailable'), type: 'error' });
+              return;
+            }
             if (result.delivered > 0) {
               toast.create({ title: t(`${k}.notifications.newToast`, { count: result.delivered }), type: 'info' });
             }

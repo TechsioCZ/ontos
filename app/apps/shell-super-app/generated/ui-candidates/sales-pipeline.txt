@@ -16,6 +16,7 @@
 -mx-100
 [&_label]:text-label-sm
 block
+blur
 border-border-primary
 border-t
 filter
@@ -57,7 +58,6 @@ min-h-0
 min-w-0
 min-w-28
 outline
-overflow-x-auto
 overflow-y-auto
 p-100
 p-150

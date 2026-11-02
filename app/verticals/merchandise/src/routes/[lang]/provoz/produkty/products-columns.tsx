@@ -2,9 +2,32 @@ import { formatMoney, formatNumber } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
+import type { ProductId } from '../../../../../shared/domain/merchandise-model.ts';
 import { TagsCell, formatKc } from '../../../../list-cells.tsx';
 import type { TagsOf } from '../../../../tags/subject-tags.ts';
-import { AvailabilityBadge, imageUrl } from './product-eshop.tsx';
+import { AvailabilityBadge } from './product-eshop.tsx';
+import { useImageSource } from './product-image-source.ts';
+
+/** The product's main image as a small list thumbnail; nothing while it loads or when nothing can serve it. */
+const ProductThumbnail = ({ image, productId }: { readonly image: string; readonly productId: ProductId }) => {
+  const source = useImageSource(productId, image, 'thumbnail');
+  return source.status === 'ready' ? (
+    <img
+      alt=""
+      className="shrink-0 rounded-sm border border-border-primary object-cover"
+      height={32}
+      loading="lazy"
+      onError={(event) => {
+        event.currentTarget.style.visibility = 'hidden';
+      }}
+      src={source.src}
+      style={{ height: 32, objectFit: 'cover', width: 32 }}
+      width={32}
+    />
+  ) : (
+    <span aria-hidden="true" className="inline-block size-8 shrink-0 rounded-sm bg-fg-secondary/10" />
+  );
+};
 
 /** Czech plural of „varianta“ for a count. */
 const variantNoun = (count: number) => {
@@ -35,20 +58,7 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
       const variantsLabel = variants > 0 ? `${formatNumber(variants)} ${variantNoun(variants)}` : null;
       return (
         <span className="flex min-w-0 items-center gap-100">
-          {image !== undefined && imageUrl(image) !== undefined && (
-            <img
-              alt=""
-              className="shrink-0 rounded-sm border border-border-primary object-cover"
-              height={32}
-              loading="lazy"
-              onError={(event) => {
-                event.currentTarget.style.visibility = 'hidden';
-              }}
-              src={imageUrl(image)}
-              style={{ height: 32, objectFit: 'cover', width: 32 }}
-              width={32}
-            />
-          )}
+          {image !== undefined && <ProductThumbnail image={image} productId={product.id} />}
           <span className="flex min-w-0 flex-col">
             <span className="truncate">{product.name}</span>
             {(variants > 0 || product.published === false) && (

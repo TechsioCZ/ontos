@@ -12,7 +12,6 @@ import {
   ReservationReleaseCommittedTruthSchema,
   ReservationReleaseNotCommittedOpenTruthSchema,
   ReservationReleaseOrderIndeterminateTruthSchema,
-  ReservationReleaseProtectionEstablishedTruthSchema,
   ReservationReleaseProtectionIndeterminateTruthSchema,
   ReleasedReservationEffectSchema,
   WholeReservationReleaseScopeSchema,
@@ -470,17 +469,6 @@ export const makeInventoryReservationReleaseExecutionService = (dependencies: {
     }
 
     const protectionTruth = yield* dependencies.protectionTruth.read(authoritativeRequest.reservation);
-    if (Schema.is(ReservationReleaseProtectionEstablishedTruthSchema)(protectionTruth)) {
-      yield* advance(dependencies, ledgerRecord.record, current, {
-        _tag: 'NOT_RELEASABLE',
-        evidenceRef: protectionTruth.evidenceRef,
-        observedAt: protectionTruth.observedAt,
-        reason: 'PROTECTION_ESTABLISHED',
-        request: authoritativeRequest,
-        safelyReusable: false,
-      });
-      return yield* Effect.void;
-    }
     if (Schema.is(ReservationReleaseProtectionIndeterminateTruthSchema)(protectionTruth)) {
       yield* advance(dependencies, ledgerRecord.record, current, {
         _tag: 'INDETERMINATE',

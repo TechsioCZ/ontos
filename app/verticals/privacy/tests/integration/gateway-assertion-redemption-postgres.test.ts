@@ -1,12 +1,13 @@
 import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import {
   ActiveApplicationCompositionService,
+  DatabaseConfig,
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
+  loadDatabaseConnectionPair,
 } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
-import { PgClient } from '@effect/sql-pg';
 import { ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
 import { GatewayPrincipalVerifierLive } from '@app/gateway-principal-verifier/server';
 import { expect, it } from 'effect-rstest';
@@ -14,12 +15,19 @@ import { expect, it } from 'effect-rstest';
 import { testDatabaseClients } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { ActionPrincipalScopeErrorSchema, verifyActionPrincipal } from '../../api/auth/action-principal.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
-import { GatewayAssertionRedemptionLive } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  GatewayAssertionRedemptionLive,
+} from '../../src/auth/gateway-assertion-redemption-runtime.ts';
 
 const withRedemption = Effect.gen(function* acquirePrivacyRedemption() {
-  const { admin, runtime } = yield* testDatabaseClients;
+  const { admin } = yield* testDatabaseClients;
+  const connections = yield* loadDatabaseConnectionPair();
   const services = yield* Layer.build(
-    GatewayAssertionRedemptionLive.pipe(Layer.provide(Layer.succeed(PgClient.PgClient, runtime))),
+    GatewayAssertionRedemptionLive.pipe(
+      Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+      Layer.provide(Layer.succeed(DatabaseConfig, connections.runtime)),
+    ),
   );
   const redemption = Context.get(services, GatewayAssertionRedemptionService);
   const issuer = `https://privacy-redemption.ontos.test/${randomUUID()}`;

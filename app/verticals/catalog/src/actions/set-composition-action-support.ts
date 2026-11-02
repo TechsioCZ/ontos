@@ -10,6 +10,7 @@ import type {
 } from '../persistence/set-composition-persistence.ts';
 import { setCompositionPersistenceForScope } from '../persistence/set-composition-persistence.ts';
 import { setCompositionComponentCurrentBasisForScope } from '../persistence/set-composition-component-current-basis.ts';
+import type { CartOpenSelectionPopulationPort } from '../../shared/domain/catalog-open-selection-population.ts';
 import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
 import { setCompositionSelectionImpactForScope } from '../persistence/catalog-selection-change-impact.ts';
 
@@ -28,8 +29,11 @@ export const setCompositionBasisForScope = (transaction: ScopedTransaction, scop
 };
 
 export const setCompositionPersistenceServiceFactory = Effect.fn('SetCompositionActionSupport.makePersistence')(
-  function* makeSetCompositionPersistence(transaction: ScopedTransaction, scope: Scope) {
-    const configuredPopulation = yield* cartOpenSelectionPopulationFromEnvironment;
+  function* makeSetCompositionPersistence(
+    transaction: ScopedTransaction,
+    { population, scope }: { readonly population?: CartOpenSelectionPopulationPort | undefined; readonly scope: Scope },
+  ) {
+    const configuredPopulation = population ?? (yield* cartOpenSelectionPopulationFromEnvironment);
     return setCompositionPersistenceForScope(
       transaction,
       scope,

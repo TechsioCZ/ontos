@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useDictionary } from "@/ontos/market-context";
 import { useRef, useState } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { toaster } from "@techsio/ui-kit/molecules/toast";
@@ -23,6 +24,7 @@ export function FavoriteButton({
   variantId?: string | null;
   placement?: "card" | "detail" | "action";
 }) {
+  const cs = useDictionary();
   const { favorites, ready } = useFavorites();
   const saved = favorites.filter((item) => item.productId === productId);
   const concrete = variantId !== undefined;
@@ -57,7 +59,9 @@ export function FavoriteButton({
     }
   }
   const label = concrete
-    ? `${selected ? "Odebrat" : "Uložit"} ${productName} ${selected ? "z" : "do"} oblíbených`
+    ? selected
+      ? cs.product.removeFavorite(productName)
+      : cs.product.saveFavorite(productName)
     : `Vybrat oblíbené varianty: ${productName}, uloženo ${saved.length}`;
   return (
     <>

@@ -1,3 +1,4 @@
+import { selectItem } from '../../../ui/select-item.ts';
 import { ActivityRefSchema } from '../../../../shared/resources/activity.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
@@ -16,7 +17,7 @@ import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { loadCounterpartiesClient, executeCounterpartyRead } from '@app/party-registry/api/client';
 import { executeRecords as executeWorkRecords } from '@app/work-tasks/clients/records';
-import { executeRecords } from '../../../api/records-client.ts';
+import { executeRecords } from '../../../api/records-consumer.ts';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
 import type { Activity, RecordsResponse } from '../../../../shared/apis/records.ts';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -37,6 +38,8 @@ type FollowUpFields = Types.Mutable<Pick<ActivityCommand, 'followUpTaskRef'>>;
 type Counterparties = Effect.Success<ReturnType<typeof loadCounterpartiesClient>>;
 type Tasks = Effect.Success<ReturnType<typeof executeWorkRecords>>['items'];
 type Card = Effect.Success<ReturnType<typeof executeCounterpartyRead>>;
+/** Governed records reads (activities and Work Tasks) share the generated read problems. */
+type LoadError = Effect.Error<ReturnType<typeof executeRecords>>;
 
 /** The activity list a page shows: the person's legal entity and the optional `resourceId` from the query. */
 interface ActivitiesInput {
@@ -66,6 +69,13 @@ const activities = definePageData({
   runtime: browserRuntime,
 });
 
+/** Tasks an activity can follow up: loaded once the record form is shown, revalidated after writes. */
+const followUpTasks = definePageData({
+  key: (legalEntityId: string) => legalEntityId,
+  load: (_legalEntityId: string) => requestId.pipe(Effect.flatMap((id) => executeWorkRecords({}, id))),
+  runtime: browserRuntime,
+});
+
 export const preloadPage = modulePagePreload((props) =>
   activities.preload({ legalEntityId: props.context?.legalEntityId ?? '', resourceId: resourceIdOf(props.search) }),
 );
@@ -82,23 +92,34 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
   useEffect(() => activities.ensure({ legalEntityId, resourceId }), [legalEntityId, resourceId]);
   const records: RecordsResponse | undefined = snapshot.state === 'ready' ? snapshot.value : undefined;
   const refreshing = snapshot.state !== 'pending' && snapshot.refreshing;
-  const loadFailure =
-    snapshot.state === 'failed'
-      ? Match.value(snapshot.error).pipe(
-          Match.tag('RecordsForbiddenProblem', () => t(`${key}.forbidden`)),
-          Match.orElse(() => t(`${key}.unavailable`)),
-        )
-      : '';
+  const canWrite = records?.canWrite === true;
+  const tasksSnapshot = useSyncExternalStore(
+    followUpTasks.subscribe,
+    () => followUpTasks.snapshot(legalEntityId),
+    () => pageDataPending,
+  );
+  useEffect(() => {
+    if (canWrite) {
+      followUpTasks.ensure(legalEntityId);
+    }
+  }, [canWrite, legalEntityId]);
+  const tasks: Tasks = tasksSnapshot.state === 'ready' ? tasksSnapshot.value.items : [];
+  const failureText = (error: LoadError) =>
+    Match.value(error).pipe(
+      Match.tag('RecordsForbiddenProblem', () => t(`${key}.forbidden`)),
+      Match.orElse(() => t(`${key}.unavailable`)),
+    );
+  const loadFailure = snapshot.state === 'failed' ? failureText(snapshot.error) : '';
+  const tasksFailure = canWrite && tasksSnapshot.state === 'failed' ? failureText(tasksSnapshot.error) : '';
   const [summary, setSummary] = useState('');
   const [query, setQuery] = useState('');
   const [counterparties, setCounterparties] = useState<Counterparties>([]);
-  const [tasks, setTasks] = useState<Tasks>([]);
   const [counterpartyId, setCounterpartyId] = useState<string[]>([]);
   const [taskId, setTaskId] = useState<string[]>([]);
   const [card, setCard] = useState<Card>();
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState('');
-  const refresh = () => {
+  const retry = () => {
     setMessage('');
     void browserRuntime.runPromise(activities.refresh(input));
   };
@@ -120,31 +141,6 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
           },
           onSuccess: (result) => {
             setCounterparties(result);
-            setPending(false);
-          },
-        }),
-      ),
-    );
-  };
-  const loadTasks = () => {
-    setPending(true);
-    void browserRuntime.runPromise(
-      requestId.pipe(
-        Effect.flatMap((id) => executeWorkRecords({}, id)),
-        Effect.match({
-          onFailure: (error) => {
-            setTasks([]);
-            setTaskId([]);
-            setPending(false);
-            setMessage(
-              Match.value(error).pipe(
-                Match.tag('RecordsForbiddenProblem', () => t(`${key}.forbidden`)),
-                Match.orElse(() => t(`${key}.unavailable`)),
-              ),
-            );
-          },
-          onSuccess: (result) => {
-            setTasks(result.items);
             setPending(false);
           },
         }),
@@ -242,21 +238,21 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
       ),
     );
   };
-  const partyItems = counterparties.map((item) => ({ label: item.party.title, value: item.ref.resourceId }));
-  const taskItems = tasks.map((item) => ({ label: item.title, value: item.ref.resourceId }));
+  const partyItems = counterparties.map((item) => selectItem(item.ref.resourceId, item.party.title));
+  const taskItems = tasks.map((item) => selectItem(item.ref.resourceId, item.title));
   return {
     card,
     counterpartyId,
     findCounterparty,
     key,
     language,
-    loadTasks,
-    message: message === '' ? loadFailure : message,
+    loadFailed: snapshot.state === 'failed',
+    message: [message, loadFailure, tasksFailure].find((text) => text !== '') ?? '',
     partyItems,
     pending: pending || refreshing,
     query,
     records,
-    refresh,
+    retry,
     save,
     setCounterpartyId,
     setQuery,
@@ -277,13 +273,13 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
     findCounterparty,
     key,
     language,
-    loadTasks,
+    loadFailed,
     message,
     partyItems,
     pending,
     query,
     records,
-    refresh,
+    retry,
     save,
     setCounterpartyId,
     setQuery,
@@ -309,13 +305,15 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
             </h1>
             <p className="crmactivities:text-sm crmactivities:text-(--color-fg-secondary)">{t(`${key}.intro`)}</p>
           </div>
-          <Button disabled={pending} onClick={refresh} size="sm" theme="outlined" variant="secondary">
-            {t(`${key}.refresh`)}
-          </Button>
         </header>
         <output aria-live="polite" className="crmactivities:block crmactivities:text-sm">
           {message}
         </output>
+        {loadFailed && (
+          <Button disabled={pending} onClick={retry} size="sm" theme="outlined" variant="secondary">
+            {t(`${key}.retry`)}
+          </Button>
+        )}
         {records !== undefined && (
           <>
             <div className="crmactivities:overflow-x-auto">
@@ -486,16 +484,6 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                       </Select>
                     </div>
                     <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base crmactivities:space-y-4 crmactivities:p-4">
-                      <Button
-                        disabled={pending}
-                        onClick={loadTasks}
-                        size="sm"
-                        theme="outlined"
-                        type="button"
-                        variant="secondary"
-                      >
-                        {t(`${key}.loadTasks`)}
-                      </Button>
                       <Select items={taskItems} onValueChange={({ value }) => setTaskId(value)} value={taskId}>
                         <Select.Label>{t(`${key}.followUp`)}</Select.Label>
                         <Select.Control>

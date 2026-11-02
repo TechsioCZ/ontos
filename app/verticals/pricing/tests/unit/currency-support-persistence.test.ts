@@ -2,12 +2,14 @@ import {
   CurrentSupportedCurrenciesRequestSchema,
   CurrentSupportedCurrenciesSuccessSchema,
 } from '@app/pricing-contracts/current-supported-currencies';
-import { PersistenceFailure } from '@app/core-runtime';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import { scopedRoutineInvokerFromTransaction, PersistenceFailure } from '@app/core-runtime';
 import { SetSupportedCurrenciesV2PayloadSchema } from '@app/pricing-contracts/domain/currency-support';
 import { DateTime, Effect, Match, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
+  currencySupportPersistence,
   currencySupportCanonicalIdempotencyIntentWire,
   currencySupportRecoveryCompensationCommandWire,
   currencySupportSetCommandWire,
@@ -123,6 +125,158 @@ const currentnessEvidenceOf = (outcome: CurrencySupportReadOutcome) =>
   );
 
 describe('Tenant Currency Support persistence decoding', () => {
+  it.effect('reads genuine future admission state without issuing a future Current proof (#1278)', () =>
+    Effect.gen(function* futureCanonicalAdmission() {
+      const futureAt = '2026-10-02T12:00:00.000Z';
+      const futureRequest = { ...request, effectiveAt: futureAt };
+      const future = {
+        ...current,
+        effectiveFrom: '2026-10-01T00:00:00.000Z',
+        effectiveTo: '2026-11-01T00:00:00.000Z',
+        supportRevisionId: futureRevisionId,
+      };
+      const revalidated = {
+        activeRevisionCount: 1,
+        current,
+        evaluatedAt: observedAt,
+        evaluationMode: 'CURRENT_WITH_REVALIDATION',
+        observedAt,
+        outcome: 'CURRENCY_SUPPORT_CURRENT',
+        revalidatedAt,
+        schedule: { current, future: [future], revisions: [current, future] },
+        scheduleRevision: 5,
+        supportId,
+      };
+      const historical = {
+        activeRevisionCount: 1,
+        current: future,
+        evaluatedAt: futureAt,
+        evaluationMode: 'HISTORICAL_AS_OF',
+        observedAt,
+        outcome: 'CURRENCY_SUPPORT_CURRENT',
+        schedule: { current: future, future: [], revisions: [current, future] },
+        scheduleRevision: 5,
+        supportId,
+      };
+      const cases = [
+        { currencies: ['CZK'], payload: historical, tag: 'current' },
+        {
+          currencies: ['EUR'],
+          payload: {
+            ...historical,
+            current: { ...future, supportedCurrencies: ['EUR'] },
+            schedule: {
+              current: { ...future, supportedCurrencies: ['EUR'] },
+              future: [],
+              revisions: [current, { ...future, supportedCurrencies: ['EUR'] }],
+            },
+          },
+          tag: 'current',
+        },
+        {
+          currencies: [],
+          payload: {
+            activeRevisionCount: 0,
+            evaluatedAt: futureAt,
+            evaluationMode: 'HISTORICAL_AS_OF',
+            observedAt,
+            outcome: 'CURRENCY_SUPPORT_GAP',
+          },
+          tag: 'gap',
+        },
+        {
+          currencies: [],
+          payload: {
+            activeRevisionCount: 0,
+            evaluatedAt: futureAt,
+            evaluationMode: 'HISTORICAL_AS_OF',
+            observedAt,
+            outcome: 'CURRENCY_SUPPORT_ABSENT',
+          },
+          tag: 'absent',
+        },
+      ] as const;
+      for (const testCase of cases) {
+        const statements: string[] = [];
+        const transaction = scopedRoutineInvokerFromTransaction(
+          (statement) => {
+            statements.push(new PgDialect().sqlToQuery(statement).sql);
+            return Effect.succeed([{ payload: statements.length === 1 ? testCase.payload : revalidated }]);
+          },
+          { tenantId: request.tenantId },
+        );
+        const persistence = currencySupportPersistence(
+          transaction,
+          request.tenantId,
+          establishCommand.actingPrincipalId,
+        );
+        const result = yield* persistence.loadForCanonicalAdmission(futureRequest);
+        expect(tagOf(result)).toBe(testCase.tag);
+        Match.value(result).pipe(
+          Match.tag('current', ({ current: retained }) => {
+            expect(retained.supportedCurrencies).toEqual(testCase.currencies);
+            expect(retained.currentnessEvidence).toMatchObject({
+              evaluatedAt: futureAt,
+              evaluationMode: 'HISTORICAL_AS_OF',
+              observedAt,
+              supportRevisionRef: supportRevisionRef(futureRevisionId),
+            });
+            expect(retained).not.toHaveProperty('verificationRef');
+            expect(retained).not.toHaveProperty('factProofs');
+            return true;
+          }),
+          Match.orElse(() => false),
+        );
+        expect(statements).toHaveLength(2);
+        expect(statements[0]).toContain('read_tenant_currency_support_v1');
+        expect(statements[1]).toContain('revalidate_tenant_currency_support_v1');
+        expect(statements.join(' ')).not.toContain('issue_tenant_currency_support_proof_v1');
+      }
+      const transaction = scopedRoutineInvokerFromTransaction(
+        () => Effect.succeed([{ payload: { ...historical, evaluatedAt: effectiveAt } }]),
+        { tenantId: request.tenantId },
+      );
+      const failure = yield* currencySupportPersistence(
+        transaction,
+        request.tenantId,
+        establishCommand.actingPrincipalId,
+      )
+        .loadForCanonicalAdmission(futureRequest)
+        .pipe(Effect.flip);
+      expect(failure).toBeInstanceOf(PersistenceFailure);
+    }),
+  );
+
+  it.effect('accepts the native omitted open-ended boundary and rejects a malformed supplied boundary (#1279)', () =>
+    Effect.gen(function* nativeOptionalCurrencyBoundary() {
+      const open = { ...current, effectiveTo: null };
+      const payload = {
+        activeRevisionCount: 1,
+        current: open,
+        evaluatedAt: effectiveAt,
+        evaluationMode: 'HISTORICAL_AS_OF',
+        observedAt,
+        outcome: 'CURRENCY_SUPPORT_CURRENT',
+        schedule: { current: open, future: [], revisions: [open] },
+        scheduleRevision: 5,
+        supportId,
+      };
+      const native = yield* decodeTenantCurrencySupportRead(payload, request, 'HISTORICAL_AS_OF');
+      expect(tagOf(native)).toBe('current');
+      const retained = Match.value(native).pipe(
+        Match.tag('current', ({ current: value }) => value),
+        Match.orElse(() => null),
+      );
+      expect(retained).not.toHaveProperty('nextApplicabilityBoundary');
+      const malformed = yield* decodeTenantCurrencySupportRead(
+        { ...payload, nextApplicabilityBoundary: 'not-an-instant' },
+        request,
+        'HISTORICAL_AS_OF',
+      ).pipe(Effect.flip);
+      expect(malformed).toBeInstanceOf(PersistenceFailure);
+    }),
+  );
+
   it.effect('maps one exact Tenant root and real currentness evidence without fabricating state', () =>
     Effect.gen(function* currentRoot() {
       const result = yield* decodeTenantCurrencySupportRead(

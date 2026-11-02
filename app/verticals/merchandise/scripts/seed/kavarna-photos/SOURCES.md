@@ -1,0 +1,35 @@
+# Kavárna Doma seed photos
+
+Product photos for the Kavárna Doma demo catalog, uploaded into Core Media by
+`pnpm demo:seed:product-images --company kavarna --apply`. Each `<slug>.jpg` is the full image (longest side
+at most 1280 px) and `<slug>.thumb.jpg` its 480 px thumbnail. Every source is from Wikimedia Commons and is
+in the public domain or dedicated to it under CC0, so no attribution is required; the sources are listed for
+traceability.
+
+| Product slug           | Wikimedia Commons file                                                                                                                                                                                | License       |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| aeropress              | [No Right Way to Do It (Unsplash).jpg](<https://commons.wikimedia.org/wiki/File:No_Right_Way_to_Do_It_(Unsplash).jpg>)                                                                                | CC0           |
+| bialetti-moka          | [Moka Pot (55013301353).jpg](<https://commons.wikimedia.org/wiki/File:Moka_Pot_(55013301353).jpg>)                                                                                                    | CC0           |
+| brazilie-santos        | [Coffee-Beans.jpg](https://commons.wikimedia.org/wiki/File:Coffee-Beans.jpg)                                                                                                                          | CC0           |
+| brazilie-turecka       | [Turkish coffee - Olea 2025-08-17.jpg](https://commons.wikimedia.org/wiki/File:Turkish_coffee_-_Olea_2025-08-17.jpg)                                                                                  | CC0           |
+| cajova-kazeta          | [Tea box, designer and maker unknown - Bröhan Museum, Berlin - DSC03910.JPG](https://commons.wikimedia.org/wiki/File:Tea_box,_designer_and_maker_unknown_-_Br%C3%B6han_Museum,_Berlin_-_DSC03910.JPG) | Public domain |
+| darjeeling-first-flush | [Loose leaf darjeeling tea twinings.jpg](https://commons.wikimedia.org/wiki/File:Loose_leaf_darjeeling_tea_twinings.jpg)                                                                              | Public domain |
+| darkova-sada-objevitel | [State Gifts Coffee Service.JPG](https://commons.wikimedia.org/wiki/File:State_Gifts_Coffee_Service.JPG)                                                                                              | Public domain |
+| earl-grey              | [Lipton-mug-tea.jpg](https://commons.wikimedia.org/wiki/File:Lipton-mug-tea.jpg)                                                                                                                      | Public domain |
+| espresso-domaci-smes   | [Espresso BW 1.jpg](https://commons.wikimedia.org/wiki/File:Espresso_BW_1.jpg)                                                                                                                        | Public domain |
+| espresso-mleta         | [Coffee-206142.jpg](https://commons.wikimedia.org/wiki/File:Coffee-206142.jpg)                                                                                                                        | CC0           |
+| etiopie-yirgacheffe    | [Roasted coffee beans.jpg](https://commons.wikimedia.org/wiki/File:Roasted_coffee_beans.jpg)                                                                                                          | Public domain |
+| filtry-v60             | [Coffee-filter.jpg](https://commons.wikimedia.org/wiki/File:Coffee-filter.jpg)                                                                                                                        | Public domain |
+| guatemala-antigua      | [Equal Exchange coffee beans.jpg](https://commons.wikimedia.org/wiki/File:Equal_Exchange_coffee_beans.jpg)                                                                                            | CC0           |
+| hario-v60              | [Manual drip (pour-over) coffee.jpg](<https://commons.wikimedia.org/wiki/File:Manual_drip_(pour-over)_coffee.jpg>)                                                                                    | CC0           |
+| kena-aa-nyeri          | [Roasted coffee beans (Unsplash).jpg](<https://commons.wikimedia.org/wiki/File:Roasted_coffee_beans_(Unsplash).jpg>)                                                                                  | CC0           |
+| kolumbie-decaf-mleta   | [Ashtray with coffee grounds.jpg](https://commons.wikimedia.org/wiki/File:Ashtray_with_coffee_grounds.jpg)                                                                                            | CC0           |
+| kolumbie-huila         | [Coffee Beans, color (28183654506).jpg](<https://commons.wikimedia.org/wiki/File:Coffee_Beans,_color_(28183654506).jpg>)                                                                              | CC0           |
+| konvice-gooseneck      | [Drip brewing (Unsplash).jpg](<https://commons.wikimedia.org/wiki/File:Drip_brewing_(Unsplash).jpg>)                                                                                                  | CC0           |
+| matcha-uji             | [Iced Matcha Tea (small) - GAIL's Bakery 2026-05-23.jpg](<https://commons.wikimedia.org/wiki/File:Iced_Matcha_Tea_(small)_-_GAIL%27s_Bakery_2026-05-23.jpg>)                                          | CC0           |
+| rooibos-vanilka        | [Cup of rooibos tea (23427608102).jpg](<https://commons.wikimedia.org/wiki/File:Cup_of_rooibos_tea_(23427608102).jpg>)                                                                                | CC0           |
+| rwanda-nyamasheke      | [Coffee-cherries-green-coffee-tarrazu-costa-rica.jpg](https://commons.wikimedia.org/wiki/File:Coffee-cherries-green-coffee-tarrazu-costa-rica.jpg)                                                    | Public domain |
+| sada-domaci-barista    | [Chemex (Unsplash).jpg](<https://commons.wikimedia.org/wiki/File:Chemex_(Unsplash).jpg>)                                                                                                              | CC0           |
+| sencha-kagoshima       | [Green tea 3 appearances.jpg](https://commons.wikimedia.org/wiki/File:Green_tea_3_appearances.jpg)                                                                                                    | CC0           |
+| snidanova-smes         | [Coffee-morning-breakfast-croissant (24300690486).jpg](<https://commons.wikimedia.org/wiki/File:Coffee-morning-breakfast-croissant_(24300690486).jpg>)                                                | CC0           |
+| timemore-c3            | [Coffee grinder with coffee.jpg](https://commons.wikimedia.org/wiki/File:Coffee_grinder_with_coffee.jpg)                                                                                              | CC0           |

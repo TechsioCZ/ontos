@@ -17,20 +17,20 @@
   },
   "scripts": {
     "test:unit": "rstest --project unit",
-    "test:integration": "rstest --project integration",
-    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
+    "test:integration": "rstest --project integration"
   },
   "dependencies": {
+    "effect": "4.0.7",
     "@app/shared-contracts": "workspace:*",
-    "effect": "4.0.5",
-    "@effect/sql-pg": "4.0.5"
+    "@effect/sql-pg": "4.0.7"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20260923.1",
     "@rstest/core": "0.11.12",
     "@types/node": "^26.4.1",
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
-    "@effect/platform-node": "4.0.5"
+    "@cloudflare/workers-types": "5.20260923.1",
+    "@effect/platform-node": "4.0.7"
   },
   "imports": {
     "#email-transport": {

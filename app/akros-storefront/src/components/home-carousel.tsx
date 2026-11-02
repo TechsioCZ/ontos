@@ -5,10 +5,11 @@ import StoreLink from "@/components/store-link";
 import { useRef, useState } from "react";
 import { Carousel } from "@techsio/ui-kit/molecules/carousel";
 
-import { cs } from "@/i18n/cs";
+import { useDictionary } from "@/ontos/market-context";
 import { homeCarouselSlides } from "@/content/home-carousel";
 
 export function HomeCarousel() {
+  const cs = useDictionary();
   const [activePage, setActivePage] = useState(0);
   const wasDragged = useRef(false);
   const slides = homeCarouselSlides.map((slide, index) => {

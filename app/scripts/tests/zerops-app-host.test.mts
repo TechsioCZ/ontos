@@ -1,7 +1,14 @@
-import { Option } from 'effect';
+import { Effect, Option, Ref } from 'effect';
+import { HttpServerRequest } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
-import { derivedEnvironment, processEnvironment, routeRequest } from '../zerops/app-host.mts';
+import {
+  derivedEnvironment,
+  finiteProcessEnvironment,
+  hostApplication,
+  processEnvironment,
+  routeRequest,
+} from '../zerops/app-host.mts';
 import { hostedUnits } from '../zerops/hosted-units.mts';
 import type { ReleaseIntent, Topology } from '../zerops/hosted-units.mts';
 import { ownerEntrySource } from '../zerops/owner-entry.mts';
@@ -11,6 +18,28 @@ const SHELL_ID = 'shell-super-app';
 const ORIGIN = 'https://ontos.example.com';
 const DIST = '/abs/app/dist';
 const resolvePackage = (specifier: string) => `/abs/app/node_modules/${specifier}/index.js`;
+
+it.effect('rejects credential URLs and native login POSTs at the public host before forwarding to any owner', () =>
+  Effect.gen(function* publicCredentialGuard() {
+    const published = yield* Ref.make(false);
+    for (const [method, path] of [
+      ['GET', '/cs/login?login=x&password=y'],
+      ['GET', '/shell-super-app-api/oauth?client_secret=y'],
+      ['GET', '/_m/crm/private?api_key=y'],
+      ['POST', '/en/login'],
+    ] as const) {
+      const response = yield* hostApplication(new Map(), published, Effect.succeed(Option.none())).pipe(
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(new Request(`https://stage.test${path}`, { method })),
+        ),
+      );
+      expect(response.status).toBe(303);
+      expect(response.headers.location).toBe(path.startsWith('/en/') ? '/en/login' : '/cs/login');
+      expect(response.headers['referrer-policy']).toBe('no-referrer');
+    }
+  }),
+);
 
 const topology: Topology = {
   shell: { path: 'app/shell' },
@@ -87,12 +116,34 @@ describe('routeRequest', () => {
     expect(Option.getOrUndefined(routeRequest('/_m/crm', owners))).toEqual({ path: '/', port: 4125 });
   });
 
+  it('keeps owner document routes reachable for lazy rendering', () => {
+    expect(Option.getOrUndefined(routeRequest('/_m/crm/cs', owners))).toEqual({ path: '/cs', port: 4125 });
+  });
+
   it('returns none for an unknown app id', () => {
     expect(Option.isNone(routeRequest('/_m/unknown/x', owners))).toBe(true);
   });
 
   it('returns none for a module path that names the Shell', () => {
     expect(Option.isNone(routeRequest('/_m/shell-super-app/x', owners))).toBe(true);
+  });
+});
+
+describe('finiteProcessEnvironment', () => {
+  it('keeps one-shot migrators and verifiers on private pools even when the supervisor shares pools', () => {
+    const environment = finiteProcessEnvironment({
+      MIGRATOR_ONCE: 'true',
+      ONTOS_DATABASE_POOL_SHARED: 'true',
+    });
+    expect(environment.ONTOS_DATABASE_POOL_SHARED).toBe('false');
+    expect(environment.MIGRATOR_ONCE).toBe('true');
+  });
+
+  it('overrides inherited sharing without changing other operator settings', () => {
+    expect(finiteProcessEnvironment({ MIGRATOR_ONCE: 'true' })).toEqual({
+      MIGRATOR_ONCE: 'true',
+      ONTOS_DATABASE_POOL_SHARED: 'false',
+    });
   });
 });
 
@@ -141,15 +192,61 @@ describe('processEnvironment', () => {
 });
 
 const STOREFRONT = 'https://akros.example';
+/** Owner runtime keys are derived from the shared configuration, so read them as entries of the overlay. */
+const derivedValue = (derived: ReturnType<typeof derivedEnvironment>, key: string) =>
+  new Map<string, unknown>(Object.entries(derived)).get(key);
 
 describe('derivedEnvironment', () => {
+  it('uses immutable release metadata without compression probes or production debug request logs', () => {
+    const derivedValues = derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map());
+    expect(derivedValues.MODERN_SERVER_IMMUTABLE_ASSETS).toBe('true');
+    expect(derivedValues.MODERN_SERVER_PRECOMPRESSED_ASSETS).toBe('false');
+    expect(derivedValues.MODERN_SERVER_LOG_LEVEL).toBe('info');
+    const secrets = {
+      crm: { MODERN_SERVER_IMMUTABLE_ASSETS: 'false' },
+      [PARTY_REGISTRY]: { MODERN_SERVER_IMMUTABLE_ASSETS: 'different' },
+    };
+    const hosted = processEnvironment(['crm', PARTY_REGISTRY], secrets, derivedValues);
+    expect(hosted.conflicts).toEqual([]);
+    expect(hosted.environment.MODERN_SERVER_IMMUTABLE_ASSETS).toBe('true');
+  });
+
   it('uses the public origin as the issuer and auth URL', () => {
     const derivedValues = derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map([['price-group-catalog', 4204]]));
     expect(derivedValues.ONTOS_GATEWAY_ISSUER).toBe(ORIGIN);
     expect(derivedValues.BETTER_AUTH_URL).toBe(ORIGIN);
     expect(derivedValues.ONTOS_OAUTH_ISSUER).toBe(`${ORIGIN}/shell-super-app-api/oauth`);
     expect(derivedValues.COMMERCE_PORTAL_AUTH_URL).toBe(STOREFRONT);
-    expect(derivedValues.ONTOS_PRICE_GROUP_CATALOG_BASE_URL).toBe('http://127.0.0.1:4204/price-group-catalog-api');
+    expect(derivedValue(derivedValues, 'ONTOS_PRICE_GROUP_CATALOG_BASE_URL')).toBe(
+      'http://127.0.0.1:4204/price-group-catalog-api',
+    );
+  });
+
+  it('binds each owner API dependency to its serving unit on loopback and leaves unserved ones unset', () => {
+    const derivedValues = derivedEnvironment(
+      ORIGIN,
+      STOREFRONT,
+      3000,
+      new Map([
+        ['commerce-customer-context', 4103],
+        ['commerce-cart', 4115],
+      ]),
+    );
+    expect(derivedValue(derivedValues, 'ONTOS_COMMERCE_CART_API_BASE_URL')).toBe(
+      'http://127.0.0.1:4115/commerce-cart-api',
+    );
+    expect(derivedValue(derivedValues, 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL')).toBe(
+      'http://127.0.0.1:4103/commerce-customer-context-api',
+    );
+    expect(derivedValues.ONTOS_SHELL_GATEWAY_BASE_URL).toBe('http://127.0.0.1:3020/shell-super-app-api');
+    // An owner this environment does not serve gets no base, so a stored owner secret cannot point elsewhere.
+    expect(new Map(Object.entries(derivedValues)).has('ONTOS_COMMERCE_ORDER_API_BASE_URL')).toBe(true);
+    expect(derivedValue(derivedValues, 'ONTOS_COMMERCE_ORDER_API_BASE_URL')).toBeUndefined();
+    expect(derivedValue(derivedValues, 'ONTOS_PRICE_GROUP_CATALOG_BASE_URL')).toBeUndefined();
+    expect(derivedValue(derivedValues, 'ONTOS_ORDER_FINALIZATION_WORKER_AUTHENTICATION_NAMESPACE_ID')).toBe(
+      'ontos.staff.better-auth.v1',
+    );
+    expect(derivedValue(derivedValues, 'ONTOS_PRICING_ORDER_NAMESPACE_ID')).toBe('ontos.staff.better-auth.v1');
   });
 
   it('points the composition source at the host loopback port', () => {

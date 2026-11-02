@@ -1,14 +1,13 @@
 // Forms of the assets page. Each renders a <form id> whose submit button sits in the SidePanel footer and hands a
-// typed command to `onSubmit`; the page runs it through the governed apply-command Action. Owned by ops-assets.
+// typed command to `onSubmit`; the page runs it through the governed apply-command Action. The create/edit card keeps
+// its values in the page's draft, so an edit of a stored asset saves itself. Owned by ops-assets.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Option as EffectOption, Schema } from 'effect';
 import type { TOptions } from 'i18next';
 import { useState } from 'react';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type {
-  AcquisitionMethod,
   Asset,
-  AssetKind,
   AssetsState,
   DepreciationInterval,
   DepreciationPlan,
@@ -31,7 +30,13 @@ import {
   ServiceResultSchema,
 } from '../../../../../shared/domain/assets.ts';
 import { optionalField } from '../../../../../shared/domain/common.ts';
-import type { PropertyRef } from '../../../../../shared/domain/common.ts';
+import {
+  assetCardCreateCommandOf,
+  assetCardDraftOf,
+  assetCardProblems,
+  assetCardUpdateCommandOf,
+} from './asset-card-draft.ts';
+import type { AssetCardDraft } from './asset-card-draft.ts';
 import { money, parseCzk, todayIsoDate } from './assets-model.ts';
 import {
   AreaField,
@@ -44,7 +49,7 @@ import {
   optional,
 } from './form-kit.tsx';
 import type { Option } from './form-kit.tsx';
-import { locationItems, owningPropertyId, usePropertyTree } from './property-tree.ts';
+import { assetPlacementOf, locationItems, usePropertyTree } from './property-tree.ts';
 import type { PropertyTree } from './property-tree.ts';
 import { surfaceTileClassName } from '@app/admin-ui';
 
@@ -74,79 +79,46 @@ const locationOptions = (tree: PropertyTree, none: string): Option[] => [
   { label: none, value: NONE },
   ...locationItems(tree).map((item) => ({ label: item.label, value: item.value })),
 ];
-const refOf = (tree: PropertyTree, value: string): PropertyRef | undefined =>
-  locationItems(tree).find((item) => item.value === value)?.ref;
 
 // ── Create / edit card ──────────────────────────────────────────────────────────────────────────────────
 
-export const AssetCardForm = ({
-  asset,
-  formId,
-  onSubmit,
-  state,
-}: FormProps & { readonly asset?: Asset; readonly state: AssetsState }) => {
+export interface AssetCardFormProps extends FormProps {
+  readonly asset?: Asset;
+  readonly draft: AssetCardDraft;
+  /** The page owns the draft, so an edit can autosave it from the panel footer. */
+  readonly onChange: (patch: Partial<AssetCardDraft>) => void;
+  readonly state: AssetsState;
+}
+
+export const AssetCardForm = ({ asset, draft, formId, onChange, onSubmit, state }: AssetCardFormProps) => {
   const k = useK();
   const tree = usePropertyTree();
-  const [kind, setKind] = useState<AssetKind>(() => asset?.kind ?? 'equipment');
-  const [inventoryNumber, setInventoryNumber] = useState(() => asset?.inventoryNumber ?? '');
-  const [name, setName] = useState(() => asset?.name ?? '');
-  const [category, setCategory] = useState(() => asset?.category ?? '');
-  const [location, setLocation] = useState(() =>
-    asset?.location === undefined ? NONE : `${asset.location.kind}:${asset.location.id}`,
-  );
-  const [responsible, setResponsible] = useState(() => asset?.responsible ?? '');
-  const [serialNumber, setSerialNumber] = useState(() => asset?.serialNumber ?? '');
-  const [accountingProduct, setAccountingProduct] = useState(() => asset?.accountingProduct ?? '');
-  const [note, setNote] = useState(() => asset?.note ?? '');
-  const [acquisitionDate, setAcquisitionDate] = useState('');
-  const [acquisitionMethod, setAcquisitionMethod] = useState<AcquisitionMethod>('purchase');
-  const [acquisitionValue, setAcquisitionValue] = useState('');
-  const [placedInServiceDate, setPlacedInServiceDate] = useState('');
   const [error, setError] = useState<string | undefined>();
+  const problems = assetCardProblems(draft);
 
   const submit = () => {
-    if (inventoryNumber.trim() === '' || name.trim() === '' || category.trim() === '') {
+    if (problems.inventoryNumber || problems.name || problems.category) {
       setError(k(formText.required));
       return;
     }
     if (
       asset === undefined &&
-      state.assets.some((entry) => entry.inventoryNumber.toLowerCase() === inventoryNumber.trim().toLowerCase())
+      state.assets.some((entry) => entry.inventoryNumber.toLowerCase() === draft.inventoryNumber.trim().toLowerCase())
     ) {
       setError(k('form.duplicateNumber'));
       return;
     }
-    const value = parseCzk(acquisitionValue);
-    if (value === null) {
+    if (problems.amount) {
       setError(k(formText.invalidAmount));
       return;
     }
     setError(undefined);
-    const picked = location === NONE ? undefined : (refOf(tree, location) ?? asset?.location);
-    const propertyId = owningPropertyId(tree, picked) ?? (picked === asset?.location ? asset?.propertyId : undefined);
-    const card = {
-      category: category.trim(),
-      kind,
-      name: name.trim(),
-      ...optional('responsible', responsible),
-      ...optional('serialNumber', serialNumber),
-      ...optional('accountingProduct', accountingProduct),
-      ...optional('note', note),
-      ...optionalField('location', picked),
-      ...optionalField('propertyId', propertyId),
-    };
-    if (asset === undefined) {
-      onSubmit({
-        _tag: 'AssetCreate',
-        ...card,
-        acquisitionMethod,
-        inventoryNumber: inventoryNumber.trim(),
-        ...optional('acquisitionDate', acquisitionDate),
-        ...optional('placedInServiceDate', placedInServiceDate),
-        ...optionalField('acquisitionValueMinor', value),
-      });
-    } else {
-      onSubmit({ _tag: 'AssetUpdate', assetId: asset.id, ...card });
+    const command =
+      asset === undefined
+        ? assetCardCreateCommandOf(draft, assetPlacementOf(tree, draft))
+        : assetCardUpdateCommandOf(draft, asset, assetPlacementOf(tree, draft, asset));
+    if (EffectOption.isSome(command)) {
+      onSubmit(command.value);
     }
   };
 
@@ -156,67 +128,81 @@ export const AssetCardForm = ({
       <FormGrid>
         <TextField
           id="asset-inventory-number"
+          invalid={problems.inventoryNumber}
           label={k('fields.inventoryNumber')}
           maxLength={64}
-          onChange={setInventoryNumber}
+          onChange={(value) => onChange({ inventoryNumber: value })}
           required
-          value={inventoryNumber}
+          value={draft.inventoryNumber}
           {...(asset === undefined ? {} : { helpText: k('form.numberFixed') })}
         />
         <SelectField
           label={k('fields.kind')}
           name="kind"
-          onChange={(value) => setKind(assetKinds.find((entry) => entry === value) ?? 'equipment')}
+          onChange={(value) => onChange({ kind: assetKinds.find((entry) => entry === value) ?? 'equipment' })}
           options={assetKinds.map((entry) => ({ label: k(`kind.${entry}`), value: entry }))}
-          value={kind}
+          value={draft.kind}
         />
       </FormGrid>
-      <TextField id="asset-name" label={k('fields.name')} onChange={setName} required value={name} />
+      <TextField
+        id="asset-name"
+        invalid={problems.name}
+        label={k('fields.name')}
+        onChange={(value) => onChange({ name: value })}
+        required
+        value={draft.name}
+      />
       <FormGrid>
         <TextField
           id="asset-category"
+          invalid={problems.category}
           label={k('fields.category')}
           maxLength={120}
-          onChange={setCategory}
+          onChange={(value) => onChange({ category: value })}
           placeholder={k('form.categoryPlaceholder')}
           required
-          value={category}
+          value={draft.category}
         />
         <TextField
           id="asset-serial"
           label={k('fields.serialNumber')}
           maxLength={120}
-          onChange={setSerialNumber}
-          value={serialNumber}
+          onChange={(value) => onChange({ serialNumber: value })}
+          value={draft.serialNumber}
         />
       </FormGrid>
       <SelectField
         label={k('fields.location')}
         name="location"
-        onChange={(value) => setLocation(value === '' ? NONE : value)}
+        onChange={(value) => onChange({ location: value === NONE ? '' : value })}
         options={locationOptions(tree, k('form.noLocation'))}
-        value={location}
+        value={draft.location === '' ? NONE : draft.location}
       />
       {tree.status === 'failed' && <ErrorLine message={k('form.propertiesFailed')} />}
-      <TextField id="asset-responsible" label={k('fields.responsible')} onChange={setResponsible} value={responsible} />
+      <TextField
+        id="asset-responsible"
+        label={k('fields.responsible')}
+        onChange={(value) => onChange({ responsible: value })}
+        value={draft.responsible}
+      />
       {asset === undefined && (
         <>
           <FormGrid>
             <TextField
               id="asset-acquisition-date"
               label={k('fields.acquisitionDate')}
-              onChange={setAcquisitionDate}
+              onChange={(value) => onChange({ acquisitionDateInput: value })}
               type="date"
-              value={acquisitionDate}
+              value={draft.acquisitionDateInput}
             />
             <SelectField
               label={k('fields.acquisitionMethod')}
               name="acquisitionMethod"
               onChange={(value) =>
-                setAcquisitionMethod(acquisitionMethods.find((entry) => entry === value) ?? 'purchase')
+                onChange({ acquisitionMethod: acquisitionMethods.find((entry) => entry === value) ?? 'purchase' })
               }
               options={acquisitionMethods.map((entry) => ({ label: k(`method.${entry}`), value: entry }))}
-              value={acquisitionMethod}
+              value={draft.acquisitionMethod}
             />
           </FormGrid>
           <FormGrid>
@@ -224,16 +210,17 @@ export const AssetCardForm = ({
               helpText={k(formText.amountHelp)}
               id="asset-acquisition-value"
               inputMode="decimal"
+              invalid={problems.amount}
               label={k('fields.acquisitionValue')}
-              onChange={setAcquisitionValue}
-              value={acquisitionValue}
+              onChange={(value) => onChange({ acquisitionValue: value })}
+              value={draft.acquisitionValue}
             />
             <TextField
               id="asset-in-service"
               label={k('fields.placedInService')}
-              onChange={setPlacedInServiceDate}
+              onChange={(value) => onChange({ placedInServiceDateInput: value })}
               type="date"
-              value={placedInServiceDate}
+              value={draft.placedInServiceDateInput}
             />
           </FormGrid>
         </>
@@ -242,12 +229,24 @@ export const AssetCardForm = ({
         helpText={k('form.accountingProductHelp')}
         id="asset-accounting-product"
         label={k('fields.accountingProduct')}
-        onChange={setAccountingProduct}
-        value={accountingProduct}
+        onChange={(value) => onChange({ accountingProduct: value })}
+        value={draft.accountingProduct}
       />
-      <AreaField id="asset-note" label={k(formText.note)} onChange={setNote} value={note} />
+      <AreaField
+        id="asset-note"
+        label={k(formText.note)}
+        onChange={(value) => onChange({ note: value })}
+        value={draft.note}
+      />
     </PanelForm>
   );
+};
+
+/** A new asset card: its draft is local, because a new asset is submitted once with the footer button. */
+export const AssetCardCreateForm = ({ formId, onSubmit, state }: FormProps & { readonly state: AssetsState }) => {
+  const [draft, setDraft] = useState<AssetCardDraft>(() => assetCardDraftOf());
+  const change = (patch: Partial<AssetCardDraft>) => setDraft((current) => ({ ...current, ...patch }));
+  return <AssetCardForm draft={draft} formId={formId} onChange={change} onSubmit={onSubmit} state={state} />;
 };
 
 // ── Value change (S02-02) ─────────────────────────────────────────────────────────────────────────────

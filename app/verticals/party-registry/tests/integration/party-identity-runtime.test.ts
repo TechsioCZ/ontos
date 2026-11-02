@@ -9,6 +9,7 @@ import {
   loadDatabaseIdentityConnections,
   OutboxRuntime,
   ReadRuntime,
+  ResourceContainmentRelationshipMutation,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   runAction,
   DatabaseIdentityEnrollmentContext,
@@ -93,9 +94,11 @@ const contactPointProvenance = {
 const decodeFixturePrincipal = (principal: EncodedFixturePrincipal): TrustedPrincipalContext =>
   Schema.decodeSync(TrustedPrincipalContextSchema)(principal);
 
-/** The production worker host composition from `src/worker-host/entry.ts`, minus the HTTP composition source. */
+/** The production worker host composition from `src/worker-host/entry.ts`, minus the HTTP composition source and SpiceDB. */
 const partyWorkerRuntimeLive = outboxWorkerLayer.pipe(
   Layer.provide(outboxWorkerHandlerLayers.projectionSource),
+  // SpiceDB topology is not under test here; Counterparty containment has its own unit scenario.
+  Layer.provide(Layer.succeed(ResourceContainmentRelationshipMutation, { touch: () => Effect.void })),
   Layer.provide(outboxWorkerHandlerLayers.searchIngestion),
   Layer.provide(outboxWorkerHandlerLayers.searchProjectionStore),
   Layer.provide(outboxWorkerHandlerLayers.searchWorkerSnapshot),
@@ -216,19 +219,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const openFixture = Effect.acquireRelease(
             makeLiveOperationFixture({
               databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-              legalEntityManagerRelations: ['counterparty_manager', 'counterparty_reader'],
-              tenantManagerRelations: [
-                'party_identity_manager',
-                'party_identity_reader',
-                'party_identity_reviewer',
-                'party_relationship_manager',
-              ],
               actionKeys,
               adminConnectionString: Redacted.make(connections.admin.connectionString),
-              audience: 'party-registry',
               authenticationNamespaceId: testAuthenticationNamespaceId,
               compositionRevision,
-              moduleKey: 'party.registry',
               runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
             }).pipe(Effect.orDie),
             (resource) => resource.close().pipe(Effect.orDie),

@@ -76,10 +76,11 @@ it.live(
         path.join(workspace, 'pnpm-workspace.yaml'),
         'packages:\n  - packages/*\nverifyDepsBeforeRun: error\nenableGlobalVirtualStore: false\n',
       );
+      // Workspace links only: an offline install of a registry package would depend on ambient metadata caches.
       const packages = {
         runtime: '{"name":"runtime","private":true}',
-        shipped: '{"name":"shipped","private":true,"dependencies":{"runtime":"workspace:*","picocolors":"1.1.1"}}',
-        unshipped: '{"name":"unshipped","private":true,"dependencies":{"picocolors":"1.1.1"}}',
+        shipped: '{"name":"shipped","private":true,"dependencies":{"runtime":"workspace:*"}}',
+        unshipped: '{"name":"unshipped","private":true,"dependencies":{"runtime":"workspace:*"}}',
       };
       for (const [name, manifest] of Object.entries(packages)) {
         const directory = path.join(workspace, 'packages', name);

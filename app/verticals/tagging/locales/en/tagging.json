@@ -90,6 +90,7 @@
       },
       "form": {
         "cancel": "Cancel",
+        "close": "Close",
         "color": "Colour",
         "createSubmit": "Create tag",
         "description": "Description",
@@ -97,7 +98,6 @@
         "discardDescription": "The details you entered in this form will be lost.",
         "discardKeep": "Keep editing",
         "discardTitle": "Discard unsaved changes?",
-        "editSubmit": "Save changes",
         "kinds": "Applies to",
         "kindsRequired": "Choose at least one area.",
         "name": "Name",
@@ -123,7 +123,6 @@
         "search": "Search tags…",
         "searchLabel": "Filter tags"
       },
-      "updated": "Tag updated",
       "selectPlaceholder": "Select…",
       "loading": "Loading…"
     },

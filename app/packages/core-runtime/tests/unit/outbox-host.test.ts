@@ -1,4 +1,4 @@
-import { Clock, ConfigProvider, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Schema } from 'effect';
+import { Clock, ConfigProvider, DateTime, Deferred, Effect, Exit, Fiber, Layer, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { identity } from 'effect/Function';
 import { TestClock } from 'effect/testing';
@@ -202,7 +202,7 @@ const freeHealthPort = Effect.scoped(
     Effect.flatMap((health) =>
       serveOutboxWorkerHealth(health, {
         port: 0,
-        status: Effect.succeed({ artifactDigest: Option.none(), owners: [] }),
+        status: Effect.succeed({ owners: [] }),
       }),
     ),
     Effect.map(({ port }) => port),
@@ -342,7 +342,7 @@ it.effect('serves one readiness endpoint that is ready only while every hosted l
   }),
 );
 
-it.effect("reports the host artifact and each owner's admitted revision, including owners behind a wrapper", () =>
+it.effect("reports each owner's admitted revision, including owners behind a wrapper", () =>
   Effect.gen(function* hostAdmissionStatus() {
     const client = yield* Layer.build(FetchHttpClient.layer).pipe(
       Effect.flatMap((services) => Effect.provide(HttpClient.HttpClient, services)),
@@ -359,7 +359,6 @@ it.effect("reports the host artifact and each owner's admitted revision, includi
     };
     const port = yield* freeHealthPort;
     const host = yield* runOutboxWorkerHost({
-      artifactDigest: Option.some('d'.repeat(64)),
       entries: [observedEntry('billing-outbox-worker', billing), wrappedLedger],
       health: true,
     }).pipe(hostEnvironment({ OUTBOX_WORKER_HEALTH_PORT: String(port) }), Effect.forkChild);
@@ -368,7 +367,6 @@ it.effect("reports the host artifact and each owner's admitted revision, includi
     yield* Effect.all([driveCycles(billing, 2), driveCycles(ledger, 2)], { concurrency: 'unbounded' });
     const observed = yield* status;
     expect(observed).toMatchObject({
-      artifactDigest: 'd'.repeat(64),
       owners: [
         { admittedRevision: null, lastSuccessAt: null, ready: false, ...expectedDeployment },
         // The wrapper hands the inner loop no health, so only the admission is visible, never readiness.

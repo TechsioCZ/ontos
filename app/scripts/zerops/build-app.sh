@@ -141,18 +141,24 @@ echo "built$pending ($(echo "$units" | wc -w | tr -d ' ') units ready) in $(($(d
 # The Outbox Worker host bundles every hosted owner's worker under the release identity that owner's dist was built
 # with, so the composition admits each owner's outbox subscriptions (scripts/materialize-outbox-worker.mjs).
 if [ "$units" = "$all_units" ]; then
+  # The host runs only the workers of the units this deployment serves: the Application Composition it publishes admits
+  # no other owner. Each served owner's build identity names the revision its dist was built with.
+  # shellcheck disable=SC2086 # all_units is a list of unit ids.
   revisions="$(node -e '
     const fs = require("node:fs");
-    const hosted = [...fs.readFileSync("scripts/outbox-worker-host.generated.mts", "utf8").matchAll(/from '"'"'@app\/([a-z-]+)\/outbox-worker-host'"'"'/gu)].map((m) => m[1]);
+    const served = new Set(process.argv.slice(1));
+    const hosted = [...fs.readFileSync("scripts/outbox-worker-host.generated.mts", "utf8").matchAll(/from '"'"'@app\/([a-z-]+)\/outbox-worker-host'"'"'/gu)].map((m) => m[1]).filter((id) => served.has(id));
     const dir = (id) => (id === "shell-super-app" ? "apps/shell-super-app" : `verticals/${id}`);
     const revision = (id) => JSON.parse(fs.readFileSync(`${dir(id)}/dist/ultramodern-build.json`, "utf8")).deliveryUnit.sourceRevision;
     console.log(JSON.stringify(Object.fromEntries(hosted.map((id) => [id, revision(id)]))));
-  ')"
+  ' $all_units)"
   started="$(date +%s)"
   # The host bundle names this checkout's revision only from a clean tree; show what makes it dirty.
   dirty="$(git status --porcelain --untracked-files=all | head -20)"
   [ -z "$dirty" ] || printf 'the Git tree is not clean, so the host build reads as workspace:\n%s\n' "$dirty" >&2
-  ONTOS_OUTBOX_HOST_OWNER_REVISIONS="$revisions" ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" \
+  # shellcheck disable=SC2086 # all_units is a list of unit ids.
+  ONTOS_OUTBOX_HOST_OWNER_REVISIONS="$revisions" ONTOS_OUTBOX_HOST_SERVED_UNITS="$(echo $all_units)" \
+    ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" \
     pnpm run zerops:materialize --app outbox-worker-host --package app --package-dir . --worker >"$log_dir/outbox-worker-host.log" 2>&1 ||
     { tail -60 "$log_dir/outbox-worker-host.log" >&2; echo 'outbox worker host build failed' >&2; exit 1; }
   echo "built outbox-worker-host in $(($(date +%s) - started))s"

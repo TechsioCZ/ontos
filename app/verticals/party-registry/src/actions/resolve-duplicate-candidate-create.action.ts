@@ -109,15 +109,20 @@ export const resolveDuplicateCandidateCreateAction = defineAction(
   handle,
   (transaction, scope) =>
     Effect.succeed({
-      resolve: (payload: ResolveDuplicateCandidateCreatePayload, invocationId: string) =>
-        resolveDuplicateCandidateCreate(transaction, {
+      resolve: (payload: ResolveDuplicateCandidateCreatePayload, invocationId: string) => {
+        const input: Parameters<typeof resolveDuplicateCandidateCreate>[1] = {
           actionInvocationId: invocationId,
           candidateCaseId: payload.caseRef.resourceId,
           expectedRevision: payload.expectedRevision,
           principalId: scope.principalId,
           reason: payload.reason,
           tenantId: scope.tenantId,
-        }),
+        };
+        if (scope.legalEntityId !== undefined) {
+          Object.assign(input, { legalEntityId: scope.legalEntityId });
+        }
+        return resolveDuplicateCandidateCreate(transaction, input);
+      },
     }),
 );
 // <generated-outbox-message-exports>

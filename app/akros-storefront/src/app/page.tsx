@@ -1,11 +1,14 @@
 import { FeaturedProductGrid } from "@/components/featured-product-grid";
 import { HomeCarousel } from "@/components/home-carousel";
 import { StorefrontShell } from "@/components/storefront-shell";
-import { cs } from "@/i18n/cs";
+import { getDictionary } from "@/ontos/active-market";
 import { getCatalog } from "@/ontos/catalog-server";
 
 export default async function HomePage() {
-  const { getHomepageFeaturedProducts, toProductSummary } = await getCatalog();
+  const [{ getHomepageFeaturedProducts, toProductSummary }, cs] = await Promise.all([
+    getCatalog(),
+    getDictionary(),
+  ]);
   return (
     <StorefrontShell>
       <HomeCarousel />

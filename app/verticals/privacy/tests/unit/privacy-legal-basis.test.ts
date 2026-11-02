@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+import { PrivacyApplicabilityAuthoritySchema } from '../../shared/domain/privacy-applicability.ts';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -88,6 +89,99 @@ describe('privacy legal basis assignments', () => {
     expect(validatePrivacyLegalBasisAssignment(decoded)).toEqual({ valid: true });
     expect(decoded.basis).toBe('CONTRACT');
     expect(decoded.scope.controllerRef).toBe('controller:acme');
+  });
+
+  it('accepts an omitted duplicate Controller fact only with the exact typed authority', () => {
+    const common = {
+      ...decoded,
+      applicabilityDecision: {
+        ...decoded.applicabilityDecision,
+        evaluatedScope: {
+          ...decoded.applicabilityDecision.evaluatedScope,
+          facts: decoded.applicabilityDecision.evaluatedScope.facts.filter(
+            ({ dimension }) => dimension !== 'CONTROLLER_SCOPE',
+          ),
+        },
+      },
+    };
+    expect(validatePrivacyLegalBasisAssignment(common)).toEqual({ valid: true });
+    const { authority, ...withoutAuthority } = common.applicabilityDecision;
+    expect(validatePrivacyLegalBasisAssignment({ ...common, applicabilityDecision: withoutAuthority }).valid).toBe(
+      false,
+    );
+    if (authority === undefined) {
+      return;
+    }
+    for (const invalidAuthority of [
+      { ...authority, tenantId: '00000000-0000-4000-8000-000000000099' },
+      { ...authority, controllerRef: { ...authority.controllerRef, resourceId: 'controller:other' } },
+      { ...authority, controllerRef: { ...authority.controllerRef, tenantId: '00000000-0000-4000-8000-000000000099' } },
+      {
+        ...authority,
+        purposeVersionRef: { ...authority.purposeVersionRef, tenantId: '00000000-0000-4000-8000-000000000099' },
+      },
+      { ...authority, purposeRef: { ...authority.purposeRef, resourceId: 'purpose:other' } },
+      {
+        ...authority,
+        purposeVersionRef: { ...authority.purposeVersionRef, resourceId: '00000000-0000-4000-8000-000000000099' },
+      },
+    ]) {
+      expect(
+        validatePrivacyLegalBasisAssignment({
+          ...common,
+          applicabilityDecision: {
+            ...common.applicabilityDecision,
+            authority: Schema.decodeUnknownSync(PrivacyApplicabilityAuthoritySchema)(invalidAuthority),
+          },
+        }).valid,
+      ).toBe(false);
+    }
+    expect(
+      validatePrivacyLegalBasisAssignment({
+        ...common,
+        applicabilityDecision: { ...common.applicabilityDecision, policyIdentities: [] },
+      }).valid,
+    ).toBe(false);
+    for (const dimension of ['PROCESSING_PURPOSE', 'PROCESSING_PURPOSE_VERSION']) {
+      expect(
+        validatePrivacyLegalBasisAssignment({
+          ...common,
+          applicabilityDecision: {
+            ...common.applicabilityDecision,
+            evaluatedScope: {
+              ...common.applicabilityDecision.evaluatedScope,
+              facts: common.applicabilityDecision.evaluatedScope.facts.filter((fact) => fact.dimension !== dimension),
+            },
+          },
+        }).valid,
+      ).toBe(false);
+    }
+  });
+
+  it('rejects explicitly wrong or repeated Controller facts including identical duplicates', () => {
+    for (const values of [
+      ['controller:other'],
+      ['controller:acme', 'controller:acme'],
+      ['controller:acme', 'controller:other'],
+    ]) {
+      expect(
+        validatePrivacyLegalBasisAssignment({
+          ...decoded,
+          applicabilityDecision: {
+            ...decoded.applicabilityDecision,
+            evaluatedScope: {
+              ...decoded.applicabilityDecision.evaluatedScope,
+              facts: [
+                ...decoded.applicabilityDecision.evaluatedScope.facts.filter(
+                  ({ dimension }) => dimension !== 'CONTROLLER_SCOPE',
+                ),
+                ...values.map((value) => ({ dimension: 'CONTROLLER_SCOPE' as const, value })),
+              ],
+            },
+          },
+        }).valid,
+      ).toBe(false);
+    }
   });
 
   it('fails closed when applicability is unresolved', () => {

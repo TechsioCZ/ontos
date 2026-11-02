@@ -1,5 +1,5 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Layer, PlatformError, Predicate, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Layer, PlatformError, Predicate, Schema } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import {
@@ -14,7 +14,9 @@ import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-ve
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
 import { FinancePersistenceUnavailable } from '../../shared/actions/apply-command.ts';
 import type { FinanceState } from '../../shared/apis/records.ts';
-import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
+import { applyCommandAction, CommandReferenceValidators } from '../../src/actions/apply-command.action.ts';
+
+import { transitionFinance } from '../../src/services/persistence.service.ts';
 
 const principal = {
   authBindingId: '10000000-0000-4000-8000-000000000001',
@@ -84,6 +86,18 @@ it.layer(Layer.merge(unusedProductionServices, NodeCrypto.layer))('Finance comma
     Effect.gen(function* apiKeyCommand() {
       const saved: FinanceState[] = [];
       expect(profileActionGrants('direct').map(({ relation }) => relation)).toEqual(['role']);
+      const transition = yield* transitionFinance(
+        { financialPlanEntries: [], invoices: [] },
+        payload.command,
+        { legalEntityId: principal.legalEntityId, tenantId: principal.tenantId },
+        { invoice: () => Effect.void },
+        {
+          attemptId: principal.authBindingId,
+          now: DateTime.makeUnsafe('2026-11-02T00:00:00Z'),
+          principalId: principal.principalId,
+          resourceId: principal.authBindingId,
+        },
+      );
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
         services: [
@@ -91,12 +105,12 @@ it.layer(Layer.merge(unusedProductionServices, NodeCrypto.layer))('Finance comma
             load: () => Effect.succeed({ revision: 0, state: { financialPlanEntries: [], invoices: [] } }),
             loadDocument: unused,
             loadStateRow: unused,
+            prepared: { payload, transition },
             save: (state, revision) =>
               Effect.sync(() => {
                 saved.push(state);
                 return revision + 1;
               }),
-            validators: { invoice: () => Effect.void },
             writeDocument: () => Effect.void,
           }),
         ],
@@ -126,22 +140,11 @@ it.layer(Layer.merge(unusedProductionServices, NodeCrypto.layer))('Finance comma
     Effect.gen(function* uuidFailure() {
       const crypto = yield* Crypto.Crypto;
       const cause = PlatformError.systemError({ _tag: 'Unknown', method: 'randomUUIDv4', module: 'Crypto' });
-      const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
-        services: [
-          bindActionTestServices(applyCommandAction, {
-            load: () => Effect.succeed({ revision: 0, state: { financialPlanEntries: [], invoices: [] } }),
-            loadDocument: unused,
-            loadStateRow: unused,
-            save: () => Effect.die('UUID failure must not save Finance state'),
-            validators: { invoice: () => Effect.void },
-            writeDocument: () => Effect.die('UUID failure must not write Finance documents'),
-          }),
-        ],
-      });
+      const harness = yield* makeActionTestHarness({ actionPermission: 'allowed' });
       const failure = yield* harness.runtime
         .runAction(request)
         .pipe(
+          Effect.provideService(CommandReferenceValidators, { invoice: () => Effect.void }),
           Effect.provideService(Crypto.Crypto, Crypto.Crypto.of({ ...crypto, randomUUIDv4: () => Effect.fail(cause) })),
           Effect.flip,
         );

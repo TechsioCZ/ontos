@@ -3,7 +3,6 @@
 import { SectionCard, StatCard, StatRow, formatNumber } from '@app/admin-ui';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
-import { Button } from '@techsio/ui-kit/atoms/button';
 import type { RecordsResponse } from '../../shared/apis/records.ts';
 import { canSeeEverything } from '../../shared/domain/access.ts';
 import { buildCrmHomeSummary } from '../../shared/domain/reports.ts';
@@ -102,14 +101,7 @@ const HomeSummaryContent = () => {
   const { t } = useModernI18n();
   const { load, state } = useCrmRecords();
   return (
-    <SectionCard
-      actions={
-        <Button onClick={load} size="sm" theme="outlined" variant="secondary">
-          Obnovit údaje
-        </Button>
-      }
-      title={t('crm.ciWorkflow.businessOverview')}
-    >
+    <SectionCard title={t('crm.ciWorkflow.businessOverview')}>
       <CrmStateGate onRetry={load} state={state}>
         {(records) => <HomeFacts records={records} />}
       </CrmStateGate>

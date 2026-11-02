@@ -84,7 +84,12 @@ it.live('governs the Payment Term Catalog schema through forced RLS and routine-
           Order.String,
         ),
       ).toEqual(EffectArray.sort([...PAYMENT_TERM_CATALOG_TABLE_INVENTORY], Order.String));
-      expect(tables.filter(({ enabled, forced }) => !enabled || !forced)).toEqual([]);
+      // Global pre-authentication replay state has no Tenant scope; business tables retain forced RLS.
+      expect(
+        tables.filter(({ enabled, forced, name }) =>
+          name === 'gateway_assertion_redemptions' ? enabled || forced : !enabled || !forced,
+        ),
+      ).toEqual([]);
 
       const tableGrants = yield* admin.execute<{ readonly name: string }>(
         sql`select format('%s:%s', table_name, privilege_type) as name
@@ -92,7 +97,16 @@ it.live('governs the Payment Term Catalog schema through forced RLS and routine-
             where grantee = ${runtimeRole} and table_schema = ${schema}`,
         'objects',
       );
-      expect(tableGrants).toEqual([]);
+      expect(
+        EffectArray.sort(
+          tableGrants.map(({ name }) => name),
+          Order.String,
+        ),
+      ).toEqual([
+        'gateway_assertion_redemptions:DELETE',
+        'gateway_assertion_redemptions:INSERT',
+        'gateway_assertion_redemptions:SELECT',
+      ]);
 
       const sequenceGrants = yield* admin.execute<{ readonly name: string }>(
         sql`select sequence_name as name

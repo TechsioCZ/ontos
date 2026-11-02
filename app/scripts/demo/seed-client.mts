@@ -252,12 +252,10 @@ export const connectSeedClient = (
     const composition = yield* get('/shell-super-app-api/shell/composition').pipe(
       Effect.flatMap(HttpClientResponse.schemaBodyJson(Composition)),
     );
-    return makeOwnerClient(
-      target,
-      origin,
-      Cookies.toCookieHeader(cookies),
-      composition.compositionRevision,
-      checkpoint,
-    );
+    return {
+      ...makeOwnerClient(target, origin, Cookies.toCookieHeader(cookies), composition.compositionRevision, checkpoint),
+      /** Ends this login session; use as the release of an acquired client so no seed session outlives its run. */
+      signOut: shell('/shell-super-app-api/auth/sign-out', Empty, {}).pipe(Effect.asVoid),
+    };
   });
 export type SeedClient = Effect.Success<ReturnType<typeof connectSeedClient>>;

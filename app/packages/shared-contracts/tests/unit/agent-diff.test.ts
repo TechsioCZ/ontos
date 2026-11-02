@@ -86,7 +86,7 @@ it('command-built lines show a bare reference id as a short record reference', (
       { _tag: 'UpdateAgendaEvent', eventId: '73130000-0000-4000-8000-000000000101' },
       { eventId: 'Událost' },
     ),
-  ).toEqual([{ after: 'záznam 73130000…', field: 'eventId', label: 'Událost' }]);
+  ).toEqual([{ after: 'propojený záznam', field: 'eventId', label: 'Událost' }]);
 });
 
 it.each([null, undefined])('a cleared diff omits its value keys for %s', (emptyValue) => {

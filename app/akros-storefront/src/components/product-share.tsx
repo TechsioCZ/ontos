@@ -7,6 +7,7 @@ import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Popover } from "@techsio/ui-kit/molecules/popover";
 import dynamic from "next/dynamic";
 import { buildVariantDetailHref, buildVariantSelectionHref } from "@/lib/product-variant-links";
+import { useStoreHref } from "@/ontos/market-context";
 
 const VariantSelectionDialog = dynamic(() =>
   import("./variant-selection-dialog").then((module) => module.VariantSelectionDialog),
@@ -23,6 +24,7 @@ export function ProductShare({
   productSlug: string;
   variantId?: string | null;
 }) {
+  const storeHref = useStoreHref();
   const [open, setOpen] = useState(false);
   const [selecting, setSelecting] = useState(false);
   const [selection, setSelection] = useState<string[]>([]);
@@ -34,9 +36,11 @@ export function ProductShare({
   const id = useId();
   async function share(ids: string[]) {
     const canonical = new URL(
-      variantId
-        ? buildVariantDetailHref(productSlug, variantId)
-        : buildVariantSelectionHref(productSlug, ids),
+      storeHref(
+        variantId
+          ? buildVariantDetailHref(productSlug, variantId)
+          : buildVariantSelectionHref(productSlug, ids),
+      ),
       window.location.origin,
     ).href;
     setUrl(canonical);

@@ -1,13 +1,14 @@
 import {
+  startGatewayAssertionRedemptionCleanup,
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
+  recoverSqlTransactionError,
 } from '@app/core-runtime';
 import type { GatewayAssertionRedemption, GatewayAssertionRedemptionInput } from '@app/core-runtime';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
 import { lt } from 'drizzle-orm';
 import { Clock, DateTime, Duration, Effect, Layer } from 'effect';
-import { isSqlError } from 'effect/sql/SqlError';
 
 import { PriceGroupCatalogDatabase } from '../database/client.ts';
 import { gatewayAssertionRedemptions } from '../database/schema.ts';
@@ -39,21 +40,9 @@ const REDEMPTION_TIMEOUT = Duration.seconds(5);
 const redeemAssertion = (
   executor: PriceGroupCatalogDatabaseExecutor,
   input: GatewayAssertionRedemptionInput,
-  expiredBefore: Date,
   expiresAt: Date,
 ) =>
   executor
-    // One autocommit statement (one round trip): the expired-evidence purge rides along as a CTE.
-    .with(
-      executor
-        .$with('expired_redemptions')
-        .as(
-          executor
-            .delete(gatewayAssertionRedemptions)
-            .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
-            .returning({ jti: gatewayAssertionRedemptions.jti }),
-        ),
-    )
     .insert(gatewayAssertionRedemptions)
     .values({
       audience: input.audience,
@@ -72,18 +61,14 @@ export const makeGatewayAssertionRedemption = (
   ) {
     const nowEpochMs = yield* Clock.currentTimeMillis;
     // Verification can finish after its captured clock passes the assertion's skew window.
-    // Reject before cleanup can delete this assertion's existing replay evidence.
+    // Reject without modifying the durable replay evidence.
     if (input.expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS <= Math.floor(nowEpochMs / 1000)) {
       return yield* replayError();
     }
-    const expiredBefore = DateTime.toDateUtc(
-      DateTime.makeUnsafe(nowEpochMs - GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS * 1000),
-    );
     const expiresAt = DateTime.toDateUtc(DateTime.makeUnsafe(input.expiresAtEpochSeconds * 1000));
-    const inserted = yield* redeemAssertion(executor, input, expiredBefore, expiresAt).pipe(
+    const inserted = yield* redeemAssertion(executor, input, expiresAt).pipe(
+      recoverSqlTransactionError,
       Effect.mapError(unavailableError),
-      // oxlint-disable-next-line effect-native/no-local-defect-seam -- Native SQL settlement dies with SqlError; this owner narrows only that expected persistence failure and preserves other defects. remove-when: the rule recognizes native SQL settlement narrowing.
-      Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(unavailableError(defect)) : Effect.die(defect))),
       Effect.timeoutOrElse({
         duration: REDEMPTION_TIMEOUT,
         orElse: () => Effect.fail(unavailableError()),
@@ -98,5 +83,17 @@ export const makeGatewayAssertionRedemption = (
 
 export const GatewayAssertionRedemptionLive = Layer.effect(
   GatewayAssertionRedemptionService,
-  PriceGroupCatalogDatabase.pipe(Effect.map(({ executor }) => makeGatewayAssertionRedemption(executor))),
+  Effect.gen(function* makeRedemptionWithCleanup() {
+    const { executor } = yield* PriceGroupCatalogDatabase;
+    yield* startGatewayAssertionRedemptionCleanup(
+      'price-group-catalog',
+      GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
+      (expiredBefore) =>
+        executor
+          .delete(gatewayAssertionRedemptions)
+          .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
+          .pipe(Effect.asVoid, Effect.mapError(unavailableError)),
+    );
+    return makeGatewayAssertionRedemption(executor);
+  }),
 );

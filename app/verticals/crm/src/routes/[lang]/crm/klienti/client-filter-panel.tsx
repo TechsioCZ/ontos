@@ -4,20 +4,20 @@ import type { ReactNode } from 'react';
 import type { ClientEntity, ClientMetric } from './client-filters.ts';
 
 /** One metric as the variant navigation shows it: translated label, id, and its exact formatted count. */
-export interface ClientFilterShortcut {
+interface ClientFilterShortcut {
   readonly countLabel: string;
   readonly label: string;
   readonly metricId: ClientMetric;
 }
 
 /** Metrics of one record type with the translated group heading. */
-export interface ClientFilterGroup {
+interface ClientFilterGroup {
   readonly entity: ClientEntity;
   readonly label: string;
   readonly metrics: readonly ClientFilterShortcut[];
 }
 
-export interface ClientFilterPanelProps {
+interface ClientFilterPanelProps {
   readonly children: ReactNode;
   readonly groups: readonly ClientFilterGroup[];
   readonly label: string;

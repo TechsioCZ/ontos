@@ -302,7 +302,8 @@ exactly one company and a switch to any other company answers 403.
 The storefront key lands in `app/.env.demo.local` as `ONTOS_STOREFRONT_API_KEY` (with
 `ONTOS_STOREFRONT_PRINCIPAL_ID` and `ONTOS_STOREFRONT_LEGAL_ENTITY_ID`); it is verified against a
 `merchandise` gateway assertion in company 0023 and runs without the Better Auth rate limit. The Nájempark
-accounts (`management@`, `operations@`, `finance@`, `external@`, `provoz@najempark.demo`) also get their roles in the
+accounts (`management@najempark.demo`, `operations@najempark.demo`, `finance@najempark.demo`,
+`external@najempark.demo`, `provoz@najempark.demo`) also get their roles in the
 Nájempark company 0021 (`siamparkRentalPersonas`).
 
 ### Nájempark CRM: entrusted contacts (S00)
@@ -323,6 +324,26 @@ and the bot creates one task. Agents use the Shell MCP endpoint `http://localhos
 
 Pages: `/cs/ukoly` (Úkoly) and `/cs/finance` (Faktury a finance). The business
 date is 2026-10-05.
+
+### Operator acceptance tests
+
+`pnpm test:operator` runs the rstest `operator` project. The workspace gates never run it, because each
+test needs an environment CI does not provision; prepare that environment first:
+
+- `scripts/integration/siampark-demo-http.test.mts` drives the running stack over HTTP at
+  `http://localhost:3020`. Start the stack with `./scripts/demo/up.sh` (or run `pnpm demo:reset` on a running
+  stack) immediately before it: the test commits Nájempark changes and expects the reset golden fixture.
+- `scripts/integration/agent-profile-replay.test.mts` replays the reviewed agent profiles. Point
+  `DATABASE_URL` and `DATABASE_ADMIN_URL` at the same freshly migrated scratch database whose name matches
+  `people_model_scratch_20261023_<hex>`, `SPICEDB_ENDPOINT` at a local SpiceDB (`localhost:<port>`), and set
+  `ONTOS_AGENT_REPLAY_PROOF_INPUT` to the reviewed nine-row profile file and `ONTOS_AGENT_REPLAY_PROOF_SHA256`
+  to its SHA-256. The test rewrites that SpiceDB schema and the scratch database.
+
+Run one of them with `pnpm test:operator scripts/integration/<file>`.
+
+The people-model scratch proofs need the same scratch database and local SpiceDB, and also rewrite its schema:
+`pnpm --filter @app/core-runtime test:operator` runs the company membership and agent profile, operator and status
+lifecycles, and `pnpm --filter @app/shell-super-app test:operator` runs the person invitation lifecycle.
 
 ## Known issues
 

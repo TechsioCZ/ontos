@@ -18,7 +18,7 @@ const resolveCandidate = (
     entrypointKey: candidate.entrypointKey,
     moduleId: candidate.moduleId,
   }).pipe(
-    Effect.flatMap((payload) => resolveModuleTarget(payload, options)),
+    Effect.flatMap((payload) => resolveModuleTarget(payload, { ...options, targetSource: 'home' })),
     Effect.matchEffect({
       onFailure: (error) =>
         Effect.succeed(

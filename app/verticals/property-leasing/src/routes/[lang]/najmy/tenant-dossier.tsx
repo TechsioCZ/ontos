@@ -1,5 +1,6 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { DetailList, SectionCard } from '@app/admin-ui';
+import { AutosaveStatus, DetailList, SectionCard, useAutosaveDraft } from '@app/admin-ui';
+import type { RevisionedSaveResult } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
@@ -7,16 +8,27 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Effect, Option, Schema } from 'effect';
 import type { PlatformError } from 'effect';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
-import { useState } from 'react';
-import type { OccupancyCommand } from '../../../../shared/actions/apply-command.ts';
+import { useEffect, useRef, useState } from 'react';
 import type { Occupancy, RecordsResponse, TenantContact, TenantDossier } from '../../../../shared/apis/records.ts';
 import { formatInstant, principalLabel } from './principal-labels.ts';
-import { parseCrowns } from './lease-story.tsx';
 import type { TenantDirectoryEntry } from './lease-story.tsx';
 import './tenant-dossier.css';
 import { timelineEntries } from './timeline-entries.ts';
 import { TenantActivityInputSchema, TenantCaseStateSchema } from '../../../../shared/apis/records.ts';
 import { contactCountLabel } from './contact-count.ts';
+import {
+  caseChangesOf,
+  caseDraftOf,
+  caseProblems,
+  caseUnchangedSince,
+  contactProblems,
+  contactsUnchangedSince,
+  sameCaseDraft,
+  sameContacts,
+  trimmedContacts,
+  validContacts,
+} from './leasing-autosave.ts';
+import type { CaseDraft, DossierChanges, UnchangedSince } from './leasing-autosave.ts';
 
 const caseLabels = {
   CANCELLED: 'Zrušený',
@@ -39,8 +51,7 @@ const fold = (value: string) =>
     .normalize('NFD')
     .replaceAll(/\p{Diacritic}/gu, '')
     .toLowerCase();
-type DossierCommand = Extract<OccupancyCommand, { readonly _tag: 'UpdateTenantDossier' }>;
-export type DossierChanges = Omit<DossierCommand, '_tag' | 'occupancyRef'>;
+export type { DossierChanges } from './leasing-autosave.ts';
 
 interface DossierSectionProps {
   readonly busy: boolean;
@@ -48,32 +59,134 @@ interface DossierSectionProps {
   readonly dossier: TenantDossier | undefined;
   readonly onUpdate: (changes: DossierChanges) => void;
 }
-interface CaseSectionProps extends DossierSectionProps {
-  readonly contractHref?: string | undefined;
-  readonly counterpartyName: string;
-  readonly leaseHref?: string | undefined;
-  readonly taskHref?: string | undefined;
+
+/** Saves one dossier edit against the revision its draft builds on. */
+export type DossierAutosave = (
+  changes: DossierChanges,
+  expectedRevision: number,
+  unchanged: UnchangedSince,
+) => Effect.Effect<RevisionedSaveResult>;
+
+interface DossierAutosaveProps {
+  readonly counterpartyId: string;
+  readonly dossier: TenantDossier | undefined;
+  readonly onAutosave: DossierAutosave;
+  /** Revision of the records the dossier comes from. */
+  readonly revision: number;
 }
-interface ContactsSectionProps extends DossierSectionProps {
+
+/**
+ * One autosaving dossier section: its draft follows the dossier while nothing is pending and saves itself against
+ * the revision it builds on; a change of the same section by someone else ends in a conflict.
+ */
+const useDossierAutosave = <V,>({
+  changesOf,
+  equals,
+  onAutosave,
+  revision,
+  server,
+  unchangedSince,
+}: {
+  readonly changesOf: (value: V) => Option.Option<DossierChanges>;
+  readonly equals: (left: V, right: V) => boolean;
+  readonly onAutosave: DossierAutosave;
+  readonly revision: number;
+  readonly server: V;
+  readonly unchangedSince: (base: V) => UnchangedSince;
+}) => {
+  /** The version of the section the draft builds on: what it opened with, last saved or reloaded. */
+  const base = useRef(server);
+  const rememberSaved = (value: V, result: RevisionedSaveResult) => {
+    if (result !== 'conflict' && result !== 'failed') {
+      base.current = value;
+    }
+  };
+  const send = (value: V, expectedRevision: number, changes: DossierChanges) =>
+    onAutosave(changes, expectedRevision, unchangedSince(base.current)).pipe(
+      Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))),
+    );
+  const autosave = useAutosaveDraft<V, never>({
+    equals,
+    isValid: (value) => Option.isSome(changesOf(value)),
+    revision,
+    runtime: browserRuntime,
+    save: (value, expectedRevision) =>
+      Option.match(changesOf(value), {
+        onNone: () => Effect.succeed<RevisionedSaveResult>('failed'),
+        onSome: (changes) => send(value, expectedRevision, changes),
+      }),
+    server,
+  });
+  const settledOnServer = !autosave.pending && equals(autosave.draft, server);
+  useEffect(() => {
+    if (settledOnServer) {
+      base.current = server;
+    }
+  }, [base, server, settledOnServer]);
+  return autosave;
+};
+
+/** Error props for a field, spread so `validateStatus` is absent (not undefined) when the field is valid. */
+const invalidField = (invalid: boolean, message: string) =>
+  invalid ? { helpText: message, validateStatus: 'error' as const } : {};
+
+const emptyContact = (id: string): TenantContact => ({ email: '', id, name: '', phone: '', role: '' });
+const caseFieldRequiredKey = 'property-leasing.dossier.caseFieldRequired';
+
+interface ContactsSectionProps extends DossierAutosaveProps {
+  readonly canWrite: boolean;
   readonly newContactId: Effect.Effect<string, PlatformError.PlatformError>;
 }
-const DossierContacts = ({ busy, canWrite, dossier, newContactId, onUpdate }: ContactsSectionProps) => {
+const noContacts: readonly TenantContact[] = [];
+const DossierContacts = ({
+  canWrite,
+  counterpartyId,
+  dossier,
+  newContactId,
+  onAutosave,
+  revision,
+}: ContactsSectionProps) => {
   const { t } = useModernI18n();
-  const [contacts, setContacts] = useState<readonly TenantContact[]>(dossier?.contacts ?? []);
+  const autosave = useDossierAutosave({
+    changesOf: (contacts: readonly TenantContact[]) =>
+      validContacts(contacts) ? Option.some({ contacts: trimmedContacts(contacts) }) : Option.none(),
+    equals: sameContacts,
+    onAutosave,
+    revision,
+    server: dossier?.contacts ?? noContacts,
+    unchangedSince: (base) => contactsUnchangedSince(counterpartyId, base),
+  });
+  const contacts = autosave.draft;
   const [editing, setEditing] = useState(false);
   const editLabel = contacts.length === 0 ? 'Přidat kontaktní osoby' : 'Upravit kontakty';
   const updateContact = (id: string, field: 'name' | 'role' | 'email' | 'phone', value: string) =>
-    setContacts(contacts.map((contact) => (contact.id === id ? { ...contact, [field]: value } : contact)));
+    autosave.setDraft((current) =>
+      current.map((contact) => (contact.id === id ? { ...contact, [field]: value } : contact)),
+    );
+  const removeContact = (id: string) => autosave.setDraft((current) => current.filter((item) => item.id !== id));
+  const appendContact = (id: string) => autosave.setDraft((current) => [...current, emptyContact(id)]);
+  const toggleEditing = () => {
+    if (editing) {
+      autosave.flush();
+    }
+    setEditing(!editing);
+  };
+  const handleBlur = autosave.flush;
+  const handleRetry = autosave.retry;
+  const handleReloadLatest = autosave.reloadLatest;
   return (
     <>
       <div className="sp-tenant-heading">
         <h3>Kontaktní osoby</h3>
         {canWrite && (
-          <Button disabled={busy} onClick={() => setEditing(!editing)} size="sm" theme="outlined" variant="secondary">
+          <Button onClick={toggleEditing} size="sm" theme="outlined" variant="secondary">
             {editing ? 'Zavřít úpravy' : editLabel}
           </Button>
         )}
       </div>
+      {canWrite && (
+        <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+      )}
       {!editing && contacts.length === 0 && (
         <p className="sp-tenant-muted">
           Kontaktní osoby zatím nejsou doplněny. Hlavní e-mail a telefon protistrany najdete v kartě výše.
@@ -100,54 +213,54 @@ const DossierContacts = ({ busy, canWrite, dossier, newContactId, onUpdate }: Co
         ))}
       {editing && canWrite && (
         <div className="sp-tenant-stack">
-          {contacts.map((contact, index) => (
-            <fieldset className="sp-tenant-contact" key={contact.id}>
-              <legend>Kontakt {index + 1}</legend>
-              <div className="sp-tenant-fields">
-                <FormInput
-                  label={t('property-leasing.registration.fullName')}
-                  onChange={(event) => updateContact(contact.id, 'name', event.target.value)}
-                  required
-                  value={contact.name}
-                />
-                <FormInput
-                  label={t('property-leasing.dossier.contactRole')}
-                  onChange={(event) => updateContact(contact.id, 'role', event.target.value)}
-                  value={contact.role}
-                />
-                <FormInput
-                  label={t('property-leasing.dossier.contactEmail')}
-                  onChange={(event) => updateContact(contact.id, 'email', event.target.value)}
-                  type="email"
-                  value={contact.email}
-                />
-                <FormInput
-                  label={t('property-leasing.dossier.contactPhone')}
-                  onChange={(event) => updateContact(contact.id, 'phone', event.target.value)}
-                  type="tel"
-                  value={contact.phone}
-                />
-              </div>
-              <Button
-                onClick={() => setContacts(contacts.filter((item) => item.id !== contact.id))}
-                size="sm"
-                theme="borderless"
-                variant="secondary"
-              >
-                Odebrat kontakt
-              </Button>
-            </fieldset>
-          ))}
+          {contacts.map((contact, index) => {
+            const problems = contactProblems(contact);
+            return (
+              <fieldset className="sp-tenant-contact" key={contact.id}>
+                <legend>Kontakt {index + 1}</legend>
+                <div className="sp-tenant-fields">
+                  <FormInput
+                    label={t('property-leasing.registration.fullName')}
+                    onBlur={handleBlur}
+                    onChange={(event) => updateContact(contact.id, 'name', event.target.value)}
+                    required
+                    value={contact.name}
+                    {...invalidField(problems.name, t('property-leasing.dossier.contactNameRequired'))}
+                  />
+                  <FormInput
+                    label={t('property-leasing.dossier.contactRole')}
+                    onBlur={handleBlur}
+                    onChange={(event) => updateContact(contact.id, 'role', event.target.value)}
+                    value={contact.role}
+                  />
+                  <FormInput
+                    label={t('property-leasing.dossier.contactEmail')}
+                    onBlur={handleBlur}
+                    onChange={(event) => updateContact(contact.id, 'email', event.target.value)}
+                    type="email"
+                    value={contact.email}
+                    {...invalidField(problems.email, t('property-leasing.dossier.contactEmailInvalid'))}
+                  />
+                  <FormInput
+                    label={t('property-leasing.dossier.contactPhone')}
+                    onBlur={handleBlur}
+                    onChange={(event) => updateContact(contact.id, 'phone', event.target.value)}
+                    type="tel"
+                    value={contact.phone}
+                  />
+                </div>
+                <Button onClick={() => removeContact(contact.id)} size="sm" theme="borderless" variant="secondary">
+                  Odebrat kontakt
+                </Button>
+              </fieldset>
+            );
+          })}
           <div className="sp-tenant-actions">
             <Button
               disabled={contacts.length >= 50}
               onClick={() => {
                 void browserRuntime.runPromiseExit(
-                  newContactId.pipe(
-                    Effect.tap((id) =>
-                      Effect.sync(() => setContacts([...contacts, { email: '', id, name: '', phone: '', role: '' }])),
-                    ),
-                  ),
+                  newContactId.pipe(Effect.tap((id) => Effect.sync(() => appendContact(id)))),
                 );
               }}
               size="sm"
@@ -156,79 +269,46 @@ const DossierContacts = ({ busy, canWrite, dossier, newContactId, onUpdate }: Co
             >
               Přidat kontaktní osobu
             </Button>
-            <Button
-              disabled={
-                busy ||
-                contacts.some(
-                  (contact) =>
-                    contact.name.trim().length === 0 ||
-                    (contact.email !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(contact.email)),
-                )
-              }
-              onClick={() => onUpdate({ contacts })}
-              size="sm"
-              variant="primary"
-            >
-              Uložit kontakty
-            </Button>
           </div>
         </div>
       )}
     </>
   );
 };
-const useDossierCase = (dossier: TenantDossier | undefined) => {
-  const [caseState, setCaseState] = useState(dossier?.caseState ?? 'NEW');
-  const [caseSubject, setCaseSubject] = useState(dossier?.caseDetails?.subject ?? '');
-  const [caseOwner, setCaseOwner] = useState(dossier?.caseDetails?.owner ?? '');
-  const [caseDeadline, setCaseDeadline] = useState(dossier?.caseDetails?.deadline ?? '');
-  const [caseValue, setCaseValue] = useState(
-    dossier?.caseDetails === undefined
-      ? ''
-      : Option.match(dossier.caseDetails.estimatedValueMinor, {
-          onNone: () => '',
-          onSome: (value) => String(value / 100),
-        }),
-  );
-  const estimatedValueMinor = caseValue.trim() === '' ? null : parseCrowns(caseValue);
-  return {
-    caseDeadline,
-    caseOwner,
-    caseState,
-    caseSubject,
-    caseValue,
-    estimatedValueMinor,
-    setCaseDeadline,
-    setCaseOwner,
-    setCaseState,
-    setCaseSubject,
-    setCaseValue,
-  };
-};
+
+interface CaseSectionProps extends DossierAutosaveProps {
+  readonly canWrite: boolean;
+  readonly contractHref?: string | undefined;
+  readonly counterpartyName: string;
+  readonly leaseHref?: string | undefined;
+  readonly taskHref?: string | undefined;
+}
 const DossierCase = ({
-  busy,
   canWrite,
   contractHref,
+  counterpartyId,
   counterpartyName,
   dossier,
   leaseHref,
-  onUpdate,
+  onAutosave,
+  revision,
   taskHref,
 }: CaseSectionProps) => {
   const { t } = useModernI18n();
-  const {
-    caseDeadline,
-    caseOwner,
-    caseState,
-    caseSubject,
-    caseValue,
-    estimatedValueMinor,
-    setCaseDeadline,
-    setCaseOwner,
-    setCaseState,
-    setCaseSubject,
-    setCaseValue,
-  } = useDossierCase(dossier);
+  const autosave = useDossierAutosave({
+    changesOf: (draft: CaseDraft) => caseChangesOf(draft, dossier),
+    equals: sameCaseDraft,
+    onAutosave,
+    revision,
+    server: caseDraftOf(dossier),
+    unchangedSince: (base) => caseUnchangedSince(counterpartyId, base),
+  });
+  const { draft } = autosave;
+  const problems = caseProblems(draft, dossier);
+  const change = (patch: Partial<CaseDraft>) => autosave.setDraft((current) => ({ ...current, ...patch }));
+  const handleBlur = autosave.flush;
+  const handleRetry = autosave.retry;
+  const handleReloadLatest = autosave.reloadLatest;
   return (
     <div className="sp-tenant-contact">
       <h3>Obchodní případ</h3>
@@ -257,29 +337,37 @@ const DossierCase = ({
             <FormInput
               label={t('property-leasing.dossier.caseSubject')}
               maxLength={500}
-              onChange={(event) => setCaseSubject(event.target.value)}
+              onBlur={handleBlur}
+              onChange={(event) => change({ subject: event.target.value })}
               required
-              value={caseSubject}
+              value={draft.subject}
+              {...invalidField(problems.subject, t(caseFieldRequiredKey))}
             />
             <FormInput
               label={t('property-leasing.dossier.caseOwner')}
               maxLength={500}
-              onChange={(event) => setCaseOwner(event.target.value)}
+              onBlur={handleBlur}
+              onChange={(event) => change({ owner: event.target.value })}
               required
-              value={caseOwner}
+              value={draft.owner}
+              {...invalidField(problems.owner, t(caseFieldRequiredKey))}
             />
             <FormInput
               label={t('property-leasing.dossier.caseDeadline')}
-              onChange={(event) => setCaseDeadline(event.target.value)}
+              onBlur={handleBlur}
+              onChange={(event) => change({ deadline: event.target.value })}
               required
               type="date"
-              value={caseDeadline}
+              value={draft.deadline}
+              {...invalidField(problems.deadline, t(caseFieldRequiredKey))}
             />
             <FormInput
               inputMode="decimal"
               label={t('property-leasing.dossier.optionalCaseValue')}
-              onChange={(event) => setCaseValue(event.target.value)}
-              value={caseValue}
+              onBlur={handleBlur}
+              onChange={(event) => change({ value: event.target.value })}
+              value={draft.value}
+              {...invalidField(problems.value, t('property-leasing.rent.invalidAmount'))}
             />
           </div>
           <div className="sp-tenant-actions">
@@ -290,10 +378,10 @@ const DossierCase = ({
                 onChange={(event) => {
                   const selected = Schema.decodeUnknownOption(TenantCaseStateSchema)(event.target.value);
                   if (Option.isSome(selected)) {
-                    setCaseState(selected.value);
+                    change({ state: selected.value });
                   }
                 }}
-                value={caseState}
+                value={draft.state}
               >
                 {(['NEW', 'IN_PROGRESS', 'CONFIRMED', 'CLOSED', 'CANCELLED'] as const).map((value) => (
                   <option key={value} value={value}>
@@ -302,42 +390,8 @@ const DossierCase = ({
                 ))}
               </select>
             </label>
-            <Button
-              disabled={busy || caseState === (dossier?.caseState ?? 'NEW')}
-              onClick={() => onUpdate({ caseState })}
-              size="sm"
-              theme="outlined"
-              variant="secondary"
-            >
-              Uložit stav případu
-            </Button>
+            <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
           </div>
-          <Button
-            disabled={
-              busy ||
-              caseSubject.trim().length === 0 ||
-              caseOwner.trim().length === 0 ||
-              caseDeadline.length === 0 ||
-              estimatedValueMinor === undefined
-            }
-            onClick={() => {
-              if (estimatedValueMinor !== undefined) {
-                onUpdate({
-                  caseDetails: {
-                    deadline: caseDeadline,
-                    estimatedValueMinor: Option.fromNullOr(estimatedValueMinor),
-                    owner: caseOwner.trim(),
-                    subject: caseSubject.trim(),
-                  },
-                  caseState,
-                });
-              }
-            }}
-            size="sm"
-            variant="primary"
-          >
-            Uložit případ
-          </Button>
         </>
       )}
       <div className="sp-tenant-actions">
@@ -404,7 +458,10 @@ const DossierCommunication = ({
       </div>
       <Button
         disabled={busy || summary.trim().length === 0}
-        onClick={() => onUpdate({ activity: { kind, summary } })}
+        onClick={() => {
+          onUpdate({ activity: { kind, summary } });
+          setSummary('');
+        }}
         size="sm"
         variant="primary"
       >
@@ -420,21 +477,31 @@ export const TenantDossierCard = ({
   busy,
   canWrite,
   contractHref,
+  counterpartyId,
   counterpartyName,
   dossier,
   leaseHref,
   newContactId,
+  onAutosave,
   onUpdate,
+  revision,
   taskHref,
 }: {
   readonly busy: boolean;
   readonly canWrite: boolean;
   readonly contractHref?: string | undefined;
+  /** The counterparty whose dossier this is; autosave checks its contacts and case against it. */
+  readonly counterpartyId: string;
   readonly counterpartyName: string;
   readonly dossier: TenantDossier | undefined;
   readonly leaseHref?: string | undefined;
   readonly newContactId: Effect.Effect<string, PlatformError.PlatformError>;
+  /** Saves a contacts or case edit against the revision its draft builds on. */
+  readonly onAutosave: DossierAutosave;
+  /** Logs communication and archives: commands that stay explicit. */
   readonly onUpdate: (changes: DossierChanges) => void;
+  /** Revision of the records the dossier comes from. */
+  readonly revision: number;
   readonly taskHref?: string | undefined;
 }) => {
   const { t } = useModernI18n();
@@ -453,20 +520,22 @@ export const TenantDossierCard = ({
           ukládají s autorem a časem.
         </p>
         <DossierContacts
-          busy={busy}
           canWrite={canWrite}
+          counterpartyId={counterpartyId}
           dossier={dossier}
           newContactId={newContactId}
-          onUpdate={onUpdate}
+          onAutosave={onAutosave}
+          revision={revision}
         />
         <DossierCase
-          busy={busy}
           canWrite={canWrite}
           contractHref={contractHref}
+          counterpartyId={counterpartyId}
           counterpartyName={counterpartyName}
           dossier={dossier}
           leaseHref={leaseHref}
-          onUpdate={onUpdate}
+          onAutosave={onAutosave}
+          revision={revision}
           taskHref={taskHref}
         />
         <DossierCommunication busy={busy} canWrite={canWrite} onUpdate={onUpdate} />

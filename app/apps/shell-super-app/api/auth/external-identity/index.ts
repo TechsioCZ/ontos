@@ -889,7 +889,7 @@ const reservePrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.reservePr
               principal,
               payload,
               idempotencyKey,
-              configuration.providerEndpointAudience,
+              ultramodernDeliveryUnit.appId,
               admission,
             );
           }),
@@ -913,10 +913,10 @@ const activatePrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.activate
             const binding = yield* requireBinding(
               principal,
               payload.activation.authBindingId,
-              configuration.providerEndpointAudience,
+              ultramodernDeliveryUnit.appId,
             );
             yield* requireBindingWorkloadGrant(principal, 'activate', binding.authenticationNamespaceId);
-            const subject = yield* requireBindingSubject(principal, binding, configuration.providerEndpointAudience);
+            const subject = yield* requireBindingSubject(principal, binding, ultramodernDeliveryUnit.appId);
             const admission = yield* provideExternalIdentityHttpWorkload(
               {
                 authenticationRef: payload.authenticationRef,
@@ -942,7 +942,7 @@ const activatePrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.activate
               principal,
               payload,
               idempotencyKey,
-              configuration.providerEndpointAudience,
+              ultramodernDeliveryUnit.appId,
               admission,
             );
           }),
@@ -966,7 +966,7 @@ const changePrincipalBindingStatusHandler = Effect.fn('ExternalIdentityHttp.chan
             const binding = yield* requireBinding(
               principal,
               payload.change.authBindingId,
-              configuration.providerEndpointAudience,
+              ultramodernDeliveryUnit.appId,
             );
             yield* requireBindingWorkloadGrant(principal, 'status', binding.authenticationNamespaceId);
             let admission: ExternalIdentityAdmissionContext | undefined;
@@ -975,7 +975,7 @@ const changePrincipalBindingStatusHandler = Effect.fn('ExternalIdentityHttp.chan
               if (authenticationRef === undefined) {
                 return yield* Effect.fail(invalidProblem('Re-enabling a binding requires an authenticationRef'));
               }
-              const subject = yield* requireBindingSubject(principal, binding, configuration.providerEndpointAudience);
+              const subject = yield* requireBindingSubject(principal, binding, ultramodernDeliveryUnit.appId);
               admission = yield* provideExternalIdentityHttpWorkload(
                 {
                   authenticationRef,
@@ -998,13 +998,7 @@ const changePrincipalBindingStatusHandler = Effect.fn('ExternalIdentityHttp.chan
                 }).pipe(refuseAdmission),
               );
             }
-            return yield* runStatusAction(
-              principal,
-              payload,
-              idempotencyKey,
-              configuration.providerEndpointAudience,
-              admission,
-            );
+            return yield* runStatusAction(principal, payload, idempotencyKey, ultramodernDeliveryUnit.appId, admission);
           }),
         );
       }),
@@ -1021,13 +1015,8 @@ const readPrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.readPrincipa
           Effect.gen(function* readPrincipalBindingHandlerBody() {
             const apiKey = Redacted.make(request.headers['x-api-key']);
             const principal = yield* authenticateWorkloadPrincipal(apiKey);
-            const configuration = yield* ExternalIdentityHttpConfigurationService;
             if (payload.lookup === 'binding') {
-              const binding = yield* requireBinding(
-                principal,
-                payload.authBindingId,
-                configuration.providerEndpointAudience,
-              );
+              const binding = yield* requireBinding(principal, payload.authBindingId, ultramodernDeliveryUnit.appId);
               yield* requireBindingWorkloadGrant(principal, 'read', binding.authenticationNamespaceId);
               return binding;
             }
@@ -1035,7 +1024,7 @@ const readPrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.readPrincipa
               operation: 'read',
               targetAuthenticationNamespaceId: payload.authenticationNamespaceId,
             });
-            return yield* runBindingRead(principal, payload, configuration.providerEndpointAudience);
+            return yield* runBindingRead(principal, payload, ultramodernDeliveryUnit.appId);
           }),
         );
       }),
@@ -1058,7 +1047,7 @@ const resolveExternalSubjectHandler = Effect.fn('ExternalIdentityHttp.resolveExt
               targetAuthenticationNamespaceId: payload.authenticationNamespaceId,
             });
             const configuration = yield* ExternalIdentityHttpConfigurationService;
-            const binding = yield* requireSubjectBinding(principal, subject, configuration.providerEndpointAudience);
+            const binding = yield* requireSubjectBinding(principal, subject, ultramodernDeliveryUnit.appId);
             const admission = yield* provideExternalIdentityHttpWorkload(
               {
                 authenticationRef: payload.authenticationRef,
@@ -1081,7 +1070,7 @@ const resolveExternalSubjectHandler = Effect.fn('ExternalIdentityHttp.resolveExt
                 tenantId: principal.tenantId,
               }).pipe(refuseAdmission),
             );
-            return yield* runResolveRead(principal, subject, admission, configuration.providerEndpointAudience);
+            return yield* runResolveRead(principal, subject, admission, ultramodernDeliveryUnit.appId);
           }),
         );
       }),
@@ -1104,8 +1093,7 @@ const issueExternalGatewayContextHandler = Effect.fn('ExternalIdentityHttp.issue
               targetAudience: payload.audience,
               targetAuthenticationNamespaceId: payload.authenticationNamespaceId,
             });
-            const configuration = yield* ExternalIdentityHttpConfigurationService;
-            const binding = yield* requireSubjectBinding(principal, subject, configuration.providerEndpointAudience);
+            const binding = yield* requireSubjectBinding(principal, subject, ultramodernDeliveryUnit.appId);
             const admission = yield* provideExternalIdentityHttpWorkload(
               {
                 authenticationRef: payload.authenticationRef,
@@ -1129,12 +1117,7 @@ const issueExternalGatewayContextHandler = Effect.fn('ExternalIdentityHttp.issue
                 tenantId: principal.tenantId,
               }).pipe(refuseAdmission),
             );
-            const resolved = yield* runResolveRead(
-              principal,
-              subject,
-              admission,
-              configuration.providerEndpointAudience,
-            );
+            const resolved = yield* runResolveRead(principal, subject, admission, ultramodernDeliveryUnit.appId);
             let legalEntityId: typeof principal.legalEntityId;
             if (payload.legalEntityId !== undefined) {
               const selected = yield* validateAuthorizedLegalEntity({

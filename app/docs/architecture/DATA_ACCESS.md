@@ -55,7 +55,7 @@ Every Shell-to-MicroVertical provider attempt acquires a fresh assertion for tha
 
 ## PostgreSQL Isolation
 
-`DATABASE_ADMIN_URL` is used only for role, schema and migration work. Each runtime process connects as one checked-in database identity (`packages/core-runtime/src/db/database-identities.ts`), and each identity has its own URL key:
+`DATABASE_ADMIN_URL` is used only for role, schema and migration work, plus the approved operator-only legacy-completion publication observation described in [Deployment](./DEPLOYMENT.md#operator-only-legacy-completion-gate). That observation is a deployment control-plane capability, never a business handler, public read, tenant-scope override, or reusable authorization receipt. Each runtime process connects as one checked-in database identity (`packages/core-runtime/src/db/database-identities.ts`), and each identity has its own URL key:
 
 | Identity                 | Role                     | URL key                              | Scope authority         |
 | ------------------------ | ------------------------ | ------------------------------------ | ----------------------- |

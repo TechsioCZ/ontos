@@ -1,3 +1,5 @@
+import { CZK_MONEY, isStoreCurrency, type MoneyFormat } from "@/lib/format";
+
 export const orderStatusLabels = {
   NEW: "Nová",
   CONFIRMED: "Zpracovává se",
@@ -33,7 +35,15 @@ export interface CustomerOrder {
     variantName?: string;
   }[];
   history?: { kind: string; at: string; before?: string; after?: string; reason?: string }[];
+  /** Market the order was placed in (merchandise snapshot); orders without it are CZK. */
+  market?: { marketId: string; marketCode: string; currency: string };
 }
+
+/** Amounts of a saved order are in the currency of the market it was placed in. */
+export const orderMoney = (order: Pick<CustomerOrder, "market">): MoneyFormat =>
+  isStoreCurrency(order.market?.currency)
+    ? { currency: order.market.currency, locale: CZK_MONEY.locale }
+    : CZK_MONEY;
 
 export const orderHref = (order: Pick<CustomerOrder, "id">) =>
   `/detail-objednavky?order=${encodeURIComponent(order.id)}`;

@@ -1,4 +1,4 @@
-import { ConfigProvider, Effect, Layer, Option, Predicate } from 'effect';
+import { ConfigProvider, Effect, Layer, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient, HttpClient } from 'effect/http';
 
@@ -11,7 +11,7 @@ import { defineOutboxWorkerEntry, runOutboxWorkerHost } from '../../src/outbox/p
 import { OutboxRuntime } from '../../src/outbox/runtime.ts';
 import { outboxWorkerCompositionLayer } from '../support/outbox-worker-composition.ts';
 
-const status = Effect.succeed({ artifactDigest: Option.none(), owners: [] });
+const status = Effect.succeed({ owners: [] });
 
 it.live('production health binds all IPv4 interfaces for external-container probes', () =>
   Effect.gen(function* externallyReachableHealth() {
@@ -42,7 +42,7 @@ it.live('readiness starts false, follows successful/failing cycles, expires, and
     expect((yield* client.get(`http://127.0.0.1:${server.port}/unknown`)).status).toBe(404);
     const statusResponse = yield* client.get(`http://127.0.0.1:${server.port}/status`);
     expect(statusResponse.status).toBe(200);
-    expect(yield* statusResponse.json).toEqual({ artifactDigest: null, owners: [] });
+    expect(yield* statusResponse.json).toEqual({ owners: [] });
     yield* health.cycleSucceeded;
     const readyResponse = yield* ready;
     expect(readyResponse.status).toBe(200);

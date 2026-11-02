@@ -4,7 +4,11 @@ import type {
   ScopedRoutineDefinition,
   ScopedRoutineInvoker,
 } from '@app/core-runtime';
-import { getVerticalRuntimeEntrypoints, toContextPermissionAccessKey } from '@app/core-runtime';
+import {
+  getVerticalRuntimeEntrypoints,
+  toContextPermissionAccessKey,
+  ScopedRoutineInvocationError,
+} from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Predicate, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -25,6 +29,7 @@ import {
   PaymentTermPolicyAdministrationPayloadSchema,
   PurchaseCurrencyPolicyAdministrationPayloadSchema,
   toTrustedPurchaseCurrencyPolicyAdministrationCommand,
+  toTrustedCommerceQuantityAssignmentCommand,
 } from '../../shared/domain/customer-commerce-policy-administration.ts';
 import type { MarketBootstrapPolicyBatchCurrentResponse } from '../../shared/domain/customer-commerce-policy-administration.ts';
 import { OutboxPayloadSchema as QuantityAssignmentChangedOutboxPayloadSchema } from '../../shared/outbox/commerce-customer-context-commerce-quantity-rule-assignment-changed.ts';
@@ -42,6 +47,7 @@ import { commerceQuantityPolicyCurrentRead } from '../../src/api/commerce-quanti
 import { marketBootstrapPolicyCurrentRead } from '../../src/api/market-bootstrap-policy-current.read.ts';
 import { paymentTermPolicyCurrentRead } from '../../src/api/payment-term-policy-current.read.ts';
 import { purchaseCurrencyPolicyCurrentRead } from '../../src/api/purchase-currency-policy-current.read.ts';
+import { customerCommercePolicyRepositoryForScope } from '../../src/persistence/customer-commerce-policy-persistence.ts';
 import { customerCommercePolicyAdministrationServiceFactory } from '../../src/services/customer-commerce-policy-administration.service.ts';
 import type { CustomerCommercePolicyAdministrationService } from '../../src/services/customer-commerce-policy-administration.service.ts';
 import { commerceCustomerContextManifest } from '../../vertical.manifest.ts';
@@ -222,6 +228,7 @@ interface StatefulInvoker {
 const statefulInvoker = (
   bootstrapBatch: MarketBootstrapPolicyBatchCurrentResponse = emptyBootstrapBatch,
   stateOverrides: Readonly<Record<string, Schema.Json>> = {},
+  profileInspection: () => Schema.Json = () => ({ outcome: 'VERIFIED' }),
 ): StatefulInvoker => {
   const calls: RoutineCall[] = [];
   const states = new Map<string, Schema.Json>(Object.entries({ ...emptyStates(), ...stateOverrides }));
@@ -231,6 +238,9 @@ const statefulInvoker = (
         calls.push({ name: routine.name, values });
         if (routine.name === 'load_current_market_bootstrap_policy_candidates') {
           return [{ result: bootstrapBatch }];
+        }
+        if (routine.name === 'inspect_commerce_quantity_assignment_profile') {
+          return [{ result: profileInspection() }];
         }
         if (routine.name.startsWith('load_')) {
           return [{ result: states.get(routine.name) ?? null }];
@@ -441,6 +451,7 @@ const currentBootstrapBatch = Schema.decodeUnknownSync(MarketBootstrapPolicyCurr
 });
 
 const currentRoutineResults = [
+  ['inspect_commerce_quantity_assignment_profile', { outcome: 'VERIFIED' }],
   ['load_commerce_quantity_rule_assignments', currentProjectionStates.load_commerce_quantity_rule_assignments],
   ['load_commerce_quantity_rule_state', currentProjectionStates.load_commerce_quantity_rule_state],
   ['load_current_market_bootstrap_policy_candidates', currentBootstrapBatch],
@@ -547,7 +558,7 @@ it('requires an explicit audience on new Commerce Quantity Rule writes', () => {
   expect(Result.isFailure(decode(withoutAudience))).toBe(true);
 });
 
-const quantityAssignmentPayload = Schema.decodeUnknownSync(CommerceQuantityAssignmentPayloadSchema)({
+const quantityAssignmentInput = {
   _tag: 'ASSIGN',
   assignment: {
     assignmentId: quantityAssignmentId,
@@ -573,7 +584,11 @@ const quantityAssignmentPayload = Schema.decodeUnknownSync(CommerceQuantityAssig
     },
   },
   expectedGeneration: 0,
-});
+};
+
+const quantityAssignmentPayload = Schema.decodeUnknownSync(CommerceQuantityAssignmentPayloadSchema)(
+  quantityAssignmentInput,
+);
 
 // The governed read runtime decodes every read result closed against its type side
 // (core-runtime `reads/runtime.ts`), so a projection carrying private fields is refused there.
@@ -1035,7 +1050,11 @@ describe('Customer Commerce Policy integration', () => {
         },
         {
           permission: 'customer_commerce_policy.quantity.read',
-          routineCalls: ['load_commerce_quantity_rule_assignments', 'load_commerce_quantity_rule_state'],
+          routineCalls: [
+            'load_commerce_quantity_rule_assignments',
+            'load_commerce_quantity_rule_state',
+            'inspect_commerce_quantity_assignment_profile',
+          ],
           run: (harness) =>
             harness.runtime
               .runRead({
@@ -1166,4 +1185,297 @@ describe('Customer Commerce Policy integration', () => {
       expect(Schema.is(schema)({ changed: true, field, generation: 1, revisionIds: ['not-a-uuid'] })).toBe(false);
     }
   });
+});
+
+describe('quantity assignment profile admission', () => {
+  for (const outcome of ['PROFILE_NOT_FOUND', 'PROFILE_KIND_MISMATCH', 'PROFILE_UNVERIFIABLE'] as const) {
+    it.effect(`refuses ${outcome} for every effective Current projection without dropping the assignment`, () =>
+      Effect.gen(function* currentProfileAdmission() {
+        const { calls, invoker } = statefulInvoker(emptyBootstrapBatch, currentProjectionStates, (): Schema.Json => {
+          if (outcome === 'PROFILE_UNVERIFIABLE') {
+            return { outcome, reason: 'RECONCILIATION_REQUIRED' };
+          }
+          return { outcome };
+        });
+        const service = yield* customerCommercePolicyAdministrationServiceFactory(
+          asServiceTransaction(invoker),
+          scope,
+          'a'.repeat(64),
+        );
+        for (const read of [
+          service.readCurrentCommerceQuantityAssignments(at).pipe(Effect.asVoid),
+          service.readCurrentCommerceQuantityPolicy(at).pipe(Effect.asVoid),
+          service.readCurrentCommerceQuantityRules(at).pipe(Effect.asVoid),
+        ]) {
+          const failure = yield* Effect.flip(read);
+          expect(failure.code).toBe(
+            outcome === 'PROFILE_UNVERIFIABLE' ? 'PERSISTENCE_UNAVAILABLE' : 'BROKEN_ASSIGNMENT',
+          );
+          expect(failure.retryable).toBe(outcome === 'PROFILE_UNVERIFIABLE');
+        }
+        expect(calls.filter(({ name }) => name === 'inspect_commerce_quantity_assignment_profile')).toHaveLength(3);
+        expect(calls.some(({ name }) => name.startsWith('persist_'))).toBe(false);
+      }),
+    );
+  }
+
+  it.effect('does not re-admit ineffective retained history', () =>
+    Effect.gen(function* retainedHistory() {
+      const { calls, invoker } = statefulInvoker(emptyBootstrapBatch, currentProjectionStates, () => ({
+        outcome: 'PROFILE_NOT_FOUND',
+      }));
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(
+        asServiceTransaction(invoker),
+        scope,
+        'a'.repeat(64),
+      );
+      const current = yield* service.readCurrentCommerceQuantityAssignments('2026-09-20T10:00:00.000Z');
+      expect(current.assignments).toEqual([]);
+      expect(calls.some(({ name }) => name === 'inspect_commerce_quantity_assignment_profile')).toBe(false);
+    }),
+  );
+
+  it.effect('admits a new ASSIGN once, preserves replay and CAS, and permits UNASSIGN after profile loss', () =>
+    Effect.gen(function* assignmentProfileAdmission() {
+      let inspection: Schema.Json = { outcome: 'VERIFIED' };
+      const { calls, invoker } = statefulInvoker(
+        emptyBootstrapBatch,
+        {
+          load_commerce_quantity_rule_state: Schema.decodeUnknownSync(Schema.Json)({
+            ...currentProjectionStates.load_commerce_quantity_rule_state,
+            revisions: currentProjectionStates.load_commerce_quantity_rule_state.revisions.map((revision) => ({
+              ...revision,
+              value: { ...revision.value, audience: 'ASSIGNMENT_ONLY' },
+            })),
+          }),
+        },
+        () => inspection,
+      );
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(
+        asServiceTransaction(invoker),
+        scope,
+        'a'.repeat(64),
+      );
+      const trusted = {
+        actionInvocationId: '70000000-0000-4000-8000-000000000001',
+        actorPrincipalId: principalId,
+        sellingLegalEntityId: legalEntityId,
+        tenantId,
+      };
+      const command = toTrustedCommerceQuantityAssignmentCommand(quantityAssignmentPayload, trusted, at);
+      const changed = yield* service.assignCommerceQuantityRule(command);
+      expect(changed.changed).toBe(true);
+      inspection = { outcome: 'PROFILE_NOT_FOUND' };
+      const replay = yield* service.assignCommerceQuantityRule(command);
+      expect(replay.changed).toBe(false);
+      const stale = yield* Effect.flip(
+        service.assignCommerceQuantityRule(
+          toTrustedCommerceQuantityAssignmentCommand(
+            Schema.decodeUnknownSync(CommerceQuantityAssignmentPayloadSchema)({
+              ...quantityAssignmentPayload,
+              assignment: { ...quantityAssignmentInput.assignment, idempotencyKey: 'stale-profile-admission' },
+            }),
+            trusted,
+            at,
+          ),
+        ),
+      );
+      expect(stale.code).toBe('GENERATION_CONFLICT');
+      const unassign = toTrustedCommerceQuantityAssignmentCommand(
+        Schema.decodeUnknownSync(CommerceQuantityAssignmentPayloadSchema)({
+          _tag: 'UNASSIGN',
+          assignmentId: quantityAssignmentId,
+          effectiveAt: '2026-09-21T10:00:01.000Z',
+          expectedGeneration: 1,
+          idempotencyKey: 'unassign-after-profile-loss',
+          reason: 'Remove retained broken assignment',
+        }),
+        trusted,
+        at,
+      );
+      const removed = yield* service.assignCommerceQuantityRule(unassign);
+      expect(removed.changed).toBe(true);
+      expect(calls.filter(({ name }) => name === 'inspect_commerce_quantity_assignment_profile')).toHaveLength(1);
+      expect(calls.filter(({ name }) => name === 'persist_commerce_quantity_rule_assignments')).toHaveLength(2);
+      const current = yield* service.readCurrentCommerceQuantityAssignments('2026-09-21T10:00:01.000Z');
+      expect(current.assignments).toEqual([]);
+    }),
+  );
+
+  it.effect('rejects a new missing profile before persistence', () =>
+    Effect.gen(function* missingAssignmentProfile() {
+      const { calls, invoker } = statefulInvoker(
+        emptyBootstrapBatch,
+        {
+          load_commerce_quantity_rule_state: Schema.decodeUnknownSync(Schema.Json)({
+            ...currentProjectionStates.load_commerce_quantity_rule_state,
+            revisions: currentProjectionStates.load_commerce_quantity_rule_state.revisions.map((revision) => ({
+              ...revision,
+              value: { ...revision.value, audience: 'ASSIGNMENT_ONLY' },
+            })),
+          }),
+        },
+        () => ({ outcome: 'PROFILE_NOT_FOUND' }),
+      );
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(
+        asServiceTransaction(invoker),
+        scope,
+        'a'.repeat(64),
+      );
+      const command = toTrustedCommerceQuantityAssignmentCommand(
+        quantityAssignmentPayload,
+        {
+          actionInvocationId: '70000000-0000-4000-8000-000000000002',
+          actorPrincipalId: principalId,
+          sellingLegalEntityId: legalEntityId,
+          tenantId,
+        },
+        at,
+      );
+      const failure = yield* Effect.flip(service.assignCommerceQuantityRule(command));
+      expect(failure).toMatchObject({ code: 'BROKEN_ASSIGNMENT', retryable: false });
+      expect(calls.some(({ name }) => name === 'persist_commerce_quantity_rule_assignments')).toBe(false);
+    }),
+  );
+});
+
+describe('quantity profile verification truth', () => {
+  for (const reason of [
+    'PROFILE_BUSY',
+    'RECONCILIATION_REQUIRED',
+    'COMPLETED_ALIAS',
+    'OWNER_RESPONSE_INVALID',
+  ] as const) {
+    it.effect(`keeps ${reason} distinct from a missing owner profile`, () =>
+      Effect.gen(function* unavailableProfile() {
+        const { invoker } = statefulInvoker(emptyBootstrapBatch, currentProjectionStates, () => ({
+          outcome: 'PROFILE_UNVERIFIABLE',
+          reason,
+        }));
+        const service = yield* customerCommercePolicyAdministrationServiceFactory(
+          asServiceTransaction(invoker),
+          scope,
+          'a'.repeat(64),
+        );
+        const failure = yield* Effect.flip(service.readCurrentCommerceQuantityAssignments(at));
+        expect(failure).toMatchObject({
+          code: 'PERSISTENCE_UNAVAILABLE',
+          reason: {
+            COMPLETED_ALIAS:
+              'Commerce Quantity assignment profile is a completed alias and cannot be verified as the referenced identity',
+            OWNER_RESPONSE_INVALID: 'Commerce Quantity assignment profile owner response cannot be verified',
+            PROFILE_BUSY: 'Commerce Quantity assignment profile is busy; retry its owner verification',
+            RECONCILIATION_REQUIRED: 'Commerce Quantity assignment profile requires owner reconciliation',
+          }[reason],
+          retryable: true,
+        });
+      }),
+    );
+  }
+  for (const result of Schema.decodeUnknownSync(Schema.Array(Schema.Json))([
+    null,
+    {},
+    { outcome: 'UNKNOWN' },
+    { outcome: 'PROFILE_UNVERIFIABLE' },
+  ])) {
+    it.effect(`refuses malformed profile inspection ${JSON.stringify(result)}`, () =>
+      Effect.gen(function* malformedOwnerProof() {
+        const { invoker } = statefulInvoker(emptyBootstrapBatch, currentProjectionStates, () => result);
+        const service = yield* customerCommercePolicyAdministrationServiceFactory(
+          asServiceTransaction(invoker),
+          scope,
+          'a'.repeat(64),
+        );
+        const failure = yield* Effect.flip(service.readCurrentCommerceQuantityAssignments(at));
+        expect(failure).toMatchObject({ code: 'PERSISTENCE_UNAVAILABLE', retryable: true });
+        expect(failure.reason).toBe(
+          'Customer Commerce Policy routine returned an invalid result (customer-commerce-policy.inspect-commerce-quantity-assignment-profile)',
+        );
+      }),
+    );
+  }
+  it.effect('verifies one exact profile identity once for multiple effective relations', () =>
+    Effect.gen(function* deduplicatedOwnerProof() {
+      const state = currentProjectionStates.load_commerce_quantity_rule_assignments;
+      const { calls, invoker } = statefulInvoker(emptyBootstrapBatch, {
+        ...currentProjectionStates,
+        load_commerce_quantity_rule_assignments: Schema.decodeUnknownSync(Schema.Json)({
+          ...state,
+          assignments: [
+            ...state.assignments,
+            ...state.assignments.map((assignment) => ({
+              ...assignment,
+              assignmentId: '50000000-0000-4000-8000-000000000099',
+            })),
+          ],
+        }),
+      });
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(
+        asServiceTransaction(invoker),
+        scope,
+        'a'.repeat(64),
+      );
+      const current = yield* service.readCurrentCommerceQuantityAssignments(at);
+      expect(current.assignments).toHaveLength(2);
+      const proofs = calls.filter(({ name }) => name === 'inspect_commerce_quantity_assignment_profile');
+      expect(proofs).toEqual([
+        { name: 'inspect_commerce_quantity_assignment_profile', values: ['RETAIL', 'retail-profile-1'] },
+      ]);
+    }),
+  );
+});
+
+describe('quantity native profile constraint boundary', () => {
+  for (const sample of [
+    { constraint: 'ccc_quantity_assignment_profile_not_found', expected: 'BROKEN_ASSIGNMENT' },
+    { constraint: 'ccc_quantity_assignment_profile_kind_mismatch', expected: 'BROKEN_ASSIGNMENT' },
+    { constraint: 'ccc_quantity_assignment_profile_busy', expected: 'PERSISTENCE_UNAVAILABLE' },
+    { constraint: 'foreign_profile_not_found', expected: 'PERSISTENCE_UNAVAILABLE' },
+    { constraint: null, expected: 'PERSISTENCE_UNAVAILABLE' },
+    {
+      constraint: 'ccc_quantity_assignment_profile_not_found',
+      expected: 'PERSISTENCE_UNAVAILABLE',
+      ownerModuleKey: 'foreign.owner',
+    },
+    {
+      constraint: 'ccc_quantity_assignment_profile_not_found',
+      expected: 'PERSISTENCE_UNAVAILABLE',
+      routineKey: 'foreign.write',
+    },
+    {
+      code: 'scoped_routine_result_invalid',
+      constraint: 'ccc_quantity_assignment_profile_not_found',
+      expected: 'PERSISTENCE_UNAVAILABLE',
+    },
+  ]) {
+    it.effect(`classifies only an exact owner invocation failure ${JSON.stringify(sample)}`, () =>
+      Effect.gen(function* constrainedOwnerFailure() {
+        const failure = Schema.decodeUnknownSync(ScopedRoutineInvocationError)({
+          _tag: 'ScopedRoutineInvocationError',
+          code: 'scoped_routine_invocation_failed',
+          ownerModuleKey: 'commerce.customer-context',
+          postgresCode: null,
+          reason: 'Native guarded write failed',
+          routineKey: 'customer-commerce-policy.persist-commerce-quantity-rule-assignments',
+          ...sample,
+        });
+        const invoker: ScopedRoutineInvoker = { invoke: () => Effect.fail(failure) };
+        const repository = yield* customerCommercePolicyRepositoryForScope(invoker, scope);
+        const result = yield* Effect.flip(
+          repository.persistCommerceQuantityRuleAssignments(0, {
+            completeness: {
+              observedAt: at,
+              ownerRevision: 'COMMERCE_QUANTITY_ASSIGNMENT:1',
+              scope: {
+                kind: 'EXACT_PREDICATE',
+                predicateRef: 'commerce.customer-context.policy.commerce_quantity_assignment.current',
+              },
+            },
+            state: { assignments: [], generation: 1 },
+          }),
+        );
+        expect(result.code).toBe(sample.expected);
+      }),
+    );
+  }
 });

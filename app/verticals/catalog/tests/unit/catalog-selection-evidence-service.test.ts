@@ -105,6 +105,117 @@ const untouchedTransaction = {
 };
 
 describe('Catalog Selection evidence assembly service', () => {
+  for (const change of ['STABLE', 'ALLOWANCE', 'TYPE_REVISION_ID', 'INHERITED_VALUE'] as const) {
+    it.effect(`revalidates exact Set component-scoped ${change} source identity`, () =>
+      Effect.gen(function* componentScopedToken() {
+        const composition = {
+          resourceRef: ref('commerce.catalog.set-composition', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'),
+          revision: 1,
+        };
+        const setSelection = decodeSelection({ ...selection, setComposition: composition });
+        const subject = { componentId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', composition, kind: 'SET_COMPONENT' };
+        const componentProduct = ref('commerce.catalog.product', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee');
+        const reads = yield* Ref.make(0);
+        const currentBasis = {
+          read: () =>
+            Ref.updateAndGet(reads, (count) => count + 1).pipe(
+              Effect.map((count) =>
+                observedFacts({
+                  basis: [
+                    ...purchaseBasis,
+                    fact('CATEGORY', categoryRef, 1),
+                    fact('SET_COMPOSITION', composition.resourceRef, 1),
+                    decodeBasis({
+                      axisAllowances: [
+                        {
+                          allowanceRevision: change === 'ALLOWANCE' ? count : 1,
+                          attributeDefinition: { resourceRef: attrDefRef, revision: 3 },
+                        },
+                      ],
+                      role: 'VARIANT_AXIS',
+                      source: { resourceRef: componentProduct, revision: 1 },
+                      subject,
+                    }),
+                    decodeBasis({
+                      role: 'PRODUCT_TYPE',
+                      source: {
+                        resourceRef: typeRef,
+                        revision: 1,
+                        revisionId:
+                          change === 'TYPE_REVISION_ID' && count > 1
+                            ? 'ffffffff-ffff-4fff-8fff-ffffffffffff'
+                            : 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                      },
+                      subject,
+                    }),
+                    decodeBasis({
+                      role: 'INHERITED_VALUE',
+                      source: { resourceRef: valueSetRef, revision: change === 'INHERITED_VALUE' ? count : 1 },
+                      subject,
+                    }),
+                  ],
+                  purpose: 'PRICING',
+                  selection: setSelection,
+                }),
+              ),
+            ),
+        };
+        const result = yield* catalogSelectionEvidenceFromCurrentReader(currentBasis).assess({
+          purpose: 'PRICING',
+          selection: setSelection,
+          validUntil: '2026-09-18T12:01:00.000Z',
+        });
+        expect(result.evidence).toMatchObject({ status: change === 'STABLE' ? 'VALID' : 'INDETERMINATE' });
+        if (change === 'STABLE') {
+          expect(result.validity).toBeDefined();
+        } else {
+          expect(result.evidence).toMatchObject({
+            reason: expect.stringContaining('source changed during evidence preparation'),
+          });
+          expect(result.validity).toBeUndefined();
+        }
+        expect(yield* Ref.get(reads)).toBe(2);
+      }).pipe(Effect.provide(NodeCrypto.layer)),
+    );
+  }
+
+  it.effect('revalidates PRICING when only a Product-specific allowance counter changes', () =>
+    Effect.gen(function* allowanceOnlyChange() {
+      const count = yield* Ref.make(0);
+      const reader = catalogSelectionEvidenceFromCurrentReader({
+        read: () =>
+          Ref.updateAndGet(count, (value) => value + 1).pipe(
+            Effect.map((allowanceRevision) =>
+              observedFacts({
+                basis: [
+                  ...purchaseBasis.filter(({ role }) => role !== 'VARIANT_AXIS'),
+                  fact('CATEGORY', categoryRef, 1),
+                  decodeBasis({
+                    axisAllowances: [
+                      { allowanceRevision, attributeDefinition: { resourceRef: attrDefRef, revision: 3 } },
+                    ],
+                    role: 'VARIANT_AXIS',
+                    source: { resourceRef: productRef, revision: 3 },
+                  }),
+                ],
+                purpose: 'PRICING',
+              }),
+            ),
+          ),
+      });
+      const result = yield* reader.assess({ purpose: 'PRICING', selection, validUntil: '2026-09-18T12:01:00.000Z' });
+      expect(result.evidence).toMatchObject({
+        reason: 'Catalog Current source changed during evidence preparation; re-assessment is required',
+        status: 'INDETERMINATE',
+      });
+      expect('validity' in result).toBe(false);
+      expect(
+        'basis' in result.evidence &&
+          result.evidence.basis.find(({ role }) => role === 'VARIANT_AXIS')?.axisAllowances?.[0]?.allowanceRevision,
+      ).toBe(2);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
   it('issues the smallest complete PURCHASE_ACCEPTANCE basis with deciding value facts', () => {
     const result = assembleCatalogSelectionEvidence({
       current: observedFacts({

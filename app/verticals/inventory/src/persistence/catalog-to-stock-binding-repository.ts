@@ -22,6 +22,7 @@ import {
 } from './catalog-to-stock-binding-table.ts';
 import { inventoryStockItems } from './stock-item-table.ts';
 import type { StockItemRepositoryService } from './stock-item-repository.ts';
+import type { StockItem } from '../../shared/domain/stock-item.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 type BindingRow = typeof inventoryCatalogToStockBindings.$inferSelect;
@@ -188,7 +189,136 @@ export const catalogToStockBindingStockItemReader = (
 
 export const makeDrizzleCatalogToStockBindingPersistence = (
   transaction: ScopedTransaction,
+  stockItemReplacement?: { readonly expectedStockItemRevision: number; readonly replacement: StockItem },
 ): CatalogToStockBindingPersistence => {
+  if (stockItemReplacement !== undefined) {
+    const { expectedStockItemRevision, replacement } = stockItemReplacement;
+    const bindings = makeDrizzleCatalogToStockBindingPersistence(transaction);
+    // Same logical CORRECTED binding, never End/Establish. History has no Current-row FK.
+    // This Core-owned transaction keeps all immediate guards active and rolls every
+    // statement back if subsequent owner impacts or Core evidence cannot commit.
+    return {
+      ...bindings,
+      replaceCurrent: Effect.fn('CatalogToStockBindingPersistence.replaceStockItem')(function* replaceStockItem({
+        current,
+        historyEntry,
+        next,
+      }) {
+        const [source] = yield* transaction
+          .select()
+          .from(inventoryStockItems)
+          .where(
+            and(
+              eq(inventoryStockItems.tenantId, current.stockItemRef.tenantId),
+              eq(inventoryStockItems.stockItemId, current.stockItemRef.resourceId),
+            ),
+          )
+          .for('update')
+          .limit(1)
+          .pipe(Effect.mapError(unavailable));
+        yield* validateCatalogToStockBindingTarget(current, source);
+        if (source === undefined || source.revision !== expectedStockItemRevision) {
+          return yield* reject('REVISION_CONFLICT');
+        }
+        const references = yield* transaction
+          .select()
+          .from(inventoryCatalogToStockBindings)
+          .where(
+            and(
+              eq(inventoryCatalogToStockBindings.tenantId, current.stockItemRef.tenantId),
+              eq(inventoryCatalogToStockBindings.stockItemId, current.stockItemRef.resourceId),
+            ),
+          )
+          .for('update')
+          .pipe(Effect.mapError(unavailable));
+        if (
+          references.length !== 1 ||
+          references[0]?.bindingId !== current.bindingRef.resourceId ||
+          references[0].currentRevision !== current.revision
+        ) {
+          return yield* reject('REVISION_CONFLICT');
+        }
+        if (
+          next.bindingRef.resourceId !== current.bindingRef.resourceId ||
+          next.bindingRef.tenantId !== current.bindingRef.tenantId ||
+          next.revision !== current.revision + 1 ||
+          historyEntry.transition !== 'CORRECTED' ||
+          next.stockItemRef.resourceId !== replacement.stockItemRef.resourceId ||
+          replacement.stockItemRef.tenantId !== current.stockItemRef.tenantId ||
+          replacement.lifecycle !== 'CURRENT' ||
+          replacement.revision !== 1 ||
+          replacement.retiredAt !== null
+        ) {
+          return yield* reject('REVISION_CONFLICT');
+        }
+        yield* transaction
+          .insert(inventoryCatalogToStockBindingHistory)
+          .values({
+            bindingId: current.bindingRef.resourceId,
+            endedAt: instantAsDate(historyEntry.endedAt),
+            ownerEvidenceRef: historyEntry.ownerEvidenceRef,
+            revision: current.revision,
+            snapshot: current,
+            tenantId: current.bindingRef.tenantId,
+            transition: 'CORRECTED',
+          })
+          .pipe(Effect.mapError(mapCatalogToStockBindingWriteError));
+        const [removed] = yield* transaction
+          .delete(inventoryCatalogToStockBindings)
+          .where(
+            and(
+              eq(inventoryCatalogToStockBindings.tenantId, current.bindingRef.tenantId),
+              eq(inventoryCatalogToStockBindings.bindingId, current.bindingRef.resourceId),
+              eq(inventoryCatalogToStockBindings.currentRevision, current.revision),
+              eq(inventoryCatalogToStockBindings.stockItemId, current.stockItemRef.resourceId),
+            ),
+          )
+          .returning({ bindingId: inventoryCatalogToStockBindings.bindingId })
+          .pipe(Effect.mapError(mapCatalogToStockBindingWriteError));
+        if (removed === undefined) {
+          return yield* reject('REVISION_CONFLICT');
+        }
+        const [retired] = yield* transaction
+          .update(inventoryStockItems)
+          .set({
+            lifecycleState: 'RETIRED',
+            retiredAt: instantAsDate(next.effectiveFrom),
+            revision: source.revision + 1,
+          })
+          .where(
+            and(
+              eq(inventoryStockItems.tenantId, source.tenantId),
+              eq(inventoryStockItems.stockItemId, source.stockItemId),
+              eq(inventoryStockItems.lifecycleState, 'CURRENT'),
+              eq(inventoryStockItems.revision, source.revision),
+            ),
+          )
+          .returning({ id: inventoryStockItems.stockItemId })
+          .pipe(Effect.mapError(unavailable));
+        if (retired === undefined) {
+          return yield* reject('REVISION_CONFLICT');
+        }
+        yield* transaction
+          .insert(inventoryStockItems)
+          .values({
+            createdAt: instantAsDate(replacement.createdAt),
+            exactSelectionKind: replacement.exactSelectionMeaning.kind,
+            exactSelectionMeaningId: replacement.exactSelectionMeaning.id,
+            lifecycleState: replacement.lifecycle,
+            retiredAt: null,
+            revision: replacement.revision,
+            stockItemId: replacement.stockItemRef.resourceId,
+            stockUnitModuleId: replacement.unitRef.moduleId,
+            stockUnitResourceId: replacement.unitRef.resourceId,
+            stockUnitResourceType: replacement.unitRef.resourceType,
+            stockUnitTenantId: replacement.unitRef.tenantId,
+            tenantId: replacement.stockItemRef.tenantId,
+          })
+          .pipe(Effect.mapError(unavailable));
+        return yield* bindings.insertCurrent(next);
+      }),
+    };
+  }
   const assertPersistableTarget = (binding: CatalogToStockBinding) =>
     transaction
       .select()

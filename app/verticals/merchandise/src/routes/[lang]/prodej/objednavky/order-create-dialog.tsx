@@ -192,7 +192,7 @@ export const OrderCreateDialog = ({ customers, onCreated, onOpenChange, open, re
           helpText={submitted && partyError !== undefined ? partyError : t(key('create.customerHelp'))}
           items={customers.active.map((customer) => ({
             data: customer,
-            label: customer.name ?? customer.partyId,
+            label: customer.name ?? t('merchandise.pages.orders.customers.unknown'),
             value: customer.partyId,
           }))}
           label={t(key('create.customer'))}

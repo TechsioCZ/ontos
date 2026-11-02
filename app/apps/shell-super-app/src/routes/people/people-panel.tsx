@@ -1,38 +1,38 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { czechPlural } from '@app/shared-contracts';
-import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { AutosaveStatus, useAutosave } from '@app/admin-ui';
+import type { AutosaveOutcome } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { Effect, Fiber, Match } from 'effect';
-import { useEffect, useEffectEvent, useState } from 'react';
+import { moduleChangeEvent } from '@app/shared-contracts/page-data';
+import { Effect, Fiber, Match, Option, Schema } from 'effect';
+import type { HttpClient } from 'effect/http';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 
-import type {
-  PeopleList,
-  PeopleRoleCatalog,
-  Person,
-  SetPeopleCompanyMembershipRequest,
-} from '../../../shared/people-api.ts';
+import type { PeopleList, PeopleRoleCatalog, Person } from '../../../shared/people-api.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import type { PeopleOutcome } from './people-client.ts';
+import { changeCompanyMembership, changeScopedRole, loadAllPeople, loadRoleCatalog } from './people-client.ts';
 import {
-  changeCompanyMembership,
-  changeScopedRole,
-  loadPeople,
-  loadPeopleForPerson,
-  loadRoleCatalog,
-} from './people-client.ts';
-import { isChangeConfirmed, membershipLabels, personKindLabel, principalStatusLabels } from './people-model.ts';
+  defaultPeopleFilters,
+  isChangeConfirmed,
+  membershipLabels,
+  personKindLabel,
+  personStatusKey,
+  roleName,
+} from './people-model.ts';
 import { InvitePersonButton } from './invite-person-button.tsx';
-import type { PendingPeopleChange } from './people-model.ts';
+import type { PeopleEditKind, PeopleFilters, PendingPeopleChange } from './people-model.ts';
+import { PeopleTable, PeopleToolbar, PersonStatusDot } from './people-table.tsx';
+import { baseOf, membershipDraftOf, membershipEditOf, sameMembershipDraft } from './people-membership-draft.ts';
+import type { MembershipBase, MembershipDraft } from './people-membership-draft.ts';
 
 interface Editor {
-  readonly kind: 'membership' | 'role';
+  readonly kind: PeopleEditKind;
   readonly person: Person;
 }
-const roleName = (catalog: PeopleRoleCatalog | undefined, roleKey: string) =>
-  catalog?.items.find((role) => role.roleKey === roleKey)?.name ?? 'Název role není dostupný';
 const selectClass = 'w-full rounded-md border border-border-primary bg-base p-100';
 
 const RolePicker = ({
@@ -80,7 +80,7 @@ const RolePicker = ({
         </select>
       </label>
       {catalog === undefined ? (
-        <StatusText status="warning">Seznam rolí není dostupný. Obnovte seznam.</StatusText>
+        <StatusText status="warning">Seznam rolí se zatím nepodařilo načíst. Zkusíme to znovu automaticky.</StatusText>
       ) : null}
       {selected === undefined ? null : <p className="text-fg-secondary text-sm">{selected.description}</p>}
     </>
@@ -104,42 +104,80 @@ const PeopleEditor = ({
   const { person } = editor;
   const membership = person.selectedCompanyMembership;
   const { kind, principalRef } = person;
-  const [affiliation, setAffiliation] = useState<'employee' | 'external'>(membership?.affiliation ?? 'external');
-  const [status, setStatus] = useState<SetPeopleCompanyMembershipRequest['status']>(membership?.status ?? 'invited');
   const [roleKey, setRoleKey] = useState('');
   const [operation, setOperation] = useState<'assign' | 'revoke'>('assign');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const title = editor.kind === 'role' ? 'Přiřadit nebo odebrat roli' : 'Členství ve firmě';
+  // The company membership of an existing person saves itself: the change is audited, so it is sent only once the
+  // reason is filled in, and the revision the server answered with is the one the next change builds on.
+  const openedBase: MembershipBase = {
+    affiliation: membership?.affiliation ?? null,
+    status: membership?.status ?? 'invited',
+  };
+  const base = useRef<MembershipBase>(openedBase);
+  const revision = useRef(membership?.revision ?? 0);
+  const [membershipDraft, setMembershipDraft] = useState<MembershipDraft>(() => membershipDraftOf(openedBase));
+  const autosave = useAutosave<MembershipDraft, HttpClient.HttpClient>({
+    equals: sameMembershipDraft,
+    isValid: (value) => Option.isSome(membershipEditOf(value, base.current)),
+    runtime: browserRuntime,
+    save: (value) =>
+      Option.match(membershipEditOf(value, base.current), {
+        onNone: () => Effect.succeed<AutosaveOutcome>('saved'),
+        onSome: (edit) =>
+          changeCompanyMembership({
+            affiliation: kind === 'agent' ? null : edit.affiliation,
+            expectedRevision: revision.current,
+            principalRef,
+            reason: edit.reason,
+            status: edit.status,
+          }).pipe(
+            Effect.map((outcome): AutosaveOutcome => {
+              if (outcome.status === 'failed') {
+                setError(outcome.message);
+                return 'failed';
+              }
+              const changed = outcome.value.membership;
+              revision.current = changed.revision;
+              base.current = { affiliation: changed.affiliation, status: changed.status };
+              setError('');
+              onCommitted({ kind: 'membership', result: outcome.value });
+              return 'saved';
+            }),
+          ),
+      }),
+    value: membershipDraft,
+  });
+  const patchMembership = (patch: Partial<MembershipDraft>) =>
+    setMembershipDraft((current) => ({ ...current, ...patch }));
+  const close = () => {
+    autosave.flush();
+    onClose();
+  };
+  const handleRetry = autosave.retry;
+  const handleReloadLatest = () => autosave.adopt(membershipDraftOf(baseOf(person)));
+  const requestClose = () => {
+    if (editor.kind === 'role') {
+      if (!busy) {
+        onClose();
+      }
+      return;
+    }
+    close();
+  };
   const submit = () => {
-    if (busy || reason.trim() === '' || (editor.kind === 'role' && roleKey.trim() === '')) {
+    if (busy || reason.trim() === '' || roleKey.trim() === '') {
       return;
     }
     setBusy(true);
     setError('');
-    const command =
-      editor.kind === 'role'
-        ? changeScopedRole(scope, { operation, principalRef, reason: reason.trim(), roleKey: roleKey.trim() }).pipe(
-            Effect.map((outcome): PeopleOutcome<PendingPeopleChange> =>
-              outcome.status === 'failed' ? outcome : { status: 'ok', value: { kind: 'role', result: outcome.value } },
-            ),
-          )
-        : changeCompanyMembership({
-            affiliation: kind === 'agent' ? null : affiliation,
-            expectedRevision: membership?.revision ?? 0,
-            principalRef,
-            reason: reason.trim(),
-            status,
-          }).pipe(
-            Effect.map((outcome): PeopleOutcome<PendingPeopleChange> =>
-              outcome.status === 'failed'
-                ? outcome
-                : { status: 'ok', value: { kind: 'membership', result: outcome.value } },
-            ),
-          );
     void browserRuntime.runPromise(
-      command.pipe(
+      changeScopedRole(scope, { operation, principalRef, reason: reason.trim(), roleKey: roleKey.trim() }).pipe(
+        Effect.map((outcome): PeopleOutcome<PendingPeopleChange> =>
+          outcome.status === 'failed' ? outcome : { status: 'ok', value: { kind: 'role', result: outcome.value } },
+        ),
         Effect.andThen((outcome) =>
           Effect.sync(() => {
             setBusy(false);
@@ -156,24 +194,29 @@ const PeopleEditor = ({
   return (
     <Dialog
       actions={
-        <>
-          <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
-            Zrušit
-          </Button>
-          <Button
-            disabled={busy || reason.trim() === '' || (editor.kind === 'role' && roleKey.trim() === '')}
-            onClick={submit}
-            variant="primary"
-          >
-            {busy ? 'Odesílám…' : 'Potvrdit změnu'}
-          </Button>
-        </>
+        editor.kind === 'role' ? (
+          <>
+            <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
+              Zrušit
+            </Button>
+            <Button disabled={busy || reason.trim() === '' || roleKey.trim() === ''} onClick={submit} variant="primary">
+              {busy ? 'Odesílám…' : 'Potvrdit změnu'}
+            </Button>
+          </>
+        ) : (
+          <>
+            <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+            <Button onClick={close} theme="outlined" variant="secondary">
+              Zavřít
+            </Button>
+          </>
+        )
       }
       closeLabel="Zavřít"
       customTrigger
       onOpenChange={(details) => {
-        if (!details.open && !busy) {
-          onClose();
+        if (!details.open) {
+          requestClose();
         }
       }}
       open
@@ -214,8 +257,10 @@ const PeopleEditor = ({
                 Zařazení ve firmě
                 <select
                   className={selectClass}
-                  onChange={(event) => setAffiliation(event.target.value === 'employee' ? 'employee' : 'external')}
-                  value={affiliation}
+                  onChange={(event) =>
+                    patchMembership({ affiliation: event.target.value === 'employee' ? 'employee' : 'external' })
+                  }
+                  value={membershipDraft.affiliation}
                 >
                   <option value="employee">Zaměstnanec</option>
                   <option value="external">Externí osoba</option>
@@ -232,10 +277,10 @@ const PeopleEditor = ({
                   onChange={(event) => {
                     const { value } = event.target;
                     if (value === 'active' || value === 'disabled' || value === 'departed' || value === 'invited') {
-                      setStatus(value);
+                      patchMembership({ status: value });
                     }
                   }}
-                  value={status}
+                  value={membershipDraft.status}
                 >
                   {Object.entries(membershipLabels).map(([value, label]) => (
                     <option key={value} value={value}>
@@ -254,9 +299,11 @@ const PeopleEditor = ({
         <FormInput
           label={t('shell.people.changeReason')}
           maxLength={500}
-          onChange={(event) => setReason(event.target.value)}
+          onChange={(event) =>
+            editor.kind === 'role' ? setReason(event.target.value) : patchMembership({ reason: event.target.value })
+          }
           required
-          value={reason}
+          value={editor.kind === 'role' ? reason : membershipDraft.reason}
         />
         {error === '' ? null : (
           <StatusText role="alert" status="error">
@@ -348,8 +395,9 @@ const PersonDetail = ({
     title={person.displayName}
   >
     <div className="grid gap-150">
-      <p>
-        {personKindLabel(person)} · {principalStatusLabels[person.principalStatus]}
+      <p className="flex flex-wrap items-center gap-100">
+        <span>{personKindLabel(person)}</span>
+        <PersonStatusDot status={personStatusKey(person)} />
       </p>
       <p>
         {person.selectedCompanyMembership === null
@@ -368,68 +416,6 @@ const PersonDetail = ({
   </Dialog>
 );
 
-const PersonCard = ({
-  catalog,
-  onDetail,
-  onEdit,
-  person,
-  scope,
-}: {
-  readonly catalog: PeopleRoleCatalog | undefined;
-  readonly onDetail: (person: Person) => void;
-  readonly onEdit: (editor: Editor) => void;
-  readonly person: Person;
-  readonly scope: 'company' | 'tenant';
-}) => (
-  <li className="grid gap-150 rounded-lg border border-border-primary bg-base p-250">
-    <div className="flex flex-wrap items-center justify-between gap-150">
-      <div className="grid gap-50">
-        <h2 className="font-semibold">
-          <button
-            className="cursor-pointer text-left underline-offset-4 hover:underline"
-            onClick={() => onDetail(person)}
-            type="button"
-          >
-            {person.displayName}
-          </button>
-        </h2>
-        <span className="text-fg-secondary text-sm">
-          {personKindLabel(person)} · {principalStatusLabels[person.principalStatus]}
-        </span>
-      </div>
-      <Badge variant={person.selectedCompanyMembership?.status === 'departed' ? 'warning' : 'outline'}>
-        {person.selectedCompanyMembership === null
-          ? 'Organizace'
-          : membershipLabels[person.selectedCompanyMembership.status]}
-      </Badge>
-    </div>
-    {person.selectedCompanyMembership?.status === 'departed' ? (
-      <p className="text-fg-secondary text-sm">Osoba odešla z firmy. Historie zůstává zachována.</p>
-    ) : null}
-    <div className="flex flex-wrap gap-100">
-      {person.roleAssignments.length === 0 ? (
-        <span className="text-fg-secondary text-sm">Žádné role v tomto rozsahu</span>
-      ) : (
-        person.roleAssignments.map((role) => (
-          <Badge key={role.roleKey} variant="outline">
-            {roleName(catalog, role.roleKey)}
-          </Badge>
-        ))
-      )}
-    </div>
-    <div className="flex flex-wrap gap-100">
-      {scope === 'company' ? (
-        <Button onClick={() => onEdit({ kind: 'membership', person })} theme="outlined" variant="secondary">
-          Upravit členství
-        </Button>
-      ) : null}
-      <Button onClick={() => onEdit({ kind: 'role', person })} theme="outlined" variant="secondary">
-        Spravovat role
-      </Button>
-    </div>
-  </li>
-);
-
 const peopleReadError = (current: PeopleOutcome<PeopleList> | undefined, linkedPerson: string | undefined): string => {
   const list = current?.status === 'ok' ? current.value : undefined;
   let error = '';
@@ -445,10 +431,42 @@ const peopleReadError = (current: PeopleOutcome<PeopleList> | undefined, linkedP
   return error;
 };
 
-const currentRoleCatalog = (
-  loaded: { readonly key: string; readonly outcome: PeopleOutcome<PeopleRoleCatalog> } | undefined,
-  requestKey: string,
-) => (loaded?.key === requestKey && loaded.outcome.status === 'ok' ? loaded.outcome.value : undefined);
+/** Core-owned people data changes arrive as live changes for the pseudo app `shell`; `all` after a reconnect. */
+const LiveChangeDetailSchema = Schema.Struct({
+  apps: Schema.Union([Schema.Literal('all'), Schema.Array(Schema.String)]),
+});
+const changesPeople = (event: Event): boolean =>
+  Schema.decodeUnknownOption(LiveChangeDetailSchema)('detail' in event ? event.detail : null).pipe(
+    Option.exists(({ apps }) => apps === 'all' || apps.includes('shell')),
+  );
+
+/** Push-based list: reload on a committed people change and on return to the tab, never on a timer. */
+const useLiveReload = (reload: () => void) => {
+  const onChange = useEffectEvent(reload);
+  useEffect(() => {
+    const follow = (event: Event) => {
+      if (changesPeople(event)) {
+        onChange();
+      }
+    };
+    const returned = () => {
+      if (document.visibilityState !== 'hidden') {
+        onChange();
+      }
+    };
+    globalThis.addEventListener(moduleChangeEvent, follow);
+    document.addEventListener('visibilitychange', returned);
+    return () => {
+      globalThis.removeEventListener(moduleChangeEvent, follow);
+      document.removeEventListener('visibilitychange', returned);
+    };
+  }, []);
+};
+
+interface Loaded<Value> {
+  readonly key: string;
+  readonly outcome: PeopleOutcome<Value>;
+}
 
 export const PeoplePanel = ({
   companyId,
@@ -458,103 +476,79 @@ export const PeoplePanel = ({
   readonly linkedPerson?: string | undefined;
 }) => {
   const [scope, setScope] = useState<'company' | 'tenant'>(companyId === undefined ? 'tenant' : 'company');
-  const [catalogLoaded, setCatalogLoaded] = useState<{
-    readonly key: string;
-    readonly outcome: PeopleOutcome<PeopleRoleCatalog>;
-  }>();
-  const [offset, setOffset] = useState(0);
+  const [catalogLoaded, setCatalogLoaded] = useState<Loaded<PeopleRoleCatalog>>();
   const [detail, setDetail] = useState<Person>();
-  const [loaded, setLoaded] = useState<{ readonly key: string; readonly outcome: PeopleOutcome<PeopleList> }>();
+  const [loaded, setLoaded] = useState<Loaded<PeopleList>>();
   const [editor, setEditor] = useState<Editor | undefined>();
   const [pending, setPending] = useState<readonly PendingPeopleChange[]>([]);
-  const [refresh, setRefresh] = useState(0);
-  const requestKey = `${companyId}:${scope}:${offset}:${refresh}:${linkedPerson}`;
-  const current = loaded?.key === requestKey ? loaded.outcome : undefined;
-  const catalog = currentRoleCatalog(catalogLoaded, requestKey);
-  const loading = current === undefined;
+  const [filters, setFilters] = useState<PeopleFilters>(defaultPeopleFilters);
+  const [reload, setReload] = useState(0);
+  const viewKey = `${companyId}:${scope}:${linkedPerson}`;
+  // A background reload keeps the rows of the same view on screen; only a new view starts empty.
+  const current = loaded?.key === viewKey ? loaded.outcome : undefined;
   const list = current?.status === 'ok' ? current.value : undefined;
+  const catalog =
+    catalogLoaded?.key === viewKey && catalogLoaded.outcome.status === 'ok' ? catalogLoaded.outcome.value : undefined;
+  const loading = current === undefined;
   const error = peopleReadError(current, linkedPerson);
-  const acceptRead = useEffectEvent((key: string, outcome: PeopleOutcome<PeopleList>) => {
-    setLoaded({ key, outcome });
-    if (outcome.status === 'ok') {
-      setDetail((selected) => {
-        const principalId = linkedPerson ?? selected?.principalRef.principalId;
-        return outcome.value.items.find((person) => person.principalRef.principalId === principalId);
-      });
-      setPending((changes) => changes.filter((change) => !isChangeConfirmed(change, outcome.value)));
-    }
-  });
+  const acceptRead = useEffectEvent(
+    (key: string, people: PeopleOutcome<PeopleList>, roles: PeopleOutcome<PeopleRoleCatalog>) => {
+      const firstRead = loaded?.key !== key;
+      if (people.status === 'ok' || firstRead) {
+        setLoaded({ key, outcome: people });
+      }
+      if (roles.status === 'ok' || catalogLoaded?.key !== key) {
+        setCatalogLoaded({ key, outcome: roles });
+      }
+      if (people.status === 'ok') {
+        setDetail((selected) => {
+          // A deep link opens its person once; a later reload only refreshes a detail the user still has open.
+          const principalId = selected?.principalRef.principalId ?? (firstRead ? linkedPerson : undefined);
+          return people.value.items.find((person) => person.principalRef.principalId === principalId);
+        });
+        setPending((changes) => changes.filter((change) => !isChangeConfirmed(change, people.value)));
+      }
+    },
+  );
   useEffect(() => {
-    const request =
-      linkedPerson === undefined ? loadPeople(scope, { limit: 50, offset }) : loadPeopleForPerson(scope, linkedPerson);
     const fiber = browserRuntime.runFork(
-      Effect.all({ people: request, roles: loadRoleCatalog(scope) }, { concurrency: 2 }).pipe(
-        Effect.andThen(({ people, roles }) =>
-          Effect.sync(() => {
-            acceptRead(requestKey, people);
-            setCatalogLoaded({ key: requestKey, outcome: roles });
-          }),
-        ),
+      Effect.all({ people: loadAllPeople(scope), roles: loadRoleCatalog(scope) }, { concurrency: 2 }).pipe(
+        Effect.andThen(({ people, roles }) => Effect.sync(() => acceptRead(viewKey, people, roles))),
+        Effect.withSpan('PeoplePanel.load', { attributes: { reload } }),
       ),
     );
     return () => {
       browserRuntime.runFork(Fiber.interrupt(fiber));
     };
-  }, [requestKey, scope, offset, linkedPerson]);
+  }, [viewKey, scope, reload]);
+  useLiveReload(() => setReload((value) => value + 1));
+  const commit = (change: PendingPeopleChange) => {
+    setPending((changes) => [...changes, change]);
+    setReload((value) => value + 1);
+  };
 
   return (
-    <div className="grid min-w-0 gap-300">
-      <section className="grid gap-150 rounded-lg border border-border-primary bg-base p-300">
-        <p>
-          Každý člověk i agent má vlastní přihlášení. Role určují, co může ve firmě dělat. Pracovní zařazení samo o sobě
-          přístup nepřiděluje.
-        </p>
-        <div className="flex flex-wrap items-end gap-150">
-          <label className="grid gap-50">
-            Rozsah správy
-            <select
-              className={selectClass}
-              onChange={(event) => {
-                setScope(event.target.value === 'tenant' ? 'tenant' : 'company');
-                setOffset(0);
-                setEditor(undefined);
-              }}
-              value={scope}
-            >
-              {companyId === undefined ? null : <option value="company">Vybraná firma</option>}
-              <option value="tenant">Celá organizace</option>
-            </select>
-          </label>
-          <Button
-            disabled={loading}
-            onClick={() => setRefresh((value) => value + 1)}
-            theme="outlined"
-            variant="secondary"
-          >
-            Obnovit seznam
-          </Button>
-          {scope === 'company' && list !== undefined ? (
-            <InvitePersonButton
-              onCommitted={(change) => {
-                setPending((changes) => [...changes, change]);
-                setRefresh((value) => value + 1);
-              }}
-            />
-          ) : null}
-        </div>
-      </section>
+    <div className="grid min-w-0 gap-200">
+      <PeopleToolbar
+        actions={scope === 'company' && list !== undefined ? <InvitePersonButton onCommitted={commit} /> : null}
+        catalog={catalog}
+        companyAvailable={companyId !== undefined}
+        filters={filters}
+        onFiltersChange={setFilters}
+        onScopeChange={(next) => {
+          setScope(next);
+          setEditor(undefined);
+          setFilters((value) => ({ ...value, roleKey: 'all' }));
+        }}
+        scope={scope}
+      />
       {pending.length === 0 ? null : (
         <StatusText aria-live="polite" status="warning">
           Zpracovává se {pending.length}{' '}
           {czechPlural(pending.length, { few: 'změny', many: 'změny', one: 'změna', other: 'změn' })}. Potvrzení zápisu
-          není potvrzením promítnutí přístupu. Obnovte seznam; čekáme na ověření skutečného přístupu.
+          není potvrzením promítnutí přístupu. Seznam se obnoví sám, jakmile ověříme skutečný přístup.
         </StatusText>
       )}
-      {loading ? (
-        <StatusText aria-live="polite" status="default">
-          Načítám lidi a role…
-        </StatusText>
-      ) : null}
       {error === '' ? null : (
         <StatusText role="alert" status="error">
           {error}
@@ -569,61 +563,30 @@ export const PeoplePanel = ({
           scope={scope}
         />
       )}
-      {list === undefined ? null : (
-        <>
-          {list.items.length === 0 ? (
-            <p>V tomto rozsahu nejsou žádná evidovaná členství.</p>
-          ) : (
-            <ul className="grid gap-150">
-              {list.items.map((person) => (
-                <PersonCard
-                  catalog={catalog}
-                  key={person.principalRef.principalId}
-                  onDetail={setDetail}
-                  onEdit={setEditor}
-                  person={person}
-                  scope={scope}
-                />
-              ))}
-            </ul>
-          )}
-          <div className="flex gap-150">
-            <Button
-              disabled={offset === 0 || loading}
-              onClick={() => setOffset((value) => Math.max(0, value - 50))}
-              theme="outlined"
-              variant="secondary"
-            >
-              Předchozí
-            </Button>
-            <Button
-              disabled={list.nextOffset === null || loading}
-              onClick={() => {
-                if (list.nextOffset !== null) {
-                  setOffset(list.nextOffset);
-                }
-              }}
-              theme="outlined"
-              variant="secondary"
-            >
-              Další
-            </Button>
-          </div>
-          {editor === undefined ? null : (
-            <PeopleEditor
-              catalog={catalog}
-              editor={editor}
-              key={`${scope}:${editor.kind}:${editor.person.principalRef.principalId}`}
-              onClose={() => setEditor(undefined)}
-              onCommitted={(change) => {
-                setPending((changes) => [...changes, change]);
-                setEditor(undefined);
-                setRefresh((value) => value + 1);
-              }}
-              scope={scope}
-            />
-          )}
-        </>
+      {current?.status === 'failed' ? null : (
+        <PeopleTable
+          catalog={catalog}
+          filters={filters}
+          loading={loading}
+          onEdit={(kind, person) => setEditor({ kind, person })}
+          onFiltersChange={setFilters}
+          onOpen={setDetail}
+          people={list?.items ?? []}
+          scope={scope}
+        />
+      )}
+      {editor === undefined ? null : (
+        <PeopleEditor
+          catalog={catalog}
+          editor={editor}
+          key={`${scope}:${editor.kind}:${editor.person.principalRef.principalId}`}
+          onClose={() => setEditor(undefined)}
+          onCommitted={(change) => {
+            commit(change);
+            setEditor(undefined);
+          }}
+          scope={scope}
+        />
       )}
     </div>
   );

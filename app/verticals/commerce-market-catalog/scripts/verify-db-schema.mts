@@ -27,7 +27,6 @@ interface InfrastructureRow extends Readonly<Record<string, boolean | number>> {
   readonly journal_count: number;
   readonly policy_count: number;
   readonly private_routine_executable: boolean;
-  readonly redemption_safe: boolean;
   readonly role_bypass_rls: boolean;
   readonly role_super: boolean;
   readonly runtime_create: boolean;
@@ -95,16 +94,41 @@ const verification = Effect.gen(function* verifyDatabase() {
   ) {
     return yield* new VerificationError({ reason: 'Commerce Market Catalog column inventory mismatch' });
   }
+  const [gateway] = yield* database.executor.execute<{ readonly valid: boolean }>(
+    sql`select (
+  (select count(*) = 1 from pg_catalog.pg_class relation join pg_catalog.pg_namespace ns on ns.oid=relation.relnamespace
+    where ns.nspname='commerce_market_catalog' and relation.relname='gateway_assertion_redemptions' and relation.relkind='r'
+      and not relation.relrowsecurity and not relation.relforcerowsecurity)
+  and (select count(*) = 5 from information_schema.columns where table_schema='commerce_market_catalog' and table_name='gateway_assertion_redemptions'
+    and is_nullable='NO' and ((column_name in ('issuer','audience') and data_type='text')
+      or (column_name='jti' and data_type='uuid')
+      or (column_name in ('expires_at','redeemed_at') and data_type='timestamp with time zone')))
+  and (select count(*) = 1 from pg_catalog.pg_constraint c join pg_catalog.pg_class t on t.oid=c.conrelid
+    join pg_catalog.pg_namespace ns on ns.oid=t.relnamespace where ns.nspname='commerce_market_catalog' and t.relname='gateway_assertion_redemptions'
+      and c.contype='u' and pg_catalog.pg_get_constraintdef(c.oid)='UNIQUE (issuer, audience, jti)')
+  and (select count(*) = 1 from pg_catalog.pg_indexes where schemaname='commerce_market_catalog' and tablename='gateway_assertion_redemptions'
+    and indexdef like '% USING btree (expires_at)')
+  and has_table_privilege('ontos_runtime','commerce_market_catalog.gateway_assertion_redemptions','SELECT')
+  and has_table_privilege('ontos_runtime','commerce_market_catalog.gateway_assertion_redemptions','INSERT')
+  and has_table_privilege('ontos_runtime','commerce_market_catalog.gateway_assertion_redemptions','DELETE')
+  and not has_table_privilege('ontos_runtime','commerce_market_catalog.gateway_assertion_redemptions','UPDATE')
+  and not has_table_privilege('ontos_runtime','commerce_market_catalog.gateway_assertion_redemptions','REFERENCES')
+  and not has_table_privilege('ontos_runtime','commerce_market_catalog.gateway_assertion_redemptions','TRUNCATE')
+  and not has_table_privilege('ontos_runtime','commerce_market_catalog.gateway_assertion_redemptions','TRIGGER')
+  and not exists(select 1 from pg_catalog.pg_class t join pg_catalog.pg_namespace ns on ns.oid=t.relnamespace,
+    lateral pg_catalog.aclexplode(coalesce(t.relacl,pg_catalog.acldefault('r',t.relowner))) acl
+    where ns.nspname='commerce_market_catalog' and t.relname='gateway_assertion_redemptions' and acl.grantee=0)
+  and not exists(select 1 from pg_catalog.pg_roles where rolname='ontos_runtime' and (rolsuper or rolbypassrls))
+) as valid`,
+    'objects',
+  );
+  if (!gateway?.valid) {
+    return yield* new VerificationError({
+      reason: 'Gateway assertion redemption shape, replay identity, expiry index or exact privileges mismatch',
+    });
+  }
   const [infrastructure] = yield* database.executor.execute<InfrastructureRow>(
     sql`select
-      exists (select 1 from pg_catalog.pg_class redemption
-        join pg_catalog.pg_namespace redemption_namespace on redemption_namespace.oid = redemption.relnamespace
-        where redemption_namespace.nspname = 'commerce_market_catalog' and redemption.relname = 'gateway_assertion_redemptions'
-          and not redemption.relrowsecurity and not redemption.relforcerowsecurity
-          and has_table_privilege('ontos_runtime', redemption.oid, 'SELECT')
-          and has_table_privilege('ontos_runtime', redemption.oid, 'INSERT')
-          and has_table_privilege('ontos_runtime', redemption.oid, 'DELETE')
-          and not has_table_privilege('ontos_runtime', redemption.oid, 'UPDATE')) as redemption_safe,
       count(distinct relation.oid)::integer as table_count,
       count(distinct relation.oid) filter (where relation.relrowsecurity and relation.relforcerowsecurity)::integer as force_rls_count,
       count(distinct relation.oid) filter (where pg_catalog.pg_get_userbyid(relation.relowner) <> ${connections.admin.user})::integer as wrong_owner_count,
@@ -113,16 +137,16 @@ const verification = Effect.gen(function* verifyDatabase() {
       (select count(*)::integer from pg_catalog.pg_trigger trigger_record join pg_catalog.pg_class triggered on triggered.oid = trigger_record.tgrelid join pg_catalog.pg_namespace ns on ns.oid = triggered.relnamespace where ns.nspname = ${COMMERCE_MARKET_CATALOG_SCHEMA_NAME} and trigger_record.tgname in (${'commerce_market_catalog_definition_revisions_append_only'}, ${'commerce_market_catalog_association_revisions_append_only'}) and not trigger_record.tgisinternal) as append_only_trigger_count,
       (select count(*)::integer from pg_catalog.pg_trigger trigger_record join pg_catalog.pg_class triggered on triggered.oid = trigger_record.tgrelid join pg_catalog.pg_namespace ns on ns.oid = triggered.relnamespace where ns.nspname = ${COMMERCE_MARKET_CATALOG_SCHEMA_NAME} and trigger_record.tgname in (${'commerce_market_catalog_markets_identity_immutable'}, ${'commerce_market_catalog_associations_identity_immutable'}) and not trigger_record.tgisinternal) as identity_trigger_count,
       (select count(*)::integer from pg_catalog.pg_class journal join pg_catalog.pg_namespace ns on ns.oid = journal.relnamespace where ns.nspname = ${'drizzle'} and journal.relname = ${'__drizzle_migrations_commerce_market_catalog'}) as journal_count,
-      (select count(*)::integer from pg_catalog.pg_proc routine join pg_catalog.pg_namespace ns on ns.oid = routine.pronamespace where ns.nspname = ${COMMERCE_MARKET_CATALOG_SCHEMA_NAME} and routine.proname in (${'create_market'}, ${'revise_market_definition'}, ${'transition_market_lifecycle'}, ${'associate_storefront'}, ${'revise_storefront_association'}, ${'remove_storefront_association'}, ${'read_market_eligibility_snapshot'}, ${'read_current_market_catalog'}, ${'read_market_history'}, ${'read_pricing_current_market_evidence'}) and routine.prosecdef and has_function_privilege(${'ontos_runtime'}, routine.oid, ${'EXECUTE'})) as governed_routine_count,
-      (select count(*)::integer from pg_catalog.pg_proc routine join pg_catalog.pg_namespace ns on ns.oid = routine.pronamespace where ns.nspname = ${COMMERCE_MARKET_CATALOG_SCHEMA_NAME} and routine.proname in (${'create_market'}, ${'revise_market_definition'}, ${'transition_market_lifecycle'}, ${'associate_storefront'}, ${'revise_storefront_association'}, ${'remove_storefront_association'}, ${'read_market_eligibility_snapshot'}, ${'read_current_market_catalog'}, ${'read_market_history'}, ${'read_pricing_current_market_evidence'}) and (not routine.prosecdef or not coalesce(routine.proconfig @> array[${'search_path=pg_catalog, pg_temp'}]::text[], false))) as unsafe_governed_routine_count,
-      (select count(*)::integer from pg_catalog.pg_proc routine join pg_catalog.pg_namespace ns on ns.oid = routine.pronamespace where ns.nspname = ${COMMERCE_MARKET_CATALOG_SCHEMA_NAME} and routine.proname not in (${'create_market'}, ${'revise_market_definition'}, ${'transition_market_lifecycle'}, ${'associate_storefront'}, ${'revise_storefront_association'}, ${'remove_storefront_association'}, ${'read_market_eligibility_snapshot'}, ${'read_current_market_catalog'}, ${'read_market_history'}, ${'read_pricing_current_market_evidence'}) and has_function_privilege(${'ontos_runtime'}, routine.oid, ${'EXECUTE'})) as unexpected_runtime_routine_count,
+      (select count(*)::integer from pg_catalog.pg_proc routine join pg_catalog.pg_namespace ns on ns.oid = routine.pronamespace where ns.nspname = ${COMMERCE_MARKET_CATALOG_SCHEMA_NAME} and routine.proname in (${'create_market'}, ${'revise_market_definition'}, ${'transition_market_lifecycle'}, ${'associate_storefront'}, ${'revise_storefront_association'}, ${'remove_storefront_association'}, ${'read_market_eligibility_snapshot'}, ${'read_current_market_catalog'}, ${'read_market_history'}, ${'read_pricing_current_market_evidence'}, ${'request_market_retirement'}, ${'read_market_retirement_intent'}, ${'advance_market_retirement_intent'}, ${'read_market_administration_state'}) and routine.prosecdef and has_function_privilege(${'ontos_runtime'}, routine.oid, ${'EXECUTE'})) as governed_routine_count,
+      (select count(*)::integer from pg_catalog.pg_proc routine join pg_catalog.pg_namespace ns on ns.oid = routine.pronamespace where ns.nspname = ${COMMERCE_MARKET_CATALOG_SCHEMA_NAME} and routine.proname in (${'create_market'}, ${'revise_market_definition'}, ${'transition_market_lifecycle'}, ${'associate_storefront'}, ${'revise_storefront_association'}, ${'remove_storefront_association'}, ${'read_market_eligibility_snapshot'}, ${'read_current_market_catalog'}, ${'read_market_history'}, ${'read_pricing_current_market_evidence'}, ${'request_market_retirement'}, ${'read_market_retirement_intent'}, ${'advance_market_retirement_intent'}, ${'read_market_administration_state'}) and (not routine.prosecdef or not coalesce(routine.proconfig @> array[${'search_path=pg_catalog, pg_temp'}]::text[], false))) as unsafe_governed_routine_count,
+      (select count(*)::integer from pg_catalog.pg_proc routine join pg_catalog.pg_namespace ns on ns.oid = routine.pronamespace where ns.nspname = ${COMMERCE_MARKET_CATALOG_SCHEMA_NAME} and routine.proname not in (${'create_market'}, ${'revise_market_definition'}, ${'transition_market_lifecycle'}, ${'associate_storefront'}, ${'revise_storefront_association'}, ${'remove_storefront_association'}, ${'read_market_eligibility_snapshot'}, ${'read_current_market_catalog'}, ${'read_market_history'}, ${'read_pricing_current_market_evidence'}, ${'request_market_retirement'}, ${'read_market_retirement_intent'}, ${'advance_market_retirement_intent'}, ${'read_market_administration_state'}) and has_function_privilege(${'ontos_runtime'}, routine.oid, ${'EXECUTE'})) as unexpected_runtime_routine_count,
       has_function_privilege(${'ontos_runtime'}, ${'commerce_market_catalog.assert_operation_scope(uuid,uuid)'}, ${'EXECUTE'}) or has_function_privilege(${'ontos_runtime'}, ${'commerce_market_catalog.advance_completeness_generation(uuid,uuid)'}, ${'EXECUTE'}) as private_routine_executable,
       has_schema_privilege(${'ontos_runtime'}, ${COMMERCE_MARKET_CATALOG_SCHEMA_NAME}, ${'CREATE'}) as runtime_create,
       has_schema_privilege(${'ontos_runtime'}, ${COMMERCE_MARKET_CATALOG_SCHEMA_NAME}, ${'USAGE'}) as runtime_usage,
-      bool_or(has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'SELECT'})) filter (where relation.relname <> ${'gateway_assertion_redemptions'}) as runtime_select,
-      bool_or(has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'INSERT'})) filter (where relation.relname <> ${'gateway_assertion_redemptions'}) as runtime_insert,
-      bool_or(has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'UPDATE'})) filter (where relation.relname <> ${'gateway_assertion_redemptions'}) as runtime_update,
-      bool_or(has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'DELETE'})) filter (where relation.relname <> ${'gateway_assertion_redemptions'}) as runtime_delete,
+      bool_or(relation.relname <> ${'gateway_assertion_redemptions'} and has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'SELECT'})) as runtime_select,
+      bool_or(relation.relname <> ${'gateway_assertion_redemptions'} and has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'INSERT'})) as runtime_insert,
+      bool_or(relation.relname <> ${'gateway_assertion_redemptions'} and has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'UPDATE'})) as runtime_update,
+      bool_or(relation.relname <> ${'gateway_assertion_redemptions'} and has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'DELETE'})) as runtime_delete,
       runtime_role.rolsuper as role_super, runtime_role.rolbypassrls as role_bypass_rls
       from pg_catalog.pg_class relation join pg_catalog.pg_namespace namespace on namespace.oid = relation.relnamespace
       cross join pg_catalog.pg_roles runtime_role
@@ -132,16 +156,15 @@ const verification = Effect.gen(function* verifyDatabase() {
   );
   if (
     infrastructure === undefined ||
-    !infrastructure.redemption_safe ||
-    infrastructure.table_count !== 7 ||
-    infrastructure.force_rls_count !== 6 ||
+    infrastructure.table_count !== 8 ||
+    infrastructure.force_rls_count !== 7 ||
     infrastructure.wrong_owner_count !== 0 ||
-    infrastructure.policy_count !== 24 ||
-    infrastructure.foreign_key_count !== 6 ||
+    infrastructure.policy_count !== 28 ||
+    infrastructure.foreign_key_count !== 7 ||
     infrastructure.append_only_trigger_count !== 2 ||
     infrastructure.identity_trigger_count !== 2 ||
     infrastructure.journal_count !== 1 ||
-    infrastructure.governed_routine_count !== 10 ||
+    infrastructure.governed_routine_count !== 14 ||
     infrastructure.unsafe_governed_routine_count !== 0 ||
     infrastructure.unexpected_runtime_routine_count !== 0 ||
     infrastructure.private_routine_executable ||

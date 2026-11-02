@@ -1,12 +1,21 @@
 // Storefront reads (merchandise-queries.ts) against PostgreSQL: the catalog is written with `replaceSnapshot` into
 // a fresh company scope, then the bounded SQL reads are asserted.
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { randomUUID } from 'node:crypto';
+
+import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 
+import {
+  MerchandiseCommandSchema,
+  MerchandiseNotFound,
+  MerchandiseRevisionConflict,
+  merchandiseMarketCommandSchemas,
+} from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { RecordsViewSchema, StorefrontCatalogQuerySchema } from '../../shared/apis/records.ts';
+import { MarketIdSchema, convertGrossMinor } from '../../shared/domain/market-offers.ts';
 
 import {
   categoryTree,
@@ -20,7 +29,17 @@ import {
   storefrontProducts,
 } from '../../src/services/merchandise-queries.ts';
 import { resetToAkrosBaseline } from '../../src/services/akros-demo-reset.ts';
-import { loadHead } from '../../src/services/merchandise-store.ts';
+import { applyMarketCommand } from '../../src/services/market-commands.ts';
+import {
+  catalogMarketScope,
+  listMarkets,
+  loadMarket,
+  loadOrderMarketContext,
+  marketExceptionPage,
+  productMarketRows,
+} from '../../src/services/market-store.ts';
+import { loadHead, loadWorkingSet, persistChange } from '../../src/services/merchandise-store.ts';
+import { evolveMerchandiseState, workingSetRequestOf } from '../../src/services/persistence.service.ts';
 import type { MerchandiseFixture } from './support/merchandise-database.ts';
 import { catalogInput, catalogState, decodeState, withMerchandise } from './support/merchandise-database.ts';
 
@@ -854,3 +873,253 @@ it.live('counts only independently orderable variant packages in both card and d
     }),
   );
 });
+
+// ------------------------------------------------------------------------------------------------ markets
+
+const MARKET_ID = Schema.decodeUnknownSync(MarketIdSchema)(randomUUID());
+const UNKNOWN_MARKET_ID = Schema.decodeUnknownSync(MarketIdSchema)(randomUUID());
+const marketNow = DateTime.makeUnsafe('2026-11-01T10:00:00.000Z');
+const decodeMarketCommand = Schema.decodeUnknownSync(Schema.Union(merchandiseMarketCommandSchemas));
+type MarketCommandInput = (typeof merchandiseMarketCommandSchemas)[number]['Encoded'];
+/** EUR at half the CZK gross, rounded to whole cents: every converted price is easy to check by hand. */
+const halfPriceMarket = {
+  _tag: 'ConfigureMarket',
+  currency: 'EUR',
+  exchangeRate: '0.5',
+  marketCode: 'TEST-EU',
+  marketId: MARKET_ID,
+  offerMode: 'WHOLE_CATALOGUE',
+  roundingMinor: 1,
+} satisfies MarketCommandInput;
+
+const runMarketCommand = ({ db, scope }: MerchandiseFixture, input: MarketCommandInput) =>
+  db.transaction((transaction) => applyMarketCommand(transaction, scope, decodeMarketCommand(input), marketNow));
+
+/** Storefront card listing restricted to the market (`marketId` resolved the way persistence resolves it). */
+const marketPage = (fixture: MerchandiseFixture, marketId: string, query: StorefrontCatalogQueryInput = {}) =>
+  Effect.gen(function* marketCatalogPage() {
+    const market = yield* loadMarket(fixture.db, fixture.scope, marketId);
+    return yield* storefrontProducts(fixture.db, fixture.scope, {
+      market: catalogMarketScope(fixture.scope, market),
+      query: Schema.decodeSync(StorefrontCatalogQuerySchema)({ fields: 'card', ...query }),
+    });
+  });
+const marketIds = (fixture: MerchandiseFixture, marketId: string, query: StorefrontCatalogQueryInput = {}) =>
+  marketPage(fixture, marketId, query).pipe(Effect.map(staffProductIds));
+
+it.live('lists only the products a market offers, with every price in the market currency', () =>
+  onCatalog((fixture) =>
+    Effect.gen(function* marketCatalog() {
+      const configured = yield* runMarketCommand(fixture, { ...halfPriceMarket, expectedRevision: 0 });
+      expect(configured.marketRevision).toBe(1);
+      yield* runMarketCommand(fixture, {
+        _tag: 'SetProductMarketOffer',
+        marketId: MARKET_ID,
+        offered: false,
+        productId: 'p2',
+      });
+      // WHOLE_CATALOGUE: everything published except the withdrawn product, in every storefront mode.
+      expect(yield* marketIds(fixture, MARKET_ID)).toEqual(['p1', 'p3']);
+      expect(yield* marketIds(fixture, MARKET_ID, { label: 'sale' })).toEqual([]);
+      expect(yield* marketIds(fixture, MARKET_ID, { productIds: ['p2', 'p3'] })).toEqual(['p3']);
+      expect(yield* marketIds(fixture, MARKET_ID, { featured: true })).toEqual(['p3', 'p1']);
+      expect(yield* marketIds(fixture, MARKET_ID, { categorySlug: 'srouby' })).toEqual(['p1', 'p3']);
+      // Prices: the CZK gross × 0.5, half-up; full pages convert variants too.
+      const czkPage = yield* catalogPage(fixture, { fields: 'full', productIds: ['p1'] });
+      const eurPage = yield* marketPage(fixture, MARKET_ID, { fields: 'full', productIds: ['p1'] });
+      const [czkProduct] = czkPage.products;
+      const [eurProduct] = eurPage.products;
+      expect(eurProduct?.currentPriceMinor).toBe(
+        convertGrossMinor(czkProduct?.currentPriceMinor ?? -1, halfPriceMarket),
+      );
+      expect(eurProduct?.variantRecords?.map((variant) => variant.grossPriceMinor)).toEqual(
+        czkProduct?.variantRecords?.map((variant) => convertGrossMinor(variant.grossPriceMinor, halfPriceMarket)),
+      );
+      expect(eurProduct?.variantSummary?.minGrossPriceMinor).toEqual(Option.some(61));
+      // Price bounds are market-currency amounts: 61 (p1) passes, 18 (p3: 36 Kč) does not.
+      expect(yield* marketIds(fixture, MARKET_ID, { minMinor: 50 })).toEqual(['p1']);
+      expect(yield* marketIds(fixture, MARKET_ID, { maxMinor: 60 })).toEqual(['p3']);
+      // A market without settings offers nothing.
+      expect((yield* marketPage(fixture, UNKNOWN_MARKET_ID)).total).toBe(0);
+      // The staff views: exception counts, the exception page, the product's markets.
+      const [market] = yield* listMarkets(fixture.db, fixture.scope);
+      expect(market).toMatchObject({
+        exceptionCounts: { notOffered: 1, offered: 0 },
+        exchangeRate: '0.5',
+        marketCode: 'TEST-EU',
+        revision: 1,
+      });
+      expect(yield* marketExceptionPage(fixture.db, fixture.scope, { marketId: MARKET_ID })).toEqual({
+        items: [{ name: 'Podložka', offered: false, productId: 'p2', sku: 'P2' }],
+        marketId: MARKET_ID,
+        total: 1,
+      });
+      const [p2Market] = yield* productMarketRows(fixture.db, fixture.scope, 'p2');
+      expect(p2Market?.exception).toEqual(Option.some(false));
+    }),
+  ),
+);
+
+it.live('switches a market to selected products, guards its revision and removes it with its exceptions', () =>
+  onCatalog((fixture) =>
+    Effect.gen(function* marketLifecycle() {
+      yield* runMarketCommand(fixture, halfPriceMarket);
+      yield* runMarketCommand(fixture, {
+        _tag: 'SetMarketProductOffers',
+        marketId: MARKET_ID,
+        offered: false,
+        productIds: ['p2'],
+      });
+      // The new default (not offered) makes the p2 exception redundant: it is dropped.
+      const switched = yield* runMarketCommand(fixture, {
+        ...halfPriceMarket,
+        expectedRevision: 1,
+        offerMode: 'SELECTED_PRODUCTS',
+      });
+      expect(switched.marketRevision).toBe(2);
+      expect((yield* marketExceptionPage(fixture.db, fixture.scope, { marketId: MARKET_ID })).total).toBe(0);
+      expect(yield* marketIds(fixture, MARKET_ID)).toEqual([]);
+      yield* runMarketCommand(fixture, {
+        _tag: 'SetMarketProductOffers',
+        marketId: MARKET_ID,
+        offered: true,
+        productIds: ['p3'],
+      });
+      expect(yield* marketIds(fixture, MARKET_ID)).toEqual(['p3']);
+      // Offering the default again stores nothing.
+      yield* runMarketCommand(fixture, {
+        _tag: 'SetProductMarketOffer',
+        marketId: MARKET_ID,
+        offered: false,
+        productId: 'p1',
+      });
+      expect((yield* listMarkets(fixture.db, fixture.scope))[0]?.exceptionCounts).toEqual({
+        notOffered: 0,
+        offered: 1,
+      });
+      const stale = yield* runMarketCommand(fixture, { ...halfPriceMarket, expectedRevision: 1 }).pipe(Effect.flip);
+      expect(Schema.is(MerchandiseRevisionConflict)(stale)).toBe(true);
+      const missingProduct = yield* runMarketCommand(fixture, {
+        _tag: 'SetProductMarketOffer',
+        marketId: MARKET_ID,
+        offered: true,
+        productId: 'nope',
+      }).pipe(Effect.flip);
+      expect(Schema.is(MerchandiseNotFound)(missingProduct)).toBe(true);
+      yield* runMarketCommand(fixture, { _tag: 'RemoveMarket', marketId: MARKET_ID });
+      expect(yield* listMarkets(fixture.db, fixture.scope)).toEqual([]);
+      expect((yield* marketExceptionPage(fixture.db, fixture.scope, { marketId: MARKET_ID })).total).toBe(0);
+      const removedAgain = yield* runMarketCommand(fixture, { _tag: 'RemoveMarket', marketId: MARKET_ID }).pipe(
+        Effect.flip,
+      );
+      expect(Schema.is(MerchandiseNotFound)(removedAgain)).toBe(true);
+    }),
+  ),
+);
+
+const marketActor = {
+  principalId: '20000000-0000-4000-8000-000000000002',
+  tenantId: '20000000-0000-4000-8000-000000000001',
+};
+const decodeOrderCommand = Schema.decodeUnknownSync(MerchandiseCommandSchema);
+
+/** PlaceStorefrontOrder the way persistence runs it, with the market context read from the market tables. */
+const placeMarketOrder = (
+  fixture: MerchandiseFixture,
+  overrides: { readonly expectedUnitPriceMinor: number; readonly marketId: string },
+) =>
+  fixture.db.transaction((transaction) =>
+    Effect.gen(function* placeOrderInMarket() {
+      const command = decodeOrderCommand({
+        _tag: 'PlaceStorefrontOrder',
+        clientRequestId: `client-${randomUUID()}`,
+        contact: { email: 'jana@example.cz', name: 'Jana Nováková' },
+        deliveryAddress: { city: 'Bratislava', postalCode: '81101', street: 'Hlavná 1' },
+        expectedShippingPriceMinor: 3950,
+        lines: [
+          { expectedUnitPriceMinor: overrides.expectedUnitPriceMinor, productId: 'p1', quantity: 2, variantId: 'v1' },
+        ],
+        marketId: overrides.marketId,
+        partyId: 'test-customer-party',
+        shippingMethod: 'ZASILKOVNA',
+      });
+      if (!Predicate.isTagged(command, 'PlaceStorefrontOrder') || command.marketId === undefined) {
+        return yield* Effect.die('The fixture command must be a market storefront order');
+      }
+      const head = yield* loadHead(transaction, fixture.scope, { lock: true });
+      if (head === undefined) {
+        return yield* Effect.die('missing head');
+      }
+      const resourceId = `order-${randomUUID()}`;
+      const working = yield* loadWorkingSet(transaction, fixture.scope, head, workingSetRequestOf(command, resourceId));
+      const market = yield* loadOrderMarketContext(
+        transaction,
+        fixture.scope,
+        command.marketId,
+        command.lines.map((line) => line.productId),
+      );
+      const change = yield* evolveMerchandiseState(working.state, command, {
+        actor: marketActor,
+        market,
+        now: marketNow,
+        resourceId,
+      });
+      if (change.state !== working.state) {
+        yield* persistChange(transaction, fixture.scope, working, change.state, marketNow);
+      }
+      return { resourceId, result: change.storefrontOrder };
+    }),
+  );
+
+it.live('PlaceStorefrontOrder in a market reprices, rejects what the market does not offer and stores the market', () =>
+  onCatalog((fixture) =>
+    Effect.gen(function* marketOrder() {
+      yield* runMarketCommand(fixture, halfPriceMarket);
+      // A CZK expectation (121) is a changed price in the EUR market (61).
+      const stale = yield* placeMarketOrder(fixture, { expectedUnitPriceMinor: 121, marketId: MARKET_ID });
+      expect(stale.result?.outcome).toBe('REJECTED');
+      expect(stale.result?.issues[0]).toMatchObject({ code: 'PRICE_CHANGED', currentUnitPriceMinor: 61 });
+      const unknown = yield* placeMarketOrder(fixture, { expectedUnitPriceMinor: 61, marketId: UNKNOWN_MARKET_ID });
+      expect(unknown.result?.issues[0]?.code).toBe('MARKET_UNAVAILABLE');
+      const placed = yield* placeMarketOrder(fixture, { expectedUnitPriceMinor: 61, marketId: MARKET_ID });
+      expect(placed.result?.outcome).toBe('PLACED');
+      expect(placed.result?.shippingPriceMinor).toBe(3950);
+      expect(placed.result?.totalMinor).toBe(2 * 61 + 3950);
+      expect(placed.result?.market).toEqual({
+        configured: true,
+        currency: 'EUR',
+        marketCode: 'TEST-EU',
+        marketId: MARKET_ID,
+      });
+      // The order read decodes the stored document: the market snapshot survives the round trip.
+      const page = yield* orderPage(
+        fixture.db,
+        fixture.scope,
+        Schema.decodeSync(RecordsViewSchema)({ ordersLimit: 10 }),
+      );
+      const stored = page.orders.find((order) => order.id === placed.resourceId);
+      expect(stored?.market).toEqual({
+        currency: 'EUR',
+        exchangeRate: '0.5',
+        marketCode: 'TEST-EU',
+        marketId: MARKET_ID,
+        roundingMinor: 1,
+      });
+      expect(stored?.lines[0]?.unitPriceMinor).toBe(61);
+      // Withdrawn from the market: nothing is saved.
+      yield* runMarketCommand(fixture, {
+        _tag: 'SetProductMarketOffer',
+        marketId: MARKET_ID,
+        offered: false,
+        productId: 'p1',
+      });
+      const withdrawn = yield* placeMarketOrder(fixture, { expectedUnitPriceMinor: 61, marketId: MARKET_ID });
+      expect(withdrawn.result?.issues).toEqual([
+        expect.objectContaining({ code: 'NOT_OFFERED_IN_MARKET', productId: 'p1', variantId: 'v1' }),
+      ]);
+      expect(
+        (yield* orderPage(fixture.db, fixture.scope, Schema.decodeSync(RecordsViewSchema)({ ordersLimit: 10 }))).orders,
+      ).toHaveLength(page.orders.length);
+    }),
+  ),
+);

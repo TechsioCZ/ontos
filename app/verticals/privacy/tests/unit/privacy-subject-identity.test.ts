@@ -1,12 +1,20 @@
+import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { NodeCrypto } from '@effect/platform-node';
+import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Layer, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { createPrivacySubjectActionSchemaErrorLive } from '../../api/create-privacy-subject-action-problems.ts';
+import { createPrivacySubjectAction } from '../../src/actions/create-privacy-subject.action.ts';
+import {
+  createPrivacySubjectActionSchemaErrorLive,
+  mapCreatePrivacySubjectActionProblem,
+} from '../../api/create-privacy-subject-action-problems.ts';
 import { CreatePrivacySubjectPayloadSchema } from '../../shared/actions/privacy-operations.ts';
 import {
   CreatePrivacySubjectActionApi,
   CreatePrivacySubjectActionInvalidProblemSchema,
+  CreatePrivacySubjectActionIneligibleProblemSchema,
 } from '../../shared/apis/create-privacy-subject-action.ts';
 import { privacySubjectRefForParty } from '../../shared/domain/privacy-subject-identity.ts';
 
@@ -76,3 +84,37 @@ it.effect('rejects malformed subject IDs as typed HTTP 400 before the Action or 
     }
   }),
 );
+
+it.layer(NodeCrypto.layer)('Privacy Subject exact Party identity admission', (suite) => {
+  suite.effect('rejects an unrelated well-formed UUID as 422 before owner SQL or persistence', () =>
+    Effect.gen(function* rejectUnrelatedSubjectIdentity() {
+      const harness = yield* makeActionTestHarness({ actionPermission: 'allowed' });
+      const payload = Schema.decodeSync(CreatePrivacySubjectPayloadSchema)({
+        subject,
+        subjectRef: { ...privacySubjectRefForParty(partyRef), resourceId: '44444444-4444-4444-8444-444444444444' },
+      });
+      const error = yield* harness.runtime
+        .runAction({
+          audience: 'privacy',
+          payload,
+          principal: Schema.decodeSync(TrustedPrincipalContextSchema)({
+            authBindingId: '77777777-7777-4777-8777-777777777777',
+            authContextRef: 'api-key:subject-identity-unit',
+            authMethod: 'api_key',
+            legalEntityId: '55555555-5555-4555-8555-555555555555',
+            principalId: '66666666-6666-4666-8666-666666666666',
+            tenantId: partyRef.tenantId,
+          }),
+          registration: createPrivacySubjectAction,
+          transport: { correlationId: 'subject-identity-rejection', idempotencyKey: 'subject-identity-rejection' },
+        })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({ code: 'privacy_action_rejected' });
+      const problem = mapCreatePrivacySubjectActionProblem(error);
+      expect(Schema.is(CreatePrivacySubjectActionIneligibleProblemSchema)(problem)).toBe(true);
+      expect(problem.status).toBe(422);
+      expect(harness.snapshot().transactionCount).toBe(0);
+      expect(harness.snapshot().committed).toEqual([]);
+    }),
+  );
+});

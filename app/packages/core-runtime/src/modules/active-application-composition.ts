@@ -1,13 +1,18 @@
-import { Clock, Context, DateTime, Effect, Layer, Option, Ref, Schema } from 'effect';
+import { Clock, Context, DateTime, Effect, Layer, Option, Ref, Schema, Semaphore } from 'effect';
 
 import {
   ApplicationCompositionSchema,
   freezeApplicationCompositionArtifact,
   ONTOS_APPLICATION_COMPOSITION_MAX_BYTES,
 } from './application-composition.ts';
-import { buildApplicationCompositionCatalog } from './application-composition-catalog.ts';
+import {
+  buildApplicationCompositionCatalog,
+  validatedApplicationCompositionCatalog,
+} from './application-composition-catalog.ts';
 import { ActiveApplicationCompositionUnavailableError } from './active-application-composition-errors.ts';
 import { ActiveApplicationCompositionSource } from './active-application-composition-source-service.ts';
+import { ProcessCompositionValidation } from './process-composition-validation.ts';
+import type { ProcessCompositionValidationRegistry } from './process-composition-validation.ts';
 
 /**
  * One bounded observation of the deployment-owned active revision. The publisher owns promotion;
@@ -104,16 +109,19 @@ const approveDecodedSnapshot = Effect.fn('ActiveApplicationComposition.approveDe
   return validated;
 });
 
+const validateSnapshotLocally = Effect.fn('ActiveApplicationComposition.validateSnapshot')(function* validateSnapshot(
+  snapshot: ActiveApplicationCompositionSnapshot,
+) {
+  if ((yield* Ref.get(validatedSnapshots)).has(snapshot)) {
+    return yield* checkLease(snapshot);
+  }
+  const decoded = yield* decodeSnapshot(snapshot).pipe(Effect.mapError(unavailableActiveApplicationComposition));
+  return yield* approveDecodedSnapshot(decoded);
+});
+
 /** Every injected/runtime source is checked at the operation edge; expiry never selects an old revision. */
-export const validateActiveApplicationCompositionSnapshot = Effect.fn('ActiveApplicationComposition.validateSnapshot')(
-  function* validateSnapshot(snapshot: ActiveApplicationCompositionSnapshot) {
-    if ((yield* Ref.get(validatedSnapshots)).has(snapshot)) {
-      return yield* checkLease(snapshot);
-    }
-    const decoded = yield* decodeSnapshot(snapshot).pipe(Effect.mapError(unavailableActiveApplicationComposition));
-    return yield* approveDecodedSnapshot(decoded);
-  },
-);
+export const validateActiveApplicationCompositionSnapshot = (snapshot: ActiveApplicationCompositionSnapshot) =>
+  globalThis.ontosProcessCompositionValidation?.validate(snapshot) ?? validateSnapshotLocally(snapshot);
 
 // Bounded to one successful wire value across request-scoped Layers. Exact text, not a claimed
 // revision, identifies the cache entry: the wire value is decoded and verified once per isolate,
@@ -154,6 +162,23 @@ const configuredActiveApplicationCompositionSnapshot = Effect.fn(
 });
 
 /**
+ * Native hosts initialize this before importing owners. The permit coalesces concurrent first validation of the
+ * same exact bytes, including calls from distinct bundles. It never wraps source I/O. Only one successful wire
+ * observation and weakly held immutable artifacts survive a call; failures and principal decisions do not.
+ */
+export const ProcessCompositionValidationLive = Layer.effect(
+  ProcessCompositionValidation,
+  Effect.gen(function* makeProcessValidation() {
+    const permit = yield* Semaphore.make(1);
+    return Object.freeze({
+      catalog: validatedApplicationCompositionCatalog,
+      decode: (encoded: string) => permit.withPermit(configuredActiveApplicationCompositionSnapshot(encoded)),
+      validate: validateSnapshotLocally,
+    } satisfies ProcessCompositionValidationRegistry);
+  }),
+);
+
+/**
  * Server runtime adapter. Deployment automation publishes the immutable active snapshot as one atomic
  * value: the trusted authority URL on Node, the Workers KV entry on a placed Worker
  * (`@app/core-runtime/modules/active-application-composition-source`). Missing, malformed, or expired evidence fails closed in
@@ -165,7 +190,11 @@ export const ActiveApplicationCompositionConfigLive = Layer.effect(ActiveApplica
     return Object.freeze({
       load: source.load.pipe(
         Effect.mapError(unavailableActiveApplicationComposition),
-        Effect.flatMap(configuredActiveApplicationCompositionSnapshot),
+        Effect.flatMap(
+          (encoded) =>
+            globalThis.ontosProcessCompositionValidation?.decode(encoded) ??
+            configuredActiveApplicationCompositionSnapshot(encoded),
+        ),
       ),
     });
   }),

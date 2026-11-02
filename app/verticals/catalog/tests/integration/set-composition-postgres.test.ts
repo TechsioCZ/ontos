@@ -23,6 +23,7 @@ import {
   productConfigurationMeasuredRules,
   productConfigurationOptionAllowances,
   productConfigurationRevisionActivations,
+  productTypeUntypedDecisions,
   productUnitRuleRevisions,
   productUnits,
   productVariantAxisEvents,
@@ -176,6 +177,7 @@ it.live('publishes only a proven flat fixed Set with one shelf and two brackets'
           actingPrincipalId: principalId,
           actionInvocationId: randomUUID(),
           attributeDefinitionIds: [],
+          attributeDefinitionRevisions: [],
           axisRevision: 1,
           evidenceRefs: ['catalog:set-postgres-proof'],
           productId,
@@ -230,6 +232,34 @@ it.live('publishes only a proven flat fixed Set with one shelf and two brackets'
         { amount: '1', productId: shelfId, variantId: shelfVariantId },
         { amount: '2', productId: bracketId, variantId: bracketVariantId },
       ];
+      const unconfirmedId = randomUUID();
+      expect(
+        Match.value(yield* publish(tenantId, unconfirmedId, exact)).pipe(
+          Match.tag('invalid', () => true),
+          Match.orElse(() => false),
+        ),
+      ).toBe(true);
+      expect(
+        yield* admin.select().from(setCompositions).where(eq(setCompositions.compositionId, unconfirmedId)),
+      ).toEqual([]);
+      yield* admin.insert(productTypeUntypedDecisions).values(
+        variants.slice(1, 3).map(({ productId, variantId }) => ({
+          actingPrincipalId: principalId,
+          actionInvocationId: randomUUID(),
+          axisRevision: 1,
+          decisionRevision: 1,
+          decisionState: 'CONFIRMED',
+          evidenceRefs: ['catalog:set-postgres-proof'],
+          productId,
+          productRevision: 1,
+          reason: 'No structured attributes or Variant axes are required',
+          structuredAttributesRequired: false,
+          tenantId,
+          valueRevisionTokens: [],
+          variantAxesRequired: false,
+          variantRevisionTokens: [`${variantId}:1`],
+        })),
+      );
       const compositionId = randomUUID();
       expect(
         Match.value(yield* publish(tenantId, compositionId, exact)).pipe(

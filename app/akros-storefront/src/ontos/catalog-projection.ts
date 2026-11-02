@@ -1,3 +1,11 @@
+import {
+  CZK_MONEY,
+  currencySymbol,
+  isStoreCurrency,
+  type MoneyFormat,
+  type StoreCurrency,
+} from "@/lib/format";
+import { productMediaPath } from "./media-path";
 import { purchaseConstraints } from "./purchase-constraints";
 import type {
   CatalogVariantSummary,
@@ -11,6 +19,26 @@ import type {
   CatalogPurchaseProduct,
   CatalogPurchaseVariant,
 } from "@/ontos/catalog-types";
+
+/** The market a storefront catalog read was answered for. */
+export interface CatalogMarket {
+  marketId: string;
+  marketCode: string;
+  currency: StoreCurrency;
+  /** false: the market has no offer yet, so the read carries no products. */
+  configured: boolean;
+}
+const marketOf = (value: unknown): CatalogMarket | undefined => {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Raw;
+  if (typeof raw.marketId !== "string" || !isStoreCurrency(raw.currency)) return undefined;
+  return {
+    marketId: raw.marketId,
+    marketCode: typeof raw.marketCode === "string" ? raw.marketCode : "",
+    currency: raw.currency,
+    configured: raw.configured !== false,
+  };
+};
 
 /** A bounded client payload: do not serialize product.detail.variants through the product prop too. */
 export const purchaseProductOf = (product: CatalogProduct): CatalogPurchaseProduct => ({
@@ -104,20 +132,22 @@ const paragraphsOf = (record: Raw): string[] => {
     .filter(Boolean);
 };
 
-/** Only CZK prices are sold here; anything else is shown as „cena není dostupná“. */
-const SUPPORTED_CURRENCY = "CZK";
-/** Why an owner price cannot be sold, or undefined when it can (positive CZK gross and net). */
+/**
+ * Prices are sold only in the market currency (`storefrontCatalog.market.currency`, CZK without a market);
+ * a product priced in anything else is shown as „cena není dostupná“.
+ */
 const priceUnavailableReason = (
   gross: number | undefined,
   net: number | undefined,
   currency: unknown,
+  money: MoneyFormat,
 ): string | undefined => {
   if (
     typeof currency === "string" &&
     currency.trim() &&
-    currency.trim().toUpperCase() !== SUPPORTED_CURRENCY
+    currency.trim().toUpperCase() !== money.currency
   )
-    return `Cena je v nepodporované měně (${currency.trim().toUpperCase()}); e-shop prodává jen v Kč.`;
+    return `Cena je v nepodporované měně (${currency.trim().toUpperCase()}); e-shop prodává jen v ${currencySymbol(money)}.`;
   if (gross === undefined || net === undefined) return "OntOS pro tuto položku nevrátil cenu.";
   if (gross <= 0 || net <= 0) return "Cena v OntOS je nulová, položku proto nelze objednat.";
   return undefined;
@@ -135,6 +165,8 @@ const dedupeTiers = (tiers: CatalogPriceTier[]): CatalogPriceTier[] =>
 
 /** One owner product read (`includeCategories: false`): one page of products plus the catalog revision. */
 export interface ProductPage {
+  /** merchandise `storefrontCatalog.market` (absent only for reads without a market). */
+  market?: CatalogMarket;
   revision: number;
   total: number;
   page: number;
@@ -165,6 +197,8 @@ const variantSummaryOf = (value: unknown): CatalogVariantSummary => {
  * Listing cards carry no variant records; every product carries the owner's `variantSummary`.
  */
 export function projectProducts(body: Raw): ProductPage {
+  const market = marketOf(body.market);
+  const money: MoneyFormat = { currency: market?.currency ?? "CZK", locale: CZK_MONEY.locale };
   const products: CatalogProduct[] = [];
   for (const p of rows(body.products)) {
     if (p.active === false || p.published === false || !text(p.id) || !text(p.slug)) continue;
@@ -174,7 +208,7 @@ export function projectProducts(body: Raw): ProductPage {
       // Same default as the owner order rules (merchandise order-quantity: minimumQuantity ?? 1).
       const minimum = number(v.minimumQuantity) ?? number(p.minimumQuantity) ?? 1;
       if (!text(v.id)) return null;
-      const priceIssue = priceUnavailableReason(gross, net, p.currency);
+      const priceIssue = priceUnavailableReason(gross, net, p.currency, money);
       const availabilityUnknown = isAvailabilityUnknown(v.availability, p.stockTracked);
       const tiers = priceIssue
         ? []
@@ -230,8 +264,8 @@ export function projectProducts(body: Raw): ProductPage {
     const groupGross = variantSummary.minGrossPriceMinor ?? undefined;
     // A group has no net price of its own (each variant carries one), so only its gross price is checked.
     const productPriceIssue = isGroup
-      ? priceUnavailableReason(groupGross, groupGross, p.currency)
-      : priceUnavailableReason(gross, net, p.currency);
+      ? priceUnavailableReason(groupGross, groupGross, p.currency, money)
+      : priceUnavailableReason(gross, net, p.currency, money);
     const productAvailabilityUnknown = isAvailabilityUnknown(p.availability, p.stockTracked);
     const priced = variants.filter((v) => !v.priceUnavailableReason);
     const first = priced.reduce<CatalogProductVariant | undefined>(
@@ -251,7 +285,10 @@ export function projectProducts(body: Raw): ProductPage {
               }))
               .filter((t) => Object.values(t).every(Number.isFinite) && t.priceMinor > 0),
           ]);
-    const gallery = strings(p.gallery).flatMap((src) => safeImage(src) ?? []);
+    // Photos uploaded in OntOS are served by this storefront through the governed media read.
+    const gallery = strings(p.gallery).flatMap(
+      (src) => productMediaPath(text(p.id), src) ?? safeImage(src) ?? [],
+    );
     // Staff edit the ordered gallery in OntOS ("Hlavní" = first image); imageSrc is only the import-time copy.
     const primaryImage = gallery[0] ?? safeImage(p.imageSrc) ?? imagePlaceholder;
     const paragraphs = paragraphsOf(p);
@@ -263,7 +300,7 @@ export function projectProducts(body: Raw): ProductPage {
       name: text(p.name),
       categoryId: text(p.categoryId),
       description: paragraphs[0] ?? text(p.shortDescription),
-      currency: "CZK",
+      currency: money.currency,
       unit: text(p.sourceUnit, text(p.unit, "ks")),
       vatRate: number(p.vatRate),
       priceMinor: productPriceIssue ? 0 : isGroup ? groupGross! : gross!,
@@ -305,6 +342,7 @@ export function projectProducts(body: Raw): ProductPage {
         )
         .map((product) => product.id);
   return {
+    ...(market ? { market } : {}),
     revision: number(body.revision) ?? 0,
     total: number(body.total) ?? products.length,
     page: number(body.page) ?? 1,

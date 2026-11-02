@@ -51,7 +51,7 @@ export interface PropertyWorkspaceProps {
 }
 
 const panelClass =
-  'propertyportfolio:min-w-0 propertyportfolio:space-y-250 propertyportfolio:rounded-lg propertyportfolio:border propertyportfolio:border-border-primary propertyportfolio:p-300';
+  'propertyportfolio:min-w-0 space-y-250 propertyportfolio:rounded-lg propertyportfolio:border border-border-primary p-300';
 const stackClass =
   'propertyportfolio:flex propertyportfolio:min-w-0 propertyportfolio:flex-col propertyportfolio:gap-4';
 const rowClass =

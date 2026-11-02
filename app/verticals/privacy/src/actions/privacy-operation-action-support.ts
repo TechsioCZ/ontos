@@ -145,15 +145,6 @@ export const loadAndValidateConsentPurpose = Effect.fn('PrivacyAction.loadAndVal
         reason: 'Consent Decision must reference an authoritative Purpose Version',
       });
     }
-    if (
-      purposeVersion.effectiveFrom > decision.effectiveAt ||
-      (purposeVersion.effectiveTo !== null && decision.effectiveAt >= purposeVersion.effectiveTo)
-    ) {
-      return yield* new PrivacyActionRejected({
-        code: 'privacy_action_rejected',
-        reason: 'Consent Decision effective time must fall within the referenced Purpose Version period',
-      });
-    }
     const reason = validateConsentDecision(decision, purposeVersion, purposeVersion.requiredConsentDimensions ?? []);
     if (reason !== undefined) {
       return yield* new PrivacyActionRejected({ code: 'privacy_action_rejected', reason });

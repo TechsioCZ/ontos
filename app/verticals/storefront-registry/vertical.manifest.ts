@@ -8,6 +8,7 @@ import { CurrentStorefrontApplicationApi } from './shared/apis/current-storefron
 import { registerStorefrontApplicationAction } from './src/actions/register-storefront-application.action.ts';
 import { reviseStorefrontApplicationAction } from './src/actions/revise-storefront-application.action.ts';
 import { storefrontApplicationResourceDescriptor } from './shared/resources/storefront-application.ts';
+import { StorefrontApplicationsApi } from './shared/apis/storefront-applications.ts';
 import { VerifyCurrentStorefrontApplicationV1Api } from './shared/apis/verify-current-storefront-application-v1.ts';
 // </generated-module-manifest-imports>
 import { storefrontRegistryMcpContribution } from './shared/mcp/contribution.ts';
@@ -36,6 +37,7 @@ export const storefrontRegistryManifest: OntosModuleManifestInput = defineOntosM
     api: {
       // <generated-module-manifest-apis>
       'current-storefront-application': CurrentStorefrontApplicationApi,
+      'storefront-applications': StorefrontApplicationsApi,
       'verify-current-storefront-application-v1': VerifyCurrentStorefrontApplicationV1Api,
       // </generated-module-manifest-apis>
     },

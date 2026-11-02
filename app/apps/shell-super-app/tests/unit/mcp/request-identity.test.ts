@@ -7,7 +7,7 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { AgentActionRequestIdentity } from '../../../api/auth/agent-action-request-identity.ts';
 import { AgentReadRequestIdentity } from '../../../api/auth/agent-request-identity.ts';
-import { mcpRequestIdentityMiddleware } from '../../../api/index.ts';
+import { mcpRequestIdentityMiddleware } from '../../../api/mcp/request-identity.ts';
 import { serveMcpMetadata } from '../../../api/mcp/http.ts';
 
 const RESOURCE = 'https://identity.ontos.test/mcp';

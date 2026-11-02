@@ -336,7 +336,7 @@ const orderColumns = (
     meta: { type: 'string', width: 120 },
   },
   {
-    accessorFn: (row) => row.order.number ?? row.order.externalId,
+    accessorFn: (row) => row.order.number ?? '—',
     cell: (info) => (
       <span className="flex flex-col">
         <span className="font-medium">{info.getValue<string>()}</span>
@@ -416,7 +416,7 @@ export const OrdersTable = ({
       enablePagination
       enableSorting
       getRowId={(row) => row.order.id}
-      getRowLabel={(row) => row.original.order.number ?? row.original.order.externalId}
+      getRowLabel={(row) => row.original.order.number ?? '—'}
       pageSizeOptions={[25, 50, 100]}
       paginationProps={crmPaginationProps}
       renderToolbar={(table) => (

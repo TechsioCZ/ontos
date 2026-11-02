@@ -138,6 +138,12 @@ export const MarketLifecycleResultSchema = Schema.Struct({
   ),
 );
 
+/** Per-Action result contracts of the lifecycle transitions published under `shared/actions/`. */
+export const ActivateMarketResultSchema = MarketLifecycleResultSchema;
+export const SuspendMarketResultSchema = MarketLifecycleResultSchema;
+/** Retirement completes asynchronously: the Action returns the durable intent outcome. */
+export { MarketRetirementOutcomeSchema as RetireMarketResultSchema } from './domain/market-retirement-intent.ts';
+
 export const AssociateStorefrontPayloadSchema = Schema.Struct({
   associationId: StorefrontAssociationIdSchema,
   channel: MarketChannelSchema,
@@ -206,6 +212,11 @@ export const StorefrontAssociationResultSchema = Schema.Struct({
   ),
 );
 
+/** Per-Action result contracts of the Storefront association Actions published under `shared/actions/`. */
+export const AssociateStorefrontResultSchema = StorefrontAssociationResultSchema;
+export const ReviseStorefrontAssociationResultSchema = StorefrontAssociationResultSchema;
+export const RemoveStorefrontAssociationResultSchema = StorefrontAssociationResultSchema;
+
 export class MarketCommandRejected extends Schema.TaggedError<MarketCommandRejected>()('MarketCommandRejected', {
   code: Schema.Literals([
     'cross_tenant_reference',
@@ -214,6 +225,7 @@ export class MarketCommandRejected extends Schema.TaggedError<MarketCommandRejec
     'market_code_conflict',
     'overlapping_association',
     'replacement_impact_unresolved',
+    'retirement_in_progress',
     'revision_conflict',
     'seller_identity_immutable',
   ]),

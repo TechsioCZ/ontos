@@ -10,7 +10,7 @@ import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
 import { SearchForm } from "@techsio/ui-kit/molecules/search-form";
 import { DataTable, type ColumnDef } from "@techsio/ui-kit/organisms/data-table";
 import { loadFavoriteProduct, type FavoriteCatalogProduct } from "@/features/favorites/catalog";
-import { formatPrice } from "@/lib/format";
+import { useFormatPrice } from "@/ontos/market-context";
 import {
   matchesProductVariantSearch,
   normalizeCatalogSearchTerm,
@@ -49,6 +49,7 @@ export function VariantSelectionDialog({
   requireChange?: boolean;
   submitErrorMessage?: string;
 }) {
+  const formatPrice = useFormatPrice();
   const [catalog, setCatalog] = useState<FavoriteCatalogProduct>();
   const [selected, setSelected] = useState(() => new Set(initialSelection));
   const [query, setQuery] = useState("");
@@ -165,7 +166,7 @@ export function VariantSelectionDialog({
         ),
       },
     ],
-    [selected, checkboxId],
+    [selected, checkboxId, formatPrice],
   );
   return (
     <Dialog

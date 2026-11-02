@@ -48,7 +48,19 @@
     "./price-definition": "./src/apis/price-definition.ts",
     "./price-definition/client": "./src/api/price-definition-client.ts",
     "./resources/price": "./src/resources/price.ts",
-    "./pricing-decision": "./src/domain/pricing-decision.ts"
+    "./pricing-decision": "./src/domain/pricing-decision.ts",
+    "./manage-quotation": "./src/actions/manage-quotation.ts",
+    "./manage-quotation/api": "./src/apis/manage-quotation-action.ts",
+    "./manage-quotation/client": "./src/api/manage-quotation-client.ts",
+    "./manage-commitment-confirmation": "./src/actions/manage-commitment-confirmation.ts",
+    "./manage-commitment-confirmation/api": "./src/apis/manage-commitment-confirmation-action.ts",
+    "./manage-commitment-confirmation/client": "./src/api/manage-commitment-confirmation-client.ts",
+    "./commitment-confirmation": "./src/apis/commitment-confirmation-verification.ts",
+    "./commitment-confirmation/client": "./src/api/commitment-confirmation-verification-client.ts",
+    "./quotation-verification": "./src/apis/quotation-verification.ts",
+    "./quotation-verification/client": "./src/api/quotation-verification-client.ts",
+    "./commitment-confirmation-verification": "./src/apis/commitment-confirmation-verification.ts",
+    "./commitment-confirmation-verification/client": "./src/api/commitment-confirmation-verification-client.ts"
   },
   "scripts": {
     "test:unit": "rstest --project unit",
@@ -60,7 +72,7 @@
     "@app/party-registry": "workspace:*",
     "@app/price-group-catalog-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
-    "effect": "4.0.5"
+    "effect": "4.0.7"
   },
   "devDependencies": {
     "@rstest/core": "0.11.12",
@@ -72,7 +84,9 @@
     "moduleApis": [
       "current-pricing-decision",
       "current-supported-currencies",
-      "price-definition"
+      "price-definition",
+      "commitment-confirmation-verification",
+      "quotation-verification"
     ],
     "moduleId": "commerce.pricing",
     "packageName": "@app/pricing"

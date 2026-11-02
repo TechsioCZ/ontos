@@ -1,6 +1,6 @@
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { keyName, memberName, nearestFunction, skipWrappers, unwrapNode, walk } from './ast.ts';
+import { keyName, memberName, nearestFunction, parentOf, skipWrappers, staticString, unwrapNode, walk } from './ast.ts';
 import { lookupVariable } from './bindings.ts';
 import { isInErasedTypePosition } from './reference-positions.ts';
 
@@ -32,9 +32,12 @@ const effectTransforms = new Set([
   'delay',
   'ensuring',
   'flip',
+  'forkScoped',
   'map',
+  'mapError',
   'orDie',
   'provide',
+  'provideContext',
   'raceFirst',
   'retry',
   'scoped',
@@ -42,15 +45,17 @@ const effectTransforms = new Set([
   'timeout',
   'timeoutOrElse',
 ]);
-const directTransforms = new Set(['asVoid', 'flip', 'orDie', 'scoped']);
+const directTransforms = new Set(['asVoid', 'flip', 'forkScoped', 'orDie', 'scoped']);
 const processModule = 'effect/process';
 const rootNamespace = 'EffectRoot';
-const effectNamespaces = new Set(['Effect', 'Layer', 'Deferred']);
+const effectNamespaces = new Set(['Effect', 'Layer', 'Deferred', 'DateTime', 'Stream']);
 const moduleBases = new Map<string, readonly string[]>([
   ['effect', []],
   ['effect/Effect', ['Effect']],
   ['effect/Layer', ['Layer']],
   ['effect/Deferred', ['Deferred']],
+  ['effect/DateTime', ['DateTime']],
+  ['effect/Stream', ['Stream']],
   [processModule, ['Process']],
 ]);
 
@@ -169,6 +174,47 @@ const nativeMethod = (context: Context, node: ESTree.Node, namespace: string): s
   return path?.length === 2 && path[0] === namespace ? (path[1] ?? null) : null;
 };
 
+const stableStreamNamespace = (context: Context, callee: ESTree.Node): boolean => {
+  const member = unwrapNode(callee);
+  if (member.type !== 'MemberExpression' || member.computed || member.optional || member.object.type !== 'Identifier') {
+    return false;
+  }
+  const binding = lookupVariable(context, member.object);
+  if (!binding || mutableOrRepeated(binding) || importPath(binding.defs[0])?.join('.') !== 'Stream') {
+    return false;
+  }
+  return binding.references.every((reference) => {
+    if (isInErasedTypePosition(reference.identifier)) {
+      return true;
+    }
+    const parent = parentOf(reference.identifier);
+    if (
+      parent?.type !== 'MemberExpression' ||
+      parent.object !== reference.identifier ||
+      parent.computed ||
+      parent.optional
+    ) {
+      return false;
+    }
+    const use = parentOf(parent);
+    return (
+      !(use?.type === 'AssignmentExpression' && use.left === parent) &&
+      use?.type !== 'UpdateExpression' &&
+      !(use?.type === 'UnaryExpression' && use.operator === 'delete')
+    );
+  });
+};
+
+// Data-first terminals construct genuine Effects; an opaque receiver's .pipe is not evidence.
+const nativeStreamTerminal = (context: Context, node: ESTree.CallExpression): boolean => {
+  const terminal = nativeMethod(context, node.callee, 'Stream');
+  return (
+    node.arguments.length === 1 &&
+    (terminal === 'runHead' || terminal === 'runCollect' || terminal === 'runDrain') &&
+    stableStreamNamespace(context, node.callee)
+  );
+};
+
 const helperFunction = (context: Context, input: ESTree.Node): FunctionNode | null => {
   const node = unwrapNode(input);
   if (node.type !== 'Identifier') {
@@ -210,6 +256,89 @@ const generatorCall = (context: Context, input: ESTree.Node | null): ESTree.Call
     : null;
 };
 
+/** Only the generator itself is deferred; eager native values never inherit a later consumer's Clock. */
+export const isNativeDeferredProgram = (context: Context, input: ESTree.Node, seen = new Set<Variable>()): boolean => {
+  const node = unwrapNode(input);
+  if (node.type === 'CallExpression') {
+    return node.arguments.length === 1 && generatorCall(context, unwrapNode(node.arguments[0])) === node;
+  }
+  if (node.type !== 'Identifier') {
+    return false;
+  }
+  const variable = lookupVariable(context, node);
+  const declaration = variable ? immutableDeclaration(variable) : null;
+  if (!variable || !declaration?.init || declaration.id.type !== 'Identifier' || seen.has(variable)) {
+    return false;
+  }
+  return isNativeDeferredProgram(context, declaration.init, new Set([...seen, variable]));
+};
+
+const nativeGenerator = (context: Context, input: ESTree.Node): FunctionNode | null => {
+  const initializer = unwrapNode(input);
+  if (initializer.type !== 'CallExpression' || initializer.arguments.length !== 1) {
+    return null;
+  }
+  const builder = unwrapNode(initializer.callee);
+  const fn = unwrapNode(initializer.arguments[0]);
+  if (
+    builder.type !== 'CallExpression' ||
+    nativeMethod(context, builder.callee, 'Effect') !== 'fn' ||
+    builder.arguments.length !== 1 ||
+    builder.arguments[0].type !== 'Literal' ||
+    staticString(builder.arguments[0]) === null
+  ) {
+    return null;
+  }
+  return fn.type === 'FunctionExpression' && fn.generator && !fn.async && hasNoSelfReferences(context, fn) ? fn : null;
+};
+
+/** A native function callback is callable ownership, never a deferred program value. */
+export const nativeEffectFunctionBinding = (context: Context, input: ESTree.Node): Variable | null => {
+  const fn = unwrapNode(input);
+  const held = skipWrappers(fn);
+  if (held.parent?.type !== 'CallExpression' || nativeGenerator(context, held.parent) !== fn) {
+    return null;
+  }
+  const initializer = skipWrappers(held.parent);
+  const declaration = initializer.parent;
+  if (
+    declaration?.type !== 'VariableDeclarator' ||
+    declaration.init !== initializer.node ||
+    declaration.id.type !== 'Identifier'
+  ) {
+    return null;
+  }
+  const statement = parentOf(declaration);
+  const holder = parentOf(statement);
+  const variable = lookupVariable(context, declaration.id);
+  return holder?.type !== 'ExportNamedDeclaration' &&
+    holder?.type !== 'ExportDefaultDeclaration' &&
+    variable &&
+    immutableDeclaration(variable) === declaration
+    ? variable
+    : null;
+};
+
+const nativeGeneratorFactory = (context: Context, input: ESTree.Node): boolean => {
+  const node = unwrapNode(input);
+  if (node.type !== 'Identifier') {
+    return false;
+  }
+  const variable = lookupVariable(context, node);
+  const declaration = variable ? immutableDeclaration(variable) : null;
+  return (
+    declaration?.id.type === 'Identifier' &&
+    declaration.init !== null &&
+    nativeGenerator(context, declaration.init) !== null
+  );
+};
+
+/** Imported native Effect values cannot be passed as callable test functions. */
+export const isNativeEffectValue = (context: Context, input: ESTree.Node): boolean => {
+  const path = nativePath(context, input);
+  return path?.length === 2 && path[0] === 'DateTime' && path[1] === 'now';
+};
+
 const childProcessHandle = (context: Context, input: ESTree.Node): boolean => {
   const node = unwrapNode(input);
   if (node.type !== 'Identifier') {
@@ -237,6 +366,22 @@ const effectProof = {
     const index = call.arguments.length === 1 ? 0 : 1;
     const argument = call.arguments[index];
     if (call.arguments.length <= index || argument.type === 'SpreadElement') {
+      return false;
+    }
+    const callback = unwrapNode(argument);
+    return (
+      isFunction(callback) &&
+      hasNoSelfReferences(context, callback) &&
+      effectProof.helperProducesEffect(context, callback, seen)
+    );
+  },
+
+  forEachCallback: (context: Context, call: ESTree.CallExpression, seen: Set<FunctionNode>): boolean => {
+    if (call.arguments.length !== 2 && call.arguments.length !== 3) {
+      return false;
+    }
+    const [, argument] = call.arguments;
+    if (argument.type === 'SpreadElement') {
       return false;
     }
     const callback = unwrapNode(argument);
@@ -286,7 +431,11 @@ const effectProof = {
     }
     if (node.type !== 'CallExpression') {
       const method = nativeMethod(context, node, 'Effect');
-      return method !== null && effectValues.has(method);
+      return (
+        (method !== null && effectValues.has(method)) ||
+        isNativeEffectValue(context, node) ||
+        isNativeDeferredProgram(context, node)
+      );
     }
     if (node.arguments.some((argument) => argument.type === 'SpreadElement')) {
       return false;
@@ -298,6 +447,9 @@ const effectProof = {
       return true;
     }
     if (nativeMethod(context, node.callee, 'Deferred') === 'await') {
+      return true;
+    }
+    if (nativeStreamTerminal(context, node)) {
       return true;
     }
     if (nativeMethod(context, node.callee, 'ChildProcess') === 'make') {
@@ -315,7 +467,10 @@ const effectProof = {
       return true;
     }
     const fn = helperFunction(context, node.callee);
-    return fn !== null && effectProof.helperProducesEffect(context, fn, seen);
+    return (
+      nativeGeneratorFactory(context, node.callee) ||
+      (fn !== null && effectProof.helperProducesEffect(context, fn, seen))
+    );
   },
 
   nativeEffectMethod: (context: Context, node: ESTree.CallExpression, seen: Set<FunctionNode>): boolean => {
@@ -330,6 +485,12 @@ const effectProof = {
         effectProof.nativeEffect(context, first, seen) &&
         effectProof.flatMapCallback(context, node, seen)
       );
+    }
+    if (method === 'timeoutOrElse') {
+      return node.arguments.length === 2;
+    }
+    if (method === 'forEach') {
+      return effectProof.forEachCallback(context, node, seen);
     }
     if (method !== null && effectConstructors.has(method)) {
       return true;
@@ -366,6 +527,9 @@ const effectProof = {
     if (method === 'flatMap') {
       return node.arguments.length === 1 && effectProof.flatMapCallback(context, node, seen);
     }
+    if (method === 'provideService') {
+      return node.arguments.length === 2;
+    }
     return (
       method !== null && effectTransforms.has(method) && !directTransforms.has(method) && node.arguments.length === 1
     );
@@ -375,7 +539,10 @@ const effectProof = {
 /** Only immutable local helper calls and imported Effect constructors establish native result identity. */
 export const isNativeEffectHelper = (context: Context, fn: ESTree.Node): boolean => {
   const node = unwrapNode(fn);
-  return isFunction(node) && effectProof.helperProducesEffect(context, node, new Set());
+  return (
+    isFunction(node) &&
+    (nativeEffectFunctionBinding(context, node) !== null || effectProof.helperProducesEffect(context, node, new Set()))
+  );
 };
 
 const flatMapCall = (context: Context, fn: FunctionNode): ESTree.CallExpression | null => {
@@ -396,11 +563,25 @@ const flatMapCall = (context: Context, fn: FunctionNode): ESTree.CallExpression 
     : null;
 };
 
+/** Only the exact inline callback of the native data-first iterator inherits its consumed result's owner. */
+const forEachCall = (context: Context, fn: FunctionNode): ESTree.CallExpression | null => {
+  if (!hasNoSelfReferences(context, fn)) {
+    return null;
+  }
+  const { node, parent } = skipWrappers(fn);
+  return parent?.type === 'CallExpression' &&
+    parent.arguments[1] === node &&
+    nativeMethod(context, parent.callee, 'Effect') === 'forEach' &&
+    effectProof.nativeEffect(context, parent, new Set())
+    ? parent
+    : null;
+};
+
 const returnedBoundary = (context: Context, fn: FunctionNode): ESTree.Node | null => {
   if (fn.generator || fn.async) {
     return null;
   }
-  const deferred = flatMapCall(context, fn);
+  const deferred = flatMapCall(context, fn) ?? forEachCall(context, fn);
   return deferred ?? fn;
 };
 
@@ -415,7 +596,27 @@ const argumentConsumesEffect = (context: Context, call: ESTree.CallExpression, a
   return method === 'flatMap' || effectTransforms.has(method);
 };
 
+/** Native all consumes this direct static literal; opaque or escaped containers prove nothing. */
+const nativeAllArrayConsumer = (context: Context, array: ESTree.ArrayExpression): ESTree.CallExpression | null => {
+  const held = skipWrappers(array);
+  const call = held.parent;
+  return call?.type === 'CallExpression' &&
+    call.arguments[0] === held.node &&
+    (call.arguments.length === 1 || call.arguments.length === 2) &&
+    !call.arguments.some((argument) => argument.type === 'SpreadElement') &&
+    nativeMethod(context, call.callee, 'Effect') === 'all' &&
+    array.elements.every(
+      (element) =>
+        element !== null && element.type !== 'SpreadElement' && effectProof.nativeEffect(context, element, new Set()),
+    )
+    ? call
+    : null;
+};
+
 const nativeContainer = (context: Context, node: ESTree.Node, parent: ESTree.Node): ESTree.Node | null => {
+  if (parent.type === 'ArrayExpression' && parent.elements.some((element) => element === node)) {
+    return nativeAllArrayConsumer(context, parent);
+  }
   if (parent.type === 'ConditionalExpression' && (parent.consequent === node || parent.alternate === node)) {
     return effectProof.nativeEffect(context, parent, new Set()) ? parent : null;
   }
@@ -423,7 +624,11 @@ const nativeContainer = (context: Context, node: ESTree.Node, parent: ESTree.Nod
     const outer = skipWrappers(parent);
     return outer.parent?.type === 'CallExpression' &&
       outer.parent.callee === outer.node &&
-      effectProof.nativePipe(context, outer.parent, new Set())
+      effectProof.nativePipe(context, outer.parent, new Set()) &&
+      !outer.parent.arguments.some(
+        (argument) =>
+          argument.type === 'CallExpression' && nativeMethod(context, argument.callee, 'Effect') === 'provideService',
+      )
       ? outer.parent
       : null;
   }
@@ -443,6 +648,9 @@ const ownershipProof = {
     if (!parent) {
       return null;
     }
+    if (parent.type === 'VariableDeclarator' && parent.init === node && isNativeDeferredProgram(context, node)) {
+      return parent;
+    }
     if (parent.type === 'ArrowFunctionExpression' && parent.body === node) {
       return ownershipProof.returnedOwner(context, parent, seen);
     }
@@ -451,7 +659,11 @@ const ownershipProof = {
       return fn && isFunction(fn) ? ownershipProof.returnedOwner(context, fn, seen) : null;
     }
     if (parent.type === 'YieldExpression' && parent.argument === node && parent.delegate) {
-      const call = generatorCall(context, nearestFunction(parent));
+      const fn = nearestFunction(parent);
+      if (fn !== null && nativeEffectFunctionBinding(context, fn) !== null) {
+        return fn;
+      }
+      const call = generatorCall(context, fn);
       return call ? ownershipProof.consumedOwner(context, call, seen) : null;
     }
     const container = nativeContainer(context, node, parent);
@@ -485,4 +697,22 @@ export const nativeClockExecutionOwner = (context: Context, input: ESTree.Node):
     return null;
   }
   return ownershipProof.consumedOwner(context, expression, new Set());
+};
+
+/** A real constructor/transform must be consumed before this exact generator returns its result. */
+export const nativeEffectIsYieldedInGenerator = (context: Context, input: ESTree.Node, fn: ESTree.Node): boolean => {
+  if (!effectProof.nativeEffect(context, input, new Set()) && !effectProof.nativeTransform(context, input, new Set())) {
+    return false;
+  }
+  let current: ESTree.Node | null = input;
+  const seen = new Set<ESTree.Node>();
+  while (current !== null && !seen.has(current)) {
+    seen.add(current);
+    const { node, parent } = skipWrappers(current);
+    if (parent?.type === 'YieldExpression' && parent.delegate && parent.argument === node) {
+      return nearestFunction(parent) === fn;
+    }
+    current = parent === null ? null : nativeContainer(context, node, parent);
+  }
+  return false;
 };

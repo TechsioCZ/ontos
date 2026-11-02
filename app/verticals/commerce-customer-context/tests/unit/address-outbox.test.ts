@@ -1,7 +1,11 @@
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler, getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import {
+  getActionHandler,
+  getActionServiceFactory,
+  getActionServicePreflight,
+} from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { getReadServiceFactory } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { OutboxPayloadSchema as AddedSchema } from '../../shared/outbox/commerce-customer-context-saved-address-added-v1.ts';
 import {
@@ -15,6 +19,7 @@ import { OutboxPayloadSchema as DeliverySetSchema } from '../../shared/outbox/co
 import { OutboxPayloadSchema as DeliveryClearedSchema } from '../../shared/outbox/commerce-customer-context-default-delivery-destination-cleared-v1.ts';
 import { updateSavedAddressAction } from '../../src/actions/update-saved-address.action.ts';
 import { addSavedAddressAction } from '../../src/actions/add-saved-address.action.ts';
+import { prepareAddressPartyServices } from '../../src/actions/address-party-preflight.ts';
 import { clearDefaultBillingAddressAction } from '../../src/actions/clear-default-billing-address.action.ts';
 import { clearDefaultDeliveryDestinationAction } from '../../src/actions/clear-default-delivery-destination.action.ts';
 import { removeSavedAddressAction } from '../../src/actions/remove-saved-address.action.ts';
@@ -107,9 +112,9 @@ it('attaches every address Action and Read registration to its production persis
   const addFactory = getActionServiceFactory(addSavedAddressAction).toString();
   const updateFactory = getActionServiceFactory(updateSavedAddressAction).toString();
   expect(addFactory).toContain('addressActionPersistenceForTransaction');
-  expect(addFactory).toContain('partyBackedAddressSourceValidator');
+  expect(getActionServicePreflight(addSavedAddressAction)).toBe(prepareAddressPartyServices);
   expect(updateFactory).toContain('addressActionPersistenceForTransaction');
-  expect(updateFactory).toContain('partyBackedAddressSourceValidator');
+  expect(getActionServicePreflight(updateSavedAddressAction)).toBe(prepareAddressPartyServices);
   expect(getActionServiceFactory(removeSavedAddressAction).toString()).toContain(
     'addressActionPersistenceForTransaction',
   );

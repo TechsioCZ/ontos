@@ -1,4 +1,4 @@
-import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
+import { act, cleanup, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { DateTime, Deferred, Effect, Exit, Option, Schema } from 'effect';
 import { CustomerListItemSchema } from '../../shared/apis/customer-list.ts';
@@ -17,6 +17,15 @@ import { updateParty } from '../../src/api/party-command-client.ts';
 import { loadCustomerDetail, useCustomerDetail } from '../../src/routes/[lang]/prodej/zakaznici/customers-data.ts';
 import { relatedCustomerUrl } from '../../src/routes/[lang]/prodej/zakaznici/customers-model.ts';
 import type { CustomerDetailSnapshot } from '../../src/routes/[lang]/prodej/zakaznici/customers-data.ts';
+import { CustomerDetailDialog } from '../../src/routes/[lang]/prodej/zakaznici/customer-detail-dialog.tsx';
+import { expectHumanReadable } from '../support/visible-text.ts';
+
+rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
+  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
+}));
+rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useRouterState: () => '/cs/prodej/zakaznici',
+}));
 
 rstest.mock('../../src/api/party-command-client.ts');
 rstest.mock('../../src/api/counterparty-read-client.ts');
@@ -120,6 +129,28 @@ const useDetail = () =>
     },
   );
 const afterParty = { ...party, displayName: Option.some('After'), revision: 2 };
+
+it('shows the customer name without exposing party or business-context identifiers', () => {
+  render(
+    <CustomerDetailDialog
+      customer={customer}
+      onOpenChange={(open) => {
+        close(open);
+      }}
+      onRenamed={() => {
+        changed();
+      }}
+      onRetry={() => {
+        saved();
+      }}
+      snapshot={snapshot}
+    />,
+  );
+  expect(screen.getByRole('heading', { name: 'Before' })).toBeTruthy();
+  expect(document.body.textContent).not.toContain(partyId);
+  expect(document.body.textContent).not.toContain(counterpartyId);
+  expectHumanReadable();
+});
 
 beforeEach(() => {
   rstest.clearAllMocks();

@@ -20,7 +20,6 @@
     "pages": {
       "records": {
         "title": "Aktivity a kontakty",
-        "refresh": "Načíst aktivity",
         "timeline": "Historie komunikace",
         "occurredAt": "Kdy",
         "summary": "Shrnutí",
@@ -29,13 +28,13 @@
         "unnamed": "Kontakt bez názvu",
         "query": "Hledat protistranu",
         "find": "Vyhledat",
-        "loadTasks": "Načíst existující úkoly",
+        "retry": "Zkusit znovu",
         "record": "Zaznamenat hovor",
         "save": "Uložit aktivitu",
         "saved": "Aktivita uložena.",
         "unavailable": "Aktivity se nepodařilo načíst.",
         "forbidden": "K požadovanému kontaktu nemáte oprávnění.",
-        "invalid": "Aktivitu nelze uložit. Načtěte data a ověřte kontakt i úkol.",
+        "invalid": "Aktivitu nelze uložit. Ověřte kontakt i úkol.",
         "kinds": {
           "CALL": "Hovor",
           "EMAIL": "E-mail",

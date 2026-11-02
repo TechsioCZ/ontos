@@ -338,7 +338,14 @@
         "serviceExample": "např. Parkovací místo – kryté stání",
         "code": "Kód (nepovinné)",
         "unitExamples": "měsíc, m², ks, hod",
-        "netPrice": "Cena bez DPH (Kč)"
+        "netPrice": "Cena bez DPH (Kč)",
+        "addTitle": "Nová položka ceníku",
+        "save": "Uložit",
+        "close": "Zavřít",
+        "priceHint": "Cena za jednotku bez DPH v Kč.",
+        "nameRequired": "Vyplňte název položky.",
+        "priceRequired": "Zadejte cenu bez DPH, např. 1 500 nebo 1 500,50.",
+        "editTitle": "Upravit položku ceníku"
       },
       "recurring": {
         "period": "Období",
@@ -375,7 +382,19 @@
         "asOf": "Ke dni",
         "confirmedOpening": "Počáteční stav (ručně potvrzený)",
         "netPaid": "Uhrazeno v období (netto)",
-        "netExpected": "Očekávané doklady (netto)"
+        "netExpected": "Očekávané doklady (netto)",
+        "chart": {
+          "balanceAria": "Odhad zůstatku po měsících",
+          "balanceTitle": "Odhad zůstatku",
+          "estimateBadge": "odhad",
+          "expenseExpected": "Výdaje očekávané a plán",
+          "expensePaid": "Výdaje uhrazené",
+          "flowAria": "Měsíční příjmy a výdaje: uhrazené, očekávané a plánované",
+          "flowTitle": "Příjmy a výdaje",
+          "incomeExpected": "Příjmy očekávané a plán",
+          "incomePaid": "Příjmy uhrazené",
+          "openingHint": "Zadejte ručně potvrzený počáteční stav."
+        }
       },
       "incoming": {
         "title": "Přijatá faktura",

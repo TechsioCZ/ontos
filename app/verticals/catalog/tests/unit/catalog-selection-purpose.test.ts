@@ -46,6 +46,29 @@ const baseFacts = [
 const valueValidityFacts = [fact('OTHER_CATALOG_FACT', valueSetRef, 6), fact('ATTRIBUTE_DEFINITION', attrDefRef, 7)];
 
 describe('Catalog Selection purpose minimalisation', () => {
+  it('retains the exact deciding Product-specific allowances for PRICING without requiring undeclared axes', () => {
+    const allowance = decodeBasis({
+      axisAllowances: [{ allowanceRevision: 9, attributeDefinition: { resourceRef: attrDefRef, revision: 7 } }],
+      role: 'VARIANT_AXIS',
+      source: { resourceRef: productRef, revision: 3 },
+    });
+    const pricingFacts = [
+      fact('PRODUCT', productRef, 1),
+      fact('VARIANT', variantRef, 2),
+      fact('PRODUCT_TYPE', typeRef, 1),
+      fact('CATEGORY', categoryRef, 1),
+    ];
+    const result = selectSmallestCompleteCatalogSelectionBasis({
+      basis: [...pricingFacts, allowance],
+      purpose: 'PRICING',
+      selection,
+    });
+    expect(result).toEqual({ basis: [...pricingFacts, allowance], status: 'COMPLETE' });
+    expect(selectSmallestCompleteCatalogSelectionBasis({ basis: pricingFacts, purpose: 'PRICING', selection })).toEqual(
+      { basis: pricingFacts, status: 'COMPLETE' },
+    );
+  });
+
   it('keeps the complete axis and value validity basis for purchase acceptance', () => {
     const result = selectSmallestCompleteCatalogSelectionBasis({
       basis: [...baseFacts, ...valueValidityFacts],

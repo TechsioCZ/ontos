@@ -18,6 +18,7 @@ import { clearBrowserRequestCache, installBrowserRequestCache } from '../../../s
 import { seedDocumentGatewayAssertions } from '../../../src/routes/document-gateway-assertions.ts';
 import { ShellRouteLink } from '../../../src/routes/shell-frame.tsx';
 import { StaffRoutePreloadContext } from '../../../src/routes/use-idle-route-preload.ts';
+import { staffRoutePreloads } from '../../../src/routes/route-preload-scheduler.ts';
 
 const destinations = ['/finance', '/ukoly', '/prodej/prilezitosti'];
 const revision = 'a'.repeat(64);
@@ -35,12 +36,18 @@ beforeAll(() => {
 afterAll(() => {
   globalThis.fetch = originalFetch;
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  browserRuntime.runSync(staffRoutePreloads.invalidate);
+  return browserRuntime.runPromise(staffRoutePreloads.awaitIdle);
+});
 
 it.live(
   'prepares every rendered Home card concurrently through the native router, isolates replay and joins a click',
   () =>
     Effect.gen(function* homeCardPreparation() {
+      yield* staffRoutePreloads.invalidate;
+      yield* staffRoutePreloads.resume;
       globalThis.history.replaceState(null, '', '/en');
       globalThis.localStorage.clear();
       const release = yield* Deferred.make<boolean>();

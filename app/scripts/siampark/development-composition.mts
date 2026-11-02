@@ -47,6 +47,7 @@ import {
   ApplicationCompositionAuthorityAdminDatabaseLive,
   publishApplicationCompositionAuthoritySnapshot,
 } from '../application-composition-authority-publication.mts';
+import { ApplicationCompositionLegacyOwnersLive } from '../application-composition-legacy-owners.mts';
 import type { ObservedArtifact } from '../active-application-composition.mts';
 
 export class DevelopmentCompositionError extends Schema.TaggedError<DevelopmentCompositionError>()(
@@ -438,7 +439,11 @@ if (import.meta.main) {
       ),
     ),
   ).pipe(
-    Layer.provide(ApplicationCompositionAuthorityAdminDatabaseLive.pipe(Layer.provide(environmentLive))),
+    Layer.provide(
+      Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ApplicationCompositionLegacyOwnersLive).pipe(
+        Layer.provide(environmentLive),
+      ),
+    ),
     Layer.provide(environmentLive),
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(NodeServices.layer),

@@ -14,6 +14,7 @@ import { CoreDatabase as CoreDatabaseService } from '../db/client.ts';
 import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
 import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
+import { insideDatabaseTransaction } from '../db/transaction-io-guard.ts';
 import { trustedTransactionTime } from '../operations/transaction-time.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import {
@@ -58,7 +59,12 @@ import type {
 import type { ActionPermissionService } from '../permissions/service.ts';
 import { ActionPermission } from '../permissions/service.ts';
 import { createActionCollector } from './collector.ts';
-import type { ActionTransportMetadata, CommittedActionDomainRejection, TrustedPrincipalContext } from './context.ts';
+import type {
+  ActionOwnerTransaction,
+  ActionTransportMetadata,
+  CommittedActionDomainRejection,
+  TrustedPrincipalContext,
+} from './context.ts';
 import {
   ActionTransportMetadataSchema,
   CommittedActionDomainRejectionSchema,
@@ -83,6 +89,7 @@ import {
   getActionHandler,
   getActionResourcePermissionTargetResolver,
   getActionServiceFactory,
+  getActionServicePreflight,
 } from './definition.ts';
 import {
   ActionAlreadyCommitted,
@@ -131,6 +138,7 @@ import {
   logActionInvocationPersistenceFailureCause,
   logActionTransactionFailureCause,
   recoverSqlTransactionError,
+  trackTransactionSettlement,
 } from './repository.ts';
 
 const requireIdempotencyKey = (idempotency: string, transport: ActionTransportMetadata) =>
@@ -364,6 +372,7 @@ export interface ActionRuntimeOptions {
   ) => Effect.Effect<string, ActionTransactionError>;
   readonly resolveHandler?: typeof getActionHandler;
   readonly resolveServiceFactory?: typeof getActionServiceFactory;
+  readonly resolveServicePreflight?: typeof getActionServicePreflight;
 }
 
 const logInvocationPersistenceFailure = (
@@ -1041,6 +1050,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
   } = options;
   const resolveHandler = options.resolveHandler ?? getActionHandler;
   const resolveServiceFactory = options.resolveServiceFactory ?? getActionServiceFactory;
+  const resolveServicePreflight = options.resolveServicePreflight ?? getActionServicePreflight;
   const installScope = options.installScope ?? installOperationalScope;
   const lockCompositionAuthority = options.lockCompositionAuthority ?? lockApplicationCompositionAuthority;
   /**
@@ -1707,7 +1717,6 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
 
     const hasPermissionDenial = Effect.fn('ActionRuntime.hasPermissionDenial')(function* hasPermissionDenialEffect(
       preflightDenied: boolean,
-      hasPreflightPermit: boolean,
     ) {
       const permissionDecision = yield* permission
         .checkActionPermission(
@@ -1732,7 +1741,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       const assortmentPermissionDecision = yield* checkActionAssortmentPermissions(scope, assortmentPermissionTargets);
       return (
         preflightDenied ||
-        (permissionDecision === 'denied' && !hasPreflightPermit) ||
+        permissionDecision === 'denied' ||
         tenantPermissionDecision === 'denied' ||
         legalEntityPermissionDecision === 'denied' ||
         resourcePermissionDecision === 'denied' ||
@@ -1747,7 +1756,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         // uses only the immutable Action key and trusted principal identity.
         notifyStage('authentication_boundary');
         const { denied: preflightDenied, permit: preflightPermit } = yield* prepareAuthorizationPreflight();
-        const permissionDenied = yield* hasPermissionDenial(preflightDenied, preflightPermit !== undefined);
+        const permissionDenied = yield* hasPermissionDenial(preflightDenied);
         notifyStage('permission_checked');
         if (permissionDenied) {
           return yield* rejectPermission();
@@ -1885,6 +1894,89 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       }),
     );
 
+    const preparationTransaction: ActionOwnerTransaction = (snapshot) => {
+      const settlement = trackTransactionSettlement();
+      return database.executor
+        .transaction((transaction) =>
+          Effect.gen(function* prepareOwnerSnapshot() {
+            const scoped = yield* installScope(transaction, scope, options.databaseIdentities);
+            yield* lockCompositionAuthority(transaction, admittedCompositionRevision, 'write').pipe(
+              Effect.mapError((cause) =>
+                createActionTransactionErrorWithCause(
+                  {
+                    code: 'action_transaction_failed',
+                    reason: 'The approved Application Composition no longer admits this Action',
+                  },
+                  cause,
+                ),
+              ),
+            );
+            const { entrypoint } = input.registration.descriptor;
+            if (entrypoint.scope === 'tenant') {
+              yield* moduleStateGate
+                .recheckWrite(transaction, scope.tenantId, {
+                  ...entrypoint,
+                  scope: 'tenant' as const,
+                })
+                .pipe(
+                  Effect.mapError((cause) =>
+                    createActionTransactionErrorWithCause(
+                      {
+                        code: 'action_transaction_failed',
+                        reason: 'The Action owner is no longer writable during preparation',
+                      },
+                      cause,
+                    ),
+                  ),
+                );
+            }
+            return yield* snapshot(scoped);
+          }).pipe(insideDatabaseTransaction(input.registration.descriptor.actionKey), settlement.capture),
+        )
+        .pipe(
+          settlement.recover,
+          Effect.mapError((cause) =>
+            isSqlError(cause)
+              ? createActionTransactionErrorWithCause(
+                  {
+                    code: 'action_transaction_failed',
+                    reason: 'The Action preparation snapshot transaction did not complete',
+                  },
+                  cause,
+                )
+              : cause,
+          ),
+        );
+    };
+    const prepareServices = resolveServicePreflight(input.registration);
+    const preparationExit =
+      prepareServices === undefined
+        ? Exit.succeed(resolveServiceFactory(input.registration))
+        : yield* Effect.exit(
+            Effect.suspend(() =>
+              prepareServices(
+                payload,
+                Object.freeze({
+                  actionInvocationId: invocation.actionInvocationId,
+                  compositionRevision: admittedCompositionRevision,
+                  scope,
+                  transaction: preparationTransaction,
+                }),
+              ),
+            ),
+          );
+    if (Exit.isFailure(preparationExit)) {
+      if (
+        preparationExit.cause.reasons.every(Cause.isFailReason) ||
+        preparationExit.cause.reasons.some(Cause.isInterruptReason)
+      ) {
+        return yield* Effect.failCause(preparationExit.cause);
+      }
+      yield* Effect.logError('Unexpected Action service preparation defect', preparationExit.cause);
+      return yield* makeHandlerExecutionError();
+    }
+    const serviceFactory = preparationExit.value;
+
     const transactionBodyCompleted = yield* Ref.make(false);
     const transactionBodyExit = yield* Ref.make<Exit.Exit<unknown, unknown> | null>(null);
     const transactionProgram: (
@@ -1954,7 +2046,6 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         requestHash,
         repository.loadRecordedRejection(scopedTransaction, runningInvocation.actionInvocationId),
       );
-      const serviceFactory = resolveServiceFactory(input.registration);
       const services = yield* serviceFactory(scopedTransaction, scope, admittedCompositionRevision);
       const handler = resolveHandler(input.registration);
 
@@ -1963,6 +2054,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         input.registration.descriptor.owningModuleKey,
         input.registration.descriptor.accessEvidencePolicy,
         input.registration.descriptor.auditEvidenceSchema,
+        admittedCompositionRevision,
       );
       const handlerContext = Object.freeze({
         actionInvocationId: lockedInvocation.actionInvocationId,
@@ -2079,6 +2171,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           allowedPolicies,
           auditProfile: input.registration.descriptor.auditProfile,
           evidence: collector.snapshot(),
+          owningModuleKey: input.registration.descriptor.owningModuleKey,
           principal,
           resultHash,
           transport: governedTransport,
@@ -2098,7 +2191,10 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     });
 
     const observeTransactionBody = (transaction: CoreTransaction) =>
-      transactionProgram(transaction).pipe(Effect.onExit((exit) => Ref.set(transactionBodyExit, exit)));
+      transactionProgram(transaction).pipe(
+        insideDatabaseTransaction(input.registration.descriptor.actionKey),
+        Effect.onExit((exit) => Ref.set(transactionBodyExit, exit)),
+      );
 
     const classifyTransactionOutcome = Effect.fn('ActionRuntime.classifyTransactionOutcome')(
       function* classifyTransactionOutcome(

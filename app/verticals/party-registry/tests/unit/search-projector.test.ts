@@ -3,8 +3,15 @@ import {
   createCoreSearchQueryRuntime,
   makeCoreSearchIngestion,
   makeInMemoryCoreSearchProjectionStore,
+  toModuleAccessObjectId,
+  toResourceAccessObjectId,
 } from '@app/core-runtime';
-import type { CoreSearchProjectionDocument, OutboxWorkerHandlerContext } from '@app/core-runtime';
+import type {
+  CoreSearchProjectionDocument,
+  OutboxWorkerHandlerContext,
+  ResourceContainmentRelationshipMutationInput,
+  ResourceContainmentRelationshipMutationService,
+} from '@app/core-runtime';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import { Effect, Exit, Match, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -50,6 +57,8 @@ const contextInput: OutboxWorkerHandlerContext = {
   workerKey: 'party.registry.project-party-updated-to-search',
 };
 const context = attestOutboxWorkerHandlerContext(contextInput);
+/** Containment is asserted by its own scenario; the search scenarios only need it to succeed. */
+const noContainment: ResourceContainmentRelationshipMutationService = { touch: () => Effect.void };
 const rebuildContext = attestOutboxWorkerHandlerContext({
   ...contextInput,
   topic: 'party.registry.search-rebuild-requested.v1',
@@ -210,6 +219,7 @@ it.effect(
         },
         makeCoreSearchIngestion(store, partySearchIngestionRegistrations),
         store,
+        noContainment,
       );
       const deliver = () =>
         projector.project(context, {
@@ -460,6 +470,7 @@ it.effect('rebuild reconciles omitted documents and preserves tombstones against
       },
       makeCoreSearchIngestion(store, partySearchIngestionRegistrations),
       store,
+      noContainment,
     );
     yield* projector.project(context, {
       partyId: 'party-1',
@@ -512,6 +523,7 @@ it.effect('source failure is sanitized and leaves previously searchable state in
       },
       makeCoreSearchIngestion(store, partySearchIngestionRegistrations),
       store,
+      noContainment,
     );
     yield* projector.project(context, {
       partyId: 'party-1',
@@ -604,6 +616,7 @@ it.effect('projection generation is independent of an out-of-order business even
       },
       makeCoreSearchIngestion(store, partySearchIngestionRegistrations),
       store,
+      noContainment,
     );
     yield* projector.project(
       attestOutboxWorkerHandlerContext({
@@ -643,6 +656,7 @@ it.effect('correction and identifier/contact changes replace obsolete evidence i
       },
       makeCoreSearchIngestion(store, partySearchIngestionRegistrations),
       store,
+      noContainment,
     );
     yield* projector.project(context, {
       partyId: 'party-1',
@@ -701,6 +715,7 @@ it.effect('a complete empty rebuild also rejects delayed evidence for a never-be
       },
       makeCoreSearchIngestion(store, partySearchIngestionRegistrations),
       store,
+      noContainment,
     );
     yield* projector.project(rebuildContext, {
       rebuild: true,
@@ -720,5 +735,66 @@ it.effect('a complete empty rebuild also rejects delayed evidence for a never-be
       searchScope,
     );
     expect(hits).toEqual([]);
+  }),
+);
+
+it.effect('a projected Counterparty joins its own company module scope, and a rebuild repairs every Counterparty', () =>
+  Effect.gen(function* testScenario() {
+    const legalEntityId = '20000000-0000-4000-8000-000000000002';
+    const counterparty = (resourceId: string) => ({
+      legalEntityId,
+      partyRef,
+      ref: {
+        moduleId: 'party.registry' as const,
+        resourceId,
+        resourceType: 'party.registry.counterparty' as const,
+        tenantId,
+      },
+      rolePeriods: [],
+      storedPartyRef: partyRef,
+    });
+    const touched: ResourceContainmentRelationshipMutationInput[] = [];
+    const store = makeInMemoryCoreSearchProjectionStore();
+    let current: PartySearchSourceSnapshot = { ...snapshot, counterparties: [counterparty('cp-new')] };
+    const projector = makePartySearchProjector(
+      { load: () => Effect.succeed(current) },
+      makeCoreSearchIngestion(store, partySearchIngestionRegistrations),
+      store,
+      {
+        touch: (input) =>
+          Effect.sync(() => {
+            touched.push(input);
+          }),
+      },
+    );
+
+    yield* projector.project(context, { counterpartyId: 'cp-new' });
+    expect(touched).toEqual([
+      {
+        relationships: [
+          {
+            container: {
+              objectId: toModuleAccessObjectId(tenantId, legalEntityId, 'party.registry'),
+              objectType: 'module_access',
+            },
+            relation: 'module',
+            resource: {
+              objectId: toResourceAccessObjectId(tenantId, legalEntityId, counterparty('cp-new').ref),
+              objectType: 'resource',
+            },
+          },
+        ],
+      },
+    ]);
+
+    // 150 Counterparties: Core takes at most 100 containment edges per atomic TOUCH.
+    touched.length = 0;
+    current = {
+      ...snapshot,
+      counterparties: Array.from({ length: 150 }, (_, index) => counterparty(`cp-${index}`)),
+      projectionVersion: '2',
+    };
+    yield* projector.project(rebuildContext, { rebuild: true });
+    expect(touched.map(({ relationships }) => relationships.length)).toEqual([100, 50]);
   }),
 );

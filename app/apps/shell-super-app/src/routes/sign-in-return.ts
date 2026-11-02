@@ -1,6 +1,7 @@
 // Sign-in round trip for protected deep links: the module page sends an anonymous visitor to the login page with
 // the page it asked for, and the login page returns there after a successful sign-in.
 import { throwTanstackRedirect } from '@modern-js/plugin-tanstack/runtime';
+import { isSafeSignInReturnPath } from '@app/shared-contracts/credential-url';
 import type { AnyRouter } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Option, Predicate, Schema } from 'effect';
 import { Url, UrlParams } from 'effect/http';
@@ -13,8 +14,7 @@ const SignInRouteSearch = Schema.Struct({
  * Accepts only a same-origin path inside the current language, never the login page itself. Anything else
  * (absolute URLs, protocol-relative `//host`, backslash tricks) is ignored so the login page cannot redirect away.
  */
-const isSafeReturnPath = (path: string, language: string): boolean =>
-  path.startsWith(`/${language}/`) && !path.includes('\\') && !path.startsWith(`/${language}/login`);
+const isSafeReturnPath = isSafeSignInReturnPath;
 
 /** Why a signed-in browser was sent back to sign-in: the account lost access, or the session is no longer valid. */
 export const signInReasons = ['account_forbidden', 'session_ended'] as const;

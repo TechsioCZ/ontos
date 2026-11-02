@@ -39,7 +39,7 @@ export function VerificationResendForm() {
   }
 
   return (
-    <form className="akros-auth-form" onSubmit={resend}>
+    <form action="/api/ontos/account" className="akros-auth-form" method="post" onSubmit={resend}>
       <FormInput
         autoComplete="email"
         id="verification-resend-email"

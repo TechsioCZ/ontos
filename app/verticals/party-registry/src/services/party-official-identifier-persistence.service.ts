@@ -167,6 +167,7 @@ interface MatchingIdentifierAcceptanceInput {
   readonly actionInvocationId: string;
   readonly externalEvidence?: AresAppliedEvidence | undefined;
   readonly matchRuleVersion: string;
+  readonly originalInputDigits?: string | undefined;
   readonly partyType: 'ORGANIZATION' | 'PERSON' | 'UNRESOLVED';
   readonly principalId: string;
   readonly provenanceMethod: string;
@@ -174,7 +175,7 @@ interface MatchingIdentifierAcceptanceInput {
   readonly validFrom: string | DateTime.Utc;
 }
 
-const findCurrentMatchingIdentifier = Effect.fn(
+export const findCurrentMatchingIdentifier = Effect.fn(
   'PartyOfficialIdentifierPersistenceService.findCurrentMatchingIdentifier',
 )(function* findCurrentIdentifier(
   transaction: Pick<PartyTransaction, 'select'>,
@@ -182,6 +183,7 @@ const findCurrentMatchingIdentifier = Effect.fn(
   partyId: string,
   identifier: NormalizedOfficialIdentifier,
   lockForUpdate: boolean,
+  cardinality: 'FIRST' | 'UNIQUE' = 'FIRST',
 ) {
   const query = transaction
     .select()
@@ -197,9 +199,14 @@ const findCurrentMatchingIdentifier = Effect.fn(
         eq(partyOfficialIdentifiers.isCurrent, true),
       ),
     )
-    .limit(1);
-  const [existing] = yield* (lockForUpdate ? query.for('update') : query).pipe(Effect.mapError(unavailable));
-  return existing;
+    .limit(cardinality === 'UNIQUE' ? 2 : 1);
+  const matches = yield* (lockForUpdate ? query.for('update') : query).pipe(Effect.mapError(unavailable));
+  // Existing accepted duplicates are not remediated by Correction. Refuse to
+  // invent an authoritative replacement when more than one Current row matches.
+  if (cardinality === 'UNIQUE' && matches.length > 1) {
+    return yield* unavailable();
+  }
+  return matches[0];
 });
 
 export const addOfficialIdentifierRecord = Effect.fn(
@@ -231,6 +238,7 @@ export const addOfficialIdentifierRecord = Effect.fn(
       identifierTypeKey: identifier.identifierType,
       namespace: identifier.namespace,
       normalizedValue: identifier.normalizedValue,
+      originalInputDigits: identifier.identifierType === 'ICO' ? (input.originalInputDigits ?? null) : null,
       partyId,
       policyVersion: 'party-official-identifier.v1',
       provenanceMethod: input.provenanceMethod,
@@ -548,6 +556,7 @@ const identifierDto = (row: typeof partyOfficialIdentifiers.$inferSelect): Offic
   identifierType: row.identifierTypeKey as 'ICO' | 'CZ_DIC',
   namespace: row.namespace,
   normalizedValue: row.normalizedValue,
+  originalInputDigits: row.originalInputDigits,
   officialIdentifierRef: makePartyOfficialIdentifierRef(row.tenantId, row.officialIdentifierId),
   partyRef: makePartyRef(row.tenantId, row.partyId),
   recordedAt: row.recordedAt.toISOString(),

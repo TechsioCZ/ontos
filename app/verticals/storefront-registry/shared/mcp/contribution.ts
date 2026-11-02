@@ -32,6 +32,12 @@ export const storefrontRegistryMcpContribution = defineOntosMcpContribution({
         en: 'Current storefront application',
       },
     },
+    'storefront-applications': {
+      title: {
+        cs: 'Registrované aplikace e-shopů',
+        en: 'Registered storefront applications',
+      },
+    },
     'verify-current-storefront-application-v1': 'hidden',
   },
 });

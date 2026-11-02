@@ -104,3 +104,35 @@ export const requirePartySubjectEvidence = (
         }),
       );
 };
+
+/** Guest-specific evidence requires an explicit binding accepted in the already trusted LE.
+ * Unbound tenant-wide identity operations keep their original eligibility semantics. */
+export const partyGuestBindingFailure = (
+  candidate: Pick<PartyCandidate, 'subjectEvidence'>,
+  scope: { readonly tenantId: string; readonly legalEntityId?: string },
+): string | undefined => {
+  const evidence = candidate.subjectEvidence ?? [];
+  const bound = evidence.find((item) => item.guestBinding !== undefined)?.guestBinding;
+  if (bound === undefined) {
+    return undefined;
+  }
+  if (
+    scope.legalEntityId === undefined ||
+    bound.legalEntityRef.tenantId !== scope.tenantId ||
+    bound.legalEntityRef.resourceId !== scope.legalEntityId
+  ) {
+    return 'guest_binding_requires_trusted_legal_entity';
+  }
+  if (
+    evidence.some(
+      ({ guestBinding }) =>
+        guestBinding === undefined ||
+        guestBinding.correlationRoot !== bound.correlationRoot ||
+        guestBinding.legalEntityRef.tenantId !== scope.tenantId ||
+        guestBinding.legalEntityRef.resourceId !== scope.legalEntityId,
+    )
+  ) {
+    return 'guest_binding_requires_one_exact_context';
+  }
+  return undefined;
+};

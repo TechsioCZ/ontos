@@ -235,8 +235,7 @@ const resolvePartyCommandCommit = Effect.fn('PartyCommandServer.resolvePartyComm
     const { createResult } = yield* readRuntime
       .runRead({
         registration: partyCommandResultRead,
-        decodedInput: { invocationId: resolution.invocationId },
-        inputFormat: 'decoded',
+        input: { invocationId: resolution.invocationId },
         principal,
         transport: { correlationId },
       })

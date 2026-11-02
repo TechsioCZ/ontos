@@ -7,10 +7,8 @@ import { CurrentMarketCatalogRequestSchema } from '../../shared/apis/current-mar
 import { MarketHistoryRequestSchema } from '../../shared/apis/market-history.ts';
 import { handleCurrentMarketCatalog } from '../../src/api/current-market-catalog.read.ts';
 import { handleMarketHistory } from '../../src/api/market-history.read.ts';
-import {
-  MarketCatalogReadPersistenceUnavailable,
-  marketCatalogReadPersistenceForScope,
-} from '../../src/persistence/market-catalog-read-persistence.ts';
+import { marketCatalogReadPersistenceForScope } from '../../src/persistence/market-catalog-read-persistence.ts';
+import { MarketCatalogReadPersistenceUnavailable } from '../../src/persistence/market-history-routine.ts';
 import type { MarketCatalogReadPersistence } from '../../src/persistence/market-catalog-read-persistence.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';

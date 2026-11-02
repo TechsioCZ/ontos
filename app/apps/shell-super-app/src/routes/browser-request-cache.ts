@@ -9,6 +9,8 @@ import type { PageDataWork } from '@app/shared-contracts/page-data';
 import { Clock, Deferred, Effect, Exit, Fiber, Match, MutableRef, Option, Predicate, Schema } from 'effect';
 
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { staffRoutePreloads } from './route-preload-scheduler.ts';
+import { onOtherSessionScopeEnded, registerSessionScopedReset, resetSessionScope } from './session-scope.ts';
 import {
   documentGatewayAssertion,
   noteDocumentGatewayAudience,
@@ -20,8 +22,8 @@ import {
  *
  * Every remote bundles its own copy of the generated clients, so a cache inside those clients would be one cache
  * per remote. `fetch` is the seam they all share: module reads (`/module-api/…/reads/…` and `…/search/…`) are
- * answered from memory, concurrent identical reads share one request, and gateway assertions are reused across
- * remotes until shortly before they expire. Any other module request is a write: once it settles, every cached
+ * answered from memory and concurrent identical reads share one request. Each physical downstream request
+ * uses its own single-use gateway assertion. Any other module request is a write: once it settles, every cached
  * read is dropped and `moduleWriteEvent` is dispatched, so a user never sees their own change missing.
  *
  * The reads a page makes right after it opens are remembered per path (in `localStorage`, without credentials), so
@@ -32,8 +34,6 @@ import {
 const READ_FRESH_MILLIS = 20_000;
 /** A write can start follow-up work in other modules (a won opportunity issues an invoice); reads this soon after are not kept. */
 const WRITE_QUIET_MILLIS = 5000;
-/** Matches the Shell issuer: an assertion is reused until this close to its expiry. */
-const ASSERTION_REUSE_MARGIN_MILLIS = 15_000;
 /** Reads that start this long after a page's first read belong to user interaction, not to opening the page. */
 const VISIT_RECORD_MILLIS = 4000;
 const RECORDED_READS_LIMIT = 24;
@@ -81,7 +81,7 @@ const DocumentGatewayRequestJson = Schema.fromJsonString(
 );
 const GatewayAssertionJson = Schema.fromJsonString(GatewayContextResponseSchema);
 const textEncoder = new TextEncoder();
-const GatewayResponseJson = Schema.fromJsonString(Schema.Struct({ expiresAt: Schema.Finite, token: Schema.String }));
+const GatewayResponseJson = Schema.fromJsonString(Schema.Struct({ token: Schema.String }));
 
 interface Visit {
   readonly pathname: string;
@@ -90,7 +90,6 @@ interface Visit {
 }
 
 interface CacheState {
-  readonly assertions: Map<string, BufferedFiber>;
   /** Issued assertion token to its audience, so a recorded read knows which assertion to ask for later. */
   readonly audiences: Map<string, string>;
   /** A context switch or sign-out rejects pending work rather than restarting it under the old authority. */
@@ -110,6 +109,7 @@ interface ModuleRead {
   readonly compositionRevision: string;
   readonly contentType: string;
   readonly init: RequestInit;
+  readonly preparationKey?: string;
   readonly url: string;
 }
 
@@ -194,22 +194,72 @@ const retainPageDataWork = (work: PageDataWork): void => {
   });
 };
 
+/** Cold foreground preparation owns priority even before its remote code can issue any reads. */
+const primaryPreparations = MutableRef.make(new Map<string, Set<Deferred.Deferred<boolean>>>());
+
+/** Explicit route identity, never the recorder-exclusion counter, determines foreground ownership. */
+const holdPrimaryModulePreparation = (pathname: string | undefined) => {
+  if (pathname === undefined || pathname !== globalThis.location.pathname) {
+    return () => {
+      // This work belongs to another destination.
+    };
+  }
+  const settled = Deferred.makeUnsafe<boolean>();
+  const preparing = MutableRef.get(primaryPreparations);
+  const active = preparing.get(pathname) ?? new Set<Deferred.Deferred<boolean>>();
+  active.add(settled);
+  preparing.set(pathname, active);
+  return () => {
+    active.delete(settled);
+    if (active.size === 0 && preparing.get(pathname) === active) {
+      preparing.delete(pathname);
+    }
+    Deferred.doneUnsafe(settled, Effect.succeed(true));
+  };
+};
+
+const retainRoutePreparation = (dataKey: string | undefined) => {
+  const release = dataKey === undefined ? Effect.void : browserRuntime.runSync(staffRoutePreloads.retain(dataKey));
+  const releasePrimary = holdPrimaryModulePreparation(dataKey?.split('?')[0]);
+  return () => {
+    releasePrimary();
+    browserRuntime.runFork(release);
+  };
+};
+
 /** Keep exclusion for the owner's Promise and all its detached loads, even if its caller stops waiting. */
-export const withoutRecordedPageReads = <A>(start: () => Promise<A>) =>
+export const withoutRecordedPageReads = <A>(start: () => Promise<A>, dataKey?: string) =>
   Effect.tryPromise(async () => {
+    const release = retainRoutePreparation(dataKey);
+    const observe = (event: WindowEventMap[typeof pageDataWorkEvent]) => {
+      if (dataKey !== undefined) {
+        event.detail.onSettled(retainRoutePreparation(dataKey));
+      }
+    };
+    if (dataKey !== undefined) {
+      globalThis.addEventListener(pageDataWorkEvent, observe);
+    }
     MutableRef.update(preparations, (count) => count + 1);
     try {
       return await start();
     } finally {
       MutableRef.update(preparations, (count) => count - 1);
+      globalThis.removeEventListener(pageDataWorkEvent, observe);
+      release();
     }
   }).pipe(Effect.timeout(BACKGROUND_WAIT_LIMIT));
 
 // The shared request runs detached from any one caller, so it must not carry that caller's abort signal.
-const bufferedFetch = (state: CacheState, url: string, { signal: _callerSignal, ...init }: RequestInit) =>
+const bufferedFetch = (
+  state: CacheState,
+  url: string,
+  { signal: _callerSignal, ...init }: RequestInit,
+  preparationKey?: string,
+) =>
   Effect.tryPromise({
     catch: (cause) => new ModuleRequestFailed({ cause }),
     try: async () => {
+      const release = retainRoutePreparation(preparationKey);
       // Interrupting a superseded dataset stops its continuation, not a shared transport. Retain exclusion
       // until the real response body settles, even if every caller has stopped waiting (or timed out).
       const excluded = MutableRef.get(preparations) > 0;
@@ -228,6 +278,7 @@ const bufferedFetch = (state: CacheState, url: string, { signal: _callerSignal, 
         if (excluded) {
           MutableRef.update(preparations, (count) => count - 1);
         }
+        release();
       }
     },
   }).pipe(
@@ -285,7 +336,7 @@ const startRead = Effect.fn('BrowserRequestCache.startRead')(function* startRead
   const key = readKey(read);
   const { generation } = state;
   const keep = now >= state.quietUntil;
-  const fiber = yield* Effect.forkDetach(bufferedFetch(state, read.url, read.init));
+  const fiber = yield* Effect.forkDetach(bufferedFetch(state, read.url, read.init, read.preparationKey));
   const entry: ReadEntry = { fiber, primary: MutableRef.get(preparations) === 0, startedAt: now };
   if (state.reads.size >= READ_ENTRY_LIMIT) {
     state.reads.clear();
@@ -312,6 +363,17 @@ const serveRead = Effect.fn('BrowserRequestCache.serveRead')(function* serveRead
   read: ModuleRead,
   record: boolean,
 ): Effect.fn.Return<BufferedResponse, ModuleRequestFailed> {
+  // A lost or overtaken attempt may already have redeemed its token.
+  const retry = (): Effect.Effect<BufferedResponse, ModuleRequestFailed> =>
+    read.audience === undefined
+      ? Effect.fail(new ModuleRequestFailed())
+      : makeOperationGateway(read.audience)
+          .invoke((authorization) => {
+            const headers = new Headers(read.init.headers);
+            headers.set('authorization', authorization);
+            return serveRead(state, { ...read, init: { ...read.init, headers } }, false);
+          })
+          .pipe(Effect.mapError((cause) => new ModuleRequestFailed({ cause })));
   const now = yield* Clock.currentTimeMillis;
   if (record) {
     yield* recordRead(state, read, now);
@@ -324,7 +386,7 @@ const serveRead = Effect.fn('BrowserRequestCache.serveRead')(function* serveRead
       return yield* new ModuleRequestFailed();
     }
     if (state.generation !== generation) {
-      return yield* serveRead(state, read, false);
+      return yield* retry();
     }
     if (Exit.isSuccess(exit)) {
       return exit.value;
@@ -335,16 +397,8 @@ const serveRead = Effect.fn('BrowserRequestCache.serveRead')(function* serveRead
   if (state.contextGeneration !== contextGeneration) {
     return yield* new ModuleRequestFailed();
   }
-  return state.generation === generation ? response : yield* serveRead(state, read, false);
+  return state.generation === generation ? response : yield* retry();
 });
-
-const assertionUsable = (response: BufferedResponse, now: number) =>
-  isOk(response)
-    ? Schema.decodeEffect(GatewayResponseJson)(textDecoder.decode(response.body)).pipe(
-        Effect.map(({ expiresAt }) => expiresAt * 1000 - now > ASSERTION_REUSE_MARGIN_MILLIS),
-        Effect.orElseSucceed(() => false),
-      )
-    : Effect.succeed(false);
 
 const rememberAudience = (state: CacheState, requestBody: string, response: BufferedResponse) =>
   Effect.all(
@@ -412,30 +466,16 @@ const serveGateway = Effect.fn('BrowserRequestCache.serveGateway')(function* ser
   if (Option.isSome(documentAnswer)) {
     return documentAnswer.value;
   }
-  const now = yield* Clock.currentTimeMillis;
-  const shared = state.assertions.get(request.body);
-  if (shared !== undefined) {
-    const exit = yield* Fiber.await(shared);
-    if (state.contextGeneration !== contextGeneration) {
-      return yield* new ModuleRequestFailed();
-    }
-    if (Exit.isSuccess(exit) && (yield* assertionUsable(exit.value, now))) {
-      return exit.value;
-    }
-  }
-  const fiber = yield* Effect.forkDetach(bufferedFetch(state, request.url, request.init));
-  state.assertions.set(request.body, fiber);
-  const exit = yield* Fiber.await(fiber);
+  // Issuance is never coalesced: each response authorizes exactly one downstream attempt.
+  const response = yield* bufferedFetch(state, request.url, request.init);
   if (state.contextGeneration !== contextGeneration) {
     return yield* new ModuleRequestFailed();
   }
-  if (Exit.isSuccess(exit) && isOk(exit.value)) {
-    yield* rememberAudience(state, request.body, exit.value);
+  if (isOk(response)) {
+    yield* rememberAudience(state, request.body, response);
     yield* noteSingleAudience(request.body);
-  } else if (state.assertions.get(request.body) === fiber) {
-    state.assertions.delete(request.body);
   }
-  return yield* exit;
+  return response;
 });
 
 const serveWrite = (state: CacheState, input: RequestInfo | URL, init: RequestInit | undefined) =>
@@ -466,41 +506,29 @@ const serveWrite = (state: CacheState, input: RequestInfo | URL, init: RequestIn
 /** The Shell installs the cache once per document; prefetches read the same state. */
 const installed = MutableRef.make(Option.none<CacheState>());
 
-/** Cold foreground preparation owns priority even before its remote code can issue any reads. */
-const primaryPreparations = MutableRef.make(new Map<string, Set<Deferred.Deferred<boolean>>>());
-
 export const withPrimaryModulePreparation = <A, E, R>(pathname: string, work: Effect.Effect<A, E, R>) =>
   Effect.suspend(() =>
     pathname === globalThis.location.pathname
       ? Effect.acquireUseRelease(
-          Deferred.make<boolean>().pipe(
-            Effect.tap((settled) =>
-              Effect.sync(() => {
-                const preparing = MutableRef.get(primaryPreparations);
-                const active = preparing.get(pathname) ?? new Set<Deferred.Deferred<boolean>>();
-                active.add(settled);
-                preparing.set(pathname, active);
-              }),
-            ),
-          ),
+          Effect.sync(() => holdPrimaryModulePreparation(pathname)),
           () => work,
-          (settled) =>
-            Effect.sync(() => {
-              const preparing = MutableRef.get(primaryPreparations);
-              const active = preparing.get(pathname);
-              active?.delete(settled);
-              if (active?.size === 0) {
-                preparing.delete(pathname);
-              }
-            }).pipe(Effect.andThen(Deferred.succeed(settled, true))),
+          (release) => Effect.sync(release),
         )
       : work,
   );
 
+const awaitPrimaryPreparations: Effect.Effect<void> = Effect.suspend(() => {
+  const preparing = [...(MutableRef.get(primaryPreparations).get(globalThis.location.pathname) ?? [])];
+  return preparing.length === 0
+    ? Effect.void
+    : Effect.forEach(preparing, Deferred.await, { concurrency: READ_ENTRY_LIMIT, discard: true }).pipe(
+        Effect.andThen(awaitPrimaryPreparations),
+      );
+});
+
 /** Wait for foreground preparation first; an empty request cache alone does not mean the page is ready. */
 export const awaitPrimaryModuleReads = Effect.gen(function* awaitCurrentPagePrimaryReads() {
-  const preparing = [...(MutableRef.get(primaryPreparations).get(globalThis.location.pathname) ?? [])];
-  yield* Effect.forEach(preparing, Deferred.await, { concurrency: READ_ENTRY_LIMIT, discard: true });
+  yield* awaitPrimaryPreparations;
   const current = MutableRef.get(installed);
   if (Option.isSome(current)) {
     // Snapshot only foreground reads. Later speculative destinations never extend this gate.
@@ -517,6 +545,32 @@ export const awaitPrimaryModuleReads = Effect.gen(function* awaitCurrentPagePrim
   return true;
 });
 
+/** The deployment app id of a module read URL (`…/module-api/<appId>/<build>/…`). */
+export const moduleReadAppId = (href: string): string | undefined => {
+  const segments = (URL.parse(href)?.pathname ?? '').split('/');
+  const index = segments.indexOf('module-api');
+  return index === -1 ? undefined : segments[index + 1];
+};
+
+/**
+ * Drops cached module reads after a change committed elsewhere: the reads of the named apps, or every read. Reads in
+ * flight are dropped too, so the stores' revalidation starts fresh requests instead of joining a pre-change answer.
+ */
+export const dropBrowserModuleReads = (apps: ReadonlySet<string> | 'all') =>
+  Effect.sync(() => {
+    const current = MutableRef.get(installed);
+    if (Option.isNone(current)) {
+      return;
+    }
+    const { reads } = current.value;
+    for (const key of reads.keys()) {
+      const appId = moduleReadAppId(key.slice(0, key.indexOf('\n')));
+      if (apps === 'all' || (appId !== undefined && apps.has(appId))) {
+        reads.delete(key);
+      }
+    }
+  });
+
 /** A context boundary invalidates pending answers as well as completed data and gateway assertions. */
 export const clearBrowserRequestCache = Effect.sync(() => {
   const current = MutableRef.get(installed);
@@ -526,7 +580,6 @@ export const clearBrowserRequestCache = Effect.sync(() => {
     state.contextGeneration += 1;
     state.quietUntil = 0;
     state.reads.clear();
-    state.assertions.clear();
     state.audiences.clear();
     delete state.visit;
   }
@@ -542,7 +595,6 @@ export const installBrowserRequestCache = (): void => {
     return;
   }
   const state: CacheState = {
-    assertions: new Map(),
     audiences: new Map(),
     contextGeneration: 0,
     generation: 0,
@@ -556,6 +608,14 @@ export const installBrowserRequestCache = (): void => {
   globalThis.addEventListener(pageDataWorkEvent, (event) => {
     if (MutableRef.get(preparations) > 0) {
       retainPageDataWork(event.detail);
+    }
+  });
+  // Another document of this browser signed in, out or switched: what this document shows belongs to the previous
+  // person. It reloads to the current one, except on the sign-in page, which keeps what was typed there.
+  onOtherSessionScopeEnded(() => {
+    browserRuntime.runSync(resetSessionScope);
+    if (!/\/login\/?$/u.test(globalThis.location.pathname)) {
+      globalThis.location.reload();
     }
   });
   // eslint-disable-next-line effect-native/no-promise-shaped-port -- This replaces the platform `fetch`, whose contract is a Promise. expires: 2027-03-31.
@@ -583,7 +643,7 @@ const readManifest = (pathname: string) =>
     Effect.orElseSucceed((): readonly RecordedRead[] => []),
   );
 
-const prefetchRead = (state: CacheState, read: RecordedRead) =>
+const prefetchRead = (state: CacheState, read: RecordedRead, pathname: string) =>
   makeOperationGateway(read.audience)
     .invoke((authorization, { compositionRevision }) =>
       serveRead(
@@ -603,6 +663,7 @@ const prefetchRead = (state: CacheState, read: RecordedRead) =>
             },
             method: 'POST',
           },
+          preparationKey: pathname,
           url: read.url,
         },
         false,
@@ -631,7 +692,7 @@ export const prefetchRecordedReads = Effect.fn('BrowserRequestCache.prefetchReco
     yield* Effect.forEach(
       // A read recorded without a revision header still names its module release in the URL.
       reads.filter((read) => read.compositionRevision === '' || read.compositionRevision === revision.value),
-      (read) => prefetchRead(state, read),
+      (read) => prefetchRead(state, read, pathname),
       { concurrency: PREFETCH_CONCURRENCY, discard: true },
     );
   },
@@ -653,3 +714,7 @@ export const forgetRecordedPageReads = clearBrowserRequestCache.pipe(
   ),
   Effect.ignore,
 );
+
+// Recorded reads, the request cache and warm assertions, and queued prefetches all belong to the session scope.
+registerSessionScopedReset(forgetRecordedPageReads);
+registerSessionScopedReset(staffRoutePreloads.invalidate);

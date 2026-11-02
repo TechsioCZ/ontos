@@ -16,6 +16,7 @@ interface FixtureCoverage {
   controlFlowFindings?: number;
   discoveredFiles?: number;
   findingCounts?: Schema.Json;
+  modeledFindingCounts?: Schema.Json;
   modeledUsages?: number;
   nativeFindingCounts?: Schema.Json;
   processed?: number;
@@ -406,5 +407,43 @@ it.effect(
       ),
       { concurrency: 'unbounded' },
     );
+  }),
+);
+
+it.effect(
+  'dependency normalization requires exact per-category accounting and rejects unrelated corrections',
+  Effect.fn(function* nativeDependencyAccounting() {
+    const summary = clean();
+    const knip = summary.results.find((result) => result.name === 'knip');
+    if (knip === undefined) {
+      throw new Error(EXPECTED_PROOF_VALUE);
+    }
+    Object.assign(knip.coverage, {
+      findingCounts: { devDependencies: 0, exports: 0, unlisted: 0 },
+      modeledFindingCounts: { devDependencies: 1 },
+      modeledUsages: 1,
+      nativeFindingCounts: { devDependencies: 1, exports: 0, unlisted: 0 },
+    });
+    expect(yield* validate(summary)).toEqual([]);
+    for (const invalid of [
+      { modeledFindingCounts: { unlisted: 1 } },
+      { modeledFindingCounts: { devDependencies: 2 } },
+      { modeledFindingCounts: { exports: 1 } },
+      { modeledFindingCounts: { devDependencies: 1, unknown: 0 } },
+      { modeledFindingCounts: { devDependencies: -1 } },
+    ]) {
+      const changed = structuredClone(summary);
+      const changedKnip = changed.results.find((result) => result.name === 'knip');
+      if (changedKnip === undefined) {
+        throw new Error(EXPECTED_PROOF_VALUE);
+      }
+      Object.assign(changedKnip.coverage, invalid);
+      yield* Effect.matchCause(validate(changed), {
+        onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed|inconsistent/u),
+        onSuccess: () => {
+          throw new Error(EXPECTED_EFFECT_FAILURE);
+        },
+      });
+    }
   }),
 );

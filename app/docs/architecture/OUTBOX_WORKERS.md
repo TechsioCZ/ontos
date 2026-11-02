@@ -60,6 +60,7 @@ Worker execution is at-least-once. Handlers must be idempotent because a process
 
 - Success finishes the attempt, marks the still-owned delivery `done`, clears claim fields, and advances an eligible checkpoint in one transaction.
 - Failure finishes the attempt with bounded sanitized text and either returns the delivery to `pending` after descriptor-derived exponential backoff or marks it `dead` at the maximum attempt count.
+- Only an operator moves a `dead` delivery on. A redrive returns it to `pending` with a fresh attempt budget; a release marks it `released`, which settles its composition completion debt without delivery. Both append to `core.outbox_delivery_resolutions`. See [Dead Outbox deliveries during a composition drain](./DEPLOYMENT.md#dead-outbox-deliveries-during-a-composition-drain).
 - Payload decode failures, declared handler failures, unexpected defects, persistence failures, module-state failures, and lost claims remain distinct typed Effect failures. Stored errors and runtime telemetry contain no arbitrary payload, secret, raw Effect cause, stack, or database diagnostic. Core retains unexpected persistence causes only behind its private runtime boundary; they are not part of public failures or routine telemetry.
 
 Runtime telemetry identifies the worker, consumer and producer modules, topic, tenant, message, delivery, attempt, correlation, and outcome. It never logs arbitrary message payloads.
@@ -93,7 +94,7 @@ durably requested external projection.
 
 `worker_checkpoints` is mutable cursor state, not audit evidence. Its identity is tenant plus `consumer_name = workerKey` plus a stable producer/topic stream key. The cursor stores the linked Domain Event's `tenant_sequence_no` and advances only after successful delivery finalization.
 
-Checkpoint advancement must not skip an earlier matching delivery in `pending`, `processing`, or `dead` state. Matching, claiming, decoding failure, handler failure, lease expiry, and dead-lettering never create or advance a checkpoint. Delivery finalization and checkpoint advancement are one transaction so neither can be observed without the other.
+Checkpoint advancement must not skip an earlier matching delivery in `pending`, `processing`, `dead`, or `released` state. Matching, claiming, decoding failure, handler failure, lease expiry, and dead-lettering never create or advance a checkpoint. Delivery finalization and checkpoint advancement are one transaction so neither can be observed without the other.
 
 ## Authorization inventory
 

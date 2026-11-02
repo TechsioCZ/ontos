@@ -5,6 +5,7 @@ import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
   rstest: 'importActual',
 };
 import { loadHomePageModel, resetBrowserSessionCache } from '../../../../src/routes/[lang]/home-page-model.ts';
+import { endBrowserSession } from '../../../../src/routes/session-scope.ts';
 
 const {
   availableLegalEntitiesMock,
@@ -350,6 +351,29 @@ it.effect('reuses one authenticated browser session across loaders and rereads a
     yield* load;
     yield* load;
     expect(currentSessionMock).toHaveBeenCalledTimes(3);
+  }),
+);
+
+it.effect('answers the next load with the current person after a session boundary', () =>
+  Effect.gen(function* verifyBoundaryDropsPreviousPerson() {
+    yield* resetBrowserSessionCache;
+    const load = loadHomePageModel(new Request('https://shell.example.test/en')).pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
+    );
+    expect(yield* load).toMatchObject({ identity: { displayName: 'Ada Lovelace' }, state: 'authenticated' });
+
+    currentSessionMock.mockReturnValue(
+      Effect.succeed({
+        identity: { ...identity, displayName: 'Grace Hopper', principalId: 'principal-2' },
+        state: 'authenticated' as const,
+      }),
+    );
+    yield* endBrowserSession;
+
+    expect(yield* load).toMatchObject({
+      identity: { displayName: 'Grace Hopper', principalId: 'principal-2' },
+      state: 'authenticated',
+    });
   }),
 );
 

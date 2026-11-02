@@ -230,13 +230,12 @@ export const planStorefrontInquiryEmail = (
     `Kontakt: ${inquiry.name} <${inquiry.email}>`,
     `Druh: ${labels[inquiry.kind]}`,
     ...(inquiry.productId !== undefined && inquiry.productId !== ''
-      ? [`Produkt: ${inquiry.productName ?? inquiry.productId} (${inquiry.productId})`]
+      ? [`Produkt: ${inquiry.productName ?? 'Název není k dispozici'}`]
       : []),
     '',
     inquiry.message,
     '',
     `Úkol v OntOS: ${options.appUrl.replace(/\/+$/u, '')}/cs/ukoly`,
-    `ID úkolu: ${task.ref.resourceId}`,
   ].join('\n');
 
   return {

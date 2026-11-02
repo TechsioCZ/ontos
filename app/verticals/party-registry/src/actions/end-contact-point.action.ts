@@ -65,7 +65,7 @@ type EndError =
   | PartyContactPointNotFound
   | PartyContactPointPersistenceUnavailable;
 
-interface Services {
+export interface Services {
   readonly end: (
     command: EndContactPointCommand,
   ) => Effect.Effect<Readonly<{ changed: boolean; contactPoint: PartyContactPoint }>, EndError>;
@@ -146,7 +146,7 @@ export const endContactPointAction = defineAction(
   },
   handleEndContactPoint,
   (transaction, scope) =>
-    Effect.succeed({
+    Effect.succeed<Services>({
       end: (command: EndContactPointCommand) => endContactPointRecord(transaction, scope, command),
     }),
 );

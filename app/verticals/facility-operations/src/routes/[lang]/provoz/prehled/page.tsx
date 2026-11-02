@@ -6,10 +6,8 @@
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { PageHeader } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Button } from '@techsio/ui-kit/atoms/button';
 import { useEffect, useState } from 'react';
-import { Array as EffectArray, Effect, Option, Order, Schema } from 'effect';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { Array as EffectArray, Option, Order, Schema } from 'effect';
 import { AgendaFrame } from '../../../../ui/agenda-frame.tsx';
 import { pragueToday } from '../../../../ui/ops-agenda/deadlines.ts';
 import {
@@ -53,11 +51,10 @@ const OverviewView = ({
 }) => {
   const { language, t } = useModernI18n();
   const lang = langOf(language);
-  const { loadSearch, names, reload, sources } = useRentalOverviewSources();
+  const { loadSearch, names, sources } = useRentalOverviewSources();
   const [view, setView] = useState(() => ({ selected: readKpiParam(search), today: pragueToday() }));
   const { selected, today } = view;
   const [query, setQuery] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
 
   // Search rows of the provoz records are fetched only when someone actually searches.
   useEffect(() => {
@@ -98,11 +95,6 @@ const OverviewView = ({
     }
   };
 
-  const refresh = () => {
-    setRefreshing(true);
-    browserRuntime.runFork(reload().pipe(Effect.ensuring(Effect.sync(() => setRefreshing(false)))));
-  };
-
   const selectedKpi = kpis.find((kpi) => kpi.id === selected);
   const agendaEnvelope = sources.ops.data?.agenda;
 
@@ -110,26 +102,14 @@ const OverviewView = ({
     <>
       <PageHeader
         actions={
-          <>
-            <a
-              className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-2 facilityoperations:rounded-lg facilityoperations:px-3 facilityoperations:py-1.5 facilityoperations:text-sm facilityoperations:font-medium facilityoperations:no-underline"
-              href={`/${lang}/provoz/agenda`}
-              style={{ border: '1px solid var(--color-border-primary, #d1d5db)', color: 'inherit' }}
-            >
-              <Icon name="calendar" size={18} />
-              {t('facility-operations.agenda.overview.openCalendar')}
-            </a>
-            <Button
-              isLoading={refreshing}
-              loadingText={t('facility-operations.common.loading')}
-              onClick={refresh}
-              size="sm"
-              theme="outlined"
-              variant="secondary"
-            >
-              {t('facility-operations.agenda.overview.refresh')}
-            </Button>
-          </>
+          <a
+            className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-2 facilityoperations:rounded-lg facilityoperations:px-3 facilityoperations:py-1.5 facilityoperations:text-sm facilityoperations:font-medium facilityoperations:no-underline"
+            href={`/${lang}/provoz/agenda`}
+            style={{ border: '1px solid var(--color-border-primary, #d1d5db)', color: 'inherit' }}
+          >
+            <Icon name="calendar" size={18} />
+            {t('facility-operations.agenda.overview.openCalendar')}
+          </a>
         }
         description={t('facility-operations.agenda.overview.description')}
         meta={

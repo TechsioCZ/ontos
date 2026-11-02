@@ -47,9 +47,7 @@ describe('Shell request service initialization diagnostics', () => {
         Effect.sync(() =>
           createHttpApiHandler({
             api: HttpApi.make('ShellInitializationDiagnostics'),
-            layer: HttpRouter.layer,
-            services,
-            servicesLifetime: 'request',
+            layer: HttpRouter.layer.pipe(Layer.provide(services)),
           }),
         ),
         (handler) => Effect.promise(handler.dispose.bind(handler)),

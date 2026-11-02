@@ -1,4 +1,5 @@
 import { beforeEach, vi } from "vitest";
+import type { ActiveMarket } from "@/ontos/market";
 
 // jsdom has no layout observer. UI-kit DataTable's DnD adapter imports it eagerly;
 // actual sizing and overflow remain covered in Chromium.
@@ -49,5 +50,20 @@ vi.mock("@/ontos/catalog-server", async () => {
     getShellSnapshot: async () => {
       throw new Error("getShellSnapshot is only used by the root layout");
     },
+  };
+});
+
+// Pages, routes and the cart quote resolve the request's market from Next request headers. Suites run outside a
+// request: they get the Czech market (CZK, Czech chrome). Market resolution is covered by market-selection.
+vi.mock("@/ontos/active-market", async () => {
+  const { cs } = await import("@/i18n/cs");
+  const { testMarket } = await import("./support/market-fixture");
+  return {
+    getActiveMarket: vi.fn<() => Promise<ActiveMarket>>(async () => testMarket),
+    getMarketResolution: async () => ({ kind: "live", market: testMarket, live: [] }),
+    getMoney: async () => ({ currency: testMarket.currency, locale: testMarket.formatLocale }),
+    getDictionary: async () => cs,
+    getStorePath: async () => "/",
+    marketHref: async (href: string) => href,
   };
 });

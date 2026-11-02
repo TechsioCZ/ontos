@@ -8,16 +8,19 @@ import { Effect, Option, Redacted, Schema } from 'effect';
 import { useState } from 'react';
 
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { submitCredentialForm } from '../../../credential-form.ts';
 import {
   InvitationPasswordSchema,
   InvitationTokenSchema,
   setInvitationPassword,
 } from '../../people/invitation-client.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
+import { useHydrated } from '../../use-hydrated.ts';
 
 const SearchSchema = Schema.Struct({ token: InvitationTokenSchema });
 const SetPasswordPage = () => {
   const { language, t } = useModernI18n();
+  const hydrated = useHydrated();
   const token = useRouterState({
     select: (state) => Option.getOrUndefined(Schema.decodeUnknownOption(SearchSchema)(state.location.search))?.token,
   });
@@ -77,7 +80,12 @@ const SetPasswordPage = () => {
             </StatusText>
           )}
           {!done && token !== undefined && (
-            <form action={submit} className="grid gap-200">
+            <form
+              action={`/${language}/login`}
+              className="grid gap-200"
+              method="post"
+              onSubmit={(event) => submitCredentialForm(event, hydrated, submit)}
+            >
               <p>
                 Zvolte vlastní heslo. Tento jednorázový odkaz nikomu nepřeposílejte. Nastavení hesla nepřiděluje role
                 ani neaktivuje členství ve firmě.
@@ -107,7 +115,7 @@ const SetPasswordPage = () => {
                   {error}
                 </StatusText>
               )}
-              <Button disabled={busy} type="submit" variant="primary">
+              <Button disabled={!hydrated || busy} type="submit" variant="primary">
                 {busy ? 'Nastavuji heslo…' : 'Nastavit heslo'}
               </Button>
             </form>

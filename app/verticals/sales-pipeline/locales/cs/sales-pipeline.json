@@ -215,7 +215,6 @@
           },
           "skipped": "Přeskočeno: {{total}} ({{reasons}})",
           "stageChanged": "Fáze změněna",
-          "updated": "Příležitost uložena",
           "bulkChanged": "Změněno {{changed}}, přeskočeno {{skipped}}"
         },
         "errors": {
@@ -256,7 +255,7 @@
         "edit": {
           "title": "Upravit příležitost",
           "description": "Obchodníka měňte akcí Přiřadit obchodníka. Položky si zachovají ceny zafixované při přidání.",
-          "submit": "Uložit změny"
+          "close": "Zavřít"
         },
         "unknownOwner": "Neznámý obchodník"
       },

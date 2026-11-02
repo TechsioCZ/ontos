@@ -177,4 +177,4 @@ const command = Command.make(
 const resetProgram = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(
   Layer.provide(Layer.mergeAll(NodeServices.layer, ConfigProvider.layer(ConfigProvider.fromEnv()))),
 );
-NodeRuntime.runMain(Layer.build(resetProgram).pipe(Effect.scoped));
+NodeRuntime.runMain(Effect.scoped(Layer.build(resetProgram)));

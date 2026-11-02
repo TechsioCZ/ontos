@@ -6,13 +6,23 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { runQualityCli } from './quality-cli-lifecycle.mts';
 
 // Explicit scopes, not a guessed changed-file dependency graph. Full is the safe default.
+// `tooling` runs the same commands as CI's Repository Tooling gate.
 const localValidationScripts = {
   full: ['check'],
+  generation: ['test:generation'],
   'lint-rules': ['typecheck:lint-rules', 'test:lint-rules'],
   quality: ['quality:audit:test'],
   scripts: ['test:scripts'],
+  tooling: ['shell:ui-candidates:check', 'test:scripts', 'module-entrypoints:check', 'test:generation'],
   unit: ['test:unit'],
 } as const;
+
+const fullScopeNotice = [
+  'pnpm check does not run these CI gates:',
+  '  Repository Tooling: pnpm check:local --scope tooling',
+  '  Unit and component tests: pnpm check:local --scope unit',
+  '  Integration, browser, and Node artifact builds run in CI.',
+].join('\n');
 
 class LocalValidationError extends Schema.TaggedError<LocalValidationError>()('LocalValidationError', {
   message: Schema.String,
@@ -22,15 +32,19 @@ const cli = Command.make(
   'check-local',
   {
     dryRun: Flag.Boolean('dry-run').pipe(Flag.withDefault(false)),
-    scope: Flag.Literals('scope', ['full', 'lint-rules', 'quality', 'scripts', 'unit']).pipe(Flag.withDefault('full')),
+    scope: Flag.Literals('scope', ['full', 'generation', 'lint-rules', 'quality', 'scripts', 'tooling', 'unit']).pipe(
+      Flag.withDefault('full'),
+    ),
   },
   ({ dryRun, scope }) =>
     Effect.gen(function* checkLocalCommand() {
       const path = yield* Path.Path;
       const root = yield* path.fromFileUrl(new URL('..', import.meta.url));
-      if (scope !== 'full') {
-        yield* Console.log('Focused feedback only. Run pnpm check and task-required tests before completion.');
-      }
+      yield* Console.log(
+        scope === 'full'
+          ? fullScopeNotice
+          : 'Focused feedback only. Run pnpm check and task-required tests before completion.',
+      );
       yield* Effect.forEach(
         localValidationScripts[scope],
         Effect.fn(function* runLocalValidationScript(script) {

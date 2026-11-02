@@ -158,9 +158,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer), { excludeTestServ
                   { concurrency: 1 },
                 );
                 expect(rerun).toEqual(after);
-                // A migration connection must inherit configured budgets, not impose new ceilings.
-                yield* admin.unsafe(`alter role postgres in database "${database}" set statement_timeout = '45s'`);
-                yield* admin.unsafe(`alter role postgres in database "${database}" set lock_timeout = '15s'`);
+                // The migration connection (the fixture admin role) inherits configured budgets, not new ceilings.
+                yield* admin.unsafe(`alter role current_user in database "${database}" set statement_timeout = '45s'`);
+                yield* admin.unsafe(`alter role current_user in database "${database}" set lock_timeout = '15s'`);
                 yield* Effect.scoped(
                   Effect.gen(function* inheritedMigrationBudgets() {
                     const migrationClient = yield* PgClient.PgClient;

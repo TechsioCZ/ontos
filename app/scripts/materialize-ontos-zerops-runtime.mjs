@@ -62,10 +62,18 @@ const materializeCommand = Command.make(
         if (manifest.name !== packageName) {
           return yield* Effect.fail(failure('--package must match --package-dir/package.json name'));
         }
-        const options = { appId, packageDir, packageName, workspaceRoot };
-        // The caller passes the host digest, which the bundle serves on /status, and the revision each hosted owner's
-        // build identity names (JSON, by owner id).
-        const artifactDigest = yield* Config.option(Config.String('ONTOS_OUTBOX_HOST_DIGEST'));
+        // A deployment that serves only some units names them (space separated); the host then runs only their workers.
+        const servedUnits = yield* Config.option(Config.String('ONTOS_OUTBOX_HOST_SERVED_UNITS'));
+        const options = {
+          appId,
+          packageDir,
+          packageName,
+          servedUnits: Option.getOrUndefined(servedUnits)
+            ?.split(/\s+/u)
+            .filter((unit) => unit.length > 0),
+          workspaceRoot,
+        };
+        // The caller passes the revision each hosted owner's build identity names (JSON, by owner id).
         const ownerRevisions = yield* Config.option(Config.String('ONTOS_OUTBOX_HOST_OWNER_REVISIONS'));
         const delivery = yield* Effect.tryPromise({
           catch: (cause) => failure(String(cause)),
@@ -92,7 +100,6 @@ const materializeCommand = Command.make(
           try: async () =>
             await materializeOutboxWorker({
               ...options,
-              artifactDigest: Option.getOrUndefined(artifactDigest),
               ownerRevisions: Option.getOrUndefined(ownerRevisions),
               runtimeDir,
             }),

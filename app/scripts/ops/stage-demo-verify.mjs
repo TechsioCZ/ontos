@@ -259,7 +259,7 @@ export const verifyStage = ({
           { concurrency: 1, discard: true },
         );
       }
-      yield* probe('storefront home', `${storefrontUrl}/`, { budgetMs: DOCUMENT_ACCEPTANCE_MS });
+      yield* probe('storefront home', `${storefrontUrl}/cs`, { budgetMs: DOCUMENT_ACCEPTANCE_MS });
     });
     return Effect.scoped(pass).pipe(
       Effect.catchTag('StageVerificationFailure', recordFailure),

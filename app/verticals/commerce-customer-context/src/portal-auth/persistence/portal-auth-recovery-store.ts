@@ -1,5 +1,6 @@
+import { isSqlError } from 'effect/sql/SqlError';
 import { and, eq, gt, inArray, like, lt, sql } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Cause, Context, Crypto, DateTime, Effect, Exit, Layer, Option, Redacted, Ref, Schema } from 'effect';
 
 import { CommercePortalAuthProviderSubjectIdSchema } from '../../../api/portal-auth/provider/recovery/contracts.ts';
 import type {
@@ -66,6 +67,72 @@ const mutationFailure = (operation: string, cause: unknown): CommercePortalAuthR
   Schema.is(CommercePortalAuthAuditUnavailable)(cause)
     ? unavailable(`${operation}-audit`, cause)
     : unavailable(operation, cause);
+
+class VerificationSettlementDiagnostics extends Context.Service<
+  VerificationSettlementDiagnostics,
+  Redacted.Redacted<{
+    readonly bodyExit: Option.Option<Exit.Exit<unknown, unknown>>;
+    readonly originalCause: Cause.Cause<unknown>;
+    readonly settlementCause: Cause.Cause<unknown>;
+  }>
+>()(
+  '@app/commerce-customer-context/portal-auth/persistence/portal-auth-recovery-store/VerificationSettlementDiagnostics',
+) {}
+
+/** Unexpected failure dominates operational availability; retain every original phase privately. */
+const verificationSettlementCause = (
+  settlementCause: Cause.Cause<unknown>,
+  bodyExit: Option.Option<Exit.Exit<unknown, unknown>>,
+): Cause.Cause<CommercePortalAuthRecoveryUnavailable> => {
+  const recordedBodyExit = Option.getOrUndefined(bodyExit);
+  const bodyCause =
+    recordedBodyExit !== undefined && Exit.isFailure(recordedBodyExit) ? recordedBodyExit.cause : Cause.empty;
+  // When settlement also defects, Effect promotes the body's typed failure to a defect. The captured
+  // body cause already carries that failure in its own channel, so drop only that exact promoted copy.
+  const bodyFailures = new Set<unknown>();
+  for (const reason of bodyCause.reasons) {
+    if (Cause.isFailReason(reason)) {
+      bodyFailures.add(reason.error);
+    }
+  }
+  const settlementOnlyCause = Cause.fromReasons(
+    settlementCause.reasons.filter((reason) => !(Cause.isDieReason(reason) && bodyFailures.has(reason.defect))),
+  );
+  const originalCause = Cause.combine(settlementOnlyCause, bodyCause);
+  const unexpectedBody = bodyCause.reasons.some(
+    (reason) => Cause.isDieReason(reason) || Cause.isInterruptReason(reason),
+  );
+  const unexpectedSettlement = settlementOnlyCause.reasons.some(
+    (reason) => Cause.isInterruptReason(reason) || (Cause.isDieReason(reason) && !isSqlError(reason.defect)),
+  );
+  const diagnostic = { bodyExit, originalCause, settlementCause };
+  if (unexpectedBody || unexpectedSettlement) {
+    // A declared Fail would make handler/framework error mappers discard its unexpected siblings.
+    // Keep the original defects/cancellation outward, with all typed diagnostics privately retained.
+    const unexpectedReasons = originalCause.reasons.filter(
+      (reason): reason is Cause.Die | Cause.Interrupt => !Cause.isFailReason(reason),
+    );
+    return Cause.annotate(
+      Cause.fromReasons<never>(unexpectedReasons),
+      Context.make(VerificationSettlementDiagnostics, Redacted.make(diagnostic)),
+    );
+  }
+  return Cause.fromReasons(
+    originalCause.reasons.map((reason) => {
+      if (Cause.isDieReason(reason) && isSqlError(reason.defect)) {
+        return Cause.makeFailReason(unavailable('verification-token-consume', diagnostic));
+      }
+      if (Cause.isFailReason(reason)) {
+        return Cause.makeFailReason(
+          Schema.is(CommercePortalAuthRecoveryUnavailable)(reason.error)
+            ? reason.error
+            : mutationFailure('verification-token-consume', reason.error),
+        );
+      }
+      return reason;
+    }),
+  );
+};
 
 const sweepAgedDispatchedRowUnavailable = (cause: unknown): CommercePortalAuthRecoveryUnavailable =>
   unavailable(RESET_LEDGER_SWEEP_ROW_OPERATION, cause);
@@ -244,9 +311,10 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
      * consuming it *is* what flips `user.emailVerified`, so a flip that commits without its
      * completion row would leave a verified address unevidenced, and a completion row over a token
      * that was never actually spent would be evidence for a verification that never happened. A
-     * refused write rolls back the flip along with it, so the token and the account are left exactly
-     * as they were — `Option.none` covers both "no row matched" and "the audit row could not be
-     * written", and either way nothing changed.
+     * refused body write cannot commit the flip without the completion row. A failed COMMIT
+     * acknowledgement does not prove rollback: the caller receives unavailable and must inspect
+     * durable truth before any deliberate recovery. `Option.none` means no eligible token/subject
+     * matched; audit/storage failures retain the declared failure channel.
      */
     const consumeEmailVerificationWithAudit = Effect.fn(
       'CommercePortalAuthRecoveryStore.consumeEmailVerificationWithAudit',
@@ -259,69 +327,98 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         Effect.mapError((cause) => unavailable('verification-token-hash', cause)),
       );
       const identifier = emailVerificationIdentifier(digest);
-      return yield* database
-        .transaction(
-          Effect.fn('CommercePortalAuthRecoveryStore.consumeEmailVerificationWithAudit.transaction')(
-            function* consumeTransaction(transaction) {
-              const rows = yield* transaction
-                .select({ expiresAt: verification.expiresAt, id: verification.id, value: verification.value })
-                .from(verification)
-                .where(eq(verification.identifier, identifier))
-                .for('update');
-              // A provider token is deterministic in the realm secret and the address, so a
-              // re-registered address can leave two ledger rows under one identifier bound to two
-              // different subjects. Postgres defines no order across them, so admitting either one
-              // would verify an arbitrary subject. Both rows are spent here and neither is
-              // admitted: an ambiguous binding is refused, never guessed.
-              if (rows.length > 1) {
-                yield* transaction.delete(verification).where(eq(verification.identifier, identifier));
-                return Option.none<string>();
-              }
-              const [row] = rows;
-              if (
-                row === undefined ||
-                !Number.isFinite(epochMillis(row.expiresAt)) ||
-                epochMillis(row.expiresAt) <= epochMillis(input.now)
-              ) {
-                if (row !== undefined) {
-                  yield* transaction.delete(verification).where(eq(verification.id, row.id));
-                }
-                return Option.none<string>();
-              }
+      const transactionBody = Effect.fn(
+        'CommercePortalAuthRecoveryStore.consumeEmailVerificationWithAudit.transaction',
+      )(function* consumeTransaction(transaction: CommercePortalAuthDatabaseTransaction) {
+        const rows = yield* transaction
+          .select({ expiresAt: verification.expiresAt, id: verification.id, value: verification.value })
+          .from(verification)
+          .where(eq(verification.identifier, identifier))
+          .for('update');
+        // A provider token is deterministic in the realm secret and the address, so a
+        // re-registered address can leave two ledger rows under one identifier bound to two
+        // different subjects. Postgres defines no order across them, so admitting either one
+        // would verify an arbitrary subject. Both rows are spent here and neither is
+        // admitted: an ambiguous binding is refused, never guessed.
+        if (rows.length > 1) {
+          yield* transaction.delete(verification).where(eq(verification.identifier, identifier));
+          return Option.none<string>();
+        }
+        const [row] = rows;
+        if (
+          row === undefined ||
+          !Number.isFinite(epochMillis(row.expiresAt)) ||
+          epochMillis(row.expiresAt) <= epochMillis(input.now)
+        ) {
+          if (row !== undefined) {
+            yield* transaction.delete(verification).where(eq(verification.id, row.id));
+          }
+          return Option.none<string>();
+        }
 
-              const record = decodeVerificationLedgerRecord(row.value);
-              if (Option.isNone(record)) {
-                yield* transaction.delete(verification).where(eq(verification.id, row.id));
-                return Option.none<string>();
-              }
+        const record = decodeVerificationLedgerRecord(row.value);
+        if (Option.isNone(record)) {
+          yield* transaction.delete(verification).where(eq(verification.id, row.id));
+          return Option.none<string>();
+        }
 
-              const updated = yield* transaction
-                .update(user)
-                .set({ emailVerified: true, updatedAt: input.now })
-                .where(
-                  and(
-                    eq(user.id, record.value.providerSubjectId),
-                    eq(user.email, record.value.email),
-                    eq(user.emailVerified, false),
-                  ),
-                )
-                .returning({ id: user.id });
-              // A missed update (account deleted or rebound since `detect` read it) keeps the ledger
-              // row, so the retry's `detect` still finds the stale binding and records the conflict.
-              if (updated.length !== 1) {
-                return Option.none<string>();
-              }
-              yield* transaction.delete(verification).where(eq(verification.id, row.id));
-              yield* writeCommercePortalAuthAuditRow(transaction, {
-                ...input.audit,
-                correlationDigest: digest,
-                providerSubjectId: record.value.providerSubjectId,
-              });
-              return Option.some(record.value.providerSubjectId);
-            },
-          ),
-        )
-        .pipe(Effect.mapError((cause) => mutationFailure('verification-token-consume', cause)));
+        const updated = yield* transaction
+          .update(user)
+          .set({ emailVerified: true, updatedAt: input.now })
+          .where(
+            and(
+              eq(user.id, record.value.providerSubjectId),
+              eq(user.email, record.value.email),
+              eq(user.emailVerified, false),
+            ),
+          )
+          .returning({ id: user.id });
+        // A missed update (account deleted or rebound since `detect` read it) keeps the ledger
+        // row, so the retry's `detect` still finds the stale binding and records the conflict.
+        if (updated.length !== 1) {
+          return Option.none<string>();
+        }
+        yield* transaction.delete(verification).where(eq(verification.id, row.id));
+        yield* writeCommercePortalAuthAuditRow(transaction, {
+          ...input.audit,
+          correlationDigest: digest,
+          providerSubjectId: record.value.providerSubjectId,
+        });
+        return Option.some(record.value.providerSubjectId);
+      });
+      const bodyExit = yield* Ref.make<
+        Option.Option<
+          Exit.Exit<
+            Effect.Success<ReturnType<typeof transactionBody>>,
+            Effect.Error<ReturnType<typeof transactionBody>>
+          >
+        >
+      >(Option.none());
+      const captureBodyExit = (
+        exit: Exit.Exit<
+          Effect.Success<ReturnType<typeof transactionBody>>,
+          Effect.Error<ReturnType<typeof transactionBody>>
+        >,
+      ) => Ref.set(bodyExit, Option.some(exit));
+      return yield* Effect.uninterruptibleMask(
+        Effect.fn('CommercePortalAuthRecoveryStore.classifyVerificationSettlement')(
+          function* classifyVerificationSettlement(
+            restore: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>,
+          ) {
+            const settlementExit = yield* Effect.exit(
+              restore(
+                database.transaction((transaction) =>
+                  transactionBody(transaction).pipe(Effect.onExit(captureBodyExit)),
+                ),
+              ),
+            );
+            if (Exit.isSuccess(settlementExit)) {
+              return settlementExit.value;
+            }
+            return yield* Effect.failCause(verificationSettlementCause(settlementExit.cause, yield* Ref.get(bodyExit)));
+          },
+        ),
+      );
     });
 
     /**
@@ -807,7 +904,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
       yield* database
         .transaction(
           Effect.fn('CommercePortalAuthRecoveryStore.consumePasswordResetLedgerWithAudit.transaction')(
-            function* consumeTransaction(transaction) {
+            function* consumeTransaction(transaction: CommercePortalAuthDatabaseTransaction) {
               yield* transaction
                 .update(recoveryResetLedger)
                 .set({ email: null, providerSubjectId: null, state: RESET_LEDGER_STATE_CONSUMED, updatedAt: now })

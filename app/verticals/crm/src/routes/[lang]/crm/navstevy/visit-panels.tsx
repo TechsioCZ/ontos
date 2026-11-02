@@ -310,7 +310,6 @@ export const RecordVisitPanel = ({
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description={
         clientId === undefined
           ? 'Zapište kontakt, který proběhl. Plánované kontakty patří do K oslovení.'
@@ -474,7 +473,6 @@ export const CorrectVisitPanel = ({
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description={`${clientLabel(records, visit.clientId)} · zapsal(a) ${principalLabel(records, visit.authorPrincipalId)}`}
       onOpenChange={(next) => {
         if (!next) {

@@ -63,7 +63,7 @@ export const testCaptureFromEnvironment = (environment: TestCaptureEnvironment) 
   readTestCaptureConfiguration(ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true }));
 
 /**
- * Seeded demo and QA addresses (management@siampark.demo, ucetni@demo.ontos, demo@test.com…): no inbox exists, so
+ * Seeded demo and QA addresses (management@najempark.demo, ucetni@demo.ontos, demo@test.com…): no inbox exists, so
  * every runtime records them SKIPPED instead of sending. Suffix rules include the domain itself and its subdomains.
  */
 export const SEEDED_UNDELIVERABLE_DOMAINS = 'demo,demo.ontos,test,test.com,invalid,local,localhost';

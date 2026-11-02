@@ -34,6 +34,7 @@ const sourcePattern = 'src/**/*.{ts,mts}';
 const allTypedSourcePattern = '**/*.{ts,mts}';
 const knipManifestFile = 'node_modules/knip/package.json';
 const indexFile = 'src/index.ts';
+const emptyModuleSource = 'export {};';
 const moduleFederationConfigFile = 'module-federation.config.ts';
 const operatorScriptPattern = 'scripts/**/*.mts';
 const rstestConfigFile = 'rstest.config.ts';
@@ -44,6 +45,16 @@ const nativeRoutesWorkspace = 'apps/native-routes';
 const nativeRoutesRoot = `${nativeRoutesWorkspace}/src/routes/[lang]`;
 const nodeExecutableExpression = 'process.execPath';
 const unusedNeighborSource = 'export const unusedNeighbor = 1;';
+const unknownCwdCase = 'unknown-cwd';
+const shadowDriverCase = 'shadow-driver';
+const mutableCwdCase = 'mutable-cwd';
+const nativeChildNamespaceImport = "import * as child from 'node:child_process';";
+const loaderLateCase = 'loader-late';
+const nativePathImport = "import paths from 'node:path';";
+const nativeEffectProcessImport = "import { ChildProcess as Process } from 'effect/process';";
+const sourceScriptsPattern = 'scripts/**/*.mts';
+const esbuildRootDeclaration = "const rootDirectory = paths.resolve(import.meta.dirname, '..', '..', '..', '..');";
+const esbuildCwdOptions = '{ cwd: rootDirectory }';
 const nativeSubprocessReason = 'Native Node subprocess';
 const nativePlaywrightReason = 'Native Playwright webServer.command';
 const playwrightPackageName = '@playwright/test';
@@ -54,11 +65,19 @@ const playwrightConfigSource = (server: string) =>
 const scriptArgument = (name: string) => `paths.resolve('../../scripts/${name}.fixture.mts')`;
 const nativeInvocation = (name: string, executable = nodeExecutableExpression, options = '{}') =>
   `execute(${executable}, ['--experimental-strip-types', ${scriptArgument(name)}], ${options});`;
+const esbuildInvocation = (
+  file: string,
+  options = esbuildCwdOptions,
+  executable = "'mise'",
+  prefix = "'exec', '--', 'pnpm', 'exec', 'esbuild'",
+) =>
+  `Process.make(${executable}, [${prefix}, '${file}', '--bundle', '--platform=node', '--format=esm', '--packages=external', '--outfile=/tmp/generated.mjs'], ${options});`;
 const Names = Schema.Array(Schema.Struct({ name: Schema.String }));
 const ReportSchema = Schema.Struct({
   issues: Schema.Array(
     Schema.Struct({
       dependencies: Names,
+      devDependencies: Names,
       duplicates: Schema.Array(Schema.Array(Schema.Struct({ name: Schema.String }))),
       exports: Names,
       file: Schema.String,
@@ -76,6 +95,8 @@ const expectPageDuplicatePolicy = (
   const ignored = model.config.workspaces?.[owner]?.ignoreIssues?.[String.raw`src/routes/\[lang\]/page.tsx`] ?? [];
   expect(ignored.includes('duplicates')).toBe(allowed);
 };
+const unusedDevDependencies = (report: typeof ReportSchema.Type, file: string): readonly string[] =>
+  report.issues.find((issue) => issue.file === file)?.devDependencies.map((finding) => finding.name) ?? [];
 const stringify = (value: Schema.Json) =>
   Effect.gen(function* testEffect1() {
     return yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(value);
@@ -566,70 +587,624 @@ it.live(
   }),
 );
 
-it.live(
-  'Effect subprocesses consume immutable owner-loop and called script values while preserving invalid neighbors',
-  Effect.fn(function* ownerLoopSubprocessConsumers() {
-    const root = yield* fixture();
-    write(root, packageFile, '{"name":"loop-controls","type":"module","dependencies":{"effect":"*"}}');
-    const consumer = 'scripts/reset.mts';
-    const used = ['verticals/one/scripts/reset.mts', 'verticals/two/scripts/reset.mts', 'scripts/permissions.mts'];
-    const unused = ['verticals/dead/scripts/reset.mts', 'scripts/unknown.mts', 'scripts/one-other.mts'];
-    for (const file of [...used, ...unused]) {
-      write(root, file, unusedNeighborSource);
-    }
+const writeOpaqueScopeFixtures = (root: string, shell: string) => {
+  const cases = [
+    [
+      'for-of-path',
+      (invoke: string) =>
+        `for (const paths of [{ resolve: () => '/different' }]) { ${esbuildRootDeclaration} ${invoke} }`,
+    ],
+    [
+      'for-of-factory',
+      (invoke: string) => `${esbuildRootDeclaration} for (const Process of [{ make() {} }]) { ${invoke} }`,
+    ],
+    ['for-in-path', (invoke: string) => `for (const paths in { other: {} }) { ${esbuildRootDeclaration} ${invoke} }`],
+    [
+      'for-path',
+      (invoke: string) =>
+        `for (const paths = { resolve: () => '/different' }; flag;) { ${esbuildRootDeclaration} ${invoke} }`,
+    ],
+    [
+      'for-destructured',
+      (invoke: string) =>
+        `for (const { inner: paths } of [{ inner: { resolve: () => '/different' } }]) { ${esbuildRootDeclaration} ${invoke} }`,
+    ],
+    [
+      'var-path-owner',
+      (invoke: string) =>
+        `function run() { if (flag) { var paths = { resolve: () => '/different' }; } ${esbuildRootDeclaration} ${invoke} } run();`,
+    ],
+    [
+      'var-factory-owner',
+      (invoke: string) =>
+        `function run() { if (flag) { var Process = { make() {} }; } ${esbuildRootDeclaration} ${invoke} } run();`,
+    ],
+    [
+      'named-function-self',
+      (invoke: string) => `const run = function paths() { ${esbuildRootDeclaration} ${invoke} }; run();`,
+    ],
+    [
+      'named-class-self',
+      (invoke: string) =>
+        `const Owner = class Process { static run() { ${esbuildRootDeclaration} ${invoke} } }; Owner.run();`,
+    ],
+    [
+      'switch-path',
+      (invoke: string) =>
+        `switch (flag) { case true: const paths = { resolve: () => '/different' }; ${esbuildRootDeclaration} ${invoke} }`,
+    ],
+    [
+      'free-loader-after-loop',
+      (invoke: string) =>
+        `function loadDependency() { for (const require of [() => ({})]) {} const load = require; load('node:path'); } loadDependency(); ${esbuildRootDeclaration} ${invoke}`,
+    ],
+  ] satisfies readonly (readonly [string, (invoke: string) => string])[];
+  const rejected = cases.map(([name, source]) => {
+    const victim = `${shell}/tests/support/opaque-${name}.ts`;
+    write(root, victim, 'export const unusedOpaqueVictim = 1;');
     write(
       root,
-      consumer,
+      `${shell}/tests/integration/opaque-${name}.test.ts`,
+      [nativeEffectProcessImport, nativePathImport, source(esbuildInvocation(victim))].join('\n'),
+    );
+    return victim;
+  });
+  for (const [name, declaration, invocation] of [
+    [
+      'argv',
+      "const argv = ['exec', '--', 'pnpm', 'exec', 'esbuild', target, '--bundle'];",
+      "for (const argv of [unknownArgv]) { Process.make('mise', argv, { cwd: rootDirectory }); }",
+    ],
+    [
+      'options',
+      'const options = { cwd: rootDirectory };',
+      "for (const options of [unknownOptions]) { Process.make('mise', ['exec', '--', 'pnpm', 'exec', 'esbuild', target, '--bundle'], options); }",
+    ],
+    [
+      'default-owner',
+      'const start = (file = target) => Process.make(process.execPath, [file], { cwd: rootDirectory });',
+      'for (const start of [() => {}]) { start(); }',
+    ],
+  ]) {
+    const victim = `${shell}/tests/support/opaque-${name}.ts`;
+    rejected.push(victim);
+    write(root, victim, 'export const unusedOpaqueVictim = 1;');
+    write(
+      root,
+      `${shell}/tests/integration/opaque-${name}.test.ts`,
       [
-        "import { Effect, Path } from 'effect';",
-        "import { ChildProcess } from 'effect/process';",
-        "const OWNERS = ['one', 'two'] as const;",
-        "const unusedOwners = ['dead'] as const;",
-        `const ownerScript = (owner: string) => \`verticals/\${owner}/scripts/reset.mts\`;`,
-        'const run = Effect.gen(function* () {',
-        '  const path = yield* Path.Path;',
-        "  const root = yield* path.fromFileUrl(new URL('..', import.meta.url));",
-        '  const runScript = (script: string) => ChildProcess.make(process.execPath, [path.join(root, script)], {cwd: root});',
-        "  runScript('scripts/permissions.mts');",
-        '  runScript(unknownScript);',
-        `  const paired = (left: string, right: string) => ChildProcess.make(process.execPath, [path.join(root, \`scripts/\${left}-\${right}.mts\`)], {cwd: root});`,
-        "  paired('one', 'live'); paired('two', 'other');",
-        '  for (const owner of OWNERS) ChildProcess.make(process.execPath, [path.join(root, ownerScript(owner))], {cwd: root});',
-        '});',
+        nativeEffectProcessImport,
+        nativePathImport,
+        esbuildRootDeclaration,
+        `const target = '${victim}';`,
+        declaration,
+        invocation,
       ].join('\n'),
     );
-    const consumerPath = path.join(root, auditConsumersFile);
-    const model = yield* buildKnipModel(
+  }
+  const unusedBootstrapSource = 'export const unusedBootstrapExport = 1;';
+  const preserved = `${shell}/tests/support/valid-unrelated-loop.ts`;
+  write(root, preserved, unusedBootstrapSource);
+  write(
+    root,
+    `${shell}/tests/integration/valid-unrelated-loop.test.ts`,
+    [
+      nativeEffectProcessImport,
+      nativePathImport,
+      "for (const paths of [unknownPaths]) {} for (const Process of [unknownProcesses]) {} for (const require of [() => ({})]) { require('node:path'); }",
+      esbuildRootDeclaration,
+      esbuildInvocation(preserved),
+    ].join('\n'),
+  );
+  const lexicalPositives = [
+    [
+      'inner-data-under-self',
+      () =>
+        `const run = function argv() { { const argv = ['exec', '--', 'pnpm', 'exec', 'esbuild', TARGET, '--bundle']; Process.make('mise', argv, { cwd: rootDirectory }); } }; run();`,
+    ],
+    [
+      'switch-discriminant',
+      (invoke: string) => `switch (${invoke.replace(/;$/u, '')}) { case 0: const Process = unknownProcess; break; }`,
+    ],
+  ] satisfies readonly (readonly [string, (invoke: string) => string])[];
+  const preservedFiles = lexicalPositives.map(([name, source]) => {
+    const victim = `${shell}/tests/support/valid-${name}.ts`;
+    write(root, victim, unusedBootstrapSource);
+    write(
       root,
-      {
-        workspaces: { '.': { entry: [consumer], node: false, project: [operatorScriptPattern, 'verticals/**/*.mts'] } },
+      `${shell}/tests/integration/valid-${name}.test.ts`,
+      [
+        nativeEffectProcessImport,
+        nativePathImport,
+        esbuildRootDeclaration,
+        source(esbuildInvocation(victim)).replace('TARGET', JSON.stringify(victim)),
+      ].join('\n'),
+    );
+    return victim;
+  });
+  return { preserved: [preserved, ...preservedFiles], rejected };
+};
+
+const writeNamespaceCapabilityFixtures = (root: string, shell: string) => {
+  const rejected: string[] = [];
+  const bad = (name: string) => `${shell}/tests/support/${name}.ts`;
+  const namespaceCases = [
+    ['url-constructor-alternate', "import { URL as other } from 'node:url'; other.prototype.pathname = '/different';"],
+    ['named-default-write', "import { default as other } from 'node:path'; other.resolve = () => '/different';"],
+    ['named-default-escape', "import { default as other } from 'node:path'; unknownMutator(other);"],
+    ['bare-default-write', "import other from 'path'; other.resolve = () => '/different';"],
+    ['namespace-default-write', "import * as other from 'node:path'; other.default.resolve = () => '/different';"],
+    ['protected-subpath', "import other from 'node:path/posix'; unknownMutator(other);"],
+    ['dynamic-protected', "const other = await import('node:path'); other.default.resolve = () => '/different';"],
+    ['dynamic-unknown', 'const other = await import(unknownModule);'],
+    [
+      'parameter-default-body-var',
+      "function capture(load = require) { var require = () => {}; load('node:path'); } capture();",
+    ],
+    [
+      'destructured-default-body-var',
+      "function capture({ load = require } = {}) { var require = () => {}; load('node:path'); } capture();",
+    ],
+    [
+      'rest-default-body-var',
+      "function capture([load = require] = [], ...rest) { var require = () => {}; load('node:path'); } capture();",
+    ],
+    [
+      'inner-loader-under-self',
+      "import { createRequire } from 'node:module'; const capture = function require() { { const require = createRequire(import.meta.url); require('node:path'); } }; capture();",
+    ],
+    [
+      'inner-loader-under-loop',
+      "import { createRequire } from 'node:module'; for (const require of values) { { const require = createRequire(import.meta.url); require('node:path'); } }",
+    ],
+    [
+      'inner-loader-under-var',
+      "import { createRequire } from 'node:module'; function capture() { var require = () => {}; { const require = createRequire(import.meta.url); require('node:path'); } } capture();",
+    ],
+    ['assignment-loop-loader', "for (require of values) {} const load = require; load('node:path');"],
+    [
+      'destructured-assignment-loop-loader',
+      "for ({ load: require } of values) {} const load = require; load('node:path');",
+    ],
+    ['require-alias', "const load = require; const other = load('node:path');"],
+    ['require-direct', "const other = require('path');"],
+    [
+      'create-require',
+      "import { createRequire as makeLoader } from 'node:module'; const load = makeLoader(import.meta.url); const other = load('node:path');",
+    ],
+    [
+      'module-namespace',
+      "import * as loaders from 'node:module'; const load = loaders.createRequire(import.meta.url); const other = load('path');",
+    ],
+    [
+      'module-default',
+      "import { default as loaders } from 'module'; const load = loaders.createRequire(import.meta.url); const other = load('node:path');",
+    ],
+    ['loader-container', "import { createRequire } from 'module'; const box = { createRequire };"],
+    [
+      'loader-unknown',
+      "import { createRequire } from 'module'; const load = createRequire(import.meta.url); load(unknownModule);",
+    ],
+    [
+      loaderLateCase,
+      "import { createRequire } from 'module'; const load = createRequire(import.meta.url); load('node:path');",
+    ],
+    ['builtin-sync', "import { syncBuiltinESMExports as sync } from 'node:module'; sync();"],
+    ['process-loader', "const other = process.getBuiltinModule('path');"],
+    ['global-loader', "const other = globalThis.require('path');"],
+    [
+      'global-alias',
+      "const ambient = globalThis; const load = ambient.require; const other = load('node:path'); other.resolve = () => '/different';",
+    ],
+    [
+      'global-container',
+      "const box = { ambient: globalThis }; const other = box.ambient.require('node:path'); other.resolve = () => '/different';",
+    ],
+    [
+      'global-nested-container',
+      "const box = { ambient: [{ nested: globalThis }] }; box.ambient[0].nested.require('node:path');",
+    ],
+    ['global-array', "const box = [globalThis]; box[0].require('node:path');"],
+    ['global-wrapped', "const ambient = (globalThis as unknown); ambient.require('node:path');"],
+    ['global-spread', 'const box = { ...globalThis };'],
+    ['global-argument', 'unknownMutator(globalThis);'],
+    ['global-return', 'function capture() { return globalThis; }'],
+    ['global-closure', 'const capture = () => globalThis;'],
+    ['global-conditional', 'const box = flag ? globalThis : {};'],
+    ['global-logical', 'const box = flag && globalThis;'],
+    ['global-sequence', 'const box = (0, globalThis);'],
+    ['global-destructure', 'const { require: load } = globalThis;'],
+    ['global-computed', "globalThis['crypto'].randomUUID();"],
+    ['global-optional', 'globalThis?.crypto.randomUUID();'],
+    ['global-member-write', 'globalThis.crypto.randomUUID = replacement;'],
+    ['global-member-update', 'globalThis.crypto.randomUUID++;'],
+    ['global-member-delete', 'delete globalThis.crypto.randomUUID;'],
+    ['global-root-alternate', "const ambient = global; ambient.require('node:path');"],
+    ['window-root-alternate', "const ambient = window; ambient.require('node:path');"],
+    ['self-root-alternate', "const ambient = self; ambient.require('node:path');"],
+    ['global-default-body-var', 'function capture(ambient = globalThis) { var globalThis; } capture();'],
+    ['process-alias-loader', "const ambient = process; ambient.getBuiltinModule('path');"],
+    ['process-container-loader', "const box = { nested: [process] }; box.nested[0].getBuiltinModule('path');"],
+    [
+      'process-import-alias-loader',
+      "import otherProcess from 'node:process'; const box = { otherProcess }; box.otherProcess.getBuiltinModule('path');",
+    ],
+    ['module-container-loader', "const box = { module }; box.module.require('node:path');"],
+
+    [
+      'file-target-alias',
+      "import { pathToFileURL as toFile } from 'node:url'; const convert = toFile; await import(convert(generatedPath).href);",
+    ],
+    ['file-target-factory', 'await import(unknownConverter(generatedPath).href);'],
+    ['file-target-member', "import * as urls2 from 'node:url'; await import(urls2.pathToFileURL(generatedPath).href);"],
+    [
+      'file-target-stored',
+      "import { pathToFileURL as toFile } from 'node:url'; const location = toFile(generatedPath).href; await import(location);",
+    ],
+    [
+      'file-target-computed',
+      "import { pathToFileURL as toFile } from 'node:url'; await import(toFile(generatedPath)['href']);",
+    ],
+    ['object-write', "const box = { paths }; box.paths.resolve = () => '/different';"],
+    ['object-escape', 'const box = { paths }; unknownMutator(box);'],
+    ['array', 'const box = [paths];'],
+    ['argument', 'unknownMutator(paths);'],
+    ['assignment', 'let box; box = paths;'],
+    ['delete', 'delete paths.resolve;'],
+    ['update', 'paths.resolve++;'],
+    ['extraction', 'const method = paths.resolve;'],
+    ['call', 'paths.resolve.call(null);'],
+    ['apply', 'paths.resolve.apply(null, []);'],
+    ['bind', 'paths.resolve.bind(null);'],
+    ['optional-call', 'paths.resolve?.();'],
+    ['optional-namespace', 'paths?.resolve();'],
+    ['wrapped', 'const box = { paths: (paths as unknown) };'],
+    ['nested', 'const box = { nested: [{ paths }] };'],
+    ['conditional', 'const box = flag ? paths : {};'],
+    ['logical', 'const box = flag && paths;'],
+    ['sequence', 'const box = (0, paths);'],
+    ['destructure', 'const { resolve } = paths;'],
+    ['spread', 'const box = { ...paths };'],
+    ['return', 'function expose() { return paths; }'],
+    ['export', 'export { paths };'],
+    ['closure', 'const expose = () => paths;'],
+    ['alias', 'const alias = paths;'],
+    ['dynamic', "paths['resolve'] = () => '/different';"],
+    ['unknown-method', 'paths.unknown();'],
+    ['late', 'const box = { paths }; unknownMutator(box);'],
+    ['factory', 'const box = { Process }; unknownMutator(box);'],
+    ['child-namespace', 'const box = { child }; unknownMutator(box);'],
+    ['process', 'const box = { process }; unknownMutator(box);'],
+    ['url-constructor', 'const box = { URL }; unknownMutator(box);'],
+    ['url-namespace', 'const box = { urls }; unknownMutator(box);'],
+  ];
+  for (const [name, capture] of namespaceCases) {
+    const victim = bad(`namespace-${name}`);
+    rejected.push(victim);
+    write(root, victim, 'export const unusedNamespaceVictim = 1;');
+    const cwd =
+      name === 'url-namespace' || name === 'url-constructor' || name === 'url-constructor-alternate'
+        ? "urls.fileURLToPath(new URL('../../../../', import.meta.url))"
+        : 'rootDirectory';
+    const invocation =
+      name === 'process' || name === 'child-namespace'
+        ? `${name === 'process' ? 'Process.make' : 'child.spawn'}(process.execPath, ['${victim}'], { cwd: rootDirectory });`
+        : esbuildInvocation(victim, `{ cwd: ${cwd} }`);
+    write(
+      root,
+      `${shell}/tests/integration/namespace-${name}.test.ts`,
+      [
+        nativeEffectProcessImport,
+        nativePathImport,
+        "import * as urls from 'node:url';",
+        nativeChildNamespaceImport,
+        name === 'late' || name === loaderLateCase ? '' : capture,
+        esbuildRootDeclaration,
+        invocation,
+        name === 'late' || name === loaderLateCase ? capture : '',
+      ].join('\n'),
+    );
+  }
+  const nativeNamespaceInput = bad('valid-native-namespace');
+  const helperNamespaceInput = bad('valid-helper-namespace');
+  for (const victim of [nativeNamespaceInput, helperNamespaceInput]) {
+    write(root, victim, 'console.log("bootstrap side effect"); export const unusedBootstrapExport = 1;');
+  }
+  write(
+    root,
+    `${shell}/tests/integration/valid-namespace.test.ts`,
+    [
+      nativeEffectProcessImport,
+      nativePathImport,
+      "import * as urls from 'node:url';",
+      nativeChildNamespaceImport,
+      "const rootDirectory = paths.join(urls.fileURLToPath(new URL('../../../../', import.meta.url)), '.');",
+      `child.spawn(process.execPath, ['${nativeNamespaceInput}'], { cwd: rootDirectory });`,
+      esbuildInvocation(helperNamespaceInput),
+    ].join('\n'),
+  );
+  const canonicalPositives = [
+    ['named-default', "import { default as paths } from 'node:path';"],
+    ['bare-default', "import paths from 'path';"],
+    ['namespace', "import * as paths from 'node:path';"],
+    ['ordinary-require', `${nativePathImport} function require() { return {}; } require('node:path');`],
+    [
+      'ordinary-loader',
+      `${nativePathImport} import { createRequire as makeLoader } from 'node:module'; const load = makeLoader(import.meta.url); load('@fixture/ordinary');`,
+    ],
+    ['ordinary-dynamic', `${nativePathImport} await import('./ordinary.ts');`],
+    ['ordinary-global-crypto', `${nativePathImport} globalThis.crypto.randomUUID();`],
+    [
+      'local-global-object-shadow',
+      `${nativePathImport} function capture(globalThis) { const box = { globalThis }; } capture({});`,
+    ],
+    ['local-process-shadow', `${nativePathImport} function capture(process) { const box = { process }; } capture({});`],
+
+    [
+      'ordinary-file',
+      `${nativePathImport} import { pathToFileURL as toFile } from 'node:url'; await import(toFile(generatedPath).href);`,
+    ],
+    ['type-only', `${nativePathImport} import type { createRequire } from 'node:module';`],
+  ].map(([name, importSource]) => {
+    const victim = bad(`valid-${name}`);
+    write(root, victim, 'export const unusedBootstrapExport = 1;');
+    write(
+      root,
+      `${shell}/tests/integration/valid-canonical-${name}.test.ts`,
+      [nativeEffectProcessImport, importSource, esbuildRootDeclaration, esbuildInvocation(victim)].join('\n'),
+    );
+    return victim;
+  });
+  return { canonicalPositives, helperNamespaceInput, nativeNamespaceInput, rejected };
+};
+
+it.live(
+  'esbuild subprocess inputs retain exact binding and cwd proof without hiding unused neighbors',
+  Effect.fn(function* esbuildSubprocessConsumers() {
+    const root = yield* fixture();
+    write(
+      root,
+      packageFile,
+      '{"name":"bundle-controls","private":true,"type":"module","workspaces":["apps/*","verticals/*"]}',
+    );
+    const shell = 'apps/bundle-shell';
+    const receiver = 'verticals/bundle-receiver';
+    for (const workspace of [shell, receiver]) {
+      write(
+        root,
+        `${workspace}/package.json`,
+        JSON.stringify({ dependencies: { effect: '*' }, name: `@fixture/${workspace.split('/')[1]}`, type: 'module' }),
+      );
+    }
+    const shellInput = `${shell}/tests/support/shell-http.ts`;
+    const receiverInput = `${receiver}/tests/support/receiver-http.ts`;
+    const immutableInput = `${shell}/tests/support/immutable-alias-http.ts`;
+    const crossInput = `${receiver}/tests/support/cross-http.ts`;
+    const unused = `${shell}/tests/support/never-bundled.ts`;
+    const rejected = [
+      'fake-driver',
+      shadowDriverCase,
+      'mutable-argv',
+      'spliced-argv',
+      'aliased-argv',
+      'aliased-options',
+      'aliased-factory',
+      'member-argv',
+      'member-options',
+      'member-escape',
+      'conditional-alias',
+      'logical-alias',
+      'sequence-alias',
+      'destructured-alias',
+      'nested-computed-alias',
+      'returned-options',
+      'constructor-options',
+      'url-mutation',
+      'url-escape',
+      'captured-path',
+      'captured-cwd',
+      'escaped-argv',
+      mutableCwdCase,
+      unknownCwdCase,
+      'spread-cwd',
+      'fake-path',
+      'fake-url',
+      'wrong-prefix',
+      'wrong-executable',
+      'output-only',
+      'string-only',
+    ].map((name) => `${shell}/tests/support/${name}.ts`);
+    for (const file of [shellInput, receiverInput, crossInput, immutableInput, unused, ...rejected]) {
+      write(root, file, 'console.log("bootstrap side effect"); export const unusedBootstrapExport = 1;');
+    }
+    const bad = (name: string) => `${shell}/tests/support/${name}.ts`;
+    const shellConsumer = `${shell}/tests/integration/consumer.test.ts`;
+    const receiverConsumer = `${receiver}/tests/integration/consumer.test.ts`;
+    write(
+      root,
+      shellConsumer,
+      [
+        nativeEffectProcessImport,
+        nativePathImport,
+        esbuildRootDeclaration,
+        esbuildInvocation(shellInput),
+        esbuildInvocation(crossInput),
+        `const stableArgv = ['exec', '--', 'pnpm', 'exec', 'esbuild', '${immutableInput}', '--bundle']; const stableAlias = stableArgv; const stableOptions = { cwd: rootDirectory }; const stableOptionAlias = stableOptions; Process.make('mise', stableAlias, stableOptionAlias);`,
+        `{ const Process = { make() {} }; ${esbuildInvocation(bad('fake-driver'))} }`,
+        `function shadow(Process) { ${esbuildInvocation(bad(shadowDriverCase))} } shadow({ make() {} });`,
+        `const args = ['exec', '--', 'pnpm', 'exec', 'esbuild', '${bad('mutable-argv')}']; args[5] = 'elsewhere.ts'; Process.make('mise', args, { cwd: rootDirectory });`,
+        `{ const argv = ['exec', '--', 'pnpm', 'exec', 'esbuild', '${bad('spliced-argv')}', '--bundle']; argv.splice(5, 1, '${shellInput}'); Process.make('mise', argv, { cwd: rootDirectory }); }`,
+        `{ const argv = ['exec', '--', 'pnpm', 'exec', 'esbuild', '${bad('aliased-argv')}', '--bundle']; const alias = argv; alias[5] = '${shellInput}'; Process.make('mise', argv, { cwd: rootDirectory }); }`,
+        `{ const options = { cwd: rootDirectory }; const alias = options; alias.cwd = '/different'; ${esbuildInvocation(bad('aliased-options'), 'options')} }`,
+        `{ const argv = ['exec', '--', 'pnpm', 'exec', 'esbuild', '${bad('escaped-argv')}', '--bundle']; unknownMutator(argv); Process.make('mise', argv, { cwd: rootDirectory }); }`,
+        `{ let cwd = rootDirectory; cwd = '/different'; ${esbuildInvocation(bad(mutableCwdCase), '{ cwd }')} }`,
+        `{ const argv = ['exec', '--', 'pnpm', 'exec', 'esbuild', '${bad('member-argv')}', '--bundle']; const outer = { argv }; const projected = outer.argv; projected[5] = '${shellInput}'; Process.make('mise', argv, { cwd: rootDirectory }); }`,
+        ...[
+          [
+            'member-options',
+            'const outer = { options }; const projected = outer.options; projected.cwd = "/different";',
+          ],
+          ['member-escape', 'const outer = { options }; const projected = outer.options; unknownMutator(projected);'],
+          ['conditional-alias', 'const projected = condition ? options : {}; unknownMutator(projected);'],
+          ['logical-alias', 'const projected = condition && options; unknownMutator(projected);'],
+          ['sequence-alias', 'const projected = (null, options); projected.cwd = "/different";'],
+          ['destructured-alias', 'const { inner } = { inner: options }; unknownMutator(inner);'],
+          [
+            'nested-computed-alias',
+            'const outer = { inner: { options } }; const projected = outer.inner["options"]; unknownMutator(projected);',
+          ],
+          ['returned-options', 'const escape = () => options; unknownMutator(escape);'],
+          ['constructor-options', 'new UnknownMutator(options);'],
+        ].map(
+          ([name, mutation]) =>
+            `{ const options = { cwd: rootDirectory }; ${mutation} ${esbuildInvocation(bad(name), 'options')} }`,
+        ),
+        `function capturedCwd(directory) { const captured = directory; { const directory = rootDirectory; ${esbuildInvocation(bad('captured-cwd'), '{ cwd: captured }')} } } capturedCwd('/different');`,
+        esbuildInvocation(bad(unknownCwdCase), '{ cwd: missingDirectory }'),
+        esbuildInvocation(bad('spread-cwd'), '{ ...missingOptions }'),
+        `{ const paths = { resolve: () => rootDirectory }; const fakeRoot = paths.resolve(import.meta.dirname); ${esbuildInvocation(bad('fake-path'), '{ cwd: fakeRoot }')} }`,
+        esbuildInvocation(bad('wrong-prefix'), esbuildCwdOptions, "'mise'", "'exec', '--', 'pnpm', 'run', 'esbuild'"),
+        esbuildInvocation(bad('wrong-executable'), esbuildCwdOptions, "'printf'"),
+        `Process.make('mise', ['exec', '--', 'pnpm', 'exec', 'esbuild', '--outfile=${bad('output-only')}'], { cwd: rootDirectory });`,
+        `const documentation = ${JSON.stringify(esbuildInvocation(bad('string-only')))}; void documentation;`,
+      ].join('\n'),
+    );
+    write(
+      root,
+      receiverConsumer,
+      [
+        nativeEffectProcessImport,
+        "import { fileURLToPath as toPath } from 'node:url';",
+        "const rootDirectory = toPath(new URL('../../../../', import.meta.url));",
+        esbuildInvocation(receiverInput),
+        ...[
+          ['url-mutation', 'const projected = address; projected.pathname = "/different";'],
+          ['url-escape', 'unknownMutator(address);'],
+        ].map(
+          ([name, mutation]) =>
+            `{ const address = new URL('../../../../', import.meta.url); ${mutation} ${esbuildInvocation(bad(name), '{ cwd: toPath(address) }')} }`,
+        ),
+        `{ const toPath = () => rootDirectory; const fakeRoot = toPath(new URL('../../../../', import.meta.url)); ${esbuildInvocation(bad('fake-url'), '{ cwd: fakeRoot }')} }`,
+      ].join('\n'),
+    );
+    write(
+      root,
+      `${shell}/tests/integration/mutated-factory.test.ts`,
+      [
+        nativeEffectProcessImport,
+        nativePathImport,
+        esbuildRootDeclaration,
+        'const driverAlias = Process; driverAlias.make = () => {};',
+        esbuildInvocation(bad('aliased-factory')),
+      ].join('\n'),
+    );
+    write(
+      root,
+      `${shell}/tests/integration/captured-path.test.ts`,
+      [
+        nativeEffectProcessImport,
+        nativePathImport,
+        `function capturedPath(fakePaths) { const captured = fakePaths; { const fakePaths = paths; ${esbuildInvocation(bad('captured-path'), "{ cwd: captured.resolve(import.meta.dirname, '..', '..', '..', '..') }")} } } capturedPath({ resolve: () => '/different' });`,
+      ].join('\n'),
+    );
+    const opaqueFixtures = writeOpaqueScopeFixtures(root, shell);
+    rejected.push(...opaqueFixtures.rejected);
+    const namespaceFixtures = writeNamespaceCapabilityFixtures(root, shell);
+    const { helperNamespaceInput, nativeNamespaceInput } = namespaceFixtures;
+    namespaceFixtures.canonicalPositives.push(...opaqueFixtures.preserved);
+    rejected.push(...namespaceFixtures.rejected);
+    const config = {
+      workspaces: {
+        '.': { entry: [], node: false, project: [sourceScriptsPattern] },
+        'apps/*': { entry: ['tests/integration/consumer.test.ts'], node: false, project: ['**/*.ts'] },
+        'verticals/*': { entry: ['tests/integration/consumer.test.ts'], node: false, project: ['**/*.ts'] },
       },
-      consumerPath,
-    ).pipe(Effect.provide(NodeServices.layer));
-    const subprocesses = model.evidence.filter((fact) => fact.reason.startsWith(nativeSubprocessReason));
-    for (const file of used) {
+    };
+    const consumerPath = path.join(root, auditConsumersFile);
+    const model = yield* buildKnipModel(root, config, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    const bundled = model.evidence.filter((fact) => fact.reason.startsWith('Native esbuild subprocess'));
+    for (const [source, target, workspace] of [
+      [shellConsumer, shellInput, shell],
+      [shellConsumer, crossInput, shell],
+      [shellConsumer, immutableInput, shell],
+      [receiverConsumer, receiverInput, receiver],
+    ]) {
+      const proof = bundled.find(
+        (fact) => fact.source === source && path.resolve(root, fact.workspace, fact.target) === path.join(root, target),
+      );
+      expect(proof).toMatchObject({ kind: 'file', workspace });
+      expect(proof?.line).toBeGreaterThan(0);
+      expect(proof?.column).toBeGreaterThanOrEqual(0);
+    }
+    for (const target of [nativeNamespaceInput, helperNamespaceInput, ...namespaceFixtures.canonicalPositives]) {
       expect(
-        subprocesses.some((fact) => fact.target === file),
-        file,
+        model.evidence.some(
+          (fact) => fact.kind === 'file' && path.resolve(root, fact.workspace, fact.target) === path.join(root, target),
+        ),
+        target,
       ).toBe(true);
     }
-    for (const file of unused) {
+    for (const file of [unused, ...rejected]) {
       expect(
-        subprocesses.some((fact) => fact.target === file),
+        model.evidence.some((fact) => path.resolve(root, fact.workspace, fact.target) === path.join(root, file)),
         file,
       ).toBe(false);
     }
     const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    expect(run.status, run.stderr).toBe(1);
     const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
     const unusedFiles = report.issues.flatMap((issue) => issue.files.map((finding) => finding.name));
-    for (const file of used) {
+    for (const file of [
+      shellInput,
+      receiverInput,
+      crossInput,
+      immutableInput,
+      nativeNamespaceInput,
+      helperNamespaceInput,
+      ...namespaceFixtures.canonicalPositives,
+    ]) {
       expect(unusedFiles).not.toContain(file);
       expect(report.issues.find((issue) => issue.file === file)?.exports.map((finding) => finding.name)).toContain(
-        'unusedNeighbor',
+        'unusedBootstrapExport',
       );
     }
-    for (const file of unused) {
+    for (const file of [unused, ...rejected]) {
       expect(unusedFiles).toContain(file);
+    }
+
+    // Exercise the exact production-test source syntax without evaluating its modules.
+    const actualShell = 'apps/shell-super-app/tests/integration/auth-runtime.test.ts';
+    const actualReceiver =
+      'verticals/commerce-customer-context/tests/integration/purchase-resolution-permission-plan-postgres.test.ts';
+    for (const [workspace, name] of [
+      ['apps/shell-super-app', '@fixture/actual-shell'],
+      ['verticals/party-registry', '@fixture/actual-party'],
+      ['verticals/commerce-customer-context', '@fixture/actual-receiver'],
+    ]) {
+      write(root, `${workspace}/package.json`, JSON.stringify({ name, type: 'module' }));
+    }
+    for (const file of [actualShell, actualReceiver]) {
+      write(root, file, readFileSync(path.join(appRoot, file), 'utf-8'));
+    }
+    const actualInputs = [
+      'apps/shell-super-app/tests/support/tenant-party-shell-http.ts',
+      'verticals/party-registry/tests/support/tenant-party-http.ts',
+      'verticals/commerce-customer-context/tests/support/purchase-resolution-permission-plan-receiver.fixture.ts',
+    ];
+    for (const file of actualInputs) {
+      write(root, file, 'export const unusedActualExport = 1;');
+    }
+    const actual = yield* buildKnipModel(root, config, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    for (const target of actualInputs) {
+      expect(
+        actual.evidence.some(
+          (fact) =>
+            fact.kind === 'file' &&
+            fact.reason.startsWith('Native esbuild subprocess') &&
+            [actualShell, actualReceiver].includes(fact.source) &&
+            path.resolve(root, fact.workspace, fact.target) === path.join(root, target),
+        ),
+      ).toBe(true);
     }
   }),
 );
@@ -650,20 +1225,19 @@ it.live(
     const nativeFixture = 'scripts/native.fixture.mts';
     const coreFixture = `${core}/tests/fixtures/worker.fixture.ts`;
     const overrideFixture = `${core}/tests/fixtures/override.fixture.ts`;
-    const nativeDirectoryFixture = `${core}/tests/fixtures/directory.fixture.ts`;
-    for (const file of [nativeFixture, coreFixture, overrideFixture, nativeDirectoryFixture]) {
+    for (const file of [nativeFixture, coreFixture, overrideFixture]) {
       write(root, file, 'export const unusedNativeNeighbor = 1;');
     }
     const invalidFiles = [
       'data',
       'local-driver',
-      'shadow-driver',
+      shadowDriverCase,
       'destructured-driver',
       'foreign-executable',
       'eval',
       'fake-path',
       'mutable-path',
-      'unknown-cwd',
+      unknownCwdCase,
       'spread-options',
       'factory-options',
       'dynamic-member',
@@ -672,9 +1246,6 @@ it.live(
       'mutated-driver',
       'unused-default',
       'overridden-default',
-      'unknown-directory-root',
-      'recursive-directory-root',
-      'mutated-executable',
     ].map((name) => `scripts/${name}.fixture.mts`);
     for (const file of invalidFiles) {
       write(root, file, 'export const unusedControl = 1;');
@@ -684,17 +1255,17 @@ it.live(
       `${shell}/tests/consumer.ts`,
       [
         "import { spawn as execute } from 'node:child_process';",
-        "import * as child from 'node:child_process';",
-        "import paths from 'node:path';",
+        nativeChildNamespaceImport,
+        nativePathImport,
         "execute(process.execPath, ['--experimental-strip-types', paths.resolve('../../scripts/native.fixture.mts'), paths.resolve('../../scripts/data.fixture.mts')], { stdio: 'pipe' });",
         `{ const execute = () => {}; ${nativeInvocation('local-driver')} }`,
-        `function shadow(execute) { ${nativeInvocation('shadow-driver')} } shadow(() => {});`,
+        `function shadow(execute) { ${nativeInvocation(shadowDriverCase)} } shadow(() => {});`,
         `function destructured({ execute }) { ${nativeInvocation('destructured-driver')} } destructured({ execute: () => {} });`,
         nativeInvocation('foreign-executable', "'/usr/bin/printf'"),
         `execute(process.execPath, ['-e', ${scriptArgument('eval')}]);`,
         `{ const paths = { resolve: (value) => value }; ${nativeInvocation('fake-path')} }`,
         "{ let target = '../../scripts/mutable-path.fixture.mts'; const alias = target; target = 'elsewhere.mts'; execute(process.execPath, [paths.resolve(alias)]); }",
-        nativeInvocation('unknown-cwd', nodeExecutableExpression, '{ cwd: unknownDirectory }'),
+        nativeInvocation(unknownCwdCase, nodeExecutableExpression, '{ cwd: unknownDirectory }'),
         nativeInvocation('spread-options', nodeExecutableExpression, '{ ...unknownOptions }'),
         nativeInvocation('factory-options', nodeExecutableExpression, 'unknownFactory({})'),
         `{ const method = 'spawn'; child[method](process.execPath, [${scriptArgument('dynamic-member')}]); }`,
@@ -709,38 +1280,20 @@ it.live(
       root,
       `${core}/tests/unit/consumer.test.ts`,
       [
-        "import { ChildProcess as Process } from 'effect/process';",
-        "import nativePath from 'node:path';",
-        "const packageRoot = nativePath.resolve(import.meta.dirname, '../..');",
-        "Process.make(process.execPath, [nativePath.join(packageRoot, 'tests/fixtures/directory.fixture.ts')], { cwd: packageRoot });",
-        'process.exitCode = 0;',
-        "const unknownRoot = nativePath.resolve(unknownDirectory, '../..');",
-        "Process.make(process.execPath, [nativePath.join(unknownRoot, '../../scripts/unknown-directory-root.fixture.mts')], { cwd: unknownRoot });",
-        "const recursiveRoot = nativePath.resolve(recursiveRoot, '../..');",
-        "Process.make(process.execPath, [nativePath.join(recursiveRoot, '../../scripts/recursive-directory-root.fixture.mts')], { cwd: recursiveRoot });",
+        nativeEffectProcessImport,
         "const start = (signal, file = 'tests/fixtures/worker.fixture.ts') => (() => Process.make(process.execPath, ['--experimental-strip-types', file], { cwd: new URL('../..', import.meta.url).pathname }))();",
         "const assertStopped = (signal, file = 'tests/fixtures/worker.fixture.ts') => start(signal, file);",
         "assertStopped('SIGTERM'); assertStopped('SIGINT', 'tests/fixtures/override.fixture.ts');",
       ].join('\n'),
-    );
-    const executableMutationConsumer = 'tests/unit/executable-mutation.test.ts';
-    write(
-      root,
-      `${core}/${executableMutationConsumer}`,
-      "import { ChildProcess } from 'effect/process';\nprocess.execPath = '/usr/bin/printf';\nprocess.exitCode = 0;\nChildProcess.make(process.execPath, ['../../scripts/mutated-executable.fixture.mts']);",
     );
     const consumerPath = path.join(root, auditConsumersFile);
     const model = yield* buildKnipModel(
       root,
       {
         workspaces: {
-          '.': { entry: [], node: false, project: [operatorScriptPattern] },
+          '.': { entry: [], node: false, project: [sourceScriptsPattern] },
           'apps/*': { entry: ['tests/consumer.ts'], node: false, project: ['**/*.ts'] },
-          'packages/*': {
-            entry: ['tests/unit/consumer.test.ts', executableMutationConsumer],
-            node: false,
-            project: ['**/*.ts'],
-          },
+          'packages/*': { entry: ['tests/unit/consumer.test.ts'], node: false, project: ['**/*.ts'] },
         },
       },
       consumerPath,
@@ -755,9 +1308,6 @@ it.live(
     expect(
       subprocesses.some((fact) => fact.workspace === core && fact.target === 'tests/fixtures/override.fixture.ts'),
     ).toBe(true);
-    expect(
-      subprocesses.some((fact) => fact.workspace === core && fact.target === 'tests/fixtures/directory.fixture.ts'),
-    ).toBe(true);
     for (const file of invalidFiles) {
       expect(subprocesses.some((fact) => fact.target.endsWith(path.basename(file)))).toBe(false);
     }
@@ -768,7 +1318,7 @@ it.live(
     for (const file of invalidFiles) {
       expect(unusedFiles).toContain(file);
     }
-    for (const file of [nativeFixture, coreFixture, overrideFixture, nativeDirectoryFixture]) {
+    for (const file of [nativeFixture, coreFixture, overrideFixture]) {
       expect(unusedFiles).not.toContain(file);
       expect(report.issues.find((issue) => issue.file === file)?.exports.map((finding) => finding.name)).toContain(
         'unusedNativeNeighbor',
@@ -786,7 +1336,7 @@ it.live(
       root,
       {
         workspaces: {
-          '.': { entry: [], node: false, project: [operatorScriptPattern] },
+          '.': { entry: [], node: false, project: [sourceScriptsPattern] },
           'apps/*': { entry: ['tests/integration/module-api-node-process.test.ts'], node: false, project: ['**/*.ts'] },
           'packages/*': { entry: ['tests/unit/outbox-process.test.ts'], node: false, project: ['**/*.ts'] },
         },
@@ -1283,6 +1833,89 @@ it.live(
 );
 
 it.live(
+  'UltraModern compiler commands consume tsrs without hiding unused compiler neighbors',
+  Effect.fn(function* testUltramodernCompilerConsumers() {
+    const root = yield* fixture();
+    const child = 'verticals/compiler';
+    const consumerPath = path.join(root, auditConsumersFile);
+    const prepare = 'ultramodern-create ultramodern compiler-prepare';
+    const typecheck = 'ultramodern-create ultramodern typecheck --project tsconfig.json';
+    const compilerDependencies = { '@effect/tsgo': '0.63.0', tsrs: '0.20.1-ts7.1.0-beta', yaml: '2.9.1' };
+    const manifests = (rootCommand: string, childCommand: string, withProvider = true) =>
+      Effect.gen(function* writeCompilerManifests() {
+        const devDependencies = withProvider
+          ? compilerDependencies
+          : { tsrs: compilerDependencies.tsrs, yaml: '2.9.1' };
+        write(
+          root,
+          packageFile,
+          yield* stringify({
+            devDependencies,
+            name: 'compiler-consumer-controls',
+            private: true,
+            scripts: { prepare: rootCommand },
+            type: 'module',
+            workspaces: ['verticals/*'],
+          }),
+        );
+        write(
+          root,
+          `${child}/${packageFile}`,
+          yield* stringify({
+            devDependencies,
+            name: '@fixture/compiler',
+            private: true,
+            scripts: { typecheck: childCommand },
+            type: 'module',
+          }),
+        );
+      });
+    write(root, indexFile, emptyModuleSource);
+    write(root, `${child}/${indexFile}`, emptyModuleSource);
+    const base = {
+      workspaces: {
+        '.': { entry: [indexFile], node: false, project: [sourcePattern] },
+        'verticals/*': { entry: [indexFile], node: false, project: [sourcePattern] },
+      },
+    };
+    const analyze = () =>
+      Effect.gen(function* analyzeCompilerConsumers() {
+        const model = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+        const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+        expect(run.status, run.stderr).toBe(1);
+        const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+        return { model, report };
+      });
+    yield* manifests(prepare, typecheck);
+    const consumed = yield* analyze();
+    expect(consumed.model.evidence.filter((fact) => fact.target === 'tsrs')).toEqual([
+      expect.objectContaining({ kind: 'dependency', source: packageFile, workspace: '.' }),
+      expect.objectContaining({ kind: 'dependency', source: `${child}/${packageFile}`, workspace: child }),
+    ]);
+    for (const file of [packageFile, `${child}/${packageFile}`]) {
+      expect(unusedDevDependencies(consumed.report, file)).not.toContain('tsrs');
+      expect(unusedDevDependencies(consumed.report, file)).toContain('yaml');
+    }
+    for (const { childCommand, rootCommand, withProvider } of [
+      {
+        childCommand: 'ultramodern-create ultramodern skills install',
+        rootCommand: `echo '${prepare}'`,
+        withProvider: true,
+      },
+      { childCommand: typecheck, rootCommand: prepare, withProvider: false },
+    ]) {
+      yield* manifests(rootCommand, childCommand, withProvider);
+      const unused = yield* analyze();
+      expect(unused.model.evidence.some((fact) => fact.target === 'tsrs')).toBe(false);
+      for (const file of [packageFile, `${child}/${packageFile}`]) {
+        expect(unusedDevDependencies(unused.report, file)).toContain('tsrs');
+        expect(unusedDevDependencies(unused.report, file)).toContain('yaml');
+      }
+    }
+  }),
+);
+
+it.live(
   'Rstest, compiler type tests and Oxlint loaders consume files without hiding unused exports',
   Effect.fn(function* testConsumerExports() {
     const root = yield* fixture();
@@ -1563,217 +2196,6 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       write(root, `${owner}/package.json`, yield* stringify({ ...manifest, name: '@fixture/not-core' }));
       const foreignOwner = yield* buildKnipModel(root, config, consumerPath);
       expect(foreignOwner.evidence.some((fact) => aliases.some((alias) => alias.target === fact.target))).toBe(false);
-    }),
-  );
-
-  testing.effect(
-    'named Effect generator subprocess helpers require finite calls and native file URL conversion',
-    Effect.fn(function* namedGeneratorSubprocessConsumers() {
-      const effectImportSource = "import { Effect } from 'effect';";
-      const fileUrlImportSource = "import { fileURLToPath } from 'node:url';";
-      const awaitedVerifierCall = 'yield* verify(ownerPath)';
-      const inertOwnerPath = 'void ownerPath';
-      const ownerUrlExpression = 'new URL(file,';
-      const mainDeclaration = 'const main =';
-      const awaitedChildProcess = '  yield* ChildProcess.make';
-      const verifierGeneratorDeclaration = 'function* verify';
-      const root = yield* fixture();
-      const consumer = 'scripts/verify.mts';
-      const target = 'scripts/owner.mts';
-      const unused = 'scripts/unused.mts';
-      write(root, target, unusedNeighborSource);
-      write(root, unused, unusedNeighborSource);
-      const config = {
-        workspaces: { '.': { entry: [consumer], node: false, project: [operatorScriptPattern] } },
-      };
-      const consumerPath = path.join(root, auditConsumersFile);
-      const source = [
-        effectImportSource,
-        "import { ChildProcess } from 'effect/process';",
-        fileUrlImportSource,
-        "const ownerPaths = ['./owner.mts'] as const;",
-        "const unusedPaths = ['./unused.mts'] as const;",
-        "export const verify = Effect.fn('verify')(function* verify(file: string) {",
-        '  yield* ChildProcess.make(process.execPath, [fileURLToPath(new URL(file, import.meta.url))]);',
-        '});',
-        'const main = Effect.gen(function* main() {',
-        '  for (const ownerPath of ownerPaths) yield* verify(ownerPath);',
-        '});',
-      ].join('\n');
-      for (const valid of [
-        source,
-        source.replaceAll('fileURLToPath', 'toPath').replace('{ toPath }', '{ fileURLToPath as toPath }'),
-        source
-          .replace(fileUrlImportSource, "import * as urls from 'node:url';")
-          .replace('fileURLToPath(new URL', 'urls.fileURLToPath(new URL'),
-        source.replace(awaitedVerifierCall, "yield* verify('./owner.mts')"),
-        source.replace(ownerUrlExpression, "new URL('./owner.mts',"),
-      ]) {
-        write(root, consumer, valid);
-        const model = yield* buildKnipModel(root, config, consumerPath);
-        expect(
-          model.evidence.filter((fact) => fact.reason.startsWith(nativeSubprocessReason)).map((fact) => fact.target),
-          valid,
-        ).toEqual([target]);
-      }
-      const invalid = [
-        source.replace(awaitedVerifierCall, inertOwnerPath),
-        source.replace(awaitedVerifierCall, inertOwnerPath).replace(ownerUrlExpression, "new URL('./owner.mts',"),
-        source
-          .replace(awaitedVerifierCall, inertOwnerPath)
-          .replace(awaitedChildProcess, "  yield* verify('./owner.mts'); yield* ChildProcess.make"),
-        source.replace(awaitedVerifierCall, 'yield* verify(unknownPath)'),
-        source.replace('of ownerPaths', 'of unknownPaths'),
-        source.replace('const ownerPaths', 'let ownerPaths'),
-        source.replace(mainDeclaration, 'ownerPaths.pop(); const main ='),
-        source.replace(mainDeclaration, 'verify = replacement; const main ='),
-        source.replace(mainDeclaration, 'verify.custom = replacement; const main ='),
-        source.replace(mainDeclaration, 'Effect.fn = replacement; const main ='),
-        source.replace(awaitedVerifierCall, '{ const verify = replacement; yield* verify(ownerPath); }'),
-        source.replace(awaitedChildProcess, "  file = './unused.mts'; yield* ChildProcess.make"),
-        source.replace(effectImportSource, "import { Effect } from './counterfeit.mts';"),
-        source.replace(effectImportSource, 'const Effect = replacement;'),
-        source.replace("Effect.fn('verify')", "unknownFactory('verify')"),
-        source.replace("Effect.fn('verify')", 'Effect.fn(unknownLabel)'),
-        source
-          .replace(verifierGeneratorDeclaration, 'function verify')
-          .replace(awaitedChildProcess, '  ChildProcess.make'),
-        source.replace('process.execPath', "'/usr/bin/printf'"),
-        source.replace(fileUrlImportSource, "import { fileURLToPath } from './counterfeit.mts';"),
-        source.replace(awaitedChildProcess, '  const fileURLToPath = replacement; yield* ChildProcess.make'),
-        source.replace(awaitedChildProcess, '  const URL = replacement; yield* ChildProcess.make'),
-        source.replace(verifierGeneratorDeclaration, 'function* URL'),
-        source.replace(verifierGeneratorDeclaration, 'function* fileURLToPath'),
-        source.replace(mainDeclaration, 'fileURLToPath.custom = replacement; const main ='),
-        source.replace('new URL(file, import.meta.url)', 'new URL(file, unknownBase)'),
-        source.replace('new URL(file, import.meta.url)', 'new URL(file, import.meta.url, unknownOption)'),
-        source.replace(
-          'fileURLToPath(new URL(file, import.meta.url))',
-          'fileURLToPath(new URL(file, import.meta.url), unknownOptions)',
-        ),
-        source.replace('./owner.mts', './owner.mts?ignored'),
-        source.replace('./owner.mts', './owner%2emts'),
-      ];
-      for (const rejected of invalid) {
-        write(root, consumer, rejected);
-        const model = yield* buildKnipModel(root, config, consumerPath);
-        expect(
-          model.evidence.filter((fact) => fact.reason.startsWith(nativeSubprocessReason)),
-          rejected,
-        ).toEqual([]);
-      }
-    }),
-  );
-
-  testing.effect(
-    'actual owner reset tables and verifier loops require the native consumer; inert neighboring lists remain unused',
-    Effect.fn(function* dynamicOwnerTables() {
-      const root = yield* fixture();
-      const reset = 'scripts/siampark/reset-demo.mts';
-      const table = 'scripts/siampark/fixtures.mts';
-      const verifier = 'scripts/verify-application-db-schema.mts';
-      const appManifest =
-        '{"name":"dynamic-owner-controls","type":"module","workspaces":["verticals/*","apps/*","packages/*"]}';
-      write(root, packageFile, appManifest);
-      for (const source of [reset, table, verifier]) {
-        write(root, source, readFileSync(path.join(appRoot, source), 'utf-8'));
-      }
-      const valid = [
-        'apps/shell-super-app/scripts/reset-demo-accounts.mts',
-        'packages/core-runtime/scripts/bootstrap-development-context.mts',
-        'verticals/party-registry/scripts/reset-siampark-demo.mts',
-        ...[
-          'legal-agreements',
-          'finance-billing',
-          'property-leasing',
-          'property-portfolio',
-          'crm-activities',
-          // The second legal entity has its own fixture invocation of the same owner script.
-          'crm-activities',
-          'work-tasks',
-        ].map((owner) => `verticals/${owner}/scripts/reset-demo.mts`),
-      ];
-      const checked = [
-        'scripts/verify-core-db-schema.mts',
-        ...['legal-agreements', 'property-leasing'].map((owner) => `verticals/${owner}/scripts/verify-db-schema.mts`),
-        'verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts',
-      ];
-      for (const file of [...valid, ...checked]) {
-        if (!file.startsWith('scripts/')) {
-          write(
-            root,
-            `${file.split('/').slice(0, 2).join('/')}/package.json`,
-            '{"name":"@fixture/owner","type":"module"}',
-          );
-        }
-        write(root, file, 'export const unusedOwnerNeighbor = 1;');
-      }
-      const dead = 'scripts/inert-port.mts';
-      write(root, dead, 'export const unusedInert = 1;');
-      write(
-        root,
-        table,
-        `${readFileSync(path.join(appRoot, table), 'utf-8')}\nconst inert = [{ script: '${dead}' }]; void inert;`,
-      );
-      const config = {
-        workspaces: {
-          '.': { entry: [reset, verifier], node: false, project: [operatorScriptPattern] },
-          'apps/*': { entry: [], node: false, project: [operatorScriptPattern] },
-          'packages/*': { entry: [], node: false, project: [operatorScriptPattern] },
-          'verticals/*': { entry: [], node: false, project: [operatorScriptPattern] },
-        },
-      };
-      const consumerPath = path.join(root, auditConsumersFile);
-      const model = yield* buildKnipModel(root, config, consumerPath);
-      const ports = model.evidence.filter((fact) => fact.reason.startsWith('Literal owner port'));
-      expect(ports).toHaveLength(valid.length);
-      expect(ports.filter((fact) => fact.target === 'verticals/crm-activities/scripts/reset-demo.mts')).toHaveLength(2);
-      expect(new Set(ports.map((fact) => fact.target))).toEqual(new Set(valid));
-      expect(ports.some((fact) => fact.target === dead)).toBe(false);
-      for (const target of checked) {
-        expect(
-          model.evidence.some(
-            (fact) =>
-              fact.source === verifier && fact.target === target && fact.reason.startsWith(nativeSubprocessReason),
-          ),
-        ).toBe(true);
-      }
-      const run = yield* runPinnedKnip(root, consumerPath, model);
-      const report = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
-      const unusedFiles = report.issues.flatMap((issue) => issue.files.map((finding) => finding.name));
-      expect(unusedFiles).toContain(dead);
-      for (const file of [...valid, ...checked]) {
-        expect(unusedFiles).not.toContain(file);
-        expect(report.issues.find((issue) => issue.file === file)?.exports.map((finding) => finding.name)).toContain(
-          'unusedOwnerNeighbor',
-        );
-      }
-      write(
-        root,
-        reset,
-        readFileSync(path.join(appRoot, reset), 'utf-8').replace(
-          'ChildProcess.make(process.execPath',
-          "ChildProcess.make('/usr/bin/printf'",
-        ),
-      );
-      write(
-        root,
-        verifier,
-        readFileSync(path.join(appRoot, verifier), 'utf-8').replace(
-          'for (const ownerVerifierPath of ownerVerifierPaths)',
-          'for (const ownerVerifierPath of unknownPaths)',
-        ),
-      );
-      const invalid = yield* buildKnipModel(root, config, consumerPath);
-      expect(invalid.evidence.some((fact) => fact.reason.startsWith('Literal owner port'))).toBe(false);
-      for (const target of checked.filter((file) => !file.endsWith('verify-portal-auth-db-schema.mts'))) {
-        expect(
-          invalid.evidence.some(
-            (fact) =>
-              fact.source === verifier && fact.target === target && fact.reason.startsWith(nativeSubprocessReason),
-          ),
-        ).toBe(false);
-      }
     }),
   );
 
@@ -2067,7 +2489,7 @@ it.live(
     const main = 'NodeRuntime.runMain(Effect.scoped(Layer.build(runtimeLive)));';
     const source = `${nativeImport}\nconst runtimeLive = Layer.empty;\n${main}`;
     write(root, `${owner}/package.json`, '{"name":"@fixture/manual-cli","type":"module"}');
-    write(root, `${owner}/src/index.ts`, 'export {};');
+    write(root, `${owner}/src/index.ts`, emptyModuleSource);
     write(root, `${owner}/scripts/operator.mts`, source);
     write(
       root,

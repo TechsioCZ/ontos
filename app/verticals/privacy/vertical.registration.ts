@@ -4,6 +4,7 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { privacyManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
+import { acknowledgePrivacyNoticeAction } from './src/actions/acknowledge-privacy-notice.action.ts';
 import { addProcessingPurposeVersionAction } from './src/actions/add-processing-purpose-version.action.ts';
 import { assignDsrResolverAction } from './src/actions/assign-dsr-resolver.action.ts';
 import { assignLegalBasisAction } from './src/actions/assign-legal-basis.action.ts';
@@ -48,6 +49,7 @@ import { upsertTemporaryDsrExportAction } from './src/actions/upsert-temporary-d
 export const privacyRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
+    acknowledgePrivacyNoticeAction,
     addProcessingPurposeVersionAction,
     assignDsrResolverAction,
     assignLegalBasisAction,
@@ -94,6 +96,7 @@ export const privacyRegistration = defineVerticalRuntimeRegistration({
       'current-consent': () => import('./src/api/current-consent-client.ts'),
       'dsr-cases': () => import('./src/api/dsr-cases-client.ts'),
       'legal-basis-assignments': () => import('./src/api/legal-basis-assignments-client.ts'),
+      'notice-presentation': () => import('./src/api/notice-presentation-client.ts'),
       'notice-versions': () => import('./src/api/notice-versions-client.ts'),
       'owner-inventory': () => import('./src/api/owner-inventory-client.ts'),
       'privacy-subjects': () => import('./src/api/privacy-subjects-client.ts'),

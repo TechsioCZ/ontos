@@ -40,6 +40,7 @@
 bg-(--color-chart-series-1)
 bg-(--color-popup-bg)
 block
+blur
 border
 border-border-primary
 border-dashed
@@ -177,6 +178,7 @@ text-label-md
 text-label-sm
 text-sm
 text-xs
+transition
 truncate
 underline
 visible

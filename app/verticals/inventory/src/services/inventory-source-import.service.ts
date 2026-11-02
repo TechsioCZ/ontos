@@ -30,6 +30,10 @@ import type {
 } from '../../shared/domain/inventory-source-assertion.ts';
 import type { InventoryBackendConfiguration } from '../../shared/domain/inventory-backend-configuration.ts';
 import type { InventoryBackendConfigurationPersistenceUnavailable } from '../../shared/domain/inventory-backend-configuration-persistence-unavailable.ts';
+import {
+  inventorySourceAssertionsClaimSameIdentityOrRevision,
+  inventorySourceAssertionsHaveSameMaterialContent,
+} from '../../shared/domain/inventory-source-ordering.ts';
 import { PhysicalStockEffectRecordSchema } from '../../shared/domain/physical-stock-effect.ts';
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This generated owner-local service composes the transaction-scoped correlation port; expires: 2027-03-31.
 import { makeExternalStockCorrelationResolver } from '../../shared/domain/external-stock-correlation.ts';
@@ -148,6 +152,27 @@ export const makeInventorySourceImportService = (dependencies: InventorySourceIm
         actionInvocationId: input.actionInvocationId,
         itemIndex: input.itemIndex,
         outcome: finalized,
+        proposal: input.proposal,
+      });
+      return recorded.outcome;
+    }
+    const persistedHistory = yield* dependencies.ledger.findPersistedSourceHistory(input.proposal);
+    const identityHistory = persistedHistory.filter((entry) =>
+      inventorySourceAssertionsClaimSameIdentityOrRevision(input.proposal, entry.proposal),
+    );
+    const conflicting = identityHistory.some(
+      (entry) => !inventorySourceAssertionsHaveSameMaterialContent(input.proposal, entry.proposal),
+    );
+    const existing = identityHistory.find((entry) => entry.proposal.assertionId === input.proposal.assertionId);
+    const persistedOutcome: InventorySourceImportOutcome | undefined = conflicting
+      ? { assertionId: input.proposal.assertionId, reason: 'ASSERTION_ID_CONFLICT', status: 'REJECTED' }
+      : existing?.outcome;
+    if (persistedOutcome !== undefined) {
+      const outcome = persistedOutcome;
+      const recorded = yield* dependencies.ledger.append({
+        actionInvocationId: input.actionInvocationId,
+        itemIndex: input.itemIndex,
+        outcome,
         proposal: input.proposal,
       });
       return recorded.outcome;

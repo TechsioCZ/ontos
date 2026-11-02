@@ -1,5 +1,5 @@
 import { expect, it } from 'effect-rstest';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { getReadConditionalPermissionPlan } from '../../../../packages/core-runtime/src/reads/definition.ts';
 
 import {
@@ -24,6 +24,7 @@ import { PurchaseCurrencyPolicyPort } from '../../shared/domain/purchase-currenc
 import { PurchaseCurrencyPricingPort } from '../../shared/domain/purchase-currency-pricing-port.ts';
 import { PurchaseCurrencyDependencyUnavailable } from '../../shared/domain/purchase-currency-dependency.ts';
 import {
+  emptyCustomerCommercePolicySet,
   CurrentPurchaseCurrencyPolicyCandidateSchema,
   CurrentPurchaseCurrencyPolicySetSchema,
 } from '../../shared/domain/customer-commerce-policy-administration.ts';
@@ -32,6 +33,7 @@ import type {
   CurrentPurchaseCurrencyPolicySet,
 } from '../../shared/domain/customer-commerce-policy-administration.ts';
 import {
+  verifyPurchaseCurrencyReadSnapshot,
   handlePurchaseCurrencyResolution,
   makePurchaseCurrencyResolutionServices,
   purchaseCurrencyGuestPermissionTargets,
@@ -783,4 +785,55 @@ it.effect('fails closed when the purchasing-context owner is not configured', ()
       expect(failure.retryable).toBe(true);
     }
   }),
+);
+
+it.effect(
+  'rejects owner policy changes and exact policy or Pricing End boundaries after released currency resolution',
+  () =>
+    Effect.gen(function* revalidateResolvedCurrency() {
+      const snapshot = emptyCustomerCommercePolicySet('PURCHASE_CURRENCY');
+      const response = resolvePurchaseCurrency({
+        policy,
+        pricing: pricingSupport('pricing:1', ['CZK', 'EUR']),
+        request: {
+          contextRevision: 'context:1',
+          purchasingContext,
+          requestedAt: '2026-09-09T10:00:01.000Z',
+          subject: guestSubject,
+        },
+      });
+      if (!Schema.is(PurchaseCurrencyResolvedSchema)(response)) {
+        return yield* Effect.die('The currency fixture must resolve');
+      }
+      const boundary = '2026-09-09T10:00:02.000Z';
+      const boundaryAt = DateTime.toEpochMillis(DateTime.makeUnsafe(boundary));
+      yield* verifyPurchaseCurrencyReadSnapshot(snapshot, { ...snapshot }, response, boundaryAt);
+      const changed = yield* Effect.flip(
+        verifyPurchaseCurrencyReadSnapshot(snapshot, { ...snapshot, generation: 1 }, response, boundaryAt),
+      );
+      expect(changed.code).toBe('currency_policy_unavailable');
+      for (const expiring of [
+        {
+          ...response,
+          evidence: {
+            ...response.evidence,
+            policyCompleteness: { ...response.evidence.policyCompleteness, nextApplicabilityBoundary: boundary },
+          },
+        },
+        {
+          ...response,
+          evidence: {
+            ...response.evidence,
+            pricingSupport: { ...response.evidence.pricingSupport, nextApplicabilityBoundary: boundary },
+          },
+        },
+      ]) {
+        yield* verifyPurchaseCurrencyReadSnapshot(snapshot, snapshot, expiring, boundaryAt - 1);
+        const expired = yield* Effect.flip(
+          verifyPurchaseCurrencyReadSnapshot(snapshot, snapshot, expiring, boundaryAt),
+        );
+        expect(expired.code).toBe('currency_policy_unavailable');
+      }
+      return yield* Effect.void;
+    }),
 );

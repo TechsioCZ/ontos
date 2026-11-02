@@ -111,8 +111,8 @@ export const resolveDuplicateCandidateMatchAction = defineAction(
   handle,
   (transaction, scope) =>
     Effect.succeed({
-      resolve: (payload: ResolveDuplicateCandidateMatchPayload, invocationId: string) =>
-        resolveDuplicateCandidateMatch(transaction, {
+      resolve: (payload: ResolveDuplicateCandidateMatchPayload, invocationId: string) => {
+        const input: Parameters<typeof resolveDuplicateCandidateMatch>[1] = {
           actionInvocationId: invocationId,
           candidateCaseId: payload.caseRef.resourceId,
           expectedRevision: payload.expectedRevision,
@@ -121,7 +121,12 @@ export const resolveDuplicateCandidateMatchAction = defineAction(
           selectedPartyId: payload.selectedPartyRef.resourceId,
           selectedPartyTenantId: payload.selectedPartyRef.tenantId,
           tenantId: scope.tenantId,
-        }),
+        };
+        if (scope.legalEntityId !== undefined) {
+          Object.assign(input, { legalEntityId: scope.legalEntityId });
+        }
+        return resolveDuplicateCandidateMatch(transaction, input);
+      },
     }),
 );
 // <generated-outbox-message-exports>

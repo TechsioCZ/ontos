@@ -28,6 +28,7 @@ export {
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
 } from './auth/gateway-assertion-redemption.ts';
+export { startGatewayAssertionRedemptionCleanup } from './auth/gateway-assertion-redemption-cleanup.ts';
 export type {
   GatewayAssertionRedemption,
   GatewayAssertionRedemptionError,
@@ -198,8 +199,10 @@ export type {
 } from './auth/legal-entity-context.ts';
 export { DatabaseConnectionError } from './db/client.ts';
 export { DEFAULT_DATABASE_POOL_DEADLINES, configureDatabasePool } from './db/pool-configuration.ts';
-export { verifyDatabaseSessionRole } from './db/session-identity.ts';
+export { openDatabaseClient } from './db/database-client.ts';
+export { verifySessionRoleOnFirstUse } from './db/session-identity.ts';
 export { databaseRuntime } from '#database-runtime';
+export type { DatabaseConnectionPair } from './db/config.ts';
 export type { DatabaseRuntime } from './db/database-runtime.ts';
 export type { DatabaseIdentityConnections, RuntimeDatabaseConfigValue } from './db/config.ts';
 export {
@@ -321,6 +324,7 @@ export {
   toModuleAccessObjectId,
   toResourceAccessObjectId,
 } from './permissions/context-access.ts';
+export { toSpiceDbActionObjectId } from './permissions/service.ts';
 export { LEGAL_ENTITY_PERMISSION_KEYS, TENANT_PERMISSION_KEYS } from './permissions/context-permissions.ts';
 export type {
   AssortmentPermissionAccessTarget,
@@ -467,6 +471,7 @@ export {
   createResourceContainmentRelationshipMutationClient,
   makeResourceContainmentRelationshipMutation,
   makeResourceContainmentRelationshipMutationLive,
+  ownerResourceModuleContainment,
 } from './permissions/resource-containment-mutation.ts';
 export type {
   ResourceContainmentRelationship,
@@ -518,6 +523,8 @@ export type {
   ActionResourcePermissionTargetResolver,
   ActionRequirements,
   ActionServiceFactory,
+  ActionServicePreflight,
+  ActionServicePreparation,
   ActionTenantPermission,
   AnyActionRegistration,
 } from './actions/definition.ts';
@@ -533,6 +540,7 @@ export type {
   GlobalActionPolicy,
   MicroverticalActionPolicy,
 } from './actions/policy.ts';
+export { recoverSqlTransactionError } from './actions/repository.ts';
 export {
   ActionExecutionResolutionSchema,
   ActionRuntime,
@@ -556,6 +564,8 @@ export {
 export type {
   ActionCollectorMethods,
   ActionHandlerContext,
+  ActionOwnerTransaction,
+  ActionServicePreparationContext,
   ActionTransportMetadata,
   CommittedActionDomainRejection,
   TrustedPrincipalContext,
@@ -634,6 +644,7 @@ export type {
   ReadResourcePermissionDeclaration,
   ReadResourcePermissionTarget,
   ReadResourcePermissionTargetResolver,
+  ReadHandler,
   ReadServiceFactory,
   ResolvedReadPermissionTarget,
   ResolvedReadConditionalPermissionRequirement,
@@ -641,6 +652,7 @@ export type {
 export type {
   ReadEvidenceMetadata,
   ReadFinishContext,
+  ReadHandlerContext,
   ReadHandlerResult,
   ReadLoadContext,
   ReadOwnerTransaction,
@@ -1071,7 +1083,11 @@ export type {
   ReplaceAgentOperatorsResult,
 } from './modules/actions/agent-operator-command.ts';
 
-export { defineOutboxWorker, extractOutboxWorkerSubscriptions } from './outbox/definition.ts';
+export {
+  defineOutboxWorker,
+  extractOutboxWorkerSubscriptions,
+  isVerifiedOutboxWorkerHandlerContext,
+} from './outbox/definition.ts';
 export type {
   AnyOutboxWorkerRegistration,
   OutboxWorkerDescriptor,
@@ -1159,3 +1175,34 @@ export {
   PrincipalCandidatesUnavailable,
 } from './permissions/human-principal-candidates.ts';
 export { toTenantResourceAccessObjectId } from './permissions/context-access.ts';
+
+export {
+  RETAINED_OWNER_HISTORY_CAPABILITY,
+  RetainedOwnerHistoryEnvelopeSchema,
+  RetainedOwnerHistoryEventSchema,
+  RetainedOwnerHistoryRequestSchema,
+  RetainedOwnerHistoryResourceRefSchema,
+  RetainedOwnerHistorySelectorSchema,
+} from './actions/retained-owner-history.ts';
+export type {
+  RetainedOwnerHistoryEnvelope,
+  RetainedOwnerHistoryRequest,
+  RetainedOwnerHistorySelector,
+} from './actions/retained-owner-history.ts';
+export {
+  MEDIA_IMAGE_LIMITS,
+  MEDIA_IMAGE_MIME_TYPES,
+  MediaImageUploadSchema,
+  MediaRenditionSchema,
+  detectImageMimeType,
+} from './media/media-image-contract.ts';
+export type { MediaImageMimeType, MediaImageUpload, MediaRendition } from './media/media-image-contract.ts';
+export {
+  readLinkedMediaRendition,
+  relinkMediaToResource,
+  storeLinkedMediaImage,
+  unlinkMediaFromResource,
+} from './media/media-image-store.ts';
+export type { MediaLinkTarget, MediaRenditionContent, StoredMediaImage } from './media/media-image-store.ts';
+export { MediaStoreUnavailable } from './media/media-store-unavailable.ts';
+export { MediaUploadRejected } from './media/media-upload-rejected.ts';

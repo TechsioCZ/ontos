@@ -113,7 +113,7 @@ export const retailAccessDecisionPermissionTarget = (input: RetailAccessDecision
 
 const retailAccessDecisionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'retail.profile.read' },
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'commerce.customer-context.api.retail-access-decision',
   moduleKey: 'commerce.customer-context',
   role: 'api',
@@ -137,7 +137,8 @@ export const retailAccessDecisionRead = defineRead(
     schemaVersion: '1',
   },
   {
-    prepare: (input, context) => prepareRetailPermissions(context.scope, input.profileRef.resourceId),
+    prepare: (input, context) =>
+      prepareRetailPermissions(context.scope, input.profileRef.resourceId, [input.requiredPermission]),
     load: (input, context: ReadLoadContext<RetailAccessDecisionServicesFor, RetailPermissionReader>) =>
       decideRetailAccessFromServices(
         input,

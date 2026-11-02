@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'effect-rstest';
-import { Effect, Schema } from 'effect';
+import { Effect, Exit, Schema } from 'effect';
 
 import {
   ConsentDecisionInvariantError,
@@ -53,6 +53,132 @@ const decision = (decisionKind: ConsentDecision['decision'], id: string, effecti
 });
 
 describe('Consent Decisions', () => {
+  it.effect('requires an exact retained grant for withdrawal after the historical Purpose Version ends', () =>
+    Effect.gen(function* retainedPurposeWithdrawal() {
+      const version = {
+        effectiveFrom: '2025-01-01T00:00:00Z',
+        effectiveTo: '2026-02-01T00:00:00Z',
+        materialChangeAssessment: null,
+        meaning: scope.purposeMeaning,
+        recordedAt: '2025-01-01T00:00:00Z',
+        requiredConsentDimensions: [],
+        versionId: scope.purposeVersionRef,
+        versionNumber: 1,
+      };
+      const noGrant = makeConsentDecisionStore();
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(
+            noGrant.record(decision('WITHDRAWN', 'withdraw:no-basis', '2026-03-01T00:00:00Z'), version),
+          ),
+        ),
+      ).toBe(true);
+      expect(noGrant.history(scope.scopeRef)).toEqual([]);
+      for (const at of ['2026-02-01T00:00:00Z', '2026-03-01T00:00:00Z']) {
+        const store = makeConsentDecisionStore();
+        const grant = decision('GRANTED', `grant:${at}`, '2026-01-01T00:00:00Z');
+        yield* store.record(grant, version);
+        const withdrawn = decision('WITHDRAWN', `withdraw:${at}`, at);
+        yield* store.record(withdrawn, version);
+        expect(store.history(scope.scopeRef)).toEqual([grant, withdrawn]);
+        expect(store.current(scope.scopeRef)).toEqual({ decision: withdrawn, outcome: 'CURRENT' });
+      }
+      for (const kind of ['GRANTED', 'REFUSED'] as const) {
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(
+              makeConsentDecisionStore().record(decision(kind, `ended:${kind}`, '2026-03-01T00:00:00Z'), version),
+            ),
+          ),
+        ).toBe(true);
+      }
+      const wrongScope = makeConsentDecisionStore();
+      yield* wrongScope.record(decision('GRANTED', 'grant:original', '2026-01-01T00:00:00Z'), version);
+      const withdrawal = decision('WITHDRAWN', 'withdraw:changed-controller', '2026-03-01T00:00:00Z');
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(
+            wrongScope.record(
+              {
+                ...withdrawal,
+                scope: { ...withdrawal.scope, controllerRef: 'controller:other' },
+              },
+              version,
+            ),
+          ),
+        ),
+      ).toBe(true);
+    }),
+  );
+
+  it.effect(
+    'does not convert refusal, conflicting history, or a changed original scope into retained grant authority',
+    () =>
+      Effect.gen(function* invalidRetainedWithdrawalBases() {
+        const version = {
+          effectiveFrom: '2025-01-01T00:00:00Z',
+          effectiveTo: '2026-02-01T00:00:00Z',
+          materialChangeAssessment: null,
+          meaning: scope.purposeMeaning,
+          recordedAt: '2025-01-01T00:00:00Z',
+          versionId: scope.purposeVersionRef,
+          versionNumber: 1,
+        };
+        const withdrawn = decision('WITHDRAWN', 'withdraw:invalid-basis', '2026-03-01T00:00:00Z');
+        const refusedOnly = makeConsentDecisionStore();
+        yield* refusedOnly.record(decision('REFUSED', 'refused:only', '2026-01-01T00:00:00Z'), version);
+        expect(Exit.isFailure(yield* Effect.exit(refusedOnly.record(withdrawn, version)))).toBe(true);
+        const conflicting = makeConsentDecisionStore();
+        yield* conflicting.record(decision('GRANTED', 'choice:one', '2026-01-01T00:00:00Z'), version);
+        yield* conflicting.record(decision('REFUSED', 'choice:two', '2026-01-01T00:00:00Z'), version);
+        expect(Exit.isFailure(yield* Effect.exit(conflicting.record(withdrawn, version)))).toBe(true);
+        for (const changed of [
+          { ...scope, purposeVersionRef: 'purpose-v2' },
+          { ...scope, materialDimensions: [{ kind: 'SITE' as const, value: 'different-site' }] },
+          { ...scope, processingPurposeRef: { ...scope.processingPurposeRef, resourceId: 'purpose:other' } },
+        ]) {
+          const store = makeConsentDecisionStore();
+          yield* store.record(decision('GRANTED', 'original:scope', '2026-01-01T00:00:00Z'), version);
+          expect(Exit.isFailure(yield* Effect.exit(store.record({ ...withdrawn, scope: changed }, version)))).toBe(
+            true,
+          );
+        }
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(
+              makeConsentDecisionStore().record(
+                decision('WITHDRAWN', 'before:version', '2024-12-31T00:00:00Z'),
+                version,
+              ),
+            ),
+          ),
+        ).toBe(true);
+        // The existing in-period withdrawal semantics are not an ended-version exemption.
+        yield* makeConsentDecisionStore().record(
+          decision('WITHDRAWN', 'within:version', '2026-01-10T00:00:00Z'),
+          version,
+        );
+      }),
+  );
+
+  it.effect('keeps a scope bound to its original typed Subject across distinct decisions and times', () =>
+    Effect.gen(function* immutableConsentSubject() {
+      const store = makeConsentDecisionStore();
+      const withdrawn = decision('WITHDRAWN', 'decision:subject-a', '2026-01-01T00:00:00Z');
+      yield* store.record(withdrawn);
+      const granted = decision('GRANTED', 'decision:subject-b', '2026-02-01T00:00:00Z');
+      const result = yield* Effect.exit(
+        store.record({
+          ...granted,
+          scope: { ...granted.scope, privacySubjectRef: { ...scope.privacySubjectRef, resourceId: 'subject:other' } },
+        }),
+      );
+      expect(Exit.isFailure(result)).toBe(true);
+      expect(store.current(scope.scopeRef)).toEqual({ decision: withdrawn, outcome: 'CURRENT' });
+      expect(store.history(scope.scopeRef)).toEqual([withdrawn]);
+    }),
+  );
+
   it('accepts explicit decisions and preserves the full evidence envelope', () => {
     const granted = decision('GRANTED', 'decision:grant', '2026-01-01T00:00:00Z');
     expect(validateConsentDecision(granted)).toBeUndefined();

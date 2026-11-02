@@ -42,7 +42,7 @@ const nameOf = (records: RecordsResponse, principalId: string) => {
     records.state.salespeople.find((entry) => entry.principalId === principalId)?.name ??
     hanakReviewers.get(principalId) ??
     records.state.aiChanges?.batches.find((entry) => entry.agentPrincipalId === principalId)?.agentLabel ??
-    `Účet schvalovatele ${principalId}`;
+    'Schvalovatel';
   return records.viewer.principalId === principalId ? `${name} (vy)` : name;
 };
 
@@ -321,11 +321,6 @@ const AiApprovalsContent = () => {
   return (
     <>
       <PageHeader
-        actions={
-          <Button disabled={busy} onClick={load} size="sm" theme="outlined" variant="secondary">
-            Obnovit seznam
-          </Button>
-        }
         description="AI připraví návrh. Vy porovnáte údaje a rozhodnete. Bez vašeho souhlasu se nic nezmění."
         meta={<Badge variant="secondary">Úroveň C</Badge>}
         title={t('crm.pages.ai.title')}

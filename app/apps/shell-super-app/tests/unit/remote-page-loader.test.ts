@@ -346,3 +346,28 @@ it.effect('releases foreground priority when its preparation budget expires', ()
     expect(yield* Fiber.join(gate)).toBe(true);
   }),
 );
+
+it.live('keeps actual foreground data ahead of speculation after the router stops waiting', () =>
+  Effect.gen(function* retainedForegroundData() {
+    const reading = yield* Deferred.make<boolean>();
+    const release = yield* Deferred.make<boolean>();
+    const preloadPage = () =>
+      runtime.runPromise(Deferred.succeed(reading, true).pipe(Effect.andThen(Deferred.await(release)), Effect.asVoid));
+    transport.load.mockReturnValue(Effect.succeed(readyPage(preloadPage)));
+    yield* Effect.gen(function* checkRealLifetime() {
+      const preparation = yield* prepare(
+        target('foreground-beyond-reveal'),
+        props,
+        globalThis.location.pathname,
+        '20 millis',
+      ).pipe(Effect.forkChild);
+      yield* Deferred.await(reading);
+      expect(yield* Fiber.join(preparation)).toEqual(Option.none());
+      const gate = yield* awaitPrimaryModuleReads.pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      expect(gate.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(release, true);
+      expect(yield* Fiber.join(gate)).toBe(true);
+    }).pipe(Effect.ensuring(Deferred.succeed(release, true)));
+  }),
+);

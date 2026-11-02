@@ -210,6 +210,24 @@ export const ApprovalRouteSchema = Schema.Struct({
 });
 type ApprovalRoute = typeof ApprovalRouteSchema.Type;
 
+/** CCC consumer claim only. The actual final owner defines its identities and bundle version. */
+export const PurchaseApprovalFinalBindingSchema = Schema.Struct({
+  attemptRef: CoreSearchResourceRefSchema,
+  bundleHash: sha256,
+  bundleRef: CoreSearchResourceRefSchema,
+  bundleVersion: shortText,
+});
+export type PurchaseApprovalFinalBinding = typeof PurchaseApprovalFinalBindingSchema.Type;
+
+/** Owner-verified observation, never accepted from the public revalidation payload. */
+export const PurchaseApprovalFinalBindingEvidenceSchema = Schema.Struct({
+  binding: PurchaseApprovalFinalBindingSchema,
+  observedAt: instant,
+  provenance: text,
+  validUntil: instant,
+});
+export type PurchaseApprovalFinalBindingEvidence = typeof PurchaseApprovalFinalBindingEvidenceSchema.Type;
+
 export const PurchaseApprovalRequestSchema = Schema.Struct({
   consumedAt: Schema.Union([instant, Schema.Null]),
   expiresAt: instant,
@@ -232,6 +250,8 @@ export const PurchaseApprovalRequestSchema = Schema.Struct({
   /** Set only by the owner consume/reconciliation routine after Order commit is proven. */
   committedOrderRef: Schema.Union([CoreSearchResourceRefSchema, Schema.Null]),
   consumptionCommitmentId: Schema.Union([shortText, Schema.Null]),
+  consumptionFinalBinding: Schema.optional(PurchaseApprovalFinalBindingSchema),
+  consumptionProofRef: Schema.optional(ApprovalRevalidationRefSchema),
   decisionBundleHash: Schema.Union([sha256, Schema.Null]),
   decisionBundleVersion: Schema.Union([shortText, Schema.Null]),
   lastDecisionRef: Schema.Union([ApprovalDecisionRefSchema, Schema.Null]),
@@ -270,15 +290,19 @@ export const ApprovalRevalidationSchema = Schema.Struct({
   checkedAt: instant,
   committedOrderRef: Schema.Union([CoreSearchResourceRefSchema, Schema.Null]),
   evidence: Schema.Struct({
+    actionInvocationId: Schema.optional(TenantIdSchema),
+    actorPrincipalId: Schema.optional(TenantIdSchema),
     buyerPermission: BuyerPermissionSchema,
     commitmentCorrelationId: CommitmentCorrelationIdSchema,
     decisionBundleHash: sha256,
     decisionBundleVersion: DecisionBundleVersionSchema,
     decisionRef: ApprovalDecisionRefSchema,
+    finalBindingEvidence: Schema.optional(PurchaseApprovalFinalBindingEvidenceSchema),
     hierarchyRef: ApprovalHierarchyRefSchema,
     policyRouteCurrent: Schema.Boolean,
     profileState: ProfileStateSchema,
     proposalHash: sha256,
+    requestRevision: Schema.optional(positiveInteger),
     routeRef: ApprovalRouteRefSchema,
     sourceRevisions: Schema.Array(Schema.Struct({ revision, source: shortText })).check(
       Schema.isMinLength(1),
@@ -361,6 +385,7 @@ export const RevalidatePurchaseApprovalInputSchema = Schema.Struct({
   decisionBundleVersion: DecisionBundleVersionSchema,
   decisionRef: ApprovalDecisionRefSchema,
   expectedProposalHash: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
+  finalBinding: Schema.optional(PurchaseApprovalFinalBindingSchema),
   hierarchyRef: ApprovalHierarchyRefSchema,
   idempotencyKey: IdempotencyKeySchema,
   profileState: ProfileStateSchema,
@@ -376,6 +401,13 @@ export const RevalidatePurchaseApprovalInputSchema = Schema.Struct({
   validUntil: instant,
 });
 export type RevalidatePurchaseApprovalInput = typeof RevalidatePurchaseApprovalInputSchema.Type;
+/** Internal owner payload: callers cannot assert this observation through the public schema. */
+export const TrustedRevalidatePurchaseApprovalInputSchema = Schema.Struct({
+  ...RevalidatePurchaseApprovalInputSchema.fields,
+  finalBinding: PurchaseApprovalFinalBindingSchema,
+  finalBindingEvidence: PurchaseApprovalFinalBindingEvidenceSchema,
+});
+export type TrustedRevalidatePurchaseApprovalInput = typeof TrustedRevalidatePurchaseApprovalInputSchema.Type;
 
 /** Order-owner reconciliation seam. It is the only operation that can move an approved request
  * to CONSUMED, and it requires the exact proposal/decision bundle/commitment identity and the
@@ -386,10 +418,12 @@ export const ConsumePurchaseApprovalInputSchema = Schema.Struct({
   counterpartyRef: CoreSearchResourceRefSchema,
   decisionBundleHash: sha256,
   decisionBundleVersion: DecisionBundleVersionSchema,
+  finalBinding: Schema.optional(PurchaseApprovalFinalBindingSchema),
   idempotencyKey: IdempotencyKeySchema,
   orderRef: OrderResourceRefSchema,
   proposalRevisionRef: PurchaseProposalRevisionRefSchema,
   requestRef: PurchaseApprovalRequestRefSchema,
+  revalidationRef: Schema.optional(ApprovalRevalidationRefSchema),
   storefrontId: StorefrontIdSchema,
 });
 export type ConsumePurchaseApprovalInput = typeof ConsumePurchaseApprovalInputSchema.Type;
@@ -486,9 +520,53 @@ const {
 } = PurchaseProposalRevisionSchema.fields;
 const canonicalPurchaseProposalJsonSchema = Schema.fromJsonString(Schema.Struct(canonicalPurchaseProposalFields));
 
+// Free-form address and configuration records do not retain key order through JSONB.
+// Struct fields use schema order; records use the same key order at every depth.
+const compareRecordKeys = ([left]: readonly [string, unknown], [right]: readonly [string, unknown]): number => {
+  if (left < right) {
+    return -1;
+  }
+  return left > right ? 1 : 0;
+};
+const sortedRecord = <Value>(value: Readonly<Record<string, Value>>): Record<string, Value> =>
+  Object.fromEntries(Object.entries(value).toSorted(compareRecordKeys));
+const configurationRecord = Schema.Record(Schema.String, ApprovalProductConfigurationSchema);
+const sortedConfigurationJson = (value: Schema.Json): Schema.Json => {
+  if (Array.isArray(value)) {
+    return value.map(sortedConfigurationJson);
+  }
+  if (Schema.is(configurationRecord)(value)) {
+    return Object.fromEntries(
+      Object.entries(sortedRecord(value)).map(([key, nested]) => [key, sortedConfigurationJson(nested)]),
+    );
+  }
+  return value;
+};
+
 /** Stable JSON representation used for the proposal hash and idempotency evidence. */
 const canonicalizePurchaseProposal = (proposal: PurchaseProposalRevision): string =>
-  Result.getOrThrow(Schema.encodeResult(canonicalPurchaseProposalJsonSchema)(proposal));
+  Result.getOrThrow(
+    Schema.encodeResult(canonicalPurchaseProposalJsonSchema)({
+      ...proposal,
+      deliveryDestination: {
+        ...proposal.deliveryDestination,
+        address: sortedRecord(proposal.deliveryDestination.address),
+      },
+      invoiceRecipient: {
+        ...proposal.invoiceRecipient,
+        address: sortedRecord(proposal.invoiceRecipient.address),
+      },
+      lines: proposal.lines.map((line) => ({
+        ...line,
+        configuration: Object.fromEntries(
+          Object.entries(sortedRecord(line.configuration)).map(([key, nested]) => [
+            key,
+            sortedConfigurationJson(nested),
+          ]),
+        ),
+      })),
+    }),
+  );
 
 /** Deterministic, lowercase SHA-256 hash of the canonical proposal snapshot. */
 export const computePurchaseProposalCanonicalHash = (proposal: PurchaseProposalRevision): string =>

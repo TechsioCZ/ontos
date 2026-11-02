@@ -1,6 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { sql } from 'drizzle-orm';
 import { retailEnrollmentVerificationRequired } from '../../src/enrollment/orchestration/owner-effect-registry.ts';
 import type { CommercePortalAuthAccountLookup } from '../../api/portal-auth/provider/account-lookup-service.ts';
 
@@ -34,6 +32,7 @@ import {
   PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
   PARTY_REGISTRY_OWNER_MODULE_KEY,
   RETAIL_CUSTOMER_PROFILE_ENSURED_OUTCOME_CODE,
+  RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY,
   RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE,
   RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE,
   retailPartyCandidateDigest,
@@ -130,7 +129,7 @@ const succeeded = (outcomeCode: string, resultReference: string): EnrollmentAcce
   resultReference,
 });
 
-/** The three continuation-dispatched owner answers of a journey that runs clean end to end. */
+/** The four continuation-dispatched owner answers of a journey that runs clean end to end. */
 const happyAnswers: Readonly<Record<string, EnrollmentAcceptanceOwnerAnswer>> = Object.freeze({
   [BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY]: succeeded(RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE, BINDING_RESOURCE_ID),
   [ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY]: succeeded(
@@ -138,6 +137,7 @@ const happyAnswers: Readonly<Record<string, EnrollmentAcceptanceOwnerAnswer>> = 
     PROFILE_RESOURCE_ID,
   ),
   [PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]: succeeded(PARTY_CANDIDATE_CREATED_OUTCOME_CODE, PARTY_RESOURCE_ID),
+  [RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY]: succeeded('retail_customer_directory_enrolled', PARTY_RESOURCE_ID),
 });
 
 const withAnswer = (transitionKey: string, answer: EnrollmentAcceptanceOwnerAnswer) => ({
@@ -236,21 +236,6 @@ it.live('parks signup without a Party claim, then immediately completes on one v
       const identities = makeScenarioIdentities();
       const compositionRevision = yield* enrollmentApplicationCompositionRevision;
       const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId: identities.tenantId }, compositionRevision);
-      const migration = readFileSync(
-        new URL('../../drizzle/20261024153000_enrollment-verification-boundary/migration.sql', import.meta.url),
-        'utf-8',
-      );
-      yield* fixture.admin.transaction((transaction) =>
-        Effect.forEach(
-          migration.split('--> statement-breakpoint'),
-          (statement) =>
-            transaction.execute(
-              sql.raw(statement.replaceAll('CREATE FUNCTION ', 'CREATE OR REPLACE FUNCTION ')),
-              'objects',
-            ),
-          { concurrency: 1, discard: true },
-        ),
-      );
       const started = yield* startEnrollmentAcceptanceAttempt(fixture, {
         ...identities.startInput,
         compositionRevision,
@@ -305,6 +290,7 @@ it.live('parks signup without a Party claim, then immediately completes on one v
       expect(complete.lease).toBeUndefined();
       expect(harness.owner.log.dispatched).toEqual([
         PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
+        RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY,
         ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY,
         BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
       ]);
@@ -335,10 +321,11 @@ it.live('advances a started Attempt to derived COMPLETE through every declared t
       expect(result.outcome).toBe('COMPLETE');
       expect(harness.owner.log.dispatched).toStrictEqual([
         PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
+        RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY,
         ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY,
         BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
       ]);
-      // Removing the derived-completion gate leaves this Attempt IN_PROGRESS with four SUCCEEDED
+      // Removing the derived-completion gate leaves this Attempt IN_PROGRESS with five SUCCEEDED
       // owner rows, and this assertion fails.
       const attempt = yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId);
       expect(attempt.state).toBe('COMPLETE');
@@ -347,6 +334,7 @@ it.live('advances a started Attempt to derived COMPLETE through every declared t
       ).toStrictEqual([
         [PORTAL_ACCOUNT_CREATION_TRANSITION_KEY, 'SUCCEEDED', PORTAL_ACCOUNT_CREATED_OUTCOME_CODE],
         [PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY, 'SUCCEEDED', PARTY_CANDIDATE_CREATED_OUTCOME_CODE],
+        [RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY, 'SUCCEEDED', 'retail_customer_directory_enrolled'],
         [ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY, 'SUCCEEDED', RETAIL_CUSTOMER_PROFILE_ENSURED_OUTCOME_CODE],
         [BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY, 'SUCCEEDED', RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE],
       ]);
@@ -405,7 +393,7 @@ it.live('a crash after the Party step re-runs onto the same Party without duplic
       // One row per transition, and the Party still names the very same resource. Removing the
       // derived owner-invocation identity mints a fresh one on the re-run, the claim no longer
       // replays, and this length assertion fails with a duplicated Party row.
-      expect(operations).toHaveLength(4);
+      expect(operations).toHaveLength(5);
       const party = operations.find((row) => row.transition_key === PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
       expect(party?.result_reference).toBe(PARTY_RESOURCE_ID);
       expect(party?.status).toBe('SUCCEEDED');
@@ -469,7 +457,7 @@ it.live('an owner answer that never arrives is reconciled once, never dispatched
       expect(recovery.owner.log.dispatched).not.toContain(PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
       expect(recovery.owner.log.reconciled).toStrictEqual([PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY]);
       const operations = yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId);
-      expect(operations).toHaveLength(4);
+      expect(operations).toHaveLength(5);
       const party = operations.find((row) => row.transition_key === PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
       expect(party?.result_reference).toBe(PARTY_RESOURCE_ID);
       expect(party?.reconciliation_ref).not.toBeNull();
@@ -588,6 +576,7 @@ it.live('a retail binding that commits without its grant baseline halts as RECON
       ).toStrictEqual([
         [PORTAL_ACCOUNT_CREATION_TRANSITION_KEY, 'SUCCEEDED', PORTAL_ACCOUNT_CREATED_OUTCOME_CODE],
         [PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY, 'SUCCEEDED', PARTY_CANDIDATE_CREATED_OUTCOME_CODE],
+        [RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY, 'SUCCEEDED', 'retail_customer_directory_enrolled'],
         [ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY, 'SUCCEEDED', RETAIL_CUSTOMER_PROFILE_ENSURED_OUTCOME_CODE],
         [BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY, 'FAILED', RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE],
       ]);

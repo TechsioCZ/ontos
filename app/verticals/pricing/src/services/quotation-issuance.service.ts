@@ -39,6 +39,11 @@ export interface PricingQuotationReferenceIssuer {
 }
 
 export interface PricingQuotationTrustedOperationTime {
+  /**
+   * Owner-private issuance instant. Fresh evidence is validated after the owner reads that follow the operation
+   * instant, so the Quotation is issued at that validation instant. Defaults to the operation instant.
+   */
+  readonly readIssuanceTime?: Effect.Effect<string, PricingQuotationIssuanceUnavailable>;
   /** Owner-private trusted time. Public quotation input cannot supply or override this instant. */
   readonly readOperationTime: Effect.Effect<string, PricingQuotationIssuanceUnavailable>;
 }
@@ -115,13 +120,24 @@ export const makePricingQuotationIssuanceService = (
       });
     }
     const trustedOperationTime = trustedOperationTimeOption.value;
+    const issuanceTimeOption =
+      trustedTime.readIssuanceTime === undefined
+        ? trustedOperationTimeOption
+        : Schema.decodeOption(PricingInstantSchema)(yield* trustedTime.readIssuanceTime);
+    if (Option.isNone(issuanceTimeOption)) {
+      return yield* new PricingQuotationIssuanceUnavailable({
+        reason: 'TRUSTED_OPERATION_TIME_UNAVAILABLE',
+        retryable: true,
+      });
+    }
+    const issuanceTime = issuanceTimeOption.value;
 
     // #784 owns trusted-clock validity checks. #782 only permits issuance from the result evaluated
     // at this exact backend operation instant, never from an earlier retained Current read.
     if (commercialTotal.decision.operationTime !== trustedOperationTime) {
       return yield* reject('CURRENT_RESULT_NOT_FRESH');
     }
-    if (request.materialEvidence.validatedAt > trustedOperationTime) {
+    if (issuanceTime < trustedOperationTime || request.materialEvidence.validatedAt > issuanceTime) {
       return yield* reject('INVALID_ISSUANCE_REQUEST');
     }
 
@@ -130,13 +146,13 @@ export const makePricingQuotationIssuanceService = (
     // backend validates them against the actual operation authority.
     yield* ownerBoundary.verifyIssuanceAuthority({
       binding: request.binding,
-      operationTime: trustedOperationTime,
+      operationTime: issuanceTime,
     });
 
     const policy = yield* ownerBoundary.selectValidity({
       binding: request.binding,
       quotedResult: commercialTotal,
-      validFrom: trustedOperationTime,
+      validFrom: issuanceTime,
     });
     if (
       !Number.isSafeInteger(policy.durationMilliseconds) ||
@@ -151,7 +167,7 @@ export const makePricingQuotationIssuanceService = (
     const validUntil = yield* Effect.try({
       catch: (cause) => new PricingQuotationIssuanceRejected({ cause, reason: 'INVALID_VALIDITY_POLICY' }),
       try: () =>
-        DateTime.makeUnsafe(trustedOperationTime).pipe(
+        DateTime.makeUnsafe(issuanceTime).pipe(
           DateTime.add({ milliseconds: policy.durationMilliseconds }),
           DateTime.formatIso,
         ),
@@ -160,7 +176,7 @@ export const makePricingQuotationIssuanceService = (
       onExcessProperty: 'error',
     })({
       policyEvidence: policy.policyEvidence,
-      validFrom: trustedOperationTime,
+      validFrom: issuanceTime,
       validUntil,
     });
     if (Option.isNone(validityOption)) {
@@ -169,14 +185,14 @@ export const makePricingQuotationIssuanceService = (
 
     const quotationRef = yield* ownerBoundary.issueReference({
       candidateRef: commercialTotal.candidateRef,
-      issuedAt: trustedOperationTime,
+      issuedAt: issuanceTime,
       tenantId: commercialTotal.decision.tenantId,
     });
     const issuedOption = Schema.decodeOption(PricingQuotationIssuedSchema, {
       onExcessProperty: 'error',
     })({
       binding: request.binding,
-      issuedAt: trustedOperationTime,
+      issuedAt: issuanceTime,
       kind: 'PRICING_QUOTATION',
       materialEvidence: request.materialEvidence,
       quotationRef,

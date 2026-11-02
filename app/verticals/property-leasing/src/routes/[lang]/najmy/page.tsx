@@ -1,5 +1,6 @@
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import {
+  AutosaveStatus,
   DetailList,
   PageHeader,
   SectionCard,
@@ -10,7 +11,9 @@ import {
   formatMoney,
   surfaceCardClassName,
   surfaceTileClassName,
+  useAutosaveDraft,
 } from '@app/admin-ui';
+import type { RevisionedSaveResult } from '@app/admin-ui';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { failureFeedback } from '../../../../shared/actions/apply-command.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
@@ -36,7 +39,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { Crypto, DateTime, Effect, Match, Option, PlatformError, Predicate } from 'effect';
+import { DateTime, Effect, Match, Option, Predicate } from 'effect';
 import { useEffect, useEffectEvent, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 
 import type { OccupancyCommand, Feedback } from '../../../../shared/actions/apply-command.ts';
@@ -64,13 +67,23 @@ import csResource from '../../../../locales/cs/property-leasing.json';
 import enResource from '../../../../locales/en/property-leasing.json';
 import '../../index.css';
 import { TenantDirectory, TenantDossierCard } from './tenant-dossier.tsx';
-import type { DossierChanges, NewCounterpartyInput } from './tenant-dossier.tsx';
+import type { DossierAutosave, DossierChanges, NewCounterpartyInput } from './tenant-dossier.tsx';
 import { CounterpartyDossierView } from './counterparty-dossier.tsx';
 import { NoticeCard, OccupancyHistoryCard, RegistrationSheetCard } from './stay-documents.tsx';
 import type { NoticeContext } from './notice-templates.ts';
 import { OccupancyCalendar } from './occupancy-calendar.tsx';
 import './occupancy-form.css';
 import { initialEditorState, occupancyEditorActions, occupancyEditorReducer } from './editor-state.ts';
+import {
+  autosaveLeasingCommand,
+  newUuid,
+  rentDraftOf,
+  rentProblems,
+  rentTermsOf,
+  rentUnchangedSince,
+  sameRentDraft,
+} from './leasing-autosave.ts';
+import type { RentDraft } from './leasing-autosave.ts';
 import type { OccupancyEditorMode } from './editor-state.ts';
 
 const LABEL_CHOOSE = 'property-leasing.demo.choose';
@@ -92,22 +105,6 @@ const propertyLeasingI18nResources = {
   cs: { 'property-leasing': csResource },
   en: { 'property-leasing': enResource },
 } as const;
-const browserCrypto = Crypto.make({
-  digest: (algorithm, data) =>
-    Effect.tryPromise({
-      catch: (cause) => PlatformError.systemError({ _tag: 'Unknown', cause, method: 'digest', module: 'WebCrypto' }),
-      try: globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle, algorithm, new Uint8Array(data)),
-    }).pipe(
-      Effect.map((buffer) => new Uint8Array(buffer)),
-      Effect.timeoutOrElse({
-        duration: '5 seconds',
-        orElse: () =>
-          Effect.fail(PlatformError.systemError({ _tag: 'TimedOut', method: 'digest', module: 'WebCrypto' })),
-      }),
-    ),
-  randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
-});
-const newUuid = browserCrypto.randomUUIDv4();
 const loadOccupantName = Effect.fn('Occupancy.loadOccupantName')(function* resolveOccupantName(
   record: Occupancy | undefined,
 ) {
@@ -265,7 +262,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     cancellation.current = controller;
     void browserRuntime.runPromiseExit(effect, { signal: controller.signal });
   };
-  /** Set when a read refused this role: the loaded records stay hidden until the next refresh. */
+  /** Set when a read refused this role: the loaded records stay hidden until the person retries. */
   const [cleared, setCleared] = useState(false);
   const {
     agreements,
@@ -333,6 +330,12 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     dispatchEditor(occupancyEditorActions.CLEAR({ startDate: DEFAULT_START_DATE }));
     setRelated({ invoices: Option.none(), tasks: Option.none() });
   };
+  /** Re-reads the page's data after the person's own write; the loaded values stay on screen meanwhile. */
+  const reload = () =>
+    Effect.all(
+      [leaseRecords.refresh(leaseInput), detailInput === undefined ? Effect.void : leaseOccupant.refresh(detailInput)],
+      { concurrency: 2, discard: true },
+    );
   const reportFailure = (failure: { readonly _tag: string; readonly status?: number }) => {
     const nextFeedback = failureFeedback(failure);
     if (nextFeedback === 'forbidden' || nextFeedback === 'unavailable') {
@@ -342,6 +345,10 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       setCleared(true);
     }
     setActionFeedback(nextFeedback);
+    if (nextFeedback === 'conflict') {
+      // Someone changed the leases meanwhile: show their version before the person tries again.
+      run(reload());
+    }
   };
   const loadRelated = (record: Occupancy) =>
     Effect.all(
@@ -369,13 +376,8 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
         Effect.sync(() => setRelated({ invoices: Option.some(value.invoices), tasks: Option.some(value.tasks) })),
       ),
     );
-  /** Re-reads the page's data after the person's own write; the loaded values stay on screen meanwhile. */
-  const reload = () =>
-    Effect.all(
-      [leaseRecords.refresh(leaseInput), detailInput === undefined ? Effect.void : leaseOccupant.refresh(detailInput)],
-      { concurrency: 2, discard: true },
-    );
-  const refresh = () => {
+  /** Retries after a refused or failed read: clears the hidden state and reads again. */
+  const retry = () => {
     cancellation.current?.abort();
     cancellation.current = new AbortController();
     clearSensitiveState();
@@ -397,7 +399,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     () => () => {
       cancellation.current?.abort();
     },
-    [],
+    [cancellation],
   );
   /** S10-01: names the confirmed stay or lease that blocks the second confirmation of the same unit. */
   const collisionFor = (command: OccupancyCommand): { readonly href: string; readonly text: string } | undefined => {
@@ -509,6 +511,18 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       runCommand({ _tag: 'UpdateCounterpartyDossier', counterpartyRef: entry.counterpartyRef, ...changes });
     }
   };
+  const autosaveCounterpartyDossier =
+    (counterpartyId: string): DossierAutosave =>
+    (changes, expectedRevision, unchanged) => {
+      const entry = tenantDirectory.find((item) => item.counterpartyRef.resourceId === counterpartyId);
+      return entry === undefined
+        ? Effect.succeed<RevisionedSaveResult>('failed')
+        : autosaveLeasingCommand(
+            { _tag: 'UpdateCounterpartyDossier', counterpartyRef: entry.counterpartyRef, ...changes },
+            expectedRevision,
+            unchanged,
+          );
+    };
   /** S01-01: a firm or person becomes a counterparty of this company with its first timeline note. */
   const createCounterparty = (input: NewCounterpartyInput) => {
     if (snapshot === undefined) {
@@ -603,15 +617,6 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
   };
   const openRentEditor = () => {
     dispatchEditor(occupancyEditorActions.OPEN_RENT({ terms: Option.fromUndefinedOr(selected?.rentTerms) }));
-  };
-  const saveRentTerms = () => {
-    const rentTerms = rentTermsFromForm();
-    if (selected === undefined || rentTerms === undefined || rentTerms === 'invalid') {
-      setActionFeedback('validation');
-      return;
-    }
-    setRentEditorOpen(false);
-    runCommand({ _tag: 'SetRentTerms', occupancyRef: selected.occupancyRef, rentTerms });
   };
   const createDraft = () => {
     const unit = properties?.units.find((record) => record.unitRef.resourceId === unitId);
@@ -801,7 +806,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     );
   };
   const unitName = (resourceId: string) =>
-    properties?.units.find((record) => record.unitRef.resourceId === resourceId)?.name ?? resourceId;
+    properties?.units.find((record) => record.unitRef.resourceId === resourceId)?.name ?? 'Jednotka bez názvu';
   const [showCancelled, setShowCancelled] = useState(false);
   const cancelledCount = snapshot?.occupancies.filter((record) => record.state === 'CANCELLED').length ?? 0;
   // Cancelled stays and leases keep their audit but do not crowd the working list unless asked for.
@@ -829,6 +834,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
   return {
     activate,
     agreements,
+    autosaveCounterpartyDossier,
     busy,
     cancelledCount,
     canWrite,
@@ -864,15 +870,14 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     peopleCount,
     properties,
     propertyOf,
-    refresh,
     related,
     rentEditorOpen,
     rentMonthly,
     rentPaymentDay,
     rentService,
+    retry,
     runCommand,
     saveDraft,
-    saveRentTerms,
     searchGuests,
     selected,
     setCustomerId,
@@ -912,6 +917,7 @@ const stateBadge = {
   CONFIRMED: 'info',
   DRAFT: 'outline',
 } as const;
+type PageState = ReturnType<typeof useRecordsPage>;
 const RentFields = ({ state }: { readonly state: ReturnType<typeof useRecordsPage> }) => (
   <div className="propertyleasing:grid propertyleasing:gap-4 propertyleasing:md:grid-cols-3">
     <FormInput
@@ -939,34 +945,72 @@ const RentFields = ({ state }: { readonly state: ReturnType<typeof useRecordsPag
     />
   </div>
 );
-const RentTermsForm = ({ state }: { readonly state: ReturnType<typeof useRecordsPage> }) => {
-  const { busy, feedback, t } = state;
-  if (!state.rentEditorOpen) {
-    return null;
-  }
+/**
+ * The agreed rent of the selected lease. Changes save themselves (debounced, on blur and on Zavřít) against the
+ * revision the draft builds on; when someone else changed this rent, the panel offers the current version instead.
+ */
+const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; readonly state: PageState }) => {
+  const { t } = state;
+  const server = rentDraftOf(occupancy.rentTerms);
+  /** The rent the draft builds on: what the panel opened with, last saved or reloaded. */
+  const base = useRef(server);
+  const rememberSaved = (value: RentDraft, result: RevisionedSaveResult) => {
+    if (result !== 'conflict' && result !== 'failed') {
+      base.current = value;
+    }
+  };
+  const send = (value: RentDraft, expectedRevision: number, rentTerms: RentTerms) =>
+    autosaveLeasingCommand(
+      { _tag: 'SetRentTerms', occupancyRef: occupancy.occupancyRef, rentTerms },
+      expectedRevision,
+      rentUnchangedSince(occupancy.occupancyRef.resourceId, base.current),
+    ).pipe(Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))));
+  const autosave = useAutosaveDraft<RentDraft, never>({
+    equals: sameRentDraft,
+    isValid: (value) => Option.isSome(rentTermsOf(value)),
+    revision: state.snapshot?.revision ?? 0,
+    runtime: browserRuntime,
+    save: (value, expectedRevision) =>
+      Option.match(rentTermsOf(value), {
+        onNone: () => Effect.succeed<RevisionedSaveResult>('failed'),
+        onSome: (rentTerms) => send(value, expectedRevision, rentTerms),
+      }),
+    server,
+  });
+  const settledOnServer = !autosave.pending && sameRentDraft(autosave.draft, server);
+  useEffect(() => {
+    if (settledOnServer) {
+      base.current = server;
+    }
+  }, [base, server, settledOnServer]);
+  const { draft } = autosave;
+  const problems = rentProblems(draft);
+  const invalid = (problem: boolean, key: string) =>
+    problem ? { helpText: t(key), validateStatus: 'error' as const } : {};
+  const change = (field: keyof RentDraft) => (value: string) =>
+    autosave.setDraft((current) => ({ ...current, [field]: value }));
+  const close = () => {
+    autosave.flush();
+    state.setRentEditorOpen(false);
+  };
+  const handleBlur = autosave.flush;
+  const handleRetry = autosave.retry;
+  const handleReloadLatest = autosave.reloadLatest;
   return (
     <SidePanel
       actions={
         <>
-          <Button disabled={busy} onClick={() => state.setRentEditorOpen(false)} theme="outlined" variant="secondary">
+          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <Button onClick={close} theme="outlined" variant="secondary">
             {t(LABEL_CLOSE)}
-          </Button>
-          <Button
-            disabled={busy}
-            isLoading={feedback === 'saving'}
-            onClick={() => state.saveRentTerms()}
-            variant="primary"
-          >
-            {t('property-leasing.rent.save')}
           </Button>
         </>
       }
       closeLabel={t(LABEL_CLOSE)}
-      closeOnInteractOutside={false}
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#occupancy-rent-monthly')}
       onOpenChange={(open) => {
-        if (!open && !busy) {
-          state.setRentEditorOpen(false);
+        if (!open) {
+          close();
         }
       }}
       open
@@ -978,14 +1022,45 @@ const RentTermsForm = ({ state }: { readonly state: ReturnType<typeof useRecords
         <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
           {t('property-leasing.rent.formHint')}
         </p>
-        {feedback === 'validation' && (
-          <output aria-live="polite">{t('property-leasing.demo.feedback.validation')}</output>
-        )}
-        <RentFields state={state} />
+        <div className="propertyleasing:grid propertyleasing:gap-4 propertyleasing:md:grid-cols-3">
+          <FormInput
+            id="occupancy-rent-monthly"
+            inputMode="decimal"
+            label={t('property-leasing.rent.monthlyRentInput')}
+            onBlur={handleBlur}
+            onChange={(event) => change('monthly')(event.target.value)}
+            value={draft.monthly}
+            {...invalid(problems.monthly, 'property-leasing.rent.invalidAmount')}
+          />
+          <FormInput
+            id="occupancy-rent-service"
+            inputMode="decimal"
+            label={t('property-leasing.rent.serviceChargesInput')}
+            onBlur={handleBlur}
+            onChange={(event) => change('service')(event.target.value)}
+            value={draft.service}
+            {...invalid(problems.service, 'property-leasing.rent.invalidAmount')}
+          />
+          <FormInput
+            id="occupancy-rent-payment-day"
+            label={t('property-leasing.rent.paymentDayInput')}
+            max={31}
+            min={1}
+            onBlur={handleBlur}
+            onChange={(event) => change('paymentDay')(event.target.value)}
+            type="number"
+            value={draft.paymentDay}
+            {...invalid(problems.paymentDay, 'property-leasing.rent.invalidPaymentDay')}
+          />
+        </div>
       </div>
     </SidePanel>
   );
 };
+const RentTermsForm = ({ state }: { readonly state: PageState }) =>
+  state.rentEditorOpen && state.selected !== undefined ? (
+    <RentTermsPanel key={state.selected.occupancyRef.resourceId} occupancy={state.selected} state={state} />
+  ) : null;
 const occupancyDetailModel = (state: ReturnType<typeof useRecordsPage>, selected: Occupancy) => {
   const { customerName, snapshot, t, unitName } = state;
   const customerLabel =
@@ -1234,20 +1309,29 @@ const OccupancyRelations = ({ model, state }: OccupancyDetailProps) => {
           contractHref={
             contract === undefined ? undefined : `/${language}/smlouvy?resourceId=${contract.contractRef.resourceId}`
           }
+          counterpartyId={selected.customerCounterpartyRef?.resourceId ?? ''}
           counterpartyName={tenant?.displayName ?? customerLabel}
           dossier={snapshot.tenantDossiers?.find(
             (item) => item.counterpartyId === selected.customerCounterpartyRef?.resourceId,
           )}
-          key={`tenant:${snapshot.revision}`}
+          key={`tenant:${selected.customerCounterpartyRef?.resourceId ?? ''}`}
           leaseHref={
             selected.customerCounterpartyRef === null
               ? undefined
               : `/${language}/najmy?counterpartyId=${selected.customerCounterpartyRef.resourceId}#tenant`
           }
           newContactId={newUuid}
+          onAutosave={(changes, expectedRevision, unchanged) =>
+            autosaveLeasingCommand(
+              { _tag: 'UpdateTenantDossier', occupancyRef: selected.occupancyRef, ...changes },
+              expectedRevision,
+              unchanged,
+            )
+          }
           onUpdate={(changes) =>
             state.runCommand({ _tag: 'UpdateTenantDossier', occupancyRef: selected.occupancyRef, ...changes })
           }
+          revision={snapshot.revision}
           taskHref={tasks[0] === undefined ? undefined : `/${language}/ukoly?resourceId=${tasks[0].ref.resourceId}`}
         />
       )}
@@ -1497,7 +1581,6 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
         </div>
       }
       closeLabel={t(LABEL_CLOSE)}
-      closeOnInteractOutside={false}
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#occupancy-start-date')}
       onOpenChange={(open) => {
         if (!open && !busy) {
@@ -1546,7 +1629,7 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
                     disabled={busy}
                     footer={state.customersEmpty ? t('property-leasing.demo.customersEmpty') : undefined}
                     items={customers.map((record) => ({
-                      label: record.displayName ?? record.partyId,
+                      label: record.displayName ?? 'Zákazník bez názvu',
                       value: record.counterpartyRef.resourceId,
                     }))}
                     label={t('property-leasing.demo.customer')}
@@ -1679,6 +1762,24 @@ const OccupancySummary = ({ state }: { readonly state: ReturnType<typeof useReco
     </div>
   );
 };
+/** Only a refused or failed read offers a retry; everything else updates by itself. */
+const RetryAfterFailure = ({
+  busy,
+  feedback,
+  label,
+  onRetry,
+}: {
+  readonly busy: boolean;
+  readonly feedback: Feedback;
+  readonly label: string;
+  readonly onRetry: () => void;
+}) =>
+  feedback === 'unavailable' || feedback === 'forbidden' ? (
+    <Button disabled={busy} onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+      {label}
+    </Button>
+  ) : null;
+
 const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['context'] }) => {
   const state = useRecordsPage(context);
   const [calendarMonth, setCalendarMonth] = useState('');
@@ -1686,7 +1787,7 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
     busy,
     feedback,
     kindFilter,
-    refresh,
+    retry,
 
     setKindFilter,
     snapshot,
@@ -1712,6 +1813,7 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
             }
             language={state.language}
             newContactId={newUuid}
+            onAutosave={state.autosaveCounterpartyDossier(state.linkedCounterpartyId)}
             onUpdate={state.updateCounterpartyDossier(state.linkedCounterpartyId)}
             snapshot={snapshot}
             unitName={unitName}
@@ -1819,9 +1921,12 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                     Zobrazit zrušené ({state.cancelledCount})
                   </label>
                 )}
-                <Button disabled={busy} onClick={refresh} size="sm" theme="outlined" variant="secondary">
-                  {t('property-leasing.demo.refresh')}
-                </Button>
+                <RetryAfterFailure
+                  busy={busy}
+                  feedback={feedback}
+                  label={t('property-leasing.demo.retry')}
+                  onRetry={retry}
+                />
               </div>
             </div>
             {snapshot !== undefined && visible.length === 0 && (

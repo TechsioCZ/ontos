@@ -1,9 +1,12 @@
 import {
+  startGatewayAssertionRedemptionCleanup,
   DatabaseConfig,
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
+  recoverSqlTransactionError,
   configureDatabasePool,
+  openDatabaseClient,
 } from '@app/core-runtime';
 import type {
   DatabasePoolDeadlines,
@@ -18,7 +21,6 @@ import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
 import type { Scope } from 'effect';
 import { Clock, Context, DateTime, Duration, Effect, Layer, Redacted } from 'effect';
 import { Reactivity } from 'effect/reactivity';
-import { isSqlError } from 'effect/sql/SqlError';
 
 import { gatewayAssertionRedemptions } from '../database/schema.ts';
 
@@ -57,21 +59,9 @@ const REDEMPTION_TIMEOUT = Duration.seconds(5);
 const redeemAssertion = (
   executor: PricingGatewayAssertionRedemptionDatabaseExecutor,
   input: GatewayAssertionRedemptionInput,
-  expiredBefore: Date,
   expiresAt: Date,
 ) =>
   executor
-    // One autocommit statement (one round trip): the expired-evidence purge rides along as a CTE.
-    .with(
-      executor
-        .$with('expired_redemptions')
-        .as(
-          executor
-            .delete(gatewayAssertionRedemptions)
-            .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
-            .returning({ jti: gatewayAssertionRedemptions.jti }),
-        ),
-    )
     .insert(gatewayAssertionRedemptions)
     .values({
       audience: input.audience,
@@ -90,17 +80,14 @@ export const makeGatewayAssertionRedemption = (
   ) {
     const nowEpochMs = yield* Clock.currentTimeMillis;
     // Verification can finish after its captured clock passes the assertion's skew window.
-    // Reject before cleanup can delete this assertion's existing replay evidence.
+    // Reject without modifying the durable replay evidence.
     if (input.expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS <= Math.floor(nowEpochMs / 1000)) {
       return yield* replayError();
     }
-    const expiredBefore = DateTime.toDateUtc(
-      DateTime.makeUnsafe(nowEpochMs - GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS * 1000),
-    );
     const expiresAt = DateTime.toDateUtc(DateTime.makeUnsafe(input.expiresAtEpochSeconds * 1000));
-    const inserted = yield* redeemAssertion(executor, input, expiredBefore, expiresAt).pipe(
+    const inserted = yield* redeemAssertion(executor, input, expiresAt).pipe(
+      recoverSqlTransactionError,
       Effect.mapError(unavailableError),
-      Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(unavailableError(defect)) : Effect.die(defect))),
       Effect.timeoutOrElse({
         duration: REDEMPTION_TIMEOUT,
         orElse: () => Effect.fail(unavailableError()),
@@ -133,7 +120,7 @@ const makeGatewayAssertionRedemptionDatabase = Effect.fn('PricingGatewayAssertio
       configuration.maxConnections,
     ).pipe(Effect.mapError((error) => unavailableError(error)));
     const reactivity = yield* Reactivity.make;
-    const client = yield* PgClient.make(poolConfiguration).pipe(
+    const client = yield* openDatabaseClient(poolConfiguration).pipe(
       Effect.provideService(Reactivity.Reactivity, reactivity),
       Effect.mapError(unavailableError),
     );
@@ -155,7 +142,14 @@ export const GatewayAssertionRedemptionDatabaseLive = Layer.effect(
 
 export const GatewayAssertionRedemptionLive = Layer.effect(
   GatewayAssertionRedemptionService,
-  PricingGatewayAssertionRedemptionDatabase.pipe(
-    Effect.map(({ executor }) => makeGatewayAssertionRedemption(executor)),
-  ),
+  Effect.gen(function* makeRedemptionWithCleanup() {
+    const { executor } = yield* PricingGatewayAssertionRedemptionDatabase;
+    yield* startGatewayAssertionRedemptionCleanup('pricing', GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS, (expiredBefore) =>
+      executor
+        .delete(gatewayAssertionRedemptions)
+        .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
+        .pipe(Effect.asVoid, Effect.mapError(unavailableError)),
+    );
+    return makeGatewayAssertionRedemption(executor);
+  }),
 );

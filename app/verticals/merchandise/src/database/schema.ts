@@ -13,6 +13,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgSchema,
   primaryKey,
   smallint,
@@ -231,6 +232,51 @@ export const orders = merchandiseSchema.table.withRLS(
   ],
 );
 
+/**
+ * Offer and price list of one commerce market (`market_id` = opaque commerce.market-catalog market reference, the code
+ * a snapshot). Market prices are the CZK gross price × `exchange_rate`, rounded half-up to `rounding_minor`.
+ */
+export const marketSettings = merchandiseSchema.table.withRLS(
+  'market_settings',
+  {
+    ...scopeColumns,
+    currency: text('currency').notNull(),
+    exchangeRate: numeric('exchange_rate').notNull(),
+    marketCode: text('market_code').notNull(),
+    marketId: uuid('market_id').notNull(),
+    offerMode: text('offer_mode').notNull(),
+    revision: integer('revision').default(1).notNull(),
+    roundingMinor: integer('rounding_minor').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tenantId, table.legalEntityId, table.marketId] }),
+    check('demo_merchandise_market_offer_mode', sql`${table.offerMode} in ('WHOLE_CATALOGUE', 'SELECTED_PRODUCTS')`),
+    check('demo_merchandise_market_currency', sql`${table.currency} in ('CZK', 'EUR', 'PLN')`),
+    check('demo_merchandise_market_rate_positive', sql`${table.exchangeRate} > 0`),
+    check('demo_merchandise_market_rounding_positive', sql`${table.roundingMinor} >= 1`),
+    check('demo_merchandise_market_revision_positive', sql`${table.revision} >= 1`),
+    ...tenantLegalEntityRlsPolicies('demo_merchandise_market_scope', table.tenantId, table.legalEntityId),
+  ],
+);
+
+/** Product exceptions of a market: stored only where `offered` differs from the market's offer-mode default. */
+export const marketProductOffers = merchandiseSchema.table.withRLS(
+  'market_product_offers',
+  {
+    ...scopeColumns,
+    marketId: uuid('market_id').notNull(),
+    offered: boolean('offered').notNull(),
+    productId: text('product_id').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tenantId, table.legalEntityId, table.marketId, table.productId] }),
+    index('demo_merchandise_market_offers_product').on(table.tenantId, table.legalEntityId, table.productId),
+    ...tenantLegalEntityRlsPolicies('demo_merchandise_market_offer_scope', table.tenantId, table.legalEntityId),
+  ],
+);
+
 export const gatewayAssertionRedemptions = merchandiseSchema.table(
   'gateway_assertion_redemptions',
   {
@@ -249,6 +295,8 @@ export const merchandiseRelations = defineRelations({
   catalogHeads,
   categories,
   gatewayAssertionRedemptions,
+  marketProductOffers,
+  marketSettings,
   orders,
   priceTiers,
   products,

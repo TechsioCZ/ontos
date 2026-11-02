@@ -3,7 +3,7 @@
 // and DEMO_RESET_PROFILE=sales in the environment. It writes only the party schema, with deterministic
 // client-supplied IDs (see ./demo-customers.mts), and restores every seeded customer to its baseline:
 // seeded rows return to ACTIVE, and other current facts on seeded Parties are superseded.
-import { NodeServices } from '@effect/platform-node';
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { DatabaseConfig, parseDatabaseConfig } from '@app/core-runtime';
 import { and, eq, inArray, notInArray } from 'drizzle-orm';
 import { Config, Console, DateTime, Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
@@ -522,4 +522,4 @@ const command = Command.make(
 const runtimeLive = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(
   Layer.provide(NodeServices.layer),
 );
-await Effect.runPromise(Effect.scoped(Layer.build(runtimeLive)));
+NodeRuntime.runMain(Effect.scoped(Layer.build(runtimeLive)));

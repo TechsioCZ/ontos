@@ -82,10 +82,34 @@ export const PrincipalAttributionSchema = Schema.Struct({
 });
 export type PrincipalAttribution = typeof PrincipalAttributionSchema.Type;
 
+/** Admission observation from an authorized Party owner Read; never permanent Current proof. */
+export const PrivacySubjectOwnerEvidenceSchema = Schema.Struct({
+  observedAt: PrivacyIsoTimestampSchema,
+  ownerRevision: Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
+  partyRef: PrivacyPartyRefSchema,
+  typeAssertions: Schema.Array(
+    Schema.Struct({
+      assertionId: NonEmptyText.pipe(Schema.brand('PartyOwnerAssertionId')),
+      validFrom: PrivacyIsoTimestampSchema,
+      validTo: Schema.toEncoded(Schema.OptionFromNullOr(PrivacyIsoTimestampSchema)),
+    }),
+  ).check(Schema.isMinLength(1)),
+});
+export type PrivacySubjectOwnerEvidence = typeof PrivacySubjectOwnerEvidenceSchema.Type;
+
 export const PrivacySubjectRecordSchema = Schema.Struct({
   createdAt: PrivacyIsoTimestampSchema,
+  ownerAdmission: Schema.optionalKey(PrivacySubjectOwnerEvidenceSchema),
   subject: PrivacySubjectSchema,
   subjectRef: PrivacySubjectRefSchema,
   updatedAt: PrivacyIsoTimestampSchema,
-});
+}).check(
+  Schema.makeFilter((record) =>
+    record.ownerAdmission === undefined ||
+    (record.subject.kind === 'DATA_SUBJECT' &&
+      Schema.toEquivalence(PrivacyPartyRefSchema)(record.subject.partyRef, record.ownerAdmission.partyRef))
+      ? undefined
+      : 'Owner admission evidence must identify this exact Data Subject Party',
+  ),
+);
 export type PrivacySubjectRecord = typeof PrivacySubjectRecordSchema.Type;

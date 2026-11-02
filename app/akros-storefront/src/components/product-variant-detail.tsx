@@ -9,7 +9,7 @@ import { Dialog } from "@techsio/ui-kit/molecules/dialog";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
 import { FavoriteButton } from "@/features/favorites/favorite-button";
 import { buildVariantDetailHref } from "@/lib/product-variant-links";
-import { formatPrice } from "@/lib/format";
+import { useFormatPrice, useStoreHref } from "@/ontos/market-context";
 import { getProductDescriptionParagraphs } from "@/lib/product-description";
 import type { CatalogPurchaseProduct, CatalogProductVariant } from "@/ontos/catalog-types";
 import { loadFavoriteProduct } from "@/features/favorites/catalog";
@@ -29,6 +29,8 @@ export function ProductVariantDetail({
   descriptionParagraphs: string[];
 }) {
   const router = useRouter();
+  const formatPrice = useFormatPrice();
+  const storeHref = useStoreHref();
   const search = useSearchParams();
   // The kit's portalled Dialog assigns different useId positions during SSR.
   const mounted = useSyncExternalStore(subscribeToMount, clientMounted, serverMounted);
@@ -67,9 +69,12 @@ export function ProductVariantDetail({
   function close() {
     if (fromList.current) router.back();
     else
-      router.replace(buildVariantDetailHref(product.slug, null, search?.toString() ?? ""), {
-        scroll: false,
-      });
+      router.replace(
+        storeHref(buildVariantDetailHref(product.slug, null, search?.toString() ?? "")),
+        {
+          scroll: false,
+        },
+      );
   }
   const common = { productId: product.id, productName: product.name, productSlug: product.slug };
   const description = getProductDescriptionParagraphs(descriptionParagraphs);

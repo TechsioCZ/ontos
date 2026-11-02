@@ -3,7 +3,10 @@
 import { executeRecords as executePropertyRecords } from '@app/property-portfolio/clients/records';
 import { Effect } from 'effect';
 import { useEffect, useState } from 'react';
+import { optionalField } from '../../../../../shared/domain/common.ts';
 import type { PropertyRef } from '../../../../../shared/domain/common.ts';
+import type { Asset } from '../../../../../shared/domain/assets.ts';
+import type { AssetCardDraft, AssetPlacement } from './asset-card-draft.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
 export interface PropertyNode {
@@ -90,3 +93,16 @@ export const locationItems = (tree: PropertyTree) =>
         })),
       ])
     : [];
+
+const refOfLocation = (tree: PropertyTree, value: string): PropertyRef | undefined =>
+  locationItems(tree).find((item) => item.value === value)?.ref;
+
+/** The placement a card draft asks for: the picked property or unit, or the one the asset already has. */
+export const assetPlacementOf = (tree: PropertyTree, draft: AssetCardDraft, asset?: Asset): AssetPlacement => {
+  const picked = draft.location === '' ? undefined : (refOfLocation(tree, draft.location) ?? asset?.location);
+  const propertyId = owningPropertyId(tree, picked) ?? (picked === asset?.location ? asset?.propertyId : undefined);
+  return {
+    ...optionalField('location', picked),
+    ...optionalField('propertyId', propertyId),
+  };
+};

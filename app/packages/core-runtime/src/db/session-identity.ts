@@ -1,35 +1,37 @@
 import type { PgClient } from '@effect/sql-pg';
-import { Duration, Effect, Schedule } from 'effect';
+import { Effect, Ref } from 'effect';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import { DatabaseConnectionError } from './connection-error.ts';
+import { beforePoolAcquisition } from './transaction-io-guard.ts';
+
+export const SESSION_ROLE_MISMATCH_REASON = 'The PostgreSQL session does not match the required database identity';
+
+const sessionRoleMismatch = () =>
+  new SqlError({
+    reason: new ConnectionError({
+      cause: new DatabaseConnectionError({ reason: SESSION_ROLE_MISMATCH_REASON }),
+      message: SESSION_ROLE_MISMATCH_REASON,
+    }),
+  });
 
 /**
- * A server that refuses the first connection (no free connection slot while a deploy overlaps the previous release,
- * a database restart) recovers within seconds. A Node process builds its database services once and keeps a failed
- * build for its whole life, so the check retries a refused connection with a capped backoff before startup gives up.
+ * Confirms the enrolled origin role on the client's first statement, transaction or reservation, so building a
+ * root opens no connection. Until a check succeeds no statement runs: a refused connection or a foreign role fails
+ * that use as a connection-class SqlError and is not remembered, so the next use checks again (a server that
+ * refuses the first connection during a deploy recovers without a restart). The native pool has no
+ * physical-connection initialization hook: this does not verify every pooled connection.
  */
-export const SESSION_ROLE_CONNECT_RETRY = Schedule.min([
-  Schedule.exponential(Duration.millis(250)),
-  Schedule.spaced(Duration.seconds(5)),
-]).pipe(Schedule.upTo({ duration: Duration.minutes(3) }));
-
-/**
- * Refuse startup unless the checked session authenticates as the enrolled origin role. The native
- * pool has no physical-connection initialization hook: this does not verify every pooled connection.
- */
-export const verifyDatabaseSessionRole = Effect.fn('SessionIdentity.verifyDatabaseSessionRole')(
-  function* verifySessionRole(client: PgClient.PgClient, expectedRole: string) {
-    const rows = yield* client.unsafe<{ role: string }>('select session_user::text as role').pipe(
-      Effect.retry(SESSION_ROLE_CONNECT_RETRY),
-      Effect.catchTag('SqlError', () =>
-        Effect.fail(new DatabaseConnectionError({ reason: 'Unable to verify the PostgreSQL session role' })),
+export const verifySessionRoleOnFirstUse = (client: PgClient.PgClient, expectedRole: string): PgClient.PgClient => {
+  const verified = Ref.makeUnsafe(false);
+  const verify = client
+    .unsafe<{ role: string }>('select session_user::text as role')
+    .pipe(
+      Effect.flatMap((rows) =>
+        rows.length === 1 && rows[0]?.role === expectedRole
+          ? Ref.set(verified, true)
+          : Effect.fail(sessionRoleMismatch()),
       ),
     );
-    if (rows.length !== 1 || rows[0]?.role !== expectedRole) {
-      return yield* new DatabaseConnectionError({
-        reason: 'The PostgreSQL session does not match the required database identity',
-      });
-    }
-    return yield* Effect.void;
-  },
-);
+  return beforePoolAcquisition(client, Ref.get(verified).pipe(Effect.flatMap((done) => (done ? Effect.void : verify))));
+};

@@ -51,11 +51,16 @@ const CatalogPersistedDecimalSchema = Schema.String.check(
   Schema.isPattern(/^(?:0|[1-9]\d*)(?:\.\d+)?$/u),
   Schema.isMaxLength(100),
 );
+const CatalogPersistedUuidSchema = Schema.String.check(Schema.isUUID());
+const CatalogPersistedUnitIdSchema = CatalogPersistedUuidSchema.pipe(
+  Schema.brand('CatalogSourceUnitId'),
+  Schema.decodeTo(CatalogPersistedUuidSchema),
+);
 const CatalogPersistedSourceFactValueSchema = Schema.Union([
   CatalogPersistedTextValueSchema,
   Schema.Struct({
     amount: CatalogPersistedDecimalSchema,
-    unitId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('CatalogSourceUnitId')),
+    unitId: CatalogPersistedUnitIdSchema,
   }),
 ]);
 const CatalogFactTargetKindSchema = Schema.Literals(['PRODUCT', 'VARIANT', 'PACKAGE_DEFINITION']);

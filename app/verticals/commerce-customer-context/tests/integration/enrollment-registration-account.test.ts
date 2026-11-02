@@ -301,7 +301,11 @@ it.live('admits the new provider account immediately after verification and one 
         yield* enrollmentApplicationCompositionRevision,
       );
       const configuration = yield* parseCommercePortalAuthConfig({
-        COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(yield* Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL')),
+        COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(
+          yield* Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+            Config.orElse(() => Config.Redacted('DATABASE_URL')),
+          ),
+        ),
         COMMERCE_PORTAL_AUTH_SECRET: 'a'.repeat(64),
         COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS: origin,
         COMMERCE_PORTAL_AUTH_URL: origin,

@@ -32,12 +32,18 @@ export const principalKindOf = (
 export const nonHumanForbiddenCommands: ReadonlySet<string> = new Set([
   'BulkUpdateProducts',
   'ChangePrice',
+  // Product photos are chosen and arranged by people.
+  'ChangeProductImages',
   'EditOrder',
   'LinkOrderCustomer',
   'RemoveDemoOrder',
   'ResetDemoData',
   'ArchiveDemoProduct',
   'UpdateCategory',
+  // Market price lists and bulk market assortment change money and the whole offer of a market.
+  'ConfigureMarket',
+  'RemoveMarket',
+  'SetMarketProductOffers',
   // AI level C: an agent may only propose; a person approves or reverts in the app.
   'AiDecideChanges',
   'AiRevertBatch',
@@ -124,6 +130,16 @@ export const withCommandGuard =
       Effect.flatMap(() => handler(payload, context)),
     );
 
+/**
+ * AKROS market offers and price lists (ConfigureMarket, SetProductMarketOffer, SetMarketProductOffers, RemoveMarket):
+ * administrators and the company's own administrators (the e-shop manager, Core `legal_entity#manage_people`), never
+ * dispatch. Other companies keep their normal write rights.
+ */
+export const staffMarketCommandAllowed = (
+  legalEntityId: string,
+  rights: { readonly administrator: boolean; readonly companyAdministrator: boolean },
+): boolean => legalEntityId !== AKROS_LEGAL_ENTITY_ID || rights.administrator || rights.companyAdministrator;
+
 /** AKROS dispatch is operational only; catalog and money edits require a trusted administrator decision. */
 export const staffCommandAllowed = (legalEntityId: string, administrator: boolean, commandTag: string): boolean => {
   if (commandTag === 'ResetDemoData') {
@@ -135,6 +151,8 @@ export const staffCommandAllowed = (legalEntityId: string, administrator: boolea
   return (
     legalEntityId !== AKROS_LEGAL_ENTITY_ID ||
     administrator ||
+    // The AKROS e-shop manager curates product photos; prices and catalog data stay with administrators.
+    commandTag === 'ChangeProductImages' ||
     commandTag === 'RecordStockMovement' ||
     commandTag === 'ChangeOrderStatus'
   );

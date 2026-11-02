@@ -566,6 +566,15 @@ const readProfileRoutine = routine('read_customer_profile', 'profile.read', [
   { source: 'input', type: 'uuid' },
   { source: 'input', type: 'text' },
 ] as const);
+/** Read the owner profile through its existing scoped routine for address preparation. */
+export const readAddressProfileSnapshot = (
+  transaction: ProfileScopedRoutineInvoker,
+  profileId: string,
+  kind: 'RETAIL' | 'COUNTERPARTY',
+) =>
+  transaction
+    .invoke(readProfileRoutine, [profileId, kind])
+    .pipe(Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(Schema.Array(RoutineRowSchema)))));
 const readTradingGateRoutine = routine('read_profile_trading_gate', 'profile.read-trading-gate', [
   ...scopeParameters,
   { source: 'input', type: 'uuid' },
@@ -1205,12 +1214,66 @@ export const readRetailPortalBindingForPrincipal = (
     ),
   );
 
+/** Enrollment confirms the original binding and the live baseline; aggregate ACTIVE alone is insufficient. */
+export const retailEnrollmentBindingIsCurrentForPrincipal = Effect.fn('ProfilePersistence.enrollmentBindingIsCurrent')(
+  function* retailEnrollmentBindingIsCurrentForPrincipalEffect(
+    transaction: ProfileScopedRoutineInvoker,
+    scope: ProfilePersistenceScope,
+    expected: {
+      readonly bindingId: string;
+      readonly enrollmentEvidenceRef: string;
+      readonly profileId: string;
+    },
+    readPermissions: NonNullable<ProfilePersistenceDependencies['readRetailPermissions']>,
+  ): Effect.fn.Return<boolean, ReadHandlerUnavailable> {
+    const [principalRow] = yield* transaction
+      .invoke(resolvePrincipalRoutine, [expected.profileId, scope.principalId])
+      .pipe(Effect.mapError(readUnavailableFromRoutineFailure));
+    const principal = principalRow === undefined ? undefined : principalPayloadFromRow(principalRow);
+    if (principal?.bindingId !== expected.bindingId) {
+      return false;
+    }
+    const [bindingRow] = yield* transaction
+      .invoke(readBindingRoutine, [expected.bindingId, scope.principalId])
+      .pipe(Effect.mapError(readUnavailableFromRoutineFailure));
+    const binding = availableBindingPayloadFromRow(bindingRow);
+    if (
+      binding === undefined ||
+      binding.bindingId !== expected.bindingId ||
+      binding.profileId !== expected.profileId ||
+      binding.principalId !== scope.principalId ||
+      binding.enrollmentEvidenceRef !== expected.enrollmentEvidenceRef ||
+      binding.state !== 'ACTIVE' ||
+      binding.authorizationOperation !== 'grant' ||
+      binding.authorizationState !== 'ACTIVE'
+    ) {
+      return false;
+    }
+    const { permissions } = yield* readPermissions({
+      ...scope,
+      profileId: expected.profileId,
+    }).pipe(
+      Effect.mapError((cause) =>
+        preserveFailureCause(readUnavailable('The Current Retail baseline is unavailable'), cause),
+      ),
+    );
+    const current = new Set(permissions);
+    return (
+      current.size === RETAIL_PORTAL_SELF_SERVICE_BASELINE.length &&
+      permissions.length === current.size &&
+      RETAIL_PORTAL_SELF_SERVICE_BASELINE.every((permission) => current.has(permission))
+    );
+  },
+);
+
 export type CounterpartyRoleEligibility =
   | {
       readonly managedLegalEntityId: string;
       readonly outcome: 'ELIGIBLE';
       readonly roleResourceId: string;
       readonly roleResourceRevision: string;
+      /** Exact Party role end; undefined is unknown and must not authorize a prepared write. */
+      readonly validUntil?: string | null;
     }
   | { readonly outcome: 'INELIGIBLE' }
   | { readonly outcome: 'UNAVAILABLE' | 'INDETERMINATE' };
@@ -1233,6 +1296,7 @@ export interface ProfilePersistenceDependencies {
     readonly legalEntityId: string;
     readonly principalId: string;
     readonly profileId: string;
+    readonly requestedPermissions?: readonly RetailPortalPermissionCode[];
     readonly tenantId: string;
   }) => Effect.Effect<
     {
@@ -1476,7 +1540,12 @@ const counterpartyServices = (
                   row?.payload !== undefined &&
                   Schema.is(CreateCounterpartyPurchasingProfileResultSchema)(row.payload)
                 ) {
-                  return Effect.succeed(row.payload);
+                  return Effect.succeed({
+                    outcome: row.payload.outcome,
+                    profileRef: row.payload.profileRef,
+                    revision: row.payload.revision,
+                    state: row.payload.state,
+                  });
                 }
                 const code = row?.outcome;
                 return Effect.fail(
@@ -2216,6 +2285,7 @@ const readServices = (
     profileId: string,
     principalId: string,
     observedAt: string,
+    requestedPermissions?: readonly RetailPortalPermissionCode[],
   ): Effect.Effect<RetailPermissionProjection> => {
     const readPermissions = dependencies.readRetailPermissions;
     if (readPermissions === undefined) {
@@ -2228,12 +2298,13 @@ const readServices = (
         permissions: [],
       });
     }
-    return readPermissions({
+    const request = {
       legalEntityId: scope.legalEntityId,
       principalId,
       profileId,
       tenantId: scope.tenantId,
-    }).pipe(
+    };
+    return readPermissions(requestedPermissions === undefined ? request : { ...request, requestedPermissions }).pipe(
       Effect.map(({ observedAt: permissionObservedAt, permissions, revision }) => {
         const freshness =
           revision === undefined
@@ -2840,7 +2911,9 @@ const readServices = (
                                   ? ('CURRENT' as const)
                                   : ('INDETERMINATE' as const),
                             };
-                            return readRetailPermissionProjection(raw.profileId, principalId, raw.updatedAt).pipe(
+                            return readRetailPermissionProjection(raw.profileId, principalId, raw.updatedAt, [
+                              input.requiredPermission,
+                            ]).pipe(
                               Effect.map(({ freshness, permissions }) => {
                                 const decision = decideRetailPortalAccess({
                                   authorizationOperation,
@@ -2912,7 +2985,12 @@ const readServices = (
                 return succeedRetailPortalBindingRead({
                   _tag: 'BINDING_RECONCILIATION_REQUIRED' as const,
                   bindingRef: input.bindingRef,
-                  profileRef: profileRef(scope.tenantId, raw.profileId, 'RETAIL'),
+                  profileRef: {
+                    moduleId: 'commerce.customer-context' as const,
+                    resourceId: raw.profileId,
+                    resourceType: 'commerce.customer-context.retail-customer-profile' as const,
+                    tenantId: scope.tenantId,
+                  },
                   provenance: profileProvenance(raw.observedAt, raw.revision),
                   reconciliationCaseRef: Option.some(reconciliationRef(scope.tenantId, raw.caseId)),
                 });
@@ -2953,7 +3031,12 @@ const readServices = (
                       resourceType: 'core.identity.principal' as const,
                       tenantId: scope.tenantId,
                     },
-                    profileRef: profileRef(scope.tenantId, raw.profileId, 'RETAIL'),
+                    profileRef: {
+                      moduleId: 'commerce.customer-context' as const,
+                      resourceId: raw.profileId,
+                      resourceType: 'commerce.customer-context.retail-customer-profile' as const,
+                      tenantId: scope.tenantId,
+                    },
                     revision: raw.revision,
                     sellingLegalEntityRef: sellingLegalEntityRef(scope),
                     state: raw.state,

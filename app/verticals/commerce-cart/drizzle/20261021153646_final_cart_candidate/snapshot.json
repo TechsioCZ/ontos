@@ -1,0 +1,2175 @@
+{
+  "version": "8",
+  "dialect": "postgres",
+  "id": "15ef3c41-e09d-4742-b8e6-cd657ce16996",
+  "prevIds": [
+    "6562bfaa-10c3-46bd-9536-6553858ca586"
+  ],
+  "ddl": [
+    {
+      "name": "commerce_cart",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "cart_revision_selections",
+      "entityType": "tables",
+      "schema": "commerce_cart"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "cart_revisions",
+      "entityType": "tables",
+      "schema": "commerce_cart"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "carts",
+      "entityType": "tables",
+      "schema": "commerce_cart"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "final_cart_candidates",
+      "entityType": "tables",
+      "schema": "commerce_cart"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "gateway_assertion_redemptions",
+      "entityType": "tables",
+      "schema": "commerce_cart"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "population_cart_heads",
+      "entityType": "tables",
+      "schema": "commerce_cart"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "population_cart_versions",
+      "entityType": "tables",
+      "schema": "commerce_cart"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "population_generation_history",
+      "entityType": "tables",
+      "schema": "commerce_cart"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "population_roots",
+      "entityType": "tables",
+      "schema": "commerce_cart"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "population_selection_refs",
+      "entityType": "tables",
+      "schema": "commerce_cart"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "cart_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_by_principal_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "origin_revision_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "position",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "requested_quantity",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "requested_unit",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "selection",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "selection_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_action_invocation_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "cart_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "encoded_cart",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "population_generation",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "previous_revision_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_number",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "cart_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "carts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "creator_principal_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "carts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "current_revision_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "carts"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "intended_context",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "carts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "carts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "carts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "buyer_principal_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "candidate_hash",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "candidate_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "cart_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "encoded_candidate",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "final_revision_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "material_json",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_revision_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "audience",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "expires_at",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "issuer",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "jti",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "redeemed_at",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "cart_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_cart_heads"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_cart_heads"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_cart_heads"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_cart_heads"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_cart_versions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_cart_versions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "cart_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_cart_versions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "creator_principal_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_cart_versions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_cart_versions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_cart_versions"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_number",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_cart_versions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_cart_versions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_cart_versions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_generation_history"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_generation_history"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "cart_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_generation_history"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "generation",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_generation_history"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "history_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_generation_history"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_generation_history"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "previous_history_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_generation_history"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_generation_history"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_generation_history"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "generation",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_roots"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "history_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_roots"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_roots"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "cart_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_by_principal_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "origin_revision_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "position",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "selection",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "selection_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_action_invocation_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "expires_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "cart_gateway_assertion_redemptions_expiry_idx",
+      "entityType": "indexes",
+      "schema": "commerce_cart",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id",
+        "revision_id"
+      ],
+      "schemaTo": "commerce_cart",
+      "tableTo": "cart_revisions",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id",
+        "revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "cart_revision_selections_revision_fk",
+      "entityType": "fks",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id"
+      ],
+      "schemaTo": "commerce_cart",
+      "tableTo": "carts",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "cart_revisions_cart_fk",
+      "entityType": "fks",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "commerce_cart",
+      "tableTo": "population_roots",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "carts_population_root_fk",
+      "entityType": "fks",
+      "schema": "commerce_cart",
+      "table": "carts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id",
+        "source_revision_id"
+      ],
+      "schemaTo": "commerce_cart",
+      "tableTo": "cart_revisions",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id",
+        "revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "final_cart_candidates_source_fk",
+      "entityType": "fks",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id",
+        "final_revision_id"
+      ],
+      "schemaTo": "commerce_cart",
+      "tableTo": "cart_revisions",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id",
+        "revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "final_cart_candidates_closed_fk",
+      "entityType": "fks",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id",
+        "revision_id"
+      ],
+      "schemaTo": "commerce_cart",
+      "tableTo": "population_cart_versions",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id",
+        "revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "cart_population_heads_version_fk",
+      "entityType": "fks",
+      "schema": "commerce_cart",
+      "table": "population_cart_heads"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id",
+        "revision_id"
+      ],
+      "schemaTo": "commerce_cart",
+      "tableTo": "cart_revisions",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id",
+        "revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "cart_population_versions_source_fk",
+      "entityType": "fks",
+      "schema": "commerce_cart",
+      "table": "population_cart_versions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "commerce_cart",
+      "tableTo": "population_roots",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "cart_population_history_root_fk",
+      "entityType": "fks",
+      "schema": "commerce_cart",
+      "table": "population_generation_history"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id",
+        "revision_id"
+      ],
+      "schemaTo": "commerce_cart",
+      "tableTo": "population_cart_versions",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id",
+        "revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "cart_population_history_version_fk",
+      "entityType": "fks",
+      "schema": "commerce_cart",
+      "table": "population_generation_history"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id",
+        "revision_id"
+      ],
+      "schemaTo": "commerce_cart",
+      "tableTo": "population_cart_versions",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id",
+        "revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "cart_population_selections_version_fk",
+      "entityType": "fks",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "cart_id",
+        "revision_id",
+        "selection_id"
+      ],
+      "schemaTo": "commerce_cart",
+      "tableTo": "cart_revision_selections",
+      "columnsTo": [
+        "tenant_id",
+        "cart_id",
+        "revision_id",
+        "selection_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "cart_population_selections_source_fk",
+      "entityType": "fks",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "cart_id",
+        "revision_id",
+        "selection_id"
+      ],
+      "nameExplicit": true,
+      "name": "cart_revision_selections_pk",
+      "entityType": "pks",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "cart_id",
+        "revision_id"
+      ],
+      "nameExplicit": true,
+      "name": "cart_revisions_pk",
+      "entityType": "pks",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "cart_id"
+      ],
+      "nameExplicit": true,
+      "name": "carts_pk",
+      "entityType": "pks",
+      "schema": "commerce_cart",
+      "table": "carts"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "candidate_id"
+      ],
+      "nameExplicit": true,
+      "name": "final_cart_candidates_pk",
+      "entityType": "pks",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "cart_id"
+      ],
+      "nameExplicit": true,
+      "name": "cart_population_heads_pk",
+      "entityType": "pks",
+      "schema": "commerce_cart",
+      "table": "population_cart_heads"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "cart_id",
+        "revision_id"
+      ],
+      "nameExplicit": true,
+      "name": "cart_population_versions_pk",
+      "entityType": "pks",
+      "schema": "commerce_cart",
+      "table": "population_cart_versions"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "generation"
+      ],
+      "nameExplicit": true,
+      "name": "cart_population_history_pk",
+      "entityType": "pks",
+      "schema": "commerce_cart",
+      "table": "population_generation_history"
+    },
+    {
+      "columns": [
+        "tenant_id"
+      ],
+      "nameExplicit": true,
+      "name": "cart_population_roots_pk",
+      "entityType": "pks",
+      "schema": "commerce_cart",
+      "table": "population_roots"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "cart_id",
+        "revision_id",
+        "selection_id"
+      ],
+      "nameExplicit": true,
+      "name": "cart_population_selections_pk",
+      "entityType": "pks",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "cart_id",
+        "revision_id",
+        "position"
+      ],
+      "nullsNotDistinct": false,
+      "name": "cart_revision_selections_position_uk",
+      "entityType": "uniques",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "cart_id",
+        "revision_number"
+      ],
+      "nullsNotDistinct": false,
+      "name": "cart_revisions_sequence_uk",
+      "entityType": "uniques",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "cart_revisions_invocation_uk",
+      "entityType": "uniques",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id",
+        "revision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "cart_revisions_sle_uk",
+      "entityType": "uniques",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "carts_sle_uk",
+      "entityType": "uniques",
+      "schema": "commerce_cart",
+      "table": "carts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "cart_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "final_cart_candidates_cart_uk",
+      "entityType": "uniques",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "final_cart_candidates_invocation_uk",
+      "entityType": "uniques",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "issuer",
+        "audience",
+        "jti"
+      ],
+      "nullsNotDistinct": false,
+      "name": "cart_gateway_assertion_redemptions_identity_uk",
+      "entityType": "uniques",
+      "schema": "commerce_cart",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "cart_id",
+        "revision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "cart_population_versions_sle_uk",
+      "entityType": "uniques",
+      "schema": "commerce_cart",
+      "table": "population_cart_versions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "history_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "cart_population_history_id_uk",
+      "entityType": "uniques",
+      "schema": "commerce_cart",
+      "table": "population_generation_history"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "cart_population_history_invocation_uk",
+      "entityType": "uniques",
+      "schema": "commerce_cart",
+      "table": "population_generation_history"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "cart_id",
+        "revision_id",
+        "position"
+      ],
+      "nullsNotDistinct": false,
+      "name": "cart_population_selections_position_uk",
+      "entityType": "uniques",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "value": "\"position\" >= 0",
+      "name": "cart_revision_selections_position_ck",
+      "entityType": "checks",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "value": "octet_length(\"selection\"::text) between 2 and 65536",
+      "name": "cart_revision_selections_selection_size_ck",
+      "entityType": "checks",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "value": "\"requested_quantity\" ~ '^[0-9]+([.][0-9]+)?$' and length(\"requested_quantity\") <= 100 and \"requested_quantity\"::numeric > 0",
+      "name": "cart_revision_selections_quantity_ck",
+      "entityType": "checks",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "value": "octet_length(\"requested_unit\"::text) between 2 and 4096",
+      "name": "cart_revision_selections_unit_size_ck",
+      "entityType": "checks",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "value": "octet_length(\"encoded_cart\"::text) between 2 and 262144 and \"population_generation\" > 0",
+      "name": "cart_revisions_snapshot_size_ck",
+      "entityType": "checks",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "value": "\"revision_number\" between 1 and 2147483647 and ((\"revision_number\" = 1 and \"previous_revision_id\" is null) or (\"revision_number\" > 1 and \"previous_revision_id\" is not null))",
+      "name": "cart_revisions_number_ck",
+      "entityType": "checks",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "value": "\"status\" in ('OPEN', 'CLOSED')",
+      "name": "cart_revisions_status_ck",
+      "entityType": "checks",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "value": "octet_length(\"intended_context\"::text) between 2 and 16384",
+      "name": "carts_context_size_ck",
+      "entityType": "checks",
+      "schema": "commerce_cart",
+      "table": "carts"
+    },
+    {
+      "value": "\"candidate_hash\" ~ '^[a-f0-9]{64}$' and \"candidate_hash\" = encode(sha256(convert_to(\"material_json\", 'UTF8')), 'hex')",
+      "name": "final_cart_candidates_digest_ck",
+      "entityType": "checks",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "value": "octet_length(\"material_json\") between 2 and 2097152 and \"material_json\"::jsonb = \"encoded_candidate\" - 'candidateHash' and (\"encoded_candidate\"->>'candidateHash') is not distinct from \"candidate_hash\"",
+      "name": "final_cart_candidates_material_ck",
+      "entityType": "checks",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "value": "\"audience\" = 'commerce-cart'",
+      "name": "cart_gateway_assertion_redemptions_audience_ck",
+      "entityType": "checks",
+      "schema": "commerce_cart",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "value": "\"status\" in ('OPEN', 'CLOSED')",
+      "name": "cart_population_versions_status_ck",
+      "entityType": "checks",
+      "schema": "commerce_cart",
+      "table": "population_cart_versions"
+    },
+    {
+      "value": "(\"generation\" = 0 and \"previous_history_id\" is null and \"legal_entity_id\" is null and \"cart_id\" is null and \"revision_id\" is null) or (\"generation\" > 0 and \"previous_history_id\" is not null and \"legal_entity_id\" is not null and \"cart_id\" is not null and \"revision_id\" is not null)",
+      "name": "cart_population_history_shape_ck",
+      "entityType": "checks",
+      "schema": "commerce_cart",
+      "table": "population_generation_history"
+    },
+    {
+      "value": "\"generation\" >= 0",
+      "name": "cart_population_roots_generation_ck",
+      "entityType": "checks",
+      "schema": "commerce_cart",
+      "table": "population_roots"
+    },
+    {
+      "value": "\"position\" >= 0",
+      "name": "cart_population_selections_position_ck",
+      "entityType": "checks",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "value": "octet_length(\"selection\"::text) between 2 and 65536",
+      "name": "cart_population_selections_size_ck",
+      "entityType": "checks",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"cart_revision_selections\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"cart_revision_selections\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "cart_revision_selections_scope_select",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_cart\".\"cart_revision_selections\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"cart_revision_selections\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "cart_revision_selections_scope_insert",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"cart_revision_selections\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"cart_revision_selections\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_cart\".\"cart_revision_selections\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"cart_revision_selections\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "cart_revision_selections_scope_update",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"cart_revision_selections\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"cart_revision_selections\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "cart_revision_selections_scope_delete",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "cart_revision_selections"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"cart_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"cart_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "cart_revisions_scope_select",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_cart\".\"cart_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"cart_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "cart_revisions_scope_insert",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"cart_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"cart_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_cart\".\"cart_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"cart_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "cart_revisions_scope_update",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"cart_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"cart_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "cart_revisions_scope_delete",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "cart_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"carts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"carts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "carts_scope_select",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "carts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_cart\".\"carts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"carts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "carts_scope_insert",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "carts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"carts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"carts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_cart\".\"carts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"carts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "carts_scope_update",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "carts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"carts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"carts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "carts_scope_delete",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "carts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"final_cart_candidates\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"final_cart_candidates\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "final_cart_candidates_scope_select",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_cart\".\"final_cart_candidates\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"final_cart_candidates\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "final_cart_candidates_scope_insert",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"final_cart_candidates\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"final_cart_candidates\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_cart\".\"final_cart_candidates\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"final_cart_candidates\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "final_cart_candidates_scope_update",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"final_cart_candidates\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"final_cart_candidates\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "final_cart_candidates_scope_delete",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "final_cart_candidates"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"population_cart_heads\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "cart_population_heads_scope_select",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "population_cart_heads"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_cart\".\"population_cart_heads\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"population_cart_heads\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "cart_population_heads_scope_insert",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "population_cart_heads"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"population_cart_heads\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"population_cart_heads\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_cart\".\"population_cart_heads\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"population_cart_heads\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "cart_population_heads_scope_update",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "population_cart_heads"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"population_cart_heads\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"population_cart_heads\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "cart_population_heads_scope_delete",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "population_cart_heads"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"population_cart_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "cart_population_versions_scope_select",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "population_cart_versions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_cart\".\"population_cart_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"population_cart_versions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "cart_population_versions_scope_insert",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "population_cart_versions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"population_cart_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"population_cart_versions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_cart\".\"population_cart_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"population_cart_versions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "cart_population_versions_scope_update",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "population_cart_versions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"population_cart_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"population_cart_versions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "cart_population_versions_scope_delete",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "population_cart_versions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"population_generation_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "cart_population_history_select",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "population_generation_history"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_cart\".\"population_generation_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and ((\"commerce_cart\".\"population_generation_history\".\"generation\" = 0 and nullif(current_setting('ontos.legal_entity_id', true), '') is null) or (\"commerce_cart\".\"population_generation_history\".\"generation\" > 0 and \"commerce_cart\".\"population_generation_history\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid))",
+      "name": "cart_population_history_insert",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "population_generation_history"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"population_roots\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "cart_population_roots_select",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "population_roots"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_cart\".\"population_roots\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and nullif(current_setting('ontos.legal_entity_id', true), '') is null and \"commerce_cart\".\"population_roots\".\"generation\" = 0",
+      "name": "cart_population_roots_insert",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "population_roots"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"population_roots\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and nullif(current_setting('ontos.legal_entity_id', true), '') is not null",
+      "withCheck": "\"commerce_cart\".\"population_roots\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and nullif(current_setting('ontos.legal_entity_id', true), '') is not null",
+      "name": "cart_population_roots_update",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "population_roots"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"population_selection_refs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "cart_population_selections_scope_select",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_cart\".\"population_selection_refs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"population_selection_refs\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "cart_population_selections_scope_insert",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"population_selection_refs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"population_selection_refs\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_cart\".\"population_selection_refs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"population_selection_refs\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "cart_population_selections_scope_update",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_cart\".\"population_selection_refs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_cart\".\"population_selection_refs\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "cart_population_selections_scope_delete",
+      "entityType": "policies",
+      "schema": "commerce_cart",
+      "table": "population_selection_refs"
+    }
+  ],
+  "renames": []
+}

@@ -20,7 +20,11 @@ import { RecordsApi } from './apis/records.ts';
 export type PropertyLeasingMarker = MicroVerticalBuildMarker;
 export type PropertyLeasingReadiness = MicroVerticalReadiness;
 export type OperationContext = MicroVerticalOperationContext;
-export const propertyLeasingMarkerSchema = Schema.Struct({ ...MicroVerticalBuildMarkerSchema.fields });
+export const propertyLeasingMarkerSchema = Schema.Struct({
+  ...MicroVerticalBuildMarkerSchema.fields,
+  kind: Schema.Literal('microvertical-delivery-unit'),
+  schemaVersion: Schema.Literal(1),
+});
 export const propertyLeasingReadinessSchema = Schema.Struct({
   ...MicroVerticalReadinessSchema.fields,
   marker: propertyLeasingMarkerSchema,

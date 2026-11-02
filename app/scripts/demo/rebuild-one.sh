@@ -71,6 +71,9 @@ LOCK_ROOT="$SCRATCH/demo-build-locks"
 VERTICALS_FILE="$SCRATCH/demo-verticals"
 COMPOSITION_PORT="${DEMO_COMPOSITION_PORT:-3041}"
 mkdir -p "$LOG_DIR" "$PID_DIR" "$STAMP_DIR" "$STUB_DIR" "$LOCK_ROOT"
+# The composition publisher retains native legacy completion evidence for every authority transition.
+export ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY="$SCRATCH/legacy-completion-evidence"
+install -d -m 700 "$ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY"
 export TMPDIR="${TMPDIR:-/Volumes/TraceDecayKingston/techsio-demo/tmp}"
 export DEMO_DISABLE_TS_CHECKER="${DEMO_DISABLE_TS_CHECKER:-1}"
 export pnpm_config_verify_deps_before_run=false

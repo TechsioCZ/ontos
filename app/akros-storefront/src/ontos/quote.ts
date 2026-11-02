@@ -5,6 +5,7 @@ import { purchaseConstraints } from "./purchase-constraints";
 import type { CartState, CartLine } from "@/features/cart/cart-state";
 import { createCatalog } from "./catalog-model";
 import { readCartProducts } from "./catalog-server";
+import { getActiveMarket } from "./active-market";
 import { callAction } from "./gateway";
 export function assertCart(value: unknown): asserts value is CartState {
   const cart = value as CartState;
@@ -45,6 +46,8 @@ interface QuoteLineIssue {
     | "INSUFFICIENT_STOCK"
     | "MINIMUM_QUANTITY"
     | "PACKAGE_QUANTITY"
+    | "NOT_OFFERED_IN_MARKET"
+    | "MARKET_UNAVAILABLE"
     | "OWNER_REJECTED";
   message: string;
 }
@@ -78,6 +81,9 @@ const ownerCodes = new Set<QuoteLineIssue["code"]>([
   "INSUFFICIENT_STOCK",
   "MINIMUM_QUANTITY",
   "PACKAGE_QUANTITY",
+  // Market orders: the product is not sold in this market, or the market has no offer configured.
+  "NOT_OFFERED_IN_MARKET",
+  "MARKET_UNAVAILABLE",
 ]);
 
 interface OwnerDryRun {
@@ -94,7 +100,12 @@ interface OwnerDryRun {
  * Asks OntOS to validate the exact cart without saving (PlaceStorefrontOrder dryRun): the owner checks
  * availability, quantities and prices and returns its own totals incl. VAT. Nothing is stored.
  */
-async function ownerDryRun(cart: CartState, revision: number, deliveryId: unknown) {
+async function ownerDryRun(
+  cart: CartState,
+  revision: number,
+  deliveryId: unknown,
+  marketId: string | undefined,
+) {
   const method = ownerShippingMethod(deliveryId);
   const lines = cart.lines.map((l) => ({
     productId: l.productId,
@@ -103,7 +114,7 @@ async function ownerDryRun(cart: CartState, revision: number, deliveryId: unknow
     expectedUnitPriceMinor: l.priceMinor,
   }));
   const digest = createHash("sha256")
-    .update(JSON.stringify({ lines, method, revision }))
+    .update(JSON.stringify({ lines, method, revision, marketId }))
     .digest("hex")
     .slice(0, 32);
   const command = {
@@ -112,6 +123,8 @@ async function ownerDryRun(cart: CartState, revision: number, deliveryId: unknow
     clientRequestId: `akros-quote-${digest}`,
     shippingMethod: method ?? "OSOBNI_ODBER",
     lines,
+    // The owner checks the market offer and prices in the market currency.
+    ...(marketId === undefined ? {} : { marketId }),
   };
   const result = (await callAction(
     "merchandise",
@@ -127,6 +140,8 @@ async function ownerDryRun(cart: CartState, revision: number, deliveryId: unknow
 }
 
 export async function quoteCart(cart: CartState, deliveryId?: unknown): Promise<CartQuote> {
+  const market = await getActiveMarket();
+  // Only products offered in this market are returned, priced in its currency.
   const snapshot = await readCartProducts(cart.lines);
   const model = createCatalog(snapshot, { categories: [] });
   const lineIssues: QuoteLineIssue[] = [];
@@ -144,7 +159,7 @@ export async function quoteCart(cart: CartState, deliveryId?: unknown): Promise<
       lineIssues.push({
         ...ids,
         code: "NOT_AVAILABLE",
-        message: `${fallbackLabel}: zboží již není v nabídce.`,
+        message: `${fallbackLabel}: zboží již není v nabídce tohoto trhu.`,
       });
       return line;
     }
@@ -210,7 +225,12 @@ export async function quoteCart(cart: CartState, deliveryId?: unknown): Promise<
   let totals: QuoteTotals | null = null;
   if (!priceChanged && !lineIssues.length) {
     // Same lines the order will send; OntOS has the final word on availability and totals.
-    const { order, shippingIncluded } = await ownerDryRun(cart, snapshot.revision, deliveryId);
+    const { order, shippingIncluded } = await ownerDryRun(
+      cart,
+      snapshot.revision,
+      deliveryId,
+      market.marketId,
+    );
     for (const issue of order.issues ?? []) {
       if (typeof issue.message !== "string" || !issue.message || issue.message.length > 300)
         continue;

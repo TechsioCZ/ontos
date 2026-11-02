@@ -1,7 +1,10 @@
+"use client";
+
 import { Icon } from "@techsio/ui-kit/atoms/icon";
-import { cs } from "@/i18n/cs";
+import { useDictionary } from "@/ontos/market-context";
 
 export function CartServices() {
+  const cs = useDictionary();
   return (
     <div
       data-akros-cart-services

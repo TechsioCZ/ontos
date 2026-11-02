@@ -5,7 +5,7 @@ import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { VerticalNavigation } from "@techsio/ui-kit/molecules/vertical-navigation";
 import StoreLink from "@/components/store-link";
 
-import { cs } from "@/i18n/cs";
+import { useDictionary } from "@/ontos/market-context";
 import type { CatalogCategory } from "@/ontos/catalog-types";
 
 interface CategoryNavigationItemProps {
@@ -37,6 +37,7 @@ function SpecialCategoriesNavigation({
   navigationId: string;
   expandRoots: boolean;
 }) {
+  const cs = useDictionary();
   return (
     <VerticalNavigation.Branch defaultOpen={expandRoots} id={`${navigationId}-special-categories`}>
       <VerticalNavigation.Row data-akros-depth={0}>
@@ -155,6 +156,7 @@ export function CatalogNavigation({
   navigationId: string;
   expandRoots?: boolean;
 }) {
+  const cs = useDictionary();
   const activeCategory = activeSlug
     ? categories.find((category) => category.slug === activeSlug)
     : undefined;
@@ -198,6 +200,7 @@ export function CatalogNavigation({
 }
 
 export function CatalogHelpNavigation() {
+  const cs = useDictionary();
   return (
     <VerticalNavigation
       aria-label={cs.catalog.recommendations}
@@ -226,6 +229,7 @@ export function CatalogSidebar({
   activeSlug?: string;
   categories: CatalogCategory[];
 }) {
+  const cs = useDictionary();
   return (
     <aside
       className="akros-sidebar flex max-h-(--akros-sidebar-max-height) flex-col gap-(--dimension-24)"

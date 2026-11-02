@@ -1073,11 +1073,18 @@ it.live(
         key: `${GENERATED_OWNER.moduleId}:${GENERATED_OWNER.resourceType}:${collidingResourceId}`,
       },
     ]);
+    const generatedModule = catalog.composition.modules.find(
+      ({ deployment }) => deployment.appId === GENERATED_OWNER.appId,
+    );
+    if (generatedModule === undefined) {
+      throw new Error('Generated owner release is not admitted');
+    }
     expect(
       yield* gateway.search.search({
         appId: GENERATED_OWNER.appId,
         authorization: yield* issueAuthorization(principalA1),
         correlationId: randomUUID(),
+        module: generatedModule,
         query: 'searchable',
         searchKey: `${GENERATED_OWNER.moduleId}.records`,
       }),

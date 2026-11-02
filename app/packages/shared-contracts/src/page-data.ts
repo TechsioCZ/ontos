@@ -75,6 +75,14 @@ export interface PageData<I, A, E> {
 /** Window event the Shell dispatches after every settled module write; every store marks all entries stale. */
 export const moduleWriteEvent = 'ontos:module-write';
 
+/**
+ * Window event the Shell dispatches when the live channel reports a change committed elsewhere (another session,
+ * an agent, an Outbox Worker), or after it may have missed changes (reconnect, tab shown again). Stores react exactly
+ * as to a write: every entry becomes stale and only what mounted readers show revalidates. Unlike a write it does not
+ * restart the Shell's menu prefetch, so a busy tenant never multiplies preload traffic.
+ */
+export const moduleChangeEvent = 'ontos:module-change';
+
 /** A ready value this young is served without loading again. */
 const FRESH_FOR = '20 seconds';
 
@@ -291,7 +299,8 @@ export const definePageData = <I, A, E, R>(options: {
         const entry = entries.get(key);
         if (
           entry !== undefined &&
-          (loadingKeys.has(key) || entry.snapshot.state === 'ready') &&
+          // A shown failure retries too: the change may be the recovery the reader is waiting for.
+          (loadingKeys.has(key) || entry.snapshot.state !== 'pending') &&
           entry.stale &&
           Option.isNone(entry.inFlight)
         ) {
@@ -312,6 +321,7 @@ export const definePageData = <I, A, E, R>(options: {
       if (!MutableRef.get(writeListenerRegistered)) {
         MutableRef.set(writeListenerRegistered, true);
         globalThis.addEventListener(moduleWriteEvent, onModuleWrite);
+        globalThis.addEventListener(moduleChangeEvent, onModuleWrite);
       }
     }
     const key = options.key(input);

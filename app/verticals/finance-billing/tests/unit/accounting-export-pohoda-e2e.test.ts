@@ -17,7 +17,11 @@ const trustedReferences = (
   issuerName: string,
   partners: Readonly<Record<string, ExportPartnerReference>> = {},
 ): FinanceValidators => ({
-  exportReferences: Effect.succeed({ issuerName, partners: new Map(Object.entries(partners)) }),
+  exportReferences: Effect.succeed({
+    authorName: 'Jana Účetní',
+    issuerName,
+    partners: new Map(Object.entries(partners)),
+  }),
   invoice: () => Effect.void,
 });
 const counterpartyRef = {
@@ -212,8 +216,9 @@ it.layer(Layer.merge(NodeServices.layer, NodeCrypto.layer))('S08 POHODA XML hand
       expect(content).toContain('<typ:company>Nájempark</typ:company>');
       expect(content).not.toContain('Obchodní firma');
       expect(content).not.toContain('12345678');
-      // The file names the authenticated principal, not the readable label the browser sent.
-      expect(content).toContain('vytvořil uživatel OntOS principal-1');
+      // The file names the authenticated principal by its Core display name, not the label the browser sent.
+      expect(content).toContain('vytvořil Jana Účetní');
+      expect(content).not.toContain('principal-1');
       expect(content).not.toContain('ucetni@demo.ontos');
       expect(content).toContain('https://shell.example.test/cs/finance?resourceId=fv-1');
       expect(content).not.toContain('untrusted.example.test');

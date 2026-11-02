@@ -33,6 +33,11 @@ export interface RunOutboxCycleInput<Registration extends AnyOutboxWorkerRegistr
   readonly claimOwner: string;
   readonly compositionRevision: string;
   readonly maxDeliveries?: number;
+  /**
+   * Fixed timestamp for deterministic tests. Every claim and success/failure settlement in the
+   * cycle uses this value, without advancing with the Effect Clock. Omit in production so each
+   * operation reads fresh Effect time.
+   */
   readonly now?: Date;
   readonly registrations: readonly Registration[];
   readonly subscriptions: readonly OutboxWorkerSubscription[];

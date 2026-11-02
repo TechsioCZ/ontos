@@ -22,6 +22,7 @@ import { InventoryBackendIdSchema } from '../../shared/domain/inventory-backend-
 import { ActionInvocationIdSchema, LegalEntityIdSchema } from '../../shared/domain/physical-stock-effect.ts';
 import { ReservationAuthorityEffectIdSchema } from '../../shared/domain/reservation-issuer-failure-fields.ts';
 import {
+  ReleasedReservationEffectSchema,
   ReservationReleaseEffectIdSchema,
   ReservationReleaseMutationIdSchema,
 } from '../../shared/domain/inventory-reservation-release.ts';
@@ -292,7 +293,7 @@ const makeHarness = (
       orderTruth: { read: () => Effect.succeed(closedTruth) },
       release: releaseService,
     });
-    return { cleanupCalls, current, releaseCalls, service };
+    return { cleanupCalls, current, releaseCalls, releasePersistence, service };
   });
 
 describe('Inventory pre-commit compensation', () => {
@@ -361,6 +362,46 @@ describe('Inventory pre-commit compensation', () => {
       expect(yield* Ref.get(harness.releaseCalls)).toHaveLength(1);
       expect(yield* Ref.get(harness.cleanupCalls)).toHaveLength(0);
     }),
+  );
+
+  it.effect('returns both truthful completed whole-release proofs on compensation replay', () =>
+    Effect.forEach(
+      [
+        { _tag: 'ABSENT_PROVEN', evidenceRef: 'protection:absent', observedAt: timestamp },
+        { _tag: 'ESTABLISHED', establishedAt: timestamp, evidenceRef: 'protection:original', observedAt: timestamp },
+      ] as const,
+      (protection) =>
+        Effect.gen(function* replayCompletedRelease() {
+          const harness = yield* makeHarness(establishedEffect());
+          const pending = yield* harness.service.compensate(payload, context);
+          expect(pending.result.outcome).toBe('RESERVATION_RELEASE');
+          const current = yield* harness.releasePersistence.read(releaseEffectId);
+          const original = yield* Effect.fromOption(current);
+          const completed = yield* Schema.decodeUnknownEffect(ReleasedReservationEffectSchema)({
+            _tag: 'RELEASED',
+            activeAllocations: [],
+            authorityIssuer: {
+              backend: 'external_business_system',
+              backendId: request.authority.selection.backendId,
+              origin: 'EXTERNAL_BUSINESS_SYSTEM',
+            },
+            ownerEvidenceRef: 'original-backend:whole-release',
+            releasedAt: timestamp,
+            releaseOutcome: 'RELEASED',
+            request: original.request,
+            revision: 2,
+            safelyReusable: true,
+            safeReleaseProof: { order: closedTruth, protection },
+          });
+          yield* harness.releasePersistence.save(original, completed);
+          const replay = yield* harness.service.compensate(payload, context);
+          expect(replay.result).toMatchObject({ release: { effect: completed, outcome: 'ALREADY_RELEASED' } });
+          expect(replay.releaseDispatchRequested).toBe(false);
+          expect(yield* Ref.get(harness.releaseCalls)).toHaveLength(1);
+          expect(yield* Ref.get(harness.cleanupCalls)).toHaveLength(0);
+        }),
+      { concurrency: 1 },
+    ),
   );
 
   it.effect('compensates an exact partial hold once under its original effect and authority', () =>

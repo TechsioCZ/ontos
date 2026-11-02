@@ -90,8 +90,9 @@ zerops:
         ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
-        - sudo apk add --no-cache curl git libstdc++ zstd
+        - sudo apk add --no-cache curl git libstdc++ unzip zstd
         - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
+        - sh /build/source/app/scripts/install-zerops-bun.sh 1.4.4
       buildCommands:
         # Zerops restores the build cache (and unpacks a pushed package) as root; the build user must own the tree, and Git
         # must trust it, or every release identity reads as `workspace`.
@@ -102,6 +103,7 @@ zerops:
         - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
         - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" sh scripts/zerops/build-app.sh
         - mkdir -p 'app/.zerops/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/node/'
+        - mkdir -p 'app/.zerops/bun' && cp -a "$HOME/.local/bun-1.4.4/bin" 'app/.zerops/bun/'
       deployFiles:
         - app/
       # Unchanged units reuse their last build (scripts/zerops/build-app.sh); Rspack and TS-Go keep their caches.
@@ -132,10 +134,16 @@ zerops:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         EMAIL_PROVIDER: smtp
         NODE_ENV: production
-        # One container serves every owner, each with several pools, and a deploy runs two containers side by side;
-        # small pools that drop idle connections keep both inside db18's 150 connection slots.
+        # YAML variables are read-only in Zerops. Keep ONTOS_SHELL_RUNTIME as an editable service override.
+        # Both binaries ship, so rollback is ONTOS_SHELL_RUNTIME=node plus a restart, without a rebuild.
+        ONTOS_SHELL_RUNTIME_DEFAULT: node
+        # Private, container-local directory where composition publication retains its legacy completion evidence.
+        ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY: /tmp/ontos-legacy-completion-evidence
+        # Every owner in a process shares one pool per database configuration and role. Small pools
+        # keep the old and new containers inside db18's 150 slots during deployment.
         ONTOS_DATABASE_POOL_IDLE_TIMEOUT_MILLIS: '10000'
-        ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '4'
+        ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '6'
+        ONTOS_DATABASE_POOL_SHARED: 'true'
         ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
         ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
         PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:${migrator_PARTY_REGISTRY_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}

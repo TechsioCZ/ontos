@@ -2,12 +2,15 @@
 // @ontos-action-boundary-owner privacy
 // @ontos-action-boundary-audience privacy
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
-import { staffAuthenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/staff-authentication-namespace';
+import { authenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/external-identity-admission';
+import { AuthenticationNamespaceRegistrationSchema } from '@app/core-runtime/auth/external-identity-contracts';
+import { staffAuthenticationNamespaceRegistration } from '@app/core-runtime/auth/staff-authentication-namespace';
+import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '@app/commerce-customer-context/portal-auth/contracts';
 import { makeMicroverticalHttpPrincipalAuthentication } from '@app/core-runtime/http/principal-authentication';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { GatewayPrincipalVerifierLive, bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import type { GatewayPrincipalVerificationWithRedemptionOptions } from '@app/gateway-principal-verifier/server';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Schema } from 'effect';
 import type { Redacted } from 'effect';
 
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
@@ -32,11 +35,33 @@ export type {
 } from '@app/gateway-principal-verifier/server';
 
 export const ACTION_GATEWAY_AUDIENCE = 'privacy' as const;
+
+/** Owner-local trusted receiving configuration; gateway assertions keep their actual namespace.
+ * Commerce provider admission remains upstream, matching the canonical CCC receiving registry.
+ * This registry grants no business permission and accepts only this deployment's audience.
+ */
+export const PrivacyAuthenticationNamespaceRegistryLive = authenticationNamespaceRegistryLayer(
+  Effect.all(
+    [
+      Schema.decodeEffect(AuthenticationNamespaceRegistrationSchema)({
+        allowedAudiences: [ACTION_GATEWAY_AUDIENCE],
+        authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+        provider: 'commerce-portal-better-auth',
+        requiresOperationAdmission: false,
+        reservationPrincipalKind: 'human',
+        subjectTypes: ['user'],
+        trustedAttesterPrincipalIds: [],
+      }),
+      staffAuthenticationNamespaceRegistration([ACTION_GATEWAY_AUDIENCE]),
+    ],
+    { concurrency: 2 },
+  ),
+);
 export { GatewayPrincipalVerifierConfiguration as ActionPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 type ActionPrincipalVerifierLayers =
   | typeof GatewayPrincipalVerifierLive
   | typeof ActiveApplicationCompositionConfigLive
-  | ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>;
+  | typeof PrivacyAuthenticationNamespaceRegistryLive;
 export const ActionPrincipalVerifierLive: Layer.Layer<
   Layer.Success<ActionPrincipalVerifierLayers>,
   Layer.Error<ActionPrincipalVerifierLayers>,
@@ -44,7 +69,7 @@ export const ActionPrincipalVerifierLive: Layer.Layer<
 > = Layer.mergeAll(
   GatewayPrincipalVerifierLive,
   ActiveApplicationCompositionConfigLive,
-  staffAuthenticationNamespaceRegistryLayer([ACTION_GATEWAY_AUDIENCE]),
+  PrivacyAuthenticationNamespaceRegistryLive,
 );
 export type ActionPrincipalVerificationOptions = GatewayPrincipalVerificationWithRedemptionOptions;
 

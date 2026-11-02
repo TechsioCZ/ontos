@@ -1,18 +1,33 @@
 import { Match, Schema } from 'effect';
 
 import {
+  CatalogSelectionRevisionSchema,
+  CatalogSelectionSchema,
+  SetCompositionSelectionRevisionSchema,
+  VariantSelectionRevisionSchema,
+} from '@app/catalog-selection-contracts/catalog-selection';
+import type { CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
+import { ProductRefSchema } from '../resources/product.ts';
+import {
   CatalogResourceRefSchema,
-  CatalogRevisionIdSchema,
   CatalogRevisionInstantSchema,
   CatalogRevisionNumberSchema,
 } from './catalog-revision-reference.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+
+export {
+  CatalogSelectionRevisionSchema,
+  CatalogSelectionSchema,
+  PackageDefinitionSelectionRevisionSchema,
+  ProductConfigurationSelectionSchema,
+  ProductSelectionRevisionSchema,
+  SetCompositionSelectionRevisionSchema,
+  VariantSelectionRevisionSchema,
+} from '@app/catalog-selection-contracts/catalog-selection';
+export type { CatalogSelection, CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
 
 const nonEmptyText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());
-const choiceKeySchema = nonEmptyText.pipe(Schema.brand('CatalogConfigurationChoiceKey'));
 const membershipAttestationIdSchema = nonEmptyText.pipe(Schema.brand('CatalogMembershipAttestationId'));
-const setComponentIdSchema = Schema.String.check(Schema.isUUID(), Schema.isTrimmed()).pipe(
+export const setComponentIdSchema = Schema.String.check(Schema.isUUID(), Schema.isTrimmed()).pipe(
   Schema.brand('SetComponentId'),
 );
 const packageDefinitionType = 'commerce.catalog.package-definition';
@@ -27,28 +42,11 @@ const attributeValueSetType = 'commerce.catalog.attribute-value-set';
 const productUnitRuleType = 'commerce.catalog.product-unit';
 const productCategoryType = 'commerce.catalog.product-category';
 
-/** An owner-issued business revision; no revision ID is invented when the owner issues only a sequence. */
-export const CatalogSelectionRevisionSchema = Schema.Struct({
-  resourceRef: CatalogResourceRefSchema,
-  revision: CatalogRevisionNumberSchema,
-  revisionId: Schema.optionalKey(CatalogRevisionIdSchema),
-});
-export type CatalogSelectionRevision = typeof CatalogSelectionRevisionSchema.Type;
-
-const revisionOf = (resourceType: string) =>
-  CatalogSelectionRevisionSchema.check(
-    Schema.makeFilter(({ resourceRef }) =>
-      resourceRef.resourceType === resourceType ? undefined : `Expected ${resourceType} revision`,
-    ),
-  );
-
-export const ProductSelectionRevisionSchema = revisionOf(productType);
-export const VariantSelectionRevisionSchema = revisionOf(variantType);
-const AttributeDefinitionSelectionRevisionSchema = revisionOf(attributeDefinitionType);
-const ConfigurationUnitSelectionRevisionSchema = revisionOf(configurationUnitType);
-export const PackageDefinitionSelectionRevisionSchema = revisionOf(packageDefinitionType);
-const ConfigurationDefinitionSelectionRevisionSchema = revisionOf(configurationDefinitionType);
-export const SetCompositionSelectionRevisionSchema = revisionOf(setCompositionType);
+const AttributeDefinitionSelectionRevisionSchema = CatalogSelectionRevisionSchema.check(
+  Schema.makeFilter(({ resourceRef }) =>
+    resourceRef.resourceType === attributeDefinitionType ? undefined : `Expected ${attributeDefinitionType} revision`,
+  ),
+);
 
 const sameResource = (
   left: { readonly resourceId: string; readonly tenantId: string },
@@ -71,74 +69,6 @@ const sameRef = (
     readonly tenantId: string;
   },
 ) => left.moduleId === right.moduleId && left.resourceType === right.resourceType && sameResource(left, right);
-
-/** A configuration is a complete value for one exact target, not a Configuration Resource. */
-export const ProductConfigurationSelectionSchema = Schema.Struct({
-  choices: Schema.Array(
-    Schema.Struct({
-      /** Only present when this choice independently depends on an Attribute Definition. */
-      attributeDefinition: Schema.optionalKey(AttributeDefinitionSelectionRevisionSchema),
-      choiceKey: choiceKeySchema,
-      unit: Schema.optionalKey(ConfigurationUnitSelectionRevisionSchema),
-      value: nonEmptyText,
-    }),
-  ),
-  definition: ConfigurationDefinitionSelectionRevisionSchema,
-  productRef: ProductRefSchema,
-  variantRef: VariantRefSchema,
-}).check(
-  Schema.makeFilter(({ choices }) =>
-    new Set(choices.map(({ choiceKey }) => choiceKey)).size === choices.length
-      ? undefined
-      : 'Configuration choice keys must be unique',
-  ),
-);
-
-/** Package quantity remains distinct from purchase-line Quantity. */
-const CatalogPackageOptionSelectionSchema = Schema.Struct({
-  contentRevision: PackageDefinitionSelectionRevisionSchema,
-  optionRef: CatalogResourceRefSchema,
-}).check(
-  Schema.makeFilter(({ contentRevision, optionRef }) =>
-    optionRef.resourceType === 'commerce.catalog.package-definition' &&
-    sameResource(optionRef, contentRevision.resourceRef)
-      ? undefined
-      : 'Package Option must identify its exact Package Definition content revision',
-  ),
-);
-
-/** Immutable requested product meaning. Parentage and completeness still require owner validation. */
-export const CatalogSelectionSchema = Schema.Struct({
-  configuration: Schema.optionalKey(ProductConfigurationSelectionSchema),
-  packageOption: Schema.optionalKey(CatalogPackageOptionSelectionSchema),
-  productRef: ProductRefSchema,
-  setComposition: Schema.optionalKey(SetCompositionSelectionRevisionSchema),
-  variantRef: VariantRefSchema,
-}).check(
-  Schema.makeFilter((selection) => {
-    const { tenantId } = selection.productRef;
-    const refs = [
-      selection.variantRef,
-      selection.packageOption?.optionRef,
-      selection.configuration?.definition.resourceRef,
-      selection.setComposition?.resourceRef,
-      ...(selection.configuration?.choices.flatMap((choice) => [
-        choice.attributeDefinition?.resourceRef,
-        choice.unit?.resourceRef,
-      ]) ?? []),
-    ];
-    if (!refs.every((ref) => ref === undefined || ref.tenantId === tenantId)) {
-      return 'Selection references must share one Tenant';
-    }
-    const { configuration } = selection;
-    return configuration === undefined ||
-      (sameRef(configuration.productRef, selection.productRef) &&
-        sameRef(configuration.variantRef, selection.variantRef))
-      ? undefined
-      : 'Configuration must target the exact selected Product and Variant';
-  }),
-);
-export type CatalogSelection = typeof CatalogSelectionSchema.Type;
 
 /** A line's Quantity is separate from its selected product meaning and package contents. */
 export const CatalogSelectionWithQuantitySchema = Schema.Struct({
@@ -200,7 +130,14 @@ const expectedBasisResourceTypes = (role: CatalogSelectionBasisRole): readonly s
     Match.exhaustive,
   );
 
+/** Product-specific allowance counters are value proofs, never Resource revisions. */
+const axisAllowanceProofSchema = Schema.Struct({
+  allowanceRevision: CatalogRevisionNumberSchema,
+  attributeDefinition: AttributeDefinitionSelectionRevisionSchema,
+});
+
 export const CatalogSelectionBasisSchema = Schema.Struct({
+  axisAllowances: Schema.optionalKey(Schema.Array(axisAllowanceProofSchema)),
   provenance: Schema.optionalKey(Schema.Literal('CATALOG_OWNER_CONFIRMED_UNTYPED_DECISION')),
   role: Schema.Literals([...CatalogSelectionBasisRoles]),
   source: CatalogSelectionRevisionSchema,
@@ -222,11 +159,25 @@ export const CatalogSelectionBasisSchema = Schema.Struct({
       ? `Basis role ${role} must name a ${expected.join(' or ')} Resource`
       : undefined;
   }),
-  Schema.makeFilter(({ provenance, role, subject }) => {
+  Schema.makeFilter(({ axisAllowances, role, source }) =>
+    axisAllowances === undefined ||
+    (role === 'VARIANT_AXIS' &&
+      source.resourceRef.moduleId === 'commerce.catalog' &&
+      new Set(axisAllowances.map((proof) => proof.attributeDefinition.resourceRef.resourceId)).size ===
+        axisAllowances.length &&
+      axisAllowances.every(
+        (proof) =>
+          proof.attributeDefinition.resourceRef.moduleId === source.resourceRef.moduleId &&
+          proof.attributeDefinition.resourceRef.tenantId === source.resourceRef.tenantId,
+      ))
+      ? undefined
+      : 'Axis allowance proofs require an owner Product axis source and distinct definitions in the same Tenant',
+  ),
+  Schema.makeFilter(({ provenance, role }) => {
     if (role === 'PRODUCT_TYPE_UNTYPED_DECISION') {
-      return provenance === 'CATALOG_OWNER_CONFIRMED_UNTYPED_DECISION' && subject === undefined
+      return provenance === 'CATALOG_OWNER_CONFIRMED_UNTYPED_DECISION'
         ? undefined
-        : 'Untyped Product Type proof requires exact owner decision provenance and no component subject';
+        : 'Untyped Product Type proof requires exact owner decision provenance';
     }
     return provenance === undefined ? undefined : 'Only an untyped Product Type decision may carry decision provenance';
   }),
@@ -237,6 +188,10 @@ export type CatalogSelectionBasis = typeof CatalogSelectionBasisSchema.Type;
 export const sameCatalogSelectionBasis = (left: CatalogSelectionBasis, right: CatalogSelectionBasis): boolean =>
   left.role === right.role &&
   left.provenance === right.provenance &&
+  (left.axisAllowances === undefined
+    ? right.axisAllowances === undefined
+    : right.axisAllowances !== undefined &&
+      Schema.toEquivalence(Schema.Array(axisAllowanceProofSchema))(left.axisAllowances, right.axisAllowances)) &&
   sameRef(left.source.resourceRef, right.source.resourceRef) &&
   left.source.revision === right.source.revision &&
   left.source.revisionId === right.source.revisionId &&

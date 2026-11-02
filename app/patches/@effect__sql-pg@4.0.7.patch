@@ -1,0 +1,155 @@
+diff --git a/dist/PgClient.d.ts b/dist/PgClient.d.ts
+index bed134d5b983018b973a5b04742b08724461eabe..b245ef840a27b5113ca57da74068988f629f9d58 100644
+--- a/dist/PgClient.d.ts
++++ b/dist/PgClient.d.ts
+@@ -1,3 +1,4 @@
++import type * as PgPool from "./PgPool.js";
+ import * as Config from "effect/Config";
+ import * as Context from "effect/Context";
+ import type * as Duration from "effect/Duration";
+@@ -40,6 +41,7 @@ export type TypeId = "~@effect/sql-pg/PgClient";
+  */
+ export interface PgClient extends Client.SqlClient {
+     readonly [TypeId]: TypeId;
++    readonly poolStatistics?: Effect.Effect<PgPool.PoolStatistics> | undefined
+     readonly config: PgClientConfig;
+     readonly json: (_: unknown) => Fragment;
+     /**
+diff --git a/dist/PgClient.js b/dist/PgClient.js
+index 6c7a96da4d0526b20b16e7d1b33d63aa2a342a6a..8ae4a6f8cab4ea49cbbd8f22e9cff9ea4cd3791c 100644
+--- a/dist/PgClient.js
++++ b/dist/PgClient.js
+@@ -39,6 +39,7 @@ export const make = options => Effect.flatMap(PgPool.make(options), pool => make
+   borrower: f => pool.use(connection => f(makeConnection(connection))),
+   transactionAcquirer: Effect.map(pool.reserve, makeConnection),
+   listenAcquirer: pool.reserve,
++  poolStatistics: pool.statistics,
+   config: options
+ }));
+ /**
+@@ -101,6 +102,7 @@ const makeImpl = /*#__PURE__*/Effect.fnUntraced(function* (options) {
+   }), {
+     [TypeId]: TypeId,
+     config,
++    poolStatistics: options.poolStatistics,
+     json: _ => Statement.fragment([PgJson(_)]),
+     listen,
+     notify: (channel, payload) => {
+diff --git a/dist/PgPool.d.ts b/dist/PgPool.d.ts
+index 6e1a884bc250cd0e34729d45043a5614bcf2bef1..901122a565fb54e88c11a9e164f33668fc38aedd 100644
+--- a/dist/PgPool.d.ts
++++ b/dist/PgPool.d.ts
+@@ -68,8 +68,16 @@ export interface Config extends PgConnection.Config {
+  * @category models
+  * @since 4.0.0
+  */
++export interface PoolStatistics {
++  readonly total: number
++  readonly idle: number
++  readonly waiting: number
++  readonly inUse: number
++}
++
+ export interface PgPool {
+     readonly [TypeId]: TypeId;
++    readonly statistics: Effect.Effect<PoolStatistics>;
+     readonly config: Config;
+     /**
+      * Checks out a session until the scope closes. Without multiplexing the
+diff --git a/dist/PgPool.js b/dist/PgPool.js
+index 4ffd4d48142b2c080a4fa3771b27eac04d8c3096..cf8605360fb3ee12e682d71167aaa1772d1036a1 100644
+--- a/dist/PgPool.js
++++ b/dist/PgPool.js
+@@ -179,6 +179,17 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (options) {
+   const use = f => Effect.suspend(() => connectionTTL === undefined && acquireTimeout === undefined && deadConnections.size === 0 ? Pool.use(pool, connection => connects.has(connection) ? Effect.andThen(reportConnect(connection), f(connection)) : f(connection)) : Effect.scoped(Effect.flatMap(get, f)));
+   const pgPool = {
+     [TypeId]: TypeId,
++    statistics: Effect.sync(() => {
++      let total = 0
++      let idle = 0
++      for (const item of pool.state.items) {
++        if (Exit.isSuccess(item.exit) && !pool.state.invalidated.has(item)) {
++          total++
++          if (item.refCount === 0) idle++
++        }
++      }
++      return { total, idle, waiting: pool.state.waiters.size, inUse: total - idle }
++    }),
+     config: options,
+     get,
+     reserve,
+diff --git a/src/PgClient.ts b/src/PgClient.ts
+index a4137bada60d813ab77abd1fab49d318a82a078d..071aee59e97e2171064c5a52fe8cee5aded361ea 100644
+--- a/src/PgClient.ts
++++ b/src/PgClient.ts
+@@ -54,6 +54,7 @@ export type TypeId = "~@effect/sql-pg/PgClient"
+  */
+ export interface PgClient extends Client.SqlClient {
+   readonly [TypeId]: TypeId
++  readonly poolStatistics?: Effect.Effect<PgPool.PoolStatistics> | undefined
+   readonly config: PgClientConfig
+   readonly json: (_: unknown) => Fragment
+   /**
+@@ -223,6 +224,7 @@ export const make = <R = never>(
+       borrower: (f) => pool.use((connection) => f(makeConnection(connection))),
+       transactionAcquirer: Effect.map(pool.reserve, makeConnection),
+       listenAcquirer: pool.reserve,
++      poolStatistics: pool.statistics,
+       config: options
+     }))
+ 
+@@ -261,6 +263,7 @@ const makeImpl = Effect.fnUntraced(function*<R>(
+     readonly borrower?: Borrower | undefined
+     readonly transactionAcquirer: Effect.Effect<Connection, SqlError, Scope.Scope>
+     readonly listenAcquirer: Effect.Effect<PgConnection.PgConnection, SqlError, Scope.Scope>
++    readonly poolStatistics?: Effect.Effect<PgPool.PoolStatistics> | undefined
+     readonly config: PgClientConfig<R>
+   }
+ ): Effect.fn.Return<PgClient, SqlError, Scope.Scope | Reactivity.Reactivity | R> {
+@@ -321,6 +324,7 @@ const makeImpl = Effect.fnUntraced(function*<R>(
+     {
+       [TypeId]: TypeId as TypeId,
+       config,
++      poolStatistics: options.poolStatistics,
+       json: (_: unknown) => Statement.fragment([PgJson(_)]),
+       listen,
+       notify: (channel: string, payload: string) => {
+diff --git a/src/PgPool.ts b/src/PgPool.ts
+index c6014f0bfdd7b1b2181ba0ec9fc36df20624d675..bdd9072c31400391a2374ea8443fabb32748569c 100644
+--- a/src/PgPool.ts
++++ b/src/PgPool.ts
+@@ -88,8 +88,16 @@ export interface Config extends PgConnection.Config {
+  * @category models
+  * @since 4.0.0
+  */
++export interface PoolStatistics {
++  readonly total: number
++  readonly idle: number
++  readonly waiting: number
++  readonly inUse: number
++}
++
+ export interface PgPool {
+   readonly [TypeId]: TypeId
++  readonly statistics: Effect.Effect<PoolStatistics>
+   readonly config: Config
+   /**
+    * Checks out a session until the scope closes. Without multiplexing the
+@@ -331,6 +339,17 @@ export const make = Effect.fnUntraced(function*(options: Config): Effect.fn.Retu
+ 
+   const pgPool: PgPool = {
+     [TypeId]: TypeId,
++    statistics: Effect.sync(() => {
++      let total = 0
++      let idle = 0
++      for (const item of pool.state.items) {
++        if (Exit.isSuccess(item.exit) && !pool.state.invalidated.has(item)) {
++          total++
++          if (item.refCount === 0) idle++
++        }
++      }
++      return { total, idle, waiting: pool.state.waiters.size, inUse: total - idle }
++    }),
+     config: options,
+     get,
+     reserve,

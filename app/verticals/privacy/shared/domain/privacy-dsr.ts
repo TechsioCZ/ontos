@@ -138,7 +138,7 @@ export const DsrResolverAssignmentSchema = Schema.Struct({
 });
 export type DsrResolverAssignment = typeof DsrResolverAssignmentSchema.Type;
 
-export const DsrDeadlineSchema = Schema.Struct({
+const dsrDeadlineReceiptFields = {
   calendar: Schema.Literal('UTC_CALENDAR_MONTH'),
   caseRef: Ref,
   controllerRef: Ref,
@@ -148,8 +148,38 @@ export const DsrDeadlineSchema = Schema.Struct({
   policyVersion: Ref,
   receiptBasisRef: Ref,
   receivedAt: Timestamp,
+};
+
+/** Exact new writes never accept a historical record without obligation identity. */
+export const DsrDeadlineSchema = Schema.Struct({
+  ...dsrDeadlineReceiptFields,
+  obligationRef: Ref,
+  version: Schema.Literal(2),
 });
 export type DsrDeadline = typeof DsrDeadlineSchema.Type;
+
+/** Historical bytes remain unchanged; absence of identity is never resolved by inference. */
+export const LegacyDsrDeadlineSchema = Schema.Struct({
+  ...dsrDeadlineReceiptFields,
+  obligationRef: Schema.optionalKey(Schema.Never),
+  version: Schema.optionalKey(Schema.Never),
+});
+export const StoredDsrDeadlineSchema = Schema.Union([DsrDeadlineSchema, LegacyDsrDeadlineSchema]);
+export const DsrDeadlineHistorySchema = Schema.Union([
+  Schema.Struct({ ...DsrDeadlineSchema.fields, identityStatus: Schema.Literal('EXACT') }),
+  Schema.Struct({
+    ...dsrDeadlineReceiptFields,
+    identityStatus: Schema.Literal('LEGACY_UNRESOLVED'),
+    obligationRef: Schema.optionalKey(Schema.Never),
+    version: Schema.Literal(1),
+  }),
+]);
+export type DsrDeadlineHistory = typeof DsrDeadlineHistorySchema.Type;
+
+export const dsrDeadlineHistory = (deadline: typeof StoredDsrDeadlineSchema.Type): DsrDeadlineHistory =>
+  deadline.version === 2
+    ? { ...deadline, identityStatus: 'EXACT' }
+    : { ...deadline, identityStatus: 'LEGACY_UNRESOLVED', version: 1 };
 
 export const DsrSubstantiveDecisionSchema = Schema.Struct({
   /** Optional on legacy history; authoritative writes require all governance fields below. */
@@ -876,10 +906,11 @@ export const createDsrCase = (input: CreateDsrCaseInput): DsrCase => ({
 const addUtcCalendarMonths = (receivedAt: string, months: number): string =>
   DateTime.formatIso(DateTime.add(DateTime.makeUnsafe(receivedAt), { months }));
 
-/** Each Controller gets its own deadline; reassignment never changes the original receipt time. */
+/** Each exact Controller obligation retains its original receipt time through reassignment. */
 export const calculateDsrDeadline = (input: {
   readonly caseRef: string;
   readonly controllerRef: string;
+  readonly obligationRef: string;
   readonly originalReceivedAt: DsrCase['originalReceivedAt'];
   readonly policy: DsrDeadlinePolicy;
   readonly receiptBasisRef: string;
@@ -889,10 +920,12 @@ export const calculateDsrDeadline = (input: {
   controllerRef: input.controllerRef,
   deadlineAt: addUtcCalendarMonths(input.originalReceivedAt, input.policy.months),
   months: input.policy.months,
+  obligationRef: input.obligationRef,
   policyRef: input.policy.policyRef,
   policyVersion: input.policy.policyVersion,
   receiptBasisRef: input.receiptBasisRef,
   receivedAt: input.originalReceivedAt,
+  version: 2,
 });
 
 export const canCloseDsrCase = (
@@ -1122,25 +1155,31 @@ const validateDsrResponseOwnerExecutionObligation = (
   const matchingInventoryEntries = ownerInventory.entries.filter((entry) =>
     ownerInventoryEntryMatchesObligation(entry, obligation),
   );
-  if (matchingInventoryEntries.length !== 1) {
+  if (matchingInventoryEntries.length === 0) {
     return 'DSR Response owner-execution obligation is not exactly covered by authoritative Owner Inventory';
   }
-  const [inventoryEntry] = matchingInventoryEntries;
-  if (inventoryEntry === undefined) {
-    return 'DSR Response owner-execution obligation is not exactly covered by authoritative Owner Inventory';
+  const usedTaskRefs = new Set<string>();
+  for (const inventoryEntry of matchingInventoryEntries) {
+    const matchingTasks = tasks.filter(
+      (task) =>
+        task.caseRef === obligation.caseRef &&
+        task.controllerRef === obligation.controllerRef &&
+        task.ownerModuleId === inventoryEntry.ownerModuleId &&
+        task.right === obligation.right &&
+        sameDsrExactScopeRefs(task.exactScopeRefs, obligation.exactScopeRefs),
+    );
+    const [task] = matchingTasks;
+    if (
+      matchingTasks.length !== 1 ||
+      task === undefined ||
+      usedTaskRefs.has(task.taskRef) ||
+      !hasValidDsrOwnerTaskAuthorityProvenance(task)
+    ) {
+      return 'DSR Response owner-execution obligation is not exactly correlated to one trusted owner task';
+    }
+    usedTaskRefs.add(task.taskRef);
   }
-  const matchingTasks = tasks.filter(
-    (task) =>
-      task.caseRef === obligation.caseRef &&
-      task.controllerRef === obligation.controllerRef &&
-      task.ownerModuleId === inventoryEntry.ownerModuleId &&
-      task.right === obligation.right &&
-      sameDsrExactScopeRefs(task.exactScopeRefs, obligation.exactScopeRefs),
-  );
-  const [task] = matchingTasks;
-  return matchingTasks.length !== 1 || task === undefined || !hasValidDsrOwnerTaskAuthorityProvenance(task)
-    ? 'DSR Response owner-execution obligation is not exactly correlated to one trusted owner task'
-    : undefined;
+  return undefined;
 };
 
 const resolveDsrResponseDecisionCoverage = (

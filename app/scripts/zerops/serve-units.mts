@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { startProcessObservability } from './process-observability.mts';
+import { startProcessDatabasePools } from './process-database-pools.mts';
+import { startProcessCompositionValidation } from './process-composition-validation.mts';
 /**
  * Serves the named units in this one Node process, each unit's own Modern.js production server on its loopback
  * port. Every unit resolves its packages through the installed workspace, so their shared dependencies load once.
@@ -15,16 +18,14 @@ import { Argument, Command } from 'effect/cli';
 
 import { UNIT_ENTRY, readHostedUnits, workspaceRoot } from './hosted-units.mts';
 import type { HostedUnit } from './hosted-units.mts';
+import { ownerWarmState } from './owner-warm-state.mts';
 
 export class ServeUnitsError extends Schema.TaggedError<ServeUnitsError>()('ServeUnitsError', {
   reason: Schema.String,
 }) {}
 
 /** The generated entry's contract: `start(port)` resolves once the unit's server listens on that port. */
-// oxlint-disable-next-line effect-native/no-promise-shaped-port -- start(port) is the Modern.js entry's own Promise API, the driver boundary that the Effect code wraps. expires: 2027-03-31.
-type UnitStart = (port: number) => Promise<void>;
-
-const isUnitStart = (cause: unknown): cause is UnitStart => Predicate.isFunction(cause);
+const isUnitStart = (cause: unknown): cause is (port: number) => Promise<void> => Predicate.isFunction(cause);
 
 const UnitModuleSchema = Schema.Struct({ start: Schema.declare(isUnitStart) });
 
@@ -42,7 +43,8 @@ const loadUnitModule = (unit: HostedUnit) =>
     ),
   );
 
-const startUnitServer = (unit: HostedUnit, start: UnitStart) =>
+/** The Modern.js entry's Promise is converted here, at the driver edge; the rest stays Effect. */
+const startUnitServer = (unit: HostedUnit, start: (typeof UnitModuleSchema.Type)['start']) =>
   Effect.tryPromise({
     catch: () => new ServeUnitsError({ reason: `${unit.id} server failed to start` }),
     try: async () => {
@@ -52,6 +54,7 @@ const startUnitServer = (unit: HostedUnit, start: UnitStart) =>
 
 const serveUnit = (unit: HostedUnit) =>
   Effect.gen(function* startUnit() {
+    ownerWarmState.register(unit.id);
     const { start } = yield* loadUnitModule(unit);
     yield* startUnitServer(unit, start);
     return yield* Console.log(`[serve-units] ${unit.id} on 127.0.0.1:${String(unit.port)}`);
@@ -59,6 +62,7 @@ const serveUnit = (unit: HostedUnit) =>
 
 const command = Command.make('serve-units', { ids: Argument.String('app-id').pipe(Argument.atLeast(1)) }, ({ ids }) =>
   Effect.gen(function* serveUnits() {
+    yield* startProcessObservability(ids.length === 1 && ids[0] === 'shell-super-app' ? 'shell' : 'owners');
     const units = yield* readHostedUnits;
     const selected = ids.map((id) => units.find((unit) => unit.id === id));
     const unknown = ids.filter((_, index) => selected[index] === undefined);
@@ -73,8 +77,11 @@ const command = Command.make('serve-units', { ids: Argument.String('app-id').pip
 
 if (import.meta.main) {
   NodeRuntime.runMain(
-    Layer.build(
-      Layer.effectDiscard(Command.run({ version: '1.0.0' })(command)).pipe(Layer.provide(NodeServices.layer)),
+    Effect.andThen(
+      Effect.andThen(startProcessDatabasePools, startProcessCompositionValidation),
+      Layer.build(
+        Layer.effectDiscard(Command.run({ version: '1.0.0' })(command)).pipe(Layer.provide(NodeServices.layer)),
+      ),
     ).pipe(Effect.scoped),
   );
 }

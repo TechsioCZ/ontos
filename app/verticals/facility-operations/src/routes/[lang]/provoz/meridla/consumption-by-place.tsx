@@ -36,6 +36,10 @@ export const ConsumptionByPlace = ({
   const series = points.filter((point) => point.unit === unit);
   const placeLabel = places.find((option) => option.value === place)?.label ?? '';
   const counted = selected.filter((meter) => meter.medium === medium).length;
+  // The axis shows "zář 26"; the tooltip titles the column with the full month ("září 2026").
+  const monthTitles = new Map(
+    series.map((point) => [monthLabel(point.month, language), monthLongLabel(point.month, language)] as const),
+  );
 
   return (
     <SectionCard
@@ -91,9 +95,11 @@ export const ConsumptionByPlace = ({
                 month: monthLabel(point.month, language),
                 state: point.anomaly ? t(`${k}.detail.series.anomaly`) : t(`${k}.detail.series.normal`),
               }))}
+              formatCategory={(month) => monthTitles.get(String(month)) ?? String(month)}
               formatValue={(value) => formatQuantity(value, unit)}
               height={240}
               legend={series.some((point) => point.anomaly)}
+              locale={language}
               series="state"
               stacked
               type="bar"

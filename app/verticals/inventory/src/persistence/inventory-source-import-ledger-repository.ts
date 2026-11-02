@@ -1,5 +1,5 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, or } from 'drizzle-orm';
 import { Effect, Match, Option, Schema } from 'effect';
 
 import {
@@ -13,6 +13,12 @@ import type {
 import type { InventorySourceAssertionProposal } from '../../shared/domain/inventory-source-assertion.ts';
 import { inventoryStockPositions } from './stock-position-table.ts';
 import { inventorySourceImportLedger } from './inventory-source-import-ledger-table.ts';
+import { inventorySourceAssertions } from './inventory-source-assertion-table.ts';
+import { inventorySourceAssertionPersistenceForScope } from './inventory-source-assertion-repository.ts';
+import {
+  inventorySourceAssertionsClaimSameIdentityOrRevision,
+  inventorySourceAssertionsHaveSameMaterialContent,
+} from '../../shared/domain/inventory-source-ordering.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 
@@ -119,6 +125,57 @@ export const inventorySourceImportLedgerPersistenceForScope = (
     return yield* Effect.forEach((row: (typeof rows)[number]) => decodeEntry(row), { concurrency: 1 })(rows);
   });
 
+  const findPersistedSourceHistory: InventorySourceImportLedgerPersistence['findPersistedSourceHistory'] = Effect.fn(
+    'InventorySourceImportLedger.findPersistedSourceHistory',
+  )(function* findPersistedSourceHistory(proposal) {
+    if (proposal.positionRef.tenantId !== scope.tenantId) {
+      return [];
+    }
+    const rows = yield* transaction
+      .select({ entry: inventorySourceImportLedger })
+      .from(inventorySourceImportLedger)
+      .innerJoin(
+        inventorySourceAssertions,
+        and(
+          eq(inventorySourceAssertions.tenantId, inventorySourceImportLedger.tenantId),
+          eq(inventorySourceAssertions.assertionId, inventorySourceImportLedger.assertionId),
+        ),
+      )
+      .where(
+        and(
+          eq(inventorySourceImportLedger.tenantId, scope.tenantId),
+          eq(inventorySourceImportLedger.status, 'INDETERMINATE'),
+          or(
+            eq(inventorySourceImportLedger.assertionId, proposal.assertionId),
+            and(
+              eq(inventorySourceImportLedger.customerConfigurationId, proposal.customerConfigurationId),
+              eq(inventorySourceImportLedger.issuerBackendKind, proposal.issuer.backendKind),
+              eq(inventorySourceImportLedger.issuerBackendId, proposal.issuer.backendId),
+              eq(inventorySourceImportLedger.factMeaning, proposal.factMeaning),
+              eq(inventorySourceImportLedger.positionId, proposal.positionRef.resourceId),
+            ),
+          ),
+        ),
+      )
+      .pipe(Effect.mapError(unavailable));
+    const assertions = inventorySourceAssertionPersistenceForScope(transaction, scope);
+    const readPersistedEntry = Effect.fn('InventorySourceImportLedger.readPersistedEntry')(function* readPersistedEntry(
+      row: (typeof rows)[number],
+    ) {
+      const entry = yield* decodeEntry(row.entry);
+      if (!inventorySourceAssertionsClaimSameIdentityOrRevision(proposal, entry.proposal)) {
+        return Option.none<InventorySourceImportLedgerEntry>();
+      }
+      const stored = yield* assertions.findById(entry.proposal.assertionId).pipe(Effect.mapError(unavailable));
+      if (Option.isNone(stored) || !inventorySourceAssertionsHaveSameMaterialContent(stored.value, entry.proposal)) {
+        return yield* unavailable();
+      }
+      return Option.some(entry);
+    });
+    const entries = yield* Effect.all(rows.map(readPersistedEntry), { concurrency: 1 });
+    return entries.flatMap((entry) => Option.toArray(entry));
+  });
+
   const append: InventorySourceImportLedgerPersistence['append'] = Effect.fn('InventorySourceImportLedger.append')(
     function* append(entry) {
       if (
@@ -139,5 +196,5 @@ export const inventorySourceImportLedgerPersistenceForScope = (
     },
   );
 
-  return Object.freeze({ append, findByInvocationItem, lockAndReadAcceptedHistory });
+  return Object.freeze({ append, findByInvocationItem, findPersistedSourceHistory, lockAndReadAcceptedHistory });
 };

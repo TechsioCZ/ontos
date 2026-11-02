@@ -6,7 +6,7 @@ import {
   PartyContactPointDetailPolicyProblemSchema,
   executePartyContactPointDetail,
 } from '@app/party-registry/api/client';
-import { Effect, Schema } from 'effect';
+import { Clock, Context, DateTime, Effect, Schema } from 'effect';
 
 import type { AddSavedAddressPayload, UpdateSavedAddressPayload } from '../../shared/domain/address-actions.ts';
 import type { PostalAddress, SavedAddress } from '../../shared/domain/address-book.ts';
@@ -21,6 +21,13 @@ type PartyBackedAddressOrigin = Extract<
   { readonly kind: 'PARTY_BACKED' }
 >;
 type PartyContactPointDetailExecutor = typeof executePartyContactPointDetail;
+// The default transport is the published owner client. Composition may supply the same
+// typed client with its own credential acquisition, while all source validation stays here.
+export const PartyAddressSourceExecutor = Context.Reference<PartyContactPointDetailExecutor>(
+  '@app/commerce-customer-context/PartyAddressSourceExecutor',
+  { defaultValue: () => executePartyContactPointDetail },
+);
+
 type PartyContactPointDetailResponse = Effect.Success<ReturnType<PartyContactPointDetailExecutor>>;
 type PartyContactPointDetailFailure = Effect.Error<ReturnType<PartyContactPointDetailExecutor>>;
 type AddressBookDomainError = typeof AddressBookDomainErrorSchema.Type;
@@ -99,49 +106,6 @@ const sourceIdentityFailure = (
   return undefined;
 };
 
-const isCurrentPostalContactPoint = (contactPoint: PartyContactPointDetailResponse): boolean =>
-  contactPoint.current &&
-  contactPoint.state === 'ACTIVE' &&
-  contactPoint.validTo === null &&
-  contactPoint.value.type === 'ADDRESS';
-
-const postalSourceFailure = (
-  origin: PartyBackedAddressOrigin,
-  contactPoint: PartyContactPointDetailResponse,
-): AddressBookDomainError | undefined => {
-  if (!isCurrentPostalContactPoint(contactPoint)) {
-    return invalid('The Party-backed address source is not a Current postal address');
-  }
-  return contactPoint.revision === origin.sourceRevision
-    ? undefined
-    : invalid('The Party-backed address source revision is stale');
-};
-
-const validateCurrentPostalSource = (
-  payload: PartyBackedAddressPayload,
-  contactPoint: PartyContactPointDetailResponse,
-): Effect.Effect<void, AddressBookDomainError> => {
-  const { origin } = payload;
-  if (origin === undefined || origin.kind !== 'PARTY_BACKED') {
-    return Effect.void;
-  }
-  const failure = sourceIdentityFailure(payload, origin, contactPoint) ?? postalSourceFailure(origin, contactPoint);
-  return failure === undefined ? Effect.void : Effect.fail(failure);
-};
-
-export const partyBackedAddressSourceValidator =
-  (requestCorrelation: string, execute: PartyContactPointDetailExecutor = executePartyContactPointDetail) =>
-  (payload: PartyBackedAddressPayload): Effect.Effect<void, AddressBookDomainError> => {
-    const { origin } = payload;
-    if (origin === undefined || origin.kind !== 'PARTY_BACKED') {
-      return Effect.void;
-    }
-    return execute({ contactPointRef: origin.contactPointRef }, requestCorrelation).pipe(
-      Effect.mapError(validatorFailure),
-      Effect.flatMap((contactPoint) => validateCurrentPostalSource(payload, contactPoint)),
-    );
-  };
-
 const postalAddressFromContactPoint = (contactPoint: PartyContactPointDetailResponse): PostalAddress | undefined => {
   if (contactPoint.value.type !== 'ADDRESS') {
     return undefined;
@@ -164,6 +128,85 @@ const postalAddressFromContactPoint = (contactPoint: PartyContactPointDetailResp
   }
   return region === null ? requiredAddress : { ...requiredAddress, region };
 };
+
+const isCurrentPostalContactPoint = (contactPoint: PartyContactPointDetailResponse): boolean =>
+  contactPoint.current && contactPoint.state === 'ACTIVE' && contactPoint.value.type === 'ADDRESS';
+
+const postalSourceFailure = (
+  origin: PartyBackedAddressOrigin,
+  contactPoint: PartyContactPointDetailResponse,
+): AddressBookDomainError | undefined => {
+  if (!isCurrentPostalContactPoint(contactPoint) || postalAddressFromContactPoint(contactPoint) === undefined) {
+    return invalid('The Party-backed address source is not a Current postal address');
+  }
+  return contactPoint.revision === origin.sourceRevision
+    ? undefined
+    : invalid('The Party-backed address source revision is stale');
+};
+
+const validateCurrentPostalSource = (
+  payload: PartyBackedAddressPayload,
+  contactPoint: PartyContactPointDetailResponse,
+): Effect.Effect<void, AddressBookDomainError> => {
+  const { origin } = payload;
+  if (origin === undefined || origin.kind !== 'PARTY_BACKED') {
+    return Effect.void;
+  }
+  const failure = sourceIdentityFailure(payload, origin, contactPoint) ?? postalSourceFailure(origin, contactPoint);
+  return failure === undefined ? Effect.void : Effect.fail(failure);
+};
+
+/** Owner evidence is retained only for this invocation and expires at the first known End. */
+export const preparePartyAddressSource = (
+  payload: PartyBackedAddressPayload,
+  requestCorrelation: string,
+  execute?: PartyContactPointDetailExecutor,
+): Effect.Effect<{ readonly validFrom: number; readonly validUntil: number | null }, AddressBookDomainError> => {
+  const { origin } = payload;
+  if (origin === undefined || origin.kind !== 'PARTY_BACKED') {
+    return Effect.fail(invalid('A Party-backed address source is required'));
+  }
+  return (execute === undefined ? PartyAddressSourceExecutor : Effect.succeed(execute)).pipe(
+    Effect.flatMap((client) => client({ contactPointRef: origin.contactPointRef }, requestCorrelation)),
+    Effect.mapError(validatorFailure),
+    Effect.flatMap((contactPoint) =>
+      validateCurrentPostalSource(payload, contactPoint).pipe(
+        Effect.as({
+          validFrom: DateTime.toEpochMillis(contactPoint.validFrom),
+          validUntil: Math.min(
+            contactPoint.validTo === null ? Infinity : DateTime.toEpochMillis(contactPoint.validTo),
+            contactPoint.end === null ? Infinity : DateTime.toEpochMillis(contactPoint.end.effectiveEnd),
+          ),
+        }),
+      ),
+    ),
+    Effect.map(({ validFrom, validUntil }) => ({
+      validFrom,
+      validUntil: Number.isFinite(validUntil) ? validUntil : null,
+    })),
+  );
+};
+
+export const assertPreparedPartyAddressCurrent = (evidence: {
+  readonly validFrom: number;
+  readonly validUntil: number | null;
+}) =>
+  Clock.currentTimeMillis.pipe(
+    Effect.flatMap((now) =>
+      now >= evidence.validFrom && (evidence.validUntil === null || now < evidence.validUntil)
+        ? Effect.void
+        : Effect.fail(invalid('The Party-backed address source is no longer Current')),
+    ),
+  );
+
+export const partyBackedAddressSourceValidator =
+  (requestCorrelation: string, execute?: PartyContactPointDetailExecutor) =>
+  (payload: PartyBackedAddressPayload): Effect.Effect<void, AddressBookDomainError> => {
+    const { origin } = payload;
+    return origin === undefined || origin.kind !== 'PARTY_BACKED'
+      ? Effect.void
+      : preparePartyAddressSource(payload, requestCorrelation, execute).pipe(Effect.asVoid);
+  };
 
 const hasResolvablePartyIdentity = (
   origin: PartyBackedAddressOrigin,
@@ -204,7 +247,7 @@ const resolverFailure = (
     : Effect.succeed(notFound<ResolvedSavedPostalAddress>());
 
 export const partyBackedPostalAddressResolver =
-  (requestCorrelation: string, execute: PartyContactPointDetailExecutor = executePartyContactPointDetail) =>
+  (requestCorrelation: string, execute?: PartyContactPointDetailExecutor) =>
   (address: SavedAddress): Effect.Effect<AddressLookup<ResolvedSavedPostalAddress>, AddressBookUnavailable> => {
     if (address.origin.kind === 'COMMERCE_ONLY') {
       return Effect.succeed(
@@ -215,7 +258,8 @@ export const partyBackedPostalAddressResolver =
       );
     }
     const { origin } = address;
-    return execute({ contactPointRef: origin.contactPointRef }, requestCorrelation).pipe(
+    return (execute === undefined ? PartyAddressSourceExecutor : Effect.succeed(execute)).pipe(
+      Effect.flatMap((client) => client({ contactPointRef: origin.contactPointRef }, requestCorrelation)),
       Effect.map((contactPoint) => resolvePartyBackedPostalAddress(origin, contactPoint)),
       // oxlint-disable-next-line promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining.
       Effect.catch(resolverFailure),

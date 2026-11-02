@@ -50,6 +50,7 @@ import { requireCanonicalPartyWriteTarget, resolvePartyAlias } from '../merge/pa
 import { evaluatePartySubjectEvidence } from '../policies/create-party-without-strong-identifier.policy.ts';
 import { lockAndResolveClaims, lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
 import { reconcilePartyIdentifierClaims } from './party-identity-persistence.service.ts';
+import { findCurrentMatchingIdentifier } from './party-official-identifier-persistence.service.ts';
 
 type CorrectionTransaction = Pick<PartyTransaction, 'select' | 'insert' | 'update' | 'delete'>;
 const attachCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
@@ -391,6 +392,24 @@ const correctRelationship = Effect.fn('PartyCorrectionService.correctRelationshi
   };
 });
 
+const isEffectiveOfficialIdentifier = (row: typeof partyOfficialIdentifiers.$inferSelect, now: Date) =>
+  row.state === 'ACTIVE' && row.isCurrent && row.validFrom <= now && (row.validTo === null || row.validTo > now);
+
+const isCompatibleOfficialIdentifierReplacement = (
+  target: typeof partyOfficialIdentifiers.$inferSelect,
+  replacement: typeof partyOfficialIdentifiers.$inferSelect,
+  identifier: NormalizedOfficialIdentifier | undefined,
+  now: Date,
+) =>
+  replacement.officialIdentifierId !== target.officialIdentifierId &&
+  replacement.tenantId === target.tenantId &&
+  replacement.partyId === target.partyId &&
+  replacement.identifierTypeKey === identifier?.identifierType &&
+  replacement.namespace === identifier?.namespace &&
+  replacement.normalizedValue === identifier?.normalizedValue &&
+  replacement.verificationState !== 'REJECTED' &&
+  isEffectiveOfficialIdentifier(replacement, now);
+
 const correctOfficialIdentifier = Effect.fn('PartyCorrectionService.correctOfficialIdentifier')(
   function* correctOfficialIdentifier(
     transaction: CorrectionTransaction,
@@ -452,6 +471,30 @@ const correctOfficialIdentifier = Effect.fn('PartyCorrectionService.correctOffic
               ),
             ),
           );
+    const existingReplacement =
+      replacementIdentifier === undefined
+        ? undefined
+        : yield* findCurrentMatchingIdentifier(
+            transaction,
+            tenantId,
+            command.partyId,
+            replacementIdentifier,
+            true,
+            'UNIQUE',
+          );
+    if (
+      !isEffectiveOfficialIdentifier(target, now) ||
+      (existingReplacement !== undefined &&
+        !isCompatibleOfficialIdentifierReplacement(target, existingReplacement, replacementIdentifier, now))
+    ) {
+      return yield* new PartyCorrectionConflict({
+        code: 'party_correction_conflict',
+        reason: 'The Official Identifier correction target or replacement is not a distinct compatible Current fact',
+      });
+    }
+    // A correction record owns the A -> B edge. Reusing B must never rewrite its
+    // acceptance, verification, validity, provenance or original supersession link.
+    replacementOfficialIdentifierId = existingReplacement?.officialIdentifierId ?? null;
     yield* transaction
       .update(partyOfficialIdentifiers)
       .set({
@@ -475,7 +518,7 @@ const correctOfficialIdentifier = Effect.fn('PartyCorrectionService.correctOffic
         ),
       )
       .pipe(Effect.mapError(unavailable));
-    if (replacementIdentifier !== undefined) {
+    if (replacementIdentifier !== undefined && existingReplacement === undefined) {
       const [replacement] = yield* transaction
         .insert(partyOfficialIdentifiers)
         .values({

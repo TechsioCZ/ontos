@@ -262,6 +262,7 @@
         "label": "Aktivní MicroVerticaly",
         "unavailable": "Aktivní MicroVerticaly jsou dočasně nedostupné. Pro další pokus znovu načtěte stránku."
       },
+      "deploymentEntry": "Nedostupná agenda",
       "discovery": {
         "disabled": "Modul je deaktivovaný.",
         "incompatible": "Smlouva nasazeného modulu není kompatibilní.",
@@ -298,13 +299,24 @@
       "unavailable": "Modul je dočasně nedostupný. Zkuste to znovu."
     },
     "search": {
+      "groups": {
+        "counterparty": "Zákazníci a dodavatelé",
+        "party": "Kontakty",
+        "resource": "Další záznamy"
+      },
+      "suggestions": {
+        "all": "Zobrazit všechny výsledky pro „{{query}}“",
+        "empty": "Pro „{{query}}“ jsme nic nenašli.",
+        "label": "Návrhy hledání",
+        "loading": "Hledám…"
+      },
       "agenda_title": "Vyhledávání v agendách",
-      "agenda_hint": "Společné vyhledávání není součástí této ukázky. Otevřete povolenou agendu a použijte její hledání nebo filtry. Výsledky záznamů zde nepředstíráme.",
+      "agenda_hint": "Hledání je teď nedostupné. Zkuste to za chvíli znovu, nebo otevřete agendu a hledejte přímo v ní.",
       "alias_match": "Shoda přes alias",
       "archived": "Archivováno",
       "counterparty": "Obchodní protistrana",
       "empty": "Nebyly nalezeny žádné autorizované výsledky.",
-      "label": "Hledat v tenantovi a vybraném právním subjektu",
+      "label": "Hledat",
       "legal_entity": "Právní subjekt",
       "partial": "Někteří poskytovatelé vyhledávání jsou dočasně nedostupní. Zobrazujeme dostupné výsledky.",
       "party": "Subjekt",
@@ -315,13 +327,14 @@
       },
       "selection_required": "Před vyhledáváním se přihlaste a vyberte tenanta.",
       "seoDescription": "Vyhledávání autorizovaných zdrojů ve vybraném kontextu OntOS.",
-      "submit": "Hledat",
       "title": "Výsledky hledání",
       "unavailable": "Vyhledávání je dočasně nedostupné. Zkuste to znovu.",
       "clear": "Vymazat hledání",
-      "placeholder": "Hledat…"
+      "placeholder": "Hledat zákazníky a dodavatele…"
     },
     "resource": {
+      "found_in_agenda": "Podrobnosti tohoto záznamu najdete v agendě, ke které patří.",
+      "open_in_agenda": "Otevřít v agendě",
       "forbidden": "K zobrazení tohoto zdroje nemáte oprávnění.",
       "media": {
         "absent": "Tento zdroj nepodporuje mediální přílohy.",
@@ -472,16 +485,15 @@
         "title": "API klíče",
         "description": "Nativní přihlašovací údaje tohoto agenta ve vybrané firmě. Klíč nepřidává oprávnění; nadále platí auditovaný profil a role ve zvoleném rozsahu.",
         "requiresProfile": "Nejprve uložte auditovaný profil a aktivujte agenta. Poté můžete spravovat jeho klíče.",
-        "show": "Zobrazit klíče",
-        "refresh": "Obnovit klíče",
+        "retry": "Zkusit znovu",
         "issue": "Vydat klíč",
         "working": "Zpracovává se…",
-        "failed": "Výsledek se nepodařilo potvrdit. Před další změnou obnovte seznam klíčů. Jednorázové tajemství nelze znovu získat.",
-        "conflict": "Požadavek už byl přijat nebo se klíč změnil. Obnovte seznam; příkaz neopakujte.",
+        "failed": "Seznam klíčů se nepodařilo načíst nebo potvrdit výsledek. Zkuste to znovu. Jednorázové tajemství nelze znovu získat.",
+        "conflict": "Požadavek už byl přijat nebo se klíč změnil. Zobrazuje se aktuální seznam; příkaz neopakujte.",
         "cleanupPending": "Dokončení odebrání přihlašovacích údajů čeká na zpracování. Původní klíč může stále fungovat; nepovažujte jej ještě za zrušený.",
         "updated": "Příkaz byl přijat a aktuální seznam potvrdil očekávaný stav klíče.",
-        "projectionPending": "Příkaz byl přijat, ale seznam zatím nepotvrzuje očekávaný stav klíče. Obnovte seznam nebo načtěte další klíče; příkaz neopakujte.",
-        "refreshRequired": "Před dalším příkazem obnovte seznam. Žádný příkaz se automaticky neopakuje.",
+        "projectionPending": "Příkaz byl přijat, ale seznam zatím nepotvrzuje očekávaný stav klíče. Seznam se průběžně načítá znovu; příkaz neopakujte.",
+        "refreshRequired": "Další příkaz bude možný, až seznam potvrdí aktuální stav klíčů. Žádný příkaz se automaticky neopakuje.",
         "oneTime": "Tajemství se zobrazí pouze jednou. Označte a zkopírujte jej do bezpečného správce přihlašovacích údajů, ne do chatu. Zavřením panelu nebo skrytím z tohoto pohledu zmizí.",
         "secret": "Jednorázové tajemství",
         "selectSecret": "Označit tajemství",
@@ -627,7 +639,7 @@
           "succeeded": "Provedeno",
           "deniedStatus": "Zamítnuto"
         },
-        "loadError": "Agenty se nepodařilo načíst. Zkuste to znovu."
+        "loadError": "Agenty se teď nepodařilo načíst."
       },
       "errors": {
         "forbidden": "Akci smí provést jen správce firmy. Pokus byl zaznamenán v auditu.",

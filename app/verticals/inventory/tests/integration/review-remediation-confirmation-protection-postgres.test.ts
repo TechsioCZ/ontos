@@ -787,6 +787,7 @@ const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(functio
     proofValidUntil,
     protectionAuthorityCalls,
     reservationBackendCalls,
+    runtimeDatabase,
   };
 });
 
@@ -1002,7 +1003,8 @@ it.live(
             );
           expect(durableAttempt?.currentState).toBe('INDETERMINATE');
 
-          yield* scenario.coreAdmin.transaction((transaction) =>
+          // The owner write runs as the enrolled runtime role, the only kind of login that may install scope.
+          yield* scenario.runtimeDatabase.transaction((transaction) =>
             Effect.gen(function* expireConfirmation() {
               const scope = {
                 authMethod: 'api_key' as const,

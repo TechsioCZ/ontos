@@ -569,6 +569,7 @@ describe('issue #775 Pricing Promotion contribution acceptance', () => {
           ownerEvidence: ownerEvidence(request),
           reason: 'NON_POSITIVE_ELIGIBLE_PRE_PROMOTION_BASIS_REQUIRES_OWNER_DECISION',
           request,
+          target: { kind: 'MERCHANDISE_ONLY', occurrenceIds: ['line-a', 'line-b'] },
         })),
         Schema.is(PricingPromotionParked),
       );

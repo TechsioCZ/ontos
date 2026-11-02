@@ -20,7 +20,6 @@
     "pages": {
       "records": {
         "title": "Activities and contacts",
-        "refresh": "Load activities",
         "timeline": "Communication history",
         "occurredAt": "When",
         "summary": "Summary",
@@ -29,13 +28,13 @@
         "unnamed": "Unnamed contact",
         "query": "Find Counterparty",
         "find": "Search",
-        "loadTasks": "Load existing Tasks",
+        "retry": "Try again",
         "record": "Record call",
         "save": "Save Activity",
         "saved": "Activity saved.",
         "unavailable": "Activities could not be loaded.",
         "forbidden": "You do not have permission to read this contact.",
-        "invalid": "Activity could not be saved. Reload data and verify the contact and Task.",
+        "invalid": "Activity could not be saved. Verify the contact and Task.",
         "kinds": {
           "CALL": "Call",
           "EMAIL": "Email",

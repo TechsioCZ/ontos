@@ -366,7 +366,10 @@ export const finishFacilityOverview = Effect.fn('FacilityOperations.finishOvervi
 });
 
 export const persistenceService = Effect.fn('FacilityOperations.persistenceService')(
-  function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
+  function* makePersistence(
+    transaction: ScopedTransactionExecutor,
+    { preparedGrants, scope }: { readonly preparedGrants?: Grants; readonly scope: OperationalScope },
+  ) {
     const { legalEntityId } = scope;
     if (
       legalEntityId === undefined ||
@@ -380,7 +383,10 @@ export const persistenceService = Effect.fn('FacilityOperations.persistenceServi
     }
     const actor = { principalId: scope.principalId, tenantId: scope.tenantId };
 
-    const grants = yield* makeGrants(scope);
+    // Reads supply their prepared grants to loadRecords. Actions must prepare theirs before SQL opens.
+    // Never fall back to a remote permission check from this transaction-bound service.
+    const grants = () =>
+      preparedGrants === undefined ? Effect.fail(referenceUnavailable()) : Effect.succeed(preparedGrants);
 
     const whereAgenda = (agenda: AgendaId) =>
       and(

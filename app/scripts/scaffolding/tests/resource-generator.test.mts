@@ -101,7 +101,7 @@ import { propertyRegistryApi } from '../shared/api.ts';
 
 const handlersLive = Layer.empty;
 
-export default assembleEffectBffRuntime({ api: propertyRegistryApi, handlers: handlersLive, services: Layer.empty });
+export default assembleEffectBffRuntime({ api: propertyRegistryApi, handlers: handlersLive });
 `,
     );
     yield* write(

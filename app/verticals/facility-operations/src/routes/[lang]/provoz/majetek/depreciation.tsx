@@ -1,6 +1,6 @@
 // S03 depreciation evidence: per-asset plan cards with the approved-amounts schedule, and the portfolio overview
 // with reusable templates. Nothing here computes legal or tax depreciation. Owned by ops-assets.
-import { SectionCard, formatMoney, surfaceTileClassName } from '@app/admin-ui';
+import { ScrollRegion, SectionCard, formatMoney, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -15,6 +15,12 @@ import { instantLabel, isoDateLabel, planOf, principalLabel, todayIsoDate } from
 const YEARS_LABEL = 'depreciation.yearsValue';
 const START_DATE_LABEL = 'fields.startDate';
 const TAX_GROUP_LABEL = 'fields.taxGroup';
+const auditViewport = {
+  marginInline: '-1.25rem',
+  minWidth: 0,
+  overflowX: 'auto',
+  overscrollBehaviorX: 'contain',
+} as const;
 
 const useK = () => {
   const { t } = useModernI18n();
@@ -151,13 +157,7 @@ const PlanCard = ({
       </dl>
       {plan.note !== undefined && <p className="text-fg-secondary text-sm">{plan.note}</p>}
       {/* Keep the audit's intrinsic width inside its own viewport, not the panel's prose and controls. */}
-      {/* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Pending scoped exception approval: this named audit viewport needs keyboard scrolling. */}
-      <section
-        aria-label={k(`depreciation.${plan.type}Plan`)}
-        style={{ marginInline: '-1.25rem', minWidth: 0, overflowX: 'auto', overscrollBehaviorX: 'contain' }}
-        tabIndex={0}
-      >
-        {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
+      <ScrollRegion label={k(`depreciation.${plan.type}Plan`)} style={auditViewport}>
         <Table size="sm" style={{ minWidth: 840, tableLayout: 'fixed' }} variant="line">
           <colgroup>
             <col style={{ width: 70 }} />
@@ -219,7 +219,7 @@ const PlanCard = ({
             })}
           </Table.Body>
         </Table>
-      </section>
+      </ScrollRegion>
       <div
         className="flex flex-wrap items-center justify-between gap-100 text-fg-secondary"
         style={{ fontSize: '1rem' }}

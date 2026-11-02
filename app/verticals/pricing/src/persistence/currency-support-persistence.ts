@@ -137,7 +137,7 @@ const ReadCurrentPayloadSchema = Schema.Struct({
   ...readEvidence,
   activeRevisionCount: Schema.Literal(1),
   current: StoredRevisionSummarySchema,
-  nextApplicabilityBoundary: Schema.NullOr(PricingInstantSchema),
+  nextApplicabilityBoundary: Schema.optionalKey(Schema.NullOr(PricingInstantSchema)),
   outcome: Schema.Literal('CURRENCY_SUPPORT_CURRENT'),
   schedule: StoredScheduleSchema,
   scheduleRevision: PricingCurrencySupportScheduleRevisionSchema,
@@ -306,6 +306,12 @@ export interface CurrencySupportPersistence {
     command: SetCurrencySupportCommand,
   ) => Effect.Effect<SetCurrencySupportOutcome, PersistenceFailure>;
 }
+/** Owner command admission reads configured support; it never issues a customer Current proof. */
+export interface CurrencySupportAdmissionPersistence {
+  readonly loadForCanonicalAdmission: (
+    input: CurrentSupportedCurrenciesRequest,
+  ) => Effect.Effect<CurrencySupportReadOutcome, PersistenceFailure>;
+}
 export interface CurrencySupportActionResultLookupQuery {
   readonly actingPrincipalId: string;
   readonly actionInvocationId: string;
@@ -470,7 +476,7 @@ export const decodeTenantCurrencySupportRead = (
         scheduleRevision: value.scheduleRevision,
         supportedCurrencies: value.current.supportedCurrencies,
       } satisfies StoredCurrencySupport;
-      return value.nextApplicabilityBoundary === null
+      return value.nextApplicabilityBoundary === null || value.nextApplicabilityBoundary === undefined
         ? ({ _tag: 'current', current } as const)
         : ({
             _tag: 'current',
@@ -1163,6 +1169,7 @@ export const currencySupportPersistence = (
   tenantId: string,
   actingPrincipalId: string,
 ): CurrencySupportPersistence &
+  CurrencySupportAdmissionPersistence &
   CurrencySupportActionResultLookupPersistence &
   CurrencySupportGenerationVerificationPersistence &
   CurrencySupportProofResolutionPersistence &
@@ -1184,6 +1191,14 @@ export const currencySupportPersistence = (
         ),
       ),
       Effect.flatMap((reconciled) => issueProofForReconciledCurrencySupport(transaction, input, reconciled)),
+    ),
+  loadForCanonicalAdmission: (input) =>
+    readHistoricalCurrencySupport(transaction, input).pipe(
+      Effect.flatMap((historical) =>
+        revalidateCurrentCurrencySupport(transaction, input).pipe(
+          Effect.map((revalidated) => reconcileTenantCurrencySupportRead(historical, revalidated)),
+        ),
+      ),
     ),
   lookupResult: ({ actionInvocationId }) => {
     const query = { actingPrincipalId, actionInvocationId };
@@ -1227,10 +1242,10 @@ export const currencySupportPersistence = (
     );
   },
 });
-export const currencySupportPersistenceForScope: ReadServiceFactory<CurrencySupportPersistence> = (
-  transaction,
-  scope: OperationalScope,
-) => Effect.succeed(currencySupportPersistence(transaction, scope.tenantId, scope.principalId));
+export const currencySupportPersistenceForScope: ReadServiceFactory<
+  CurrencySupportPersistence & CurrencySupportAdmissionPersistence
+> = (transaction, scope: OperationalScope) =>
+  Effect.succeed(currencySupportPersistence(transaction, scope.tenantId, scope.principalId));
 export const currencySupportResultLookupPersistenceForScope: ReadServiceFactory<
   CurrencySupportActionResultLookupPersistence
 > = (transaction, scope: OperationalScope) =>

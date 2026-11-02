@@ -2,6 +2,7 @@ import { defineRelations, sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
+  bytea,
   check,
   foreignKey,
   index,
@@ -16,7 +17,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
-import type { Schema } from 'effect';
+import { Schema } from 'effect';
 import type { OutboxWorkerSubscription } from '../outbox/definition.ts';
 import type { CompanyAffiliation, CompanyMembershipStatus } from '../permissions/company-membership.ts';
 
@@ -44,7 +45,9 @@ export const CORE_TABLE_INVENTORY = [
   'outbox_messages',
   'outbox_deliveries',
   'outbox_attempts',
+  'outbox_delivery_resolutions',
   'media_assets',
+  'media_asset_renditions',
   'media_links',
   'evidence_references',
   'search_index_entries',
@@ -719,6 +722,8 @@ export const outboxMessages = enableCoreGovernedRls(
       domainEventId: domainEventId().notNull(),
       producerModuleKey: text('producer_module_key').notNull(),
       topic: text('topic').notNull(),
+      completionConsumerModuleKey: text('completion_consumer_module_key'),
+      completionOriginalRevision: text('completion_original_revision'),
       payloadJson: jsonb('payload_json')
         .notNull()
         .default(sql`'{}'::jsonb`),
@@ -726,6 +731,16 @@ export const outboxMessages = enableCoreGovernedRls(
       createdAt: createdAt(),
     },
     (table) => [
+      check(
+        'core_outbox_messages_completion_pair_ck',
+        sql`(
+      ${table.completionConsumerModuleKey} is null and ${table.completionOriginalRevision} is null
+    ) or (
+      length(btrim(${table.completionConsumerModuleKey})) > 0 and
+      length(btrim(${table.completionOriginalRevision})) > 0 and
+      ${table.completionConsumerModuleKey} is not null and ${table.completionOriginalRevision} is not null
+    )`,
+      ),
       index('core_outbox_messages_unmatched_idx')
         .on(table.createdAt)
         .where(sql`${table.matchedAt} is null`),
@@ -766,9 +781,68 @@ export const outboxDeliveries = coreSchema.table(
       .where(sql`${table.status} = 'pending'`),
     index('core_outbox_deliveries_message_idx').on(table.outboxMessageId),
     index('core_outbox_deliveries_worker_status_idx').on(table.workerKey, table.status),
-    check('core_outbox_deliveries_status_ck', sql`${table.status} in ('pending', 'processing', 'done', 'dead')`),
+    check(
+      'core_outbox_deliveries_status_ck',
+      sql`${table.status} in ('pending', 'processing', 'done', 'dead', 'released')`,
+    ),
     check('core_outbox_deliveries_attempts_count_ck', sql`${table.attemptsCount} >= 0`),
   ],
+);
+
+export const OutboxDeliveryResolutionActionSchema = Schema.Literals(['redrive', 'release']);
+export type OutboxDeliveryResolutionAction = typeof OutboxDeliveryResolutionActionSchema.Type;
+
+/**
+ * Append-only operator decisions about dead deliveries. Only the migration administrator writes it; its
+ * triggers bind each row to one exact dead delivery and apply the redrive or release in the same statement.
+ */
+export const outboxDeliveryResolutions = enableCoreGovernedRls(
+  coreSchema.table(
+    'outbox_delivery_resolutions',
+    {
+      outboxDeliveryResolutionId: uuid('outbox_delivery_resolution_id').defaultRandom().primaryKey(),
+      tenantId: uuid('tenant_id').notNull(),
+      outboxMessageId: uuid('outbox_message_id').notNull(),
+      outboxDeliveryId: uuid('outbox_delivery_id').notNull(),
+      workerKey: text('worker_key').notNull(),
+      action: text('action').$type<OutboxDeliveryResolutionAction>().notNull(),
+      deadAttemptsCount: integer('dead_attempts_count').notNull(),
+      operatorName: text('operator_name').notNull(),
+      reason: text('reason').notNull(),
+      recordedBy: text('recorded_by')
+        .default(sql`session_user`)
+        .notNull(),
+      recordedTransactionId: text('recorded_transaction_id')
+        .default(sql`(pg_current_xact_id())::text`)
+        .notNull(),
+      recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(),
+    },
+    (table) => [
+      index('core_outbox_delivery_resolutions_delivery_idx').on(table.outboxDeliveryId, table.recordedAt),
+      foreignKey({
+        columns: [table.tenantId],
+        foreignColumns: [tenants.tenantId],
+        name: 'core_outbox_delivery_resolutions_tenant_fk',
+      }).onDelete('restrict'),
+      foreignKey({
+        columns: [table.outboxDeliveryId],
+        foreignColumns: [outboxDeliveries.outboxDeliveryId],
+        name: 'core_outbox_delivery_resolutions_delivery_fk',
+      }).onDelete('restrict'),
+      check('core_outbox_delivery_resolutions_action_ck', sql`${table.action} in ('redrive', 'release')`),
+      check(
+        'core_outbox_delivery_resolutions_operator_ck',
+        sql`length(btrim(${table.operatorName})) between 1 and 200`,
+      ),
+      check('core_outbox_delivery_resolutions_reason_ck', sql`length(btrim(${table.reason})) between 1 and 2000`),
+      check('core_outbox_delivery_resolutions_attempts_ck', sql`${table.deadAttemptsCount} >= 0`),
+      pgPolicy('core_outbox_delivery_resolutions_select', {
+        for: 'select',
+        to: SHARED_RUNTIME_ROLE,
+        using: sql`true`,
+      }),
+    ],
+  ),
 );
 
 export const outboxAttempts = coreSchema.table(
@@ -839,6 +913,40 @@ export const mediaAssets = coreSchema.table(
 );
 
 const mediaAssetId = () => uuid('media_asset_id').notNull();
+
+/**
+ * Stored bytes of one Media Asset, per rendition, for the `database` storage provider (the stage has no object
+ * storage). `full` is the asset content itself; `thumbnail` is an optional smaller rendition of the same image.
+ * Rows are immutable content: a changed image is a new Media Asset.
+ */
+export const mediaAssetRenditions = coreSchema.table(
+  'media_asset_renditions',
+  {
+    tenantId: tenantId(),
+    mediaAssetId: mediaAssetId(),
+    rendition: text('rendition').notNull(),
+    mimeType: text('mime_type').notNull(),
+    byteSize: integer('byte_size').notNull(),
+    width: integer('width'),
+    height: integer('height'),
+    contentSha256: text('content_sha256').notNull(),
+    bytes: bytea('bytes').notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.mediaAssetId, table.rendition],
+      name: 'core_media_asset_renditions_pk',
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.mediaAssetId],
+      foreignColumns: [mediaAssets.tenantId, mediaAssets.mediaAssetId],
+      name: 'core_media_asset_renditions_tenant_asset_fk',
+    }).onDelete('restrict'),
+    check('core_media_asset_renditions_rendition_ck', sql`${table.rendition} in ('full', 'thumbnail')`),
+    check('core_media_asset_renditions_size_ck', sql`${table.byteSize} > 0`),
+  ],
+);
 
 export const mediaLinks = coreSchema.table(
   'media_links',
@@ -1246,11 +1354,13 @@ export const coreDatabaseSchema = {
   evidenceReferences,
   legalEntities,
   legalEntityNavigationExclusions,
+  mediaAssetRenditions,
   mediaAssets,
   mediaLinks,
   oauthConnectionGrants,
   outboxAttempts,
   outboxDeliveries,
+  outboxDeliveryResolutions,
   outboxMessages,
   personInvitations,
   principalAuthBindings,
@@ -1283,7 +1393,9 @@ export const CORE_TABLES = [
   outboxMessages,
   outboxDeliveries,
   outboxAttempts,
+  outboxDeliveryResolutions,
   mediaAssets,
+  mediaAssetRenditions,
   mediaLinks,
   evidenceReferences,
   searchIndexEntries,

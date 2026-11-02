@@ -262,26 +262,22 @@ const cleanupRows = (admin: AssortmentTestDatabase) =>
     }),
   );
 
+// The migrations grant the runtime role usage of the assortment schema; the test grants and revokes only
+// its table access, so later suites keep the migrated schema grants.
 const grantRuntimeAccess = (admin: AssortmentTestDatabase) =>
   admin.transaction((transaction) =>
-    Effect.gen(function* grantCommitmentConfirmationAccess() {
-      yield* transaction.execute(sql`grant usage on schema assortment to ontos_runtime`, 'objects');
-      yield* transaction.execute(
-        sql`grant select, insert, update, delete on table assortment.assortment_commitment_confirmations to ontos_runtime`,
-        'objects',
-      );
-    }),
+    transaction.execute(
+      sql`grant select, insert, update, delete on table assortment.assortment_commitment_confirmations to ontos_runtime`,
+      'objects',
+    ),
   );
 
 const revokeRuntimeAccess = (admin: AssortmentTestDatabase) =>
   admin.transaction((transaction) =>
-    Effect.gen(function* revokeCommitmentConfirmationAccess() {
-      yield* transaction.execute(
-        sql`revoke select, insert, update, delete on table assortment.assortment_commitment_confirmations from ontos_runtime`,
-        'objects',
-      );
-      yield* transaction.execute(sql`revoke usage on schema assortment from ontos_runtime`, 'objects');
-    }),
+    transaction.execute(
+      sql`revoke select, insert, update, delete on table assortment.assortment_commitment_confirmations from ontos_runtime`,
+      'objects',
+    ),
   );
 
 it.live('persists immutable confirmations with replay, RLS isolation, and append-only enforcement', () =>

@@ -8,6 +8,7 @@ import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microv
 import { identity } from 'effect';
 
 // <generated-governed-http-api-imports>
+import { AcknowledgePrivacyNoticeActionApi } from './apis/acknowledge-privacy-notice-action.ts';
 import { AddProcessingPurposeVersionActionApi } from './apis/add-processing-purpose-version-action.ts';
 import { ApplicabilityDecisionsApi } from './apis/applicability-decisions.ts';
 import { AssignDsrResolverActionApi } from './apis/assign-dsr-resolver-action.ts';
@@ -26,6 +27,7 @@ import { EnqueueRetentionEvaluationActionApi } from './apis/enqueue-retention-ev
 import { EvaluateProcessingEligibilityActionApi } from './apis/evaluate-processing-eligibility-action.ts';
 import { IssueDsrDeliveryAccessActionApi } from './apis/issue-dsr-delivery-access-action.ts';
 import { LegalBasisAssignmentsApi } from './apis/legal-basis-assignments.ts';
+import { NoticePresentationApi } from './apis/notice-presentation.ts';
 import { NoticeVersionsApi } from './apis/notice-versions.ts';
 import { OwnerInventoryApi } from './apis/owner-inventory.ts';
 import { PrivacySubjectsApi } from './apis/privacy-subjects.ts';
@@ -255,6 +257,7 @@ export const privacyFoundationApi = HttpApi.make('PrivacyApiFoundation').add(
 export const privacyApi = HttpApi.make('PrivacyApi')
   .addHttpApi(privacyFoundationApi)
   // <generated-governed-http-api-additions>
+  .addHttpApi(AcknowledgePrivacyNoticeActionApi)
   .addHttpApi(AddProcessingPurposeVersionActionApi)
   .addHttpApi(ApplicabilityDecisionsApi)
   .addHttpApi(AssignDsrResolverActionApi)
@@ -273,6 +276,7 @@ export const privacyApi = HttpApi.make('PrivacyApi')
   .addHttpApi(EvaluateProcessingEligibilityActionApi)
   .addHttpApi(IssueDsrDeliveryAccessActionApi)
   .addHttpApi(LegalBasisAssignmentsApi)
+  .addHttpApi(NoticePresentationApi)
   .addHttpApi(NoticeVersionsApi)
   .addHttpApi(OwnerInventoryApi)
   .addHttpApi(PrivacySubjectsApi)

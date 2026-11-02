@@ -287,7 +287,7 @@ const validateComposition = (
     input.subjectEvidence.revalidatedAt !== input.decision.operationTime ||
     input.currencyCompatibility.tenantId !== input.decision.tenantId ||
     input.currencyCompatibility.currencyCode !== input.decision.currencyCode ||
-    input.currencyCompatibility.observedAt !== input.decision.operationTime
+    input.currencyCompatibility.observedAt < input.decision.operationTime
   ) {
     return Effect.fail(
       new PricingPromotionUnverifiable({

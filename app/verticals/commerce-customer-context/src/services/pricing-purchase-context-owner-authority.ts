@@ -153,7 +153,7 @@ const ownerFailure = (
     ),
   );
 
-const classifyObservation = (
+export const classifyPricingPurchaseContextOwnerObservation = (
   request: PricingPurchaseContextVerificationRequest,
   scope: {
     readonly callingPrincipalId: string;
@@ -255,15 +255,16 @@ export const makePricingPurchaseContextVerificationServices = (
               );
             }
             return Schema.decodeEffect(observationSchema, { onExcessProperty: 'error' })(observationOption.value).pipe(
-              Effect.flatMap((observation) => classifyObservation(request, scope, observation)),
-              Effect.catchTag('SchemaError', () =>
-                checkedResponse({
-                  outcome: 'PURCHASE_CONTEXT_UNVERIFIABLE',
-                  reason: 'Owner returned malformed Purchase Context authority evidence',
-                  request,
-                  retryable: true,
-                }),
-              ),
+              Effect.matchEffect({
+                onFailure: () =>
+                  checkedResponse({
+                    outcome: 'PURCHASE_CONTEXT_UNVERIFIABLE',
+                    reason: 'Owner returned malformed Purchase Context authority evidence',
+                    request,
+                    retryable: true,
+                  }),
+                onSuccess: (observation) => classifyPricingPurchaseContextOwnerObservation(request, scope, observation),
+              }),
             );
           },
         }),

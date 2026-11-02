@@ -2,7 +2,8 @@
 import StoreLink from "@/components/store-link";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
+import { useDictionary, useStoreHref, useStorePathname } from "@/ontos/market-context";
 import { Steps, useSteps } from "@techsio/ui-kit/molecules/steps";
 import { ProductGrid, type ProductGridItem } from "@/components/product-grid";
 import { useCart } from "@/features/cart/cart-provider";
@@ -14,20 +15,19 @@ import { useCheckout } from "./checkout-provider";
 import { CheckoutSummary } from "./checkout-summary";
 
 function UnconfirmedOrder() {
+  const cs = useDictionary();
   const { completeOrder, storageError } = useCheckout();
   const router = useRouter();
+  const storeHref = useStoreHref();
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   return (
     <section
       className="order-1 grid gap-4 rounded-sm bg-(--color-base) p-6"
-      aria-label="Nepotvrzená objednávka"
+      aria-label={cs.checkout.unconfirmed.label}
     >
-      <h1 className="font-bold">Ověření předchozí objednávky</h1>
-      <p>
-        Výsledek odeslání zatím nebyl potvrzen. Ověříme původní požadavek, nevytvoříme novou
-        objednávku. Aktuální dostupnost košíku toto ověření neblokuje.
-      </p>
+      <h1 className="font-bold">{cs.checkout.unconfirmed.title}</h1>
+      <p>{cs.checkout.unconfirmed.description}</p>
       {storageError && (
         <p role="alert" className="text-sm text-(--color-danger)">
           {storageError}
@@ -43,14 +43,16 @@ function UnconfirmedOrder() {
           try {
             const order = await completeOrder();
             if (order)
-              router.push(`/potvrzeni-objednavky?order=${encodeURIComponent(order.orderId)}`);
+              router.push(
+                storeHref(`/potvrzeni-objednavky?order=${encodeURIComponent(order.orderId)}`),
+              );
           } finally {
             sendingRef.current = false;
             setSending(false);
           }
         }}
       >
-        {sending ? "Ověřuji v OntOS…" : "Ověřit předchozí objednávku"}
+        {sending ? cs.checkout.unconfirmed.checking : cs.checkout.unconfirmed.confirm}
       </Button>
     </section>
   );
@@ -63,10 +65,12 @@ export function CheckoutLayout({
   children: ReactNode;
   recommendations: ProductGridItem[];
 }) {
+  const cs = useDictionary();
   const quote = useCartQuote();
   const pricesVisible = !quote?.enabled || (quote.status === "ready" && !quote.quote?.priceChanged);
-  const pathname = usePathname();
+  const pathname = useStorePathname();
   const router = useRouter();
+  const storeHref = useStoreHref();
   const { cart } = useCart();
   const {
     draft,
@@ -92,14 +96,16 @@ export function CheckoutLayout({
     step,
     onStepChange: ({ step: next }) => {
       router.push(
-        checkoutSteps[canCheckout ? getReachableStep(next, cart, draft, methods) : 0].href,
+        storeHref(
+          checkoutSteps[canCheckout ? getReachableStep(next, cart, draft, methods) : 0].href,
+        ),
       );
     },
   });
   useEffect(() => {
     if (ready && accountReady && !submitted && !hasUnconfirmedOrder && reachable !== step)
-      router.replace(checkoutSteps[reachable].href);
-  }, [ready, accountReady, reachable, router, step, submitted, hasUnconfirmedOrder]);
+      router.replace(storeHref(checkoutSteps[reachable].href));
+  }, [ready, accountReady, reachable, router, step, submitted, hasUnconfirmedOrder, storeHref]);
   return (
     <div
       data-akros-checkout
@@ -112,7 +118,7 @@ export function CheckoutLayout({
         >
           <div className="contents min-w-0 2xl:block">
             <Steps.List
-              aria-label="Kroky objednávky"
+              aria-label={cs.checkout.stepsLabel}
               className="mb-(--dimension-60) order-0 min-w-0 pt-(--dimension-24)"
             >
               {checkoutSteps.map((item, index) => (
@@ -129,7 +135,7 @@ export function CheckoutLayout({
                       <Steps.Number className="leading-(--akros-checkout-body-leading)" />
                     </Steps.Indicator>
                     <Steps.Title className="w-full overflow-visible text-center wrap-break-word whitespace-normal">
-                      {item.title}
+                      {cs.checkout.steps[item.key]}
                     </Steps.Title>
                   </Steps.Trigger>
                   <Steps.Separator className="absolute top-5 left-[calc(50%+1.5rem)] w-[calc(100%-3rem)]" />
@@ -143,17 +149,10 @@ export function CheckoutLayout({
             )}
             {ready && hasUnconfirmedOrder && <UnconfirmedOrder />}
             {hasUnconfirmedOrder && step === 3 ? null : !ready || reachable !== step ? (
-              <output className="block py-12 text-center">Načítám košík…</output>
+              <output className="block py-12 text-center">{cs.cart.loading}</output>
             ) : (
               <Steps.Content index={step} className="order-1 min-w-0">
-                {pricesVisible ? (
-                  children
-                ) : (
-                  <output>
-                    Ceny a dostupnost nejsou aktuálně ověřené. Po úspěšném ověření se obsah košíku
-                    znovu zobrazí.
-                  </output>
-                )}
+                {pricesVisible ? children : <output>{cs.checkout.pricesNotVerified}</output>}
               </Steps.Content>
             )}
             {ready &&
@@ -161,7 +160,7 @@ export function CheckoutLayout({
               !hasUnconfirmedOrder &&
               step === 0 &&
               (!accountReady ? (
-                <output>Ověřuji přihlášení…</output>
+                <output>{cs.checkout.verifyingLogin}</output>
               ) : canCheckout ? (
                 <CartNavigation />
               ) : (
@@ -170,13 +169,9 @@ export function CheckoutLayout({
                   aria-labelledby="checkout-choice"
                 >
                   <h2 id="checkout-choice" className="font-bold">
-                    Jak chcete objednat?
+                    {cs.checkout.chooser.title}
                   </h2>
-                  <p>
-                    Objednat můžete bez registrace, kontaktní a dodací údaje vyplníte v dalších
-                    krocích. Se zákaznickým účtem uvidíte historii a stav svých objednávek. Košík i
-                    rozpracované údaje zůstanou zachované.
-                  </p>
+                  <p>{cs.checkout.chooser.description}</p>
                   <div className="flex flex-wrap items-center gap-4">
                     <Button
                       type="button"
@@ -187,16 +182,16 @@ export function CheckoutLayout({
                       aria-describedby={cartBlocked ? "checkout-choice-blocked" : undefined}
                       onClick={() => {
                         chooseGuestCheckout();
-                        router.push(checkoutSteps[1].href);
+                        router.push(storeHref(checkoutSteps[1].href));
                       }}
                     >
-                      Objednat bez registrace
+                      {cs.checkout.chooser.withoutAccount}
                     </Button>
                     <StoreLink href="/prihlaseni?returnTo=%2Fkosik" className="underline">
-                      Přihlásit se
+                      {cs.checkout.chooser.signIn}
                     </StoreLink>
                     <StoreLink href="/registrace?returnTo=%2Fkosik" className="underline">
-                      Vytvořit účet
+                      {cs.checkout.chooser.createAccount}
                     </StoreLink>
                   </div>
                   {cartBlocked && (
@@ -216,7 +211,7 @@ export function CheckoutLayout({
                   id="checkout-recommendations"
                   className="mt-4 mb-6 text-(length:--akros-checkout-recommendation-size) leading-(--akros-checkout-heading-leading) font-extrabold text-(--akros-checkout-recommendation-color)"
                 >
-                  Mohlo by se Vám líbit
+                  {cs.checkout.recommendationsTitle}
                 </h2>
                 <ProductGrid products={recommendations} action="detail" columns="checkout" />
               </section>

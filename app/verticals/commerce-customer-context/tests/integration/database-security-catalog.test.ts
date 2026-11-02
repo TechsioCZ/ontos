@@ -48,6 +48,7 @@ const privateRoutines = [
 /** Routines the runtime role must be able to execute; every owner surface reaches the database through one. */
 const grantedRoutines = [
   'add_saved_address',
+  'admit_portal_enrollment_attempt',
   'archive_customer_group',
   'assess_market_retirement_affected_use',
   'assess_payment_term_entitlement_use',
@@ -71,9 +72,11 @@ const grantedRoutines = [
   'decide_purchase_approval_request',
   'ensure_counterparty_profile',
   'ensure_retail_profile',
+  'fail_portal_enrollment',
   'finalize_reconciled_access_invitation',
   'finalize_retail_portal_binding_authorization',
   'finalize_retail_portal_profile_binding_permission_mutation',
+  'inspect_commerce_quantity_assignment_profile',
   'inspect_price_group_profile',
   'list_access_grants',
   'list_access_reconciliation',
@@ -97,6 +100,7 @@ const grantedRoutines = [
   'persist_market_bootstrap_policy_state',
   'persist_payment_term_policy_state',
   'persist_purchase_currency_policy_state',
+  'purchase_proposal_basis_state',
   'reactivate_customer_group',
   'read_access_invitation',
   'read_access_invitation_claim_reconciliation',
@@ -106,6 +110,7 @@ const grantedRoutines = [
   'read_counterparty_invitation_claimability',
   'read_current_purchase_approval_revalidation',
   'read_current_purchase_proposal_revision',
+  'read_current_retail_enrollment',
   'read_customer_consent_receipt',
   'read_customer_group',
   'read_customer_group_history',
@@ -114,7 +119,11 @@ const grantedRoutines = [
   'read_customer_profile',
   'read_demo_newsletter_choice',
   'read_effective_customer_group_memberships',
+  'read_enrollment_invitation_claim',
   'read_guest_attribution',
+  'read_market_retirement_reservation',
+  'read_order_commitment_approval_evidence',
+  'read_order_service_approval_proof',
   'read_portal_enrollment_attempt',
   'read_portal_enrollment_owner_operation',
   'read_price_group_assignment_compatibility_evidence',
@@ -125,6 +134,7 @@ const grantedRoutines = [
   'read_purchase_limit_policies',
   'read_retail_enrollment_account_party',
   'read_retail_enrollment_registration',
+  'read_retail_enrollment_restart_context',
   'read_retail_portal_binding',
   'read_retail_portal_binding_authorization',
   'read_retail_portal_profile_binding_permission_mutation',
@@ -137,6 +147,7 @@ const grantedRoutines = [
   'record_portal_enrollment_outcome',
   'record_privacy_measure_execution',
   'record_profile_reconciliation_owner_outcome',
+  'recover_buyer_approval_revalidation',
   'redeem_invitation_claim_secret',
   'register_invitation_claim_proof',
   'remove_customer_group_membership',
@@ -145,10 +156,12 @@ const grantedRoutines = [
   'reroute_purchase_approval_request',
   'reserve_payment_term_retirement',
   'reserve_market_retirement',
+  'resolve_legacy_payment_term_grant_intent_v1',
   'resolve_price_group_assignments',
   'resolve_profile_reconciliation',
   'resolve_retail_principal',
   'revalidate_purchase_approval',
+  'set_portal_enrollment_verification_state',
   'stage_access_invitation_claim_grants',
   'stage_invitation_claim_proof_delivery',
   'stage_retail_portal_profile_binding_permission_mutations',
@@ -223,7 +236,7 @@ const names = (rows: readonly { readonly name: string }[]): readonly string[] =>
     Order.String,
   );
 
-it.live('governs the Commerce Customer Context schema through forced RLS and routine-only runtime access', () =>
+it.live('governs business tables through forced RLS and limits global ingress replay grants', () =>
   Effect.scoped(
     Effect.gen(function* databaseSecurityCatalog() {
       const connections = yield* loadDatabaseConnectionPair();
@@ -243,7 +256,14 @@ it.live('governs the Commerce Customer Context schema through forced RLS and rou
         'objects',
       );
       expect(names(tables)).toEqual(EffectArray.sort([...COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY], Order.String));
-      expect(tables.filter(({ enabled, forced }) => !enabled || !forced)).toEqual([]);
+      expect(
+        tables.filter(({ enabled, forced, name }) => name !== 'gateway_assertion_redemptions' && (!enabled || !forced)),
+      ).toEqual([]);
+      expect(tables.find(({ name }) => name === 'gateway_assertion_redemptions')).toEqual({
+        enabled: false,
+        forced: false,
+        name: 'gateway_assertion_redemptions',
+      });
 
       const tableGrants = yield* admin.execute<{ readonly name: string }>(
         sql`select format('%s.%s:%s', table_schema, table_name, privilege_type) as name
@@ -251,7 +271,11 @@ it.live('governs the Commerce Customer Context schema through forced RLS and rou
             where grantee = ${runtimeRole} and table_schema = ${schema}`,
         'objects',
       );
-      expect(tableGrants).toEqual([]);
+      expect(names(tableGrants)).toEqual([
+        'commerce_customer_context.gateway_assertion_redemptions:DELETE',
+        'commerce_customer_context.gateway_assertion_redemptions:INSERT',
+        'commerce_customer_context.gateway_assertion_redemptions:SELECT',
+      ]);
 
       const sequenceGrants = yield* admin.execute<{ readonly name: string }>(
         sql`select sequence_name as name

@@ -12,8 +12,8 @@ describe('statusPresentation', () => {
     });
   });
 
-  it('falls back to the raw value on an outline badge for unknown input', () => {
-    expect(statusPresentation('task', 'MYSTERY')).toEqual({ label: 'MYSTERY', variant: 'outline' });
-    expect(statusPresentation('task', 'constructor')).toEqual({ label: 'constructor', variant: 'outline' });
+  it('does not expose an unknown wire enum or inherited property as a label', () => {
+    expect(statusPresentation('task', 'MYSTERY')).toEqual({ label: '—', variant: 'outline' });
+    expect(statusPresentation('task', 'constructor')).toEqual({ label: '—', variant: 'outline' });
   });
 });

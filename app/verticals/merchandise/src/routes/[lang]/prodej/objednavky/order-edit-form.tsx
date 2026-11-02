@@ -7,14 +7,25 @@ import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { formatMoney, SectionCard, surfaceTileClassName } from '@app/admin-ui';
+import { selectItem } from '../../../../ui/select-item.ts';
+import {
+  AutosaveStatus,
+  formatMoney,
+  ScrollRegion,
+  SectionCard,
+  surfaceTileClassName,
+  useAutosave,
+} from '@app/admin-ui';
+import type { AutosaveOutcome } from '@app/admin-ui';
 import { Effect } from 'effect';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { Order, ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductId, ShippingMethod, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
+import { convertGrossMinor } from '../../../../../shared/domain/market-offers.ts';
 import {
   grossUnitPriceMinor,
+  orderCurrency,
   shippingMethodFor,
   shippingMethods,
 } from '../../../../../shared/domain/merchandise-model.ts';
@@ -23,7 +34,10 @@ import { fullOrderTotals, lineGrossMinor } from '../../../../../shared/domain/or
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { MONEY_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { shippingOptions } from './order-eshop.ts';
-import { editOrder, isRevisionConflict } from './orders-records.ts';
+import { draftOf, parseAmount, parseQuantity, sameOrderDraft } from './order-edit-draft.ts';
+import type { Draft, DraftLine } from './order-edit-draft.ts';
+import { saveOrderEdit } from './order-edit-autosave.ts';
+import type { OrderVersion } from './order-edit-autosave.ts';
 import { activeVariants } from './order-line-editor.tsx';
 import { loadProductRecord } from '../../provoz/produkty/product-reads.ts';
 import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
@@ -33,80 +47,9 @@ type EditCommand = Extract<MerchandiseCommand, { readonly _tag: 'EditOrder' }>;
 type EditLine = NonNullable<EditCommand['lines']>[number];
 type Mutable<Value> = { -readonly [Key in keyof Value]: Value[Key] };
 
-interface DraftLine {
-  readonly key: string;
-  readonly name: string;
-  readonly priceText: string;
-  readonly productId: ProductId;
-  readonly quantityText: string;
-  readonly sku: string;
-  readonly variantId?: VariantId;
-  readonly variantName?: string;
-  readonly vatRate: Order['lines'][number]['vatRate'];
-}
-
-interface Draft {
-  readonly city: string;
-  readonly country: string;
-  readonly email: string;
-  readonly lines: readonly DraftLine[];
-  readonly name: string;
-  readonly note: string;
-  readonly phone: string;
-  readonly postalCode: string;
-  readonly reason: string;
-  readonly shippingMethod: ShippingMethod | null;
-  readonly shippingPriceText: string;
-  readonly street: string;
-}
-
-const parseCzk = (text: string): number | null => {
-  const normalized = text.replaceAll(/\s/gu, '').replace(',', '.');
-  if (normalized === '') {
-    return null;
-  }
-  const value = Number(normalized);
-  return Number.isFinite(value) && value >= 0 ? Math.round(value * 100) : null;
-};
-
-const parseQuantity = (text: string): number | null => {
-  const value = Number(text.replaceAll(/\s/gu, '').replace(',', '.'));
-  return Number.isFinite(value) && value > 0 && value <= 1_000_000 ? value : null;
-};
-
-const draftLineOf = (line: Order['lines'][number], index: number): DraftLine => {
-  const draft: Mutable<DraftLine> = {
-    key: `existing-${index}`,
-    name: line.productName,
-    priceText: moneyInputText(line.unitPriceMinor / 100),
-    productId: line.productId,
-    quantityText: String(line.quantity),
-    sku: line.sku,
-    vatRate: line.vatRate,
-  };
-  if (line.variantId !== undefined) {
-    draft.variantId = line.variantId;
-  }
-  if (line.variantName !== undefined) {
-    draft.variantName = line.variantName;
-  }
-  return draft;
-};
-
-const draftOf = (order: Order): Draft => ({
-  city: order.deliveryAddress?.city ?? '',
-  country: order.deliveryAddress?.country ?? '',
-  email: order.contact?.email ?? '',
-  lines: order.lines.map((line, index) => draftLineOf(line, index)),
-  name: order.contact?.name ?? '',
-  note: order.note ?? '',
-  phone: order.contact?.phone ?? '',
-  postalCode: order.deliveryAddress?.postalCode ?? '',
-  reason: '',
-  shippingMethod: order.shipping?.method ?? null,
-  shippingPriceText: order.shipping === undefined ? '' : moneyInputText(order.shipping.priceMinor / 100),
-  street: order.deliveryAddress?.street ?? '',
-});
+/** A catalog CZK amount in the order's currency: market orders keep their own price list (as the server reprices). */
+const inOrderCurrency = (order: Pick<Order, 'market'>, czkMinor: number): number =>
+  order.market === undefined ? czkMinor : convertGrossMinor(czkMinor, order.market);
 
 interface SellableUnit {
   readonly name: string;
@@ -318,10 +261,8 @@ const useOrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revi
   };
   const pickedVariants = activeVariants(pickedProduct);
   const unit = pickedProduct === null ? undefined : sellableUnit(pickedProduct, pickedVariantId);
-  const [busy, setBusy] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
   const gross = order.pricesIncludeVat === true;
+  const currencyUnit = t(`merchandise.ui.currencyUnit.${orderCurrency(order)}`);
   const patch = (next: Partial<Draft>) => setDraft((current) => ({ ...current, ...next }));
   const patchLine = (key: string, next: Partial<DraftLine>) =>
     patch({ lines: draft.lines.map((line) => (line.key === key ? { ...line, ...next } : line)) });
@@ -335,68 +276,87 @@ const useOrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revi
     );
     return orderQuantityRules(stockUnit ?? { stockOnHand: 1_000_000 }, movesStock ? (original?.quantity ?? 0) : 0);
   };
-  const parsedLines = draft.lines.map((line) => {
-    const quantity = parseQuantity(line.quantityText);
-    const original = order.lines.find(
-      (entry) => entry.productId === line.productId && entry.variantId === line.variantId,
-    );
-    const rules = rulesFor(line);
-    const valid = quantity !== null && (quantity === original?.quantity || isOrderQuantityValid(quantity, rules));
-    return { line, price: parseCzk(line.priceText), quantity: valid ? quantity : null, rules };
-  });
-  const linesInvalid =
-    draft.lines.length === 0 || parsedLines.some((entry) => entry.price === null || entry.quantity === null);
-  const shippingPrice = parseCzk(draft.shippingPriceText);
-  const shippingInvalid = draft.shippingMethod !== null && shippingPrice === null;
-  const addressTouched = !sameAddress(order, draft);
-  const addressInvalid =
-    addressTouched && [draft.street, draft.city, draft.postalCode].some((value) => value.trim() === '');
-  const contactTouched = !sameContact(order, draft);
-  const contactInvalid =
-    contactTouched && (draft.name.trim() === '' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(draft.email.trim()));
+  /** Everything one draft needs: its parsed lines, what is invalid, and whether it may be sent at all. */
+  const draftValidation = (value: Draft) => {
+    const parsedLines = value.lines.map((line) => {
+      const quantity = parseQuantity(line.quantityText);
+      const original = order.lines.find(
+        (entry) => entry.productId === line.productId && entry.variantId === line.variantId,
+      );
+      const rules = rulesFor(line);
+      const valid = quantity !== null && (quantity === original?.quantity || isOrderQuantityValid(quantity, rules));
+      return { line, price: parseAmount(line.priceText), quantity: valid ? quantity : null, rules };
+    });
+    const linesInvalid =
+      value.lines.length === 0 || parsedLines.some((entry) => entry.price === null || entry.quantity === null);
+    const shippingPrice = parseAmount(value.shippingPriceText);
+    const shippingInvalid = value.shippingMethod !== null && shippingPrice === null;
+    const addressTouched = !sameAddress(order, value);
+    const addressInvalid =
+      addressTouched && [value.street, value.city, value.postalCode].some((field) => field.trim() === '');
+    const contactTouched = !sameContact(order, value);
+    const contactInvalid =
+      contactTouched && (value.name.trim() === '' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(value.email.trim()));
+    return {
+      addressInvalid,
+      addressTouched,
+      contactInvalid,
+      contactTouched,
+      linesInvalid,
+      parsedLines,
+      shippingInvalid,
+      shippingPrice,
+      valid: !linesInvalid && !shippingInvalid && !addressInvalid && !contactInvalid,
+    };
+  };
+  const { addressInvalid, contactInvalid, linesInvalid, parsedLines, shippingInvalid, shippingPrice } =
+    draftValidation(draft);
 
   const preview = previewTotals(order, parsedLines, draft.shippingMethod, shippingPrice);
 
-  const buildCommand = () => editCommandOf(order, draft, parsedLines, shippingPrice, addressTouched, contactTouched);
+  // `EditOrder` names the order version it was made against, so every save re-reads the version it leaves behind.
+  const savedOnce = useRef(false);
+  const version = useRef<OrderVersion>({ revision, updatedAt: order.updatedAt });
+  useEffect(() => {
+    version.current = { revision, updatedAt: order.updatedAt };
+  }, [order.updatedAt, revision]);
+  const autosave = useAutosave<Draft, never>({
+    equals: sameOrderDraft,
+    isValid: (value) => draftValidation(value).valid,
+    runtime: browserRuntime,
+    save: (value): Effect.Effect<AutosaveOutcome> => {
+      const checked = draftValidation(value);
+      const command = editCommandOf(
+        { ...order, updatedAt: version.current.updatedAt },
+        value,
+        checked.parsedLines,
+        checked.shippingPrice,
+        checked.addressTouched,
+        checked.contactTouched,
+      );
+      return command === null
+        ? Effect.succeed('saved')
+        : saveOrderEdit(command, version).pipe(
+            Effect.tap((outcome) =>
+              Effect.sync(() => {
+                if (outcome === 'saved') {
+                  savedOnce.current = true;
+                }
+              }),
+            ),
+          );
+    },
+    value: draft,
+  });
+  const busy = autosave.status === 'saving';
 
-  const save = () => {
-    setSubmitted(true);
-    if (linesInvalid || shippingInvalid || addressInvalid || contactInvalid || busy) {
-      const invalid = parsedLines.find((entry) => entry.quantity === null || entry.price === null);
-      if (invalid !== undefined) {
-        const field = document.querySelector<HTMLElement>(
-          `[id="edit-${invalid.quantity === null ? 'qty' : 'price'}-${invalid.line.key}"]`,
-        );
-        field?.scrollIntoView({ block: 'center' });
-        field?.focus();
-      }
+  const close = () => {
+    autosave.flush();
+    if (savedOnce.current) {
+      onSaved(`Objednávka ${order.number} upravena — změna je zapsána v historii`);
       return;
     }
-    const command = buildCommand();
-    if (command === null) {
-      onCancel();
-      return;
-    }
-    setBusy(true);
-    setServerError(null);
-    void browserRuntime.runPromise(
-      editOrder(command, revision).pipe(
-        Effect.match({
-          onFailure: (error) => {
-            setBusy(false);
-            setServerError(
-              isRevisionConflict(error)
-                ? 'Tuto objednávku mezitím změnil někdo jiný. Zavřete úpravy, načtěte data znovu a změnu zopakujte.'
-                : 'Změnu se nepodařilo uložit. Nic nebylo změněno, zkuste to prosím znovu.',
-            );
-          },
-          onSuccess: () => {
-            setBusy(false);
-            onSaved(`Objednávka ${order.number} upravena — změna je zapsána v historii`);
-          },
-        }),
-      ),
-    );
+    onCancel();
   };
 
   const clearPick = () => pickProduct(null);
@@ -417,7 +377,7 @@ const useOrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revi
         ? pickedProduct
         : (pickedProduct.variantRecords?.find((entry) => entry.id === unit.variantId) ?? pickedProduct),
     );
-    const unitPrice = gross ? grossUnitPriceMinor(unit.netMinor, unit.vatRate) : unit.netMinor;
+    const unitPrice = inOrderCurrency(order, gross ? grossUnitPriceMinor(unit.netMinor, unit.vatRate) : unit.netMinor);
     const line: Mutable<DraftLine> = {
       key: `new-${sequence.current}`,
       name: unit.name,
@@ -439,16 +399,21 @@ const useOrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revi
   };
 
   const akros = products.some((product) => product.sourceGroupId !== undefined);
-  const methodItems = shippingOptions.map((option) => ({
-    label: `${shippingMethodFor(option.method, akros).label} · ${formatMoney(option.priceMinor)}`,
-    value: option.method,
-  }));
+  const methodItems = shippingOptions.map((option) =>
+    selectItem(
+      option.method,
+      `${shippingMethodFor(option.method, akros).label} · ${formatMoney(inOrderCurrency(order, option.priceMinor), orderCurrency(order))}`,
+    ),
+  );
 
   return {
     addLine,
     addressInvalid,
+    autosave,
     busy,
+    close,
     contactInvalid,
+    currencyUnit,
     draft,
     gross,
     linesInvalid,
@@ -464,22 +429,20 @@ const useOrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revi
     pickedVariants,
     pickProduct,
     preview,
-    save,
-    serverError,
     setPickedVariantId,
     shippingInvalid,
-    submitted,
     t,
     unit,
   };
 };
 
 const renderOrderShipping = ({
+  currencyUnit,
   draft,
   methodItems,
+  order,
   patch,
   shippingInvalid,
-  submitted,
   t,
 }: ReturnType<typeof useOrderEditForm>) => (
   <SectionCard title={t('merchandise.ui.shipping')}>
@@ -494,7 +457,9 @@ const renderOrderShipping = ({
           if (method !== undefined) {
             patch({
               shippingMethod: method.method,
-              shippingPriceText: moneyInputText(shippingMethods[method.method].grossPriceMinor / 100),
+              shippingPriceText: moneyInputText(
+                inOrderCurrency(order, shippingMethods[method.method].grossPriceMinor) / 100,
+              ),
             });
           }
         }}
@@ -505,14 +470,14 @@ const renderOrderShipping = ({
       <FormNumericInput
         formatOptions={MONEY_FORMAT}
         id="edit-shipping-price"
-        label={t('merchandise.ui.shippingPriceInclVat')}
+        label={t('merchandise.ui.shippingPriceInclVat', { currency: currencyUnit })}
         locale="cs-CZ"
         min={0}
         name="shippingPrice"
         onValueChange={(details) => patch({ shippingPriceText: details.value })}
         size="sm"
         value={draft.shippingPriceText}
-        {...(submitted && shippingInvalid ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const } : {})}
+        {...(shippingInvalid ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const } : {})}
       >
         <NumericInput.Control>
           <NumericInput.Input />
@@ -522,7 +487,7 @@ const renderOrderShipping = ({
   </SectionCard>
 );
 
-const renderOrderAddress = ({ addressInvalid, draft, patch, submitted, t }: ReturnType<typeof useOrderEditForm>) => (
+const renderOrderAddress = ({ addressInvalid, draft, patch, t }: ReturnType<typeof useOrderEditForm>) => (
   <SectionCard title={t('merchandise.ui.deliveryAddress')}>
     <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
       <FormInput
@@ -554,7 +519,7 @@ const renderOrderAddress = ({ addressInvalid, draft, patch, submitted, t }: Retu
         value={draft.country}
       />
     </div>
-    {submitted && addressInvalid && (
+    {addressInvalid && (
       <StatusText showIcon status="error">
         Vyplňte ulici, město i PSČ.
       </StatusText>
@@ -562,7 +527,7 @@ const renderOrderAddress = ({ addressInvalid, draft, patch, submitted, t }: Retu
   </SectionCard>
 );
 
-const renderOrderContact = ({ contactInvalid, draft, patch, submitted, t }: ReturnType<typeof useOrderEditForm>) => (
+const renderOrderContact = ({ contactInvalid, draft, patch, t }: ReturnType<typeof useOrderEditForm>) => (
   <SectionCard title={t('merchandise.ui.demoCustomerContact')}>
     <div className="grid grid-cols-1 gap-200 sm:grid-cols-3">
       <FormInput
@@ -588,7 +553,7 @@ const renderOrderContact = ({ contactInvalid, draft, patch, submitted, t }: Retu
         value={draft.phone}
       />
     </div>
-    {submitted && contactInvalid && (
+    {contactInvalid && (
       <StatusText showIcon status="error">
         Zadejte jméno a platný e-mail.
       </StatusText>
@@ -600,12 +565,14 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
   const model = useOrderEditForm(props);
   const {
     addLine,
+    autosave,
     busy,
+    close,
+    currencyUnit,
     draft,
     gross,
     linesInvalid,
     movesStock,
-    onCancel,
     order,
     parsedLines,
     patch,
@@ -615,13 +582,15 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
     pickedVariants,
     pickProduct,
     preview,
-    save,
-    serverError,
     setPickedVariantId,
-    submitted,
     t,
     unit,
   } = model;
+  const handleRetry = autosave.retry;
+  /** Someone else changed the order: close the editor on their version and let the list reload it. */
+  const reloadLatest = () => {
+    props.onSaved(`Objednávka ${order.number}: načtena aktuální verze`);
+  };
 
   return (
     <form
@@ -630,7 +599,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
       noValidate
       onSubmit={(event) => {
         event.preventDefault();
-        save();
+        autosave.flush();
       }}
     >
       <p className="text-fg-secondary text-sm">
@@ -640,16 +609,14 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
           : 'Tato objednávka sklad neodepsala, změna množství zásoby nemění.'}
       </p>
       <SectionCard flush title={t('merchandise.ui.items')}>
-        {/* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Pending scoped exception approval: this named overflow viewport needs keyboard scrolling. */}
-        <section aria-label={t('merchandise.ui.orderItems')} style={{ overflowX: 'auto' }} tabIndex={0}>
-          {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
+        <ScrollRegion label={t('merchandise.ui.orderItems')}>
           <Table size="sm" variant="line">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader>Položka</Table.ColumnHeader>
                 <Table.ColumnHeader align="end">Množství</Table.ColumnHeader>
                 <Table.ColumnHeader align="end">
-                  {gross ? 'Cena/j s DPH (Kč)' : 'Cena/j bez DPH (Kč)'}
+                  {`${gross ? 'Cena/j s DPH' : 'Cena/j bez DPH'} (${currencyUnit})`}
                 </Table.ColumnHeader>
                 <Table.ColumnHeader align="end">Celkem s DPH</Table.ColumnHeader>
                 <Table.ColumnHeader align="end">
@@ -682,7 +649,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                         size="sm"
                         step={rules.step}
                         value={line.quantityText}
-                        {...(submitted && quantity === null
+                        {...(quantity === null
                           ? {
                               helpText: `Minimum ${rules.minimum.toLocaleString('cs-CZ')}, balení po ${rules.step.toLocaleString('cs-CZ')}, dostupné ${rules.maximum.toLocaleString('cs-CZ')}`,
                               validateStatus: 'error' as const,
@@ -707,9 +674,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                         onValueChange={(details) => patchLine(line.key, { priceText: details.value })}
                         size="sm"
                         value={line.priceText}
-                        {...(submitted && price === null
-                          ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const }
-                          : {})}
+                        {...(price === null ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const } : {})}
                       >
                         <NumericInput.Control>
                           <NumericInput.Input />
@@ -725,6 +690,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                             { quantity, unitPriceMinor: price, vatRate: line.vatRate },
                             order.pricesIncludeVat,
                           ),
+                          orderCurrency(order),
                         )}
                   </Table.Cell>
                   <Table.Cell align="end">
@@ -743,7 +709,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
               ))}
             </Table.Body>
           </Table>
-        </section>
+        </ScrollRegion>
         <div className="flex flex-col gap-150 p-200">
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-150">
             <ProductSearchCombobox
@@ -771,7 +737,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
           </div>
           {pickedVariants.length > 0 && (
             <SelectTemplate
-              items={pickedVariants.map((entry) => ({ label: `${entry.name} (${entry.sku})`, value: entry.id }))}
+              items={pickedVariants.map((entry) => selectItem(entry.id, `${entry.name} (${entry.sku})`))}
               label={t('merchandise.ui.variant')}
               name="order-edit-add-variant"
               onValueChange={(details) => {
@@ -819,23 +785,18 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
         <div className="flex flex-col">
           <span className="text-fg-secondary text-sm">Náhled celkové částky s DPH (přepočte server)</span>
           <span className="font-semibold text-lg tabular-nums">
-            {linesInvalid ? 'Zkontrolujte množství a ceny položek' : formatMoney(preview.totalMinor)}
+            {linesInvalid
+              ? 'Zkontrolujte množství a ceny položek'
+              : formatMoney(preview.totalMinor, orderCurrency(order))}
           </span>
         </div>
-        <div className="flex gap-150">
-          <Button disabled={busy} onClick={onCancel} theme="outlined" type="button" variant="secondary">
-            Zrušit úpravy
-          </Button>
-          <Button isLoading={busy} loadingText="Ukládám…" type="submit" variant="primary">
-            Uložit změny
+        <div className="flex flex-wrap items-center gap-150">
+          <AutosaveStatus onReloadLatest={reloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <Button disabled={busy} onClick={close} theme="outlined" type="button" variant="secondary">
+            Zavřít
           </Button>
         </div>
       </div>
-      {serverError !== null && (
-        <StatusText showIcon status="error">
-          {serverError}
-        </StatusText>
-      )}
     </form>
   );
 };

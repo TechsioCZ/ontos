@@ -345,6 +345,7 @@ const makeConflictAwareImportHarness = (
               ),
             ),
           ),
+        findPersistedSourceHistory: () => Effect.succeed([]),
         lockAndReadAcceptedHistory: () =>
           Ref.get(entries).pipe(
             Effect.map((current) => current.filter((entry) => entry.outcome.status === 'ACCEPTED')),

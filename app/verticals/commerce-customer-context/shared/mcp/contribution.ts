@@ -129,6 +129,8 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
         en: 'Clear the default delivery address',
       },
     },
+    'complete-purchase-proposal-basis': 'hidden',
+    'consume-order-purchase-approval': 'hidden',
     'consume-purchase-approval': 'hidden',
     'create-approval-hierarchy': {
       title: {
@@ -202,6 +204,7 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
         en: 'Start customer profile reconciliation',
       },
     },
+    'prepare-purchase-proposal-basis': 'hidden',
     'reactivate-customer-group': {
       title: {
         cs: 'Znovu aktivovat zákaznickou skupinu',
@@ -293,6 +296,7 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
         en: 'Resolve customer profile reconciliation',
       },
     },
+    'revalidate-order-purchase-approval': 'hidden',
     'revalidate-purchase-approval': {
       title: {
         cs: 'Znovu ověřit schválení nákupu',
@@ -539,12 +543,15 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
       },
     },
     'market-bootstrap-resolution': 'hidden',
+    'market-retirement-reservation': 'hidden',
     'market-subject-restrictions-current': {
       title: {
         cs: 'Aktuální omezení subjektů na trhu',
         en: 'Current market subject restrictions',
       },
     },
+    'order-commitment-approval-evidence': 'hidden',
+    'order-service-approval-evidence': 'hidden',
     'payment-term-affected-use-assessment': {
       title: {
         cs: 'Dopad změny platebních podmínek',
@@ -590,6 +597,7 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
         en: 'Purchase limit policies',
       },
     },
+    'purchase-proposal-basis': 'hidden',
     'repeat-order-preparation': {
       title: {
         cs: 'Příprava opakované objednávky',

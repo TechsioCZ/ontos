@@ -45,7 +45,7 @@ interface PoolRun {
 }
 
 interface PoolObservations {
-  readonly configurations: actualPgClient.PgPoolConfig[];
+  readonly configurations: actualPgClient.PgPoolConfig<unknown>[];
   readonly runs: PoolRun[];
 }
 
@@ -63,16 +63,18 @@ const releasePool = (run: PoolRun) =>
   });
 
 /** Only native acquisition is mocked; Drizzle, SQL execution and scoped finalizers remain real. */
-const scriptedNativePool = (observations: PoolObservations) => (configuration: actualPgClient.PgPoolConfig) =>
-  Effect.gen(function* acquireScriptedNativePool() {
-    observations.configurations.push(configuration);
-    const run: PoolRun = { events: [], released: false };
-    observations.runs.push(run);
-    const connection = testSqlConnection((statement) => recordStatement(run, statement));
-    const services = yield* Layer.build(scriptedPgClientLayer(Effect.succeed(connection)));
-    yield* Effect.addFinalizer(() => releasePool(run));
-    return Context.get(services, actualPgClient.PgClient);
-  });
+const scriptedNativePool =
+  (observations: PoolObservations) =>
+  <R>(configuration: actualPgClient.PgPoolConfig<R>) =>
+    Effect.gen(function* acquireScriptedNativePool() {
+      observations.configurations.push(configuration);
+      const run: PoolRun = { events: [], released: false };
+      observations.runs.push(run);
+      const connection = testSqlConnection((statement) => recordStatement(run, statement));
+      const services = yield* Layer.build(scriptedPgClientLayer(Effect.succeed(connection)));
+      yield* Effect.addFinalizer(() => releasePool(run));
+      return Context.get(services, actualPgClient.PgClient);
+    });
 
 it.effect(
   'acquires one configured admin pool per fixture and keeps it open through cleanup on success and failure',

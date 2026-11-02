@@ -21,7 +21,7 @@ const CommerceMarketCatalogHome = (): ReactElement => {
             className="commercemarketcatalog:rounded-full commercemarketcatalog:border commercemarketcatalog:border-stone-900/15 commercemarketcatalog:bg-white commercemarketcatalog:px-4 commercemarketcatalog:py-2 commercemarketcatalog:text-sm commercemarketcatalog:font-bold commercemarketcatalog:text-stone-950 commercemarketcatalog:no-underline"
             key={code}
             params={{ lang: code }}
-            to="/$lang"
+            to="/$lang/"
           >
             {t(`commerce-market-catalog.language.${code}`)}
           </Link>

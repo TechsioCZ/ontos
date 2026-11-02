@@ -1,6 +1,8 @@
 /* oxlint-disable sonarjs/no-nested-functions -- In-memory owner ports keep the public ledger seam explicit; expires: 2027-03-31. */
-import { Effect, Option, Ref, Schema } from 'effect';
-import { describe, expect, it } from 'effect-rstest';
+import { Array as EffectArray, Effect, Option, Ref, Schema } from 'effect';
+import { CommitmentProtectionEffectRequestSchema } from '../../shared/domain/commitment-protection.ts';
+import { buildInventoryOwnerAcceptanceBindingCorrectionLineage } from '../support/inventory-owner-acceptance-binding-correction.ts';
+import { assert, describe, expect, it } from 'effect-rstest';
 
 import {
   InventoryEffectLedgerConflict,
@@ -16,6 +18,11 @@ import type { InventoryEffectLedgerRecord } from '../../shared/domain/inventory-
 import type { InventoryEffectLedgerPersistence } from '../../src/services/inventory-effect-ledger.service.ts';
 import {
   makeInventoryEffectLedgerService,
+  commitmentProtectionLedgerIntent,
+  commitmentProtectionLedgerResolution,
+  canonicalInventoryEffectIntent,
+  sameInventoryEffectIntent,
+  inventoryEffectLedgerId,
   physicalStockLedgerIntent,
 } from '../../src/services/inventory-effect-ledger.service.ts';
 
@@ -261,3 +268,188 @@ describe('Inventory effect ledger', () => {
     }),
   );
 });
+
+const originalProtectionRequest = Effect.gen(function* originalProtectionRequest() {
+  const lineage = yield* buildInventoryOwnerAcceptanceBindingCorrectionLineage;
+  const request = yield* Schema.decodeUnknownEffect(CommitmentProtectionEffectRequestSchema)({
+    confirmation: lineage.confirmation,
+    effectId: lineage.protection.authorityEvidence.effectId,
+    legalEntityId: '12111111-1111-4111-8111-111111111111',
+    mutationId: lineage.protection.ref.resourceId,
+    protectionRef: lineage.protection.ref,
+    requestedAt: '2026-09-25T10:10:00.000Z',
+    sourceActionInvocationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+  });
+  return { protection: lineage.protection, request };
+});
+
+for (const state of ['REQUESTED', 'INDETERMINATE', 'SUCCEEDED'] as const) {
+  it.effect(`Protection ${state} exact replay ignores only new invocation and dispatch time`, () =>
+    Effect.gen(function* protectionMetadataReplay() {
+      const { protection, request } = yield* originalProtectionRequest;
+      const { history, service } = yield* makeHarness();
+      const identity = inventoryEffectLedgerId(request.effectId);
+      let original = (yield* service.claim(tenantId, identity, commitmentProtectionLedgerIntent(request))).record;
+      if (state !== 'REQUESTED') {
+        original = yield* service.transition(original, { currentState: 'INDETERMINATE', resolution: null });
+      }
+      if (state === 'SUCCEEDED') {
+        original = yield* service.transition(original, {
+          currentState: 'SUCCEEDED',
+          resolution: commitmentProtectionLedgerResolution({ _tag: 'PROTECTED', protection, request }),
+        });
+      }
+      const priorHistory = yield* Ref.get(history);
+      const later = {
+        ...request,
+        requestedAt: '2026-09-25T11:10:00.000Z',
+        sourceActionInvocationId: ActionInvocationIdSchema.make('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'),
+      };
+      expect(canonicalInventoryEffectIntent(commitmentProtectionLedgerIntent(later))).not.toBe(
+        canonicalInventoryEffectIntent(commitmentProtectionLedgerIntent(request)),
+      );
+      expect(
+        sameInventoryEffectIntent(
+          commitmentProtectionLedgerIntent(request),
+          commitmentProtectionLedgerIntent({ ...request, requestedAt: later.requestedAt }),
+        ),
+      ).toBe(true);
+      expect(
+        sameInventoryEffectIntent(
+          commitmentProtectionLedgerIntent(request),
+          commitmentProtectionLedgerIntent({ ...request, sourceActionInvocationId: later.sourceActionInvocationId }),
+        ),
+      ).toBe(true);
+      const replay = yield* service.claim(tenantId, identity, commitmentProtectionLedgerIntent(later));
+      expect(replay.outcome).toBe('EXACT_REPLAY');
+      expect(replay.record).toEqual(original);
+      expect(yield* Ref.get(history)).toEqual(priorHistory);
+    }),
+  );
+}
+
+it.effect(
+  'Protection business projection preserves every material dimension and normalizes only permitted ordering',
+  () =>
+    Effect.gen(function* protectionMaterialControls() {
+      const { request } = yield* originalProtectionRequest;
+      const original = commitmentProtectionLedgerIntent(request);
+      const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(CommitmentProtectionEffectRequestSchema))(
+        request,
+      );
+      const [requirement] = request.confirmation.reservation.requirements;
+      assert(requirement !== undefined);
+      const [materialAllocation] = requirement.allocations;
+      assert(materialAllocation !== undefined);
+      const changes = [
+        [request.effectId, 'protection:different-effect'],
+        [request.mutationId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9'],
+        [requirement.purchaseDemandOccurrenceId, 'different-occurrence'],
+        [materialAllocation.positionRef.resourceId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9'],
+        [request.protectionRef.resourceId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9'],
+        [request.legalEntityId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9'],
+        [request.confirmation.ref.resourceId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9'],
+        [request.confirmation.reservation.ref.resourceId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9'],
+        [request.confirmation.reservation.origin.attemptId, 'different-attempt'],
+        [request.confirmation.reservation.authority.selection.backendId, 'different-backend'],
+        [request.confirmation.reservation.authority.configurationId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9'],
+        [request.confirmation.reservation.authority.customerConfigurationId, 'different-customer-configuration'],
+        [request.protectionRef.tenantId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9'],
+        [requirement.unitRef.resourceId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9'],
+        [requirement.stockItem.stockItemRef.resourceId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9'],
+        ['"4"', '"5"'],
+      ] as const;
+      for (const [source, target] of changes) {
+        const typed = yield* Schema.decodeEffect(Schema.fromJsonString(CommitmentProtectionEffectRequestSchema))(
+          encoded.replaceAll(source, target),
+        );
+        expect(sameInventoryEffectIntent(original, commitmentProtectionLedgerIntent(typed))).toBe(false);
+      }
+      const otherBackend = yield* Schema.decodeEffect(Schema.fromJsonString(CommitmentProtectionEffectRequestSchema))(
+        encoded
+          .replaceAll('"ontos_wms"', '"external_business_system"')
+          .replaceAll('"ONTOS_WMS"', '"EXTERNAL_BUSINESS_SYSTEM"'),
+      );
+      expect(sameInventoryEffectIntent(original, commitmentProtectionLedgerIntent(otherBackend))).toBe(false);
+      const [allocation] = requirement.allocations;
+      assert(allocation !== undefined);
+      const requirements = ['first', 'second'].map((label) => ({
+        ...requirement,
+        allocations: ['a', 'b'].map((suffix) => ({
+          ...allocation,
+          allocationId: `allocation:${label}:${suffix}`,
+          quantity: { ...allocation.quantity, amount: '2' },
+        })),
+        purchaseDemandOccurrenceId: `demand:${label}`,
+      }));
+      const multiple = yield* Schema.decodeUnknownEffect(CommitmentProtectionEffectRequestSchema)({
+        ...request,
+        confirmation: {
+          ...request.confirmation,
+          authorityEvidence: {
+            ...request.confirmation.authorityEvidence,
+            evidence: {
+              ...request.confirmation.authorityEvidence.evidence,
+              allocations: requirements.flatMap((entry) =>
+                entry.allocations.map((entryAllocation) => ({
+                  ...entryAllocation,
+                  stockPositionRef: entryAllocation.positionRef,
+                })),
+              ),
+            },
+          },
+          reservation: { ...request.confirmation.reservation, requirements },
+        },
+      });
+      expect(sameInventoryEffectIntent(original, commitmentProtectionLedgerIntent(multiple))).toBe(false);
+      expect(sameInventoryEffectIntent(commitmentProtectionLedgerIntent(multiple), original)).toBe(false);
+      const reordered = yield* Schema.decodeUnknownEffect(CommitmentProtectionEffectRequestSchema)({
+        ...multiple,
+        confirmation: {
+          ...multiple.confirmation,
+          reservation: {
+            ...multiple.confirmation.reservation,
+            requirements: EffectArray.reverse(multiple.confirmation.reservation.requirements).map((entry) => ({
+              ...entry,
+              allocations: EffectArray.reverse(entry.allocations),
+            })),
+          },
+        },
+      });
+      expect(reordered.confirmation.reservation.requirements).not.toEqual(
+        multiple.confirmation.reservation.requirements,
+      );
+      expect(
+        sameInventoryEffectIntent(
+          commitmentProtectionLedgerIntent(multiple),
+          commitmentProtectionLedgerIntent(reordered),
+        ),
+      ).toBe(true);
+    }),
+);
+
+it.effect('Protection resolution still requires original dispatch provenance', () =>
+  Effect.gen(function* originalResolutionProvenance() {
+    const { protection, request } = yield* originalProtectionRequest;
+    const { service } = yield* makeHarness();
+    const original = (yield* service.claim(
+      tenantId,
+      inventoryEffectLedgerId(request.effectId),
+      commitmentProtectionLedgerIntent(request),
+    )).record;
+    const changes = [
+      { ...request, sourceActionInvocationId: ActionInvocationIdSchema.make('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2') },
+      { ...request, requestedAt: '2026-09-25T11:10:00.000Z' },
+    ];
+    for (const changed of changes) {
+      const failure = yield* Effect.flip(
+        service.transition(original, {
+          currentState: 'SUCCEEDED',
+          resolution: commitmentProtectionLedgerResolution({ _tag: 'PROTECTED', protection, request: changed }),
+        }),
+      );
+      expect(Schema.is(InventoryEffectLedgerRejected)(failure)).toBe(true);
+      expect(failure.reason).toBe('INVALID_RESOLUTION');
+    }
+  }),
+);

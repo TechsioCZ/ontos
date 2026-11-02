@@ -420,7 +420,6 @@ const MeterPanels = ({ view }: { readonly view: ReturnType<typeof useMetersView>
   return (
     <>
       <SidePanel
-        closeOnInteractOutside={detailMode === 'view'}
         description={detail?.location?.label}
         onOpenChange={(next) => {
           if (!next) {
@@ -455,7 +454,6 @@ const MeterPanels = ({ view }: { readonly view: ReturnType<typeof useMetersView>
       </SidePanel>
 
       <SidePanel
-        closeOnInteractOutside={false}
         onOpenChange={(next) => setCreating(next)}
         open={creating}
         resizeLabel={t(CLOSE_LABEL)}
@@ -481,7 +479,6 @@ const MeterPanels = ({ view }: { readonly view: ReturnType<typeof useMetersView>
       </SidePanel>
 
       <SidePanel
-        closeOnInteractOutside={false}
         onOpenChange={(next) => setRecording(next)}
         open={recording}
         resizeLabel={t(CLOSE_LABEL)}

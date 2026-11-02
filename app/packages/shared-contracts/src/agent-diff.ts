@@ -41,7 +41,8 @@ export interface AgentDiffValueOptions {
 
 const isoDate = /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})$/u;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
-const recordReferenceText = (resourceId: string): string => `záznam ${resourceId.slice(0, 8)}…`;
+/** A reference id says nothing to a person; the card title names the record. */
+const RECORD_REFERENCE_TEXT = 'propojený záznam';
 type DiffLineDraft = { -readonly [Key in keyof AgentDiffLine]: AgentDiffLine[Key] };
 
 const agentStringDiffValue = (field: string, value: string, options: AgentDiffValueOptions): string => {
@@ -50,8 +51,7 @@ const agentStringDiffValue = (field: string, value: string, options: AgentDiffVa
     return label;
   }
   if (uuid.test(value)) {
-    // A bare reference id says nothing to a person; the card title names the record.
-    return recordReferenceText(value);
+    return RECORD_REFERENCE_TEXT;
   }
   const date = isoDate.exec(value)?.groups;
   return date === undefined ? value : `${Number(date['day'])}. ${Number(date['month'])}. ${date['year']}`;
@@ -79,7 +79,7 @@ export const agentDiffValue = (
     return value.length === 0 ? undefined : `${value.length} položek`;
   }
   if (isRecord(value) && isString(value['resourceId'])) {
-    return recordReferenceText(value['resourceId']);
+    return RECORD_REFERENCE_TEXT;
   }
   // Command-source normalization makes the encoded JSON total for this declared value domain.
   return isRecord(value) ? Result.getOrThrow(Schema.encodeResult(CommandJsonSchema)(agentCommandOf(value))) : undefined;

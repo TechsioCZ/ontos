@@ -366,6 +366,47 @@ describe('Pricing Quotation issuance', () => {
     }),
   );
 
+  it.effect('issues at the evidence validation instant that follows the evaluated operation instant', () =>
+    Effect.gen(function* issuesAtValidationInstant() {
+      const request = yield* readyRequest();
+      const { commercialTotal } = request.currentResult;
+      const validatedAt = '2026-09-28T12:00:01.250Z';
+      const materialEvidence = makeQuotationMaterialEvidence(commercialTotal, validatedAt);
+      const issued = yield* makePricingQuotationIssuanceService(ownerBoundary, {
+        readIssuanceTime: Effect.succeed(validatedAt),
+        readOperationTime: Effect.succeed(commercialTotal.decision.operationTime),
+      }).issue({ ...request, materialEvidence });
+
+      expect(issued.issuedAt).toBe(validatedAt);
+      expect(issued.validity.validFrom).toBe(validatedAt);
+      expect(issued.quotedResult.decision.operationTime).toBe(commercialTotal.decision.operationTime);
+      expect(issued.materialEvidence.validatedAt).toBe(validatedAt);
+    }),
+  );
+
+  it.effect('rejects evidence validated after the issuance instant and issuance before the operation instant', () =>
+    Effect.gen(function* rejectsMisorderedInstants() {
+      const request = yield* readyRequest();
+      const { commercialTotal } = request.currentResult;
+      const lateEvidence = makeQuotationMaterialEvidence(commercialTotal, '2026-09-28T12:00:02.000Z');
+      const lateFailure = yield* makePricingQuotationIssuanceService(ownerBoundary, {
+        readIssuanceTime: Effect.succeed('2026-09-28T12:00:01.000Z'),
+        readOperationTime: Effect.succeed(commercialTotal.decision.operationTime),
+      })
+        .issue({ ...request, materialEvidence: lateEvidence })
+        .pipe(Effect.flip);
+      const earlyFailure = yield* makePricingQuotationIssuanceService(ownerBoundary, {
+        readIssuanceTime: Effect.succeed('2026-09-28T11:59:59.000Z'),
+        readOperationTime: Effect.succeed(commercialTotal.decision.operationTime),
+      })
+        .issue(request)
+        .pipe(Effect.flip);
+
+      expect(lateFailure).toEqual(new PricingQuotationIssuanceRejected({ reason: 'INVALID_ISSUANCE_REQUEST' }));
+      expect(earlyFailure).toEqual(new PricingQuotationIssuanceRejected({ reason: 'INVALID_ISSUANCE_REQUEST' }));
+    }),
+  );
+
   it.effect('derives a bounded positive interval from owner policy and never from browser input', () =>
     Effect.gen(function* derivesOwnerValidity() {
       const request = yield* readyRequest();

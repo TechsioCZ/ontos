@@ -1,4 +1,4 @@
-import { Predicate, Schema } from 'effect';
+import { DateTime, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { CoreSearchResourceRefSchema } from '@app/core-runtime';
 
@@ -246,6 +246,23 @@ it('attaches the concrete purchasing policy to every governed approval Action', 
   }
 });
 
+it('treats Approval Decision expiry as exclusive for approve, return and reject', () => {
+  const afterExpiry = Schema.decodeUnknownSync(Schema.DateTimeUtcFromString)('2026-09-09T13:00:00.001Z');
+  for (const kind of ['APPROVE', 'RETURN', 'REJECT'] as const) {
+    const decide = (now: typeof expiresAt) =>
+      applyApprovalDecision({
+        actor: principal(approverId),
+        hierarchy: hierarchy('storefront-specific', 'storefront-eu'),
+        kind,
+        now,
+        request: request(),
+      });
+    expect(Predicate.isTagged(decide(later), 'APPLIED')).toBe(true);
+    expect(Predicate.isTagged(decide(expiresAt), 'REQUEST_EXPIRED')).toBe(true);
+    expect(Predicate.isTagged(decide(afterExpiry), 'REQUEST_EXPIRED')).toBe(true);
+  }
+});
+
 it('requires both route eligibility and the explicit self-approval policy', () => {
   const pending = request();
   const deniedSelfApproval = applyApprovalDecision({
@@ -392,4 +409,43 @@ it('revalidates only an approved exact revision and keeps consumed approval term
     validUntil: later,
   });
   expect(Predicate.isTagged(late, 'REQUEST_EXPIRED')).toBe(true);
+});
+
+// Lifecycle values are domain controls; this does not claim native cancellation/supersession producers.
+it('refuses a fresh proof for every non-approved, unconsumed request lifecycle', () => {
+  for (const status of ['PENDING', 'RETURNED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'SUPERSEDED'] as const) {
+    const result = revalidateApproval({
+      buyerPermission: 'ALLOWED',
+      checkedAt: later,
+      exactProposalHashMatches: true,
+      profileState: 'ACTIVE',
+      request: { ...request(), status },
+      routeCurrent: true,
+      validUntil: expiresAt,
+    });
+    expect(Predicate.isTagged(result, 'REQUEST_NOT_APPROVED')).toBe(true);
+  }
+});
+
+it('applies exclusive request expiry to the request-bounded proof window', () => {
+  const approved = { ...request(), status: 'APPROVED' as const };
+  const original = Schema.encodeSync(PurchaseApprovalRequestSchema)(approved);
+  const validUntil = expiresAt;
+  for (const [checkedAt, expected] of [
+    [DateTime.subtract(expiresAt, { milliseconds: 1 }), 'APPROVAL_VALID'],
+    [expiresAt, 'REQUEST_EXPIRED'],
+    [DateTime.add(expiresAt, { milliseconds: 1 }), 'REQUEST_EXPIRED'],
+  ] as const) {
+    const result = revalidateApproval({
+      buyerPermission: 'ALLOWED',
+      checkedAt,
+      exactProposalHashMatches: true,
+      profileState: 'ACTIVE',
+      request: approved,
+      routeCurrent: true,
+      validUntil,
+    });
+    expect(Predicate.isTagged(result, expected)).toBe(true);
+    expect(Schema.encodeSync(PurchaseApprovalRequestSchema)(approved)).toEqual(original);
+  }
 });

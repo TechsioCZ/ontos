@@ -14,10 +14,9 @@ export const problemDetailsFields = Object.freeze({
 
 export const problemDetailsContentType = 'application/problem+json';
 
-// Capture the owning HTTP API's encoding metadata once; each contract then rebuilds its AST only once.
-const problemDetailsAnnotations = Schema.Struct({}).pipe(
-  HttpApiSchema.asJson({ contentType: problemDetailsContentType }),
-).ast.annotations;
+const problemDetailsRepresentation = HttpApiSchema.asJson({
+  contentType: problemDetailsContentType,
+});
 
 const hasJsonSafeNumberCheck = (checks: SchemaAST.Checks | undefined): boolean =>
   checks?.some((check) =>
@@ -226,7 +225,7 @@ const makeAnnotatedProblemDetailsSchema = <
     marker,
     concreteExtensions,
   );
-  return Schema.TaggedStruct(tag, fields).annotate({ ...problemDetailsAnnotations, httpApiStatus: status });
+  return Schema.TaggedStruct(tag, fields).pipe(problemDetailsRepresentation, HttpApiSchema.status(status));
 };
 
 /**

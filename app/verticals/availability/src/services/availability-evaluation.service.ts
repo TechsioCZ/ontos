@@ -97,7 +97,10 @@ const hasIndependentLowerBound = (
   proof: AvailabilityOwnerQualification,
   uncertainty: readonly AvailabilityDecisionReason[],
 ) =>
-  uncertainty.length > 0 || proof.positions.some((position) => position.constraintSupport === 'INDEPENDENTLY_PROVEN');
+  uncertainty.length > 0 ||
+  proof.positions.some(
+    (position) => position.usability !== 'UNUSABLE' && position.constraintSupport === 'INDEPENDENTLY_PROVEN',
+  );
 
 const hasCurrentZeroEvidence = (input: AvailabilityEvaluationInput, quantities: readonly string[]): boolean =>
   quantities.length > 0 &&

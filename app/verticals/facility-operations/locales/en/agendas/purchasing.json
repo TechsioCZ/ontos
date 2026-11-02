@@ -423,7 +423,6 @@
       "removeLine": "Remove",
       "saveDraft": "Save draft",
       "saveSent": "Save as sent",
-      "saveChanges": "Save changes",
       "required": "Choose a customer, a date and fill in name, quantity and price for every line.",
       "validity": "The quote cannot expire before its date.",
       "copyNote": "This quote already has an order. The order and issued invoices keep their own copy of the lines; editing the quote does not change them.",

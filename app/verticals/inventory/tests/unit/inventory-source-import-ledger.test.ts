@@ -2,14 +2,24 @@ import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { InventorySourceImportLedgerEntrySchema } from '../../shared/domain/inventory-source-import-outcome.ts';
-import { InventorySourceAssertionProposalSchema } from '../../shared/domain/inventory-source-assertion.ts';
+import {
+  InventorySourceImportLedgerEntrySchema,
+  InventorySourceImportUnavailable,
+} from '../../shared/domain/inventory-source-import-outcome.ts';
+import {
+  InventorySourceAssertionProposalSchema,
+  InventorySourceAssertionSchema,
+} from '../../shared/domain/inventory-source-assertion.ts';
 import { inventorySourceImportLedgerPersistenceForScope } from '../../src/persistence/inventory-source-import-ledger-repository.ts';
 import {
   inventorySourceImportLedger,
   inventorySourceImportLedgerVerifierContract,
 } from '../../src/persistence/inventory-source-import-ledger-table.ts';
 import { inventoryStockPositions } from '../../src/persistence/stock-position-table.ts';
+import {
+  inventorySourceAssertions,
+  inventorySourceAssertionCoverage,
+} from '../../src/persistence/inventory-source-assertion-table.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const actionInvocationId = '22222222-2222-4222-8222-222222222222';
@@ -111,16 +121,79 @@ describe('Inventory source import ledger', () => {
 
   it.effect('locks the exact Stock Position before reading accepted source history', () =>
     Effect.gen(function* lockStream() {
-      type SelectedTable = typeof inventorySourceImportLedger | typeof inventoryStockPositions;
+      type SelectedTable =
+        | typeof inventorySourceImportLedger
+        | typeof inventoryStockPositions
+        | typeof inventorySourceAssertions
+        | typeof inventorySourceAssertionCoverage;
       const selectedTables: SelectedTable[] = [];
       const lockedTables: SelectedTable[] = [];
-      const queuedRows = [[{ positionId: proposal.positionRef.resourceId }], [row]];
+      const uncertain = {
+        ...entry,
+        outcome: {
+          assertionId,
+          reason: 'MATERIAL_EFFECT_COVERAGE_UNKNOWN',
+          reconciliationRequired: true as const,
+          status: 'INDETERMINATE' as const,
+        },
+      };
+      const uncertainRow = { ...row, outcomeJson: uncertain.outcome, status: 'INDETERMINATE' };
+      const assertion = Schema.decodeUnknownSync(InventorySourceAssertionSchema)({
+        ...proposal,
+        authorityConfiguration: {
+          configurationId: '77777777-7777-4777-8777-777777777777',
+          customerConfigurationId: proposal.customerConfigurationId,
+          revision: 1,
+          selectedAt: '2026-09-24T09:00:00.000Z',
+          selection: {
+            backend: 'external_business_system',
+            backendId: 'erp-a',
+            exactReservationCapability: 'SUPPORTED',
+            stockCorrectionCapability: 'UNSUPPORTED',
+          },
+          tenantId,
+        },
+        issuerAuthority: 'SELECTED_BACKEND',
+        itemCorrelationRef: {
+          moduleId: 'commerce.inventory',
+          resourceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          resourceType: 'commerce.inventory.external-stock-correlation',
+          tenantId,
+        },
+        locationCorrelationRef: {
+          moduleId: 'commerce.inventory',
+          resourceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          resourceType: 'commerce.inventory.external-stock-correlation',
+          tenantId,
+        },
+        stockItemRef: {
+          moduleId: 'commerce.inventory',
+          resourceId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          resourceType: 'commerce.inventory.stock-item',
+          tenantId,
+        },
+        stockLocationRef: {
+          moduleId: 'commerce.inventory',
+          resourceId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+          resourceType: 'commerce.inventory.stock-location',
+          tenantId,
+        },
+      });
+      const queuedRows: unknown[][] = [
+        [{ positionId: proposal.positionRef.resourceId }],
+        [row],
+        [{ entry: uncertainRow }],
+        [{ assertionJson: assertion }],
+        [],
+      ];
       const transaction = {
         select: () => ({
           from: (table: SelectedTable) => {
             selectedTables.push(table);
-            const result = Effect.succeed(queuedRows.shift() ?? []);
+            const effect = Effect.succeed(queuedRows.shift() ?? []);
+            const result = Object.assign(effect, { limit: () => effect });
             return {
+              innerJoin: () => ({ where: () => result }),
               where: () =>
                 table === inventoryStockPositions
                   ? {
@@ -142,6 +215,28 @@ describe('Inventory source import ledger', () => {
       expect(history).toEqual([entry]);
       expect(selectedTables).toEqual([inventoryStockPositions, inventorySourceImportLedger]);
       expect(lockedTables).toEqual([inventoryStockPositions]);
+      const persisted = yield* persistence.findPersistedSourceHistory(proposal);
+      expect(persisted).toEqual([uncertain]);
+      expect(selectedTables.slice(2)).toEqual([
+        inventorySourceImportLedger,
+        inventorySourceAssertions,
+        inventorySourceAssertionCoverage,
+      ]);
+      const queryCount = selectedTables.length;
+      expect(
+        yield* persistence.findPersistedSourceHistory({
+          ...proposal,
+          positionRef: { ...proposal.positionRef, tenantId: '99999999-9999-4999-8999-999999999999' },
+        }),
+      ).toEqual([]);
+      expect(selectedTables).toHaveLength(queryCount);
+      queuedRows.push(
+        [{ entry: uncertainRow }],
+        [{ assertionJson: { ...assertion, quantity: { ...assertion.quantity, amount: '999' } } }],
+        [],
+      );
+      const invalid = yield* persistence.findPersistedSourceHistory(proposal).pipe(Effect.flip);
+      expect(Schema.is(InventorySourceImportUnavailable)(invalid)).toBe(true);
     }),
   );
 

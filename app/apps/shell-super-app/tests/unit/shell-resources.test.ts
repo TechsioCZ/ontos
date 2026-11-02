@@ -1,4 +1,9 @@
-import type { ContextAccessDecision, ContextAccessService, TenantModuleState } from '@app/core-runtime';
+import type {
+  ApplicationCompositionModule,
+  ContextAccessDecision,
+  ContextAccessService,
+  TenantModuleState,
+} from '@app/core-runtime';
 import { DateTime, Duration, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -14,6 +19,7 @@ import {
   ShellTimelineEntrySchema,
 } from '../../api/modules/shell-resources.ts';
 import type { ShellProviderAssertionIssuer } from '../../api/modules/shell-resources.ts';
+import { makeModuleSearchProviderGateway } from '../../api/modules/shell-search-provider-gateway.ts';
 
 const moduleId = 'property.registry';
 const resourceType = 'property.registry.unit';
@@ -308,7 +314,7 @@ it.effect('search filters resource denials and reports partial provider failure'
 );
 
 it.effect(
-  'tenant-scoped Party search needs no Legal Entity, forwards declared filters and preserves identity metadata',
+  'tenant-scoped Party search answers only in tenant context, forwards declared filters and preserves identity metadata',
   () =>
     Effect.gen(function* tenantScopedPartySearchNeedsNo() {
       const installed = yield* catalog();
@@ -443,6 +449,20 @@ it.effect(
           },
         ],
       });
+
+      // With a company selected the tenant-wide provider is not asked: results never come from another company.
+      const callsBeforeCompanySearch = calls.length;
+      const inCompany = yield* makeShellSearch(
+        { ...baseline, catalog: Effect.succeed(partyCatalog) },
+        {
+          search: (input) => {
+            calls.push(input);
+            return Effect.succeed([]);
+          },
+        },
+      ).search(context, 'party');
+      expect(inCompany).toEqual({ partial: false, results: [] });
+      expect(calls).toHaveLength(callsBeforeCompanySearch);
     }),
 );
 
@@ -905,5 +925,71 @@ it.effect('search issues assertions for the release captured by its single catal
     expect(assertions).toEqual([
       { appId: 'property-registry', compositionRevision: approved.composition.revision, context },
     ]);
+  }),
+);
+
+const providerRequest = Effect.gen(function* providerRequestFixture() {
+  const approved = yield* catalog();
+  const [module] = approved.composition.modules;
+  if (module === undefined) {
+    return yield* Effect.die('The fixture composition admits the property registry');
+  }
+  return {
+    appId: 'property-registry',
+    authorization: 'Bearer owner-assertion',
+    correlationId: 'unit-correlation',
+    includeArchived: false,
+    module,
+    query: 'dvořák',
+    searchKey: 'property.registry.unit-search',
+  } as const;
+});
+
+it.effect("the search gateway posts to the provider's own BFF route on the approved release", () =>
+  Effect.gen(function* searchGatewayPostsToOwnerRoute() {
+    const request = yield* providerRequest;
+    const sent: { readonly body: unknown; readonly headers: Headers; readonly method: string; readonly url: string }[] =
+      [];
+    const gateway = makeModuleSearchProviderGateway((outgoing: Request, module: ApplicationCompositionModule) =>
+      Effect.promise(async () => {
+        sent.push({
+          body: await outgoing.json(),
+          headers: outgoing.headers,
+          method: outgoing.method,
+          url: `${module.deployment.appId} ${new URL(outgoing.url).pathname}`,
+        });
+        return Response.json([{ ref, title: 'Unit 1' }]);
+      }),
+    );
+    expect(yield* gateway.search(request)).toEqual([{ ref, title: 'Unit 1' }]);
+    expect(sent.map(({ body, method, url }) => ({ body, method, url }))).toEqual([
+      {
+        body: { includeArchived: false, query: 'dvořák' },
+        method: 'POST',
+        url: 'property-registry /property-registry-api/property.registry/search/unit-search',
+      },
+    ]);
+    expect(sent[0]?.headers.get('authorization')).toBe('Bearer owner-assertion');
+    expect(sent[0]?.headers.get('x-correlation-id')).toBe('unit-correlation');
+  }),
+);
+
+it.effect('the search gateway reads an owner refusal as no readable results and an outage as unavailable', () =>
+  Effect.gen(function* searchGatewayFailsClosed() {
+    const request = yield* providerRequest;
+    let calls = 0;
+    const respondWith = (status: number) =>
+      makeModuleSearchProviderGateway(() =>
+        Effect.sync(() => {
+          calls += 1;
+          return Response.json({ _tag: 'UnitSearchProviderProblem' }, { status });
+        }),
+      );
+    expect(yield* respondWith(403).search(request)).toEqual([]);
+    const outage = yield* Effect.flip(respondWith(503).search(request));
+    expect(Schema.is(ShellProviderUnavailableError)(outage)).toBe(true);
+    const foreign = yield* Effect.flip(respondWith(200).search({ ...request, searchKey: 'party.registry.parties' }));
+    expect(Schema.is(ShellProviderUnavailableError)(foreign)).toBe(true);
+    expect(calls).toBe(2);
   }),
 );

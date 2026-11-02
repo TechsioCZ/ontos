@@ -99,21 +99,26 @@ it.layer(NodeServices.layer)((suite) => {
       Effect.gen(function* policySnapshot() {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const snapshotPath = yield* path.fromFileUrl(
-          new URL('../../drizzle/20261024223832_gateway-identity-attestation/snapshot.json', import.meta.url),
-        );
-        const snapshot = decodeSnapshot(yield* fileSystem.readFileString(snapshotPath));
-        const expected = snapshot.ddl
-          .filter((entry) => decodeSnapshotEntry(entry).entityType === 'policies')
-          .map((entry) => decodePolicySnapshot(entry))
-          .filter(({ schema }) => schema === 'core')
-          .map((policy) => ({
-            ...policy,
-            roles: policy.roles.toSorted(),
-            using: Option.getOrNull(policy.using),
-            withCheck: Option.getOrNull(policy.withCheck),
-          }))
-          .toSorted((left, right) => left.name.localeCompare(right.name));
+        const corePolicies = Effect.fn('IdentityPoliciesTest.corePolicies')(function* corePolicies(migration: string) {
+          const snapshotPath = yield* path.fromFileUrl(
+            new URL(`../../drizzle/${migration}/snapshot.json`, import.meta.url),
+          );
+          const snapshot = decodeSnapshot(yield* fileSystem.readFileString(snapshotPath));
+          return snapshot.ddl
+            .filter((entry) => decodeSnapshotEntry(entry).entityType === 'policies')
+            .map((entry) => decodePolicySnapshot(entry))
+            .filter(({ schema }) => schema === 'core')
+            .map((policy) => ({
+              ...policy,
+              roles: policy.roles.toSorted(),
+              using: Option.getOrNull(policy.using),
+              withCheck: Option.getOrNull(policy.withCheck),
+            }))
+            .toSorted((left, right) => left.name.localeCompare(right.name));
+        });
+        const preExtraction = yield* corePolicies('20261024223832_gateway-identity-attestation');
+        // Later Core migrations add policies (the Outbox delivery resolution read); the latest snapshot is the schema of record.
+        const current = yield* corePolicies('20261030130000_core-main-merge-convergence');
         const actual = [
           ...Object.values(coreDatabaseSchema).flatMap((table) =>
             getTableConfig(table).policies.map((policy) => renderPolicy({ policy, table })),
@@ -121,8 +126,10 @@ it.layer(NodeServices.layer)((suite) => {
           ...fixturePolicies.map(renderPolicy),
         ].toSorted((left, right) => left.name.localeCompare(right.name));
 
-        expect(expected).toHaveLength(59);
-        expect(actual).toEqual(expected);
+        expect(preExtraction).toHaveLength(59);
+        expect(actual).toEqual(expect.arrayContaining(preExtraction));
+        expect(current).toHaveLength(60);
+        expect(actual).toEqual(current);
       }),
   );
 });

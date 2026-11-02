@@ -88,6 +88,10 @@ export const OfficialIdentifierAssertionSchema = Schema.Struct({
   identifierType: OfficialIdentifierTypeSchema,
   namespace: Schema.String,
   normalizedValue: Schema.String,
+  // Additive V1 evidence: omitted by older producers; NULL means no retained source proof.
+  originalInputDigits: Schema.optionalKey(
+    Schema.toEncoded(Schema.OptionFromNullOr(Schema.String.check(Schema.isPattern(/^[0-9]{1,8}$/u)))),
+  ),
   officialIdentifierRef: PartyOfficialIdentifierRefSchema,
   partyRef: PartyRefSchema,
   recordedAt: CanonicalUtcTimestampJsonSchema,
@@ -95,5 +99,13 @@ export const OfficialIdentifierAssertionSchema = Schema.Struct({
   validFrom: CanonicalUtcTimestampJsonSchema,
   validTo: Schema.toEncoded(Schema.OptionFromNullOr(CanonicalUtcTimestampJsonSchema)),
   verification: IdentifierVerificationSchema,
-});
+}).check(
+  Schema.makeFilter((assertion) =>
+    assertion.originalInputDigits === undefined ||
+    assertion.originalInputDigits === null ||
+    (assertion.identifierType === 'ICO' && assertion.originalInputDigits.padStart(8, '0') === assertion.normalizedValue)
+      ? undefined
+      : 'original ICO digits must normalize to the asserted canonical value',
+  ),
+);
 export type OfficialIdentifierAssertion = typeof OfficialIdentifierAssertionSchema.Type;

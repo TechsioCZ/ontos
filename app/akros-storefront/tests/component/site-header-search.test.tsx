@@ -156,7 +156,7 @@ describe("SiteHeader search", () => {
     await user.click(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }));
     await user.paste("nenalezenyproduktxyz");
     await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toContain("nenašli žádné produkty"),
+      expect(screen.getByText(/nenašli žádné produkty/u).getAttribute("role")).toBe("status"),
     );
 
     await user.keyboard("{Enter}");
@@ -200,7 +200,7 @@ describe("SiteHeader search", () => {
     await user.paste("  M8 A4  ");
     await waitFor(() => expect(input.getAttribute("value")).toBe("  M8 A4  "));
     await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toContain("nenašli žádné produkty"),
+      expect(screen.getByText(/nenašli žádné produkty/u).getAttribute("role")).toBe("status"),
     );
     await user.click(submit);
 

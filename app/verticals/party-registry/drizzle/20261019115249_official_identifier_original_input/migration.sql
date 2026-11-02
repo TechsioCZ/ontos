@@ -1,0 +1,2 @@
+ALTER TABLE "party"."party_official_identifiers" ADD COLUMN "original_input_digits" text;--> statement-breakpoint
+ALTER TABLE "party"."party_official_identifiers" ADD CONSTRAINT "party_official_identifiers_original_input_digits_ck" CHECK ("original_input_digits" is null or ("identifier_type_key" = 'ICO' and "original_input_digits" ~ '^[0-9]{1,8}$' and lpad("original_input_digits", 8, '0') = "normalized_value"));

@@ -9,7 +9,6 @@ import {
   jsonb,
   pgPolicy,
   pgSchema,
-  primaryKey,
   text,
   timestamp,
   unique,
@@ -52,18 +51,19 @@ export const DECISION_SET_FENCE_SOURCE_TABLES = [
 
 export const assortmentSchema = pgSchema(ASSORTMENT_SCHEMA_NAME);
 
-// Replay evidence is consumed before tenant/business scope is installed.
+/** Global pre-authentication replay identities, independent of Tenant/SLE business rows. */
 export const gatewayAssertionRedemptions = assortmentSchema.table(
   'gateway_assertion_redemptions',
   {
     audience: text('audience').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     issuer: text('issuer').notNull(),
-    jti: text('jti').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.issuer, table.audience, table.jti] }),
-    index('assortment_redemption_expiry').on(table.expiresAt),
+    unique('assortment_gateway_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
+    index('assortment_gateway_redemptions_expiry_idx').on(table.expiresAt),
   ],
 );
 

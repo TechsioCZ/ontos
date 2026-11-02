@@ -20,11 +20,10 @@ export interface PriceGroupActionServices {
   readonly store: CustomerPriceGroupAssignmentStorePort;
 }
 
-export const priceGroupActionServicesForTransaction = (
+export const priceGroupLocalActionServicesForTransaction = (
   invoker: PriceGroupRoutineInvoker,
   scope: OperationalScope,
-  compositionRevision: string,
-): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable> => {
+): Effect.Effect<Omit<PriceGroupActionServices, 'catalog'>, OperationContextUnavailable> => {
   const { legalEntityId } = scope;
   if (legalEntityId === undefined) {
     return Effect.fail(
@@ -35,16 +34,29 @@ export const priceGroupActionServicesForTransaction = (
     );
   }
   const trustedScope = { ...scope, legalEntityId };
-  return Effect.gen(function* makePriceGroupActionServices() {
-    const catalog = yield* priceGroupCatalogPortFromEnvironment({
-      compositionRevision,
-      requestCorrelation: scope.correlationId,
-    });
-    return {
-      catalog,
-      now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
-      profileValidation: customerPriceGroupProfileValidationForTransaction(invoker, trustedScope),
-      store: customerPriceGroupAssignmentStoreForTransaction(invoker, trustedScope),
-    };
+  return Effect.succeed({
+    now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
+    profileValidation: customerPriceGroupProfileValidationForTransaction(invoker, trustedScope),
+    store: customerPriceGroupAssignmentStoreForTransaction(invoker, trustedScope),
   });
 };
+
+export const priceGroupActionServicesForTransaction = Effect.fn('PriceGroupAction.makeServices')(
+  function* servicesForTransaction(
+    invoker: PriceGroupRoutineInvoker,
+    scope: OperationalScope,
+    compositionRevision: string,
+  ) {
+    const { catalog, local } = yield* Effect.all(
+      {
+        catalog: priceGroupCatalogPortFromEnvironment({
+          compositionRevision,
+          requestCorrelation: scope.correlationId,
+        }),
+        local: priceGroupLocalActionServicesForTransaction(invoker, scope),
+      },
+      { concurrency: 1 },
+    );
+    return { ...local, catalog };
+  },
+);

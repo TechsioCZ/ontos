@@ -9,7 +9,7 @@ import { Schema, DateTime, Effect, Match, Option, Random, Schedule } from 'effec
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import { useEffect, useSyncExternalStore } from 'react';
 import { executeApplyCommand } from '../api/apply-command-action-client.ts';
-import { executeRecords } from '../api/records-client.ts';
+import { executeRecords } from '../api/records-consumer.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { agendaIds, agendaOfCommand } from '../../shared/agendas.ts';
 import type { OpsCommand } from '../../shared/agendas.ts';

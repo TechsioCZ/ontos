@@ -24,6 +24,7 @@ import {
   PurchaseLimitDependencyUnavailableSchema,
   PurchaseLimitPolicyConflictSchema,
 } from '../../shared/domain/purchase-limit-policy.ts';
+import type { PurchaseLimitPolicySnapshot } from '../../shared/domain/purchase-limit-policy.ts';
 import { ExactNonNegativeDecimalSchema } from '../../shared/domain/purchase-limit.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -86,7 +87,19 @@ const transactionReturning = (rows: readonly object[]) =>
   // private Core brand; persistence under test only consumes `invoke`.
   ({
     invoke: (routine: ScopedRoutineDefinition) =>
-      Effect.succeed(Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))(rows)),
+      Schema.decodeUnknownEffect(Schema.Array(Schema.toType(routine.resultSchema)))(rows).pipe(
+        Effect.mapError(
+          () =>
+            new ScopedRoutineInvocationError({
+              code: 'scoped_routine_result_invalid',
+              constraint: Option.none(),
+              ownerModuleKey: routine.ownerModuleKey,
+              postgresCode: Option.none(),
+              reason: 'The native row violates the routine wire contract',
+              routineKey: routine.routineKey,
+            }),
+        ),
+      ),
   }) as unknown as ScopedTransactionExecutor;
 
 // SAFETY: This failure harness implements the only capability exercised by the persistence read.
@@ -552,7 +565,7 @@ it.effect('re-reads exact profile and proposal evidence for the approval trigger
       invoke: (routine: ScopedRoutineDefinition) => {
         invokedRoutines.push(routine.name);
         return Effect.succeed(
-          Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))(
+          Schema.decodeUnknownSync(Schema.Array(Schema.toType(routine.resultSchema)))(
             routine.name === 'read_profile_trading_gate'
               ? [
                   {
@@ -678,7 +691,7 @@ it.effect('rejects approval evidence when the profile revision is not owner-curr
     const transaction = {
       invoke: (routine: ScopedRoutineDefinition) =>
         Effect.succeed(
-          Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))(
+          Schema.decodeUnknownSync(Schema.Array(Schema.toType(routine.resultSchema)))(
             routine.name === 'read_profile_trading_gate'
               ? [
                   {
@@ -784,5 +797,154 @@ it.effect('rejects an external Currentness provider claiming owner-local revisio
     const failure = yield* Effect.flip(source.loadCurrent({ principalId: targetPrincipalId, query }));
     expect(Schema.is(PurchaseLimitDependencyUnavailableSchema)(failure)).toBe(true);
     expect(failure.reason).toContain('claimed owner-local sources');
+  }),
+);
+
+const policyProjection = (snapshot: PurchaseLimitPolicySnapshot | null) =>
+  snapshot === null
+    ? null
+    : Match.value(snapshot.policy).pipe(
+        Match.tag('UNLIMITED', () => ({ kind: 'UNLIMITED' })),
+        Match.tag('MONETARY_LIMIT', ({ limit }) => ({ kind: 'MONETARY_LIMIT', limit })),
+        Match.exhaustive,
+      );
+
+it.effect(
+  'accepts an initial native SET with SQL NULL previous columns and a later replacement with both snapshots',
+  () =>
+    Effect.gen(function* nativeMutationWireSnapshots() {
+      const input = {
+        actionInvocationId,
+        actorPrincipalId,
+        change: { _tag: 'SET' as const, policy: { _tag: 'UNLIMITED' as const } },
+        counterpartyRef,
+        expectedRevision: null,
+        reason: 'Native nullable wire regression',
+      };
+      const initial = yield* changeCounterpartyPurchaseLimit(
+        transactionReturning([
+          mutationRow({
+            current_amount: null,
+            current_currency_code: null,
+            current_policy_kind: 'UNLIMITED',
+            current_revision: 1,
+          }),
+        ]),
+        input,
+      );
+      expect(initial.previousPolicy).toBeNull();
+      expect(policyProjection(initial.currentPolicy)).toEqual({ kind: 'UNLIMITED' });
+      expect(initial.currentPolicy?.revision).toBe(1);
+      const replaced = yield* changeCounterpartyPurchaseLimit(
+        transactionReturning([
+          mutationRow({
+            previous_amount: null,
+            previous_currency_code: null,
+            previous_policy_id: '60000000-0000-4000-8000-000000000002',
+            previous_policy_kind: 'UNLIMITED',
+            previous_recorded_at: '2026-09-09T09:00:00.000Z',
+            previous_revision: 1,
+          }),
+        ]),
+        { ...input, expectedRevision: 1 },
+      );
+      expect(policyProjection(replaced.previousPolicy)).toEqual({ kind: 'UNLIMITED' });
+      expect(replaced.previousPolicy?.revision).toBe(1);
+      expect(policyProjection(replaced.currentPolicy)).toEqual({
+        kind: 'MONETARY_LIMIT',
+        limit: { amount: '100', currency: 'CZK' },
+      });
+    }),
+);
+
+it.effect('preserves native no-policy reads as authoritative absence with no UNLIMITED fallback', () =>
+  Effect.gen(function* nativeNoPolicyWire() {
+    const state = yield* readCurrentPurchaseLimitPolicyState(transactionReturning([]), {
+      counterpartyRef,
+      principalRef: { principalId: targetPrincipalId, tenantId },
+      tenantId,
+    });
+    expect(
+      Match.value(state.result).pipe(
+        Match.tag('NO_EFFECTIVE_POLICY', () => true),
+        Match.tag('EFFECTIVE_POLICY', () => false),
+        Match.tag('INCONSISTENT_POLICY', () => false),
+        Match.exhaustive,
+      ),
+    ).toBe(true);
+    expect(state.counterpartyPolicies).toEqual([]);
+    expect(state.principalOverrides).toEqual([]);
+    expect(state.sourceRevisions).toEqual([
+      { revision: 'counterparty-policy:absent', source: 'counterparty-policy' },
+      { revision: 'principal-override:absent', source: 'principal-override' },
+    ]);
+  }),
+);
+
+it.effect('rejects malformed native mutation scalars instead of normalizing them into absent policies', () =>
+  Effect.gen(function* invalidNativeMutationWire() {
+    for (const row of [
+      { ...mutationRow(), current_revision: '1' },
+      { ...mutationRow(), previous_revision: false },
+      { ...mutationRow(), current_policy_kind: 'UNKNOWN' },
+      { ...mutationRow(), current_recorded_at: 42 },
+      { ...mutationRow(), current_amount: 100 },
+    ]) {
+      const failure = yield* Effect.flip(
+        changeCounterpartyPurchaseLimit(transactionReturning([row]), {
+          actionInvocationId,
+          actorPrincipalId,
+          change: { _tag: 'SET', policy: { _tag: 'UNLIMITED' } },
+          counterpartyRef,
+          expectedRevision: null,
+          reason: 'Invalid native scalar control',
+        }),
+      );
+      expect(Schema.is(PurchaseLimitDependencyUnavailableSchema)(failure)).toBe(true);
+    }
+  }),
+);
+
+it.effect('rejects malformed native read columns and keeps PROFILE_NOT_FOUND unavailable', () =>
+  Effect.gen(function* invalidNativePolicyReadWire() {
+    const present = {
+      amount: null,
+      currency_code: null,
+      outcome: 'PRESENT',
+      policy_id: '60000000-0000-4000-8000-000000000001',
+      policy_kind: 'UNLIMITED',
+      recorded_at: '2026-09-09T10:00:00.000Z',
+      revision: 1,
+      source: 'COUNTERPARTY_DEFAULT',
+      source_revision: 'counterparty-policy:1',
+    };
+    for (const row of [
+      { ...present, revision: '1' },
+      { ...present, source: 'OTHER' },
+      { ...present, policy_kind: false },
+      { ...present, source_revision: 1 },
+      { ...present, recorded_at: false },
+      {
+        ...present,
+        amount: null,
+        currency_code: null,
+        outcome: 'PROFILE_NOT_FOUND',
+        policy_id: null,
+        policy_kind: null,
+        recorded_at: null,
+        revision: null,
+        source: null,
+        source_revision: null,
+      },
+    ]) {
+      const failure = yield* Effect.flip(
+        readCurrentPurchaseLimitPolicyState(transactionReturning([row]), {
+          counterpartyRef,
+          principalRef: { principalId: targetPrincipalId, tenantId },
+          tenantId,
+        }),
+      );
+      expect(Schema.is(PurchaseLimitDependencyUnavailableSchema)(failure)).toBe(true);
+    }
   }),
 );

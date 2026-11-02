@@ -143,6 +143,10 @@ const makeLedger = (seed: readonly InventorySourceImportLedgerEntry[] = []) =>
             ),
           ),
         ),
+      findPersistedSourceHistory: () =>
+        Ref.get(entries).pipe(
+          Effect.map((current) => current.filter((entry) => entry.outcome.status === 'INDETERMINATE')),
+        ),
       lockAndReadAcceptedHistory: () =>
         Ref.get(entries).pipe(Effect.map((current) => current.filter((entry) => entry.outcome.status === 'ACCEPTED'))),
     };
@@ -468,6 +472,192 @@ describe('Inventory source import service', () => {
 
       expect(first.items).toMatchObject([{ status: 'ACCEPTED' }]);
       expect(retry.items).toMatchObject([{ duplicateOfAssertionId: candidate.assertionId, status: 'DUPLICATE' }]);
+      expect(evaluations).toBe(1);
+    }),
+  );
+
+  it.effect(
+    'reuses committed uncertain source evidence under a new invocation without reevaluation or finalization',
+    () =>
+      Effect.gen(function* uncertainRetry() {
+        const candidate = proposal(1);
+        const original = {
+          assertionId: candidate.assertionId,
+          reason: 'MATERIAL_EFFECT_COVERAGE_UNKNOWN',
+          reconciliationRequired: true as const,
+          status: 'INDETERMINATE' as const,
+        };
+        const { entries, ledger } = yield* makeLedger([
+          { actionInvocationId: actionIdFor(801), itemIndex: 0, outcome: original, proposal: candidate },
+        ]);
+        const service = makeInventorySourceImportService({
+          configurations: { findCurrent: () => Effect.die(new Error('retry must not reload authority')) },
+          evaluator: { evaluate: () => Effect.die(new Error('retry must not reevaluate uncertainty')) },
+          finalizeOutcome: () => Effect.die(new Error('retry must not manufacture new conflict evidence')),
+          ledger,
+        });
+        const result = yield* service.importBatch({
+          actionInvocationId: actionIdFor(802),
+          payload: { authorizationTargetRef: positionRef, items: [candidate] },
+        });
+        expect(result.items).toEqual([original]);
+        expect(result.summary.indeterminate).toBe(1);
+        expect(yield* Ref.get(entries)).toHaveLength(2);
+      }),
+  );
+
+  it.effect('rejects materially changed persisted uncertain identity before evaluation or SQL writes', () =>
+    Effect.gen(function* uncertainIntegrityConflict() {
+      const candidate = proposal(1);
+      const { ledger } = yield* makeLedger([
+        {
+          actionInvocationId: actionIdFor(803),
+          itemIndex: 0,
+          outcome: {
+            assertionId: candidate.assertionId,
+            reason: 'MATERIAL_EFFECT_COVERAGE_UNKNOWN',
+            reconciliationRequired: true,
+            status: 'INDETERMINATE',
+          },
+          proposal: candidate,
+        },
+      ]);
+      const service = makeInventorySourceImportService({
+        configurations: { findCurrent: () => Effect.die(new Error('conflict must not reload authority')) },
+        evaluator: { evaluate: () => Effect.die(new Error('conflict must not attempt duplicate INSERT')) },
+        ledger,
+      });
+      const result = yield* service.importBatch({
+        actionInvocationId: actionIdFor(804),
+        payload: {
+          authorizationTargetRef: positionRef,
+          items: [proposal(1, { quantity: { amount: '999', unitRef } })],
+        },
+      });
+      expect(result.items).toEqual([
+        { assertionId: candidate.assertionId, reason: 'ASSERTION_ID_CONFLICT', status: 'REJECTED' },
+      ]);
+    }),
+  );
+
+  it.effect(
+    'keeps a mixed new invocation atomic at the owner port and evaluates only genuinely new source evidence',
+    () =>
+      Effect.gen(function* mixedUncertainRetry() {
+        const original = proposal(1);
+        const next = proposal(2);
+        const priorOutcome = {
+          assertionId: original.assertionId,
+          reason: 'MATERIAL_EFFECT_COVERAGE_UNKNOWN',
+          reconciliationRequired: true as const,
+          status: 'INDETERMINATE' as const,
+        };
+        const { entries, ledger } = yield* makeLedger([
+          { actionInvocationId: actionIdFor(805), itemIndex: 0, outcome: priorOutcome, proposal: original },
+        ]);
+        const evaluated: string[] = [];
+        const ordering: string[] = [];
+        const service = makeInventorySourceImportService({
+          configurations: { findCurrent: () => Effect.succeedSome(configuration) },
+          evaluator: {
+            evaluate: ({ proposal: candidate }) =>
+              Effect.sync(() => {
+                evaluated.push(candidate.assertionId);
+                return determinate(candidate);
+              }),
+          },
+          ledger: {
+            ...ledger,
+            findPersistedSourceHistory: (candidate) =>
+              Effect.sync(() => {
+                ordering.push('persisted');
+              }).pipe(Effect.andThen(ledger.findPersistedSourceHistory(candidate))),
+            lockAndReadAcceptedHistory: (candidate) =>
+              Effect.sync(() => {
+                ordering.push('locked');
+              }).pipe(Effect.andThen(ledger.lockAndReadAcceptedHistory(candidate))),
+          },
+        });
+        const result = yield* service.importBatch({
+          actionInvocationId: actionIdFor(806),
+          payload: { authorizationTargetRef: positionRef, items: [original, next] },
+        });
+        expect(result.items).toEqual([
+          priorOutcome,
+          { assertionId: next.assertionId, postEffectOnHand: next.quantity, status: 'ACCEPTED' },
+        ]);
+        expect(evaluated).toEqual([next.assertionId]);
+        expect(ordering).toEqual(['locked', 'persisted', 'locked', 'persisted']);
+        expect(yield* Ref.get(entries)).toHaveLength(3);
+      }),
+  );
+
+  it.effect('preserves uncertain revision integrity even when the caller uses a different assertion ID', () =>
+    Effect.gen(function* uncertainRevisionConflict() {
+      const original = proposal(1);
+      const changed = proposal(1, { assertionId: uuidFor(900), quantity: { amount: '99', unitRef } });
+      const { ledger } = yield* makeLedger([
+        {
+          actionInvocationId: actionIdFor(807),
+          itemIndex: 0,
+          outcome: {
+            assertionId: original.assertionId,
+            reason: 'MATERIAL_EFFECT_COVERAGE_UNKNOWN',
+            reconciliationRequired: true,
+            status: 'INDETERMINATE',
+          },
+          proposal: original,
+        },
+      ]);
+      const service = makeInventorySourceImportService({
+        configurations: { findCurrent: () => Effect.die(new Error('changed revision is not a new authority')) },
+        evaluator: { evaluate: () => Effect.die(new Error('changed revision must not be inserted')) },
+        ledger,
+      });
+      const result = yield* service.importBatch({
+        actionInvocationId: actionIdFor(808),
+        payload: { authorizationTargetRef: positionRef, items: [changed] },
+      });
+      expect(result.items).toEqual([
+        { assertionId: changed.assertionId, reason: 'ASSERTION_ID_CONFLICT', status: 'REJECTED' },
+      ]);
+    }),
+  );
+
+  it.effect('does not infer persisted immutable evidence from an unrelated uncertain stream', () =>
+    Effect.gen(function* unrelatedUncertainStream() {
+      const previous = proposal(1);
+      const candidate = proposal(2, { positionRef: { ...positionRef, resourceId: uuidFor(901) } });
+      const { ledger } = yield* makeLedger([
+        {
+          actionInvocationId: actionIdFor(809),
+          itemIndex: 0,
+          outcome: {
+            assertionId: previous.assertionId,
+            reason: 'MATERIAL_EFFECT_COVERAGE_UNKNOWN',
+            reconciliationRequired: true,
+            status: 'INDETERMINATE',
+          },
+          proposal: previous,
+        },
+      ]);
+      let evaluations = 0;
+      const service = makeInventorySourceImportService({
+        configurations: { findCurrent: () => Effect.succeedSome(configuration) },
+        evaluator: {
+          evaluate: ({ proposal: current }) =>
+            Effect.sync(() => {
+              evaluations += 1;
+              return determinate(current);
+            }),
+        },
+        ledger,
+      });
+      const result = yield* service.importBatch({
+        actionInvocationId: actionIdFor(810),
+        payload: { authorizationTargetRef: candidate.positionRef, items: [candidate] },
+      });
+      expect(result.items).toMatchObject([{ status: 'ACCEPTED' }]);
       expect(evaluations).toBe(1);
     }),
   );

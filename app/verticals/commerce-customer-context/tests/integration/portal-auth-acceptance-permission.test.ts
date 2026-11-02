@@ -166,23 +166,30 @@ const acquirePermissionDatabase = Effect.fn('PermissionAcceptance.acquireDatabas
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     for (const owner of ['packages/core-runtime', 'verticals/commerce-customer-context']) {
       const workingDirectory = path.join(workspaceRoot, owner);
+      // Core migrates through its own convergent migrator: its main and demo lineages converge through the
+      // reviewed equivalence plan, which a plain `drizzle-kit migrate` would replay twice.
+      const [command, ...commandArguments]: readonly [string, ...string[]] =
+        owner === 'packages/core-runtime'
+          ? [process.execPath, '../../scripts/migration-convergence-cli.mts', 'core']
+          : [
+              path.join(workingDirectory, 'node_modules', '.bin', 'drizzle-kit'),
+              'migrate',
+              '--config',
+              'drizzle.config.ts',
+            ];
       const migration = yield* spawner.spawn(
-        ChildProcess.make(
-          path.join(workingDirectory, 'node_modules', '.bin', 'drizzle-kit'),
-          ['migrate', '--config', 'drizzle.config.ts'],
-          {
-            cwd: workingDirectory,
-            env: {
-              APP_ENV_PATH: '/dev/null',
-              DATABASE_ADMIN_URL: isolated.admin.connectionString,
-              DATABASE_URL: isolated.runtime.connectionString,
-            },
-            extendEnv: true,
-            stderr: 'ignore',
-            stdin: 'ignore',
-            stdout: 'ignore',
+        ChildProcess.make(command, commandArguments, {
+          cwd: workingDirectory,
+          env: {
+            APP_ENV_PATH: '/dev/null',
+            DATABASE_ADMIN_URL: isolated.admin.connectionString,
+            DATABASE_URL: isolated.runtime.connectionString,
           },
-        ),
+          extendEnv: true,
+          stderr: 'ignore',
+          stdin: 'ignore',
+          stdout: 'ignore',
+        }),
       );
       const status = yield* migration.exitCode;
       if (Number(status) !== 0) {

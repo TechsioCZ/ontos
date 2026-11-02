@@ -418,3 +418,63 @@ it.effect('archived Party and stale verification updates are rejected before mut
     }),
   ),
 );
+
+it.effect('standalone Add stores source ICO digits independently of the normalized claim identity', () =>
+  Effect.gen(function* originalInputAcceptance() {
+    const db = harness({ absent: true });
+    yield* addOfficialIdentifierRecord(
+      db.transaction,
+      tenantId,
+      partyId,
+      {
+        ...identifier,
+        normalizedValue: '01000004',
+        verification: 'UNVERIFIED',
+      },
+      {
+        actionInvocationId: 'original-input-invocation',
+        matchRuleVersion: 'party-exact-claims.v1',
+        originalInputDigits: '1000004',
+        partyType: 'ORGANIZATION',
+        principalId,
+        provenanceMethod: 'MANUAL',
+        provenanceSource: 'USER',
+        validFrom: '2026-01-01T00:00:00.000Z',
+      },
+    );
+    expect(db.inserts).toHaveLength(1);
+    expect(db.inserts[0]?.values['originalInputDigits']).toBe('1000004');
+    expect(db.inserts[0]?.values['normalizedValue']).toBe('01000004');
+    expect(db.inserts[0]?.values['acceptedByActionInvocationId']).toBe('original-input-invocation');
+  }),
+);
+
+it.effect('a new Add invocation never overwrites the original source or fills unknown evidence on reuse', () =>
+  Effect.gen(function* retainedInputReuse() {
+    for (const originalInputDigits of ['1000004', null]) {
+      const db = harness({ current: row({ normalizedValue: '01000004', originalInputDigits }) });
+      const reused = yield* addOfficialIdentifierRecord(
+        db.transaction,
+        tenantId,
+        partyId,
+        {
+          ...identifier,
+          normalizedValue: '01000004',
+        },
+        {
+          actionInvocationId: 'different-invocation',
+          matchRuleVersion: 'party-exact-claims.v1',
+          originalInputDigits: '01000004',
+          partyType: 'ORGANIZATION',
+          principalId,
+          provenanceMethod: 'MANUAL',
+          provenanceSource: 'USER',
+          validFrom: '2026-01-01T00:00:00.000Z',
+        },
+      );
+      expect(reused.originalInputDigits).toBe(originalInputDigits);
+      expect(db.inserts).toEqual([]);
+      expect(db.updates).toEqual([]);
+    }
+  }),
+);

@@ -129,8 +129,10 @@ it.effect.each(['/cs/previously-unknown/page', '/cs/sprava/lide'])(
 it.effect.each([
   ['/xx/future/orders/private', 'xx'],
   ['/cs/future/orders/private', 'en'],
+  ['/cs/favicon.ico', 'cs'],
+  ['/en/favicon.ico', 'en'],
 ] as const)(
-  'rejects an unsupported or mismatched localized prefix %s before target resolution',
+  'rejects non-page assets and unsupported localized prefixes %s before target resolution',
   ([pathname, language]) =>
     Effect.gen(function* rejectsUntrustedLocalePrefix() {
       expect(

@@ -434,7 +434,6 @@
       "removeLine": "Odebrat",
       "saveDraft": "Uložit koncept",
       "saveSent": "Uložit odeslanou",
-      "saveChanges": "Uložit změny",
       "required": "Vyberte zákazníka, datum a u každé položky vyplňte název, množství a cenu.",
       "validity": "Platnost nabídky nemůže skončit před jejím datem.",
       "copyNote": "K nabídce už existuje objednávka. Ta i vystavené faktury mají vlastní kopii řádků – úprava nabídky je nezmění.",

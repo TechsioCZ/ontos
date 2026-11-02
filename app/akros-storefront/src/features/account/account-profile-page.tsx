@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import { useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
@@ -45,6 +46,7 @@ export function AccountProfilePage({
   profile: CustomerProfile;
 }) {
   const router = useRouter();
+  const storeHref = useStoreHref();
   const [pending, setPending] = useState<"save" | "logout" | null>(null);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
@@ -105,7 +107,7 @@ export function AccountProfilePage({
       if (!response.ok) {
         throw new Error("Odhlášení se nepodařilo. Zkuste to znovu.");
       }
-      router.replace("/prihlaseni");
+      router.replace(storeHref("/prihlaseni"));
       router.refresh();
     } catch (error) {
       setError(isError(error) ? error.message : "Odhlášení se nepodařilo.");

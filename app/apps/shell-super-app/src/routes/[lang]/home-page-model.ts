@@ -29,6 +29,7 @@ import type { HomeContribution } from './home-contribution-model.ts';
 import type { AvailableTenantsClientError, ShellAuthenticationClientOptions } from '../../api/auth-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { browserBaseUrl, browserReadKey, browserStaleWhileRevalidateCache, keyPart } from '../browser-swr-cache.ts';
+import { registerSessionScopedReset } from '../session-scope.ts';
 import {
   isServerRender,
   isServerRenderWithoutSession,
@@ -134,18 +135,22 @@ const tenantRead = (error: AvailableTenantsClientError, tenantId: SafeTenantIden
     Match.exhaustive,
   );
 
+/** A session reused in the browser is at most this old; past it the next loader reads the session again. */
+const SESSION_FRESH_MILLIS = 5000;
+
 /**
  * TanStack runs this loader for every navigation and every link preload, so one Zákazníci visit read
- * `/auth/session` more than a dozen times. In the browser an authenticated session is reused and concurrent loaders
- * share one request; a session older than a few seconds is still answered at once and re-read in the background, so a
- * navigation never waits for it. Anonymous and failed reads are never kept, so a fresh sign-in is seen at once;
- * sign-out and tenant or legal-entity switches reload the document, which drops the cache. Requests that carry a
- * cookie header (server rendering) always read fresh: one SSR process serves many users.
+ * `/auth/session` more than a dozen times. In the browser an authenticated session is reused for a few seconds and
+ * concurrent loaders share one request. It is never answered stale: the session names the person, so a sign-in,
+ * sign-out or switch elsewhere must show at the next navigation. Anonymous and failed reads are never kept. The
+ * session scope (session-scope.ts) drops this cache at every boundary. Requests that carry a cookie header (server
+ * rendering) always read fresh: one SSR process serves many users.
  */
 const browserSessionCache = browserStaleWhileRevalidateCache(
   (baseUrl: string) => currentSession({ baseUrl: new URL(baseUrl) }),
   {
     capacity: 4,
+    freshMillis: SESSION_FRESH_MILLIS,
     keep: (session) => session.state === 'authenticated',
   },
 );
@@ -161,7 +166,7 @@ const keepSuccess = () => true;
 
 const browserCompositionCache = browserStaleWhileRevalidateCache(
   (key: string) => {
-    const requestedRevision = key.split(keyPart)[3] ?? '';
+    const requestedRevision = key.split(keyPart)[4] ?? '';
     return shellComposition(requestedRevision === '' ? {} : { compositionRevision: requestedRevision }, {
       baseUrl: baseUrlOfKey(key),
     });
@@ -203,6 +208,9 @@ export const resetBrowserSessionCache = Effect.all(
   ],
   { concurrency: 1, discard: true },
 );
+
+// A sign-in, sign-out or identity switch in this document drops every read answered for the previous person.
+registerSessionScopedReset(resetBrowserSessionCache);
 
 const sessionFor = (options: ShellAuthenticationClientOptions) => {
   const cacheBaseUrl = browserBaseUrl(options);

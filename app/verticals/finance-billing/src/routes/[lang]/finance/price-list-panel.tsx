@@ -1,7 +1,15 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
-import { Effect } from 'effect';
-import { dialogCloseLabel, EmptyState, formatMoney, SectionCard } from '@app/admin-ui';
+import { Effect, Option } from 'effect';
+import {
+  AutosaveStatus,
+  dialogCloseLabel,
+  EmptyState,
+  formatMoney,
+  SectionCard,
+  useAutosaveDraft,
+} from '@app/admin-ui';
+import type { AutosaveOutcome } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -9,63 +17,217 @@ import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { PriceListItem, VatRate } from '../../../../shared/apis/records.ts';
 import { lineDiscountMinor } from '../../../../shared/domain/invoice-totals.ts';
-import { invoiceLineKey, minorToInput, outcomeMessage, parseAmountMinor, withOccurrenceKeys } from './finance-ui.tsx';
+import { invoiceLineKey, outcomeMessage, withOccurrenceKeys } from './finance-ui.tsx';
 import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
+import type { CommandOutcome } from './use-finance-records.ts';
 import { FinanceTableScroll } from './finance-table-scroll.tsx';
-
-interface ItemDraft {
-  readonly code: string;
-  readonly id?: string;
-  readonly name: string;
-  readonly price: string;
-  readonly unit: string;
-  readonly vatRate: VatRate;
-}
+import {
+  emptyItem,
+  financeAutosaveOutcome,
+  itemCommandOf,
+  itemDraftOf,
+  itemProblems,
+  itemUnchangedSince,
+  sameItemDraft,
+} from './price-list-draft.ts';
+import type { ItemDraft } from './price-list-draft.ts';
 
 const VAT_CHOICES: readonly VatRate[] = [21, 12, 0];
 
-const emptyItem: ItemDraft = { code: '', name: '', price: '', unit: 'měsíc', vatRate: 21 };
+/** Error props for a field, spread so `validateStatus` is absent (not undefined) when the field is valid. */
+const invalidField = (invalid: boolean, message: string) =>
+  invalid ? { helpText: message, validateStatus: 'error' as const } : {};
+
+/** The fields of one price list item, shared by the create dialog and the autosaving edit dialog. */
+const PriceItemFields = ({
+  draft,
+  onBlur,
+  onChange,
+  showErrors,
+}: {
+  readonly draft: ItemDraft;
+  readonly onBlur: () => void;
+  readonly onChange: (patch: Partial<ItemDraft>) => void;
+  readonly showErrors: boolean;
+}) => {
+  const { t } = useModernI18n();
+  const problems = itemProblems(draft);
+  return (
+    <>
+      <FormInput
+        id="price-name"
+        label={t('finance-billing.financeUi.priceList.serviceName')}
+        onBlur={onBlur}
+        onChange={(event) => onChange({ name: event.target.value })}
+        placeholder={t('finance-billing.financeUi.priceList.serviceExample')}
+        size="sm"
+        value={draft.name}
+        {...invalidField(showErrors && problems.name, t('finance-billing.financeUi.priceList.nameRequired'))}
+      />
+      <div className="grid grid-cols-1 gap-150 sm:grid-cols-2">
+        <FormInput
+          id="price-code"
+          label={t('finance-billing.financeUi.priceList.code')}
+          onBlur={onBlur}
+          onChange={(event) => onChange({ code: event.target.value })}
+          size="sm"
+          value={draft.code}
+        />
+        <FormInput
+          id="price-unit"
+          label={t('finance-billing.financeUi.priceList.unit')}
+          onBlur={onBlur}
+          onChange={(event) => onChange({ unit: event.target.value })}
+          placeholder={t('finance-billing.financeUi.priceList.unitExamples')}
+          size="sm"
+          value={draft.unit}
+        />
+      </div>
+      <div className="grid grid-cols-1 gap-150 sm:grid-cols-2">
+        <FormInput
+          id="price-amount"
+          inputMode="decimal"
+          label={t('finance-billing.financeUi.priceList.netPrice')}
+          onBlur={onBlur}
+          onChange={(event) => onChange({ price: event.target.value })}
+          size="sm"
+          value={draft.price}
+          {...invalidField(showErrors && problems.price, t('finance-billing.financeUi.priceList.priceRequired'))}
+        />
+        <SelectTemplate
+          items={VAT_CHOICES.map((rate) => ({
+            displayValue: `${rate} %`,
+            label: `${rate} %`,
+            value: String(rate),
+          }))}
+          label={t('finance-billing.financeUi.common.vatRate')}
+          labelProps={{ className: 'font-label text-label-md' }}
+          onValueChange={({ value }) => {
+            const rate = VAT_CHOICES.find((entry) => String(entry) === value[0]);
+            if (rate !== undefined) {
+              onChange({ vatRate: rate });
+            }
+          }}
+          size="sm"
+          value={[String(draft.vatRate)]}
+        />
+      </div>
+    </>
+  );
+};
+
+/**
+ * Edit one price list item. Changes save themselves (debounced, on blur and on Zavřít) only while the price list
+ * still has the item as the draft started from; when someone else changed it, the dialog offers the current version.
+ */
+const PriceItemEditDialog = ({
+  item,
+  onClose,
+  vm,
+}: {
+  readonly item: PriceListItem;
+  readonly onClose: () => void;
+  readonly vm: FinanceViewModel;
+}) => {
+  const { t } = useModernI18n();
+  const [error, setError] = useState<string>();
+  const server = itemDraftOf(item);
+  /** The version of the item the draft builds on: what it opened with, last saved or reloaded. */
+  const base = useRef(server);
+  const settle = (value: ItemDraft, outcome: CommandOutcome) => {
+    setError(outcome.ok || outcome.feedback === 'conflict' ? undefined : outcomeMessage(vm, outcome));
+    if (outcome.ok) {
+      base.current = value;
+    }
+  };
+  const send = (value: ItemDraft, command: FinanceCommandDraft<'UpsertPriceListItem'>) =>
+    itemUnchangedSince(item.id, base.current)(vm.snapshot?.state.priceList ?? [])
+      ? vm.execute(command).pipe(
+          Effect.tap((outcome) => Effect.sync(() => settle(value, outcome))),
+          Effect.map(financeAutosaveOutcome),
+        )
+      : Effect.succeed<AutosaveOutcome>('conflict');
+  const autosave = useAutosaveDraft<ItemDraft, never>({
+    equals: sameItemDraft,
+    isValid: (value) => Option.isSome(itemCommandOf(value, item, vm.actorLabel)),
+    runtime: financeBrowserRuntime,
+    save: (value) =>
+      Option.match(itemCommandOf(value, item, vm.actorLabel), {
+        onNone: () => Effect.succeed<AutosaveOutcome>('failed'),
+        onSome: (command) => send(value, command),
+      }),
+    server,
+  });
+  const settledOnServer = !autosave.pending && sameItemDraft(autosave.draft, server);
+  useEffect(() => {
+    if (settledOnServer) {
+      base.current = server;
+    }
+  }, [base, server, settledOnServer]);
+  const close = () => {
+    autosave.flush();
+    onClose();
+  };
+  const handleBlur = autosave.flush;
+  const handleChange = (patch: Partial<ItemDraft>) => autosave.setDraft((current) => ({ ...current, ...patch }));
+  const handleRetry = autosave.retry;
+  const handleReloadLatest = autosave.reloadLatest;
+  return (
+    <Dialog
+      actions={
+        <>
+          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <Button onClick={close} theme="outlined" variant="secondary">
+            {t('finance-billing.financeUi.priceList.close')}
+          </Button>
+        </>
+      }
+      closeLabel={dialogCloseLabel}
+      customTrigger
+      description={t('finance-billing.financeUi.priceList.priceHint')}
+      onOpenChange={(details) => {
+        if (!details.open) {
+          close();
+        }
+      }}
+      open
+      placement="center"
+      size="md"
+      title={t('finance-billing.financeUi.priceList.editTitle')}
+    >
+      <div className="flex flex-col gap-150">
+        {error !== undefined && (
+          <StatusText showIcon size="sm" status="error">
+            {error}
+          </StatusText>
+        )}
+        <PriceItemFields draft={autosave.draft} onBlur={handleBlur} onChange={handleChange} showErrors />
+      </div>
+    </Dialog>
+  );
+};
+
+const noBlur = () => {
+  // A new item is saved only on "Uložit".
+};
 
 /** S07.R4: the company price list; invoice lines copy a snapshot of an item, discounts are approved per line. */
 const priceListPanelSaveProgram = Effect.fn('Finance.save')(function* priceListPanelSaveProgram(
-  context: Pick<ReturnType<typeof usePriceListPanel>, 'draft' | 'items' | 'setDraft' | 'setError' | 'vm'>,
+  context: Pick<ReturnType<typeof usePriceListPanel>, 'draft' | 'setDraft' | 'setError' | 'vm'>,
 ) {
-  const { draft, items, setDraft, setError, vm } = context;
+  const { draft, setDraft, setError, vm } = context;
   if (draft === undefined) {
     return;
   }
-  const price = parseAmountMinor(draft.price);
-  if (draft.name.trim() === '' || price === undefined) {
+  const command = itemCommandOf(draft, undefined, vm.actorLabel);
+  if (Option.isNone(command)) {
     setError('Vyplňte název a cenu bez DPH (např. 1 500 nebo 1 500,50).');
     return;
   }
-  const existing = items.find((item) => item.id === draft.id);
-  const upsertPriceListItemCommand: FinanceCommandDraft<'UpsertPriceListItem'> = {
-    _tag: 'UpsertPriceListItem',
-    active: existing?.active ?? true,
-    name: draft.name.trim(),
-    unitPriceMinor: price,
-    vatRate: draft.vatRate,
-  };
-  if (vm.actorLabel !== undefined) {
-    upsertPriceListItemCommand.actorLabel = vm.actorLabel;
-  }
-  if (draft.code.trim() !== '') {
-    upsertPriceListItemCommand.code = draft.code.trim();
-  }
-  if (draft.id !== undefined) {
-    upsertPriceListItemCommand.id = draft.id;
-  }
-  if (draft.unit.trim() !== '') {
-    upsertPriceListItemCommand.unit = draft.unit.trim();
-  }
-  const outcome = yield* vm.execute(
-    upsertPriceListItemCommand,
-    draft.id === undefined ? 'Položka ceníku přidána' : 'Položka ceníku uložena',
-  );
+  const outcome = yield* vm.execute(command.value, 'Položka ceníku přidána');
   if (outcome.ok) {
     setDraft(undefined);
     setError(undefined);
@@ -78,7 +240,9 @@ const usePriceListPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
   const items = (vm.snapshot?.state.priceList ?? []).toSorted(
     (left, right) => Number(right.active) - Number(left.active) || left.name.localeCompare(right.name, 'cs'),
   );
+  /** A new item being created; an existing item is edited (and autosaved) in its own dialog. */
   const [draft, setDraft] = useState<ItemDraft>();
+  const [editingId, setEditingId] = useState<string>();
   const [error, setError] = useState<string>();
   const discounted = (vm.snapshot?.state.invoices ?? [])
     .flatMap((invoice) =>
@@ -89,7 +253,7 @@ const usePriceListPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
     .slice(0, 12);
 
   const save = (): void => {
-    void financeBrowserRuntime.runPromise(priceListPanelSaveProgram({ draft, items, setDraft, setError, vm }));
+    void financeBrowserRuntime.runPromise(priceListPanelSaveProgram({ draft, setDraft, setError, vm }));
   };
 
   const toggle = (item: PriceListItem) => {
@@ -111,12 +275,14 @@ const usePriceListPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
       vm.execute(upsertPriceListItemCommand, item.active ? 'Položka vyřazena z nabídky' : 'Položka znovu v nabídce'),
     );
   };
-  return { discounted, draft, error, items, save, setDraft, setError, toggle, vm };
+  return { discounted, draft, editingId, error, items, save, setDraft, setEditingId, setError, toggle, vm };
 };
 
 export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
   const { t } = useModernI18n();
-  const { discounted, draft, error, items, save, setDraft, setError, toggle, vm } = usePriceListPanel(props);
+  const { discounted, draft, editingId, error, items, save, setDraft, setEditingId, setError, toggle, vm } =
+    usePriceListPanel(props);
+  const editing = items.find((item) => item.id === editingId);
   return (
     <div className="flex flex-col gap-500">
       <SectionCard
@@ -131,7 +297,7 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
               size="sm"
               variant="primary"
             >
-              Nová položka ceníku
+              {t('finance-billing.financeUi.priceList.addTitle')}
             </Button>
           ) : undefined
         }
@@ -189,17 +355,7 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
                           <Button
                             aria-label={`Upravit ${item.name}`}
                             icon="icon-[mdi--pencil-outline]"
-                            onClick={() => {
-                              setError(undefined);
-                              setDraft({
-                                code: item.code ?? '',
-                                id: item.id,
-                                name: item.name,
-                                price: minorToInput(item.unitPriceMinor),
-                                unit: item.unit ?? '',
-                                vatRate: item.vatRate,
-                              });
-                            }}
+                            onClick={() => setEditingId(item.id)}
                             size="sm"
                             theme="borderless"
                             variant="secondary"
@@ -277,13 +433,13 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
               }}
               variant="primary"
             >
-              Uložit
+              {t('finance-billing.financeUi.priceList.save')}
             </Button>
           </>
         }
         closeLabel={dialogCloseLabel}
         customTrigger
-        description="Cena za jednotku bez DPH v Kč."
+        description={t('finance-billing.financeUi.priceList.priceHint')}
         onOpenChange={(details) => {
           if (!details.open) {
             setDraft(undefined);
@@ -292,7 +448,7 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
         open={draft !== undefined}
         placement="center"
         size="md"
-        title={draft?.id === undefined ? 'Nová položka ceníku' : 'Upravit položku ceníku'}
+        title={t('finance-billing.financeUi.priceList.addTitle')}
       >
         {draft !== undefined && (
           <div className="flex flex-col gap-150">
@@ -301,61 +457,18 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
                 {error}
               </StatusText>
             )}
-            <FormInput
-              id="price-name"
-              label={t('finance-billing.financeUi.priceList.serviceName')}
-              onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-              placeholder={t('finance-billing.financeUi.priceList.serviceExample')}
-              size="sm"
-              value={draft.name}
+            <PriceItemFields
+              draft={draft}
+              onBlur={noBlur}
+              onChange={(patch) => setDraft({ ...draft, ...patch })}
+              showErrors={error !== undefined}
             />
-            <div className="grid grid-cols-1 gap-150 sm:grid-cols-2">
-              <FormInput
-                id="price-code"
-                label={t('finance-billing.financeUi.priceList.code')}
-                onChange={(event) => setDraft({ ...draft, code: event.target.value })}
-                size="sm"
-                value={draft.code}
-              />
-              <FormInput
-                id="price-unit"
-                label={t('finance-billing.financeUi.priceList.unit')}
-                onChange={(event) => setDraft({ ...draft, unit: event.target.value })}
-                placeholder={t('finance-billing.financeUi.priceList.unitExamples')}
-                size="sm"
-                value={draft.unit}
-              />
-            </div>
-            <div className="grid grid-cols-1 gap-150 sm:grid-cols-2">
-              <FormInput
-                id="price-amount"
-                inputMode="decimal"
-                label={t('finance-billing.financeUi.priceList.netPrice')}
-                onChange={(event) => setDraft({ ...draft, price: event.target.value })}
-                size="sm"
-                value={draft.price}
-              />
-              <SelectTemplate
-                items={VAT_CHOICES.map((rate) => ({
-                  displayValue: `${rate} %`,
-                  label: `${rate} %`,
-                  value: String(rate),
-                }))}
-                label={t('finance-billing.financeUi.common.vatRate')}
-                labelProps={{ className: 'font-label text-label-md' }}
-                onValueChange={({ value }) => {
-                  const rate = VAT_CHOICES.find((entry) => String(entry) === value[0]);
-                  if (rate !== undefined) {
-                    setDraft({ ...draft, vatRate: rate });
-                  }
-                }}
-                size="sm"
-                value={[String(draft.vatRate)]}
-              />
-            </div>
           </div>
         )}
       </Dialog>
+      {editing !== undefined && (
+        <PriceItemEditDialog item={editing} key={editing.id} onClose={() => setEditingId(undefined)} vm={vm} />
+      )}
     </div>
   );
 };

@@ -8,6 +8,7 @@ import type { ComponentProps } from 'react';
 import { browserRuntime } from '../../../src/runtime/browser-effect-runtime.ts';
 import { ShellRouteLink } from '../../../src/routes/shell-frame.tsx';
 import { StaffRoutePreloadContext, useIdleRoutePreload } from '../../../src/routes/use-idle-route-preload.ts';
+import { staffRoutePreloads } from '../../../src/routes/route-preload-scheduler.ts';
 
 interface RouterStateSlot {
   current: RouterStateFixture;
@@ -102,6 +103,8 @@ const IntentContext = ({
 };
 
 beforeEach(() => {
+  browserRuntime.runSync(staffRoutePreloads.invalidate);
+  browserRuntime.runSync(staffRoutePreloads.resume);
   preloadRoute.mockReset();
   preloadRoute.mockResolvedValue();
   router.clearCache.mockClear();
@@ -110,31 +113,65 @@ beforeEach(() => {
   unstableRouter.enabled = false;
   routeState.current = { location: { href: '/en' }, resolvedLocation: { href: '/en' } };
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  browserRuntime.runSync(staffRoutePreloads.invalidate);
+  return browserRuntime.runPromise(staffRoutePreloads.awaitIdle);
+});
 
-it.live('starts every rendered destination concurrently and never cancels started work on leave', () =>
-  Effect.gen(function* concurrentRender() {
+it.live('queues rendered destinations and never cancels started work on leave', () =>
+  Effect.gen(function* queuedRender() {
     const release = yield* Deferred.make<boolean>();
     preloadRoute.mockImplementation(() => browserRuntime.runPromise(Deferred.await(release).pipe(Effect.asVoid)));
     render(<StaffLinks />);
     expect(preloadRoute.mock.calls.map(([destination]) => destination)).toEqual([
       { hash: '', search: {}, to: '/en/finance' },
-      { hash: '', search: {}, to: '/en/operations' },
-      { hash: '', search: {}, to: '/en/contacts' },
     ]);
     fireEvent.mouseLeave(screen.getByRole('link', { name: 'Finance' }));
     fireEvent.mouseLeave(screen.getByRole('link', { name: 'Operations' }));
-    expect(preloadRoute).toHaveBeenCalledTimes(3);
+    expect(preloadRoute).toHaveBeenCalledTimes(1);
     yield* Deferred.succeed(release, true);
+    yield* staffRoutePreloads.awaitIdle;
+    expect(preloadRoute.mock.calls.map(([destination]) => destination)).toEqual([
+      { hash: '', search: {}, to: '/en/finance' },
+      { hash: '', search: {}, to: '/en/operations' },
+      { hash: '', search: {}, to: '/en/contacts' },
+    ]);
   }),
 );
 
-it.each(['mouseEnter', 'focus', 'touchStart'] as const)('starts %s preparation with zero dwell', (event) => {
-  render(<StaffLinks />);
-  preloadRoute.mockClear();
-  fireEvent[event](screen.getByRole('link', { name: 'Finance' }));
-  expect(preloadRoute).toHaveBeenCalledTimes(1);
-});
+it.live('bounds rendered links in the same pool as menu warming and drains every link', () =>
+  Effect.gen(function* boundedRenderedLinks() {
+    const release = yield* Deferred.make<boolean>();
+    preloadRoute.mockImplementation(() => browserRuntime.runPromise(Deferred.await(release).pipe(Effect.asVoid)));
+    render(
+      <StaffRoutePreloadContext value={{ enabled: true, generation: 0 }}>
+        {['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'].map((key) => (
+          <ShellRouteLink key={key} to={`/${key}`}>
+            {key}
+          </ShellRouteLink>
+        ))}
+      </StaffRoutePreloadContext>,
+    );
+    expect(preloadRoute).toHaveBeenCalledTimes(1);
+    fireEvent.focus(screen.getByRole('link', { name: 'eight' }));
+    expect(preloadRoute).toHaveBeenCalledTimes(2);
+    expect(preloadRoute).toHaveBeenLastCalledWith({ hash: '', search: {}, to: '/en/eight' });
+    yield* Deferred.succeed(release, true);
+    yield* staffRoutePreloads.awaitIdle;
+    expect(preloadRoute).toHaveBeenCalledTimes(8);
+  }),
+);
+it.live.each(['mouseEnter', 'focus', 'touchStart'] as const)('promotes %s preparation with zero dwell', (event) =>
+  Effect.gen(function* intent() {
+    render(<StaffLinks />);
+    yield* Effect.promise(() => waitFor(() => expect(preloadRoute).toHaveBeenCalledTimes(3)));
+    yield* staffRoutePreloads.awaitIdle;
+    preloadRoute.mockClear();
+    fireEvent[event](screen.getByRole('link', { name: 'Finance' }));
+    expect(preloadRoute).toHaveBeenCalledTimes(1);
+  }),
+);
 
 it('retains complete localized query/hash and user event handlers', () => {
   const onFocus = rstest.fn<() => void>();
@@ -179,17 +216,20 @@ it.live('settles the preparation key when the router handle changes identity acr
   }),
 );
 
-it.live('restarts preparations after writes and clears native/context caches on a company change', () =>
+it.live('drops caches at once after writes but keeps the menu prefetch quiet while writes go on', () =>
   Effect.gen(function* invalidation() {
     const view = render(<IntentContext />);
     yield* Effect.promise(() => waitFor(() => expect(preloadRoute).toHaveBeenCalledTimes(2)));
     preloadRoute.mockClear();
     globalThis.dispatchEvent(new Event(moduleWriteEvent));
-    yield* Effect.promise(() => waitFor(() => expect(preloadRoute).toHaveBeenCalledWith({ to: '/en/contacts' })));
-    expect(router.clearCache).toHaveBeenCalledTimes(1);
+    yield* Effect.sleep('30 millis');
+    globalThis.dispatchEvent(new Event(moduleWriteEvent));
+    yield* Effect.sleep('30 millis');
+    expect(router.clearCache).toHaveBeenCalledTimes(2);
+    expect(preloadRoute).not.toHaveBeenCalled();
     view.rerender(<IntentContext context="company-b" />);
     yield* Effect.promise(() => waitFor(() => expect(forget).toHaveBeenCalledTimes(1)));
-    expect(router.clearCache).toHaveBeenCalledTimes(2);
+    expect(router.clearCache).toHaveBeenCalledTimes(3);
   }),
 );
 

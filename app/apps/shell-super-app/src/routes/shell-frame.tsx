@@ -15,12 +15,14 @@ import type { SelectItem } from '@techsio/ui-kit/molecules/select';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { Sidebar } from '@techsio/ui-kit/organisms/sidebar';
 import type { SidebarExpandedChangeDetails, SidebarSide } from '@techsio/ui-kit/organisms/sidebar';
-import { useContext, useEffect, useEffectEvent, useSyncExternalStore } from 'react';
+import { useContext, useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
 import { Effect } from 'effect';
 
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { withoutRecordedPageReads } from './browser-request-cache.ts';
+import { staffRoutePreloads } from './route-preload-scheduler.ts';
+import type { RoutePreloadPriority } from './route-preload-scheduler.ts';
 
 import type { ShellLabel, ShellUnavailableDeployment } from '../../shared/api.ts';
 import { DemoGuidePanel, DemoGuideToggleButton, demoGuidePageAttribute } from '../demo-guide/demo-guide-panel.tsx';
@@ -28,6 +30,9 @@ import { demoGuideFor } from '../demo-guide/demo-guide-registry.ts';
 import { guideWidthCss, useDemoGuideOpen, useDemoGuideWidth } from '../demo-guide/demo-guide-store.ts';
 import { navigationHrefFromPath, usePendingNavigationPath } from './use-pending-navigation.ts';
 import { StaffRoutePreloadContext, useIdleRoutePreload } from './use-idle-route-preload.ts';
+import { useHydratedMarker } from './use-hydrated.ts';
+import { ShellSearchBar } from './shell-search-bar.tsx';
+import { useShellSearchSuggestions } from './shell-search-suggestions.ts';
 
 interface DashboardAccount {
   readonly displayName: string;
@@ -155,7 +160,7 @@ export interface ShellNavigationModel {
 
 type Translate = (key: string) => string;
 
-/** Staff links prepare on render and immediately on intent, using native joinable router flights. */
+/** Staff links share the idle queue; intent promotes a queued destination without duplicating its router flight. */
 export const ShellRouteLink = ({
   href: _unusedHref,
   ...props
@@ -163,7 +168,7 @@ export const ShellRouteLink = ({
   const router = useRouter();
   const { language } = useModernI18n();
   const { enabled } = useContext(StaffRoutePreloadContext);
-  const prepare = (element: HTMLAnchorElement) => {
+  const prepare = (element: HTMLAnchorElement, priority: RoutePreloadPriority) => {
     const url = new URL(element.href);
     if (
       !enabled ||
@@ -176,13 +181,19 @@ export const ShellRouteLink = ({
       return;
     }
     browserRuntime.runFork(
-      withoutRecordedPageReads(() =>
-        router.preloadRoute({
-          hash: url.hash.slice(1),
-          search: router.options.parseSearch(url.search),
-          to: url.pathname,
-        }),
-      ).pipe(Effect.ignore),
+      staffRoutePreloads
+        .schedule(
+          `${url.pathname}${url.search}${url.hash}`,
+          priority,
+          withoutRecordedPageReads(() =>
+            router.preloadRoute({
+              hash: url.hash.slice(1),
+              search: router.options.parseSearch(url.search),
+              to: url.pathname,
+            }),
+          ).pipe(Effect.ignore),
+        )
+        .pipe(Effect.ignore),
     );
   };
   return (
@@ -192,26 +203,26 @@ export const ShellRouteLink = ({
       onFocus={(event) => {
         props.onFocus?.(event);
         if (!event.defaultPrevented) {
-          prepare(event.currentTarget);
+          prepare(event.currentTarget, 'intent');
         }
       }}
       onMouseEnter={(event) => {
         props.onMouseEnter?.(event);
         if (!event.defaultPrevented) {
-          prepare(event.currentTarget);
+          prepare(event.currentTarget, 'intent');
         }
       }}
       onTouchStart={(event) => {
         props.onTouchStart?.(event);
         if (!event.defaultPrevented) {
-          prepare(event.currentTarget);
+          prepare(event.currentTarget, 'intent');
         }
       }}
       prefetch="none"
       preload={false}
       ref={(element: HTMLAnchorElement | null) => {
         if (element !== null) {
-          prepare(element);
+          prepare(element, 'background');
         }
       }}
     />
@@ -294,7 +305,8 @@ export const buildShellNavigation = (
     href: null,
     icon: 'icon-[mdi--cloud-off-outline]',
     key: `deployment:${deployment.appId}`,
-    label: deployment.appId,
+    // The deployment carries no display name; its technical id never reaches the menu.
+    label: t('shell.modules.deploymentEntry'),
     moduleMatch: false,
     notice: t(`shell.modules.discovery.${deployment.status === 'unavailable' ? deployment.reason : deployment.status}`),
     state: 'active',
@@ -689,6 +701,35 @@ const DashboardNavigationLink = ({
 
 const navigationToggleKey = 'shell.dashboard.navigation.toggle';
 
+interface DashboardHeaderSearchProps {
+  readonly compositionRevision: string | undefined;
+  readonly hidden: boolean;
+  readonly onSearch: (query: string) => void;
+}
+
+/** The global search, centred between the trail and the account; hidden once sign-out has started. */
+const DashboardHeaderSearch = ({ compositionRevision, hidden, onSearch }: DashboardHeaderSearchProps) => {
+  const [value, setValue] = useState('');
+  const suggestions = useShellSearchSuggestions(compositionRevision);
+  return hidden ? null : (
+    <Header.Container className="flex w-auto min-w-0 flex-1 justify-center md:flex-[2]" position="center">
+      <div className="w-full max-w-xl">
+        <ShellSearchBar
+          onDismissSuggestions={suggestions.handleDismiss}
+          onSearch={onSearch}
+          onValueChange={(next) => {
+            setValue(next);
+            suggestions.handleQueryChange(next);
+          }}
+          SuggestionLink={ShellRouteLink}
+          suggestions={suggestions.state}
+          value={value}
+        />
+      </div>
+    </Header.Container>
+  );
+};
+
 /** Grouped navigation panel: labelled groups on desktop, icon rail when collapsed, drawer below lg. */
 const GroupedSidebarPanel = ({
   model,
@@ -854,6 +895,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
   const guide = demoGuideFor(props.currentLegalEntityId);
   const guideOpen = useDemoGuideOpen();
   const guideWidth = useDemoGuideWidth();
+  const hydrated = useHydratedMarker();
   const guideVisible = guide !== undefined && guideOpen && !props.logoutPending;
   // The saved width is re-fitted to the current screen by CSS, next to the expanded or icon-only sidebar.
   const sidebarStyle: SidebarOffsetStyle = {
@@ -886,7 +928,10 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
           size="sm"
           style={{ height: 'var(--spacing-700)' }}
         >
-          <Header.Container className="flex w-auto min-w-0 flex-1 flex-nowrap items-center gap-200" position="start">
+          <Header.Container
+            className="flex w-auto shrink-0 flex-nowrap items-center gap-200 md:min-w-0 md:flex-1 md:basis-0"
+            position="start"
+          >
             {/* Once sign-out has started, navigation, search and the page are hidden; only the account stays. */}
             {props.logoutPending ? null : (
               <Sidebar.Trigger aria-label={t(navigationToggleKey)} side="start" tooltip={t(navigationToggleKey)} />
@@ -895,17 +940,21 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
             <ShellRouteLink aria-current={false} className="hidden no-underline md:flex" to="/">
               <DashboardBrand />
             </ShellRouteLink>
-            {/* Search lives in each governed agenda; do not advertise an unavailable global provider. */}
             {props.logoutPending ? null : <DashboardTrail model={model} />}
           </Header.Container>
-          <Header.Container className="ms-auto w-auto shrink-0" position="end">
+          <DashboardHeaderSearch
+            compositionRevision={props.compositionRevision}
+            hidden={props.logoutPending}
+            onSearch={props.onSearch}
+          />
+          <Header.Container className="flex w-auto shrink-0 justify-end md:flex-1 md:basis-0" position="end">
             <Header.Actions>
               {guide === undefined || props.logoutPending ? null : (
                 <Header.ActionItem>
                   <DemoGuideToggleButton open={guideOpen} />
                 </Header.ActionItem>
               )}
-              <Header.ActionItem>
+              <Header.ActionItem data-hydrated={hydrated}>
                 <DashboardAccountMenu
                   identity={props.identity}
                   logoutPending={props.logoutPending}

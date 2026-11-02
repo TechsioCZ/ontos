@@ -1,3 +1,4 @@
+// pinned to the current demo authorization model; revisit with the pending authorization-model decision (research thread 'granular authorization models')
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
@@ -90,12 +91,19 @@ import { openActionRuntimeOptions } from '../../packages/core-runtime/tests/supp
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../../packages/core-runtime/tests/support/database.ts';
 import { purgeFixtureRows } from '../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import {
+  buildActionAuthorizationRelationships,
+  buildIntrinsicSelfCredentialRelationships,
+  deriveScopedActionAuthorization,
+} from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
+import { bindSelfApiKeyAction } from '../../packages/core-runtime/src/modules/actions/bind-self-api-key.action.ts';
+import { buildPrincipalSelfCredentialUpdates } from '../../packages/core-runtime/src/permissions/action-authorization-lifecycle.ts';
+import {
   ContextAccess,
   toLegalEntityAccessObjectId,
 } from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
+import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { newSpiceDbGrpcClient } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
-import { toSpiceDbActionObjectId } from '../../packages/core-runtime/src/permissions/service.ts';
 import {
   GatewayContextResponseSchema,
   GatewayContextV2ClaimsSchema,
@@ -422,6 +430,7 @@ const relationship = (
   relation: string,
   subjectType: string,
   subjectId: string,
+  subjectRelation = '',
 ) =>
   v1.Relationship.create({
     relation,
@@ -434,6 +443,7 @@ const relationship = (
         objectId: subjectId,
         objectType: subjectType,
       }),
+      optionalRelation: subjectRelation,
     }),
   });
 
@@ -564,16 +574,49 @@ it.live(
     if (legalEntityAccessObjectId === undefined) {
       return yield* Effect.die('The modularity fixture legal-entity object ID could not be encoded');
     }
-    const bindSelfApiKeyActionObjectId = toSpiceDbActionObjectId({
-      actionKey: 'core.identity.bind-self-api-key',
-      legalEntityId,
-      tenantId,
-    });
+    const { descriptor } = bindSelfApiKeyAction;
+    const { authorization } = descriptor.entrypoint;
+    if (authorization.kind !== 'action_execution' || authorization.provisioning !== 'principal_self_credentials') {
+      return yield* fixtureError(
+        'The self-key fixture requires Core intrinsic principal self-credential authorization',
+      );
+    }
+    const selfCredentialDescriptors = [
+      {
+        actionKey: descriptor.actionKey,
+        legalEntityScope: descriptor.legalEntityScope,
+        owningModuleKey: descriptor.owningModuleKey,
+        provisioning: authorization.provisioning,
+      },
+    ];
+    // Identity mutations resolve tenant context, not the Shell's selected legal entity.
+    const selfCredentialActions = deriveScopedActionAuthorization(selfCredentialDescriptors, [
+      { moduleKeys: ['core.identity'], tenantId },
+    ]);
+    const principalSelfCredentialRelationships = yield* Effect.forEach(
+      buildPrincipalSelfCredentialUpdates({
+        kind: 'human',
+        principalId,
+        status: 'active',
+        tenantActive: true,
+        tenantId,
+      }),
+      ({ relationship: item }) =>
+        item === undefined
+          ? Effect.fail(fixtureError('Core self-credential updates must contain their exact relationships'))
+          : Effect.succeed(item),
+      { concurrency: 1 },
+    );
+    const contextRole = toScopedRoleObjectId({ roleKey: 'lean-core-context-selection', tenantId });
     const spiceDbRelationships = [
       relationship('tenant', tenantId, 'member', 'principal', principalId),
+      relationship('scoped_role', contextRole, 'member', 'principal', principalId),
+      relationship('tenant', tenantId, 'context_role', 'scoped_role', contextRole, 'member'),
       relationship('legal_entity', legalEntityAccessObjectId, 'tenant', 'tenant', tenantId),
       relationship('legal_entity', legalEntityAccessObjectId, 'member', 'principal', principalId),
-      relationship('action', bindSelfApiKeyActionObjectId, 'executor', 'principal', principalId),
+      ...buildActionAuthorizationRelationships(selfCredentialActions),
+      ...buildIntrinsicSelfCredentialRelationships(selfCredentialDescriptors, selfCredentialActions),
+      ...principalSelfCredentialRelationships,
     ];
     const cleanup = Effect.fnUntraced(function* cleanupLeanCoreModularityFixture() {
       yield* writeSpiceDbRelationships(spiceDbClient, spiceDbRelationships, v1.RelationshipUpdate_Operation.DELETE);

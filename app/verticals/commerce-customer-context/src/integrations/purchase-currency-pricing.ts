@@ -104,7 +104,6 @@ const makePricingPort = (input: {
           .issue({
             audience: 'pricing',
             compositionRevision: input.requestContext.compositionRevision,
-            legalEntityId: input.requestContext.legalEntityId,
             requestCorrelation: input.requestContext.requestCorrelation,
           })
           .pipe(

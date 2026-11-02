@@ -2,10 +2,11 @@ import type { Metadata } from "next";
 import { StorefrontWideShell } from "@/components/storefront-shell";
 import { readCheckoutOptions } from "@/ontos/checkout-options";
 import { formatPrice } from "@/lib/format";
+import { getMoney } from "@/ontos/active-market";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Doprava a platba" };
 export default async function ShippingPage() {
-  const options = await readCheckoutOptions();
+  const [options, money] = await Promise.all([readCheckoutOptions(), getMoney()]);
   return (
     <StorefrontWideShell>
       <article className="akros-landing-page py-8">
@@ -18,7 +19,7 @@ export default async function ShippingPage() {
                 <article key={method.id}>
                   <div className="akros-option-list__heading">
                     <h3>{method.title}</h3>
-                    <strong>{formatPrice(method.priceMinor)}</strong>
+                    <strong>{formatPrice(method.priceMinor, money)}</strong>
                   </div>
                   <p>
                     Aktuální ceník OntOS. Termín doručení ani rezervace dopravce nejsou dostupné.

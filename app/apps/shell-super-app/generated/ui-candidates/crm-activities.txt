@@ -9,6 +9,7 @@ bg-base
 bg-surface
 border
 border-border-primary/60
+hidden
 icon-[mdi--account-group-outline]
 outline
 rounded-lg

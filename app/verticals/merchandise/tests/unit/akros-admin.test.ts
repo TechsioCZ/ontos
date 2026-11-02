@@ -5,6 +5,7 @@ import {
   AKROS_LEGAL_ENTITY_ID,
   ESHOP_LEGAL_ENTITY_ID,
   staffCommandAllowed,
+  staffMarketCommandAllowed,
 } from '../../shared/actions/command-guard.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
@@ -42,6 +43,13 @@ it('allows dispatch only status processing and stock movement while preserving o
   }
   expect(staffCommandAllowed(ESHOP_LEGAL_ENTITY_ID, false, 'EditOrder')).toBe(true);
   expect(staffCommandAllowed(ESHOP_LEGAL_ENTITY_ID, false, 'RemoveDemoOrder')).toBe(false);
+});
+const rights = (administrator: boolean, companyAdministrator: boolean) => ({ administrator, companyAdministrator });
+it('lets the AKROS company administrator manage market offers and price lists, never dispatch', () => {
+  expect(staffMarketCommandAllowed(AKROS_LEGAL_ENTITY_ID, rights(false, true))).toBe(true);
+  expect(staffMarketCommandAllowed(AKROS_LEGAL_ENTITY_ID, rights(true, false))).toBe(true);
+  expect(staffMarketCommandAllowed(AKROS_LEGAL_ENTITY_ID, rights(false, false))).toBe(false);
+  expect(staffMarketCommandAllowed(ESHOP_LEGAL_ENTITY_ID, rights(false, false))).toBe(true);
 });
 const seeded = Effect.gen(function* seed() {
   const product = yield* apply(

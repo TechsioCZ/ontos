@@ -1,6 +1,7 @@
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { PurposeVersionConflict } from './purpose-version-conflict.ts';
 
-import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
+import { PrivacyIsoTimestampSchema, comparePrivacyInstants } from './privacy-subject.ts';
 import { PrivacyMaterialChangeAssessmentSchema } from './privacy-material-change.ts';
 import { ConsentMaterialDimensionKindSchema } from './privacy-consent-scope.ts';
 import { ProcessingPurposeRefSchema } from '../resources/processing-purpose.ts';
@@ -52,6 +53,50 @@ export const PurposeVersionSchema = Schema.Struct({
   versionNumber: Schema.Int.check(Schema.isGreaterThan(0)),
 });
 export type PurposeVersion = typeof PurposeVersionSchema.Type;
+
+/** The immutable successor fact supplies the predecessor's exclusive applicability end. */
+export const resolvePurposeVersionTimeline = Effect.fn('PurposeVersion.resolveTimeline')(
+  function* resolvePurposeVersionTimeline(versions: readonly PurposeVersion[]) {
+    const ordered = versions.toSorted((left, right) => left.versionNumber - right.versionNumber);
+    if (ordered.length === 0 || new Set(ordered.map(({ versionId }) => versionId)).size !== ordered.length) {
+      return yield* new PurposeVersionConflict({
+        code: 'privacy_purpose_version_conflict',
+        reason: 'Purpose Version timeline is missing or has ambiguous identities',
+      });
+    }
+    return yield* Effect.forEach(
+      ordered,
+      Effect.fn('PurposeVersion.resolveInterval')(function* resolvePurposeInterval(version, index) {
+        const next = ordered[index + 1];
+        const duration =
+          version.effectiveTo === null ? 1 : comparePrivacyInstants(version.effectiveTo, version.effectiveFrom);
+        const successorOrder =
+          next === undefined ? 1 : comparePrivacyInstants(next.effectiveFrom, version.effectiveFrom);
+        const explicitEndOrder =
+          version.effectiveTo === null || next === undefined
+            ? 0
+            : comparePrivacyInstants(version.effectiveTo, next.effectiveFrom);
+        if (
+          version.versionNumber !== index + 1 ||
+          comparePrivacyInstants(version.effectiveFrom, version.effectiveFrom) === undefined ||
+          duration === undefined ||
+          duration <= 0 ||
+          successorOrder === undefined ||
+          successorOrder <= 0 ||
+          explicitEndOrder === undefined ||
+          explicitEndOrder > 0
+        ) {
+          return yield* new PurposeVersionConflict({
+            code: 'privacy_purpose_version_conflict',
+            reason: 'Purpose Version timeline has incoherent or missing chronology',
+          });
+        }
+        return { ...version, effectiveTo: version.effectiveTo ?? next?.effectiveFrom ?? null };
+      }),
+      { concurrency: 1 },
+    );
+  },
+);
 
 export const ProcessingPurposeSchema = Schema.Struct({
   businessCode: PurposeCodeSchema,

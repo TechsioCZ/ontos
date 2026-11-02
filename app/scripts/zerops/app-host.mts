@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import { startProcessObservability } from './process-observability.mts';
+import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
+import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
+import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@app/shared-contracts/credential-url';
 /**
  * One stateless Zerops container that serves the whole OntOS application: the Shell, every MicroVertical owner
  * of the release intent and the Outbox Worker host, each as its own process on a loopback port.
@@ -29,6 +33,7 @@ import {
   Duration,
   Effect,
   Exit,
+  Layer,
   Option,
   Order,
   Redacted,
@@ -38,7 +43,7 @@ import {
   Stream,
   Struct,
 } from 'effect';
-import { FetchHttpClient, HttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { FetchHttpClient, HttpClient, HttpServer, HttpServerRequest, HttpServerResponse, UrlParams } from 'effect/http';
 import { ChildProcess } from 'effect/process';
 
 import {
@@ -52,7 +57,6 @@ import { isLoopbackHostname } from '../../packages/core-runtime/src/modules/appl
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
   ARTIFACT_FETCH_TIMEOUT,
-  decodeActiveApplicationCompositionSnapshot,
   deriveActiveApplicationCompositionSnapshot,
   encodeActiveApplicationCompositionSnapshot,
 } from '../active-application-composition.mts';
@@ -61,6 +65,12 @@ import {
   ApplicationCompositionAuthorityAdminDatabaseLive,
   publishApplicationCompositionAuthoritySnapshot,
 } from '../application-composition-authority-publication.mts';
+import { ApplicationCompositionLegacyOwnersLive } from '../application-composition-legacy-owners.mts';
+import {
+  CALLER_NAMESPACE_ID,
+  OWNER_RUNTIME_CONFIGURATIONS,
+  unitApiBaseUrl,
+} from '../ops/owner-runtime-configuration.mts';
 import { SHELL_ID, SHELL_PORT, readHostedUnits, workspaceRoot } from './hosted-units.mts';
 import type { HostedUnit } from './hosted-units.mts';
 
@@ -100,6 +110,8 @@ const SUPERVISOR_ONLY_KEYS: readonly string[] = [
   'COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL',
   'DATABASE_ADMIN_URL',
   'ONTOS_OWNER_SECRETS_JSON',
+  'ONTOS_SHELL_RUNTIME',
+  'ONTOS_SHELL_RUNTIME_DEFAULT',
   'PARTY_REGISTRY_DB_PASSWORD',
   'PARTY_REGISTRY_WORKER_DB_PASSWORD',
   'SHELL_GATEWAY_ISSUER_DB_PASSWORD',
@@ -110,6 +122,10 @@ const HOST_CONTROLLED_KEYS: ReadonlySet<string> = new Set([
   'BETTER_AUTH_TRUSTED_ORIGINS',
   'BETTER_AUTH_URL',
   'DATABASE_URL',
+  'MODERN_SERVER_IMMUTABLE_ASSETS',
+  'MODERN_SERVER_LOG_LEVEL',
+  'MODERN_SERVER_PRECOMPRESSED_ASSETS',
+  'MODERN_SERVER_RENDER_RESOURCES',
   'NODE_ENV',
   'ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL',
   'ONTOS_GATEWAY_ISSUER',
@@ -173,6 +189,22 @@ const PublicOriginSchema = Schema.URLFromString.check(
 const loopbackOrigin = (port: number) => `http://127.0.0.1:${String(port)}`;
 
 /**
+ * The owner API bases and caller namespaces the shared owner runtime configuration names. Each base is the serving
+ * unit's loopback origin; a unit this host does not serve leaves its base unset (undefined removes it from the child)
+ * rather than pointing at an address nothing serves.
+ */
+const ownerRuntimeEnvironment = (ports: ReadonlyMap<string, number>) =>
+  Object.fromEntries(
+    OWNER_RUNTIME_CONFIGURATIONS.flatMap(({ apiDependencies, callerNamespaces }) => [
+      ...apiDependencies.map(({ unitId, variable }) => {
+        const port = unitId === SHELL_ID ? SHELL_PORT : ports.get(unitId);
+        return [variable, port === undefined ? undefined : unitApiBaseUrl(loopbackOrigin(port), unitId)] as const;
+      }),
+      ...callerNamespaces.map((variable) => [variable, CALLER_NAMESPACE_ID] as const),
+    ]),
+  );
+
+/**
  * Settings every process derives from the public origins of this environment and the host's own ports. They win over
  * stored owner secrets, whose URL values name whatever hostnames the bundle was written for.
  */
@@ -182,15 +214,19 @@ export const derivedEnvironment = (
   hostPort: number,
   ports: ReadonlyMap<string, number>,
 ) => {
-  const shellGateway = `${loopbackOrigin(SHELL_PORT)}/shell-super-app-api`;
-  const priceGroupCatalog = ports.get('price-group-catalog');
+  const shellGateway = unitApiBaseUrl(loopbackOrigin(SHELL_PORT), SHELL_ID);
   return {
+    ...ownerRuntimeEnvironment(ports),
     AKROS_STOREFRONT_PUBLIC_URL: storefrontOrigin,
     BETTER_AUTH_TRUSTED_ORIGINS: `${origin},${storefrontOrigin}`,
     BETTER_AUTH_URL: origin,
     COMMERCE_CORE_IDENTITY_BASE_URL: shellGateway,
     COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS: `${origin},${storefrontOrigin}`,
     COMMERCE_PORTAL_AUTH_URL: storefrontOrigin,
+    // A container serves one immutable release. The deployment package excludes compressed copies.
+    MODERN_SERVER_IMMUTABLE_ASSETS: 'true',
+    MODERN_SERVER_LOG_LEVEL: 'info',
+    MODERN_SERVER_PRECOMPRESSED_ASSETS: 'false',
     NODE_ENV: 'production',
     ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `${loopbackOrigin(hostPort)}${COMPOSITION_PATH}`,
     ONTOS_EMAIL_DISPATCH_URL: `${origin}/shell-super-app-api/email/dispatch`,
@@ -198,9 +234,6 @@ export const derivedEnvironment = (
     ONTOS_GATEWAY_ISSUER: origin,
     ONTOS_OAUTH_ISSUER: `${origin}/shell-super-app-api/oauth`,
     ONTOS_PUBLIC_URL: origin,
-    // An environment without the owner leaves the variable unset (undefined removes it from the child).
-    ONTOS_PRICE_GROUP_CATALOG_BASE_URL:
-      priceGroupCatalog === undefined ? undefined : `${loopbackOrigin(priceGroupCatalog)}/price-group-catalog-api`,
     ONTOS_SHELL_GATEWAY_BASE_URL: shellGateway,
   };
 };
@@ -227,6 +260,17 @@ export const routeRequest = (
 
 type ChildEnvironment = NonNullable<ChildProcess.CommandOptions['env']>;
 
+const ShellRuntime = Schema.Literals(['node', 'bun']);
+
+/**
+ * Zerops makes YAML-defined variables read-only. Keep the live override out of YAML so operators can change it
+ * and restart without rebuilding. Both settings fail closed on invalid values and affect only the Shell.
+ */
+export const shellRuntime = Config.all({
+  deploymentDefault: Config.schema(ShellRuntime, 'ONTOS_SHELL_RUNTIME_DEFAULT').pipe(Config.withDefault('node')),
+  override: Config.option(Config.schema(ShellRuntime, 'ONTOS_SHELL_RUNTIME')),
+}).pipe(Config.map(({ deploymentDefault, override }) => Option.getOrElse(override, () => deploymentDefault)));
+
 /** Starts one long-running child in the current Scope. Its exit, for any reason, fails the returned effect. */
 const startChild = Effect.fn('AppHost.startChild')(function* startChild(
   name: string,
@@ -250,13 +294,31 @@ const startChild = Effect.fn('AppHost.startChild')(function* startChild(
   );
 });
 
+/** Only the single-unit Shell process can use the packaged Bun binary. Every other unit process uses Node. */
+export const startUnitProcess = (ids: readonly string[], runtime: typeof ShellRuntime.Type, env: ChildEnvironment) =>
+  startChild(
+    ids.length === 1 ? (ids[0] ?? 'owners') : 'owners',
+    runtime === 'bun' && ids.length === 1 && ids[0] === SHELL_ID
+      ? path.join(workspaceRoot, '.zerops/bun/bin/bun')
+      : process.execPath,
+    [path.join(workspaceRoot, 'scripts/zerops/serve-units.mts'), ...ids],
+    workspaceRoot,
+    env,
+  );
+
+/** Finite operator commands own private pools; only long-running hosts install a shared-pool registry. */
+export const finiteProcessEnvironment = (environment: ChildEnvironment): ChildEnvironment => ({
+  ...environment,
+  ONTOS_DATABASE_POOL_SHARED: 'false',
+});
+
 /** Runs one finite child to a successful exit. */
 const runChild = (name: string, command: string, args: readonly string[], cwd: string, env: ChildEnvironment) =>
   Effect.scoped(
     Effect.gen(function* runFiniteChild() {
       const handle = yield* ChildProcess.make(command, [...args], {
         cwd,
-        env,
+        env: finiteProcessEnvironment(env),
         extendEnv: true,
         stderr: 'inherit',
         stdout: 'inherit',
@@ -267,7 +329,10 @@ const runChild = (name: string, command: string, args: readonly string[], cwd: s
       }
       return yield* Effect.void;
     }),
-  ).pipe(Effect.catchTag('PlatformError', () => Effect.fail(failure(`${name} could not run`))));
+  ).pipe(
+    observeRuntimeJob('supervisor-child', name),
+    Effect.catchTag('PlatformError', () => Effect.fail(failure(`${name} could not run`))),
+  );
 
 // ---------------------------------------------------------------------------------------------------------------
 // HTTP
@@ -372,13 +437,20 @@ const compositionSourceResponse = <Failure, Requirements>(
       : HttpServerResponse.empty({ status: 503 });
   });
 
-const hostApplication = <Failure, Requirements>(
+export const hostApplication = <Failure, Requirements>(
   ports: ReadonlyMap<string, number>,
   published: Ref.Ref<boolean>,
   loadComposition: Effect.Effect<Option.Option<string>, Failure, Requirements>,
 ) =>
   Effect.gen(function* routeHostRequest() {
     const request = yield* HttpServerRequest.HttpServerRequest;
+    const location = credentialSubmissionRedirect(new URL(request.url, 'https://host.invalid'), request.method);
+    if (location !== undefined) {
+      return HttpServerResponse.empty({
+        headers: { 'cache-control': 'no-store', location, 'referrer-policy': 'no-referrer' },
+        status: 303,
+      });
+    }
     if (request.url === COMPOSITION_PATH) {
       return yield* compositionSourceResponse(request, loadComposition);
     }
@@ -406,52 +478,59 @@ const hostApplication = <Failure, Requirements>(
 // ---------------------------------------------------------------------------------------------------------------
 // Composition
 
+interface ApprovedCompositionObservation {
+  readonly encoded: string;
+  readonly snapshot: ActiveApplicationCompositionSnapshot;
+}
+
 /** The candidate first, then the previously committed value, so either side of the authority commit matches. */
 const withLatestFirst =
-  (encoded: string) =>
-  (current: readonly string[]): readonly string[] =>
-    [encoded, ...current.filter((value) => value !== encoded)].slice(0, 2);
+  (observation: ApprovedCompositionObservation) =>
+  (current: readonly ApprovedCompositionObservation[]): readonly ApprovedCompositionObservation[] =>
+    [observation, ...current.filter(({ encoded }) => encoded !== observation.encoded)].slice(0, 2);
+
+interface CompositionPointerAuthority {
+  readonly phase: string;
+  readonly revision: string;
+  readonly validUntilMillis: number;
+}
 
 /**
  * The one approved snapshot this host serves. A value is readable only while the PostgreSQL authority names its
  * revision and lease, so the loopback source never serves a revision the database no longer admits.
  */
-const makeCompositionPointer = Effect.gen(function* makePointer() {
-  const database = yield* CoreDatabase;
-  const journal = yield* Ref.make<readonly string[]>([]);
-  const load = Effect.gen(function* loadApprovedPointer() {
-    const [authority] = yield* database.executor.execute<{
-      readonly phase: string;
-      readonly revision: string;
-      readonly validUntilMillis: number;
-    }>(
-      sql`select phase, revision, (extract(epoch from valid_until) * 1000)::double precision as "validUntilMillis" from core.application_composition_authority where authority_key = 'active'`,
-      'objects',
-    );
-    if (authority === undefined || (authority.phase !== 'active' && authority.phase !== 'draining')) {
-      return Option.none<string>();
-    }
-    for (const encoded of yield* Ref.get(journal)) {
-      const approved = yield* decodeActiveApplicationCompositionSnapshot(encoded).pipe(
-        Effect.flatMap(validateActiveApplicationCompositionSnapshot),
-        Effect.option,
-      );
-      if (
-        Option.isSome(approved) &&
-        approved.value.composition.revision === authority.revision &&
-        DateTime.toEpochMillis(approved.value.validUntil) === authority.validUntilMillis
-      ) {
-        return Option.some(encoded);
+export const makeCompositionPointer = <Failure, Requirements>(
+  readAuthority: Effect.Effect<readonly CompositionPointerAuthority[], Failure, Requirements>,
+) =>
+  Effect.gen(function* makePointer() {
+    const journal = yield* Ref.make<readonly ApprovedCompositionObservation[]>([]);
+    const load = Effect.gen(function* loadApprovedPointer() {
+      // Mutable authority is always re-read. Only immutable content validation moves to publication.
+      const [authority] = yield* readAuthority;
+      if (authority === undefined || (authority.phase !== 'active' && authority.phase !== 'draining')) {
+        return Option.none<string>();
       }
-    }
-    return Option.none<string>();
+      for (const { encoded, snapshot } of yield* Ref.get(journal)) {
+        const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot).pipe(Effect.option);
+        if (
+          Option.isSome(approved) &&
+          approved.value.composition.revision === authority.revision &&
+          DateTime.toEpochMillis(approved.value.validUntil) === authority.validUntilMillis
+        ) {
+          return Option.some(encoded);
+        }
+      }
+      return Option.none<string>();
+    });
+    const publish = Effect.fn('AppHost.publishCompositionPointer')(function* publishPointer(
+      snapshot: ActiveApplicationCompositionSnapshot,
+    ) {
+      const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot);
+      const encoded = yield* encodeActiveApplicationCompositionSnapshot(approved);
+      yield* Ref.update(journal, withLatestFirst({ encoded, snapshot: approved }));
+    });
+    return { load, publish };
   });
-  const publish = (snapshot: ActiveApplicationCompositionSnapshot) =>
-    encodeActiveApplicationCompositionSnapshot(snapshot).pipe(
-      Effect.flatMap((encoded) => Ref.update(journal, withLatestFirst(encoded))),
-    );
-  return { load, publish };
-});
 
 const publicArtifactUrl = (owner: HostedUnit, artifactPath: string, publicOrigin: string) =>
   new URL(owner.id === SHELL_ID ? artifactPath : `${MODULE_ASSET_PREFIX}${owner.id}${artifactPath}`, publicOrigin).href;
@@ -501,6 +580,7 @@ const observeOwners = Effect.fn('AppHost.observeOwners')(function* observeOwners
 // Host
 
 export const runAppHost = Effect.gen(function* runAppHost() {
+  yield* startProcessObservability('supervisor');
   const publicPort = yield* Config.Int('PORT').pipe(Config.withDefault(3000));
   const publicOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_PUBLIC_ORIGIN')).origin;
   const storefrontOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_STOREFRONT_ORIGIN')).origin;
@@ -513,24 +593,42 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   const ports = new Map(units.map(({ id, port }) => [id, port]));
   const derived = derivedEnvironment(publicOrigin, storefrontOrigin, publicPort, ports);
   const node = process.execPath;
+  const runtime = yield* shellRuntime;
   const published = yield* Ref.make(false);
-  const pointer = yield* makeCompositionPointer;
+  const database = yield* CoreDatabase;
+  const pointer = yield* makeCompositionPointer(
+    database.executor.execute<{
+      readonly phase: string;
+      readonly revision: string;
+      readonly validUntilMillis: number;
+    }>(
+      sql`select phase, revision, (extract(epoch from valid_until) * 1000)::double precision as "validUntilMillis" from core.application_composition_authority where authority_key = 'active'`,
+      'objects',
+    ),
+  );
 
   yield* HttpServer.serveEffect(hostApplication(ports, published, pointer.load));
 
   // Two processes serve every unit: the Shell alone (its SSR owns the Module Federation host runtime), and every
   // owner together, so their shared dependencies load once.
   const ownerIds = units.filter(({ id }) => id !== SHELL_ID).map(({ id }) => id);
-  const shellEnvironment = processEnvironment([SHELL_ID], ownerSecrets, derived);
-  const ownersEnvironment = processEnvironment(ownerIds, ownerSecrets, derived);
+  const shellEnvironment = processEnvironment([SHELL_ID], ownerSecrets, {
+    ...derived,
+    MODERN_SERVER_RENDER_RESOURCES: 'eager',
+  });
+  const ownersEnvironment = processEnvironment(ownerIds, ownerSecrets, {
+    ...derived,
+    // Owner HTML remains renderable, but BFF/contract/federation asset requests never load its page bundles.
+    MODERN_SERVER_RENDER_RESOURCES: 'lazy',
+  });
   if (ownersEnvironment.conflicts.length > 0) {
     return yield* failure(`owners store different values for ${ownersEnvironment.conflicts.join(', ')}`);
   }
-  const serveUnits = path.join(workspaceRoot, 'scripts/zerops/serve-units.mts');
   const exits = [
-    yield* startChild(SHELL_ID, node, [serveUnits, SHELL_ID], workspaceRoot, shellEnvironment.environment),
-    yield* startChild('owners', node, [serveUnits, ...ownerIds], workspaceRoot, ownersEnvironment.environment),
+    yield* startUnitProcess([SHELL_ID], runtime, shellEnvironment.environment),
+    yield* startUnitProcess(ownerIds, runtime, ownersEnvironment.environment),
   ];
+  yield* Console.log(`[app-host] Shell runtime ${runtime}; owners and Outbox runtime node`);
   yield* Console.log(`[app-host] serving ${String(units.length)} units; migrating`);
 
   const publish = Effect.gen(function* publishObservedComposition() {
@@ -539,7 +637,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     yield* Console.log(
       `[app-host] composition ${snapshot.composition.revision} (${String(snapshot.composition.modules.length)} owners) valid until ${DateTime.formatIso(snapshot.validUntil)}`,
     );
-  });
+  }).pipe(observeRuntimeJob('composition-publish'));
 
   // ONTOS_APP_HOST_PUBLISH=false starts and observes every unit without migrating or taking the authority, so a new
   // environment can be checked beside the one that still holds it.
@@ -609,9 +707,14 @@ if (import.meta.main) {
         port: Config.Int('PORT').pipe(Config.withDefault(3000)),
       }),
     ),
-    Effect.provide(ApplicationCompositionAuthorityAdminDatabaseLive),
+    // Every authority transition re-observes legacy owner completion, as the operator publisher does.
+    Effect.provide(
+      Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ApplicationCompositionLegacyOwnersLive),
+    ),
     Effect.provide(FetchHttpClient.layer),
     Effect.provide(NodeServices.layer),
+    Effect.provide(ProcessDatabasePoolsLive),
+    Effect.provideService(UrlParams.CurrentRedactedNames, authenticationQueryRedactions),
     Effect.tapCause((cause) => Console.error(`[app-host] stopped: ${String(cause)}`)),
   );
   const exit = await Effect.runPromiseExit(program);

@@ -1,4 +1,11 @@
 import { Context, Schema } from 'effect';
+import type {
+  ActionServiceFactory,
+  ActionServicePreparationContext,
+  OperationalScope,
+  ScopedTransactionExecutor,
+} from '@app/core-runtime';
+import type { PurchaseProposalRevision } from './purchasing-approval.ts';
 import type { Effect } from 'effect';
 
 import type { PurchaseLimitCounterpartyRef, PurchaseLimitDependencyUnavailable } from './purchase-limit-policy.ts';
@@ -33,7 +40,18 @@ export const PurchaseLimitEvaluationCurrentFactsSchema = Schema.Struct({
 });
 export type PurchaseLimitEvaluationCurrentFacts = typeof PurchaseLimitEvaluationCurrentFactsSchema.Type;
 
+export interface PreparedPurchaseLimitCurrentness {
+  readonly currentness: PurchaseLimitEvaluationCurrentnessPortService;
+  readonly revalidate: () => Effect.Effect<void, PurchaseLimitDependencyUnavailable>;
+}
+
 export interface PurchaseLimitEvaluationCurrentnessPortService {
+  /** Capture the real authenticated operation; a business buyer scope must never be promoted to it. */
+  readonly forOperation?: (
+    transaction: ScopedTransactionExecutor,
+    scope: OperationalScope,
+  ) => PurchaseLimitEvaluationCurrentnessPortService;
+
   /**
    * Close the owner-currentness resolver over the Action transaction. A
    * resolver may omit this when it is already transaction-bound; production
@@ -44,11 +62,18 @@ export interface PurchaseLimitEvaluationCurrentnessPortService {
     transaction: Transaction,
     scope: PurchaseLimitEvaluationTrustedScope,
   ) => PurchaseLimitEvaluationCurrentnessPortService;
+  /** Observe this provider outside the business transaction, then recheck its owner state at commit.
+   * Actions fail closed when their configured provider does not support released preparation. */
+  readonly prepare?: (
+    context: ActionServicePreparationContext,
+    source: Pick<PurchaseValue, 'sourceRef' | 'sourceRevision'>,
+  ) => Effect.Effect<ActionServiceFactory<PreparedPurchaseLimitCurrentness>, PurchaseLimitDependencyUnavailable>;
   /**
    * Candidate-only external facts for the first proposal revision. Implementations must not
    * satisfy this by reading the proposal row that the create routine is about to insert.
    */
   readonly resolveCandidate?: (input: {
+    readonly candidateProposal?: PurchaseProposalRevision;
     readonly claimedPurchaseValue: PurchaseValue;
     readonly counterpartyRef: PurchaseLimitCounterpartyRef;
     readonly expectedSourceRevisions: PurchaseLimitSourceRevisionVector;

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -17,6 +17,7 @@ const storefrontWorkspace = 'akros-storefront';
 const inertNodeCommand = 'node scripts/unused-neighbor.mjs';
 const appWorkingDirectoryLine = 'cd "$APP"\n';
 const nativeNextCssReason = 'Native Next layout CSS';
+const shellPackage = '@fixture/shell';
 const shellRoot = 'apps/shell';
 const sourcePattern = 'src/**/*.ts';
 const packageManifest = 'package.json';
@@ -70,7 +71,7 @@ const fixture = () =>
           '@fixture/css-dead': '1',
           [cssUsed]: '1',
         },
-        name: '@fixture/shell',
+        name: shellPackage,
         scripts: { bootstrap: 'sh scripts/launch.sh' },
         type: 'module',
       }),
@@ -110,6 +111,87 @@ const fixture = () =>
     write(root, readinessConfig, 'export default {}; export const unusedConfigExport = 1;');
     return root;
   });
+
+it.live(
+  'literal Rstest config commands consume only their contained file and default export',
+  Effect.fn(function* literalRstestConfigPositive() {
+    const root = yield* fixture();
+    const configFile = 'tests/support/reconciliation.rstest.config.ts';
+    write(root, `${shellRoot}/${configFile}`, 'export default {}; export const unusedNeighbor = 1;');
+    for (const command of [
+      `rstest run --config ${configFile} --project integration`,
+      `rstest --config="${configFile}"`,
+      `rstest --config '${configFile}'`,
+    ]) {
+      write(
+        root,
+        `${shellRoot}/package.json`,
+        yield* stringify({
+          name: shellPackage,
+          scripts: { 'test:integration:reconciliation': command },
+        }),
+      );
+      const evidence = (yield* facts(root)).filter((fact) => fact.target.includes(configFile));
+      expect(evidence.map((fact) => [fact.kind, fact.target])).toEqual([
+        ['file', configFile],
+        ['export', `${shellRoot}/${configFile}#default`],
+      ]);
+      expect(
+        evidence.every((fact) => fact.source === `${shellRoot}/package.json` && fact.workspace === shellRoot),
+      ).toBe(true);
+    }
+  }),
+);
+
+it.live(
+  'literal Rstest config commands reject dynamic missing escaping and unrelated controls',
+  Effect.fn(function* literalRstestConfigInvalid() {
+    const root = yield* fixture();
+    const configFile = 'tests/support/reconciliation.rstest.config.ts';
+    write(root, `${shellRoot}/${configFile}`, 'export default {};');
+    write(root, 'outside.config.ts', 'export default {};');
+    const commands = [
+      `echo rstest --config ${configFile}`,
+      `rstest --config ${configFile} && other-command`,
+      `rstest --config ${configFile}; other-command`,
+      'rstest --config "$CONFIG"',
+      'rstest --config $(choose-config)',
+      'rstest --config tests/*.config.ts',
+      'rstest --config tests/missing.config.ts',
+      'rstest --config ../../outside.config.ts',
+      'rstest --config /tmp/outside.config.ts',
+      'rstest --config tests/../outside.config.ts',
+      `rstest --config ${configFile} --config other.config.ts`,
+      `other-runner --config ${configFile}`,
+    ];
+    for (const command of commands) {
+      write(
+        root,
+        `${shellRoot}/package.json`,
+        yield* stringify({
+          name: shellPackage,
+          scripts: { test: command },
+        }),
+      );
+      const evidence = yield* facts(root);
+      expect(
+        evidence.filter((fact) => fact.reason.includes('literal workspace configuration')),
+        command,
+      ).toEqual([]);
+    }
+    const linkedConfig = 'tests/support/linked.config.ts';
+    symlinkSync(path.join(root, 'outside.config.ts'), path.join(root, shellRoot, linkedConfig));
+    write(
+      root,
+      `${shellRoot}/package.json`,
+      yield* stringify({
+        name: shellPackage,
+        scripts: { test: `rstest --config ${linkedConfig}` },
+      }),
+    );
+    expect((yield* facts(root)).filter((fact) => fact.reason.includes('literal workspace configuration'))).toEqual([]);
+  }),
+);
 
 it.live(
   'runtime consumers require the exact CSS, shell, deployment and compiler contracts',

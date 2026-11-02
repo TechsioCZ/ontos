@@ -26,7 +26,6 @@
     "./domain/privacy-responsibility-assignment": "./shared/domain/privacy-responsibility-assignment.ts",
     "./domain/privacy-retention-disposition": "./shared/domain/privacy-retention-disposition.ts",
     "./domain/privacy-retention-rule": "./shared/domain/privacy-retention-rule.ts",
-    "./domain/privacy-subject-identity": "./shared/domain/privacy-subject-identity.ts",
     "./domain/privacy-subject": "./shared/domain/privacy-subject.ts",
     "./domain/privacy-technology-consent": "./shared/domain/privacy-technology-consent.ts",
     "./domain/privacy-terms-consent-boundary": "./shared/domain/privacy-terms-consent-boundary.ts",
@@ -39,6 +38,7 @@
     "./outbox/privacy-retention-evaluation-requested": "./shared/outbox/privacy-retention-evaluation-requested.ts",
     "./resources/identity-reconciliation": "./shared/resources/identity-reconciliation.ts",
     "./resources/legal-basis-assignment": "./shared/resources/legal-basis-assignment.ts",
+    "./resources/privacy-notice-acknowledgement": "./shared/resources/privacy-notice-acknowledgement.ts",
     "./resources/privacy-notice-version": "./shared/resources/privacy-notice-version.ts",
     "./resources/privacy-responsibility-assignment": "./shared/resources/privacy-responsibility-assignment.ts",
     "./resources/privacy-subject": "./shared/resources/privacy-subject.ts",
@@ -46,7 +46,9 @@
     "./resources/processing-purpose": "./shared/resources/processing-purpose.ts",
     "./outbox-worker-host": "./src/worker-host/entry.ts",
     "./Route": "./src/federation-entry.tsx",
-    "./Widget": "./src/components/widget.tsx"
+    "./Widget": "./src/components/widget.tsx",
+    "./admin/legacy-completion": "./scripts/legacy-completion-publication.ts",
+    "./domain/privacy-subject-identity": "./shared/domain/privacy-subject-identity.ts"
   },
   "scripts": {
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical privacy --target dist && ultramodern-create ultramodern public-surface --app privacy --target dist && modern deploy --skip-build --deploy-target node",
@@ -64,15 +66,15 @@
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {
-    "@app/consent-authority-contracts": "workspace:*",
+    "@app/commerce-customer-context": "workspace:*",
     "@app/core-runtime": "workspace:*",
+    "@app/party-registry": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
-    "@effect/opentelemetry": "4.0.5",
-    "@effect/platform-node": "4.0.5",
-    "@effect/sql-pg": "4.0.5",
-    "@noble/hashes": "2.2.0",
+    "@effect/opentelemetry": "4.0.7",
+    "@effect/platform-node": "4.0.7",
+    "@effect/sql-pg": "4.0.7",
     "@modern-js/backend-federation-contracts": "catalog:ultramodern",
     "@modern-js/bff-effect": "catalog:ultramodern",
     "@modern-js/federation-runtime": "catalog:ultramodern",
@@ -88,14 +90,19 @@
     "@module-federation/runtime": "npm:@bleedingdev/mf-runtime@2.9.3",
     "@tanstack/react-router": "1.170.39",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "effect": "4.0.5",
+    "effect": "4.0.7",
+    "jose": "6.2.5",
     "i18next": "26.4.2",
     "pg": "8.22.0",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "@app/consent-authority-contracts": "workspace:*",
+    "@noble/hashes": "2.2.0"
   },
   "devDependencies": {
-    "@effect/tsgo": "0.53.1",
+    "@app/party-registry-identity-contracts": "workspace:*",
+    "@authzed/authzed-node": "1.6.1",
+    "@effect/tsgo": "0.63.0",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
     "@modern-js/plugin-bff-build-extensions": "catalog:ultramodern",
@@ -110,7 +117,9 @@
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
     "tailwindcss": "^4.3.3",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "@app/shell-super-app": "workspace:*",
+    "tsrs": "0.20.1-ts7.1.0-beta"
   },
   "modernjs": {
     "preset": "presetUltramodern",

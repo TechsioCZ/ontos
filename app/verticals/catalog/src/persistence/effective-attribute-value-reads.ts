@@ -349,7 +349,8 @@ const decodeItem = Effect.fn('EffectiveAttributeValueReads.decodeItem')(function
     controlled.tenantId !== tenantId ||
     controlled.attributeDefinitionId !== definitionId ||
     controlled.specialization !== controlledKind ||
-    controlled.lifecycleState !== 'ACTIVE'
+    // Existing persisted use survives vocabulary retirement; writers still require ACTIVE.
+    (controlled.lifecycleState !== 'ACTIVE' && controlled.lifecycleState !== 'RETIRED')
   ) {
     return Option.none<AttributeValue>();
   }
@@ -401,7 +402,7 @@ const readControlledDependency = Effect.fn('EffectiveAttributeValueReads.readCon
       revision.meaning !== value.meaning ||
       revision.name !== value.name ||
       revision.specialization !== value.specialization ||
-      value.lifecycleState !== 'ACTIVE'
+      (value.lifecycleState !== 'ACTIVE' && value.lifecycleState !== 'RETIRED')
     ) {
       return Option.none<string>();
     }

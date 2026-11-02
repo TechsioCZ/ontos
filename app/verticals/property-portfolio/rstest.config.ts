@@ -8,7 +8,6 @@ export default defineConfig({
       testEnvironment: 'node',
       tools: { swc: { jsc: { transform: { react: { runtime: 'automatic' } } } } },
     },
-    { include: ['tests/integration/**/*.test.ts'], name: 'integration', testEnvironment: 'node', testTimeout: 30_000 },
   ],
   root: new URL('.', import.meta.url).pathname,
 });

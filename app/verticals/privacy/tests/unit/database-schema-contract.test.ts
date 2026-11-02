@@ -17,6 +17,7 @@ import {
   gatewayAssertionRedemptions,
   legalBasisAssignments,
   legalHolds,
+  noticeAcknowledgements,
   noticeProvisions,
   processingActivities,
   purposeVersions,
@@ -32,11 +33,19 @@ const migrationSql = (): string => {
     .join('\n');
 };
 
+it('retains one immutable, scoped Consent Subject binding and guards native decision inserts', () => {
+  expect(PRIVACY_TABLE_INVENTORY).toContain('consent_scope_bindings');
+  const sql = migrationSql();
+  expect(sql).toContain('privacy_consent_scope_bindings_immutable');
+  expect(sql).toContain('privacy_consent_subject_binding_guard');
+});
+
 const IMMUTABLE_TRIGGER_NAMES = [
   'privacy_anti_resurrection_immutable',
   'privacy_applicability_decisions_immutable',
   'privacy_applicability_policies_immutable',
   'privacy_consent_decisions_immutable',
+  'privacy_consent_scope_bindings_immutable',
   'privacy_disposition_decisions_immutable',
   'privacy_dsr_deadlines_immutable',
   'privacy_dsr_delivery_evidence_immutable',
@@ -47,6 +56,7 @@ const IMMUTABLE_TRIGGER_NAMES = [
   'privacy_eligibility_evidence_immutable',
   'privacy_legal_basis_assignments_immutable',
   'privacy_legal_holds_immutable',
+  'privacy_notice_acknowledgements_immutable',
   'privacy_notice_provisions_immutable',
   'privacy_notice_versions_immutable',
   'privacy_owner_contributions_immutable',
@@ -65,6 +75,7 @@ const IMMUTABLE_TABLES = [
   'applicability_decisions',
   'applicability_policies',
   'consent_decisions',
+  'consent_scope_bindings',
   'disposition_decisions',
   'dsr_deadlines',
   'dsr_delivery_evidence',
@@ -75,6 +86,7 @@ const IMMUTABLE_TABLES = [
   'eligibility_evidence',
   'legal_basis_assignments',
   'legal_holds',
+  'notice_acknowledgements',
   'notice_provisions',
   'notice_versions',
   'owner_contributions',
@@ -107,7 +119,7 @@ it('owns the complete Privacy persistence inventory in one schema', () => {
   );
 
   expect(PRIVACY_SCHEMA_NAME).toBe('privacy');
-  expect(PRIVACY_TABLE_INVENTORY).toHaveLength(36);
+  expect(PRIVACY_TABLE_INVENTORY).toHaveLength(38);
   expect(qualifiedNames).toEqual(PRIVACY_TABLE_INVENTORY.map((name) => `privacy.${name}`));
 });
 
@@ -305,6 +317,12 @@ it('preserves only meaningful owner-local foreign keys', () => {
       name: 'privacy_activity_lifecycle_activity_fk',
     },
     {
+      columns: ['tenant_id', 'legal_entity_id', 'privacy_subject_id'],
+      foreignColumns: ['tenant_id', 'legal_entity_id', 'privacy_subject_id'],
+      foreignTable: 'privacy_subjects',
+      name: 'privacy_consent_scope_bindings_subject_fk',
+    },
+    {
       columns: ['tenant_id', 'legal_entity_id', 'rule_ref', 'rule_version'],
       foreignColumns: ['tenant_id', 'legal_entity_id', 'rule_ref', 'rule_version'],
       foreignTable: 'retention_rules',
@@ -357,6 +375,18 @@ it('preserves only meaningful owner-local foreign keys', () => {
       foreignColumns: ['tenant_id', 'legal_entity_id', 'measure_id'],
       foreignTable: 'privacy_measure_dispatches',
       name: 'privacy_external_obligations_measure_fk',
+    },
+    {
+      columns: ['tenant_id', 'legal_entity_id', 'notice_version_id'],
+      foreignColumns: ['tenant_id', 'legal_entity_id', 'notice_version_id'],
+      foreignTable: 'notice_versions',
+      name: 'privacy_notice_ack_notice_fk',
+    },
+    {
+      columns: ['tenant_id', 'legal_entity_id', 'privacy_subject_id'],
+      foreignColumns: ['tenant_id', 'legal_entity_id', 'privacy_subject_id'],
+      foreignTable: 'privacy_subjects',
+      name: 'privacy_notice_ack_subject_fk',
     },
     {
       columns: ['tenant_id', 'legal_entity_id', 'measure_id'],
@@ -462,16 +492,55 @@ it('checks in non-destructive generated migrations with forced RLS and exact imm
   expect(sql).toContain('ALTER COLUMN "processing_activity_id" SET DATA TYPE text');
 });
 
-it('owns global replay evidence with an atomic identity and no business RLS', () => {
+it('keeps pre-authentication assertion replay identities global and separate from business RLS', () => {
   const config = getTableConfig(gatewayAssertionRedemptions);
-  expect(config.schema).toBe('privacy');
+  expect(config.schema).toBe(PRIVACY_SCHEMA_NAME);
+  expect(config.name).toBe('gateway_assertion_redemptions');
   expect(config.enableRLS).toBe(false);
   expect(config.policies).toEqual([]);
-  expect(config.primaryKeys.map((key) => key.columns.map(({ name }) => name))).toEqual([['issuer', 'audience', 'jti']]);
-  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['privacy_redemption_expiry']);
+  expect(config.primaryKeys).toEqual([]);
+  expect(config.columns.map(({ name, notNull }) => ({ name, notNull }))).toEqual([
+    { name: 'audience', notNull: true },
+    { name: 'expires_at', notNull: true },
+    { name: 'issuer', notNull: true },
+    { name: 'jti', notNull: true },
+    { name: 'redeemed_at', notNull: true },
+  ]);
+  expect(config.columns.find(({ name }) => name === 'jti')?.getSQLType()).toBe('uuid');
+  expect(
+    config.uniqueConstraints.map(({ columns, name }) => ({ columns: columns.map((column) => column.name), name })),
+  ).toEqual([{ columns: ['issuer', 'audience', 'jti'], name: 'privacy_gateway_redemptions_identity_uk' }]);
+  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['privacy_gateway_redemptions_expiry_idx']);
   const sql = migrationSql();
-  expect(sql).toContain('CREATE TABLE "privacy"."gateway_assertion_redemptions"');
-  expect(sql).toContain(
-    'GRANT SELECT, INSERT, DELETE ON TABLE "privacy"."gateway_assertion_redemptions" TO ontos_runtime',
+  expect(sql).toContain('privacy_gateway_redemptions_identity_uk');
+  expect(sql).toContain('privacy_gateway_redemptions_expiry_idx');
+  // The owner migration's final word on the replay ledger: no PUBLIC access, runtime select/insert/delete only.
+  expect(sql).toMatch(
+    /REVOKE ALL ON TABLE "privacy"\."gateway_assertion_redemptions" FROM PUBLIC, ontos_runtime;[\s\S]*GRANT SELECT, INSERT, DELETE ON TABLE "privacy"\."gateway_assertion_redemptions" TO ontos_runtime/u,
   );
+});
+
+it('retains one immutable acknowledgement per scoped presentation and invocation with opaque owner profile IDs', () => {
+  const config = getTableConfig(noticeAcknowledgements);
+  expect(
+    EffectArray.sort(
+      config.uniqueConstraints.map(({ name }) => name ?? ''),
+      Order.String,
+    ),
+  ).toEqual([
+    'privacy_notice_ack_invocation_uk',
+    'privacy_notice_ack_presentation_uk',
+    'privacy_notice_ack_scope_id_uk',
+  ]);
+  expect(config.columns.find(({ name }) => name === 'retail_profile_id')?.getSQLType()).toBe('text');
+  expect(
+    EffectArray.sort(
+      config.checks.map(({ name }) => name),
+      Order.String,
+    ),
+  ).toEqual([
+    'privacy_notice_ack_period_ck',
+    'privacy_notice_ack_record_binding_ck',
+    'privacy_notice_ack_session_digest_ck',
+  ]);
 });

@@ -1,5 +1,8 @@
 import { PricingInstantSchema } from '@app/pricing-contracts/domain/currency-support';
-import { PricingMaterialEvidenceUnverifiableFailure } from '@app/pricing-contracts/domain/material-evidence';
+import {
+  PricingOwnerMaterialEvidenceFenceGatewayRequestSchema,
+  PricingMaterialEvidenceUnverifiableFailure,
+} from '@app/pricing-contracts/domain/material-evidence';
 import type {
   PricingMaterialEvidenceFenceSource,
   PricingOwnerMaterialEvidenceFenceGatewayRequest as PricingTypedOwnerFenceRequest,
@@ -21,6 +24,7 @@ import {
 } from '../services/material-evidence-final-validation.service.ts';
 
 const boundedReason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
+const CATALOG_OWNER_MODULE_ID = 'commerce.catalog';
 const CUSTOMER_CONTEXT_OWNER_MODULE_ID = 'commerce.customer-context';
 const PROMOTION_OWNER_MODULE_ID = 'commerce.promotion';
 
@@ -242,6 +246,7 @@ const validateOwnerResult = (
   candidateRef: string,
   expectations: readonly PricingMaterialEvidenceFenceExpectation[],
   result: PricingOwnerMaterialEvidenceFenceGatewayResult,
+  orderedCatalog = false,
 ): Effect.Effect<PricingOwnerMaterialEvidenceFenceGatewayResult, PricingMaterialEvidenceUnverifiableFailure> => {
   const [first] = expectations;
   if (!Schema.is(PricingInstantSchema)(result.completedAt)) {
@@ -276,11 +281,28 @@ const validateOwnerResult = (
   }
   const expectedRefs = new Set(expectations.map(({ evidenceVerificationRef }) => evidenceVerificationRef));
   const observedRefs = new Set(result.observations.map(({ evidenceVerificationRef }) => evidenceVerificationRef));
+  const exactCatalogOrder =
+    orderedCatalog &&
+    result.observations.length === expectations.length &&
+    result.observations.every((observation, index) => {
+      const expected = expectations[index];
+      return (
+        expected !== undefined &&
+        observation.ownerModuleId === expected.ownerModuleId &&
+        observation.tenantId === expected.tenantId &&
+        observation.family === expected.family &&
+        observation.ownerRootRef === expected.ownerRootRef &&
+        observation.predicateRef === expected.predicateRef &&
+        observation.evidenceVerificationRef === expected.evidenceVerificationRef
+      );
+    });
   if (
-    result.observations.length !== expectations.length ||
-    observedRefs.size !== result.observations.length ||
-    expectedRefs.size !== observedRefs.size ||
-    [...expectedRefs].some((reference) => !observedRefs.has(reference))
+    orderedCatalog
+      ? !exactCatalogOrder
+      : result.observations.length !== expectations.length ||
+        observedRefs.size !== result.observations.length ||
+        expectedRefs.size !== observedRefs.size ||
+        [...expectedRefs].some((reference) => !observedRefs.has(reference))
   ) {
     return Effect.fail(
       first === undefined
@@ -304,6 +326,7 @@ const validateGenerationConfirmation = (
   through: typeof PricingInstantSchema.Type,
   observations: readonly PricingMaterialEvidenceFenceSourceObservation[],
   result: PricingOwnerMaterialEvidenceGenerationFenceResult,
+  orderedCatalog = false,
 ): Effect.Effect<void, PricingMaterialEvidenceOwnerFenceFailure> => {
   const [first] = observations;
   const confirmations = new Map(
@@ -313,7 +336,7 @@ const validateGenerationConfirmation = (
     !Schema.is(PricingInstantSchema)(result.verifiedThrough) ||
     result.verifiedThrough < through ||
     result.confirmations.length !== observations.length ||
-    confirmations.size !== result.confirmations.length
+    (!orderedCatalog && confirmations.size !== result.confirmations.length)
   ) {
     return Effect.fail(
       first === undefined
@@ -329,10 +352,13 @@ const validateGenerationConfirmation = (
           ),
     );
   }
-  for (const observation of observations) {
-    const confirmation = confirmations.get(observation.evidenceVerificationRef);
+  for (const [index, observation] of observations.entries()) {
+    const confirmation = orderedCatalog
+      ? result.confirmations[index]
+      : confirmations.get(observation.evidenceVerificationRef);
     if (
       confirmation === undefined ||
+      confirmation.evidenceVerificationRef !== observation.evidenceVerificationRef ||
       confirmation.evidenceInvalidationGenerationRef !== observation.evidenceInvalidationGenerationRef ||
       confirmation.currentInvalidationGenerationRef !== observation.currentInvalidationGenerationRef ||
       confirmation.currentOwnerSetRevisionRef !== observation.currentOwnerSetRevisionRef ||
@@ -365,6 +391,10 @@ export const makePricingMaterialEvidenceOwnerFinalFenceFromGateways = (
       PricingMaterialEvidenceOwnerFenceFailure
     > {
       const groups = yield* groupByOwner(candidateRef, sources);
+      const validatedCatalogMaterial =
+        verificationRequest !== undefined &&
+        verificationRequest.candidateRef === candidateRef &&
+        Schema.is(PricingOwnerMaterialEvidenceFenceGatewayRequestSchema)(verificationRequest);
       const purchaseAuthority = verificationRequest?.sources.find(
         ({ verificationMaterial }) => verificationMaterial.kind === 'CUSTOMER_CONTEXT_PURCHASE_AUTHORITY',
       );
@@ -388,10 +418,17 @@ export const makePricingMaterialEvidenceOwnerFinalFenceFromGateways = (
         > => {
           const gateway = gateways[ownerModuleId];
           const [first] = ownerSources;
-          const setBackedTypedSources = ownerSources.flatMap(({ evidenceVerificationRef }) => {
-            const typed = typedByProof.get(evidenceVerificationRef);
-            return typed === undefined ? [] : [typed];
-          });
+          const orderedCatalog = validatedCatalogMaterial && ownerModuleId === CATALOG_OWNER_MODULE_ID;
+          const setBackedTypedSources = orderedCatalog
+            ? (verificationRequest?.sources.filter(
+                (source) =>
+                  'sourceEvidence' in source &&
+                  source.sourceEvidence.request.ownerScope.ownerModuleId === CATALOG_OWNER_MODULE_ID,
+              ) ?? [])
+            : ownerSources.flatMap(({ evidenceVerificationRef }) => {
+                const typed = typedByProof.get(evidenceVerificationRef);
+                return typed === undefined ? [] : [typed];
+              });
           const typedSources =
             ownerModuleId === CUSTOMER_CONTEXT_OWNER_MODULE_ID && purchaseAuthority !== undefined
               ? [...setBackedTypedSources, purchaseAuthority]
@@ -443,7 +480,7 @@ export const makePricingMaterialEvidenceOwnerFinalFenceFromGateways = (
                     cause,
                   ),
             ),
-            Effect.flatMap((result) => validateOwnerResult(candidateRef, ownerSources, result)),
+            Effect.flatMap((result) => validateOwnerResult(candidateRef, ownerSources, result, orderedCatalog)),
             Effect.map((result) => ({ ownerModuleId, ownerSources, result, typedSources })),
           );
         },
@@ -499,20 +536,38 @@ export const makePricingMaterialEvidenceOwnerFinalFenceFromGateways = (
                   ),
             ),
             Effect.flatMap((confirmation) =>
-              validateGenerationConfirmation(candidateRef, completedAt, result.observations, confirmation),
+              validateGenerationConfirmation(
+                candidateRef,
+                completedAt,
+                result.observations,
+                confirmation,
+                validatedCatalogMaterial && ownerModuleId === CATALOG_OWNER_MODULE_ID,
+              ),
             ),
           );
         },
         { concurrency: 5, discard: true },
       );
       const byVerificationRef = new Map<string, PricingMaterialEvidenceFenceSourceObservation>();
+      const catalogObservations: PricingMaterialEvidenceFenceSourceObservation[] = [];
       for (const ownerResult of ownerResults) {
         for (const observation of ownerResult.result.observations) {
-          byVerificationRef.set(observation.evidenceVerificationRef, observation);
+          if (validatedCatalogMaterial && observation.ownerModuleId === CATALOG_OWNER_MODULE_ID) {
+            catalogObservations.push(observation);
+          } else {
+            byVerificationRef.set(observation.evidenceVerificationRef, observation);
+          }
         }
       }
-      const observations = sources.flatMap(({ evidenceVerificationRef }) => {
-        const observation = byVerificationRef.get(evidenceVerificationRef);
+      let catalogIndex = 0;
+      const observations = sources.flatMap(({ evidenceVerificationRef, ownerModuleId }) => {
+        const observation =
+          validatedCatalogMaterial && ownerModuleId === CATALOG_OWNER_MODULE_ID
+            ? catalogObservations[catalogIndex]
+            : byVerificationRef.get(evidenceVerificationRef);
+        if (validatedCatalogMaterial && ownerModuleId === CATALOG_OWNER_MODULE_ID) {
+          catalogIndex += 1;
+        }
         return observation === undefined ? [] : [observation];
       });
       return {

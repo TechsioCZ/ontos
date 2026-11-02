@@ -65,15 +65,25 @@ Party Registry owns Contacts, counterparties, and engagement profiles in one Mic
 
 ### Fail-closed Action authorization checkpoint
 
-Sandbox preparation creates the fixed development context and Tenant membership but does not provision Action executor relationships. For authorization changes, keep one sandbox unchanged and verify this order:
+Sandbox preparation creates the fixed development context and Tenant membership, but does not provision Action executor relationships. Check the current owner descriptor before choosing a sample: `tenant_membership_default` and `explicit` have different provisioning requirements. Neither classification grants execution by itself.
 
-1. invoke a representative Party Registry engagement mutation as `demo@test.com`;
-2. confirm a localized error Toast and `403`, one rejected invocation/audit record, and no business write or handler effect;
-3. run `mise exec -- pnpm authorization:provision-current-actions` twice to prove idempotence;
-4. retry the mutation and confirm normal success without a denial Toast;
-5. confirm a Principal outside the fixed development Tenant remains denied.
+**A. Default membership Action.** In a fresh, unchanged isolated sandbox, use the Party Registry person-engagement flow (`party.registry.attach-person-engagement`, declared `tenant_membership_default`) as `demo@test.com`, with the fixed local Tenant and Legal Entity and valid owner input:
 
-The provisioning command discovers current Actions and grants executor relations only to the fixed development Tenant membership set. It accepts no caller-supplied scope and never writes stage from a development sandbox.
+1. Submit the engagement mutation and confirm the localized denial Toast and `403`, one rejected invocation/audit record, and no business write or handler effect. This tests missing executor denial; unavailable configuration or an indeterminate permission check is a different result.
+2. Keep the missing-rule case as the negative control. A positive retry requires a successfully verified, authorized provisioning input for that environment and catalog; it must also satisfy the Action's owner/resource and lifecycle rules. Tenant membership alone is insufficient.
+3. When that prerequisite is available, verify the fixed member's permission separately, retry the valid mutation with a fresh request identity after the terminal rejection, confirm success without a denial Toast, and verify a Principal outside the fixed development Tenant remains denied. Verify idempotent provisioning by repeating the same **valid authorized input**, not by repeating a refused call.
+
+**B. Explicit Actions and the current CLI refusal.** Inspect the current Core catalog and owner descriptors; for example, `core.identity.reserve-principal-binding` is `explicit`. Every explicit Action needs its recorded allowed and denied verification assertions; any direct executor grants must name approved fixed Principals that those assertions allow. Do not substitute a default Tenant-membership grant.
+
+The parameterless operator command discovers the **complete** current Action catalog, including explicit Actions:
+
+```sh
+mise exec -- pnpm authorization:provision-current-actions
+```
+
+Development supplies no explicit policy input. With the current explicit-containing catalog and otherwise valid local configuration/discovery, this command deliberately returns `action_authorization_input_invalid` **before schema or grant writes**. It does not partially provision the default Actions. Existing stored grants do not supply the missing input assertions, and running it twice does not establish provisioning idempotence or make the subsequent mutation succeed. There is currently no development CLI flag/file input that supplies this missing policy; do not filter the catalog, relabel Actions, add manual blanket grants or borrow stage data to complete the tutorial.
+
+Stage uses its separately approved operator accounts file to derive fixed explicit grants and assertions; follow [Stage accounts bootstrap and provisioning](docs/architecture/DEPLOYMENT.md#stage-accounts-bootstrap). That authority does not extend to development or production. The command accepts no arbitrary Tenant, Principal or Action arguments, selects only the fixed development or stage target, and rejects production. Run it only as an authorized operator action, never during startup, migration, sandbox preparation or automatic deployment. See [Action authorization](docs/architecture/ACTIONS.md) and the [SpiceDB provisioning sequence](docs/architecture/DEPLOYMENT.md#spicedb) for the distinct provisioning, permission-verification and business-execution boundaries.
 
 When the feature sandbox is no longer needed, stop its running processes and remove it:
 

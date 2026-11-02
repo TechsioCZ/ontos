@@ -1,9 +1,30 @@
-import { DetailList, SectionCard, SidePanel, formatDate, formatMoney } from '@app/admin-ui';
+import {
+  AutosaveStatus,
+  DetailList,
+  SectionCard,
+  SidePanel,
+  formatDate,
+  formatMoney,
+  useAutosaveDraft,
+} from '@app/admin-ui';
+import type { RevisionedSaveResult } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { Effect, Option } from 'effect';
+import { useEffect, useRef } from 'react';
 
 import type { Contract } from '../../../../shared/apis/records.ts';
+import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import {
+  sameTermsDraft,
+  termsCommandOf,
+  termsDraftOf,
+  termsProblems,
+  termsUnchangedSince,
+} from './contract-terms-draft.ts';
+import type { ContractTermsCommand, TermsDraft } from './contract-terms-draft.ts';
+import { autosaveTerms } from './use-agreements-records.ts';
 import type { useRecordsPage } from './use-agreements-records.ts';
 
 type PageState = ReturnType<typeof useRecordsPage>;
@@ -140,31 +161,70 @@ export const ContractLinksCard = ({ state }: { readonly state: PageState }) => {
   );
 };
 
-export const ContractTermsForm = ({ state }: { readonly state: PageState }) => {
-  const { busy, feedback, saveTerms: handleSaveTerms, t, terms } = state;
-  if (!state.termsOpen) {
-    return null;
-  }
-  const change = (field: keyof typeof terms) => (value: string) =>
-    state.setTerms((current) => ({ ...current, [field]: value }));
+/**
+ * The terms of the selected contract. Changes save themselves (debounced, on blur and on Zavřít) against the revision
+ * the draft builds on; when someone else changed these terms, the panel offers the current version instead.
+ */
+const ContractTermsPanel = ({ contract, state }: { readonly contract: Contract; readonly state: PageState }) => {
+  const { t } = state;
+  const server = termsDraftOf(contract);
+  /** The version of the terms the draft builds on: what the panel opened with, last saved or reloaded. */
+  const base = useRef(server);
+  const rememberSaved = (value: TermsDraft, result: RevisionedSaveResult) => {
+    if (result !== 'conflict' && result !== 'failed') {
+      base.current = value;
+    }
+  };
+  const send = (value: TermsDraft, expectedRevision: number, command: ContractTermsCommand) =>
+    autosaveTerms(command, expectedRevision, termsUnchangedSince(contract.contractRef.resourceId, base.current)).pipe(
+      Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))),
+    );
+  const autosave = useAutosaveDraft<TermsDraft, never>({
+    equals: sameTermsDraft,
+    isValid: (value) => Option.isSome(termsCommandOf(contract.contractRef, value)),
+    revision: state.snapshot?.revision ?? 0,
+    runtime: browserRuntime,
+    save: (value, expectedRevision) =>
+      Option.match(termsCommandOf(contract.contractRef, value), {
+        onNone: () => Effect.succeed<RevisionedSaveResult>('failed'),
+        onSome: (command) => send(value, expectedRevision, command),
+      }),
+    server,
+  });
+  const settledOnServer = !autosave.pending && sameTermsDraft(autosave.draft, server);
+  useEffect(() => {
+    if (settledOnServer) {
+      base.current = server;
+    }
+  }, [base, server, settledOnServer]);
+  const { draft } = autosave;
+  const problems = termsProblems(draft);
+  const invalid = (problem: boolean) =>
+    problem ? { helpText: t(`${P}.terms.invalidAmount`), validateStatus: 'error' as const } : {};
+  const change = (field: keyof TermsDraft) => (value: string) =>
+    autosave.setDraft((current) => ({ ...current, [field]: value }));
+  const close = () => {
+    autosave.flush();
+    state.setTermsOpen(false);
+  };
+  const handleBlur = autosave.flush;
+  const handleRetry = autosave.retry;
+  const handleReloadLatest = autosave.reloadLatest;
   return (
     <SidePanel
       actions={
         <>
-          <Button disabled={busy} onClick={() => state.setTermsOpen(false)} theme="outlined" variant="secondary">
+          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <Button onClick={close} theme="outlined" variant="secondary">
             {t('legal-agreements.detail.close')}
-          </Button>
-          <Button disabled={busy} isLoading={feedback === 'saving'} onClick={handleSaveTerms} variant="primary">
-            {t(`${P}.terms.save`)}
           </Button>
         </>
       }
       closeLabel={t('legal-agreements.detail.close')}
-      closeOnInteractOutside={false}
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#contract-terms-subject')}
       onOpenChange={(open) => {
-        if (!open && !busy) {
-          state.setTermsOpen(false);
+        if (!open) {
+          close();
         }
       }}
       open
@@ -174,25 +234,27 @@ export const ContractTermsForm = ({ state }: { readonly state: PageState }) => {
     >
       <div className="legalagreements:space-y-4 legalagreements:py-2">
         <p className={mutedClass}>{t(`${P}.terms.formHint`)}</p>
-        {feedback === 'validation' && <output aria-live="polite">{t(`${P}.demo.feedback.validation`)}</output>}
         <FormInput
           id="contract-terms-subject"
           label={t(`${P}.terms.subject`)}
+          onBlur={handleBlur}
           onChange={(event) => change('subject')(event.target.value)}
-          value={terms.subject}
+          value={draft.subject}
         />
         <div className="legalagreements:grid legalagreements:gap-4 legalagreements:md:grid-cols-2">
           <FormInput
             id="contract-terms-owner"
             label={t(`${P}.terms.responsiblePerson`)}
+            onBlur={handleBlur}
             onChange={(event) => change('responsiblePerson')(event.target.value)}
-            value={terms.responsiblePerson}
+            value={draft.responsiblePerson}
           />
           <FormInput
             id="contract-terms-notice"
             label={t(`${P}.terms.noticePeriod`)}
+            onBlur={handleBlur}
             onChange={(event) => change('noticePeriod')(event.target.value)}
-            value={terms.noticePeriod}
+            value={draft.noticePeriod}
           />
         </div>
         <h3 className="legalagreements:text-sm legalagreements:font-semibold">{t(`${P}.terms.rentSection`)}</h3>
@@ -201,27 +263,40 @@ export const ContractTermsForm = ({ state }: { readonly state: PageState }) => {
             id="contract-terms-monthly"
             inputMode="decimal"
             label={t(`${P}.terms.monthlyRentInput`)}
+            onBlur={handleBlur}
             onChange={(event) => change('monthly')(event.target.value)}
-            value={terms.monthly}
+            value={draft.monthly}
+            {...invalid(problems.monthly)}
           />
           <FormInput
             id="contract-terms-service"
             inputMode="decimal"
             label={t(`${P}.terms.serviceChargesInput`)}
+            onBlur={handleBlur}
             onChange={(event) => change('service')(event.target.value)}
-            value={terms.service}
+            value={draft.service}
+            {...invalid(problems.service)}
           />
           <FormInput
             id="contract-terms-payment-day"
             label={t(`${P}.terms.paymentDayInput`)}
             max={31}
             min={1}
+            onBlur={handleBlur}
             onChange={(event) => change('paymentDay')(event.target.value)}
             type="number"
-            value={terms.paymentDay}
+            value={draft.paymentDay}
+            {...(problems.paymentDay
+              ? { helpText: t(`${P}.terms.invalidPaymentDay`), validateStatus: 'error' as const }
+              : {})}
           />
         </div>
       </div>
     </SidePanel>
   );
 };
+
+export const ContractTermsForm = ({ state }: { readonly state: PageState }) =>
+  state.termsOpen && state.selected !== undefined ? (
+    <ContractTermsPanel contract={state.selected} key={state.selected.contractRef.resourceId} state={state} />
+  ) : null;

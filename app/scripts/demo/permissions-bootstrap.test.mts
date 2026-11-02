@@ -35,18 +35,21 @@ import {
   commercePortalRelationships,
   companyPermissionRelationships,
   crmIntakeRelationships,
+  tenantAdministratorCrmRelationships,
   demoCompanyMemberships,
   demoHumanAccounts,
   demoPermissionRelationships,
   demoRoles,
   principalRelationships,
   privacyConsentAuthorityRelationships,
+  marketRetirementRelationships,
   rentalDemoRoles,
   rentalPermissionRelationships,
   scopedDemoActionRelationships,
   siamparkRentalPersonas,
 } from './permissions.mts';
 import type { DemoAction, DemoPermissionInstallation, DemoRelationship } from './permissions.mts';
+import { warmupAccounts } from './warmup-accounts.mts';
 
 const coreActions = coreActionCatalog.map((descriptor): DemoAction => {
   const { authorization } = descriptor.entrypoint;
@@ -84,6 +87,9 @@ const coreInstallation: DemoPermissionInstallation = {
 const existingRolePolicy = (actions: readonly DemoAction[]) =>
   companyMembershipAdmissionRelationships(
     [
+      ...warmupAccounts.flatMap(({ legalEntityId, principalId, role, roleKey }) =>
+        principalRelationships(principalId, role, [], legalEntityId, demoTenantId, roleKey),
+      ),
       ...demoHumanAccounts.flatMap((account) =>
         principalRelationships(account.principalId, demoRoles[account.role], actions),
       ),
@@ -92,7 +98,9 @@ const existingRolePolicy = (actions: readonly DemoAction[]) =>
       ...companyPermissionRelationships(actions),
       ...commercePortalRelationships(actions),
       ...privacyConsentAuthorityRelationships(actions),
+      ...marketRetirementRelationships(actions),
       ...crmIntakeRelationships(actions),
+      ...tenantAdministratorCrmRelationships(actions),
     ],
     demoCompanyMemberships.map(({ principalId }) => ({ principalId, tenantId: demoTenantId })),
   );

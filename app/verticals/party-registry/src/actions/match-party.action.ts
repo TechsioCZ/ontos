@@ -82,6 +82,9 @@ export const matchPartyAction = defineAction(
           candidate: payload.candidate,
           tenantId: scope.tenantId,
         };
+        if (scope.legalEntityId !== undefined) {
+          Object.assign(input, { legalEntityId: scope.legalEntityId });
+        }
         if (payload.priorCaseRef !== undefined) {
           return matchParty(transaction, {
             ...input,

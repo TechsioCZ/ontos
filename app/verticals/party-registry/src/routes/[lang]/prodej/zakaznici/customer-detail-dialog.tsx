@@ -155,7 +155,6 @@ const CustomerDetailView = ({
             {t(`${KEY}.cancel`)}
           </Button>
         }
-        closeOnInteractOutside={false}
         onOpenChange={requestClose}
         open
         resizeLabel={t('party-registry.sidePanel.resize')}
@@ -172,8 +171,6 @@ const CustomerDetailView = ({
           <DetailList
             items={[
               { label: t(`${KEY}.createdAt`), value: formatDate(customer.createdAt) },
-              { label: t(`${KEY}.partyId`), value: customer.partyId },
-              { label: t(`${KEY}.counterpartyId`), value: customer.counterpartyId },
               {
                 label: t(`${KEY}.status`),
                 value: t(`${STATUS_KEY}.${status}`),

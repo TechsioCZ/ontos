@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
 
 import type { AntiResurrectionEnforcementReceipt } from '../../shared/domain/anti-resurrection.ts';
 import type {
@@ -6,8 +6,11 @@ import type {
   OwnerExecutionOutcomeRequest,
   PrivacyMeasureHandoff,
 } from '../../shared/domain/privacy-measure-handoff.ts';
-import type { PrivacyActionRejected } from './privacy-action-rejected.ts';
+import { OwnerExecutionAuthorityResultSchema } from '../../shared/domain/privacy-measure-handoff.ts';
+import { PrivacyActionRejected } from './privacy-action-rejected.ts';
 import { PrivacyOperationPersistenceError } from '../persistence/privacy-operation-repository.ts';
+import type { PreparedOwnerExecution } from './privacy-owner-execution-authority.ts';
+import { preparedOwnerExecutionAuthority } from './privacy-owner-execution-authority.ts';
 
 interface AntiResurrectionEnforcementAuthorityContext {
   readonly actionInvocationId: string;
@@ -45,3 +48,20 @@ export const AntiResurrectionEnforcementAuthorityUnavailableLive = Layer.succeed
   AntiResurrectionEnforcementAuthority,
   antiResurrectionEnforcementAuthorityUnavailable,
 );
+
+/** Existing immutable enforcement evidence, not an external enforcement mutation. */
+export const preparedAntiResurrectionAuthority = (
+  prepared: PreparedOwnerExecution,
+  receipt: AntiResurrectionEnforcementReceipt,
+): AntiResurrectionEnforcementAuthorityService => ({
+  resolve: Effect.fn('AntiResurrectionEnforcementAuthority.resolvePrepared')(function* resolvePrepared(context) {
+    yield* preparedOwnerExecutionAuthority(prepared).resolve(context.request, context);
+    if (!Schema.toEquivalence(OwnerExecutionAuthorityResultSchema)(context.authority, prepared.authority)) {
+      return yield* new PrivacyActionRejected({
+        code: 'privacy_action_rejected',
+        reason: 'Prepared enforcement receipt belongs to another owner outcome',
+      });
+    }
+    return receipt;
+  }),
+});

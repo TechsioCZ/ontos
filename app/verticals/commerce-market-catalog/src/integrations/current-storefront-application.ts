@@ -11,6 +11,7 @@ import { Config, Effect, Schema } from 'effect';
 import { StorefrontApplicationEvidenceStale } from '../actions/storefront-application-evidence-stale.ts';
 import { StorefrontApplicationNotCurrent } from '../actions/storefront-application-not-current.ts';
 import { StorefrontApplicationValidationUnavailable } from '../actions/storefront-application-validation-unavailable.ts';
+import { ownerGatewayApiKey } from './owner-gateway-api-key.ts';
 
 export { StorefrontApplicationEvidenceStale } from '../actions/storefront-application-evidence-stale.ts';
 export { StorefrontApplicationNotCurrent } from '../actions/storefront-application-not-current.ts';
@@ -56,10 +57,11 @@ const httpUrl = Schema.URLFromString.check(
   ),
 );
 
-const configuration = Config.all({
-  apiKey: Config.Redacted('ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY'),
-  shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
-});
+const configuration = (legalEntityId: string | undefined) =>
+  Config.all({
+    apiKey: ownerGatewayApiKey(legalEntityId),
+    shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
+  });
 
 const unavailable = (reason: string, cause?: unknown): StorefrontApplicationValidationUnavailable => {
   const failure = new StorefrontApplicationValidationUnavailable({
@@ -158,7 +160,7 @@ export const makeServerCurrentStorefrontApplicationAuthority = ({
   makeCurrentStorefrontApplicationAuthority(
     Effect.fn('CurrentStorefrontApplicationAuthority.executeStorefrontOwnerRead')(
       function* executeStorefrontOwnerRead(payload: CurrentStorefrontApplicationRequest, requestCorrelation: string) {
-        const configured = yield* configuration;
+        const configured = yield* configuration(legalEntityId);
         const issued = yield* issueApiKeyGatewayContext(
           legalEntityId === undefined
             ? { audience: 'storefront-registry', compositionRevision }

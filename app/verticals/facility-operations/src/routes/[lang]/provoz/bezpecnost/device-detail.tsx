@@ -520,7 +520,6 @@ export const DeviceDetailPanel = ({
 
   return (
     <SidePanel
-      closeOnInteractOutside
       description={
         <span className="flex flex-wrap items-center gap-100">
           <Badge size="sm" variant="outline">

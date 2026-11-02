@@ -20,6 +20,7 @@ import {
 } from '../database/schema.ts';
 import { CatalogPersistenceUnavailable } from './errors.ts';
 import { resolveEffectiveRevision } from './package-persistence.ts';
+import { setCompositionPersistenceForScope } from './set-composition-persistence.ts';
 import { productConfigurationPersistenceForScope } from './product-configuration-persistence.ts';
 import { evaluateCurrentProductConfiguration } from './product-configuration-current-evaluator.ts';
 import type {
@@ -335,7 +336,7 @@ const readPackage = (
 
 const readSet = Effect.fn('CatalogSelectionPackageUnitBasis.readSet')(function* readSet(
   transaction: ScopedTransaction,
-  tenantId: string,
+  scope: OperationalScope,
   selected: CatalogSelection['setComposition'],
   productId: string,
   variantId: string,
@@ -344,6 +345,7 @@ const readSet = Effect.fn('CatalogSelectionPackageUnitBasis.readSet')(function* 
   if (selected === undefined) {
     return { status: 'NONE' as const };
   }
+  const { tenantId } = scope;
   const id = selected.resourceRef.resourceId;
   const [composition] = yield* transaction
     .select()
@@ -372,11 +374,17 @@ const readSet = Effect.fn('CatalogSelectionPackageUnitBasis.readSet')(function* 
     composition.variantId !== variantId ||
     revision.productId !== productId ||
     revision.variantId !== variantId ||
-    composition.currentRevision !== selected.revision ||
     revision.lifecycleState !== 'ACTIVE' ||
     !activeAt(revision.effectiveFrom, now) ||
     (revision.effectiveTo !== null && activeAt(revision.effectiveTo, now))
   ) {
+    return fail('INVALID', 'Set Composition is not Current for this Variant');
+  }
+  const current = yield* setCompositionPersistenceForScope(transaction, scope).readCurrent({
+    at: now,
+    compositionId: id,
+  });
+  if (Option.isNone(current) || current.value.revision.reference.revision !== selected.revision) {
     return fail('INVALID', 'Set Composition is not Current for this Variant');
   }
   return { revision: revision.revision, status: 'CURRENT' as const };
@@ -606,7 +614,6 @@ const assessSelectedConfiguration = Effect.fn('CatalogSelectionPackageUnitBasis.
       assessment.target.packageDefinitionId !== packageDefinitionId ||
       DateTime.toEpochMillis(DateTime.makeUnsafe(assessment.assessedAt)) !==
         DateTime.toEpochMillis(DateTime.makeUnsafe(now)) ||
-      assessment.choiceRevisions.length !== configuration.choices.length ||
       configuration.choices.some((choice) => {
         const proven = assessment.choiceRevisions.find((item) => item.choiceKey === choice.choiceKey);
         return (
@@ -732,7 +739,7 @@ export const catalogSelectionPackageUnitBasisForScope = (transaction: ScopedTran
     }
     const setBasis = yield* readSet(
       transaction,
-      tenantId,
+      scope,
       selection.setComposition,
       product.productId,
       variant.variantId,

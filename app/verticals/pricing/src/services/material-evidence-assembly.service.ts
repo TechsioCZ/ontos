@@ -1,5 +1,8 @@
+import { ExactPriceLookupRequestSchema } from '@app/pricing-contracts/domain/exact-price-lookup';
+import type { ExactPriceLookupFound, ExactPriceLookupAbsent } from '@app/pricing-contracts/domain/exact-price-lookup';
 import {
   PricingMaterialEvidenceAssemblyRequestSchema,
+  PricingExactPriceOwnerReadReceiptSchema,
   PricingMaterialEvidenceConflictFailure,
   PricingMaterialEvidenceMissingFailure,
   PricingMaterialEvidenceReadySchema,
@@ -21,6 +24,7 @@ import {
   PricingSourceEvidenceConflictSchema,
   PricingSourceEvidenceMissingSchema,
   PricingSourceEvidenceUnverifiableSchema,
+  PricingSourceEvidenceResultSchema,
   PricingSourceEvidenceVerifiedAbsentSchema,
   PricingSourceEvidenceVerifiedPresentSchema,
 } from '@app/pricing-contracts/domain/source-revision-evidence';
@@ -31,7 +35,7 @@ import {
 } from '@app/pricing-contracts/domain/discount-fee-allocation';
 import { PricingDecisionSchema } from '@app/pricing-contracts/pricing-decision';
 import { unitPriceGroupAbsencePredicateRef } from './unit-price-material-evidence.service.ts';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Schema } from 'effect';
 
 interface EvidenceContext {
   readonly candidateRef: string;
@@ -323,6 +327,64 @@ const validateCurrencySupport = (
   );
 };
 
+// Exact lookup digests and persistent candidate-set revisions are separate owner meanings.
+// A retained native receipt is the bridge; a fenced request must never fall back to a legacy digest.
+const exactPriceSourceExpectation = (
+  request: PricingMaterialEvidenceAssemblyRequest,
+  lookup: ExactPriceLookupFound | ExactPriceLookupAbsent,
+  source: PricingSourceEvidenceResult,
+) => {
+  if (request.ownerFenceRequest === undefined) {
+    return Option.some({
+      expectedObservedAt: lookup.evidence.observedAt,
+      expectedOwnerSetRevision: lookup.evidence.ownerRevision,
+      expectedPredicateRef: unitPriceGroupAbsencePredicateRef(lookup.request),
+    });
+  }
+  const matches = request.ownerFenceRequest.sources.flatMap((retained) => {
+    const material = retained.verificationMaterial;
+    return material.kind === 'PRICING_PRICE_AUTHORITY' &&
+      'sourceEvidence' in retained &&
+      Schema.toEquivalence(ExactPriceLookupRequestSchema)(material.lookupRequest, lookup.request) &&
+      Schema.toEquivalence(PricingSourceEvidenceResultSchema)(retained.sourceEvidence, source)
+      ? [material.ownerReadReceipt]
+      : [];
+  });
+  const [receipt] = matches;
+  if (
+    receipt === undefined ||
+    receipt.lookupEvidence === undefined ||
+    !matches.every((matching) => Schema.toEquivalence(PricingExactPriceOwnerReadReceiptSchema)(matching, receipt))
+  ) {
+    return Option.none();
+  }
+  const { authority, factProofs, lookupEvidence } = receipt;
+  const nativeBindingMatches =
+    lookupEvidence.effectiveAt === lookup.request.effectiveAt &&
+    lookupEvidence.ownerRevision === lookup.evidence.ownerRevision &&
+    lookupEvidence.nextApplicabilityBoundary === lookup.evidence.nextApplicabilityBoundary &&
+    lookup.evidence.observedAt <= lookupEvidence.observedAt &&
+    authority.observedAt === lookupEvidence.observedAt;
+  const factsMatch = Match.value(lookup).pipe(
+    Match.tag(
+      'FOUND',
+      (found) =>
+        factProofs.length === 1 &&
+        factProofs[0]?.factRef === found.priceRef.resourceId &&
+        factProofs[0].factRevisionRef === found.priceRevision.revisionId,
+    ),
+    Match.tag('ABSENT', () => factProofs.length === 0),
+    Match.exhaustive,
+  );
+  return nativeBindingMatches && factsMatch
+    ? Option.some({
+        expectedObservedAt: authority.observedAt,
+        expectedOwnerSetRevision: authority.ownerRevision,
+        expectedPredicateRef: authority.predicateRef,
+      })
+    : Option.none();
+};
+
 const validatePricePath = (
   request: PricingMaterialEvidenceAssemblyRequest,
   evidenceLine: PricingMaterialEvidenceAssemblyRequest['lines'][number],
@@ -339,14 +401,22 @@ const validatePricePath = (
       retryable: false,
     });
   }
+  const usedExpectation = exactPriceSourceExpectation(request, usedPrice, evidenceLine.pricePath.usedPrice);
+  if (Option.isNone(usedExpectation)) {
+    return new PricingMaterialEvidenceUnverifiableFailure({
+      candidateRef: request.commercialTotal.candidateRef,
+      family: 'PRICE',
+      occurrenceId: evidenceLine.occurrenceId,
+      reason: 'Used Price lacks its exact retained native candidate-set binding',
+      retryable: false,
+    });
+  }
   const usedPriceFailure = validateSource(
     evidenceLine.pricePath.usedPrice,
     {
       candidateRef: request.commercialTotal.candidateRef,
       expectedFactRefs: [usedPrice.priceRef.resourceId],
-      expectedObservedAt: usedPrice.evidence.observedAt,
-      expectedOwnerSetRevision: usedPrice.evidence.ownerRevision,
-      expectedPredicateRef: unitPriceGroupAbsencePredicateRef(usedPrice.request),
+      ...usedExpectation.value,
       expectedRevisionRefs: [usedPrice.priceRevision.revisionId],
       family: 'PRICE',
       kind: 'PRESENT',
@@ -375,13 +445,25 @@ const validatePricePath = (
       reason: 'Assigned Group fallback requires exact Group Price absence proof',
     });
   }
+  const absenceExpectation = exactPriceSourceExpectation(
+    request,
+    path.groupAbsence,
+    evidenceLine.pricePath.assignedGroupAbsence,
+  );
+  if (Option.isNone(absenceExpectation)) {
+    return new PricingMaterialEvidenceUnverifiableFailure({
+      candidateRef: request.commercialTotal.candidateRef,
+      family: 'PRICE',
+      occurrenceId: evidenceLine.occurrenceId,
+      reason: 'Assigned-group absence lacks its exact retained native candidate-set binding',
+      retryable: false,
+    });
+  }
   return validateSource(
     evidenceLine.pricePath.assignedGroupAbsence,
     {
       candidateRef: request.commercialTotal.candidateRef,
-      expectedObservedAt: path.groupAbsence.evidence.observedAt,
-      expectedOwnerSetRevision: path.groupAbsence.evidence.ownerRevision,
-      expectedPredicateRef: unitPriceGroupAbsencePredicateRef(path.groupAbsence.request),
+      ...absenceExpectation.value,
       family: 'PRICE',
       kind: 'ABSENT',
       occurrenceId: evidenceLine.occurrenceId,

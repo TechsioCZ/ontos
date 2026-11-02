@@ -2,7 +2,10 @@ import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { InventorySourceAssertionSchema } from '../../shared/domain/inventory-source-assertion.ts';
+import {
+  InventorySourceAssertionSchema,
+  InventorySourceAssertionUnavailable,
+} from '../../shared/domain/inventory-source-assertion.ts';
 import {
   inventorySourceAssertionCoverage,
   inventorySourceAssertionCoverageCompletenessContract,
@@ -150,16 +153,22 @@ describe('Inventory Source Assertion persistence', () => {
     });
   });
 
-  it.effect('appends the exact assertion and its coverage without mutating prior history', () =>
+  it.effect('appends exact immutable evidence and keeps opaque SQL failures unavailable', () =>
     Effect.gen(function* appendAssertion() {
       const insertedTables: (typeof inventorySourceAssertions | typeof inventorySourceAssertionCoverage)[] = [];
+      let opaqueFailure: Error | null = null;
       const transaction = {
         insert: (table: typeof inventorySourceAssertions | typeof inventorySourceAssertionCoverage) => {
           insertedTables.push(table);
           return {
             values: () =>
               table === inventorySourceAssertions
-                ? { returning: () => Effect.succeed([{ assertionJson: assertion }]) }
+                ? {
+                    returning: () =>
+                      opaqueFailure === null
+                        ? Effect.succeed([{ assertionJson: assertion }])
+                        : Effect.fail(opaqueFailure),
+                  }
                 : Effect.succeed([]),
           };
         },
@@ -171,6 +180,9 @@ describe('Inventory Source Assertion persistence', () => {
 
       expect(stored).toEqual(assertion);
       expect(insertedTables).toEqual([inventorySourceAssertions, inventorySourceAssertionCoverage]);
+      opaqueFailure = new Error('SQLSTATE 23505 without trusted driver metadata');
+      const unavailable = yield* persistence.append(assertion).pipe(Effect.flip);
+      expect(Schema.is(InventorySourceAssertionUnavailable)(unavailable)).toBe(true);
     }),
   );
 

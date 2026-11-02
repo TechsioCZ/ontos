@@ -3,6 +3,7 @@ import type { Schema } from 'effect';
 
 import { oauthPageSecurityHeaders, serveRootMetadataAlias, serveRootRoute, viaModule } from './root-routes.ts';
 import type { MiddlewareContext } from './root-routes.ts';
+import { guardCredentialSubmission } from './credential-submission.ts';
 
 import { SHELL_HTTP_BUDGET, shellBff, shellServerRuntime } from '../src/runtime/shell-server-runtime.ts';
 
@@ -37,6 +38,24 @@ const rootRoute = serveRootRoute(
 
 export default {
   middlewares: [
+    {
+      handler: Fn.flow(
+        (context: MiddlewareContext, next: () => Promise<void>) =>
+          (shellServerRuntime.runPromise<
+            Response | undefined,
+            Effect.Error<ReturnType<typeof guardCredentialSubmission>>
+          >).bind(
+            shellServerRuntime,
+            guardCredentialSubmission(context, Effect.promise(next).pipe(Effect.timeout(SHELL_HTTP_BUDGET))).pipe(
+              Effect.map(Option.getOrUndefined),
+            ),
+            { signal: context.req.raw?.signal },
+          ),
+        Fn.apply({}),
+      ),
+      name: 'ontos-credential-submission',
+      order: 'pre',
+    },
     {
       handler: Fn.flow(
         (context: MiddlewareContext, next: () => Promise<void>) =>

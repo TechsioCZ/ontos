@@ -3,6 +3,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { EmptyState, SectionCard, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
+import { DateTime } from 'effect';
 import { Component, useState } from 'react';
 import type { ReactElement } from 'react';
 
@@ -11,11 +12,29 @@ import type { SalesReport } from '../../../../../shared/domain/reports.ts';
 
 import { useFormatDecimalMoney, totalIn } from './report-format.ts';
 
-const shortMonths = ['led', 'úno', 'bře', 'dub', 'kvě', 'čvn', 'čvc', 'srp', 'zář', 'říj', 'lis', 'pro'];
-const shortMonth = (key: string) => `${shortMonths[Number(key.slice(5, 7)) - 1] ?? key.slice(5, 7)} ${key.slice(2, 4)}`;
+const k = 'crm.reports.chart';
 
-class ChartBoundary extends Component<{ readonly children: ReactElement }, { readonly failed: boolean }> {
-  constructor(props: { readonly children: ReactElement }) {
+const monthFormats = (locale: string) => ({
+  long: new Intl.DateTimeFormat(locale, { month: 'long', timeZone: 'UTC', year: 'numeric' }),
+  short: new Intl.DateTimeFormat(locale, { month: 'short', timeZone: 'UTC' }),
+});
+const csMonthFormats = monthFormats('cs-CZ');
+const enMonthFormats = monthFormats('en-GB');
+const monthFormatsFor = (language: string) => (language === 'en' ? enMonthFormats : csMonthFormats);
+const monthEpochMillis = (month: string) => DateTime.toEpochMillis(DateTime.makeUnsafe(`${month}-01T00:00:00Z`));
+/** Axis tick: "dub 26" / "Apr 26". */
+const shortMonth = (key: string, language: string) =>
+  `${monthFormatsFor(language).short.format(monthEpochMillis(key))} ${key.slice(2, 4)}`;
+/** Tooltip title, descriptions and table rows: "duben 2026" / "April 2026". */
+const longMonth = (key: string, language: string) => monthFormatsFor(language).long.format(monthEpochMillis(key));
+
+interface ChartBoundaryProps {
+  readonly children: ReactElement;
+  readonly fallback: string;
+}
+
+class ChartBoundary extends Component<ChartBoundaryProps, { readonly failed: boolean }> {
+  constructor(props: ChartBoundaryProps) {
     super(props);
     this.state = { failed: false };
   }
@@ -23,16 +42,12 @@ class ChartBoundary extends Component<{ readonly children: ReactElement }, { rea
     return { failed: true };
   }
   override render() {
-    return this.state.failed ? (
-      <p className="text-fg-secondary text-sm">Graf se nepodařilo vykreslit; čísla najdete v datové tabulce níže.</p>
-    ) : (
-      this.props.children
-    );
+    return this.state.failed ? <p className="text-fg-secondary text-sm">{this.props.fallback}</p> : this.props.children;
   }
 }
 
 export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const formatDecimalMoney = useFormatDecimalMoney();
   const [chosenCurrency, setChosenCurrency] = useState<string | undefined>();
   const currency =
@@ -40,10 +55,7 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
   if (report.count === 0) {
     return (
       <SectionCard title={t('crm.ciWorkflow.monthlyTrend')}>
-        <EmptyState
-          description="Pro zvolené filtry neexistuje žádná započtená objednávka."
-          title={t('crm.ciWorkflow.noData')}
-        />
+        <EmptyState description={t(`${k}.emptyDescription`)} title={t('crm.ciWorkflow.noData')} />
       </SectionCard>
     );
   }
@@ -64,7 +76,11 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
     const key = `${row.month}|${statusKey(row)}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  const countData = report.byMonth.map((month) => ({ count: month.count, month: shortMonth(month.key) }));
+  const titleByTick = new Map(
+    report.byMonth.map((month) => [shortMonth(month.key, language), longMonth(month.key, language)] as const),
+  );
+  const monthTitle = (tick: string | number | Date) => titleByTick.get(String(tick)) ?? String(tick);
+  const countData = report.byMonth.map((month) => ({ count: month.count, month: shortMonth(month.key, language) }));
   const valueData =
     currency === undefined
       ? []
@@ -73,25 +89,30 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
           // A month with orders but no supplied amount in this currency is missing data, not a zero value.
           return total === undefined && month.count > 0
             ? []
-            : [{ month: shortMonth(month.key), value: Number(total?.amount ?? '0') }];
+            : [{ month: shortMonth(month.key, language), value: Number(total?.amount ?? '0') }];
         });
-  const firstMonth = report.byMonth[0]?.label ?? '';
-  const lastMonth = report.byMonth.at(-1)?.label ?? '';
+  const firstKey = report.byMonth[0]?.key;
+  const lastKey = report.byMonth.at(-1)?.key;
+  const from = firstKey === undefined ? '' : longMonth(firstKey, language);
+  const to = lastKey === undefined ? '' : longMonth(lastKey, language);
+  const fallback = t(`${k}.boundaryFailed`);
   return (
     <section aria-label={t('crm.ciWorkflow.orderChartData')} className="flex min-w-0 flex-col gap-150">
       <div className="grid min-w-0 grid-cols-1 gap-250 xl:grid-cols-2">
         <SectionCard title={t('crm.ciWorkflow.monthlyOrderCounts')}>
-          <p className="text-fg-secondary text-sm">
-            Spárované objednávky bez duplicit. Podrobné rozdělení podle stavů je v datové tabulce a souhrnu.
-          </p>
-          <ChartBoundary>
+          <p className="text-fg-secondary text-sm">{t(`${k}.countsNote`)}</p>
+          <ChartBoundary fallback={fallback}>
             <Chart
-              ariaDescription={`Počet objednávek od ${firstMonth} do ${lastMonth}. Přesná čísla včetně stavů jsou v datové tabulce pod grafy.`}
-              ariaLabel="Počet objednávek po měsících"
+              ariaDescription={t(`${k}.countsDescription`, { from, to })}
+              ariaLabel={t(`${k}.countsAria`)}
               data={countData}
+              formatCategory={monthTitle}
+              formatTooltipValue={formatNumber}
               formatValue={(value) => (Number.isInteger(value) ? formatNumber(value) : '')}
               height={260}
+              locale={language}
               type="bar"
+              valueLabel={t(`${k}.orderCount`)}
               x="month"
               y="count"
             />
@@ -119,27 +140,24 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
               </fieldset>
             ) : undefined
           }
-          title={currency === undefined ? 'Hodnota objednávek' : `Hodnota objednávek v ${currency}`}
+          title={currency === undefined ? t(`${k}.valueTitle`) : t(`${k}.valueTitleIn`, { currency })}
         >
           {currency === undefined ? (
-            <EmptyState
-              description="Zdroj u započtených objednávek neposkytl částku a měnu."
-              title={t('crm.ciWorkflow.noData')}
-            />
+            <EmptyState description={t(`${k}.noAmount`)} title={t('crm.ciWorkflow.noData')} />
           ) : (
             <>
-              <p className="text-fg-secondary text-sm">
-                Součet importovaných částek jen v {currency}; ostatní měny se nikdy nepřičítají. Nejde o tržbu. Měsíce
-                bez poskytnuté částky v této měně se nevykreslují.
-              </p>
-              <ChartBoundary>
+              <p className="text-fg-secondary text-sm">{t(`${k}.valueNote`, { currency })}</p>
+              <ChartBoundary fallback={fallback}>
                 <Chart
-                  ariaDescription={`Hodnota objednávek v ${currency} od ${firstMonth} do ${lastMonth}. Přesné částky jsou v datové tabulce pod grafy.`}
-                  ariaLabel={`Hodnota objednávek v ${currency} po měsících`}
+                  ariaDescription={t(`${k}.valueDescription`, { currency, from, to })}
+                  ariaLabel={t(`${k}.valueAria`, { currency })}
                   data={valueData}
+                  formatCategory={monthTitle}
                   formatValue={(value) => formatDecimalMoney(String(value), currency)}
                   height={260}
+                  locale={language}
                   type="bar"
+                  valueLabel={t(`${k}.valueTitle`)}
                   x="month"
                   y="value"
                 />
@@ -149,19 +167,17 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
         </SectionCard>
       </div>
       <details className={`${surfaceTileClassName} p-200`}>
-        <summary className="cursor-pointer font-medium text-sm">
-          Zobrazit datovou tabulku grafů (měsíce, stavy, měny)
-        </summary>
+        <summary className="cursor-pointer font-medium text-sm">{t(`${k}.tableToggle`)}</summary>
         <div className="overflow-x-auto pt-150">
           <table className="w-full border-collapse text-sm">
-            <caption className="sr-only">Přesná měsíční data obou grafů a stavy objednávek</caption>
+            <caption className="sr-only">{t(`${k}.tableCaption`)}</caption>
             <thead>
               <tr className="border-border-primary border-b text-left">
                 <th className="py-100 pr-200" scope="col">
-                  Měsíc
+                  {t(`${k}.month`)}
                 </th>
                 <th className="py-100 pr-200" scope="col">
-                  Objednávky
+                  {t(`${k}.orders`)}
                 </th>
                 {meanings.map((meaning) => (
                   <th className="py-100 pr-200" key={meaning.key} scope="col">
@@ -170,7 +186,7 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
                 ))}
                 {report.currencies.map((entry) => (
                   <th className="py-100 pr-200" key={entry} scope="col">
-                    Hodnota {entry}
+                    {t(`${k}.valueIn`, { currency: entry })}
                   </th>
                 ))}
               </tr>
@@ -179,7 +195,7 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
               {report.byMonth.map((month) => (
                 <tr className="border-border-primary border-b" key={month.key}>
                   <th className="py-100 pr-200 text-left font-normal" scope="row">
-                    {month.label}
+                    {longMonth(month.key, language)}
                   </th>
                   <td className="py-100 pr-200 tabular-nums">{formatNumber(month.count)}</td>
                   {meanings.map((meaning) => (

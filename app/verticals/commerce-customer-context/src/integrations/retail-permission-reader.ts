@@ -7,12 +7,16 @@ import {
 import type { BusinessPermissionAccessTarget, BusinessPermissionCode, ContextAccessService } from '@app/core-runtime';
 import { Context, DateTime, Effect, Exit, Layer, Result, Schema } from 'effect';
 
-import { RETAIL_PORTAL_SELF_SERVICE_BASELINE } from '../../shared/domain/profile-contracts.ts';
+import {
+  RETAIL_PORTAL_SELF_SERVICE_BASELINE,
+  RetailPortalPermissionCodeSchema,
+} from '../../shared/domain/profile-contracts.ts';
+import type { RetailPortalPermissionCode } from '../../shared/domain/profile-contracts.ts';
 import { ProfilePersistenceDependencyFailure } from '../persistence/profile-persistence.ts';
 import type { ProfilePersistenceDependencies } from '../persistence/profile-persistence.ts';
 
 export type RetailPermissionReader = NonNullable<ProfilePersistenceDependencies['readRetailPermissions']>;
-type RetailPermission = (typeof RETAIL_PORTAL_SELF_SERVICE_BASELINE)[number];
+type RetailPermission = RetailPortalPermissionCode;
 
 export interface ProfileRetailPermissionReaderScope {
   readonly legalEntityId: string;
@@ -42,11 +46,12 @@ const retailPermissionTarget = (
 const allowedRetailPermissions = (
   expectedKeys: readonly string[],
   resultsByKey: ReadonlyMap<string, { readonly decision: string }>,
+  permissions: readonly RetailPermission[],
 ): readonly RetailPermission[] => {
   const allowed: RetailPermission[] = [];
   for (const [index, key] of expectedKeys.entries()) {
     const result = resultsByKey.get(key);
-    const permission = RETAIL_PORTAL_SELF_SERVICE_BASELINE[index];
+    const permission = permissions[index];
     if (result?.decision === 'allowed' && permission !== undefined) {
       allowed.push(permission);
     }
@@ -65,7 +70,12 @@ const makeReader =
     ) {
       return Effect.fail(dependencyFailure('Retail Portal Permission lookup crossed the verified scope'));
     }
-    const permissionResults = RETAIL_PORTAL_SELF_SERVICE_BASELINE.map((permission) =>
+    const requested = input.requestedPermissions ?? [];
+    if (!requested.every(Schema.is(RetailPortalPermissionCodeSchema))) {
+      return Effect.fail(dependencyFailure('The requested Retail Portal Permission is unsupported'));
+    }
+    const selected = [...new Set([...RETAIL_PORTAL_SELF_SERVICE_BASELINE, ...requested])];
+    const permissionResults = selected.map((permission) =>
       Schema.decodeResult(BusinessPermissionCodeSchema)(permission),
     );
     const permissions: BusinessPermissionCode[] = [];
@@ -112,7 +122,7 @@ const makeReader =
           return DateTime.now.pipe(
             Effect.map((observedAt) => ({
               observedAt: DateTime.formatIso(observedAt),
-              permissions: allowedRetailPermissions(expectedKeys, byKey),
+              permissions: allowedRetailPermissions(expectedKeys, byKey, selected),
             })),
           );
         }),
@@ -124,6 +134,9 @@ const makeReader =
 export const unreadRetailPermissions: RetailPermissionReader = () =>
   Effect.fail(dependencyFailure('No Retail Portal Permission snapshot was read before the transaction'));
 
+const hasUnpreparedPermission = (permissions: readonly RetailPermission[], prepared: ReadonlySet<RetailPermission>) =>
+  permissions.some((permission) => !prepared.has(permission));
+
 /**
  * Reads the Retail Portal permission snapshots of the given profiles before a transaction opens. The
  * returned reader serves only those snapshots (or their failures), so owner code that consumes it inside
@@ -133,23 +146,32 @@ export const prefetchRetailPermissions = (
   reader: RetailPermissionReader,
   scope: ProfileRetailPermissionReaderScope,
   profileIds: readonly string[],
+  requestedPermissions: readonly RetailPermission[] = [],
 ): Effect.Effect<RetailPermissionReader> =>
   Effect.forEach(
     [...new Set(profileIds)],
-    (profileId) =>
-      Effect.map(Effect.exit(reader({ ...scope, profileId })), (snapshot) => [profileId, snapshot] as const),
+    (profileId) => {
+      const input = { ...scope, profileId };
+      const selected = requestedPermissions.length === 0 ? input : { ...input, requestedPermissions };
+      return Effect.map(Effect.exit(reader(selected)), (snapshot) => [profileId, snapshot] as const);
+    },
     // One target profile per Read; an owner overlay names a handful at most.
     { concurrency: 4 },
   ).pipe(
     Effect.map((entries): RetailPermissionReader => {
       const snapshots = new Map(entries);
+      const preparedPermissions = new Set<RetailPermission>([
+        ...RETAIL_PORTAL_SELF_SERVICE_BASELINE,
+        ...requestedPermissions,
+      ]);
       return (input) => {
         const snapshot = snapshots.get(input.profileId);
         if (
           snapshot === undefined ||
           input.legalEntityId !== scope.legalEntityId ||
           input.principalId !== scope.principalId ||
-          input.tenantId !== scope.tenantId
+          input.tenantId !== scope.tenantId ||
+          hasUnpreparedPermission(input.requestedPermissions ?? [], preparedPermissions)
         ) {
           return Effect.fail(
             dependencyFailure('The Retail Portal Permission snapshot was not read before the transaction'),

@@ -271,9 +271,10 @@ export const IncomingInvoiceDialog = (props: IncomingInvoiceDialogProps) => {
           </Button>
         </>
       }
-      closeOnInteractOutside={false}
       description="Ruční evidence došlé faktury. Přiložený doklad se uloží a lze jej kdykoli stáhnout nebo zobrazit."
-      onOpenChange={(next) => (next ? onOpenChange(true) : close())}
+      // The backdrop, Escape and the close button only hide the panel, so a stray click keeps the draft;
+      // Zrušit discards it.
+      onOpenChange={onOpenChange}
       open={open}
       resizeLabel={vm.t('finance-billing.sidePanel.resize')}
       size="lg"

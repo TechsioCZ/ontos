@@ -298,6 +298,7 @@ export interface VerifyQuantityTierSetGenerationPersistenceQuery {
   readonly observedAt: typeof PricingInstantSchema.Type;
   readonly ownerRevision: string;
   readonly ownerRootRef: string;
+  readonly predicateRef: string;
   readonly priceRef: typeof PriceRefSchema.Type;
   readonly through: typeof PricingInstantSchema.Type;
   readonly verificationRef: string;

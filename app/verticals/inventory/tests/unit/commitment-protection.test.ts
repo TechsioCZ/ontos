@@ -232,7 +232,7 @@ const context = { actionInvocationId, legalEntityId, tenantId };
 
 const makeHarness = (
   confirmation: ReservationConfirmation,
-  options: { readonly failProtectionFinalizationOnce?: boolean } = {},
+  options: { readonly failProtectionFinalizationOnce?: boolean; readonly now?: Effect.Effect<string> } = {},
 ) =>
   Effect.gen(function* harness() {
     const currentConfirmation = yield* Ref.make(confirmation);
@@ -300,7 +300,7 @@ const makeHarness = (
     const service = makeCommitmentProtectionService({
       confirmations,
       ledger,
-      now: Effect.succeed(requestedAt),
+      now: options.now ?? Effect.succeed(requestedAt),
       protections,
     });
     const execution = makeCommitmentProtectionEstablishmentExecutionService({
@@ -730,7 +730,10 @@ describe('Inventory Commitment Protection', () => {
         },
         protection: protectedResult.protection,
       });
-      const replay = (yield* harness.service.establish(payload, context)).result;
+      const replay = (yield* harness.service.establish(payload, {
+        ...context,
+        actionInvocationId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
+      })).result;
 
       expect(atRisk.health).toMatchObject({ reconciliationRequired: true, state: 'AT_RISK' });
       expect(Schema.is(CommitmentProtectionAtRiskResultSchema)(replay)).toBe(true);
@@ -740,3 +743,31 @@ describe('Inventory Commitment Protection', () => {
     }),
   );
 });
+
+for (const phase of ['PENDING', 'INDETERMINATE', 'SUCCEEDED'] as const) {
+  it.effect(`new invocation Protection ${phase} replay returns original immutable request`, () =>
+    Effect.gen(function* changedInvocationReplay() {
+      const confirmation = yield* buildConfirmation();
+      const time = yield* Ref.make(requestedAt);
+      const harness = yield* makeHarness(confirmation, { now: Ref.get(time) });
+      const first = yield* harness.service.establish(payload, context);
+      if (phase === 'INDETERMINATE') {
+        yield* harness.execution.prepare(context, first.request);
+      }
+      if (phase === 'SUCCEEDED') {
+        yield* Ref.set(harness.observation, confirmedObservation(confirmation));
+        yield* harness.executeEstablishment(first.request);
+      }
+      yield* Ref.set(time, '2026-09-24T11:10:00.000Z');
+      const replay = yield* harness.service.establish(payload, {
+        ...context,
+        actionInvocationId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      });
+      expect(replay.dispatchRequested).toBe(false);
+      expect(replay.request).toEqual(first.request);
+      expect(replay.result.replayed).toBe(true);
+      expect(Predicate.isTagged(replay.result, phase === 'SUCCEEDED' ? 'PROTECTED' : phase)).toBe(true);
+      expect(yield* Ref.get(harness.authorityCalls)).toBe(phase === 'SUCCEEDED' ? 1 : 0);
+    }),
+  );
+}

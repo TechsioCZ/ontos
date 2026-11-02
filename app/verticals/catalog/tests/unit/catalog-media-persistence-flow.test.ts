@@ -107,14 +107,14 @@ const insertValues = (state: FixtureState, table: MediaTable, values: MockRow) =
   }
   if (table === catalogMediaAssignmentSetRevisions) {
     return Effect.sync(() => {
-      state.setRevisions.push(values);
+      state.setRevisions.push({ ...values });
       state.writes.push('set-revision');
       return [];
     });
   }
   if (table === catalogMediaAssignmentRevisions) {
     return Effect.sync(() => {
-      state.assignmentRevisions.push(values);
+      state.assignmentRevisions.push({ ...values });
       state.writes.push('assignment-revision');
       return [];
     });
@@ -147,12 +147,21 @@ const updateRows = (state: FixtureState, table: MediaTable, values: MockRow) => 
       `Unexpected update target: ${table === catalogMediaAssignmentSets ? 'set' : 'assignment'}, remaining=${state.assignmentUpdateIds.join(',')}, rows=${state.assignments.map((candidate) => candidate.assignmentId).join(',')}`,
     );
   }
+  // The native identity trigger rejects EVERY update unless the revision advances.
+  // Enforce that independent invariant rather than teaching the fixture to accept parking.
+  if (
+    row.currentRevision === undefined ||
+    values.currentRevision === undefined ||
+    values.currentRevision <= row.currentRevision
+  ) {
+    throw new Error('55000: Catalog identity update requires a strictly increasing revision');
+  }
   Object.assign(row, values);
   state.writes.push(table === catalogMediaAssignmentSets ? 'set-update' : 'assignment-update');
   return [row];
 };
 const selectTable = (state: FixtureState, table: MediaTable) => {
-  const selected = () => selectedRows(state, table);
+  const selected = () => selectedRows(state, table).map((row) => ({ ...row }));
   const limited = () => selected().slice(0, 1);
   const selection = {
     limit: () => Effect.sync(limited),
@@ -162,7 +171,8 @@ const selectTable = (state: FixtureState, table: MediaTable) => {
 };
 const updateTable = (state: FixtureState, table: MediaTable, values: MockRow) => {
   const run = () => updateRows(state, table, values);
-  return { where: () => ({ pipe: () => Effect.sync(run), returning: () => Effect.sync(run) }) };
+  const updated = () => Effect.try({ catch: (error) => error, try: run });
+  return { where: () => ({ pipe: updated, returning: updated }) };
 };
 
 // Models the exercised Drizzle chains while retaining rows across independent operations.
@@ -194,6 +204,129 @@ const fixture = () => {
 };
 
 describe('Catalog media persistence flow', () => {
+  it.effect('reorders active assignments with one truthful revision per changed item', () =>
+    Effect.gen(function* truthfulReorder() {
+      const state = fixture();
+      state.invocation.id = 'truthful-append-first';
+      yield* state.service.assign({
+        ...mutation(firstId, state.invocation.id, 0),
+        order: 1,
+        purpose: 'photo',
+        resourceKind: 'MEDIA',
+        resourceRef,
+      });
+      state.invocation.id = 'truthful-append-second';
+      yield* state.service.assign({
+        ...mutation(secondId, state.invocation.id, 1),
+        order: 2,
+        purpose: 'detail',
+        resourceKind: 'MEDIA',
+        resourceRef,
+      });
+      expect(
+        state.assignmentRevisions.map(({ position, revision, state: status }) => [position, revision, status]),
+      ).toEqual([
+        [1, 1, 'ACTIVE'],
+        [2, 1, 'ACTIVE'],
+      ]);
+      // These identify the logical final writes, not technical parking updates.
+      state.assignmentUpdateIds.push(secondId, firstId);
+      state.invocation.id = 'truthful-reorder';
+      const result = yield* state.service.reorder({
+        ...mutation(secondId, state.invocation.id, 2),
+        order: 1,
+      });
+      expect(Schema.is(reorderedOutcome)(result)).toBe(true);
+      expect(result).toMatchObject({ assignmentId: secondId, setRevision: 3 });
+      expect(
+        state.assignments.map(({ assignmentId, currentRevision, position, state: status }) => [
+          assignmentId,
+          currentRevision,
+          position,
+          status,
+        ]),
+      ).toEqual([
+        [firstId, 2, 2, 'ACTIVE'],
+        [secondId, 2, 1, 'ACTIVE'],
+      ]);
+      expect(
+        state.assignmentRevisions.map(({ assignmentId, position, revision, state: status }) => [
+          assignmentId,
+          position,
+          revision,
+          status,
+        ]),
+      ).toEqual([
+        [firstId, 1, 1, 'ACTIVE'],
+        [secondId, 2, 1, 'ACTIVE'],
+        [secondId, 1, 2, 'ACTIVE'],
+        [firstId, 2, 2, 'ACTIVE'],
+      ]);
+      expect(state.assignmentUpdateIds).toEqual([]);
+    }),
+  );
+
+  it.effect('inserts before existing items, compacts removal, and leaves unchanged item histories untouched', () =>
+    Effect.gen(function* insertionRemovalHistory() {
+      const state = fixture();
+      const append = (assignmentId: string, revision: number, order: number) => {
+        state.invocation.id = `append-${assignmentId}`;
+        return state.service.assign({
+          ...mutation(assignmentId, state.invocation.id, revision),
+          order,
+          purpose: 'photo',
+          resourceKind: 'MEDIA',
+          resourceRef,
+        });
+      };
+      yield* append(firstId, 0, 1);
+      yield* append(secondId, 1, 2);
+      const thirdId = '00000000-0000-4000-8000-000000000008';
+      state.assignmentUpdateIds.push(secondId);
+      yield* append(thirdId, 2, 2);
+      expect(
+        state.assignmentRevisions.map(({ assignmentId, position, revision, state: status }) => [
+          assignmentId,
+          position,
+          revision,
+          status,
+        ]),
+      ).toEqual([
+        [firstId, 1, 1, 'ACTIVE'],
+        [secondId, 2, 1, 'ACTIVE'],
+        [thirdId, 2, 1, 'ACTIVE'],
+        [secondId, 3, 2, 'ACTIVE'],
+      ]);
+      state.invocation.id = 'remove-middle';
+      state.assignmentUpdateIds.push(thirdId, secondId);
+      yield* state.service.remove(mutation(thirdId, state.invocation.id, 3));
+      expect(
+        state.assignmentRevisions
+          .slice(4)
+          .map(({ assignmentId, position, revision, state: status }) => [assignmentId, position, revision, status]),
+      ).toEqual([
+        [thirdId, 2, 2, 'REMOVED'],
+        [secondId, 2, 3, 'ACTIVE'],
+      ]);
+      const unchangedHistory = state.assignmentRevisions.map((row) => ({ ...row }));
+      state.invocation.id = 'no-op';
+      yield* state.service.reorder({ ...mutation(firstId, state.invocation.id, 4), order: 1 });
+      expect(state.assignmentRevisions).toEqual(unchangedHistory);
+      expect(state.setRevisions.map((row) => row.revision)).toEqual([1, 2, 3, 4, 5]);
+      state.invocation.id = 'remove-last';
+      state.assignmentUpdateIds.push(secondId);
+      yield* state.service.remove(mutation(secondId, state.invocation.id, 5));
+      expect(state.assignmentRevisions.at(-1)).toMatchObject({
+        assignmentId: secondId,
+        position: 2,
+        revision: 4,
+        state: 'REMOVED',
+      });
+      expect(state.assignmentRevisions.filter((row) => row.assignmentId === firstId)).toHaveLength(1);
+      expect(state.assignmentUpdateIds).toEqual([]);
+    }),
+  );
+
   it.effect('rejects a foreign-Tenant subject before any persistence query', () =>
     Effect.gen(function* foreignTenant() {
       const transaction = new Proxy(
@@ -249,7 +382,7 @@ describe('Catalog media persistence flow', () => {
         const staleResult = yield* state.service.reorder({ ...first, actionInvocationId: 'action-stale', order: 2 });
         expect(Schema.is(revisionConflict)(staleResult)).toBe(true);
         expect(staleResult).toMatchObject({ actualRevision: 2 });
-        state.assignmentUpdateIds.push(secondId, firstId, secondId, firstId);
+        state.assignmentUpdateIds.push(secondId, firstId);
         const reordered = mutation(secondId, 'action-3', 2);
         state.invocation.id = reordered.actionInvocationId;
         const reorderResult = yield* state.service.reorder({ ...reordered, order: 1 });
@@ -261,7 +394,7 @@ describe('Catalog media persistence flow', () => {
         expect(Schema.is(reorderedOutcome)(replayResult)).toBe(true);
         expect(replayResult).toMatchObject({ assignmentId: secondId, setRevision: 3 });
         expect(state.writes).toHaveLength(writeCount);
-        state.assignmentUpdateIds.push(secondId, firstId, firstId);
+        state.assignmentUpdateIds.push(secondId, firstId);
         const removed = mutation(secondId, 'action-4', 3);
         state.invocation.id = removed.actionInvocationId;
         const removeResult = yield* state.service.remove(removed);

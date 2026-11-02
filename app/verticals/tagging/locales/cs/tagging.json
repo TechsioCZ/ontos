@@ -90,6 +90,7 @@
       },
       "form": {
         "cancel": "Zrušit",
+        "close": "Zavřít",
         "color": "Barva",
         "createSubmit": "Vytvořit štítek",
         "description": "Popis",
@@ -97,7 +98,6 @@
         "discardDescription": "Údaje, které jste ve formuláři zadali, se ztratí.",
         "discardKeep": "Pokračovat v úpravách",
         "discardTitle": "Zahodit neuložené změny?",
-        "editSubmit": "Uložit změny",
         "kinds": "Platí pro",
         "kindsRequired": "Vyberte alespoň jednu oblast.",
         "name": "Název",
@@ -123,7 +123,6 @@
         "search": "Hledat štítky…",
         "searchLabel": "Filtrovat štítky"
       },
-      "updated": "Štítek upraven",
       "selectPlaceholder": "Vyberte…",
       "loading": "Načítám…"
     },

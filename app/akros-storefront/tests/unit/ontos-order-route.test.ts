@@ -4,6 +4,8 @@ import { createCheckoutDraft } from "@/features/checkout/checkout-state";
 import { callAction, readRecords } from "@/ontos/gateway";
 import { readAccount } from "@/ontos/account";
 import { GET, POST } from "@/app/api/ontos/orders/route";
+import { getActiveMarket } from "@/ontos/active-market";
+import { testMarket, unmarketedMarket } from "../support/market-fixture";
 
 vi.mock("@/ontos/account", () => ({ readAccount: vi.fn() }));
 vi.mock("@/ontos/catalog-server", () => ({ readProducts: async () => ({ revision: 7 }) }));
@@ -62,6 +64,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(readAccount).mockResolvedValue(account);
   vi.mocked(readRecords).mockResolvedValue({
+    market: {
+      marketId: testMarket.marketId,
+      marketCode: "AKROS-CZ",
+      currency: "CZK",
+      configured: true,
+    },
     checkout: {
       shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
       paymentAvailable: false,
@@ -96,9 +104,45 @@ describe("real order boundary", () => {
         shippingMethod: "PPL",
         expectedShippingPriceMinor: 12900,
         note: "Company",
+        // The market the server resolved for this request, never a browser-sent id.
+        marketId: testMarket.marketId,
+      },
+    });
+    // Shipping prices are read for the same market (converted into its currency by merchandise).
+    expect(readRecords).toHaveBeenCalledWith("merchandise", "records", {
+      view: {
+        storefront: true,
+        storefrontCheckout: true,
+        storefrontCatalog: {
+          marketId: testMarket.marketId,
+          mode: "categories",
+          includeCategories: false,
+        },
       },
     });
     expect(JSON.stringify(payload)).not.toMatch(/DEMO|simulace|forged|attacker/);
+  });
+  it("places a plain CZK order without a market before any market exists", async () => {
+    vi.mocked(getActiveMarket).mockResolvedValue(unmarketedMarket);
+    vi.mocked(readRecords).mockResolvedValue({
+      checkout: {
+        shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
+        paymentAvailable: false,
+        carrierTrackingAvailable: false,
+      },
+    });
+    try {
+      expect((await submit()).status).toBe(200);
+      expect(vi.mocked(callAction).mock.calls[0][2]).toMatchObject({
+        command: { _tag: "PlaceStorefrontOrder", expectedShippingPriceMinor: 12900 },
+      });
+      expect(vi.mocked(callAction).mock.calls[0][2]).not.toHaveProperty("command.marketId");
+      expect(readRecords).toHaveBeenCalledWith("merchandise", "records", {
+        view: { storefront: true, storefrontCheckout: true },
+      });
+    } finally {
+      vi.mocked(getActiveMarket).mockResolvedValue(testMarket);
+    }
   });
   it.each([false, true])(
     "sends the selected delivery recipient separately from billing contact (different address: %s)",

@@ -2,13 +2,16 @@ import { Schema } from 'effect';
 import type { Effect } from 'effect';
 
 import type { OperationalScope } from '../operations/context.ts';
-import type { ActionCollectorError } from './errors.ts';
+import type { ActionCollectorError, ActionTransactionError } from './errors.ts';
+import type { OperationContextUnavailable } from '../operations/errors.ts';
+import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type {
   DataAccessEventInput,
   DeclaredDomainEvent,
   DomainEventContractMap,
   DomainEventReference,
   OutboxMessage,
+  OutboxCompletionDeclaration,
 } from './events.ts';
 import {
   decodedStringBrand,
@@ -80,6 +83,7 @@ export interface ActionCollectorMethods<DomainEvents extends DomainEventContract
   readonly addOutboxMessage: (
     domainEvent: DomainEventReference,
     message: OutboxMessage,
+    completion?: OutboxCompletionDeclaration,
   ) => Effect.Effect<void, ActionCollectorError>;
   readonly recordAuditEvidence: (
     evidence: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>,
@@ -96,4 +100,17 @@ export interface ActionHandlerContext<
   readonly compositionRevision: string;
   readonly scope: OperationalScope;
   readonly services: Services;
+}
+
+/** A short, composition-admitted SQL snapshot transaction. Never return transaction-bound services. */
+export type ActionOwnerTransaction = <Value, Failure, Requirements>(
+  use: (transaction: ScopedTransactionExecutor) => Effect.Effect<Value, Failure, Requirements>,
+) => Effect.Effect<Value, Failure | ActionTransactionError | OperationContextUnavailable, Requirements>;
+
+/** Invocation-local preparation runs after authorization and before the business transaction. */
+export interface ActionServicePreparationContext {
+  readonly actionInvocationId: string;
+  readonly compositionRevision: string;
+  readonly scope: OperationalScope;
+  readonly transaction: ActionOwnerTransaction;
 }

@@ -417,6 +417,7 @@ describe('issue #775 Promotion contribution owner contract', () => {
           ],
         },
       },
+      target: { kind: 'MERCHANDISE_ONLY' as const, occurrenceIds: ['line-a', 'line-b'] },
     });
     expect(Schema.is(PromotionContributionParkedSchema)(parked)).toBe(true);
   });

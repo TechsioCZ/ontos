@@ -20,13 +20,6 @@ const externalizeRuntimeDependencies = (
   { request }: Rspack.ExternalItemFunctionData,
   resolveExternal: (error?: Error, external?: string) => void,
 ): void => {
-  if (request === 'cloudflare:workers' || request?.endsWith('/fixtures/worker-environment.ts') === true) {
-    resolveExternal(
-      undefined,
-      `module-import ${new URL('tests/fixtures/worker-environment.ts', import.meta.url).href}`,
-    );
-    return;
-  }
   resolveExternal(
     undefined,
     request !== undefined && /^(?:@better-auth\/|better-auth(?:\/|$))/u.test(request)
@@ -65,6 +58,20 @@ const swc = {
   jsc: { parser: { disallowAmbiguousJsxLike: false, syntax: 'typescript' } },
 } as const;
 
+// The person-invitation proof needs a migrated people_model_scratch_* database and a local SpiceDB whose schema it
+// rewrites; no gate provisions one. `pnpm test:operator` runs it (app/scripts/demo/README.md).
+const operatorTests = ['tests/integration/person-invitation-runtime.test.ts'];
+const integration = {
+  source: {
+    define: {
+      ULTRAMODERN_SITE_URL: encodedSiteUrl,
+    },
+  },
+  testEnvironment: 'node' as const,
+  testTimeout: 30_000,
+  tools: { rspack: { externals: [externalizeRuntimeDependencies, externalizeCoreRuntime] }, swc },
+};
+
 export default defineConfig({
   output: { distPath: path.join(tmpdir(), `ontos-shell-rstest-${process.pid}`) },
   performance: { buildCache: false },
@@ -76,8 +83,9 @@ export default defineConfig({
       }),
       include: ['tests/unit/**/*.{test,spec}.?(c|m)[jt]s?(x)'],
       name: 'unit',
+      // The .14 TanStack runtime has async SSR dependencies that require ESM test output.
       output: {
-        module: false,
+        module: true,
       },
       plugins: [
         {
@@ -99,16 +107,15 @@ export default defineConfig({
       tools: { rspack: { externals: [externalizeRuntimeDependencies] } },
     },
     {
+      ...integration,
+      exclude: operatorTests,
       include: ['tests/integration/**/*.test.ts'],
       name: 'integration',
-      source: {
-        define: {
-          ULTRAMODERN_SITE_URL: encodedSiteUrl,
-        },
-      },
-      testEnvironment: 'node',
-      testTimeout: 30_000,
-      tools: { rspack: { externals: [externalizeRuntimeDependencies, externalizeCoreRuntime] }, swc },
+    },
+    {
+      ...integration,
+      include: operatorTests,
+      name: 'operator',
     },
   ],
 });

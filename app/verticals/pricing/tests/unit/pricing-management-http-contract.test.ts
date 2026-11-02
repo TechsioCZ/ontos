@@ -1,12 +1,20 @@
+import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { HttpApi } from 'effect/http-api';
+import { pricingApi } from '../../shared/api.ts';
+import { RevisePricePayloadSchema } from '../../shared/actions/revise-price.ts';
 import { CurrencySupportScheduleAcknowledgementSchema } from '@app/pricing-contracts/domain/currency-support';
 import {
   PriceScheduleAcknowledgementSchema,
   PriceScheduleReadResultSchema,
 } from '@app/pricing-contracts/domain/price-schedule';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Layer, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { mapRevisePriceActionProblem } from '../../api/revise-price-action-problems.ts';
+import {
+  mapRevisePriceActionProblem,
+  revisePriceActionSchemaErrorLive,
+} from '../../api/revise-price-action-problems.ts';
 import { mapSetSupportedCurrenciesActionProblem } from '../../api/set-supported-currencies-action-problems.ts';
 import { RevisePriceAcknowledgementRequired } from '../../src/actions/revise-price.action.ts';
 import { SupportedCurrenciesScheduleAcknowledgementRequired } from '../../src/actions/set-supported-currencies.action.ts';
@@ -152,6 +160,69 @@ const supportAcknowledgement = Schema.decodeSync(CurrencySupportScheduleAcknowle
 });
 
 describe('Pricing management HTTP contract', () => {
+  it.live('accepts ordinary transport headers while rejecting excess business payload (#1278)', () =>
+    Effect.gen(function* strictPayloadAndTransportHeaders() {
+      const api = HttpApi.make('PricingHeaderContract')
+        .add(pricingApi.groups.revisePriceAction)
+        .annotateMerge(pricingApi.annotations);
+      let calls = 0;
+      const runtime = assembleEffectBffRuntime({
+        api,
+        handlers: HttpApiBuilder.group(api, 'revisePriceAction', (handlers) =>
+          handlers.handle('execute', () =>
+            Effect.sync(() => {
+              calls += 1;
+              return { outcome: 'PRICE_REVISION_CREATED' as const, revision: futureRevision };
+            }),
+          ),
+        ).pipe(Layer.provide(revisePriceActionSchemaErrorLive)),
+      });
+      const server = yield* Effect.acquireRelease(
+        Effect.sync(() => runtime.createHandler()),
+        (handler) => Effect.promise(() => handler.dispose()),
+      );
+      const payload = yield* Schema.decodeUnknownEffect(RevisePricePayloadSchema)({
+        expectedCurrent: {
+          effectivePeriod: currentPeriod,
+          priceRef,
+          revision: currentRevision.definition.revision.revision,
+          revisionId: currentRevision.definition.revision.revisionId,
+          scheduleRevision: 2,
+        },
+        intent: 'RETIRE_CURRENT',
+        priceRef,
+        reason: 'Explicit transport-only unit fixture',
+      });
+      const encoded = yield* Schema.encodeEffect(RevisePricePayloadSchema)(payload);
+      const encodeRequest = Schema.encodeEffect(Schema.fromJsonString(Schema.Json));
+      const validBody = yield* encodeRequest(encoded);
+      const extraBody = yield* encodeRequest({ ...encoded, undeclaredBusinessField: true });
+      for (const [body, idempotencyKey, expectedStatus] of [
+        [validBody, 'transport-unit-only', 200],
+        [validBody, '', 400],
+        [extraBody, 'transport-unit-only', 400],
+      ] as const) {
+        const response = yield* Effect.promise(() =>
+          server.handler(
+            new Request('https://pricing.ontos.test/pricing/actions/revise-price', {
+              body,
+              headers: {
+                accept: 'application/json',
+                authorization: 'Bearer transport-unit-only',
+                'content-type': 'application/json',
+                'idempotency-key': idempotencyKey,
+                'x-correlation-id': 'transport-unit-only',
+              },
+              method: 'POST',
+            }),
+          ),
+        );
+        expect(response.status).toBe(expectedStatus);
+      }
+      expect(calls).toBe(1);
+    }),
+  );
+
   it('preserves exact Price and Currency Support schedule acknowledgement challenges', () => {
     const priceProblem = mapRevisePriceActionProblem(
       new RevisePriceAcknowledgementRequired({

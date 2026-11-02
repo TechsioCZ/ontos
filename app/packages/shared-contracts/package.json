@@ -22,7 +22,8 @@
     "./agent-access": "./src/agent-access.ts",
     "./oauth-connections": "./src/oauth-connections.ts",
     "./page-data": "./src/page-data.ts",
-    "./calendar-date": "./src/calendar-date.ts"
+    "./calendar-date": "./src/calendar-date.ts",
+    "./credential-url": "./src/credential-url.ts"
   },
   "scripts": {
     "test:types": "ultramodern-create ultramodern typecheck --project tests/tsconfig.json && ultramodern-create ultramodern typecheck --project tests/client-runtime-types.tsconfig.json",
@@ -30,8 +31,8 @@
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
-    "@effect/opentelemetry": "4.0.5",
-    "effect": "4.0.5",
+    "@effect/opentelemetry": "4.0.7",
+    "effect": "4.0.7",
     "@app/core-runtime": "workspace:*",
     "@modern-js/bff-effect": "catalog:ultramodern"
   },

@@ -1,8 +1,10 @@
-/** Match the design's whole-crown prices while keeping non-zero haléře and allowing line wraps. */
-export const formatCheckoutPrice = (priceMinor: number) =>
-  new Intl.NumberFormat("cs-CZ", {
+import { CZK_MONEY, type MoneyFormat } from "@/lib/format";
+
+/** Match the design's whole-unit prices while keeping non-zero minor units and allowing line wraps. */
+export const formatCheckoutPrice = (priceMinor: number, money: MoneyFormat = CZK_MONEY) =>
+  new Intl.NumberFormat(money.locale, {
     style: "currency",
-    currency: "CZK",
+    currency: money.currency,
     minimumFractionDigits: priceMinor % 100 === 0 ? 0 : 2,
     maximumFractionDigits: 2,
   })

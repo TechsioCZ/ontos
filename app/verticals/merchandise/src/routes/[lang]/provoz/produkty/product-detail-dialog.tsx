@@ -8,41 +8,47 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
-import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { dialogCloseLabel, formatDate, formatMoney, PageHeader } from '@app/admin-ui';
-import { DateTime, Option, Schema } from 'effect';
-import { isRealVariant, ProductMetadataSchema } from '../../../../../shared/domain/merchandise-model.ts';
+import { selectItem } from '../../../../ui/select-item.ts';
+import { AutosaveStatus, dialogCloseLabel, formatDate, formatMoney, PageHeader, useAutosave } from '@app/admin-ui';
+import type { AutosaveOutcome } from '@app/admin-ui';
+import { DateTime, Effect, Predicate, Random, Schema } from 'effect';
+import { isRealVariant } from '../../../../../shared/domain/merchandise-model.ts';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { useEffect, useRef, useState } from 'react';
-import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
+import { ApplyCommandPayloadSchema } from '../../../../../shared/actions/apply-command.ts';
+import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { CategoryTrail, ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
-import type {
-  ProductMetadata,
-  ProductUnit,
-  ProductVariant,
-  VatRate,
-} from '../../../../../shared/domain/merchandise-model.ts';
+import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
 import { orderLineVatMinor } from '../../../../../shared/domain/order-totals.ts';
-import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT, moneyInputText } from '../../../../form-number.ts';
-import { runCommand } from './products-api.ts';
-import type { CommandOutcome, FailureReason } from './products-api.ts';
+import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
+import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import {
+  detailDraftInvalid,
+  detailSaveOf,
+  draftOf,
+  measurementInvalid,
+  sameDetailDraft,
+} from './product-detail-draft.ts';
+import type { DetailDraft } from './product-detail-draft.ts';
 import {
   PRODUCT_LIMITS,
   UNITS,
   VAT_RATES,
   fieldError,
-  focusFirstInvalid,
   lowStockErrorKey,
   priceErrorKey,
   tooLongMessage,
-  useCommandFailure,
   useProductLabel,
 } from './product-forms.tsx';
 import { EMPTY_MOVEMENT_DRAFT, MovementForm, MovementsTable, isMovementDraftDirty } from './product-movements.tsx';
 import { AvailabilityBadge, EshopPanel, VariantsPanel, VariantPriceHistory } from './product-eshop.tsx';
+import { ProductImageGallery } from './product-image-gallery.tsx';
 import { CatalogContentPanel } from './product-catalog-content.tsx';
+import { MarketsPanel } from './product-markets.tsx';
+import type { ProductMarket } from '../../../../../shared/domain/market-offers.ts';
 import type { MovementDraft } from './product-movements.tsx';
 
 export interface ProductDetailViewProps {
@@ -51,6 +57,11 @@ export interface ProductDetailViewProps {
   /** The product's tree category with its path label; null when it has none. */
   readonly category?: CategoryTrail | null;
   readonly hasCategoryTree?: boolean;
+  /**
+   * The product's offer and price in every configured market of the company, and whether the viewer may switch it
+   * (records `canManageMarkets`).
+   */
+  readonly markets?: ProductMarketsAccess;
   readonly movements: readonly StockMovement[];
   readonly onBack: () => void;
   readonly onCommitted: (message: string) => void;
@@ -61,12 +72,17 @@ export interface ProductDetailViewProps {
 }
 
 /** Writable subset of ProductPatch, filled field by field so only changed values are sent. */
-type PatchDraft = { -readonly [Key in keyof ProductPatch]?: ProductPatch[Key] };
 
 /**
  * The page header submits this form by id. Tab contents stay mounted so unsaved fields survive tab switches.
  */
 const DETAIL_FORM_ID = 'product-detail-form';
+/** A product's markets on the detail page and whether the viewer may switch its offer in them. */
+export interface ProductMarketsAccess {
+  readonly canManage: boolean;
+  readonly entries: readonly ProductMarket[];
+}
+const NO_MARKETS: ProductMarketsAccess = { canManage: false, entries: [] };
 const REQUIRED_MESSAGE_KEY = 'validation.required';
 
 const PriceHistory = ({ product }: { readonly product: ProductRecord }) => {
@@ -103,246 +119,19 @@ const PriceHistory = ({ product }: { readonly product: ProductRecord }) => {
   );
 };
 
-/** Editable product fields as typed. The page owns the draft for navigation and unload protection. */
-interface DetailDraft {
-  readonly active: boolean;
-  readonly category: string;
-  readonly description: string;
-  readonly heightMm: string;
-  readonly lengthMm: string;
-  readonly lowStock: number;
-  /** The minimum-stock input's text, kept as typed so "2,5" reaches validation instead of becoming 25. */
-  readonly lowStockText: string;
-  readonly name: string;
-  readonly nextVariantId: number;
-  readonly priceCzk: number;
-  /** The price input's text, kept as typed so the two-decimal display never fights the keyboard. */
-  readonly priceText: string;
-  /** Real (sellable) variants are edited on the Varianty tab; the detail form passes them through unchanged. */
-  readonly realVariants: readonly ProductVariant[];
-  readonly shortDescription: string;
-  readonly unit: ProductUnit;
-  readonly variants: readonly { readonly attributes: string; readonly key: number; readonly name: string }[];
-  readonly vatRate: VatRate;
-  readonly weightGrams: string;
-  readonly widthMm: string;
-}
-
-const measurementText = (value: Option.Option<number> | undefined): string =>
-  Option.match(value ?? Option.none(), { onNone: () => '', onSome: String });
-
-const legacyVariantDraftsOf = (product: ProductRecord): DetailDraft['variants'] => {
-  const variants: DetailDraft['variants'][number][] = [];
-  for (const variant of product.variants ?? []) {
-    if (!isRealVariant(variant)) {
-      variants.push({ attributes: variant.attributes, key: variants.length, name: variant.name });
-    }
-  }
-  return variants;
-};
-
-const draftOf = (product: ProductRecord): DetailDraft => ({
-  active: product.active,
-  category: product.category,
-  description: product.description ?? '',
-  heightMm: measurementText(product.heightMm),
-  lengthMm: measurementText(product.lengthMm),
-  lowStock: product.lowStockThreshold,
-  lowStockText: String(product.lowStockThreshold),
-  name: product.name,
-  nextVariantId: product.variants?.length ?? 0,
-  priceCzk: product.currentPriceMinor / 100,
-  priceText: moneyInputText(product.currentPriceMinor / 100),
-  realVariants: (product.variants ?? []).filter(isRealVariant),
-  shortDescription: product.shortDescription ?? '',
-  unit: product.unit,
-  variants: legacyVariantDraftsOf(product),
-  vatRate: product.vatRate,
-  weightGrams: measurementText(product.weightGrams),
-  widthMm: measurementText(product.widthMm),
-});
-
-const measurementOf = (value: string): number | null => (value.trim() === '' ? null : Number(value));
-const metadataOf = (draft: DetailDraft): ProductMetadata => ({
-  description: draft.description.trim(),
-  heightMm: Option.fromNullOr(measurementOf(draft.heightMm)),
-  lengthMm: Option.fromNullOr(measurementOf(draft.lengthMm)),
-  shortDescription: draft.shortDescription.trim(),
-  variants: [
-    ...draft.realVariants,
-    ...draft.variants.map(({ attributes, name }) => ({ attributes: attributes.trim(), name: name.trim() })),
-  ],
-  weightGrams: Option.fromNullOr(measurementOf(draft.weightGrams)),
-  widthMm: Option.fromNullOr(measurementOf(draft.widthMm)),
-});
-const metadataEquivalent = Schema.toEquivalence(ProductMetadataSchema);
-const metadataChanged = (draft: DetailDraft, product: ProductRecord): boolean =>
-  !metadataEquivalent(metadataOf(draft), metadataOf(draftOf(product)));
-const measurementInvalid = (value: string): boolean => {
-  const number = measurementOf(value);
-  return number !== null && (!Number.isInteger(number) || number < 1 || number > 1_000_000_000);
-};
-
-/** True when Save would send something: a changed field or a changed price. */
-const isDraftDirty = (draft: DetailDraft, product: ProductRecord): boolean =>
-  metadataChanged(draft, product) ||
-  draft.name.trim() !== product.name ||
-  draft.category.trim() !== product.category ||
-  draft.unit !== product.unit ||
-  draft.vatRate !== product.vatRate ||
-  draft.lowStock !== product.lowStockThreshold ||
-  Math.round(draft.priceCzk * 100) !== product.currentPriceMinor ||
-  draft.active !== product.active;
-
-/**
- * Editable product fields. Changed fields go to UpdateProduct; a changed price follows as ChangePrice. The two
- * commands run one after the other and can take a few seconds, so a persistent "Ukládám změny…" toast shows
- * from the first click until the outcome replaces it.
- */
+/** The editable fields of the product. The view keeps the draft and every change saves itself. */
 interface DetailFormProps {
-  readonly busy: boolean;
   readonly canWrite: boolean;
   readonly draft: DetailDraft;
-  /** Close without saving: asks first when another tab still holds an unsent draft. */
-  readonly onClose: () => void;
-  readonly onCommitted: (message: string) => void;
+  /** Sends a pending draft now: a field lost focus. */
+  readonly onBlur: () => void;
   readonly onDraftChange: (patch: Partial<DetailDraft>) => void;
-  readonly onReload: () => void;
-  /** Called after a successful save; the page checks for an unsaved movement before returning. */
-  readonly onSaved: () => void;
   readonly product: ProductRecord;
-  readonly revision: number;
-  readonly setBusy: (busy: boolean) => void;
 }
 
-interface DetailValidation {
-  readonly categoryError: string | undefined;
-  readonly lowStockError: string | undefined;
-  readonly metadataError: boolean;
-  readonly nameError: string | undefined;
-  readonly priceError: string | undefined;
-  readonly priceMinor: number;
-}
-
-/** Application handler owns patch construction, sequential revision use, and partial failure reporting. */
-const saveDetailProduct = ({
-  busy,
-  draft,
-  failure,
-  k,
-  onClose,
-  onCommitted,
-  onReload,
-  onSaved,
-  product,
-  revision,
-  setBusy,
-  setServerError,
-  setSubmitted,
-  toaster,
-  validation,
-}: DetailFormProps & {
-  readonly failure: ReturnType<typeof useCommandFailure>;
-  readonly k: ReturnType<typeof useProductLabel>;
-  readonly setServerError: (value: string | null) => void;
-  readonly setSubmitted: (value: boolean) => void;
-  readonly toaster: ReturnType<typeof useToast>;
-  readonly validation: DetailValidation;
-}) => {
-  const { active, category, lowStock, name, unit, vatRate } = draft;
-  const { categoryError, lowStockError, metadataError, nameError, priceError, priceMinor } = validation;
-
-  if (busy) {
-    return;
-  }
-  setSubmitted(true);
-  if (metadataError || [nameError, categoryError, priceError, lowStockError].some((message) => message !== undefined)) {
-    focusFirstInvalid([
-      ['detail-name', nameError !== undefined],
-      ['detail-category', categoryError !== undefined],
-      ['detail-price', priceError !== undefined],
-      ['detail-low-stock', lowStockError !== undefined],
-    ]);
-    return;
-  }
-  const patch: PatchDraft = metadataChanged(draft, product) ? { ...metadataOf(draft) } : {};
-  if (name.trim() !== product.name) {
-    patch.name = name.trim();
-  }
-  if (category.trim() !== product.category) {
-    patch.category = category.trim();
-  }
-  if (unit !== product.unit) {
-    patch.unit = unit;
-  }
-  if (vatRate !== product.vatRate) {
-    patch.vatRate = vatRate;
-  }
-  if (lowStock !== product.lowStockThreshold) {
-    patch.lowStockThreshold = lowStock;
-  }
-  if (active !== product.active) {
-    patch.active = active;
-  }
-  const hasPatch = Object.keys(patch).length > 0;
-  const priceChanged = priceMinor !== product.currentPriceMinor;
-  if (!hasPatch && !priceChanged) {
-    onClose();
-    return;
-  }
-  setBusy(true);
-  setServerError(null);
-  const savingToast = toaster.create({
-    duration: Number.POSITIVE_INFINITY,
-    title: k('messages.saving'),
-    type: 'info',
-  });
-  const finish = (reason: FailureReason | null) => {
-    setBusy(false);
-    toaster.dismiss(savingToast);
-    if (reason !== null) {
-      setServerError(failure(reason, onReload));
-      return;
-    }
-    onSaved();
-    onCommitted(k('messages.updated'));
-  };
-  const afterPatch = (outcome: CommandOutcome) => {
-    if (!outcome.ok) {
-      finish(outcome.reason);
-      return;
-    }
-    if (!priceChanged) {
-      finish(null);
-      return;
-    }
-    runCommand({ _tag: 'ChangePrice', id: product.id, priceMinor }, outcome.revision, (second) =>
-      finish(second.ok ? null : second.reason),
-    );
-  };
-  if (hasPatch) {
-    runCommand({ _tag: 'UpdateProduct', id: product.id, patch }, revision, afterPatch);
-  } else {
-    afterPatch({ ok: true, revision });
-  }
-};
-
-const invalidMetadata = (draft: DetailDraft): boolean =>
-  draft.description.trim().length > 20_000 ||
-  draft.shortDescription.trim().length > 500 ||
-  draft.variants.length > 50 ||
-  draft.variants.some(
-    (variant) =>
-      variant.name.trim() === '' || variant.name.trim().length > 100 || variant.attributes.trim().length > 1000,
-  ) ||
-  [draft.weightGrams, draft.lengthMm, draft.widthMm, draft.heightMm].some(measurementInvalid);
-
-const DetailForm = (props: DetailFormProps) => {
-  const { busy, canWrite, draft, onDraftChange, product } = props;
+const DetailForm = ({ canWrite, draft, onBlur, onDraftChange, product }: DetailFormProps) => {
   const k = useProductLabel();
-  const failure = useCommandFailure();
-  const toaster = useToast();
-  const disabled = !canWrite || busy;
+  const disabled = !canWrite;
   const { active, category, lowStock, lowStockText, name, priceCzk, priceText, unit, vatRate } = draft;
   const setActive = (value: boolean) => {
     onDraftChange({ active: value });
@@ -359,8 +148,6 @@ const DetailForm = (props: DetailFormProps) => {
   const setVatRate = (value: VatRate) => {
     onDraftChange({ vatRate: value });
   };
-  const [serverError, setServerError] = useState<string | null>(null);
-  const [submitted, setSubmitted] = useState(false);
 
   const nameError = name.trim() === '' ? k(REQUIRED_MESSAGE_KEY) : tooLongMessage(k, name, PRODUCT_LIMITS.name);
   const categoryError =
@@ -370,25 +157,14 @@ const DetailForm = (props: DetailFormProps) => {
   const lowStockKey = lowStockErrorKey(lowStock);
   const lowStockError = lowStockKey === undefined ? undefined : k(lowStockKey);
   const priceMinor = Math.round(priceCzk * 100);
-  const metadataError = invalidMetadata(draft);
+  const draftInvalid = detailDraftInvalid(draft);
   const grossMinor =
     Number.isFinite(priceMinor) && priceMinor >= 0
       ? priceMinor + orderLineVatMinor({ quantity: 1, unitPriceMinor: priceMinor, vatRate })
       : null;
 
-  const save = () =>
-    saveDetailProduct({
-      ...props,
-      failure,
-      k,
-      setServerError,
-      setSubmitted,
-      toaster,
-      validation: { categoryError, lowStockError, metadataError, nameError, priceError, priceMinor },
-    });
-
-  // noValidate: the form may sit in a hidden tab when the footer submits it, and native validation would
-  // block that silently; save() validates and shows the Czech messages instead.
+  // noValidate: the form may sit in a hidden tab, and native validation would block the autosave silently; the
+  // inline autosave line and the field messages say what is missing instead.
   return (
     <form
       className="grid grid-cols-1 gap-200 lg:grid-cols-2"
@@ -396,14 +172,9 @@ const DetailForm = (props: DetailFormProps) => {
       noValidate
       onSubmit={(event) => {
         event.preventDefault();
-        save();
+        onBlur();
       }}
     >
-      {serverError !== null && (
-        <StatusText showIcon status="error">
-          {serverError}
-        </StatusText>
-      )}
       <FormInput disabled id="detail-sku" label={k('fields.sku')} name="sku" value={product.sku} />
       <FormInput
         autoComplete="off"
@@ -414,7 +185,7 @@ const DetailForm = (props: DetailFormProps) => {
         onChange={(event) => setName(event.target.value)}
         required
         value={name}
-        {...fieldError(submitted, nameError)}
+        {...fieldError(true, nameError)}
       />
       <FormInput
         autoComplete="off"
@@ -425,12 +196,12 @@ const DetailForm = (props: DetailFormProps) => {
         onChange={(event) => setCategory(event.target.value)}
         required
         value={category}
-        {...fieldError(submitted, categoryError)}
+        {...fieldError(true, categoryError)}
       />
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
         <SelectTemplate
           disabled={disabled}
-          items={UNITS.map((value) => ({ label: value, value }))}
+          items={UNITS.map((value) => selectItem(value, value))}
           label={k('fields.unit')}
           name="unit"
           onValueChange={(details) => {
@@ -445,7 +216,7 @@ const DetailForm = (props: DetailFormProps) => {
         />
         <SelectTemplate
           disabled={disabled}
-          items={VAT_RATES.map((rate) => ({ label: `${rate} %`, value: String(rate) }))}
+          items={VAT_RATES.map((rate) => selectItem(String(rate), `${rate} %`))}
           label={k('fields.vat')}
           name="vat"
           onValueChange={(details) => {
@@ -474,7 +245,7 @@ const DetailForm = (props: DetailFormProps) => {
           required
           step={1}
           value={priceText}
-          {...fieldError(submitted, priceError)}
+          {...fieldError(true, priceError)}
         >
           <NumericInput.Control>
             <NumericInput.Input aria-valuemax={undefined} />
@@ -494,7 +265,7 @@ const DetailForm = (props: DetailFormProps) => {
           }}
           step={1}
           value={lowStockText}
-          {...fieldError(submitted, lowStockError)}
+          {...fieldError(true, lowStockError)}
         >
           <NumericInput.Control>
             <NumericInput.Input aria-valuemax={undefined} />
@@ -539,7 +310,7 @@ const DetailForm = (props: DetailFormProps) => {
           step={1}
           type="number"
           value={draft[field]}
-          {...fieldError(submitted, measurementInvalid(draft[field]) ? k('validation.measurement') : undefined)}
+          {...fieldError(true, measurementInvalid(draft[field]) ? k('validation.measurement') : undefined)}
         />
       ))}
       {draft.realVariants.length > 0 ? (
@@ -571,7 +342,7 @@ const DetailForm = (props: DetailFormProps) => {
                 }
                 required
                 value={variant.name}
-                {...fieldError(submitted, variant.name.trim() === '' ? k(REQUIRED_MESSAGE_KEY) : undefined)}
+                {...fieldError(true, variant.name.trim() === '' ? k(REQUIRED_MESSAGE_KEY) : undefined)}
               />
               <FormInput
                 disabled={disabled}
@@ -590,7 +361,6 @@ const DetailForm = (props: DetailFormProps) => {
               />
               {canWrite && (
                 <Button
-                  disabled={busy}
                   onClick={() =>
                     onDraftChange({ variants: draft.variants.filter((current) => current.key !== variant.key) })
                   }
@@ -605,7 +375,7 @@ const DetailForm = (props: DetailFormProps) => {
           ))}
           {canWrite && (
             <Button
-              disabled={draft.variants.length >= 50 || busy}
+              disabled={draft.variants.length >= 50}
               onClick={() =>
                 onDraftChange({
                   nextVariantId: draft.nextVariantId + 1,
@@ -619,13 +389,71 @@ const DetailForm = (props: DetailFormProps) => {
               {k('detail.addVariant')}
             </Button>
           )}
-          {submitted && metadataError && <StatusText status="error">{k('validation.metadata')}</StatusText>}
+          {draftInvalid && <StatusText status="error">{k('validation.metadata')}</StatusText>}
         </div>
       )}
       <Switch checked={active} disabled={disabled} name="active" onCheckedChange={setActive}>
         {k('detail.active')}
       </Switch>
     </form>
+  );
+};
+
+type CommandFailure = Effect.Error<ReturnType<typeof executeApplyCommand>>;
+
+const idempotencyKey = Effect.all({ now: DateTime.now, random: Random.nextInt }, { concurrency: 1 }).pipe(
+  Effect.map(({ now, random }) => `merchandise:product:${DateTime.toEpochMillis(now)}:${random}`),
+);
+
+/** One merchandise command; the revision the server answered with is the one the next command must expect. */
+const runProductCommand = (command: MerchandiseCommand, expectedRevision: number) =>
+  idempotencyKey.pipe(
+    Effect.flatMap((key) =>
+      Schema.encodeEffect(ApplyCommandPayloadSchema)({ command, expectedRevision }).pipe(
+        Effect.flatMap((payload) => executeApplyCommand(payload, key, { idempotencyKey: key })),
+      ),
+    ),
+    Effect.map((result) => result.revision),
+  );
+
+const failureOutcome = (error: CommandFailure): AutosaveOutcome =>
+  Predicate.isTagged(error, 'ApplyCommandActionConflictProblem') && error.code !== 'merchandise_lifecycle_conflict'
+    ? 'conflict'
+    : 'failed';
+
+/**
+ * One autosave of the detail form: the changed basic fields first, then a changed price, each against the revision
+ * the previous command or the page left. A conflict keeps the draft and offers the version someone else saved.
+ */
+const saveDetailEffect = (
+  value: DetailDraft,
+  product: ProductRecord,
+  revisionRef: { current: number },
+): Effect.Effect<AutosaveOutcome> => {
+  const { patch, priceChanged, priceMinor } = detailSaveOf(value, product);
+  if (Object.keys(patch).length === 0 && !priceChanged) {
+    return Effect.succeed('saved');
+  }
+  const update: Effect.Effect<number, CommandFailure> =
+    Object.keys(patch).length === 0
+      ? Effect.succeed(revisionRef.current)
+      : runProductCommand({ _tag: 'UpdateProduct', id: product.id, patch }, revisionRef.current);
+  return update.pipe(
+    Effect.flatMap((revision) => {
+      revisionRef.current = revision;
+      return priceChanged
+        ? runProductCommand({ _tag: 'ChangePrice', id: product.id, priceMinor }, revision)
+        : Effect.succeed(revision);
+    }),
+    Effect.tap((revision) =>
+      Effect.sync(() => {
+        revisionRef.current = revision;
+      }),
+    ),
+    Effect.match({
+      onFailure: failureOutcome,
+      onSuccess: (): AutosaveOutcome => 'saved',
+    }),
   );
 };
 
@@ -637,6 +465,7 @@ export const ProductDetailView = ({
   canMoveStock = canWrite,
   category = null,
   hasCategoryTree = false,
+  markets = NO_MARKETS,
   movements,
   onBack,
   onCommitted,
@@ -647,25 +476,29 @@ export const ProductDetailView = ({
 }: ProductDetailViewProps) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
-  const [busy, setBusy] = useState(false);
   const [editableDraft, setEditableDraft] = useState(() => draftOf(product));
   // Real variants are read-only on this tab and always come from the latest product.
   // Deriving them preserves unsaved detail fields when the variants tab commits a change.
   const draft = { ...editableDraft, realVariants: (product.variants ?? []).filter(isRealVariant) };
   const [movementDraft, setMovementDraft] = useState(EMPTY_MOVEMENT_DRAFT);
-  // A detail save finishes seconds after the click; it reads the movement draft as it is then, not at the click.
-  const movementDraftRef = useRef(movementDraft);
-  useEffect(() => {
-    movementDraftRef.current = movementDraft;
-  }, [movementDraft]);
   const [tab, setTab] = useState('detail');
-  const dirty = isDraftDirty(draft, product) || isMovementDraftDirty(movementDraft);
-  const allowNavigation = useRef(false);
-  const blocker = useBlocker({
-    enableBeforeUnload: () => dirty && !allowNavigation.current,
-    shouldBlockFn: () => dirty && !allowNavigation.current,
-    withResolver: true,
+  // The revision the next save must expect: the one the page passed, then the one each save returns.
+  // The page's snapshot is the authority after a reload; a save moves it to the revision the server answered with,
+  // and a conflict is healed by reloading the product, so the next save never builds on a revision nobody has.
+  const revisionRef = useRef(revision);
+  useEffect(() => {
+    revisionRef.current = revision;
+  }, [revision]);
+  // Every change of the product fields saves itself, debounced; the page re-reads the product after each save.
+  const autosave = useAutosave<DetailDraft, never>({
+    equals: sameDetailDraft,
+    isValid: (value) => !detailDraftInvalid(value),
+    runtime: browserRuntime,
+    save: (value): Effect.Effect<AutosaveOutcome> => saveDetailEffect(value, product, revisionRef),
+    value: draft,
   });
+  const dirty = autosave.pending || isMovementDraftDirty(movementDraft);
+  const blocker = useBlocker({ enableBeforeUnload: () => dirty, shouldBlockFn: () => dirty, withResolver: true });
   const updateDraft = (patch: Partial<DetailDraft>) => {
     setEditableDraft((current) => ({ ...current, ...patch }));
   };
@@ -678,14 +511,11 @@ export const ProductDetailView = ({
     onBack();
   };
 
-  // After a detail save, an unsent movement keeps the page on the movement tab instead of being dropped.
-  const closeAfterSave = () => {
-    if (isMovementDraftDirty(movementDraftRef.current)) {
-      setTab('movements');
-      return;
-    }
-    allowNavigation.current = true;
-    onBack();
+  const handleRetry = autosave.retry;
+  const handleBlur = autosave.flush;
+  const handleReloadLatest = () => {
+    autosave.adopt(draftOf(product));
+    onReload();
   };
 
   return (
@@ -703,16 +533,7 @@ export const ProductDetailView = ({
                 {k('detail.back')}
               </Button>
               {canWrite && tab === 'detail' && (
-                <Button
-                  className="shrink-0 whitespace-nowrap"
-                  form={DETAIL_FORM_ID}
-                  isLoading={busy}
-                  loadingText={k('messages.saving')}
-                  type="submit"
-                  variant="primary"
-                >
-                  {k('common.save')}
-                </Button>
+                <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
               )}
             </div>
           }
@@ -743,6 +564,9 @@ export const ProductDetailView = ({
               <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="content">
                 Obsah e-shopu
               </Tabs.Trigger>
+              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="markets">
+                {k('markets.tab')}
+              </Tabs.Trigger>
               <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="prices">
                 {k('prices.tab')}
               </Tabs.Trigger>
@@ -754,17 +578,11 @@ export const ProductDetailView = ({
           </div>
           <Tabs.Content className="py-200" value="detail">
             <DetailForm
-              busy={busy}
               canWrite={canWrite}
               draft={draft}
-              onClose={() => requestClose(false)}
-              onCommitted={onCommitted}
+              onBlur={handleBlur}
               onDraftChange={updateDraft}
-              onReload={onReload}
-              onSaved={closeAfterSave}
               product={product}
-              revision={revision}
-              setBusy={setBusy}
             />
           </Tabs.Content>
           <Tabs.Content className="py-200" value="variants">
@@ -778,7 +596,15 @@ export const ProductDetailView = ({
               revision={revision}
             />
           </Tabs.Content>
-          <Tabs.Content className="py-200" value="eshop">
+          <Tabs.Content className="flex flex-col gap-250 py-200" value="eshop">
+            {/* Every staff writer curates product photos, also where catalog data stays with administrators. */}
+            <ProductImageGallery
+              canWrite={canMoveStock}
+              images={product.images ?? []}
+              onChanged={onReload}
+              productId={product.id}
+              productName={product.name}
+            />
             <EshopPanel
               {...(storefrontOrigin === undefined ? {} : { storefrontOrigin })}
               canWrite={canWrite}
@@ -796,6 +622,16 @@ export const ProductDetailView = ({
               category={category}
               hasCategoryTree={hasCategoryTree}
               key={`content-${DateTime.formatIso(product.updatedAt)}`}
+              onCommitted={onCommitted}
+              onReload={onReload}
+              product={product}
+              revision={revision}
+            />
+          </Tabs.Content>
+          <Tabs.Content className="py-200" value="markets">
+            <MarketsPanel
+              canManage={markets.canManage}
+              markets={markets.entries}
               onCommitted={onCommitted}
               onReload={onReload}
               product={product}

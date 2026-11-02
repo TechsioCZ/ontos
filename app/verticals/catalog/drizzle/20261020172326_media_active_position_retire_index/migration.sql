@@ -1,0 +1,1 @@
+DROP INDEX "catalog"."catalog_media_assignments_active_position_uk";

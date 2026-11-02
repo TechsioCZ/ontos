@@ -729,9 +729,6 @@ const ApprovalsQueue = ({
         <p className="text-fg-secondary text-sm">
           Návrhy změn od AI agentů ze všech modulů. Bez souhlasu člověka se nic nezmění.
         </p>
-        <Button disabled={actions.busy} onClick={refresh} size="sm" theme="outlined" variant="secondary">
-          Obnovit seznam
-        </Button>
       </div>
       <div className="ai-review-safety">
         <span aria-hidden className="icon-[mdi--shield-check-outline] size-250" />
@@ -741,9 +738,14 @@ const ApprovalsQueue = ({
         </p>
       </div>
       {response.unavailableModules.length > 0 && (
-        <StatusText aria-live="polite" showIcon status="warning">
-          {`Návrhy z modulů ${response.unavailableModules.join(', ')} se teď nepodařilo načíst. Obnovte prosím stránku za chvíli.`}
-        </StatusText>
+        <div className="flex flex-wrap items-center gap-150">
+          <StatusText aria-live="polite" showIcon status="warning">
+            {`Návrhy z modulů ${response.unavailableModules.join(', ')} se teď nepodařilo načíst.`}
+          </StatusText>
+          <Button disabled={actions.busy} onClick={refresh} size="sm" theme="outlined" variant="secondary">
+            Zkusit znovu
+          </Button>
+        </div>
       )}
       <QueueFilters
         filter={filter}

@@ -24,6 +24,7 @@ import { coreActionCatalog } from '../../packages/core-runtime/src/modules/actio
 import { deriveActionAuthorizationInstalledModuleScopes } from '../provision-current-action-authorization.mts';
 import { toIdentityNamespaceAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
+import { warmupAccounts } from './warmup-accounts.mts';
 import { Effect, Schema } from 'effect';
 
 import {
@@ -37,12 +38,16 @@ import {
 } from './fixture-ids.mts';
 
 const commerceModule = 'commerce.customer-context';
+/** Market retirement impact summary and Market owner reads of commerce-customer-context. */
+const marketCatalogRead = 'market.catalog.read';
 const pipelineModule = 'demo.sales-pipeline';
 const commercialAdministratorLabel = 'Vedoucí obchodu';
 
 const partyModule = 'party.registry';
 const workforceModule = 'demo.workforce';
 const operationsModule = 'facility.operations';
+const marketModule = 'commerce.market-catalog';
+const storefrontRegistryModule = 'commerce.storefront-registry';
 const tenantSuperadminRole = 'superadmin';
 const principalResource = 'core.principal';
 const crmReadAll = 'demo.crm.read_all';
@@ -71,6 +76,8 @@ export const demoModuleIds = [
   'demo.crm',
   'crm.activities',
   operationsModule,
+  marketModule,
+  storefrontRegistryModule,
 ] as const;
 export type DemoModuleId = (typeof demoModuleIds)[number];
 export const ModuleAccessSchema = Schema.Literals(['read', 'write']);
@@ -719,6 +726,8 @@ export const eshopDemoRoles = {
     },
     companyRole: 'admin',
     contextPermissions: {
+      // Market retirement impact summary (commerce-customer-context market-affected-use-assessment).
+      [commerceModule]: [marketCatalogRead],
       'privacy.core': ['privacy.processing_catalog.read', 'privacy.notice.read'],
     },
     label: eshopAdministratorLabel,
@@ -727,8 +736,11 @@ export const eshopDemoRoles = {
       [commerceModule]: 'read',
       'demo.merchandise': 'write',
       'demo.tagging': 'read',
+      // E-shops and their markets: the company administrator manages markets, associations and registrations.
+      [marketModule]: 'write',
       [partyModule]: 'write',
       'privacy.core': 'read',
+      [storefrontRegistryModule]: 'write',
       'work.tasks': 'write',
       [workforceModule]: 'write',
     },
@@ -750,23 +762,33 @@ export const eshopDemoRoles = {
       ],
     },
     label: 'AKROS storefront (API)',
-    modules: { [commerceModule]: 'read', 'demo.merchandise': 'write', 'work.tasks': 'write' },
+    // Market resolution for the locale paths (current-market-catalog, resolve-commerce-market).
+    modules: { [commerceModule]: 'read', 'demo.merchandise': 'write', [marketModule]: 'read', 'work.tasks': 'write' },
     restrictedModules: [commerceModule],
   },
   eshopAdmin: {
     companyRole: 'admin',
+    // Market retirement impact summary (commerce-customer-context market-affected-use-assessment).
+    contextPermissions: { [commerceModule]: [marketCatalogRead] },
     label: eshopAdministratorLabel,
     modules: {
       [commerceModule]: 'read',
       'demo.merchandise': 'write',
       'demo.tagging': 'read',
+      [marketModule]: 'write',
       [partyModule]: 'write',
+      [storefrontRegistryModule]: 'write',
       'work.tasks': 'write',
       [workforceModule]: 'write',
     },
     proposalReview: true,
   },
-  fulfilment: { label: 'Expedice', modules: { 'demo.merchandise': 'write' }, proposalReview: true },
+  fulfilment: {
+    label: 'Expedice',
+    // Read-only view of the e-shops and markets the orders come from.
+    modules: { 'demo.merchandise': 'write', [marketModule]: 'read', [storefrontRegistryModule]: 'read' },
+    proposalReview: true,
+  },
   /** Non-human storefront BFF: merchandise reads and the apply-command Action (PlaceStorefrontOrder). */
   storefront: { label: 'Storefront (API)', modules: { 'demo.merchandise': 'write' } },
 } as const satisfies Readonly<Record<string, DemoRole>>;
@@ -850,6 +872,11 @@ export const companyPermissionRelationships = (actions: readonly DemoAction[]): 
 
 /** Deliberate human affiliations only; role assignment never creates an SQL membership. */
 export const demoCompanyMemberships = [
+  ...warmupAccounts.map(({ legalEntityId, principalId }) => ({
+    affiliation: 'external' as const,
+    legalEntityId,
+    principalId,
+  })),
   ...demoHumanAccounts.map(({ principalId }) => ({
     affiliation: 'employee' as const,
     legalEntityId: demoLegalEntityId,
@@ -901,6 +928,24 @@ export const privacyConsentPrincipal = {
   displayName: 'Privacy · Commerce consent authority reader',
   legalEntityId: akrosDemoLegalEntityId,
   principalId: demoId(principalResource, 'privacy-consent-authority'),
+} as const;
+
+export const marketRetirementPrincipal = {
+  apiKeyName: 'market-retirement-authority',
+  displayName: 'Market · retirement authority',
+  legalEntityId: akrosDemoLegalEntityId,
+  principalId: demoId(principalResource, 'market-retirement-authority'),
+} as const;
+
+/**
+ * Kavárna's Market owner gateway: API keys are bound to one company, so Kavárna's markets validate their storefront
+ * (and reserve their retirement) through their own key (`ONTOS_COMMERCE_MARKET_CATALOG_COMPANY_GATEWAY_API_KEYS`).
+ */
+export const kavarnaMarketAuthorityPrincipal = {
+  apiKeyName: 'kavarna-market-authority',
+  displayName: 'Market · Kavárna owner gateway',
+  legalEntityId: eshopDemoLegalEntityId,
+  principalId: demoId(principalResource, 'kavarna-market-authority'),
 } as const;
 
 export const COMMERCE_PORTAL_NAMESPACE = 'ontos.commerce.portal.better-auth.v1';
@@ -983,6 +1028,67 @@ export const privacyConsentAuthorityRelationships = (actions: readonly DemoActio
     privacyConsentPrincipal.legalEntityId,
   );
 
+export const marketRetirementActionKeys: readonly string[] = ['commerce.customer-context.reserve-market-retirement'];
+
+/** Market reads share one permission; retirement execution is restricted to exact company-scoped descriptors. */
+const marketOwnerGatewayRelationships = (
+  { legalEntityId, principalId }: { readonly legalEntityId: string; readonly principalId: string },
+  actions: readonly DemoAction[],
+): readonly DemoRelationship[] => {
+  const marketModuleAccess = toModuleAccessObjectId(demoTenantId, legalEntityId, marketModule) ?? '';
+  const storefrontModuleAccess = toModuleAccessObjectId(demoTenantId, legalEntityId, storefrontRegistryModule) ?? '';
+  const roleId = toScopedRoleObjectId({
+    legalEntityId,
+    roleKey: demoPrincipalRoleKey(principalId),
+    tenantId: demoTenantId,
+  });
+  return [
+    ...principalRelationships(
+      principalId,
+      {
+        actionKeys: { [commerceModule]: marketRetirementActionKeys },
+        contextPermissions: { [commerceModule]: [marketCatalogRead] },
+        label: 'Market retirement authority',
+        modules: { [commerceModule]: 'read' },
+        restrictedModules: [commerceModule],
+      },
+      actions.filter(
+        ({ actionKey, legalEntityScope, owningModuleKey, provisioning }) =>
+          marketRetirementActionKeys.includes(actionKey) &&
+          owningModuleKey === commerceModule &&
+          legalEntityScope === 'required' &&
+          provisioning === 'explicit',
+      ),
+      legalEntityId,
+    ),
+    {
+      relation: 'legal_entity',
+      resourceId: marketModuleAccess,
+      resourceType: 'module_access',
+      subjectId: toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '',
+      subjectType: 'legal_entity',
+    },
+    // Both CCC reads check resource#read on a Market-owner resource linked to this exact company module.
+    // reader_role supplies module->read_all and module->access, never resource#write or Market Actions.
+    roleRelationship('module_access', marketModuleAccess, 'reader_role', roleId),
+    // The same Market owner gateway validates Storefront Application currentness before an association.
+    {
+      relation: 'legal_entity',
+      resourceId: storefrontModuleAccess,
+      resourceType: 'module_access',
+      subjectId: toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '',
+      subjectType: 'legal_entity',
+    },
+    roleRelationship('module_access', storefrontModuleAccess, 'reader_role', roleId),
+  ];
+};
+
+export const marketRetirementRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] =>
+  marketOwnerGatewayRelationships(marketRetirementPrincipal, actions);
+
+export const kavarnaMarketAuthorityRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] =>
+  marketOwnerGatewayRelationships(kavarnaMarketAuthorityPrincipal, actions);
+
 const intakeName = 'crm-party-intake';
 
 export const crmPartyIntakePrincipal = {
@@ -1007,6 +1113,38 @@ export const crmIntakeActionKeys: readonly string[] = [
   'demo.crm.apply-command',
 ];
 const crmIntakePermissions = [crmReadAll, crmWriteAll] as const;
+
+/**
+ * Tenant superadmin (obchod@demo.ontos): administrators can do everything, so in every company that uses the CRM
+ * (Obchodní firma, Nájempark, Velkoobchod Hanák) it opens `demo.crm` with the CRM manager permissions
+ * (`demo.crm.read_all` + `write_all` + `assign`) and its write Actions. Additive only: no SQL membership and no
+ * Tenant or company membership edge (the superadmin is already admitted to these companies).
+ */
+export const tenantAdministratorCrmLegalEntityIds: readonly string[] = [
+  demoLegalEntityId,
+  rentalDemoLegalEntityId,
+  crmDemoLegalEntityId,
+];
+export const tenantAdministratorCrmRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
+  const [administrator] = demoHumanAccounts;
+  return tenantAdministratorCrmLegalEntityIds.flatMap((legalEntityId) =>
+    principalRelationships(
+      administrator.principalId,
+      {
+        contextPermissions: { 'demo.crm': crmManagerPermissions },
+        label: 'Správce tenantu',
+        modules: { 'demo.crm': 'write' },
+      },
+      actions,
+      legalEntityId,
+      demoTenantId,
+      'tenant-administrator-crm',
+    ).filter(
+      (item) =>
+        !(item.relation === 'member' && (item.resourceType === 'tenant' || item.resourceType === 'legal_entity')),
+    ),
+  );
+};
 
 export const crmIntakeRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
   const { principalId } = crmPartyIntakePrincipal;
@@ -1100,6 +1238,9 @@ export const demoPermissionRelationships = (
   installation: DemoPermissionInstallation,
 ): readonly DemoRelationship[] => {
   const policy = [
+    ...warmupAccounts.flatMap(({ legalEntityId, principalId, role, roleKey }) =>
+      principalRelationships(principalId, role, [], legalEntityId, demoTenantId, roleKey),
+    ),
     ...demoHumanAccounts.flatMap((account) =>
       principalRelationships(account.principalId, demoRoles[account.role], actions),
     ),
@@ -1108,7 +1249,9 @@ export const demoPermissionRelationships = (
     ...companyPermissionRelationships(actions),
     ...commercePortalRelationships(actions),
     ...privacyConsentAuthorityRelationships(actions),
+    ...marketRetirementRelationships(actions),
     ...crmIntakeRelationships(actions),
+    ...tenantAdministratorCrmRelationships(actions),
   ];
   const all = [
     ...demoTopologyRelationships(actions, installation),

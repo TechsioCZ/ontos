@@ -1,13 +1,22 @@
 import { describe, expect, it } from 'effect-rstest';
-import { Schema } from 'effect';
-
-import { prepareCatalogQuantityHandoff } from '../../shared/domain/catalog-quantity-handoff.ts';
+import { Effect, Option, Schema } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import type { CatalogSelectionCurrentFacts } from '../../shared/domain/catalog-selection-assessment.ts';
 import {
+  CatalogSelectionBasisSchema,
+  CatalogSelectionMembershipSchema,
   CatalogSelectionSchema,
   CatalogSelectionEvidenceSchema,
   PackageDefinitionSelectionRevisionSchema,
   VariantSelectionRevisionSchema,
 } from '../../shared/domain/catalog-selection-evidence.ts';
+import { resolvePricingPurposeEquivalence } from '../../src/api/pricing-purpose-equivalence.read.ts';
+import { PricingPurposeEquivalenceRequestSchema } from '../../shared/apis/pricing-purpose-equivalence.ts';
+
+import {
+  assembleCatalogQuantityHandoff,
+  prepareCatalogQuantityHandoff,
+} from '../../shared/domain/catalog-quantity-handoff.ts';
 import { CatalogResourceRefSchema } from '../../shared/domain/catalog-revision-reference.ts';
 import type { CatalogSelectionEvidence } from '../../shared/domain/catalog-selection-evidence.ts';
 import type { PackageContentRevision, PackageResolution } from '../../shared/domain/package-content.ts';
@@ -217,3 +226,293 @@ describe('Catalog quantity handoff', () => {
     ).toBe('READY');
   });
 });
+
+it('keeps material Quantity identity stable across fresh membership attestations', () => {
+  const basis = {
+    contentPath: [
+      {
+        amount: '10',
+        configurationKey: null,
+        lowerCount: null,
+        packageDefinitionId: packageRef.resourceId,
+        revision: 1,
+        unitId: unitRef.resourceId,
+      },
+    ],
+    productRevision: 1,
+    unit: {
+      divisible: false,
+      id: unitRef.resourceId,
+      rounding: 'UP' as const,
+      ruleRevision: 1,
+      step: '1',
+      targetDivisibilityRevision: 1,
+    },
+    variantRevision: 1,
+  };
+  expect(evidence.status).toBe('VALID');
+  if (evidence.status !== 'VALID') {
+    return;
+  }
+  const current: CatalogSelectionCurrentFacts = {
+    assessedAt: evidence.assessedAt,
+    basis: evidence.basis,
+    dependentFactsComplete: true,
+    membership: evidence.membership,
+    productLifecycle: 'ACTIVE',
+    purpose: evidence.purpose,
+    selection,
+    source: 'CATALOG_OWNER_CURRENT_READ',
+    status: 'OBSERVED',
+    variantLifecycle: 'ACTIVE',
+  };
+  const first = assembleCatalogQuantityHandoff({ basis, current, quantity, selection });
+  const observedAt = '2026-09-17T12:00:01.000Z';
+  const next = {
+    ...current,
+    assessedAt: observedAt,
+    membership: Schema.decodeUnknownSync(CatalogSelectionMembershipSchema)({
+      ...current.membership,
+      attestationId: '88888888-8888-4888-8888-888888888888',
+      observedAt,
+    }),
+  };
+  const fresh = assembleCatalogQuantityHandoff({ basis, current: next, quantity, selection });
+  expect(first.status).toBe('READY');
+  expect(fresh.status).toBe('READY');
+  if (first.status !== 'READY' || fresh.status !== 'READY') {
+    return;
+  }
+  expect(first.evidence).not.toEqual(fresh.evidence);
+  expect(first.ownerRevision).toBe(fresh.ownerRevision);
+});
+
+// Owner-local unit facts only; public Cart-backed Configuration production is a separate prerequisite.
+const configuredMaterialInput = (observedAt = '2026-10-01T12:00:00.000Z', attestationId = 'observation-initial') => {
+  const configured = Schema.decodeUnknownSync(CatalogSelectionSchema)({
+    configuration: {
+      choices: [{ choiceKey: 'mount', value: 'A' }],
+      definition: {
+        resourceRef: ref('commerce.catalog.configuration-definition', '88888888-8888-4888-8888-888888888888'),
+        revision: 1,
+      },
+      productRef,
+      variantRef,
+    },
+    productRef,
+    variantRef,
+  });
+  const materialBasis = Schema.decodeUnknownSync(Schema.Array(CatalogSelectionBasisSchema))([
+    { role: 'PRODUCT', source: { resourceRef: productRef, revision: 1 } },
+    { role: 'VARIANT', source: variantRevision },
+    {
+      provenance: 'CATALOG_OWNER_CONFIRMED_UNTYPED_DECISION',
+      role: 'PRODUCT_TYPE_UNTYPED_DECISION',
+      source: { resourceRef: productRef, revision: 1 },
+    },
+    { role: 'CONFIGURATION_DEFINITION', source: configured.configuration?.definition },
+    { role: 'UNIT_RULE', source: { resourceRef: unitRef, revision: 1 } },
+    { role: 'UNIT_TARGET_DIVISIBILITY', source: { resourceRef: variantRef, revision: 1 } },
+    {
+      role: 'CATEGORY',
+      source: {
+        resourceRef: ref('commerce.catalog.product-category', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+        revision: 1,
+      },
+    },
+  ]);
+  const current: Extract<CatalogSelectionCurrentFacts, { status: 'OBSERVED' }> = {
+    assessedAt: observedAt,
+    basis: materialBasis,
+    dependentFactsComplete: true,
+    membership: Schema.decodeUnknownSync(CatalogSelectionMembershipSchema)({
+      attestationId,
+      observedAt,
+      productRef,
+      source: 'CATALOG_OWNER_CURRENT_READ',
+      variant: variantRevision,
+    }),
+    productLifecycle: 'ACTIVE',
+    purpose: 'PRICING',
+    selection: configured,
+    source: 'CATALOG_OWNER_CURRENT_READ',
+    status: 'OBSERVED',
+    validUntil: '2026-10-02T00:00:00.000Z',
+    variantLifecycle: 'ACTIVE',
+  };
+  return {
+    basis: {
+      contentPath: [],
+      productRevision: 1,
+      unit: {
+        divisible: false,
+        id: unitRef.resourceId,
+        rounding: 'UP' as const,
+        ruleRevision: 1,
+        step: '1',
+        targetDivisibilityRevision: 1,
+      },
+      variantRevision: 1,
+    },
+    current,
+    quantity: { ...quantity, targetId: variantRef.resourceId },
+    selection: configured,
+  };
+};
+
+it('retains every membership material field and all source, hierarchy, quantity and Unit inputs', () => {
+  const original = configuredMaterialInput();
+  const stable = assembleCatalogQuantityHandoff(original);
+  expect(stable.status).toBe('READY');
+  if (stable.status !== 'READY') {
+    return;
+  }
+  const { current } = original;
+  for (const membership of [
+    { ...current.membership, productRef: { ...current.membership.productRef, resourceId: packageRef.resourceId } },
+    {
+      ...current.membership,
+      variant: {
+        ...current.membership.variant,
+        resourceRef: { ...variantRevision.resourceRef, resourceId: packageRef.resourceId },
+      },
+    },
+    {
+      ...current.membership,
+      variant: {
+        ...current.membership.variant,
+        revision: Schema.decodeUnknownSync(VariantSelectionRevisionSchema)({ ...variantRevision, revision: 2 })
+          .revision,
+      },
+    },
+    Schema.decodeUnknownSync(CatalogSelectionMembershipSchema)({
+      ...current.membership,
+      productRef: { ...productRef, tenantId: '99999999-9999-4999-8999-999999999999' },
+      variant: { ...variantRevision, resourceRef: { ...variantRef, tenantId: '99999999-9999-4999-8999-999999999999' } },
+    }),
+  ]) {
+    expect(assembleCatalogQuantityHandoff({ ...original, current: { ...current, membership } }).status).toBe(
+      'UNVERIFIABLE',
+    );
+  }
+  expect(
+    Option.isNone(
+      Schema.decodeUnknownOption(CatalogSelectionMembershipSchema)({
+        ...current.membership,
+        source: 'UNTRUSTED_SOURCE',
+      }),
+    ),
+  ).toBe(true);
+  for (const fact of current.basis) {
+    const changed = assembleCatalogQuantityHandoff({
+      ...original,
+      current: {
+        ...current,
+        basis: current.basis.map((entry) =>
+          entry === fact
+            ? Schema.decodeUnknownSync(CatalogSelectionBasisSchema)({
+                ...entry,
+                source: { ...entry.source, revision: entry.source.revision + 1 },
+              })
+            : entry,
+        ),
+      },
+    });
+    if (changed.status === 'READY') {
+      expect(changed.ownerRevision).not.toBe(stable.ownerRevision);
+    } else {
+      expect(['INVALID', 'UNVERIFIABLE', 'STALE']).toContain(changed.status);
+    }
+  }
+  for (const basis of [
+    { ...original.basis, productRevision: 2 },
+    { ...original.basis, variantRevision: 2 },
+    { ...original.basis, setCompositionRevision: 2 },
+    { ...original.basis, unit: { ...original.basis.unit, rounding: 'DOWN' as const } },
+    { ...original.basis, unit: { ...original.basis.unit, step: '2' } },
+    { ...original.basis, unit: { ...original.basis.unit, divisible: true } },
+    { ...original.basis, unit: { ...original.basis.unit, ruleRevision: 2 } },
+    { ...original.basis, unit: { ...original.basis.unit, targetDivisibilityRevision: 2 } },
+  ]) {
+    const changed = assembleCatalogQuantityHandoff({ ...original, basis });
+    if (changed.status === 'READY') {
+      expect(changed.ownerRevision).not.toBe(stable.ownerRevision);
+    } else {
+      expect(['INVALID', 'UNVERIFIABLE', 'STALE']).toContain(changed.status);
+    }
+  }
+  const changedQuantity = assembleCatalogQuantityHandoff({
+    ...original,
+    quantity: { ...original.quantity, requested: '3', resulting: '3' },
+  });
+  expect(changedQuantity.status).toBe('READY');
+  if (changedQuantity.status === 'READY') {
+    expect(changedQuantity.ownerRevision).not.toBe(stable.ownerRevision);
+  }
+});
+
+it.effect('revalidates freshly assembled finite handoffs with stable real equivalence generation', () =>
+  Effect.gen(function* freshMaterialEquivalence() {
+    const original = configuredMaterialInput();
+    const supplied = assembleCatalogQuantityHandoff(original);
+    expect(supplied.status).toBe('READY');
+    if (supplied.status !== 'READY') {
+      return;
+    }
+    const request = Schema.decodeUnknownSync(PricingPurposeEquivalenceRequestSchema)({
+      anchorSelection: supplied.selection,
+      effectiveAt: '2026-10-01T12:00:01.000Z',
+      members: [{ handoff: supplied, occurrenceId: 'line-1' }],
+    });
+    let serial = 0;
+    const prepare = () =>
+      Effect.sync(() => {
+        serial += 1;
+        return assembleCatalogQuantityHandoff(
+          configuredMaterialInput(`2026-10-01T12:00:0${serial + 1}.000Z`, `fresh-observation-${serial}`),
+        );
+      });
+    const first = yield* resolvePricingPurposeEquivalence(request, { prepare });
+    const replay = yield* resolvePricingPurposeEquivalence(request, { prepare });
+    expect(serial).toBe(4);
+    expect(first.outcome).toBe('CATALOG_EQUIVALENCE_CONFIRMED');
+    expect(replay.outcome).toBe('CATALOG_EQUIVALENCE_CONFIRMED');
+    if (first.outcome !== 'CATALOG_EQUIVALENCE_CONFIRMED' || replay.outcome !== 'CATALOG_EQUIVALENCE_CONFIRMED') {
+      return;
+    }
+    expect(replay.generation).toBe(first.generation);
+    expect(replay.currentness.validThrough).toBe('2026-10-02T00:00:00.000Z');
+    expect(replay.verificationReceipt.verificationRef).not.toBe(first.verificationReceipt.verificationRef);
+    const revised = configuredMaterialInput('2026-10-01T12:00:06.000Z', 'material-revised');
+    revised.current = {
+      ...revised.current,
+      basis: revised.current.basis.map((fact) =>
+        fact.role === 'PRODUCT'
+          ? Schema.decodeUnknownSync(CatalogSelectionBasisSchema)({ ...fact, source: { ...fact.source, revision: 2 } })
+          : fact,
+      ),
+    };
+    const stale = yield* resolvePricingPurposeEquivalence(request, {
+      prepare: () => Effect.succeed(assembleCatalogQuantityHandoff(revised)),
+    });
+    expect(stale.outcome).toBe('CATALOG_EQUIVALENCE_STALE');
+    const { validUntil: _end, ...withoutEnd } = revised.current;
+    const unbounded = assembleCatalogQuantityHandoff({
+      ...original,
+      current: { ...withoutEnd, basis: original.current.basis },
+    });
+    expect(unbounded.status).toBe('READY');
+    const noInterval = yield* resolvePricingPurposeEquivalence(request, { prepare: () => Effect.succeed(unbounded) });
+    expect(noInterval.outcome).toBe('CATALOG_EQUIVALENCE_UNVERIFIABLE');
+    const expired = configuredMaterialInput('2026-10-02T00:00:00.000Z', 'boundary-observation');
+    expect(assembleCatalogQuantityHandoff(expired).status).toBe('UNVERIFIABLE');
+    expect(
+      Option.isNone(
+        Schema.decodeUnknownOption(PricingPurposeEquivalenceRequestSchema)({
+          ...request,
+          effectiveAt: original.current.validUntil,
+        }),
+      ),
+    ).toBe(true);
+  }).pipe(Effect.provide(NodeCrypto.layer)),
+);

@@ -60,7 +60,10 @@ export const CustomerPaymentTermEntitlementSchema = Schema.Struct({
   cancelledAt: Schema.optionalKey(PaymentTermsTimestampSchema),
   effectiveFrom: PaymentTermsTimestampSchema,
   effectiveTo: Schema.optionalKey(PaymentTermsTimestampSchema),
+  endedAt: Schema.optionalKey(PaymentTermsTimestampSchema),
   entitlementRef: CustomerPaymentTermEntitlementRefSchema,
+  // Absent preserves unknown legacy provenance; null is a proven originally open grant.
+  originalEffectiveTo: Schema.optionalKey(Schema.Union([PaymentTermsTimestampSchema, Schema.Null])),
   paymentTermRef: PaymentTermReferenceSchema,
   semanticRevisionId: PaymentTermDefinitionSnapshotSchema.fields.semanticRevisionId,
   status: Schema.Literals(['ACTIVE', 'CANCELLED']),

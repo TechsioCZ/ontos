@@ -39,6 +39,7 @@ import { createContext, use, useState } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { legalEntityOf, usePageData } from '../../../../runtime/use-page-data.ts';
+import type { WorkforceCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { Employee, EmployeeRole, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import csResource from '../../../../../locales/cs/workforce.json';
 import enResource from '../../../../../locales/en/workforce.json';
@@ -48,7 +49,7 @@ import { AiActivityCard } from './ai-activity-card.tsx';
 import { aiActivityData, employeeTagsData, employeesData } from './employees-data.ts';
 import type { EmployeeTags, EmployeesLoadError } from './employees-data.ts';
 import { BulkDepartmentDialog, BulkRoleDialog, EmployeeFormDialog, selectLabelProps } from './employee-dialogs.tsx';
-import type { CommitCommand, ShownEdit } from './employee-dialogs.tsx';
+import type { AutosaveCommand, CommitCommand, ShownEdit } from './employee-dialogs.tsx';
 import type { CommitOutcome, EmployeeFilters } from './employee-model.ts';
 import {
   allOption,
@@ -58,6 +59,7 @@ import {
   employeeRoles,
   filterEmployees,
   hasActiveFilters,
+  isCommitOutcome,
   newRequestToken,
   noFilters,
   roleFromValue,
@@ -185,6 +187,40 @@ const outcomeOfFailure = (error: Effect.Error<ReturnType<typeof executeApplyComm
     Match.tag('ApplyCommandActionForbiddenProblem', (): CommitOutcome => 'forbidden'),
     Match.orElse((): CommitOutcome => 'failed'),
   );
+
+const execute = (command: WorkforceCommand, expectedRevision: number) =>
+  newRequestToken.pipe(
+    Effect.flatMap((token) =>
+      executeApplyCommand({ command, expectedRevision }, `workforce:command:${token}`, {
+        idempotencyKey: `workforce:${token}`,
+      }),
+    ),
+  );
+
+/** Autosave of the edit panel: the draft's base revision, no toast; the saved fields show on the row right away. */
+const autosaveCommitOf =
+  (reload: () => void, showSaved: (shown: ShownEdit) => void): AutosaveCommand =>
+  (command, expectedRevision, shown) =>
+    execute(command, expectedRevision).pipe(
+      Effect.match({
+        onFailure: outcomeOfFailure,
+        onSuccess: (response): CommitOutcome | number => response.revision,
+      }),
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          if (!isCommitOutcome(result)) {
+            showSaved(shown);
+          }
+          if (result === 'conflict' || !isCommitOutcome(result)) {
+            reload();
+          }
+        }),
+      ),
+    );
+
+/** The open panel's Employee as the list has it now, so live rereads reach the edit panel. */
+const currentEmployee = (items: readonly Employee[], opened: Employee | null): Employee | null =>
+  opened === null ? null : (items.find(({ id }) => id === opened.id) ?? opened);
 
 /** The list after a saved edit: the named rows show the saved fields. The reread that follows brings the server's values. */
 const withSavedEdit = (data: RecordsResponse, shown: ShownEdit): RecordsResponse => {
@@ -499,21 +535,15 @@ const EmployeesPageContent = ({ legalEntityId }: { readonly legalEntityId: strin
   const showSaved = (shown: ShownEdit) => employeesData.update(legalEntityId, (data) => withSavedEdit(data, shown));
 
   /** Sends one command on the revision the page last read. A conflict or a success reloads the list. */
+  const autosaveCommit = autosaveCommitOf(reload, showSaved);
+
   const commit: CommitCommand = (build, successKey, shown) => {
     if (state.status !== 'ready') {
       return Effect.succeed<CommitOutcome>('failed');
     }
     const { revision } = state.data;
     return build.pipe(
-      Effect.flatMap((command) =>
-        newRequestToken.pipe(
-          Effect.flatMap((token) =>
-            executeApplyCommand({ command, expectedRevision: revision }, `workforce:command:${token}`, {
-              idempotencyKey: `workforce:${token}`,
-            }),
-          ),
-        ),
-      ),
+      Effect.flatMap((command) => execute(command, revision)),
       Effect.match({
         onFailure: outcomeOfFailure,
         onSuccess: (): CommitOutcome => 'saved',
@@ -733,10 +763,12 @@ const EmployeesPageContent = ({ legalEntityId }: { readonly legalEntityId: strin
 
       {form !== null && (
         <EmployeeFormDialog
+          autosaveCommit={autosaveCommit}
           availablePrincipals={data?.availablePrincipals ?? []}
           commit={commit}
-          employee={form.employee}
+          employee={currentEmployee(items, form.employee)}
           onClose={() => setForm(null)}
+          revision={data?.revision ?? 0}
         />
       )}
       <BulkTagDialog

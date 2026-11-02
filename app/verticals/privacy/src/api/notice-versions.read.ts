@@ -3,6 +3,7 @@ import type { ReadLoadContext } from '@app/core-runtime';
 import { ReadHandlerUnavailable, defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect } from 'effect';
 import { NoticeVersionsRequestSchema, NoticeVersionsResponseSchema } from '../../shared/apis/notice-versions.ts';
+import { comparePrivacyNoticeInstants } from '../../shared/domain/privacy-notice-version.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 
@@ -56,8 +57,9 @@ export const noticeVersionsRead = defineRead(
           (version) =>
             (noticeRefs.size === 0 || noticeRefs.has(version.noticeRef.resourceId)) &&
             (languages.size === 0 || languages.has(version.language)) &&
-            version.effectiveFrom <= input.asOf &&
-            (version.effectiveTo === null || input.asOf < version.effectiveTo),
+            (comparePrivacyNoticeInstants(version.effectiveFrom, input.asOf) ?? Number.NaN) <= 0 &&
+            (version.effectiveTo === null ||
+              (comparePrivacyNoticeInstants(input.asOf, version.effectiveTo) ?? Number.NaN) < 0),
         );
         return {
           evidence: { resultCount: items.length },

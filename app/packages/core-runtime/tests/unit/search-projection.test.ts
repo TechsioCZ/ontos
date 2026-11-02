@@ -239,6 +239,31 @@ it.effect('Core Search identifies alias-only matches while canonical evidence ta
   });
 });
 
+it.effect('Core Search matches regardless of case and Czech diacritics in either direction', () => {
+  const store = makeInMemoryCoreSearchProjectionStore();
+  return Effect.gen(function* testDiacriticsInsensitiveMatches() {
+    const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
+    yield* store.apply({ document: party({ title: 'Jana Dvořáková' }), kind: 'upsert' }, workerContext());
+    const titles = (query: string) =>
+      runtime
+        .search(
+          {
+            includeArchived: false,
+            moduleId: partyRef.moduleId,
+            query,
+            resourceType: partyRef.resourceType,
+            tenantId,
+          },
+          searchScope(tenantId),
+        )
+        .pipe(Effect.map((hits) => hits.map(({ title }) => title)));
+    expect(yield* titles('dvorakova')).toEqual(['Jana Dvořáková']);
+    expect(yield* titles('DVOŘÁK')).toEqual(['Jana Dvořáková']);
+    expect(yield* titles('Dvořákova')).toEqual(['Jana Dvořáková']);
+    expect(yield* titles('dvorska')).toEqual([]);
+  });
+});
+
 it.effect('Core Search rejects cross-tenant aliases and malformed or oversized temporal evidence', () => {
   const store = makeInMemoryCoreSearchProjectionStore();
   const invalidEvidence = [

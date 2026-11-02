@@ -26,15 +26,17 @@
   },
   "dependencies": {
     "@app/catalog": "workspace:*",
+    "@app/commerce-cart-finalization-contracts": "workspace:*",
     "@app/commerce-customer-context": "workspace:*",
     "@app/commerce-market-catalog": "workspace:*",
+    "@app/commerce-order-contracts": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/price-group-catalog-contracts": "workspace:*",
     "@app/pricing-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
-    "@effect/platform-node": "4.0.5",
-    "@effect/sql-pg": "4.0.5",
+    "@effect/platform-node": "4.0.7",
+    "@effect/sql-pg": "4.0.7",
     "@modern-js/backend-federation-contracts": "catalog:ultramodern",
     "@modern-js/bff-effect": "catalog:ultramodern",
     "@modern-js/plugin-bff": "catalog:ultramodern",
@@ -42,9 +44,10 @@
     "@module-federation/runtime": "npm:@bleedingdev/mf-runtime@2.9.3",
     "@noble/hashes": "2.2.0",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "effect": "4.0.5"
+    "effect": "4.0.7"
   },
   "devDependencies": {
+    "@app/party-registry-identity-contracts": "workspace:*",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
     "@modern-js/plugin-bff-build-extensions": "catalog:ultramodern",
@@ -58,7 +61,7 @@
   },
   "modernjs": {
     "preset": "presetUltramodern",
-    "role": "module-federation-remote",
+    "role": "api-only",
     "appId": "pricing",
     "topology": "../../topology/reference-topology.json",
     "apiRuntime": "effect",

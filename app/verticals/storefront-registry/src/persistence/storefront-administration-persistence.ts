@@ -1,9 +1,7 @@
 import type { ReadServiceFactory, ScopedRoutineInvocationError, ScopedRoutineInvoker } from '@app/core-runtime';
 import { PersistenceFailure, defineScopedRoutine } from '@app/core-runtime';
-import type {
-  RegisterStorefrontApplicationPayload,
-  ReviseStorefrontApplicationPayload,
-} from '../../shared/action-contracts.ts';
+import type { RegisterStorefrontApplicationPayload } from '../../shared/actions/register-storefront-application.ts';
+import type { ReviseStorefrontApplicationPayload } from '../../shared/actions/revise-storefront-application.ts';
 import { StorefrontApplicationResourceIdSchema } from '../../shared/resources/storefront-application.ts';
 import { Effect, Schema } from 'effect';
 

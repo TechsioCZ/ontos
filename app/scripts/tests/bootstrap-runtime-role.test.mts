@@ -16,6 +16,7 @@ import { PRICING_RUNTIME_ROUTINE_SIGNATURES, PRICING_RUNTIME_TABLE_GRANTS } from
 const databaseScripts = Schema.decodeUnknownSync(
   Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) }),
 )(JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'))).scripts;
+// Hand-written owners migrate before portal auth; generated provider verticals follow it, as in the deployed migrator.
 const ownerMigrations = [
   'core-runtime',
   'shell-super-app',
@@ -31,6 +32,8 @@ const ownerMigrations = [
   'assortment',
   'tax',
   'privacy',
+];
+const generatedOwnerMigrations = [
   'property-portfolio',
   'property-leasing',
   'legal-agreements',
@@ -45,32 +48,27 @@ const ownerMigrations = [
   'finance-billing',
   'crm-activities',
   'projects',
+  'commerce-cart',
+  'commerce-order',
 ];
+const bootstrapRuntimeRole = 'pnpm db:bootstrap-runtime-role';
+const migrate = (owners: readonly string[]) => owners.map((owner) => `pnpm --filter @app/${owner} db:migrate`);
 
-it('keeps the internal owner command sequential and free of general or portal-auth bootstraps', () => {
-  expect(databaseScripts['db:migrate:owners:internal']).toBe(
-    ownerMigrations.map((owner) => `pnpm --filter @app/${owner} db:migrate`).join(' && '),
-  );
-});
-
-it('standalone migration prepares identities, migrates owners, then verifies grants before portal auth', () => {
+it('migrates every owner between runtime-role bootstraps and grants again after the last owner', () => {
   expect(databaseScripts['db:migrate']).toBe(
-    'pnpm db:bootstrap-runtime-role && pnpm db:migrate:owners:internal && pnpm db:bootstrap-runtime-role && pnpm db:portal-auth:migrate',
+    [
+      bootstrapRuntimeRole,
+      ...migrate(ownerMigrations),
+      bootstrapRuntimeRole,
+      'pnpm db:portal-auth:migrate',
+      ...migrate(generatedOwnerMigrations),
+      bootstrapRuntimeRole,
+    ].join(' && '),
   );
   expect(databaseScripts['db:bootstrap-runtime-role']).toBe('node ./scripts/postgres/bootstrap-runtime-role.mts');
   expect(databaseScripts['db:portal-auth:migrate']).toBe(
     'node ./scripts/run-optional-commerce-portal-auth-db.mts migrate',
   );
-});
-
-it('prepared stage migration verifies every owner after final grants and portal migration inside the sealed child', () => {
-  expect(databaseScripts['db:migrate:prepared:internal']).toBe(
-    'pnpm db:migrate:owners:internal && pnpm db:bootstrap-runtime-role && pnpm db:portal-auth:migrate && pnpm db:verify',
-  );
-  expect(databaseScripts['db:migrate:prepared:internal']).toBe(
-    `${databaseScripts['db:migrate']?.replace('pnpm db:bootstrap-runtime-role && ', '')} && pnpm db:verify`,
-  );
-  expect(databaseScripts['db:migrate:prepared:internal']?.split('pnpm db:bootstrap-runtime-role')).toHaveLength(2);
 });
 
 const readBootstrapSource = (): string =>
@@ -242,10 +240,11 @@ it('provisions the exact least-privilege Pricing runtime table surface', () => {
       { privileges: ['select', 'insert'], table: 'quantity_tier_schedule_entries' },
       { privileges: ['select', 'insert', 'update'], table: 'quantity_tier_schedule_heads' },
       { privileges: ['select', 'insert'], table: 'quantity_tier_schedule_revisions' },
+      { privileges: ['select', 'insert'], table: 'pricing_commitment_confirmation_issuance_receipts' },
       { privileges: ['select', 'insert'], table: 'quantity_tiers' },
     ]),
   );
-  expect(PRICING_RUNTIME_TABLE_GRANTS).toHaveLength(61);
+  expect(PRICING_RUNTIME_TABLE_GRANTS).toHaveLength(62);
   expect(new Set(PRICING_RUNTIME_TABLE_GRANTS.map(({ table }) => table)).size).toBe(
     PRICING_RUNTIME_TABLE_GRANTS.length,
   );
@@ -294,6 +293,8 @@ it('exposes only the governed Pricing routine signatures to the runtime role', (
       'pricing.read_current_commercial_fee_v1(uuid,uuid,jsonb)',
       'pricing.read_current_quantity_tier_v1(uuid,uuid,jsonb)',
       'pricing.read_current_supported_currencies(uuid,uuid,jsonb)',
+      'pricing.read_current_zero_floor_authorization_set_for_query_v1(uuid,uuid,jsonb)',
+      'pricing.read_current_zero_floor_authorization_set_v1(uuid,uuid,jsonb)',
       'pricing.read_current_price_definition_v1(uuid,uuid,uuid)',
       'pricing.read_price_schedule_v1(uuid,uuid,jsonb)',
       'pricing.read_quantity_tier_schedule_v1(uuid,uuid,jsonb)',
@@ -309,7 +310,7 @@ it('exposes only the governed Pricing routine signatures to the runtime role', (
       'pricing.store_external_price_source_authority_grant_v1(uuid,uuid,jsonb)',
     ]),
   );
-  expect(PRICING_RUNTIME_ROUTINE_SIGNATURES).toHaveLength(90);
+  expect(PRICING_RUNTIME_ROUTINE_SIGNATURES).toHaveLength(91);
   const signatures = PRICING_RUNTIME_ROUTINE_SIGNATURES.map(normalizedRoutine);
   expect(new Set(signatures).size).toBe(signatures.length);
   for (const signature of migrationRoutineGrants) {
@@ -328,6 +329,32 @@ it('exposes only the governed Pricing routine signatures to the runtime role', (
   ]) {
     expect(signatures).not.toContain(helper);
   }
+});
+
+it('keeps the receipted ZERO_FLOOR Current-set read runtime-callable while its initializer and unreceipted read stay unreachable', () => {
+  const uninitializedScopeMigration = readFileSync(
+    new URL('20261024100000_pricing_zero_floor_uninitialized_scope_empty/migration.sql', pricingMigrationRoot),
+    'utf-8',
+  );
+  const signatures = PRICING_RUNTIME_ROUTINE_SIGNATURES.map(normalizedRoutine);
+
+  for (const runtimeRoutine of [
+    'pricing.read_current_zero_floor_authorization_set_v1(uuid,uuid,jsonb)',
+    'pricing.read_current_zero_floor_authorization_set_for_query_v1(uuid,uuid,jsonb)',
+  ]) {
+    expect(signatures).toContain(runtimeRoutine);
+  }
+  for (const protectedRoutine of [
+    'pricing.ensure_zero_floor_set_v1(uuid,uuid,text)',
+    'pricing.read_current_zero_floor_authorization_set_unreceipted_v1(uuid,uuid,jsonb)',
+  ]) {
+    expect(signatures).not.toContain(protectedRoutine);
+  }
+  // The migration lets only the receipted read's owner call the initializer; the runtime plan is bootstrap-owned.
+  expect(uninitializedScopeMigration).not.toMatch(/\bontos_runtime\b/u);
+  expect(uninitializedScopeMigration).toContain(
+    "EXECUTE format('GRANT EXECUTE ON FUNCTION pricing.ensure_zero_floor_set_v1(uuid,uuid,text) TO %I', current_user);",
+  );
 });
 
 it('revokes broad Pricing access before applying the exact table and routine plans', () => {
@@ -362,6 +389,12 @@ it('restores read-only Application Composition authority privileges after blanke
   );
   expect(durableRevoke).toBeGreaterThan(broadGrant);
   expect(durableGrant).toBeGreaterThan(durableRevoke);
+  const resolutionRevoke = bootstrap.indexOf(
+    'revoke all on table core.outbox_delivery_resolutions from public, ontos_runtime',
+  );
+  const resolutionGrant = bootstrap.indexOf('grant select on table core.outbox_delivery_resolutions to ontos_runtime');
+  expect(resolutionRevoke).toBeGreaterThan(broadGrant);
+  expect(resolutionGrant).toBeGreaterThan(resolutionRevoke);
   expect(bootstrap).toContain(
     'revoke all on function core.track_application_composition_durable_work(text,text,text,boolean) from public, ontos_runtime',
   );

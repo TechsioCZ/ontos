@@ -1,3 +1,4 @@
+import type { RevisionedSaveResult } from '@app/admin-ui';
 import { matchesSearch } from '@app/admin-ui';
 import { Effect, Option, Random, Schema, Struct } from 'effect';
 import {
@@ -203,3 +204,12 @@ export const newEmployeeId: Effect.Effect<EmployeeId> = Effect.all(
 
 export const CommitOutcomeSchema = Schema.Literals(['saved', 'conflict', 'duplicateEmail', 'forbidden', 'failed']);
 export type CommitOutcome = typeof CommitOutcomeSchema.Type;
+export const isCommitOutcome = Schema.is(CommitOutcomeSchema);
+
+/** Maps a commit result of the edit panel onto autosave: a revision means saved. */
+export const employeeAutosaveResult = (result: CommitOutcome | number): RevisionedSaveResult => {
+  if (!isCommitOutcome(result)) {
+    return result;
+  }
+  return result === 'saved' || result === 'conflict' ? result : 'failed';
+};

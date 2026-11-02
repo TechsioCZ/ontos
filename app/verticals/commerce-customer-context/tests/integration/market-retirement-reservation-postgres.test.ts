@@ -23,6 +23,7 @@ import {
   MarketRetirementReservationConflictError,
   marketAffectedUseAssessmentRepositoryForInvoker,
   marketRetirementReservationForTransaction,
+  marketRetirementReservationServicesForInvoker,
 } from '../../src/persistence/market-retirement-persistence.ts';
 
 const firstTenantId = 'e4100000-0000-4000-8000-000000000001';
@@ -582,6 +583,27 @@ it.live('makes COMMIT terminal and idempotent for the exact Action retry', () =>
 
       expect(committed).toMatchObject({ lifecycle: 'COMMITTED', reservationVersion: 2 });
       expect(retried).toEqual(committed);
+
+      // A RESERVE replay that only learned `action_already_committed` recovers exactly this reservation.
+      const recoverReservation = (
+        marketRef: ReserveMarketRetirementResult['marketRef'],
+        reservationInvocationId: string,
+      ) =>
+        inOwnerScope(runtime, secondTenantId, secondLegalEntityId, (transaction) =>
+          marketRetirementReservationServicesForInvoker(
+            invokerFor(transaction, secondTenantId, secondLegalEntityId),
+          ).readByReservationInvocation({ marketRef, reservationInvocationId, tenantId: secondTenantId }),
+        );
+      expect(yield* recoverReservation(reservation.marketRef, actionInvocationIds.firstReserve)).toEqual(
+        Option.some(committed),
+      );
+      expect(yield* recoverReservation(reservation.marketRef, actionInvocationIds.commit)).toEqual(Option.none());
+      expect(
+        yield* recoverReservation(
+          { ...reservation.marketRef, resourceId: 'another-market' },
+          actionInvocationIds.firstReserve,
+        ),
+      ).toEqual(Option.none());
 
       const committedBootstrapWrite = yield* Effect.exit(
         mutateBootstrapReference(admin, secondTenantId, secondLegalEntityId, secondMarketId),

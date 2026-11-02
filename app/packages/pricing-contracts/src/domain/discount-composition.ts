@@ -280,7 +280,7 @@ export const PricingDiscountCompositionRequestSchema = Schema.Struct({
     if (
       currencySupport.tenantId !== decision.tenantId ||
       currencySupport.effectiveAt !== decision.operationTime ||
-      currencySupport.currentnessEvidence.evaluatedAt !== decision.operationTime ||
+      currencySupport.currentnessEvidence.evaluatedAt < decision.operationTime ||
       currencySupport.currentnessEvidence.evaluationMode !== 'CURRENT_WITH_REVALIDATION'
     ) {
       return 'Currency Support must be Current for the exact Pricing Decision Tenant and operation instant';

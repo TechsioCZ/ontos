@@ -50,6 +50,7 @@
   },
   "contract": {
     "section": "Contract details",
+    "required": "Fill in the contract type, the owner and at least one party, or change the document category.",
     "parties": "Parties",
     "partiesHelp": "One party per line.",
     "contractType": "Contract type",

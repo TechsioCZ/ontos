@@ -206,7 +206,7 @@ it.layer(NodeFileSystem.layer)('TAX migrations as checked in', (suite) => {
   );
 });
 
-it('owns pre-scope replay evidence with an atomic issuer/audience/jti identity', () => {
+it('keeps gateway assertion replay identities global, unique and expiry-indexed', () => {
   const table = TAX_TABLES.find((candidate) => getTableConfig(candidate).name === 'gateway_assertion_redemptions');
   expect(table).toBeDefined();
   if (table === undefined) {
@@ -216,6 +216,17 @@ it('owns pre-scope replay evidence with an atomic issuer/audience/jti identity',
   expect(config.schema).toBe('tax');
   expect(config.enableRLS).toBe(false);
   expect(config.policies).toEqual([]);
-  expect(config.primaryKeys.map((key) => key.columns.map(({ name }) => name))).toEqual([['issuer', 'audience', 'jti']]);
-  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['tax_redemption_expiry']);
+  expect(config.columns.some((column) => column.name === 'tenant_id')).toBe(false);
+  expect(config.columns.map(({ name, notNull }) => [name, notNull])).toEqual([
+    ['audience', true],
+    ['expires_at', true],
+    ['issuer', true],
+    ['jti', true],
+    ['redeemed_at', true],
+  ]);
+  expect(config.primaryKeys).toEqual([]);
+  expect(config.uniqueConstraints.map((key) => [key.name, key.columns.map(({ name }) => name)])).toEqual([
+    ['tax_gateway_redemptions_identity_uk', ['issuer', 'audience', 'jti']],
+  ]);
+  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['tax_gateway_redemptions_expiry_idx']);
 });

@@ -153,6 +153,9 @@ it.effect(
       },
       (payload, context) => context.services.increment(payload.amount),
       (): Effect.Effect<CounterServices> => Effect.die('production owner services must not run in this test'),
+      {
+        prepareServices: () => Effect.die('production owner preparation must not run for an explicit test binding'),
+      },
     );
     let calls = 0;
     const harness = yield* makeActionTestHarness({
@@ -180,6 +183,32 @@ it.effect(
 
     expect(result).toBe(5);
     expect(calls).toBe(1);
+    expect(harness.snapshot().committed.length).toBe(1);
+  }),
+);
+
+it.effect('executes real preparation for registrations without an explicit test service binding', () =>
+  Effect.gen(function* preserveUnboundPreparation() {
+    let preparations = 0;
+    const registration = defineAction(
+      lifecycleAction.descriptor,
+      (_payload, context) => Effect.succeed({ total: context.services.total }),
+      (): Effect.Effect<{ readonly total: number }> =>
+        Effect.die('The prepared factory must replace ordinary acquisition'),
+      {
+        prepareServices: (payload) =>
+          Effect.sync(() => {
+            preparations += 1;
+            return () => Effect.succeed({ total: payload.amount + 1 });
+          }),
+      },
+    );
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      tenantPermission: 'allowed',
+    });
+    expect(yield* harness.runtime.runAction({ ...request, registration })).toEqual({ total: 3 });
+    expect(preparations).toBe(1);
     expect(harness.snapshot().committed.length).toBe(1);
   }),
 );

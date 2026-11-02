@@ -18,8 +18,7 @@ import type {
 import type { defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import { Cause, Effect, Predicate, Schema } from 'effect';
 import { describe, afterEach, expect, it, rs } from 'effect-rstest';
-
-import { build as bundleSource, transform } from 'esbuild';
+import { transform } from 'esbuild';
 
 import { MicroVerticalReadinessSchema } from '@modern-js/bff-effect/microvertical-api';
 import { hasValidGovernedHttpCompositionRoot } from '../generated-governed-http-boundary.mts';
@@ -35,11 +34,8 @@ import type { MicroVerticalApiBaselineExpectation } from '@modern-js/code-tools/
 import { strictEffectRuntimeTopologyViolation } from '@modern-js/code-tools/strict-effect-runtime';
 import { ReleaseUiSchema } from './release-envelope-ui.fixture.mts';
 
-const EXPECTED_PROOF_VALUE = 'Expected a defined proof value';
-
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 
-const modernConfigFile = 'modern.config.ts';
 const packageJsonFile = 'package.json';
 
 const partyId = 'party-registry';
@@ -243,6 +239,19 @@ interface WorkspaceAppFixture {
   readonly id: typeof AppIdSchema.Type;
 }
 
+interface GeneratedRootPackage {
+  readonly devDependencies: Readonly<Record<string, string>>;
+  readonly scripts: Readonly<Record<string, string>>;
+}
+
+type CreateRootPackageJson = (
+  scope: string,
+  packageSource: {
+    readonly modernPackageVersion: string;
+    readonly strategy: 'install';
+  },
+) => GeneratedRootPackage;
+
 type CreateSharedPackage = (
   scope: string,
   id: string,
@@ -276,16 +285,6 @@ type StrictEffectApiBoundaryRuleFactory = () => {
 };
 
 type CreateVerticalDescriptor = (appId: string, port: number) => WorkspaceAppFixture;
-
-type CreateLayout = (appId: typeof AppIdSchema.Type) => string;
-
-type CreateAppModernConfig = (app: WorkspaceAppFixture) => string;
-
-type CreateBackendModuleFederationConfig = (app: WorkspaceAppFixture) => string;
-
-type CreateUltramodernBuildModule = (applicationRoot: string, app: WorkspaceAppFixture) => string;
-
-type ReadWorkspaceInputs = (root: string) => { readonly apps: readonly WorkspaceAppFixture[] };
 
 interface ApiGeneratorFixture {
   readonly api?: {
@@ -414,7 +413,13 @@ const ApiServiceGeneratorModuleSchema = Schema.Struct({
 });
 
 const PackageGeneratorModuleSchema = Schema.Struct({
+  createRootPackageJson: callable<CreateRootPackageJson>(),
   createSharedPackage: callable<CreateSharedPackage>(),
+});
+
+const GeneratedRootPackageSchema = Schema.Struct({
+  devDependencies: Schema.Record(Schema.String, Schema.String),
+  scripts: Schema.Record(Schema.String, Schema.String),
 });
 
 const SharedApiGeneratorModuleSchema = Schema.Struct({
@@ -423,23 +428,6 @@ const SharedApiGeneratorModuleSchema = Schema.Struct({
 
 const StrictEffectApiBoundaryRuleModuleSchema = Schema.Struct({
   createStrictEffectApiBoundariesRule: callable<StrictEffectApiBoundaryRuleFactory>(),
-});
-
-const ComponentModuleSchema = Schema.Struct({
-  createLayout: callable<CreateLayout>(),
-});
-
-const FederationConfigModuleSchema = Schema.Struct({
-  createAppModernConfig: callable<CreateAppModernConfig>(),
-  createBackendModuleFederationConfig: callable<CreateBackendModuleFederationConfig>(),
-});
-
-const BuildModuleGeneratorSchema = Schema.Struct({
-  createUltramodernBuildModule: callable<CreateUltramodernBuildModule>(),
-});
-
-const WorkspaceInputModuleSchema = Schema.Struct({
-  readUltramodernWorkspaceInputs: callable<ReadWorkspaceInputs>(),
 });
 
 const SharedApiGeneratorSchema = Schema.Struct({
@@ -617,7 +605,45 @@ it.live(
     );
     expect(sharedContractsPackage.exports['./server/effect-bff-runtime']).toBeUndefined();
     expect(sharedContractsPackage.dependencies['@modern-js/plugin-bff']).toBe('catalog:ultramodern');
-    expect(sharedContractsPackage.dependencies.effect).toBe('4.0.5');
+    expect(sharedContractsPackage.dependencies.effect).toBe('4.0.7');
+    expect(sharedContractsPackage.dependencies['@effect/opentelemetry']).toBe('4.0.7');
+  }),
+);
+
+it.live(
+  'all published package generators emit the prepared Effect compiler cohort',
+  Effect.fn(function* generatedCompilerCohort() {
+    for (const moduleFormat of ['esm', 'esm-node', 'cjs']) {
+      const modulePath = publishedGeneratorModulePath(moduleFormat)('package-json');
+      const source: unknown =
+        moduleFormat === 'cjs'
+          ? require(modulePath)
+          : yield* Effect.promise(() => import(pathToFileURL(modulePath).href));
+      const generator = yield* Schema.decodeUnknownEffect(PackageGeneratorModuleSchema)(source);
+      const packageSource = { modernPackageVersion: '3.9.3-ultramodern.16', strategy: 'install' } as const;
+      const root = yield* Schema.decodeUnknownEffect(GeneratedRootPackageSchema)(
+        generator.createRootPackageJson('fixture', packageSource),
+      );
+      expect(root.devDependencies['@effect/tsgo'], moduleFormat).toBe('0.63.0');
+      expect(root.devDependencies.tsrs, moduleFormat).toBe('0.20.1-ts7.1.0-beta');
+      expect(root.devDependencies.typescript, moduleFormat).toBe('7.0.2');
+      expect(root.devDependencies['@typescript/native'], moduleFormat).toBe('npm:typescript@7.0.2');
+      expect(root.devDependencies.effect, moduleFormat).toBe('4.0.7');
+      expect(root.devDependencies['@effect/opentelemetry'], moduleFormat).toBe('4.0.7');
+      expect(root.scripts.postinstall, moduleFormat).toBe(
+        'ultramodern-create ultramodern compiler-prepare && ultramodern-create ultramodern skills install --postinstall',
+      );
+      const shared = generator.createSharedPackage('fixture', 'shared-contracts', 'fixture contracts', packageSource);
+      expect(shared.dependencies.effect, moduleFormat).toBe('4.0.7');
+      expect(shared.dependencies['@effect/opentelemetry'], moduleFormat).toBe('4.0.7');
+    }
+    const preparationOutput = yield* Effect.sync(() =>
+      runNode([path.join(generatorRoot, 'templates/workspace-scripts/ultramodern-compiler-prepare.mjs')], {
+        cwd: workspaceRoot,
+      }),
+    );
+    expect(preparationOutput).toContain('Validating Effect-enabled tsrs 0.20.1-ts7.1.0-beta');
+    expect(preparationOutput).toContain('7.1.0-beta+effect-tsgo.0.63.0');
   }),
 );
 
@@ -2364,378 +2390,6 @@ it.live(
       const compiledReader = yield* Schema.decodeUnknownEffect(CompiledReaderSchema)(compiledReaderModule);
       expect([...compiledReader.allowedOrigins]).toEqual([shellOrigin]);
     }).pipe(Effect.ensuring(Effect.promise(() => rm(temporaryRoot, { force: true, recursive: true }))));
-  }),
-);
-
-const ScaffoldSemanticKindSchema = Schema.Literals(['backend', 'layout', 'service']);
-type ScaffoldSemanticKind = typeof ScaffoldSemanticKindSchema.Type;
-const scaffoldSemanticKinds = new Map<string, ScaffoldSemanticKind>([
-  ['backend-federation.config.ts', 'backend'],
-  ['src/routes/layout.tsx', 'layout'],
-]);
-
-// Evaluate only controlled scaffolds with inert dependency adapters in a separate Node process.
-// No application server, deployment, real plugin or environment file is loaded by this harness.
-const evaluateScaffoldSemantics = Effect.fn(function* evaluateScaffoldSemantics(
-  source: string,
-  kind: ScaffoldSemanticKind,
-) {
-  const scratchRoot = path.join(workspaceRoot, '.scratch');
-  yield* Effect.promise(() => mkdir(scratchRoot, { recursive: true }));
-  const fixture = yield* Effect.acquireRelease(
-    Effect.promise(() => mkdtemp(path.join(scratchRoot, 'scaffold-semantics-'))),
-    (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
-  );
-  {
-    const effectUrl = pathToFileURL(require.resolve('effect')).href;
-    const { code } = yield* Effect.promise(() =>
-      transform(source, {
-        define: {
-          'import.meta.url': JSON.stringify('file:///fixture/config.ts'),
-        },
-        format: 'cjs',
-        jsxFactory: 'element',
-        loader: kind === 'layout' ? 'tsx' : 'ts',
-      }),
-    );
-    const harnessPath = path.join(fixture, 'evaluate.mjs');
-    yield* Effect.promise(() =>
-      writeFile(
-        harnessPath,
-        `
-import * as effect from ${JSON.stringify(effectUrl)};
-import { runInNewContext } from 'node:vm';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
-const kind = ${JSON.stringify(kind)};
-const pluginNames = ['appTools', 'ultramodernAppTools', 'bffPlugin', 'i18nPlugin', 'tanstackRouterPlugin', 'moduleFederationPlugin', 'pluginTailwindcss', 'ultramodernReleaseEnvelopePlugin'];
-const framework = {
-  ...Object.fromEntries(pluginNames.map(name => [name, () => ({ name })])),
-  builtinModules: [], createRequire: () => name => ({ version: name === 'effect/package.json' ? '4.0.5' : '3.9.3-ultramodern.9' }),
-  defineConfig: config => config, presetUltramodern: config => config,
-  createModuleFederationConfig: config => config,
-  getBuildConfigEnvironment: () => undefined, resolveDeployTarget: () => ({ explicit: false, target: 'node' }),
-  ultramodernLocalisedUrls: {},
-};
-const module = { exports: {} };
-const spans = [];
-const contexts = Object.fromEntries(['readiness', 'list', 'get', 'create'].map(name => [name, { method: 'GET', operationId: name, routePath: '/' + name, source: 'server', traceId: 'trace-' + name }]));
-const fixtureEffect = { succeed: () => ({ pipe: (...steps) => steps.reduce((value, step) => step(value), {}) }), withSpan: (name, options) => value => { spans.push({ name, attributes: options.attributes }); return value; } };
-const fixtureHandlers = { handle: (_name, callback) => { callback({ query: {}, params: { id: 'starter-inventory-stock' }, payload: { title: 'Fixture' } }); return fixtureHandlers; } };
-runInNewContext(${JSON.stringify(code)}, {
-  module, exports: module.exports, URL,
-  element: (type, props, ...children) => ({ type, props, children }),
-  require: specifier => {
-    if (kind === 'service') {
-      if (specifier === '@modern-js/bff-effect/assembly') return { assembleEffectBffRuntime: value => value };
-      if (specifier === '@modern-js/bff-effect/effect-edge') return { Effect: fixtureEffect, Layer: { mergeAll: (...layers) => layers }, HttpApiBuilder: { group: (_api, _group, configure) => configure(fixtureHandlers) } };
-      if (specifier === '../shared/api.ts') return { inventoryStockApi: {}, inventoryStockOperationContexts: contexts };
-      if (specifier === '../shared/ultramodern-build.ts') return { ultramodernApiMarker: {} };
-    }
-    if (specifier === 'effect') return effect;
-    if (specifier === 'effect/Schema') return effect.Schema;
-    if (specifier === 'node:url') return { fileURLToPath };
-    if (specifier === 'node:path') return path;
-    if (specifier === './package.json') return { dependencies: { '@module-federation/runtime': '2.9.0' } };
-    if (specifier === '@modern-js/plugin-tanstack/runtime') return { Outlet: 'Outlet' };
-    if (specifier === './index.css') return {};
-    return framework;
-  },
-});
-let evidence = module.exports;
-if (kind === 'layout') evidence = evidence.default();
-if (kind === 'backend') evidence = evidence.default;
-if (kind === 'service') evidence = spans;
-process.stdout.write(JSON.stringify(evidence));
-`,
-      ),
-    );
-    return runNode([harnessPath]);
-  }
-});
-
-const evaluatedInfrastructureSource = Effect.fn(function* mergedScenario1(
-  fileName: string,
-  source: string,
-  injection: Readonly<Record<string, string>>,
-  contractOnly = false,
-) {
-  const partyRoot = path.join(workspaceRoot, partyDirectory);
-  const result = yield* Effect.promise(() =>
-    bundleSource({
-      alias: {
-        '@modern-js/backend-federation-contracts': createRequire(path.join(partyRoot, fileName)).resolve(
-          '@modern-js/backend-federation-contracts',
-        ),
-      },
-      bundle: true,
-      define: {
-        'import.meta.resolve': '__resolve',
-        'import.meta.url': JSON.stringify(pathToFileURL(path.join(partyRoot, fileName)).href),
-      },
-      external: ['./src/routes/ultramodern-route-metadata'],
-      format: 'cjs',
-      packages: 'external',
-      platform: 'node',
-      stdin: {
-        contents: source,
-        loader: 'ts',
-        resolveDir: path.dirname(path.join(partyRoot, fileName)),
-      },
-      write: false,
-    }),
-  );
-  const code = result.outputFiles[0]?.text;
-  expect(code).toBeTruthy();
-  if (!code) {
-    throw new Error(EXPECTED_PROOF_VALUE);
-  }
-  const effectUrl = pathToFileURL(require.resolve('effect')).href;
-  const buildIdentityUrl = pathToFileURL(
-    createRequire(path.join(partyRoot, fileName)).resolve('@app/shared-contracts/ultramodern-build'),
-  ).href;
-  const databaseIdentityManifestUrl = pathToFileURL(
-    createRequire(path.join(partyRoot, fileName)).resolve('@app/core-runtime/db/database-identity-manifest'),
-  ).href;
-  return runNode([
-    '--input-type=module',
-    '-e',
-    `
-import * as effect from ${JSON.stringify(effectUrl)};
-import * as buildIdentity from ${JSON.stringify(buildIdentityUrl)};
-import * as databaseIdentityManifest from ${JSON.stringify(databaseIdentityManifestUrl)};
-import * as nodeModule from 'node:module';
-import * as nodePath from 'node:path';
-import * as nodeUrl from 'node:url';
-import { runInNewContext } from 'node:vm';
-const environment = {
-  ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 'composition-kv-id',
-  ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'hyperdrive-id',
-  ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: 'party-hyperdrive-id',
-  ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-service-id',
-  ULTRAMODERN_MF_DEV_ORIGIN: 'https://shell.example.test',
-  ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: 'https://party.example.test',
-  ZE_CI_TOKEN: 'proof-token',
-  ZE_FAIL_BUILD: 'true',
-};
-const plugin = name => options => ({ name, options });
-const framework = {
-  appTools: plugin('appTools'), ultramodernAppTools: plugin('ultramodernAppTools'), bffPlugin: plugin('bff'), i18nPlugin: plugin('i18n'),
-  ultramodernReleaseEnvelopePlugin: plugin('ultramodernReleaseEnvelopePlugin'),
-  moduleFederationPlugin: plugin('moduleFederation'), pluginTailwindcss: plugin('tailwind'),
-  tanstackRouterPlugin: plugin('tanstack'), withZephyr: plugin('zephyr'),
-  defineConfig: value => value, presetUltramodern: (value, identity) => ({ ...value, identity }),
-  presetUltramodernWorkspace: (value, workspace) => ({ ...value, workspace }),
-  getBuildConfigEnvironment: name => environment[name],
-  resolveDeployTarget: () => ({ explicit: true, target: 'node' }),
-  ultramodernLocalisedUrls: {},
-};
-const moduleShim = { ...nodeModule, createRequire: () => Object.assign(() => ({}), { resolve: name => '/dependencies/' + name }) };
-const module = { exports: {} };
-runInNewContext(${JSON.stringify(code)}, {
-  exports: module.exports, module, URL,
-  ...${JSON.stringify(injection)},
-  __resolve: name => 'file:///dependencies/' + name,
-  require: name => ({
-    effect,
-    'effect/Option': effect.Option,
-    'effect/Result': effect.Result,
-    'effect/Schema': effect.Schema,
-    'effect/SchemaTransformation': effect.SchemaTransformation,
-    '@app/shared-contracts/ultramodern-build': buildIdentity,
-    '@app/core-runtime/db/database-identity-manifest': databaseIdentityManifest,
-    'node:module': moduleShim,
-    'node:path': nodePath,
-    'node:url': nodeUrl,
-  }[name] ?? framework),
-});
-const configuration = module.exports.default;
-const observations = {};
-if (configuration) {
-  const chainValues = [];
-  const output = { uniqueName: name => { chainValues.push(name); return output; }, chunkLoadingGlobal: name => { chainValues.push(name); return output; } };
-  configuration.tools?.bundlerChain?.({ output });
-  observations.chain = chainValues;
-  observations.plugins = [];
-  for (const entry of configuration.plugins ?? []) entry.setup?.({ modifyRspackConfig: value => observations.plugins.push(value) });
-  const plugins = {
-    DefinePlugin: class { constructor(definitions) { this.definitions = definitions; } },
-    NormalModuleReplacementPlugin: class { constructor(pattern, replace) {
-      this.pattern = pattern;
-      this.results = ['./handler.ts', './handler.ts?loaderId=x&retain=false', './other.ts?modern-bff-runtime-source'].map(request => {
-        const resource = { context: ${JSON.stringify(path.join(partyRoot, 'api'))}, request }; replace(resource); return resource;
-      });
-    } },
-  };
-  observations.rspack = ['client', 'workerSSR'].map(name => {
-    const config = { resolve: {}, externals: [], plugins: [], node: {} };
-    configuration.tools?.rspack?.(config, { environment: { name }, rspack: plugins });
-    const externalResults = [];
-    for (const external of config.externals) for (const request of ['node:fs', 'fs', 'cloudflare:sockets', 'unrelated']) {
-      external({ request, dependencyType: 'commonjs' }, (...args) => externalResults.push(args));
-    }
-    return { config, externalResults };
-  });
-}
-const normalize = (_key, value) => {
-  if (typeof value === 'function') return '[Function]';
-  if (Object.prototype.toString.call(value) === '[object RegExp]') return String(value);
-  return value;
-};
-const evidence = ${contractOnly} && configuration ? {
-  bff: configuration.bff,
-  builderPlugins: configuration.builderPlugins,
-  deploy: configuration.deploy,
-  identity: configuration.identity,
-  html: configuration.html,
-  output: configuration.output,
-  buildCache: configuration.performance?.buildCache,
-  plugins: configuration.plugins.map(entry => entry.name),
-  devAssetPrefix: configuration.dev?.assetPrefix,
-  devHeaders: configuration.dev?.server?.headers ?? configuration.tools?.devServer?.headers,
-  port: configuration.server?.port,
-  alias: configuration.source?.alias,
-  siteUrl: configuration.source?.globalVars?.ULTRAMODERN_SITE_URL,
-  mainEntryName: configuration.source?.mainEntryName,
-  chain: observations.chain,
-  pluginsBehavior: observations.plugins,
-} : { exported: module.exports, observations };
-process.stdout.write(JSON.stringify(evidence, normalize));
-`,
-  ]);
-});
-
-// The OntOS workspace helper sets the TS-Go checker explicitly: it stays on for builds and is off only
-// under `modern dev` (NODE_ENV=development), which this harness never sets.
-const OntosOutputConfigSchema = Schema.Struct({
-  output: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
-});
-const withOntosOutputConfig = (configuration: Schema.Json): Schema.Json => {
-  const { output } = Schema.decodeUnknownSync(OntosOutputConfigSchema)(configuration);
-  return Schema.decodeUnknownSync(Schema.Json)({
-    ...Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(configuration),
-    output: { disableTsChecker: false, ...output },
-  });
-};
-
-it.live(
-  'all published scaffold formats retain Party infrastructure behavior and source parity',
-  Effect.fn(function* mergedScenario4() {
-    const canonicalModule: unknown = yield* Effect.promise(
-      () => import(pathToFileURL(publishedGeneratorModulePath('esm-node')('module-federation/config')).href),
-    );
-    const canonical = Schema.decodeUnknownSync(FederationConfigModuleSchema)(canonicalModule);
-    const inputModule: unknown = yield* Effect.promise(
-      () => import(pathToFileURL(path.join(generatorRoot, 'dist/esm-node/ultramodern-tooling/config.js')).href),
-    );
-    const workspaceInputs =
-      Schema.decodeUnknownSync(WorkspaceInputModuleSchema)(inputModule).readUltramodernWorkspaceInputs(workspaceRoot);
-    const reconciledParty = yield* Effect.fromNullishOr(workspaceInputs.apps.find((app) => app.id === partyId));
-    yield* Effect.all(
-      ['esm', 'esm-node', 'cjs'].map(
-        Effect.fn(function* mergedScenario3(moduleFormat) {
-          const descriptorPath = publishedGeneratorModulePath(moduleFormat)('descriptors');
-          const descriptorSource: unknown =
-            moduleFormat === 'cjs'
-              ? require(descriptorPath)
-              : yield* Effect.promise(() => import(pathToFileURL(descriptorPath).href));
-          const descriptorModule = Schema.decodeUnknownSync(DescriptorModuleSchema)(descriptorSource);
-          const componentPath = publishedGeneratorModulePath(moduleFormat)('demo-components');
-          const componentSource: unknown =
-            moduleFormat === 'cjs'
-              ? require(componentPath)
-              : yield* Effect.promise(() => import(pathToFileURL(componentPath).href));
-          const componentModule = Schema.decodeUnknownSync(ComponentModuleSchema)(componentSource);
-          const federationPath = publishedGeneratorModulePath(moduleFormat)('module-federation/config');
-          const federationSource: unknown =
-            moduleFormat === 'cjs'
-              ? require(federationPath)
-              : yield* Effect.promise(() => import(pathToFileURL(federationPath).href));
-          const federationModule = Schema.decodeUnknownSync(FederationConfigModuleSchema)(federationSource);
-          const buildModulePath = publishedGeneratorModulePath(moduleFormat)('module-federation/reexport-module');
-          const buildModuleSource: unknown =
-            moduleFormat === 'cjs'
-              ? require(buildModulePath)
-              : yield* Effect.promise(() => import(pathToFileURL(buildModulePath).href));
-          const buildModule = Schema.decodeUnknownSync(BuildModuleGeneratorSchema)(buildModuleSource);
-          const createVerticalDescriptor = descriptorModule.createVerticalDescriptor.bind(descriptorSource);
-          const createLayout = componentModule.createLayout.bind(componentSource);
-          const createAppModernConfig = federationModule.createAppModernConfig.bind(federationSource);
-          const createBackendModuleFederationConfig =
-            federationModule.createBackendModuleFederationConfig.bind(federationSource);
-          const createUltramodernBuildModule = buildModule.createUltramodernBuildModule.bind(buildModuleSource);
-          const descriptor: unknown = createVerticalDescriptor(partyId, 4102);
-          Schema.asserts(WorkspaceAppFixtureSchema, descriptor);
-          // Build modules now embed the canonical artifact, so use its checked renderer identity.
-          const app = { ...descriptor, ...reconciledParty, exposes: {} };
-          const generated = {
-            'backend-federation.config.ts': Schema.decodeUnknownSync(Schema.String)(
-              createBackendModuleFederationConfig(app),
-            ),
-            [buildMarkerFile]: Schema.decodeUnknownSync(Schema.String)(createUltramodernBuildModule('app', app)),
-            [modernConfigFile]: Schema.decodeUnknownSync(Schema.String)(createAppModernConfig(app)),
-            'src/routes/layout.tsx': Schema.decodeUnknownSync(Schema.String)(createLayout(app.id)),
-          };
-          yield* Effect.all(
-            Object.entries(generated).map(
-              Effect.fn(function* mergedScenario2([fileName, source]) {
-                const actual = yield* Effect.promise(() =>
-                  readFile(path.join(workspaceRoot, partyDirectory, fileName), 'utf-8'),
-                );
-                if (fileName === modernConfigFile || fileName === 'shared/ultramodern-build.ts') {
-                  const injections: Readonly<Record<string, string>>[] = [
-                    {},
-                    {
-                      ULTRAMODERN_BUILD_MARKER: 'executed-build',
-                      ULTRAMODERN_SOURCE_REVISION: 'a'.repeat(40),
-                    },
-                  ];
-                  yield* Effect.forEach(
-                    injections,
-                    Effect.fn(function* evaluateInfrastructureInjection(injection) {
-                      if (fileName === modernConfigFile) {
-                        const canonicalSource = Schema.decodeUnknownSync(Schema.String)(
-                          canonical.createAppModernConfig(app),
-                        );
-                        expect(
-                          yield* evaluatedInfrastructureSource(fileName, source, injection),
-                          `${moduleFormat} must retain complete published config behavior`,
-                        ).toBe(yield* evaluatedInfrastructureSource(fileName, canonicalSource, injection));
-                      }
-                      const [expected, evaluated] = yield* Effect.all(
-                        [
-                          evaluatedInfrastructureSource(fileName, source, injection, fileName === modernConfigFile),
-                          evaluatedInfrastructureSource(fileName, actual, injection, fileName === modernConfigFile),
-                        ],
-                        { concurrency: 'unbounded' },
-                      );
-                      const decode = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json));
-                      expect(
-                        fileName === modernConfigFile ? withOntosOutputConfig(decode(expected)) : decode(expected),
-                        `${moduleFormat}: ${fileName} must preserve evaluated configuration, build identity and plugin behavior`,
-                      ).toEqual(decode(evaluated));
-                    }),
-                    { concurrency: 'unbounded' },
-                  );
-                  return;
-                }
-                const kind = scaffoldSemanticKinds.get(fileName);
-                expect(kind, `Unknown scaffold ${fileName}`).toBeDefined();
-                if (kind === undefined) {
-                  throw new Error(`Unknown scaffold ${fileName}`);
-                }
-                expect(
-                  yield* evaluateScaffoldSemantics(source, kind),
-                  `${moduleFormat}: ${fileName} must preserve typed runtime, ownership and release gates`,
-                ).toBe(yield* evaluateScaffoldSemantics(actual, kind));
-              }),
-            ),
-            { concurrency: 'unbounded' },
-          );
-        }),
-      ),
-      { concurrency: 'unbounded' },
-    );
   }),
 );
 

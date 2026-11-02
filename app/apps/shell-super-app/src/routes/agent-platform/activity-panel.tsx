@@ -188,9 +188,6 @@ export const ActivityPanel = () => {
             ))}
           </select>
         </label>
-        <Button onClick={reload} size="sm" theme="outlined" variant="secondary">
-          Obnovit
-        </Button>
       </div>
       {state.state === 'pending' && <ModulePageSkeleton />}
       {state.state === 'failed' && (

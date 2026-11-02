@@ -179,9 +179,15 @@ const currentSetEvidenceFailure = (
   ) {
     return 'UNVERIFIABLE_CURRENT_SET';
   }
-  return input.feeSet.observedAt !== input.decision.operationTime ||
-    input.feeSet.completenessEvidence.observedAt !== input.decision.operationTime ||
-    input.feeSet.currentnessEvidence.observedAt !== input.decision.operationTime ||
+  // Observation can follow the requested as-of instant; the same facts must remain usable at both.
+  return input.feeSet.observedAt < input.decision.operationTime ||
+    input.feeSet.completenessEvidence.observedAt !== input.feeSet.observedAt ||
+    input.feeSet.currentnessEvidence.observedAt !== input.feeSet.observedAt ||
+    input.feeSet.fees.some(
+      ({ effectivePeriod }) =>
+        effectivePeriod.effectiveFrom > input.decision.operationTime ||
+        (effectivePeriod.effectiveTo !== null && input.decision.operationTime >= effectivePeriod.effectiveTo),
+    ) ||
     input.feeSet.currentnessEvidence.revalidatedAt < input.feeSet.observedAt ||
     (input.feeSet.completenessEvidence.nextApplicabilityBoundary !== undefined &&
       input.feeSet.currentnessEvidence.revalidatedAt >= input.feeSet.completenessEvidence.nextApplicabilityBoundary)
@@ -212,7 +218,7 @@ const monetaryFailure = (
 const currencySupportIsStale = (input: PricingCommercialFeeCalculationInput): boolean =>
   input.currencySupport.tenantId !== input.decision.tenantId ||
   input.currencySupport.effectiveAt !== input.decision.operationTime ||
-  input.currencySupport.currentnessEvidence.evaluatedAt !== input.decision.operationTime ||
+  input.currencySupport.currentnessEvidence.evaluatedAt < input.decision.operationTime ||
   input.currencySupport.currentnessEvidence.evaluationMode !== 'CURRENT_WITH_REVALIDATION';
 
 const contributionFor = (

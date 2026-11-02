@@ -19,7 +19,7 @@ import {
   PricingQuotationLineBindingSchema,
 } from '@app/pricing-contracts/domain/quotation';
 import { PricingCommercialScopeSchema } from '@app/pricing-contracts/domain/pricing-commercial-scope';
-import { Context, Data, DateTime, Effect, Match, Option, Schema } from 'effect';
+import { Context, Layer, Data, DateTime, Effect, Match, Option, Schema } from 'effect';
 
 const PricingCommitmentConfirmationOwnerVerifiedSchema = Schema.TaggedStruct('VERIFIED', {
   authenticityEvidence: PricingCommitmentConfirmationVerificationEvidenceSchema,
@@ -166,132 +166,188 @@ const evidenceAuthenticates = (
  * issuance are deliberately absent from this service; the bounded owner proof is the authority.
  * Independent Order/Permission/Inventory/Tax/Payment gates remain outside this owner boundary.
  */
-export const makePricingCommitmentConfirmationVerificationService = Effect.gen(
-  function* makePricingCommitmentConfirmationVerificationService() {
-    const ownerVerifier = yield* PricingCommitmentConfirmationOwnerVerifier;
+interface PreparedVerificationRequest {
+  readonly attemptedAt: typeof PricingInstantSchema.Type;
+  readonly confirmation: PricingCommitmentConfirmationIssued;
+  readonly requestedBinding: PricingCommitmentConfirmationBinding;
+}
+type VerificationRequestPreparation =
+  | { readonly request: PreparedVerificationRequest }
+  | { readonly outcome: PricingCommitmentConfirmationVerificationOutcome };
+
+const prepareVerification = (
+  request: PricingCommitmentConfirmationVerificationRequest,
+): VerificationRequestPreparation => {
+  const { confirmationRef } = request.confirmation;
+  const confirmationOption = Schema.decodeOption(PricingCommitmentConfirmationIssuedSchema, {
+    onExcessProperty: 'error',
+  })(request.confirmation);
+  if (Option.isNone(confirmationOption)) {
     return {
-      verify: Effect.fn('PricingCommitmentConfirmationVerification.verify')(
-        function* verifyPricingCommitmentConfirmation(request: PricingCommitmentConfirmationVerificationRequest) {
-          const { confirmationRef } = request.confirmation;
-          const confirmationOption = Schema.decodeOption(PricingCommitmentConfirmationIssuedSchema, {
+      outcome: {
+        _tag: 'AUTHENTICITY_INVALID' as const,
+        confirmationRef,
+        reason: 'PAYLOAD_TAMPERED' as const,
+        retryable: false as const,
+      },
+    };
+  }
+
+  const requestedBindingOption = Schema.decodeOption(PricingCommitmentConfirmationBindingSchema, {
+    onExcessProperty: 'error',
+  })(request.requestedBinding);
+  if (Option.isNone(requestedBindingOption)) {
+    return {
+      outcome: {
+        _tag: 'BINDING_UNVERIFIABLE' as const,
+        confirmationRef,
+        reason: 'Requested Attempt and Bundle binding is malformed',
+        retryable: true as const,
+      },
+    };
+  }
+
+  const attemptedAtOption = Schema.decodeOption(PricingInstantSchema)(request.attemptedAt);
+  if (Option.isNone(attemptedAtOption)) {
+    return {
+      outcome: {
+        _tag: 'VALIDITY_UNVERIFIABLE' as const,
+        confirmationRef,
+        reason: 'TRUSTED_TIME_UNAVAILABLE' as const,
+        retryable: true as const,
+      },
+    };
+  }
+
+  return {
+    request: {
+      attemptedAt: attemptedAtOption.value,
+      confirmation: confirmationOption.value,
+      requestedBinding: requestedBindingOption.value,
+    },
+  };
+};
+
+const finishVerification = (
+  validated: PreparedVerificationRequest,
+  ownerResult: typeof PricingCommitmentConfirmationOwnerVerificationOutcomeSchema.Type | null,
+): PricingCommitmentConfirmationVerificationOutcome => {
+  const { attemptedAt, confirmation } = validated;
+  const { confirmationRef } = confirmation;
+  const ownerOutcome = Schema.decodeUnknownOption(PricingCommitmentConfirmationOwnerVerificationOutcomeSchema, {
+    onExcessProperty: 'error',
+  })(ownerResult);
+  if (Option.isNone(ownerOutcome)) {
+    return authenticityUnavailable(confirmationRef);
+  }
+
+  const authenticity = Match.value(ownerOutcome.value).pipe(
+    Match.tag('AUTHENTICITY_INVALID', (invalid) => invalid),
+    Match.tag('AUTHENTICITY_UNVERIFIABLE', (unverifiable) => unverifiable),
+    Match.tag('VERIFIED', (verified) =>
+      evidenceAuthenticates(verified.authenticityEvidence, confirmation, attemptedAt)
+        ? verified
+        : {
+            _tag: 'AUTHENTICITY_INVALID' as const,
+            confirmationRef,
+            reason: 'INVALID_PROOF' as const,
+            retryable: false as const,
+          },
+    ),
+    Match.exhaustive,
+  );
+  if (!Schema.is(PricingCommitmentConfirmationOwnerVerifiedSchema)(authenticity)) {
+    return authenticity.confirmationRef === confirmationRef
+      ? authenticity
+      : {
+          _tag: 'AUTHENTICITY_INVALID' as const,
+          confirmationRef,
+          reason: 'INVALID_PROOF' as const,
+          retryable: false as const,
+        };
+  }
+
+  const mismatchReason = bindingMismatchReason(confirmation.binding, validated.requestedBinding);
+  if (mismatchReason !== undefined) {
+    return {
+      _tag: 'BINDING_MISMATCH' as const,
+      confirmationRef,
+      reason: mismatchReason,
+      retryable: false as const,
+    };
+  }
+
+  const evaluatedMilliseconds = DateTime.toEpochMillis(DateTime.makeUnsafe(attemptedAt));
+  const issuedMilliseconds = DateTime.toEpochMillis(DateTime.makeUnsafe(confirmation.issuedAt));
+  const expiresMilliseconds = DateTime.toEpochMillis(DateTime.makeUnsafe(confirmation.expiresAt));
+  if (evaluatedMilliseconds < issuedMilliseconds) {
+    return {
+      _tag: 'NOT_YET_VALID' as const,
+      confirmationRef,
+      evaluatedAt: attemptedAt,
+      issuedAt: confirmation.issuedAt,
+    };
+  }
+  if (evaluatedMilliseconds >= expiresMilliseconds) {
+    return {
+      _tag: 'EXPIRED' as const,
+      confirmationRef,
+      evaluatedAt: attemptedAt,
+      expiresAt: confirmation.expiresAt,
+    };
+  }
+
+  return {
+    _tag: 'VERIFIED' as const,
+    authenticityEvidence: authenticity.authenticityEvidence,
+    confirmation,
+    verifiedAt: attemptedAt,
+  };
+};
+
+export const makePricingCommitmentConfirmationVerificationService = Effect.gen(function* verificationService() {
+  const ownerVerifier = yield* PricingCommitmentConfirmationOwnerVerifier;
+  return {
+    verify: Effect.fn('PricingCommitmentConfirmationVerification.verify')(function* verify(
+      request: PricingCommitmentConfirmationVerificationRequest,
+    ) {
+      const validated = prepareVerification(request);
+      if ('outcome' in validated) {
+        return validated.outcome;
+      }
+      const ownerResult = yield* ownerVerifier
+        .verifyImmutableConfirmation({
+          confirmation: validated.request.confirmation,
+          verifiedAt: validated.request.attemptedAt,
+        })
+        .pipe(Effect.catchTag('PricingCommitmentConfirmationOwnerVerifierUnavailable', () => Effect.succeed(null)));
+      return finishVerification(
+        validated.request,
+        Option.getOrNull(
+          Schema.decodeUnknownOption(PricingCommitmentConfirmationOwnerVerificationOutcomeSchema, {
             onExcessProperty: 'error',
-          })(request.confirmation);
-          if (Option.isNone(confirmationOption)) {
-            return {
-              _tag: 'AUTHENTICITY_INVALID' as const,
-              confirmationRef,
-              reason: 'PAYLOAD_TAMPERED' as const,
-              retryable: false as const,
-            };
-          }
+          })(ownerResult),
+        ),
+      );
+    }),
+  } satisfies PricingCommitmentConfirmationVerificationService;
+});
 
-          const requestedBindingOption = Schema.decodeOption(PricingCommitmentConfirmationBindingSchema, {
-            onExcessProperty: 'error',
-          })(request.requestedBinding);
-          if (Option.isNone(requestedBindingOption)) {
-            return {
-              _tag: 'BINDING_UNVERIFIABLE' as const,
-              confirmationRef,
-              reason: 'Requested Attempt and Bundle binding is malformed',
-              retryable: true as const,
-            };
-          }
-
-          const attemptedAtOption = Schema.decodeOption(PricingInstantSchema)(request.attemptedAt);
-          if (Option.isNone(attemptedAtOption)) {
-            return {
-              _tag: 'VALIDITY_UNVERIFIABLE' as const,
-              confirmationRef,
-              reason: 'TRUSTED_TIME_UNAVAILABLE' as const,
-              retryable: true as const,
-            };
-          }
-
-          const confirmation = confirmationOption.value;
-          const attemptedAt = attemptedAtOption.value;
-          const ownerRead = yield* ownerVerifier
-            .verifyImmutableConfirmation({ confirmation, verifiedAt: attemptedAt })
-            .pipe(
-              Effect.match({
-                onFailure: (failure) => ({ failure, kind: 'failure' as const }),
-                onSuccess: (value) => ({ kind: 'success' as const, value }),
-              }),
-            );
-          if (ownerRead.kind === 'failure') {
-            return authenticityUnavailable(confirmationRef);
-          }
-
-          const ownerOutcome = Schema.decodeUnknownOption(PricingCommitmentConfirmationOwnerVerificationOutcomeSchema, {
-            onExcessProperty: 'error',
-          })(ownerRead.value);
-          if (Option.isNone(ownerOutcome)) {
-            return authenticityUnavailable(confirmationRef);
-          }
-
-          const authenticity = Match.value(ownerOutcome.value).pipe(
-            Match.tag('AUTHENTICITY_INVALID', (invalid) => invalid),
-            Match.tag('AUTHENTICITY_UNVERIFIABLE', (unverifiable) => unverifiable),
-            Match.tag('VERIFIED', (verified) =>
-              evidenceAuthenticates(verified.authenticityEvidence, confirmation, attemptedAt)
-                ? verified
-                : {
-                    _tag: 'AUTHENTICITY_INVALID' as const,
-                    confirmationRef,
-                    reason: 'INVALID_PROOF' as const,
-                    retryable: false as const,
-                  },
-            ),
-            Match.exhaustive,
-          );
-          if (!Schema.is(PricingCommitmentConfirmationOwnerVerifiedSchema)(authenticity)) {
-            return authenticity.confirmationRef === confirmationRef
-              ? authenticity
-              : {
-                  _tag: 'AUTHENTICITY_INVALID' as const,
-                  confirmationRef,
-                  reason: 'INVALID_PROOF' as const,
-                  retryable: false as const,
-                };
-          }
-
-          const mismatchReason = bindingMismatchReason(confirmation.binding, requestedBindingOption.value);
-          if (mismatchReason !== undefined) {
-            return {
-              _tag: 'BINDING_MISMATCH' as const,
-              confirmationRef,
-              reason: mismatchReason,
-              retryable: false as const,
-            };
-          }
-
-          const evaluatedMilliseconds = DateTime.toEpochMillis(DateTime.makeUnsafe(attemptedAt));
-          const issuedMilliseconds = DateTime.toEpochMillis(DateTime.makeUnsafe(confirmation.issuedAt));
-          const expiresMilliseconds = DateTime.toEpochMillis(DateTime.makeUnsafe(confirmation.expiresAt));
-          if (evaluatedMilliseconds < issuedMilliseconds) {
-            return {
-              _tag: 'NOT_YET_VALID' as const,
-              confirmationRef,
-              evaluatedAt: attemptedAt,
-              issuedAt: confirmation.issuedAt,
-            };
-          }
-          if (evaluatedMilliseconds >= expiresMilliseconds) {
-            return {
-              _tag: 'EXPIRED' as const,
-              confirmationRef,
-              evaluatedAt: attemptedAt,
-              expiresAt: confirmation.expiresAt,
-            };
-          }
-
-          return {
-            _tag: 'VERIFIED' as const,
-            authenticityEvidence: authenticity.authenticityEvidence,
-            confirmation,
-            verifiedAt: attemptedAt,
-          };
-        },
-      ),
-    } satisfies PricingCommitmentConfirmationVerificationService;
+export class PricingCommitmentConfirmationVerificationFactory extends Context.Service<
+  PricingCommitmentConfirmationVerificationFactory,
+  {
+    readonly finish: typeof finishVerification;
+    readonly ownerOutcomeSchema: typeof PricingCommitmentConfirmationOwnerVerificationOutcomeSchema;
+    readonly prepare: typeof prepareVerification;
+  }
+>()(
+  '@app/pricing/services/commitment-confirmation-verification.service/PricingCommitmentConfirmationVerificationFactory',
+) {}
+export const pricingCommitmentConfirmationVerificationFactoryLive = Layer.succeed(
+  PricingCommitmentConfirmationVerificationFactory,
+  {
+    finish: finishVerification,
+    ownerOutcomeSchema: PricingCommitmentConfirmationOwnerVerificationOutcomeSchema,
+    prepare: prepareVerification,
   },
 );

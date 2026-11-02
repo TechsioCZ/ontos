@@ -8,7 +8,7 @@ import type {
   ScopedRoutineInvocationError,
   ScopedRoutineParameter,
 } from '@app/core-runtime';
-import { Effect, Redacted, Schema } from 'effect';
+import { Effect, Match, Redacted, Schema } from 'effect';
 import type { Crypto } from 'effect';
 
 import type {
@@ -268,8 +268,8 @@ const invitationTarget = (
         tenantId,
       };
 
-const requireInviterAuthority = (
-  ownerScope: Pick<ClaimAuthorityOwnerScope, 'contextAccess' | 'currentOwnerAccess'>,
+export const verifyInvitationInviterCoreAuthority = (
+  contextAccess: Pick<ContextAccessService, 'businessPermissions'>,
   input: {
     readonly counterpartyRef: CounterpartyRef;
     readonly inviter: PrincipalRef;
@@ -277,7 +277,7 @@ const requireInviterAuthority = (
     readonly scope: CounterpartyPermissionScope;
   },
 ): Effect.Effect<void, CounterpartyAccessDomainError> => {
-  const check = ownerScope.contextAccess.businessPermissions;
+  const check = contextAccess.businessPermissions;
   if (check === undefined) {
     return Effect.fail(unavailable());
   }
@@ -299,7 +299,7 @@ const requireInviterAuthority = (
     input.scope.kind === 'storefront'
       ? check({ ...target, trustedStorefrontId: input.scope.storefrontKey })
       : check(target);
-  const verifyCoreAuthority = checked.pipe(
+  return checked.pipe(
     Effect.flatMap(([decision]) => {
       if (decision?.decision === 'allowed') {
         return Effect.void;
@@ -314,6 +314,18 @@ const requireInviterAuthority = (
       );
     }),
   );
+};
+
+const requireInviterAuthority = (
+  ownerScope: Pick<ClaimAuthorityOwnerScope, 'contextAccess' | 'currentOwnerAccess'>,
+  input: {
+    readonly counterpartyRef: CounterpartyRef;
+    readonly inviter: PrincipalRef;
+    readonly legalEntityId: string;
+    readonly scope: CounterpartyPermissionScope;
+  },
+): Effect.Effect<void, CounterpartyAccessDomainError> => {
+  const verifyCoreAuthority = verifyInvitationInviterCoreAuthority(ownerScope.contextAccess, input);
   if (ownerScope.currentOwnerAccess === undefined) {
     // Invitation authority is owner-governed. Missing current-owner state must fail closed;
     // Core's relationship projection is not a substitute for the owner grant ledger.
@@ -397,31 +409,23 @@ const validateClaimTenant = (
     ? Effect.fail(violation('invitation_claimant_mismatch', 'The invitation claim proof is outside the trusted Tenant'))
     : Effect.void;
 
-// oxlint-disable-next-line typescript/consistent-return -- The decoded operation outcome is an exhaustive schema union, so every reachable switch branch returns an Effect.
 const validatePreflightOutcome = (
   row: InvitationClaimPreflightRow | undefined,
 ): Effect.Effect<InvitationClaimPreflightRow, CounterpartyAccessContractViolation> => {
   if (row === undefined) {
     return Effect.fail(violation('invitation_claim_proof_invalid', invitationClaimProofInvalidReason));
   }
-  // oxlint-disable-next-line eslint/default-case, effect-native/prefer-match-over-tag-switch -- The decoded operation-outcome schema is exhaustive here, and the grouped invalid/revoked branches are the validator's established failure mapping.
-  switch (row.operation_outcome) {
-    case 'INVALID':
-    case 'REVOKED': {
-      return Effect.fail(violation('invitation_claim_proof_invalid', invitationClaimProofInvalidReason));
-    }
-    case 'EXPIRED': {
-      return Effect.fail(violation('invitation_expired', invitationExpiredReason));
-    }
-    case 'CONSUMED': {
-      return Effect.fail(
-        violation('invitation_claim_proof_consumed', 'The invitation claim proof has already been consumed'),
-      );
-    }
-    case 'VERIFIED': {
-      return Effect.succeed(row);
-    }
-  }
+  return Match.value(row.operation_outcome).pipe(
+    Match.whenOr('INVALID', 'REVOKED', () =>
+      Effect.fail(violation('invitation_claim_proof_invalid', invitationClaimProofInvalidReason)),
+    ),
+    Match.when('EXPIRED', () => Effect.fail(violation('invitation_expired', invitationExpiredReason))),
+    Match.when('CONSUMED', () =>
+      Effect.fail(violation('invitation_claim_proof_consumed', 'The invitation claim proof has already been consumed')),
+    ),
+    Match.when('VERIFIED', () => Effect.succeed(row)),
+    Match.exhaustive,
+  );
 };
 
 const validatePreflightBinding = (
@@ -506,24 +510,34 @@ const validateConsumption = Effect.fn('InvitationClaimAuthorityPersistence.valid
  * one-time consume inside its handler transaction, so a concurrent revoke/claim still fails at
  * the existing linearization point.
  */
+export const readVerifiedInvitationClaimProof = Effect.fn('InvitationClaimAuthorityPersistence.readVerifiedClaimProof')(
+  function* readVerifiedClaimProof(
+    transaction: InvitationClaimScopedRoutineInvoker,
+    input: CounterpartyInvitationClaimPreflightInput,
+  ) {
+    yield* validatePreflightTenant(input);
+    const [row] = yield* transaction
+      .invoke(verifyInvitationClaimAuthorityRoutine, [
+        input.invitationRef.resourceId,
+        input.claimProofReference,
+        input.counterpartyRef.resourceId,
+        storefrontId(input.scope),
+        input.claimant.principalId,
+      ])
+      .pipe(Effect.mapError(routineFailure));
+    const proof = yield* validatePreflightOutcome(row);
+    const inviter = yield* validatePreflightBinding(proof, input);
+    return { inviter, proof };
+  },
+);
+
 export const verifyCounterpartyInvitationClaimAuthorityForOwnerScope = Effect.fn(
   'InvitationClaimAuthorityPersistence.verifyClaimAuthority',
 )(function* verifyClaimAuthority(
   ownerScope: Pick<ClaimAuthorityOwnerScope, 'contextAccess' | 'currentOwnerAccess' | 'transaction'>,
   input: CounterpartyInvitationClaimPreflightInput,
 ): Effect.fn.Return<void, CounterpartyAccessDomainError> {
-  yield* validatePreflightTenant(input);
-  const [row] = yield* ownerScope.transaction
-    .invoke(verifyInvitationClaimAuthorityRoutine, [
-      input.invitationRef.resourceId,
-      input.claimProofReference,
-      input.counterpartyRef.resourceId,
-      storefrontId(input.scope),
-      input.claimant.principalId,
-    ])
-    .pipe(Effect.mapError(routineFailure));
-  const verifiedRow = yield* validatePreflightOutcome(row);
-  const inviter = yield* validatePreflightBinding(verifiedRow, input);
+  const { inviter } = yield* readVerifiedInvitationClaimProof(ownerScope.transaction, input);
   return yield* requireInviterAuthority(ownerScope, {
     counterpartyRef: input.counterpartyRef,
     inviter,

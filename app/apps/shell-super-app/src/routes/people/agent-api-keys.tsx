@@ -7,8 +7,9 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { DateTime, Effect, Fiber, Option, Redacted, Schema } from 'effect';
-import { useEffect, useRef, useState } from 'react';
+import { moduleChangeEvent } from '@app/shared-contracts/page-data';
+import { DateTime, Effect, Fiber, Option, Redacted, Schedule, Schema } from 'effect';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 
 import { ApiKeyIssueResponseSchema, PrincipalIdSchema, ShellPolicyConflictProblemSchema } from '../../../shared/api.ts';
 import type { ManagedApiKeyListResponse, SetManagedApiKeyStatusPayload } from '../../../shared/api.ts';
@@ -24,6 +25,14 @@ import { newRequestToken } from './people-client.ts';
 class AgentKeyScopeError extends Schema.TaggedError<AgentKeyScopeError>()('AgentKeyScopeError', {
   reason: Schema.String,
 }) {}
+/** Live changes of Core-owned data (keys included) arrive for the pseudo app `shell`; `all` after a reconnect. */
+const LiveChangeDetailSchema = Schema.Struct({
+  apps: Schema.Union([Schema.Literal('all'), Schema.Array(Schema.String)]),
+});
+const changesKeys = (event: Event): boolean =>
+  Schema.decodeUnknownOption(LiveChangeDetailSchema)('detail' in event ? event.detail : null).pipe(
+    Option.exists(({ apps }) => apps === 'all' || apps.includes('shell')),
+  );
 type AgentPrincipalId = typeof PrincipalIdSchema.Type;
 type AgentKey = NonNullable<ManagedApiKeyListResponse['items'][number]['key']>;
 type KeyCommand =
@@ -32,6 +41,7 @@ type KeyCommand =
 const copyKey = 'shell.agents.keys';
 const companyAgentScope = 'company-agent';
 const pageSize = 100;
+const readTimeout = '30 seconds';
 
 const keyCommand = (
   command: KeyCommand,
@@ -84,7 +94,7 @@ const projectionMatches = (projection: KeyProjection, keys: readonly AgentKey[],
 const useAgentKeys = (principalId: AgentPrincipalId) => {
   const [keys, setKeys] = useState<readonly AgentKey[] | null>(null);
   const [nextOffset, setNextOffset] = useState<number | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(true);
   const [failure, setFailure] = useState<'conflict' | 'failed' | null>(null);
   const [needsRefresh, setNeedsRefresh] = useState(false);
   const [secret, setSecret] = useState<Redacted.Redacted | null>(null);
@@ -120,6 +130,7 @@ const useAgentKeys = (principalId: AgentPrincipalId) => {
         expected.current = null;
       }
     }
+    return confirmed;
   };
   const read = (offset: number) =>
     listManagedApiKeys({ limit: pageSize, offset, principalId, scope: companyAgentScope }).pipe(
@@ -131,21 +142,28 @@ const useAgentKeys = (principalId: AgentPrincipalId) => {
           );
         }
         const items = response.items.flatMap((item) => (item.key === null ? [] : [item.key]));
-        return Effect.sync(() => {
-          updateKeys(offset, items, response.nextOffset);
-        });
+        return Effect.sync(() => updateKeys(offset, items, response.nextOffset));
       }),
     );
 
-  const load = (offset = 0) => {
-    if (busy) {
-      return;
-    }
-    setBusy(true);
-    setFailure(null);
-    pending.current = browserRuntime.runFork(
+  /**
+   * After a command, re-reads the first page a few times with growing pauses until it shows the result (the
+   * projection catches up on its own). Still unconfirmed, the list stays locked and offers a retry; no command is
+   * ever repeated.
+   */
+  const readUntilConfirmed = () =>
+    Effect.suspend(() => read(0)).pipe(
+      Effect.repeat({
+        schedule: Schedule.exponential('1 second'),
+        times: 4,
+        while: (confirmed) => !confirmed,
+      }),
+    );
+
+  const runRead = (offset: number) =>
+    browserRuntime.runFork(
       read(offset).pipe(
-        Effect.timeout('30 seconds'),
+        Effect.timeout(readTimeout),
         Effect.match({
           onFailure: (problem) => {
             setFailure(Schema.is(ShellPolicyConflictProblemSchema)(problem) ? 'conflict' : 'failed');
@@ -158,6 +176,13 @@ const useAgentKeys = (principalId: AgentPrincipalId) => {
         Effect.ensuring(Effect.sync(() => setBusy(false))),
       ),
     );
+  const load = (offset = 0) => {
+    if (busy) {
+      return;
+    }
+    setBusy(true);
+    setFailure(null);
+    pending.current = runRead(offset);
   };
 
   const handleExecute = (command: KeyCommand, name: string, reason: string, onCommitted: () => void) => {
@@ -192,21 +217,42 @@ const useAgentKeys = (principalId: AgentPrincipalId) => {
           }),
         ),
         // A committed mutation is never retried, even when this subsequent projection read fails.
-        Effect.andThen(() => read(0)),
-        Effect.timeout('30 seconds'),
-        Effect.match({
+        Effect.andThen(readUntilConfirmed),
+        Effect.timeout(readTimeout),
+        Effect.matchEffect({
           onFailure: (problem) => {
-            setFailure(Schema.is(ShellPolicyConflictProblemSchema)(problem) ? 'conflict' : 'failed');
-            setNeedsRefresh(true);
+            const conflict = Schema.is(ShellPolicyConflictProblemSchema)(problem);
+            return Effect.sync(() => {
+              setFailure(conflict ? 'conflict' : 'failed');
+              setNeedsRefresh(true);
+            }).pipe(
+              // A changed key is shown at once; the command itself is never repeated.
+              Effect.andThen(conflict ? read(0).pipe(Effect.timeout(readTimeout), Effect.ignore) : Effect.void),
+            );
           },
-          onSuccess: () => {
-            /* The fresh list confirms the binding projection. */
-          },
+          onSuccess: () => Effect.void,
         }),
         Effect.ensuring(Effect.sync(() => setBusy(false))),
       ),
     );
   };
+
+  // The keys load as soon as the detail is shown and follow live changes while it stays open.
+  const loadOnEvent = useEffectEvent(() => load());
+  // The first read starts with the detail; `busy` starts true for it.
+  const startFirstRead = useEffectEvent(() => {
+    pending.current = runRead(0);
+  });
+  useEffect(() => {
+    startFirstRead();
+    const follow = (event: Event) => {
+      if (changesKeys(event)) {
+        loadOnEvent();
+      }
+    };
+    globalThis.addEventListener(moduleChangeEvent, follow);
+    return () => globalThis.removeEventListener(moduleChangeEvent, follow);
+  }, []);
 
   return { busy, failure, handleExecute, keys, load, needsRefresh, nextOffset, notice, secret, setSecret };
 };
@@ -402,16 +448,6 @@ const AgentKeyDetail = ({ principalId }: { readonly principalId: AgentPrincipalI
       <p className="text-fg-secondary text-xs">{t(`${copyKey}.description`)}</p>
       <div className="flex flex-wrap gap-100">
         <Button
-          disabled={state.busy}
-          onClick={() => state.load()}
-          size="sm"
-          theme="outlined"
-          type="button"
-          variant="secondary"
-        >
-          {t(state.keys === null ? `${copyKey}.show` : `${copyKey}.refresh`)}
-        </Button>
-        <Button
           disabled={locked || state.keys === null}
           onClick={() => setCommand({ kind: 'issue' })}
           size="sm"
@@ -430,6 +466,13 @@ const AgentKeyDetail = ({ principalId }: { readonly principalId: AgentPrincipalI
         <StatusText showIcon status="error">
           {t(`${copyKey}.${state.failure}`)}
         </StatusText>
+      )}
+      {(state.failure !== null || state.needsRefresh) && !state.busy && (
+        <div>
+          <Button onClick={() => state.load()} size="sm" theme="outlined" type="button" variant="secondary">
+            {t(`${copyKey}.retry`)}
+          </Button>
+        </div>
       )}
       {state.notice !== null && (
         <StatusText showIcon status={state.notice === 'updated' ? 'success' : 'warning'}>

@@ -1,3 +1,4 @@
+import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import type { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
@@ -38,7 +39,7 @@ export interface CommercePortalAuthVerificationWorkloadAuthorizationService {
   readonly authorize: (
     input: CommercePortalAuthVerificationWorkloadAuthorizationInput,
   ) => Effect.Effect<
-    void,
+    TrustedPrincipalContext,
     CommercePortalAuthVerificationWorkloadRejectedError | CommercePortalAuthVerificationWorkloadUnavailableError,
     | CommercePortalAuthVerificationWorkloadGrantConfiguration
     | GatewayAssertionRedemptionService
@@ -103,7 +104,7 @@ const matchesGrant = (
 const authorize = Effect.fn('CommercePortalAuthVerificationWorkloadAuthorization.authorize')(function* authorize(
   input: CommercePortalAuthVerificationWorkloadAuthorizationInput,
 ): Effect.fn.Return<
-  void,
+  TrustedPrincipalContext,
   CommercePortalAuthVerificationWorkloadRejectedError | CommercePortalAuthVerificationWorkloadUnavailableError,
   | CommercePortalAuthVerificationWorkloadGrantConfiguration
   | GatewayAssertionRedemptionService
@@ -131,7 +132,7 @@ const authorize = Effect.fn('CommercePortalAuthVerificationWorkloadAuthorization
   if (grant === undefined) {
     return yield* Effect.fail(rejected('The workload principal is not granted for this exact Commerce request'));
   }
-  return undefined;
+  return principal;
 });
 
 export const commercePortalAuthVerificationWorkloadAuthorizationLive = Layer.succeed(

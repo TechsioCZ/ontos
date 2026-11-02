@@ -1,4 +1,7 @@
-import { Effect } from 'effect';
+import { Effect, Result, Schema } from 'effect';
+import { ReadHandlerUnavailable } from '@app/core-runtime';
+import { TestClock } from 'effect/testing';
+import { runReadOwnerSteps } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { expect, it } from 'effect-rstest';
 
 import type {
@@ -6,6 +9,8 @@ import type {
   ProfilePersistenceScope,
   ProfileScopedRoutineInvoker,
 } from '../../src/persistence/profile-persistence.ts';
+import { customerProfileTradingGateRead } from '../../src/api/customer-profile-trading-gate.read.ts';
+import { ProfileCounterpartyRoleEligibilityResolverFactory } from '../../src/profile-counterparty-role-eligibility.ts';
 import { profilePersistenceServicesForTransaction } from '../../src/persistence/profile-persistence.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -132,4 +137,34 @@ it.effect('fails closed when an eligible Role belongs to another seller', () =>
       }),
     ),
   ),
+);
+
+it.effect('rejects a prepared role that reaches its End during the trading-gate read', () =>
+  Effect.gen(function* roleExpiresDuringRead() {
+    const end = '2026-09-09T10:00:01.000Z';
+    const role = {
+      managedLegalEntityId: legalEntityId,
+      outcome: 'ELIGIBLE' as const,
+      roleResourceId: roleId,
+      roleResourceRevision: '2026-09-09T10:00:00.000Z',
+      validUntil: end,
+    };
+    yield* TestClock.setTime(Date.parse(end) - 1);
+    const result = yield* runReadOwnerSteps(customerProfileTradingGateRead, request, {
+      readKey: customerProfileTradingGateRead.descriptor.readKey,
+      scope: { ...scope, authMethod: 'system', correlationId: 'trading-gate-expiry' },
+      services: {
+        evaluateGate: () => gateWith(role).pipe(Effect.tap(() => TestClock.setTime(Date.parse(end)))),
+      },
+    }).pipe(
+      Effect.provideService(ProfileCounterpartyRoleEligibilityResolverFactory, {
+        make: () => () => Effect.succeed(role),
+      }),
+      Effect.result,
+    );
+    expect(Result.isFailure(result)).toBe(true);
+    if (Result.isFailure(result)) {
+      expect(Schema.is(ReadHandlerUnavailable)(result.failure)).toBe(true);
+    }
+  }).pipe(Effect.provide(TestClock.layer())),
 );

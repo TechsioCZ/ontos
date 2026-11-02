@@ -24,6 +24,7 @@ import type {
   DsrCase,
   DsrCaseLifecycleMutation,
   DsrDeadline,
+  DsrDeadlineHistory,
   DsrOwnerInventoryAuthorityResult,
   DsrDeadlinePolicy,
   DsrOwnerTaskAuthorityResult,
@@ -89,7 +90,7 @@ export interface ResolvedPrivacyEligibilityInputs {
 }
 
 interface DsrWorkflowRecords {
-  readonly deadlines: readonly DsrDeadline[];
+  readonly deadlines: readonly DsrDeadlineHistory[];
   readonly decisions: readonly DsrSubstantiveDecision[];
   readonly resolverAssignments: readonly DsrResolverAssignment[];
   readonly responses: readonly DsrResponse[];
@@ -102,7 +103,19 @@ export interface PrivacyOperationScope {
   readonly tenantId: string;
 }
 
+/** Owner-local insertion result; existing dispatch callers retain their handoff-only contract. */
+export interface PrivacyMeasureDispatchAdmission {
+  readonly created: boolean;
+  readonly handoff: PrivacyMeasureHandoff;
+}
+
 export interface PrivacyOperationRepositoryService {
+  readonly admitMeasureDispatch: (
+    tenantId: string,
+    legalEntityId: string,
+    actionInvocationId: string,
+    handoff: PrivacyMeasureHandoff,
+  ) => Effect.Effect<PrivacyMeasureDispatchAdmission, PrivacyOperationPersistenceError>;
   readonly assignDsrResolver: (
     tenantId: string,
     legalEntityId: string,

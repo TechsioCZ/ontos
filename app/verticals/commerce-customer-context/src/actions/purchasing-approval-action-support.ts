@@ -9,7 +9,11 @@ import { DateTime, Effect, Option, Schema, SchemaGetter } from 'effect';
 import { PurchaseApprovalCurrentnessFactory } from '../../shared/domain/purchase-approval-currentness-port.ts';
 import type { PurchaseApprovalCurrentnessService } from '../../shared/domain/purchase-approval-currentness-port.ts';
 import { PurchaseLimitEvaluationCurrentnessPort } from '../../shared/domain/purchase-limit-evaluation-currentness-port.ts';
-import { PurchaseLimitEvaluationSourceFactory } from '../../shared/domain/purchase-limit-evaluation.ts';
+import {
+  PurchaseLimitSellingLegalEntityIdSchema,
+  PurchaseLimitStorefrontIdSchema,
+  PurchaseLimitEvaluationSourceFactory,
+} from '../../shared/domain/purchase-limit-evaluation.ts';
 import type { PurchaseApprovalRequest } from '../../shared/domain/purchasing-approval.ts';
 import { purchasingApprovalWorkflowForScope } from '../persistence/purchasing-approval-persistence.ts';
 import type { PurchasingApprovalWorkflowService } from '../persistence/purchasing-approval-persistence.ts';
@@ -99,24 +103,30 @@ export const purchasingApprovalPermissionTarget = (input: {
     | 'counterparty.purchase.submit';
   readonly scope: OperationalScope;
   readonly storefrontId: string | null;
-}): ActionBusinessPermissionTarget => ({
-  permission: input.permission,
-  target:
-    input.storefrontId === null
-      ? {
-          counterpartyId: input.counterpartyRef.resourceId,
-          kind: 'counterparty',
-          legalEntityId: input.scope.legalEntityId ?? '',
-          tenantId: input.scope.tenantId,
-        }
-      : {
-          counterpartyId: input.counterpartyRef.resourceId,
-          kind: 'counterparty_storefront',
-          legalEntityId: input.scope.legalEntityId ?? '',
-          storefrontId: input.storefrontId,
-          tenantId: input.scope.tenantId,
-        },
-});
+}): ActionBusinessPermissionTarget => {
+  const resolved: ActionBusinessPermissionTarget = {
+    permission: input.permission,
+    target:
+      input.storefrontId === null
+        ? {
+            counterpartyId: input.counterpartyRef.resourceId,
+            kind: 'counterparty',
+            legalEntityId: input.scope.legalEntityId ?? '',
+            tenantId: input.scope.tenantId,
+          }
+        : {
+            counterpartyId: input.counterpartyRef.resourceId,
+            kind: 'counterparty_storefront',
+            legalEntityId: input.scope.legalEntityId ?? '',
+            storefrontId: input.storefrontId,
+            tenantId: input.scope.tenantId,
+          },
+  };
+  if (input.storefrontId !== null && input.scope.trustedStorefrontId !== undefined) {
+    return { ...resolved, trustedStorefrontId: input.scope.trustedStorefrontId };
+  }
+  return resolved;
+};
 
 export const trustedPurchasingContext = (
   counterpartyRef: CoreSearchResourceRef,
@@ -147,12 +157,19 @@ interface PurchasingApprovalCurrentnessServices {
 
 type PurchasingApprovalTransaction = Parameters<typeof purchasingApprovalWorkflowForScope>[0];
 
+// Narrow the original scope: spreading it would discard Core's object-identity provenance.
+const hasPurchasingApprovalScope = Schema.is(
+  Schema.Struct({
+    legalEntityId: PurchaseLimitSellingLegalEntityIdSchema,
+    trustedStorefrontId: PurchaseLimitStorefrontIdSchema,
+  }),
+);
+
 export const purchasingApprovalCurrentnessServicesForScope = (
   transaction: PurchasingApprovalTransaction,
   scope: OperationalScope,
-) => {
-  const { legalEntityId, trustedStorefrontId } = scope;
-  return Effect.all(
+) =>
+  Effect.all(
     {
       currentness: Effect.all(
         {
@@ -164,20 +181,20 @@ export const purchasingApprovalCurrentnessServicesForScope = (
         { concurrency: 4 },
       ).pipe(
         Effect.flatMap(({ contextAccess, currentnessFactory, evaluationSourceFactory, purchaseLimitCurrentness }) =>
-          legalEntityId === undefined || trustedStorefrontId === undefined
-            ? Effect.void
-            : evaluationSourceFactory.make(transaction, scope).pipe(
+          hasPurchasingApprovalScope(scope)
+            ? evaluationSourceFactory.make(transaction, scope).pipe(
                 Effect.mapError(purchaseApprovalEvaluationUnavailable),
                 Effect.map((evaluationSource) =>
                   currentnessFactory.make(
                     transaction,
-                    { ...scope, legalEntityId, trustedStorefrontId },
+                    scope,
                     contextAccess,
                     purchaseLimitCurrentness,
                     evaluationSource,
                   ),
                 ),
-              ),
+              )
+            : Effect.void,
         ),
       ),
       workflow: purchasingApprovalWorkflowForScope(transaction, scope),
@@ -195,4 +212,3 @@ export const purchasingApprovalCurrentnessServicesForScope = (
         : Effect.succeed({ currentness, workflow } satisfies PurchasingApprovalCurrentnessServices),
     ),
   );
-};

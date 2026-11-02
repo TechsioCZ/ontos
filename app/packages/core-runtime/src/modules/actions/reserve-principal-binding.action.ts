@@ -9,9 +9,10 @@ import { ExternalIdentityActionAuditEvidenceSchema } from '../../auth/external-i
 import {
   externalIdentityQueryHash,
   externalIdentityRepositoryFromTransaction,
+  authenticationNamespaceRegistration,
 } from '../../auth/external-identity/repository.ts';
 import { ExternalIdentityAdmission } from '../../auth/external-identity/resolve.ts';
-import { AuthenticationNamespaceRegistry } from '../../auth/external-identity/verifier.ts';
+import { prepareIdentityNamespaceAuthorization } from '../../auth/external-identity/namespace-action-preparation.ts';
 import type {
   ExternalIdentityAdmissionContext,
   ExternalIdentityRepositoryDependencies,
@@ -28,7 +29,7 @@ import {
   ReservePrincipalBindingResultSchema,
 } from '../../auth/external-identity-contracts.ts';
 import { externalIdentityFailure } from '../../auth/external-identity/errors.ts';
-import { ContextAccess } from '../../permissions/context-access.ts';
+import { OperationContextUnavailable } from '../../operations/errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 import {
   createReservePrincipalBindingCoreIdentityPrincipalBindingReservedV1OutboxMessage,
@@ -44,38 +45,6 @@ type Services = Readonly<{
 
 const malformedResult = (cause: unknown): ExternalIdentityError =>
   Object.assign(new ExternalIdentityError({ code: 'identity_unavailable' }), { cause });
-
-const authorizeNamespace = (
-  contextAccess: Option.Option<(typeof ContextAccess)['Service']>,
-  scope: { readonly principalId: string; readonly tenantId: string },
-  authenticationNamespaceId: string,
-) => {
-  if (Option.isNone(contextAccess) || contextAccess.value.identityNamespaces === undefined) {
-    return Effect.fail(externalIdentityFailure('identity_unavailable', 'Identity namespace access is unavailable'));
-  }
-  return contextAccess.value
-    .identityNamespaces({
-      authenticationNamespaceIds: [authenticationNamespaceId],
-      principalId: scope.principalId,
-      tenantId: scope.tenantId,
-    })
-    .pipe(
-      Effect.flatMap((decisions) => {
-        const decision =
-          decisions.length === 1 && decisions[0]?.key === authenticationNamespaceId
-            ? decisions[0].decision
-            : 'unavailable';
-        return decision === 'allowed'
-          ? Effect.void
-          : Effect.fail(
-              externalIdentityFailure(
-                decision === 'denied' ? 'identity_forbidden' : 'identity_unavailable',
-                'The Actor is not authorized to provision this identity namespace',
-              ),
-            );
-      }),
-    );
-};
 
 const handleReservePrincipalBinding = Effect.fn('ReservePrincipalBindingAction.handle')(function* handle(
   payload: ReservePrincipalBindingPayload,
@@ -181,23 +150,59 @@ export const reservePrincipalBindingAction = defineAction(
     schemaVersion: '1',
   },
   handleReservePrincipalBinding,
-  Effect.fn('ReservePrincipalBindingAction.services')(function* makeServices(transaction, scope) {
-    const registry = yield* Effect.serviceOption(AuthenticationNamespaceRegistry);
-    const contextAccess = yield* Effect.serviceOption(ContextAccess);
-    const dependencies: ExternalIdentityRepositoryDependencies = Option.isSome(registry)
-      ? {
-          authorizeNamespace: (authenticationNamespaceId) =>
-            authorizeNamespace(contextAccess, scope, authenticationNamespaceId),
-          registry: registry.value,
-        }
-      : {
-          authorizeNamespace: (authenticationNamespaceId) =>
-            authorizeNamespace(contextAccess, scope, authenticationNamespaceId),
-        };
-    const repository = externalIdentityRepositoryFromTransaction(transaction, dependencies);
-    return {
-      admission: yield* Effect.serviceOption(ExternalIdentityAdmission),
-      prepare: repository.prepare,
-    };
-  }),
+  () =>
+    Effect.fail(
+      new OperationContextUnavailable({
+        code: 'operation_context_unavailable',
+        reason: 'Identity reservation requires invocation-local namespace preparation',
+      }),
+    ),
+  {
+    prepareServices: Effect.fn('ReservePrincipalBindingAction.prepareServices')(
+      function* prepareServices(payload, context) {
+        const selector = structuredClone(payload);
+        const samePayload = Schema.toEquivalence(ReservePrincipalBindingPayloadSchema);
+        const registration = yield* authenticationNamespaceRegistration({}, selector.authenticationNamespaceId).pipe(
+          Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })),
+        );
+        const preparedRegistration = structuredClone(registration);
+        const prepared = yield* prepareIdentityNamespaceAuthorization(selector.authenticationNamespaceId, context).pipe(
+          Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })),
+        );
+        const admission = yield* Effect.serviceOption(ExternalIdentityAdmission);
+        return Effect.fn('ReservePrincipalBindingAction.preparedServices')(
+          function* preparedServices(transaction, scope, compositionRevision) {
+            yield* prepared.bind(scope, compositionRevision);
+            const dependencies: ExternalIdentityRepositoryDependencies = {
+              authorizeNamespace: prepared.authorizeNamespace,
+              preparedRegistration,
+            };
+            const repository = externalIdentityRepositoryFromTransaction(transaction, dependencies);
+            const prepare: Services['prepare'] = Effect.fn('ReservePrincipalBindingAction.prepareExactSubject')(
+              function* prepareExactSubject(input) {
+                const candidate =
+                  input.displayName === undefined
+                    ? input.subject
+                    : { ...input.subject, displayName: input.displayName };
+                if (
+                  input.invocationId !== context.actionInvocationId ||
+                  input.tenantId !== scope.tenantId ||
+                  !samePayload(selector, candidate)
+                ) {
+                  return yield* externalIdentityFailure(
+                    'identity_unavailable',
+                    'The prepared identity reservation does not match this invocation',
+                  );
+                }
+                const result = yield* repository.prepare(input);
+                yield* prepared.authorizeNamespace(selector.authenticationNamespaceId);
+                return result;
+              },
+            );
+            return { admission, prepare };
+          },
+        );
+      },
+    ),
+  },
 );

@@ -1,9 +1,13 @@
+import { PgDialect } from 'drizzle-orm/pg-core';
+import type { SQL } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
+import type { CatalogSelection } from '../../shared/domain/catalog-selection-evidence.ts';
 import { describe, expect, it } from 'effect-rstest';
 
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionBasisSchema, CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
 import { assessCatalogSelection } from '../../shared/domain/catalog-selection-assessment.ts';
 import {
   attributeDefinitionRevisions,
@@ -11,6 +15,15 @@ import {
   attributeValueItems,
   attributeValueRevisions,
   attributeValueSets,
+  productConfigurationDefinitions,
+  productConfigurationDefinitionRevisions,
+  productConfigurationRevisionActivations,
+  productConfigurationChoices,
+  productConfigurationChoiceOptions,
+  productConfigurationOptionAllowances,
+  productCategories,
+  productCategoryAssignments,
+  productCategoryHierarchyRevisions,
   packageContentRevisions,
   packageDefinitions,
   packageOptionRoleRevisions,
@@ -24,6 +37,10 @@ import {
   productTypeRevisions,
   productTypes,
   productTypeUntypedDecisions,
+  productAttributeApplicability,
+  productAttributeApplicabilityRevisions,
+  productVariantAxisAllowanceEvents,
+  productVariantAxisAllowedValues,
   productVariantAxes,
   productVariantAxisEvents,
   setCompositionComponents,
@@ -31,7 +48,11 @@ import {
   setCompositions,
   variantUnitDivisibility,
 } from '../../src/database/schema.ts';
-import { catalogSelectionCurrentBasisForScope } from '../../src/persistence/catalog-selection-current-basis.ts';
+import { allowedValueKeyHash } from '../../src/persistence/variant-axis-persistence.ts';
+import {
+  hasClosedScheduledConfigurationBasis,
+  catalogSelectionCurrentBasisForScope,
+} from '../../src/persistence/catalog-selection-current-basis.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const productId = '22222222-2222-4222-8222-222222222222';
@@ -67,12 +88,40 @@ const selected = (rows: readonly object[]) => ({
       orderBy: () => Object.assign(Effect.succeed(rows), { limit: () => Effect.succeed(rows) }),
     }),
 });
-type BareSetTable = typeof products | typeof productVariants | typeof setCompositions;
+type BareSetTable =
+  | typeof products
+  | typeof productVariants
+  | typeof setCompositions
+  | typeof productConfigurationDefinitionRevisions;
+const unavailableAllowanceRows = {
+  where: () => ({ orderBy: () => ({ limit: () => Effect.fail(new Error('allowance owner unavailable')) }) }),
+};
 const unavailableSetRows = { where: () => ({ limit: () => Effect.fail(new Error('Set owner unavailable')) }) };
-const readBareSet = (setRows: readonly object[] | null) => {
+const selectedConfigurationRevisions = (rows: readonly object[]) => ({
+  where: (where: SQL) => {
+    const { params } = new PgDialect().sqlToQuery(where);
+    const revision = params.find(Schema.is(Schema.Int));
+    return Object.assign(Effect.succeed(rows), {
+      limit: () => Effect.succeed(rows.filter((row) => !('revision' in row) || row.revision === revision)),
+    });
+  },
+});
+const readBareSet = (
+  setRows: readonly object[] | null,
+  exactSelection: CatalogSelection = selection,
+  ownerRows: ReadonlyMap<unknown, readonly object[]> = new Map(),
+  purpose = 'PURCHASE_ACCEPTANCE',
+) => {
   const transaction = {
     select: () => ({
       from: (table: BareSetTable) => {
+        const override = ownerRows.get(table);
+        if (override !== undefined) {
+          if (table === productConfigurationDefinitionRevisions) {
+            return selectedConfigurationRevisions(override);
+          }
+          return selected(override);
+        }
         if (table === products) {
           return selected([{ lifecycleState: 'ACTIVE', revision: 4 }]);
         }
@@ -84,7 +133,7 @@ const readBareSet = (setRows: readonly object[] | null) => {
     }),
   };
   // @ts-expect-error The mock implements only the exercised owner read chains.
-  return catalogSelectionCurrentBasisForScope(transaction, scope).read({ purpose: 'PURCHASE_ACCEPTANCE', selection });
+  return catalogSelectionCurrentBasisForScope(transaction, scope).read({ purpose, selection: exactSelection });
 };
 const packageEffectiveDate = (index: number, selectedAt: Date): Date => {
   if (index < 3) {
@@ -331,6 +380,15 @@ describe('Catalog Selection Current basis', () => {
         packageCurrentRevision?: number,
         packageEffectiveAt = new Date('1960-01-01T00:00:00.000Z'),
         inheritedRevision?: number,
+        allowance?: {
+          readonly foreignProduct?: boolean;
+          readonly incomplete?: boolean;
+          readonly missing?: boolean;
+          readonly revision: number;
+          readonly staleDefinition?: boolean;
+          readonly unavailable?: boolean;
+          readonly values: readonly string[];
+        },
       ) => {
         const rows = new Map<unknown, readonly object[]>([
           [products, [{ currentRevision: 4, lifecycleState: 'ACTIVE', productId, revision: 4, tenantId }]],
@@ -502,9 +560,64 @@ describe('Catalog Selection Current basis', () => {
             },
           ]);
         }
+        if (allowance !== undefined) {
+          rows.set(productVariantAxes, [
+            {
+              attributeDefinitionId: definitionId,
+              axisRevision: 3,
+              definitionRevision: 3,
+              ordinal: 0,
+              productId,
+              tenantId,
+            },
+          ]);
+          rows.set(productAttributeApplicability, [
+            {
+              attributeDefinitionId: definitionId,
+              currentRevision: 1,
+              productId,
+              productLevel: true,
+              tenantId,
+              variantLevel: true,
+            },
+          ]);
+          rows.set(productAttributeApplicabilityRevisions, [
+            {
+              attributeDefinitionId: definitionId,
+              productId,
+              productLevel: true,
+              revision: 1,
+              tenantId,
+              variantLevel: true,
+            },
+          ]);
+          rows.set(
+            productVariantAxisAllowanceEvents,
+            allowance.missing === true
+              ? []
+              : [
+                  {
+                    allowanceRevision: allowance.revision,
+                    attributeDefinitionId: definitionId,
+                    axisRevision: 3,
+                    definitionRevision: allowance.staleDefinition === true ? 2 : 3,
+                    productId: allowance.foreignProduct === true ? typeId : productId,
+                    tenantId,
+                    valueCount: allowance.values.length + (allowance.incomplete === true ? 1 : 0),
+                  },
+                ],
+          );
+          rows.set(
+            productVariantAxisAllowedValues,
+            allowance.values.map((text) => ({ valueKey: allowedValueKeyHash({ kind: 'TEXT', text }) })),
+          );
+        }
         const transaction = {
           select: () => ({
-            from: (table: typeof products) => selected(rows.get(table) ?? []),
+            from: (table: typeof products | typeof productVariantAxisAllowanceEvents) =>
+              table === productVariantAxisAllowanceEvents && allowance?.unavailable === true
+                ? unavailableAllowanceRows
+                : selected(rows.get(table) ?? []),
           }),
         };
         // @ts-expect-error The mock provides the exercised owner read chains only.
@@ -561,6 +674,39 @@ describe('Catalog Selection Current basis', () => {
       expect(inheritedAfter.basis.find(({ role }) => role === 'INHERITED_VALUE')?.source.resourceRef.resourceId).toBe(
         valueSetId,
       );
+      const allowed = yield* readAt(3, undefined, undefined, 1, { revision: 1, values: ['cotton', 'wool'] });
+      expect(allowed.status).toBe('OBSERVED');
+      const revoked = yield* readAt(3, undefined, undefined, 1, { revision: 2, values: ['wool'] });
+      expect(revoked).toMatchObject({
+        reason: 'Current Variant axis value is not permitted for this Product',
+        status: 'INVALID',
+      });
+      const empty = yield* readAt(3, undefined, undefined, 1, { revision: 3, values: [] });
+      expect(empty.status).toBe('INVALID');
+      const changed = yield* readAt(3, undefined, undefined, 1, { revision: 4, values: ['cotton'] });
+      expect(changed.status).toBe('OBSERVED');
+      expect(changed.basis.find(({ role }) => role === 'VARIANT_AXIS')).toMatchObject({
+        axisAllowances: [
+          { allowanceRevision: 4, attributeDefinition: { resourceRef: { resourceId: definitionId }, revision: 3 } },
+        ],
+        source: { resourceRef: selection.productRef, revision: 3 },
+      });
+      expect(allowed.basis.find(({ role }) => role === 'VARIANT')?.source).toEqual(
+        revoked.basis.find(({ role }) => role === 'VARIANT')?.source,
+      );
+      for (const control of [
+        { missing: true },
+        { unavailable: true },
+        { foreignProduct: true },
+        { staleDefinition: true },
+        { incomplete: true },
+      ]) {
+        const unknown = yield* readAt(3, undefined, undefined, 1, { revision: 2, values: ['wool'], ...control });
+        expect(unknown).toMatchObject({
+          reason: 'Current Product-specific axis allowances are unavailable or incomplete',
+          status: 'INDETERMINATE',
+        });
+      }
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
@@ -877,6 +1023,9 @@ it.effect('reassesses an unchanged Set selection against component Current facts
     const packageId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
     const state = {
       componentLifecycle: 'ACTIVE',
+      componentMissingRequired: false,
+      componentTypeRevision: 2,
+      componentUntyped: false,
       componentVariantLifecycle: 'ACTIVE',
       nested: false,
       ownerUnavailable: false,
@@ -906,184 +1055,239 @@ it.effect('reassesses an unchanged Set selection against component Current facts
       quantityAmount: '2',
       quantityUnitId: unitId,
     });
-    const readCounts = new Map<unknown, number>();
+    const dialect = new PgDialect();
+    const componentScope = (params: readonly unknown[], previous: boolean): boolean => {
+      if ([componentProductId, componentVariantId].some((id) => params.includes(id))) {
+        return true;
+      }
+      return [productId, variantId].some((id) => params.includes(id)) ? false : previous;
+    };
+    let readingComponent = false;
     const transaction = {
       select: () => ({
-        from: (table: BareSetTable) => {
-          const count = readCounts.get(table) ?? 0;
-          readCounts.set(table, count + 1);
-          if (state.ownerUnavailable && table === productVariants && count > 0) {
-            return unavailableSetRows;
-          }
-          const rows = new Map<unknown, readonly object[]>([
-            [
-              products,
+        from: (table: BareSetTable) => ({
+          where: (condition: SQL) => {
+            const { params } = dialect.sqlToQuery(condition);
+            readingComponent = componentScope(params, readingComponent);
+            const currentProductId = readingComponent ? componentProductId : productId;
+            const currentTypeRevision = readingComponent ? state.componentTypeRevision : 2;
+            const typeAssignments =
+              readingComponent && state.componentUntyped
+                ? []
+                : [{ assignmentRevision: 1, productId: currentProductId, productTypeId: typeId, tenantId }];
+            if (state.ownerUnavailable && table === productVariants && readingComponent) {
+              return unavailableSetRows.where();
+            }
+            const rows = new Map<unknown, readonly object[]>([
               [
-                {
-                  currentRevision: 1,
-                  lifecycleState: state.componentLifecycle,
-                  productId: componentProductId,
-                  revision: 1,
-                  tenantId,
-                },
+                products,
+                [
+                  {
+                    currentRevision: 1,
+                    lifecycleState: state.componentLifecycle,
+                    productId: componentProductId,
+                    revision: 1,
+                    tenantId,
+                  },
+                ],
               ],
-            ],
-            [
-              productVariants,
               [
-                {
-                  currentRevision: 1,
-                  lifecycleState: state.componentVariantLifecycle,
-                  productId: componentProductId,
-                  revision: 1,
-                  tenantId,
-                  variantId: componentVariantId,
-                },
+                productVariants,
+                [
+                  {
+                    currentRevision: 1,
+                    lifecycleState: state.componentVariantLifecycle,
+                    productId: componentProductId,
+                    revision: 1,
+                    tenantId,
+                    variantId: componentVariantId,
+                  },
+                ],
               ],
-            ],
-            [setCompositions, [{ compositionId, currentRevision: 1, productId, variantId }]],
-            [
-              setCompositionRevisions,
+              [setCompositions, [{ compositionId, currentRevision: 1, productId, variantId }]],
               [
-                {
-                  changeKind: 'INITIAL',
-                  effectiveFrom: new Date('1960-01-01'),
-                  effectiveTo: null,
-                  evidenceRefs: ['owner'],
-                  lifecycleState: 'ACTIVE',
-                  predecessorRevision: null,
-                  productId,
-                  reason: 'initial',
-                  revision: 1,
-                  variantId,
-                },
+                setCompositionRevisions,
+                [
+                  {
+                    changeKind: 'INITIAL',
+                    effectiveFrom: new Date('1960-01-01'),
+                    effectiveTo: null,
+                    evidenceRefs: ['owner'],
+                    lifecycleState: 'ACTIVE',
+                    predecessorRevision: null,
+                    productId,
+                    reason: 'initial',
+                    revision: 1,
+                    variantId,
+                  },
+                ],
               ],
-            ],
-            [
-              setCompositionComponents,
               [
-                component('cccccccc-cccc-4ccc-8ccc-cccccccccccc', false),
-                component('dddddddd-dddd-4ddd-8ddd-dddddddddddd', true),
+                setCompositionComponents,
+                [
+                  component('cccccccc-cccc-4ccc-8ccc-cccccccccccc', false),
+                  component('dddddddd-dddd-4ddd-8ddd-dddddddddddd', true),
+                ],
               ],
-            ],
-            [productTypeAssignments, [{ assignmentRevision: 1, productId, productTypeId: typeId, tenantId }]],
-            [productTypes, [{ currentRevision: 2, productTypeId: typeId, tenantId }]],
-            [
-              productTypeRevisions,
+              [productTypeAssignments, typeAssignments],
               [
-                {
-                  effectiveAt: new Date('1960-01-01'),
-                  productTypeId: typeId,
-                  productTypeRevisionId: typeRevisionId,
-                  revision: 2,
-                  tenantId,
-                },
+                productTypes,
+                [
+                  {
+                    currentRevision: currentTypeRevision,
+                    productTypeId: typeId,
+                    tenantId,
+                  },
+                ],
               ],
-            ],
-            [productTypeRevisionAttributes, []],
-            [productVariantAxes, []],
-            [
-              productVariantAxisEvents,
               [
-                {
-                  attributeDefinitionIds: [],
-                  attributeDefinitionRevisions: [],
-                  axisRevision: 3,
-                  productId,
-                  tenantId,
-                },
+                productTypeRevisions,
+                [
+                  {
+                    effectiveAt: new Date('1960-01-01'),
+                    productTypeId: typeId,
+                    productTypeRevisionId: typeRevisionId,
+                    revision: currentTypeRevision,
+                    tenantId,
+                  },
+                ],
               ],
-            ],
-            [variantUnitDivisibility, [{ currentRevision: 1, divisible: false, unitId }]],
-            [packageUnitDivisibility, [{ currentRevision: 1, divisible: false, unitId }]],
-            [productUnits, [{ currentRuleRevision: 2, lifecycleState: state.unitLifecycle, unitId }]],
-            [
-              productUnitRuleRevisions,
-              [{ lifecycleState: 'ACTIVE', revision: 2, rounding: 'UP', step: state.quantityStep }],
-            ],
-            [
-              packageDefinitions,
               [
-                {
-                  currentOptionRevision: 1,
-                  currentRevision: 1,
-                  lifecycleState: state.packageLifecycle,
-                  optionState: 'ACTIVE',
-                  packageDefinitionId: packageId,
-                  productId: componentProductId,
-                  variantId: componentVariantId,
-                },
+                productTypeRevisionAttributes,
+                readingComponent && state.componentMissingRequired
+                  ? [
+                      {
+                        attributeDefinitionId: 'abababab-abab-4bab-8bab-abababababab',
+                        level: 'PRODUCT',
+                        productTypeId: typeId,
+                        requirement: 'REQUIRED',
+                        revision: state.componentTypeRevision,
+                        tenantId,
+                      },
+                    ]
+                  : [],
               ],
-            ],
-            [
-              packageContentRevisions,
               [
-                {
-                  amount: '1',
-                  configurationKey: null,
-                  effectiveAt: new Date('1960-01-01'),
-                  lifecycleState: 'ACTIVE',
-                  lowerCount: null,
-                  lowerPackageDefinitionId: null,
-                  lowerRevision: null,
-                  packageDefinitionId: packageId,
-                  productId: componentProductId,
-                  revision: 1,
-                  setCompositionResourceId: null,
-                  setCompositionRevision: null,
-                  unitResourceId: unitId,
-                  unitResourceType: 'commerce.catalog.product-unit',
-                  variantId: componentVariantId,
-                },
+                productTypeUntypedDecisions,
+                [
+                  {
+                    axisRevision: 3,
+                    decisionRevision: 9,
+                    decisionState: 'CONFIRMED',
+                    productId: currentProductId,
+                    productRevision: 1,
+                    structuredAttributesRequired: false,
+                    tenantId,
+                    valueRevisionTokens: [],
+                    variantAxesRequired: false,
+                    variantRevisionTokens: [`${componentVariantId}:1`],
+                  },
+                ],
               ],
-            ],
-            [
-              packageOptionRoleRevisions,
+              [productVariantAxes, []],
               [
-                {
-                  contentRevision: 1,
-                  effectiveAt: new Date('1960-01-01'),
-                  independentlyRequested: true,
-                  looseUnitsSubstitutable: false,
-                  productId: componentProductId,
-                  revision: 1,
-                  state: 'ACTIVE',
-                  variantId: componentVariantId,
-                },
+                productVariantAxisEvents,
+                [
+                  {
+                    attributeDefinitionIds: [],
+                    attributeDefinitionRevisions: [],
+                    axisRevision: 3,
+                    productId: currentProductId,
+                    tenantId,
+                  },
+                ],
               ],
-            ],
-          ]);
-          if (table === products && (count === 0 || count >= 5)) {
-            rows.set(products, [{ currentRevision: 4, lifecycleState: 'ACTIVE', productId, revision: 4, tenantId }]);
-          }
-          if (table === productVariants && (count === 0 || count >= 5)) {
-            rows.set(productVariants, [
-              { currentRevision: 7, lifecycleState: 'ACTIVE', productId, revision: 7, tenantId, variantId },
+              [variantUnitDivisibility, [{ currentRevision: 1, divisible: false, unitId }]],
+              [packageUnitDivisibility, [{ currentRevision: 1, divisible: false, unitId }]],
+              [productUnits, [{ currentRuleRevision: 2, lifecycleState: state.unitLifecycle, unitId }]],
+              [
+                productUnitRuleRevisions,
+                [{ lifecycleState: 'ACTIVE', revision: 2, rounding: 'UP', step: state.quantityStep }],
+              ],
+              [
+                packageDefinitions,
+                [
+                  {
+                    currentOptionRevision: 1,
+                    currentRevision: 1,
+                    lifecycleState: state.packageLifecycle,
+                    optionState: 'ACTIVE',
+                    packageDefinitionId: packageId,
+                    productId: componentProductId,
+                    variantId: componentVariantId,
+                  },
+                ],
+              ],
+              [
+                packageContentRevisions,
+                [
+                  {
+                    amount: '1',
+                    configurationKey: null,
+                    effectiveAt: new Date('1960-01-01'),
+                    lifecycleState: 'ACTIVE',
+                    lowerCount: null,
+                    lowerPackageDefinitionId: null,
+                    lowerRevision: null,
+                    packageDefinitionId: packageId,
+                    productId: componentProductId,
+                    revision: 1,
+                    setCompositionResourceId: null,
+                    setCompositionRevision: null,
+                    unitResourceId: unitId,
+                    unitResourceType: 'commerce.catalog.product-unit',
+                    variantId: componentVariantId,
+                  },
+                ],
+              ],
+              [
+                packageOptionRoleRevisions,
+                [
+                  {
+                    contentRevision: 1,
+                    effectiveAt: new Date('1960-01-01'),
+                    independentlyRequested: true,
+                    looseUnitsSubstitutable: false,
+                    productId: componentProductId,
+                    revision: 1,
+                    state: 'ACTIVE',
+                    variantId: componentVariantId,
+                  },
+                ],
+              ],
             ]);
-          }
-          if (table === setCompositions && count > 1 && count < 4) {
-            rows.set(
-              setCompositions,
-              state.nested
-                ? [
-                    {
-                      compositionId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
-                      currentRevision: 1,
-                      productId: componentProductId,
-                      variantId: componentVariantId,
-                    },
-                  ]
-                : [],
-            );
-          }
-          return selected(rows.get(table) ?? []);
-        },
+            if (table === products && !readingComponent) {
+              rows.set(products, [{ currentRevision: 4, lifecycleState: 'ACTIVE', productId, revision: 4, tenantId }]);
+            }
+            if (table === productVariants && !readingComponent) {
+              rows.set(productVariants, [
+                { currentRevision: 7, lifecycleState: 'ACTIVE', productId, revision: 7, tenantId, variantId },
+              ]);
+            }
+            if (table === setCompositions && readingComponent) {
+              rows.set(
+                setCompositions,
+                state.nested
+                  ? [
+                      {
+                        compositionId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+                        currentRevision: 1,
+                        productId: componentProductId,
+                        variantId: componentVariantId,
+                      },
+                    ]
+                  : [],
+              );
+            }
+            return selected(rows.get(table) ?? []).where();
+          },
+        }),
       }),
     };
     // @ts-expect-error The stateful fixture implements the exercised owner read chains only.
     const reader = catalogSelectionCurrentBasisForScope(transaction, scope);
     const assess = () => {
-      readCounts.clear();
+      readingComponent = false;
       return reader.read({ purpose: 'PURCHASE_ACCEPTANCE', selection: setSelection });
     };
     const before = yield* assess();
@@ -1096,6 +1300,47 @@ it.effect('reassesses an unchanged Set selection against component Current facts
         selection: setSelection,
       }).status,
     ).toBe('VALID');
+    const beforeComponentTypes = before.basis.filter(
+      (fact) => fact.role === 'PRODUCT_TYPE' && fact.subject !== undefined,
+    );
+    expect(beforeComponentTypes).toHaveLength(2);
+    expect(
+      beforeComponentTypes.every((fact) => fact.source.revisionId === typeRevisionId && fact.source.revision === 2),
+    ).toBe(true);
+    state.componentTypeRevision = 3;
+    const changedType = yield* assess();
+    expect(changedType.status).toBe('OBSERVED');
+    expect(
+      changedType.basis
+        .filter((fact) => fact.role === 'PRODUCT_TYPE' && fact.subject !== undefined)
+        .every((fact) => fact.source.revision === 3),
+    ).toBe(true);
+    expect(
+      changedType.basis.find((fact) => fact.role === 'PRODUCT_TYPE' && fact.subject === undefined)?.source.revision,
+    ).toBe(2);
+    state.componentUntyped = true;
+    const untypedComponents = yield* assess();
+    expect(untypedComponents.status).toBe('OBSERVED');
+    expect(untypedComponents.basis.filter((fact) => fact.role === 'PRODUCT_TYPE_UNTYPED_DECISION')).toHaveLength(2);
+    expect(
+      untypedComponents.basis
+        .filter((fact) => fact.role === 'PRODUCT_TYPE_UNTYPED_DECISION')
+        .every(
+          (fact) =>
+            fact.provenance === 'CATALOG_OWNER_CONFIRMED_UNTYPED_DECISION' &&
+            fact.source.resourceRef.resourceId === componentProductId &&
+            fact.source.revision === 9 &&
+            fact.subject?.composition.resourceRef.resourceId === compositionId,
+        ),
+    ).toBe(true);
+    state.componentUntyped = false;
+    state.componentMissingRequired = true;
+    expect(yield* assess()).toMatchObject({
+      reason: 'Set component Current proof: COMPONENT_TYPE_VALUE_AXIS_UNVERIFIABLE',
+      status: 'INVALID',
+    });
+    state.componentMissingRequired = false;
+    state.componentTypeRevision = 2;
     for (const [change, expected] of [
       ['componentLifecycle', 'Set component Current proof: CURRENT_COMPONENT_UNVERIFIABLE'],
       ['componentVariantLifecycle', 'Set component Current proof: CURRENT_COMPONENT_UNVERIFIABLE'],
@@ -1122,5 +1367,528 @@ it.effect('reassesses an unchanged Set selection against component Current facts
     const unavailable = yield* assess();
     expect(unavailable.status).toBe('INDETERMINATE');
     expect(unavailable.basis.some(({ role }) => role === 'SET_COMPOSITION')).toBe(false);
+  }).pipe(Effect.provide(NodeCrypto.layer)),
+);
+
+it.effect('preserves real scheduled Configuration boundaries for complete untyped and typed axis-only bases', () =>
+  Effect.gen(function* scheduledConfigurationBoundary() {
+    const definitionId = '77777777-7777-4777-8777-777777777777';
+    const unitId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const categoryId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const at = '2026-10-01T12:00:00.000Z';
+    const boundary = '2026-10-02T00:00:00.000Z';
+    const configured = Schema.decodeUnknownSync(CatalogSelectionSchema)({
+      ...selection,
+      configuration: {
+        choices: [{ choiceKey: 'mount', value: 'A' }],
+        definition: {
+          resourceRef: {
+            moduleId: 'commerce.catalog',
+            resourceId: definitionId,
+            resourceType: 'commerce.catalog.configuration-definition',
+            tenantId,
+          },
+          revision: 1,
+        },
+        productRef: selection.productRef,
+        variantRef: selection.variantRef,
+      },
+    });
+    const activation = (revision: number, effectiveAt: string) => ({
+      actingPrincipalId: scope.principalId,
+      actionInvocationId: `activation-${revision}`,
+      definitionId,
+      effectiveAt: new Date(effectiveAt),
+      evidenceRefs: ['owner:recorded-mount'],
+      reason: 'Record mounting choice meaning',
+      revision,
+      supersededRevision: revision === 1 ? null : revision - 1,
+      tenantId,
+    });
+    const activations = [activation(1, '2026-10-01T00:00:00.000Z'), activation(2, boundary)];
+    const rows = new Map<unknown, readonly object[]>([
+      [products, [{ currentRevision: 4, lifecycleState: 'ACTIVE', productId, revision: 4, tenantId }]],
+      [
+        productVariants,
+        [{ currentRevision: 7, lifecycleState: 'ACTIVE', productId, revision: 7, tenantId, variantId }],
+      ],
+      [
+        productVariantAxisEvents,
+        [{ attributeDefinitionIds: [], attributeDefinitionRevisions: [], axisRevision: 3, productId, tenantId }],
+      ],
+      [
+        productTypeUntypedDecisions,
+        [
+          {
+            axisRevision: 3,
+            decisionRevision: 2,
+            decisionState: 'CONFIRMED',
+            productId,
+            productRevision: 4,
+            structuredAttributesRequired: false,
+            tenantId,
+            valueRevisionTokens: [],
+            variantAxesRequired: false,
+            variantRevisionTokens: [`${variantId}:7`],
+          },
+        ],
+      ],
+      [variantUnitDivisibility, [{ currentRevision: 1, divisible: false, unitId }]],
+      [productUnits, [{ currentRuleRevision: 2, lifecycleState: 'ACTIVE', unitId }]],
+      [productUnitRuleRevisions, [{ lifecycleState: 'ACTIVE', revision: 2, rounding: 'UP', step: '1' }]],
+      [productConfigurationDefinitions, [{ currentRevision: 2, definitionId, productId, tenantId }]],
+      [productConfigurationRevisionActivations, activations],
+      [
+        productConfigurationDefinitionRevisions,
+        activations.map(({ effectiveAt, ...item }) => ({
+          ...item,
+          effectiveFrom: effectiveAt,
+          effectiveTo: null,
+          productId,
+          state: 'ACTIVE',
+        })),
+      ],
+      [
+        productConfigurationChoices,
+        [
+          {
+            choiceKey: 'mount',
+            label: 'Mount',
+            meaning: 'Mounting part',
+            required: true,
+            unitId: null,
+            unitRevision: null,
+            valueKind: 'SINGLE_CHOICE',
+          },
+        ],
+      ],
+      [productConfigurationChoiceOptions, [{ choiceKey: 'mount', label: 'A', meaning: 'Mount A', optionKey: 'A' }]],
+      [
+        productConfigurationOptionAllowances,
+        [
+          {
+            allowed: true,
+            choiceKey: 'mount',
+            evidenceRefs: ['owner:recorded-mount'],
+            optionKey: 'A',
+            packageDefinitionId: null,
+            variantId: null,
+          },
+        ],
+      ],
+      [productCategoryHierarchyRevisions, [{ assignmentRevision: 1, hierarchyRevision: 1 }]],
+      [productCategoryAssignments, [{ categoryId, productId, tenantId }]],
+      [productCategories, [{ categoryId, currentRevision: 1, lifecycleState: 'ACTIVE', parentCategoryId: null }]],
+    ]);
+    yield* TestClock.setTime(new Date(at).getTime());
+    const current = yield* readBareSet([], configured, rows, 'PRICING');
+    expect(current.status).toBe('OBSERVED');
+    expect(current).toMatchObject({ dependentFactsComplete: true, validUntil: boundary });
+    expect(
+      assessCatalogSelection({ assessedAt: current.assessedAt, current, purpose: 'PRICING', selection: configured }),
+    ).toMatchObject({ status: 'VALID', validUntil: boundary });
+    // Inspect the whole real returned basis, including roles the untyped branch could retain.
+    expect(hasClosedScheduledConfigurationBasis(configured, current.basis)).toBe(true);
+    const unsupported = [
+      ['PRODUCT_TYPE', 'commerce.catalog.product-type'],
+      ['ATTRIBUTE_DEFINITION', 'commerce.catalog.attribute-definition'],
+      ['INHERITED_VALUE', 'commerce.catalog.attribute-value-set'],
+      ['OTHER_CATALOG_FACT', 'commerce.catalog.attribute-value-set'],
+      ['VARIANT_AXIS', 'commerce.catalog.product'],
+      ['UNIT', 'commerce.catalog.unit'],
+      ['UNIT_CONVERSION', 'commerce.catalog.unit'],
+      ['PACKAGE_CONTENT', 'commerce.catalog.package-definition'],
+      ['PACKAGE_OPTION_ROLE', 'commerce.catalog.package-definition'],
+      ['SET_COMPOSITION', 'commerce.catalog.set-composition'],
+    ];
+    for (const [role, resourceType] of unsupported) {
+      const extra = Schema.decodeUnknownSync(CatalogSelectionBasisSchema)({
+        role,
+        source: {
+          resourceRef: { moduleId: 'commerce.catalog', resourceId: unitId, resourceType, tenantId },
+          revision: 1,
+        },
+      });
+      expect(hasClosedScheduledConfigurationBasis(configured, [...current.basis, extra])).toBe(false);
+    }
+    for (const fact of current.basis) {
+      // Every admitted role still checks its foreign owner and tenant, not just its name.
+      for (const resourceRef of [
+        { ...fact.source.resourceRef, moduleId: 'foreign.owner' },
+        { ...fact.source.resourceRef, tenantId: '99999999-9999-4999-8999-999999999999' },
+      ]) {
+        const foreign = Schema.decodeUnknownOption(CatalogSelectionBasisSchema)({
+          ...fact,
+          source: { ...fact.source, resourceRef },
+        });
+        if (Option.isSome(foreign)) {
+          expect(
+            hasClosedScheduledConfigurationBasis(
+              configured,
+              current.basis.map((entry) => (entry === fact ? foreign.value : entry)),
+            ),
+          ).toBe(false);
+        } else {
+          expect(resourceRef.moduleId).toBe('foreign.owner');
+        }
+      }
+      expect(
+        hasClosedScheduledConfigurationBasis(
+          configured,
+          current.basis.filter((entry) => entry !== fact),
+        ),
+      ).toBe(fact.role === 'CATEGORY');
+      if (fact.role !== 'CATEGORY') {
+        expect(hasClosedScheduledConfigurationBasis(configured, [...current.basis, fact])).toBe(false);
+      }
+    }
+    const component = Schema.decodeUnknownSync(CatalogSelectionBasisSchema)({
+      ...current.basis[0],
+      subject: {
+        componentId: unitId,
+        composition: {
+          resourceRef: {
+            moduleId: 'commerce.catalog',
+            resourceId: unitId,
+            resourceType: 'commerce.catalog.set-composition',
+            tenantId,
+          },
+          revision: 1,
+        },
+        kind: 'SET_COMPONENT',
+      },
+    });
+    expect(hasClosedScheduledConfigurationBasis(configured, [...current.basis, component])).toBe(false);
+    expect(
+      Option.isNone(
+        Schema.decodeUnknownOption(CatalogSelectionBasisSchema)({
+          role: 'FUTURE_UNSUPPORTED_ROLE',
+          source: { resourceRef: selection.productRef, revision: 1 },
+        }),
+      ),
+    ).toBe(true);
+    const omittedRequired = yield* readBareSet([], selection, rows, 'PRICING');
+    expect(omittedRequired.status).toBe('INVALID');
+    expect('validUntil' in omittedRequired).toBe(false);
+    rows.set(productConfigurationDefinitions, []);
+    const direct = yield* readBareSet([], selection, rows, 'PRICING');
+    expect(direct.status).toBe('OBSERVED');
+    expect('validUntil' in direct).toBe(false);
+    // A later append cannot shorten R1's already recorded R2 end.
+    const third = activation(3, '2026-10-03T00:00:00.000Z');
+    rows.set(productConfigurationDefinitions, [{ currentRevision: 3, definitionId, productId, tenantId }]);
+    rows.set(productConfigurationRevisionActivations, [...activations, third]);
+    rows.set(
+      productConfigurationDefinitionRevisions,
+      [...activations, third].map(({ effectiveAt, ...item }) => ({
+        ...item,
+        effectiveFrom: effectiveAt,
+        effectiveTo: null,
+        productId,
+        state: 'ACTIVE',
+      })),
+    );
+    expect(yield* readBareSet([], configured, rows, 'PRICING')).toMatchObject({
+      status: 'OBSERVED',
+      validUntil: boundary,
+    });
+    // Incomplete deciding Category remains an observation, without a finite claim.
+    rows.set(productCategoryAssignments, []);
+    const incomplete = yield* readBareSet([], configured, rows, 'PRICING');
+    expect(incomplete).toMatchObject({ dependentFactsComplete: false, status: 'OBSERVED' });
+    expect('validUntil' in incomplete).toBe(false);
+    rows.set(productCategoryAssignments, [{ categoryId, productId, tenantId }]);
+    yield* TestClock.setTime(new Date(boundary).getTime());
+    expect(yield* readBareSet([], configured, rows, 'PRICING')).toMatchObject({ status: 'INVALID' });
+    const r2 = Schema.decodeUnknownSync(CatalogSelectionSchema)({
+      ...configured,
+      configuration: {
+        ...configured.configuration,
+        definition: { ...configured.configuration?.definition, revision: 2 },
+      },
+    });
+    expect(yield* readBareSet([], r2, rows, 'PRICING')).toMatchObject({
+      status: 'OBSERVED',
+      validUntil: '2026-10-03T00:00:00.000Z',
+    });
+    yield* TestClock.setTime(new Date(at).getTime());
+    rows.set(productConfigurationDefinitions, [{ currentRevision: 1, definitionId, productId, tenantId }]);
+    rows.set(productConfigurationRevisionActivations, activations.slice(0, 1));
+    rows.set(
+      productConfigurationDefinitionRevisions,
+      activations.slice(0, 1).map(({ effectiveAt, ...item }) => ({
+        ...item,
+        effectiveFrom: effectiveAt,
+        effectiveTo: null,
+        productId,
+        state: 'ACTIVE',
+      })),
+    );
+    const unbounded = yield* readBareSet([], configured, rows, 'PRICING');
+    expect(unbounded.status).toBe('OBSERVED');
+    expect('validUntil' in unbounded).toBe(false);
+
+    // The native owner closure proves this selected Variant's one local value and complete axis allowance.
+    const typeId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const typeRevisionId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const attributeId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    const valueSetId = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+    const definitionRules = {
+      allowsNone: 0,
+      allowsNotApplicable: 0,
+      allowsUnknown: 0,
+      applicableLevels: ['PRODUCT', 'VARIANT'],
+      canonicalUnit: null,
+      controlledValueKind: null,
+      decimalPlaces: null,
+      maximumValue: null,
+      meaning: 'Finish',
+      measuredQuantity: null,
+      minimumValue: null,
+      multiplicity: 'SINGLE',
+      name: 'Finish',
+      valueKind: 'TEXT',
+    };
+    rows.set(productTypeUntypedDecisions, []);
+    rows.set(productTypeAssignments, [{ assignmentRevision: 1, productId, productTypeId: typeId, tenantId }]);
+    rows.set(productTypes, [{ currentRevision: 2, productTypeId: typeId, tenantId }]);
+    rows.set(productTypeRevisions, [
+      {
+        effectiveAt: new Date('2026-09-01T00:00:00.000Z'),
+        productTypeId: typeId,
+        productTypeRevisionId: typeRevisionId,
+        revision: 2,
+        tenantId,
+      },
+    ]);
+    rows.set(productTypeRevisionAttributes, [
+      {
+        attributeDefinitionId: attributeId,
+        level: 'VARIANT',
+        productTypeId: typeId,
+        requirement: 'OPTIONAL',
+        revision: 2,
+        tenantId,
+      },
+    ]);
+    rows.set(productVariantAxes, [
+      { attributeDefinitionId: attributeId, axisRevision: 3, definitionRevision: 3, ordinal: 0, productId, tenantId },
+    ]);
+    rows.set(productVariantAxisEvents, [
+      {
+        attributeDefinitionIds: [attributeId],
+        attributeDefinitionRevisions: [3],
+        axisRevision: 3,
+        productId,
+        tenantId,
+      },
+    ]);
+    rows.set(attributeDefinitions, [
+      { ...definitionRules, attributeDefinitionId: attributeId, currentRevision: 3, tenantId },
+    ]);
+    rows.set(attributeDefinitionRevisions, [
+      { ...definitionRules, attributeDefinitionId: attributeId, revision: 3, tenantId },
+    ]);
+    rows.set(attributeValueSets, [
+      {
+        attributeDefinitionId: attributeId,
+        attributeValueSetId: valueSetId,
+        currentRevision: 1,
+        currentState: 'SET',
+        productId,
+        tenantId,
+        variantId,
+      },
+    ]);
+    rows.set(attributeValueRevisions, [
+      {
+        attributeValueSetId: valueSetId,
+        changeKind: 'SET',
+        revision: 1,
+        tenantId,
+        valueSnapshot: {
+          attributeDefinitionRevision: 3,
+          productTypeId: typeId,
+          productTypeRevision: 2,
+          sourceProductValueRevision: null,
+          values: [{ kind: 'TEXT', text: 'matte' }],
+        },
+      },
+    ]);
+    rows.set(attributeValueItems, [
+      {
+        attributeDefinitionId: attributeId,
+        attributeValueSetId: valueSetId,
+        ordinal: 0,
+        tenantId,
+        textValue: 'matte',
+        valueKind: 'TEXT',
+      },
+    ]);
+    rows.set(productAttributeApplicability, [
+      {
+        attributeDefinitionId: attributeId,
+        currentRevision: 1,
+        productId,
+        productLevel: false,
+        tenantId,
+        variantLevel: true,
+      },
+    ]);
+    rows.set(productAttributeApplicabilityRevisions, [
+      { attributeDefinitionId: attributeId, productId, productLevel: false, revision: 1, tenantId, variantLevel: true },
+    ]);
+    const allowance = {
+      allowanceRevision: 4,
+      attributeDefinitionId: attributeId,
+      axisRevision: 3,
+      definitionRevision: 3,
+      productId,
+      tenantId,
+      valueCount: 1,
+    };
+    rows.set(productVariantAxisAllowanceEvents, [allowance]);
+    rows.set(productVariantAxisAllowedValues, [{ valueKey: allowedValueKeyHash({ kind: 'TEXT', text: 'matte' }) }]);
+    rows.set(productConfigurationDefinitions, [{ currentRevision: 2, definitionId, productId, tenantId }]);
+    rows.set(productConfigurationRevisionActivations, activations);
+    rows.set(
+      productConfigurationDefinitionRevisions,
+      activations.map(({ effectiveAt, ...item }) => ({
+        ...item,
+        effectiveFrom: effectiveAt,
+        effectiveTo: null,
+        productId,
+        state: 'ACTIVE',
+      })),
+    );
+    const typed = yield* readBareSet([], configured, rows, 'PRICING');
+    expect(typed).toMatchObject({ dependentFactsComplete: true, status: 'OBSERVED', validUntil: boundary });
+    expect(hasClosedScheduledConfigurationBasis(configured, typed.basis)).toBe(true);
+    expect(typed.basis.filter(({ role }) => role === 'OTHER_CATALOG_FACT')).toHaveLength(1);
+    expect(
+      assessCatalogSelection({
+        assessedAt: typed.assessedAt,
+        current: typed,
+        purpose: 'PRICING',
+        selection: configured,
+      }),
+    ).toMatchObject({ status: 'VALID', validUntil: boundary });
+
+    for (const fact of typed.basis) {
+      expect(
+        hasClosedScheduledConfigurationBasis(
+          configured,
+          typed.basis.filter((item) => item !== fact),
+        ),
+      ).toBe(fact.role === 'CATEGORY');
+      expect(hasClosedScheduledConfigurationBasis(configured, [...typed.basis, fact])).toBe(false);
+      for (const resourceRef of [
+        { ...fact.source.resourceRef, tenantId: '99999999-9999-4999-8999-999999999999' },
+        { ...fact.source.resourceRef, moduleId: 'foreign.owner' },
+      ]) {
+        const changed = Schema.decodeUnknownOption(CatalogSelectionBasisSchema)({
+          ...fact,
+          source: { ...fact.source, resourceRef },
+        });
+        if (Option.isSome(changed)) {
+          expect(
+            hasClosedScheduledConfigurationBasis(
+              configured,
+              typed.basis.map((item) => (item === fact ? changed.value : item)),
+            ),
+          ).toBe(false);
+        }
+      }
+    }
+    const untypedDecision = current.basis.find(({ role }) => role === 'PRODUCT_TYPE_UNTYPED_DECISION');
+    expect(
+      hasClosedScheduledConfigurationBasis(configured, [
+        ...typed.basis,
+        ...(untypedDecision === undefined ? [] : [untypedDecision]),
+      ]),
+    ).toBe(false);
+    for (const [role, resourceType] of [
+      ['UNIT', 'commerce.catalog.unit'],
+      ['PACKAGE_CONTENT', 'commerce.catalog.package-definition'],
+      ['SET_COMPOSITION', 'commerce.catalog.set-composition'],
+    ]) {
+      const extra = Schema.decodeUnknownSync(CatalogSelectionBasisSchema)({
+        role,
+        source: {
+          resourceRef: {
+            moduleId: 'commerce.catalog',
+            resourceId: unitId,
+            resourceType,
+            tenantId,
+          },
+          revision: 1,
+        },
+      });
+      expect(hasClosedScheduledConfigurationBasis(configured, [...typed.basis, extra])).toBe(false);
+    }
+    const axis = typed.basis.find(({ role }) => role === 'VARIANT_AXIS');
+    for (const axisAllowances of [
+      undefined,
+      [],
+      [
+        {
+          allowanceRevision: 4,
+          attributeDefinition: {
+            resourceRef: {
+              moduleId: 'commerce.catalog',
+              resourceId: attributeId,
+              resourceType: 'commerce.catalog.attribute-definition',
+              tenantId,
+            },
+            revision: 2,
+          },
+        },
+      ],
+    ]) {
+      const changed = Schema.decodeUnknownSync(CatalogSelectionBasisSchema)(
+        axisAllowances === undefined ? { role: axis?.role, source: axis?.source } : { ...axis, axisAllowances },
+      );
+      expect(
+        hasClosedScheduledConfigurationBasis(
+          configured,
+          typed.basis.map((fact) => (fact === axis ? changed : fact)),
+        ),
+      ).toBe(false);
+    }
+    const withoutTypeRevisionId = typed.basis.map((fact) =>
+      fact.role === 'PRODUCT_TYPE'
+        ? Schema.decodeUnknownSync(CatalogSelectionBasisSchema)({
+            ...fact,
+            source: { resourceRef: fact.source.resourceRef, revision: fact.source.revision },
+          })
+        : fact,
+    );
+    expect(hasClosedScheduledConfigurationBasis(configured, withoutTypeRevisionId)).toBe(false);
+    expect(hasClosedScheduledConfigurationBasis(configured, [...typed.basis, component])).toBe(false);
+
+    for (const invalidAllowance of [
+      [],
+      [{ ...allowance, productId: typeId }],
+      [{ ...allowance, valueCount: 2 }],
+      [{ ...allowance, definitionRevision: 2 }],
+    ]) {
+      rows.set(productVariantAxisAllowanceEvents, invalidAllowance);
+      const invalid = yield* readBareSet([], configured, rows, 'PRICING');
+      expect(invalid.status).toBe('INDETERMINATE');
+      expect('validUntil' in invalid).toBe(false);
+    }
+    rows.set(productVariantAxisAllowanceEvents, [allowance]);
+    rows.set(productVariantAxisAllowedValues, [{ valueKey: allowedValueKeyHash({ kind: 'TEXT', text: 'gloss' }) }]);
+    const restricted = yield* readBareSet([], configured, rows, 'PRICING');
+    expect(restricted.status).toBe('INVALID');
+    expect('validUntil' in restricted).toBe(false);
+    rows.set(productVariantAxisAllowedValues, [{ valueKey: allowedValueKeyHash({ kind: 'TEXT', text: 'matte' }) }]);
+    rows.set(productVariantAxisAllowanceEvents, [{ ...allowance, allowanceRevision: 5 }]);
+    const sourceChanged = yield* readBareSet([], configured, rows, 'PRICING');
+    expect(sourceChanged).toMatchObject({ status: 'OBSERVED', validUntil: boundary });
+    expect(sourceChanged.basis).not.toEqual(typed.basis);
+    expect(
+      sourceChanged.basis.find(({ role }) => role === 'VARIANT_AXIS')?.axisAllowances?.[0]?.allowanceRevision,
+    ).toBe(5);
   }).pipe(Effect.provide(NodeCrypto.layer)),
 );

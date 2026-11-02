@@ -8,14 +8,11 @@ import { expect, it } from 'effect-rstest';
 
 import {
   commercePortalAuthRealmLive,
+  configuredGatewayAssertionRedemptionLive,
   makeCommerceCustomerContextApiRuntime,
   productionActionRuntimeLive,
   productionReadRuntimeLive,
 } from '../../api/index.ts';
-import {
-  GatewayAssertionRedemptionDatabaseLive,
-  GatewayAssertionRedemptionLive,
-} from '../../api/auth/gateway-assertion-redemption.ts';
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { jsonBody } from '../support/response.ts';
@@ -54,10 +51,7 @@ const configuredRuntime = Effect.acquireRelease(
     return makeCommerceCustomerContextApiRuntime(
       productionReadRuntimeLive,
       productionActionRuntimeLive,
-      GatewayAssertionRedemptionLive.pipe(
-        Layer.provide(GatewayAssertionRedemptionDatabaseLive),
-        Layer.provide(DatabaseConfigLive),
-      ),
+      configuredGatewayAssertionRedemptionLive,
       commercePortalAuthRealmLive.pipe(
         Layer.provideMerge(
           Layer.mergeAll(

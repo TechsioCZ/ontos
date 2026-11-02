@@ -5,7 +5,8 @@ import StoreLink from "@/components/store-link";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { Footer } from "@techsio/ui-kit/organisms/footer";
 
-import { cs } from "@/i18n/cs";
+import type { Dictionary } from "@/i18n";
+import { useDictionary } from "@/ontos/market-context";
 
 type FooterAsset = {
   alt: string;
@@ -29,25 +30,27 @@ function FooterAssetImage({ asset }: { asset: FooterAsset }) {
   );
 }
 
-const customerLinks = [
-  { href: "/doprava-a-platba", label: cs.footer.delivery },
-  { href: "/kontakty", label: cs.footer.pickup },
-  { href: "/doprava-a-platba", label: cs.footer.paymentOptions },
-  { href: "/o-nas", label: cs.footer.shoppingBenefits },
-  { href: "/obchodni-podminky", label: cs.header.terms },
-  { href: "/reklamace", label: cs.footer.claims },
-  { href: "/gdpr", label: cs.footer.privacy },
-  { href: "/faq", label: cs.footer.downloads },
-  { href: "/kontakty", label: cs.footer.substitutePerformance },
-] as const;
+const customerLinks = (cs: Dictionary) =>
+  [
+    { href: "/doprava-a-platba", label: cs.footer.delivery },
+    { href: "/kontakty", label: cs.footer.pickup },
+    { href: "/doprava-a-platba", label: cs.footer.paymentOptions },
+    { href: "/o-nas", label: cs.footer.shoppingBenefits },
+    { href: "/obchodni-podminky", label: cs.header.terms },
+    { href: "/reklamace", label: cs.footer.claims },
+    { href: "/gdpr", label: cs.footer.privacy },
+    { href: "/faq", label: cs.footer.downloads },
+    { href: "/kontakty", label: cs.footer.substitutePerformance },
+  ] as const;
 
-const paymentMethods = [
-  { alt: cs.footer.paymentCard, height: 28, src: "/akros/footer/payment-card.png", width: 39 },
-  { alt: "Google Pay", height: 28, src: "/akros/footer/google-pay.png", width: 39 },
-  { alt: "Apple Pay", height: 28, src: "/akros/footer/apple-pay.png", width: 39 },
-  { alt: cs.footer.cash, height: 28, src: "/akros/footer/cash.png", width: 39 },
-  { alt: cs.footer.bankTransfer, height: 28, src: "/akros/footer/bank-transfer.png", width: 39 },
-] satisfies FooterAsset[];
+const paymentMethods = (cs: Dictionary) =>
+  [
+    { alt: cs.footer.paymentCard, height: 28, src: "/akros/footer/payment-card.png", width: 39 },
+    { alt: "Google Pay", height: 28, src: "/akros/footer/google-pay.png", width: 39 },
+    { alt: "Apple Pay", height: 28, src: "/akros/footer/apple-pay.png", width: 39 },
+    { alt: cs.footer.cash, height: 28, src: "/akros/footer/cash.png", width: 39 },
+    { alt: cs.footer.bankTransfer, height: 28, src: "/akros/footer/bank-transfer.png", width: 39 },
+  ] satisfies FooterAsset[];
 
 const carriers = [
   { alt: "Zásilkovna", height: 28, src: "/akros/footer/zasilkovna.png", width: 69 },
@@ -83,6 +86,7 @@ const socialLinks = [
 ] as const;
 
 export function SiteFooter() {
+  const cs = useDictionary();
   return (
     <Footer className="akros-footer" direction="vertical" layout="col" sectionFlow="col" size="sm">
       <div className="akros-footer__inner" id="footer">
@@ -125,7 +129,7 @@ export function SiteFooter() {
             <Footer.Title>{cs.footer.customerInformation}</Footer.Title>
             <nav aria-label={cs.footer.customerInformation}>
               <Footer.List>
-                {customerLinks.map((item) => (
+                {customerLinks(cs).map((item) => (
                   <li key={`${item.href}-${item.label}`}>
                     <Footer.Link
                       as={StoreLink}
@@ -178,7 +182,7 @@ export function SiteFooter() {
           <Footer.Section>
             <Footer.Title>{cs.footer.paymentMethods}</Footer.Title>
             <div className="akros-footer__asset-row akros-footer__asset-row--payments">
-              {paymentMethods.map((item) => (
+              {paymentMethods(cs).map((item) => (
                 <FooterAssetImage asset={item} key={item.src} />
               ))}
             </div>

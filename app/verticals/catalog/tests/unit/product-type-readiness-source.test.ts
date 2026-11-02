@@ -23,6 +23,7 @@ import {
   ProductTypeCurrentRulesRevisionSchema,
 } from '../../shared/domain/product-type-rules.ts';
 import { evaluateCurrentProductTypeReadiness } from '../../src/persistence/product-type-readiness-evaluator.ts';
+import { CatalogPersistenceUnavailable } from '../../src/persistence/errors.ts';
 import { productTypeReadinessSourceForScope } from '../../src/persistence/product-type-readiness-source.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -65,11 +66,21 @@ interface Rows {
   readonly assigned?: boolean;
   readonly decisionState?: 'CONFIRMED' | 'REVOKED';
   readonly foreignRule?: boolean;
+  readonly foreignSetProduct?: boolean;
   readonly malformedValueSet?: boolean;
   readonly optionalRule?: boolean;
+  readonly retainedVariantId?: string;
   readonly revision?: number;
   readonly specialState?: 'UNKNOWN' | 'NONE' | 'NOT_APPLICABLE';
   readonly staleDecision?: boolean;
+  readonly unavailableInventory?: boolean;
+  readonly variants?: readonly {
+    readonly currentRevision: number;
+    readonly lifecycleState: string;
+    readonly productId: string;
+    readonly tenantId: string;
+    readonly variantId: string;
+  }[];
 }
 const decisionRows = (options: Rows) =>
   options.decisionState === undefined
@@ -102,6 +113,21 @@ const revisionRows = (options: Rows) =>
           tenantId,
         },
       ];
+const variantRowsFor = (table: Table, options: Rows) => (table === productVariants ? (options.variants ?? []) : []);
+const valueSetRows = (options: Rows) =>
+  options.malformedValueSet === true || options.specialState !== undefined
+    ? [
+        {
+          attributeDefinitionId: definitionId,
+          attributeValueSetId: '88888888-8888-4888-8888-888888888888',
+          currentRevision: 1,
+          currentState: 'SET',
+          productId: options.foreignSetProduct === true ? 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' : productId,
+          tenantId,
+          variantId: options.retainedVariantId ?? null,
+        },
+      ]
+    : [];
 const rowsFor = (table: Table, options: Rows) => {
   if (table === attributeDefinitions || table === attributeDefinitionRevisions) {
     return [
@@ -154,25 +180,10 @@ const rowsFor = (table: Table, options: Rows) => {
     ];
   }
   if (table === attributeValueSets) {
-    return options.malformedValueSet === true || options.specialState !== undefined
-      ? [
-          {
-            attributeDefinitionId: definitionId,
-            attributeValueSetId: '88888888-8888-4888-8888-888888888888',
-            currentRevision: 1,
-            currentState: 'SET',
-            productId,
-            tenantId,
-            variantId: null,
-          },
-        ]
-      : [];
+    return valueSetRows(options);
   }
-  if (table === productVariantAxes || table === productVariants) {
-    return [];
-  }
-  if (table === productVariantAxisEvents) {
-    return [];
+  if (table === productVariants || table === productVariantAxes || table === productVariantAxisEvents) {
+    return variantRowsFor(table, options);
   }
   if (table === productTypeUntypedDecisions) {
     return decisionRows(options);
@@ -208,7 +219,18 @@ const selected = (rows: readonly object[]) => ({
 });
 const transaction = (options: Rows = {}) => ({
   select: () => ({
-    from: (table: Table) => selected(rowsFor(table, options)),
+    from: (table: Table) =>
+      options.unavailableInventory === true && table === attributeValueSets
+        ? {
+            where: () =>
+              Effect.fail(
+                new CatalogPersistenceUnavailable({
+                  code: 'catalog_persistence_unavailable',
+                  reason: 'TEST owner read unavailable',
+                }),
+              ),
+          }
+        : selected(rowsFor(table, options)),
   }),
 });
 
@@ -304,6 +326,118 @@ describe('Product Type Current readiness source', () => {
       }),
     ).toMatchObject({ rules: { minimumSatisfied: true, violations: [] }, status: 'VERIFIED_TYPE_MINIMUM' });
   });
+  const retiredId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const selectedId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const selectedRef = { ...productRef, resourceId: selectedId, resourceType: 'commerce.catalog.variant' } as const;
+  const siblingRows = [
+    { currentRevision: 3, lifecycleState: 'RETIRED', productId, tenantId, variantId: retiredId },
+    { currentRevision: 2, lifecycleState: 'ACTIVE', productId, tenantId, variantId: selectedId },
+  ];
+  it.effect('keeps exact healthy V2 ready with a structurally verified retained V1 direct set', () =>
+    Effect.gen(function* retainedSibling() {
+      const source = productTypeReadinessSourceForScope(
+        // @ts-expect-error Mock supplies only the selected Drizzle query chain.
+        transaction({ optionalRule: true, retainedVariantId: retiredId, specialState: 'NONE', variants: siblingRows }),
+        scope,
+      );
+      expect(yield* source.evaluate(productRef, at, selectedRef)).toMatchObject({ status: 'VERIFIED_TYPE_MINIMUM' });
+      expect(yield* source.evaluate(productRef, at, { ...selectedRef, resourceId: retiredId })).toMatchObject({
+        status: 'INDETERMINATE',
+      });
+    }),
+  );
+  it.effect('keeps retained malformed snapshots fail closed and shared Product minimum independent', () =>
+    Effect.gen(function* retainedSnapshotControls() {
+      for (const options of [
+        { malformedValueSet: true, optionalRule: true, retainedVariantId: retiredId, variants: siblingRows },
+        { retainedVariantId: retiredId, specialState: 'NONE' as const, variants: siblingRows },
+      ]) {
+        // @ts-expect-error Mock supplies only the selected Drizzle query chain.
+        const source = productTypeReadinessSourceForScope(transaction(options), scope);
+        const result = yield* source.evaluate(productRef, at, selectedRef);
+        expect(result.status).not.toBe('VERIFIED_TYPE_MINIMUM');
+      }
+    }),
+  );
+  it.effect('keeps foreign Product value sets invalid even when the selected sibling is healthy', () =>
+    Effect.gen(function* foreignRetainedValueSet() {
+      const source = productTypeReadinessSourceForScope(
+        // @ts-expect-error Mock supplies only the selected Drizzle query chain.
+        transaction({
+          foreignSetProduct: true,
+          optionalRule: true,
+          retainedVariantId: retiredId,
+          specialState: 'NONE',
+          variants: siblingRows,
+        }),
+        scope,
+      );
+      expect(yield* source.evaluate(productRef, at, selectedRef)).toMatchObject({ status: 'INDETERMINATE' });
+    }),
+  );
+  it.effect('propagates unavailable complete owner inventory instead of filtering to an empty success', () =>
+    Effect.gen(function* unavailableInventory() {
+      const source = productTypeReadinessSourceForScope(
+        // @ts-expect-error Mock supplies only the selected Drizzle query chain.
+        transaction({ optionalRule: true, unavailableInventory: true, variants: siblingRows }),
+        scope,
+      );
+      expect(Exit.isFailure(yield* Effect.exit(source.evaluate(productRef, at, selectedRef)))).toBe(true);
+    }),
+  );
+  it.effect('does not fabricate confirmed untyped readiness from retained structured sets', () =>
+    Effect.gen(function* retainedUntyped() {
+      const source = productTypeReadinessSourceForScope(
+        // @ts-expect-error Mock supplies only the selected Drizzle query chain.
+        transaction({ assigned: false, retainedVariantId: retiredId, specialState: 'NONE', variants: siblingRows }),
+        scope,
+      );
+      expect(yield* source.evaluate(productRef, at, selectedRef)).toMatchObject({ status: 'UNTYPED_PARTIAL' });
+    }),
+  );
+  it.effect('keeps healthy exact selection ready without a direct retired set and with a WIP sibling', () =>
+    Effect.gen(function* noRetainedSet() {
+      const source = productTypeReadinessSourceForScope(
+        // @ts-expect-error Mock supplies only the selected Drizzle query chain.
+        transaction({
+          optionalRule: true,
+          variants: [
+            ...siblingRows,
+            {
+              ...siblingRows[1],
+              lifecycleState: 'WORK_IN_PROGRESS',
+              variantId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+            },
+          ],
+        }),
+        scope,
+      );
+      expect(yield* source.evaluate(productRef, at, selectedRef)).toMatchObject({ status: 'VERIFIED_TYPE_MINIMUM' });
+    }),
+  );
+  for (const control of ['orphan', 'foreign-product', 'foreign-tenant', 'duplicate-retired'] as const) {
+    it.effect(`rejects ${control} across the full retained owner inventory`, () =>
+      Effect.gen(function* inventoryProvenance() {
+        let variants = siblingRows;
+        if (control === 'foreign-product') {
+          variants = [{ ...siblingRows[0], productId: selectedId }, siblingRows[1]];
+        } else if (control === 'foreign-tenant') {
+          variants = [{ ...siblingRows[0], tenantId: selectedId }, siblingRows[1]];
+        } else if (control === 'duplicate-retired') {
+          variants = [...siblingRows, siblingRows[0]];
+        }
+        const options = {
+          optionalRule: true,
+          retainedVariantId: control === 'orphan' ? 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' : retiredId,
+          specialState: 'NONE' as const,
+          variants,
+        };
+        // @ts-expect-error Mock supplies only the selected Drizzle query chain.
+        const source = productTypeReadinessSourceForScope(transaction(options), scope);
+        expect(yield* source.evaluate(productRef, at, selectedRef)).toMatchObject({ status: 'INDETERMINATE' });
+      }),
+    );
+  }
   it.effect('fails closed when a recorded Current value set has no owner-verifiable revision', () =>
     Effect.gen(function* malformedValueSet() {
       // @ts-expect-error Mock supplies only the selected Drizzle query chain.

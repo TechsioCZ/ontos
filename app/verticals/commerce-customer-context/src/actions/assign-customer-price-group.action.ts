@@ -6,6 +6,7 @@ import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
+  CustomerPriceGroupAssignedAuditEvidenceSchema,
   CustomerPriceGroupAssignedEventSchema,
   isPriceGroupInstantBefore,
   samePriceGroupRef,
@@ -37,6 +38,7 @@ import type {
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
 import { createAssignCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupAssignedV1OutboxMessage } from './assign-customer-price-group.commerce-customer-context-customer-price-group-assigned-v1.outbox-message.ts';
 import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
+import { preparePriceGroupActionServices } from './price-group-action-preparation.ts';
 
 export { AssignCustomerPriceGroupPayloadSchema } from '../../shared/actions/assign-customer-price-group.ts';
 export type { AssignCustomerPriceGroupPayload } from '../../shared/actions/assign-customer-price-group.ts';
@@ -292,6 +294,20 @@ export const handleAssignCustomerPriceGroup = Effect.fn(
     tenantId: context.scope.tenantId,
   });
   const result = yield* resolveAssignmentPersistenceResult(stored, payload, context);
+  let auditEvidence: typeof CustomerPriceGroupAssignedAuditEvidenceSchema.Type = {
+    assignmentId: result.assignment.assignmentRef.resourceId,
+    assignmentRevision: result.assignment.revision,
+    changed: result.changed,
+    operation: 'ASSIGN',
+    requestedEffectiveFrom: payload.effectiveFrom,
+  };
+  if (result.replacedAssignmentRef !== null) {
+    auditEvidence = { ...auditEvidence, replacedAssignmentId: result.replacedAssignmentRef.resourceId };
+  }
+  if (payload.effectiveTo !== undefined) {
+    auditEvidence = { ...auditEvidence, requestedEffectiveTo: payload.effectiveTo };
+  }
+  yield* context.recordAuditEvidence(auditEvidence);
   yield* recordAssignmentDataAccess(payload, catalogOutcome, context);
   yield* publishAssignmentEvent(result, context);
 
@@ -309,6 +325,7 @@ export const assignCustomerPriceGroupAction = defineAction(
       policyKey: 'commerce.customer-context.assign-customer-price-group.access.v1',
     },
     actionKey: 'commerce.customer-context.assign-customer-price-group',
+    auditEvidenceSchema: CustomerPriceGroupAssignedAuditEvidenceSchema,
     auditProfile: 'standard',
     domainErrorSchema: AssignCustomerPriceGroupErrorSchema,
     domainEvents: {
@@ -335,4 +352,5 @@ export const assignCustomerPriceGroupAction = defineAction(
   },
   handleAssignCustomerPriceGroup,
   priceGroupActionServicesForTransaction,
+  { prepareServices: preparePriceGroupActionServices },
 );

@@ -1,8 +1,9 @@
 import { PgClient } from '@effect/sql-pg';
-import { Effect, Function as Fn, Layer } from 'effect';
+import { Effect, Function as Fn, Layer, Stream } from 'effect';
 import type { Reactivity } from 'effect/reactivity';
 import { SqlClient, Statement } from 'effect/sql';
-import type { Acquirer } from 'effect/sql/SqlConnection';
+import type { Acquirer, Connection } from 'effect/sql/SqlConnection';
+import type { SqlError } from 'effect/sql/SqlError';
 
 /**
  * Test double of the `PgClient` service over scripted in-memory connections.
@@ -21,6 +22,7 @@ export const scriptedPgClientLayer = (
       const client = yield* SqlClient.make({
         acquirer,
         compiler: PgClient.makeCompiler(),
+        driver: 'pg',
         prepareTransactionControls: true,
         releaseSavepoint: (name) => `RELEASE SAVEPOINT ${name}`,
         spanAttributes: [['db.system.name', 'postgresql']],
@@ -36,3 +38,19 @@ export const scriptedPgClientLayer = (
       return service;
     }),
   );
+
+export const testSqlConnection = (
+  execute: (sql: string, params: readonly unknown[]) => Effect.Effect<readonly object[], SqlError>,
+): Connection => {
+  const values = (sql: string, params: readonly unknown[]) =>
+    execute(sql, params).pipe(Effect.map((rows) => rows.map(Object.values)));
+  const connection: Connection = {
+    execute,
+    executeRaw: execute,
+    executeStream: (sql, params) => Stream.fromIterableEffect(execute(sql, params)),
+    executeUnprepared: execute,
+    executeValues: values,
+    executeValuesUnprepared: values,
+  };
+  return connection;
+};

@@ -1,6 +1,13 @@
 import { getVerticalRuntimeActions } from '@app/core-runtime';
 import { PricingCommercialFeeProductTargetSnapshotSchema } from '@app/pricing-contracts/domain/commercial-fee';
-import { DateTime, Effect, Match, Schema } from 'effect';
+import { DateTime, Effect, Match, Schema, Redacted } from 'effect';
+import { FetchHttpClient } from 'effect/http';
+import { TestClock } from 'effect/testing';
+import { CatalogSelectionGatewayCredentialService } from '../../shared/domain/catalog-selection-gateway-credential.ts';
+import {
+  prepareCommercialFeeCatalogTargets,
+  assertPreparedPricingScope,
+} from '../../src/integrations/commercial-fee-catalog-target-evidence.ts';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -205,20 +212,32 @@ const makeCommandDependencies = (
     'define' | 'loadCurrencySupport' | 'validateCatalogTarget'
   > &
     Pick<ProductCommercialFeeBulkCommandDependencies['reviseServices'], 'revise'> & {
+      readonly lookupOriginalResult?: ProductCommercialFeeBulkCommandDependencies['persistence']['lookupOriginalResult'];
       readonly lookupResult?: ProductCommercialFeeBulkCommandDependencies['persistence']['lookupResult'];
     },
 ): ProductCommercialFeeBulkCommandDependencies => {
+  const lookupResult =
+    services.lookupResult ??
+    (({ actionInvocationId }: { readonly actionInvocationId: string }) =>
+      Effect.succeed(
+        Schema.decodeSync(CommercialFeeActionResultLookupOutcomeSchema)({
+          actionInvocationId,
+          outcome: 'COMMERCIAL_FEE_ACTION_RESULT_ABSENT',
+        }),
+      ));
   const persistence = {
     define: services.define,
-    lookupResult:
-      services.lookupResult ??
-      (({ actionInvocationId }: { readonly actionInvocationId: string }) =>
-        Effect.succeed(
-          Schema.decodeSync(CommercialFeeActionResultLookupOutcomeSchema)({
-            actionInvocationId,
-            outcome: 'COMMERCIAL_FEE_ACTION_RESULT_ABSENT',
-          }),
+    lookupOriginalResult:
+      services.lookupOriginalResult ??
+      ((query) =>
+        lookupResult(query).pipe(
+          Effect.map((lookup) =>
+            lookup.outcome === 'COMMERCIAL_FEE_ACTION_RESULT_FOUND'
+              ? { ...lookup, originalIntentMatches: true }
+              : lookup,
+          ),
         )),
+    lookupResult,
     readCurrent: () => Effect.die('unused Commercial Fee Current read'),
     readCurrentSet: () => Effect.die('unused Commercial Fee set read'),
     readSchedule: () => Effect.die('unused Commercial Fee schedule read'),
@@ -431,6 +450,52 @@ describe('Product Commercial Fee bulk management (#797)', () => {
     }),
   );
 
+  it.effect('requires the original Fee operation proof before translating a recovered success (#1278)', () =>
+    Effect.gen(function* feeOriginalIntentProof() {
+      const { operation } = firstIntent;
+      if (operation.kind !== 'DEFINE_COMMERCIAL_FEE') {
+        return yield* Effect.die('Expected the existing exact Fee definition fixture');
+      }
+      const found = yield* Schema.decodeEffect(CommercialFeeActionResultLookupOutcomeSchema)({
+        actionInvocationId: '33333333-3333-4333-8333-333333333333',
+        outcome: 'COMMERCIAL_FEE_ACTION_RESULT_FOUND',
+        result: {
+          definition: {
+            catalogTargetEvidence: operation.payload.catalogTargetEvidence,
+            feeRef: canonicalFor(0).feeRef,
+            identityKey: operation.payload.identityKey,
+            revision: {
+              configuredAmount: operation.payload.configuredAmount,
+              effectiveFrom: operation.payload.effectivePeriod.effectiveFrom,
+              revision: 1,
+              revisionId: '44444444-4444-4444-8444-444444444444',
+            },
+          },
+          outcome: 'COMMERCIAL_FEE_REUSED',
+        },
+      });
+      for (const originalIntentMatches of [false, true]) {
+        const dependencies = makeCommandDependencies({
+          define: () => Effect.die('Reconciliation must not define a Fee'),
+          loadCurrencySupport: () => Effect.die('Reconciliation must not refresh owner evidence'),
+          lookupOriginalResult: () => Effect.succeed({ ...found, originalIntentMatches }),
+          lookupResult: () => Effect.succeed(found),
+          revise: () => Effect.die('Reconciliation must not revise a Fee'),
+          validateCatalogTarget: () => Effect.die('Reconciliation must not re-admit the original command'),
+        });
+        const result = yield* makeProductCommercialFeeBulkCommandPort(
+          dependencies,
+        ).reconcileAuthorizedCommercialFeeAction({ ...firstIntent, trusted });
+        expect(result).toMatchObject(
+          originalIntentMatches
+            ? { outcome: { outcome: 'UNCHANGED' }, status: 'RESOLVED' }
+            : { outcome: { outcome: 'CONFLICT', reasonCode: 'IDEMPOTENCY_CONFLICT' }, status: 'RESOLVED' },
+        );
+      }
+      return yield* Effect.void;
+    }),
+  );
+
   it.effect('rejects a stale Catalog snapshot before target execution', () =>
     Effect.gen(function* staleSnapshot() {
       let executions = 0;
@@ -625,3 +690,45 @@ describe('Product Commercial Fee bulk management (#797)', () => {
     }),
   );
 });
+
+it.effect('prepares real Catalog HTTP outside SQL and refuses selectors and scopes it did not verify', () =>
+  Effect.gen(function* preparedCatalogEvidence() {
+    yield* TestClock.setTime(trusted.trustedOperationAt.getTime());
+    let requests = 0;
+    const context = {
+      actionInvocationId: trusted.actionInvocationId,
+      compositionRevision: trusted.compositionRevision,
+      scope: trusted.principalContext,
+      transaction: () => Effect.die('Immutable payload selectors must not create a SQL snapshot'),
+    };
+    const fetch: typeof globalThis.fetch = () => {
+      requests += 1;
+      return Promise.resolve(Response.json(snapshot));
+    };
+    const prepared = yield* prepareCommercialFeeCatalogTargets([firstIntent.catalogTargetEvidence], context).pipe(
+      Effect.provideService(CatalogSelectionGatewayCredentialService, {
+        issue: (input) =>
+          Effect.sync(() => {
+            expect(input.compositionRevision).toBe(trusted.compositionRevision);
+            expect(input.legalEntityId).toBe(legalEntityId);
+            return { baseUrl: new URL('https://catalog.test'), credential: Redacted.make('Bearer exact-preparation') };
+          }),
+      }),
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+    );
+    expect(requests).toBe(1);
+    expect(yield* prepared.validate(firstIntent.catalogTargetEvidence)).toBe(true);
+    expect(yield* prepared.validate(secondIntent.catalogTargetEvidence).pipe(Effect.isFailure)).toBe(true);
+    expect(
+      yield* assertPreparedPricingScope(
+        context,
+        { ...context.scope, principalId: '90000000-0000-4000-8000-000000000001' },
+        context.compositionRevision,
+      ).pipe(Effect.isFailure),
+    ).toBe(true);
+    expect(
+      yield* assertPreparedPricingScope(context, context.scope, 'different-composition').pipe(Effect.isFailure),
+    ).toBe(true);
+    expect(requests).toBe(1);
+  }),
+);

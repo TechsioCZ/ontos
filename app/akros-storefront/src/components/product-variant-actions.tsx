@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useDictionary, useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { VariantSelectionDialog } from "./variant-selection-dialog";
 
@@ -18,12 +19,14 @@ export function ProductVariantActions({
   variantId?: string | null;
 }) {
   const router = useRouter();
+  const cs = useDictionary();
+  const storeHref = useStoreHref();
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const ask = (ids: string[]) => {
     const query = new URLSearchParams({ productId });
     if (ids.length) query.set("variantIds", ids.join(","));
-    router.push(`/kontakty?${query}#primy-kontakt`);
+    router.push(storeHref(`/kontakty?${query}#primy-kontakt`));
   };
   return (
     <>
@@ -41,7 +44,7 @@ export function ProductVariantActions({
           variantId !== undefined ? ask(variantId ? [variantId] : []) : setOpen(true)
         }
       >
-        {variantId ? "Dotaz na variantu" : "Dotaz na produkt"}
+        {variantId ? cs.product.askVariant : cs.product.askQuestion}
       </Button>
       {open && (
         <VariantSelectionDialog

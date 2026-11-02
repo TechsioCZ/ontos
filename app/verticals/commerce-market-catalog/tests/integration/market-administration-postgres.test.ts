@@ -521,7 +521,7 @@ it.live('enforces CAS, idempotency, temporal associations, terminal retirement, 
   ),
 );
 
-it.live('exposes only the six governed mutations and four governed reads over forced Tenant RLS', () =>
+it.live('exposes only the governed mutations, retirement-intent routines, and reads over forced Tenant RLS', () =>
   Effect.scoped(
     Effect.gen(function* marketSecurityCatalog() {
       const { admin: adminClient } = yield* testDatabaseClients;
@@ -530,7 +530,7 @@ it.live('exposes only the six governed mutations and four governed reads over fo
         readonly executable_routines: readonly string[];
         readonly forced_tables: number;
         readonly private_routines_executable: boolean;
-        readonly runtime_table_grants: number;
+        readonly runtime_table_grants: readonly string[];
       }>(
         sql`select
           (select array_agg(
@@ -545,26 +545,35 @@ it.live('exposes only the six governed mutations and four governed reads over fo
           has_function_privilege('ontos_runtime', 'commerce_market_catalog.assert_operation_scope(uuid,uuid)', 'EXECUTE')
             or has_function_privilege('ontos_runtime', 'commerce_market_catalog.advance_completeness_generation(uuid,uuid)', 'EXECUTE')
             as private_routines_executable,
-          (select count(*)::integer from information_schema.role_table_grants
+          (select array_agg(format('%s:%s', table_name, privilege_type) order by table_name, privilege_type)
+            from information_schema.role_table_grants
             where grantee = 'ontos_runtime' and table_schema = 'commerce_market_catalog') as runtime_table_grants`,
         'objects',
       );
       expect(catalog).toEqual({
         executable_routines: [
+          'advance_market_retirement_intent(uuid, uuid, jsonb)',
           'associate_storefront(uuid, uuid, jsonb)',
           'create_market(uuid, uuid, jsonb)',
           'read_current_market_catalog(uuid, uuid, jsonb)',
+          'read_market_administration_state(uuid, uuid, jsonb)',
           'read_market_eligibility_snapshot(uuid, jsonb)',
           'read_market_history(uuid, uuid, jsonb)',
+          'read_market_retirement_intent(uuid, uuid, jsonb)',
           'read_pricing_current_market_evidence(uuid, uuid, jsonb)',
           'remove_storefront_association(uuid, uuid, jsonb)',
+          'request_market_retirement(uuid, uuid, jsonb)',
           'revise_market_definition(uuid, uuid, jsonb)',
           'revise_storefront_association(uuid, uuid, jsonb)',
           'transition_market_lifecycle(uuid, uuid, jsonb)',
         ],
-        forced_tables: 6,
+        forced_tables: 7,
         private_routines_executable: false,
-        runtime_table_grants: 0,
+        runtime_table_grants: [
+          'gateway_assertion_redemptions:DELETE',
+          'gateway_assertion_redemptions:INSERT',
+          'gateway_assertion_redemptions:SELECT',
+        ],
       });
     }),
   ),

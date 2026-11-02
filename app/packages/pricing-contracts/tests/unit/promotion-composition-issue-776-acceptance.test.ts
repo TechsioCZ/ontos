@@ -232,6 +232,75 @@ const ready = {
 const isReady = Schema.is(PricingPromotionCompositionReadySchema);
 
 describe('issue #776 Promotion composition result contract', () => {
+  it('retains a later Currency observation in Ready without weakening independent subject or owner bindings', () => {
+    const later = {
+      ...ready,
+      currentnessEvidence: {
+        ...ready.currentnessEvidence,
+        currencySupport: { ...ready.currentnessEvidence.currencySupport, observedAt: '2026-09-28T08:00:00.001Z' },
+      },
+    };
+    expect(isReady(later)).toBe(true);
+    const decoded = Schema.decodeUnknownSync(PricingPromotionCompositionReadySchema)(later);
+    expect(decoded.currentnessEvidence.currencySupport).toEqual(later.currentnessEvidence.currencySupport);
+    expect(decoded.decision.operationTime).toBe(operationTime);
+    expect(decoded.lines.map(({ rawPreTaxValue }) => rawPreTaxValue.amount)).toEqual(['720', '180']);
+    expect(
+      isReady({
+        ...later,
+        currentnessEvidence: {
+          ...later.currentnessEvidence,
+          currencySupport: { ...later.currentnessEvidence.currencySupport, observedAt: '2026-09-28T07:59:59.999Z' },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isReady({
+        ...later,
+        currentnessEvidence: {
+          ...later.currentnessEvidence,
+          currencySupport: { ...later.currentnessEvidence.currencySupport, currencyCode: 'EUR' },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isReady({
+        ...later,
+        currentnessEvidence: {
+          ...later.currentnessEvidence,
+          currencySupport: {
+            ...later.currentnessEvidence.currencySupport,
+            tenantId: '99999999-9999-4999-8999-999999999999',
+          },
+        },
+      }),
+    ).toBe(false);
+    for (const revalidatedAt of ['2026-09-28T07:59:59.999Z', '2026-09-28T08:00:00.001Z']) {
+      const changedSubject = { ...later.currentnessEvidence.subjectEvidence, revalidatedAt };
+      expect(
+        isReady({
+          ...later,
+          currentnessEvidence: { ...later.currentnessEvidence, subjectEvidence: changedSubject },
+          promotion: {
+            ...later.promotion,
+            acceptedRequest: { ...later.promotion.acceptedRequest, subjectEvidence: changedSubject },
+          },
+        }),
+      ).toBe(false);
+    }
+    const earlierOwner = {
+      ...ownerEvidence,
+      currentness: { ...ownerEvidence.currentness, evaluatedAt: '2026-09-28T07:59:59.999Z' },
+    };
+    expect(
+      isReady({
+        ...later,
+        currentnessEvidence: { ...later.currentnessEvidence, ownerEvidence: earlierOwner },
+        promotion: { ...later.promotion, ownerEvidence: earlierOwner },
+      }),
+    ).toBe(false);
+  });
+
   it('retains exact original recipients, post-Pricing basis, once-only owner allocations, and complete Current evidence', () => {
     expect(isReady(ready)).toBe(true);
     const decoded = Schema.decodeSync(PricingPromotionCompositionReadySchema)(ready);
@@ -239,6 +308,45 @@ describe('issue #776 Promotion composition result contract', () => {
     expect(decoded.lines.map(({ prePromotionValue }) => prePromotionValue.amount)).toEqual(['800', '200']);
     expect(decoded.lines.map(({ rawPreTaxValue }) => rawPreTaxValue.amount)).toEqual(['720', '180']);
     expect(decoded.currentnessEvidence).toEqual(ready.currentnessEvidence);
+  });
+
+  it('publishes the exact eligible subset without borrowing unrelated capacity or deducting twice', () => {
+    for (const [eligible, unrelated, raw, positive] of [
+      ['100', '-100', '90', true],
+      ['100', '100', '90', true],
+      ['0', '100', '-10', false],
+      ['-100', '200', '-110', false],
+    ] as const) {
+      const subset = {
+        ...ready,
+        lines: [
+          {
+            ...ready.lines[0],
+            prePromotionValue: money(eligible),
+            promotionAllocation: allocation('line-a', 'a', '-10'),
+            rawPreTaxValue: money(raw),
+          },
+          {
+            catalogSelection: selection('b'),
+            occurrenceId: 'line-b',
+            prePromotionValue: money(unrelated),
+            rawPreTaxValue: money(unrelated),
+            recipientKind: 'MERCHANDISE' as const,
+          },
+        ],
+        promotion: {
+          ...ready.promotion,
+          allocations: [allocation('line-a', 'a', '-10')],
+          contribution: money('-10'),
+          target: { kind: 'MERCHANDISE_ONLY' as const, occurrenceIds: ['line-a'] },
+        },
+      };
+      expect(isReady(subset)).toBe(positive);
+      expect(
+        isReady({ ...subset, lines: [{ ...subset.lines[0], rawPreTaxValue: money('80') }, subset.lines[1]] }),
+      ).toBe(false);
+      expect(isReady({ ...subset, lines: subset.lines.slice(0, 1) })).toBe(false);
+    }
   });
 
   it('rejects duplicate deductions, changed recipients, contribution mismatch, implicit Shipping, and non-CZK mixing', () => {

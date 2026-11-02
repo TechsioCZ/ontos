@@ -2,6 +2,8 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@t
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { Deferred, Effect, Option, Schema } from 'effect';
 
+import { moduleChangeEvent, moduleWriteEvent } from '@app/shared-contracts/page-data';
+
 import {
   DuplicateCandidateDetailForbiddenProblemSchema,
   DuplicateCandidateDetailResponseSchema,
@@ -30,6 +32,7 @@ import {
 } from '../../src/api/party-command-client.ts';
 import { useCustomerIdentityReview } from '../../src/routes/[lang]/prodej/zakaznici/customers-data.ts';
 import { CustomerIdentityReviewPanel } from '../../src/routes/[lang]/prodej/zakaznici/customer-identity-review-panel.tsx';
+import { expectHumanReadable } from '../support/visible-text.ts';
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({
@@ -149,6 +152,12 @@ afterEach(cleanup);
 
 const reviewKey = 'party-registry.pages.customers.identityReview';
 
+const liveChange = (event = moduleChangeEvent) => {
+  act(() => {
+    globalThis.dispatchEvent(new Event(event));
+  });
+};
+
 it.effect('the extracted panel presents loading, empty, denied and unavailable queue states with read retries', () =>
   Effect.gen(function* panelQueueStates() {
     const pendingQueue = yield* Deferred.make<typeof queue>();
@@ -156,6 +165,10 @@ it.effect('the extracted panel presents loading, empty, denied and unavailable q
     const review = renderReview();
     act(() => review.result.current.openReview());
     const panel = render(<CustomerIdentityReviewPanel review={review.result.current} />);
+    expect(document.body.textContent).not.toContain(partyRef.resourceId);
+    expect(document.body.textContent).not.toContain(candidateCase.caseRef.resourceId);
+    expect(document.body.textContent).not.toContain(candidateCase.matchRuleVersion);
+    expectHumanReadable();
     expect(screen.getByText(`${reviewKey}.loading`)).toBeTruthy();
     expect(screen.queryByText(`${reviewKey}.empty`)).toBeNull();
     yield* Deferred.succeed(pendingQueue, { items: [], nextCaseRef: null });
@@ -175,7 +188,12 @@ it.effect('the extracted panel presents loading, empty, denied and unavailable q
         type: 'urn:test:read-failed',
       });
       rstest.mocked(executeDuplicateCandidateList).mockReturnValueOnce(Effect.fail(failure));
-      fireEvent.click(screen.getByRole('button', { name: `${reviewKey}.reloadQueue` }));
+      // A shown page follows live changes; a failed one offers only an error-state retry.
+      if (review.result.current.queue.status === 'ready') {
+        liveChange();
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: `${reviewKey}.retryQueue` }));
+      }
       yield* Effect.promise(() => waitFor(() => expect(review.result.current.queue.status).toBe('failed')));
       panel.rerender(<CustomerIdentityReviewPanel review={review.result.current} />);
       expect(screen.getByText(`${reviewKey}.${key}`)).toBeTruthy();
@@ -189,6 +207,10 @@ it.effect('the extracted panel requires an explicit subject choice and renders a
     const review = renderReview();
     yield* opened(review);
     const panel = render(<CustomerIdentityReviewPanel review={review.result.current} />);
+    expect(document.body.textContent).not.toContain(partyRef.resourceId);
+    expect(document.body.textContent).not.toContain(candidateCase.caseRef.resourceId);
+    expect(document.body.textContent).not.toContain(candidateCase.matchRuleVersion);
+    expectHumanReadable();
     const confirm = () => screen.getByRole<HTMLButtonElement>('button', { name: `${reviewKey}.match` });
     expect(confirm().disabled).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: `${reviewKey}.selectParty Existing identity` }));
@@ -403,7 +425,42 @@ it.effect('a denied resolution retains the reason and chosen identity without cl
   }),
 );
 
-it.effect('a revision or claim conflict requires a governed detail reload before another resolution', () =>
+it.effect('the panel offers no manual reload and follows live changes and module writes while open', () =>
+  Effect.gen(function* followsLiveChanges() {
+    const review = renderReview();
+    liveChange();
+    expect(executeDuplicateCandidateList).not.toHaveBeenCalled();
+    yield* opened(review);
+    prepare(review);
+    const panel = render(<CustomerIdentityReviewPanel review={review.result.current} />);
+    expect(screen.queryByRole('button', { name: /reload/u })).toBeNull();
+    expect(screen.queryByRole('button', { name: /retry/u })).toBeNull();
+    rstest.mocked(executeDuplicateCandidateList).mockClear();
+    rstest.mocked(executeDuplicateCandidateDetail).mockClear();
+    rstest.mocked(executeDuplicateCandidateDetail).mockReturnValue(Effect.succeed({ ...candidateCase, revision: 5 }));
+    liveChange();
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        const { detail } = review.result.current;
+        expect(detail.status === 'ready' ? detail.value.candidateCase.revision : undefined).toBe(5);
+      }),
+    );
+    expect(executeDuplicateCandidateList).toHaveBeenCalledTimes(1);
+    expect(executeDuplicateCandidateDetail).toHaveBeenCalledTimes(1);
+    // The background read never blanks the panel and keeps the reviewer's draft.
+    expect(review.result.current.queue.status).toBe('ready');
+    expect(review.result.current.reason).toBe('Reviewed the signup evidence');
+    expect(review.result.current.selectedPartyId).toBe(partyRef.resourceId);
+    liveChange(moduleWriteEvent);
+    yield* Effect.promise(() => waitFor(() => expect(executeDuplicateCandidateList).toHaveBeenCalledTimes(2)));
+    act(() => review.result.current.closeReview(false));
+    liveChange();
+    expect(executeDuplicateCandidateList).toHaveBeenCalledTimes(2);
+    panel.unmount();
+  }),
+);
+
+it.effect('a revision or claim conflict reloads the case and requires a fresh subject choice', () =>
   Effect.gen(function* conflict() {
     const failure = yield* Schema.decodeEffect(PartyCommandConflictProblemSchema)({
       _tag: 'PartyCommandConflictProblem',
@@ -417,12 +474,15 @@ it.effect('a revision or claim conflict requires a governed detail reload before
     const review = renderReview();
     yield* opened(review);
     prepare(review);
+    const reloaded = yield* Deferred.make<typeof candidateCase>();
+    rstest.mocked(executeDuplicateCandidateDetail).mockReturnValue(Deferred.await(reloaded));
     act(() => review.result.current.resolve('MATCH_EXISTING'));
     yield* Effect.promise(() => waitFor(() => expect(review.result.current.stale).toBe(true)));
+    expect(review.result.current.notice?.key).toBe('conflict');
+    expect(review.result.current.selectedPartyId).toBe('');
     act(() => review.result.current.resolve('MATCH_EXISTING'));
     expect(resolveDuplicateCandidateMatch).toHaveBeenCalledTimes(1);
-    rstest.mocked(executeDuplicateCandidateDetail).mockReturnValue(Effect.succeed({ ...candidateCase, revision: 4 }));
-    act(() => review.result.current.refreshDetail());
+    yield* Deferred.succeed(reloaded, { ...candidateCase, revision: 4 });
     yield* Effect.promise(() => waitFor(() => expect(review.result.current.canResolve).toBe(true)));
     prepare(review);
     act(() => review.result.current.resolve('MATCH_EXISTING'));
@@ -479,7 +539,7 @@ it.effect('a failed committed detail refresh preserves the refreshed empty queue
       .mockReturnValue(
         Effect.succeed({ ...candidateCase, lifecycleState: 'RESOLVED', resolutionOutcome: 'MATCH_EXISTING' }),
       );
-    act(() => review.result.current.refreshDetail());
+    act(() => review.result.current.retryDetail());
     yield* Effect.promise(() => waitFor(() => expect(review.result.current.detail.status).toBe('ready')));
     expect(review.result.current.canResolve).toBe(false);
     expect(resolveDuplicateCandidateMatch).toHaveBeenCalledTimes(1);

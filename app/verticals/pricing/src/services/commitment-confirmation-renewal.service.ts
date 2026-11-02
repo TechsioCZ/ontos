@@ -1,3 +1,5 @@
+import type { PricingCommitmentConfirmationRenewalService } from './commitment-confirmation-renewal-context.ts';
+
 import {
   PricingCommitmentConfirmationBindingSchema,
   PricingCommitmentConfirmationRenewalOutcomeSchema,
@@ -17,7 +19,7 @@ import {
 } from '@app/pricing-contracts/domain/commercial-total';
 import { PricingQuotationBindingSchema } from '@app/pricing-contracts/domain/quotation';
 import { PricingDecisionSchema } from '@app/pricing-contracts/pricing-decision';
-import { Context, Effect, Match, Option, Schema } from 'effect';
+import { Context, Layer, Effect, Match, Option, Schema } from 'effect';
 
 import type { PricingCurrentBackedConfirmationIssuanceService } from './current-backed-confirmation-issuance.service.ts';
 import type { PricingQuotationBackedConfirmationIssuanceService } from './quotation-backed-confirmation-issuance.service.ts';
@@ -29,18 +31,10 @@ const sameBreakdown = Schema.toEquivalence(PricingCommercialTotalBreakdownSchema
 const sameDecision = Schema.toEquivalence(PricingDecisionSchema);
 const samePublishedLines = Schema.toEquivalence(Schema.Array(PricingPublishedCommercialLineSchema));
 
-export interface PricingCommitmentConfirmationRenewalService {
-  readonly renew: (
-    request: PricingCommitmentConfirmationRenewalRequest,
-  ) => Effect.Effect<PricingCommitmentConfirmationRenewalOutcome>;
-}
+export type { PricingCommitmentConfirmationRenewalService } from './commitment-confirmation-renewal-context.ts';
+export { PricingCommitmentConfirmationRenewal } from './commitment-confirmation-renewal-context.ts';
 
-export class PricingCommitmentConfirmationRenewal extends Context.Service<
-  PricingCommitmentConfirmationRenewal,
-  PricingCommitmentConfirmationRenewalService
->()('@app/pricing/services/commitment-confirmation-renewal.service/PricingCommitmentConfirmationRenewal') {}
-
-interface PricingCommitmentConfirmationRenewalDependencies {
+export interface PricingCommitmentConfirmationRenewalDependencies {
   readonly currentIssuance: PricingCurrentBackedConfirmationIssuanceService;
   readonly quotationIssuance: PricingQuotationBackedConfirmationIssuanceService;
 }
@@ -189,3 +183,12 @@ export const makePricingCommitmentConfirmationRenewalService = (
     );
   }),
 });
+
+export class PricingCommitmentConfirmationRenewalFactory extends Context.Service<
+  PricingCommitmentConfirmationRenewalFactory,
+  { readonly make: typeof makePricingCommitmentConfirmationRenewalService }
+>()('@app/pricing/services/commitment-confirmation-renewal.service/PricingCommitmentConfirmationRenewalFactory') {}
+export const pricingCommitmentConfirmationRenewalFactoryLive = Layer.succeed(
+  PricingCommitmentConfirmationRenewalFactory,
+  { make: makePricingCommitmentConfirmationRenewalService },
+);

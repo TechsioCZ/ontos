@@ -7,10 +7,9 @@ import { DataTable, type ColumnDef } from "@techsio/ui-kit/organisms/data-table"
 import { ProductVariantLink } from "@/components/product-variant-link";
 
 import { useCart } from "@/features/cart/cart-provider";
-import { cs } from "@/i18n/cs";
+import { useDictionary, useFormatPrice } from "@/ontos/market-context";
 import { getVariantRangeFilters, type NumericRange } from "@/lib/product-variant-filters";
 import { VariantRangeFilter } from "./variant-range-filter";
-import { formatPrice } from "@/lib/format";
 import {
   matchesProductVariantSearch,
   normalizeCatalogSearchTerm,
@@ -70,6 +69,7 @@ interface VariantOrderControlProps {
 
 function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderControlProps) {
   const { adding } = useCart();
+  const cs = useDictionary();
   const inputId = useId();
   const isPackage = mode === "package";
   const packageQuantity = variant.packageQuantity ?? variant.minimumQuantity;
@@ -111,20 +111,20 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
       >
         <NumericInput.Control className="akros-variant-table__quantity-control @max-akros-variant-table/akros-variants:grid-cols-[var(--dimension-44)_minmax(0,1fr)_var(--dimension-44)]!">
           <NumericInput.DecrementTrigger
-            aria-label={isPackage ? "Snížit počet balení" : "Snížit množství"}
+            aria-label={isPackage ? cs.product.decrementPackages : cs.product.decrementQuantity}
             icon="token-icon-minus"
           />
           <NumericInput.Input
-            aria-label={isPackage ? `Počet celých balení ${label}` : `Množství ${label}`}
+            aria-label={isPackage ? cs.product.packagesOf(label) : cs.product.quantityOf(label)}
           />
           <NumericInput.IncrementTrigger
-            aria-label={isPackage ? "Zvýšit počet balení" : "Zvýšit množství"}
+            aria-label={isPackage ? cs.product.incrementPackages : cs.product.incrementQuantity}
             icon="token-icon-plus"
           />
         </NumericInput.Control>
       </NumericInput>
       <Button
-        aria-label={isPackage ? `Koupit celé balení ${label}` : `Koupit ${label}`}
+        aria-label={isPackage ? cs.product.buyPackageOf(label) : cs.product.buyItem(label)}
         block={!isPackage}
         className={
           isPackage
@@ -139,16 +139,16 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
       >
         {isPackage ? (
           <span>
-            Koupit celé
+            {cs.product.buyPackageLead}
             <br />
-            balení{" "}
+            {cs.product.buyPackageNoun}{" "}
             <small>
               ({packageQuantity.toLocaleString("cs-CZ")} {variant.unit})
             </small>
           </span>
         ) : (
           <span>
-            Koupit <small>({variant.unit})</small>
+            {cs.product.buy} <small>({variant.unit})</small>
           </span>
         )}
       </Button>
@@ -163,6 +163,8 @@ export function ProductPurchaseForm({
   initialVariantSearch,
 }: ProductPurchaseFormProps) {
   const { addItem, adding } = useCart();
+  const cs = useDictionary();
+  const formatPrice = useFormatPrice();
   const sourceVariants = variants ?? noVariants;
   const filters = useMemo(
     () => getVariantRangeFilters(product, sourceVariants),
@@ -199,7 +201,7 @@ export function ProductPurchaseForm({
     () => [
       {
         id: "name",
-        header: "Název",
+        header: cs.product.table.name,
         meta: { width: "auto" },
         cell: ({ row }) => {
           const label = formatVariantLabel(row.original);
@@ -217,7 +219,7 @@ export function ProductPurchaseForm({
               <p
                 className={`${variantListOnlyClassName} mt-(--dimension-8) whitespace-nowrap text-xs font-normal text-fg-secondary`}
               >
-                Kód: {row.original.sku}
+                {cs.product.code}: {row.original.sku}
               </p>
             </div>
           );
@@ -225,12 +227,12 @@ export function ProductPurchaseForm({
       },
       {
         accessorKey: "sku",
-        header: "Kód",
+        header: cs.product.table.code,
         meta: { width: "16%" },
         cell: ({ row }) => (
           <span className="akros-variant-table__sku block whitespace-nowrap @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal @max-akros-variant-table/akros-variants:text-fg-secondary">
             <span className="akros-variant-table__mobile-label @max-akros-variant-table/akros-variants:inline!">
-              Kód:{" "}
+              {cs.product.code}:{" "}
             </span>
             <span>{row.original.sku}</span>
           </span>
@@ -238,12 +240,12 @@ export function ProductPurchaseForm({
       },
       {
         accessorKey: "unit",
-        header: "M.J.",
+        header: cs.product.table.unit,
         meta: { align: "center", width: "4%" },
       },
       {
         id: "availability",
-        header: "Dostupnost",
+        header: cs.product.table.availability,
         meta: { width: "9%" },
         cell: ({ row }) => {
           const isAvailable =
@@ -256,17 +258,17 @@ export function ProductPurchaseForm({
               data-available={isAvailable}
             >
               {row.original.availabilityUnknown
-                ? "Nelze ověřit"
+                ? cs.product.variantAvailability.unknown
                 : isAvailable
-                  ? "Skladem"
-                  : "Není skladem"}
+                  ? cs.product.variantAvailability.inStock
+                  : cs.product.variantAvailability.outOfStock}
             </strong>
           );
         },
       },
       {
         id: "price",
-        header: "Cena",
+        header: cs.product.table.price,
         meta: { width: "12%" },
         cell: ({ row }) => {
           const basePriceTier = row.original.priceTiers[0];
@@ -279,15 +281,15 @@ export function ProductPurchaseForm({
                   data-available={row.original.stockCount >= row.original.minimumQuantity}
                 >
                   {row.original.availabilityUnknown
-                    ? "Nelze ověřit"
+                    ? cs.product.variantAvailability.unknown
                     : row.original.stockCount >= row.original.minimumQuantity
-                      ? "Skladem"
-                      : "Není skladem"}
+                      ? cs.product.variantAvailability.inStock
+                      : cs.product.variantAvailability.outOfStock}
                 </span>
               </div>
               <strong className="min-w-0 whitespace-normal! wrap-anywhere @max-akros-variant-table/akros-variants:text-(length:--text-base)!">
                 {row.original.priceUnavailableReason || row.original.priceMinor <= 0
-                  ? "Cena není dostupná"
+                  ? cs.product.priceUnavailable
                   : formatPrice(row.original.priceMinor).replace(/\s(?=\S+$)/u, " ")}
                 <span className="akros-variant-table__mobile-label @max-akros-variant-table/akros-variants:inline! @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal">
                   {" "}
@@ -298,7 +300,7 @@ export function ProductPurchaseForm({
                 !row.original.priceUnavailableReason &&
                 row.original.priceMinor > 0 && (
                   <small className="@max-akros-variant-table/akros-variants:text-xs! @max-akros-variant-table/akros-variants:font-normal">
-                    {formatPrice(basePriceTier.priceExcludingVatMinor)} bez DPH
+                    {formatPrice(basePriceTier.priceExcludingVatMinor)} {cs.product.excludingVat}
                   </small>
                 )}
             </div>
@@ -307,7 +309,7 @@ export function ProductPurchaseForm({
       },
       {
         id: "quantity",
-        header: "Množství",
+        header: cs.product.table.quantity,
         meta: { align: "center", width: "var(--akros-variant-table-purchase-column-width)" },
         cell: ({ row }) => {
           const item = row.original;
@@ -319,8 +321,11 @@ export function ProductPurchaseForm({
             <div className="akros-variant-table__purchase-cell @max-akros-variant-table/akros-variants:grid-cols-1! @max-akros-variant-table/akros-variants:gap-(--dimension-8)">
               {item.quantityStep && (
                 <small className="col-span-full text-fg-secondary">
-                  Pouze celá balení po {packageQuantity.toLocaleString("cs-CZ")} {item.unit}.
-                  Minimální odběr {item.minimumQuantity.toLocaleString("cs-CZ")} {item.unit}.
+                  {cs.product.wholePackagesMinimum(
+                    packageQuantity,
+                    item.unit,
+                    item.minimumQuantity,
+                  )}
                 </small>
               )}
               <VariantOrderControl
@@ -349,7 +354,7 @@ export function ProductPurchaseForm({
         },
       },
     ],
-    [addVariant, product],
+    [addVariant, product, cs, formatPrice],
   );
 
   if (!variants?.length) {
@@ -379,9 +384,10 @@ export function ProductPurchaseForm({
       <div className="akros-purchase-form">
         {purchaseItem.quantityStep && (
           <small className="col-span-full text-fg-secondary">
-            Pouze celá balení po{" "}
-            {(purchaseItem.packageQuantity ?? purchaseItem.quantityStep).toLocaleString("cs-CZ")}{" "}
-            {purchaseItem.unit}.
+            {cs.product.wholePackagesOnly(
+              purchaseItem.packageQuantity ?? purchaseItem.quantityStep,
+              purchaseItem.unit,
+            )}
           </small>
         )}
         <NumericInput
@@ -396,13 +402,13 @@ export function ProductPurchaseForm({
         >
           <NumericInput.Control className="akros-purchase-form__quantity-control">
             <NumericInput.DecrementTrigger
-              aria-label="Snížit množství"
+              aria-label={cs.product.decrementQuantity}
               className="akros-purchase-form__quantity-trigger h-full"
               icon="token-icon-minus"
             />
             <NumericInput.Input aria-label={cs.cart.quantity} />
             <NumericInput.IncrementTrigger
-              aria-label="Zvýšit množství"
+              aria-label={cs.product.incrementQuantity}
               className="akros-purchase-form__quantity-trigger h-full"
               icon="token-icon-plus"
             />
@@ -419,9 +425,9 @@ export function ProductPurchaseForm({
           }
           title={
             purchaseItem.priceUnavailableReason
-              ? `Cena není dostupná: ${purchaseItem.priceUnavailableReason}`
+              ? cs.product.priceUnavailableTitle(purchaseItem.priceUnavailableReason)
               : purchaseItem.availabilityUnknown
-                ? "Dostupnost nyní nelze ověřit."
+                ? cs.product.availabilityUnknownTitle
                 : undefined
           }
           icon="token-icon-cart"
@@ -436,7 +442,7 @@ export function ProductPurchaseForm({
           uppercase
           variant="primary"
         >
-          Koupit
+          {cs.product.buy}
         </Button>
       </div>
     );
@@ -447,7 +453,7 @@ export function ProductPurchaseForm({
       {filters.length > 0 && (
         <section className="w-full max-w-full rounded-sm border-(length:--border-sm) border-base-dark bg-base p-(--akros-variant-filter-padding) md:w-fit md:@max-akros-variant-table/akros-variants:w-full">
           <form
-            aria-label="Filtrování variant"
+            aria-label={cs.product.variantFilters}
             className="akros-variant-purchase__filter-bar flex flex-col gap-y-(--dimension-12) md:flex-row md:flex-wrap md:items-baseline-last"
             onSubmit={(event) => event.preventDefault()}
           >
@@ -476,13 +482,13 @@ export function ProductPurchaseForm({
                 setFilterRevision((revision) => revision + 1);
               }}
             >
-              Obnovit filtry
+              {cs.product.resetVariantFilters}
             </Button>
           </form>
         </section>
       )}
       <output className="block m-0 text-sm text-fg-secondary">
-        Zobrazeno {visibleVariants.length} z {sourceVariants.length} variant
+        {cs.product.visibleVariants(visibleVariants.length, sourceVariants.length)}
       </output>
 
       <>
@@ -493,15 +499,13 @@ export function ProductPurchaseForm({
           enableSorting={false}
           getRowId={(item) => item.id}
           renderEmpty={() => (
-            <p className="akros-variant-purchase__empty">
-              Pro zadané filtry nebyla nalezena varianta.
-            </p>
+            <p className="akros-variant-purchase__empty">{cs.product.noVariantsForFilters}</p>
           )}
           showColumnBorder
           size="sm"
           slotProps={{
             root: {
-              "aria-label": "Varianty produktu",
+              "aria-label": cs.product.variantsTitle,
               className:
                 "akros-variant-data-table__table @max-akros-variant-table/akros-variants:block @max-akros-variant-table/akros-variants:[&_thead]:sr-only @max-akros-variant-table/akros-variants:[&_tbody]:grid @max-akros-variant-table/akros-variants:[&_tbody]:min-w-0 @max-akros-variant-table/akros-variants:[&_tbody]:gap-(--dimension-12)",
             },

@@ -13,15 +13,15 @@ import { issueDocumentGatewayContexts } from '../api/auth-client.ts';
  * five modules waited for five `/auth/gateway-context` round trips (1-3 s each on a loaded stage) before any read
  * could start. Server rendering embeds the document's assertions (see home-page-model.ts), a client-side navigation
  * obtains them in one batch while the page's target and remote load, and the browser request cache answers each
- * remote's request from here. When they near expiry, the first request renews all of them in one batch, which the
- * other remotes join.
+ * remote's request from here. Each slot is claimed once. Missing or expiring slots are replenished in a batch, and
+ * concurrent consumers never share a token.
  *
  * Nothing is persisted: sign-out and tenant or legal-entity switches reload the document, which drops them, and a new
  * composition revision replaces them. Each assertion keeps its own audience and lifetime; modules authorize every call.
  */
 
-/** Matches the Shell issuer and the per-remote reuse: an assertion is used until this close to its expiry. */
-const REUSE_MARGIN_MILLIS = 15_000;
+/** Leave enough lifetime for a claimed assertion to reach its owner. */
+const EXPIRY_MARGIN_MILLIS = 15_000;
 /** A batch that has not answered by then is abandoned; remotes then ask for their assertion alone. */
 const BATCH_TIMEOUT = '30 seconds';
 /** A release composes far fewer deployments than one batch carries; this only bounds a pathological set. */
@@ -37,6 +37,7 @@ interface DocumentAssertions {
   /** Audiences this document asks for; a renewal covers all of them together. */
   readonly audiences: Set<string>;
   readonly revision: string;
+  readonly seededTokens: Set<string>;
   readonly slots: Map<string, Slot>;
 }
 
@@ -45,14 +46,15 @@ const documentAssertions = MutableRef.make(Option.none<DocumentAssertions>());
 
 const inBrowser = () => 'document' in globalThis;
 
-const usable = (response: GatewayContextResponse, now: number) => response.expiresAt * 1000 - now > REUSE_MARGIN_MILLIS;
+const usable = (response: GatewayContextResponse, now: number) =>
+  response.expiresAt * 1000 - now > EXPIRY_MARGIN_MILLIS;
 
 const currentFor = (revision: string): Option.Option<DocumentAssertions> =>
   MutableRef.get(documentAssertions).pipe(Option.filter((current) => current.revision === revision));
 
 const ownedFor = (revision: string): DocumentAssertions =>
   Option.getOrElse(currentFor(revision), () => {
-    const fresh: DocumentAssertions = { audiences: new Set(), revision, slots: new Map() };
+    const fresh: DocumentAssertions = { audiences: new Set(), revision, seededTokens: new Set(), slots: new Map() };
     MutableRef.set(documentAssertions, Option.some(fresh));
     return fresh;
   });
@@ -173,11 +175,20 @@ export const documentGatewayAssertion = Effect.fn('DocumentGatewayAssertions.get
   if (slot === undefined) {
     return Option.none<GatewayContextResponse>();
   }
-  const response = Option.fromNullishOr(
-    slot.kind === 'ready' ? slot.response : (yield* Deferred.await(slot.batch)).get(audience),
-  );
+  if (slot.kind === 'pending') {
+    yield* Deferred.await(slot.batch);
+  }
   const answeredAt = yield* Clock.currentTimeMillis;
-  return response.pipe(Option.filter((answer) => usable(answer, answeredAt)));
+  // Claim synchronously after a shared batch settles. Only one waiter can remove
+  // this slot; the others acquire fresh assertions through the ordinary issuer.
+  return yield* Effect.sync(() => {
+    const ready = owned.slots.get(audience);
+    if (ready?.kind !== 'ready') {
+      return Option.none<GatewayContextResponse>();
+    }
+    owned.slots.delete(audience);
+    return usable(ready.response, answeredAt) ? Option.some(ready.response) : Option.none<GatewayContextResponse>();
+  });
 });
 
 /** An audience a remote asked for alone joins the document's set, so the next renewal covers it in the batch. */
@@ -203,6 +214,10 @@ export const seedDocumentGatewayAssertions = Effect.fn('DocumentGatewayAssertion
     owned.audiences.add(assertion.audience);
     const slot = owned.slots.get(assertion.audience);
     const response = assertionOf(assertion);
+    if (owned.seededTokens.has(response.token)) {
+      continue;
+    }
+    owned.seededTokens.add(response.token);
     if (
       assertion.compositionRevision === revision &&
       usable(response, now) &&

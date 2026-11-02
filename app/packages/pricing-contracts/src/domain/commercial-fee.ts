@@ -601,8 +601,14 @@ export const PricingCommercialFeeCalculationInputSchema = Schema.Struct({
     ) {
       return 'Commercial Fee calculation requires Current Tenant currency-support evidence';
     }
+    // The native receipt binds the requested instant separately from actual owner observation.
     if (
-      feeSet.observedAt !== decision.operationTime ||
+      feeSet.observedAt < decision.operationTime ||
+      feeSet.fees.some(
+        ({ effectivePeriod }) =>
+          effectivePeriod.effectiveFrom > decision.operationTime ||
+          (effectivePeriod.effectiveTo !== null && decision.operationTime >= effectivePeriod.effectiveTo),
+      ) ||
       !sameCommercialScope(feeSet.commercialScope, decision.commercialScope) ||
       !sameResourceRef(feeSet.target.variantRef, line.catalog.selection.variantRef)
     ) {

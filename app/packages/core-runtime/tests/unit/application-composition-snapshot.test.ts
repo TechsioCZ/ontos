@@ -10,8 +10,10 @@ import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
+  ProcessCompositionValidationLive,
   validateActiveApplicationCompositionSnapshot,
 } from '../../src/modules/active-application-composition.ts';
+import { ProcessCompositionValidation } from '../../src/modules/process-composition-validation.ts';
 import {
   ActiveApplicationCompositionSource,
   requestScopedActiveApplicationCompositionSource,
@@ -27,7 +29,7 @@ import {
 const observedAt = '2026-10-02T12:00:00.000Z';
 const validUntil = '2026-10-02T12:00:01.000Z';
 
-const snapshot = (): ActiveApplicationCompositionSnapshot => {
+const snapshot = (buildMarker = 'shell-build-1'): ActiveApplicationCompositionSnapshot => {
   const composition = Schema.decodeSync(ApplicationCompositionSchema)({
     modules: [],
     revision: '0'.repeat(64),
@@ -35,7 +37,7 @@ const snapshot = (): ActiveApplicationCompositionSnapshot => {
     shell: {
       contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
       coreCapabilities: [],
-      deployment: { appId: 'shell-super-app', buildMarker: 'shell-build-1' },
+      deployment: { appId: 'shell-super-app', buildMarker },
       federationManifest: {
         sha256: 'a'.repeat(64),
         url: 'https://shell.example/releases/shell-build-1/mf-manifest.json',
@@ -249,6 +251,81 @@ it.effect('reuses exact configured bytes across request Layers but never skips t
     expect(renewed.composition.revision).toBe(first.composition.revision);
     expect(yield* load).toBe(renewed);
     expect(reads).toBe(7);
+  }),
+);
+
+it.effect('a native process validates concurrent owner observations once and still checks every source and lease', () =>
+  Effect.gen(function* shareNativeValidation() {
+    yield* TestClock.setTime(Date.parse(observedAt));
+    const input = {
+      ...snapshot('process-cache-build'),
+      validUntil: DateTime.makeUnsafe(Date.parse(validUntil) + 10_000),
+    };
+    const encode = Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema));
+    let current = yield* encode(input);
+    let reads = 0;
+    const previous = globalThis.ontosProcessCompositionValidation;
+    const registry = Context.get(yield* Layer.build(ProcessCompositionValidationLive), ProcessCompositionValidation);
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        globalThis.ontosProcessCompositionValidation = registry;
+      }),
+      () =>
+        Effect.sync(() => {
+          globalThis.ontosProcessCompositionValidation = previous;
+        }),
+    );
+    const digest = rstest.spyOn(globalThis.crypto.subtle, 'digest');
+    yield* Effect.addFinalizer(() => Effect.sync(() => digest.mockRestore()));
+    const layer = ActiveApplicationCompositionConfigLive.pipe(
+      Layer.provide(
+        Layer.succeed(ActiveApplicationCompositionSource, {
+          load: Effect.sync(() => {
+            reads += 1;
+            return current;
+          }),
+        }),
+      ),
+    );
+    const load = Layer.build(layer).pipe(
+      Effect.flatMap((context) => Context.get(context, ActiveApplicationCompositionService).load),
+      Effect.scoped,
+    );
+    const owners = yield* Effect.all(
+      Array.from({ length: 27 }, () => load),
+      { concurrency: 'unbounded' },
+    );
+    const [first] = owners;
+    expect(first).toBeDefined();
+    expect(owners.every((owner) => owner === first)).toBe(true);
+    expect(reads).toBe(27);
+    expect(digest).toHaveBeenCalledTimes(1);
+    if (first === undefined) {
+      return;
+    }
+    expect(yield* validateActiveApplicationCompositionSnapshot(first)).toBe(first);
+    expect(digest).toHaveBeenCalledTimes(1);
+
+    // A matching revision does not admit edited bytes, even while another observation is cached.
+    current = yield* encode({
+      ...input,
+      composition: {
+        ...input.composition,
+        shell: {
+          ...input.composition.shell,
+          deployment: { ...input.composition.shell.deployment, buildMarker: 'not-approved' },
+        },
+      },
+    });
+    expect(yield* Effect.flip(load)).toBeInstanceOf(ActiveApplicationCompositionUnavailableError);
+    current = yield* encode(input);
+    expect(yield* load).toBe(first);
+    yield* TestClock.setTime(DateTime.toEpochMillis(input.validUntil));
+    expect(yield* Effect.flip(load)).toBeInstanceOf(ActiveApplicationCompositionUnavailableError);
+    expect(yield* Effect.flip(validateActiveApplicationCompositionSnapshot(first))).toBeInstanceOf(
+      ActiveApplicationCompositionUnavailableError,
+    );
+    expect(reads).toBe(30);
   }),
 );
 

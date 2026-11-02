@@ -5,6 +5,7 @@ import {
   PricingDecisionSubjectSchema,
 } from '@app/pricing-contracts/current-pricing-decision';
 import { Effect, Match, Option, Redacted, Schema } from 'effect';
+import { isOrderFinalizationPricingContext } from './order-finalization-owner-gateways.ts';
 
 import {
   CurrentPricingDecisionCustomerContextGatewayIssuer,
@@ -74,7 +75,15 @@ const requestPayload = (input: CurrentPricingDecisionSubjectAuthorityInput) => {
   })({
     actor:
       input.request.subject.kind === 'PROFILE'
-        ? { kind: 'AUTHENTICATED_CUSTOMER', principalId: principal.principalId }
+        ? {
+            kind: 'AUTHENTICATED_CUSTOMER',
+            principalId:
+              (isOrderFinalizationPricingContext(purchasingContext.contextRef) ||
+                /^ccc:preproposal:[a-f0-9-]{36}$/u.test(purchasingContext.contextRef)) &&
+              purchasingContext.actor.kind === 'PRINCIPAL'
+                ? purchasingContext.actor.principalId
+                : principal.principalId,
+          }
         : { kind: 'GUEST' },
     operationTime,
     purchasingContext: {
@@ -160,6 +169,14 @@ const makeCustomerContextSubjectAuthority = (dependencies: {
     ),
 });
 
+export const currentPricingDecisionCustomerContextSubjectAuthorityForIssuer = (
+  issuer: CurrentPricingDecisionCustomerContextGatewayIssuerService,
+  requestCorrelation: string,
+  compositionRevision: string,
+  execute: VerificationExecutor = executeVerification,
+): CurrentPricingDecisionSubjectAuthorityService =>
+  makeCustomerContextSubjectAuthority({ compositionRevision, execute, issuer, requestCorrelation });
+
 export const currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironment = (
   requestCorrelation: string,
   compositionRevision: string,
@@ -167,13 +184,13 @@ export const currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironmen
 ): Effect.Effect<CurrentPricingDecisionSubjectAuthorityService> =>
   Effect.serviceOption(CurrentPricingDecisionCustomerContextGatewayIssuer).pipe(
     Effect.map((issuerOption) =>
-      makeCustomerContextSubjectAuthority({
-        compositionRevision,
-        execute,
-        issuer: Option.isSome(issuerOption)
+      currentPricingDecisionCustomerContextSubjectAuthorityForIssuer(
+        Option.isSome(issuerOption)
           ? issuerOption.value
           : unavailableCurrentPricingDecisionCustomerContextGatewayIssuer,
         requestCorrelation,
-      }),
+        compositionRevision,
+        execute,
+      ),
     ),
   );

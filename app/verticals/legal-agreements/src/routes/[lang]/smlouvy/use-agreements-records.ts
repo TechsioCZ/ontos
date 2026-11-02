@@ -12,19 +12,14 @@ import { executeApplyCommand } from '../../../api/apply-command-action-client.ts
 import { agreements, agreementsView, loadRentalReferences } from './agreements-data.ts';
 import type { AgreementsInput, RentalReferences } from './agreements-data.ts';
 import { contractTitle } from './contract-title.ts';
+import { termsAutosaveResult } from './contract-terms-draft.ts';
+import type { ContractTermsCommand } from './contract-terms-draft.ts';
+import { executeRecords } from '../../../api/records-client.ts';
 
 const DEFAULT_START_DATE = '2026-10-05';
 const DEFAULT_END_DATE = '2027-10-05';
 type CommercialTerms = Pick<Contract, 'noticePeriod' | 'rentTerms' | 'responsiblePerson' | 'subject'>;
 type MutableCommercialTerms = { -readonly [Field in keyof CommercialTerms]: CommercialTerms[Field] };
-type ContractTermsCommand = Extract<AgreementsCommand, { readonly _tag: 'SetContractTerms' }>;
-type MutableContractTermsCommand = { -readonly [Field in keyof ContractTermsCommand]: ContractTermsCommand[Field] };
-const crowns = (minor: number) => (minor % 100 === 0 ? String(minor / 100) : (minor / 100).toFixed(2));
-const parseCrowns = (value: string) => {
-  const normalized = value.replaceAll(/\s/gu, '').replace(',', '.');
-  return /^\d+(?:\.\d{1,2})?$/u.test(normalized) ? Math.round(Number(normalized) * 100) : undefined;
-};
-const optionalTermsText = (value: string) => (value.trim().length === 0 ? undefined : value.trim());
 const browserCrypto = Crypto.make({
   digest: (algorithm, data) =>
     Effect.tryPromise({
@@ -67,6 +62,33 @@ const contractReferenceAudiences = (record: Contract | undefined) => {
     audiences.push('property-leasing');
   }
   return audiences;
+};
+/**
+ * Autosave of the terms panel against the revision its draft builds on. The revision covers every agreement, so a
+ * conflict is resent once against a fresh read while `unchanged` holds for the contracts read then.
+ */
+export const autosaveTerms = (
+  command: ContractTermsCommand,
+  expectedRevision: number,
+  unchanged: (contracts: readonly Contract[]) => boolean,
+) => {
+  const send = (revision: number) =>
+    newUuid.pipe(
+      Effect.flatMap((idempotencyKey) =>
+        executeApplyCommand({ command, expectedRevision: revision }, 'legal-agreements.command', { idempotencyKey }),
+      ),
+    );
+  return termsAutosaveResult(
+    send(expectedRevision).pipe(
+      Effect.catchTag('ApplyCommandActionConflictProblem', (conflict) =>
+        conflict.code === 'agreements_conflict'
+          ? executeRecords({}, 'legal-agreements.records').pipe(
+              Effect.flatMap((fresh) => (unchanged(fresh.contracts) ? send(fresh.revision) : Effect.fail(conflict))),
+            )
+          : Effect.fail(conflict),
+      ),
+    ),
+  );
 };
 export const useRecordsPage = (input: AgreementsInput) => {
   const { language, t } = useModernI18n();
@@ -131,14 +153,6 @@ export const useRecordsPage = (input: AgreementsInput) => {
   const [editingDraft, setEditingDraft] = useState(false);
   const [expiringOnly, setExpiringOnly] = useState(false);
   const [termsOpen, setTermsOpen] = useState(false);
-  const [terms, setTerms] = useState({
-    monthly: '',
-    noticePeriod: '',
-    paymentDay: '15',
-    responsiblePerson: '',
-    service: '',
-    subject: '',
-  });
   const selected = snapshot?.contracts.find((record) => record.contractRef.resourceId === linkedResourceId);
   const clearSensitiveState = () => {
     setSensitiveHidden(true);
@@ -164,6 +178,10 @@ export const useRecordsPage = (input: AgreementsInput) => {
       clearSensitiveState();
     }
     setActionFeedback(nextFeedback);
+    if (nextFeedback === 'conflict') {
+      // Someone changed the agreements meanwhile: show their version before the person tries again.
+      run(agreements.refresh(input));
+    }
   };
   const selectContractKind = (kind: Contract['kind']) => {
     setChosenContractKind(kind);
@@ -182,8 +200,8 @@ export const useRecordsPage = (input: AgreementsInput) => {
       );
     }
   };
-  /** Reloads in place: the current list stays visible until the owners answered. */
-  const refresh = () => {
+  /** Retries after a failure in place: the current list stays visible until the owners answered. */
+  const retry = () => {
     setActionFeedback('loading');
     setSensitiveHidden(false);
     run(agreements.refresh(input).pipe(Effect.andThen(Effect.sync(() => setActionFeedback(undefined)))));
@@ -335,59 +353,9 @@ export const useRecordsPage = (input: AgreementsInput) => {
     });
   };
   const openTerms = () => {
-    if (selected === undefined) {
-      return;
+    if (selected !== undefined) {
+      setTermsOpen(true);
     }
-    setTerms({
-      monthly: selected.rentTerms === undefined ? '' : crowns(selected.rentTerms.monthlyRentMinor),
-      noticePeriod: selected.noticePeriod ?? '',
-      paymentDay: String(selected.rentTerms?.paymentDay ?? 15),
-      responsiblePerson: selected.responsiblePerson ?? '',
-      service: selected.rentTerms === undefined ? '' : crowns(selected.rentTerms.serviceChargesMinor),
-      subject: selected.subject ?? '',
-    });
-    setTermsOpen(true);
-  };
-  const saveTerms = () => {
-    if (selected === undefined) {
-      return;
-    }
-    const hasRent = terms.monthly.trim().length > 0;
-    const monthlyRentMinor = parseCrowns(terms.monthly);
-    const serviceChargesMinor = terms.service.trim().length === 0 ? 0 : parseCrowns(terms.service);
-    const paymentDay = Number(terms.paymentDay);
-    if (
-      hasRent &&
-      (monthlyRentMinor === undefined ||
-        serviceChargesMinor === undefined ||
-        !Number.isInteger(paymentDay) ||
-        paymentDay < 1 ||
-        paymentDay > 31)
-    ) {
-      setActionFeedback('validation');
-      return;
-    }
-    const subject = optionalTermsText(terms.subject);
-    const responsiblePerson = optionalTermsText(terms.responsiblePerson);
-    const noticePeriod = optionalTermsText(terms.noticePeriod);
-    setTermsOpen(false);
-    const command: MutableContractTermsCommand = {
-      _tag: 'SetContractTerms',
-      contractRef: selected.contractRef,
-    };
-    if (subject !== undefined) {
-      command.subject = subject;
-    }
-    if (responsiblePerson !== undefined) {
-      command.responsiblePerson = responsiblePerson;
-    }
-    if (noticePeriod !== undefined) {
-      command.noticePeriod = noticePeriod;
-    }
-    if (hasRent && monthlyRentMinor !== undefined && serviceChargesMinor !== undefined) {
-      command.rentTerms = { currency: 'CZK', monthlyRentMinor, paymentDay, serviceChargesMinor };
-    }
-    runCommand(command);
   };
   const recordSignature = (record: Contract) => {
     if ([signedReference, signedFileName, signedBy, signedOn].some((value) => value.trim().length === 0)) {
@@ -515,13 +483,12 @@ export const useRecordsPage = (input: AgreementsInput) => {
     openTerms,
     properties,
     recordSignature,
-    refresh,
     renew,
     rentalFeedback,
     resetDraftForm,
+    retry,
     runCommand,
     saveDraft,
-    saveTerms,
     selectContractKind,
     selected,
     setCustomerId,
@@ -535,7 +502,6 @@ export const useRecordsPage = (input: AgreementsInput) => {
     setSignedOn,
     setSignedReference,
     setStartDate,
-    setTerms,
     setTermsOpen,
     signedBy,
     signedFileName,
@@ -544,7 +510,6 @@ export const useRecordsPage = (input: AgreementsInput) => {
     snapshot,
     startDate,
     t,
-    terms,
     termsOpen,
     titleOf,
     unitName,

@@ -6,11 +6,12 @@ export interface DeliveryMethod {
   priceMinor: number;
 }
 
+/** Steps of the cart and the order; the title comes from the market dictionary (`checkout.steps`). */
 export const checkoutSteps = [
-  { title: "Nákupní košík", href: "/kosik" },
-  { title: "Doprava a platba", href: "/kosik/doprava-platba" },
-  { title: "Dodací údaje", href: "/kosik/dodaci-udaje" },
-  { title: "Shrnutí objednávky", href: "/kosik/shrnuti" },
+  { key: "cart", href: "/kosik" },
+  { key: "delivery", href: "/kosik/doprava-platba" },
+  { key: "address", href: "/kosik/dodaci-udaje" },
+  { key: "summary", href: "/kosik/shrnuti" },
 ] as const;
 
 export interface CheckoutAddress {

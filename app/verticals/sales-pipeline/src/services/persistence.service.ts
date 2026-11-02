@@ -6,6 +6,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { DateTime, Effect, Match, Option, Predicate, Result, Schema, Struct } from 'effect';
 
 import {
+  SalesPipelineCommandSchema,
   SalesPipelineLifecycleConflict,
   SalesPipelineNotFound,
   SalesPipelinePermissionDenied,
@@ -16,6 +17,7 @@ import {
 } from '../../shared/actions/apply-command.ts';
 import type {
   ApplyCommandResult,
+  ApplyCommandPayload,
   BulkOpportunityPatch,
   BulkOpportunityResult,
   BulkSkipReason,
@@ -565,8 +567,72 @@ export const salesPipelineStateRepository = (persistence: PipelineStatePersisten
   }),
 });
 
+/** Authorize only this decoded command, outside its final business transaction. */
+export const prepareSalesPipelineCommand = Effect.fn('SalesPipeline.prepareCommand')(function* prepareCommand(
+  command: SalesPipelineCommand,
+  scope: OperationalScope,
+) {
+  if (scope.legalEntityId === undefined) {
+    return yield* referenceUnavailable();
+  }
+  if (isSalesPipelineAiCommand(command)) {
+    const proposing = Predicate.isTagged(command, 'AiProposeChanges');
+    if (!(yield* contextGrant(scope, proposing ? 'read_all' : 'write_all'))) {
+      return yield* new SalesPipelinePermissionDenied({
+        code: 'sales_pipeline_permission_denied',
+        reason: proposing
+          ? 'Návrhy AI vyžadují čtení příležitostí'
+          : 'Schvalovat a vracet změny AI může jen uživatel s právem zápisu do příležitostí',
+      });
+    }
+    return yield* Effect.void;
+  }
+  if (yield* contextGrant(scope, 'write_all')) {
+    return yield* Effect.void;
+  }
+  const targetIds = targetIdsOf(command);
+  if (targetIds.length === 0) {
+    return yield* new SalesPipelinePermissionDenied({
+      code: 'sales_pipeline_permission_denied',
+      reason: 'Creating Opportunities requires SalesPipeline write permission',
+    });
+  }
+  const access = yield* ContextAccess;
+  const targets = targetIds.map(opportunityTarget);
+  const keys = targets.map(targetKey);
+  const decisions = yield* access.resources({
+    legalEntityId: scope.legalEntityId,
+    permission: 'write',
+    principalId: scope.principalId,
+    resources: targets,
+    tenantId: scope.tenantId,
+  });
+  if (
+    decisions.length !== targetIds.length ||
+    decisions.some((decision, index) => decision.decision === 'unavailable' || decision.key !== keys[index])
+  ) {
+    return yield* referenceUnavailable();
+  }
+  if (decisions.some((decision) => decision.decision !== 'allowed')) {
+    return yield* new SalesPipelinePermissionDenied({
+      code: 'sales_pipeline_permission_denied',
+      reason: 'Opportunity mutation is forbidden',
+    });
+  }
+  return yield* Effect.void;
+});
+
+const sameCommand = Schema.toEquivalence(SalesPipelineCommandSchema);
+
 export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
-  function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
+  function* makePersistence(
+    transaction: ScopedTransactionExecutor,
+    options: {
+      readonly prepared?: { readonly actionInvocationId: string; readonly payload: ApplyCommandPayload };
+      readonly scope: OperationalScope;
+    },
+  ) {
+    const { prepared, scope } = options;
     const { legalEntityId } = scope;
     if (
       legalEntityId === undefined ||
@@ -578,7 +644,6 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
         reason: 'A scoped company transaction is required',
       });
     }
-    const access = yield* ContextAccess;
     const whereScope = and(
       eq(salesPipelineStates.tenantId, scope.tenantId),
       eq(salesPipelineStates.legalEntityId, legalEntityId),
@@ -634,16 +699,6 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
       expectedRevision: number,
       invocationId: string,
     ) {
-      const proposing = Predicate.isTagged(command, 'AiProposeChanges');
-      const permission = proposing ? 'read_all' : 'write_all';
-      if (!(yield* contextGrant(scope, permission))) {
-        return yield* new SalesPipelinePermissionDenied({
-          code: 'sales_pipeline_permission_denied',
-          reason: proposing
-            ? 'Návrhy AI vyžadují čtení příležitostí'
-            : 'Schvalovat a vracet změny AI může jen uživatel s právem zápisu do příležitostí',
-        });
-      }
       const snapshot = yield* load();
       if (snapshot.revision !== expectedRevision) {
         return yield* new SalesPipelineRevisionConflict({
@@ -698,38 +753,16 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
       expectedRevision: number,
       invocationId: string,
     ) {
+      if (
+        prepared === undefined ||
+        prepared.actionInvocationId !== invocationId ||
+        prepared.payload.expectedRevision !== expectedRevision ||
+        !sameCommand(prepared.payload.command, command)
+      ) {
+        return yield* referenceUnavailable();
+      }
       if (isSalesPipelineAiCommand(command)) {
         return yield* applyAi(command, expectedRevision, invocationId);
-      }
-      const targetIds = targetIdsOf(command);
-      if (!(yield* contextGrant(scope, 'write_all'))) {
-        if (targetIds.length === 0) {
-          return yield* new SalesPipelinePermissionDenied({
-            code: 'sales_pipeline_permission_denied',
-            reason: 'Creating Opportunities requires SalesPipeline write permission',
-          });
-        }
-        const targets = targetIds.map(opportunityTarget);
-        const keys = targets.map(targetKey);
-        const decisions = yield* access.resources({
-          legalEntityId,
-          permission: 'write',
-          principalId: scope.principalId,
-          resources: targets,
-          tenantId: scope.tenantId,
-        });
-        if (
-          decisions.length !== targetIds.length ||
-          decisions.some((decision, index) => decision.decision === 'unavailable' || decision.key !== keys[index])
-        ) {
-          return yield* referenceUnavailable();
-        }
-        if (decisions.some((decision) => decision.decision !== 'allowed')) {
-          return yield* new SalesPipelinePermissionDenied({
-            code: 'sales_pipeline_permission_denied',
-            reason: 'Opportunity mutation is forbidden',
-          });
-        }
       }
       const snapshot = yield* load();
       if (snapshot.revision !== expectedRevision) {

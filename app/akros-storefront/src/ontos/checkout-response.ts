@@ -23,6 +23,8 @@ const rejectionCodes = new Set([
   "PRICE_CHANGED",
   "PRICE_UNAVAILABLE",
   "SHIPPING_PRICE_CHANGED",
+  "MARKET_UNAVAILABLE",
+  "NOT_OFFERED_IN_MARKET",
 ]);
 
 /** Only bounded owner-authored stock messages are shown; other upstream text stays hidden. */
@@ -60,6 +62,14 @@ async function json(response: Response): Promise<unknown> {
       )
         throw new CheckoutPriceError(
           "Cena zboží nebo dopravy se změnila. Vraťte se do košíku, ověřte aktuální ceny a odešlete objednávku znovu.",
+        );
+      if (value.issues.some((issue) => String(issue.code) === "MARKET_UNAVAILABLE"))
+        throw new CheckoutRejectionError(
+          "Tento trh teď objednávky nepřijímá. Košík zůstává zachovaný, zkuste to prosím později.",
+        );
+      if (value.issues.some((issue) => String(issue.code) === "NOT_OFFERED_IN_MARKET"))
+        throw new CheckoutRejectionError(
+          "Některé zboží není v nabídce tohoto trhu. Odeberte ho z košíku a objednávku odešlete znovu.",
         );
       if (
         value.issues.some((issue) =>

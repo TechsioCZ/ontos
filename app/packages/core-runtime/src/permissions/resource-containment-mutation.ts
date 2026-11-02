@@ -15,7 +15,12 @@ import type { SpiceDbConfigValue } from './config.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
 import { BusinessPermissionCodeSchema } from './business-permission.ts';
 import type { BusinessPermissionCode } from './business-permission.ts';
-import { PricingAuthorizationResourceIdSchema, toBusinessPermissionAccessObjectId } from './context-access.ts';
+import {
+  PricingAuthorizationResourceIdSchema,
+  toBusinessPermissionAccessObjectId,
+  toModuleAccessObjectId,
+  toResourceAccessObjectId,
+} from './context-access.ts';
 import {
   createPermissionRelationshipMutationClient,
   // eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Generic scoped factory consumed by this owning Layer.
@@ -37,8 +42,20 @@ type PricingBusinessPermissionReference = Readonly<
 
 type PricingTenantReference = Readonly<SpiceDbResourceReference & { readonly objectType: 'tenant' }>;
 
-/** The only topology mutations exposed to owner workers are exact Pricing scope and catalog-containment edges. */
+type OwnerResourceReference = Readonly<SpiceDbResourceReference & { readonly objectType: 'resource' }>;
+
+type OwnerModuleAccessReference = Readonly<SpiceDbResourceReference & { readonly objectType: 'module_access' }>;
+
+/**
+ * The only topology mutations exposed to owner workers are exact Pricing scope and catalog-containment edges, and
+ * the `resource#module` edge that places one owner resource in its own module's exact Legal Entity scope.
+ */
 export type ResourceContainmentRelationship =
+  | Readonly<{
+      readonly container: OwnerModuleAccessReference;
+      readonly relation: 'module';
+      readonly resource: OwnerResourceReference;
+    }>
   | Readonly<{
       readonly container: PricingTenantReference;
       readonly relation: 'tenant';
@@ -81,6 +98,7 @@ const ContextAccessObjectIdParts = Schema.fromJsonString(Schema.Array(Schema.Str
 const decodeContextAccessObjectIdParts = Schema.decodeUnknownOption(ContextAccessObjectIdParts);
 const TenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
 type TenantId = typeof TenantIdSchema.Type;
+const isLegalEntityId = Schema.is(Schema.String.check(Schema.isUUID()));
 
 type PricingPermissionObjectIdentity =
   | Readonly<{
@@ -162,11 +180,82 @@ const validCatalogContainmentRelationship = ({ container, resource }: ResourceCo
   );
 };
 
-const validPricingRelationship = (relationship: ResourceContainmentRelationship): boolean => {
+const decodeScopedObjectParts = (
+  reference: SpiceDbResourceReference,
+  objectType: 'module_access' | 'resource',
+  length: number,
+): readonly string[] | undefined => {
+  if (
+    reference.objectType !== objectType ||
+    reference.objectId.length > 1024 ||
+    !reference.objectId.startsWith('ctx_')
+  ) {
+    return undefined;
+  }
+  const serialized = Buffer.from(reference.objectId.slice(4), 'base64url').toString('utf-8');
+  const parts = decodeContextAccessObjectIdParts(serialized).pipe(Option.getOrUndefined);
+  return parts !== undefined && parts.length === length && parts.every((part) => part.length > 0) ? parts : undefined;
+};
+
+/** A resource joins only its own module's access object in the same Tenant and Legal Entity. */
+const validModuleContainmentRelationship = ({ container, resource }: ResourceContainmentRelationship): boolean => {
+  const resourceParts = decodeScopedObjectParts(resource, 'resource', 5);
+  const moduleParts = decodeScopedObjectParts(container, 'module_access', 3);
+  if (resourceParts === undefined || moduleParts === undefined) {
+    return false;
+  }
+  const [tenantId, legalEntityId, moduleId, resourceType, resourceId] = resourceParts;
+  if (
+    tenantId === undefined ||
+    legalEntityId === undefined ||
+    moduleId === undefined ||
+    resourceType === undefined ||
+    resourceId === undefined ||
+    !Schema.is(TenantIdSchema)(tenantId) ||
+    !isLegalEntityId(legalEntityId) ||
+    !resourceType.startsWith(`${moduleId}.`)
+  ) {
+    return false;
+  }
+  return (
+    toResourceAccessObjectId(tenantId, legalEntityId, { moduleId, resourceId, resourceType }) === resource.objectId &&
+    toModuleAccessObjectId(tenantId, legalEntityId, moduleId) === container.objectId &&
+    moduleParts[0] === tenantId &&
+    moduleParts[1] === legalEntityId &&
+    moduleParts[2] === moduleId
+  );
+};
+
+const validContainmentRelationship = (relationship: ResourceContainmentRelationship): boolean => {
+  if (relationship.relation === 'module') {
+    return validModuleContainmentRelationship(relationship);
+  }
   if (relationship.relation === 'tenant') {
     return validTenantRelationship(relationship);
   }
   return relationship.relation === 'containing_catalog' && validCatalogContainmentRelationship(relationship);
+};
+
+/**
+ * The exact `resource#module` edge for one owner resource. Undefined when an identity part is empty or the resource
+ * type is not namespaced under its module.
+ */
+export const ownerResourceModuleContainment = (
+  tenantId: string,
+  legalEntityId: string,
+  resource: Readonly<{ moduleId: string; resourceId: string; resourceType: string }>,
+): ResourceContainmentRelationship | undefined => {
+  const resourceObjectId = toResourceAccessObjectId(tenantId, legalEntityId, resource);
+  const moduleObjectId = toModuleAccessObjectId(tenantId, legalEntityId, resource.moduleId);
+  if (resourceObjectId === undefined || moduleObjectId === undefined) {
+    return undefined;
+  }
+  const relationship: ResourceContainmentRelationship = {
+    container: { objectId: moduleObjectId, objectType: 'module_access' },
+    relation: 'module',
+    resource: { objectId: resourceObjectId, objectType: 'resource' },
+  };
+  return validModuleContainmentRelationship(relationship) ? relationship : undefined;
 };
 
 const relationshipKey = ({ container, relation, resource }: ResourceContainmentRelationship): string =>
@@ -178,7 +267,7 @@ const membershipKey = ({ relation, resource }: ResourceContainmentRelationship):
 const validRelationships = (relationships: readonly ResourceContainmentRelationship[]): boolean =>
   relationships.length > 0 &&
   relationships.length <= 100 &&
-  relationships.every(validPricingRelationship) &&
+  relationships.every(validContainmentRelationship) &&
   new Set(relationships.map(relationshipKey)).size === relationships.length &&
   new Set(relationships.map(membershipKey)).size === relationships.length;
 

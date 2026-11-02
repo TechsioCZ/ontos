@@ -129,10 +129,38 @@ it('starts the storefront from its standalone bundle and keeps the Shell URL in-
   expect(storefront).toContain('ONTOS_SHELL_URL: http://app:3000');
 });
 
+it('ships checksum-pinned Bun beside Node with the Shell pilot off and no runtime download', () => {
+  const app = serviceNode(readZeropsDeploymentYaml(), 'app');
+  expect(serviceStrings(app, ['build', 'prepareCommands'])).toContain(
+    'sh /build/source/app/scripts/install-zerops-bun.sh 1.4.4',
+  );
+  expect(serviceStrings(app, ['build', 'buildCommands'])).toContain(
+    `mkdir -p 'app/.zerops/bun' && cp -a "$HOME/.local/bun-1.4.4/bin" 'app/.zerops/bun/'`,
+  );
+  expect(app.getIn(['run', 'envVariables', 'ONTOS_SHELL_RUNTIME_DEFAULT'])).toBe('node');
+  expect(app.getIn(['run', 'envVariables', 'ONTOS_SHELL_RUNTIME'])).toBeUndefined();
+  expect(serviceStrings(app, ['run', 'initCommands'])).toEqual([]);
+  const installer = readFileSync(new URL('../install-zerops-bun.sh', import.meta.url), 'utf-8');
+  expect(installer).toContain('bun-linux-x64-musl-baseline');
+  expect(installer).toContain('6e9c37098b293920aed28bfb51ab240e26d23bfdd9bbfecb3ad428ac166549bc');
+  expect(installer).toContain('sha256sum -c -');
+  expect(installer.indexOf('sha256sum -c -')).toBeLessThan(installer.indexOf('unzip -q'));
+});
+
 it('fails the application build whose Zephyr upload fails', () => {
   const app = serviceNode(readZeropsDeploymentYaml(), 'app');
 
   expect(app.getIn(['build', 'envVariables', 'ZE_FAIL_BUILD'])).toBe('true');
+});
+
+it('excludes compressed asset copies from both CI archives and the final Zerops package', () => {
+  const deployIgnore = readFileSync(new URL('../../../.deployignore', import.meta.url), 'utf-8');
+  const workflow = readFileSync(new URL('../../../.github/workflows/zerops-stage.yml', import.meta.url), 'utf-8');
+  for (const extension of ['br', 'gz']) {
+    expect(deployIgnore).toContain(`app/apps/*/dist/**/*.${extension}`);
+    expect(deployIgnore).toContain(`app/verticals/*/dist/**/*.${extension}`);
+    expect(workflow).toContain(`--exclude='*.${extension}'`);
+  }
 });
 
 it('bakes the public origins the app runs with into its bundles, including the AKROS storefront', () => {
@@ -307,6 +335,24 @@ it('declares the import list of the data plane, the migrator secrets, the app an
   }
 });
 
+it('reserves the application working set and one dedicated CPU while preserving free-memory and replica limits', () => {
+  const services = Schema.decodeUnknownSync(Schema.instanceOf(YAMLSeq))(
+    parseDocument(readFileSync(zeropsImportPath, 'utf-8')).get('services', true),
+  );
+  const app = Schema.decodeUnknownSync(Schema.instanceOf(YAMLMap))(
+    services.items.find((service) => isMap(service) && service.get('hostname') === 'app'),
+  );
+
+  expect(app.getIn(['verticalAutoscaling', 'minRam'])).toBe(2.5);
+  expect(app.getIn(['verticalAutoscaling', 'maxRam'])).toBe(4);
+  expect(app.getIn(['verticalAutoscaling', 'minFreeRamGB'])).toBe(0.5);
+  expect(app.getIn(['verticalAutoscaling', 'cpuMode'])).toBe('DEDICATED');
+  expect(app.getIn(['verticalAutoscaling', 'minCpu'])).toBe(1);
+  expect(app.getIn(['verticalAutoscaling', 'maxCpu'])).toBe(1);
+  expect(app.get('minContainers')).toBe(1);
+  expect(app.get('maxContainers')).toBe(1);
+});
+
 it('declares no project-level variable that could carry a database credential', () => {
   const deployment = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))(
     parse(readZeropsDeploymentYaml()),
@@ -319,4 +365,21 @@ it('declares no project-level variable that could carry a database credential', 
   expect(Object.keys(deployment)).toStrictEqual(['zerops']);
   expect(Object.keys(imports)).toStrictEqual(['services']);
   expect(readFileSync(zeropsImportPath, 'utf-8')).not.toMatch(/envVariables|DB_PASSWORD|DATABASE_URL/u);
+});
+
+it('installs Chromium for the warm-up client before running its bounded browser pass', () => {
+  const workflow = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Struct({
+        verify: Schema.Struct({
+          steps: Schema.Array(Schema.Struct({ name: Schema.String, run: Schema.optional(Schema.String) })),
+        }),
+      }),
+    }),
+  )(parse(readFileSync(new URL('../../../.github/workflows/zerops-stage.yml', import.meta.url), 'utf-8')));
+  const { steps } = workflow.jobs.verify;
+  const install = steps.findIndex(({ run }) => run?.includes('pnpm exec playwright-core install chromium') === true);
+  const warmup = steps.findIndex(({ run }) => run?.includes('node scripts/ops/stage-warmup.mts') === true);
+  expect(install).toBeGreaterThanOrEqual(0);
+  expect(warmup).toBeGreaterThan(install);
 });

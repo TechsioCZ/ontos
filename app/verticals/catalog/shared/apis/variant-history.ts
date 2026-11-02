@@ -3,7 +3,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { CatalogRevisionNumberSchema } from '../domain/catalog-revision-reference.ts';
-import { ProductActionInvocationIdSchema, ProductInstantSchema } from '../domain/product.ts';
+import { ProductActionInvocationIdSchema, ProductInstantSchema, ProductReasonSchema } from '../domain/product.ts';
 import { ProductRefSchema } from '../resources/product.ts';
 import { VariantRefSchema } from '../resources/variant.ts';
 
@@ -25,10 +25,16 @@ export const VariantHistoryResponseSchema = Schema.Struct({
   historical: Schema.Literal(true),
   lifecycle: Schema.String,
   productId: ProductRefSchema.fields.resourceId,
-  reason: Schema.String,
+  reason: Schema.optionalKey(ProductReasonSchema),
   recordedAt: ProductInstantSchema,
   reference: VariantHistoryReferenceSchema,
-});
+}).check(
+  Schema.makeFilter((record) =>
+    record.changeKind === 'CREATED' || record.reason !== undefined
+      ? undefined
+      : 'Non-CREATED Variant history requires its recorded reason',
+  ),
+);
 
 export const VariantHistoryAuthenticationProblemSchema = makeProblemDetailsSchema(
   'VariantHistoryAuthenticationProblem',

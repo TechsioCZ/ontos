@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect, Redacted, Schema } from 'effect';
 import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
+import { renderToString } from 'react-dom/server';
 
 import LoginPage from '../../../../src/routes/[lang]/login/page';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
@@ -107,6 +108,18 @@ const getPassword = () => screen.getByLabelText(/^Password/u, { selector: 'input
 const getSubmit = () => screen.getByRole('button', { name: 'Login' });
 
 const renderLogin = () => render(<LoginPage />);
+
+it('renders a fixed POST action and a disabled submit button before hydration', () => {
+  const html = renderToString(<LoginPage />);
+  const document = new DOMParser().parseFromString(html, 'text/html');
+  const form = document.querySelector('form');
+  expect(form?.getAttribute('method')).toBe('post');
+  expect(form?.getAttribute('action')).toBe('/en/login');
+  expect(form?.querySelector('button[type="submit"]')?.hasAttribute('disabled')).toBe(true);
+  expect(form?.dataset['hydrated']).toBeUndefined();
+  renderLogin();
+  expect(getSubmit().hasAttribute('disabled')).toBe(false);
+});
 const oauthLoginPath =
   '/en/login?response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Fclient&redirect_uri=https%3A%2F%2Fclaude.ai%2Fcallback&prompt=login&state=preserved&sig=SIGNED';
 

@@ -11,6 +11,7 @@ import type {
 } from '../../shared/action-contracts.ts';
 import type { MarketRetirementImpactAssessment } from '../../shared/domain/market-retirement-impact.ts';
 import type { MarketLifecycle } from '../../shared/market-contracts.ts';
+import { MarketAdministrationPersistenceUnavailable } from './market-administration-persistence-unavailable.ts';
 import {
   associateStorefrontRoutine,
   createMarketRoutine,
@@ -102,14 +103,6 @@ const AssociationOutcomeSchema = Schema.Union([
 ]);
 type StorefrontAssociationPersistenceOutcome = typeof AssociationOutcomeSchema.Type;
 
-export class MarketAdministrationPersistenceUnavailable extends Schema.TaggedError<MarketAdministrationPersistenceUnavailable>()(
-  'MarketAdministrationPersistenceUnavailable',
-  {
-    code: Schema.Literal('market_administration_persistence_unavailable'),
-    reason: Schema.String,
-  },
-) {}
-
 interface MarketAdministrationCommandContext {
   readonly actionInvocationId: string;
   readonly principalId: string;
@@ -164,6 +157,8 @@ export interface MarketAdministrationPersistence {
     input: LifecycleCommand,
   ) => Effect.Effect<MarketLifecyclePersistenceOutcome, MarketAdministrationPersistenceUnavailable>;
 }
+
+export { MarketAdministrationPersistenceUnavailable } from './market-administration-persistence-unavailable.ts';
 
 const unavailable = (cause: unknown): MarketAdministrationPersistenceUnavailable => {
   const failure = new MarketAdministrationPersistenceUnavailable({
