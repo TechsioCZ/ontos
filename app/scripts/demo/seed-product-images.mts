@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Product photos into Core Media through the native gallery command (`pnpm demo:seed:product-images`).
 //   --company akros    moves the storefront-bundled AKROS photos (/akros/products/…) into Core Media, keeps their
-//                      gallery position and drops the "image unavailable" placeholder reference.
+//                      gallery position and drops the "image unavailable" placeholder reference (older data only;
+//                      neutral demo seeds have no photos, see pseudonymize-akros-catalog.mts).
 //   --company kavarna  gives every Kavárna Doma seed product without a photo its photo (scripts/seed/kavarna-photos).
 // Without --apply it only reports. Each upload is an audited ChangeProductImages Action of the signed-in person;
 // running it again changes nothing, because migrated or photographed products are skipped.
@@ -180,7 +181,7 @@ if (import.meta.main) {
         const password = yield* Config.Redacted('ONTOS_DEMO_SEED_PASSWORD').pipe(
           Config.withDefault(Redacted.make('password1234')),
         );
-        const email = company === 'akros' ? 'eshop@akros.demo' : 'eshop@kavarna.demo';
+        const email = company === 'akros' ? 'eshop@sroubarna.demo' : 'eshop@kavarna.demo';
         const client = yield* connectSeedClient(target, email, password, checkpoint);
         yield* company === 'akros' ? migrateAkros(client, apply) : photographKavarna(client, apply);
       }),

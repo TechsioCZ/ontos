@@ -34,7 +34,7 @@ Local only. Nothing here deploys. Run everything from `app/`.
    (AI A/B/C principals and keys).
 8. Unless `DEMO_RESET=0`, `pnpm demo:seed:rental --apply` against the running local shell, authenticated as
    `management@najempark.demo`, fixed Nájempark company `…0021`. This uses public reads/Actions, not private DB writes.
-9. Restarts the AKROS storefront on **http://localhost:3070** (`akros-storefront/scripts/demo-restart.sh`). Its
+9. Restarts the ŠroubShop storefront on **http://localhost:3070** (`akros-storefront/scripts/demo-restart.sh`). Its
    managed key is read server-side; Kavárna Doma has no customer storefront.
 
 The CRM and operations seeds are already wired through `scripts/demo/reset-demo.mts`; their standalone entrypoints
@@ -82,7 +82,7 @@ Nothing is simulated: e-mails really go over SMTP. In the demo the SMTP server i
 
 What is sent, exactly once per event (after the database commit, by `scripts/demo/email-dispatcher/main.mts`):
 
-- AKROS e-shop orders (channel STOREFRONT): order received, then the status changes Zpracovává se
+- ŠroubShop e-shop orders (channel STOREFRONT): order received, then the status changes Zpracovává se
   (same label as staff app and storefront), Předáno dopravci (for Osobní odběr: „připravena k vyzvednutí“), Dokončená and Stornovaná.
   Only orders created after the dispatcher's first start (`demo_email.settings.enabled_since`) get e-mails, so
   old fixtures are never mailed. Customer e-mails carry no „(simulace)“ markers; their DEMO footer says that no
@@ -108,13 +108,13 @@ Test and proof scripts must use such an address and check delivery on `http://lo
 the ledger and the receipts („Odesláno e-mailem“) are the same as for real recipients. Demo-story orders use a
 presentable fictitious address (guide: `pavel.dvorak@dvorak-stavby.demo`). `EMAIL_TEST_SMTP_HOST=none` turns the
 separation off. To clear leftovers from older runs: `node --env-file=.env scripts/demo/email-dispatcher/tidy-inbox.mts`
-(dry run) and `… --apply` deletes from the demo inbox only messages about removed (soft-deleted) AKROS orders and
+(dry run) and `… --apply` deletes from the demo inbox only messages about removed (soft-deleted) ŠroubShop orders and
 messages to test/audit addresses; the ledger and the domain data stay untouched.
 
 The dispatcher claims each e-mail in its own ledger `demo_email.deliveries` (primary key = dedupe key) before
 sending. SMTP unreachable before any data was sent → `RETRY` with backoff (10 s, 20 s, 40 s, then every 60 s,
 so it heals by itself when the server is back); still undelivered after 24 h → `FAILED` („Odeslání selhalo“).
-A broken connection after the data → `UNKNOWN` and never resent. Staff UI and the AKROS confirmation page show
+A broken connection after the data → `UNKNOWN` and never resent. Staff UI and the ŠroubShop confirmation page show
 „Odesláno e-mailem“ with the time the SMTP server accepted the message.
 
 Who may read receipts (`GET /v1/deliveries`, never addresses or bodies):
@@ -122,7 +122,7 @@ Who may read receipts (`GET /v1/deliveries`, never addresses or bodies):
 - staff app (browser, `credentials: 'include'`): the dispatcher checks the OntOS session cookie with the shell
   (`EMAIL_DISPATCHER_SESSION_URL`) and returns only rows of the session's tenant and selected company; no
   session → 401;
-- AKROS storefront (server-side BFF `/api/ontos/order-emails`): the order number AND the e-mail the order was
+- ŠroubShop storefront (server-side BFF `/api/ontos/order-emails`): the order number AND the e-mail the order was
   placed with (`recipient`) must both match, so other customers' orders cannot be enumerated.
 
 | Variable                                        | Default                                                  | Meaning                                                                                                                                                                                                |
@@ -133,7 +133,7 @@ Who may read receipts (`GET /v1/deliveries`, never addresses or bodies):
 | `SMTP_USER` / `SMTP_PASSWORD`                   | –                                                        | AUTH PLAIN; only accepted together with `SMTP_SECURE=true`                                                                                                                                             |
 | `SMTP_TIMEOUT_MS`                               | `10000`                                                  | Socket timeout per attempt                                                                                                                                                                             |
 | `SMTP_FROM`                                     | –                                                        | Sender address for every company without its own variable below (the display name stays the company's, e.g. `Obchodní firma – účtárna <noreply@vase-domena.cz>`). Unset → the built-in demo addresses. |
-| `AKROS_EMAIL_FROM`                              | `AKROS e-shop <eshop@akros.demo>`                        | Sender of AKROS order e-mails                                                                                                                                                                          |
+| `AKROS_EMAIL_FROM`                              | `ŠroubShop e-shop <eshop@sroubarna.demo>`                | Sender of ŠroubShop order e-mails                                                                                                                                                                      |
 | `SIAMPARK_EMAIL_FROM`                           | `Nájempark – finanční oddělení <finance@najempark.demo>` | Sender of Nájempark payment reminders                                                                                                                                                                  |
 | `OBCHODNI_FIRMA_EMAIL_FROM`                     | `Obchodní firma – účtárna <ucetni@demo.ontos>`           | Sender of Obchodní firma payment reminders                                                                                                                                                             |
 | `EMAIL_TEST_SMTP_HOST` / `EMAIL_TEST_SMTP_PORT` | `127.0.0.1` / `1026`                                     | Test capture for test/QA recipients (second Mailpit); `none` = send them to `SMTP_HOST` too                                                                                                            |
@@ -141,11 +141,11 @@ Who may read receipts (`GET /v1/deliveries`, never addresses or bodies):
 | `SIAMPARK_AGENDA_EMAIL_FROM`                    | `Nájempark – upozornění <provoz@najempark.demo>`         | Sender of Nájempark agenda notifications                                                                                                                                                               |
 | `ONTOS_PUBLIC_URL`                              | `http://localhost:3020`                                  | Links to the staff app in agenda e-mails                                                                                                                                                               |
 | `EMAIL_DISPATCHER_SESSION_URL`                  | `http://127.0.0.1:3020/shell-super-app-api/auth/session` | Shell session check for staff receipt reads                                                                                                                                                            |
-| `AKROS_STOREFRONT_PUBLIC_URL`                   | `http://localhost:3070`                                  | Link in AKROS e-mails                                                                                                                                                                                  |
+| `AKROS_STOREFRONT_PUBLIC_URL`                   | `http://localhost:3070`                                  | Link in ŠroubShop e-mails                                                                                                                                                                              |
 | `EMAIL_DISPATCHER_PORT`                         | `3096`                                                   | Receipts API (127.0.0.1 only)                                                                                                                                                                          |
 | `EMAIL_DISPATCHER_INTERVAL_MS`                  | `2000`                                                   | Poll interval                                                                                                                                                                                          |
 | `EMAIL_DISPATCHER_ALLOWED_ORIGINS`              | `http://localhost:3020,http://127.0.0.1:3020`            | CORS origins of the staff app                                                                                                                                                                          |
-| `EMAIL_DISPATCHER_URL`                          | `http://127.0.0.1:3096`                                  | Used server-side by the AKROS storefront                                                                                                                                                               |
+| `EMAIL_DISPATCHER_URL`                          | `http://127.0.0.1:3096`                                  | Used server-side by the ŠroubShop storefront                                                                                                                                                           |
 
 A real SMTP server is configuration only: put e.g. `SMTP_HOST=smtp.vase-domena.cz`, `SMTP_PORT=465`,
 `SMTP_SECURE=true`, `SMTP_USER=…`, `SMTP_PASSWORD=…`, `SMTP_FROM=noreply@vase-domena.cz` (one verified sender
@@ -232,7 +232,7 @@ Every account uses the password `password1234`. Sign in at http://localhost:3020
 
 For administration across all five companies in **OntOS DEMO**, use `obchod@demo.ontos`.
 It holds the explicit tenant superadministrator role and can switch between Obchodní firma,
-Nájempark, Velkoobchod Hanák, Kavárna Doma and AKROS. This does not grant access to other tenants.
+Nájempark, Velkoobchod Hanák, Kavárna Doma and Šroubárna Vysočina s.r.o. (brand ŠroubShop). This does not grant access to other tenants.
 The company-specific personas below keep their restricted roles.
 
 | Login                       | Role                                                                             |
@@ -344,6 +344,78 @@ Run one of them with `pnpm test:operator scripts/integration/<file>`.
 The people-model scratch proofs need the same scratch database and local SpiceDB, and also rewrite its schema:
 `pnpm --filter @app/core-runtime test:operator` runs the company membership and agent profile, operator and status
 lifecycles, and `pnpm --filter @app/shell-super-app test:operator` runs the person invitation lifecycle.
+
+## Pseudonymous demo catalog (lane P/b)
+
+The fixed demo company keeps its product/variant identities, prices, stock, category tree/order and offers; only
+display text and photos change. Demo seeds use the neutral copy: `merchandise/scripts/seed-akros.mts` selects
+`buildSroubshopEncoded()`, and the in-app „Obnovit demo data“ baseline (`generate-akros-baseline.mts`) is built from
+it. Real-AKROS imports must use `buildAkrosEncodedFrom(source, demoId)` / `buildAkrosEncoded()`, which stay unchanged;
+the generated source JSON is never edited. The neutral copy contains no source image URLs, so photos come from the
+operator below as Core Media uploads, never hot links.
+
+`scripts/demo/pseudonymize-akros-catalog.mts` uses only governed merchandise records/media reads and audited
+`ChangeProductImages`, `UpdateProduct`, `UpdateCategory` Actions. It reads live (also staff-edited) descriptions,
+parameters, variant labels and alt texts, not just seed copy. Audit history is retained, not rewritten. Czech
+phrases are rewritten before declined brand names (rewriting is idempotent, so a resumed run matches its snapshot).
+
+- **Plan** freezes per-record snapshots and the exact photo bytes/SHA-256 (only full renditions are uploaded) and
+  writes `summary.json` with the approval fingerprint that apply/verify require. A source photo that no longer
+  answers with an accepted image (≤ 5 MB JPEG/PNG/WebP) is listed as unavailable and dropped. The placeholder
+  `/akros/products/image-unavailable.svg` is removed, never uploaded.
+- **Photos**: at most 20 per product: main first, then distinct gallery/variant photos in order. Variants beyond the
+  cap use the same product's main photo; the plan lists these groups (`overflowGroups`, in the source
+  `product-35568` and `product-37766`). Marketing artwork (file name contains `banner`/`sekce`, e.g. the FVE banners)
+  is never uploaded: it is replaced by the first photo of its category's representative product, or dropped
+  (`brandedGraphics`).
+- **Categories** (after all products): the first active, published product with a photo of the category itself
+  (catalog order), otherwise the first one in its descendants ordered by category position. `imageSrc` becomes that
+  product's `/obrazky/<product>/<asset>` only after an anonymous image response from the storefront, otherwise it
+  is cleared. No category media links or static image hosting.
+- **Apply** is resumable and never uploads a photo twice: already uploaded photos are recognized from the live
+  gallery's governed media SHA-256, even when the local journal was lost. Prices, variant stock, SKU, quantity tiers
+  and the category tree are rechecked; staff edits since the plan stop the run (re-plan with a new checkpoint).
+- **Verify** re-reads every record: no brand text or source URL, consistent galleries (main = first photo, variant
+  photos in the gallery), unchanged protected fields, category images anonymously deliverable.
+
+„Obnovit demo data“ keeps the photos already uploaded to Core Media (gallery, variant and category photos of the
+baseline products) and resets everything else to the neutral baseline. Should photos still be missing afterwards
+(e.g. the reset ran before the first apply), run a fresh plan → apply → verify with a new checkpoint; it re-uses the
+uploaded media and changes nothing else.
+
+Local demo: `ONTOS_DEMO_SEED_URL=http://localhost:3020 ONTOS_AGENT_SETUP_EMAIL=obchod@demo.ontos
+ONTOS_AGENT_SETUP_PASSWORD=… node scripts/demo/pseudonymize-akros-catalog.mts --mode plan --seed-images
+--checkpoint .scratch/pseudonym-catalog`, repeat until the summary prints, then `--mode apply` and `--mode verify`
+with `--approved <fingerprint>` (storefront on http://localhost:3070). Only the stage and local demo are accepted.
+
+### Stage runbook — plan first; apply only after lane T cutover and parent approval
+
+Every run stops starting new records after 200 s, so one `run-remote.sh` call (300 s limit) never times out; repeat
+a mode until it prints `complete=true`. Never run two batches at once. The checkpoint lives in the app container
+(`/var/www/ontos-pseudonym-catalog-v2`), which **every deploy replaces**: after each batch copy it back, and before a
+batch restore it when the container is new (after a deploy, re-pin the SSH host key first).
+
+```sh
+REMOTE=/Users/satan/workspace/techsio/agent-scratch/eshop-markets/run-remote.sh
+KNOWN=/Users/satan/workspace/techsio/agent-scratch/eshop-markets/known_hosts.app
+LOCAL=/Users/satan/workspace/techsio/agent-scratch/akros-pseudonym/p-b/checkpoint   # owner-only copy
+SSH="ssh -o UserKnownHostsFile=$KNOWN -o StrictHostKeyChecking=yes -o BatchMode=yes app"
+restore() { [ ! -d "$LOCAL" ] || $SSH test -d /var/www/ontos-pseudonym-catalog-v2 || tar -C "$LOCAL" -cf - . | $SSH 'mkdir -m 700 -p /var/www/ontos-pseudonym-catalog-v2 && tar -C /var/www/ontos-pseudonym-catalog-v2 -xf -'; }
+backup() { mkdir -m 700 -p "$LOCAL" && $SSH tar -C /var/www/ontos-pseudonym-catalog-v2 -cf - . | tar -C "$LOCAL" -xf -; }
+# 1. Plan (read-only), repeat until complete=true and the summary JSON is printed:
+restore; "$REMOTE" scripts/demo/pseudonymize-akros-catalog.mts --mode plan; backup
+# Review "$LOCAL/summary.json"; only the lane P parent authorizes apply.
+APPROVED=$(sed -n 's/.*"fingerprint":"\([0-9a-f]*\)".*/\1/p' "$LOCAL/summary.json")
+# 2. Apply (after lane T snapshot + real-host cutover and parent approval), repeat until complete=true:
+restore; "$REMOTE" scripts/demo/pseudonymize-akros-catalog.mts --mode apply --approved "$APPROVED"; backup
+# 3. Verify (read-only), repeat until complete=true:
+restore; "$REMOTE" scripts/demo/pseudonymize-akros-catalog.mts --mode verify --approved "$APPROVED"; backup
+```
+
+`summary.json` states the expected apply effort (`estimatedApplyBatches`, `estimatedApplyMinutes`); stop on any
+error instead of retrying concurrently, and do not delete the checkpoint after a partial apply. Do not run other
+catalog/market migrations meanwhile. Keep the local copy until verification is signed off, then delete exactly that
+directory. Deploying this code authorizes no apply.
 
 ## Known issues
 
