@@ -4,7 +4,8 @@ export default function GlobalError({ reset }: { reset: () => void }) {
   return (
     <html lang="cs">
       <head>
-        <title>Katalog je dočasně nedostupný | AKROS DEMO</title>
+        {/* Replaces the root layout, so no brand is known here: a brand-neutral title. */}
+        <title>Katalog je dočasně nedostupný | DEMO</title>
         <meta name="robots" content="noindex, nofollow, noarchive" />
       </head>
       <body style={{ margin: 0 }}>

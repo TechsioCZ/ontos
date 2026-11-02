@@ -5,11 +5,12 @@ import { Input } from "@techsio/ui-kit/atoms/input";
 
 import { PrimaryLinkButton } from "@/components/primary-link-button";
 import { StorefrontWideShell } from "@/components/storefront-shell";
-import { blogArticles } from "@/content/editorial";
+import { getBrand } from "@/brand";
 
 export const metadata: Metadata = { title: "Blog" };
 
 export default function BlogPage() {
+  const { blog } = getBrand().pages;
   return (
     <StorefrontWideShell>
       <article className="sf-blog-page">
@@ -20,7 +21,7 @@ export default function BlogPage() {
             loading="eager"
             priority
             sizes="(max-width: 760px) 100vw, 46vw"
-            src="/akros/content/blog-featured.png"
+            src={blog.featuredImage}
             width={1200}
           />
           <div>
@@ -49,7 +50,7 @@ export default function BlogPage() {
           <section aria-labelledby="latest-posts-title">
             <h2 id="latest-posts-title">Nejnovější příspěvky</h2>
             <div className="sf-blog-grid">
-              {blogArticles.map((article) => (
+              {blog.articles.map((article) => (
                 <article className="sf-blog-card" key={article.title}>
                   <Image
                     alt=""

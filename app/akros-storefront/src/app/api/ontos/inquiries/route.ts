@@ -1,4 +1,5 @@
 import "server-only";
+import { getBrand } from "@/brand";
 import { createHash } from "node:crypto";
 import { readProducts } from "@/ontos/catalog-server";
 import { callAction, OntosError, readRecords } from "@/ontos/gateway";
@@ -72,10 +73,10 @@ export async function POST(request: Request) {
   } catch (error) {
     if (OntosError.is(error) && error.status === 403) {
       console.error("[AKROS] Inquiry owner authorization denied");
+      const { contact } = getBrand();
       return Response.json(
         {
-          message:
-            "Kontaktní formulář je dočasně nedostupný. Dotaz nebyl odeslán. Napište nám prosím na akros@akros.cz nebo zavolejte na 737 591 849.",
+          message: `Kontaktní formulář je dočasně nedostupný. Dotaz nebyl odeslán. Napište nám prosím na ${contact.email}${contact.phone ? ` nebo zavolejte na ${contact.phone.display}` : ""}.`,
         },
         { status: 503, headers: { "cache-control": "no-store" } },
       );

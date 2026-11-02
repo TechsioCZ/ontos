@@ -5,7 +5,7 @@ import {
   type MoneyFormat,
   type StoreCurrency,
 } from "@/lib/format";
-import { productMediaPath } from "./media-path";
+import { imagePlaceholder, isImagePlaceholder, productMediaPath } from "./media-path";
 import { purchaseConstraints } from "./purchase-constraints";
 import type {
   CatalogVariantSummary,
@@ -84,7 +84,6 @@ const parameters = (v: unknown): CatalogParameter[] =>
     .map((p) => ({ label: text(p.label), value: text(p.value), unit: text(p.unit) }))
     .filter((p) => p.label.trim() !== "");
 
-export const imagePlaceholder = "/akros/products/image-unavailable.svg";
 const imageHosts = (): Set<string> =>
   new Set([
     "www.akros.cz",
@@ -97,6 +96,8 @@ const imageHosts = (): Set<string> =>
 const safeImage = (v: unknown): string | undefined => {
   const src = text(v).trim();
   if (!src) return undefined;
+  // Product data may still store the placeholder's original path; serve the brand-neutral one.
+  if (isImagePlaceholder(src)) return imagePlaceholder;
   if (src.startsWith("/") && !src.startsWith("//")) return src;
   try {
     const url = new URL(src);

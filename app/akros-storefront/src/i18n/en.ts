@@ -23,7 +23,6 @@ export const en: Dictionary = {
     steel: "Steel products",
     blog: "Blog",
     partnerProgram: "Partner programme",
-    production: "AKROS CZ manufacturing",
     claims: "Complaints",
     contacts: "Contacts",
     login: "Sign in",
@@ -54,9 +53,7 @@ export const en: Dictionary = {
   },
   catalog: {
     title: "Catalogue",
-    description: "Quick access to the main AKROS categories and services.",
     specialCategories: "Special categories",
-    production: "AKROSCZ Manufacturing",
     categoryDescription: "Choose a subcategory or continue straight to the products.",
     emptyCategory: "There are currently no products in this category.",
     recommendations: "You may also like…",
@@ -71,48 +68,6 @@ export const en: Dictionary = {
       item: (index: number, count: number) => `Banner ${index + 1} of ${count}`,
     },
     featuredTitle: "Recommended",
-    companyTitle: "AKROS – your partner for steel products and fasteners",
-    companyIntro: {
-      label: "About AKROS",
-      paragraphs: [
-        {
-          id: "welcome",
-          content: [
-            "Welcome to the online shop of AKROS, specialists in stainless steel. We offer a wide range of quality ",
-            { strong: "stainless fasteners" },
-            " such as bolts, nuts, screws, pins, rivets, chains and tools, and ",
-            { strong: "stainless steel products" },
-            " such as sheets, tubes, bars, elbows, flanges and fittings.",
-          ],
-        },
-        {
-          id: "assortment",
-          content: [
-            "We regularly ",
-            { strong: "add new products to the range" },
-            ". Keep an eye on our sale and special offers as well.",
-          ],
-        },
-        {
-          id: "production",
-          content: [
-            "We also provide ",
-            { strong: "series and custom metalwork" },
-            ", including ",
-            { strong: "stainless steel products" },
-            " such as railings and ",
-            { strong: "staircases" },
-            ".",
-          ],
-        },
-        {
-          id: "contact",
-          content: [
-            "If you have any questions, please contact us. Product descriptions are provided in Czech.",
-          ],
-        },
-      ],
-    },
   },
   product: {
     originalPrice: "Original price",
@@ -400,7 +355,7 @@ export const en: Dictionary = {
   },
   footer: {
     contact: "Contact",
-    homeLinkLabel: "AKROS – home page",
+    homeLinkLabel: (store: string) => `${store} – home page`,
     customerInformation: "Customer information",
     delivery: "Delivery",
     pickup: "Collection near you",
@@ -419,7 +374,6 @@ export const en: Dictionary = {
     carriers: "Carriers",
     secureShopping: "Secure shopping",
     privacy: "GDPR",
-    copyright: "Copyright (c) 2014–2026 AKROS b2c",
     createdBy: "Shop by:",
     cookies: "Cookies",
     personalDataProtection: "Privacy policy",

@@ -5,6 +5,7 @@ import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { VerticalNavigation } from "@techsio/ui-kit/molecules/vertical-navigation";
 import StoreLink from "@/components/store-link";
 
+import { useBrand } from "@/brand/brand-context";
 import { useDictionary } from "@/ontos/market-context";
 import type { CatalogCategory } from "@/ontos/catalog-types";
 
@@ -17,8 +18,6 @@ interface CategoryNavigationItemProps {
   categories: CatalogCategory[];
   expandRoots: boolean;
 }
-
-const akrosProductionUrl = "https://www.akroscz.cz/";
 
 /** Keep the kit's navigation behavior, but ship its repeated link utilities once in CSS, not per link. */
 function CatalogLink({ className, ...props }: ComponentProps<typeof StoreLink>) {
@@ -38,6 +37,9 @@ function SpecialCategoriesNavigation({
   expandRoots: boolean;
 }) {
   const cs = useDictionary();
+  // The brand's own manufacturing site; a brand without one has no special categories.
+  const { production } = useBrand();
+  if (!production) return null;
   return (
     <VerticalNavigation.Branch defaultOpen={expandRoots} id={`${navigationId}-special-categories`}>
       <VerticalNavigation.Row data-sf-depth={0}>
@@ -49,8 +51,8 @@ function SpecialCategoriesNavigation({
       <VerticalNavigation.BranchContent indent>
         <VerticalNavigation.List>
           <VerticalNavigation.Item>
-            <VerticalNavigation.Link href={akrosProductionUrl}>
-              {cs.catalog.production}
+            <VerticalNavigation.Link href={production.externalUrl}>
+              {production.sidebarLabel}
             </VerticalNavigation.Link>
           </VerticalNavigation.Item>
         </VerticalNavigation.List>

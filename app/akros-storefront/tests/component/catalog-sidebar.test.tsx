@@ -39,7 +39,7 @@ describe("CatalogSidebar", () => {
       within(navigation).getByRole("button", { name: "Vruty" }).getAttribute("aria-expanded"),
     ).toBe("false");
     expect(
-      within(navigation).getByRole("link", { name: cs.catalog.production }).getAttribute("href"),
+      within(navigation).getByRole("link", { name: "AKROSCZ Výroba" }).getAttribute("href"),
     ).toBe("https://www.akroscz.cz/");
     expect(within(navigation).queryByText("Speciální spojovací materiál")).toBeNull();
   });
@@ -100,7 +100,6 @@ describe("CatalogSidebar", () => {
     });
 
     expect(screen.queryByRole("heading", { name: cs.catalog.title })).toBeNull();
-    expect(screen.queryByText(cs.catalog.description)).toBeNull();
     expect(desktopNavigation.querySelector('[data-part="group"]')?.getAttribute("data-tone")).toBe(
       "subtle",
     );

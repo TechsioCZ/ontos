@@ -11,9 +11,11 @@ import {
   UNKNOWN_MARKET_PATH,
 } from "@/ontos/market-locale";
 
-/** Unprefixed by design: BFF routes, Next assets, OntOS customer-context callbacks and root public files. */
+/** Unprefixed by design: BFF routes, Next assets, OntOS customer-context callbacks and public files. */
 const passThrough = (pathname: string, locale: string | undefined) =>
-  /^\/(?:api|_next|commerce-customer-context-api|akros)(?:\/|$)/u.test(pathname) ||
+  /^\/(?:api|_next|commerce-customer-context-api|storefront|akros|sroubshop)(?:\/|$)/u.test(
+    pathname,
+  ) ||
   (locale === undefined && /^\/[^/]*\.[A-Za-z0-9]+$/u.test(pathname));
 
 /**

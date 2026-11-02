@@ -5,7 +5,7 @@ import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { Input } from "@techsio/ui-kit/atoms/input";
 import { Accordion } from "@techsio/ui-kit/molecules/accordion";
 
-import { faqGroups } from "@/content/editorial";
+import type { FaqGroupId, FaqGroups } from "@/content/editorial";
 
 const normalize = (value: string) =>
   value
@@ -13,17 +13,16 @@ const normalize = (value: string) =>
     .replaceAll(/[\u0300-\u036f]/g, "")
     .toLocaleLowerCase("cs-CZ");
 
-const faqGroupIcons: Record<(typeof faqGroups)[number]["id"], string> = {
+const faqGroupIcons: Record<FaqGroupId, string> = {
   doprava: "🚚",
   objednavky: "🛒",
   produkty: "⚙️",
   reklamace: "🔄",
 };
 
-export function FaqExplorer() {
-  const [activeGroupId, setActiveGroupId] = useState<(typeof faqGroups)[number]["id"]>(
-    faqGroups[0].id,
-  );
+/** `faqGroups`: the shop FAQ with the brand's contact (server page: `faqGroups(inquiryEmail)`). */
+export function FaqExplorer({ faqGroups }: { faqGroups: FaqGroups }) {
+  const [activeGroupId, setActiveGroupId] = useState<FaqGroupId>(faqGroups[0].id);
   const [query, setQuery] = useState("");
   const normalizedQuery = normalize(query.trim());
   const activeGroup = faqGroups.find((group) => group.id === activeGroupId) ?? faqGroups[0];
@@ -35,7 +34,7 @@ export function FaqExplorer() {
         normalize(`${question} ${answer} ${details.join(" ")}`).includes(normalizedQuery),
       ),
     );
-  }, [activeGroup, normalizedQuery]);
+  }, [activeGroup, faqGroups, normalizedQuery]);
 
   return (
     <>

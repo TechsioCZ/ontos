@@ -8,6 +8,8 @@ import { Drawer } from "@techsio/ui-kit/molecules/drawer";
 import { CatalogHelpNavigation, CatalogNavigation } from "@/components/catalog-sidebar";
 import { HeaderSearch } from "@/components/header-search";
 
+import { useBrand } from "@/brand/brand-context";
+import type { ClientBrand } from "@/brand/types";
 import { MiniCart } from "@/features/cart/mini-cart";
 import type { Dictionary } from "@/i18n";
 import { useCatalog } from "@/ontos/catalog-provider";
@@ -16,7 +18,7 @@ import { MarketSwitcher } from "@/ontos/market-switcher";
 
 const isElement = (value: EventTarget): value is Element => Element.prototype.isPrototypeOf(value);
 
-const utilityLinks = (cs: Dictionary) => [
+const utilityLinks = (cs: Dictionary, brand: ClientBrand) => [
   { href: "/", label: cs.header.home },
   { href: "/obchodni-podminky", label: cs.header.terms },
   { href: "/o-nas", label: cs.header.about },
@@ -27,7 +29,9 @@ const utilityLinks = (cs: Dictionary) => [
   { href: "/kategorie/nerezovy-hutni-material", label: cs.header.steel },
   { href: "/blog", label: cs.header.blog },
   { href: "/partnersky-program", label: cs.header.partnerProgram },
-  { href: "/kategorie/akroscz-vyroba", label: cs.header.production },
+  ...(brand.production
+    ? [{ href: brand.production.path, label: brand.production.headerLabel }]
+    : []),
   { href: "/reklamace", label: cs.header.claims },
   { href: "/kontakty", label: cs.header.contacts },
 ];
@@ -35,6 +39,7 @@ const utilityLinks = (cs: Dictionary) => [
 function MobileNavigation({ pathname }: { pathname: string }) {
   const { getSidebarCategories } = useCatalog();
   const cs = useDictionary();
+  const brand = useBrand();
   const [open, setOpen] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
   const activeSlug = pathname.startsWith("/kategorie/") ? pathname.split("/")[2] : undefined;
@@ -144,7 +149,7 @@ function MobileNavigation({ pathname }: { pathname: string }) {
                 <section>
                   <h3 className="sf-mobile-menu__section-title">{cs.header.information}</h3>
                   <nav aria-label="Mobilní navigace" className="sf-mobile-menu__links">
-                    {utilityLinks(cs).map((item) => (
+                    {utilityLinks(cs, brand).map((item) => (
                       <LinkButton
                         key={item.href}
                         as={StoreLink}
@@ -174,13 +179,14 @@ export function SiteHeader() {
   // Without the market prefix, so current-page state matches Kai's unprefixed routes.
   const pathname = useStorePathname();
   const cs = useDictionary();
+  const brand = useBrand();
 
   return (
     <header className="sf-header">
       <div className="sf-header__utility-bar">
         <div className="sf-header__utility">
           <nav className="sf-header__utility-links" aria-label="Pomocná navigace">
-            {utilityLinks(cs).map((item) => (
+            {utilityLinks(cs, brand).map((item) => (
               <LinkButton
                 key={item.href}
                 as={StoreLink}
@@ -213,15 +219,21 @@ export function SiteHeader() {
       <div className="sf-header__main">
         <div className="sf-header__top-row">
           <MobileNavigation key={pathname} pathname={pathname} />
-          <StoreLink className="sf-brand" href="/" aria-label={cs.footer.homeLinkLabel}>
-            <Image
-              alt=""
-              className="sf-brand__logo"
-              height={61}
-              priority
-              src="/akros/logo-akros.png"
-              width={380}
-            />
+          <StoreLink className="sf-brand" href="/" aria-label={cs.footer.homeLinkLabel(brand.name)}>
+            {brand.logo ? (
+              <Image
+                alt=""
+                className="sf-brand__logo"
+                height={61}
+                priority
+                src={brand.logo.header}
+                width={380}
+              />
+            ) : (
+              <span aria-hidden="true" className="sf-brand__wordmark">
+                {brand.name}
+              </span>
+            )}
           </StoreLink>
 
           <div className="sf-header__cart-actions flex shrink-0 items-center gap-3">

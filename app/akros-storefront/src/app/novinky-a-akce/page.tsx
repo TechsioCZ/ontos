@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { getBrand } from "@/brand";
 import Image from "next/image";
 import StoreLink from "@/components/store-link";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
@@ -56,7 +57,7 @@ export default async function NewsPage() {
             loading="eager"
             priority
             sizes="100vw"
-            src="/akros/content/news-hero.png"
+            src={getBrand().pages.newsHero}
           />
           <div className="sf-news-hero__overlay">
             <div>

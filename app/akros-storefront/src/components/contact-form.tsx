@@ -4,6 +4,7 @@ import { useRef, useState, type FormEvent } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { FormTextarea } from "@techsio/ui-kit/molecules/form-textarea";
+import { useBrand } from "@/brand/brand-context";
 import type { InquiryKind } from "@/ontos/inquiry-model";
 import { marketRequestHeaders } from "@/ontos/market-locale";
 
@@ -21,6 +22,7 @@ export function ContactForm({
   productId?: string;
   productName?: string;
 }) {
+  const brand = useBrand();
   const [pending, setPending] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -83,7 +85,7 @@ export function ContactForm({
   if (taskId !== null)
     return (
       <output className="sf-form-success">
-        Děkujeme. Dotaz jsme předali týmu AKROS k vyřízení. Číslo požadavku: {taskId}.
+        Děkujeme. Dotaz jsme předali týmu {brand.name} k vyřízení. Číslo požadavku: {taskId}.
       </output>
     );
   return (
@@ -150,7 +152,10 @@ export function ContactForm({
           rows={compact ? 4 : 6}
           size={compact ? "sm" : "md"}
         />
-        <p>Údaje odešleme týmu AKROS k vyřízení vašeho dotazu. Nejde o přihlášení k newsletteru.</p>
+        <p>
+          Údaje odešleme týmu {brand.name} k vyřízení vašeho dotazu. Nejde o přihlášení k
+          newsletteru.
+        </p>
         {kind === "COMPLAINT" && (
           <p>
             Odesláním vznikne úkol pro podporu, nikoli automaticky zaevidovaný reklamační případ.

@@ -17,6 +17,7 @@ import {
 import { getDictionary, getMoney } from "@/ontos/active-market";
 import { getCatalog, getCatalogPage } from "@/ontos/catalog-server";
 import { purchaseProductOf, purchaseVariantOf } from "@/ontos/catalog-projection";
+import { isImagePlaceholder } from "@/ontos/media-path";
 
 interface ProductPageProps {
   params: Promise<{ slug: string }>;
@@ -103,7 +104,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
         candidate.id !== product.id &&
         candidate.name.trim().toLocaleUpperCase("cs-CZ") !== "AKCE" &&
         candidate.priceMinor > 0 &&
-        candidate.imageSrc !== "/akros/products/image-unavailable.svg",
+        !isImagePlaceholder(candidate.imageSrc),
     )
     .sort(
       (left, right) =>

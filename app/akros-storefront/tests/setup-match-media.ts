@@ -54,3 +54,13 @@ vi.mock("@/ontos/active-market", async () => {
     marketHref: async (href: string) => href,
   };
 });
+
+// Client chrome reads the brand from the root layout's BrandProvider. Suites render outside the root layout: they
+// get the default AKROS brand unless they mount their own BrandProvider (brand suites do).
+vi.mock("@/brand/brand-context", async (original) => {
+  const actual = await original<typeof import("@/brand/brand-context")>();
+  const { akros } = await import("@/brand/akros");
+  const { toClientBrand } = await import("@/brand");
+  const fallback = toClientBrand(akros, "cs");
+  return { ...actual, useBrand: () => actual.useOptionalBrand() ?? fallback };
+});

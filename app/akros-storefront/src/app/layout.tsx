@@ -7,6 +7,9 @@ import type { ReactNode } from "react";
 
 import "./globals.css";
 
+import { getBrand, toClientBrand } from "@/brand";
+import { BrandProvider } from "@/brand/brand-context";
+
 import { CartProvider } from "@/features/cart/cart-provider";
 import { CartNotifications } from "@/features/cart/cart-notifications";
 import { dictionaryFor, dictionaryLanguage } from "@/i18n";
@@ -46,14 +49,15 @@ export async function generateMetadata(): Promise<Metadata> {
     getStorePath(),
     headers(),
   ]);
+  const brand = getBrand();
   const base: Metadata = {
     title: {
-      default: "AKROS | Nerezový a spojovací materiál",
-      template: "%s | AKROS",
+      default: brand.metadata.defaultTitle,
+      template: `%s | ${brand.name}`,
     },
     robots: { index: false, follow: false, nocache: true },
-    description:
-      "E-shop AKROS s nerezovým, hutním a spojovacím materiálem v prezentačním prostředí OntOS.",
+    description: brand.metadata.description,
+    icons: { icon: { url: brand.metadata.icon, type: "image/svg+xml", sizes: "any" } },
   };
   if (resolution.kind !== "live") {
     const dictionary = dictionaryFor(resolution.locale);
@@ -88,6 +92,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export const dynamic = "force-dynamic";
 export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   const resolution = await getMarketResolution();
+  const brand = getBrand();
   if (resolution.kind !== "live")
     // Unknown locale (root 404 status) or an inactive market: no catalog, cart or market data.
     return (
@@ -98,6 +103,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       >
         <body>
           <MarketGatePage
+            brandName={brand.name}
             dictionary={dictionaryFor(resolution.locale)}
             kind={resolution.kind}
             live={resolution.live}
@@ -110,15 +116,17 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   return (
     <html lang={market.locale} className={`${inter.variable} light`} data-scroll-behavior="smooth">
       <body>
-        <MarketProvider market={market}>
-          <CatalogProvider snapshot={snapshot}>
-            {/* Each market keeps its own carts: prices and currency differ between markets. */}
-            <CartProvider storageScope={market.marketCode}>
-              {children}
-              <CartNotifications />
-            </CartProvider>
-          </CatalogProvider>
-        </MarketProvider>
+        <BrandProvider brand={toClientBrand(brand, market.locale)}>
+          <MarketProvider market={market}>
+            <CatalogProvider snapshot={snapshot}>
+              {/* Each market keeps its own carts: prices and currency differ between markets. */}
+              <CartProvider storageScope={market.marketCode}>
+                {children}
+                <CartNotifications />
+              </CartProvider>
+            </CatalogProvider>
+          </MarketProvider>
+        </BrandProvider>
       </body>
     </html>
   );

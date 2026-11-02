@@ -149,6 +149,18 @@ body {
   height: auto;
 }
 
+/* Brands without a logo (STOREFRONT_BRAND) show their name as a text wordmark in the logo's box. */
+.sf-brand__wordmark {
+  display: block;
+  width: var(--sf-header-logo-width);
+  color: var(--color-fg-primary, #111);
+  font-size: var(--text-xl);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .sf-header__search {
   width: min(100%, var(--sf-header-search-width));
   min-width: 0;
@@ -856,6 +868,16 @@ body {
 
 .sf-footer__logo {
   object-fit: contain;
+}
+
+.sf-footer__wordmark {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  color: inherit;
+  font-size: var(--text-xl);
+  font-weight: 800;
+  letter-spacing: -0.02em;
 }
 
 .sf-footer__contact {

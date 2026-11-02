@@ -1,53 +1,23 @@
 import type { Metadata } from "next";
-import StoreLink from "@/components/store-link";
+import { notFound } from "next/navigation";
 
+import { getBrand } from "@/brand";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 
-export const metadata: Metadata = { title: "AKROS CZ výroba" };
+// The brand's own manufacturing page; a brand without one (STOREFRONT_BRAND) answers 404.
+export function generateMetadata(): Metadata {
+  const { production } = getBrand();
+  return production ? { title: production.title } : {};
+}
 
 export default function ManufacturingPage() {
+  const { production } = getBrand();
+  if (!production) notFound();
   return (
     <StorefrontShell activeCategorySlug="akroscz-vyroba">
-      <StorefrontBreadcrumbs items={[{ href: "/", label: "Domů" }, { label: "AKROS CZ výroba" }]} />
-      <article className="sf-content-page">
-        <header className="sf-content-page__heading">
-          <h1>AKROS CZ výroba</h1>
-          <p>
-            Zakázková výroba a zpracování materiálu pro průmysl, stavebnictví a technické projekty.
-          </p>
-        </header>
-        <section className="sf-content-panel" aria-labelledby="manufacturing-services-title">
-          <h2 id="manufacturing-services-title">Výrobní služby</h2>
-          <p>
-            AKROS CZ nabízí zakázkovou výrobu, laserové řezání, svařování a tváření plechů. Součástí
-            nabídky jsou také galvanické povrchové úpravy pro vybrané materiály.
-          </p>
-          <ul className="sf-service-list">
-            <li>Zakázková výroba</li>
-            <li>Laserové řezání</li>
-            <li>Svařování</li>
-            <li>Tváření plechů</li>
-            <li>Galvanické povrchové úpravy</li>
-          </ul>
-        </section>
-        <section className="sf-content-panel" aria-labelledby="manufacturing-contact-title">
-          <h2 id="manufacturing-contact-title">Řešení pro váš projekt</h2>
-          <p>
-            Pro informace o možnostech zpracování materiálu a zakázkové výrobě přejděte na{" "}
-            <StoreLink href="/kontakty">kontakty AKROS</StoreLink>.
-          </p>
-          <p>
-            Hledáte hotový materiál? Prohlédněte si{" "}
-            <StoreLink href="/kategorie/nerezovy-spojovaci-material">
-              nerezový spojovací materiál
-            </StoreLink>{" "}
-            nebo{" "}
-            <StoreLink href="/kategorie/nerezovy-hutni-material">nerezový hutní materiál</StoreLink>
-            .
-          </p>
-        </section>
-      </article>
+      <StorefrontBreadcrumbs items={[{ href: "/", label: "Domů" }, { label: production.title }]} />
+      <article className="sf-content-page">{production.page}</article>
     </StorefrontShell>
   );
 }

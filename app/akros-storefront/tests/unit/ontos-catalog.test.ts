@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { imagePlaceholder } from "@/ontos/media-path";
 import {
-  imagePlaceholder,
   projectCategories,
   projectProducts,
   purchaseProductOf,
@@ -183,6 +183,12 @@ describe("OntOS source-of-truth boundary", () => {
       gallery: ["https://cdn.example/x.jpg"],
     };
     expect(project({ products: [p] }).catalog.products[0].imageSrc).toBe(imagePlaceholder);
+  });
+  it("serves the placeholder stored under its original path from the brand-neutral path", () => {
+    const p = { ...live(), imageSrc: "/akros/products/image-unavailable.svg", gallery: [] };
+    expect(project({ products: [p] }).catalog.products[0].imageSrc).toBe(
+      "/storefront/products/image-unavailable.svg",
+    );
   });
   it("uses the first OntOS gallery image as the main image after a staff image change", () => {
     const p = {

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { getBrand } from "@/brand";
 import { SimpleContentPage } from "@/components/simple-content-page";
 
 export const metadata: Metadata = { title: "Partnerský program" };
@@ -6,7 +7,7 @@ export const metadata: Metadata = { title: "Partnerský program" };
 export default function PartnerPage() {
   return (
     <SimpleContentPage
-      title="Partnerský program AKROS"
+      title={`Partnerský program ${getBrand().name}`}
       lead="Výhody pro pravidelné odběratele a firemní zákazníky."
       sections={[
         {

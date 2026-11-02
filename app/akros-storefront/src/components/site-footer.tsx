@@ -4,6 +4,7 @@ import Image from "next/image";
 import StoreLink from "@/components/store-link";
 import { Footer } from "@techsio/ui-kit/organisms/footer";
 
+import { useBrand } from "@/brand/brand-context";
 import type { Dictionary } from "@/i18n";
 import { useDictionary } from "@/ontos/market-context";
 
@@ -44,35 +45,54 @@ const customerLinks = (cs: Dictionary) =>
 
 export function SiteFooter() {
   const cs = useDictionary();
+  const brand = useBrand();
   return (
     <Footer className="sf-footer" direction="vertical" layout="col" sectionFlow="col" size="sm">
       <div className="sf-footer__inner" id="footer">
         <Footer.Container className="sf-footer__top">
           <Footer.Section className="sf-footer__section sf-footer__brand-column">
-            <StoreLink className="sf-footer__brand" href="/" aria-label={cs.footer.homeLinkLabel}>
-              <Image
-                alt="AKROS"
-                className="sf-footer__logo"
-                fill
-                loading="lazy"
-                sizes="161px"
-                src="/akros/footer/logo.png"
-              />
+            <StoreLink
+              className="sf-footer__brand"
+              href="/"
+              aria-label={cs.footer.homeLinkLabel(brand.name)}
+            >
+              {brand.logo ? (
+                <Image
+                  alt={brand.name}
+                  className="sf-footer__logo"
+                  fill
+                  loading="lazy"
+                  sizes="161px"
+                  src={brand.logo.footer}
+                />
+              ) : (
+                <span className="sf-footer__wordmark">{brand.name}</span>
+              )}
             </StoreLink>
             <div className="sf-footer__contact">
               <Footer.Title>{cs.footer.contact}</Footer.Title>
               <div className="sf-footer__contact-links">
-                <Footer.Link className="sf-footer__contact-link" href="tel:+420737591849">
+                {brand.contact.phone && (
+                  <Footer.Link className="sf-footer__contact-link" href={brand.contact.phone.href}>
+                    <FooterAssetImage
+                      asset={{
+                        alt: "",
+                        height: 26,
+                        src: "/storefront/footer/phone.png",
+                        width: 26,
+                      }}
+                    />
+                    <span>{brand.contact.phone.display}</span>
+                  </Footer.Link>
+                )}
+                <Footer.Link
+                  className="sf-footer__contact-link"
+                  href={`mailto:${brand.contact.email}`}
+                >
                   <FooterAssetImage
-                    asset={{ alt: "", height: 26, src: "/akros/footer/phone.png", width: 26 }}
+                    asset={{ alt: "", height: 25, src: "/storefront/footer/email.png", width: 25 }}
                   />
-                  <span>737 591 849</span>
-                </Footer.Link>
-                <Footer.Link className="sf-footer__contact-link" href="mailto:akros@akros.cz">
-                  <FooterAssetImage
-                    asset={{ alt: "", height: 25, src: "/akros/footer/email.png", width: 25 }}
-                  />
-                  <span>akros@akros.cz</span>
+                  <span>{brand.contact.email}</span>
                 </Footer.Link>
               </div>
             </div>
@@ -104,7 +124,7 @@ export function SiteFooter() {
                 asset={{
                   alt: cs.footer.heurekaBadge,
                   height: 45,
-                  src: "/akros/footer/heureka-overeno-zakazniky.png",
+                  src: "/storefront/footer/heureka-overeno-zakazniky.png",
                   width: 45,
                 }}
               />
@@ -116,7 +136,7 @@ export function SiteFooter() {
 
         <Footer.Bottom className="sf-footer__bottom">
           <Footer.Text className="sf-footer__copyright">
-            {cs.footer.copyright} / {cs.footer.createdBy}{" "}
+            {brand.copyright} / {cs.footer.createdBy}{" "}
             <Footer.Link href="https://www.web-revolution.cz/internetovy-obchod-eshop">
               Web Revolution
             </Footer.Link>

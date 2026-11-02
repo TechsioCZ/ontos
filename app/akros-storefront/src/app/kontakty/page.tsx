@@ -5,7 +5,7 @@ import { ContactForm } from "@/components/contact-form";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { readProducts } from "@/ontos/catalog-server";
-import { branches } from "@/content/editorial";
+import { getBrand } from "@/brand";
 
 export const metadata: Metadata = { title: "Kontakty" };
 
@@ -20,6 +20,7 @@ export default async function ContactsPage({
         (item) => item.id === productId,
       )
     : undefined;
+  const { branches } = getBrand().pages;
   return (
     <StorefrontShell>
       <StorefrontBreadcrumbs items={[{ href: "/", label: "Domů" }, { label: "Kontakty" }]} />
@@ -40,18 +41,25 @@ export default async function ContactsPage({
           <section className="sf-branch" id={branch.id} key={branch.id}>
             <h2>{branch.title}</h2>
             <div className="sf-branch__body">
-              <Image
-                alt={`Mapa pobočky ${branch.city}`}
-                height={420}
-                loading="lazy"
-                sizes="(max-width: 760px) 100vw, 520px"
-                src={branch.mapSrc}
-                width={760}
-              />
+              {branch.mapSrc && (
+                <Image
+                  alt={`Mapa pobočky ${branch.city}`}
+                  height={420}
+                  loading="lazy"
+                  sizes="(max-width: 760px) 100vw, 520px"
+                  src={branch.mapSrc}
+                  width={760}
+                />
+              )}
               <address>
                 <span>{branch.address}</span>
                 {branch.details && <span>{branch.details}</span>}
-                <a href={`tel:+420${branch.phone.replaceAll(" ", "")}`}>Telefon: {branch.phone}</a>
+                {branch.phone && (
+                  <a href={`tel:+420${branch.phone.replaceAll(" ", "")}`}>
+                    Telefon: {branch.phone}
+                  </a>
+                )}
+                {branch.email && <a href={`mailto:${branch.email}`}>E-mail: {branch.email}</a>}
               </address>
             </div>
           </section>

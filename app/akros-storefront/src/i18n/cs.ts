@@ -21,7 +21,6 @@ export const cs = {
     steel: "Hutní materiál",
     blog: "Blog",
     partnerProgram: "Partnerský program",
-    production: "AKROS CZ výroba",
     claims: "Reklamace",
     contacts: "Kontakty",
     login: "Přihlášení",
@@ -52,9 +51,7 @@ export const cs = {
   },
   catalog: {
     title: "Katalog",
-    description: "Rychlý přístup k hlavním kategoriím a službám AKROS.",
     specialCategories: "Speciální kategorie",
-    production: "AKROSCZ Výroba",
     categoryDescription: "Vyberte podkategorii nebo pokračujte rovnou k produktům.",
     emptyCategory: "V této kategorii momentálně nejsou žádné produkty.",
     recommendations: "Mohlo by vás zajímat…",
@@ -69,48 +66,6 @@ export const cs = {
       item: (index: number, count: number) => `Banner ${index + 1} z ${count}`,
     },
     featuredTitle: "Doporučujeme",
-    companyTitle: "AKROS – partner pro hutní a spojovací materiál",
-    companyIntro: {
-      label: "O společnosti AKROS",
-      paragraphs: [
-        {
-          id: "welcome",
-          content: [
-            "Vítejte v internetovém obchodě společnosti AKROS - specialistů v oblasti nerezového materiálu. Nabízíme nejširší sortiment kvalitních nerezových spojovacích a hutních materiálů, jaký můžete na našem trhu nalézt. V kategorii ",
-            { strong: "nerezových spojovacích materiálů" },
-            " najdete např. šrouby, matice, vruty, kolíky, nýty, řetězy, nářadí, maziva nebo příslušenství a doplňky pro jachty. V kategorii ",
-            { strong: "nerezový hutní materiál" },
-            " můžete nakoupit plechy, trubky, tyče, kolena, příruby, armatury a další příslušenství.",
-          ],
-        },
-        {
-          id: "assortment",
-          content: [
-            "Pravidelně pro Vás budeme ",
-            { strong: "rozšiřovat sortiment o nové produkty" },
-            ", které naleznete v sekci Nově nabízené zboží. Doporučujeme také sledovat Výprodej a Zboží v akci.",
-          ],
-        },
-        {
-          id: "production",
-          content: [
-            "Zabýváme se rovněž ",
-            { strong: "seriovou zámečnickou výrobou i výrobou na zakázku" },
-            ". Výroba na zakázku se specializuje také na ",
-            { strong: "výrobky z nerezové oceli" },
-            ", jako jsou zábradlí nebo ",
-            { strong: "schodiště" },
-            ".",
-          ],
-        },
-        {
-          id: "contact",
-          content: [
-            "V případě dotazů nebo připomínek nás neváhejte kontaktovat. Věříme, že neustálé vylepšování poskytovaných služeb a rozšiřování sortimentu poskytne našim zákazníkům prostor k pohodlným nákupům.",
-          ],
-        },
-      ],
-    },
   },
   product: {
     originalPrice: "Původní cena",
@@ -399,7 +354,7 @@ export const cs = {
   },
   footer: {
     contact: "Kontakt",
-    homeLinkLabel: "AKROS – domovská stránka",
+    homeLinkLabel: (store: string) => `${store} – domovská stránka`,
     customerInformation: "Informace pro zákazníky",
     delivery: "Doručení k Vám",
     pickup: "Osobní vyzvednutí ve Vaší blízkosti",
@@ -418,7 +373,6 @@ export const cs = {
     carriers: "Dopravci",
     secureShopping: "Bezpečný nákup",
     privacy: "GDPR",
-    copyright: "Copyright (c) 2014–2026 AKROS b2c",
     createdBy: "Tvorba eshopu:",
     cookies: "Cookies",
     personalDataProtection: "Ochrana osobních údajů",

@@ -1,17 +1,21 @@
 import { FeaturedProductGrid } from "@/components/featured-product-grid";
 import { HomeCarousel } from "@/components/home-carousel";
 import { StorefrontShell } from "@/components/storefront-shell";
-import { getDictionary } from "@/ontos/active-market";
+import { brandLocale, getBrand } from "@/brand";
+import { getActiveMarket, getDictionary } from "@/ontos/active-market";
 import { getCatalog } from "@/ontos/catalog-server";
 
 export default async function HomePage() {
-  const [{ getHomepageFeaturedProducts, toProductSummary }, cs] = await Promise.all([
+  const [{ getHomepageFeaturedProducts, toProductSummary }, cs, market] = await Promise.all([
     getCatalog(),
     getDictionary(),
+    getActiveMarket(),
   ]);
+  const brand = getBrand();
+  const copy = brand.copy[brandLocale(market.locale)];
   return (
     <StorefrontShell>
-      <HomeCarousel />
+      <HomeCarousel slides={brand.carousel} title={copy.companyTitle} />
 
       <section className="grid gap-4" aria-labelledby="featured-title">
         <div className="flex min-h-(--dimension-48) items-center bg-base-dark px-(--dimension-20) py-(--dimension-8) text-base-light">
@@ -23,10 +27,10 @@ export default async function HomePage() {
       </section>
 
       <section
-        aria-label={cs.home.companyIntro.label}
+        aria-label={copy.companyIntro.label}
         className="mt-20 grid gap-3 px-2 text-sm leading-normal max-md:mt-8"
       >
-        {cs.home.companyIntro.paragraphs.map((paragraph) => (
+        {copy.companyIntro.paragraphs.map((paragraph) => (
           <p className="m-0" key={paragraph.id}>
             {paragraph.content.map((part) =>
               typeof part === "string" ? part : <strong key={part.strong}>{part.strong}</strong>,

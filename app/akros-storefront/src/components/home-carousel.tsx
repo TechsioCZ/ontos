@@ -5,14 +5,21 @@ import StoreLink from "@/components/store-link";
 import { useRef, useState } from "react";
 import { Carousel } from "@techsio/ui-kit/molecules/carousel";
 
+import type { CarouselSlide } from "@/brand/types";
 import { useDictionary } from "@/ontos/market-context";
-import { homeCarouselSlides } from "@/content/home-carousel";
 
-export function HomeCarousel() {
+/** The brand's home banners (`slides`) under a visually hidden page heading (`title`). */
+export function HomeCarousel({
+  slides: brandSlides,
+  title,
+}: {
+  slides: readonly CarouselSlide[];
+  title: string;
+}) {
   const cs = useDictionary();
   const [activePage, setActivePage] = useState(0);
   const wasDragged = useRef(false);
-  const slides = homeCarouselSlides.map((slide, index) => {
+  const slides = brandSlides.map((slide, index) => {
     const image = (
       <Image
         alt={slide.alt}
@@ -50,7 +57,7 @@ export function HomeCarousel() {
   return (
     <section aria-labelledby="home-carousel-title" data-sf-home-carousel>
       <h1 className="sr-only" id="home-carousel-title">
-        {cs.home.companyTitle}
+        {title}
       </h1>
       <Carousel
         aspectRatio="none"

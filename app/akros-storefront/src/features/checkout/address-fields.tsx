@@ -11,7 +11,7 @@ const phoneCountries = [
     value: "CZ" as const,
     label: "Česká republika",
     callingCode: "420",
-    flag: <Image src="/akros/checkout/czechia.svg" width={40} height={40} alt="" />,
+    flag: <Image src="/storefront/checkout/czechia.svg" width={40} height={40} alt="" />,
   },
 ];
 

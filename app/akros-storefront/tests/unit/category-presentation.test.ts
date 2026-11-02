@@ -31,7 +31,7 @@ describe("category presentation", () => {
 
   it("replaces the known missing AKCE image with an honest local fallback", () => {
     expect(categoryImage(category)).toEqual({
-      src: "/akros/products/image-unavailable.svg",
+      src: "/storefront/products/image-unavailable.svg",
       alt: "Fotografie kategorie AKCE není k dispozici",
     });
   });

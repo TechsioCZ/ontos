@@ -3,6 +3,12 @@ export const ASSET_ID = /^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}
 export const PRODUCT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u;
 const MEDIA_REFERENCE = /^media:(.+)$/u;
 
+/** Honest product image placeholder (brand-neutral path; both brands serve it). */
+export const imagePlaceholder = "/storefront/products/image-unavailable.svg";
+/** The placeholder, also under the path that product data of the original AKROS tenant stores. */
+export const isImagePlaceholder = (src: string | undefined): boolean =>
+  src === imagePlaceholder || src === "/akros/products/image-unavailable.svg";
+
 /** Storefront address of an uploaded product photo; undefined for any other image reference. */
 export const productMediaPath = (productId: string, reference: string): string | undefined => {
   const assetId = MEDIA_REFERENCE.exec(reference)?.[1];

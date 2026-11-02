@@ -1,5 +1,6 @@
 "use client";
-export function Unavailable({ reset }: { reset: () => void }) {
+/** `storeName`: the brand's name, absent when the root layout itself failed (global error, no brand chrome). */
+export function Unavailable({ reset, storeName }: { reset: () => void; storeName?: string }) {
   return (
     <main
       style={{
@@ -23,7 +24,13 @@ export function Unavailable({ reset }: { reset: () => void }) {
         aria-labelledby="unavailable-title"
       >
         <p style={{ fontWeight: 800, letterSpacing: 2, fontSize: 14, marginBottom: 24 }}>
-          AKROS <span style={{ fontWeight: 400, letterSpacing: 0 }}>· DEMO</span>
+          {storeName === undefined ? (
+            "DEMO"
+          ) : (
+            <>
+              {storeName} <span style={{ fontWeight: 400, letterSpacing: 0 }}>· DEMO</span>
+            </>
+          )}
         </p>
         <h1
           id="unavailable-title"
