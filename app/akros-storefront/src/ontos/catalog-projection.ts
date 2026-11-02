@@ -7,6 +7,7 @@ import {
 } from "@/lib/format";
 import { imagePlaceholder, isImagePlaceholder, productMediaPath } from "./media-path";
 import { purchaseConstraints } from "./purchase-constraints";
+import { sourceUnitWeightKg } from "./variant-weights";
 import type {
   CatalogVariantSummary,
   CatalogData,
@@ -221,12 +222,15 @@ export function projectProducts(body: Raw): ProductPage {
             }))
             .filter((t) => Object.values(t).every(Number.isFinite) && t.priceMinor > 0);
       const packageQuantity = number(v.packageQuantity) ?? number(p.packageQuantity);
+      const unit = text(v.sourceUnit, text(v.unit, text(p.sourceUnit, text(p.unit, "ks"))));
+      const sourceNetWeight = sourceUnitWeightKg(text(v.sku), unit);
       return {
         id: text(v.id),
         sourceId: text(v.sourceId, text(v.id)),
         sku: text(v.sku),
         label: text(v.name, text(v.label, text(v.sku))),
-        unit: text(v.sourceUnit, text(v.unit, text(p.sourceUnit, text(p.unit, "ks")))),
+        unit,
+        ...(sourceNetWeight === undefined ? {} : { sourceNetWeight }),
         vatRate: number(p.vatRate),
         // An unpriced variant is shown (with the reason) but can never be bought: price 0 disables buying.
         priceMinor: priceIssue ? 0 : gross!,
@@ -294,6 +298,10 @@ export function projectProducts(body: Raw): ProductPage {
     // Staff edit the ordered gallery in OntOS ("Hlavní" = first image); imageSrc is only the import-time copy.
     const primaryImage = gallery[0] ?? safeImage(p.imageSrc) ?? imagePlaceholder;
     const paragraphs = paragraphsOf(p);
+    const productUnit = text(p.sourceUnit, text(p.unit, "ks"));
+    // A variant group has no weight of its own; each variant carries its own (never inherited).
+    const netWeight =
+      isGroup || variants.length ? undefined : sourceUnitWeightKg(text(p.sku), productUnit);
     const detail = p.detail && typeof p.detail === "object" ? (p.detail as Raw) : {};
     products.push({
       id: text(p.id),
@@ -303,7 +311,8 @@ export function projectProducts(body: Raw): ProductPage {
       categoryId: text(p.categoryId),
       description: paragraphs[0] ?? text(p.shortDescription),
       currency: money.currency,
-      unit: text(p.sourceUnit, text(p.unit, "ks")),
+      unit: productUnit,
+      ...(netWeight === undefined ? {} : { netWeight }),
       vatRate: number(p.vatRate),
       priceMinor: productPriceIssue ? 0 : isGroup ? groupGross! : gross!,
       ...(productAvailabilityUnknown ? { availabilityUnknown: true } : {}),

@@ -21,6 +21,9 @@ export interface CatalogProductVariant {
   sourceId: string;
   sku: string;
   label: string;
+  description?: string;
+  /** kg per sales unit (kg/ks or kg/m) from the AKROS source feed index (`src/ontos/variant-weights.ts`); absent = unknown. */
+  sourceNetWeight?: number;
   minimumQuantity: number;
   packageQuantity?: number;
   quantityStep?: number;
@@ -84,6 +87,7 @@ export interface CatalogProduct {
   minimumQuantity: number;
   packageQuantity?: number;
   quantityStep?: number;
+  /** kg per sales unit of a product without variants (source feed index); absent = unknown. */
   netWeight?: number;
   stockCount: number;
   /** OntOS reports availability UNKNOWN (or untracked stock): shown as „nelze ověřit“, never sold. */

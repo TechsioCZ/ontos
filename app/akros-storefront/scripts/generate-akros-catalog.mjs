@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { buildVariantWeights } from "./variant-weights.mjs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -300,6 +301,8 @@ for (const [groupId, items] of groups) {
         sourceId: item.id,
         sku: cleanText(item.sku),
         label: cleanText(item.variantName || item.title || item.productName) || itemName(item),
+        description: cleanText(item.shortDescription || item.description) || undefined,
+        sourceNetWeight: toOptionalPositiveNumber(item.netWeight),
         minimumQuantity: toPositiveNumber(item.minimumQuantity, 1),
         packageQuantity: toOptionalPositiveNumber(item.packageQuantity),
         priceMinor: itemPrice(item),
@@ -372,6 +375,11 @@ writeFileSync(
 writeFileSync(
   resolve(outputRoot, "catalog.generated.json"),
   `${JSON.stringify({ metadata, homepageFeaturedProductIds, products }, null, 2)}\n`,
+);
+
+writeFileSync(
+  resolve(outputRoot, "variant-weights.generated.json"),
+  `${JSON.stringify(buildVariantWeights(products))}\n`,
 );
 
 console.log(
