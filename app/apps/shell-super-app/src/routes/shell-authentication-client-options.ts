@@ -9,7 +9,8 @@ export const shellAuthenticationClientOptionsFromRequest = (request: Request) =>
     Effect.map((configuredOrigin) => {
       const baseUrl = new URL(shellAuthenticationApiContract.apiPrefix, configuredOrigin);
       const cookie = request.headers.get('cookie');
-      return cookie === null ? { baseUrl } : { baseUrl, cookie };
+      const targetSourcePath = new URL(request.url).pathname;
+      return cookie === null ? { baseUrl, targetSourcePath } : { baseUrl, cookie, targetSourcePath };
     }),
   );
 

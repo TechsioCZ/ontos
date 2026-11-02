@@ -230,6 +230,57 @@ const resolvePageSelection = (catalog: InstalledModuleCatalog, input: ShellModul
     : selected;
 };
 
+const targetKindForLogs = (input: ShellModuleTargetSelector) => {
+  if (input.canonicalPath !== undefined) {
+    return 'canonical_path';
+  }
+  return input.entrypointKey === undefined ? 'module_landing' : 'entrypoint';
+};
+
+/** Only catalog-owned keys and route templates reach logs, never requested resource IDs or arbitrary input. */
+export const moduleTargetSelectorForLogs = (catalog: InstalledModuleCatalog, input: ShellModuleTargetSelector) => {
+  const selected = resolvePageSelection(catalog, input);
+  const targetKind = targetKindForLogs(input);
+  if (selected !== null) {
+    return {
+      targetAppKey: selected.contract.deployment.appId.slice(0, 120),
+      targetKey: selected.page.entrypoint.entrypointKey.slice(0, 200),
+      targetKind,
+      targetModuleKey: selected.contract.manifest.module.id.slice(0, 120),
+      targetRoute: 'routePath' in selected.page ? selected.page.routePath.slice(0, 200) : 'public_component',
+    };
+  }
+  if (input.moduleId !== undefined) {
+    const contract = catalog.getByModuleId(input.moduleId);
+    if (contract !== undefined) {
+      return {
+        targetAppKey: contract.deployment.appId.slice(0, 120),
+        targetKey: 'unknown',
+        targetKind,
+        targetModuleKey: contract.manifest.module.id.slice(0, 120),
+        targetRoute: 'unknown',
+      };
+    }
+  }
+  const root = input.canonicalPath === undefined ? undefined : canonicalSegments(input.canonicalPath)?.[0];
+  if (root !== undefined && isReservedShellRouteRoot(root)) {
+    return {
+      targetAppKey: 'shell-super-app',
+      targetKey: root,
+      targetKind,
+      targetModuleKey: 'core.shell',
+      targetRoute: `/${root}`,
+    };
+  }
+  return {
+    targetAppKey: 'unknown',
+    targetKey: 'unknown',
+    targetKind,
+    targetModuleKey: 'unknown',
+    targetRoute: 'unknown',
+  };
+};
+
 const resolveTargetPermission = Effect.fn('ShellComposition.resolveTargetPermission')(function* resolveTargetPermission(
   sources: ShellCompositionAccessSources,
   context: ShellCompositionContext & {

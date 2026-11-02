@@ -10,6 +10,8 @@ import { Context } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 
 import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/api.ts';
+import { moduleTargetSourceHeader, moduleTargetSourcePathHeader } from '../../shared/module-target-diagnostics.ts';
+import type { ModuleTargetSource } from '../../shared/module-target-diagnostics.ts';
 import type { DocumentGatewayContextsRequest } from '../../shared/document-gateway-api.ts';
 // @ontos-codesmith-core-read-client-imports:start
 
@@ -99,6 +101,8 @@ export interface ShellAuthenticationClientOptions {
   readonly baseUrl?: string | URL;
   readonly cookie?: string;
   readonly locale?: string;
+  readonly targetSource?: ModuleTargetSource;
+  readonly targetSourcePath?: string | undefined;
 }
 
 export type ShellAuthenticationClientError =
@@ -180,6 +184,16 @@ const shellAuthenticationClient = makeEffectHttpApiClient(ShellAuthenticationApi
         if (options.cookie !== undefined) {
           nextRequest = HttpClientRequest.setHeader(nextRequest, 'cookie', options.cookie);
         }
+        if (options.targetSource !== undefined) {
+          nextRequest = HttpClientRequest.setHeader(nextRequest, moduleTargetSourceHeader, options.targetSource);
+          if (options.targetSourcePath !== undefined) {
+            nextRequest = HttpClientRequest.setHeader(
+              nextRequest,
+              moduleTargetSourcePathHeader,
+              options.targetSourcePath.slice(0, 2048),
+            );
+          }
+        }
         return nextRequest;
       }),
     ),
@@ -248,14 +262,30 @@ export const resolveModuleTarget = (
   payload: ResolveModuleTargetPayload,
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ResolvedModuleTarget, ShellTargetClientError> =>
-  invokeShellAuthenticationClient(options, (client) => client.composition.resolveModuleTarget({ payload }));
+  invokeShellAuthenticationClient(
+    {
+      ...options,
+      targetSource: options.targetSource ?? ('document' in globalThis ? 'browser_page' : 'server_render'),
+      targetSourcePath:
+        options.targetSourcePath ?? ('location' in globalThis ? globalThis.location.pathname : undefined),
+    },
+    (client) => client.composition.resolveModuleTarget({ payload }),
+  );
 
 /** Several targets of one release in one request; each answers its own target or problem. */
 export const resolveModuleTargets = (
   payload: ResolveModuleTargetsPayload,
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ResolvedModuleTargets, ShellTargetClientError> =>
-  invokeShellAuthenticationClient(options, (client) => client.composition.resolveModuleTargets({ payload }));
+  invokeShellAuthenticationClient(
+    {
+      ...options,
+      targetSource: 'menu_prefetch',
+      targetSourcePath:
+        options.targetSourcePath ?? ('location' in globalThis ? globalThis.location.pathname : undefined),
+    },
+    (client) => client.composition.resolveModuleTargets({ payload }),
+  );
 
 /** Gateway assertions for a document's module audiences, one per audience, in one request. */
 export const issueDocumentGatewayContexts = (

@@ -133,6 +133,8 @@ import {
   SwitchTenantResponseSchema,
   SwitchToTenantContextResponseSchema,
 } from '../shared/api.ts';
+import { moduleTargetSourceHeader, moduleTargetSourcePathHeader } from '../shared/module-target-diagnostics.ts';
+import { moduleTargetLogAnnotations } from './modules/module-target-log.ts';
 import type {
   AuthenticationInternalProblem,
   AuthenticationProblem,
@@ -972,10 +974,12 @@ const logShellReadFailure = (
   operation: 'composition' | 'module_target' | 'resource' | 'search',
   request: RequestWithHeaders,
   error: ReadCoreError,
+  targetDiagnostics: Readonly<Record<string, LogAnnotation>> = {},
 ) =>
   Effect.annotateLogs(
     Effect.logError('Shell governed read failed'),
     requestLogAnnotations(request, {
+      ...targetDiagnostics,
       failureReason: error.reason,
       failureTag: error._tag,
       operation,
@@ -1295,7 +1299,18 @@ export const moduleTargetsHandler = Effect.fn('shell.composition.moduleTargets')
         .pipe(
           Effect.provideService(CapturedShellCompositionCatalog, catalog),
           Effect.map((target) => ({ state: 'resolved' as const, target })),
-          Effect.tapError((error) => logShellReadFailure('module_target', request, error)),
+          Effect.tapError((error) =>
+            logShellReadFailure(
+              'module_target',
+              request,
+              error,
+              moduleTargetLogAnnotations(catalog, {
+                reportedSource: request.headers[moduleTargetSourceHeader],
+                selector,
+                sourcePath: request.headers[moduleTargetSourcePathHeader],
+              }),
+            ),
+          ),
           Effect.catch((error) => Effect.succeed({ problem: shellReadProblem(error), state: 'failed' as const })),
         ),
     // Each read holds a pooled connection only for its own short transaction; this matches the pool size.
@@ -1576,7 +1591,18 @@ const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'compo
           })
           .pipe(
             Effect.provideService(CapturedShellCompositionCatalog, catalog),
-            Effect.tapError((error) => logShellReadFailure('module_target', request, error)),
+            Effect.tapError((error) =>
+              logShellReadFailure(
+                'module_target',
+                request,
+                error,
+                moduleTargetLogAnnotations(catalog, {
+                  reportedSource: request.headers[moduleTargetSourceHeader],
+                  selector: payload,
+                  sourcePath: request.headers[moduleTargetSourcePathHeader],
+                }),
+              ),
+            ),
             Effect.catch((error) => pipe(error, shellReadProblem, failShellProblem)),
           );
         return yield* decodeResponse(ResolvedModuleTargetSchema, response, shellInternalProblem);

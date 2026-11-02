@@ -19,6 +19,7 @@ import type {
   ShellCompositionDataSources,
 } from '../../api/modules/shell-composition.ts';
 import { ShellCompositionSchema } from '../../shared/api.ts';
+import { moduleTargetLogAnnotations } from '../../api/modules/module-target-log.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -207,6 +208,54 @@ const catalogWithContactPages = (
   }
   return makeInstalledModuleCatalogLoader(makeCompositionSnapshot([party]));
 };
+
+it.effect(
+  'module-target diagnostics identify the approved target and caller without logging resource IDs or secrets',
+  () =>
+    Effect.gen(function* boundedTargetDiagnostics() {
+      const approvedCatalog = yield* catalogWithContactPages([
+        { expose: './CustomerDetail', key: 'customer-detail', routePath: '/contacts/customers/:customerId' },
+      ]);
+      const annotations = moduleTargetLogAnnotations(approvedCatalog, {
+        reportedSource: 'menu_prefetch',
+        selector: { canonicalPath: '/contacts/customers/private-customer' },
+        sourcePath: '/cs/contacts/customers/private-customer?token=never-log-this',
+      });
+      expect(annotations).toEqual({
+        targetAppKey: 'party-registry',
+        targetKey: 'party.registry.page.customer-detail',
+        targetKind: 'canonical_path',
+        targetModuleKey: 'party.registry',
+        targetRoute: '/contacts/customers/:customerId',
+        targetSource: 'menu_prefetch',
+        targetSourceModule: 'party.registry',
+        targetSourceRoute: '/contacts/customers/:customerId',
+      });
+      expect(JSON.stringify(annotations)).not.toContain('private-customer');
+      expect(JSON.stringify(annotations)).not.toContain('never-log-this');
+      const unknown = moduleTargetLogAnnotations(approvedCatalog, {
+        reportedSource: 'never-log-this',
+        selector: { entrypointKey: 'never-log-this', moduleId: 'never-log-this' },
+        sourcePath: '//never-log-this.example/secret',
+      });
+      expect(unknown).toEqual({
+        targetAppKey: 'unknown',
+        targetKey: 'unknown',
+        targetKind: 'entrypoint',
+        targetModuleKey: 'unknown',
+        targetRoute: 'unknown',
+        targetSource: 'unknown',
+        targetSourceModule: 'unknown',
+        targetSourceRoute: 'unknown',
+      });
+      expect(JSON.stringify(unknown)).not.toContain('never-log-this');
+      expect(
+        moduleTargetLogAnnotations(approvedCatalog, {
+          selector: { entrypointKey: 'removed-entrypoint', moduleId: 'party.registry' },
+        }),
+      ).toMatchObject({ targetAppKey: 'party-registry', targetKey: 'unknown', targetModuleKey: 'party.registry' });
+    }),
+);
 
 const contextAccess = (
   decisions: Readonly<Record<string, ContextAccessDecision>>,
