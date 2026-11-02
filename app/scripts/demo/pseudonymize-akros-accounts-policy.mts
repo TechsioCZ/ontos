@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import { v1 } from '@authzed/authzed-node';
 import { Array as Arr, Effect, Option, Order, Schema } from 'effect';
 
+import type { CompanyAgentDirectoryResultSchema } from '../../packages/core-runtime/src/auth/company-agent-directory-read.ts';
+import { AgentProfileSchema } from '../../packages/core-runtime/src/modules/actions/configure-agent.action.ts';
 import {
   fromScopedRoleObjectId,
   toScopedRoleObjectId,
@@ -61,11 +63,26 @@ export const PseudonymAccountSchema = Schema.Struct({
   roles: Schema.Array(PseudonymRoleSchema),
 });
 export type PseudonymAccount = typeof PseudonymAccountSchema.Type;
+/** A company agent owned or operated by a migrated login; its audited profile is kept except the owner. */
+export const PseudonymAgentSchema = Schema.Struct({
+  agentPrincipalId: PrincipalId,
+  description: AgentProfileSchema.fields.description,
+  displayName: Schema.String,
+  legalEntityId: LegalEntityId,
+  modules: AgentProfileSchema.fields.modules,
+  newOwnerPrincipalId: OptionalPrincipalId,
+  oldOperatorPrincipalIds: Schema.Array(PrincipalId),
+  oldOwnerPrincipalId: OptionalPrincipalId,
+  operatorRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  writePolicy: AgentProfileSchema.fields.writePolicy,
+});
+export type PseudonymAgent = typeof PseudonymAgentSchema.Type;
 export const PseudonymAccountPlanSchema = Schema.Struct({
   accounts: Schema.Array(PseudonymAccountSchema),
+  agents: Schema.Array(PseudonymAgentSchema),
   employees: Schema.Array(PseudonymEmployeeSchema),
   operatorPrincipalId: PrincipalId,
-  schemaVersion: Schema.Literal(1),
+  schemaVersion: Schema.Literal(2),
   tenantId: Schema.Literal(demoTenantId),
 });
 export type PseudonymAccountPlan = typeof PseudonymAccountPlanSchema.Type;
@@ -165,6 +182,66 @@ export const scopedRoleAssignments = Effect.fn('PseudonymAccount.scopedRoleAssig
   ).map(([, role]) => role);
 });
 
+/** Agent operator edges belong to the governed operator command and its projection; they are never copied. */
+export const isAgentOperatorEdge = (edge: v1.Relationship, principalId: string) =>
+  edge.resource?.objectType === 'principal' && edge.relation === 'operator' && edge.resource.objectId !== principalId;
+
+const sortedIds = (ids: readonly string[]) => Arr.sort([...new Set(ids)], Order.String);
+const migratedPrincipal = (accounts: readonly PseudonymAccount[], principalId: string) =>
+  accounts.find(({ oldPrincipalId }) => oldPrincipalId === principalId)?.newPrincipalId ?? principalId;
+
+type DirectoryAgent = (typeof CompanyAgentDirectoryResultSchema.Type)['agents'][number];
+
+/** A company agent whose owner or operator is a migrated login moves to the new login; other agents stay untouched. */
+export const pseudonymAgent = (
+  agent: DirectoryAgent,
+  legalEntityId: string,
+  accounts: readonly PseudonymAccount[],
+): Option.Option<PseudonymAgent> => {
+  const old = new Set(accounts.map(({ oldPrincipalId }) => oldPrincipalId));
+  const pending = agent.operatorCommand?.desiredOperatorPrincipalIds ?? [];
+  const owner = Option.fromNullishOr(agent.ownerPrincipalId);
+  const involved =
+    (Option.isSome(owner) && old.has(owner.value)) ||
+    [...agent.operatorPrincipalIds, ...pending].some((principalId) => old.has(principalId));
+  if (!involved) {
+    return Option.none();
+  }
+  return Option.some({
+    agentPrincipalId: agent.principalId,
+    description: agent.description,
+    displayName: agent.displayName,
+    legalEntityId,
+    modules: agent.modules,
+    newOwnerPrincipalId: owner.pipe(Option.map((principalId) => migratedPrincipal(accounts, principalId))),
+    oldOperatorPrincipalIds: sortedIds(agent.operatorPrincipalIds),
+    oldOwnerPrincipalId: owner,
+    operatorRevision: agent.operatorCommand?.revision ?? 0,
+    writePolicy: agent.writePolicy,
+  });
+};
+
+/** Phase A adds the new login next to the old one, so the agent stays usable while both logins exist. */
+export const agentOperatorsAfterCreate = (agent: PseudonymAgent, accounts: readonly PseudonymAccount[]) =>
+  sortedIds([
+    ...agent.oldOperatorPrincipalIds,
+    ...agent.oldOperatorPrincipalIds.map((principalId) => migratedPrincipal(accounts, principalId)),
+  ]);
+
+/** Phase B leaves only the new logins (and every unrelated operator). */
+export const agentOperatorsAfterRetire = (agent: PseudonymAgent, accounts: readonly PseudonymAccount[]) =>
+  sortedIds(agent.oldOperatorPrincipalIds.map((principalId) => migratedPrincipal(accounts, principalId)));
+
+const validAgent = (agent: PseudonymAgent, accounts: readonly PseudonymAccount[]) => {
+  const old = new Set(accounts.map(({ oldPrincipalId }) => oldPrincipalId));
+  return (
+    Option.match(agent.newOwnerPrincipalId, { onNone: () => true, onSome: (principalId) => !old.has(principalId) }) &&
+    agentOperatorsAfterRetire(agent, accounts).every((principalId) => !old.has(principalId)) &&
+    (Option.exists(agent.oldOwnerPrincipalId, (principalId) => old.has(principalId)) ||
+      agent.oldOperatorPrincipalIds.some((principalId) => old.has(principalId)))
+  );
+};
+
 const validAccount = (row: PseudonymAccount) => {
   const identity = pseudonymAccountIdentity(row.oldEmail, row.oldDisplayName);
   return (
@@ -190,6 +267,8 @@ export const validatePseudonymAccountPlan = (plan: PseudonymAccountPlan) => {
     new Set(emails).size === emails.length &&
     new Set(ids).size === ids.length &&
     new Set(plan.employees.map(({ id }) => id)).size === plan.employees.length &&
+    new Set(plan.agents.map(({ agentPrincipalId }) => agentPrincipalId)).size === plan.agents.length &&
+    plan.agents.every((agent) => validAgent(agent, plan.accounts)) &&
     plan.employees.every((row) => !/akros/iu.test(row.fullName) && !/@akros\.demo$/iu.test(row.email)) &&
     plan.accounts.every(validAccount)
   );

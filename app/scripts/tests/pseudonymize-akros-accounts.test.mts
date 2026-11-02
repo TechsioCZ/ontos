@@ -1,5 +1,5 @@
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Exit, Option } from 'effect';
+import { Array as Arr, Effect, Exit, Option, Order } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -16,8 +16,12 @@ import {
 } from '../demo/permissions.mts';
 import {
   accountPlanFingerprint,
+  agentOperatorsAfterCreate,
+  agentOperatorsAfterRetire,
+  isAgentOperatorEdge,
   isPseudonymSource,
   pseudonymAccountIdentity,
+  pseudonymAgent,
   pseudonymRoleId,
   remapAccountRelationships,
   sameAccounts,
@@ -53,9 +57,10 @@ const account = {
 };
 const plan = {
   accounts: [account],
+  agents: [],
   employees: [],
   operatorPrincipalId: demoId(principalNamespace, 'obchod'),
-  schemaVersion: 1 as const,
+  schemaVersion: 2 as const,
   tenantId: demoTenantId,
 };
 const companyRole = toScopedRoleObjectId({
@@ -228,4 +233,64 @@ it('fresh seeds produce the pseudonymous accounts with the same role keys and ma
   expect(
     principalRelationships(identity.newPrincipalId, eshopDemoRoles.akrosAdmin, [], akrosDemoLegalEntityId).length,
   ).toBeGreaterThan(0);
+});
+
+const agentId = demoId(principalNamespace, 'agent-eshop-assistant');
+const colleague = demoId(principalNamespace, 'kolega');
+const directoryAgent = {
+  description: 'Odpovídá na dotazy k produktům.',
+  displayName: 'Asistent e-shopu',
+  hasProfile: true,
+  modules: [],
+  operatorCommand: { desiredOperatorPrincipalIds: [old, colleague], revision: 3 },
+  operatorPrincipalIds: [old, colleague],
+  ownerPrincipalId: old,
+  principalId: agentId,
+  status: 'active' as const,
+  writePolicy: 'read_only' as const,
+};
+
+it('moves an agent owned and operated by a migrated login, keeping every other operator and the profile', () => {
+  const moved = pseudonymAgent(directoryAgent, akrosDemoLegalEntityId, [account]);
+  expect(Option.isSome(moved)).toBe(true);
+  if (Option.isSome(moved)) {
+    expect(moved.value).toMatchObject({
+      agentPrincipalId: agentId,
+      description: directoryAgent.description,
+      newOwnerPrincipalId: Option.some(identity.newPrincipalId),
+      oldOwnerPrincipalId: Option.some(old),
+      operatorRevision: 3,
+      writePolicy: 'read_only',
+    });
+    // Phase A: both logins operate the agent; phase B: only the new one, colleague untouched.
+    expect(agentOperatorsAfterCreate(moved.value, [account])).toEqual(
+      Arr.sort([old, colleague, identity.newPrincipalId], Order.String),
+    );
+    expect(agentOperatorsAfterRetire(moved.value, [account])).toEqual(
+      Arr.sort([colleague, identity.newPrincipalId], Order.String),
+    );
+    expect(validatePseudonymAccountPlan({ ...plan, agents: [moved.value] })).toBe(true);
+    expect(validatePseudonymAccountPlan({ ...plan, agents: [moved.value, moved.value] })).toBe(false);
+    expect(
+      validatePseudonymAccountPlan({ ...plan, agents: [{ ...moved.value, newOwnerPrincipalId: Option.some(old) }] }),
+    ).toBe(false);
+  }
+});
+
+it('leaves agents of unrelated people alone and treats an unowned agent as owner-neutral', () => {
+  const unrelated = {
+    ...directoryAgent,
+    operatorCommand: null,
+    operatorPrincipalIds: [colleague],
+    ownerPrincipalId: colleague,
+  };
+  expect(Option.isNone(pseudonymAgent(unrelated, akrosDemoLegalEntityId, [account]))).toBe(true);
+  const unowned = pseudonymAgent({ ...directoryAgent, ownerPrincipalId: null }, akrosDemoLegalEntityId, [account]);
+  expect(Option.isSome(unowned) && Option.isNone(unowned.value.newOwnerPrincipalId)).toBe(true);
+});
+
+it('never copies agent operator edges; the governed operator command owns them', () => {
+  expect(isAgentOperatorEdge(edge('principal', agentId, 'operator'), old)).toBe(true);
+  expect(isAgentOperatorEdge(edge('principal', old, 'self'), old)).toBe(false);
+  expect(isAgentOperatorEdge(edge('resource', marketRoot, 'writer'), old)).toBe(false);
 });

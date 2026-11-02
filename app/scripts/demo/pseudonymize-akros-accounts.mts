@@ -8,11 +8,18 @@ import { randomUUID } from 'node:crypto';
 
 import {
   ActionRuntime,
+  companyAgentDirectoryRead,
+  configureAgentAction,
   ContextAccess,
   manageDemoAccountAction,
+  ReadRuntime,
+  replaceAgentOperatorsAction,
   setCompanyMembershipAction,
   setScopedRoleMembershipAction,
 } from '@app/core-runtime';
+import { ActionPermission } from '@app/core-runtime/actions/runtime-wiring';
+import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import { ActionAuthorizationLifecycle } from '@app/core-runtime/outbox/core-system-worker';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { StageAccountsFileSchema } from '@app/core-runtime/install/stage-accounts-file';
 import { v1 } from '@authzed/authzed-node';
@@ -29,6 +36,7 @@ import {
   bootstrapStageAccounts,
   loadStageAccountsConfiguration,
 } from '../../apps/shell-super-app/api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts';
+import { AuthenticationService } from '../../apps/shell-super-app/api/auth/service.ts';
 import {
   legalEntities,
   principalAuthBindings,
@@ -50,17 +58,26 @@ import {
   AccountPseudonymError,
   accountPlanFingerprint,
   accountPseudonymFailure as fail,
+  agentOperatorsAfterCreate,
+  agentOperatorsAfterRetire,
+  isAgentOperatorEdge,
   isPseudonymSource,
   PseudonymAccountPlanSchema,
   PseudonymAccountSchema,
   pseudonymAccountIdentity,
+  pseudonymAgent,
   pseudonymRoleId,
   remapAccountRelationships,
   sameAccounts,
   scopedRoleAssignments,
   validatePseudonymAccountPlan,
 } from './pseudonymize-akros-accounts-policy.mts';
-import type { PseudonymAccount, PseudonymRole } from './pseudonymize-akros-accounts-policy.mts';
+import type {
+  PseudonymAccount,
+  PseudonymAccountPlan,
+  PseudonymAgent,
+  PseudonymRole,
+} from './pseudonymize-akros-accounts-policy.mts';
 import { discoverPseudonymEmployees, reconcilePseudonymEmployees } from './pseudonymize-akros-accounts-workforce.mts';
 import { reconcileServiceGrants } from './reconcile-stage-service-grants.mts';
 import { connectSeedClient } from './seed-client.mts';
@@ -72,6 +89,7 @@ const phases = ['create', 'retire'] as const;
 const reason = 'Operator-approved synthetic demo account pseudonymization';
 const planCodec = Schema.fromJsonString(PseudonymAccountPlanSchema);
 const stageShellUrl = 'https://ontos-stage.web-revolution.cz';
+type AuthenticatedOperator = Effect.Success<typeof authenticateAgentProfileOperator>;
 
 /** The documented demo password; overridable for a rotated stage, never logged. */
 const demoAccountPassword = Config.Redacted('ONTOS_DEMO_ACCOUNT_PASSWORD').pipe(
@@ -171,7 +189,10 @@ const discoverAccount = Effect.fn('PseudonymAccount.discoverOne')(function* disc
     return yield* fail(`Source is not an active member of the pseudonymous company: ${person.email}`);
   }
   const identity = pseudonymAccountIdentity(person.email, oldDisplayName);
-  const original = yield* readSubjectGrants(rpc, 'principal', oldPrincipalId);
+  // Agent operator edges move through the governed operator command (see moveAgents), never by copy.
+  const original = (yield* readSubjectGrants(rpc, 'principal', oldPrincipalId)).filter(
+    (edge) => !isAgentOperatorEdge(edge, oldPrincipalId),
+  );
   const roles = yield* scopedRoleAssignments(original);
   const mapped = [
     ...(yield* remapAccountRelationships(original, oldPrincipalId, identity.newPrincipalId)),
@@ -430,7 +451,7 @@ const verifyAccount = Effect.fn('PseudonymAccount.verify')(function* verifyAccou
   const desired = new Set(row.relationships);
   if (
     (yield* readSubjectGrants(rpc, 'principal', row.newPrincipalId)).some(
-      (edge) => !desired.has(v1.Relationship.toJsonString(edge)),
+      (edge) => !isAgentOperatorEdge(edge, row.newPrincipalId) && !desired.has(v1.Relationship.toJsonString(edge)),
     )
   ) {
     return yield* fail(`New account has unexpected additional grants: ${row.email}`);
@@ -481,7 +502,7 @@ const preflightTargets = Effect.fn('PseudonymAccount.preflight')(function* prefl
     const desired = new Set(row.relationships);
     if (
       (yield* readSubjectGrants(rpc, 'principal', row.newPrincipalId)).some(
-        (edge) => !desired.has(v1.Relationship.toJsonString(edge)),
+        (edge) => !isAgentOperatorEdge(edge, row.newPrincipalId) && !desired.has(v1.Relationship.toJsonString(edge)),
       )
     ) {
       return yield* fail(`Target account has unreviewed grants: ${row.email}`);
@@ -493,7 +514,7 @@ const preflightTargets = Effect.fn('PseudonymAccount.preflight')(function* prefl
 const retireOldAccount = Effect.fn('PseudonymAccount.retire')(function* retireOldAccount(
   rpc: SpiceDbRpc,
   row: PseudonymAccount,
-  operator: Effect.Success<typeof authenticateAgentProfileOperator>,
+  operator: AuthenticatedOperator,
   fingerprint: string,
 ) {
   const runtime = yield* ActionRuntime;
@@ -566,6 +587,199 @@ const retireOldAccount = Effect.fn('PseudonymAccount.retire')(function* retireOl
   return roles.size;
 });
 
+const sameIds = (left: readonly string[], right: readonly string[]) => {
+  const ids = new Set(right);
+  return left.length === ids.size && left.every((id) => ids.has(id));
+};
+
+/** Native selected-company provenance for company-scoped agent Reads/Actions (as setup-agent-operators does). */
+const selectCompany = Effect.fn('PseudonymAccount.selectCompany')(function* selectCompany(
+  operator: AuthenticatedOperator,
+  legalEntityId: string,
+) {
+  const authentication = yield* AuthenticationService;
+  yield* authentication.switchLegalEntity(legalEntityId, operator.requestHeaders);
+  const selected = yield* authentication.resolveShellContext(operator.requestHeaders);
+  if (
+    selected.state !== 'authenticated' ||
+    selected.principal.legalEntityId !== legalEntityId ||
+    selected.principal.principalId !== operator.principal.principalId ||
+    selected.principal.tenantId !== operator.principal.tenantId
+  ) {
+    return yield* fail('The authenticated operator could not select the company of an agent');
+  }
+  return selected.principal;
+});
+
+const readCompanyAgents = Effect.fn('PseudonymAccount.readCompanyAgents')(function* readCompanyAgents(
+  operator: AuthenticatedOperator,
+  legalEntityId: string,
+) {
+  const principal = yield* selectCompany(operator, legalEntityId);
+  const reads = yield* ReadRuntime;
+  const directory = yield* reads.runRead({
+    input: {},
+    principal,
+    registration: companyAgentDirectoryRead,
+    transport: { correlationId: randomUUID() },
+  });
+  return { agents: directory.agents, principal };
+});
+
+/** Every company agent owned or operated by a migrated login, with its exact audited profile. */
+const discoverAgents = Effect.fn('PseudonymAccount.discoverAgents')(function* discoverAgents(
+  rpc: SpiceDbRpc,
+  operator: AuthenticatedOperator,
+  accounts: readonly PseudonymAccount[],
+) {
+  const permission = yield* ActionPermission;
+  const companies = [...new Set(accounts.flatMap(({ memberships }) => memberships.map((row) => row.legalEntityId)))];
+  const result: PseudonymAgent[] = [];
+  for (const legalEntityId of companies) {
+    for (const action of [configureAgentAction, replaceAgentOperatorsAction]) {
+      const decision = yield* permission.checkActionPermission({
+        actionKey: action.descriptor.actionKey,
+        correlationId: randomUUID(),
+        legalEntityId,
+        principalId: operator.principal.principalId,
+        tenantId: demoTenantId,
+      });
+      if (decision !== 'allowed') {
+        return yield* fail(
+          `The superadministrator cannot execute ${action.descriptor.actionKey} in an account company`,
+        );
+      }
+    }
+    const { agents } = yield* readCompanyAgents(operator, legalEntityId);
+    for (const agent of agents) {
+      const migration = pseudonymAgent(agent, legalEntityId, accounts);
+      if (Option.isSome(migration)) {
+        if (
+          agent.status !== 'active' ||
+          !agent.hasProfile ||
+          (agent.operatorCommand !== null &&
+            !sameIds(agent.operatorCommand.desiredOperatorPrincipalIds, agent.operatorPrincipalIds))
+        ) {
+          return yield* fail(`Agent ${agent.displayName} is inactive, unprofiled or has a pending operator change`);
+        }
+        if (!result.some(({ agentPrincipalId }) => agentPrincipalId === agent.principalId)) {
+          result.push(migration.value);
+        }
+      }
+    }
+  }
+  // Every operator edge of a migrated login must be covered by a governed agent move.
+  for (const source of accounts) {
+    for (const edge of yield* readSubjectGrants(rpc, 'principal', source.oldPrincipalId)) {
+      if (
+        isAgentOperatorEdge(edge, source.oldPrincipalId) &&
+        !result.some(({ agentPrincipalId }) => agentPrincipalId === edge.resource?.objectId)
+      ) {
+        return yield* fail(`${source.oldEmail} operates an agent outside its companies; explicit review required`);
+      }
+    }
+  }
+  return Arr.sort(
+    result,
+    Order.mapInput(Order.String, ({ agentPrincipalId }: PseudonymAgent) => agentPrincipalId),
+  );
+});
+
+const findAgent = Effect.fn('PseudonymAccount.findAgent')(function* findAgent(
+  operator: AuthenticatedOperator,
+  agent: PseudonymAgent,
+) {
+  const { agents, principal } = yield* readCompanyAgents(operator, agent.legalEntityId);
+  const current = agents.find(({ principalId }) => principalId === agent.agentPrincipalId);
+  if (current?.status !== 'active') {
+    return yield* fail(`Reviewed agent ${agent.displayName} is no longer active`);
+  }
+  return { current, principal };
+});
+
+const owners = Option.makeEquivalence((a: string, b: string) => a === b);
+
+/** Owner via governed configure-agent (profile otherwise unchanged); operators via replace-agent-operators. */
+const moveAgent = Effect.fn('PseudonymAccount.moveAgent')(function* moveAgent(
+  operator: AuthenticatedOperator,
+  agent: PseudonymAgent,
+  wanted: readonly string[],
+  previous: readonly string[],
+  key: string,
+) {
+  const actions = yield* ActionRuntime;
+  const { current, principal } = yield* findAgent(operator, agent);
+  const owner = Option.fromNullishOr(current.ownerPrincipalId);
+  if (!owners(owner, agent.newOwnerPrincipalId)) {
+    if (!owners(owner, agent.oldOwnerPrincipalId)) {
+      return yield* fail(`Agent ${agent.displayName} owner changed after review; no overwrite performed`);
+    }
+    yield* actions
+      .runAction({
+        payload: {
+          description: current.description,
+          displayName: current.displayName,
+          modules: current.modules,
+          operation: 'configure-agent',
+          ownerPrincipalId: Option.getOrNull(agent.newOwnerPrincipalId),
+          principalId: agent.agentPrincipalId,
+          writePolicy: current.writePolicy,
+        },
+        principal,
+        registration: configureAgentAction,
+        transport: { correlationId: randomUUID(), idempotencyKey: `${key}:owner` },
+      })
+      .pipe(Effect.catchTag('ActionAlreadyCommitted', () => Effect.void));
+  }
+  const command = current.operatorCommand;
+  const commandMatches = command !== null && sameIds(command.desiredOperatorPrincipalIds, wanted);
+  if (!sameIds(current.operatorPrincipalIds, wanted) || (command !== null && !commandMatches)) {
+    if (!commandMatches) {
+      if (!sameIds(current.operatorPrincipalIds, previous)) {
+        return yield* fail(`Agent ${agent.displayName} operators changed after review; no overwrite performed`);
+      }
+      yield* actions
+        .runAction({
+          payload: {
+            agentPrincipalId: agent.agentPrincipalId,
+            context: 'operators-edited',
+            expectedRevision: command?.revision ?? 0,
+            operatorPrincipalIds: wanted,
+            revokedConnections: 0,
+          },
+          principal,
+          registration: replaceAgentOperatorsAction,
+          transport: { correlationId: randomUUID(), idempotencyKey: `${key}:operators` },
+        })
+        .pipe(Effect.catchTag('ActionAlreadyCommitted', () => Effect.void));
+    }
+    // The existing serialized lifecycle projects the committed command after the Action transaction ended.
+    const installed = yield* (yield* ActiveApplicationCompositionService).load;
+    yield* (yield* ActionAuthorizationLifecycle).reconcilePrincipal(
+      demoTenantId,
+      agent.agentPrincipalId,
+      installed.composition.revision,
+    );
+  }
+  return yield* Effect.void;
+});
+
+const verifyAgent = Effect.fn('PseudonymAccount.verifyAgent')(function* verifyAgent(
+  operator: AuthenticatedOperator,
+  agent: PseudonymAgent,
+  wanted: readonly string[],
+) {
+  const { current } = yield* findAgent(operator, agent);
+  if (
+    !owners(Option.fromNullishOr(current.ownerPrincipalId), agent.newOwnerPrincipalId) ||
+    !sameIds(current.operatorPrincipalIds, wanted) ||
+    (current.operatorCommand !== null && !sameIds(current.operatorCommand.desiredOperatorPrincipalIds, wanted))
+  ) {
+    return yield* fail(`Agent ${agent.displayName} owner/operators did not verify`);
+  }
+  return yield* Effect.void;
+});
+
 const openSpiceDb = Effect.gen(function* openSpiceDb() {
   const environment = yield* Config.all({
     SPICEDB_CA_CERT: Config.String('SPICEDB_CA_CERT'),
@@ -606,15 +820,17 @@ const openWorkforce = (fingerprint: string) =>
 const writePlan = Effect.fn('PseudonymAccount.writePlan')(function* writePlan(
   rpc: SpiceDbRpc,
   path: string,
-  operatorPrincipalId: string,
+  operator: AuthenticatedOperator,
 ) {
   const accounts = yield* discoverAccounts(rpc);
+  const agents = yield* discoverAgents(rpc, operator, accounts);
   const workforce = yield* openWorkforce('plan');
   const plan = yield* Schema.decodeUnknownEffect(PseudonymAccountPlanSchema)({
     accounts,
+    agents,
     employees: yield* discoverPseudonymEmployees(workforce, accounts),
-    operatorPrincipalId,
-    schemaVersion: 1,
+    operatorPrincipalId: operator.principal.principalId,
+    schemaVersion: 2,
     tenantId: demoTenantId,
   });
   if (!validatePseudonymAccountPlan(plan)) {
@@ -624,6 +840,14 @@ const writePlan = Effect.fn('PseudonymAccount.writePlan')(function* writePlan(
   const fs = yield* FileSystem.FileSystem;
   yield* fs.writeFileString(path, text, { flag: 'wx', mode: 0o600 });
   yield* Console.log({
+    agents: plan.agents.map((agent) => ({
+      agent: agent.displayName,
+      operatorsAfterCreate: agentOperatorsAfterCreate(agent, plan.accounts),
+      operatorsAfterRetire: agentOperatorsAfterRetire(agent, plan.accounts),
+      operatorsBefore: agent.oldOperatorPrincipalIds,
+      ownerAfter: Option.getOrNull(agent.newOwnerPrincipalId),
+      ownerBefore: Option.getOrNull(agent.oldOwnerPrincipalId),
+    })),
     employees: plan.employees.map(({ email, fullName, oldEmail, oldFullName }) => ({
       email,
       fullName,
@@ -668,6 +892,92 @@ const readReviewedPlan = Effect.fn('PseudonymAccount.readReviewedPlan')(function
   return { fingerprint, plan };
 });
 
+const agentKey = (fingerprint: string, agent: PseudonymAgent, step: string) =>
+  `pseudonym-agent:${fingerprint}:${agent.agentPrincipalId}:${step}`;
+
+/** Phase A: new logins, their exact grants, agent owner/operators and Workforce rows; old logins untouched. */
+const runCreate = Effect.fn('PseudonymAccount.runCreate')(function* runCreate(
+  rpc: SpiceDbRpc,
+  operator: AuthenticatedOperator,
+  plan: PseudonymAccountPlan,
+  fingerprint: string,
+  apply: boolean,
+) {
+  if (apply) {
+    yield* preflightTargets(rpc, plan.accounts);
+    if (!sameAccounts(yield* discoverAccounts(rpc), plan.accounts)) {
+      return yield* fail('Source identities, memberships or grants changed; review a fresh plan');
+    }
+    for (const row of plan.accounts) {
+      yield* installAccount(row, false);
+      yield* reconcileServiceGrants(
+        rpc,
+        row.relationships.map((edge) => v1.Relationship.fromJsonString(edge)),
+        'apply',
+      );
+    }
+  }
+  for (const row of plan.accounts) {
+    yield* verifyAccount(row, rpc, false);
+  }
+  // Agents need the new logins as active company members, so they move only after the accounts verify.
+  for (const agent of plan.agents) {
+    const operators = agentOperatorsAfterCreate(agent, plan.accounts);
+    if (apply) {
+      yield* moveAgent(
+        operator,
+        agent,
+        operators,
+        agent.oldOperatorPrincipalIds,
+        agentKey(fingerprint, agent, 'create'),
+      );
+    }
+    yield* verifyAgent(operator, agent, operators);
+  }
+  const workforce = yield* openWorkforce(fingerprint);
+  return yield* reconcilePseudonymEmployees(workforce, plan.employees, apply);
+});
+
+/** Phase B: never retire an old login until every new login, its grants and the agent moves are verified. */
+const runRetire = Effect.fn('PseudonymAccount.runRetire')(function* runRetire(
+  rpc: SpiceDbRpc,
+  operator: AuthenticatedOperator,
+  plan: PseudonymAccountPlan,
+  fingerprint: string,
+  apply: boolean,
+) {
+  for (const row of plan.accounts) {
+    yield* verifyAccount(row, rpc, false);
+  }
+  yield* reconcilePseudonymEmployees(yield* openWorkforce(fingerprint), plan.employees, false);
+  if (apply) {
+    // The deployed warm-up switch is part of this code: old warm-up logins must no longer be used by deploys.
+    if (!warmupAccounts.some(({ email }) => email === 'warmup@sroubarna.demo')) {
+      return yield* fail('Deploy the prepared warm-up switch before retiring any old account');
+    }
+    // The old logins stop operating company agents before they are disabled.
+    for (const agent of plan.agents) {
+      yield* moveAgent(
+        operator,
+        agent,
+        agentOperatorsAfterRetire(agent, plan.accounts),
+        agentOperatorsAfterCreate(agent, plan.accounts),
+        agentKey(fingerprint, agent, 'retire'),
+      );
+    }
+    for (const row of plan.accounts) {
+      yield* retireOldAccount(rpc, row, operator, fingerprint);
+    }
+  }
+  for (const agent of plan.agents) {
+    yield* verifyAgent(operator, agent, agentOperatorsAfterRetire(agent, plan.accounts));
+  }
+  for (const row of plan.accounts) {
+    yield* verifyAccount(row, rpc, true);
+  }
+  return plan.accounts.length;
+});
+
 const main = (
   mode: (typeof modes)[number],
   phase: (typeof phases)[number],
@@ -703,41 +1013,10 @@ const main = (
       );
     yield* checkSuperadmin;
     if (mode === 'plan') {
-      return yield* writePlan(rpc, path, operator.principal.principalId);
+      return yield* writePlan(rpc, path, operator);
     }
     const { fingerprint, plan } = yield* readReviewedPlan(path, reviewed, operator.principal.principalId);
-    if (mode === 'apply' && phase === 'create') {
-      yield* preflightTargets(rpc, plan.accounts);
-      if (!sameAccounts(yield* discoverAccounts(rpc), plan.accounts)) {
-        return yield* fail('Source identities, memberships or grants changed; review a fresh plan');
-      }
-      for (const row of plan.accounts) {
-        yield* installAccount(row, false);
-        yield* reconcileServiceGrants(
-          rpc,
-          row.relationships.map((edge) => v1.Relationship.fromJsonString(edge)),
-          'apply',
-        );
-      }
-    }
-    // Never retire an old login until EVERY new login and its exact membership/grants are verified.
-    for (const row of plan.accounts) {
-      yield* verifyAccount(row, rpc, false);
-    }
-    const workforce = yield* openWorkforce(fingerprint);
-    yield* reconcilePseudonymEmployees(workforce, plan.employees, mode === 'apply' && phase === 'create');
-    if (mode === 'apply' && phase === 'retire') {
-      // The deployed warm-up switch is part of this code: old warm-up logins must no longer be used by deploys.
-      if (!warmupAccounts.some(({ email }) => email === 'warmup@sroubarna.demo')) {
-        return yield* fail('Deploy the prepared warm-up switch before retiring any old account');
-      }
-      for (const row of plan.accounts) {
-        yield* retireOldAccount(rpc, row, operator, fingerprint);
-      }
-    }
-    for (const row of plan.accounts) {
-      yield* verifyAccount(row, rpc, phase === 'retire');
-    }
+    yield* (phase === 'create' ? runCreate : runRetire)(rpc, operator, plan, fingerprint, mode === 'apply');
     yield* checkSuperadmin;
     return yield* Console.log({ accounts: plan.accounts.length, failures: 0, fingerprint, mode, phase });
   }).pipe(Effect.scoped);
