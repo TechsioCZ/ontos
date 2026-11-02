@@ -31,11 +31,11 @@ const companylessHtml = `<select name="legalEntity"><option value="tenant" selec
 <main><h1>Domů</h1><p>Není vybraná firma. Pro práci s jejími daty vyberte firmu v nabídce vlevo.</p></main>`;
 const unavailableHtml = `<main><p aria-live="polite">Přihlášené prostředí je dočasně nedostupné. Znovu načtěte stránku a zkuste to znovu.</p></main>`;
 const loginHtml = '<main><h1>Přihlášení</h1><form><input type="email"/><input type="password"/></form></main>';
-const storefrontHtml = `<main><h1>Sortiment</h1><div data-akros-product-listing="catalog"><article>
+const storefrontHtml = `<main><h1>Sortiment</h1><div data-sf-product-listing="catalog"><article>
 <a href="/produkt/fixture-product"><img src="/fixture.webp" alt="Fixture product"/></a><p>Fixture product</p>
 </article></div></main>`;
 const productHtml = `<main><h1 id="product-title">Fixture product</h1><section id="product-variants">
-<div class="akros-variant-table__order"><input aria-label="Množství Fixture variant" value="1"/><button>Koupit (ks)</button></div>
+<div class="sf-variant-table__order"><input aria-label="Množství Fixture variant" value="1"/><button>Koupit (ks)</button></div>
 </section></main>`;
 const htmlHeaders = () => new Headers({ 'content-type': 'text/html; charset=utf-8' });
 const selectedRow = {
@@ -183,7 +183,7 @@ it('accepts populated single-product purchase controls without a variant section
     oracle(
       productHtml
         .replace('<section id="product-variants">', '<section>')
-        .replace('akros-variant-table__order', 'akros-purchase-form'),
+        .replace('sf-variant-table__order', 'sf-purchase-form'),
       row,
     ),
   ).toEqual([]);
@@ -209,7 +209,7 @@ it.each([
   productHtml.replace('id="product-title"', 'id="product-title" hidden'),
   productHtml.replace('value="1"', 'value=""'),
   productHtml.replace('Koupit (ks)', ''),
-  productHtml.replace('class="akros-variant-table__order"', 'class="akros-variant-table__order" hidden'),
+  productHtml.replace('class="sf-variant-table__order"', 'class="sf-variant-table__order" hidden'),
 ])('requires title text and populated visible purchase controls independently (%#)', (html) => {
   const row = { ...selectedRow, persona: 'anonymous', route: PRODUCT_ROUTE, surface: 'storefront' };
   expect(oracle(html, row)).toContain('Missing product title and product purchase/variant markup');

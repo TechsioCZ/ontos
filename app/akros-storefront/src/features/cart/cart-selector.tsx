@@ -35,16 +35,16 @@ export function CartSelector() {
   };
   return (
     <section
-      data-akros-cart-selector
-      className="@container/cart-selector rounded-sm bg-base p-(--akros-checkout-panel-padding)"
+      data-sf-cart-selector
+      className="@container/cart-selector rounded-sm bg-base p-(--sf-checkout-panel-padding)"
       aria-labelledby="cart-selector-title"
     >
       <h2
         id="cart-selector-title"
-        className="mb-(--dimension-32) flex items-center gap-(--dimension-16) text-(length:--akros-checkout-heading-size) leading-(--akros-checkout-heading-leading) font-medium"
+        className="mb-(--dimension-32) flex items-center gap-(--dimension-16) text-(length:--sf-checkout-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
       >
-        <span className="flex size-(--dimension-45) shrink-0 items-center justify-center text-(length:--akros-checkout-cart-glyph-size)">
-          <Icon icon="token-icon-akros-checkout-cart" size="current" />
+        <span className="flex size-(--dimension-45) shrink-0 items-center justify-center text-(length:--sf-checkout-cart-glyph-size)">
+          <Icon icon="token-icon-sf-checkout-cart" size="current" />
         </span>
         {cs.checkout.selector.title}
       </h2>
@@ -67,13 +67,13 @@ export function CartSelector() {
                 <RadioGroup.ItemHiddenInput />
                 <RadioGroup.ItemControl />
                 <RadioGroup.ItemContent>
-                  <RadioGroup.ItemText className="wrap-anywhere leading-(--akros-checkout-heading-leading)! font-bold">
+                  <RadioGroup.ItemText className="wrap-anywhere leading-(--sf-checkout-heading-leading)! font-bold">
                     {cart.name}
                   </RadioGroup.ItemText>
                 </RadioGroup.ItemContent>
               </RadioGroup.Item>
               <ActionIcon
-                icon="token-icon-akros-checkout-remove"
+                icon="token-icon-sf-checkout-remove"
                 aria-label={cs.checkout.selector.removeAria(cart.name)}
                 disabled={!ready || carts.length === 1}
                 onClick={() => setDialog(cart)}
@@ -88,7 +88,7 @@ export function CartSelector() {
         theme="outlined"
         size="sm"
         block
-        className="mt-(--dimension-32) leading-(--akros-checkout-heading-leading)"
+        className="mt-(--dimension-32) leading-(--sf-checkout-heading-leading)"
         uppercase
         disabled={!ready}
         onClick={() => {

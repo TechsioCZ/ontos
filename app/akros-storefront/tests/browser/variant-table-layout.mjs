@@ -29,7 +29,7 @@ try {
       waitUntil: "domcontentloaded",
     });
     await page
-      .locator(".akros-variant-data-table__table tbody tr")
+      .locator(".sf-variant-data-table__table tbody tr")
       .first()
       .waitFor({ timeout: 120000 });
     await page.evaluate(() => document.fonts.ready);
@@ -40,7 +40,7 @@ try {
       await page.waitForTimeout(350);
 
       const result = await page
-        .locator(".akros-variant-data-table__table")
+        .locator(".sf-variant-data-table__table")
         .evaluate(inspectTableLayout);
 
       assert.equal(
@@ -65,7 +65,7 @@ try {
             submit.left < bounds.left - 1
           )
             errors.push("Filter/submit overflow");
-          const price = form.querySelector(".akros-variant-filter-range--price");
+          const price = form.querySelector(".sf-variant-filter-range--price");
           if (
             price &&
             innerWidth >= 768 &&
@@ -76,7 +76,7 @@ try {
           if (price && price.querySelectorAll("input[role=spinbutton]").length !== 2)
             errors.push("Price filter must have two editable endpoints");
           for (const input of form.querySelectorAll(
-            ".akros-variant-filter-range--price input[role=spinbutton]",
+            ".sf-variant-filter-range--price input[role=spinbutton]",
           )) {
             const style = getComputedStyle(input);
             context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
@@ -89,7 +89,7 @@ try {
           return errors;
         });
       assert.deepEqual(filterFailures, [], `${slug} at ${width}px: filter layout`);
-      const mode = await page.locator(".akros-variant-purchase").evaluate((root) => {
+      const mode = await page.locator(".sf-variant-purchase").evaluate((root) => {
         const row = root.querySelector("tbody tr");
         const order = row.querySelector("td:last-child");
         const name = row.querySelector("td");

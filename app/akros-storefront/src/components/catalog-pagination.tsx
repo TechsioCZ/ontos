@@ -29,7 +29,7 @@ export function CatalogPagination({
 
   return (
     <Pagination
-      className="akros-pagination akros-catalog-pagination"
+      className="sf-pagination sf-catalog-pagination"
       count={itemCount}
       getPageUrl={getPageUrl}
       linkAs={StoreLink}

@@ -115,7 +115,7 @@ export function AccountOrderDetail({ order }: { order: CustomerOrder }) {
           {order.lines.map((line) => (
             <li
               key={`${line.productId}:${line.variantId ?? ""}`}
-              className="rounded-(--dimension-8) bg-(--akros-account-surface) p-6"
+              className="rounded-(--dimension-8) bg-(--sf-account-surface) p-6"
             >
               <h3 className="font-bold">
                 {line.productName}

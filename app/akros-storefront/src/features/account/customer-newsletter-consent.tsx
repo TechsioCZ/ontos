@@ -89,7 +89,7 @@ export function CustomerNewsletterConsentForm() {
     }
   }
   return (
-    <section aria-labelledby="newsletter-consent-heading" className="akros-auth-form">
+    <section aria-labelledby="newsletter-consent-heading" className="sf-auth-form">
       <h2 id="newsletter-consent-heading">Newsletter</h2>
       {consent ? (
         <>

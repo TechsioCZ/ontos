@@ -60,10 +60,10 @@ export default async function SearchPage({
         items={[{ href: "/", label: cs.header.home }, { label: cs.search.results }]}
       />
       <section
-        className="akros-section akros-product-listing-section"
+        className="sf-section sf-product-listing-section"
         aria-labelledby="search-results-title"
       >
-        <div className="akros-category-heading">
+        <div className="sf-category-heading">
           <h1 id="search-results-title">{cs.search.results}</h1>
           {q && <p>Dotaz: „{q}“</p>}
         </div>
@@ -79,7 +79,7 @@ export default async function SearchPage({
             />
           </>
         ) : (
-          <p className="akros-empty-state">{cs.search.noResults}</p>
+          <p className="sf-empty-state">{cs.search.noResults}</p>
         )}
       </section>
     </StorefrontShell>

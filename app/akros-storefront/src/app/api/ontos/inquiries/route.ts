@@ -50,7 +50,7 @@ export async function POST(request: Request) {
           "work-tasks",
           "apply-command",
           payload,
-          `akros-inquiry-${inquiry.requestId}-${digest}`,
+          `sf-inquiry-${inquiry.requestId}-${digest}`,
         )) as { task?: { ref?: { resourceId?: string } } };
         const taskId = result.task?.ref?.resourceId;
         if (typeof taskId !== "string" || taskId === "")

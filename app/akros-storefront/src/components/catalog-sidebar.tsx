@@ -25,7 +25,7 @@ function CatalogLink({ className, ...props }: ComponentProps<typeof StoreLink>) 
   return (
     <StoreLink
       {...props}
-      className={`akros-catalog-link${className?.includes("justify-between") ? " akros-catalog-link--branch" : ""}`}
+      className={`sf-catalog-link${className?.includes("justify-between") ? " sf-catalog-link--branch" : ""}`}
     />
   );
 }
@@ -40,7 +40,7 @@ function SpecialCategoriesNavigation({
   const cs = useDictionary();
   return (
     <VerticalNavigation.Branch defaultOpen={expandRoots} id={`${navigationId}-special-categories`}>
-      <VerticalNavigation.Row data-akros-depth={0}>
+      <VerticalNavigation.Row data-sf-depth={0}>
         <VerticalNavigation.Link as="span">{cs.catalog.specialCategories}</VerticalNavigation.Link>
         <VerticalNavigation.BranchTrigger aria-label={cs.catalog.specialCategories}>
           <VerticalNavigation.BranchIndicator />
@@ -78,7 +78,7 @@ function CategoryNavigationItem({
     if (category.hasChildren) {
       return (
         <VerticalNavigation.Item>
-          <VerticalNavigation.Row data-akros-depth={visualDepth}>
+          <VerticalNavigation.Row data-sf-depth={visualDepth}>
             <VerticalNavigation.Link
               as={CatalogLink}
               className="justify-between"
@@ -87,7 +87,7 @@ function CategoryNavigationItem({
             >
               {category.name}
               <Icon
-                data-akros-branch-indicator=""
+                data-sf-branch-indicator=""
                 icon="token-icon-vertical-navigation-chevron"
                 size="current"
               />
@@ -102,7 +102,7 @@ function CategoryNavigationItem({
         <VerticalNavigation.Link
           as={CatalogLink}
           current={isCurrent}
-          data-akros-depth={visualDepth}
+          data-sf-depth={visualDepth}
           href={href}
         >
           {category.name}
@@ -117,7 +117,7 @@ function CategoryNavigationItem({
       defaultOpen={(expandRoots && depth === 0) || isOnCurrentPath}
       id={`${navigationId}-${category.id}`}
     >
-      <VerticalNavigation.Row data-akros-depth={visualDepth}>
+      <VerticalNavigation.Row data-sf-depth={visualDepth}>
         <VerticalNavigation.Link as={CatalogLink} current={isCurrent} href={href}>
           {category.name}
         </VerticalNavigation.Link>
@@ -174,7 +174,7 @@ export function CatalogNavigation({
   return (
     <VerticalNavigation
       aria-label={cs.catalog.title}
-      data-akros-catalog=""
+      data-sf-catalog=""
       key={`${navigationId}-${activeSlug ?? "catalog"}`}
       maxIndentDepth={3}
       size="sm"
@@ -205,7 +205,7 @@ export function CatalogHelpNavigation() {
     <VerticalNavigation
       aria-label={cs.catalog.recommendations}
       className="shrink-0"
-      data-akros-catalog-help=""
+      data-sf-catalog-help=""
       size="sm"
     >
       <VerticalNavigation.Group>
@@ -232,10 +232,10 @@ export function CatalogSidebar({
   const cs = useDictionary();
   return (
     <aside
-      className="akros-sidebar flex max-h-(--akros-sidebar-max-height) flex-col gap-(--dimension-24)"
+      className="sf-sidebar flex max-h-(--sf-sidebar-max-height) flex-col gap-(--dimension-24)"
       aria-label={cs.catalog.title}
     >
-      <div className="akros-sidebar__desktop min-h-0 shrink">
+      <div className="sf-sidebar__desktop min-h-0 shrink">
         <CatalogNavigation
           activeSlug={activeSlug}
           categories={categories}

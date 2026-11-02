@@ -31,7 +31,7 @@ describe("HomePage company introduction", () => {
       "schodiště",
     ]);
     expect(within(introduction).queryByRole("heading")).toBeNull();
-    expect(introduction.classList.contains("akros-company-intro")).toBe(false);
+    expect(introduction.classList.contains("sf-company-intro")).toBe(false);
     expect(introduction.classList.contains("text-sm")).toBe(true);
   });
 });

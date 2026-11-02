@@ -68,7 +68,7 @@ export function AccountOrders({
         title="Objednávky"
         description="Vaše objednávky uložené v OntOS. Ceny jsou částky uložené při objednání."
       />
-      <div className="grid gap-6 rounded-(--dimension-8) bg-(--akros-account-surface) p-6 md:grid-cols-2">
+      <div className="grid gap-6 rounded-(--dimension-8) bg-(--sf-account-surface) p-6 md:grid-cols-2">
         <FormInput
           id="account-order-search"
           label="Číslo objednávky na této stránce"
@@ -103,10 +103,7 @@ export function AccountOrders({
           </div>
           <ul data-account-order-cards className="grid gap-6 md:grid-cols-2 xl:hidden">
             {visible.map((order) => (
-              <li
-                key={order.id}
-                className="rounded-(--dimension-8) bg-(--akros-account-surface) p-6"
-              >
+              <li key={order.id} className="rounded-(--dimension-8) bg-(--sf-account-surface) p-6">
                 <h2 className="font-bold">
                   <StoreLink className="underline" href={orderHref(order)}>
                     {order.number}

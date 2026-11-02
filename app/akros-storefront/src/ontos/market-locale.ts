@@ -12,7 +12,7 @@ export const STORE_PATH_HEADER = "x-akros-store-path";
  * Proxy rewrite targets that read no market data: an unknown locale matches no route (root 404 status),
  * an inactive market renders an empty page (200, noindex) whose content the root layout replaces.
  */
-export const UNKNOWN_MARKET_PATH = "/_akros-unknown-market";
+export const UNKNOWN_MARKET_PATH = "/_unknown-market";
 export const UNAVAILABLE_MARKET_PATH = "/trh-nedostupny";
 /** Legacy URLs without a locale redirect into the Czech market. */
 export const DEFAULT_MARKET_LOCALE = "cs";

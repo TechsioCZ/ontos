@@ -28,7 +28,7 @@ interface ProductPurchaseFormProps {
 
 const variantsPerPage = 5;
 const variantListOnlyClassName =
-  "hidden @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:block";
+  "hidden @min-sf-variant-list/sf-variants:@max-sf-variant-table/sf-variants:block";
 const noVariants: CatalogPurchaseVariant[] = [];
 const variantCollator = new Intl.Collator("cs-CZ", {
   numeric: true,
@@ -92,10 +92,10 @@ function VariantRangeFilter({
   const formatPrice = useFormatPrice();
   const scale = price ? 100 : 1;
   const priceInputStyle: CSSProperties & {
-    "--akros-variant-filter-price-characters"?: number;
+    "--sf-variant-filter-price-characters"?: number;
   } = price
     ? {
-        "--akros-variant-filter-price-characters": Math.max(
+        "--sf-variant-filter-price-characters": Math.max(
           ...bounds.map((bound) => priceInputFormatter.format(bound / scale).length),
         ),
       }
@@ -115,12 +115,12 @@ function VariantRangeFilter({
   return (
     <div
       style={priceInputStyle}
-      className={`akros-variant-filter-range ${filterGroupClassName} w-full md:shrink-0 md:@max-akros-variant-table/akros-variants:grow ${price ? "akros-variant-filter-range--price md:w-(--akros-variant-filter-price-width)" : "md:w-(--akros-variant-filter-measurement-width)"}`}
+      className={`sf-variant-filter-range ${filterGroupClassName} w-full md:shrink-0 md:@max-sf-variant-table/sf-variants:grow ${price ? "sf-variant-filter-range--price md:w-(--sf-variant-filter-price-width)" : "md:w-(--sf-variant-filter-measurement-width)"}`}
     >
       <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-end gap-(--dimension-8)">
         <NumericInput
           key={`minimum-${sliderRevision}`}
-          className="w-(--akros-variant-filter-input-width)"
+          className="w-(--sf-variant-filter-input-width)"
           locale="cs-CZ"
           min={bounds[0] / scale}
           max={value[1] / scale}
@@ -135,7 +135,7 @@ function VariantRangeFilter({
           </NumericInput.Control>
         </NumericInput>
         <Slider
-          className="[&>div:first-child]:justify-center [&_label]:whitespace-nowrap [&_label]:text-(length:--akros-variant-filter-label-font-size) [&_label]:leading-(--akros-variant-filter-label-line-height) [&_[data-part=control]]:min-h-(--height-form-control-sm)"
+          className="[&>div:first-child]:justify-center [&_label]:whitespace-nowrap [&_label]:text-(length:--sf-variant-filter-label-font-size) [&_label]:leading-(--sf-variant-filter-label-line-height) [&_[data-part=control]]:min-h-(--height-form-control-sm)"
           formatValue={price ? formatPrice : (next) => measurementFormatter.format(next)}
           label={label}
           max={bounds[1]}
@@ -153,7 +153,7 @@ function VariantRangeFilter({
         />
         <NumericInput
           key={`maximum-${sliderRevision}`}
-          className="w-(--akros-variant-filter-input-width)"
+          className="w-(--sf-variant-filter-input-width)"
           locale="cs-CZ"
           min={value[0] / scale}
           max={bounds[1] / scale}
@@ -267,7 +267,7 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
 
   return (
     <div
-      className={`akros-variant-table__order akros-variant-table__order--${mode} @max-akros-variant-table/akros-variants:grid-cols-[var(--akros-variant-table-compact-quantity-width)_minmax(0,1fr)]! @max-akros-variant-table/akros-variants:gap-(--dimension-8)! @max-akros-variant-table/akros-variants:border-0! @max-akros-variant-table/akros-variants:px-(--dimension-0)!`}
+      className={`sf-variant-table__order sf-variant-table__order--${mode} @max-sf-variant-table/sf-variants:grid-cols-[var(--sf-variant-table-compact-quantity-width)_minmax(0,1fr)]! @max-sf-variant-table/sf-variants:gap-(--dimension-8)! @max-sf-variant-table/sf-variants:border-0! @max-sf-variant-table/sf-variants:px-(--dimension-0)!`}
     >
       <NumericInput
         id={inputId}
@@ -279,7 +279,7 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
         step={step}
         value={selectedQuantity}
       >
-        <NumericInput.Control className="akros-variant-table__quantity-control @max-akros-variant-table/akros-variants:grid-cols-[var(--dimension-44)_minmax(0,1fr)_var(--dimension-44)]!">
+        <NumericInput.Control className="sf-variant-table__quantity-control @max-sf-variant-table/sf-variants:grid-cols-[var(--dimension-44)_minmax(0,1fr)_var(--dimension-44)]!">
           <NumericInput.DecrementTrigger
             aria-label={isPackage ? cs.product.decrementPackages : cs.product.decrementQuantity}
             icon="token-icon-minus"
@@ -296,7 +296,7 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
       <Button
         aria-label={isPackage ? cs.product.buyPackageOf(label) : cs.product.buyItem(label)}
         block
-        className="akros-variant-table__buy-button @max-akros-variant-table/akros-variants:min-h-(--dimension-44) @max-akros-variant-table/akros-variants:whitespace-normal! @max-akros-variant-table/akros-variants:[&>span]:flex-col! @max-akros-variant-table/akros-variants:[&>span]:items-center! @max-akros-variant-table/akros-variants:[&>span]:leading-(--akros-variant-table-compact-button-line-height)! @max-akros-variant-table/akros-variants:[&_small]:text-xs!"
+        className="sf-variant-table__buy-button @max-sf-variant-table/sf-variants:min-h-(--dimension-44) @max-sf-variant-table/sf-variants:whitespace-normal! @max-sf-variant-table/sf-variants:[&>span]:flex-col! @max-sf-variant-table/sf-variants:[&>span]:items-center! @max-sf-variant-table/sf-variants:[&>span]:leading-(--sf-variant-table-compact-button-line-height)! @max-sf-variant-table/sf-variants:[&_small]:text-xs!"
         disabled={disabled}
         onClick={() => onAdd(variant, quantityToAdd)}
         size="sm"
@@ -459,7 +459,7 @@ export function ProductPurchaseForm({
     const maximumQuantity = getMaximumOrderQuantity(productCartItem);
 
     return (
-      <div className="akros-purchase-form">
+      <div className="sf-purchase-form">
         {purchaseItem.quantityStep && (
           <small className="col-span-full text-fg-secondary">
             {cs.product.wholePackagesOnly(
@@ -478,16 +478,16 @@ export function ProductPurchaseForm({
           size="lg"
           value={quantity}
         >
-          <NumericInput.Control className="akros-purchase-form__quantity-control">
+          <NumericInput.Control className="sf-purchase-form__quantity-control">
             <NumericInput.DecrementTrigger
               aria-label={cs.product.decrementQuantity}
-              className="akros-purchase-form__quantity-trigger h-full"
+              className="sf-purchase-form__quantity-trigger h-full"
               icon="token-icon-minus"
             />
             <NumericInput.Input aria-label={cs.cart.quantity} />
             <NumericInput.IncrementTrigger
               aria-label={cs.product.incrementQuantity}
-              className="akros-purchase-form__quantity-trigger h-full"
+              className="sf-purchase-form__quantity-trigger h-full"
               icon="token-icon-plus"
             />
           </NumericInput.Control>
@@ -535,11 +535,11 @@ export function ProductPurchaseForm({
   };
 
   return (
-    <div className="akros-variant-purchase @container/akros-variants">
-      <section className="w-full max-w-full rounded-sm border-(length:--border-sm) border-base-dark bg-base p-(--akros-variant-filter-padding) md:w-fit md:@max-akros-variant-table/akros-variants:w-full">
+    <div className="sf-variant-purchase @container/sf-variants">
+      <section className="w-full max-w-full rounded-sm border-(length:--border-sm) border-base-dark bg-base p-(--sf-variant-filter-padding) md:w-fit md:@max-sf-variant-table/sf-variants:w-full">
         <form
           aria-label={cs.product.variantFilters}
-          className="akros-variant-purchase__filter-bar flex flex-col gap-y-(--dimension-12) md:flex-row md:flex-wrap md:items-center"
+          className="sf-variant-purchase__filter-bar flex flex-col gap-y-(--dimension-12) md:flex-row md:flex-wrap md:items-center"
           onSubmit={(event) => {
             event.preventDefault();
             applyFilters();
@@ -567,7 +567,7 @@ export function ProductPurchaseForm({
 
           {materialOptions.length > 0 && (
             <fieldset className={`${filterGroupClassName} m-0 min-w-0`}>
-              <legend className="mx-auto mb-(--dimension-6) text-(length:--akros-variant-filter-label-font-size) leading-(--akros-variant-filter-label-line-height) font-medium">
+              <legend className="mx-auto mb-(--dimension-6) text-(length:--sf-variant-filter-label-font-size) leading-(--sf-variant-filter-label-line-height) font-medium">
                 {cs.product.material}
               </legend>
               <div
@@ -575,7 +575,7 @@ export function ProductPurchaseForm({
               >
                 {materialOptions.map((material) => (
                   <FormCheckbox
-                    className="[&_[data-part=indicator][data-state=checked]]:token-icon-akros-checkbox-selected"
+                    className="[&_[data-part=indicator][data-state=checked]]:token-icon-sf-checkbox-selected"
                     checked={selectedMaterials.includes(material)}
                     key={material}
                     label={material}
@@ -593,7 +593,7 @@ export function ProductPurchaseForm({
             </fieldset>
           )}
 
-          <div className="flex min-w-0 flex-col gap-y-(--dimension-12) md:flex-row md:items-center md:gap-x-(--dimension-12) md:@max-akros-variant-table/akros-variants:grow">
+          <div className="flex min-w-0 flex-col gap-y-(--dimension-12) md:flex-row md:items-center md:gap-x-(--dimension-12) md:@max-sf-variant-table/sf-variants:grow">
             {priceBounds && priceBounds[0] < priceBounds[1] && (
               <VariantRangeFilter
                 bounds={priceBounds}
@@ -606,7 +606,7 @@ export function ProductPurchaseForm({
             )}
 
             <Button
-              className="akros-variant-filter-submit w-full md:ml-auto md:w-(--akros-variant-filter-submit-width)"
+              className="sf-variant-filter-submit w-full md:ml-auto md:w-(--sf-variant-filter-submit-width)"
               size="sm"
               type="submit"
               uppercase
@@ -619,12 +619,12 @@ export function ProductPurchaseForm({
       </section>
 
       <>
-        <div className="akros-variant-data-table flex w-full flex-col overflow-hidden rounded-data-table border-(length:--border-width-data-table) border-data-table-border">
+        <div className="sf-variant-data-table flex w-full flex-col overflow-hidden rounded-data-table border-(length:--border-width-data-table) border-data-table-border">
           <div className="relative w-full overflow-auto">
             <Table
               aria-label={cs.product.variantsTitle}
               aria-rowcount={paginatedVariants.length + 1}
-              className="akros-variant-data-table__table @max-akros-variant-table/akros-variants:block @max-akros-variant-table/akros-variants:[&_thead]:sr-only @max-akros-variant-table/akros-variants:[&_tbody]:grid @max-akros-variant-table/akros-variants:[&_tbody]:min-w-0 @max-akros-variant-table/akros-variants:[&_tbody]:gap-(--dimension-12)"
+              className="sf-variant-data-table__table @max-sf-variant-table/sf-variants:block @max-sf-variant-table/sf-variants:[&_thead]:sr-only @max-sf-variant-table/sf-variants:[&_tbody]:grid @max-sf-variant-table/sf-variants:[&_tbody]:min-w-0 @max-sf-variant-table/sf-variants:[&_tbody]:gap-(--dimension-12)"
               showColumnBorder
               size="sm"
               style={{ tableLayout: "fixed" }}
@@ -727,14 +727,14 @@ export function ProductPurchaseForm({
                     <Table.Row
                       key={item.id}
                       aria-rowindex={index + 2}
-                      className="akros-variant-data-table__row"
+                      className="sf-variant-data-table__row"
                     >
                       <Table.Cell style={{ width: "12%" }}>
-                        <div className="akros-variant-table__name min-w-0">
-                          <span className="@max-akros-variant-table/akros-variants:hidden">
+                        <div className="sf-variant-table__name min-w-0">
+                          <span className="@max-sf-variant-table/sf-variants:hidden">
                             {product.name}
                           </span>
-                          <strong className="min-w-0 whitespace-normal wrap-anywhere @max-akros-variant-table/akros-variants:text-(length:--text-base)!">
+                          <strong className="min-w-0 whitespace-normal wrap-anywhere @max-sf-variant-table/sf-variants:text-(length:--text-base)!">
                             {label}
                           </strong>
                           <p
@@ -745,8 +745,8 @@ export function ProductPurchaseForm({
                         </div>
                       </Table.Cell>
                       <Table.Cell style={{ width: "16%" }}>
-                        <span className="akros-variant-table__sku block whitespace-normal break-all @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal @max-akros-variant-table/akros-variants:text-fg-secondary">
-                          <span className="akros-variant-table__mobile-label @max-akros-variant-table/akros-variants:inline!">
+                        <span className="sf-variant-table__sku block whitespace-normal break-all @max-sf-variant-table/sf-variants:text-xs @max-sf-variant-table/sf-variants:font-normal @max-sf-variant-table/sf-variants:text-fg-secondary">
+                          <span className="sf-variant-table__mobile-label @max-sf-variant-table/sf-variants:inline!">
                             {cs.product.code}:{" "}
                           </span>
                           <span>{item.sku}</span>
@@ -757,7 +757,7 @@ export function ProductPurchaseForm({
                       </Table.Cell>
                       <Table.Cell style={{ width: "9%" }}>
                         <strong
-                          className="akros-variant-table__availability @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal"
+                          className="sf-variant-table__availability @max-sf-variant-table/sf-variants:text-xs @max-sf-variant-table/sf-variants:font-normal"
                           data-available={isAvailable}
                           title={
                             item.availabilityUnknown
@@ -769,10 +769,10 @@ export function ProductPurchaseForm({
                         </strong>
                       </Table.Cell>
                       <Table.Cell style={{ width: "12%" }}>
-                        <div className="akros-variant-table__price min-w-0">
+                        <div className="sf-variant-table__price min-w-0">
                           <div className={`${variantListOnlyClassName} mb-(--dimension-8)`}>
                             <span
-                              className="akros-variant-table__availability text-xs font-normal"
+                              className="sf-variant-table__availability text-xs font-normal"
                               data-available={
                                 !item.availabilityUnknown && item.stockCount >= item.minimumQuantity
                               }
@@ -791,15 +791,15 @@ export function ProductPurchaseForm({
                             </span>
                           ) : (
                             <>
-                              <strong className="min-w-0 whitespace-normal! wrap-anywhere @max-akros-variant-table/akros-variants:text-(length:--text-base)!">
+                              <strong className="min-w-0 whitespace-normal! wrap-anywhere @max-sf-variant-table/sf-variants:text-(length:--text-base)!">
                                 {formatPrice(item.priceMinor).replace(/\s(?=\S+$)/u, " ")}
-                                <span className="akros-variant-table__mobile-label @max-akros-variant-table/akros-variants:inline! @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal">
+                                <span className="sf-variant-table__mobile-label @max-sf-variant-table/sf-variants:inline! @max-sf-variant-table/sf-variants:text-xs @max-sf-variant-table/sf-variants:font-normal">
                                   {" "}
                                   / {item.unit}
                                 </span>
                               </strong>
                               {basePriceTier && (
-                                <small className="@max-akros-variant-table/akros-variants:text-xs! @max-akros-variant-table/akros-variants:font-normal">
+                                <small className="@max-sf-variant-table/sf-variants:text-xs! @max-sf-variant-table/sf-variants:font-normal">
                                   {formatPrice(basePriceTier.priceExcludingVatMinor)}{" "}
                                   {cs.product.excludingVat}
                                 </small>
@@ -809,7 +809,7 @@ export function ProductPurchaseForm({
                         </div>
                       </Table.Cell>
                       <Table.Cell align="center" style={{ width: "47%" }}>
-                        <div className="akros-variant-table__purchase-cell @max-akros-variant-table/akros-variants:grid-cols-1! @max-akros-variant-table/akros-variants:gap-(--dimension-8)">
+                        <div className="sf-variant-table__purchase-cell @max-sf-variant-table/sf-variants:grid-cols-1! @max-sf-variant-table/sf-variants:gap-(--dimension-8)">
                           {item.quantityStep && (
                             <small className="col-span-full text-fg-secondary">
                               {cs.product.wholePackagesMinimum(
@@ -835,7 +835,7 @@ export function ProductPurchaseForm({
                           ) : (
                             <span
                               aria-hidden="true"
-                              className="akros-variant-table__no-package @max-akros-variant-table/akros-variants:hidden"
+                              className="sf-variant-table__no-package @max-sf-variant-table/sf-variants:hidden"
                             >
                               —
                             </span>
@@ -848,7 +848,7 @@ export function ProductPurchaseForm({
                 {paginatedVariants.length === 0 && (
                   <Table.Row>
                     <Table.Cell colSpan={6}>
-                      <p className="akros-variant-purchase__empty">
+                      <p className="sf-variant-purchase__empty">
                         {cs.product.noVariantsForFilters}
                       </p>
                     </Table.Cell>
@@ -861,7 +861,7 @@ export function ProductPurchaseForm({
         {visibleVariants.length > variantsPerPage && (
           <Pagination
             aria-label={cs.product.variantsPagination}
-            className="akros-pagination"
+            className="sf-pagination"
             count={visibleVariants.length}
             getPageUrl={() => "#product-variants"}
             onChange={setPage}

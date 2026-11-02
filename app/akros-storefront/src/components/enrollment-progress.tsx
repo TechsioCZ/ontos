@@ -145,7 +145,7 @@ export function EnrollmentProgress() {
   }
 
   return (
-    <div className="akros-auth-form">
+    <div className="sf-auth-form">
       <output>
         {progress.state === "FAILED"
           ? "Původní registrace byla zamítnuta. Můžete zahájit nové přijetí se stejným ověřeným účtem; již potvrzené údaje se zachovají a původní zamítnutý krok se neopakuje."

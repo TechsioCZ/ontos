@@ -2,7 +2,7 @@
 :root {
   --size-toast-width: min(var(--dimension-container-sm), calc(100vw - var(--dimension-48)));
   --padding-toast-root: var(--dimension-16);
-  --radius-toast-root: var(--akros-radius-md);
+  --radius-toast-root: var(--sf-radius-md);
   --text-toast-title: var(--text-sm);
   --text-toast-description: var(--text-sm);
   --font-weight-toast-title: var(--font-weight-bold);
@@ -19,6 +19,6 @@
   --size-icon-control-sm: var(--dimension-44);
 }
 
-[data-akros-cart-notification] {
+[data-sf-cart-notification] {
   --height-form-control-sm: var(--dimension-44);
 }

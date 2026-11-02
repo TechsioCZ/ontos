@@ -1,73 +1,73 @@
 /* Keep the app collection separate from the UI kit's default Iconify loader. */
 @plugin "@iconify/tailwind4" {
-  prefix: "akros-checkout-icon";
+  prefix: "sf-checkout-icon";
   square: false;
-  icon-sets: from-folder(akros-checkout, "./src/icons/akros-checkout");
+  icon-sets: from-folder(sf-checkout, "./src/icons/akros-checkout");
 }
 
-@utility token-icon-akros-checkout-cart {
-  @apply akros-checkout-icon-[akros-checkout--cart];
+@utility token-icon-sf-checkout-cart {
+  @apply sf-checkout-icon-[sf-checkout--cart];
 }
 
-@utility token-icon-akros-checkout-remove {
-  @apply akros-checkout-icon-[akros-checkout--remove];
+@utility token-icon-sf-checkout-remove {
+  @apply sf-checkout-icon-[sf-checkout--remove];
 }
 
-@utility token-icon-akros-checkout-shipping {
-  @apply akros-checkout-icon-[akros-checkout--shipping];
+@utility token-icon-sf-checkout-shipping {
+  @apply sf-checkout-icon-[sf-checkout--shipping];
 }
 
-@utility token-icon-akros-checkout-return {
-  @apply akros-checkout-icon-[akros-checkout--return];
+@utility token-icon-sf-checkout-return {
+  @apply sf-checkout-icon-[sf-checkout--return];
 }
 
-@utility token-icon-akros-account-disclosure {
-  @apply akros-checkout-icon-[akros-checkout--account-disclosure];
+@utility token-icon-sf-account-disclosure {
+  @apply sf-checkout-icon-[sf-checkout--account-disclosure];
 }
 
-@utility token-icon-akros-account-select-chevron {
-  @apply akros-checkout-icon-[akros-checkout--account-select-chevron];
-  @apply text-(length:--akros-account-select-glyph-size);
+@utility token-icon-sf-account-select-chevron {
+  @apply sf-checkout-icon-[sf-checkout--account-select-chevron];
+  @apply text-(length:--sf-account-select-glyph-size);
 }
 
 @plugin "@iconify/tailwind4" {
-  prefix: "akros-icon";
+  prefix: "sf-icon";
   square: true;
-  icon-sets: from-folder(akros, "./src/icons/akros");
+  icon-sets: from-folder(sf, "./src/icons/akros");
 }
 
 /* Preserve the non-square frames exported for the product detail actions. */
 @plugin "@iconify/tailwind4" {
-  prefix: "akros-product-icon";
+  prefix: "sf-product-icon";
   square: false;
-  icon-sets: from-folder(akros-product-actions, "./src/icons/akros-product-actions");
+  icon-sets: from-folder(sf-product-actions, "./src/icons/akros-product-actions");
 }
 
-@utility token-icon-akros-product-watch {
-  @apply akros-product-icon-[akros-product-actions--watch];
+@utility token-icon-sf-product-watch {
+  @apply sf-product-icon-[sf-product-actions--watch];
 }
 
-@utility token-icon-akros-product-question {
-  @apply akros-product-icon-[akros-product-actions--question];
+@utility token-icon-sf-product-question {
+  @apply sf-product-icon-[sf-product-actions--question];
 }
 
-@utility token-icon-akros-product-email {
-  @apply akros-product-icon-[akros-product-actions--email];
+@utility token-icon-sf-product-email {
+  @apply sf-product-icon-[sf-product-actions--email];
 }
 
-@utility token-icon-akros-facebook {
-  @apply akros-icon-[akros--facebook];
+@utility token-icon-sf-facebook {
+  @apply sf-icon-[sf--facebook];
 }
 
-@utility token-icon-akros-instagram {
-  @apply akros-icon-[akros--instagram];
+@utility token-icon-sf-instagram {
+  @apply sf-icon-[sf--instagram];
 }
 
-@utility token-icon-akros-youtube {
-  @apply akros-icon-[akros--youtube];
+@utility token-icon-sf-youtube {
+  @apply sf-icon-[sf--youtube];
 }
 
-@utility token-icon-akros-checkbox-selected {
-  @apply akros-icon-[akros--checkbox-selected];
-  @apply size-(--akros-variant-filter-checkbox-indicator-size);
+@utility token-icon-sf-checkbox-selected {
+  @apply sf-icon-[sf--checkbox-selected];
+  @apply size-(--sf-variant-filter-checkbox-indicator-size);
 }

@@ -47,7 +47,7 @@ describe("CatalogSidebar", () => {
   it("keeps the first steps link outside the scrolling catalog panel", () => {
     const { container } = render(<CatalogSidebar categories={[]} />);
     const help = screen.getByRole("navigation", { name: cs.catalog.recommendations });
-    expect(container.querySelector(".akros-sidebar__desktop")?.contains(help)).toBe(false);
+    expect(container.querySelector(".sf-sidebar__desktop")?.contains(help)).toBe(false);
     expect(within(help).getByRole("heading", { name: cs.catalog.recommendations })).toBeTruthy();
     expect(
       within(help).getByRole("link", { name: cs.catalog.firstSteps }).getAttribute("href"),
@@ -121,8 +121,8 @@ describe("CatalogSidebar", () => {
       .filter((button) => button.getAttribute("aria-expanded") === "true");
 
     expect(currentLink.getAttribute("aria-current")).toBe("page");
-    expect(currentLink.getAttribute("data-akros-depth")).toBe("4");
-    expect(rootLink?.closest('[data-part="row"]')?.getAttribute("data-akros-depth")).toBe("0");
+    expect(currentLink.getAttribute("data-sf-depth")).toBe("4");
+    expect(rootLink?.closest('[data-part="row"]')?.getAttribute("data-sf-depth")).toBe("0");
     expect(expandedBranches).toHaveLength(6);
     expect(desktopNavigation.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
   });
@@ -149,7 +149,7 @@ describe("CatalogSidebar", () => {
     await waitFor(() => {
       expect(
         desktopNavigation.querySelector(
-          '[data-part="branch"][data-state="open"] > [data-akros-depth="0"]',
+          '[data-part="branch"][data-state="open"] > [data-sf-depth="0"]',
         ),
       ).not.toBeNull();
     });
@@ -167,6 +167,6 @@ describe("CatalogSidebar", () => {
     const categoryRow = categoryLink?.closest('[data-part="row"]');
 
     expect(categoryRow).not.toBeNull();
-    expect(categoryRow?.querySelector("[data-akros-branch-indicator]")).not.toBeNull();
+    expect(categoryRow?.querySelector("[data-sf-branch-indicator]")).not.toBeNull();
   });
 });

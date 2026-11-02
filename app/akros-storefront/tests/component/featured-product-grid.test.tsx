@@ -12,7 +12,7 @@ describe("FeaturedProductGrid", () => {
 
     const { container } = render(<FeaturedProductGrid products={products} />);
 
-    expect(container.firstElementChild?.classList.contains("akros-product-grid")).toBe(false);
+    expect(container.firstElementChild?.classList.contains("sf-product-grid")).toBe(false);
     expect(container.firstElementChild?.classList.contains("gap-x-5")).toBe(true);
     expect(container.firstElementChild?.classList.contains("px-4")).toBe(true);
 

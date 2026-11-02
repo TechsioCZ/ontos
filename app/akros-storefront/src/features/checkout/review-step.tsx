@@ -34,7 +34,7 @@ export function ReviewStep() {
   const blocked = quote ? !quote.canContinue : false;
   return (
     <form
-      data-akros-checkout-review
+      data-sf-checkout-review
       onSubmit={async (event) => {
         event.preventDefault();
         // A ref locks synchronously: a fast double/triple click never sends a second request.
@@ -56,7 +56,7 @@ export function ReviewStep() {
       <section className="rounded-sm bg-(--color-base) p-4 md:p-6" aria-labelledby="review-title">
         <h1
           id="review-title"
-          className="mb-4 text-(length:--akros-checkout-heading-size) leading-(--akros-checkout-heading-leading) font-medium"
+          className="mb-4 text-(length:--sf-checkout-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
         >
           Shrnutí objednávky
         </h1>
@@ -88,10 +88,7 @@ export function ReviewStep() {
           </div>
           <div className="flex flex-wrap items-center justify-between gap-4 py-4">
             <dt>Celková cena s DPH</dt>
-            <dd
-              className="text-(length:--akros-checkout-body-size) font-extrabold"
-              aria-live="polite"
-            >
+            <dd className="text-(length:--sf-checkout-body-size) font-extrabold" aria-live="polite">
               {formatPrice(totals.total, money)}
             </dd>
           </div>
@@ -100,12 +97,12 @@ export function ReviewStep() {
           <section aria-labelledby="billing-review-title">
             <h2
               id="billing-review-title"
-              className="mb-4 text-(length:--akros-checkout-heading-size) leading-(--akros-checkout-heading-leading) font-medium"
+              className="mb-4 text-(length:--sf-checkout-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
             >
               Fakturační údaje
             </h2>
             <AddressText address={draft.billing} />
-            <div className="text-sm leading-(--akros-checkout-body-leading)">
+            <div className="text-sm leading-(--sf-checkout-body-leading)">
               <p>{draft.email}</p>
               <p>{draft.company}</p>
               {draft.companyId && <p>IČ: {draft.companyId}</p>}
@@ -115,7 +112,7 @@ export function ReviewStep() {
           <section aria-labelledby="delivery-review-title">
             <h2
               id="delivery-review-title"
-              className="mb-4 text-(length:--akros-checkout-heading-size) leading-(--akros-checkout-heading-leading) font-medium"
+              className="mb-4 text-(length:--sf-checkout-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
             >
               Dodací údaje
             </h2>
@@ -128,8 +125,8 @@ export function ReviewStep() {
         <LinkButton
           as={StoreLink}
           href="/kosik/dodaci-udaje"
-          data-akros-checkout-action
-          className="leading-(--akros-checkout-heading-leading)"
+          data-sf-checkout-action
+          className="leading-(--sf-checkout-heading-leading)"
           variant="secondary"
           size="sm"
           uppercase
@@ -153,8 +150,8 @@ export function ReviewStep() {
           </p>
           <Button
             type="submit"
-            data-akros-checkout-action
-            className="leading-(--akros-checkout-heading-leading)"
+            data-sf-checkout-action
+            className="leading-(--sf-checkout-heading-leading)"
             variant="primary"
             size="sm"
             uppercase

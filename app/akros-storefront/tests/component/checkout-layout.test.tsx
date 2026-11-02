@@ -90,7 +90,7 @@ describe("checkout cart composition", () => {
     renderCart();
     await user.click(await screen.findByRole("button", { name: "Objednat bez registrace" }));
     expect(router.push).toHaveBeenCalledWith("/kosik/doprava-platba");
-    expect(window.sessionStorage.getItem("akros-checkout-guest")).toBe("true");
+    expect(window.sessionStorage.getItem("sf-checkout-guest")).toBe("true");
     expect(screen.getByRole("tab", { name: "Doprava a platba" }).hasAttribute("disabled")).toBe(
       false,
     );

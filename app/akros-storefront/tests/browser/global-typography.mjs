@@ -36,7 +36,7 @@ try {
   async function inspectFont(locator, label) {
     await locator.waitFor({ state: "visible" });
     const styles = await locator.evaluate((element) => {
-      element.setAttribute("data-akros-font-probe", "");
+      element.setAttribute("data-sf-font-probe", "");
       const style = getComputedStyle(element);
       return {
         text: element.textContent?.trim().slice(0, 90),
@@ -52,7 +52,7 @@ try {
       const { root } = await cdp.send("DOM.getDocument");
       const { nodeId } = await cdp.send("DOM.querySelector", {
         nodeId: root.nodeId,
-        selector: "[data-akros-font-probe]",
+        selector: "[data-sf-font-probe]",
       });
       const { fonts } = await cdp.send("CSS.getPlatformFontsForNode", { nodeId });
       const rendered = fonts.filter((font) => font.glyphCount > 0);
@@ -65,7 +65,7 @@ try {
           `${label}: expected actual Inter, got ${rendered.map((font) => font.familyName).join(", ")}`,
         );
     } finally {
-      await locator.evaluate((element) => element.removeAttribute("data-akros-font-probe"));
+      await locator.evaluate((element) => element.removeAttribute("data-sf-font-probe"));
     }
   }
 
@@ -88,19 +88,19 @@ try {
     });
     assert.equal(response.status(), name === "not-found" ? 404 : 200, route);
     if (name === "account") await page.locator("#account-firstName").waitFor();
-    if (name === "cart") await page.locator("[data-akros-cart-items] tbody tr").first().waitFor();
+    if (name === "cart") await page.locator("[data-sf-cart-items] tbody tr").first().waitFor();
     await page.evaluate(() => document.fonts.ready);
     for (const width of [1920, 390]) {
       await page.setViewportSize({ width, height: 1000 });
       const sample = page
         .locator(
-          "main h1:not(.sr-only), main h2:not(.sr-only), [data-akros-checkout] h1:not(.sr-only), .akros-catalog-product-card__name",
+          "main h1:not(.sr-only), main h2:not(.sr-only), [data-sf-checkout] h1:not(.sr-only), .sf-catalog-product-card__name",
         )
         .filter({ visible: true })
         .first();
       await inspectFont(sample, `${name}-${width}-content`);
       if (name === "not-found") {
-        const number = page.locator(".akros-not-found__code > span").first();
+        const number = page.locator(".sf-not-found__code > span").first();
         await inspectFont(number, `not-found-${width}-black`);
         assert.equal(
           await number.evaluate((element) => getComputedStyle(element).fontWeight),
@@ -108,10 +108,10 @@ try {
         );
       }
       if (width === 1920)
-        await inspectFont(page.locator(".akros-header__utility-links a").first(), `${name}-header`);
+        await inspectFont(page.locator(".sf-header__utility-links a").first(), `${name}-header`);
       const metrics = await page.evaluate(() => ({
         overflow: Math.max(0, document.documentElement.scrollWidth - innerWidth),
-        font: getComputedStyle(document.documentElement).getPropertyValue("--font-akros").trim(),
+        font: getComputedStyle(document.documentElement).getPropertyValue("--font-sf").trim(),
       }));
       results.pages.push({ name, width, ...metrics });
       if (metrics.overflow)
@@ -171,10 +171,7 @@ try {
   await page.waitForFunction(
     () => document.querySelector('input[name="q"][type="hidden"]')?.value === "vruty",
   );
-  await inspectFont(
-    page.locator("[data-akros-search-result-label]").first(),
-    "mobile-search-result",
-  );
+  await inspectFont(page.locator("[data-sf-search-result-label]").first(), "mobile-search-result");
   if (artifacts) await page.screenshot({ path: join(artifacts, "mobile-search.png") });
   assert.deepEqual(results.failures, []);
   console.log(

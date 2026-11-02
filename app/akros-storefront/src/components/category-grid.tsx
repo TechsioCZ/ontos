@@ -8,12 +8,12 @@ export function CategoryGrid({ categories }: { categories: CatalogCategory[] }) 
   if (categories.length === 0) return null;
 
   return (
-    <div className="akros-category-grid">
+    <div className="sf-category-grid">
       {categories.map((category) => {
         const image = categoryImage(category);
         return (
           <StoreLink
-            className="akros-category-card"
+            className="sf-category-card"
             href={`/kategorie/${category.slug}`}
             key={category.id}
           >

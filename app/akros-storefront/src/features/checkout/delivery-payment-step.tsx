@@ -41,13 +41,13 @@ export function DeliveryPaymentStep() {
       }}
     >
       <div
-        data-akros-checkout-methods
-        className="grid gap-(--dimension-60) rounded-sm bg-(--color-base) p-(--akros-checkout-panel-padding)"
+        data-sf-checkout-methods
+        className="grid gap-(--dimension-60) rounded-sm bg-(--color-base) p-(--sf-checkout-panel-padding)"
       >
         <section aria-labelledby="delivery-title">
           <h1
             id="delivery-title"
-            className="mb-4 text-(length:--akros-checkout-heading-size) leading-(--akros-checkout-heading-leading) font-medium"
+            className="mb-4 text-(length:--sf-checkout-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
           >
             Doprava
           </h1>
@@ -81,7 +81,7 @@ export function DeliveryPaymentStep() {
                       </RadioGroup.ItemDescription>
                     </RadioGroup.ItemContent>
                     <span
-                      className={`col-start-4 row-start-1 whitespace-nowrap text-sm ${price === 0 ? "text-(--color-fg-status-success) uppercase" : "font-extrabold text-(--akros-checkout-muted)"}`}
+                      className={`col-start-4 row-start-1 whitespace-nowrap text-sm ${price === 0 ? "text-(--color-fg-status-success) uppercase" : "font-extrabold text-(--sf-checkout-muted)"}`}
                     >
                       {price === 0 ? "Zdarma" : formatCheckoutPrice(price, money)}
                     </span>
@@ -104,7 +104,7 @@ export function DeliveryPaymentStep() {
         <section aria-labelledby="payment-title">
           <h2
             id="payment-title"
-            className="mb-4 text-(length:--akros-checkout-payment-heading-size) leading-(--akros-checkout-heading-leading) font-medium"
+            className="mb-4 text-(length:--sf-checkout-payment-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
           >
             Platba
           </h2>
@@ -123,8 +123,8 @@ export function DeliveryPaymentStep() {
           href="/kosik"
           variant="secondary"
           size="sm"
-          data-akros-checkout-action
-          className="leading-(--akros-checkout-heading-leading)"
+          data-sf-checkout-action
+          className="leading-(--sf-checkout-heading-leading)"
           uppercase
         >
           Vrátit se o krok zpět
@@ -134,8 +134,8 @@ export function DeliveryPaymentStep() {
             type="submit"
             variant="primary"
             size="sm"
-            data-akros-checkout-action
-            className="leading-(--akros-checkout-heading-leading)"
+            data-sf-checkout-action
+            className="leading-(--sf-checkout-heading-leading)"
             uppercase
             disabled={blocked}
             aria-describedby={blocked ? "methods-blocked" : undefined}

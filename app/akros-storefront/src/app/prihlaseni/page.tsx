@@ -9,14 +9,14 @@ export const metadata: Metadata = { title: "Přihlášení" };
 export default function LoginPage() {
   return (
     <StorefrontWideShell>
-      <section className="akros-auth-page">
-        <div className="akros-auth-card">
+      <section className="sf-auth-page">
+        <div className="sf-auth-card">
           <header>
             <h1>Přihlášení partnera</h1>
             <p>Vítejte zpět v e-shopu AKROS</p>
           </header>
           <LoginForm />
-          <div className="akros-auth-divider">
+          <div className="sf-auth-divider">
             <span>nebo</span>
           </div>
           <p>

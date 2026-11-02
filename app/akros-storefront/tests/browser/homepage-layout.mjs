@@ -37,7 +37,7 @@ try {
       if (document.documentElement.scrollWidth > document.documentElement.clientWidth + 1) {
         errors.push("Page scrolls horizontally");
       }
-      const carriers = [...document.querySelectorAll(".akros-footer__asset-row--carriers img")];
+      const carriers = [...document.querySelectorAll(".sf-footer__asset-row--carriers img")];
       if (
         innerWidth > 1100 &&
         carriers.some(
@@ -48,8 +48,8 @@ try {
       ) {
         errors.push("Desktop carrier logos unexpectedly wrap");
       }
-      for (const row of document.querySelectorAll(".akros-product-card__stock-row")) {
-        const card = row.closest(".akros-product-card").getBoundingClientRect();
+      for (const row of document.querySelectorAll(".sf-product-card__stock-row")) {
+        const card = row.closest(".sf-product-card").getBoundingClientRect();
         for (const child of row.children) {
           const bounds = child.getBoundingClientRect();
           if (bounds.left < card.left - 0.5 || bounds.right > card.right + 0.5) {
@@ -57,7 +57,7 @@ try {
           }
         }
       }
-      const carousel = document.querySelector("[data-akros-home-carousel]");
+      const carousel = document.querySelector("[data-sf-home-carousel]");
       const buttons = carousel.querySelectorAll("button");
       for (const button of buttons) {
         const bounds = button.getBoundingClientRect();
@@ -77,7 +77,7 @@ try {
   }
 
   await page.setViewportSize({ width: 320, height: 1000 });
-  const carousel = page.locator("[data-akros-home-carousel]");
+  const carousel = page.locator("[data-sf-home-carousel]");
   try {
     for (let index = 0; index < 6; index++) {
       const indicator = carousel.locator(`[data-part="indicator"][data-index="${index}"]`);

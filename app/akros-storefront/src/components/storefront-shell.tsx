@@ -23,14 +23,14 @@ export function StorefrontShell({
   const pathname = useStorePathname();
   const unconfigured = market?.configured === false && isCatalogPath(pathname);
   return (
-    <div className="akros-shell">
+    <div className="sf-shell">
       <SiteHeader />
-      <div className="akros-page-grid">
+      <div className="sf-page-grid">
         <CatalogSidebar
           activeSlug={activeCategorySlug}
           categories={getSidebarCategories(activeCategorySlug)}
         />
-        <main className="akros-main">{unconfigured ? <MarketNotConfigured /> : children}</main>
+        <main className="sf-main">{unconfigured ? <MarketNotConfigured /> : children}</main>
       </div>
       <SiteFooter />
     </div>
@@ -46,11 +46,9 @@ export function StorefrontWideShell({
 }) {
   const { getSidebarCategories } = useCatalog();
   return (
-    <div className="akros-shell">
+    <div className="sf-shell">
       <SiteHeader />
-      <main
-        className={fullBleed ? "akros-wide-main akros-wide-main--full-bleed" : "akros-wide-main"}
-      >
+      <main className={fullBleed ? "sf-wide-main sf-wide-main--full-bleed" : "sf-wide-main"}>
         {children}
       </main>
       <SiteFooter />

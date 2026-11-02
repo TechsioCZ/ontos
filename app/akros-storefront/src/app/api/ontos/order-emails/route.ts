@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     );
   try {
     const params = new URLSearchParams({
-      source: "akros-order",
+      source: "sf-order",
       subjectNumber: orderNumber,
       recipient: email,
     });

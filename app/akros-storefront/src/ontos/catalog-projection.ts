@@ -242,7 +242,8 @@ export function projectProducts(body: Raw): ProductPage {
               ...tiers,
             ]),
         parameters: parameters(v.parameters),
-        imageSrc: safeImage(v.imageSrc),
+        // Variant photos reference the parent product's gallery (`media:<asset>`), served like the gallery.
+        imageSrc: productMediaPath(text(p.id), text(v.imageSrc)) ?? safeImage(v.imageSrc),
         ...flags(v),
       };
     };

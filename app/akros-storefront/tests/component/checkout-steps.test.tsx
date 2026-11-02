@@ -57,7 +57,7 @@ it("shows initially empty editable addresses and blocks incomplete delivery data
   expect(router.push).not.toHaveBeenCalled();
   expect(screen.getByText("Zadejte platný e-mail.")).toBeTruthy();
   await user.type(email, "entered@example.test");
-  expect(JSON.parse(sessionStorage.getItem("akros-checkout-v2")!).draft.email).toBe(
+  expect(JSON.parse(sessionStorage.getItem("sf-checkout-v2")!).draft.email).toBe(
     "entered@example.test",
   );
 });

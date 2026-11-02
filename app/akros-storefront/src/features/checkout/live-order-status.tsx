@@ -75,7 +75,7 @@ export function LiveOrderStatus({
   }, [orderId, clientRequestId]);
 
   return (
-    <output aria-live="polite" className="block text-sm" data-akros-live-order-status="">
+    <output aria-live="polite" className="block text-sm" data-sf-live-order-status="">
       {state.kind === "loading" && "Načítám aktuální stav objednávky…"}
       {state.kind === "missing" && "Stav objednávky zatím není k dispozici."}
       {state.kind === "error" && "Aktuální stav objednávky se nepodařilo načíst. Zkusíme to znovu."}

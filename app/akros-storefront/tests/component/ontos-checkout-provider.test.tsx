@@ -97,7 +97,7 @@ beforeEach(() => {
     }),
   );
   sessionStorage.setItem(
-    "akros-checkout-v2",
+    "sf-checkout-v2",
     JSON.stringify({
       version: 1,
       draft: {
@@ -245,7 +245,7 @@ describe("OntOS submission recovery", () => {
     async ({ lineChange, draftChange }) => {
       const user = userEvent.setup();
       const originalCart = JSON.parse(localStorage.getItem("akros-demo-cart-v3") ?? "null");
-      const originalDraft = JSON.parse(sessionStorage.getItem("akros-checkout-v2") ?? "null").draft;
+      const originalDraft = JSON.parse(sessionStorage.getItem("sf-checkout-v2") ?? "null").draft;
       const requests: string[] = [];
       let quoteChecks = 0;
       vi.stubGlobal(
@@ -435,7 +435,7 @@ describe("OntOS submission recovery", () => {
     expect(url).toBe("/api/ontos/orders");
     const body = JSON.parse(String(init?.body));
     expect(body.draft.email).toBe("verified@example.test");
-    expect(JSON.parse(sessionStorage.getItem("akros-guest-order") ?? "null")).toEqual({
+    expect(JSON.parse(sessionStorage.getItem("sf-guest-order") ?? "null")).toEqual({
       orderId: "guest-order-1",
       orderNumber: "OBJ-2026-0100",
       clientRequestId: body.clientRequestId,

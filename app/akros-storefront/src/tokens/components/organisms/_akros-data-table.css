@@ -1,59 +1,59 @@
 @theme static {
-  --container-akros-variant-table: 1000px;
-  --container-akros-variant-list: 640px;
+  --container-sf-variant-table: 1000px;
+  --container-sf-variant-list: 640px;
 }
 
 :root {
-  --akros-variant-table-border-color: var(--color-base-dark);
-  --akros-variant-table-button-font-size: 10px;
-  --akros-variant-table-cell-separator-color: var(--color-border-primary);
-  --akros-variant-table-header-bg: var(--color-base-dark);
-  --akros-variant-table-header-fg: var(--color-base-light);
-  --akros-variant-table-min-width: var(--container-akros-variant-table);
-  --akros-variant-table-row-gap: var(--dimension-6);
-  --akros-variant-table-row-radius: var(--radius-sm);
-  --akros-variant-table-stock-fg: var(--color-fg-status-success);
-  --akros-variant-table-compact-quantity-width: 152px;
-  --akros-variant-table-compact-button-line-height: 1.2;
-  --akros-variant-table-list-order-width: 320px;
-  --akros-variant-table-list-columns: minmax(0, 1fr) calc(var(--dimension-96) + var(--dimension-48))
-    var(--akros-variant-table-list-order-width);
+  --sf-variant-table-border-color: var(--color-base-dark);
+  --sf-variant-table-button-font-size: 10px;
+  --sf-variant-table-cell-separator-color: var(--color-border-primary);
+  --sf-variant-table-header-bg: var(--color-base-dark);
+  --sf-variant-table-header-fg: var(--color-base-light);
+  --sf-variant-table-min-width: var(--container-sf-variant-table);
+  --sf-variant-table-row-gap: var(--dimension-6);
+  --sf-variant-table-row-radius: var(--radius-sm);
+  --sf-variant-table-stock-fg: var(--color-fg-status-success);
+  --sf-variant-table-compact-quantity-width: 152px;
+  --sf-variant-table-compact-button-line-height: 1.2;
+  --sf-variant-table-list-order-width: 320px;
+  --sf-variant-table-list-columns: minmax(0, 1fr) calc(var(--dimension-96) + var(--dimension-48))
+    var(--sf-variant-table-list-order-width);
 }
 
-.akros-variant-data-table {
+.sf-variant-data-table {
   --border-width-data-table: 0;
   --color-data-table-border: transparent;
-  --color-data-table-header-bg: var(--akros-variant-table-header-bg);
+  --color-data-table-header-bg: var(--sf-variant-table-header-bg);
   --color-data-table-pagination-bg: var(--color-base);
   --color-data-table-pagination-fg: var(--color-fg-primary);
   --color-table-bg: transparent;
-  --color-table-header-bg: var(--akros-variant-table-header-bg);
-  --color-table-header-fg: var(--akros-variant-table-header-fg);
+  --color-table-header-bg: var(--sf-variant-table-header-bg);
+  --color-table-header-fg: var(--sf-variant-table-header-fg);
   --padding-button-x-sm: var(--dimension-6);
   --radius-data-table: 0;
-  --text-button-sm: var(--akros-variant-table-button-font-size);
+  --text-button-sm: var(--sf-variant-table-button-font-size);
 }
 
-.akros-variant-data-table__table thead {
+.sf-variant-data-table__table thead {
   --text-table-sm: 10px;
 }
 
-.akros-variant-table__quantity-control {
+.sf-variant-table__quantity-control {
   --padding-input-md: var(--dimension-0) var(--dimension-4);
   --padding-numeric-input-input-sm: var(--dimension-4);
 }
 
 /* Keep these boundaries aligned with the named container tokens above. */
-@container akros-variants (width < 1000px) {
-  .akros-variant-data-table {
-    --akros-variant-table-min-width: var(--dimension-0);
-    --akros-variant-table-row-gap: var(--dimension-0);
-    --akros-variant-table-button-font-size: var(--text-sm);
+@container sf-variants (width < 1000px) {
+  .sf-variant-data-table {
+    --sf-variant-table-min-width: var(--dimension-0);
+    --sf-variant-table-row-gap: var(--dimension-0);
+    --sf-variant-table-button-font-size: var(--text-sm);
     --height-form-control-sm: var(--dimension-48);
     --text-numeric-input-sm: var(--text-base);
   }
 
-  .akros-variant-table__buy-button {
+  .sf-variant-table__buy-button {
     --height-form-control-sm: auto;
     --padding-button-sm: var(--dimension-6);
   }

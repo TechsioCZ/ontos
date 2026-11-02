@@ -54,7 +54,7 @@ function MobileNavigation({ pathname }: { pathname: string }) {
   }, []);
 
   return (
-    <div className="akros-header__mobile-menu">
+    <div className="sf-header__mobile-menu">
       <Drawer
         closeOnEscape
         closeOnInteractOutside
@@ -78,7 +78,7 @@ function MobileNavigation({ pathname }: { pathname: string }) {
         <Drawer.Portal>
           <Drawer.Backdrop />
           <Drawer.Positioner>
-            <Drawer.Content data-akros-mobile-menu="" draggable={false}>
+            <Drawer.Content data-sf-mobile-menu="" draggable={false}>
               <Drawer.Header className="flex-row items-center justify-between">
                 <Drawer.Title>{cs.header.menu}</Drawer.Title>
                 <Drawer.CloseTrigger
@@ -88,13 +88,13 @@ function MobileNavigation({ pathname }: { pathname: string }) {
                 />
               </Drawer.Header>
               <Drawer.Body
-                data-akros-mobile-menu-body=""
+                data-sf-mobile-menu-body=""
                 onClick={(event) => {
                   if (isElement(event.target) && event.target.closest("a[href]")) setOpen(false);
                 }}
               >
                 <section>
-                  <h3 className="akros-mobile-menu__section-title">{cs.catalog.title}</h3>
+                  <h3 className="sf-mobile-menu__section-title">{cs.catalog.title}</h3>
                   <CatalogNavigation
                     activeSlug={activeSlug}
                     categories={categories}
@@ -104,13 +104,8 @@ function MobileNavigation({ pathname }: { pathname: string }) {
                   <CatalogHelpNavigation />
                 </section>
                 <section>
-                  <h3 className="akros-mobile-menu__section-title">
-                    {cs.header.personalNavigation}
-                  </h3>
-                  <nav
-                    aria-label={cs.header.personalNavigation}
-                    className="akros-mobile-menu__links"
-                  >
+                  <h3 className="sf-mobile-menu__section-title">{cs.header.personalNavigation}</h3>
+                  <nav aria-label={cs.header.personalNavigation} className="sf-mobile-menu__links">
                     <LinkButton
                       as={StoreLink}
                       block
@@ -147,8 +142,8 @@ function MobileNavigation({ pathname }: { pathname: string }) {
                   </nav>
                 </section>
                 <section>
-                  <h3 className="akros-mobile-menu__section-title">{cs.header.information}</h3>
-                  <nav aria-label="Mobilní navigace" className="akros-mobile-menu__links">
+                  <h3 className="sf-mobile-menu__section-title">{cs.header.information}</h3>
+                  <nav aria-label="Mobilní navigace" className="sf-mobile-menu__links">
                     {utilityLinks(cs).map((item) => (
                       <LinkButton
                         key={item.href}
@@ -181,10 +176,10 @@ export function SiteHeader() {
   const cs = useDictionary();
 
   return (
-    <header className="akros-header">
-      <div className="akros-header__utility-bar">
-        <div className="akros-header__utility">
-          <nav className="akros-header__utility-links" aria-label="Pomocná navigace">
+    <header className="sf-header">
+      <div className="sf-header__utility-bar">
+        <div className="sf-header__utility">
+          <nav className="sf-header__utility-links" aria-label="Pomocná navigace">
             {utilityLinks(cs).map((item) => (
               <LinkButton
                 key={item.href}
@@ -203,7 +198,7 @@ export function SiteHeader() {
           <MarketSwitcher />
           <LinkButton
             as={StoreLink}
-            data-akros-header-login
+            data-sf-header-login
             href="/prihlaseni"
             icon="icon-[mdi--lock]"
             iconSize="sm"
@@ -215,13 +210,13 @@ export function SiteHeader() {
         </div>
       </div>
 
-      <div className="akros-header__main">
-        <div className="akros-header__top-row">
+      <div className="sf-header__main">
+        <div className="sf-header__top-row">
           <MobileNavigation key={pathname} pathname={pathname} />
-          <StoreLink className="akros-brand" href="/" aria-label={cs.footer.homeLinkLabel}>
+          <StoreLink className="sf-brand" href="/" aria-label={cs.footer.homeLinkLabel}>
             <Image
               alt=""
-              className="akros-brand__logo"
+              className="sf-brand__logo"
               height={61}
               priority
               src="/akros/logo-akros.png"
@@ -229,10 +224,10 @@ export function SiteHeader() {
             />
           </StoreLink>
 
-          <div className="akros-header__cart-actions flex shrink-0 items-center gap-3">
+          <div className="sf-header__cart-actions flex shrink-0 items-center gap-3">
             <nav
               aria-label={cs.header.personalNavigation}
-              className="akros-header__personal-navigation flex items-center"
+              className="sf-header__personal-navigation flex items-center"
             >
               <LinkButton
                 as={StoreLink}
@@ -258,7 +253,7 @@ export function SiteHeader() {
             <MiniCart />
           </div>
         </div>
-        <div className="akros-header__search">
+        <div className="sf-header__search">
           <HeaderSearch />
         </div>
       </div>

@@ -7,8 +7,8 @@ export const metadata: Metadata = { title: "Dokončení registrace" };
 export default function EnrollmentProgressPage() {
   return (
     <StorefrontWideShell>
-      <section className="akros-auth-page">
-        <div className="akros-auth-card">
+      <section className="sf-auth-page">
+        <div className="sf-auth-card">
           <header>
             <h1>Dokončení registrace</h1>
             <p>Stav vašeho účtu v tomto obchodě</p>

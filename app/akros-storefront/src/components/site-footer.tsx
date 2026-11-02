@@ -45,34 +45,30 @@ const customerLinks = (cs: Dictionary) =>
 export function SiteFooter() {
   const cs = useDictionary();
   return (
-    <Footer className="akros-footer" direction="vertical" layout="col" sectionFlow="col" size="sm">
-      <div className="akros-footer__inner" id="footer">
-        <Footer.Container className="akros-footer__top">
-          <Footer.Section className="akros-footer__section akros-footer__brand-column">
-            <StoreLink
-              className="akros-footer__brand"
-              href="/"
-              aria-label={cs.footer.homeLinkLabel}
-            >
+    <Footer className="sf-footer" direction="vertical" layout="col" sectionFlow="col" size="sm">
+      <div className="sf-footer__inner" id="footer">
+        <Footer.Container className="sf-footer__top">
+          <Footer.Section className="sf-footer__section sf-footer__brand-column">
+            <StoreLink className="sf-footer__brand" href="/" aria-label={cs.footer.homeLinkLabel}>
               <Image
                 alt="AKROS"
-                className="akros-footer__logo"
+                className="sf-footer__logo"
                 fill
                 loading="lazy"
                 sizes="161px"
                 src="/akros/footer/logo.png"
               />
             </StoreLink>
-            <div className="akros-footer__contact">
+            <div className="sf-footer__contact">
               <Footer.Title>{cs.footer.contact}</Footer.Title>
-              <div className="akros-footer__contact-links">
-                <Footer.Link className="akros-footer__contact-link" href="tel:+420737591849">
+              <div className="sf-footer__contact-links">
+                <Footer.Link className="sf-footer__contact-link" href="tel:+420737591849">
                   <FooterAssetImage
                     asset={{ alt: "", height: 26, src: "/akros/footer/phone.png", width: 26 }}
                   />
                   <span>737 591 849</span>
                 </Footer.Link>
-                <Footer.Link className="akros-footer__contact-link" href="mailto:akros@akros.cz">
+                <Footer.Link className="sf-footer__contact-link" href="mailto:akros@akros.cz">
                   <FooterAssetImage
                     asset={{ alt: "", height: 25, src: "/akros/footer/email.png", width: 25 }}
                   />
@@ -82,7 +78,7 @@ export function SiteFooter() {
             </div>
           </Footer.Section>
 
-          <Footer.Section className="akros-footer__section">
+          <Footer.Section className="sf-footer__section">
             <Footer.Title>{cs.footer.customerInformation}</Footer.Title>
             <nav aria-label={cs.footer.customerInformation}>
               <Footer.List>
@@ -90,7 +86,7 @@ export function SiteFooter() {
                   <li key={`${item.href}-${item.label}`}>
                     <Footer.Link
                       as={StoreLink}
-                      className="akros-footer__customer-link underline"
+                      className="sf-footer__customer-link underline"
                       href={item.href}
                     >
                       {item.label}
@@ -101,9 +97,9 @@ export function SiteFooter() {
             </nav>
           </Footer.Section>
 
-          <Footer.Section className="akros-footer__section">
+          <Footer.Section className="sf-footer__section">
             <Footer.Title>{cs.footer.reliableShop}</Footer.Title>
-            <div className="akros-footer__trust-badge">
+            <div className="sf-footer__trust-badge">
               <FooterAssetImage
                 asset={{
                   alt: cs.footer.heurekaBadge,
@@ -118,14 +114,14 @@ export function SiteFooter() {
 
         <Footer.Divider />
 
-        <Footer.Bottom className="akros-footer__bottom">
-          <Footer.Text className="akros-footer__copyright">
+        <Footer.Bottom className="sf-footer__bottom">
+          <Footer.Text className="sf-footer__copyright">
             {cs.footer.copyright} / {cs.footer.createdBy}{" "}
             <Footer.Link href="https://www.web-revolution.cz/internetovy-obchod-eshop">
               Web Revolution
             </Footer.Link>
           </Footer.Text>
-          <div className="akros-footer__bottom-links">
+          <div className="sf-footer__bottom-links">
             <Footer.Link as={StoreLink} href="/gdpr#cookies">
               {cs.footer.cookies}
             </Footer.Link>

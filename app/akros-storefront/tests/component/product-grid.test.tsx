@@ -20,7 +20,7 @@ describe("ProductGrid", () => {
       );
       const { container } = render(<ProductGrid columns={columns} products={[product]} />);
 
-      expect(container.firstElementChild?.getAttribute("data-akros-product-listing")).toBe(columns);
+      expect(container.firstElementChild?.getAttribute("data-sf-product-listing")).toBe(columns);
       expect(screen.getAllByRole("article")).toHaveLength(1);
       expect(screen.getAllByRole("link", { name: "Vybrat variantu" })).toHaveLength(1);
       expect(screen.getByRole("img").getAttribute("sizes")).toContain("max-width: 359px");
@@ -35,7 +35,7 @@ describe("ProductGrid", () => {
       );
       const { container } = render(<ProductGrid columns={columns} products={[product]} />);
 
-      expect(container.firstElementChild?.hasAttribute("data-akros-product-listing")).toBe(false);
+      expect(container.firstElementChild?.hasAttribute("data-sf-product-listing")).toBe(false);
       expect(screen.getByRole("img").getAttribute("sizes")).toContain("max-width: 430px");
     },
   );
@@ -45,7 +45,7 @@ describe("ProductGrid", () => {
 
     expect(product).toBeDefined();
     const { container } = render(<ProductGrid products={[toProductSummary(product!)]} />);
-    expect(container.firstElementChild?.className).toBe("akros-product-grid");
+    expect(container.firstElementChild?.className).toBe("sf-product-grid");
 
     expect(screen.getByText(/^od 10,36 Kč$/)).toBeDefined();
     expect(screen.getByText("Skladem")).toBeDefined();
@@ -99,7 +99,7 @@ describe("ProductGrid", () => {
       <ProductGrid action="detail" products={[toProductSummary(product)]} />,
     );
 
-    expect(container.querySelector("[data-akros-product-tags]")).toBeNull();
+    expect(container.querySelector("[data-sf-product-tags]")).toBeNull();
     expect(screen.queryByText("Novinka")).toBeNull();
     expect(screen.queryByText("Video")).toBeNull();
   });
@@ -115,7 +115,7 @@ describe("ProductGrid", () => {
     expect(screen.getByText("Doporučujeme")).toBeDefined();
     expect(screen.getByText("Doprodej")).toBeDefined();
     expect(screen.queryByText("Akce")).toBeNull();
-    expect(container.querySelector("[data-akros-product-tags]")?.children).toHaveLength(2);
+    expect(container.querySelector("[data-sf-product-tags]")?.children).toHaveLength(2);
     expect(screen.getByRole("link", { name: "Vybrat variantu" }).getAttribute("href")).toBe(
       `/produkt/${product.slug}`,
     );

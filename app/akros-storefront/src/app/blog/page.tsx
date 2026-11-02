@@ -12,8 +12,8 @@ export const metadata: Metadata = { title: "Blog" };
 export default function BlogPage() {
   return (
     <StorefrontWideShell>
-      <article className="akros-blog-page">
-        <section className="akros-blog-featured" aria-labelledby="featured-article-title">
+      <article className="sf-blog-page">
+        <section className="sf-blog-featured" aria-labelledby="featured-article-title">
           <Image
             alt="Nerezové šrouby třídy A2 a A4"
             height={800}
@@ -24,7 +24,7 @@ export default function BlogPage() {
             width={1200}
           />
           <div>
-            <p className="akros-blog-meta">
+            <p className="sf-blog-meta">
               <Badge size="sm" variant="primary">
                 NÁVODY A RADY
               </Badge>
@@ -38,19 +38,19 @@ export default function BlogPage() {
               venkovní terasu lepší A2, nebo kyselinovzdorná A4? Podíváme se na odolnost vůči solím
               a praktické příklady z praxe.
             </p>
-            <div className="akros-blog-featured__actions">
+            <div className="sf-blog-featured__actions">
               <PrimaryLinkButton href="#nejnovejsi">Přečíst celý článek</PrimaryLinkButton>
               <span>Doba čtení: 6 min</span>
             </div>
           </div>
         </section>
 
-        <div className="akros-blog-layout" id="nejnovejsi">
+        <div className="sf-blog-layout" id="nejnovejsi">
           <section aria-labelledby="latest-posts-title">
             <h2 id="latest-posts-title">Nejnovější příspěvky</h2>
-            <div className="akros-blog-grid">
+            <div className="sf-blog-grid">
               {blogArticles.map((article) => (
-                <article className="akros-blog-card" key={article.title}>
+                <article className="sf-blog-card" key={article.title}>
                   <Image
                     alt=""
                     height={360}
@@ -59,8 +59,8 @@ export default function BlogPage() {
                     src={article.imageSrc}
                     width={864}
                   />
-                  <div className="akros-blog-card__content">
-                    <p className="akros-blog-meta">
+                  <div className="sf-blog-card__content">
+                    <p className="sf-blog-meta">
                       <Badge size="sm" variant="primary">
                         {article.category.toUpperCase()}
                       </Badge>
@@ -74,7 +74,7 @@ export default function BlogPage() {
               ))}
             </div>
           </section>
-          <aside className="akros-blog-sidebar" aria-label="Nástroje blogu">
+          <aside className="sf-blog-sidebar" aria-label="Nástroje blogu">
             <section>
               <h2>Hledat v článcích</h2>
               <Input

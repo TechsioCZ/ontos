@@ -37,8 +37,8 @@ interface PlacedOrder {
   orderId: string;
 }
 
-const draftKey = "akros-checkout-v2";
-const guestCheckoutKey = "akros-checkout-guest";
+const draftKey = "sf-checkout-v2";
+const guestCheckoutKey = "sf-checkout-guest";
 type DraftUpdate = (draft: CheckoutDraft) => CheckoutDraft;
 type CheckoutStorage = Pick<Storage, "getItem" | "setItem">;
 

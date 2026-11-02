@@ -13,7 +13,7 @@ export function MarketNotConfigured() {
       <h1 className="m-0 text-xl font-bold" id="market-not-configured-title">
         {dictionary.market.notConfiguredTitle}
       </h1>
-      <p className="akros-empty-state m-0">{dictionary.market.notConfiguredDescription}</p>
+      <p className="sf-empty-state m-0">{dictionary.market.notConfiguredDescription}</p>
     </section>
   );
 }

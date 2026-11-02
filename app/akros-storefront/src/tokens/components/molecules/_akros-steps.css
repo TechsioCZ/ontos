@@ -1,5 +1,5 @@
 /* Checkout uses numbered, neutral steps; other Steps consumers retain kit defaults. */
-[data-akros-checkout] {
+[data-sf-checkout] {
   --color-steps-indicator-bg: var(--color-neutral-400);
   --color-steps-indicator-bg-current: var(--color-base-dark);
   --color-steps-indicator-bg-complete: var(--color-base-dark);

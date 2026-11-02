@@ -45,7 +45,7 @@ try {
   }
 
   await page.goto(new URL("/", baseUrl).href, { waitUntil: "networkidle" });
-  const carousel = page.locator("[data-akros-home-carousel]");
+  const carousel = page.locator("[data-sf-home-carousel]");
   const dot = carousel.locator('[data-part="indicator"] span').first();
   const previous = carousel.locator('[data-part="prev-trigger"]');
   for (const [width, size] of [
@@ -66,15 +66,15 @@ try {
   }
 
   await page.setViewportSize({ width: 1920, height: 1000 });
-  const cardActions = page.locator("[data-akros-product-actions]").first();
+  const cardActions = page.locator("[data-sf-product-actions]").first();
   const cardAction = cardActions.locator("a, button").first();
   assert.equal(await style(cardAction, "fontWeight"), "700");
   await probe(cardActions, { "--font-weight-button": "600" }, async () => {
     assert.equal(await style(cardAction, "fontWeight"), "600");
   });
-  const card = page.locator(".akros-product-card").first();
+  const card = page.locator(".sf-product-card").first();
   assert.match(await style(card, "boxShadow"), /0px 2px 6px/);
-  const favorite = card.locator(".akros-product-card__favorite");
+  const favorite = card.locator(".sf-product-card__favorite");
   await probe(
     favorite,
     { "--color-button-fg-secondary-borderless": "rgb(12, 34, 56)" },
@@ -83,7 +83,7 @@ try {
     },
   );
   const stockRow = page
-    .locator(".akros-product-card__stock-row")
+    .locator(".sf-product-card__stock-row")
     .filter({ has: page.locator("span") })
     .first();
   const variantBadge = stockRow.locator("span");
@@ -101,8 +101,8 @@ try {
     },
   );
 
-  const trigger = page.locator(".akros-header__cart-trigger");
-  const personalNavigation = page.locator(".akros-header__personal-navigation");
+  const trigger = page.locator(".sf-header__cart-trigger");
+  const personalNavigation = page.locator(".sf-header__personal-navigation");
   await probe(
     personalNavigation,
     {
@@ -148,7 +148,7 @@ try {
     assert.equal(await style(trigger, "backgroundColor"), "rgb(12, 34, 56)");
   });
   await trigger.hover();
-  const preview = page.locator("[data-akros-mini-cart]");
+  const preview = page.locator("[data-sf-mini-cart]");
   await preview.waitFor({ state: "visible" });
   await probe(
     preview,
@@ -164,7 +164,7 @@ try {
   await page.keyboard.press("Escape");
 
   await page.goto(new URL("/kosik/doprava-platba", baseUrl).href, { waitUntil: "networkidle" });
-  const action = page.locator("[data-akros-checkout-action]").first();
+  const action = page.locator("[data-sf-checkout-action]").first();
   await action.waitFor({ state: "visible" });
   assert.equal(await style(action, "fontWeight"), "700");
   assert.equal(await style(action, "lineHeight"), "24px");
@@ -172,7 +172,7 @@ try {
     assert.equal(await style(action, "fontWeight"), "600");
   });
 
-  const methods = page.locator("[data-akros-checkout-methods]");
+  const methods = page.locator("[data-sf-checkout-methods]");
   for (const width of [1920, 640, 639, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     const method = methods.locator('[data-part="item"]').first();
@@ -216,7 +216,7 @@ try {
   await page.setViewportSize({ width: 1920, height: 1000 });
 
   await page.goto(new URL("/kosik", baseUrl).href, { waitUntil: "networkidle" });
-  const quantity = page.locator("[data-akros-cart-quantity]").first();
+  const quantity = page.locator("[data-sf-cart-quantity]").first();
   const input = quantity.locator("input");
   await input.waitFor({ state: "visible" });
   assert.equal(await style(input, "fontWeight"), "700");
@@ -236,7 +236,7 @@ try {
     },
   );
 
-  const carts = page.locator('[data-akros-cart-selector] [data-part="root"]');
+  const carts = page.locator('[data-sf-cart-selector] [data-part="root"]');
   const cartName = carts.locator('[data-part="item-text"]').first();
   for (const width of [1920, 390]) {
     await page.setViewportSize({ width, height: 1000 });
@@ -265,7 +265,7 @@ try {
       waitUntil: "networkidle",
     },
   );
-  const detailBadge = page.locator(".akros-product-detail__variant-badge");
+  const detailBadge = page.locator(".sf-product-detail__variant-badge");
   await probe(
     detailBadge,
     {
@@ -281,7 +281,7 @@ try {
   await page.goto(new URL("/produkt/hacek-na-popruh-48mm-an-8541-a2", baseUrl).href, {
     waitUntil: "networkidle",
   });
-  const detailFavorite = page.locator(".akros-product-detail__favorite");
+  const detailFavorite = page.locator(".sf-product-detail__favorite");
   await probe(
     detailFavorite,
     {
@@ -295,7 +295,7 @@ try {
       assert.equal(await style(detailFavorite, "padding"), "4px 6px");
     },
   );
-  const purchase = page.locator(".akros-purchase-form");
+  const purchase = page.locator(".sf-purchase-form");
   const purchaseInput = purchase.locator("input");
   const favoritePadding = await style(detailFavorite, "padding");
   await probe(
@@ -309,9 +309,7 @@ try {
       assert.equal(await style(purchaseInput, "paddingTop"), "7px");
       assert.equal(await style(purchaseInput, "paddingInlineStart"), "11px");
       assert.equal(await style(purchaseInput, "paddingInlineEnd"), "9px");
-      for (const control of await purchase
-        .locator(".akros-purchase-form__quantity-trigger")
-        .all()) {
+      for (const control of await purchase.locator(".sf-purchase-form__quantity-trigger").all()) {
         assert.equal(await style(control, "paddingInlineStart"), "6px");
         assert.equal(await style(control, "paddingInlineEnd"), "6px");
       }

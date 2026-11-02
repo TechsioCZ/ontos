@@ -27,7 +27,7 @@ const blockedLabel = (cs: Dictionary, code: string) =>
 function LineAvailability({ line, quote }: { line: CartLine; quote: CartQuoteState | null }) {
   const cs = useDictionary();
   const base =
-    "text-(length:--akros-cart-secondary-size) font-(weight:--akros-cart-primary-weight) uppercase";
+    "text-(length:--sf-cart-secondary-size) font-(weight:--sf-cart-primary-weight) uppercase";
   if (!quote?.enabled)
     return (
       <span className={`${base} text-(--color-fg-status-success)`}>
@@ -36,7 +36,7 @@ function LineAvailability({ line, quote }: { line: CartLine; quote: CartQuoteSta
     );
   if (quote.status !== "ready")
     return (
-      <span className={`${base} text-(--color-fg-secondary)`} data-akros-line-state="unverified">
+      <span className={`${base} text-(--color-fg-secondary)`} data-sf-line-state="unverified">
         {quote.status === "error" ? cs.cart.lineState.unchecked : cs.cart.lineState.checking}
       </span>
     );
@@ -45,14 +45,14 @@ function LineAvailability({ line, quote }: { line: CartLine; quote: CartQuoteSta
     return (
       <span
         className={`${base} text-(--color-danger)`}
-        data-akros-line-state="blocked"
+        data-sf-line-state="blocked"
         title={issue.message}
       >
         {blockedLabel(cs, issue.code)}
       </span>
     );
   return (
-    <span className={`${base} text-(--color-fg-status-success)`} data-akros-line-state="verified">
+    <span className={`${base} text-(--color-fg-status-success)`} data-sf-line-state="verified">
       {cs.cart.lineState.inStock}
     </span>
   );
@@ -94,10 +94,10 @@ function CartQuantity({ line }: { line: CartLine }) {
         }}
       >
         <NumericInput.Control
-          data-akros-cart-quantity
+          data-sf-cart-quantity
           style={
             {
-              "--akros-cart-quantity-characters": Math.max(
+              "--sf-cart-quantity-characters": Math.max(
                 2,
                 new Intl.NumberFormat("cs-CZ", { maximumFractionDigits: 6 }).format(
                   draftQuantity ?? line.quantity,
@@ -105,16 +105,16 @@ function CartQuantity({ line }: { line: CartLine }) {
               ),
             } as CSSProperties
           }
-          className="w-(--akros-cart-control-width) shrink-0 gap-(--akros-cart-control-gap) overflow-visible"
+          className="w-(--sf-cart-control-width) shrink-0 gap-(--sf-cart-control-gap) overflow-visible"
         >
           <NumericInput.DecrementTrigger
             aria-label={cs.cart.decrementQuantityOf(line.variantLabel ?? line.name)}
-            className="h-full w-(--akros-cart-trigger-width) flex-none rounded-(--akros-cart-control-radius) bg-(--akros-cart-trigger-bg)"
+            className="h-full w-(--sf-cart-trigger-width) flex-none rounded-(--sf-cart-control-radius) bg-(--sf-cart-trigger-bg)"
             icon="token-icon-minus"
           />
           <NumericInput.Input
             aria-label={cs.cart.quantityOf(line.variantLabel ?? line.name)}
-            className="min-w-0 flex-1 rounded-(--akros-cart-control-radius)! border-solid! border-(length:--akros-cart-value-border-width)! border-(--akros-cart-value-border-color)! text-center leading-(--akros-checkout-heading-leading)"
+            className="min-w-0 flex-1 rounded-(--sf-cart-control-radius)! border-solid! border-(length:--sf-cart-value-border-width)! border-(--sf-cart-value-border-color)! text-center leading-(--sf-checkout-heading-leading)"
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
@@ -124,7 +124,7 @@ function CartQuantity({ line }: { line: CartLine }) {
           />
           <NumericInput.IncrementTrigger
             aria-label={cs.cart.incrementQuantityOf(line.variantLabel ?? line.name)}
-            className="h-full w-(--akros-cart-trigger-width) flex-none rounded-(--akros-cart-control-radius) bg-(--akros-cart-trigger-bg)"
+            className="h-full w-(--sf-cart-trigger-width) flex-none rounded-(--sf-cart-control-radius) bg-(--sf-cart-trigger-bg)"
             icon="token-icon-plus"
           />
         </NumericInput.Control>
@@ -141,10 +141,10 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
 
   return (
     <div
-      data-akros-cart-items
+      data-sf-cart-items
       style={
         {
-          "--akros-cart-max-quantity-characters": Math.max(
+          "--sf-cart-max-quantity-characters": Math.max(
             2,
             ...cart.lines.map(
               (line) =>
@@ -154,40 +154,40 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
           ),
         } as CSSProperties
       }
-      className="@container/akros-cart min-w-0 font-medium"
+      className="@container/sf-cart min-w-0 font-medium"
     >
       <Table
         aria-label={cs.cart.itemsLabel}
         size="sm"
         variant="line"
-        className="table-auto @max-akros-cart-wide/akros-cart:block @max-akros-cart-wide/akros-cart:[&_thead]:sr-only @max-akros-cart-wide/akros-cart:[&_tbody]:grid @max-akros-cart-wide/akros-cart:[&_td]:block @max-akros-cart-wide/akros-cart:[&_td]:w-auto! @max-akros-cart-wide/akros-cart:[&_td]:min-w-0 @max-akros-cart-wide/akros-cart:[&_td]:p-0! @max-akros-cart-wide/akros-cart:[&_td:first-child]:col-span-2 @max-akros-cart-wide/akros-cart:[&_td:last-child]:justify-self-end @max-akros-cart-narrow/akros-cart:[&_td:nth-child(2)]:col-span-2 @max-akros-cart-narrow/akros-cart:[&_td:nth-child(3)]:col-span-2 @max-akros-cart-narrow/akros-cart:[&_td:nth-child(3)]:justify-self-start"
+        className="table-auto @max-sf-cart-wide/sf-cart:block @max-sf-cart-wide/sf-cart:[&_thead]:sr-only @max-sf-cart-wide/sf-cart:[&_tbody]:grid @max-sf-cart-wide/sf-cart:[&_td]:block @max-sf-cart-wide/sf-cart:[&_td]:w-auto! @max-sf-cart-wide/sf-cart:[&_td]:min-w-0 @max-sf-cart-wide/sf-cart:[&_td]:p-0! @max-sf-cart-wide/sf-cart:[&_td:first-child]:col-span-2 @max-sf-cart-wide/sf-cart:[&_td:last-child]:justify-self-end @max-sf-cart-narrow/sf-cart:[&_td:nth-child(2)]:col-span-2 @max-sf-cart-narrow/sf-cart:[&_td:nth-child(3)]:col-span-2 @max-sf-cart-narrow/sf-cart:[&_td:nth-child(3)]:justify-self-start"
       >
         <Table.Header
-          className={`${showHeader ? "" : "sr-only "}[&_th]:text-(length:--akros-cart-secondary-size)`}
+          className={`${showHeader ? "" : "sr-only "}[&_th]:text-(length:--sf-cart-secondary-size)`}
         >
           <Table.Row>
             <Table.ColumnHeader scope="col">{cs.cart.item}</Table.ColumnHeader>
-            <Table.ColumnHeader scope="col" style={{ width: "var(--akros-cart-stock-width)" }}>
+            <Table.ColumnHeader scope="col" style={{ width: "var(--sf-cart-stock-width)" }}>
               {cs.cart.availability}
             </Table.ColumnHeader>
             <Table.ColumnHeader
               scope="col"
               align="center"
-              style={{ width: "var(--akros-cart-quantity-width)" }}
+              style={{ width: "var(--sf-cart-quantity-width)" }}
             >
               {cs.cart.quantity}
             </Table.ColumnHeader>
             <Table.ColumnHeader
               scope="col"
               align="end"
-              style={{ width: "var(--akros-cart-price-width)" }}
+              style={{ width: "var(--sf-cart-price-width)" }}
             >
               {cs.cart.price}
             </Table.ColumnHeader>
             <Table.ColumnHeader
               scope="col"
               align="end"
-              style={{ width: "var(--akros-cart-remove-width)" }}
+              style={{ width: "var(--sf-cart-remove-width)" }}
             >
               <span className="sr-only">{cs.cart.remove}</span>
             </Table.ColumnHeader>
@@ -197,10 +197,10 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
           {cart.lines.map((line) => (
             <Table.Row
               key={`${line.productId}:${line.variantId ?? "base"}`}
-              className="@max-akros-cart-wide/akros-cart:grid @max-akros-cart-wide/akros-cart:grid-cols-[minmax(0,1fr)_auto] @max-akros-cart-wide/akros-cart:items-center @max-akros-cart-wide/akros-cart:gap-(--akros-cart-row-gap) @max-akros-cart-wide/akros-cart:py-(--dimension-16)"
+              className="@max-sf-cart-wide/sf-cart:grid @max-sf-cart-wide/sf-cart:grid-cols-[minmax(0,1fr)_auto] @max-sf-cart-wide/sf-cart:items-center @max-sf-cart-wide/sf-cart:gap-(--sf-cart-row-gap) @max-sf-cart-wide/sf-cart:py-(--dimension-16)"
             >
               <Table.Cell>
-                <div className="flex min-w-0 flex-wrap items-baseline gap-x-(--akros-cart-detail-gap) gap-y-1 whitespace-normal">
+                <div className="flex min-w-0 flex-wrap items-baseline gap-x-(--sf-cart-detail-gap) gap-y-1 whitespace-normal">
                   <Link
                     as={StoreLink}
                     href={`/produkt/${line.slug}`}
@@ -209,7 +209,7 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
                     {formatCartProductName(line.name)}
                   </Link>
                   {line.variantLabel && (
-                    <span className="wrap-anywhere text-(length:--akros-cart-secondary-size) text-(--color-fg-secondary)">
+                    <span className="wrap-anywhere text-(length:--sf-cart-secondary-size) text-(--color-fg-secondary)">
                       {line.variantLabel}
                     </span>
                   )}
@@ -217,30 +217,30 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
                     quote.lineIssues(line.productId, line.variantId).map((issue) => (
                       <span
                         key={issue.message}
-                        className="basis-full wrap-anywhere text-(length:--akros-cart-secondary-size) text-(--color-danger)"
+                        className="basis-full wrap-anywhere text-(length:--sf-cart-secondary-size) text-(--color-danger)"
                       >
                         {issue.message}
                       </span>
                     ))}
                 </div>
               </Table.Cell>
-              <Table.Cell style={{ width: "var(--akros-cart-stock-width)" }}>
+              <Table.Cell style={{ width: "var(--sf-cart-stock-width)" }}>
                 <LineAvailability line={line} quote={quote} />
               </Table.Cell>
-              <Table.Cell align="center" style={{ width: "var(--akros-cart-quantity-width)" }}>
+              <Table.Cell align="center" style={{ width: "var(--sf-cart-quantity-width)" }}>
                 <CartQuantity line={line} />
               </Table.Cell>
-              <Table.Cell align="end" style={{ width: "var(--akros-cart-price-width)" }}>
-                <div className="grid min-w-0 justify-items-end gap-1 text-right @max-akros-cart-wide/akros-cart:justify-items-start @max-akros-cart-wide/akros-cart:text-left">
-                  <strong className="whitespace-normal font-(weight:--akros-cart-price-weight)">
+              <Table.Cell align="end" style={{ width: "var(--sf-cart-price-width)" }}>
+                <div className="grid min-w-0 justify-items-end gap-1 text-right @max-sf-cart-wide/sf-cart:justify-items-start @max-sf-cart-wide/sf-cart:text-left">
+                  <strong className="whitespace-normal font-(weight:--sf-cart-price-weight)">
                     {formatCheckoutPrice(getLineTotal(line), money)}
                   </strong>
                 </div>
               </Table.Cell>
-              <Table.Cell align="end" style={{ width: "var(--akros-cart-remove-width)" }}>
+              <Table.Cell align="end" style={{ width: "var(--sf-cart-remove-width)" }}>
                 <ActionIcon
                   aria-label={cs.cart.removeItem(line.name)}
-                  icon="token-icon-akros-checkout-remove"
+                  icon="token-icon-sf-checkout-remove"
                   size="md"
                   onClick={() =>
                     dispatch({

@@ -72,7 +72,7 @@ try {
         }
         // The existing carrier logos in the footer overflow at ~800px, including on an
         // empty cart. Check the entire checkout here without masking that separate bug.
-        const checkout = element.closest("[data-akros-checkout]");
+        const checkout = element.closest("[data-sf-checkout]");
         if (checkout.scrollWidth > checkout.clientWidth)
           failures.push("Checkout horizontal overflow");
         const headBounds = element.querySelector("thead")?.getBoundingClientRect();

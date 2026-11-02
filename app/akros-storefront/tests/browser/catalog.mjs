@@ -43,13 +43,13 @@ try {
     page.setDefaultTimeout(15000);
     page.setDefaultNavigationTimeout(120000);
     await page.goto(new URL(`/produkt/${slug}`, baseUrl).href, { waitUntil: "networkidle" });
-    const table = page.locator(".akros-variant-data-table__table");
+    const table = page.locator(".sf-variant-data-table__table");
     const form = page.getByRole("form", { name: "Filtrování variant" });
     const submit = form.getByRole("button", { name: "Filtruj" });
     await probe(submit, { "--font-weight-button": "600" }, async () => {
       assert.equal(await style(submit, "fontWeight"), "600");
     });
-    const quantity = table.locator(".akros-variant-table__quantity-control").first();
+    const quantity = table.locator(".sf-variant-table__quantity-control").first();
     await probe(
       quantity,
       { "--padding-input-md": "1px 9px", "--padding-numeric-input-input-sm": "7px" },
@@ -61,7 +61,7 @@ try {
       },
     );
     const containerWidth = await page
-      .locator(".akros-variant-purchase")
+      .locator(".sf-variant-purchase")
       .evaluate((element) => element.getBoundingClientRect().width);
     if (containerWidth >= 1000) {
       await probe(table, { "--padding-table-cell-sm": "7px 9px" }, async () => {
@@ -72,7 +72,7 @@ try {
         assert.equal(await style(header.locator("th").first(), "fontSize"), "12px");
       });
     } else {
-      const buy = table.locator(".akros-variant-table__buy-button").first();
+      const buy = table.locator(".sf-variant-table__buy-button").first();
       await probe(
         buy,
         { "--padding-button-sm": "3px 7px", "--height-form-control-sm": "60px" },
@@ -87,18 +87,18 @@ try {
       .locator("tbody tr")
       .filter({
         has: page.locator(
-          ".akros-variant-table__order--package .akros-variant-table__buy-button:not(:disabled)",
+          ".sf-variant-table__order--package .sf-variant-table__buy-button:not(:disabled)",
         ),
       })
       .first();
-    const sku = await firstRow.locator(".akros-variant-table__sku > span").last().textContent();
+    const sku = await firstRow.locator(".sf-variant-table__sku > span").last().textContent();
     const variant = product.detail.variants.find((item) => item.sku === sku);
     assert.ok(variant, `Source variant for ${sku} exists`);
     await firstRow
-      .locator(".akros-variant-table__order--minimum .akros-variant-table__buy-button")
+      .locator(".sf-variant-table__order--minimum .sf-variant-table__buy-button")
       .click();
     await firstRow
-      .locator(".akros-variant-table__order--package .akros-variant-table__buy-button")
+      .locator(".sf-variant-table__order--package .sf-variant-table__buy-button")
       .click();
     await page.waitForFunction(
       ({ variantId, expected }) => {
@@ -108,11 +108,11 @@ try {
       { variantId: variant.id, expected: variant.minimumQuantity + variant.packageQuantity },
     );
 
-    const nextVariants = page.locator('.akros-pagination [data-part="next-trigger"]');
-    const firstSku = await table.locator(".akros-variant-table__sku").first().textContent();
+    const nextVariants = page.locator('.sf-pagination [data-part="next-trigger"]');
+    const firstSku = await table.locator(".sf-variant-table__sku").first().textContent();
     await nextVariants.click();
     await page.waitForFunction(
-      (previous) => document.querySelector(".akros-variant-table__sku")?.textContent !== previous,
+      (previous) => document.querySelector(".sf-variant-table__sku")?.textContent !== previous,
       firstSku,
     );
 
@@ -125,7 +125,7 @@ try {
       if (await checkbox.isChecked()) await checkbox.locator("..").click();
     }
     await submit.click();
-    await page.locator(".akros-variant-purchase__empty").waitFor();
+    await page.locator(".sf-variant-purchase__empty").waitFor();
     for (let index = 0; index < count; index++) await checkboxes.nth(index).locator("..").click();
     await submit.click();
     await table.locator("tbody tr").first().waitFor();
@@ -140,9 +140,9 @@ try {
 
     for (const route of ["/kategorie/vruty", "/vyhledavani?q=DIN"]) {
       await page.goto(new URL(route, baseUrl).href, { waitUntil: "networkidle" });
-      const card = page.locator(".akros-catalog-product-card__image-link").first();
+      const card = page.locator(".sf-catalog-product-card__image-link").first();
       const firstHref = await card.getAttribute("href");
-      const next = page.locator('.akros-catalog-pagination [data-part="next-trigger"]');
+      const next = page.locator('.sf-catalog-pagination [data-part="next-trigger"]');
       const target = new URL(await next.getAttribute("href"), baseUrl);
       assert.equal(target.searchParams.get("page"), "2");
       if (route.startsWith("/vyhledavani")) assert.equal(target.searchParams.get("q"), "DIN");

@@ -15,7 +15,7 @@ export function MarketSwitcher() {
     <nav
       aria-label={dictionary.market.switcherLabel}
       className="flex items-center"
-      data-akros-market-switcher=""
+      data-sf-market-switcher=""
     >
       {market.live.map((entry) => (
         <LinkButton

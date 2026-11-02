@@ -71,7 +71,7 @@ describe("market routing proxy", () => {
 
   it("sends an unknown locale to the root 404 and an inactive market to its unavailable page", async () => {
     const unknown = await run("/de/kategorie/srouby");
-    expect(rewrite(unknown)).toBe(`${origin}/_akros-unknown-market`);
+    expect(rewrite(unknown)).toBe(`${origin}/_unknown-market`);
     expect(forwarded(unknown, "x-akros-market-locale")).toBe("de");
     const inactive = await run("/pl");
     expect(rewrite(inactive)).toBe(`${origin}/trh-nedostupny`);

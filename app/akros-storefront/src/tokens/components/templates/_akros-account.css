@@ -1,39 +1,39 @@
-[data-akros-account] {
-  --akros-account-width: 1660px;
-  --akros-account-ink: #1c1c1a;
-  --akros-account-muted: #535353;
-  --akros-account-error: #ff0000;
-  --akros-account-divider: var(--akros-account-ink);
-  --akros-account-accent: #fdc533;
-  --akros-account-surface: #f8f9fa;
-  --akros-account-body-size: var(--dimension-20);
-  --akros-account-section-size: 25px;
-  --akros-account-leading: 1.5;
-  --akros-account-optical-sizing: none;
-  --akros-account-heading-leading: 1.2;
-  --akros-account-tab-border: 3px;
-  --akros-account-save-width: 344px;
-  --akros-account-form-width: 1160px;
-  --akros-account-billing-width: 1159px;
-  --akros-account-field-width: 567.5px;
-  --akros-account-select-glyph-size: var(--dimension-28);
-  --akros-account-disclosure-rotation: 0deg;
-  --akros-account-actions-gap: calc(var(--dimension-40) + var(--dimension-16));
-  --akros-account-list-divider: #cccccc;
-  --akros-account-action-height: 58px;
+[data-sf-account] {
+  --sf-account-width: 1660px;
+  --sf-account-ink: #1c1c1a;
+  --sf-account-muted: #535353;
+  --sf-account-error: #ff0000;
+  --sf-account-divider: var(--sf-account-ink);
+  --sf-account-accent: #fdc533;
+  --sf-account-surface: #f8f9fa;
+  --sf-account-body-size: var(--dimension-20);
+  --sf-account-section-size: 25px;
+  --sf-account-leading: 1.5;
+  --sf-account-optical-sizing: none;
+  --sf-account-heading-leading: 1.2;
+  --sf-account-tab-border: 3px;
+  --sf-account-save-width: 344px;
+  --sf-account-form-width: 1160px;
+  --sf-account-billing-width: 1159px;
+  --sf-account-field-width: 567.5px;
+  --sf-account-select-glyph-size: var(--dimension-28);
+  --sf-account-disclosure-rotation: 0deg;
+  --sf-account-actions-gap: calc(var(--dimension-40) + var(--dimension-16));
+  --sf-account-list-divider: #cccccc;
+  --sf-account-action-height: 58px;
   --font-weight-normal: var(--font-weight-medium);
   --font-weight-input: var(--font-weight-medium);
   --font-weight-input-placeholder: var(--font-weight-medium);
   --text-sm: var(--dimension-20);
   --text-xs: var(--dimension-16);
-  --color-fg-primary: var(--akros-account-ink);
-  --color-label-fg: var(--akros-account-ink);
-  --color-input-fg: var(--akros-account-ink);
+  --color-fg-primary: var(--sf-account-ink);
+  --color-label-fg: var(--sf-account-ink);
+  --color-input-fg: var(--sf-account-ink);
   --color-input-fg-placeholder: #a8a8a8;
-  --color-input-border-base: var(--akros-account-ink);
-  --color-input-border-hover: var(--akros-account-ink);
-  --color-input-border-danger-base: var(--akros-account-error);
-  --color-status-text-fg-error: var(--akros-account-error);
+  --color-input-border-base: var(--sf-account-ink);
+  --color-input-border-hover: var(--sf-account-ink);
+  --color-input-border-danger-base: var(--sf-account-error);
+  --color-status-text-fg-error: var(--sf-account-error);
   --text-status-text-sm: var(--dimension-20);
   --border-width-input: 2px;
   --border-width-form-control: 2px;
@@ -47,9 +47,9 @@
   --text-select-trigger-sm: var(--dimension-20);
   --text-select-value-sm: var(--dimension-20);
   --text-phone-input-sm: var(--dimension-20);
-  --color-select-trigger-border: var(--akros-account-ink);
+  --color-select-trigger-border: var(--sf-account-ink);
   --color-form-control-bg: var(--color-base);
-  --color-form-control-border: var(--akros-account-ink);
+  --color-form-control-border: var(--sf-account-ink);
   --width-phone-input-trigger: 164px;
   --border-phone-input-trigger: 2px;
   --color-phone-input-input-bg-base: var(--color-base);
@@ -62,20 +62,20 @@
   --text-button-sm: var(--dimension-20);
   --padding-button-sm: var(--dimension-16);
   --radius-button-sm: var(--dimension-8);
-  --color-button-bg-primary-base: var(--akros-account-accent);
-  --color-button-fg-primary: var(--akros-account-ink);
-  --color-button-border-secondary: var(--akros-account-ink);
-  --color-button-fg-outlined-secondary: var(--akros-account-ink);
-  --color-button-bg-outlined-secondary-hover: var(--akros-account-surface);
-  --color-button-bg-outlined-secondary-active: var(--akros-account-surface);
+  --color-button-bg-primary-base: var(--sf-account-accent);
+  --color-button-fg-primary: var(--sf-account-ink);
+  --color-button-border-secondary: var(--sf-account-ink);
+  --color-button-fg-outlined-secondary: var(--sf-account-ink);
+  --color-button-bg-outlined-secondary-hover: var(--sf-account-surface);
+  --color-button-bg-outlined-secondary-active: var(--sf-account-surface);
   --padding-accordion-title-sm: 0px;
   --padding-accordion-content-x-sm: 0px;
   --padding-accordion-icon-right: 0px;
-  --text-accordion-title-sm: var(--akros-account-section-size);
-  --text-accordion-content-sm: var(--akros-account-body-size);
+  --text-accordion-title-sm: var(--sf-account-section-size);
+  --text-accordion-content-sm: var(--sf-account-body-size);
   --text-icon-control-sm: var(--dimension-24);
-  --color-accordion-title-fg: var(--akros-account-ink);
-  --color-accordion-content-fg: var(--akros-account-ink);
+  --color-accordion-title-fg: var(--sf-account-ink);
+  --color-accordion-content-fg: var(--sf-account-ink);
   --color-accordion-title-bg: var(--color-base);
   --color-accordion-title-bg-hover: var(--color-base);
   --color-accordion-bg: var(--color-base);
@@ -83,22 +83,22 @@
   --radius-checkbox: 4.235px;
   --border-width-checkbox: 2px;
   --spacing-form-checkbox-gap: var(--dimension-16);
-  --color-checkbox-border-base: var(--akros-account-ink);
+  --color-checkbox-border-base: var(--sf-account-ink);
   --color-checkbox-bg-base: var(--color-base);
   --text-breadcrumb-sm: var(--dimension-16);
   --padding-breadcrumb-sm: 0px;
   --spacing-breadcrumb-item: var(--dimension-4);
-  --color-breadcrumb-bg: var(--akros-account-surface);
+  --color-breadcrumb-bg: var(--sf-account-surface);
 }
 
 [data-account-table] {
-  --text-table-sm: var(--akros-account-body-size);
+  --text-table-sm: var(--sf-account-body-size);
   --padding-table-cell-sm: var(--dimension-16);
   --color-table-bg: var(--color-base);
-  --color-table-fg: var(--akros-account-ink);
-  --color-table-header-bg: var(--akros-account-surface);
-  --color-table-header-fg: var(--akros-account-ink);
-  --color-table-border: var(--akros-account-list-divider);
+  --color-table-fg: var(--sf-account-ink);
+  --color-table-header-bg: var(--sf-account-surface);
+  --color-table-header-fg: var(--sf-account-ink);
+  --color-table-border: var(--sf-account-list-divider);
   --color-data-table-bg: var(--color-table-bg);
   --color-data-table-header-bg: var(--color-table-header-bg);
 }
@@ -119,11 +119,11 @@
 [data-account-navigation] [aria-current="page"] {
   --font-weight-button: var(--font-weight-extrabold);
   --padding-button-sm: var(--dimension-16) var(--dimension-16)
-    calc(var(--dimension-16) - var(--akros-account-tab-border));
+    calc(var(--dimension-16) - var(--sf-account-tab-border));
 }
 
 [data-account-action] {
-  --height-form-control-sm: var(--akros-account-action-height);
+  --height-form-control-sm: var(--sf-account-action-height);
   --font-weight-button: var(--font-weight-bold);
 }
 
@@ -133,7 +133,7 @@
 }
 
 [data-account-field][data-invalid] {
-  --color-label-fg: var(--akros-account-error);
+  --color-label-fg: var(--sf-account-error);
 }
 
 [data-account-phone-control] {
@@ -154,5 +154,5 @@
   --radius-checkbox: var(--radius-full);
   --border-width-checkbox: 1.5px;
   --color-checkbox-bg-checked: var(--color-base);
-  --color-checkbox-fg-checked: var(--akros-account-ink);
+  --color-checkbox-fg-checked: var(--sf-account-ink);
 }

@@ -9,15 +9,15 @@ export default async function ShippingPage() {
   const [options, money] = await Promise.all([readCheckoutOptions(), getMoney()]);
   return (
     <StorefrontWideShell>
-      <article className="akros-landing-page py-8">
+      <article className="sf-landing-page py-8">
         <h1>Informace o dopravě a možnostech platby</h1>
-        <div className="akros-shipping-layout">
+        <div className="sf-shipping-layout">
           <section aria-labelledby="shipping-methods-title">
             <h2 id="shipping-methods-title">Způsoby dopravy</h2>
-            <div className="akros-option-list">
+            <div className="sf-option-list">
               {options.shippingMethods.map((method) => (
                 <article key={method.id}>
-                  <div className="akros-option-list__heading">
+                  <div className="sf-option-list__heading">
                     <h3>{method.title}</h3>
                     <strong>{formatPrice(method.priceMinor, money)}</strong>
                   </div>

@@ -5,7 +5,7 @@ import { LiveOrderStatus } from "./live-order-status";
 import { OrderEmailStatus } from "./order-email-status";
 
 /** The last guest order of this browser tab; a guest has no account to read the receipt from. */
-export const guestOrderKey = "akros-guest-order";
+export const guestOrderKey = "sf-guest-order";
 
 export interface GuestOrderReceipt {
   orderId: string;
@@ -46,7 +46,7 @@ export function GuestOrderConfirmation({ orderId }: { orderId: string }) {
   const order = parseGuestOrder(stored);
   if (!order || order.orderId !== orderId)
     return (
-      <section data-akros-checkout className="mx-auto grid max-w-5xl gap-4 py-8">
+      <section data-sf-checkout className="mx-auto grid max-w-5xl gap-4 py-8">
         <h1 className="text-lg font-bold">Potvrzení objednávky zde není k dispozici</h1>
         <p>
           Potvrzení objednávky bez registrace se zobrazí jen v okně, ze kterého byla odeslána. Stav
@@ -58,7 +58,7 @@ export function GuestOrderConfirmation({ orderId }: { orderId: string }) {
       </section>
     );
   return (
-    <section data-akros-checkout className="mx-auto grid max-w-5xl gap-8 py-8">
+    <section data-sf-checkout className="mx-auto grid max-w-5xl gap-8 py-8">
       <header className="grid gap-4">
         <h1 className="text-lg font-bold">
           Objednávka č. {order.orderNumber} byla uložena do OntOS

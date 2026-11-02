@@ -16,7 +16,7 @@ describe("CatalogPagination", () => {
       />,
     );
 
-    expect(container.firstElementChild?.classList.contains("akros-catalog-pagination")).toBe(true);
+    expect(container.firstElementChild?.classList.contains("sf-catalog-pagination")).toBe(true);
     expect(container.querySelector('a[href="/kategorie/matice?page=2"]')).toBeTruthy();
     expect(screen.getByRole("navigation").getAttribute("aria-label")).toBeTruthy();
   });

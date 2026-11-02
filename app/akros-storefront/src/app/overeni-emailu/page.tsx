@@ -27,8 +27,8 @@ export default async function EmailVerificationPage({
           : "Odkaz pro ověření e-mailu je neplatný, již použitý nebo jeho platnost vypršela. Můžete požádat o nový ověřovací e-mail.";
   return (
     <StorefrontWideShell>
-      <section className="akros-auth-page">
-        <div className="akros-auth-card">
+      <section className="sf-auth-page">
+        <div className="sf-auth-card">
           <h1>{verified ? "E-mail byl ověřen" : "E-mail nebyl ověřen"}</h1>
           <p>
             <output>{message}</output>

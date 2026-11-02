@@ -108,13 +108,13 @@ export function CheckoutLayout({
   }, [ready, accountReady, reachable, router, step, submitted, hasUnconfirmedOrder, storeHref]);
   return (
     <div
-      data-akros-checkout
-      className="bg-(--color-fill-surface) px-(--akros-checkout-page-gutter) pt-(--akros-checkout-padding-top) pb-(--akros-checkout-padding-bottom) font-medium leading-(--akros-checkout-body-leading) text-(--akros-checkout-ink)"
+      data-sf-checkout
+      className="bg-(--color-fill-surface) px-(--sf-checkout-page-gutter) pt-(--sf-checkout-padding-top) pb-(--sf-checkout-padding-bottom) font-medium leading-(--sf-checkout-body-leading) text-(--sf-checkout-ink)"
     >
       <Steps.RootProvider value={steps} size="md" variant="subtle">
         <div
-          data-akros-checkout-body
-          className="mx-auto grid w-full max-w-(--akros-checkout-content-width) items-start gap-(--dimension-24) 2xl:grid-cols-[minmax(0,1fr)_var(--akros-checkout-sidebar-width)]"
+          data-sf-checkout-body
+          className="mx-auto grid w-full max-w-(--sf-checkout-content-width) items-start gap-(--dimension-24) 2xl:grid-cols-[minmax(0,1fr)_var(--sf-checkout-sidebar-width)]"
         >
           <div className="contents min-w-0 2xl:block">
             <Steps.List
@@ -132,7 +132,7 @@ export function CheckoutLayout({
                     className="relative z-1 w-full flex-col justify-center text-center"
                   >
                     <Steps.Indicator>
-                      <Steps.Number className="leading-(--akros-checkout-body-leading)" />
+                      <Steps.Number className="leading-(--sf-checkout-body-leading)" />
                     </Steps.Indicator>
                     <Steps.Title className="w-full overflow-visible text-center wrap-break-word whitespace-normal">
                       {cs.checkout.steps[item.key]}
@@ -208,7 +208,7 @@ export function CheckoutLayout({
               >
                 <h2
                   id="checkout-recommendations"
-                  className="mt-4 mb-6 text-(length:--akros-checkout-recommendation-size) leading-(--akros-checkout-heading-leading) font-extrabold text-(--akros-checkout-recommendation-color)"
+                  className="mt-4 mb-6 text-(length:--sf-checkout-recommendation-size) leading-(--sf-checkout-heading-leading) font-extrabold text-(--sf-checkout-recommendation-color)"
                 >
                   {cs.checkout.recommendationsTitle}
                 </h2>

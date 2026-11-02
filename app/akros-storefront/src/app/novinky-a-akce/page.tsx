@@ -48,8 +48,8 @@ export default async function NewsPage() {
 
   return (
     <StorefrontWideShell>
-      <article className="akros-news-page">
-        <header className="akros-news-hero">
+      <article className="sf-news-page">
+        <header className="sf-news-hero">
           <Image
             alt="Imbusové šrouby v automatizované výrobě"
             fill
@@ -58,7 +58,7 @@ export default async function NewsPage() {
             sizes="100vw"
             src="/akros/content/news-hero.png"
           />
-          <div className="akros-news-hero__overlay">
+          <div className="sf-news-hero__overlay">
             <div>
               <Badge size="sm" variant="danger">
                 NABÍDKA Z KATALOGU
@@ -73,21 +73,21 @@ export default async function NewsPage() {
           </div>
         </header>
         <section
-          className="akros-news-section akros-product-listing-section"
+          className="sf-news-section sf-product-listing-section"
           aria-labelledby="new-products-title"
         >
-          <div className="akros-section__heading">
+          <div className="sf-section__heading">
             <h2 id="new-products-title">Nové nerezové produkty v nabídce</h2>
             <StoreLink href="/vyhledavani?q=novinka">Zobrazit všechny novinky</StoreLink>
           </div>
           <ProductGrid action="detail" products={newProducts.map(toProductSummary)} />
         </section>
         <section
-          className="akros-news-section akros-news-section--sale akros-product-listing-section"
+          className="sf-news-section sf-news-section--sale sf-product-listing-section"
           id="action-products"
           aria-labelledby="sale-products-title"
         >
-          <div className="akros-section__heading">
+          <div className="sf-section__heading">
             <h2 id="sale-products-title">Akční nabídky a výprodej</h2>
             <StoreLink href="/vyhledavani?q=akce">Zobrazit celou akční nabídku</StoreLink>
           </div>

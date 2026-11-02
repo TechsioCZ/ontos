@@ -82,13 +82,13 @@ export function ContactForm({
   };
   if (taskId !== null)
     return (
-      <output className="akros-form-success">
+      <output className="sf-form-success">
         Děkujeme. Dotaz jsme předali týmu AKROS k vyřízení. Číslo požadavku: {taskId}.
       </output>
     );
   return (
     <form
-      className="akros-contact-form"
+      className="sf-contact-form"
       action="/api/ontos/inquiries"
       method="post"
       onSubmit={submit}
@@ -98,7 +98,7 @@ export function ContactForm({
         <legend className="sr-only">
           {kind === "COMPLAINT" ? "Podnět k reklamaci" : "Kontaktní dotaz"}
         </legend>
-        <div className="akros-form-grid">
+        <div className="sf-form-grid">
           <FormInput
             autoComplete="name"
             id={compact ? "faq-name" : "contact-name"}

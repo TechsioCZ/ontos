@@ -93,7 +93,7 @@ it.each([undefined, ""])(
 
 it("confirms a guest order from this tab's receipt with live status and e-mail receipts", async () => {
   window.sessionStorage.setItem(
-    "akros-guest-order",
+    "sf-guest-order",
     JSON.stringify({
       orderId: "guest-order-1",
       orderNumber: "OBJ-2026-0100",
@@ -135,7 +135,7 @@ it("does not confirm a guest order that this tab did not place", async () => {
   const fetchMock = vi.fn<typeof fetch>();
   vi.stubGlobal("fetch", fetchMock);
   window.sessionStorage.setItem(
-    "akros-guest-order",
+    "sf-guest-order",
     JSON.stringify({
       orderId: "other-order",
       orderNumber: "OBJ-2026-0101",

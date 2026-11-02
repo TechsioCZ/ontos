@@ -11,8 +11,8 @@ export default function AboutPage() {
   return (
     <StorefrontShell>
       <StorefrontBreadcrumbs items={[{ href: "/", label: "Domů" }, { label: "O nás" }]} />
-      <article className="akros-content-page">
-        <header className="akros-content-page__heading">
+      <article className="sf-content-page">
+        <header className="sf-content-page__heading">
           <h1>O nás</h1>
           <p>
             AKROS je předním dodavatelem nerezového, hutního a spojovacího materiálu pro průmyslové
@@ -21,7 +21,7 @@ export default function AboutPage() {
           </p>
         </header>
 
-        <section className="akros-content-panel" aria-labelledby="company-history-title">
+        <section className="sf-content-panel" aria-labelledby="company-history-title">
           <h2 id="company-history-title">AKROS, s.r.o.</h2>
           <p>
             Společnost AKROS, s.r.o. se specializuje na dodávky nerezového materiálu, hutního
@@ -34,13 +34,13 @@ export default function AboutPage() {
           </p>
         </section>
 
-        <section className="akros-content-section" aria-labelledby="certification-title">
+        <section className="sf-content-section" aria-labelledby="certification-title">
           <h2 id="certification-title">Certifikace</h2>
           <p>Certifikát systému jakosti ISO 9001:2016</p>
           <ContentGallery items={aboutGallery} />
         </section>
 
-        <section className="akros-content-panel">
+        <section className="sf-content-panel">
           <p>
             Společnost AKROS CZ, s.r.o. disponuje vlastními výrobními kapacitami pro zakázkovou
             výrobu, laserové řezání, svařování a tváření plechů. Moderní technologické zázemí
@@ -48,9 +48,9 @@ export default function AboutPage() {
           </p>
         </section>
 
-        <section className="akros-content-section" aria-labelledby="services-title">
+        <section className="sf-content-section" aria-labelledby="services-title">
           <h2 id="services-title">Výrobní služby</h2>
-          <ul className="akros-service-list">
+          <ul className="sf-service-list">
             <li>Zakázková výroba</li>
             <li>Laserové řezání</li>
             <li>Svařování</li>
@@ -58,8 +58,8 @@ export default function AboutPage() {
           </ul>
         </section>
 
-        <section className="akros-content-section" aria-labelledby="finishing-title">
-          <div className="akros-content-panel">
+        <section className="sf-content-section" aria-labelledby="finishing-title">
+          <div className="sf-content-panel">
             <h2 id="finishing-title">Galvanické povrchové úpravy</h2>
             <p>Nabízíme také galvanické povrchové úpravy pro vybrané materiály.</p>
           </div>

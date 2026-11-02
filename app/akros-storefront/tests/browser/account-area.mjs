@@ -26,24 +26,21 @@ try {
   for (const [route, key, active] of routes) {
     const response = await page.goto(new URL(route, base).href, { waitUntil: "domcontentloaded" });
     assert.equal(response.status(), 200, route);
-    await page.locator("[data-akros-account] h1").waitFor({ timeout: 120000 });
+    await page.locator("[data-sf-account] h1").waitFor({ timeout: 120000 });
     if (key === "orders") await page.locator("#account-order-search").fill("");
     await page.evaluate(() => document.fonts.ready);
     assert.equal(
       await page.locator('[data-account-navigation] [aria-current="page"]').innerText(),
       active,
     );
-    assert.equal(
-      await page.locator(".akros-account-sidebar, [data-akros-cart-selector]").count(),
-      0,
-    );
+    assert.equal(await page.locator(".sf-account-sidebar, [data-sf-cart-selector]").count(), 0);
     const cdp = await page.context().newCDPSession(page);
     await cdp.send("DOM.enable");
     await cdp.send("CSS.enable");
     const { root } = await cdp.send("DOM.getDocument");
     const { nodeId } = await cdp.send("DOM.querySelector", {
       nodeId: root.nodeId,
-      selector: "[data-akros-account] h1",
+      selector: "[data-sf-account] h1",
     });
     const { fonts } = await cdp.send("CSS.getPlatformFontsForNode", { nodeId });
     assert.ok(
@@ -54,7 +51,7 @@ try {
     await cdp.detach();
     for (const width of [1920, 1536, 1280, 1024, 768, 640, 390, 320]) {
       await page.setViewportSize({ width, height: 1000 });
-      const errors = await page.locator("[data-akros-account]").evaluate((main) => {
+      const errors = await page.locator("[data-sf-account]").evaluate((main) => {
         const failures = [];
         const box = main.getBoundingClientRect();
         const nav = main.querySelector("[data-account-navigation]");
@@ -108,7 +105,7 @@ try {
     .click();
   await page.getByRole("heading", { level: 1, name: "Objednávka #2024-00812" }).waitFor();
   assert.ok(
-    await page.locator("[data-akros-account]").getByText("8 450 Kč", { exact: true }).isVisible(),
+    await page.locator("[data-sf-account]").getByText("8 450 Kč", { exact: true }).isVisible(),
   );
   assert.equal(
     await page.getByText("NX-9330830").count(),

@@ -347,6 +347,23 @@ describe("OntOS source-of-truth boundary", () => {
       priceUnavailableReason: "OntOS pro tuto položku nevrátil cenu.",
     });
   });
+  it("serves variant photos from the parent product's gallery and keeps /obrazky category images", () => {
+    const asset = "0b6b0c7e-1f2a-4c3d-8e9f-a0b1c2d3e4f5";
+    const p = live();
+    const body = {
+      products: [
+        { ...p, variantRecords: [{ ...p.variantRecords[0], imageSrc: `media:${asset}` }] },
+      ],
+      categories: [
+        { id: "c1", slug: "srouby", name: "Šrouby", imageSrc: `/obrazky/${p.id}/${asset}` },
+      ],
+    };
+    const projected = project(body);
+    expect(projected.catalog.products[0].detail.variants[0].imageSrc).toBe(
+      `/obrazky/${encodeURIComponent(p.id)}/${asset}`,
+    );
+    expect(projected.categories.categories[0].imageSrc).toBe(`/obrazky/${p.id}/${asset}`);
+  });
   it("keeps tier net/gross values and filters inactive variants", () => {
     const p = live();
     expect(

@@ -130,7 +130,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
   const page = (
     <StorefrontShell activeCategorySlug={category?.slug}>
       <StorefrontBreadcrumbs
-        className="akros-product-detail-breadcrumb"
+        className="sf-product-detail-breadcrumb"
         items={[
           { href: "/", label: cs.header.home },
           ...categoryTrail.map((item) => ({
@@ -141,12 +141,12 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
         ]}
       />
 
-      <article className="akros-product-detail">
-        <section className="akros-product-detail__overview" aria-labelledby="product-title">
-          <div className="akros-product-detail__gallery">
+      <article className="sf-product-detail">
+        <section className="sf-product-detail__overview" aria-labelledby="product-title">
+          <div className="sf-product-detail__gallery">
             <Image
               alt={product.imageAlt}
-              className="akros-product-detail__image akros-product-detail__image--primary"
+              className="sf-product-detail__image sf-product-detail__image--primary"
               height={824}
               priority
               sizes="(max-width: 760px) 100vw, 50vw"
@@ -154,11 +154,11 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
               width={1000}
             />
             {product.additionalImageSrcs?.length ? (
-              <div className="akros-product-detail__thumbnails">
+              <div className="sf-product-detail__thumbnails">
                 {product.additionalImageSrcs.map((src, index) => (
                   <Image
                     alt={`${product.name} – ${cs.product.imageNumber(index + 2)}`}
-                    className="akros-product-detail__image akros-product-detail__image--thumbnail"
+                    className="sf-product-detail__image sf-product-detail__image--thumbnail"
                     height={244}
                     key={src}
                     loading="lazy"
@@ -170,10 +170,10 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
               </div>
             ) : (
               product.secondaryImageSrc && (
-                <div className="akros-product-detail__thumbnails">
+                <div className="sf-product-detail__thumbnails">
                   <Image
                     alt={cs.product.technicalDrawing(product.name)}
-                    className="akros-product-detail__image akros-product-detail__image--thumbnail"
+                    className="sf-product-detail__image sf-product-detail__image--thumbnail"
                     height={244}
                     loading="lazy"
                     sizes="148px"
@@ -185,34 +185,26 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
             )}
           </div>
 
-          <div className="akros-product-detail__summary">
-            <header className="akros-product-detail__heading">
+          <div className="sf-product-detail__summary">
+            <header className="sf-product-detail__heading">
               <h1 id="product-title">{product.name}</h1>
               {hasMultipleVariants && (
-                <Badge
-                  className="akros-product-detail__variant-badge"
-                  size="md"
-                  variant="secondary"
-                >
+                <Badge className="sf-product-detail__variant-badge" size="md" variant="secondary">
                   {cs.product.moreVariants}
                 </Badge>
               )}
               {singleVariant && (
-                <Badge
-                  className="akros-product-detail__variant-badge"
-                  size="md"
-                  variant="secondary"
-                >
+                <Badge className="sf-product-detail__variant-badge" size="md" variant="secondary">
                   {cs.product.oneVariant}
                 </Badge>
               )}
             </header>
 
             {summaryDescription && (
-              <p className="akros-product-detail__description">{summaryDescription}</p>
+              <p className="sf-product-detail__description">{summaryDescription}</p>
             )}
 
-            <dl className="akros-product-detail__facts">
+            <dl className="sf-product-detail__facts">
               {packageQuantity > purchaseItem.minimumQuantity && (
                 <div>
                   <dt>{cs.product.packageQuantity}</dt>
@@ -255,7 +247,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
 
             {hasMultipleVariants ? (
               <p
-                className={`akros-product-detail__stock${availableVariantCount > 0 ? "" : " akros-product-detail__stock--unavailable"}`}
+                className={`sf-product-detail__stock${availableVariantCount > 0 ? "" : " sf-product-detail__stock--unavailable"}`}
               >
                 {availableVariantCount > 0
                   ? cs.product.variantsInStock(availableVariantCount, detail.variants.length)
@@ -265,15 +257,13 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
               </p>
             ) : (
               <>
-                <p
-                  className={`akros-product-detail__stock akros-product-detail__stock--${stockState}`}
-                >
+                <p className={`sf-product-detail__stock sf-product-detail__stock--${stockState}`}>
                   {simpleStockLabel}
                 </p>
 
-                <div className="akros-product-detail__buying">
+                <div className="sf-product-detail__buying">
                   {purchasePriceTiers.length > 1 && !priceUnavailableReason && (
-                    <dl className="akros-price-tiers" aria-label={cs.product.quantityPricing}>
+                    <dl className="sf-price-tiers" aria-label={cs.product.quantityPricing}>
                       {purchasePriceTiers.map((tier) => (
                         <div key={tier.minimumQuantity}>
                           <dt>
@@ -286,38 +276,38 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                   )}
 
                   {priceUnavailableReason ? (
-                    <div className="akros-product-detail__price-unavailable" role="note">
-                      <p className="akros-product-detail__price-row akros-product-detail__price-row--total">
+                    <div className="sf-product-detail__price-unavailable" role="note">
+                      <p className="sf-product-detail__price-row sf-product-detail__price-row--total">
                         <span>{cs.product.price}</span>
                         <strong>{cs.product.priceUnavailable}</strong>
                       </p>
-                      <p className="akros-product-detail__price-reason">
+                      <p className="sf-product-detail__price-reason">
                         {priceUnavailableReason} {cs.product.cannotBuyNow}
                       </p>
                     </div>
                   ) : (
                     <>
                       {basePriceTier && (
-                        <p className="akros-product-detail__price-row">
+                        <p className="sf-product-detail__price-row">
                           <span>{cs.product.priceExcludingVat}</span>
                           <strong>
                             {formatPrice(basePriceTier.priceExcludingVatMinor, money)}
                           </strong>
                         </p>
                       )}
-                      <p className="akros-product-detail__price-row akros-product-detail__price-row--total">
+                      <p className="sf-product-detail__price-row sf-product-detail__price-row--total">
                         <span>{cs.product.priceIncludingVat}</span>
                         <strong>{formatPrice(purchaseItem.priceMinor, money)}</strong>
                       </p>
                     </>
                   )}
                   {purchaseItem.availabilityUnknown && !priceUnavailableReason && (
-                    <p className="akros-product-detail__price-reason" role="note">
+                    <p className="sf-product-detail__price-reason" role="note">
                       {cs.product.availabilityCannotConfirm}
                     </p>
                   )}
 
-                  <div className="akros-product-detail__purchase-row">
+                  <div className="sf-product-detail__purchase-row">
                     <ProductPurchaseForm
                       product={purchaseProduct}
                       variant={singleVariant ? purchaseVariantOf(singleVariant) : undefined}
@@ -333,13 +323,13 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
         </section>
 
         {(remainingDescriptionParagraphs.length > 0 || detail.parameters.length > 0) && (
-          <section className="akros-product-detail__surface" aria-labelledby="description-title">
+          <section className="sf-product-detail__surface" aria-labelledby="description-title">
             <h2 id="description-title">{cs.product.details}</h2>
             {remainingDescriptionParagraphs.map((paragraph) => (
               <p key={paragraph}>{paragraph}</p>
             ))}
             {detail.parameters.length > 0 && (
-              <ul className="akros-product-parameters">
+              <ul className="sf-product-parameters">
                 {detail.parameters.map((parameter) => (
                   <li key={parameter.label}>
                     {parameter.label}: {parameter.value}
@@ -363,7 +353,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
 
         {recommendations.length > 0 && (
           <section
-            className="akros-product-detail__surface akros-section akros-section--product-recommendations"
+            className="sf-product-detail__surface sf-section sf-section--product-recommendations"
             aria-labelledby="product-recommendations-title"
           >
             <h2 id="product-recommendations-title">{cs.catalog.recommendations}</h2>

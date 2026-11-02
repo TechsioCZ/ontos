@@ -17,7 +17,7 @@ try {
     waitUntil: "networkidle",
     timeout: 120000,
   });
-  const carousel = page.locator("[data-akros-home-carousel]");
+  const carousel = page.locator("[data-sf-home-carousel]");
   const images = carousel.locator("img");
   assert.equal(await images.count(), homeCarouselSlides.length);
   for (const [index, slide] of homeCarouselSlides.entries()) {

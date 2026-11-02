@@ -21,7 +21,7 @@ describe("governed inquiry input", () => {
   });
   it("accepts bounded opaque catalog identities, not only UUIDs, for a product inquiry", () => {
     expect(parseInquirySubmission({ ...inquiry, kind: "PRODUCT_QUESTION" })).toBeNull();
-    for (const productId of ["akros-product-fh-ii", inquiry.requestId]) {
+    for (const productId of ["sf-product-fh-ii", inquiry.requestId]) {
       expect(
         parseInquirySubmission({ ...inquiry, kind: "PRODUCT_QUESTION", productId })?.productId,
       ).toBe(productId);

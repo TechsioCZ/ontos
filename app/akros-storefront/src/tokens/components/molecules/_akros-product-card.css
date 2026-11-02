@@ -11,7 +11,7 @@
   --text-product-card-stock-size: var(--text-sm);
 }
 
-.akros-product-card {
+.sf-product-card {
   --border-product-card-width: var(--dimension-0);
   /* ProductCard's static shadow-sm needs the explicit variable utility at its callsite. */
   --shadow-sm: 0 2px 6px rgb(0 0 0 / 20%);
@@ -25,19 +25,19 @@
   --text-button-sm: var(--text-sm);
 }
 
-.akros-product-card [data-akros-product-tags] {
+.sf-product-card [data-sf-product-tags] {
   --color-badge-bg-discount: #e30400;
 }
 
-.akros-product-card [data-akros-product-actions] {
+.sf-product-card [data-sf-product-actions] {
   --font-weight-button: var(--font-weight-bold);
 }
 
-.akros-product-card__favorite {
+.sf-product-card__favorite {
   --color-button-fg-secondary-borderless: var(--color-neutral-400);
 }
 
-.akros-product-card__stock-row {
+.sf-product-card__stock-row {
   --color-badge-bg-secondary: var(--color-base-dark);
   --color-badge-border-secondary: var(--color-base-dark);
   --color-badge-fg-secondary: var(--color-base-light);
@@ -48,7 +48,7 @@
     --text-product-card-price-size: var(--text-base);
   }
 
-  [data-akros-product-listing] .akros-product-card {
+  [data-sf-product-listing] .sf-product-card {
     --spacing-product-card-col-layout: var(--dimension-8);
     --spacing-product-card-padding: var(--dimension-8);
     --text-product-card-name-size: var(--text-sm);

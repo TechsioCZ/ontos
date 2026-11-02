@@ -260,7 +260,7 @@ describe("SiteHeader search", () => {
 
     const login = screen.getByRole("link", { name: "Přihlášení" });
     expect(login.getAttribute("href")).toBe("/prihlaseni");
-    expect(login.hasAttribute("data-akros-header-login")).toBe(true);
+    expect(login.hasAttribute("data-sf-header-login")).toBe(true);
     const lock = login.querySelector(".icon-\\[mdi--lock\\]");
     expect(lock?.getAttribute("aria-hidden")).toBe("true");
   });

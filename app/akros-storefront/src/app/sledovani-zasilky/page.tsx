@@ -47,7 +47,7 @@ export default async function TrackingPage({
               .map((event, index) => (
                 <li
                   key={`${event.at}:${index}`}
-                  className="border-b border-(--akros-account-list-divider) pb-6"
+                  className="border-b border-(--sf-account-list-divider) pb-6"
                 >
                   <time dateTime={event.at} className="font-bold">
                     {new Date(event.at).toLocaleString("cs-CZ", { timeZone: "Europe/Prague" })}

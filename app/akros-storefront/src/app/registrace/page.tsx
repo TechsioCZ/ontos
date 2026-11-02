@@ -22,8 +22,8 @@ const benefits = [
 export default function RegistrationPage() {
   return (
     <StorefrontWideShell>
-      <section className="akros-registration-page">
-        <div className="akros-registration-card">
+      <section className="sf-registration-page">
+        <div className="sf-registration-card">
           <header>
             <h1>Registrace nového zákazníka</h1>
             <p>
@@ -35,7 +35,7 @@ export default function RegistrationPage() {
             Již jste registrováni? <StoreLink href="/prihlaseni">Přihlaste se zde</StoreLink>
           </p>
         </div>
-        <aside className="akros-benefit-card">
+        <aside className="sf-benefit-card">
           <h2>Velkoobchodní výhody</h2>
           <ul>
             {benefits.map(([title, text]) => (

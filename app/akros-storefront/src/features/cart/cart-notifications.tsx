@@ -10,8 +10,8 @@ import { useCart } from "./cart-provider";
 
 export function CartNotifications() {
   const owner = useId();
-  const feedbackId = `akros-cart-feedback-${owner}`;
-  const removalId = `akros-cart-removal-${owner}`;
+  const feedbackId = `sf-cart-feedback-${owner}`;
+  const removalId = `sf-cart-removal-${owner}`;
   const { purchaseError, feedback, removedItem, undoRemove, dismissRemove } = useCart();
 
   useEffect(() => {
@@ -35,7 +35,7 @@ export function CartNotifications() {
               : "Přidáno do košíku",
         duration: 6000,
         description: (
-          <div data-akros-cart-notification className="grid gap-3">
+          <div data-sf-cart-notification className="grid gap-3">
             <p className="wrap-anywhere">{line.variantLabel ?? line.name}</p>
             <p>
               {kind === "limited"
@@ -84,7 +84,7 @@ export function CartNotifications() {
           if (status === "dismissing" && (src === "user" || src === "keyboard")) dismissRemove(id);
         },
         description: (
-          <div data-akros-cart-notification className="grid gap-3">
+          <div data-sf-cart-notification className="grid gap-3">
             <p className="wrap-anywhere">{line.variantLabel ?? line.name}</p>
             <p>
               {formatQuantity(line.quantity)} {line.unit}

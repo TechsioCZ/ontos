@@ -8,7 +8,7 @@ interface GalleryItem {
 
 export function ContentGallery({ items }: { items: readonly GalleryItem[] }) {
   return (
-    <div className="akros-content-gallery">
+    <div className="sf-content-gallery">
       {items.map((item) => (
         <figure key={item.src}>
           <Image

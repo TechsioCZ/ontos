@@ -13,13 +13,13 @@ export function SimpleContentPage({
   return (
     <StorefrontShell>
       <StorefrontBreadcrumbs items={[{ href: "/", label: "Domů" }, { label: title }]} />
-      <article className="akros-content-page">
-        <header className="akros-content-page__heading">
+      <article className="sf-content-page">
+        <header className="sf-content-page__heading">
           <h1>{title}</h1>
           <p>{lead}</p>
         </header>
         {sections.map((section) => (
-          <section className="akros-content-panel" key={section.title}>
+          <section className="sf-content-panel" key={section.title}>
             <h2>{section.title}</h2>
             {section.paragraphs.map((paragraph) => (
               <p key={paragraph}>{paragraph}</p>

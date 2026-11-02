@@ -36,10 +36,10 @@ export function ProductGrid({
       ? "grid grid-cols-1 gap-x-5 gap-y-12 px-4 min-[431px]:grid-cols-2 min-[1101px]:grid-cols-4 max-md:gap-x-3 max-md:gap-y-6 max-md:px-2"
       : columns === "checkout"
         ? "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
-        : "akros-product-grid";
+        : "sf-product-grid";
 
   return (
-    <div className={gridClassName} data-akros-product-listing={isListing ? columns : undefined}>
+    <div className={gridClassName} data-sf-product-listing={isListing ? columns : undefined}>
       {products.map((product, index) => {
         const detailHref = product.detailHref ?? `/produkt/${product.slug}`;
         const canAddToCart =
@@ -69,19 +69,19 @@ export function ProductGrid({
         return (
           <article className="min-w-0" key={product.id}>
             <ProductCard
-              className="akros-product-card akros-catalog-product-card shadow-(--shadow-sm)"
+              className="sf-product-card sf-catalog-product-card shadow-(--shadow-sm)"
               layout="column"
             >
               <div className="relative">
                 <StoreLink
                   aria-label={product.name}
-                  className="akros-catalog-product-card__image-link"
+                  className="sf-catalog-product-card__image-link"
                   href={detailHref}
                 >
                   <ProductCard.Image
                     as={Image}
                     alt={product.imageAlt}
-                    className="akros-catalog-product-card__image"
+                    className="sf-catalog-product-card__image"
                     height={480}
                     loading={index < 4 ? "eager" : "lazy"}
                     sizes={imageSizes}
@@ -91,7 +91,7 @@ export function ProductGrid({
                   {(product.isRecommended || product.isSale || product.isAction) && (
                     <div
                       className="absolute top-0 left-0 grid justify-items-start gap-1 pr-11"
-                      data-akros-product-tags
+                      data-sf-product-tags
                     >
                       {product.isRecommended && (
                         <Badge size="sm" variant="primary">
@@ -121,7 +121,7 @@ export function ProductGrid({
                 <LinkButton
                   aria-label="Zobrazit oblíbené produkty"
                   as={StoreLink}
-                  className="akros-product-card__favorite absolute top-0 right-0 size-11 rounded-full p-0"
+                  className="sf-product-card__favorite absolute top-0 right-0 size-11 rounded-full p-0"
                   href="/oblibene"
                   icon="icon-[mdi--heart-outline]"
                   iconSize="lg"
@@ -131,15 +131,15 @@ export function ProductGrid({
                 />
               </div>
 
-              <ProductCard.Name className="akros-catalog-product-card__name m-0 text-center uppercase">
-                <StoreLink className="akros-product-card__name-link" href={detailHref}>
+              <ProductCard.Name className="sf-catalog-product-card__name m-0 text-center uppercase">
+                <StoreLink className="sf-product-card__name-link" href={detailHref}>
                   {product.name}
                 </StoreLink>
               </ProductCard.Name>
 
-              <div className="akros-product-card__stock-row flex flex-wrap items-center justify-between gap-2 py-1">
+              <div className="sf-product-card__stock-row flex flex-wrap items-center justify-between gap-2 py-1">
                 <ProductCard.Stock
-                  className="akros-catalog-product-card__stock m-0 uppercase"
+                  className="sf-catalog-product-card__stock m-0 uppercase"
                   status={productStockTone(product.stock.status)}
                 >
                   {cs.product.stockStatus[product.stock.status]}
@@ -151,21 +151,21 @@ export function ProductGrid({
                 )}
               </div>
 
-              <p className="akros-product-card__description m-0 line-clamp-2 min-h-[2.8em] text-sm leading-normal text-(--color-fg-secondary)">
+              <p className="sf-product-card__description m-0 line-clamp-2 min-h-[2.8em] text-sm leading-normal text-(--color-fg-secondary)">
                 {supportingText}
               </p>
 
               <ProductCard.Price
-                className={`mt-auto mb-0 text-center ${columns === "checkout" ? "leading-(--akros-checkout-heading-leading)" : ""}`}
+                className={`mt-auto mb-0 text-center ${columns === "checkout" ? "leading-(--sf-checkout-heading-leading)" : ""}`}
               >
                 {hasDiscount ? (
                   <>
-                    <span className="akros-product-card__discount">
+                    <span className="sf-product-card__discount">
                       {discountPercentage === 0 ? "<1%" : `-${discountPercentage}%`}
                     </span>
                     <span className="flex flex-wrap items-baseline justify-center gap-1">
                       <span>{priceLabel}</span>
-                      <del className="akros-product-card__original-price">
+                      <del className="sf-product-card__original-price">
                         <span className="sr-only">{cs.product.originalPrice}: </span>
                         {formatPrice(comparisonPrice, money)}
                       </del>
@@ -173,7 +173,7 @@ export function ProductGrid({
                   </>
                 ) : priceUnavailable ? (
                   <span
-                    className="akros-product-card__price-unavailable"
+                    className="sf-product-card__price-unavailable"
                     title={
                       product.priceUnavailableReason ??
                       "OntOS pro tuto položku nevrátil platnou cenu."
@@ -186,10 +186,7 @@ export function ProductGrid({
                 )}
               </ProductCard.Price>
 
-              <ProductCard.Actions
-                className="mt-auto block [&>*]:w-full"
-                data-akros-product-actions
-              >
+              <ProductCard.Actions className="mt-auto block [&>*]:w-full" data-sf-product-actions>
                 {canAddToCart && product.stock.kind === "quantity" ? (
                   <AddToCartButton
                     item={{

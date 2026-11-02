@@ -50,14 +50,14 @@ it("starts with empty address fields and prefills only the real admitted account
   );
   await waitFor(() => expect(screen.getByLabelText("Ready").textContent).toBe("true"));
   expect(screen.getByLabelText("Contact").textContent).toBe("verified@example.test");
-  const saved = JSON.parse(sessionStorage.getItem("akros-checkout-v2")!);
+  const saved = JSON.parse(sessionStorage.getItem("sf-checkout-v2")!);
   expect(saved.draft.billing.street).toBe("");
   expect(saved.draft.billing.firstName).toBe("");
 });
 it("restores unfinished customer-entered drafts without inventing a saved order", async () => {
   const user = userEvent.setup();
   sessionStorage.setItem(
-    "akros-checkout-v2",
+    "sf-checkout-v2",
     JSON.stringify({ version: 1, draft: { ...createCheckoutDraft(), company: "Entered" } }),
   );
   render(
@@ -69,6 +69,6 @@ it("restores unfinished customer-entered drafts without inventing a saved order"
   );
   await waitFor(() => expect(screen.getByLabelText("Ready").textContent).toBe("true"));
   await user.click(screen.getByText("Edit"));
-  expect(JSON.parse(sessionStorage.getItem("akros-checkout-v2")!).draft.company).toBe("Edited");
+  expect(JSON.parse(sessionStorage.getItem("sf-checkout-v2")!).draft.company).toBe("Edited");
   expect(sessionStorage.getItem("akros-demo-order-v1")).toBeNull();
 });

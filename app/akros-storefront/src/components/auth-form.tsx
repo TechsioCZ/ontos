@@ -66,7 +66,7 @@ export function LoginForm() {
 
   return (
     <>
-      <form action="/api/ontos/account" className="akros-auth-form" method="post" onSubmit={login}>
+      <form action="/api/ontos/account" className="sf-auth-form" method="post" onSubmit={login}>
         <FormInput
           autoComplete="username"
           id="login-email"
@@ -85,7 +85,7 @@ export function LoginForm() {
           size="sm"
           type="password"
         />
-        <div className="akros-auth-form__row">
+        <div className="sf-auth-form__row">
           <FormCheckbox name="rememberMe" label="Zapamatovat si mě" size="sm" />
         </div>
         <Button block disabled={pending} size="md" type="submit" variant="primary">
@@ -129,8 +129,8 @@ export function RegistrationForm() {
   }
 
   return (
-    <form action="/api/ontos/account" className="akros-auth-form" method="post" onSubmit={register}>
-      <div className="akros-form-grid">
+    <form action="/api/ontos/account" className="sf-auth-form" method="post" onSubmit={register}>
+      <div className="sf-form-grid">
         <FormInput
           autoComplete="given-name"
           id="register-first-name"
@@ -201,7 +201,7 @@ export function RegistrationForm() {
       </Button>
       {error && <p role="alert">{error}</p>}
       {submitted && (
-        <output className="akros-form-success">
+        <output className="sf-form-success">
           Registrace byla přijata. Potvrďte svůj e-mail odkazem v doručené zprávě. Přihlášení bude
           dostupné po ověření e-mailu. Po přihlášení můžete zkontrolovat stav a obnovit
           rozpracovanou registraci.

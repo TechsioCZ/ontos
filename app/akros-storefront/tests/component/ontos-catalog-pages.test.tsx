@@ -79,9 +79,7 @@ describe("OntOS category and search pages", () => {
       availability: "in-stock",
     });
     expect(screen.getAllByRole("heading", { level: 1 })[0].textContent).toBe("Šrouby");
-    expect(document.querySelectorAll(".akros-catalog-product-card").length).toBeGreaterThanOrEqual(
-      3,
-    );
+    expect(document.querySelectorAll(".sf-catalog-product-card").length).toBeGreaterThanOrEqual(3);
   });
   it("re-reads the last page when the requested page is past the end", async () => {
     vi.mocked(getCategoryListing)
@@ -118,9 +116,7 @@ describe("OntOS category and search pages", () => {
       </CartProvider>,
     );
     expect(getCatalogPage).toHaveBeenCalledWith({ q: "šroub", page: 2, pageSize: 24 });
-    expect(document.querySelectorAll(".akros-catalog-product-card").length).toBeGreaterThanOrEqual(
-      3,
-    );
+    expect(document.querySelectorAll(".sf-catalog-product-card").length).toBeGreaterThanOrEqual(3);
     vi.mocked(getCatalogPage).mockClear();
     await SearchPage({ searchParams: Promise.resolve({ q: "  " }) });
     expect(getCatalogPage).not.toHaveBeenCalled();

@@ -20,7 +20,7 @@ export function CheckoutSummary() {
     >
       <h2
         id="checkout-summary-title"
-        className="mb-(--dimension-32) text-(length:--akros-checkout-heading-size) leading-(--akros-checkout-heading-leading) font-medium"
+        className="mb-(--dimension-32) text-(length:--sf-checkout-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
       >
         {cs.checkout.summary.title}
       </h2>
@@ -56,7 +56,7 @@ export function CheckoutSummary() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <dt className="text-(length:--dimension-20)">{cs.checkout.summary.totalWithVat}</dt>
           <dd
-            className="text-(length:--akros-checkout-total-size) leading-(--akros-checkout-heading-leading) font-extrabold"
+            className="text-(length:--sf-checkout-total-size) leading-(--sf-checkout-heading-leading) font-extrabold"
             aria-live="polite"
           >
             {formatCheckoutPrice(totals.total, money)}

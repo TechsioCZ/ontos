@@ -174,9 +174,9 @@ export function CartRevalidation() {
       aria-live="polite"
       className="mb-(--dimension-16) grid gap-2 rounded-sm bg-(--color-base) p-4 text-sm"
       aria-label={cs.cart.quote.sectionLabel}
-      data-akros-cart-quote={status}
+      data-sf-cart-quote={status}
     >
-      <p className="font-bold" data-akros-cart-label>
+      <p className="font-bold" data-sf-cart-label>
         {cs.cart.quote.label}
       </p>
       {status === "error" ? (

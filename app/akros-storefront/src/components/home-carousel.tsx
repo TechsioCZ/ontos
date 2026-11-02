@@ -48,7 +48,7 @@ export function HomeCarousel() {
   });
 
   return (
-    <section aria-labelledby="home-carousel-title" data-akros-home-carousel>
+    <section aria-labelledby="home-carousel-title" data-sf-home-carousel>
       <h1 className="sr-only" id="home-carousel-title">
         {cs.home.companyTitle}
       </h1>

@@ -31,7 +31,7 @@ export function ProductFavoriteButton({ productId, productName }: ProductDetailA
         isFavorite ? cs.product.removeFavorite(productName) : cs.product.addFavorite(productName)
       }
       aria-pressed={isFavorite}
-      className="akros-product-detail__favorite"
+      className="sf-product-detail__favorite"
       icon={isFavorite ? "icon-[mdi--heart]" : "icon-[mdi--heart-outline]"}
       iconSize="lg"
       onClick={toggleFavorite}
@@ -62,14 +62,14 @@ export function ProductDetailActions({ productId, productName }: ProductDetailAc
 
   return (
     <div
-      className="akros-product-actions -mt-(--akros-product-actions-offset) flex flex-wrap gap-x-(--akros-product-actions-column-gap) gap-y-(--dimension-8) pt-(--dimension-4) [&>*]:min-h-(--akros-product-actions-min-height)"
+      className="sf-product-actions -mt-(--sf-product-actions-offset) flex flex-wrap gap-x-(--sf-product-actions-column-gap) gap-y-(--dimension-8) pt-(--dimension-4) [&>*]:min-h-(--sf-product-actions-min-height)"
       aria-label={cs.product.otherActions}
     >
       <LinkButton
         as={StoreLink}
         href={`/kontakty?productId=${encodeURIComponent(productId)}#primy-kontakt`}
-        className="akros-product-actions__question hover:underline focus-visible:underline"
-        icon="token-icon-akros-product-question"
+        className="sf-product-actions__question hover:underline focus-visible:underline"
+        icon="token-icon-sf-product-question"
         iconSize="sm"
         size="sm"
         theme="borderless"
@@ -78,8 +78,8 @@ export function ProductDetailActions({ productId, productName }: ProductDetailAc
         {cs.product.askQuestion}
       </LinkButton>
       <Button
-        className="akros-product-actions__email hover:underline focus-visible:underline"
-        icon="token-icon-akros-product-email"
+        className="sf-product-actions__email hover:underline focus-visible:underline"
+        icon="token-icon-sf-product-email"
         iconSize="sm"
         onClick={shareProduct}
         size="sm"

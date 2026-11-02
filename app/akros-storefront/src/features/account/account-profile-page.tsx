@@ -102,7 +102,7 @@ export function AccountProfilePage({
       <h1>Můj účet</h1>
       <form
         action="/api/ontos/account/profile"
-        className="akros-auth-form"
+        className="sf-auth-form"
         method="post"
         onSubmit={save}
       >

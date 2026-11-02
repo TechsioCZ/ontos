@@ -39,7 +39,7 @@ export function AddressStep() {
   }
   return (
     <form
-      data-akros-checkout-address
+      data-sf-checkout-address
       ref={formRef}
       noValidate
       onSubmit={(event) => {
@@ -56,13 +56,13 @@ export function AddressStep() {
       }}
     >
       <section
-        className="grid gap-(--dimension-60) rounded-sm bg-(--color-base) p-(--akros-checkout-panel-padding)"
+        className="grid gap-(--dimension-60) rounded-sm bg-(--color-base) p-(--sf-checkout-panel-padding)"
         aria-labelledby="address-title"
       >
         <div>
           <h1
             id="address-title"
-            className="mb-6 text-(length:--akros-checkout-heading-size) leading-(--akros-checkout-heading-leading) font-medium"
+            className="mb-6 text-(length:--sf-checkout-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
           >
             Dodací údaje
           </h1>
@@ -119,7 +119,7 @@ export function AddressStep() {
               />
             </div>
           ) : (
-            <div className="text-sm leading-(--akros-checkout-body-leading)">
+            <div className="text-sm leading-(--sf-checkout-body-leading)">
               <p>
                 {draft.billing.firstName} {draft.billing.lastName}
               </p>
@@ -132,7 +132,7 @@ export function AddressStep() {
           )}
         </div>
         <div className="grid gap-4">
-          <h2 className="text-(length:--akros-checkout-choice-size) leading-(--akros-checkout-heading-leading) font-bold">
+          <h2 className="text-(length:--sf-checkout-choice-size) leading-(--sf-checkout-heading-leading) font-bold">
             Fakturační adresa
           </h2>
           {editing ? (
@@ -143,7 +143,7 @@ export function AddressStep() {
               onChange={(billing) => updateDraft((current) => ({ ...current, billing }))}
             />
           ) : (
-            <div className="text-sm leading-(--akros-checkout-body-leading)">
+            <div className="text-sm leading-(--sf-checkout-body-leading)">
               <p>{draft.billing.street}</p>
               <p>{draft.billing.city}</p>
               <p>{draft.billing.postalCode}</p>
@@ -155,8 +155,8 @@ export function AddressStep() {
             theme="outlined"
             variant="secondary"
             uppercase
-            data-akros-checkout-action
-            className="w-fit min-w-40 leading-(--akros-checkout-heading-leading)"
+            data-sf-checkout-action
+            className="w-fit min-w-40 leading-(--sf-checkout-heading-leading)"
             aria-label={editing ? "Uložit údaje" : "Změnit fakturační údaje"}
             onClick={() => (editing ? saveBilling() : setEditing(true))}
           >
@@ -164,7 +164,7 @@ export function AddressStep() {
           </Button>
         </div>
         <div className="grid gap-4">
-          <h2 className="text-(length:--akros-checkout-choice-size) leading-(--akros-checkout-heading-leading) font-bold">
+          <h2 className="text-(length:--sf-checkout-choice-size) leading-(--sf-checkout-heading-leading) font-bold">
             Dodací adresa
           </h2>
           <FormCheckbox
@@ -190,8 +190,8 @@ export function AddressStep() {
         <LinkButton
           as={StoreLink}
           href="/kosik/doprava-platba"
-          data-akros-checkout-action
-          className="leading-(--akros-checkout-heading-leading)"
+          data-sf-checkout-action
+          className="leading-(--sf-checkout-heading-leading)"
           variant="secondary"
           size="sm"
           uppercase
@@ -203,8 +203,8 @@ export function AddressStep() {
             type="submit"
             variant="primary"
             size="sm"
-            data-akros-checkout-action
-            className="leading-(--akros-checkout-heading-leading)"
+            data-sf-checkout-action
+            className="leading-(--sf-checkout-heading-leading)"
             uppercase
             disabled={blocked}
             aria-describedby={blocked ? "address-blocked" : undefined}

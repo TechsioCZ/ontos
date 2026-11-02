@@ -104,11 +104,8 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
   const page = (
     <StorefrontShell activeCategorySlug={category.slug}>
       <StorefrontBreadcrumbs items={breadcrumbItems} />
-      <section
-        className="akros-section akros-product-listing-section"
-        aria-labelledby="category-title"
-      >
-        <div className="akros-category-heading">
+      <section className="sf-section sf-product-listing-section" aria-labelledby="category-title">
+        <div className="sf-category-heading">
           <h1 id="category-title">{category.name}</h1>
           {description && <p>{description}</p>}
         </div>
@@ -123,7 +120,7 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
       />
       {itemCount > 0 && products.length > 0 ? (
         <section
-          className="akros-section akros-product-listing-section"
+          className="sf-section sf-product-listing-section"
           aria-label={`Produkty: ${category.name}`}
         >
           <ProductGrid products={products.map(toProductSummary)} />
@@ -136,7 +133,7 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
           />
         </section>
       ) : (
-        <p className="akros-empty-state">
+        <p className="sf-empty-state">
           {filtersActive
             ? "Nenalezeny žádné produkty. Upravte nebo vymažte filtry."
             : cs.catalog.emptyCategory}
@@ -145,7 +142,7 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
 
       {recommendations.length > 0 && (
         <section
-          className="akros-section akros-product-listing-section"
+          className="sf-section sf-product-listing-section"
           aria-labelledby="recommendations-title"
         >
           <h2 id="recommendations-title">{cs.catalog.recommendations}</h2>

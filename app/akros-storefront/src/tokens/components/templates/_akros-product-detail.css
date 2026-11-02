@@ -1,34 +1,34 @@
 :root {
-  --akros-product-detail-column-gap: var(--dimension-32);
-  --akros-product-detail-content-gap: var(--dimension-24);
-  --akros-product-detail-panel-padding: var(--dimension-16);
-  --akros-product-detail-panel-radius: var(--radius-sm);
-  --akros-product-detail-image-radius: var(--radius-sm);
-  --akros-product-detail-divider-color: var(--color-border-primary);
-  --akros-product-detail-tier-bg: var(--color-fill-surface);
-  --akros-product-detail-stock-fg: var(--color-fg-status-success);
-  --akros-product-detail-stock-unavailable-fg: var(--color-fg-status-error);
-  --akros-product-detail-gallery-max-width: 600px;
-  --akros-product-detail-image-aspect-ratio: 600 / 494;
-  --akros-product-detail-thumbnail-width: 148px;
-  --akros-variant-filter-background: var(--color-base);
-  --akros-variant-filter-label-color: var(--color-fg-primary);
-  --akros-variant-filter-padding: var(--dimension-8);
-  --akros-variant-filter-label-font-size: 13px;
-  --akros-variant-filter-label-line-height: var(--dimension-16);
-  --akros-variant-filter-measurement-width: 212px;
-  --akros-variant-filter-price-track-space: calc(242px - var(--dimension-48) * 2);
-  --akros-variant-filter-input-width: var(--dimension-32);
-  --akros-variant-filter-submit-width: 113px;
-  --akros-variant-filter-checkbox-indicator-size: var(--dimension-12);
+  --sf-product-detail-column-gap: var(--dimension-32);
+  --sf-product-detail-content-gap: var(--dimension-24);
+  --sf-product-detail-panel-padding: var(--dimension-16);
+  --sf-product-detail-panel-radius: var(--radius-sm);
+  --sf-product-detail-image-radius: var(--radius-sm);
+  --sf-product-detail-divider-color: var(--color-border-primary);
+  --sf-product-detail-tier-bg: var(--color-fill-surface);
+  --sf-product-detail-stock-fg: var(--color-fg-status-success);
+  --sf-product-detail-stock-unavailable-fg: var(--color-fg-status-error);
+  --sf-product-detail-gallery-max-width: 600px;
+  --sf-product-detail-image-aspect-ratio: 600 / 494;
+  --sf-product-detail-thumbnail-width: 148px;
+  --sf-variant-filter-background: var(--color-base);
+  --sf-variant-filter-label-color: var(--color-fg-primary);
+  --sf-variant-filter-padding: var(--dimension-8);
+  --sf-variant-filter-label-font-size: 13px;
+  --sf-variant-filter-label-line-height: var(--dimension-16);
+  --sf-variant-filter-measurement-width: 212px;
+  --sf-variant-filter-price-track-space: calc(242px - var(--dimension-48) * 2);
+  --sf-variant-filter-input-width: var(--dimension-32);
+  --sf-variant-filter-submit-width: 113px;
+  --sf-variant-filter-checkbox-indicator-size: var(--dimension-12);
 }
 
-.akros-product-detail__variant-badge {
+.sf-product-detail__variant-badge {
   --color-badge-bg-secondary: var(--color-fg-primary);
   --color-badge-fg-secondary: var(--color-fg-reverse);
 }
 
-.akros-purchase-form {
+.sf-purchase-form {
   --height-form-control-md: var(--dimension-60);
   --height-form-control-lg: var(--dimension-60);
   --padding-button-md: var(--padding-button-y-md) var(--dimension-16);
@@ -40,17 +40,17 @@
   --spacing-button-md: var(--dimension-20);
 }
 
-.akros-product-detail__favorite {
+.sf-product-detail__favorite {
   --color-button-border-secondary: var(--color-border-primary);
   --height-form-control-md: var(--dimension-60);
   --padding-button-md: var(--padding-button-y-md) var(--dimension-0);
   --radius-button-md: var(--radius-sm);
 }
 
-.akros-product-actions {
-  --akros-product-actions-column-gap: var(--dimension-30);
-  --akros-product-actions-min-height: var(--dimension-40);
-  --akros-product-actions-offset: var(--dimension-0);
+.sf-product-actions {
+  --sf-product-actions-column-gap: var(--dimension-30);
+  --sf-product-actions-min-height: var(--dimension-40);
+  --sf-product-actions-offset: var(--dimension-0);
   --text-button-sm: var(--text-base);
   --spacing-button-sm: var(--dimension-8);
   --padding-button-sm: var(--dimension-0);
@@ -60,24 +60,24 @@
   --color-button-bg-borderless-active: var(--color-bg-transparent);
 }
 
-.akros-product-detail__stock + .akros-product-actions {
-  --akros-product-actions-offset: var(--dimension-8);
+.sf-product-detail__stock + .sf-product-actions {
+  --sf-product-actions-offset: var(--dimension-8);
 }
 
-.akros-product-actions__watch {
+.sf-product-actions__watch {
   --text-icon-sm: 17px;
   --color-button-fg-secondary-borderless: var(--color-fg-primary);
 }
 
-.akros-product-actions__question {
+.sf-product-actions__question {
   --text-icon-sm: 22px;
 }
 
-.akros-product-actions__email {
+.sf-product-actions__email {
   --text-icon-sm: 15px;
 }
 
-.akros-variant-filter-range {
+.sf-variant-filter-range {
   --height-form-control-sm: 19px;
   --border-width-form-control: 0.5px;
   --color-numeric-input-border: var(--color-base-dark);
@@ -99,23 +99,23 @@
   --shadow-slider-thumb: none;
 }
 
-.akros-variant-filter-range--price {
-  --akros-variant-filter-input-width: max(
+.sf-variant-filter-range--price {
+  --sf-variant-filter-input-width: max(
     var(--dimension-48),
-    calc(var(--akros-variant-filter-price-characters, 5) * 1ch + var(--dimension-8))
+    calc(var(--sf-variant-filter-price-characters, 5) * 1ch + var(--dimension-8))
   );
-  --akros-variant-filter-price-width: calc(
-    var(--akros-variant-filter-input-width) * 2 + var(--akros-variant-filter-price-track-space)
+  --sf-variant-filter-price-width: calc(
+    var(--sf-variant-filter-input-width) * 2 + var(--sf-variant-filter-price-track-space)
   );
 }
 
-.akros-variant-filter-submit {
+.sf-variant-filter-submit {
   --font-weight-button: var(--font-weight-bold);
   --height-form-control-sm: 38px;
-  --text-button-sm: var(--akros-variant-filter-label-font-size);
+  --text-button-sm: var(--sf-variant-filter-label-font-size);
 }
 
-.akros-variant-purchase__filter-bar {
+.sf-variant-purchase__filter-bar {
   --size-checkbox: var(--dimension-20);
   --radius-checkbox: 5px;
   --color-checkbox-bg-base: var(--color-base);
@@ -127,23 +127,23 @@
 }
 
 @media (max-width: 767px) {
-  .akros-variant-filter-range {
+  .sf-variant-filter-range {
     --height-form-control-sm: var(--dimension-32);
   }
 
-  .akros-product-actions {
-    --akros-product-actions-min-height: var(--dimension-44);
+  .sf-product-actions {
+    --sf-product-actions-min-height: var(--dimension-44);
   }
 }
 
 @media (max-width: 1023px) {
-  .akros-purchase-form {
+  .sf-purchase-form {
     --height-form-control-md: var(--dimension-48);
     --height-form-control-lg: var(--dimension-48);
     --text-numeric-input-lg: var(--text-base);
   }
 
-  .akros-product-detail__favorite {
+  .sf-product-detail__favorite {
     --height-form-control-md: var(--dimension-48);
   }
 }

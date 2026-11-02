@@ -22,7 +22,7 @@ try {
   await page.goto(new URL("/kosik", baseUrl).href, { waitUntil: "domcontentloaded" });
   await page.locator("table tbody tr").last().waitFor();
   await page.evaluate(() => document.fonts.ready);
-  const selector = page.locator("[data-akros-cart-selector]");
+  const selector = page.locator("[data-sf-cart-selector]");
   const initialCount = await page.locator("table tbody tr").count();
   assert.equal(initialCount, 3);
   assert.equal(await page.locator("table").getByText("Kód produktu:", { exact: false }).count(), 0);
@@ -33,7 +33,7 @@ try {
     const failures = await page.evaluate(() => {
       const failures = [];
       for (const surface of document.querySelectorAll(
-        "[data-akros-cart-selector], [data-akros-cart-navigation]",
+        "[data-sf-cart-selector], [data-sf-cart-navigation]",
       )) {
         const bounds = surface.getBoundingClientRect();
         for (const control of surface.querySelectorAll('button, a, [data-part="item-text"]')) {
@@ -42,7 +42,7 @@ try {
             failures.push("Sidebar/navigation overflow");
         }
       }
-      for (const link of document.querySelectorAll("[data-akros-cart-navigation] a")) {
+      for (const link of document.querySelectorAll("[data-sf-cart-navigation] a")) {
         if (Math.abs(link.getBoundingClientRect().height - 60) > 1)
           failures.push("CTA height differs from Figma");
         if (parseFloat(getComputedStyle(link).fontSize) !== 20)
@@ -53,10 +53,10 @@ try {
         .querySelector('[aria-labelledby="checkout-summary-title"]')
         .getBoundingClientRect();
       const navigation = document
-        .querySelector("[data-akros-cart-navigation]")
+        .querySelector("[data-sf-cart-navigation]")
         .getBoundingClientRect();
-      const checkout = document.querySelector("[data-akros-checkout]");
-      const body = document.querySelector("[data-akros-checkout-body]").getBoundingClientRect();
+      const checkout = document.querySelector("[data-sf-checkout]");
+      const body = document.querySelector("[data-sf-checkout-body]").getBoundingClientRect();
       const root = checkout.getBoundingClientRect();
       const availableWidth = document.documentElement.getBoundingClientRect().width;
       if (Math.abs(root.width - availableWidth) > 1)

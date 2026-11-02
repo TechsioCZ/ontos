@@ -39,18 +39,18 @@ export function FaqExplorer() {
 
   return (
     <>
-      <header className="akros-faq-hero">
+      <header className="sf-faq-hero">
         <Badge size="md" variant="primary">
           ZÁKAZNICKÁ PODPORA
         </Badge>
         <h1>Jak vám můžeme dnes pomoci?</h1>
-        <div className="akros-faq-search">
-          <span aria-hidden="true" className="akros-faq-search__icon">
+        <div className="sf-faq-search">
+          <span aria-hidden="true" className="sf-faq-search__icon">
             🔍
           </span>
           <Input
             aria-label="Hledat v často kladených otázkách"
-            className="akros-faq-search__input"
+            className="sf-faq-search__input"
             onChange={(event) => setQuery(event.currentTarget.value)}
             placeholder="Hledejte v často kladených otázkách (např. normy, dodání, certifikáty)…"
             size="md"
@@ -59,8 +59,8 @@ export function FaqExplorer() {
           />
         </div>
       </header>
-      <div className="akros-faq-layout">
-        <nav aria-label="Kategorie často kladených otázek" className="akros-faq-categories">
+      <div className="sf-faq-layout">
+        <nav aria-label="Kategorie často kladených otázek" className="sf-faq-categories">
           <h2>Kategorie témat</h2>
           {faqGroups.map((group) => (
             <button
@@ -77,27 +77,27 @@ export function FaqExplorer() {
             </button>
           ))}
         </nav>
-        <section className="akros-faq-results" aria-live="polite">
+        <section className="sf-faq-results" aria-live="polite">
           <h2>
             <span aria-hidden="true">{normalizedQuery ? "🔍" : faqGroupIcons[activeGroup.id]}</span>
             {normalizedQuery ? "Výsledky hledání" : activeGroup.title}
           </h2>
           {visibleItems.length > 0 ? (
-            <div className="akros-faq-accordion-list">
+            <div className="sf-faq-accordion-list">
               {visibleItems.map(([question, answer, details]) => (
                 <Accordion collapsible key={question} shadow="none" size="sm" variant="default">
                   <Accordion.Item value={question}>
                     <Accordion.Header>
                       <Accordion.Title>
                         {question}
-                        <Accordion.Subtitle className="akros-faq-answer-summary">
+                        <Accordion.Subtitle className="sf-faq-answer-summary">
                           {answer}
                         </Accordion.Subtitle>
                       </Accordion.Title>
                       <Accordion.Indicator />
                     </Accordion.Header>
                     <Accordion.Content>
-                      <div className="akros-faq-answer-details">
+                      <div className="sf-faq-answer-details">
                         {details.map((paragraph) => (
                           <p key={paragraph}>{paragraph}</p>
                         ))}
@@ -108,7 +108,7 @@ export function FaqExplorer() {
               ))}
             </div>
           ) : (
-            <p className="akros-empty-state">Pro zadaný výraz jsme nenašli žádnou odpověď.</p>
+            <p className="sf-empty-state">Pro zadaný výraz jsme nenašli žádnou odpověď.</p>
           )}
         </section>
       </div>

@@ -105,7 +105,7 @@ export function MiniCart() {
           aria-expanded={open}
           aria-haspopup="dialog"
           aria-label={triggerLabel}
-          className="akros-header__cart-trigger w-(--akros-header-cart-width) shrink-0 max-lg:w-16"
+          className="sf-header__cart-trigger w-(--sf-header-cart-width) shrink-0 max-lg:w-16"
           data-state={open ? "open" : "closed"}
           href="/kosik"
           id={`${id}-trigger`}
@@ -130,7 +130,7 @@ export function MiniCart() {
           <span className="relative inline-flex shrink-0 items-center justify-center">
             <Icon icon="token-icon-cart-button" size="2xl" />
             <Badge
-              className="akros-header__cart-count absolute -top-1 -right-1 h-5 min-w-5 leading-none"
+              className="sf-header__cart-count absolute -top-1 -right-1 h-5 min-w-5 leading-none"
               aria-live="polite"
               size="sm"
               variant="secondary"
@@ -143,7 +143,7 @@ export function MiniCart() {
 
       <Popover.Positioner className="z-70 max-w-[calc(100vw-var(--dimension-32))]">
         <Popover.Content
-          data-akros-mini-cart
+          data-sf-mini-cart
           className="max-h-[min(70vh,540px)] w-[min(var(--dimension-container-3xl),calc(100vw-var(--dimension-32)))] overflow-y-auto shadow-md max-md:w-[calc(100vw-var(--dimension-32))]"
           onBlur={(event) => {
             if (

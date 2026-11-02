@@ -1,4 +1,4 @@
-[data-akros-home-carousel] {
+[data-sf-home-carousel] {
   --color-carousel-control-bg: var(--color-transparent);
   --color-carousel-trigger-bg-base: var(--color-transparent);
   --color-carousel-trigger-bg-hover: var(--color-transparent);
@@ -16,13 +16,13 @@
 }
 
 @media (max-width: 760px) {
-  [data-akros-home-carousel] {
+  [data-sf-home-carousel] {
     --size-carousel-indicator-dot: var(--dimension-8);
   }
 }
 
 @media (width < 431px) {
-  [data-akros-home-carousel] {
+  [data-sf-home-carousel] {
     /* Indicators sit below the banner on the page surface at this width. */
     --color-carousel-indicator-bg-active: var(--color-base-dark);
     --color-carousel-indicator-bg-base: color-mix(in srgb, var(--color-base-dark) 50%, transparent);

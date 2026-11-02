@@ -41,10 +41,10 @@ export function AccountShell({
     <div className="min-h-screen bg-(--color-base)">
       <SiteHeader />
       <main
-        data-akros-account
-        className="bg-(--akros-account-surface) px-(--dimension-16) pt-(--dimension-40) pb-(--dimension-80) text-(length:--akros-account-body-size) font-medium leading-(--akros-account-leading) text-fg-primary [font-optical-sizing:var(--akros-account-optical-sizing)]"
+        data-sf-account
+        className="bg-(--sf-account-surface) px-(--dimension-16) pt-(--dimension-40) pb-(--dimension-80) text-(length:--sf-account-body-size) font-medium leading-(--sf-account-leading) text-fg-primary [font-optical-sizing:var(--sf-account-optical-sizing)]"
       >
-        <div data-akros-account-body className="mx-auto w-full max-w-(--akros-account-width)">
+        <div data-sf-account-body className="mx-auto w-full max-w-(--sf-account-width)">
           <StorefrontBreadcrumbs
             className="mb-(--dimension-20)"
             items={[
@@ -60,7 +60,7 @@ export function AccountShell({
             <nav
               aria-label="Navigace účtu"
               data-account-navigation
-              className="mb-(--dimension-40) flex flex-wrap border-b border-(--akros-account-divider)"
+              className="mb-(--dimension-40) flex flex-wrap border-b border-(--sf-account-divider)"
             >
               {navigation.map((item) => (
                 <LinkButton
@@ -72,7 +72,7 @@ export function AccountShell({
                   size="sm"
                   theme="unstyled"
                   aria-current={item.key === parent ? "page" : undefined}
-                  className="shrink-0 whitespace-nowrap hover:underline data-disabled:opacity-50 aria-[current=page]:border-b-(length:--akros-account-tab-border) aria-[current=page]:border-(--akros-account-accent)"
+                  className="shrink-0 whitespace-nowrap hover:underline data-disabled:opacity-50 aria-[current=page]:border-b-(length:--sf-account-tab-border) aria-[current=page]:border-(--sf-account-accent)"
                 >
                   {item.label}
                 </LinkButton>

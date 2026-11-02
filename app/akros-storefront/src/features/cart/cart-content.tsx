@@ -29,12 +29,12 @@ export function CartContent() {
     );
   return (
     <section
-      className="rounded-sm bg-(--color-base) p-(--akros-checkout-panel-padding)"
+      className="rounded-sm bg-(--color-base) p-(--sf-checkout-panel-padding)"
       aria-labelledby="cart-title"
     >
       <h1
         id="cart-title"
-        className="mb-(--dimension-32) text-(length:--akros-checkout-heading-size) leading-(--akros-checkout-heading-leading) font-medium"
+        className="mb-(--dimension-32) text-(length:--sf-checkout-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
       >
         {cs.cart.itemsTitle}
       </h1>
@@ -50,21 +50,21 @@ export function CartNavigation() {
   const blocked = quote ? !quote.canContinue : false;
   return (
     <div
-      data-akros-cart-navigation
-      className="order-3 mt-(--dimension-24) flex flex-wrap justify-between gap-(--dimension-24) pt-(--dimension-16) leading-(--akros-checkout-heading-leading) xl:col-start-1"
+      data-sf-cart-navigation
+      className="order-3 mt-(--dimension-24) flex flex-wrap justify-between gap-(--dimension-24) pt-(--dimension-16) leading-(--sf-checkout-heading-leading) xl:col-start-1"
     >
       <LinkButton
         as={StoreLink}
         href="/"
         variant="secondary"
         size="sm"
-        className="w-full sm:w-(--akros-checkout-back-width)"
+        className="w-full sm:w-(--sf-checkout-back-width)"
         uppercase
       >
         {cs.cart.backToShop}
       </LinkButton>
       {blocked ? (
-        <div className="grid w-full gap-2 sm:w-(--akros-checkout-continue-width)">
+        <div className="grid w-full gap-2 sm:w-(--sf-checkout-continue-width)">
           <Button
             type="button"
             variant="primary"
@@ -86,7 +86,7 @@ export function CartNavigation() {
           href="/kosik/doprava-platba"
           variant="primary"
           size="sm"
-          className="w-full sm:w-(--akros-checkout-continue-width)"
+          className="w-full sm:w-(--sf-checkout-continue-width)"
           uppercase
         >
           {cs.cart.chooseDelivery}

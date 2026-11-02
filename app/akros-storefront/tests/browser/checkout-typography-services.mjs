@@ -72,29 +72,29 @@ try {
   ]) {
     await page.setViewportSize({ width: 1920, height: 1000 });
     await page.goto(new URL(route, baseUrl).href, { waitUntil: "domcontentloaded" });
-    await page.locator("[data-akros-checkout] h1").waitFor();
+    await page.locator("[data-sf-checkout] h1").waitFor();
     await page.evaluate(() => document.fonts.ready);
-    await typography("[data-akros-checkout] h1", 31, 500, 37.2);
+    await typography("[data-sf-checkout] h1", 31, 500, 37.2);
     await typography("#cart-selector-title", 31, 500, 37.2);
     await typography(".text-steps-title-md", 20, 500, 30);
     await typography(".font-steps-number", 20, 500, 30);
-    await typography('[data-akros-cart-selector] [data-part="item-text"]', 25, 700, 30);
+    await typography('[data-sf-cart-selector] [data-part="item-text"]', 25, 700, 30);
     if (route !== "/kosik/shrnuti") await typography("#checkout-summary-title", 31, 500, 37.2);
     if (route !== "/kosik/shrnuti") {
       await typography("#checkout-recommendations", 39, 800, 46.8);
-      await typography(".akros-product-card__description", 16, 500, 24);
-      await typography(".akros-catalog-product-card__name", 20, 500, 24);
+      await typography(".sf-product-card__description", 16, 500, 24);
+      await typography(".sf-catalog-product-card__name", 20, 500, 24);
       await typography(".text-product-card-price-size", 20, 800, 24);
-      await typography(".akros-catalog-product-card__stock", 16, 500, 24);
+      await typography(".sf-catalog-product-card__stock", 16, 500, 24);
     }
     if (route === "/kosik") {
-      await typography("[data-akros-cart-navigation] a", 20, 700, 24);
-      await typography("[data-akros-cart-items] td a", 20, 500, 30);
-      await typography("[data-akros-cart-items] td strong", 20, 800, 30);
-      await typography("[data-akros-cart-items] input[role=spinbutton]", 25, 700, 30);
+      await typography("[data-sf-cart-navigation] a", 20, 700, 24);
+      await typography("[data-sf-cart-items] td a", 20, 500, 30);
+      await typography("[data-sf-cart-items] td strong", 20, 800, 30);
+      await typography("[data-sf-cart-items] input[role=spinbutton]", 25, 700, 30);
     }
     if (route === "/kosik/doprava-platba") {
-      await typography('[data-akros-checkout] form button[type="submit"]', 20, 700);
+      await typography('[data-sf-checkout] form button[type="submit"]', 20, 700);
       await typography("#payment-title", 30, 500, 36);
       await typography('[aria-labelledby="delivery-title"] [data-part="item-text"]', 20, 500, 30);
       await typography(
@@ -105,31 +105,26 @@ try {
       );
     }
     if (route === "/kosik/dodaci-udaje") {
-      await typography('[data-akros-checkout] form button[type="submit"]', 20, 700);
-      await typography("[data-akros-checkout-address] h2", 25, 700, 30);
+      await typography('[data-sf-checkout] form button[type="submit"]', 20, 700);
+      await typography("[data-sf-checkout-address] h2", 25, 700, 30);
       await page.getByRole("button", { name: "Změnit fakturační údaje", exact: true }).click();
       await typography('label[for="billing-firstName"]', 20, 500, 30);
       await typography("#billing-firstName", 20, 500, 30);
-      await typography("[data-akros-checkout-address] .text-select-value-sm", 20, 500, 30);
-      await typography(
-        '[data-akros-checkout-address] input[autocomplete="billing tel"]',
-        20,
-        500,
-        30,
-      );
+      await typography("[data-sf-checkout-address] .text-select-value-sm", 20, 500, 30);
+      await typography('[data-sf-checkout-address] input[autocomplete="billing tel"]', 20, 500, 30);
     }
     if (route === "/kosik/shrnuti") {
-      await typography('[data-akros-checkout] form button[type="submit"]', 20, 700);
-      await typography("[data-akros-checkout-review] th", 16, 500, 24);
-      await typography("[data-akros-checkout-review] dl dt", 16, 500, 24);
+      await typography('[data-sf-checkout] form button[type="submit"]', 20, 700);
+      await typography("[data-sf-checkout-review] th", 16, 500, 24);
+      await typography("[data-sf-checkout-review] dl dt", 16, 500, 24);
       await typography("#billing-review-title", 31, 500, 37.2);
-      await typography("[data-akros-checkout-review] address", 16, 500, 24);
+      await typography("[data-sf-checkout-review] address", 16, 500, 24);
     }
     for (const width of widths) {
       await page.setViewportSize({ width, height: 1000 });
       await page.waitForTimeout(200);
       const overflow = await page
-        .locator("[data-akros-checkout]")
+        .locator("[data-sf-checkout]")
         .evaluate((e) => e.scrollWidth - e.clientWidth);
       assert.equal(overflow, 0, `${route} overflow at ${width}px`);
       if (artifactDir && [1920, 1280, 390].includes(width)) {

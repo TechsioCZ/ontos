@@ -205,7 +205,7 @@ export function HeaderSearch() {
             loadingMessage="Hledám v katalogu OntOS…"
             error={
               searchError ? (
-                <span data-akros-search-error="">
+                <span data-sf-search-error="">
                   <strong>Vyhledávání se nepodařilo.</strong> {searchError}
                 </span>
               ) : undefined
@@ -233,7 +233,7 @@ export function HeaderSearch() {
             resultSlot={(item) =>
               item.data && (
                 <span
-                  data-akros-search-result=""
+                  data-sf-search-result=""
                   className="flex w-full min-w-0 items-center gap-(--dimension-12)"
                 >
                   {item.data.kind === "category" ? (
@@ -250,7 +250,7 @@ export function HeaderSearch() {
                     />
                   )}
                   <span
-                    data-akros-search-result-label=""
+                    data-sf-search-result-label=""
                     className="grid min-w-0 flex-1 gap-(--dimension-4)"
                   >
                     <span className="line-clamp-2 whitespace-normal text-sm leading-tight">
@@ -285,7 +285,7 @@ function SuggestionPrice(data: Extract<SuggestionData, { kind: "product" }>) {
   ) : (
     <span
       className="shrink-0 whitespace-nowrap text-xs text-(--color-fg-secondary)"
-      data-akros-search-price-unavailable=""
+      data-sf-search-price-unavailable=""
       title={price.reason}
     >
       {price.label}

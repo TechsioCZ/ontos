@@ -117,7 +117,7 @@ describe("SiteHeader search through the OntOS BFF", () => {
       expect(option.textContent).toContain("Cena není dostupná");
       expect(option.textContent).not.toMatch(/0,00|€|Kč/);
     }
-    expect(euro.querySelector("[data-akros-search-price-unavailable]")?.getAttribute("title")).toBe(
+    expect(euro.querySelector("[data-sf-search-price-unavailable]")?.getAttribute("title")).toBe(
       "Cena je v nepodporované měně (EUR); e-shop prodává jen v Kč.",
     );
   });

@@ -30,7 +30,7 @@ const inter = localFont({
   weight: "400 900",
   style: "normal",
   display: "swap",
-  variable: "--font-akros",
+  variable: "--font-sf",
   declarations: [
     {
       prop: "unicode-range",

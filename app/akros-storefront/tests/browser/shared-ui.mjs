@@ -40,10 +40,10 @@ try {
       await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1),
       false,
     );
-    const footer = page.locator(".akros-footer");
+    const footer = page.locator(".sf-footer");
     // Fixed desktop columns allow logos to use the surrounding gap; check visible footer bounds.
     assert.deepEqual(
-      await footer.locator(".akros-footer__asset-row img").evaluateAll((images) =>
+      await footer.locator(".sf-footer__asset-row img").evaluateAll((images) =>
         images
           .filter((image) => {
             const bounds = image.closest("footer").getBoundingClientRect();
@@ -57,13 +57,13 @@ try {
     );
     assert.equal(await footer.locator('a[href="tel:+420737591849"]').count(), 1);
     assert.equal(await footer.locator('a[href="mailto:akros@akros.cz"]').count(), 1);
-    for (const social of await footer.locator(".akros-footer__social-icon").all()) {
+    for (const social of await footer.locator(".sf-footer__social-icon").all()) {
       assert.equal(await social.getAttribute("target"), "_blank");
       assert.match(await social.getAttribute("rel"), /noopener/);
     }
 
     if (width >= 1024) {
-      const nav = page.locator(".akros-header__utility-links");
+      const nav = page.locator(".sf-header__utility-links");
       const home = nav.locator('a[href="/"]');
       await probe(
         nav,
@@ -80,17 +80,17 @@ try {
       );
     }
     await probe(
-      page.locator(".akros-header__search"),
+      page.locator(".sf-header__search"),
       { "--radius-combobox-md": "9px 7px 5px 3px" },
       async () => {
         assert.equal(
-          await style(page.locator('.akros-header__search [data-part="control"]'), "borderRadius"),
+          await style(page.locator('.sf-header__search [data-part="control"]'), "borderRadius"),
           "9px 7px 5px 3px",
         );
       },
     );
-    const top = footer.locator(".akros-footer__top");
-    const commerce = footer.locator(".akros-footer__commerce");
+    const top = footer.locator(".sf-footer__top");
+    const commerce = footer.locator(".sf-footer__commerce");
     const commerceColumns = await style(commerce, "gridTemplateColumns");
     await probe(top, { "--footer-cols": "1fr" }, async () => {
       assert.equal((await style(top, "gridTemplateColumns")).split(" ").length, 1);
@@ -98,7 +98,7 @@ try {
     });
 
     await search.fill("retez");
-    const popup = page.locator('.akros-header__search [data-part="content"]');
+    const popup = page.locator('.sf-header__search [data-part="content"]');
     await page.getByRole("listbox").waitFor();
     // Wait for the kit's discrete opening/scale transition before checking bounds.
     await page.waitForTimeout(250);
@@ -107,7 +107,7 @@ try {
       bounds.x >= -1 && bounds.x + bounds.width <= width + 1,
       `${width}px search popup stays in the viewport`,
     );
-    assert.ok((await page.locator("[data-akros-search-result]").count()) > 0);
+    assert.ok((await page.locator("[data-sf-search-result]").count()) > 0);
     await page.keyboard.press("Escape");
     assert.equal(await search.inputValue(), "retez");
     await search.fill("");
@@ -117,7 +117,7 @@ try {
       await trigger.click();
       const menu = page.getByRole("dialog", { name: "Menu" });
       await menu.waitFor();
-      const links = menu.locator(".akros-mobile-menu__links").first();
+      const links = menu.locator(".sf-mobile-menu__links").first();
       const account = links.locator('a[href="/muj-ucet"]');
       assert.equal(await style(account, "height"), "44px");
       await probe(
@@ -133,7 +133,7 @@ try {
           assert.equal(await style(account, "color"), "rgb(12, 34, 56)");
         },
       );
-      const current = menu.locator('.akros-mobile-menu__links a[aria-current="page"]');
+      const current = menu.locator('.sf-mobile-menu__links a[aria-current="page"]');
       assert.equal(await current.getAttribute("href"), "/");
       await page.keyboard.press("Escape");
       await menu.waitFor({ state: "hidden" });
@@ -186,11 +186,11 @@ try {
   await page.setViewportSize({ width: 1920, height: 1000 });
   assert.equal(
     await page
-      .locator('.akros-header__utility-links a[href="/kontakty"]')
+      .locator('.sf-header__utility-links a[href="/kontakty"]')
       .getAttribute("aria-current"),
     "page",
   );
-  await page.locator('.akros-footer__bottom-links a[href="/gdpr"]').click();
+  await page.locator('.sf-footer__bottom-links a[href="/gdpr"]').click();
   await page.waitForURL((url) => url.pathname === "/gdpr");
   console.log(
     `Shared UI passed ${widths.length} widths: navigation/footer/search tokens, suggestions, keyboard navigation, menu close and footer links.`,

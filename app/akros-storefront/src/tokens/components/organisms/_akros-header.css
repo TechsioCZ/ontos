@@ -1,34 +1,34 @@
-.akros-header__utility {
-  --akros-page-gutter: var(--dimension-0);
+.sf-header__utility {
+  --sf-page-gutter: var(--dimension-0);
   --height-form-control-sm: var(--dimension-40);
 }
 
 :root {
-  --akros-header-height: calc(var(--dimension-40) + var(--dimension-64) + 2 * var(--dimension-24));
+  --sf-header-height: calc(var(--dimension-40) + var(--dimension-64) + 2 * var(--dimension-24));
 }
 
-.akros-header {
-  --akros-header-control-height: var(--dimension-64);
-  --akros-header-cart-width: 204px;
-  --akros-header-logo-width: var(--dimension-container-2xs);
-  --akros-header-main-padding-y: var(--dimension-24);
-  --akros-header-search-width: var(--dimension-container-2xl);
+.sf-header {
+  --sf-header-control-height: var(--dimension-64);
+  --sf-header-cart-width: 204px;
+  --sf-header-logo-width: var(--dimension-container-2xs);
+  --sf-header-main-padding-y: var(--dimension-24);
+  --sf-header-search-width: var(--dimension-container-2xl);
   --shadow-sm: 0 1px 4px rgb(0 0 0 / 10%);
 }
 
-.akros-header__mobile-menu {
+.sf-header__mobile-menu {
   --height-form-control-sm: var(--dimension-44);
   --color-button-fg-secondary-borderless: var(--color-fg-primary);
 }
 
-.akros-header__personal-navigation {
+.sf-header__personal-navigation {
   --height-form-control-md: var(--dimension-48);
   --padding-button-md: var(--dimension-8);
   --radius-button-md: var(--radius-sm);
   --text-button-md: var(--text-base);
 }
 
-.akros-header__cart-count {
+.sf-header__cart-count {
   --border-width-badge: var(--dimension-0);
   --color-badge-bg-secondary: var(--color-fg-primary);
   --color-badge-fg-secondary: var(--color-base-light);
@@ -38,8 +38,8 @@
   --text-badge-sm: var(--text-sm);
 }
 
-.akros-header__cart-trigger {
-  --height-form-control-sm: var(--akros-header-control-height);
+.sf-header__cart-trigger {
+  --height-form-control-sm: var(--sf-header-control-height);
   --padding-button-sm: var(--dimension-0) var(--dimension-16);
   --radius-button-sm: var(--radius-sm);
   --spacing-button-sm: var(--dimension-20);
@@ -50,12 +50,12 @@
   --color-button-fg-primary: var(--color-fg-primary);
 }
 
-.akros-header__cart-trigger[data-state="open"] {
+.sf-header__cart-trigger[data-state="open"] {
   --color-button-bg-primary-base: var(--color-button-bg-primary-hover);
   --color-button-bg-primary-active: var(--color-button-bg-primary-hover);
 }
 
-[data-akros-mobile-menu] {
+[data-sf-mobile-menu] {
   --color-drawer-content-bg: var(--color-base);
   --padding-drawer-header: var(--dimension-16);
   --padding-drawer-body: var(--dimension-16);
@@ -68,18 +68,18 @@
   max-height: 100dvh;
 }
 
-[data-akros-mobile-menu-body] {
+[data-sf-mobile-menu-body] {
   gap: var(--dimension-24);
   padding-bottom: calc(var(--padding-drawer-body) + env(safe-area-inset-bottom, 0px));
 }
 
-.akros-mobile-menu__section-title {
+.sf-mobile-menu__section-title {
   margin: 0 0 var(--dimension-8);
   font-size: var(--text-base);
   font-weight: var(--font-weight-semibold);
 }
 
-.akros-mobile-menu__links {
+.sf-mobile-menu__links {
   --height-form-control-sm: var(--dimension-44);
   --font-weight-button: var(--font-weight-normal);
   --padding-button-sm: var(--dimension-8) var(--dimension-12);
@@ -93,11 +93,11 @@
   display: grid;
 }
 
-.akros-mobile-menu__links a[aria-current="page"] {
+.sf-mobile-menu__links a[aria-current="page"] {
   --color-button-bg-borderless-base: var(--color-primary);
 }
 
-.akros-header__utility-links {
+.sf-header__utility-links {
   --color-button-fg-secondary-borderless: var(--color-fg-primary);
   --color-button-bg-borderless-base: transparent;
   --color-button-bg-borderless-hover: var(--color-button-bg-borderless-base);
@@ -109,17 +109,17 @@
   --text-button-sm: var(--text-sm);
 }
 
-.akros-header__utility-links a[aria-current="page"] {
+.sf-header__utility-links a[aria-current="page"] {
   --color-button-bg-borderless-base: var(--color-primary);
 }
 
 @media (width < 1280px) {
-  .akros-header__utility-links {
+  .sf-header__utility-links {
     --padding-button-sm: var(--dimension-0) var(--dimension-8);
   }
 }
 
-[data-akros-header-login] {
+[data-sf-header-login] {
   --color-button-bg-secondary-base: var(--color-base-dark);
   --color-button-bg-secondary-hover: var(--color-base-dark);
   --color-button-bg-secondary-active: var(--color-base-dark);
@@ -128,12 +128,12 @@
   --text-button-sm: var(--text-sm);
 }
 
-.akros-header__search {
+.sf-header__search {
   --color-form-control-border: var(--color-combobox-border-base);
   --color-input-border-base: var(--color-fg-primary);
   --color-input-border-focus: var(--color-fg-primary);
   --color-input-border-hover: var(--color-fg-primary);
-  --height-form-control-md: var(--akros-header-control-height);
+  --height-form-control-md: var(--sf-header-control-height);
   --padding-input-md: var(--dimension-20);
   --radius-button-md: var(--radius-xs);
   --radius-input-md: var(--radius-xs);
@@ -159,23 +159,21 @@
 /* The redesign defines the wide desktop header; keep notebooks more compact. */
 @media (min-width: 761px) and (max-width: 1440px) {
   :root {
-    --akros-header-height: calc(
-      var(--dimension-40) + var(--dimension-48) + 2 * var(--dimension-12)
-    );
+    --sf-header-height: calc(var(--dimension-40) + var(--dimension-48) + 2 * var(--dimension-12));
   }
 
-  .akros-header {
-    --akros-header-control-height: var(--dimension-48);
-    --akros-header-cart-width: 176px;
-    --akros-header-logo-width: var(--dimension-container-3xs);
-    --akros-header-main-padding-y: var(--dimension-12);
+  .sf-header {
+    --sf-header-control-height: var(--dimension-48);
+    --sf-header-cart-width: 176px;
+    --sf-header-logo-width: var(--dimension-container-3xs);
+    --sf-header-main-padding-y: var(--dimension-12);
   }
 
-  .akros-header__search {
+  .sf-header__search {
     --padding-input-md: var(--dimension-12);
   }
 
-  .akros-header__cart-trigger {
+  .sf-header__cart-trigger {
     --text-icon-2xl: var(--text-xl);
     --text-md: var(--text-base);
   }
@@ -184,59 +182,59 @@
 /* Preserve the former flex shrink at notebook widths: logo basis 256px,
    search/actions basis 972px. The wider desktop does not shrink its logo. */
 @media (min-width: 1024px) and (max-width: 1100px) {
-  .akros-header {
-    --akros-header-logo-width: calc(
-      (100vw - 2 * var(--akros-header-main-gutter) - var(--dimension-24)) * (256 / 1228)
+  .sf-header {
+    --sf-header-logo-width: calc(
+      (100vw - 2 * var(--sf-header-main-gutter) - var(--dimension-24)) * (256 / 1228)
     );
   }
 }
 
 @media (max-width: 1023px) {
   :root {
-    --akros-header-height: calc(
+    --sf-header-height: calc(
       var(--dimension-56) + var(--dimension-48) + var(--dimension-8) + env(safe-area-inset-top, 0px)
     );
   }
 
-  .akros-header {
-    --akros-header-control-height: var(--dimension-48);
+  .sf-header {
+    --sf-header-control-height: var(--dimension-48);
   }
 
-  .akros-header__search {
+  .sf-header__search {
     --padding-input-md: var(--dimension-12);
     --text-input-md: var(--text-base);
   }
 
-  .akros-header__search [data-part="positioner"] {
+  .sf-header__search [data-part="positioner"] {
     /* Combobox fixes width inline and exposes no positioning/width prop. */
     min-width: calc(100vw - 2 * var(--dimension-16));
   }
 
-  .akros-header__search [data-part="content"] {
+  .sf-header__search [data-part="content"] {
     max-height: min(70dvh, var(--dimension-container-xl), var(--available-height));
   }
 
-  [data-akros-search-result] {
+  [data-sf-search-result] {
     display: grid;
     grid-template-columns: var(--dimension-48) minmax(0, 1fr) auto;
     row-gap: var(--dimension-4);
   }
 
-  [data-akros-search-result] > :first-child {
+  [data-sf-search-result] > :first-child {
     grid-column: 1;
     grid-row: 1 / span 2;
   }
 
-  [data-akros-search-result-label] {
+  [data-sf-search-result-label] {
     grid-column: 2;
   }
 
-  [data-akros-search-result] > strong {
+  [data-sf-search-result] > strong {
     grid-column: 2 / -1;
     grid-row: 2;
   }
 
-  .akros-header__cart-trigger {
+  .sf-header__cart-trigger {
     --text-icon-2xl: var(--text-xl);
     --padding-button-sm: var(--dimension-0) var(--dimension-8);
   }

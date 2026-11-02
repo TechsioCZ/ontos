@@ -204,7 +204,7 @@ const primaryDocument = (html) => {
 };
 /** @param {HtmlElement | null} main Visible primary markup. */
 const hasProductPurchase = (main) =>
-  [...(main?.querySelectorAll('#product-variants .akros-variant-table__order, .akros-purchase-form') ?? [])].some(
+  [...(main?.querySelectorAll('#product-variants .sf-variant-table__order, .sf-purchase-form') ?? [])].some(
     (controls) =>
       [...controls.querySelectorAll('input[value]')].some(
         (input) => (input.getAttribute('value') ?? '').trim() !== '',
@@ -213,9 +213,7 @@ const hasProductPurchase = (main) =>
 
 /** @param {HtmlElement | null} main Visible primary markup. */
 const hasProductListing = (main) => {
-  const listing = main?.querySelector(
-    '[data-akros-product-listing="catalog"], [data-akros-product-listing="featured"]',
-  );
+  const listing = main?.querySelector('[data-sf-product-listing="catalog"], [data-sf-product-listing="featured"]');
   return [...(listing?.querySelectorAll('article') ?? [])].some(
     (card) => card.querySelector('a[href^="/produkt/"]') !== null && card.querySelector('img') !== null,
   );

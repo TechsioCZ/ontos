@@ -87,7 +87,7 @@ describe("OntOS product and news pages", () => {
     expect(getCatalogPage).toHaveBeenCalledWith({ flag: "new", pageSize: 48 });
     expect(getCatalogPage).toHaveBeenCalledWith({ flag: "promotion", pageSize: 48 });
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Novinky a akce");
-    expect(container.querySelectorAll(".akros-catalog-product-card").length).toBeGreaterThan(0);
+    expect(container.querySelectorAll(".sf-catalog-product-card").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Doprodej").length).toBeGreaterThan(0);
   });
   it("keeps the page up when a flagged read fails", async () => {
