@@ -73,6 +73,7 @@ import {
 } from '../ops/owner-runtime-configuration.mts';
 import { SHELL_ID, SHELL_PORT, readHostedUnits, workspaceRoot } from './hosted-units.mts';
 import type { HostedUnit } from './hosted-units.mts';
+import { STAGE_CIMD_FIXTURE_PATH, stageCimdFixtureResponse } from './stage-cimd-fixture.mts';
 
 const OUTBOX_HOST_ID = 'outbox-worker-host';
 const OUTBOX_HEALTH_PORT = 4100;
@@ -453,6 +454,9 @@ export const hostApplication = <Failure, Requirements>(
         headers: { 'cache-control': 'no-store', location, 'referrer-policy': 'no-referrer' },
         status: 303,
       });
+    }
+    if (new URL(request.url, 'https://host.invalid').pathname === STAGE_CIMD_FIXTURE_PATH) {
+      return yield* stageCimdFixtureResponse;
     }
     if (request.url === COMPOSITION_PATH) {
       return yield* compositionSourceResponse(request, loadComposition);
