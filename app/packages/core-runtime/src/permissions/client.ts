@@ -6,7 +6,7 @@ import type {
   CheckPermissionResponse,
 } from '@authzed/authzed-node/v1/permissions';
 import { openSpiceDbRpc } from './spicedb-transaction-guard.ts';
-import { Data, Effect } from 'effect';
+import { Data, Effect, Option } from 'effect';
 import type { Scope } from 'effect';
 
 import type { SpiceDbConfigValue } from './config.ts';
@@ -27,12 +27,14 @@ export interface CloseableSpiceDbClient {
 export class SpiceDbPermissionClientError extends Data.TaggedError('SpiceDbPermissionClientError')<{
   readonly cause?: unknown;
   readonly reason: string;
+  readonly rpcCode?: number;
 }> {}
 
-export const spiceDbPermissionClientError = (cause?: unknown): SpiceDbPermissionClientError =>
+export const spiceDbPermissionClientError = (cause?: unknown, rpcCode?: number): SpiceDbPermissionClientError =>
   new SpiceDbPermissionClientError({
     cause,
     reason: 'The SpiceDB client operation did not complete safely',
+    rpcCode,
   });
 
 export interface SpiceDbPermissionClient extends CloseableSpiceDbClient {
@@ -51,9 +53,13 @@ export const createSpiceDbPermissionClient = (
   const rpc = openSpiceDbRpc(configuration, timeoutMilliseconds);
   return {
     checkBulkPermissions: (request) =>
-      rpc.checkBulkPermissions(request).pipe(Effect.mapError(({ cause }) => spiceDbPermissionClientError(cause))),
+      rpc
+        .checkBulkPermissions(request)
+        .pipe(Effect.mapError(({ cause, code }) => spiceDbPermissionClientError(cause, Option.getOrUndefined(code)))),
     checkPermission: (request) =>
-      rpc.checkPermission(request).pipe(Effect.mapError(({ cause }) => spiceDbPermissionClientError(cause))),
+      rpc
+        .checkPermission(request)
+        .pipe(Effect.mapError(({ cause, code }) => spiceDbPermissionClientError(cause, Option.getOrUndefined(code)))),
     close: rpc.close,
   };
 };

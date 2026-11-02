@@ -841,6 +841,10 @@ export const withRequestPermissionDecisions = <Value, Failure, Requirements>(
 const requestIdentity = (request: CheckBulkPermissionsRequestItem): string =>
   `${request.resource?.objectType}:${request.resource?.objectId}#${request.permission}@${request.subject?.object?.objectType}:${request.subject?.object?.objectId}#${request.subject?.optionalRelation ?? ''}`;
 
+/** Only the bounded gRPC status is diagnostic data; messages, metadata and request contents may contain secrets. */
+const rpcStatusCode = (code: number | undefined): number | 'unknown' =>
+  code !== undefined && Number.isInteger(code) && code >= 0 && code <= 16 ? code : 'unknown';
+
 interface OwnedDecision {
   readonly deferred: Deferred.Deferred<ContextAccessDecision>;
   readonly identity: string;
@@ -894,6 +898,7 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
         | 'response_count_mismatch'
         | 'response_request_mismatch'
         | 'response_unavailable',
+      rpcCode?: number,
     ) =>
       Clock.currentTimeMillis.pipe(
         Effect.flatMap((now) =>
@@ -903,6 +908,7 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
               failureKind,
               operation: 'CheckBulkPermissions',
               requestCount: requests.length,
+              rpcCode: rpcStatusCode(rpcCode),
             }),
           ),
         ),
@@ -934,7 +940,7 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
           return Effect.succeed(decisions);
         }),
         Effect.catchTag('SpiceDbPermissionClientError', (error) =>
-          reportUnavailable(Cause.isTimeoutError(error.cause) ? 'timeout' : 'client_failure'),
+          reportUnavailable(Cause.isTimeoutError(error.cause) ? 'timeout' : 'client_failure', error.rpcCode),
         ),
       );
   });
