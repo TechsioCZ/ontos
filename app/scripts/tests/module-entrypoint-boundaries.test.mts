@@ -4959,6 +4959,11 @@ for (const [name, source, allowed] of [
     true,
   ],
   [
+    'enrollment exact operations and erased types',
+    `import { createPartyWithAuthorization, executePartyMatchWithAuthorization, recoverPartyCreateWithAuthorization } from '${PARTY_API_CLIENT_SPECIFIER}';\nimport type { createParty, executePartyMatch, recoverPartyCreate } from '${PARTY_API_CLIENT_SPECIFIER}';\n`,
+    true,
+  ],
+  [
     PRIVATE_COLOCATED_CALLABLE_CASE,
     `import { privatePartyClientCallable } from '${PARTY_API_CLIENT_SPECIFIER}';\n`,
     false,

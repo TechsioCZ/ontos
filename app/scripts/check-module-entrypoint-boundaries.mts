@@ -2,7 +2,7 @@
 import nodePath from 'node:path';
 import { createModuleGraph } from '@modern-js/code-tools/microvertical-api-boundary';
 import type { GraphValue, SourceModule } from '@modern-js/code-tools/microvertical-api-boundary';
-import { isFunction, traverseFast } from '@babel/types';
+import { getBindingIdentifiers, isFunction, traverseFast } from '@babel/types';
 import type {
   ExportAllDeclaration,
   ExportNamedDeclaration,
@@ -1685,6 +1685,44 @@ const isApprovedCompositionClient = (
   return nativeClient;
 };
 
+const isPublishedClientApiArgument = (
+  state: BoundaryCheckState,
+  source: SourceModule,
+  argument: SchemaNode | undefined,
+  api: SelectedContractDeclaration,
+): boolean => {
+  if (argument?.type !== 'Identifier' && argument?.type !== 'MemberExpression') {
+    return false;
+  }
+  const actual = state.graph.resolveReference(source, argument);
+  if (actual?.kind !== 'declaration') {
+    return false;
+  }
+  if (actual.module.path === api.module.path && actual.expression === api.expression) {
+    return true;
+  }
+  if (
+    deploymentOwner(state, nodePath.relative(state.root, actual.module.path)) !==
+      deploymentOwner(state, nodePath.relative(state.root, api.module.path)) ||
+    argument.type !== 'Identifier'
+  ) {
+    return false;
+  }
+  const published = state.graph.resolve(api.module, argument.name, 'export');
+  return (
+    published?.kind === 'declaration' &&
+    published.module.path === actual.module.path &&
+    published.expression === actual.expression &&
+    actual.expression.type === 'CallExpression' &&
+    state.graph
+      .reachable(actual.module, actual.expression.callee)
+      .some(
+        (value) =>
+          value.kind === 'external' && nativeContractProviders.has(value.specifier) && value.name === 'HttpApi',
+      )
+  );
+};
+
 const hasNativeClientApi = (
   state: BoundaryCheckState,
   binding: { readonly expression: SchemaNode; readonly module: SourceModule },
@@ -1702,28 +1740,37 @@ const hasNativeClientApi = (
   ) {
     return false;
   }
-  let native = false;
-  traverseFast(binding.expression, (node) => {
-    if (
-      node.type !== 'CallExpression' ||
-      !state.graph.evaluate(binding.module, node.callee).some(isNativeEffectClientConstructor)
-    ) {
-      return;
+  const reachable = state.graph.reachable(binding.module, binding.expression);
+  const nodes: { readonly module: SourceModule; readonly node: SchemaNode }[] = [
+    { module: binding.module, node: binding.expression },
+  ];
+  if (reachable.some(isNativeEffectClientConstructor)) {
+    for (const value of reachable) {
+      if (value.kind === 'node' || value.kind === 'unresolved') {
+        nodes.push({ module: value.module, node: value.node });
+      }
     }
-    const [argument] = node.arguments;
-    if (argument?.type !== 'Identifier' && argument?.type !== 'MemberExpression') {
-      return;
-    }
-    const actualApi = state.graph.resolveReference(binding.module, argument);
-    if (
-      actualApi?.kind === 'declaration' &&
-      actualApi.module.path === api.module.path &&
-      actualApi.expression === api.expression
-    ) {
-      native = true;
-    }
+  }
+  const proofs = nodes.map((entry) => {
+    let native = false;
+    let foreignApi = false;
+    traverseFast(entry.node, (node) => {
+      if (
+        node.type !== 'CallExpression' ||
+        !state.graph.evaluate(entry.module, node.callee).some(isNativeEffectClientConstructor)
+      ) {
+        return;
+      }
+      const [argument] = node.arguments;
+      if (isPublishedClientApiArgument(state, entry.module, argument, api)) {
+        native = true;
+      } else {
+        foreignApi = true;
+      }
+    });
+    return { foreignApi, native };
   });
-  return native;
+  return proofs.some((proof) => proof.native) && proofs.every((proof) => !proof.foreignApi);
 };
 
 const hasValidOwnerClientImports = (
@@ -1957,11 +2004,64 @@ const nextSelectedOwnerBinding = (state: BoundaryCheckState, binding: ContractBi
   return referenced === binding ? undefined : referenced;
 };
 
+interface SelectedContractDeclaration {
+  readonly expression: SchemaNode;
+  readonly module: SourceModule;
+}
+
+const evaluatedOwnerExport = (
+  state: BoundaryCheckState,
+  module: SourceModule,
+  name: string,
+  visited = new Set<string>(),
+): SelectedContractDeclaration | undefined => {
+  const key = `${module.path}:${name}`;
+  if (visited.has(key) || visited.size >= 128) {
+    return undefined;
+  }
+  visited.add(key);
+  const direct = state.graph.resolve(module, name, 'export');
+  if (direct?.kind === 'declaration') {
+    return direct;
+  }
+  let resolved: SelectedContractDeclaration | undefined;
+  for (const statement of module.file.program.body) {
+    if (statement.type === 'ExportNamedDeclaration' && statement.declaration?.type === 'VariableDeclaration') {
+      const identifier = getBindingIdentifiers(statement.declaration)[name];
+      if (identifier !== undefined) {
+        const [value, ...extra] = state.graph.evaluate(module, identifier);
+        if (extra.length > 0 || value?.kind !== 'node') {
+          return undefined;
+        }
+        resolved = { expression: value.node, module: value.module };
+      }
+    }
+  }
+  for (const candidate of contractReexportCandidates(state, module, name)) {
+    const value = evaluatedOwnerExport(
+      state,
+      state.graph.module(nodePath.join(state.root, candidate.target)),
+      candidate.exportedName,
+      new Set(visited),
+    );
+    if (value !== undefined) {
+      if (
+        resolved !== undefined &&
+        (resolved.module.path !== value.module.path || resolved.expression !== value.expression)
+      ) {
+        return undefined;
+      }
+      resolved = value;
+    }
+  }
+  return resolved;
+};
+
 const resolveSelectedOwnerBinding = (
   selection: SelectedOwnerContract,
   statement: ImportDeclaration,
   imported: ImportSpecifier,
-): ContractBinding => {
+): SelectedContractDeclaration | undefined => {
   const { state } = selection;
   const consumerModule = state.graph.module(nodePath.join(state.root, selection.consumer));
   const ownerModule = state.graph.module(nodePath.join(state.root, selection.target));
@@ -1981,14 +2081,24 @@ const resolveSelectedOwnerBinding = (
     }
     binding = referenced;
   }
-  return binding;
+  if (binding?.kind === 'declaration') {
+    return binding;
+  }
+  const values = state.graph.evaluate(consumerModule, imported.local);
+  if (values.length === 1 && values[0]?.kind === 'node') {
+    const [value] = values;
+    if (value?.kind === 'node') {
+      return { expression: value.node, module: value.module };
+    }
+  }
+  return evaluatedOwnerExport(state, ownerModule, exportedName);
 };
 
 const hasSelectedContractConstructor = (
   selection: SelectedOwnerContract,
-  binding: NonNullable<ContractBinding>,
+  binding: SelectedContractDeclaration,
 ): boolean => {
-  if (binding.kind !== 'declaration' || binding.expression.type !== 'CallExpression') {
+  if (binding.expression.type !== 'CallExpression') {
     return false;
   }
   const { state } = selection;
@@ -2021,10 +2131,7 @@ const hasSelectedOwnerImport = (
   }
   const { state } = selection;
   const binding = resolveSelectedOwnerBinding(selection, statement, imported);
-  if (
-    binding?.kind !== 'declaration' ||
-    privateImplementationPath.test(nodePath.relative(state.root, binding.module.path))
-  ) {
+  if (binding === undefined || privateImplementationPath.test(nodePath.relative(state.root, binding.module.path))) {
     return false;
   }
   if (selection.clientModules?.has(nodePath.relative(state.root, binding.module.path).replaceAll('\\', '/')) === true) {
@@ -2036,6 +2143,18 @@ const hasSelectedOwnerImport = (
     hasGovernedClientOperation(state, selection.owner, selection.target, selection.appId, exportedName, binding)
   ) {
     return true;
+  }
+  if (selection.clientModules !== undefined) {
+    const apiModule = state.graph.module(nodePath.join(state.root, `${selection.owner}/shared/api.ts`));
+    const apiName = governedApiBinding(state.sourceMap.get(`${selection.owner}/shared/api.ts`) ?? '');
+    const api = apiName === undefined ? undefined : state.graph.resolve(apiModule, apiName, 'export');
+    if (
+      api?.kind === 'declaration' &&
+      deploymentOwner(state, nodePath.relative(state.root, binding.module.path)) === selection.owner &&
+      hasNativeClientApi(state, binding, api)
+    ) {
+      return true;
+    }
   }
   if (binding.expression.type !== 'CallExpression') {
     const literalData = ['StringLiteral', 'NumericLiteral', 'BooleanLiteral', 'NullLiteral'].includes(
