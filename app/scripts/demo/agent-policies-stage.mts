@@ -103,7 +103,7 @@ const AuditPlanSchema = Schema.Struct({
 type AuditPlan = typeof AuditPlanSchema.Type;
 const reason = (text: string) => new DemoSeedError({ reason: text });
 /** Run the unfiltered native list CLI after EACH Action/materialization, outside the completed transaction. */
-const refuseDeadAfterWrite = Effect.gen(function* checkAllDeadAfterWrite() {
+export const refuseDeadAfterWrite = Effect.gen(function* checkAllDeadAfterWrite() {
   const result = yield* Effect.gen(function* runDeadList() {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const handle = yield* spawner.spawn(
