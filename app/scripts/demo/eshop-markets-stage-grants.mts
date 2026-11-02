@@ -37,7 +37,7 @@ import {
   demoTenantId,
   eshopDemoLegalEntityId,
 } from './fixture-ids.mts';
-import type { DemoAction, DemoRelationship, DemoRole } from './permissions.mts';
+import type { DemoAction, DemoModuleId, DemoRelationship, DemoRole, ModuleAccess } from './permissions.mts';
 import {
   akrosStorefrontPrincipal,
   companyHumanAccounts,
@@ -58,6 +58,7 @@ const fail = (reason: string) => new EshopMarketGrantError({ reason });
 const marketModule = 'commerce.market-catalog';
 const storefrontRegistryModule = 'commerce.storefront-registry';
 const eshopModules = [marketModule, storefrontRegistryModule] as const;
+const customerContextModule = 'commerce.customer-context';
 const modes = ['plan', 'apply', 'verify'] as const;
 
 /** Registered storefront applications and the company whose module scope holds each registration. */
@@ -79,15 +80,23 @@ const principalIdOf = (email: string) =>
   companyHumanAccounts.find((candidate) => candidate.email === email)?.principalId ?? '';
 
 /** Only the e-shop market slice of a role. */
-const eshopSlice = (role: DemoRole): DemoRole => ({
-  label: role.label,
-  modules: Object.fromEntries(
-    eshopModules.flatMap((moduleId) => {
-      const access = role.modules[moduleId];
-      return access === undefined ? [] : [[moduleId, access]];
-    }),
-  ),
-});
+const marketImpactPermission = 'market.catalog.read';
+const eshopSlice = (role: DemoRole): DemoRole => {
+  const modules: Partial<Record<DemoModuleId, ModuleAccess>> = {};
+  for (const moduleId of eshopModules) {
+    const access = role.modules[moduleId];
+    if (access !== undefined) {
+      modules[moduleId] = access;
+    }
+  }
+  const impact = role.contextPermissions?.[customerContextModule]?.includes(marketImpactPermission) === true;
+  if (!impact || role.modules[customerContextModule] === undefined) {
+    return { label: role.label, modules };
+  }
+  // The market retirement impact summary reads commerce-customer-context; the role already opens it read-only.
+  modules[customerContextModule] = 'read';
+  return { contextPermissions: { [customerContextModule]: [marketImpactPermission] }, label: role.label, modules };
+};
 
 /** Identity and membership edges belong to the account installers, never to this additive policy. */
 const baselineEdge = ({ relation, resourceType }: DemoRelationship) =>
@@ -285,6 +294,20 @@ export const eshopMarketPermissionChecks = (): readonly EshopPermissionCheck[] =
       permission: 'execute',
       principalId: storefront,
       resource: actionObject(create, akrosDemoLegalEntityId),
+    },
+    {
+      expected: true,
+      label: 'AKROS admin sees the Market retirement impact',
+      permission: 'access',
+      principalId: akrosAdmin,
+      resource: {
+        objectId:
+          toContextPermissionAccessObjectId(demoTenantId, akrosDemoLegalEntityId, {
+            moduleId: customerContextModule,
+            permission: marketImpactPermission,
+          }) ?? '',
+        objectType: 'context_permission',
+      },
     },
     {
       expected: true,

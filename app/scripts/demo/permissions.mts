@@ -38,6 +38,8 @@ import {
 } from './fixture-ids.mts';
 
 const commerceModule = 'commerce.customer-context';
+/** Market retirement impact summary and Market owner reads of commerce-customer-context. */
+const marketCatalogRead = 'market.catalog.read';
 const pipelineModule = 'demo.sales-pipeline';
 const commercialAdministratorLabel = 'Vedoucí obchodu';
 
@@ -724,6 +726,8 @@ export const eshopDemoRoles = {
     },
     companyRole: 'admin',
     contextPermissions: {
+      // Market retirement impact summary (commerce-customer-context market-affected-use-assessment).
+      [commerceModule]: [marketCatalogRead],
       'privacy.core': ['privacy.processing_catalog.read', 'privacy.notice.read'],
     },
     label: eshopAdministratorLabel,
@@ -764,6 +768,8 @@ export const eshopDemoRoles = {
   },
   eshopAdmin: {
     companyRole: 'admin',
+    // Market retirement impact summary (commerce-customer-context market-affected-use-assessment).
+    contextPermissions: { [commerceModule]: [marketCatalogRead] },
     label: eshopAdministratorLabel,
     modules: {
       [commerceModule]: 'read',
@@ -1028,7 +1034,7 @@ export const marketRetirementRelationships = (actions: readonly DemoAction[]): r
       principalId,
       {
         actionKeys: { [commerceModule]: marketRetirementActionKeys },
-        contextPermissions: { [commerceModule]: ['market.catalog.read'] },
+        contextPermissions: { [commerceModule]: [marketCatalogRead] },
         label: 'Market retirement authority',
         modules: { [commerceModule]: 'read' },
         restrictedModules: [commerceModule],
