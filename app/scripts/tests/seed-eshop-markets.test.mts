@@ -48,16 +48,16 @@ it('every seeded Market is a valid Market creation and merchandise configuration
   expect(new Set(markets.map(({ market }) => seededMarketId(market.key))).size).toBe(markets.length);
 });
 
-it('the AKROS offer plan has products only in Czechia, only in Slovakia, and outside the EU market', () => {
+it('the ŠroubShop offer plan has products only in Czechia, only in Slovakia, and outside the EU market', () => {
   const products = Array.from({ length: 40 }, (_, index) => `product-${String(index).padStart(2, '0')}`);
   const plan = akrosOfferPlan(products, ['product-30']);
-  const czOnly = plan['akros-sk'].notOffered;
-  const skOnly = plan['akros-cz'].notOffered;
+  const czOnly = plan['sroub-sk'].notOffered;
+  const skOnly = plan['sroub-cz'].notOffered;
   expect(czOnly).toHaveLength(10);
   expect(czOnly).toContain('product-30');
   expect(skOnly).toHaveLength(5);
   expect(skOnly.some((id) => czOnly.includes(id))).toBe(false);
-  expect(plan['akros-eu'].notOffered).toHaveLength(18);
-  expect(plan['akros-pl'].offered).toHaveLength(3);
-  expect(plan['akros-pl'].offered.some((id) => plan['akros-eu'].notOffered.includes(id))).toBe(false);
+  expect(plan['sroub-eu'].notOffered).toHaveLength(18);
+  expect(plan['sroub-pl'].offered).toHaveLength(3);
+  expect(plan['sroub-pl'].offered.some((id) => plan['sroub-eu'].notOffered.includes(id))).toBe(false);
 });

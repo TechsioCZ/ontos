@@ -48,7 +48,7 @@ const provenance = { kind: 'CONFIGURATION_ACTION', reference: 'seed-eshop-market
 const marketAudience = 'commerce-market-catalog';
 const registryAudience = 'storefront-registry';
 const merchandiseAudience = 'merchandise';
-const akrosStorefront = 'akros-storefront';
+const akrosStorefront = 'sroubshop-storefront';
 
 type Channel = typeof MarketChannelSchema.Type;
 interface MarketSeed {
@@ -79,17 +79,17 @@ const market = (seed: Omit<MarketSeed, 'storefrontAppId'>, storefrontAppId: stri
 
 export const eshopMarketSeed: readonly CompanySeed[] = [
   {
-    email: 'eshop@akros.demo',
+    email: 'eshop@sroubarna.demo',
     legalEntityId: akrosDemoLegalEntityId,
     markets: [
       market(
         {
           channel: 'B2C',
-          code: 'AKROS-CZ',
+          code: 'SROUB-CZ',
           currency: 'CZK',
           exchangeRate: '1',
           jurisdiction: { code: 'CZ', kind: 'COUNTRY' },
-          key: 'akros-cz',
+          key: 'sroub-cz',
           lifecycle: 'ACTIVE',
           locale: 'cs',
           offerMode: 'WHOLE_CATALOGUE',
@@ -101,11 +101,11 @@ export const eshopMarketSeed: readonly CompanySeed[] = [
       market(
         {
           channel: 'B2C',
-          code: 'AKROS-SK',
+          code: 'SROUB-SK',
           currency: 'EUR',
           exchangeRate: '0.04',
           jurisdiction: { code: 'SK', kind: 'COUNTRY' },
-          key: 'akros-sk',
+          key: 'sroub-sk',
           lifecycle: 'ACTIVE',
           locale: 'sk',
           offerMode: 'WHOLE_CATALOGUE',
@@ -117,11 +117,11 @@ export const eshopMarketSeed: readonly CompanySeed[] = [
       market(
         {
           channel: 'B2C',
-          code: 'AKROS-EU',
+          code: 'SROUB-EU',
           currency: 'EUR',
           exchangeRate: '0.041',
           jurisdiction: { code: 'EU', kind: 'REGION' },
-          key: 'akros-eu',
+          key: 'sroub-eu',
           lifecycle: 'ACTIVE',
           locale: 'en',
           offerMode: 'WHOLE_CATALOGUE',
@@ -133,11 +133,11 @@ export const eshopMarketSeed: readonly CompanySeed[] = [
       market(
         {
           channel: 'B2B',
-          code: 'AKROS-CZ-B2B',
+          code: 'SROUB-CZ-B2B',
           currency: 'CZK',
           exchangeRate: '0.92',
           jurisdiction: { code: 'CZ', kind: 'COUNTRY' },
-          key: 'akros-cz-b2b',
+          key: 'sroub-cz-b2b',
           lifecycle: 'ACTIVE',
           locale: 'cs',
           offerMode: 'WHOLE_CATALOGUE',
@@ -149,11 +149,11 @@ export const eshopMarketSeed: readonly CompanySeed[] = [
       market(
         {
           channel: 'B2C',
-          code: 'AKROS-PL',
+          code: 'SROUB-PL',
           currency: 'PLN',
           exchangeRate: '0.17',
           jurisdiction: { code: 'PL', kind: 'COUNTRY' },
-          key: 'akros-pl',
+          key: 'sroub-pl',
           lifecycle: 'SUSPENDED',
           locale: 'pl',
           offerMode: 'SELECTED_PRODUCTS',
@@ -202,10 +202,10 @@ export const akrosOfferPlan = (productIds: readonly string[], featuredIds: reado
   const notInEu = rest.slice(15, 18);
   const polishLaunch = rest.slice(18, 21);
   return {
-    'akros-cz': { notOffered: skOnly, offered: [] },
-    'akros-eu': { notOffered: [...czOnly, ...skOnly, ...notInEu], offered: [] },
-    'akros-pl': { notOffered: [], offered: polishLaunch },
-    'akros-sk': { notOffered: czOnly, offered: [] },
+    'sroub-cz': { notOffered: skOnly, offered: [] },
+    'sroub-eu': { notOffered: [...czOnly, ...skOnly, ...notInEu], offered: [] },
+    'sroub-pl': { notOffered: [], offered: polishLaunch },
+    'sroub-sk': { notOffered: czOnly, offered: [] },
   } as const satisfies Readonly<Record<string, { notOffered: readonly string[]; offered: readonly string[] }>>;
 };
 
