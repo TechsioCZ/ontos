@@ -211,6 +211,17 @@ describe('derivedEnvironment', () => {
     expect(hosted.environment.MODERN_SERVER_IMMUTABLE_ASSETS).toBe('true');
   });
 
+  it('trusts every deployed storefront host for Shell and portal sign-in, with the primary one as the portal URL', () => {
+    const shop = 'https://shop.example';
+    const derivedValues = derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map(), [shop]);
+    expect(derivedValues.BETTER_AUTH_TRUSTED_ORIGINS).toBe(`${ORIGIN},${STOREFRONT},${shop}`);
+    expect(derivedValues.COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS).toBe(`${ORIGIN},${STOREFRONT},${shop}`);
+    expect(derivedValues.COMMERCE_PORTAL_AUTH_URL).toBe(STOREFRONT);
+    expect(derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map()).COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS).toBe(
+      `${ORIGIN},${STOREFRONT}`,
+    );
+  });
+
   it('uses the public origin as the issuer and auth URL', () => {
     const derivedValues = derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map([['price-group-catalog', 4204]]));
     expect(derivedValues.ONTOS_GATEWAY_ISSUER).toBe(ORIGIN);

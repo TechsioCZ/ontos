@@ -145,6 +145,8 @@ zerops:
         ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '6'
         ONTOS_DATABASE_POOL_SHARED: 'true'
         ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
+        # Further storefront hosts whose customers sign in through the same portal realm (the pseudonymous demo e-shop).
+        ONTOS_STOREFRONT_ALTERNATE_ORIGINS: https://ontos-stage-shop.web-revolution.cz
         ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
         PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:${migrator_PARTY_REGISTRY_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
         PARTY_REGISTRY_DB_PASSWORD: ${migrator_PARTY_REGISTRY_DB_PASSWORD}
