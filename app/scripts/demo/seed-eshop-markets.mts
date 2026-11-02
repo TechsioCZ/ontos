@@ -66,11 +66,6 @@ interface MarketSeed {
   readonly storefrontAppId: string;
 }
 interface CompanySeed {
-  /**
-   * Storefront associations are validated by the Market owner gateway, whose API-key principal is bound to AKROS
-   * (`marketRetirementPrincipal`); another company's associations need its own owner gateway credential first.
-   */
-  readonly associateStorefronts: boolean;
   readonly email: string;
   readonly legalEntityId: string;
   readonly markets: readonly MarketSeed[];
@@ -84,7 +79,6 @@ const market = (seed: Omit<MarketSeed, 'storefrontAppId'>, storefrontAppId: stri
 
 export const eshopMarketSeed: readonly CompanySeed[] = [
   {
-    associateStorefronts: true,
     email: 'eshop@akros.demo',
     legalEntityId: akrosDemoLegalEntityId,
     markets: [
@@ -172,7 +166,6 @@ export const eshopMarketSeed: readonly CompanySeed[] = [
     storefront: { appId: akrosStorefront, channels: ['B2C', 'B2B'] },
   },
   {
-    associateStorefronts: false,
     email: 'eshop@kavarna.demo',
     legalEntityId: eshopDemoLegalEntityId,
     markets: [
@@ -454,9 +447,8 @@ const seedCompany = (company: CompanySeed, mode: Mode) =>
     const step: Step = { client, company, report: [], write: mode === 'apply' };
     yield* ensureStorefront(step);
     yield* ensureMarkets(step, yield* readCatalog(client));
-    if (company.associateStorefronts) {
-      yield* ensureAssociations(step, yield* readCatalog(client));
-    }
+    // Each company's associations are validated through its own Market owner gateway key.
+    yield* ensureAssociations(step, yield* readCatalog(client));
     yield* ensureMarketSettings(step);
     if (company.legalEntityId === akrosDemoLegalEntityId) {
       yield* ensureAkrosOffers(step);
