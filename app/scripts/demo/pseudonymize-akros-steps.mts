@@ -256,22 +256,31 @@ const retireLegacyMarket = Effect.fn('Pseudonym.retireMarket')(function* retireL
   return yield* Effect.void;
 });
 
+const removeLegacyAssociation = (client: SeedClient, association: Snapshot['associations'][number], reason: string) =>
+  Effect.gen(function* removeAssociationNow() {
+    return yield* ownerAction(client, marketOwner, 'remove-storefront-association', removeAssociation, {
+      associationRef: association.associationRef,
+      effectiveAt: yield* atNow,
+      expectedRevision: association.revision,
+      marketRef: association.marketRef,
+      reason,
+      storefrontRef: association.storefrontRef,
+    });
+  });
+
 /** Legacy associations end now, legacy markets retire with their pricing removed, the legacy application retires. */
 export const retireLegacyCatalog = Effect.fn('Pseudonym.retireLegacyCatalog')(function* retireLegacyCatalog(
   client: SeedClient,
   baseline: Snapshot,
   reason: string,
 ) {
-  for (const association of baseline.associations) {
-    if (association.storefrontRef.appId === legacyStorefront) {
-      yield* ownerAction(client, marketOwner, 'remove-storefront-association', removeAssociation, {
-        associationRef: association.associationRef,
-        effectiveAt: yield* atNow,
-        expectedRevision: association.revision,
-        marketRef: association.marketRef,
-        reason,
-        storefrontRef: association.storefrontRef,
-      });
+  const retired = new Set(
+    baseline.markets.filter(({ lifecycle }) => lifecycle === 'RETIRED').map(({ marketRef }) => marketRef.resourceId),
+  );
+  const legacy = baseline.associations.filter(({ storefrontRef }) => storefrontRef.appId === legacyStorefront);
+  for (const association of legacy) {
+    if (!retired.has(association.marketRef.resourceId)) {
+      yield* removeLegacyAssociation(client, association, reason);
     }
   }
   for (const source of baseline.markets) {
@@ -283,6 +292,12 @@ export const retireLegacyCatalog = Effect.fn('Pseudonym.retireLegacyCatalog')(fu
   for (const setting of baseline.settings) {
     if (setting.marketCode.startsWith(legacyMarketPrefix)) {
       yield* merchandiseAction(client, { _tag: 'RemoveMarket', marketId: setting.marketId });
+    }
+  }
+  // Associations still current on already retired QA markets end last: a refusal there leaves only this gap.
+  for (const association of legacy) {
+    if (retired.has(association.marketRef.resourceId)) {
+      yield* removeLegacyAssociation(client, association, reason);
     }
   }
   const application = baseline.applications.find(({ storefrontAppId }) => storefrontAppId === legacyStorefront);

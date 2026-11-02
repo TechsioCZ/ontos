@@ -236,7 +236,7 @@ const applyRetire = Effect.fn('Pseudonym.applyRetire')(function* applyRetire(
   rpc: SpiceDb,
   saved: Plan,
 ) {
-  yield* retireLegacyCatalog(operator.client, saved.baseline, reason);
+  // The old principal loses access first (the shop already runs on the new key, verified before this phase).
   yield* rpc.writeRelationships(
     v1.WriteRelationshipsRequest.create({
       updates: operator.revoked.map((relationship) => ({
@@ -279,6 +279,7 @@ const applyRetire = Effect.fn('Pseudonym.applyRetire')(function* applyRetire(
       },
     });
   }
+  yield* retireLegacyCatalog(operator.client, saved.baseline, reason);
 });
 
 const verifyRetired = Effect.fn('Pseudonym.verifyRetired')(function* verifyRetired(operator: Operator, saved: Plan) {
