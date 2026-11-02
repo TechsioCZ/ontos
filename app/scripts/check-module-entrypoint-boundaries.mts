@@ -1084,12 +1084,28 @@ const hasOnlyNativeContractLeaves = (
   module: SourceModule,
   expression: SchemaNode,
   visited = new Set<SchemaNode>(),
+  completed = new WeakMap<SourceModule, WeakMap<SchemaNode, Map<number, boolean>>>(),
 ): boolean => {
   if (visited.has(expression) || visited.size >= 128) {
     return false;
   }
+  let moduleProofs = completed.get(module);
+  if (moduleProofs === undefined) {
+    moduleProofs = new WeakMap();
+    completed.set(module, moduleProofs);
+  }
+  let nodeProofs = moduleProofs.get(expression);
+  if (nodeProofs === undefined) {
+    nodeProofs = new Map();
+    moduleProofs.set(expression, nodeProofs);
+  }
+  const remainingDepth = 128 - visited.size;
+  const cached = nodeProofs.get(remainingDepth);
+  if (cached !== undefined) {
+    return cached;
+  }
   visited.add(expression);
-  return state.graph.reachable(module, expression).every((value) => {
+  const result = state.graph.reachable(module, expression).every((value) => {
     if (nativeContractLeaf(value) || isProblemDetailsFactory(value)) {
       return true;
     }
@@ -1117,8 +1133,10 @@ const hasOnlyNativeContractLeaves = (
     }
     const receiver = node.type === 'CallExpression' ? node.callee : node.object;
     const values = state.graph.reachable(value.module, receiver);
-    return values.length > 0 && hasOnlyNativeContractLeaves(state, value.module, receiver, new Set(visited));
+    return values.length > 0 && hasOnlyNativeContractLeaves(state, value.module, receiver, new Set(visited), completed);
   });
+  nodeProofs.set(remainingDepth, result);
+  return result;
 };
 
 const contractReexportCandidates = (state: BoundaryCheckState, module: SourceModule, name: string) =>
