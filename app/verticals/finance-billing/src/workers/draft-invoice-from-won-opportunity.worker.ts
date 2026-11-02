@@ -18,8 +18,6 @@ import type { Crypto } from 'effect';
 import type { FinanceError } from '../../shared/actions/apply-command.ts';
 import { opportunityWonInvoiceCommand } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
 import type { CreateInvoiceFromOpportunityCommand } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
-import { SearchProjector } from '../services/search-projection.ts';
-import type { SearchProjectionUnavailable } from '../../shared/domain/search-projection-error.ts';
 import { OpportunityInvoiceLedger } from './opportunity-invoice-ledger.ts';
 
 const workerKey = 'finance.billing.draft-invoice-from-won-opportunity' as const;
@@ -89,8 +87,8 @@ export const handleDraftInvoiceFromWonOpportunity = Effect.fn('DraftInvoiceFromW
     context: OutboxWorkerHandlerContext,
   ): Effect.fn.Return<
     void,
-    DraftInvoiceFromWonOpportunityRejected | SearchProjectionUnavailable,
-    Crypto.Crypto | OpportunityInvoiceLedger | OutboxWorkerLegalEntityScopeFanout | SearchProjector
+    DraftInvoiceFromWonOpportunityRejected,
+    Crypto.Crypto | OpportunityInvoiceLedger | OutboxWorkerLegalEntityScopeFanout
   > {
     if (!deliveryMatchesWorker(context)) {
       return yield* rejected(
@@ -111,8 +109,9 @@ export const handleDraftInvoiceFromWonOpportunity = Effect.fn('DraftInvoiceFromW
     if (!(yield* Ref.get(settled))) {
       return yield* rejected('FINANCE_LEDGER_MISSING', 'No Legal Entity of this Tenant keeps a finance ledger', true);
     }
-    const projector = yield* SearchProjector;
-    yield* projector.project(context);
+    // The claim's producer remains sales-pipeline. It cannot replace a finance-owned Core Search projection.
+    // A committed finance-owned refresh event needs an approved publisher; the governed finance rebuild
+    // (or a subsequent finance Action) currently picks up this invoice without failing this completed draft.
     return yield* Effect.void;
   },
 );

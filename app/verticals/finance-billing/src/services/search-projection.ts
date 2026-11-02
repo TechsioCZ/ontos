@@ -27,12 +27,6 @@ export const searchIngestionRegistrations = defineCoreSearchIngestionRegistratio
     topic: 'finance.billing.search-rebuild-requested.v1',
     workerKey: 'finance.billing.rebuild-search',
   },
-  {
-    consumerModuleKey: moduleId,
-    producerModuleKey: 'sales-pipeline',
-    topic: 'sales-pipeline.opportunity-stage-changed.v1',
-    workerKey: 'finance.billing.draft-invoice-from-won-opportunity',
-  },
 ]);
 export const SearchIngestionRegistryLive = coreSearchIngestionRegistryLayer(searchIngestionRegistrations);
 export interface SearchSnapshot {
