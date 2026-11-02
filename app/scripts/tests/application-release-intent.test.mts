@@ -1,7 +1,11 @@
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { ApplicationReleaseIntentError, selectApplicationReleaseUnits } from '../application-release-intent.mts';
+import {
+  ApplicationReleaseIntentError,
+  ApplicationReleaseIntentSchema,
+  selectApplicationReleaseUnits,
+} from '../application-release-intent.mts';
 import type { ApplicationReleaseDeploymentUnit } from '../application-release-intent.mts';
 
 const CATALOG = 'commerce-market-catalog';
@@ -83,5 +87,20 @@ it.effect('rejects ambiguous execution placement instead of silently choosing a 
       [],
     ).pipe(Effect.flip);
     expect(Schema.is(ApplicationReleaseIntentError)(failure)).toBe(true);
+  }),
+);
+
+it.effect('carries reviewed migration requirements independently from complete module membership and builds', () =>
+  Effect.gen(function* separateMigrationRequirements() {
+    const intent = yield* Schema.decodeUnknownEffect(ApplicationReleaseIntentSchema)({
+      migrationRequirements: { mode: 'selected', owners: [{ migrate: false, ownerId: 'core', verify: true }] },
+      modules: [{ appId: INVENTORY }],
+    });
+    const selected = yield* selectApplicationReleaseUnits(intent, available, [{ id: PARTY }]);
+    expect(selected).toEqual([unit(INVENTORY)]);
+    expect(intent.migrationRequirements).toEqual({
+      mode: 'selected',
+      owners: [{ migrate: false, ownerId: 'core', verify: true }],
+    });
   }),
 );

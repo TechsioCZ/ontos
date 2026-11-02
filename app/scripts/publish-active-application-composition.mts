@@ -20,6 +20,17 @@ import { Command, Flag } from 'effect/cli';
 import { ChildProcess } from 'effect/process';
 import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
 import { parse as parseYaml } from 'yaml';
+import { Reactivity } from 'effect/reactivity';
+import { readReviewedApplicationReleaseIntent } from './application-release-intent.mts';
+import { OpsShellLive } from './ops/ops-shell.mts';
+import {
+  prepareApplicationMigrationPlan,
+  readApplicationMigrationRequirements,
+} from './application-migration-runtime.mts';
+import {
+  applicationMigrationPublicationMode,
+  materializeApplicationMigrationProvider,
+} from './application-migration-publication.mts';
 
 import {
   configureRuntimeCompositionSource,
@@ -670,77 +681,125 @@ const quiesceInitialCutoverCommand = Command.make(
     receiptFile: Flag.String('receipt-file'),
   },
   quiesceInitialCompositionCutover,
-);
+).pipe(Command.provide(() => ZeropsPublicApiLive));
 
 const verifyInitialCutoverCommand = Command.make(
   'verify-initial-cutover',
   { environment: Flag.String('environment') },
   ({ environment }) => verifyInitialApplicationCompositionPublicationEnvironment(configuredInitialCutover(environment)),
-).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
+).pipe(Command.provide(() => Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ZeropsPublicApiLive)));
+
+interface MigrationProviderDeployment {
+  readonly projectId: string;
+  readonly providerCopyPath: string;
+  readonly serviceId: string;
+  readonly versionName: string;
+}
+const deployMigrationProvider = Effect.fn('ApplicationCompositionPublication.deployMigrationProvider')(
+  function* deployMigrationProviderEffect(input: MigrationProviderDeployment) {
+    const path = yield* Path.Path;
+    const process = yield* ChildProcess.make(
+      'zcli',
+      [
+        'push',
+        '--working-dir',
+        '.',
+        '--zerops-yaml-path',
+        input.providerCopyPath,
+        '--workspace-state',
+        'clean',
+        '--deploy-git-folder',
+        '--project-id',
+        input.projectId,
+        '--service-id',
+        input.serviceId,
+        '--setup',
+        'migrator',
+        '--version-name',
+        input.versionName,
+      ],
+      { cwd: path.resolve(import.meta.dirname, '../..'), stderr: 'inherit', stdout: 'inherit' },
+    );
+    const exitCode = yield* process.exitCode;
+    if (exitCode !== 0) {
+      return yield* providerFailure('The native verified migrator deployment failed')();
+    }
+    return yield* Effect.void;
+  },
+);
 
 const migrateCommand = Command.make(
   'migrate',
   {
     environment: Flag.String('environment'),
+    intentFile: Flag.String('intent-file').pipe(Flag.withDefault('topology/application-release-intent.json')),
     projectId: Flag.String('project-id'),
     serviceId: Flag.String('service-id'),
     versionName: Flag.String('version-name'),
     zeropsYamlPath: Flag.String('zerops-yaml-path'),
   },
-  ({ environment, projectId, serviceId, versionName, zeropsYamlPath }) =>
-    Effect.gen(function* migrateUnderNativePublicationLock() {
-      const path = yield* Path.Path;
-      const api = yield* ZeropsPublicApi;
-      const deployment = Effect.acquireUseRelease(
-        Effect.void,
-        () =>
-          Effect.scoped(
-            Effect.gen(function* runVerifiedRemoteMigrator() {
-              const process = yield* ChildProcess.make(
-                'zcli',
-                [
-                  'push',
-                  '--working-dir',
-                  '.',
-                  '--zerops-yaml-path',
-                  path.resolve(zeropsYamlPath),
-                  '--workspace-state',
-                  'clean',
-                  '--deploy-git-folder',
-                  '--project-id',
-                  projectId,
-                  '--service-id',
-                  serviceId,
-                  '--setup',
-                  'migrator',
-                  '--version-name',
-                  versionName,
-                ],
-                { cwd: path.resolve(import.meta.dirname, '../..'), stderr: 'inherit', stdout: 'inherit' },
-              );
-              const exitCode = yield* process.exitCode;
-              if (exitCode !== 0) {
-                return yield* providerFailure('The native verified migrator deployment failed')();
-              }
-              return yield* Effect.void;
-            }),
-          ),
-        () =>
-          api.stopService(serviceId).pipe(
+  ({ environment, intentFile, projectId, serviceId, versionName, zeropsYamlPath }) =>
+    Effect.scoped(
+      Effect.gen(function* migrateUnderNativePublicationLock() {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const appDirectory = path.resolve(import.meta.dirname, '..');
+        const reviewedIntentFile = path.relative(appDirectory, path.resolve(appDirectory, intentFile));
+        yield* readReviewedApplicationReleaseIntent(reviewedIntentFile);
+        const requirements = yield* readApplicationMigrationRequirements(path.join(appDirectory, reviewedIntentFile));
+        const prepared = yield* prepareApplicationMigrationPlan(requirements);
+        const mode = applicationMigrationPublicationMode(prepared.plan);
+        if (mode === 'none') {
+          return yield* Effect.logInfo('Reviewed release requires no migration or owner verification');
+        }
+        const providerSource = yield* fileSystem.readFileString(path.resolve(zeropsYamlPath));
+        const providerCopy = yield* materializeApplicationMigrationProvider(providerSource, {
+          intentFile: reviewedIntentFile,
+          verifyOnly: mode === 'verify-only',
+        });
+        const temporaryDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: 'ontos-migration-publication-',
+        });
+        const providerCopyPath = path.join(temporaryDirectory, 'zerops.yaml');
+        yield* fileSystem.writeFileString(providerCopyPath, providerCopy);
+        const deployment = Effect.gen(function* deployAndStopMigrator() {
+          const api = yield* ZeropsPublicApi;
+          const stop = api.stopService(serviceId).pipe(
             Effect.mapError((failure) =>
               providerFailure(
                 `The native migrator could not be independently verified as stopped: ${failure.message}`,
               )(),
             ),
             Effect.orDie,
+          );
+          return yield* Effect.acquireUseRelease(
+            Effect.void,
+            () => deployMigrationProvider({ projectId, providerCopyPath, serviceId, versionName }),
+            () => stop,
+          );
+        });
+        if (mode === 'verify-only') {
+          return yield* Layer.build(
+            Layer.effectDiscard(withApplicationCompositionPublicationLock(deployment)).pipe(
+              Layer.provide(Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ZeropsPublicApiLive)),
+            ),
+          ).pipe(Effect.asVoid);
+        }
+        return yield* Layer.build(
+          Layer.effectDiscard(
+            runApplicationCompositionMigration(deployment, configuredInitialCutover(environment)),
+          ).pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                ApplicationCompositionAuthorityAdminDatabaseLive,
+                ApplicationCompositionLegacyOwnersLive,
+                ZeropsPublicApiLive,
+              ),
+            ),
           ),
-      );
-      yield* runApplicationCompositionMigration(deployment, configuredInitialCutover(environment));
-    }),
-).pipe(
-  Command.provide(() =>
-    Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ApplicationCompositionLegacyOwnersLive),
-  ),
+        ).pipe(Effect.asVoid);
+      }),
+    ),
 );
 
 const resumeDurableWorkCommand = Command.make(
@@ -795,7 +854,11 @@ const publishCommand = Command.make(
     ),
 ).pipe(
   Command.provide(() =>
-    Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ApplicationCompositionLegacyOwnersLive),
+    Layer.mergeAll(
+      ApplicationCompositionAuthorityAdminDatabaseLive,
+      ApplicationCompositionLegacyOwnersLive,
+      ZeropsPublicApiLive,
+    ),
   ),
 );
 
@@ -838,7 +901,11 @@ const refreshCommand = Command.make(
     }),
 ).pipe(
   Command.provide(() =>
-    Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ApplicationCompositionLegacyOwnersLive),
+    Layer.mergeAll(
+      ApplicationCompositionAuthorityAdminDatabaseLive,
+      ApplicationCompositionLegacyOwnersLive,
+      ZeropsPublicApiLive,
+    ),
   ),
 );
 
@@ -852,7 +919,7 @@ const configureSourceCommand = Command.make('configure-source', {}, () =>
     yield* configureRuntimeCompositionSource({ projectId, readToken, url });
     return yield* Effect.logInfo('Configured the stable native composition source');
   }),
-);
+).pipe(Command.provide(() => ZeropsPublicApiLive));
 
 const ensurePublicAccessCommand = Command.make('ensure-public-access', { setup: Flag.String('setup') }, ({ setup }) =>
   Effect.gen(function* ensurePublicAccess() {
@@ -869,7 +936,7 @@ const ensurePublicAccessCommand = Command.make('ensure-public-access', { setup: 
     }
     return yield* Effect.logInfo(`Enabled the public Zerops subdomain of ${setup}`);
   }),
-);
+).pipe(Command.provide(() => ZeropsPublicApiLive));
 
 /**
  * Stops a setup's stage service when it runs. A stage that never provisioned the service, deleted it, or whose
@@ -894,7 +961,7 @@ const stopServiceCommand = Command.make('stop-service', { setup: Flag.String('se
     yield* api.stopService(serviceId);
     return yield* Effect.logInfo(`Stopped ${setup}`);
   }),
-);
+).pipe(Command.provide(() => ZeropsPublicApiLive));
 
 const definedWorkerSetups = (zeropsYamlText: string, workerSetupNames: ReadonlySet<string>) =>
   Schema.decodeUnknownEffect(ZeropsYamlSchema)(parseYaml(zeropsYamlText)).pipe(
@@ -958,7 +1025,7 @@ const workerModeDriftCommand = Command.make('worker-mode-drift', {}, () =>
     }
     return yield* writeGitHubOutput(`drift=${drift}`);
   }),
-);
+).pipe(Command.provide(() => ZeropsPublicApiLive));
 
 /** The one service-ID lookup the deploy scripts use, so shell and TypeScript never map setups differently. */
 const stageServiceIdCommand = Command.make('stage-service-id', { setup: Flag.String('setup') }, ({ setup }) =>
@@ -1094,10 +1161,11 @@ if (import.meta.main) {
   NodeRuntime.runMain(
     Layer.build(
       Layer.effectDiscard(main).pipe(
-        Layer.provide(ZeropsPublicApiLive),
+        Layer.provide(OpsShellLive),
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,
+            Reactivity.layer,
             FetchHttpClient.layer,
             Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' }),
           ),

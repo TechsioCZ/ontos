@@ -7,6 +7,7 @@ import { NodeServices } from '@effect/platform-node';
 import { Cause, Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import type { ApplicationMigrationPlan } from '../application-migration-plan.mts';
 import { hashAuthorizationEvidence } from '../check-authorization-readiness.mts';
 import {
   planDeploymentImpact as planDeploymentImpactEffect,
@@ -24,6 +25,7 @@ import {
 } from '../resolve-stage-deployment-base.mts';
 import type { StageDeploymentSource } from '../resolve-stage-deployment-base.mts';
 
+const CONTACTS_SCHEMA_SOURCE = 'verticals/contacts/drizzle/0003_add_customer.sql';
 const CONTACTS_WORKER_SOURCE = 'verticals/contacts/src/workers/project-contact.worker.ts';
 const CONTACTS_WORKER_SETUP = 'contacts-worker';
 const SHELL_FRAME_SOURCE = 'apps/shell-super-app/src/routes/shell-frame.tsx';
@@ -534,13 +536,102 @@ it.live('adds the migrator before an owner whose schema or migration contract ch
     yield* withFixture((root) =>
       Effect.gen(function* testEffect13() {
         const plan = yield* planDeploymentImpact({
-          changedPaths: ['verticals/contacts/drizzle/0003_add_customer.sql'],
+          changedPaths: [CONTACTS_SCHEMA_SOURCE],
           rootDirectory: root,
         });
         expect(plan.phases.map((phase) => phase.id)).toEqual(['migrator', 'contacts']);
       }),
     );
   }),
+);
+
+const observedMigrationPlan = (pending: boolean, verify: boolean): ApplicationMigrationPlan => {
+  const migration = { hash: 'a'.repeat(64), name: '20261020063004_owner-schema' };
+  return {
+    initializationOwners: pending ? ['contacts'] : [],
+    mode: 'selected',
+    owners: [
+      {
+        before: {
+          catalogFingerprint: 'b'.repeat(64),
+          entries: pending ? [] : [migration],
+          journalExists: true,
+          journalName: '__drizzle_migrations_contacts',
+          ownerId: 'contacts',
+          schemaEvidence: 'observed-journal',
+          schemasPresent: ['contacts'],
+        },
+        migrate: true,
+        ownerId: 'contacts',
+        pendingMigrations: pending ? [migration] : [],
+        throughMigration: migration.name,
+        verification: verify ? 'pending' : 'not_requested',
+        verify,
+      },
+    ],
+    schemaVersion: 1,
+  };
+};
+
+it.live('keeps a rebuild separate from an explicitly empty native migration selection', () =>
+  withFixture((root) =>
+    Effect.gen(function* rebuildWithoutMigration() {
+      const migrationPlan: ApplicationMigrationPlan = {
+        initializationOwners: [],
+        mode: 'none',
+        owners: [],
+        schemaVersion: 1,
+      };
+      const plan = yield* planDeploymentImpact({
+        changedPaths: [CONTACTS_SCHEMA_SOURCE],
+        migrationPlan,
+        rootDirectory: root,
+      });
+      expect(plan.units.providers).toEqual(['contacts']);
+      expect(plan.units.migrator).toBe(false);
+      expect(plan.migrationPlan).toEqual(migrationPlan);
+    }),
+  ),
+);
+
+it.live('includes retained owner verification without inventing an artifact build', () =>
+  withFixture((root) =>
+    Effect.gen(function* retainedOwnerVerification() {
+      const migrationPlan = observedMigrationPlan(false, true);
+      const plan = yield* planDeploymentImpact({ changedPaths: [], migrationPlan, rootDirectory: root });
+      expect(plan.phases.map(({ id }) => id)).toEqual(['migrator']);
+      expect(plan.units.providers).toEqual([]);
+      expect(plan.migrationPlan?.owners[0]?.pendingMigrations).toEqual([]);
+    }),
+  ),
+);
+
+it.live('includes native pending owner SQL independently of changed artifact paths', () =>
+  withFixture((root) =>
+    Effect.gen(function* nativePendingWithoutBuild() {
+      const migrationPlan = observedMigrationPlan(true, false);
+      const plan = yield* planDeploymentImpact({ changedPaths: [], migrationPlan, rootDirectory: root });
+      expect(plan.units.migrator).toBe(true);
+      expect(plan.units.providers).toEqual([]);
+      expect(plan.migrationPlan).toEqual(migrationPlan);
+    }),
+  ),
+);
+
+it.live('does not repeat already journaled SQL because an owner artifact changed', () =>
+  withFixture((root) =>
+    Effect.gen(function* alreadyJournaledOwnerRebuild() {
+      const migrationPlan = observedMigrationPlan(false, false);
+      const plan = yield* planDeploymentImpact({
+        changedPaths: [CONTACTS_SCHEMA_SOURCE],
+        migrationPlan,
+        rootDirectory: root,
+      });
+      expect(plan.phases.map(({ id }) => id)).toEqual(['contacts']);
+      expect(plan.migrationPlan?.owners[0]?.before.entries).toHaveLength(1);
+      expect(plan.units.migrator).toBe(false);
+    }),
+  ),
 );
 
 for (const changedPath of [
