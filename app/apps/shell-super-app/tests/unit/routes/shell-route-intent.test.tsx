@@ -119,20 +119,24 @@ afterEach(() => {
   return browserRuntime.runPromise(staffRoutePreloads.awaitIdle);
 });
 
-it.live('starts every rendered destination concurrently and never cancels started work on leave', () =>
-  Effect.gen(function* concurrentRender() {
+it.live('queues rendered destinations and never cancels started work on leave', () =>
+  Effect.gen(function* queuedRender() {
     const release = yield* Deferred.make<boolean>();
     preloadRoute.mockImplementation(() => browserRuntime.runPromise(Deferred.await(release).pipe(Effect.asVoid)));
     render(<StaffLinks />);
     expect(preloadRoute.mock.calls.map(([destination]) => destination)).toEqual([
       { hash: '', search: {}, to: '/en/finance' },
-      { hash: '', search: {}, to: '/en/operations' },
-      { hash: '', search: {}, to: '/en/contacts' },
     ]);
     fireEvent.mouseLeave(screen.getByRole('link', { name: 'Finance' }));
     fireEvent.mouseLeave(screen.getByRole('link', { name: 'Operations' }));
-    expect(preloadRoute).toHaveBeenCalledTimes(3);
+    expect(preloadRoute).toHaveBeenCalledTimes(1);
     yield* Deferred.succeed(release, true);
+    yield* staffRoutePreloads.awaitIdle;
+    expect(preloadRoute.mock.calls.map(([destination]) => destination)).toEqual([
+      { hash: '', search: {}, to: '/en/finance' },
+      { hash: '', search: {}, to: '/en/operations' },
+      { hash: '', search: {}, to: '/en/contacts' },
+    ]);
   }),
 );
 
@@ -149,9 +153,9 @@ it.live('bounds rendered links in the same pool as menu warming and drains every
         ))}
       </StaffRoutePreloadContext>,
     );
-    expect(preloadRoute).toHaveBeenCalledTimes(4);
+    expect(preloadRoute).toHaveBeenCalledTimes(1);
     fireEvent.focus(screen.getByRole('link', { name: 'eight' }));
-    expect(preloadRoute).toHaveBeenCalledTimes(5);
+    expect(preloadRoute).toHaveBeenCalledTimes(2);
     expect(preloadRoute).toHaveBeenLastCalledWith({ hash: '', search: {}, to: '/en/eight' });
     yield* Deferred.succeed(release, true);
     yield* staffRoutePreloads.awaitIdle;

@@ -18,7 +18,9 @@ interface Preload {
  * existing native router flight or start immediately. Intent gets the next slot, including one reserved slot
  * while the background pool is full. Pausing never cancels a shared router flight or physical request.
  */
-export const makeRoutePreloadScheduler = (backgroundConcurrency = 4) => {
+// A route can fan out into several owner reads. Keep speculative routes serial so ten documents do not
+// compete with sign-in and visible reads for forty SQL/authorization workflows. Intent still gets its own slot.
+export const makeRoutePreloadScheduler = (backgroundConcurrency = 1) => {
   const preloads = new Map<string, Preload>();
   const idleWaiters = new Set<Deferred.Deferred<boolean>>();
   let active = 0;

@@ -3,6 +3,35 @@ import { expect, it } from 'effect-rstest';
 
 import { makeRoutePreloadScheduler } from '../../../src/routes/route-preload-scheduler.ts';
 
+it.effect('admits one speculative route by default but reserves immediate capacity for intent', () =>
+  Effect.gen(function* foregroundCapacity() {
+    const queue = makeRoutePreloadScheduler();
+    const release = yield* Deferred.make<boolean>();
+    const started: string[] = [];
+    const schedule = (key: string, priority: 'background' | 'intent') =>
+      queue
+        .schedule(
+          key,
+          priority,
+          Effect.sync(() => {
+            started.push(key);
+          }).pipe(Effect.andThen(Deferred.await(release).pipe(Effect.asVoid))),
+        )
+        .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* queue.resume;
+    const first = yield* schedule('/first', 'background');
+    const second = yield* schedule('/second', 'background');
+    yield* Effect.yieldNow;
+    expect(started).toEqual(['/first']);
+    const intended = yield* schedule('/intended', 'intent');
+    yield* Effect.yieldNow;
+    expect(started).toEqual(['/first', '/intended']);
+    yield* Deferred.succeed(release, true);
+    yield* Effect.forEach([first, second, intended], (fiber) => Fiber.join(fiber));
+    expect(started).toEqual(['/first', '/intended', '/second']);
+  }),
+);
+
 it.effect('bounds the shared background pool and drains every destination', () =>
   Effect.gen(function* boundedPrefetch() {
     const queue = makeRoutePreloadScheduler(2);
