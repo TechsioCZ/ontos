@@ -22,7 +22,7 @@ export const opportunityResourceDescriptor = {
     graphVisible: false,
     linkable: false,
     mediaAttachable: false,
-    searchable: false,
+    searchable: true,
     timelineVisible: false,
   },
   description: 'Opportunity resource.',

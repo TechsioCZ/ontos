@@ -132,7 +132,25 @@ const runCommand = Effect.fn('runCommand')(function* runCommand(state: SalesPipe
     })
     .pipe(Effect.provide(unusedContextAccessLayer));
   const [committed] = harness.snapshot().committed;
-  return { evidence: committed?.evidence, result };
+  const allEvidence = committed?.evidence;
+  expect(
+    allEvidence?.outboxMessages.filter(
+      (entry) => entry.message.topic === 'demo.sales-pipeline.search-refresh-requested.v1',
+    ),
+  ).toHaveLength(1);
+  expect(
+    allEvidence?.domainEvents.filter((entry) => entry.eventType === 'demo.sales-pipeline.search-refresh-requested.v1'),
+  ).toHaveLength(1);
+  // These existing assertions concern the independently consumed stage-change topic only.
+  const evidence =
+    allEvidence === undefined
+      ? undefined
+      : {
+          ...allEvidence,
+          domainEvents: allEvidence.domainEvents.filter((entry) => entry.eventType === outboxTopic),
+          outboxMessages: allEvidence.outboxMessages.filter((entry) => entry.message.topic === outboxTopic),
+        };
+  return { evidence, result };
 });
 
 it.effect('ChangeOpportunityStage to WON commits exactly one stage-changed message with the line snapshot', () =>

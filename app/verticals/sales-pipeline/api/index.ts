@@ -1,5 +1,7 @@
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
+  CoreSearchQueryRuntimeLive,
+  CoreSearchProjectionStoreLive,
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
@@ -21,22 +23,24 @@ import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramo
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
 import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
-import {
-  GatewayAssertionRedemptionDatabaseLive,
-  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
-} from './auth/gateway-assertion-redemption.ts';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { salesPipelineApi, salesPipelineOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
 
 // <generated-governed-http-handler-support-imports>
+import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+} from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
 import { applyCommandActionApiLive } from './apply-command-action-server.ts';
+import { opportunitiesReadApiLive } from './opportunities-search-server.ts';
 import { recordsReadApiLive } from './records-read-server.ts';
+import { requestSearchRebuildActionApiLive } from './request-search-rebuild-action-server.ts';
 // </generated-governed-http-handler-imports>
 
 const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
@@ -83,7 +87,14 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit)
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
   applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  opportunitiesReadApiLive.pipe(
+    GovernedReadLayer.provide(governedReadRuntimeLive),
+    GovernedReadLayer.provide(
+      CoreSearchQueryRuntimeLive.pipe(GovernedReadLayer.provide(CoreSearchProjectionStoreLive)),
+    ),
+  ),
   recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  requestSearchRebuildActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   // <generated-governed-http-handler-support-layers>

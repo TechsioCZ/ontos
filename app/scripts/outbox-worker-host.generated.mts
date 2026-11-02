@@ -11,6 +11,7 @@ import { outboxWorkerEntry as privacyOutboxWorkerEntry } from '@app/privacy/outb
 import { outboxWorkerEntry as propertyPortfolioOutboxWorkerEntry } from '@app/property-portfolio/outbox-worker-host';
 import { outboxWorkerEntry as propertyLeasingOutboxWorkerEntry } from '@app/property-leasing/outbox-worker-host';
 import { outboxWorkerEntry as legalAgreementsOutboxWorkerEntry } from '@app/legal-agreements/outbox-worker-host';
+import { outboxWorkerEntry as salesPipelineOutboxWorkerEntry } from '@app/sales-pipeline/outbox-worker-host';
 import { outboxWorkerEntry as facilityOperationsOutboxWorkerEntry } from '@app/facility-operations/outbox-worker-host';
 import { outboxWorkerEntry as financeBillingOutboxWorkerEntry } from '@app/finance-billing/outbox-worker-host';
 import { outboxWorkerEntry as crmOutboxWorkerEntry } from '@app/crm/outbox-worker-host';
@@ -28,6 +29,7 @@ startOutboxWorkerHost({
     propertyPortfolioOutboxWorkerEntry,
     propertyLeasingOutboxWorkerEntry,
     legalAgreementsOutboxWorkerEntry,
+    salesPipelineOutboxWorkerEntry,
     facilityOperationsOutboxWorkerEntry,
     financeBillingOutboxWorkerEntry,
     crmOutboxWorkerEntry,

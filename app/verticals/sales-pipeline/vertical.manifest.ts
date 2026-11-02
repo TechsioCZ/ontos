@@ -5,17 +5,19 @@ import {
   defineOntosModuleManifest,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
+  ShellSearchContributionSchema,
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
-import { applyCommandAction } from './src/actions/apply-command.action.ts';
-import { RecordsApi } from './shared/apis/records.ts';
-import { RecordsPage } from './src/routes/[lang]/prodej/prilezitosti/page.tsx';
 import { AiApprovalsPage } from './src/routes/[lang]/prodej/schvalovani-ai/page.tsx';
-import { salesPipelineReadAllPermission } from './shared/permissions/sales-pipeline-read-all.ts';
-import { salesPipelineWriteAllPermission } from './shared/permissions/sales-pipeline-write-all.ts';
+import { applyCommandAction } from './src/actions/apply-command.action.ts';
 import { opportunityCollectionResourceDescriptor } from './shared/resources/opportunity-collection.ts';
 import { opportunityResourceDescriptor } from './shared/resources/opportunity.ts';
+import { RecordsApi } from './shared/apis/records.ts';
+import { RecordsPage } from './src/routes/[lang]/prodej/prilezitosti/page.tsx';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
+import { salesPipelineReadAllPermission } from './shared/permissions/sales-pipeline-read-all.ts';
+import { salesPipelineWriteAllPermission } from './shared/permissions/sales-pipeline-write-all.ts';
 // </generated-module-manifest-imports>
 import { salesPipelineMcpContribution } from './shared/mcp/contribution.ts';
 
@@ -27,7 +29,12 @@ const navigationContribution = (value: NavigationContributionInput) =>
 const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
 
+const searchContribution = (value: typeof ShellSearchContributionSchema.Encoded) =>
+  Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
+
+const moduleAccessPermission = 'module.access';
 const moduleKey = 'demo.sales-pipeline';
+const searchEntrypointKey = 'demo.sales-pipeline.search.opportunities';
 const recordsPageKey = 'demo.sales-pipeline.page.records';
 /** AI level C approvals (opportunities + orders); only principals with write_all see the page. */
 const aiPageKey = 'demo.sales-pipeline.page.ai';
@@ -58,6 +65,7 @@ export const salesPipelineManifest = defineOntosModuleManifest({
     actions: [
       // <generated-module-manifest-actions>
       applyCommandAction,
+      requestSearchRebuildAction,
       // </generated-module-manifest-actions>
     ],
     api: {
@@ -91,6 +99,12 @@ export const salesPipelineManifest = defineOntosModuleManifest({
     ],
     search: [
       // <generated-module-manifest-search>
+      {
+        accessFiltering: 'resource_permission',
+        key: 'demo.sales-pipeline.opportunities',
+        owningModuleId: moduleKey,
+        resourceType: 'demo.sales-pipeline.opportunity',
+      },
       // </generated-module-manifest-search>
     ],
     shellContributions: {
@@ -101,7 +115,7 @@ export const salesPipelineManifest = defineOntosModuleManifest({
           contributionKey: 'demo.sales-pipeline.navigation.records',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
             entrypointKey: recordsPageKey,
             moduleKey,
             role: 'page',
@@ -132,7 +146,7 @@ export const salesPipelineManifest = defineOntosModuleManifest({
           contributionKey: recordsPageKey,
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
             entrypointKey: recordsPageKey,
             moduleKey,
             role: 'page',
@@ -161,6 +175,18 @@ export const salesPipelineManifest = defineOntosModuleManifest({
       resourceDetails: [],
       search: [
         // <generated-module-shell-search>
+        searchContribution({
+          contributionKey: searchEntrypointKey,
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
+            entrypointKey: searchEntrypointKey,
+            moduleKey,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'demo.sales-pipeline.opportunities',
+        }),
         // </generated-module-shell-search>
       ],
       timelines: [],
