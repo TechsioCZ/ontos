@@ -107,14 +107,27 @@ const resourceTypes = new Map<string, ResourceTypePresentation>([
   ['party.registry.party', { group: 'party', moduleId: 'party.registry' }],
   ['demo.crm.client', { group: 'crmClient', moduleId: 'demo.crm', record: query('/crm/klienti', 'klient') }],
   ['demo.crm.contact', { agendas: ['/crm/klienti'], group: 'crmContact', moduleId: 'demo.crm' }],
-  ['demo.sales-pipeline.opportunity', { group: 'opportunity', moduleId: 'demo.sales-pipeline' }],
+  [
+    'demo.sales-pipeline.opportunity',
+    { group: 'opportunity', moduleId: 'demo.sales-pipeline', record: query('/prodej/prilezitosti', 'opportunityId') },
+  ],
   [
     'demo.merchandise.product',
-    { group: 'product', moduleId: 'demo.merchandise', record: { kind: 'path', to: '/provoz/produkty/$id' } },
+    {
+      group: 'product',
+      idScope: 'company',
+      moduleId: 'demo.merchandise',
+      record: { kind: 'path', to: '/provoz/produkty/$id' },
+    },
   ],
   [
     'demo.merchandise.order',
-    { group: 'order', moduleId: 'demo.merchandise', record: query('/prodej/objednavky', 'orderId') },
+    {
+      group: 'order',
+      idScope: 'company',
+      moduleId: 'demo.merchandise',
+      record: query('/prodej/objednavky', 'orderId'),
+    },
   ],
   ['work.tasks.task', { group: 'task', moduleId: 'work.tasks', record: query('/ukoly') }],
   ['finance.billing.invoice', { group: 'invoice', moduleId: 'finance.billing', record: query('/finance') }],

@@ -84,10 +84,10 @@ test('records with an owner page open there, by path segment or query parameter'
     search: { klient: client.ref.resourceId },
     to: '/crm/klienti',
   });
-  const product = resourceHit('demo.merchandise', 'demo.merchandise.product', 'Kotel K-200');
-  expect(shellSearchResultTarget(product)).toEqual({
-    params: { id: product.ref.resourceId },
-    to: '/provoz/produkty/$id',
+  const opportunity = resourceHit('demo.sales-pipeline', 'demo.sales-pipeline.opportunity', 'Serverovna');
+  expect(shellSearchResultTarget(opportunity)).toEqual({
+    search: { opportunityId: opportunity.ref.resourceId },
+    to: '/prodej/prilezitosti',
   });
   const market = resourceHit('commerce.market-catalog', 'commerce.market-catalog.market', 'Slovensko');
   expect(shellSearchResultTarget(market)).toEqual({
@@ -131,12 +131,36 @@ test('native-ID records ignore the company and keep the resource ID as is', () =
   });
 });
 
-test('a merchandise order opens the orders agenda with the order selected', () => {
-  const order = resourceHit('demo.merchandise', 'demo.merchandise.order', 'Objednávka Novák');
-  expect(shellSearchResultTarget(order)).toEqual({
-    search: { orderId: order.ref.resourceId },
-    to: '/prodej/objednavky',
-  });
+const nativeProductId = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+
+test('a merchandise product or order of the selected company opens with its native ID', () => {
+  const product = resourceHit(
+    'demo.merchandise',
+    'demo.merchandise.product',
+    'Kotel K-200',
+    `${selectedLegalEntityId}.${nativeProductId}`,
+  );
+  expect(shellSearchResultTarget(product)).toEqual({ params: { id: nativeProductId }, to: '/provoz/produkty/$id' });
+  const order = resourceHit(
+    'demo.merchandise',
+    'demo.merchandise.order',
+    'Objednávka Novák',
+    `${selectedLegalEntityId}.OBJ-2026-0042`,
+  );
+  expect(shellSearchResultTarget(order)).toEqual({ search: { orderId: 'OBJ-2026-0042' }, to: '/prodej/objednavky' });
+});
+
+test.each([
+  ['demo.merchandise.product', 'another company', `${otherCompany}.${nativeProductId}`, selectedLegalEntityId],
+  ['demo.merchandise.product', 'an unqualified ID', nativeProductId, selectedLegalEntityId],
+  ['demo.merchandise.order', 'no company on the result', `${selectedLegalEntityId}.OBJ-1`, undefined],
+  ['demo.merchandise.order', 'an empty native ID', `${selectedLegalEntityId}.`, selectedLegalEntityId],
+] as const)('%s qualified with %s falls back to the Shell record page', (resourceType, _case, resourceId, company) => {
+  const hit = resourceHit('demo.merchandise', resourceType, 'Kotel K-200', resourceId);
+  expect(ownerRecordTarget(hit.ref, company)).toBeUndefined();
+  const target = shellSearchLinkTarget(hit.ref, hit.title, company);
+  expect(target).toMatchObject({ to: '/resources/$moduleId/$resourceType/$resourceId' });
+  expect('state' in target ? target.state({}) : undefined).toEqual({ searchHitTitle: 'Kotel K-200' });
 });
 
 test.each([
@@ -161,20 +185,20 @@ test('a type without named agendas, or a forged owner, falls back to the owning 
 });
 
 test('records without an owner page open the Shell record page carrying only the found title', () => {
-  const opportunity = resourceHit('demo.sales-pipeline', 'demo.sales-pipeline.opportunity', 'Serverovna');
-  expect(ownerRecordTarget(opportunity.ref, selectedLegalEntityId)).toBeUndefined();
-  const target = shellSearchResultTarget(opportunity);
+  const document = resourceHit('legal.agreements', 'legal.agreements.document', 'Předávací protokol');
+  expect(ownerRecordTarget(document.ref, selectedLegalEntityId)).toBeUndefined();
+  const target = shellSearchResultTarget(document);
   expect(target).toMatchObject({
     params: {
-      moduleId: 'demo.sales-pipeline',
-      resourceId: opportunity.ref.resourceId,
-      resourceType: 'demo.sales-pipeline.opportunity',
+      moduleId: 'legal.agreements',
+      resourceId: document.ref.resourceId,
+      resourceType: 'legal.agreements.document',
     },
     to: '/resources/$moduleId/$resourceType/$resourceId',
   });
   expect('state' in target ? target.state({ __TSR_key: 'k' }) : undefined).toEqual({
     __TSR_key: 'k',
-    searchHitTitle: 'Serverovna',
+    searchHitTitle: 'Předávací protokol',
   });
   const forged = resourceHit('demo.crm', 'finance.billing.invoice', 'Podvržená faktura');
   expect(ownerRecordTarget(forged.ref, selectedLegalEntityId)).toBeUndefined();

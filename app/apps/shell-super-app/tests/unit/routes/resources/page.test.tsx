@@ -448,11 +448,11 @@ it('opens a facility record of the current company by its local ID, never one of
 });
 
 it('offers no record link for a search hit whose owner has no record page', () => {
-  routerHistoryState.searchHitTitle = 'Serverovna';
+  routerHistoryState.searchHitTitle = 'Předávací protokol';
   Object.assign(routeParams, {
-    moduleId: 'demo.sales-pipeline',
+    moduleId: 'legal.agreements',
     resourceId: '00000000-0000-4000-8000-000000000402',
-    resourceType: 'demo.sales-pipeline.opportunity',
+    resourceType: 'legal.agreements.document',
   });
   try {
     renderResourcePage({ shell: authenticatedShellFixture(), state: 'not_found' });
