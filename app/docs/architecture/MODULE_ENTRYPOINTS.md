@@ -83,6 +83,14 @@ Codesmith output is the starting point for Actions, MicroVertical pages, and Wor
 
 API, public-component, search, and report business artifacts may not be introduced until an approved generator can patch registration atomically and an approved gateway adapter exists. Extend Codesmith first with disposable compile, overwrite, traversal, and no-partial-write tests. Repository checks reject missing/mismatched registration, raw remote loads, private cross-vertical imports, direct private handler access, and public exports of private implementations.
 
+## Static ownership checks
+
+`pnpm module-entrypoints:check`, `pnpm database-access:check`, and `pnpm lean-core:check` enforce the source boundaries alongside the contract checks. Ownership follows the explicit module identity and resolved implementation origin. A package name, `contracts` path, public barrel, or type-only import does not make a private handler, Worker, registration, repository, table, or business transaction public.
+
+The checks cover supported literal imports through relative paths, configured aliases, declared workspace package exports, reexport chains, and actual workspace symlinks. Genuine public descriptors, schemas, typed clients, and public reexports retain their existing contract requirements. Selecting an approved public declaration does not authorize a private function exported beside it. Owner-local implementations remain permitted within their own boundary.
+
+Approved business-neutral Core database routines are consumed through their declared public Core boundary. Importing a routine's private implementation does not confer that capability. These static checks provide evidence for the supported source forms; they do not prove database grants, arbitrary dynamic SQL isolation, or runtime authorization. Receiving permissions, governed execution, and database isolation remain independent requirements.
+
 ## Authorization classification and inventory
 
 Every descriptor must declare exactly one authorization classification. `public` is an intentional authorization result, not the route-discovery `public` or `indexable` flag. Protected descriptors use `authenticated_principal`, `context_permission` with a stable permission, `action_execution` with a provisioning intent, `owner_local_background`, or API-only `capability_issuance` with its credential kind. Role-incompatible and excess fields fail decoding and generation.

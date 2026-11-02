@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createModuleGraph } from '@modern-js/code-tools/microvertical-api-boundary';
 
 import { NodeServices } from '@effect/platform-node';
 import { Array as EffectArray, Cause, ConfigProvider, Effect, Exit, Match, Schema } from 'effect';
@@ -27,6 +28,7 @@ import {
 import {
   hasGeneratedGovernedClientContract,
   hasGeneratedModuleApiReadContract,
+  hasGeneratedModuleApiContract,
   generatedModuleApiEntrypointReference,
   hasGeneratedSourceHeader,
 } from '../generated-module-api-boundary.mts';
@@ -38,6 +40,27 @@ import {
   publishedResourceRefContractExports,
   resolvePublishedContractModuleId,
 } from '../published-outbox-contracts.mts';
+
+const PRIVATE_COLOCATED_CALLABLE_CASE = 'private co-located callable';
+const PARTY_VERTICAL_PATH = 'verticals/party-registry';
+const MARKET_DEPLOYMENT_ID = 'commerce-market-catalog';
+const PARTY_RESOURCE_SOURCE_PATH = './shared/resources/party.ts';
+const CUSTOMER_CONTEXT_VERTICAL_PATH = 'verticals/commerce-customer-context';
+const CUSTOMER_CONTEXT_DEPLOYMENT_ID = 'commerce-customer-context';
+const PRIVACY_VERTICAL_PATH = 'verticals/privacy';
+const WORKSPACE_MANIFEST_PATH = 'pnpm-workspace.yaml';
+const WORKSPACE_DEPENDENCY_VERSION = 'workspace:*';
+const SHELL_PACKAGE_JSON_PATH = 'apps/shell-super-app/package.json';
+const SHELL_PACKAGE_SPECIFIER = '@app/shell-super-app';
+const APP_PACKAGE_LINK_DIRECTORY = 'node_modules/@app';
+const FOREIGN_PRIVATE_DIAGNOSTIC = 'foreign private';
+const VERTICALS_WORKSPACE_DECLARATION = 'packages:\n  - packages/*\n  - verticals/*\n';
+const SHARED_CONTRACTS_PACKAGE_JSON_PATH = 'packages/shared-contracts/package.json';
+const SHARED_PROBLEM_DETAILS_SOURCE_PATH = 'packages/shared-contracts/src/problem-details.ts';
+const SHARED_CONTRACTS_WORKSPACE_NAME = 'shared-contracts';
+const SHARED_CONTRACTS_WORKSPACE_PATH = 'packages/shared-contracts';
+const CATALOG_VERTICAL_PATH = 'verticals/catalog';
+const CATALOG_SELECTION_CONTRACT_SUBPATH = 'catalog-selection-evidence';
 
 const INVENTORY_OWNER_PATH = 'verticals/inventory-stock';
 const BOUNDARY_FIXTURE_TOPOLOGY = 'topology/reference-topology.json';
@@ -609,7 +632,7 @@ const makeFixture = Effect.fn(function* mergedScenario1(
       shell: { id: BOUNDARY_FIXTURE_SHELL_ID, path: BOUNDARY_FIXTURE_SHELL_PATH },
       verticals: [
         { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
-        ...(includeParty === true ? [{ id: PARTY_DEPLOYMENT_ID, path: 'verticals/party-registry' }] : []),
+        ...(includeParty === true ? [{ id: PARTY_DEPLOYMENT_ID, path: PARTY_VERTICAL_PATH }] : []),
       ],
     }),
   );
@@ -850,7 +873,7 @@ it.live(
           shell: { id: BOUNDARY_FIXTURE_SHELL_ID, path: BOUNDARY_FIXTURE_SHELL_PATH },
           verticals: [
             { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
-            { id: 'commerce-market-catalog', path: owner },
+            { id: MARKET_DEPLOYMENT_ID, path: owner },
           ],
         }),
       );
@@ -872,7 +895,7 @@ it.live(
       ).toEqual([
         {
           authorization: { kind: 'action_execution', provisioning: 'explicit' },
-          deployment: 'commerce-market-catalog',
+          deployment: MARKET_DEPLOYMENT_ID,
           entrypointKey: 'commerce.market-catalog.manage-market-retirement-admission',
           owner: 'commerce.market-catalog',
           surface: 'action',
@@ -2690,7 +2713,7 @@ const partyPackage = {
     '.': './src/index.ts',
     './api': './shared/api.ts',
     './outbox/party-created': './shared/outbox/party-created.ts',
-    './resources/party': './shared/resources/party.ts',
+    './resources/party': PARTY_RESOURCE_SOURCE_PATH,
     [PARTY_API_CLIENT_EXPORT]: PARTY_CLIENT_SOURCE_PATH,
   },
   modernjs: {
@@ -2767,7 +2790,7 @@ it('rejects a ResourceRef import whose public path is not resources/<slug>', () 
     assertPublishedPartyUsage({
       dependencyPackageJson: {
         ...partyPackage,
-        exports: { './resource/party': './shared/resources/party.ts' },
+        exports: { './resource/party': PARTY_RESOURCE_SOURCE_PATH },
       },
       moduleSpecifiers: ['@app/party-registry/resource/party'],
     }),
@@ -4049,7 +4072,7 @@ const readPricingSourceTree = (root: string, folder: string) => {
 it.live('accepts actual CCC named recovery reexports and rejects provenance or executable escapes', () =>
   Effect.gen(function* actualNamedCustomerContextRecovery() {
     const root = path.resolve(import.meta.dirname, '../..');
-    const owner = 'verticals/commerce-customer-context';
+    const owner = CUSTOMER_CONTEXT_VERTICAL_PATH;
     const deployment = path.posix.basename(owner);
     const [trees, metadata] = yield* Effect.all([
       Effect.all(
@@ -4115,7 +4138,7 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
         hasCompleteGeneratedModuleApiSeam(
           new Map([...sources, [manifestFile, invalid]]),
           shared,
-          'commerce-customer-context',
+          CUSTOMER_CONTEXT_DEPLOYMENT_ID,
         ),
       ).toBe(false);
     }
@@ -4129,7 +4152,7 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
       hasCompleteGeneratedModuleApiSeam(
         new Map([...sources, [registrationFile, withActionBrowserClient]]),
         shared,
-        'commerce-customer-context',
+        CUSTOMER_CONTEXT_DEPLOYMENT_ID,
       ),
     ).toBe(false);
     const marker = `${MODULE_API_HEADER}// @ontos-public-contract ${contractSpecifier}\n`;
@@ -4316,7 +4339,7 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
 it.live('accepts the reviewed Privacy notice-presentation GET companion only as its exact pinned text', () =>
   Effect.gen(function* actualPrivacyNoticePresentationCompanion() {
     const root = path.resolve(import.meta.dirname, '../..');
-    const sources = new Map(yield* Effect.promise(() => readPricingSourceTree(root, 'verticals/privacy')));
+    const sources = new Map(yield* Effect.promise(() => readPricingSourceTree(root, PRIVACY_VERTICAL_PATH)));
     const shared = 'verticals/privacy/shared/api.ts';
     const contractFile = 'verticals/privacy/shared/apis/notice-presentation.ts';
     const serverFile = 'verticals/privacy/api/notice-presentation-read-server.ts';
@@ -4342,3 +4365,799 @@ it.live('accepts the reviewed Privacy notice-presentation GET companion only as 
     }
   }),
 );
+
+const RESOLVED_OWNER_CONSUMER = 'verticals/inventory-stock/src/ownership-consumer.ts';
+const RESOLVED_FOREIGN_HANDLER = 'verticals/party-registry/src/handlers/private.ts';
+const RENAMED_CONTRACTS_PACKAGE = '@contracts/renamed-party';
+
+const makeResolvedOwnerFixture = Effect.fn(function* resolvedOwnerFixture() {
+  const root = yield* makeFixture(true);
+  yield* write(root, WORKSPACE_MANIFEST_PATH, 'packages:\n  - verticals/*\n');
+  yield* write(
+    root,
+    `${INVENTORY_VERTICAL_PATH}/package.json`,
+    JSON.stringify({
+      dependencies: { [RENAMED_CONTRACTS_PACKAGE]: WORKSPACE_DEPENDENCY_VERSION },
+      name: INVENTORY_PACKAGE_SPECIFIER,
+    }),
+  );
+  yield* write(
+    root,
+    `${INVENTORY_VERTICAL_PATH}/tsconfig.json`,
+    JSON.stringify({ references: [{ path: '../party-registry' }] }),
+  );
+  yield* write(
+    root,
+    'verticals/party-registry/package.json',
+    JSON.stringify({
+      ...partyPackage,
+      exports: {
+        './contracts': './shared/contracts.ts',
+        './resources/party': PARTY_RESOURCE_SOURCE_PATH,
+      },
+      name: RENAMED_CONTRACTS_PACKAGE,
+    }),
+  );
+  yield* write(
+    root,
+    RESOLVED_FOREIGN_HANDLER,
+    'export const executePrivate = () => true;\nexport interface PrivateInput { readonly secret: string }\n',
+  );
+  yield* write(root, 'verticals/party-registry/workers/private.ts', 'export const executePrivate = () => true;\n');
+  yield* write(
+    root,
+    'verticals/party-registry/vertical.registration.ts',
+    `export const executePrivate = () => true;
+// <generated-public-component-registrations>
+// </generated-public-component-registrations>
+// <generated-search-registrations>
+// </generated-search-registrations>
+// <generated-report-registrations>
+// </generated-report-registrations>
+`,
+  );
+  yield* write(
+    root,
+    'verticals/party-registry/shared/contracts.ts',
+    "export { executePrivate } from './contract-inner.ts';\nexport type { PrivateInput } from './contract-inner.ts';\n",
+  );
+  yield* write(
+    root,
+    'verticals/party-registry/shared/contract-inner.ts',
+    "export { executePrivate } from '../src/handlers/private.ts';\nexport type { PrivateInput } from '../src/handlers/private.ts';\n",
+  );
+  yield* write(root, 'verticals/party-registry/shared/resources/party.ts', partyResourceSource);
+  yield* Effect.tryPromise(() => mkdir(path.join(root, 'node_modules/@contracts'), { recursive: true }));
+  yield* Effect.tryPromise(() =>
+    symlink(path.join(root, PARTY_VERTICAL_PATH), path.join(root, 'node_modules', RENAMED_CONTRACTS_PACKAGE), 'dir'),
+  );
+  return root;
+});
+
+for (const [form, source, leaf] of [
+  [
+    'sibling relative handler',
+    "import { executePrivate } from '../../party-registry/src/handlers/private.ts';\n",
+    RESOLVED_FOREIGN_HANDLER,
+  ],
+  [
+    'foreign worker',
+    "import { executePrivate } from '../../party-registry/workers/private.ts';\n",
+    'verticals/party-registry/workers/private.ts',
+  ],
+  [
+    'private registration',
+    "import { executePrivate } from '../../party-registry/vertical.registration.ts';\n",
+    'verticals/party-registry/vertical.registration.ts',
+  ],
+  [
+    'relative barrel chain',
+    "import { executePrivate } from '../../party-registry/shared/contracts.ts';\n",
+    RESOLVED_FOREIGN_HANDLER,
+  ],
+  [
+    'renamed contracts package through real workspace symlink',
+    `import { executePrivate } from '${RENAMED_CONTRACTS_PACKAGE}/contracts';\n`,
+    RESOLVED_FOREIGN_HANDLER,
+  ],
+  [
+    'type-only private import',
+    "import type { PrivateInput } from '../../party-registry/src/handlers/private.ts';\n",
+    RESOLVED_FOREIGN_HANDLER,
+  ],
+  [
+    'type-only renamed contracts reexport',
+    `export type { PrivateInput } from '${RENAMED_CONTRACTS_PACKAGE}/contracts';\n`,
+    RESOLVED_FOREIGN_HANDLER,
+  ],
+] as const) {
+  it.live(`rejects resolved foreign private ownership through ${form}`, () =>
+    Effect.gen(function* rejectsResolvedPrivateOrigin() {
+      const root = yield* makeResolvedOwnerFixture();
+      yield* write(root, RESOLVED_OWNER_CONSUMER, source);
+      const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+      expect(Exit.isFailure(result), form).toBe(true);
+      if (Exit.isFailure(result)) {
+        const failure = Cause.pretty(result.cause);
+        expect(failure).toMatch(/foreign private|cross-vertical private/u);
+        expect(failure).toContain(RESOLVED_OWNER_CONSUMER);
+        expect(failure).toContain(leaf);
+      }
+    }),
+  );
+}
+
+it.live(
+  'preserves owner-local implementations and genuine public ResourceRef reexports through real package exports',
+  () =>
+    Effect.gen(function* acceptsResolvedPublicOrigin() {
+      const root = yield* makeResolvedOwnerFixture();
+      yield* write(
+        root,
+        'verticals/inventory-stock/src/handlers/private.ts',
+        'export const executePrivate = () => true;\n',
+      );
+      yield* write(
+        root,
+        RESOLVED_OWNER_CONSUMER,
+        `import { executePrivate } from './handlers/private.ts';\nexport { PartyRefSchema } from '${RENAMED_CONTRACTS_PACKAGE}/resources/party';\nexport type { PartyRef } from '${RENAMED_CONTRACTS_PACKAGE}/resources/party';\n`,
+      );
+      yield* checkModuleEntrypointBoundaries(root);
+    }),
+);
+
+const INVENTORY_BACKEND_CONTRACT = 'verticals/inventory/shared/domain/inventory-backend-configuration.ts';
+const INVENTORY_SCHEMA_CONSUMER = 'apps/shell-super-app/src/api/inventory-public-schema.ts';
+const makeSelectedInventoryFixture = Effect.fn(function* selectedInventoryFixture() {
+  const root = yield* makeFixture();
+  yield* write(root, WORKSPACE_MANIFEST_PATH, 'packages:\n  - verticals/*\n');
+  yield* write(
+    root,
+    BOUNDARY_FIXTURE_TOPOLOGY,
+    JSON.stringify({
+      shell: { id: BOUNDARY_FIXTURE_SHELL_ID, path: BOUNDARY_FIXTURE_SHELL_PATH },
+      verticals: [
+        { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
+        { id: 'inventory', path: 'verticals/inventory' },
+      ],
+    }),
+  );
+  yield* write(
+    root,
+    SHELL_PACKAGE_JSON_PATH,
+    JSON.stringify({ dependencies: { '@app/inventory': WORKSPACE_DEPENDENCY_VERSION }, name: SHELL_PACKAGE_SPECIFIER }),
+  );
+  const manifest = yield* Effect.promise(() =>
+    readFile(path.resolve(import.meta.dirname, '../../verticals/inventory/vertical.manifest.ts'), 'utf-8'),
+  );
+  yield* write(root, 'verticals/inventory/vertical.manifest.ts', `${manifest.split('\n').slice(0, 3).join('\n')}\n`);
+  const pending = [INVENTORY_BACKEND_CONTRACT, 'verticals/inventory/package.json'];
+  const copied = new Set<string>();
+  for (const file of pending) {
+    if (copied.has(file)) {
+      continue;
+    }
+    copied.add(file);
+    const source = yield* Effect.promise(() => readFile(path.resolve(import.meta.dirname, '../..', file), 'utf-8'));
+    yield* write(root, file, source);
+    for (const match of source.matchAll(/\bfrom\s*['"](?<specifier>\.[^'"]+)['"]/gu)) {
+      const specifier = match.groups?.specifier;
+      if (specifier !== undefined) {
+        pending.push(path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier)));
+      }
+    }
+  }
+  yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+  yield* Effect.promise(() =>
+    symlink(path.join(root, 'verticals/inventory'), path.join(root, 'node_modules/@app/inventory'), 'dir'),
+  );
+  return root;
+});
+
+for (const [name, source, contamination, allowed] of [
+  [
+    'selected schema value only',
+    "import { InventoryBackendConfigurationSchema } from '@app/inventory/backend-configuration';\n",
+    '',
+    true,
+  ],
+  [
+    'selected schema and derived type',
+    "import { InventoryBackendConfigurationSchema } from '@app/inventory/backend-configuration';\nimport type { InventoryBackendConfiguration } from '@app/inventory/backend-configuration';\n",
+    '',
+    true,
+  ],
+  [
+    'private dispatch from same specifier',
+    "import { dispatchReservationAuthority } from '@app/inventory/backend-configuration';\n",
+    '',
+    false,
+  ],
+  [
+    'private function type from same specifier',
+    "import type { PrivateDispatch } from '@app/inventory/backend-configuration';\n",
+    '\nexport type PrivateDispatch = typeof dispatchReservationAuthority;\n',
+    false,
+  ],
+  [
+    'eager private initializer beside selected schema',
+    "import { InventoryBackendConfigurationSchema } from '@app/inventory/backend-configuration';\n",
+    '\nexport const eagerPrivate = dispatchReservationAuthority({} as never);\n',
+    false,
+  ],
+] as const) {
+  it.live(`checks Inventory backend contract ${name}`, () =>
+    Effect.gen(function* selectedInventoryContract() {
+      const root = yield* makeSelectedInventoryFixture();
+      yield* write(root, INVENTORY_SCHEMA_CONSUMER, source);
+      if (contamination !== '') {
+        const original = yield* Effect.promise(() => readFile(path.join(root, INVENTORY_BACKEND_CONTRACT), 'utf-8'));
+        yield* write(root, INVENTORY_BACKEND_CONTRACT, `${original}${contamination}`);
+      }
+      const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+      expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : name).toBe(allowed);
+      if (!allowed && Exit.isFailure(result)) {
+        expect(Cause.pretty(result.cause)).toContain(FOREIGN_PRIVATE_DIAGNOSTIC);
+      }
+    }),
+  );
+}
+
+const PORTAL_PUBLIC_SCHEMA = 'verticals/commerce-customer-context/shared/portal-auth-contracts.ts';
+const PORTAL_PUBLIC_CLIENT = 'verticals/commerce-customer-context/src/api/portal-auth-verification/client.ts';
+const PORTAL_SHELL_CONSUMER = 'apps/shell-super-app/api/auth/commerce-external-identity.ts';
+const makePortalPublicRoleFixture = Effect.fn(function* portalPublicRoleFixture() {
+  const root = yield* makeFixture();
+  yield* write(root, WORKSPACE_MANIFEST_PATH, VERTICALS_WORKSPACE_DECLARATION);
+  yield* write(
+    root,
+    BOUNDARY_FIXTURE_TOPOLOGY,
+    JSON.stringify({
+      shell: { id: BOUNDARY_FIXTURE_SHELL_ID, path: BOUNDARY_FIXTURE_SHELL_PATH },
+      verticals: [
+        { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
+        { id: CUSTOMER_CONTEXT_DEPLOYMENT_ID, path: CUSTOMER_CONTEXT_VERTICAL_PATH },
+      ],
+    }),
+  );
+  for (const file of [
+    SHELL_PACKAGE_JSON_PATH,
+    'apps/shell-super-app/tsconfig.json',
+    'packages/core-runtime/package.json',
+    'packages/core-runtime/src/auth/external-identity-contracts.ts',
+    SHARED_CONTRACTS_PACKAGE_JSON_PATH,
+    SHARED_PROBLEM_DETAILS_SOURCE_PATH,
+    'verticals/commerce-customer-context/package.json',
+    'verticals/commerce-customer-context/shared/deployment-paths.ts',
+    PORTAL_PUBLIC_SCHEMA,
+    'verticals/commerce-customer-context/shared/portal-auth-verification.ts',
+    PORTAL_PUBLIC_CLIENT,
+    'verticals/commerce-customer-context/src/api/portal-auth-verification/client-errors.ts',
+    'verticals/commerce-customer-context/src/api/portal-auth-verification/client-configuration.ts',
+    'verticals/commerce-customer-context/src/api/portal-auth-verification/workload-assertion.ts',
+  ]) {
+    yield* write(
+      root,
+      file,
+      yield* Effect.promise(() => readFile(path.resolve(import.meta.dirname, '../..', file), 'utf-8')),
+    );
+  }
+  yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+  for (const [name, target] of [
+    ['core-runtime', 'packages/core-runtime'],
+    [SHARED_CONTRACTS_WORKSPACE_NAME, SHARED_CONTRACTS_WORKSPACE_PATH],
+    [CUSTOMER_CONTEXT_DEPLOYMENT_ID, CUSTOMER_CONTEXT_VERTICAL_PATH],
+  ] as const) {
+    yield* Effect.promise(() =>
+      symlink(path.join(root, target), path.join(root, APP_PACKAGE_LINK_DIRECTORY, name), 'dir'),
+    );
+  }
+  yield* write(
+    root,
+    PORTAL_SHELL_CONSUMER,
+    "import { COMMERCE_ADMISSION_DEADLINE_MS } from '@app/commerce-customer-context/portal-auth/contracts';\nimport { commercePortalAuthVerificationClientLive } from '@app/commerce-customer-context/portal-auth/verification/client';\n",
+  );
+  return root;
+});
+
+it.live('preserves the actual public portal-auth schemas and approved typed verification client', () =>
+  Effect.gen(function* actualPortalPublicRoles() {
+    const root = yield* makePortalPublicRoleFixture();
+    yield* checkModuleEntrypointBoundaries(root);
+  }),
+);
+
+for (const [name, file, contamination, selection] of [
+  ['schema executable export', PORTAL_PUBLIC_SCHEMA, '\nexport const privateHandler = () => true;\n', 'privateHandler'],
+  [
+    'schema private database dependency',
+    PORTAL_PUBLIC_SCHEMA,
+    "\nimport { privateTable } from '../src/database/private.ts';\n",
+    undefined,
+  ],
+  ['schema opaque global data', PORTAL_PUBLIC_SCHEMA, '\nexport const privateGlobal = globalThis;\n', 'privateGlobal'],
+  [
+    'schema wrapped runtime global',
+    PORTAL_PUBLIC_SCHEMA,
+    '\nexport const privateGlobal = globalThis as unknown;\n',
+    'privateGlobal',
+  ],
+  ['schema mutable declaration', PORTAL_PUBLIC_SCHEMA, '\nexport let mutableContract = true;\n', 'mutableContract'],
+  [
+    'client private database dependency',
+    PORTAL_PUBLIC_CLIENT,
+    "\nimport { privateTable } from '../../database/private.ts';\n",
+    undefined,
+  ],
+] as const) {
+  it.live(`rejects public portal-auth ${name} contamination`, () =>
+    Effect.gen(function* contaminatedPortalPublicRole() {
+      const root = yield* makePortalPublicRoleFixture();
+      yield* write(
+        root,
+        'verticals/commerce-customer-context/src/database/private.ts',
+        'export const privateTable = {};\n',
+      );
+      const original = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
+      yield* write(root, file, `${original}${contamination}`);
+      if (selection !== undefined) {
+        yield* checkModuleEntrypointBoundaries(root);
+        const consumer = yield* Effect.promise(() => readFile(path.join(root, PORTAL_SHELL_CONSUMER), 'utf-8'));
+        yield* write(
+          root,
+          PORTAL_SHELL_CONSUMER,
+          `${consumer}import { ${selection} } from '@app/commerce-customer-context/portal-auth/contracts';\n`,
+        );
+      }
+      const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+      expect(Exit.isFailure(result), name).toBe(true);
+      if (Exit.isFailure(result)) {
+        expect(Cause.pretty(result.cause)).toContain(FOREIGN_PRIVATE_DIAGNOSTIC);
+      }
+    }),
+  );
+}
+
+it.live('keeps genuine generated API publication distinct from a private callable in the same export', () =>
+  Effect.gen(function* selectedGeneratedApiPublication() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    yield* write(root, WORKSPACE_MANIFEST_PATH, VERTICALS_WORKSPACE_DECLARATION);
+    yield* write(
+      root,
+      `${INVENTORY_VERTICAL_PATH}/package.json`,
+      JSON.stringify({
+        exports: { './api/stock-list': './shared/apis/stock-list.ts' },
+        modernjs: {
+          appId: INVENTORY_DEPLOYMENT_ID,
+          ontosModule: { manifest: './vertical.manifest.ts', moduleId: INVENTORY_MODULE_ID },
+        },
+        name: INVENTORY_PACKAGE_SPECIFIER,
+      }),
+    );
+    yield* write(
+      root,
+      SHELL_PACKAGE_JSON_PATH,
+      JSON.stringify({
+        dependencies: { [INVENTORY_PACKAGE_SPECIFIER]: WORKSPACE_DEPENDENCY_VERSION },
+        name: SHELL_PACKAGE_SPECIFIER,
+      }),
+    );
+    for (const file of [SHARED_CONTRACTS_PACKAGE_JSON_PATH, SHARED_PROBLEM_DETAILS_SOURCE_PATH]) {
+      yield* write(
+        root,
+        file,
+        yield* Effect.promise(() => readFile(path.resolve(import.meta.dirname, '../..', file), 'utf-8')),
+      );
+    }
+    yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+    for (const [name, target] of [
+      ['inventory-stock', INVENTORY_VERTICAL_PATH],
+      [SHARED_CONTRACTS_WORKSPACE_NAME, SHARED_CONTRACTS_WORKSPACE_PATH],
+    ] as const) {
+      yield* Effect.promise(() =>
+        symlink(path.join(root, target), path.join(root, APP_PACKAGE_LINK_DIRECTORY, name), 'dir'),
+      );
+    }
+    const contractFile = `${INVENTORY_VERTICAL_PATH}/shared/apis/stock-list.ts`;
+    const original = yield* Effect.promise(() => readFile(path.join(root, contractFile), 'utf-8'));
+    const contract = `${original.replace(
+      'export const StockListApi =',
+      "import { Schema } from 'effect';\nexport const StockListRequestSchema = Schema.Struct({});\nexport const StockListResponseSchema = Schema.Struct({});\nexport const StockListApi =",
+    )}\nexport const privateCallable = () => true;\nexport { StockPolicyProblemSchema } from '../domain/stock-policy.ts';\n`;
+    yield* write(
+      root,
+      `${INVENTORY_VERTICAL_PATH}/shared/domain/stock-policy.ts`,
+      `import { Schema } from 'effect';
+import { makeProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+export class StockRejected extends Schema.TaggedError<StockRejected>()('StockRejected', { reason: Schema.Literal('rejected') }) {}
+export const StockPolicyProblemSchema = makeProblemDetailsSchema('StockPolicyProblem', 422, { reason: StockRejected.fields.reason });
+export const dormantPrivateHandler = () => true;
+`,
+    );
+    expect(hasGeneratedModuleApiContract(contract, 'StockListApi', 'stockList', 'stock-list')).toBe(true);
+    yield* write(root, contractFile, contract);
+    const consumer = 'apps/shell-super-app/src/generated-api-consumer.ts';
+    yield* write(root, consumer, `import { StockListApi } from '${INVENTORY_PACKAGE_SPECIFIER}/api/stock-list';\n`);
+    yield* checkModuleEntrypointBoundaries(root);
+    yield* write(root, consumer, `import { privateCallable } from '${INVENTORY_PACKAGE_SPECIFIER}/api/stock-list';\n`);
+    const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain(FOREIGN_PRIVATE_DIAGNOSTIC);
+      expect(Cause.pretty(result.cause)).toContain(contractFile);
+    }
+  }),
+);
+
+for (const [binding, allowed] of [
+  ['RefinedPublicSchema', true],
+  ['privateCallable', false],
+] as const) {
+  it.live(`classifies refined public schema separately from ${binding}`, () =>
+    Effect.gen(function* refinedSchemaPublication() {
+      const root = yield* makeResolvedOwnerFixture();
+      yield* write(
+        root,
+        'verticals/party-registry/shared/contracts.ts',
+        `import { Schema } from 'effect';
+export const RefinedPublicSchema = Schema.Struct({ id: Schema.String }).check(
+  Schema.makeFilter(({ id }) => id.length > 0 ? undefined : 'Expected an identifier'),
+);
+export const privateCallable = () => true;
+`,
+      );
+      yield* write(
+        root,
+        RESOLVED_OWNER_CONSUMER,
+        `import { ${binding} } from '${RENAMED_CONTRACTS_PACKAGE}/contracts';\n`,
+      );
+      const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+      expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : binding).toBe(allowed);
+    }),
+  );
+}
+
+const CATALOG_SELECTION_CONTRACT = 'verticals/catalog/shared/domain/catalog-selection-evidence.ts';
+const makeActualCatalogSelectionFixture = Effect.fn(function* actualCatalogSelectionFixture() {
+  const root = yield* makeFixture();
+  yield* write(root, WORKSPACE_MANIFEST_PATH, VERTICALS_WORKSPACE_DECLARATION);
+  yield* write(
+    root,
+    BOUNDARY_FIXTURE_TOPOLOGY,
+    JSON.stringify({
+      shell: { id: BOUNDARY_FIXTURE_SHELL_ID, path: BOUNDARY_FIXTURE_SHELL_PATH },
+      verticals: [
+        { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
+        { id: 'catalog', path: CATALOG_VERTICAL_PATH },
+      ],
+    }),
+  );
+  yield* write(
+    root,
+    SHELL_PACKAGE_JSON_PATH,
+    JSON.stringify({ dependencies: { '@app/catalog': WORKSPACE_DEPENDENCY_VERSION }, name: SHELL_PACKAGE_SPECIFIER }),
+  );
+  const workspace = path.resolve(import.meta.dirname, '../..');
+  const manifest = yield* Effect.promise(() =>
+    readFile(path.join(workspace, 'verticals/catalog/vertical.manifest.ts'), 'utf-8'),
+  );
+  yield* write(root, 'verticals/catalog/vertical.manifest.ts', `${manifest.split('\n').slice(0, 3).join('\n')}\n`);
+  const pending = [
+    CATALOG_SELECTION_CONTRACT,
+    'verticals/catalog/package.json',
+    'packages/catalog-selection-contracts/package.json',
+  ];
+  const copied = new Set<string>();
+  for (const file of pending) {
+    if (copied.has(file)) {
+      continue;
+    }
+    copied.add(file);
+    const source = yield* Effect.promise(() => readFile(path.join(workspace, file), 'utf-8'));
+    yield* write(root, file, source);
+    for (const match of source.matchAll(/\bfrom\s*['"](?<specifier>\.[^'"]+)['"]/gu)) {
+      const specifier = match.groups?.specifier;
+      if (specifier !== undefined) {
+        pending.push(path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier)));
+      }
+    }
+  }
+  const kernel = yield* Effect.promise(() =>
+    readPricingSourceTree(workspace, 'packages/catalog-selection-contracts/src'),
+  );
+  for (const [file, source] of kernel) {
+    yield* write(root, file, source);
+  }
+  yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+  for (const [name, target] of [
+    ['catalog', CATALOG_VERTICAL_PATH],
+    ['catalog-selection-contracts', 'packages/catalog-selection-contracts'],
+  ] as const) {
+    yield* Effect.promise(() =>
+      symlink(path.join(root, target), path.join(root, APP_PACKAGE_LINK_DIRECTORY, name), 'dir'),
+    );
+  }
+  return root;
+});
+
+for (const [binding, subpath, allowed] of [
+  ['CatalogSelectionWithQuantitySchema', CATALOG_SELECTION_CONTRACT_SUBPATH, true],
+  ['CatalogSelectionSchema', CATALOG_SELECTION_CONTRACT_SUBPATH, true],
+  ['CatalogResourceRefSchema', 'catalog-revision-reference', true],
+  ['privateCatalogDispatch', CATALOG_SELECTION_CONTRACT_SUBPATH, false],
+] as const) {
+  it.live(`checks actual Catalog selection source and dependency chain for ${binding}`, () =>
+    Effect.gen(function* actualCatalogSelectionPublication() {
+      const root = yield* makeActualCatalogSelectionFixture();
+      const original = yield* Effect.promise(() => readFile(path.join(root, CATALOG_SELECTION_CONTRACT), 'utf-8'));
+      yield* write(
+        root,
+        CATALOG_SELECTION_CONTRACT,
+        `${original}\nexport const privateCatalogDispatch = () => globalThis;\n`,
+      );
+      yield* write(
+        root,
+        'apps/shell-super-app/src/catalog-selection-consumer.ts',
+        `import { ${binding} } from '@app/catalog/domain/${subpath}';\n`,
+      );
+      const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+      expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : binding).toBe(allowed);
+    }),
+  );
+}
+
+const makeActualPartyClientFixture = Effect.fn(function* actualPartyClientFixture() {
+  const root = yield* makeFixture();
+  const workspace = path.resolve(import.meta.dirname, '../..');
+  yield* write(root, WORKSPACE_MANIFEST_PATH, VERTICALS_WORKSPACE_DECLARATION);
+  yield* write(
+    root,
+    BOUNDARY_FIXTURE_TOPOLOGY,
+    JSON.stringify({
+      shell: { id: BOUNDARY_FIXTURE_SHELL_ID, path: BOUNDARY_FIXTURE_SHELL_PATH },
+      verticals: [
+        { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
+        { id: PARTY_DEPLOYMENT_ID, path: PARTY_VERTICAL_PATH },
+      ],
+    }),
+  );
+  const sources = yield* Effect.promise(() => readPricingSourceTree(workspace, PARTY_VERTICAL_PATH));
+  for (const [file, source] of sources) {
+    yield* write(root, file, source);
+  }
+  for (const file of [SHARED_CONTRACTS_PACKAGE_JSON_PATH, SHARED_PROBLEM_DETAILS_SOURCE_PATH]) {
+    yield* write(root, file, yield* Effect.promise(() => readFile(path.join(workspace, file), 'utf-8')));
+  }
+  yield* write(
+    root,
+    SHELL_PACKAGE_JSON_PATH,
+    JSON.stringify({
+      dependencies: { [PARTY_PACKAGE_NAME]: WORKSPACE_DEPENDENCY_VERSION },
+      name: SHELL_PACKAGE_SPECIFIER,
+    }),
+  );
+  yield* write(root, 'apps/shell-super-app/tsconfig.json', JSON.stringify({ references: [] }));
+  yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+  yield* Effect.promise(() =>
+    symlink(path.join(root, PARTY_VERTICAL_PATH), path.join(root, 'node_modules/@app/party-registry'), 'dir'),
+  );
+  yield* Effect.promise(() =>
+    symlink(
+      path.join(root, SHARED_CONTRACTS_WORKSPACE_PATH),
+      path.join(root, 'node_modules/@app/shared-contracts'),
+      'dir',
+    ),
+  );
+  return root;
+});
+
+for (const [name, source, allowed] of [
+  [
+    'public selected operation and schemas',
+    `import { PartyDetailResponseSchema, executePartyDetailWithAuthorization } from '${PARTY_API_CLIENT_SPECIFIER}';\nimport type { PartyDetailResponse } from '${PARTY_API_CLIENT_SPECIFIER}';\n`,
+    true,
+  ],
+  [
+    PRIVATE_COLOCATED_CALLABLE_CASE,
+    `import { privatePartyClientCallable } from '${PARTY_API_CLIENT_SPECIFIER}';\n`,
+    false,
+  ],
+] as const) {
+  it.live(`checks actual Party typed client ${name}`, () =>
+    Effect.gen(function* actualPartyTypedClientPublication() {
+      const root = yield* makeActualPartyClientFixture();
+      const clientFile = `${PARTY_VERTICAL_PATH}/src/api/party-registry-client.ts`;
+      const aggregate = yield* Effect.promise(() => readFile(path.join(root, clientFile), 'utf-8'));
+      yield* write(root, clientFile, `${aggregate}\nexport const privatePartyClientCallable = () => globalThis;\n`);
+      const consumer = 'apps/shell-super-app/src/party-client-consumer.ts';
+      yield* write(root, consumer, source);
+      const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+      const diagnostic = Exit.isFailure(result) ? Cause.pretty(result.cause) : name;
+      if (Exit.isFailure(result)) {
+        expect(diagnostic).toContain(consumer);
+        expect(diagnostic).toContain(clientFile);
+      }
+      expect(Exit.isSuccess(result), diagnostic).toBe(allowed);
+    }),
+  );
+}
+
+it.live('checks actual Party typed client foreign API contamination', () =>
+  Effect.gen(function* foreignApiInPartyDelegate() {
+    const root = yield* makeActualPartyClientFixture();
+    const workspace = path.resolve(import.meta.dirname, '../..');
+    const privacy = yield* Effect.promise(() => readPricingSourceTree(workspace, PRIVACY_VERTICAL_PATH));
+    for (const [file, source] of privacy) {
+      yield* write(root, file, source);
+    }
+    yield* write(
+      root,
+      BOUNDARY_FIXTURE_TOPOLOGY,
+      JSON.stringify({
+        shell: { id: BOUNDARY_FIXTURE_SHELL_ID, path: BOUNDARY_FIXTURE_SHELL_PATH },
+        verticals: [
+          { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
+          { id: PARTY_DEPLOYMENT_ID, path: PARTY_VERTICAL_PATH },
+          { id: 'privacy', path: PRIVACY_VERTICAL_PATH },
+        ],
+      }),
+    );
+    yield* Effect.promise(() =>
+      symlink(path.join(root, PRIVACY_VERTICAL_PATH), path.join(root, 'node_modules/@app/privacy'), 'dir'),
+    );
+    const delegate = `${PARTY_VERTICAL_PATH}/src/api/party-registry-http-client.ts`;
+    const original = yield* Effect.promise(() => readFile(path.join(root, delegate), 'utf-8'));
+    const changed = original.replace(
+      "import { partyRegistryApi, partyRegistryApiContract } from '../../shared/api.ts';",
+      "import { privacyApi as partyRegistryApi } from '@app/privacy/api';\nimport { partyRegistryApiContract } from '../../shared/api.ts';",
+    );
+    expect(changed).not.toBe(original);
+    yield* write(root, delegate, changed);
+    const graph = createModuleGraph();
+    const binding = graph.resolve(graph.module(path.join(root, delegate)), 'partyRegistryApi', 'local');
+    expect(binding?.kind).toBe('declaration');
+    if (binding?.kind === 'declaration') {
+      expect(binding.module.path).toBe(path.join(root, 'verticals/privacy/shared/api.ts'));
+    }
+    const consumer = 'apps/shell-super-app/src/party-client-consumer.ts';
+    yield* write(
+      root,
+      consumer,
+      `import { executePartyDetailWithAuthorization } from '${PARTY_API_CLIENT_SPECIFIER}';\n`,
+    );
+    const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      const diagnostic = Cause.pretty(result.cause);
+      expect(diagnostic).toContain(consumer);
+      expect(diagnostic).toContain(`${PARTY_VERTICAL_PATH}/src/api/party-registry-client.ts`);
+    }
+  }),
+);
+
+const makeActualQuantityClientFixture = Effect.fn(function* actualQuantityClientFixture() {
+  const root = yield* makeActualCatalogSelectionFixture();
+  const workspace = path.resolve(import.meta.dirname, '../..');
+  const sources = yield* Effect.promise(() => readPricingSourceTree(workspace, CATALOG_VERTICAL_PATH));
+  for (const [file, source] of sources) {
+    yield* write(root, file, source);
+  }
+  for (const file of [
+    SHARED_CONTRACTS_PACKAGE_JSON_PATH,
+    SHARED_PROBLEM_DETAILS_SOURCE_PATH,
+    'packages/shared-contracts/src/client-runtime.ts',
+  ]) {
+    yield* write(root, file, yield* Effect.promise(() => readFile(path.join(workspace, file), 'utf-8')));
+  }
+  yield* Effect.promise(() =>
+    symlink(
+      path.join(root, SHARED_CONTRACTS_WORKSPACE_PATH),
+      path.join(root, 'node_modules/@app/shared-contracts'),
+      'dir',
+    ),
+  );
+  return root;
+});
+
+for (const [name, operation, allowed] of [
+  ['public generated operation', 'executeQuantityPreparationWithAuthorization', true],
+  [PRIVATE_COLOCATED_CALLABLE_CASE, 'privateQuantityClientCallable', false],
+] as const) {
+  it.live(`checks actual quantity governed client ${name}`, () =>
+    Effect.gen(function* actualQuantityGovernedClient() {
+      const root = yield* makeActualQuantityClientFixture();
+      const file = 'verticals/catalog/src/api/quantity-preparation-client.ts';
+      if (!allowed) {
+        const original = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
+        yield* write(root, file, `${original}\nexport const privateQuantityClientCallable = () => globalThis;\n`);
+      }
+      const consumer = 'apps/shell-super-app/src/quantity-client-consumer.ts';
+      yield* write(root, consumer, `import { ${operation} } from '@app/catalog/api/quantity-preparation-client';\n`);
+      const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+      const diagnostic = Exit.isFailure(result) ? Cause.pretty(result.cause) : name;
+      if (Exit.isFailure(result)) {
+        expect(diagnostic).toContain(consumer);
+        expect(diagnostic).toContain(file);
+      }
+      expect(Exit.isSuccess(result), diagnostic).toBe(allowed);
+    }),
+  );
+}
+
+const makeActualMarketClientFixture = Effect.fn(function* actualMarketClientFixture() {
+  const root = yield* makeFixture();
+  const workspace = path.resolve(import.meta.dirname, '../..');
+  const owner = 'verticals/commerce-market-catalog';
+  yield* write(root, WORKSPACE_MANIFEST_PATH, VERTICALS_WORKSPACE_DECLARATION);
+  yield* write(
+    root,
+    BOUNDARY_FIXTURE_TOPOLOGY,
+    JSON.stringify({
+      shell: { id: BOUNDARY_FIXTURE_SHELL_ID, path: BOUNDARY_FIXTURE_SHELL_PATH },
+      verticals: [
+        { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
+        { id: MARKET_DEPLOYMENT_ID, path: owner },
+      ],
+    }),
+  );
+  for (const [file, source] of yield* Effect.promise(() => readPricingSourceTree(workspace, owner))) {
+    yield* write(root, file, source);
+  }
+  for (const file of [
+    SHARED_CONTRACTS_PACKAGE_JSON_PATH,
+    SHARED_PROBLEM_DETAILS_SOURCE_PATH,
+    'packages/shared-contracts/src/client-runtime.ts',
+  ]) {
+    yield* write(root, file, yield* Effect.promise(() => readFile(path.join(workspace, file), 'utf-8')));
+  }
+  yield* write(
+    root,
+    SHELL_PACKAGE_JSON_PATH,
+    JSON.stringify({
+      dependencies: { '@app/commerce-market-catalog': WORKSPACE_DEPENDENCY_VERSION },
+      name: SHELL_PACKAGE_SPECIFIER,
+    }),
+  );
+  yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+  for (const [name, directory] of [
+    [MARKET_DEPLOYMENT_ID, owner],
+    [SHARED_CONTRACTS_WORKSPACE_NAME, SHARED_CONTRACTS_WORKSPACE_PATH],
+  ] as const) {
+    yield* Effect.promise(() =>
+      symlink(path.join(root, directory), path.join(root, APP_PACKAGE_LINK_DIRECTORY, name), 'dir'),
+    );
+  }
+  return root;
+});
+
+for (const [name, source, allowed] of [
+  [
+    'actual public owner types',
+    "import type { EligibleMarketTuplesRequest, EligibleMarketTuplesResponse, ResolveCommerceMarketRequest, ResolveCommerceMarketResponse } from '@app/commerce-market-catalog/api/client';\n",
+    true,
+  ],
+  [
+    PRIVATE_COLOCATED_CALLABLE_CASE,
+    "import { privateMarketClientCallable } from '@app/commerce-market-catalog/api/client';\n",
+    false,
+  ],
+] as const) {
+  it.live(`checks actual Market typed client ${name}`, () =>
+    Effect.gen(function* actualMarketTypedClient() {
+      const root = yield* makeActualMarketClientFixture();
+      const file = 'verticals/commerce-market-catalog/src/api/commerce-market-catalog-client.ts';
+      const original = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
+      yield* write(root, file, `${original}\nexport const privateMarketClientCallable = () => globalThis;\n`);
+      const consumer = 'apps/shell-super-app/src/market-client-consumer.ts';
+      yield* write(root, consumer, source);
+      const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+      const diagnostic = Exit.isFailure(result) ? Cause.pretty(result.cause) : name;
+      if (Exit.isFailure(result)) {
+        expect(diagnostic).toContain(consumer);
+        expect(diagnostic).toContain(file);
+      }
+      expect(Exit.isSuccess(result), diagnostic).toBe(allowed);
+    }),
+  );
+}

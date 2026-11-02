@@ -740,7 +740,7 @@ const allowedCompositionSeams: readonly AllowedCompositionSeam[] = [
   },
 ];
 
-const isAllowedCompositionSeam = (importer: string, specifier: string): boolean =>
+export const isAllowedCompositionSeam = (importer: string, specifier: string): boolean =>
   allowedCompositionSeams.some((seam) => seam.importer === importer && seam.specifier === specifier);
 
 const recordNonCommerceImportViolations = (

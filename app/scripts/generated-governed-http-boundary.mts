@@ -73,7 +73,51 @@ const hasExactlyOne = (source: string | undefined, expression: RegExp): boolean 
 const matchingDelimiterEnd = (source: string, start: number, opening: string, closing: string): number | undefined =>
   matchingDelimiter(maskNonCode(source), start, opening, closing);
 
-const maskComments = (source: string): string => maskNonCode(source, true);
+interface SourceDepthAnalysis {
+  readonly code: string;
+  readonly codePositions: Map<number, boolean>;
+  readonly comments: string;
+  readonly prefixDepths: Int32Array;
+}
+
+// Source strings are immutable cache keys. Bound retained analyses because scripts may validate
+// many disposable owners in one process; repeated contributions reuse the same owner sources.
+const sourceDepthAnalyses = new Map<string, SourceDepthAnalysis>();
+const MAX_SOURCE_DEPTH_ANALYSES = 32;
+const sourceDepthAnalysis = (source: string): SourceDepthAnalysis => {
+  const cached = sourceDepthAnalyses.get(source);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const code = maskNonCode(source);
+  const prefixDepths = new Int32Array(code.length + 1);
+  let depth = 0;
+  for (let index = 0; index < code.length; index += 1) {
+    const character = code.charAt(index);
+    if ('{(['.includes(character)) {
+      depth += 1;
+    } else if ('})]'.includes(character)) {
+      depth -= 1;
+    }
+    prefixDepths[index + 1] = depth;
+  }
+  if (sourceDepthAnalyses.size >= MAX_SOURCE_DEPTH_ANALYSES) {
+    const oldest = sourceDepthAnalyses.keys().next().value;
+    if (oldest !== undefined) {
+      sourceDepthAnalyses.delete(oldest);
+    }
+  }
+  const analysis: SourceDepthAnalysis = {
+    code,
+    codePositions: new Map(),
+    comments: maskNonCode(source, true),
+    prefixDepths,
+  };
+  sourceDepthAnalyses.set(source, analysis);
+  return analysis;
+};
+
+const maskComments = (source: string): string => sourceDepthAnalysis(source).comments;
 
 const callArgument = (source: string | undefined, declaration: RegExp, argumentIndex = 0): string | undefined => {
   if (source === undefined) {
@@ -179,48 +223,18 @@ const wholeCallArguments = (
   return argumentsList.filter((argument) => argument !== '');
 };
 
-interface SourceDepthAnalysis {
-  readonly code: string;
-  readonly prefixDepths: Int32Array;
-}
-
-// Source strings are immutable cache keys. Bound retained analyses because scripts may validate
-// many disposable owners in one process; repeated contributions reuse the same owner sources.
-const sourceDepthAnalyses = new Map<string, SourceDepthAnalysis>();
-const MAX_SOURCE_DEPTH_ANALYSES = 32;
-const sourceDepthAnalysis = (source: string): SourceDepthAnalysis => {
-  const cached = sourceDepthAnalyses.get(source);
-  if (cached !== undefined) {
-    return cached;
-  }
-  const code = maskNonCode(source);
-  const prefixDepths = new Int32Array(code.length + 1);
-  let depth = 0;
-  for (let index = 0; index < code.length; index += 1) {
-    const character = code.charAt(index);
-    if ('{(['.includes(character)) {
-      depth += 1;
-    } else if ('})]'.includes(character)) {
-      depth -= 1;
-    }
-    prefixDepths[index + 1] = depth;
-  }
-  if (sourceDepthAnalyses.size >= MAX_SOURCE_DEPTH_ANALYSES) {
-    const oldest = sourceDepthAnalyses.keys().next().value;
-    if (oldest !== undefined) {
-      sourceDepthAnalyses.delete(oldest);
-    }
-  }
-  const analysis = { code, prefixDepths };
-  sourceDepthAnalyses.set(source, analysis);
-  return analysis;
-};
-
 const codeDepthBeforePosition = (source: string, target: number): number =>
   sourceDepthAnalysis(source).prefixDepths[target] ?? 0;
 
-const codeDepthAtPosition = (source: string, target: number): number | undefined =>
-  isCodePosition(source, target) ? codeDepthBeforePosition(source, target) : undefined;
+const codeDepthAtPosition = (source: string, target: number): number | undefined => {
+  const analysis = sourceDepthAnalysis(source);
+  let codePosition = analysis.codePositions.get(target);
+  if (codePosition === undefined) {
+    codePosition = isCodePosition(source, target);
+    analysis.codePositions.set(target, codePosition);
+  }
+  return codePosition ? codeDepthBeforePosition(source, target) : undefined;
+};
 
 const isTopLevelCodePosition = (source: string, target: number): boolean => codeDepthAtPosition(source, target) === 0;
 
@@ -3650,8 +3664,8 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
   });
 };
 
-const PublicContractOwnerAppIdSchema = Schema.String.pipe(Schema.brand('PublicContractOwnerAppId'));
-const PublicContractOwnerModuleIdSchema = Schema.String.pipe(Schema.brand('PublicContractOwnerModuleId'));
+export const PublicContractOwnerAppIdSchema = Schema.String.pipe(Schema.brand('PublicContractOwnerAppId'));
+export const PublicContractOwnerModuleIdSchema = Schema.String.pipe(Schema.brand('PublicContractOwnerModuleId'));
 const PublicContractPackageManifestSchema = Schema.Struct({
   exports: Schema.Record(Schema.String, Schema.String),
   name: Schema.String,
