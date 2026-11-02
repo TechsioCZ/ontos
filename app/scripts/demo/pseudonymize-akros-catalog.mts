@@ -25,6 +25,8 @@ import { connectSeedClient, DemoSeedError } from './seed-client.mts';
 import type { SeedClient } from './seed-client.mts';
 import { seedCheckpointDirectory, seedWriteCheckpoint } from './seed-checkpoint.mts';
 import {
+  galleryOrder,
+  twinReference,
   Category,
   Product,
   bytesDigest,
@@ -573,13 +575,16 @@ const applyProduct = (client: SeedClient, root: string, entry: PlannedProduct) =
     }
     for (const image of entry.images) {
       if (!mapping.has(image.source)) {
-        mapping.set(image.source, yield* uploadPhoto(client, root, id, image));
+        // The source publishes some photos twice under different names: identical bytes are one gallery photo (an
+        // identical upload request would also reuse its committed Action key and be refused as already committed).
+        const reference = twinReference(entry.images, mapping, image);
+        mapping.set(image.source, reference ?? (yield* uploadPhoto(client, root, id, image)));
         yield* jsonWrite(uploadJournal(root, id), UploadState, { mapping: Object.fromEntries(mapping) });
       }
     }
     const kept = keptPhotos(entry);
     const resolve = (image: string) => mapping.get(image) ?? (isBrandedCatalogImage(image) ? '' : image);
-    const order = kept.map(resolve).filter((image) => image !== '');
+    const order = galleryOrder(kept, resolve);
     const { product: gallery } = yield* readProduct(client, id);
     if (order.length > 1 && digest(gallery.images ?? []) !== digest(order)) {
       yield* galleryChange(client, id, { _tag: 'Reorder', images: order });

@@ -210,3 +210,21 @@ export const displayContent = (product: CatalogProduct) => ({
     parameters: variant.parameters === undefined ? [] : parametersWithoutBrand(variant.parameters),
   })),
 });
+
+/**
+ * The source publishes some photos twice under different names. Identical bytes become one gallery photo: the
+ * reference an already-uploaded twin got, if any (an identical upload request would reuse its committed Action key).
+ */
+export const twinReference = (
+  images: readonly { readonly hash: string; readonly source: string }[],
+  mapping: ReadonlyMap<string, string>,
+  image: { readonly hash: string },
+): string | undefined => {
+  const twin = images.find((other) => other.hash === image.hash && mapping.has(other.source));
+  return twin === undefined ? undefined : mapping.get(twin.source);
+};
+
+/** The kept photos in gallery order, each gallery reference once (twins resolve to the same reference). */
+export const galleryOrder = (kept: readonly string[], resolve: (image: string) => string): readonly string[] => [
+  ...new Set(kept.map(resolve).filter((image) => image !== '')),
+];

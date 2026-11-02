@@ -11,9 +11,11 @@ import {
   categoryTextPatch,
   digest,
   galleryConsistent,
+  galleryOrder,
   productPhotoPlan,
   productTextPatch,
   protectedProduct,
+  twinReference,
 } from './pseudonymize-akros-catalog-policy.mts';
 
 const fixture = Effect.gen(function* catalogFixture() {
@@ -209,4 +211,22 @@ describe('pseudonymous demo catalog', () => {
       expect(galleryConsistent({ ...gallery, imageSrc: 'media:b', variants: [] })).toBe(false);
     }),
   );
+});
+
+const twinResolve = (image: string) => (image.includes('img-5293') ? 'media:one' : 'media:two');
+
+describe('photos published twice under different names', () => {
+  it('reuses the gallery reference of an identical uploaded photo and lists it once', () => {
+    const images = [
+      { hash: 'a', source: 'https://src/img-5293.jpg' },
+      { hash: 'a', source: 'https://src/img-5293_1.jpg' },
+      { hash: 'b', source: 'https://src/other.jpg' },
+    ];
+    const mapping = new Map([['https://src/img-5293.jpg', 'media:one']]);
+    expect(twinReference(images, mapping, images[1] ?? { hash: '' })).toBe('media:one');
+    expect(twinReference(images, mapping, images[2] ?? { hash: '' })).toBeUndefined();
+    expect(
+      galleryOrder([images[0]?.source ?? '', images[1]?.source ?? '', images[2]?.source ?? ''], twinResolve),
+    ).toEqual(['media:one', 'media:two']);
+  });
 });
