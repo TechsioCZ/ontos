@@ -43,6 +43,7 @@ const ref = Schema.decodeUnknownSync(ResourceRefSchema)({
   moduleId,
   resourceId: 'unit-1',
   resourceType,
+  tenantId,
 });
 const entrypoint = (role: 'api' | 'search', access: 'read' | 'write' = 'read') => ({
   access,
@@ -248,7 +249,7 @@ it.effect('search keeps an eligible provider with zero candidates as a successfu
 it.effect('search filters resource denials and reports partial provider failure', () =>
   Effect.gen(function* searchFiltersResourceDenialsAndReports() {
     const result = yield* makeShellSearch(dependencies('active', 'allowed', 'denied'), {
-      search: () => Effect.succeed([{ ref, title: 'Unit 1' }]),
+      search: () => Effect.succeed([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]),
     }).search(context, ' unit ');
     expect(result).toEqual({ partial: false, results: [] });
 
@@ -294,22 +295,32 @@ it.effect('search filters resource denials and reports partial provider failure'
         },
       ]),
     );
+    const moduleChecks: (readonly string[])[] = [];
+    const baseline = dependencies();
     const partial = makeShellSearch(
       {
-        ...dependencies(),
+        ...baseline,
         catalog: Effect.succeed(catalogWithBackupSearch),
+        contextAccess: {
+          ...baseline.contextAccess,
+          modules: (input) => {
+            moduleChecks.push(input.moduleIds);
+            return baseline.contextAccess.modules(input);
+          },
+        },
       },
       {
         search: ({ searchKey }) =>
           searchKey === backupSearchKey
             ? Effect.fail(new ShellProviderUnavailableError())
-            : Effect.succeed([{ ref, title: 'Unit 1' }]),
+            : Effect.succeed([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]),
       },
     );
     expect(yield* partial.search(context, 'unit')).toEqual({
       partial: true,
-      results: [{ kind: 'resource', ref, title: 'Unit 1' }],
+      results: [{ kind: 'resource', ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }],
     });
+    expect(moduleChecks).toEqual([[moduleId]]);
   }),
 );
 
@@ -475,6 +486,80 @@ it.effect('search fails only when every eligible provider fails', () =>
   }),
 );
 
+it.effect('search discards foreign company and tenant results before checking readable resources', () =>
+  Effect.gen(function* searchRejectsForeignScope() {
+    const checked: string[] = [];
+    const baseline = dependencies();
+    const result = yield* makeShellSearch(
+      {
+        ...baseline,
+        contextAccess: {
+          ...baseline.contextAccess,
+          resources: (input) => {
+            checked.push(...input.resources.map((resource) => resource.resourceId));
+            // This account can read both companies. Read permission must not widen the selected company.
+            return baseline.contextAccess.resources(input);
+          },
+        },
+      },
+      {
+        search: () =>
+          Effect.succeed([
+            { ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' },
+            {
+              ref: { ...ref, resourceId: 'foreign-company' },
+              selectedLegalEntityId: '20000000-0000-4000-8000-000000000002',
+              title: 'Other company',
+            },
+            {
+              ref: { ...ref, resourceId: 'foreign-tenant', tenantId: '10000000-0000-4000-8000-000000000002' },
+              selectedLegalEntityId: legalEntityId,
+              title: 'Other tenant',
+            },
+          ]),
+      },
+    ).search(context, 'unit');
+    expect(result).toEqual({
+      partial: false,
+      results: [{ kind: 'resource', ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }],
+    });
+    expect(checked).toEqual(['unit-1']);
+  }),
+);
+
+it.effect('search refuses generic owner results without explicit tenant and company identity', () =>
+  Effect.gen(function* searchRequiresOwnerScope() {
+    const { tenantId: _tenantId, ...unscopedRef } = ref;
+    const missingTenant = makeShellSearch(dependencies(), {
+      search: () => Effect.succeed([{ ref: unscopedRef, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]),
+    }).search(context, 'unit');
+    const missingCompany = makeShellSearch(dependencies(), {
+      search: () => Effect.succeed([{ ref, title: 'Unit 1' }]),
+    }).search(context, 'unit');
+    expect(Schema.is(ShellProviderUnavailableError)(yield* Effect.flip(missingTenant))).toBe(true);
+    expect(Schema.is(ShellProviderUnavailableError)(yield* Effect.flip(missingCompany))).toBe(true);
+  }),
+);
+
+it.effect('search rejects incomplete, duplicate and foreign module permission batches before owner calls', () =>
+  Effect.gen(function* searchRejectsInvalidModulePermissionBatches() {
+    const baseline = dependencies();
+    const allowed = { decision: 'allowed' as const, key: moduleId };
+    for (const decisions of [[], [allowed, allowed], [{ ...allowed, key: 'foreign.module' }]]) {
+      const result = yield* Effect.flip(
+        makeShellSearch(
+          {
+            ...baseline,
+            contextAccess: { ...baseline.contextAccess, modules: () => Effect.succeed(decisions) },
+          },
+          { search: () => Effect.die('Invalid authorization must not reach an owner') },
+        ).search(context, 'unit'),
+      );
+      expect(Schema.is(ShellProviderUnavailableError)(result)).toBe(true);
+    }
+  }),
+);
+
 it.effect('Counterparty search preserves both identities, selected scope, roles and collision metadata', () =>
   Effect.gen(function* CounterpartySearchPreservesBothIdentitiesSelected() {
     const [contract] = (yield* catalog()).contracts;
@@ -583,7 +668,7 @@ it.effect('treats a missing tenant module-state record as hidden rather than aut
       yield* makeShellSearch(hiddenDependencies, {
         search: () => {
           calls += 1;
-          return Effect.succeed([{ ref, title: 'Unit 1' }]);
+          return Effect.succeed([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]);
         },
       }).search(context, 'unit'),
     ).toEqual({ partial: false, results: [] });
@@ -610,7 +695,7 @@ it.effect('search fails closed for module or resource authorization uncertainty'
       Schema.is(ShellProviderUnavailableError)(
         yield* Effect.flip(
           makeShellSearch(dependencies('active', 'unavailable'), {
-            search: () => Effect.succeed([{ ref, title: 'Unit 1' }]),
+            search: () => Effect.succeed([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]),
           }).search(context, 'unit'),
         ),
       ),
@@ -619,7 +704,7 @@ it.effect('search fails closed for module or resource authorization uncertainty'
       Schema.is(ShellProviderUnavailableError)(
         yield* Effect.flip(
           makeShellSearch(dependencies('active', 'allowed', 'unavailable'), {
-            search: () => Effect.succeed([{ ref, title: 'Unit 1' }]),
+            search: () => Effect.succeed([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]),
           }).search(context, 'unit'),
         ),
       ),
@@ -639,7 +724,7 @@ it.effect('expired composition authority blocks search and resource providers de
     const search = makeShellSearch(expiredDependencies, {
       search: () => {
         providerCalls += 1;
-        return Effect.succeed([{ ref, title: 'Unit 1' }]);
+        return Effect.succeed([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]);
       },
     });
     expect(Schema.is(ShellProviderUnavailableError)(yield* Effect.flip(search.search(context, 'unit')))).toBe(true);
@@ -918,9 +1003,12 @@ it.effect('search issues assertions for the release captured by its single catal
           return baseline.issueAssertion();
         },
       },
-      { search: () => Effect.succeed([{ ref, title: 'Unit 1' }]) },
+      { search: () => Effect.succeed([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]) },
     ).search(context, 'unit');
-    expect(result).toEqual({ partial: false, results: [{ kind: 'resource', ref, title: 'Unit 1' }] });
+    expect(result).toEqual({
+      partial: false,
+      results: [{ kind: 'resource', ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }],
+    });
     expect(catalogLoads).toBe(1);
     expect(assertions).toEqual([
       { appId: 'property-registry', compositionRevision: approved.composition.revision, context },
@@ -958,10 +1046,10 @@ it.effect("the search gateway posts to the provider's own BFF route on the appro
           method: outgoing.method,
           url: `${module.deployment.appId} ${new URL(outgoing.url).pathname}`,
         });
-        return Response.json([{ ref, title: 'Unit 1' }]);
+        return Response.json([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]);
       }),
     );
-    expect(yield* gateway.search(request)).toEqual([{ ref, title: 'Unit 1' }]);
+    expect(yield* gateway.search(request)).toEqual([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]);
     expect(sent.map(({ body, method, url }) => ({ body, method, url }))).toEqual([
       {
         body: { includeArchived: false, query: 'dvořák' },

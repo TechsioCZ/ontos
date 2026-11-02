@@ -643,6 +643,7 @@ const ShellSearchResultSchema = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal('resource'),
     ref: ResourceRefSchema,
+    selectedLegalEntityId: LegalEntityIdSchema,
     title: searchTitle,
   }),
   Schema.Struct({

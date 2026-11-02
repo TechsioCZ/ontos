@@ -26,8 +26,13 @@ type PartyRole = typeof PartyRoleSchema.Type;
 export const ResourceRefSchema = SharedResourceRefSchema;
 export type ResourceRef = Schema.Schema.Type<typeof ResourceRefSchema>;
 
-const LegacyShellSearchResultSchema = Schema.Struct({
-  ref: ResourceRefSchema,
+const ScopedShellSearchResultSchema = Schema.Struct({
+  ref: ResourceRefSchema.pipe(
+    Schema.check(
+      Schema.makeFilter((ref) => (ref.tenantId === undefined ? 'Search result requires Tenant identity' : undefined)),
+    ),
+  ),
+  selectedLegalEntityId: LegalEntityIdSchema,
   title: stableKey,
 });
 const PartyShellSearchResultSchema = Schema.Struct({
@@ -71,7 +76,7 @@ const CounterpartyShellSearchResultSchema = Schema.Struct({
 const RawShellSearchResultSchema = Schema.Union([
   CounterpartyShellSearchResultSchema,
   PartyShellSearchResultSchema,
-  LegacyShellSearchResultSchema,
+  ScopedShellSearchResultSchema,
 ]);
 export type ShellSearchResult = SharedShellSearchResult;
 
@@ -274,8 +279,12 @@ const resultBelongsToProvider = (
   if (result.kind === 'party') {
     return result.ref.tenantId === context.tenantId;
   }
-  if (result.kind !== 'counterparty') {
-    return true;
+  if (result.kind === 'resource') {
+    return (
+      result.ref.tenantId === context.tenantId &&
+      context.legalEntityId !== undefined &&
+      result.selectedLegalEntityId === context.legalEntityId
+    );
   }
   return counterpartyBelongsToContext(context, result) && collisionBelongsToProvider(context, provider, result);
 };
@@ -412,6 +421,34 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
         (descriptor.accessFiltering !== 'tenant_scope' || context.legalEntityId === undefined)
       );
     });
+    const companyModuleIds = [
+      ...new Set(
+        stateEligible.flatMap(({ descriptor, moduleId }) =>
+          descriptor.accessFiltering === 'tenant_scope' ? [] : [moduleId],
+        ),
+      ),
+    ].toSorted();
+    const companyPermissions =
+      context.legalEntityId === undefined || companyModuleIds.length === 0
+        ? []
+        : yield* dependencies.contextAccess.modules({
+            legalEntityId: context.legalEntityId,
+            moduleIds: companyModuleIds,
+            principalId: context.principalId,
+            tenantId: context.tenantId,
+          });
+    const companyPermissionByModule = new Map(companyPermissions.map(({ decision, key }) => [key, decision]));
+    if (
+      context.legalEntityId !== undefined &&
+      (companyPermissions.length !== companyModuleIds.length ||
+        companyPermissionByModule.size !== companyModuleIds.length ||
+        companyModuleIds.some(
+          (moduleId) =>
+            !companyPermissionByModule.has(moduleId) || companyPermissionByModule.get(moduleId) === 'unavailable',
+        ))
+    ) {
+      return yield* unavailable();
+    }
     const permissionOutcomes = yield* Effect.forEach(
       stateEligible,
       (provider) => {
@@ -442,22 +479,10 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
         if (context.legalEntityId === undefined) {
           return Effect.succeed({ decision: 'denied' as const, provider });
         }
-        return dependencies.contextAccess
-          .modules({
-            legalEntityId: context.legalEntityId,
-            moduleIds: [provider.moduleId],
-            principalId: context.principalId,
-            tenantId: context.tenantId,
-          })
-          .pipe(
-            Effect.map((decisions) => ({
-              decision:
-                decisions.length === 1 && decisions[0]?.key === provider.moduleId
-                  ? decisions[0].decision
-                  : ('unavailable' as const),
-              provider,
-            })),
-          );
+        return Effect.succeed({
+          decision: companyPermissionByModule.get(provider.moduleId) ?? ('unavailable' as const),
+          provider,
+        });
       },
       { concurrency: 4 },
     );
