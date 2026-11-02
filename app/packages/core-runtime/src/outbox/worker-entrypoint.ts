@@ -61,6 +61,7 @@ export {
   CoreSearchResourceRefSchema,
 } from '../search/projection.ts';
 export { CoreSearchWorkerSnapshot, CoreSearchWorkerSnapshotLive } from '../search/worker-snapshot.ts';
+export { CoreSearchQueryRuntime } from '../search/query-runtime.ts';
 export {
   defineOutboxWorker,
   extractOutboxWorkerSubscriptions,

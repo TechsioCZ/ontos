@@ -4,9 +4,9 @@ import { Layer } from 'effect';
 import {
   CoreSearchProjectionStoreLive,
   CoreSearchWorkerSnapshotLive,
-  defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
 } from '@app/core-runtime';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import {
   ResourceContainmentRelationshipMutationLive,
   OutboxWorkerInfrastructureLive,
