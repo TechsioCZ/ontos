@@ -212,6 +212,52 @@ const dependencies = (
   };
 };
 
+const backupSearchKey = 'property.registry.backup-unit-search';
+const catalogWithBackup = Effect.gen(function* backupCatalog() {
+  const installed = yield* catalog();
+  const [contract] = installed.contracts;
+  if (contract === undefined) {
+    throw new TypeError('The search fixture must install its module contract');
+  }
+  const installedWithBackup = yield* makeInstalledModuleCatalogLoader(
+    makeCompositionSnapshot([
+      {
+        ...contract,
+        manifest: {
+          ...contract.manifest,
+          publicSurface: {
+            ...contract.manifest.publicSurface,
+            search: [
+              ...contract.manifest.publicSurface.search,
+              {
+                accessFiltering: 'resource_permission' as const,
+                key: backupSearchKey,
+                owningModuleId: moduleId,
+                resourceType,
+              },
+            ],
+            shellContributions: {
+              ...contract.manifest.publicSurface.shellContributions,
+              search: [
+                ...contract.manifest.publicSurface.shellContributions.search,
+                {
+                  contributionKey: 'property.registry.search.backup-unit',
+                  entrypoint: {
+                    ...entrypoint('search'),
+                    entrypointKey: 'property.registry.search.backup',
+                  },
+                  searchKey: backupSearchKey,
+                },
+              ],
+            },
+          },
+        },
+      },
+    ]),
+  );
+  return installedWithBackup;
+});
+
 it.effect('search treats empty input as empty without touching providers', () =>
   Effect.gen(function* searchTreatsEmptyInputAsEmpty() {
     let calls = 0;
@@ -246,55 +292,14 @@ it.effect('search keeps an eligible provider with zero candidates as a successfu
   }),
 );
 
-it.effect('search filters resource denials and reports partial provider failure', () =>
+it.effect('search filters resource denials and fails closed when an eligible owner stays unavailable', () =>
   Effect.gen(function* searchFiltersResourceDenialsAndReports() {
     const result = yield* makeShellSearch(dependencies('active', 'allowed', 'denied'), {
       search: () => Effect.succeed([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]),
     }).search(context, ' unit ');
     expect(result).toEqual({ partial: false, results: [] });
 
-    const installed = yield* catalog();
-    const [contract] = installed.contracts;
-    if (contract === undefined) {
-      throw new TypeError('The search fixture must install its module contract');
-    }
-    const backupSearchKey = 'property.registry.backup-unit-search';
-    const catalogWithBackupSearch = yield* makeInstalledModuleCatalogLoader(
-      makeCompositionSnapshot([
-        {
-          ...contract,
-          manifest: {
-            ...contract.manifest,
-            publicSurface: {
-              ...contract.manifest.publicSurface,
-              search: [
-                ...contract.manifest.publicSurface.search,
-                {
-                  accessFiltering: 'resource_permission' as const,
-                  key: backupSearchKey,
-                  owningModuleId: moduleId,
-                  resourceType,
-                },
-              ],
-              shellContributions: {
-                ...contract.manifest.publicSurface.shellContributions,
-                search: [
-                  ...contract.manifest.publicSurface.shellContributions.search,
-                  {
-                    contributionKey: 'property.registry.search.backup-unit',
-                    entrypoint: {
-                      ...entrypoint('search'),
-                      entrypointKey: 'property.registry.search.backup',
-                    },
-                    searchKey: backupSearchKey,
-                  },
-                ],
-              },
-            },
-          },
-        },
-      ]),
-    );
+    const catalogWithBackupSearch = yield* catalogWithBackup;
     const moduleChecks: (readonly string[])[] = [];
     const baseline = dependencies();
     const partial = makeShellSearch(
@@ -316,13 +321,46 @@ it.effect('search filters resource denials and reports partial provider failure'
             : Effect.succeed([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]),
       },
     );
-    expect(yield* partial.search(context, 'unit')).toEqual({
-      partial: true,
-      results: [{ kind: 'resource', ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }],
-    });
+    expect(Schema.is(ShellProviderUnavailableError)(yield* partial.search(context, 'unit').pipe(Effect.flip))).toBe(
+      true,
+    );
     expect(moduleChecks).toEqual([[moduleId]]);
   }),
 );
+
+for (const query of ['2026', '90000101', '001', '1']) {
+  it.effect(
+    `numeric query ${query} retries only the failed owner with a fresh assertion and returns complete hits`,
+    () =>
+      Effect.gen(function* recoverNumericOwner() {
+        const installed = yield* catalogWithBackup;
+        const calls = new Map<string, string[]>();
+        const search = makeShellSearch(
+          { ...dependencies(), catalog: Effect.succeed(installed) },
+          {
+            search: ({ authorization, query: ownerQuery, searchKey }) => {
+              expect(ownerQuery).toBe(query);
+              const assertions = calls.get(searchKey) ?? [];
+              assertions.push(authorization);
+              calls.set(searchKey, assertions);
+              return searchKey === backupSearchKey && assertions.length === 1
+                ? Effect.fail(new ShellProviderUnavailableError())
+                : Effect.succeed([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]);
+            },
+          },
+        );
+        expect(yield* search.search(context, query)).toEqual({
+          partial: false,
+          results: [{ kind: 'resource', ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }],
+        });
+        expect(calls.get(backupSearchKey)).toHaveLength(2);
+        expect(new Set(calls.get(backupSearchKey)).size).toBe(2);
+        expect(
+          [...calls.values()].map((assertions) => assertions.length).toSorted((left, right) => left - right),
+        ).toEqual([1, 2]);
+      }),
+  );
+}
 
 it.effect(
   'tenant-scoped Party search answers only in tenant context, forwards declared filters and preserves identity metadata',

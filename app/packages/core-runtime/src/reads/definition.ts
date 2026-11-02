@@ -133,6 +133,13 @@ export type ReadResultPermissionTargetResolver<Result> = (
   result: Result,
   scope: OperationalScope,
 ) => readonly ResourceAccessTarget[];
+
+/** Owner records already authorize the whole selected-company ledger through module.access. */
+export interface ReadOwnerLegalEntityScopeResultAuthorization {
+  readonly accessFiltering: 'legal_entity_scope';
+  readonly kind: 'owner-legal-entity-scope';
+  readonly requiredModuleAccess: true;
+}
 export interface ReadResourcePermissionTarget {
   readonly permission: 'read';
   readonly resource: ResourceAccessTarget;
@@ -359,6 +366,8 @@ export interface ReadDescriptor<
   readonly readKey: string;
   /** Declares an additional exact Resource read permission checked before handler execution. */
   readonly resourcePermission?: ReadResourcePermissionDeclaration<InputSchema['Type']>;
+  /** Explicit owner-ledger search parity; never inferred from a missing result resolver. */
+  readonly resultAuthorization?: ReadOwnerLegalEntityScopeResultAuthorization;
   readonly resultSchema: ResultSchema;
   readonly schemaVersion: string;
 }
@@ -714,6 +723,39 @@ const hasValidReadPermissionResolvers = (
   );
 };
 
+const ownerLegalEntityScopeResultAuthorizationSchema = Schema.Struct({
+  accessFiltering: Schema.Literal('legal_entity_scope'),
+  kind: Schema.Literal('owner-legal-entity-scope'),
+  requiredModuleAccess: Schema.Literal(true),
+});
+
+const hasValidSearchResultAuthorization = (
+  descriptor: {
+    readonly accessKind: ReadAccessKind;
+    readonly entrypoint: ModuleEntrypointDescriptor;
+    readonly legalEntityScope: LegalEntityScope;
+    readonly permissionTarget: ReadPermissionTarget;
+    readonly resourcePermission?: unknown;
+    readonly resultAuthorization?: ReadOwnerLegalEntityScopeResultAuthorization;
+  },
+  resultPermissionTargetResolver: unknown,
+): boolean => {
+  if (descriptor.resultAuthorization === undefined) {
+    return descriptor.accessKind !== 'search' || Predicate.isFunction(resultPermissionTargetResolver);
+  }
+  return (
+    Schema.is(ownerLegalEntityScopeResultAuthorizationSchema)(descriptor.resultAuthorization) &&
+    descriptor.accessKind === 'search' &&
+    descriptor.legalEntityScope === 'required' &&
+    descriptor.permissionTarget === 'module' &&
+    descriptor.entrypoint.role === 'search' &&
+    descriptor.entrypoint.authorization.kind === 'context_permission' &&
+    descriptor.entrypoint.authorization.permission === 'module.access' &&
+    descriptor.resourcePermission === undefined &&
+    resultPermissionTargetResolver === undefined
+  );
+};
+
 const validateReadVocabulary = <
   InputSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
@@ -739,7 +781,7 @@ const validateReadVocabulary = <
       readKey: descriptor.readKey,
       schemaVersion: descriptor.schemaVersion,
     }) ||
-    (descriptor.accessKind === 'search' && !Predicate.isFunction(resultPermissionTargetResolver)) ||
+    !hasValidSearchResultAuthorization(descriptor, resultPermissionTargetResolver) ||
     !hasValidReadPermissionResolvers(
       conditional,
       permissionTargetResolver,
@@ -1175,12 +1217,16 @@ export function defineRead<
   ) {
     return failReadDefinition('Read policies must be an explicit array of Policy references');
   }
-  const frozenDescriptor = Object.freeze({
+  const descriptorSnapshot = {
     ...descriptor,
     entrypoint: descriptor.entrypoint,
     evidencePolicy: Object.freeze({ ...descriptor.evidencePolicy }),
     policies: Object.freeze(descriptor.policies.map((reference) => Object.freeze({ ...reference }))),
-  });
+  };
+  if (descriptorSnapshot.resultAuthorization !== undefined) {
+    descriptorSnapshot.resultAuthorization = Object.freeze({ ...descriptorSnapshot.resultAuthorization });
+  }
+  const frozenDescriptor = Object.freeze(descriptorSnapshot);
   const privateValue = {
     permissionTargetResolver,
     policies: Object.freeze([...executablePolicies]),

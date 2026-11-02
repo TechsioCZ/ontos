@@ -85,14 +85,14 @@ export const financeBillingManifest = defineOntosModuleManifest({
     search: [
       // <generated-module-manifest-search>
       {
-        accessFiltering: 'resource_permission',
+        accessFiltering: 'legal_entity_scope',
         key: 'finance.billing.documents',
         owningModuleId: moduleId,
         requestFilters: ['includeArchived'],
         resourceType: 'finance.billing.document',
       },
       {
-        accessFiltering: 'resource_permission',
+        accessFiltering: 'legal_entity_scope',
         key: 'finance.billing.invoices',
         owningModuleId: moduleId,
         requestFilters: ['includeArchived'],

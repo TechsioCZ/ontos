@@ -5,6 +5,7 @@ import type { OperationalScope, ReadFinishContext, ReadLoadContext, ReadPrepareC
 import { Effect, Schema } from 'effect';
 import { ClientsProviderRequestSchema, ClientsProviderResponseSchema } from '../../shared/apis/clients-search.ts';
 import type { ClientsProviderRequest } from '../../shared/apis/clients-search.ts';
+import { crmSearchQuery } from '../../shared/domain/search-contact-classification.ts';
 import { crmRecordsGrants, finishCrmRecords, persistenceService } from '../services/persistence.service.ts';
 import type { LoadedCrmRecords } from '../services/persistence.service.ts';
 import { searchUnavailable } from './search-unavailable.ts';
@@ -43,7 +44,7 @@ export const loadCrmSearch = Effect.fn('Crm.loadSearch')(function* loadSearch(
       {
         includeArchived: false,
         moduleId: 'demo.crm',
-        query: input.query,
+        query: crmSearchQuery(input.query),
         resourceType: input.resourceType,
         selectedLegalEntityId: scope.legalEntityId,
         tenantId: scope.tenantId,

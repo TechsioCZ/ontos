@@ -11,6 +11,7 @@ import { ShellSearchResponseSchema } from '../../shared/api.ts';
 import type { ShellSearchResponse } from '../../shared/api.ts';
 import { ShellProviderUnavailableError } from './shell-resources.ts';
 import type { ShellResourceContext } from './shell-resources.ts';
+import { observeShellSearchProvider } from './shell-search-diagnostics.ts';
 
 type UnparsedSystemSearchResults = typeof Schema.Unknown.Type;
 const unavailable = (cause?: unknown) => new ShellProviderUnavailableError(cause === undefined ? {} : { cause });
@@ -100,7 +101,7 @@ export const ShellPeopleSystemSearchLive: Layer.Layer<
           Effect.flatMap((values) => authorizePeopleSearchResults(scope, values)),
           Effect.map((results) => ({ partial: false, results })),
         );
-        return yield* operation.pipe(Effect.provideContext(environment));
+        return yield* operation.pipe(Effect.retry({ times: 1 }), Effect.provideContext(environment));
       }),
     };
   }),
@@ -112,16 +113,38 @@ export const mergeShellSystemSearch = Effect.fn('ShellSystemSearch.merge')(funct
   business: Effect.Effect<ShellSearchResponse, ShellProviderUnavailableError>,
   system: Effect.Effect<ShellSearchResponse, ShellProviderUnavailableError>,
 ) {
-  const outcomes = yield* Effect.all([Effect.result(business), Effect.result(system)], { concurrency: 2 });
+  const outcomes = yield* Effect.all(
+    [
+      Effect.result(
+        business.pipe(
+          observeShellSearchProvider({
+            moduleId: 'shell.super-app',
+            phase: 'owner',
+            searchKey: 'shell.super-app.business-search',
+          }),
+        ),
+      ),
+      Effect.result(
+        system.pipe(
+          observeShellSearchProvider({
+            moduleId: 'core.identity',
+            phase: 'owner',
+            searchKey: 'core.identity.people',
+          }),
+        ),
+      ),
+    ],
+    { concurrency: 2 },
+  );
   const successes = outcomes.flatMap((outcome) => (Result.isSuccess(outcome) ? [outcome.success] : []));
-  if (successes.length === 0) {
+  if (successes.length !== outcomes.length || successes.some(({ partial }) => partial)) {
     return yield* unavailable();
   }
   const rows = new Map(successes.flatMap(({ results }) => results.map((row) => [resultKey(row), row] as const)));
   return {
-    partial: successes.length < outcomes.length || successes.some(({ partial }) => partial),
+    partial: false,
     results: [...rows.values()].toSorted(
       (left, right) => left.title.localeCompare(right.title) || resultKey(left).localeCompare(resultKey(right)),
     ),
-  };
+  } as const;
 });

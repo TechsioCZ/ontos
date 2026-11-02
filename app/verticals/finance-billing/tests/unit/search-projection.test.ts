@@ -138,7 +138,7 @@ it.effect('queries only trusted company and rejects wrong company/tenant hits', 
     expect(Schema.is(SearchProjectionUnavailable)(wrongTenant)).toBe(true);
   }),
 );
-it('raw results require tenant and company; each provider registers per-row resource checks', () => {
+it('raw results require tenant and company; each provider retains the native module and company gates', () => {
   expect(
     Schema.is(InvoicesProviderResponseSchema)([
       { ref: { moduleId: 'finance.billing', resourceId: 'a', resourceType: 'finance.billing.invoice' }, title: 'A' },
@@ -147,6 +147,17 @@ it('raw results require tenant and company; each provider registers per-row reso
   expect(invoicesRead.descriptor.legalEntityScope).toBe('required');
   expect(documentsRead.descriptor.legalEntityScope).toBe('required');
   expect(invoicesRead.descriptor.permissionTarget).toBe('module');
+  for (const registration of [invoicesRead, documentsRead]) {
+    expect(registration.descriptor.resultAuthorization).toEqual({
+      accessFiltering: 'legal_entity_scope',
+      kind: 'owner-legal-entity-scope',
+      requiredModuleAccess: true,
+    });
+    expect(registration.descriptor.entrypoint.authorization).toEqual({
+      kind: 'context_permission',
+      permission: 'module.access',
+    });
+  }
 });
 it.effect('full replacement updates titles, prunes deletion and touches containment only post snapshot', () =>
   Effect.gen(function* test() {

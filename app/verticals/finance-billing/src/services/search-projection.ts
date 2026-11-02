@@ -183,3 +183,49 @@ export const loadSearchHits = Effect.fn('Finance.loadSearchHits')(function* load
     { concurrency: 1 },
   );
 });
+
+/** Search may return only resources still present in the same owner projection used by the records Read. */
+export const loadCurrentSearchHits = Effect.fn('Finance.loadCurrentSearchHits')(function* load(
+  scope: OperationalScope,
+  resourceType: 'finance.billing.invoice' | 'finance.billing.document',
+  input: { readonly includeArchived?: boolean; readonly query: string },
+  visible: FinanceState,
+) {
+  const { legalEntityId } = scope;
+  if (legalEntityId === undefined) {
+    return yield* unavailable();
+  }
+  const documents = yield* buildSearchDocuments({
+    companies: [{ legalEntityId, state: visible }],
+    projectionVersion: '1',
+    tenantId: scope.tenantId,
+  });
+  const current = new Map(
+    documents.flatMap((document) =>
+      document.ref.resourceType === resourceType ? [[document.ref.resourceId, document] as const] : [],
+    ),
+  );
+  const runtime = yield* CoreSearchQueryRuntime;
+  const hits = yield* runtime.search(
+    {
+      includeArchived: false,
+      moduleId,
+      query: input.query,
+      resourceType,
+      selectedLegalEntityId: legalEntityId,
+      tenantId: scope.tenantId,
+    },
+    scope,
+  );
+  return hits.flatMap((hit) => {
+    const document = current.get(hit.ref.resourceId);
+    return document === undefined ||
+      hit.archived ||
+      hit.ref.moduleId !== moduleId ||
+      hit.ref.resourceType !== resourceType ||
+      hit.ref.tenantId !== scope.tenantId ||
+      hit.selectedLegalEntityId !== legalEntityId
+      ? []
+      : [{ ref: document.ref, selectedLegalEntityId: legalEntityId, title: document.title }];
+  });
+});

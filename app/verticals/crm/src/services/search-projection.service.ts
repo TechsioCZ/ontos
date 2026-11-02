@@ -15,6 +15,7 @@ import type {
   OutboxWorkerHandlerContext,
 } from '@app/core-runtime';
 import { Array as Arr, Context, Effect, Layer, Schema } from 'effect';
+import { crmContactSearchTerms } from '../../shared/domain/search-contact-classification.ts';
 import { searchUnavailable } from '../search/search-unavailable.ts';
 import { SearchSource } from './search-source.service.ts';
 import type { SearchSnapshot } from './search-source.service.ts';
@@ -38,7 +39,7 @@ export const searchIngestionRegistrations = defineCoreSearchIngestionRegistratio
 ]);
 export const searchIngestionRegistryLive = coreSearchIngestionRegistryLayer(searchIngestionRegistrations);
 
-/** Contact values lack a privacy classification. Only names enter the projection, never email/phone/notes. */
+/** Approved contact values enter searchableText only. Results retain name/ref, never matched contact evidence. */
 const documentInputs = (snapshot: SearchSnapshot) =>
   snapshot.companies.flatMap(({ legalEntityId, state }) => {
     const common = {
@@ -52,8 +53,11 @@ const documentInputs = (snapshot: SearchSnapshot) =>
       ...common,
       archived: client.status === 'archived' || client.archivedAt !== undefined,
       ref: { moduleId, resourceId: client.id, resourceType: 'demo.crm.client', tenantId: snapshot.tenantId },
-      searchableText:
-        client.kind === 'organization' && client.regNo !== undefined ? [client.name, client.regNo] : [client.name],
+      searchableText: [
+        client.name,
+        ...(client.kind === 'organization' && client.regNo !== undefined ? [client.regNo] : []),
+        ...crmContactSearchTerms('client', client),
+      ],
       title: client.name,
     }));
     const contacts = state.clients.contacts.map((contact) => {
@@ -67,7 +71,7 @@ const documentInputs = (snapshot: SearchSnapshot) =>
           client.status === 'archived' ||
           client.archivedAt !== undefined,
         ref: { moduleId, resourceId: contact.id, resourceType: 'demo.crm.contact', tenantId: snapshot.tenantId },
-        searchableText: [contact.name],
+        searchableText: [contact.name, ...crmContactSearchTerms('contact', contact)],
         title: contact.name,
       };
     });

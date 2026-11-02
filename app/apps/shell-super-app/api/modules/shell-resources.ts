@@ -16,6 +16,7 @@ import {
 } from '../../shared/api.ts';
 import type { ShellSearchResult as SharedShellSearchResult } from '../../shared/api.ts';
 import type { InstalledModuleCatalogError, ShellInstalledCatalog } from './installed-module-catalog.ts';
+import { observeShellSearchProvider } from './shell-search-diagnostics.ts';
 
 const stableKey = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const PartyRoleSchema = Schema.Literals(['CUSTOMER', 'SUPPLIER']);
@@ -500,41 +501,66 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
         if (module === undefined) {
           return capture(Effect.fail(unavailable())).pipe(Effect.map((result) => ({ provider, result })));
         }
-        return dependencies
-          .issueAssertion({ appId: provider.appId, compositionRevision: catalog.composition.revision, context })
-          .pipe(
-            Effect.flatMap((authorization) => {
-              const requestFilters = new Set(provider.descriptor.requestFilters);
-              const providerRequest: ShellSearchProviderRequest = {
-                appId: provider.appId,
-                authorization,
-                correlationId: context.correlationId,
-                module,
-                query: normalizedQuery,
+        return Effect.suspend(() =>
+          dependencies.issueAssertion({
+            appId: provider.appId,
+            compositionRevision: catalog.composition.revision,
+            context,
+          }),
+        ).pipe(
+          observeShellSearchProvider({
+            moduleId: provider.moduleId,
+            phase: 'assertion',
+            searchKey: provider.contribution.searchKey,
+          }),
+          Effect.flatMap((authorization) => {
+            const requestFilters = new Set(provider.descriptor.requestFilters);
+            const providerRequest: ShellSearchProviderRequest = {
+              appId: provider.appId,
+              authorization,
+              correlationId: context.correlationId,
+              module,
+              query: normalizedQuery,
+              searchKey: provider.contribution.searchKey,
+            };
+            const archiveFiltered =
+              requestFilters.has('includeArchived') && searchRequest.includeArchived !== undefined
+                ? {
+                    ...providerRequest,
+                    includeArchived: searchRequest.includeArchived,
+                  }
+                : providerRequest;
+            const roleFiltered =
+              requestFilters.has('role') && searchRequest.role !== undefined
+                ? { ...archiveFiltered, role: searchRequest.role }
+                : archiveFiltered;
+            return gateway.search(roleFiltered).pipe(
+              observeShellSearchProvider({
+                moduleId: provider.moduleId,
+                phase: 'owner',
                 searchKey: provider.contribution.searchKey,
-              };
-              const archiveFiltered =
-                requestFilters.has('includeArchived') && searchRequest.includeArchived !== undefined
-                  ? {
-                      ...providerRequest,
-                      includeArchived: searchRequest.includeArchived,
-                    }
-                  : providerRequest;
-              const roleFiltered =
-                requestFilters.has('role') && searchRequest.role !== undefined
-                  ? { ...archiveFiltered, role: searchRequest.role }
-                  : archiveFiltered;
-              return gateway.search(roleFiltered);
-            }),
-            Effect.flatMap(decodeProviderResults),
-            capture,
-            Effect.map((result) => ({ provider, result })),
-          );
+              }),
+            );
+          }),
+          Effect.flatMap((result) =>
+            decodeProviderResults(result).pipe(
+              observeShellSearchProvider({
+                moduleId: provider.moduleId,
+                phase: 'decode',
+                searchKey: provider.contribution.searchKey,
+              }),
+            ),
+          ),
+          // Retry only this read, starting with a fresh single-use assertion, never the whole fan-out.
+          Effect.retry({ times: 1 }),
+          capture,
+          Effect.map((result) => ({ provider, result })),
+        );
       },
       { concurrency: 4 },
     );
     const succeeded = attempts.filter(({ result }) => result.ok);
-    if (succeeded.length === 0) {
+    if (succeeded.length !== attempts.length) {
       return yield* unavailable();
     }
     const candidates = succeeded.flatMap(({ provider, result }) =>
@@ -554,7 +580,7 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
     ];
     if (uniqueCandidates.length === 0) {
       return {
-        partial: succeeded.length !== attempts.length,
+        partial: false,
         results: [],
       } as const;
     }
@@ -583,7 +609,7 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
         return titleOrder === 0 ? left.ref.resourceId.localeCompare(right.ref.resourceId) : titleOrder;
       });
     return {
-      partial: succeeded.length !== attempts.length,
+      partial: false,
       results,
     } as const;
   }),

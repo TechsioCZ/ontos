@@ -1030,6 +1030,10 @@ const resolveReadPermissionTarget = Effect.fn('Runtime.resolveReadPermissionTarg
       });
       if (
         !targetIsValid(registration.descriptor.permissionTarget, permissionTarget, scope) ||
+        (registration.descriptor.resultAuthorization?.kind === 'owner-legal-entity-scope' &&
+          (scope.legalEntityId === undefined ||
+            permissionTarget.kind !== 'module' ||
+            permissionTarget.moduleId !== registration.descriptor.owningModuleKey)) ||
         (getReadResultPermissionTargetResolver(registration) !== undefined &&
           permissionTarget.kind === 'any_of' &&
           !allowsSelectedPeopleResultChecks(registration.descriptor, permissionTarget, scope))

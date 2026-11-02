@@ -61,18 +61,28 @@ it.effect('merges and deduplicates Core/business hits with stable ordering', () 
   }),
 );
 for (const coreFails of [true, false]) {
-  it.effect(`one ${coreFails ? 'Core' : 'business'} provider failure preserves the other hits as partial`, () =>
-    Effect.gen(function* partial() {
-      const failure = Effect.fail(new ShellProviderUnavailableError({}));
-      const result = yield* mergeShellSystemSearch(
-        coreFails ? Effect.succeed(businessResponse) : failure,
-        coreFails ? failure : Effect.succeed(coreResponse),
-      );
-      expect(result.partial).toBe(true);
-      expect(result.results).toHaveLength(1);
-    }),
+  it.effect(
+    `one ${coreFails ? 'Core' : 'business'} provider failure never exposes the other hits as an incomplete success`,
+    () =>
+      Effect.gen(function* partial() {
+        const failure = Effect.fail(new ShellProviderUnavailableError({}));
+        const failureResult = yield* mergeShellSystemSearch(
+          coreFails ? Effect.succeed(businessResponse) : failure,
+          coreFails ? failure : Effect.succeed(coreResponse),
+        ).pipe(Effect.flip);
+        expect(Schema.is(ShellProviderUnavailableError)(failureResult)).toBe(true);
+      }),
   );
 }
+it.effect('rejects an upstream partial response instead of presenting incomplete hits', () =>
+  Effect.gen(function* incompleteUpstream() {
+    const failure = yield* mergeShellSystemSearch(
+      Effect.succeed({ ...businessResponse, partial: true }),
+      Effect.succeed(coreResponse),
+    ).pipe(Effect.flip);
+    expect(Schema.is(ShellProviderUnavailableError)(failure)).toBe(true);
+  }),
+);
 it.effect('all providers unavailable remains a typed failure, while denied Core permission is empty success', () =>
   Effect.gen(function* totalFailure() {
     const failure = Effect.fail(new ShellProviderUnavailableError({}));

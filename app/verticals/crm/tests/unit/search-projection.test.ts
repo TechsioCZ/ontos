@@ -13,25 +13,63 @@ import { Effect, Schema } from 'effect';
 import { SearchSource } from '../../src/services/search-source.service.ts';
 import { expect, it } from 'effect-rstest';
 import {
+  crmContactSearchTerms,
+  crmSearchContactClassification,
+  crmSearchQuery,
+} from '../../shared/domain/search-contact-classification.ts';
+import {
   buildSearchDocuments,
   makeSearchProjection,
   searchIngestionRegistrations,
 } from '../../src/services/search-projection.service.ts';
 import { companyId, context, otherCompanyId, rebuildContext, scope, snapshot, state } from './search-fixtures.ts';
 
-it.effect('indexes client/contact names and company scope, but no private contact values or notes', () =>
+it.effect('indexes classified business/personal contact fields for lookup only and excludes notes', () =>
   Effect.gen(function* projectionTest() {
     const documents = yield* buildSearchDocuments(snapshot);
     expect(documents.map((doc) => [doc.ref.resourceType, doc.title, doc.selectedLegalEntityId])).toEqual([
       ['demo.crm.client', 'Železárny Hanák', companyId],
       ['demo.crm.contact', 'Jiří Novotný', companyId],
     ]);
-    expect(documents[0]?.searchableText).toEqual(['Železárny Hanák', '12345678']);
-    expect(documents[1]?.searchableText).toEqual(['Jiří Novotný']);
+    expect(documents[0]?.searchableText).toEqual([
+      'Železárny Hanák',
+      '12345678',
+      'info@pekarna.example.test',
+      '420777111222',
+      '777111222',
+    ]);
+    expect(documents[1]?.searchableText).toEqual([
+      'Jiří Novotný',
+      'jiri.novotny@example.test',
+      '420606333444',
+      '606333444',
+    ]);
     expect(JSON.stringify(documents)).not.toContain('private');
-    expect(JSON.stringify(documents)).not.toContain('@example');
+    for (const { searchableText: _searchOnly, ...document } of documents) {
+      expect(document.aliases).toEqual([]);
+      expect(document.metadata).toEqual([]);
+      expect(document.facets).toEqual([]);
+      expect(JSON.stringify(document)).not.toMatch(/@|777111|606333/u);
+    }
+    expect(crmSearchContactClassification.client.classification).toBe('business_contact');
+    expect(crmSearchContactClassification.contact.classification).toBe('contact_personal_data');
   }),
 );
+
+it('canonicalizes phone fields/queries only, without inventing Czech aliases for foreign or partial numbers', () => {
+  expect(crmContactSearchTerms('client', { phone: '+49 777 111 222' })).toEqual(['49777111222']);
+  expect(crmContactSearchTerms('contact', { phone: '+1 777 111 222' })).toEqual(['1777111222']);
+  expect(crmContactSearchTerms('contact', { phone: '+777111222' })).toEqual(['777111222']);
+  expect(crmContactSearchTerms('client', { phone: '777 111' })).toEqual(['777111']);
+  expect(crmContactSearchTerms('client', { email: 'note user@example.test', phone: 'call 777 111 222' })).toEqual([]);
+  expect(crmContactSearchTerms('contact', {})).toEqual([]);
+  for (const query of ['+420 (777) 111-222', '420.777.111.222', '+420 777']) {
+    expect(crmSearchQuery(query)).toBe(query.replaceAll(/[ +().-]/gu, ''));
+  }
+  for (const query of ['info@pekarna', 'call 777 111 222', 'Železárny Hanák', '12', '1/23', '1234567890123456']) {
+    expect(crmSearchQuery(query)).toBe(query);
+  }
+});
 
 it.effect('updates, removes, rebuilds, contains, and rejects stale delivery without cross-company matches', () =>
   Effect.gen(function* projectionTest() {
