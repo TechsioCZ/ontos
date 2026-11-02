@@ -10,9 +10,7 @@ import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from './ag
 const command = Command.make(
   'replay-agent-profiles',
   {
-    file: Flag.String('file').pipe(
-      Flag.withDefault('/Volumes/DevWork/agent-scratch/people-model/reviewed-nine-agent-profiles.json'),
-    ),
+    file: Flag.String('file').pipe(Flag.withDescription('Path to the reviewed nine-agent profiles JSON file')),
     mode: Flag.Literals('mode', ['dry-run', 'apply', 'verify']).pipe(Flag.withDefault('dry-run')),
     sha256: Flag.String('sha256'),
   },

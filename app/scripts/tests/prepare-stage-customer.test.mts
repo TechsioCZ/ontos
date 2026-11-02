@@ -1,5 +1,5 @@
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Stream } from 'effect';
+import { Effect, FileSystem, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 
@@ -9,13 +9,15 @@ const privateInput = 'operator-input-that-must-not-be-printed';
 it.effect('refuses a non-stage invocation before parsing the database identity or starting registration', () =>
   Effect.scoped(
     Effect.gen(function* refusesNonStagePreparation() {
+      const fs = yield* FileSystem.FileSystem;
+      const temporaryDirectory = yield* fs.makeTempDirectoryScoped({ prefix: 'prepare-stage-customer-' });
       const child = yield* ChildProcess.make(process.execPath, [script], {
         cwd: new URL('../..', import.meta.url).pathname,
         env: {
           APP_ENV_PATH: '/dev/null',
           COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: privateInput,
           DOTENV_CONFIG_PATH: '/dev/null',
-          TMPDIR: '/Volumes/DevWork/agent-scratch',
+          TMPDIR: temporaryDirectory,
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'production',
         },
         extendEnv: false,
@@ -42,13 +44,15 @@ it.effect('refuses a non-stage invocation before parsing the database identity o
 it.effect('reports an invalid stage operator identity without printing its input or attempting enrollment', () =>
   Effect.scoped(
     Effect.gen(function* refusesInvalidOperatorIdentity() {
+      const fs = yield* FileSystem.FileSystem;
+      const temporaryDirectory = yield* fs.makeTempDirectoryScoped({ prefix: 'prepare-stage-customer-' });
       const child = yield* ChildProcess.make(process.execPath, [script], {
         cwd: new URL('../..', import.meta.url).pathname,
         env: {
           APP_ENV_PATH: '/dev/null',
           COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: privateInput,
           DOTENV_CONFIG_PATH: '/dev/null',
-          TMPDIR: '/Volumes/DevWork/agent-scratch',
+          TMPDIR: temporaryDirectory,
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
         },
         extendEnv: false,

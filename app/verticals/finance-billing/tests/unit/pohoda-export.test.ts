@@ -96,19 +96,14 @@ const obchodNoIco: ExportMeta = {
   version: 1,
 };
 
-/** Official STORMWARE dataPack 2.0 schemas are supplied outside the repository. */
+/** Set POHODA_XSD_DIR to the official https://www.stormware.cz/schema/version_2/ schemas, including imports. */
 const validateAgainstXsd = Effect.fn('FinanceTest.validatePohodaXsd')(function* validateAgainstXsd(xml: string) {
-  const directory = yield* Config.String('POHODA_XSD_DIR').pipe(
-    Config.withDefault('/Volumes/DevWork/agent-scratch/pohoda-xsd/download'),
-  );
+  const directory = yield* Config.NonEmptyString('POHODA_XSD_DIR');
   const path = yield* Path.Path;
   const xsd = path.join(directory, 'data.xsd');
   const fs = yield* FileSystem.FileSystem;
-  if (!(yield* fs.exists(xsd))) {
-    yield* Effect.logWarning(`POHODA XSD not found at ${xsd}; schema validation skipped`);
-    return;
-  }
-  const validation = yield* ChildProcess.make('/usr/bin/xmllint', ['--noout', '--schema', xsd, '-'], {
+  expect(yield* fs.exists(xsd), `POHODA_XSD_DIR must contain data.xsd and its imported schemas: ${xsd}`).toBe(true);
+  const validation = yield* ChildProcess.make('xmllint', ['--noout', '--schema', xsd, '-'], {
     stderr: 'inherit',
     stdin: Stream.make(new TextEncoder().encode(xml)),
     stdout: 'ignore',

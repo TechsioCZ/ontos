@@ -71,12 +71,13 @@ Rules:
 
 ## 3. Screenshot every variant (1440 and 390)
 
-Use the persistent browser profile from `/Users/satan/workspace`, logged into the shell as `obchod@demo.ontos`
+Use your task-owned browser session, logged into the shell as `obchod@demo.ontos`
 (password `password1234`). `$SHELL_URL` is the local shell dev URL from plan 01.
 
 ```bash
-cd /Users/satan/workspace
-OUT=/Volumes/TraceDecayKingston/techsio-demo/ui-decisions/<slug>; mkdir -p "$OUT"
+# Run from app/ in your checkout.
+: "${UI_DECISION_DIR:?Set UI_DECISION_DIR to your decision screenshot output directory}"
+OUT="$UI_DECISION_DIR/<slug>"; mkdir -p "$OUT"
 agent-browser --session default open "$SHELL_URL/cs/<route>"
 agent-browser --session default wait 1500
 # For each option key K with label "$LABEL":
@@ -194,6 +195,6 @@ with your todo.
 - Why: <bullet 1>; <bullet 2>; <bullet 3>
 - Folded in from losers: <none | what>
 - Notes: <dropped judges, text-only votes>
-- Evidence: /Volumes/TraceDecayKingston/techsio-demo/ui-decisions/<slug>/
+- Evidence: <UI_DECISION_DIR>/<slug>/
 - Files: <paths changed>
 ```

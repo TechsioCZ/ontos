@@ -7,10 +7,11 @@
 // any failed assertion rolls the whole migration back.
 //
 // Usage (from app/, demo stopped, containers up):
+//   : "${REGROUP_BACKUP:?Set REGROUP_BACKUP to the pg_dump output file}"
 //   docker --context orbstack exec ontos-demo-db pg_dump -U ontos_admin -Fc siampark_demo \
-//     > /Volumes/DevWork/agent-scratch/backup-pre-regroup.dump
+//     > "$REGROUP_BACKUP"
 //   node --env-file=.env scripts/demo/migrate-domain-regroup.mts --dry-run
-//   node --env-file=.env scripts/demo/migrate-domain-regroup.mts --backup /Volumes/DevWork/agent-scratch/backup-pre-regroup.dump
+//   node --env-file=.env scripts/demo/migrate-domain-regroup.mts --backup "$REGROUP_BACKUP"
 //
 //   --dry-run          run every step inside the transaction, print the counts, then roll back.
 //   --backup <file>    required for a real run: an existing, non-empty pg_dump of the database.

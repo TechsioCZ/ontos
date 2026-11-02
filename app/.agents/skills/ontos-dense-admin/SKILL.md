@@ -151,12 +151,14 @@ If a helper still renders English text (e.g. `N selected`), do not fork it. Repo
 Run the vertical's typecheck/tests, then look at the page through the running shell, logged in as `obchod@demo.ontos`:
 
 ```bash
-cd /Users/satan/workspace
+# Run from app/ in your checkout.
+: "${UI_SCREENSHOT_DIR:?Set UI_SCREENSHOT_DIR to your screenshot output directory}"
+mkdir -p "$UI_SCREENSHOT_DIR"
 agent-browser --session default set viewport 1440 900
 agent-browser --session default open "$SHELL_URL/cs/<route>"
-agent-browser --session default screenshot --full /Volumes/TraceDecayKingston/techsio-demo/screens/<page>-1440.png
+agent-browser --session default screenshot --full "$UI_SCREENSHOT_DIR/<page>-1440.png"
 agent-browser --session default set viewport 390 844
-agent-browser --session default screenshot --full /Volumes/TraceDecayKingston/techsio-demo/screens/<page>-390.png
+agent-browser --session default screenshot --full "$UI_SCREENSHOT_DIR/<page>-390.png"
 ```
 
 Open both screenshots and check every box:
