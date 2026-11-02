@@ -34,11 +34,32 @@ const selected: ApplicationMigrationRequirements = {
 const none: ApplicationMigrationRequirements = { mode: 'none', owners: [] };
 
 class ScopedOwnerNativeFailure extends Schema.TaggedError<ScopedOwnerNativeFailure>()('ScopedOwnerNativeFailure', {
+  diagnostic: Schema.optionalKey(Schema.String),
   stage: Schema.String,
   status: Schema.optionalKey(Schema.Number),
 }) {}
 
 type Environment = Readonly<Record<string, string>>;
+
+const sanitizedDiagnostic = (output: string, env: Environment): string => {
+  const secrets = Object.entries(env)
+    .flatMap(([key, value]) => {
+      if (key.endsWith('_PASSWORD')) {
+        return [value];
+      }
+      if (key.endsWith('_URL')) {
+        const { password } = new URL(value);
+        return [value, password, decodeURIComponent(password)];
+      }
+      return [];
+    })
+    .filter((value) => value.length > 0);
+  let sanitized = output;
+  for (const secret of secrets) {
+    sanitized = sanitized.replaceAll(secret, '[redacted]');
+  }
+  return sanitized.replaceAll(/\b[a-z][a-z0-9+.-]*:\/\/[^\s'"<>]+/giu, '[redacted-url]').slice(-8192);
+};
 
 const command = (requirementsFile: string, env: Environment, verifyOnly: boolean) =>
   ChildProcess.make(
@@ -77,7 +98,17 @@ const runToReadiness = Effect.fn('ScopedOwnerMigrations.actualRunner')(function*
     Effect.raceFirst(
       child.exitCode.pipe(
         Effect.flatMap((status) =>
-          Effect.fail(new ScopedOwnerNativeFailure({ stage: 'runner_before_readiness', status: Number(status) })),
+          Effect.gen(function* reportExitedRunner() {
+            // Join only after exit, never while a live process is timing out or awaiting readiness.
+            const [stdout, stderr] = yield* Effect.all([Fiber.join(stdoutFiber), Fiber.join(stderrFiber)], {
+              concurrency: 'unbounded',
+            });
+            return yield* new ScopedOwnerNativeFailure({
+              diagnostic: sanitizedDiagnostic(`${stdout}\n${stderr}`, env),
+              stage: 'runner_before_readiness',
+              status: Number(status),
+            });
+          }),
         ),
       ),
     ),
