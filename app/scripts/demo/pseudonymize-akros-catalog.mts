@@ -4,11 +4,11 @@
 // after TIME_BUDGET_MS so one remote operator call stays below its 300 s limit; rerun to continue.
 import { NodeServices } from '@effect/platform-node';
 import { detectImageMimeType } from '@app/core-runtime/media/image-contract';
-import { Clock, Config, Console, Effect, Exit, FileSystem, Layer, Option, Schema } from 'effect';
+import { Cause, Clock, Config, Console, Effect, Exit, FileSystem, Layer, Option, Schema } from 'effect';
 import type { Types } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { Base64 } from 'effect/encoding';
-import { FetchHttpClient, HttpClient } from 'effect/http';
+import { FetchHttpClient, HttpClient, HttpClientError } from 'effect/http';
 import { MerchandiseCommandSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../verticals/merchandise/shared/apis/records.ts';
 import { MediaRequestSchema, MediaResponseSchema } from '../../verticals/merchandise/shared/apis/media.ts';
@@ -120,6 +120,19 @@ const Summary = Schema.Struct({
 });
 
 const fail = (reason: string) => new DemoSeedError({ reason });
+interface CatalogFailure {
+  readonly _tag: string;
+}
+/** Only known error kinds are diagnostic output; requests, response bodies and arbitrary error messages stay private. */
+export const catalogFailureKind = (error: CatalogFailure): string => {
+  if (HttpClientError.isHttpClientError(error)) {
+    return `HttpClientError/${error.reason._tag}`;
+  }
+  if (Cause.isTimeoutError(error)) {
+    return 'TimeoutError';
+  }
+  return Schema.isSchemaError(error) ? 'SchemaError' : 'UnclassifiedError';
+};
 const readRecords = (client: SeedClient, view: (typeof Request.Type)['view']) =>
   client.call('merchandise', '/reads/records', Request, { view }, Response);
 const jsonRead = <S extends Schema.Top>(file: string, schema: S) =>
@@ -197,9 +210,9 @@ const galleryChange = (
  * True when the public storefront serves the path as an image to an anonymous visitor. The storefront may redirect the
  * root-relative path to its default market (`/obrazky/…` → `/cs/obrazky/…`); only same-origin redirects are followed.
  */
-const publicImage = (publicOrigin: string, path: string) =>
+export const publicImage = (publicOrigin: string, path: string) =>
   Effect.gen(function* fetchPublicImage() {
-    const http = yield* HttpClient.HttpClient;
+    const http = HttpClient.withScope(yield* HttpClient.HttpClient);
     let url = new URL(path, publicOrigin);
     for (let hop = 0; hop < 3; hop += 1) {
       const response = yield* http.get(url.href).pipe(Effect.timeout('20 seconds'));
@@ -213,7 +226,7 @@ const publicImage = (publicOrigin: string, path: string) =>
       }
     }
     return false;
-  });
+  }).pipe(Effect.scoped);
 
 /**
  * Freezes one fixed-source photo. Credentials are never sent and redirects never followed. A photo the source no
@@ -858,6 +871,16 @@ if (import.meta.main) {
     Command.run(cli, { version: '2.0.0' }).pipe(
       Effect.scoped,
       Effect.tapErrorTag('DemoSeedError', (error) => Console.error(error.reason)),
+      Effect.tapError((error) =>
+        Schema.is(DemoSeedError)(error)
+          ? Effect.void
+          : Console.error(`Catalog stopped (${catalogFailureKind(error)}); checkpoint retained, no automatic retry.`),
+      ),
+      Effect.tapCause((cause) =>
+        Console.error(
+          `Catalog exit: failure=${Cause.hasFails(cause)}, defect=${Cause.hasDies(cause)}, interrupted=${Cause.hasInterrupts(cause)}.`,
+        ),
+      ),
       Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
       Effect.provideService(FetchHttpClient.RequestInit, { redirect: 'manual' }),
     ),

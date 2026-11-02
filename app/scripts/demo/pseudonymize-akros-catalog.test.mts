@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'effect-rstest';
-import { Effect, Schema } from 'effect';
+import { Cause, Effect, Schema } from 'effect';
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from 'effect/http';
+import { catalogFailureKind, publicImage } from './pseudonymize-akros-catalog.mts';
 import { buildAkrosEncoded, buildSroubshopEncoded } from '../../verticals/merchandise/scripts/akros-catalog.mts';
 import type { AkrosEncodedState } from '../../verticals/merchandise/scripts/akros-baseline.ts';
 import { isSourceCatalogImage, neutralCatalogText } from '../../verticals/merchandise/scripts/akros-pseudonym.ts';
@@ -215,6 +217,114 @@ describe('pseudonymous demo catalog', () => {
 });
 
 const twinResolve = (image: string) => (image.includes('img-5293') ? 'media:one' : 'media:two');
+
+describe('catalog failure diagnostics', () => {
+  it('reports transport and timeout kinds without copying private provider details', () => {
+    const privateMessage = 'private credential';
+    const error = new HttpClientError.HttpClientError({
+      reason: new HttpClientError.TransportError({
+        cause: new Error(privateMessage),
+        request: HttpClientRequest.get('https://private.invalid/?token=secret'),
+      }),
+    });
+    expect(catalogFailureKind(error)).toBe('HttpClientError/TransportError');
+    expect(catalogFailureKind(new Cause.TimeoutError())).toBe('TimeoutError');
+    expect(catalogFailureKind({ _tag: privateMessage })).toBe('UnclassifiedError');
+  });
+  it.effect('reports a schema failure without copying its rejected payload', () =>
+    Effect.gen(function* schemaFailureKind() {
+      const error = yield* Effect.flip(Schema.decodeUnknownEffect(Schema.Number)('private credential'));
+      expect(catalogFailureKind(error)).toBe('SchemaError');
+    }),
+  );
+});
+
+describe('anonymous category image delivery', () => {
+  const origin = 'https://ontos-stage-shop.web-revolution.cz';
+  const image = '/obrazky/product-16605/photo';
+  const photoHeaders = { 'content-type': 'image/jpeg' };
+  const check = (respond: (url: URL) => Response) => {
+    const requested: string[] = [];
+    const signals: AbortSignal[] = [];
+    const client = HttpClient.make((request, url, signal) => {
+      requested.push(url.href);
+      signals.push(signal);
+      return Effect.succeed(HttpClientResponse.fromWeb(request, respond(url)));
+    });
+    return publicImage(origin, image).pipe(
+      Effect.provideService(HttpClient.HttpClient, client),
+      Effect.map((delivered) => ({ aborted: signals.map((signal) => signal.aborted), delivered, requested })),
+    );
+  };
+  it.effect('releases the unread image body after checking its headers', () =>
+    Effect.gen(function* imageRequestLifetime() {
+      const result = yield* check(() => new Response('photo', { headers: photoHeaders, status: 200 }));
+      expect(result.delivered).toBe(true);
+      expect(result.aborted).toEqual([true]);
+    }),
+  );
+  it.effect('releases every redirect response and the final image body', () =>
+    Effect.gen(function* redirectRequestLifetime() {
+      const result = yield* check((url) =>
+        url.pathname === image
+          ? new Response('redirect', { headers: { location: `/cs${image}` }, status: 308 })
+          : new Response('photo', { headers: photoHeaders, status: 200 }),
+      );
+      expect(result.delivered).toBe(true);
+      expect(result.aborted).toEqual([true, true]);
+    }),
+  );
+  it.effect('follows the same-origin default-market redirect to the image', () =>
+    Effect.gen(function* marketRedirect() {
+      const result = yield* check((url) =>
+        url.pathname === image
+          ? new Response(null, { headers: { location: `${origin}/cs${image}` }, status: 308 })
+          : new Response(null, { headers: photoHeaders, status: 200 }),
+      );
+      expect(result.delivered).toBe(true);
+      expect(result.requested).toEqual([`${origin}${image}`, `${origin}/cs${image}`]);
+    }),
+  );
+  it.effect('resolves a relative redirect against its current URL', () =>
+    Effect.gen(function* relativeRedirect() {
+      const result = yield* check((url) =>
+        url.pathname === image
+          ? new Response(null, { headers: { location: '/cs/photo' }, status: 307 })
+          : new Response(null, { headers: { 'content-type': 'image/webp' }, status: 200 }),
+      );
+      expect(result.delivered).toBe(true);
+      expect(result.requested).toEqual([`${origin}${image}`, `${origin}/cs/photo`]);
+    }),
+  );
+  it.effect('does not request a foreign-origin redirect', () =>
+    Effect.gen(function* foreignRedirect() {
+      const result = yield* check(
+        () => new Response(null, { headers: { location: 'https://foreign.invalid/photo' }, status: 302 }),
+      );
+      expect(result.delivered).toBe(false);
+      expect(result.requested).toEqual([`${origin}${image}`]);
+    }),
+  );
+  it.effect('bounds a same-origin redirect loop', () =>
+    Effect.gen(function* redirectLoop() {
+      const result = yield* check(() => new Response(null, { headers: { location: image }, status: 308 }));
+      expect(result.delivered).toBe(false);
+      expect(result.requested).toHaveLength(3);
+    }),
+  );
+  it.effect('rejects a successful HTML response instead of treating it as an image', () =>
+    Effect.gen(function* htmlResponse() {
+      const result = yield* check(() => new Response(null, { headers: { 'content-type': 'text/html' }, status: 200 }));
+      expect(result.delivered).toBe(false);
+    }),
+  );
+  it.effect('rejects an unavailable image', () =>
+    Effect.gen(function* missingImage() {
+      const result = yield* check(() => new Response(null, { headers: photoHeaders, status: 404 }));
+      expect(result.delivered).toBe(false);
+    }),
+  );
+});
 
 describe('photos published twice under different names', () => {
   it('reuses the gallery reference of an identical uploaded photo and lists it once', () => {
