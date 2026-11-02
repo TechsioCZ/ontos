@@ -98,6 +98,7 @@ bg-success
 bg-success-light
 bg-surface
 block
+blur
 border
 border-2
 border-b

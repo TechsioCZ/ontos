@@ -50,6 +50,7 @@
   },
   "contract": {
     "section": "Smluvní údaje",
+    "required": "Doplňte typ smlouvy, vlastníka a alespoň jednu stranu, nebo změňte kategorii dokumentu.",
     "parties": "Smluvní strany",
     "partiesHelp": "Každou stranu na samostatný řádek.",
     "contractType": "Typ smlouvy",
