@@ -24,6 +24,7 @@
   },
   "fields": {
     "name": "Název",
+    "nameRequired": "Zadejte název zařízení.",
     "deviceType": "Typ zařízení",
     "state": "Provozní stav",
     "location": "Nemovitost / jednotka",
@@ -136,8 +137,7 @@
     "submit": "Založit zařízení"
   },
   "edit": {
-    "title": "Upravit kartu zařízení",
-    "submit": "Uložit změny"
+    "title": "Upravit kartu zařízení"
   },
   "inspection": {
     "title": "Zaznamenat kontrolu",

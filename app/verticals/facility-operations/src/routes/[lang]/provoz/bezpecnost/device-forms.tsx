@@ -1,6 +1,7 @@
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Side panels of the security agenda: device card create/edit, fault report (+ linked task), inspection, resolve.
-import { SidePanel, surfaceTileClassName } from '@app/admin-ui';
+import { AutosaveStatus, SidePanel, surfaceTileClassName, useAutosave } from '@app/admin-ui';
+import type { AutosaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -9,7 +10,7 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
-import { Effect, Result, Schema } from 'effect';
+import { Effect, Option, Result, Schema } from 'effect';
 import { useReducer, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
@@ -23,21 +24,16 @@ import {
   securityDeviceTypes,
   securitySeverities,
 } from '../../../../../shared/domain/security.ts';
-import type {
-  SecurityDevice,
-  SecurityDeviceState,
-  SecurityDeviceType,
-  SecurityIncident,
-  SecuritySeverity,
-} from '../../../../../shared/domain/security.ts';
+import type { SecurityDevice, SecurityIncident, SecuritySeverity } from '../../../../../shared/domain/security.ts';
 import { usePropertyOptions } from '../../../../ui/property-options.ts';
 import { runCommand } from '../../../../ui/use-agenda.ts';
 import type { CommandOutcome, FailureReason } from '../../../../ui/use-agenda.ts';
 import { addDays, createServiceTask, locationText, todayPrague, useSecurityLabel } from './security-model.ts';
+import { deviceCreateCommandOf, deviceDraftOf, deviceUpdateCommandOf, sameDeviceDraft } from './device-draft.ts';
+import type { DeviceDraft } from './device-draft.ts';
+import { facilityAutosaveOutcome } from '../../../../ui/facility-autosave.ts';
 
 export type RunCommand = (command: OpsCommand) => Effect.Effect<CommandOutcome>;
-type DeviceFields = Omit<Extract<OpsCommand, { readonly _tag: 'SecurityDeviceCreate' }>, '_tag'>;
-type MutableDeviceFields = { -readonly [Key in keyof DeviceFields]: DeviceFields[Key] };
 type InspectionCommand = Extract<OpsCommand, { readonly _tag: 'SecurityDeviceRecordInspection' }>;
 type MutableInspectionCommand = { -readonly [Key in keyof InspectionCommand]: InspectionCommand[Key] };
 type ReportCommand = Extract<OpsCommand, { readonly _tag: 'SecurityIncidentReport' }>;
@@ -63,7 +59,8 @@ const ErrorLine = ({ error }: { readonly error: FormError | undefined }) => {
 };
 
 const PanelFrame = ({
-  busy,
+  actions,
+  busy = false,
   children,
   onClose,
   onSubmit,
@@ -71,32 +68,36 @@ const PanelFrame = ({
   submitLabel,
   title,
 }: {
-  readonly busy: boolean;
+  /** Explicit actions (an edit panel shows its autosave state instead of a submit button). */
+  readonly actions?: ReactNode | undefined;
+  readonly busy?: boolean | undefined;
   readonly children: ReactNode;
   readonly onClose: () => void;
-  readonly onSubmit: () => void;
+  readonly onSubmit?: (() => void) | undefined;
   readonly open: boolean;
-  readonly submitLabel: string;
+  /** Submit button label of a create/action panel; unused when `actions` is given. */
+  readonly submitLabel?: string | undefined;
   readonly title: string;
 }) => {
   const { t } = useModernI18n();
+  const panelActions = actions ?? (
+    <>
+      <Button onClick={onClose} theme="outlined" variant="secondary">
+        {t('facility-operations.common.cancel')}
+      </Button>
+      <Button
+        isLoading={busy}
+        loadingText={t('facility-operations.common.saving')}
+        onClick={onSubmit}
+        variant="primary"
+      >
+        {submitLabel}
+      </Button>
+    </>
+  );
   return (
     <SidePanel
-      actions={
-        <>
-          <Button onClick={onClose} theme="outlined" variant="secondary">
-            {t('facility-operations.common.cancel')}
-          </Button>
-          <Button
-            isLoading={busy}
-            loadingText={t('facility-operations.common.saving')}
-            onClick={onSubmit}
-            variant="primary"
-          >
-            {submitLabel}
-          </Button>
-        </>
-      }
+      actions={panelActions}
       onOpenChange={(next) => {
         if (!next) {
           onClose();
@@ -107,188 +108,41 @@ const PanelFrame = ({
       size="md"
       title={title}
     >
-      <form
-        className="flex flex-col gap-200 py-200"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onSubmit();
-        }}
-      >
-        {children}
-      </form>
+      {onSubmit === undefined ? (
+        <div className="flex flex-col gap-200 py-200">{children}</div>
+      ) : (
+        <form
+          className="flex flex-col gap-200 py-200"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit();
+          }}
+        >
+          {children}
+        </form>
+      )}
     </SidePanel>
   );
 };
 
-interface DeviceDraft {
-  administrator: string;
-  deviceType: SecurityDeviceType;
-  lastInspectionDate: typeof IsoDateSchema.Encoded;
-  location: string;
-  locationDetail: string;
-  name: string;
-  nextInspectionDate: typeof IsoDateSchema.Encoded;
-  note: string;
-  serialNumber: string;
-  state: SecurityDeviceState;
-  supplier: string;
-}
-
-const draftOf = (device: SecurityDevice | undefined): DeviceDraft => {
-  if (device === undefined) {
-    return {
-      administrator: '',
-      deviceType: 'camera',
-      lastInspectionDate: '',
-      location: '',
-      locationDetail: '',
-      name: '',
-      nextInspectionDate: '',
-      note: '',
-      serialNumber: '',
-      state: 'in_operation',
-      supplier: '',
-    };
-  }
-  return {
-    administrator: device.administrator ?? '',
-    deviceType: device.deviceType,
-    lastInspectionDate: device.lastInspectionDate ?? '',
-    location: device.location === undefined ? '' : `${device.location.kind}:${device.location.id}`,
-    locationDetail: device.locationDetail ?? '',
-    name: device.name,
-    nextInspectionDate: device.nextInspectionDate ?? '',
-    note: device.note ?? '',
-    serialNumber: device.serialNumber ?? '',
-    state: device.state,
-    supplier: device.supplier ?? '',
-  };
-};
-
-const textKeys = ['administrator', 'locationDetail', 'note', 'serialNumber', 'supplier'] as const;
-const dateKeys = ['lastInspectionDate', 'nextInspectionDate'] as const;
-
-/** Create (device undefined) or edit one device card. */
-interface SubmitSecurityDeviceInput {
-  readonly device: SecurityDevice | undefined;
-  readonly draft: DeviceDraft;
-  readonly k: ReturnType<typeof useSecurityLabel>;
-  readonly onSaved: (deviceId: string | undefined) => void;
-  readonly pickedLocation: () => PropertyRef | undefined;
-  readonly run: RunCommand;
-  readonly setBusy: (busy: boolean) => void;
-  readonly setError: (error: FormError | undefined) => void;
-  readonly toast: ReturnType<typeof useToast>;
-}
-
-const submitSecurityDevice = Effect.fn('Facility.submitSecurityDevice')(function* submitSecurityDevice({
-  device,
+/** The fields of one device card, shared by the create panel and the autosaving edit panel. */
+const DeviceFields = ({
   draft,
   k,
-  onSaved,
-  pickedLocation,
-  run,
-  setBusy,
-  setError,
-  toast,
-}: SubmitSecurityDeviceInput) {
-  if (draft.name.trim() === '') {
-    setError('required');
-    return;
-  }
-  const location = pickedLocation();
-  const fields: MutableDeviceFields = {
-    deviceType: draft.deviceType,
-    name: draft.name.trim(),
-    state: draft.state,
-  };
-  for (const key of [...textKeys, ...dateKeys]) {
-    const value = draft[key].trim();
-    if (value !== '') {
-      fields[key] = value;
-    }
-  }
-  if (location !== undefined) {
-    fields.location = location;
-  }
-  setBusy(true);
-  const command: OpsCommand =
-    device === undefined
-      ? { _tag: 'SecurityDeviceCreate', ...fields }
-      : {
-          _tag: 'SecurityDeviceUpdate',
-          ...fields,
-          clear: [
-            ...[...textKeys, ...dateKeys].filter((key) => draft[key].trim() === '' && device[key] !== undefined),
-            ...(location === undefined && device.location !== undefined ? (['location'] as const) : []),
-          ],
-          deviceId: device.id,
-        };
-  const outcome = yield* run(command);
-  setBusy(false);
-  if (outcome.ok) {
-    toast.create({ title: device === undefined ? k('created') : k('saved'), type: 'success' });
-    onSaved(outcome.result.entityIds[0]);
-  } else {
-    setError(outcome.reason);
-  }
-});
-
-const DeviceFormSession = ({
-  device,
-  onClose,
-  onSaved,
-  open,
-  run,
+  nameMissing,
+  properties,
+  set,
 }: {
-  readonly device: SecurityDevice | undefined;
-  readonly onClose: () => void;
-  readonly onSaved: (deviceId: string | undefined) => void;
-  readonly open: boolean;
-  readonly run: RunCommand;
+  readonly draft: DeviceDraft;
+  readonly k: ReturnType<typeof useSecurityLabel>;
+  readonly nameMissing: boolean;
+  readonly properties: ReturnType<typeof usePropertyOptions>;
+  readonly set: <Key extends keyof DeviceDraft>(key: Key, value: DeviceDraft[Key]) => void;
 }) => {
-  const k = useSecurityLabel();
-  const toast = useToast();
-  const properties = usePropertyOptions();
-  const [draft, setDraft] = useState<DeviceDraft>(() => draftOf(device));
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<FormError | undefined>();
-  const set = <Key extends keyof DeviceDraft>(key: Key, value: DeviceDraft[Key]) =>
-    setDraft((current) => ({ ...current, [key]: value }));
-
-  const pickedLocation = (): PropertyRef | undefined => {
-    if (draft.location === '') {
-      return undefined;
-    }
-    if (properties.status === 'ready') {
-      const found = properties.options.find((option) => option.value === draft.location)?.ref;
-      if (found !== undefined) {
-        return found;
-      }
-    }
-    return device?.location !== undefined && `${device.location.kind}:${device.location.id}` === draft.location
-      ? device.location
-      : undefined;
-  };
-
-  const submit = () =>
-    submitSecurityDevice({ device, draft, k, onSaved, pickedLocation, run, setBusy, setError, toast });
-
   const options = (values: readonly string[], prefix: string) =>
     values.map((value) => ({ displayValue: k(`${prefix}.${value}`), label: k(`${prefix}.${value}`), value }));
-
   return (
-    <PanelFrame
-      busy={busy}
-      onClose={onClose}
-      onSubmit={() => {
-        void browserRuntime.runPromise(submit());
-      }}
-      open={open}
-      submitLabel={device === undefined ? k('create.submit') : k('edit.submit')}
-      title={device === undefined ? k('create.title') : k('edit.title')}
-    >
-      <ErrorLine error={error} />
+    <>
       <FormInput
         autoComplete="off"
         id="security-name"
@@ -297,6 +151,7 @@ const DeviceFormSession = ({
         onChange={(event) => set('name', event.target.value)}
         required
         value={draft.name}
+        {...(nameMissing ? { helpText: k('fields.nameRequired'), validateStatus: 'error' as const } : {})}
       />
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
         <Select
@@ -400,9 +255,192 @@ const DeviceFormSession = ({
         rows={3}
         value={draft.note}
       />
+    </>
+  );
+};
+
+/** The stored location of a draft: the picked property, or the one the device already has. */
+const pickedLocationOf = ({
+  device,
+  draft,
+  properties,
+}: {
+  /** The device as stored, so an unchanged location resolves even before the property list loads. */
+  readonly device?: SecurityDevice | undefined;
+  readonly draft: DeviceDraft;
+  readonly properties: ReturnType<typeof usePropertyOptions>;
+}): PropertyRef | undefined => {
+  if (draft.location === '') {
+    return undefined;
+  }
+  if (properties.status === 'ready') {
+    const found = properties.options.find((option) => option.value === draft.location)?.ref;
+    if (found !== undefined) {
+      return found;
+    }
+  }
+  return device?.location !== undefined && `${device.location.kind}:${device.location.id}` === draft.location
+    ? device.location
+    : undefined;
+};
+
+/** Create one device card on "Vytvořit": the create stays an explicit submit. */
+const DeviceCreatePanel = ({
+  onClose,
+  onSaved,
+  open,
+  run,
+}: {
+  readonly onClose: () => void;
+  readonly onSaved: (deviceId: string | undefined) => void;
+  readonly open: boolean;
+  readonly run: RunCommand;
+}) => {
+  const { t } = useModernI18n();
+  const k = useSecurityLabel();
+  const toast = useToast();
+  const properties = usePropertyOptions();
+  const [draft, setDraft] = useState<DeviceDraft>(() => deviceDraftOf());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<FormError | undefined>();
+  const set = <Key extends keyof DeviceDraft>(key: Key, value: DeviceDraft[Key]) =>
+    setDraft((current) => ({ ...current, [key]: value }));
+
+  const submit = () => {
+    const command = deviceCreateCommandOf(draft, pickedLocationOf({ draft, properties }));
+    if (Option.isNone(command)) {
+      setError('required');
+      return Effect.void;
+    }
+    setBusy(true);
+    return run(command.value).pipe(
+      Effect.tap((outcome) =>
+        Effect.sync(() => {
+          setBusy(false);
+          if (outcome.ok) {
+            toast.create({ title: k('created'), type: 'success' });
+            onSaved(outcome.result.entityIds[0]);
+          } else {
+            setError(outcome.reason);
+          }
+        }),
+      ),
+    );
+  };
+
+  return (
+    <PanelFrame
+      actions={
+        <>
+          <Button onClick={onClose} theme="outlined" variant="secondary">
+            {t('facility-operations.common.cancel')}
+          </Button>
+          <Button
+            isLoading={busy}
+            loadingText={t('facility-operations.common.saving')}
+            onClick={() => {
+              void browserRuntime.runPromise(submit());
+            }}
+            variant="primary"
+          >
+            {k('create.submit')}
+          </Button>
+        </>
+      }
+      onClose={onClose}
+      onSubmit={() => {
+        void browserRuntime.runPromise(submit());
+      }}
+      open={open}
+      title={k('create.title')}
+    >
+      <ErrorLine error={error} />
+      <DeviceFields draft={draft} k={k} nameMissing={error === 'required'} properties={properties} set={set} />
     </PanelFrame>
   );
 };
+
+/**
+ * Edit one device card. Changes save themselves (debounced, on blur and on Zavřít) against the agenda revision; a
+ * revision conflict offers the version someone else saved, and a taken name stays local until it is filled in.
+ */
+const DeviceEditPanel = ({
+  device,
+  onClose,
+  open,
+  run,
+}: {
+  readonly device: SecurityDevice;
+  readonly onClose: () => void;
+  readonly open: boolean;
+  readonly run: RunCommand;
+}) => {
+  const { t } = useModernI18n();
+  const k = useSecurityLabel();
+  const properties = usePropertyOptions();
+  const [draft, setDraft] = useState<DeviceDraft>(() => deviceDraftOf(device));
+  const set = <Key extends keyof DeviceDraft>(key: Key, value: DeviceDraft[Key]) =>
+    setDraft((current) => ({ ...current, [key]: value }));
+  const autosave = useAutosave<DeviceDraft, never>({
+    equals: sameDeviceDraft,
+    isValid: (value) =>
+      Option.isSome(deviceUpdateCommandOf(value, device, pickedLocationOf({ device, draft: value, properties }))),
+    runtime: browserRuntime,
+    save: (value) =>
+      Option.match(deviceUpdateCommandOf(value, device, pickedLocationOf({ device, draft: value, properties })), {
+        onNone: () => Effect.succeed<AutosaveOutcome>('failed'),
+        onSome: (command) => facilityAutosaveOutcome(run(command)),
+      }),
+    value: draft,
+  });
+  const close = () => {
+    autosave.flush();
+    onClose();
+  };
+  const handleRetry = autosave.retry;
+  const handleReloadLatest = () => {
+    const current = deviceDraftOf(device);
+    autosave.adopt(current);
+    setDraft(current);
+  };
+  return (
+    <PanelFrame
+      actions={
+        <>
+          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <Button onClick={close} theme="outlined" variant="secondary">
+            {t('facility-operations.common.close')}
+          </Button>
+        </>
+      }
+      onClose={close}
+      open={open}
+      title={k('edit.title')}
+    >
+      <DeviceFields draft={draft} k={k} nameMissing={autosave.status === 'invalid'} properties={properties} set={set} />
+    </PanelFrame>
+  );
+};
+
+/** Create or edit one device card; an edit saves itself while the panel is open. */
+const DeviceFormSession = ({
+  device,
+  onClose,
+  onSaved,
+  open,
+  run,
+}: {
+  readonly device: SecurityDevice | undefined;
+  readonly onClose: () => void;
+  readonly onSaved: (deviceId: string | undefined) => void;
+  readonly open: boolean;
+  readonly run: RunCommand;
+}) =>
+  device === undefined ? (
+    <DeviceCreatePanel onClose={onClose} onSaved={onSaved} open={open} run={run} />
+  ) : (
+    <DeviceEditPanel device={device} onClose={onClose} open={open} run={run} />
+  );
 
 /** Creates the work-tasks task and stores its reference on the incident. Returns whether both succeeded. */
 export const linkNewTask = Effect.fn('FacilityOperations.linkNewTask')(function* linkNewTask(input: {
