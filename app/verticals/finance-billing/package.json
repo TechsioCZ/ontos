@@ -24,7 +24,8 @@
     "demo:seed:v2": "node scripts/seed-demo-v2.mts",
     "dev": "node ../../scripts/prepare-dev-module-contract.mts finance-billing && modern dev",
     "serve": "modern serve",
-    "test:unit": "rstest --config rstest.config.ts",
+    "test:unit": "rstest --config rstest.config.ts --project unit",
+    "test:integration": "rstest --config rstest.config.ts --project integration",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
