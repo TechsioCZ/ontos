@@ -128,6 +128,9 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly onContextPermissionTarget?: (target: { readonly moduleId: string; readonly permission: string }) => void;
     readonly onLegalEntityPermission?: (permission: string | undefined) => void;
     readonly onLegalEntityTarget?: (legalEntityId: string, tenantId: string) => void;
+    readonly onOwnerPermissionPrincipal?: (
+      principal: Readonly<{ readonly principalId: string; readonly tenantId: string }>,
+    ) => void;
     readonly onResourcePermission?: (permission: 'read' | 'write' | undefined) => void;
     readonly onResourceTarget?: (target: {
       readonly moduleId: string;
@@ -171,6 +174,11 @@ const makeHarness = Effect.fn(function* makeHarness(
   let tenantPermissionChecks = 0;
   const evidenceRows: EvidenceRow[] = [];
   const evidenceParameterRows: unknown[][] = [];
+  const databaseScopeRow = () => ({
+    legal_entity_id: options.resolvedScope?.legalEntityId ?? '',
+    role: 'ontos_runtime',
+    tenant_id: options.resolvedScope?.tenantId ?? scope.tenantId,
+  });
   const query = (text: string, values: readonly unknown[]) => {
     if (text.includes('legal_entities')) {
       legalEntityReads += 1;
@@ -232,15 +240,7 @@ const makeHarness = Effect.fn(function* makeHarness(
         evidenceParameterRows.push([...values]);
         evidence += 1;
       }
-      return text.includes('current_setting')
-        ? [
-            {
-              legal_entity_id: options.resolvedScope?.legalEntityId ?? '',
-              role: 'ontos_runtime',
-              tenant_id: scope.tenantId,
-            },
-          ]
-        : [];
+      return text.includes('current_setting') ? [databaseScopeRow()] : [];
     });
   };
   const database = {
@@ -333,8 +333,9 @@ const makeHarness = Effect.fn(function* makeHarness(
               key,
             })),
           ),
-        ownerPermissions: ({ targets }) => {
+        ownerPermissions: ({ principal, targets }) => {
           ownerPermissionChecks.push(...targets);
+          options.onOwnerPermissionPrincipal?.(principal);
           return Effect.succeed(
             options.ownerPermissionResponse === 'empty'
               ? []
@@ -453,7 +454,10 @@ const ownerReadTarget = ownerPermissionTarget(
   { requiredStorefrontId: 'storefront-a' },
 );
 
-const ownerReadRegistration = (handler: () => void) =>
+const ownerReadRegistration = (
+  handler: () => void,
+  targetFor: (scope: OperationalScope) => OwnerPermissionAccessTarget = () => ownerReadTarget,
+) =>
   defineRead(
     {
       accessKind: 'detail',
@@ -479,7 +483,7 @@ const ownerReadRegistration = (handler: () => void) =>
       return Effect.succeed({ evidence: { resultCount: 1 }, result: 'ok' });
     },
     () => Effect.succeed({}),
-    defineReadOwnerPermission(fixtureOwnerContract, () => ownerReadTarget),
+    defineReadOwnerPermission(fixtureOwnerContract, (_input, resolvedScope) => targetFor(resolvedScope)),
   );
 
 it.effect(
@@ -555,6 +559,193 @@ it.effect(
       expect(storefrontMismatch.ownerPermissionChecks).toHaveLength(0);
       expect(handlerCalls).toBe(1);
     }),
+);
+
+it.effect(
+  'rechecks Current permission after revocation while retaining the same published definition and opaque Read',
+  () =>
+    Effect.gen(function* rechecksRevokedOwnerPermission() {
+      let handlerCalls = 0;
+      const ownerRegistration = ownerReadRegistration(() => {
+        handlerCalls += 1;
+      });
+      const trustedScope = trustVerifiedGatewayPrincipalContext(
+        {
+          ...scope,
+          legalEntityId: '00000000-0000-4000-8000-000000000002',
+          trustedStorefrontId: 'storefront-a',
+        },
+        approvedCompositionRevision,
+      );
+      interface RevocationOptions {
+        ownerPermissionDecision: 'allowed' | 'denied';
+        resolvedScope: typeof trustedScope;
+      }
+      const options: RevocationOptions = {
+        ownerPermissionDecision: 'allowed',
+        resolvedScope: trustedScope,
+      };
+      const harness = yield* makeHarness(options);
+      expect(
+        yield* harness.runtime.runRead({
+          input: {},
+          principal: trustedScope,
+          registration: ownerRegistration,
+          transport: { correlationId: scope.correlationId },
+        }),
+      ).toBe('ok');
+      options.ownerPermissionDecision = 'denied';
+      const failure = yield* Effect.flip(
+        harness.runtime.runRead({
+          input: {},
+          principal: trustedScope,
+          registration: ownerRegistration,
+          transport: { correlationId: scope.correlationId },
+        }),
+      );
+      expect(Predicate.isTagged(failure, 'ReadPermissionDenied')).toBe(true);
+      expect(harness.ownerPermissionChecks).toEqual([{ target: ownerReadTarget }, { target: ownerReadTarget }]);
+      expect(ownerReadTarget.contract).toBe(fixtureOwnerContract);
+      expect(handlerCalls).toBe(1);
+    }),
+);
+
+it.effect('uses each fresh Principal and Tenant for Current owner permission instead of an earlier allow', () =>
+  Effect.gen(function* rechecksOwnerActorAndTenant() {
+    let handlerCalls = 0;
+    const checkedPrincipals: Readonly<{ readonly principalId: string; readonly tenantId: string }>[] = [];
+    const ownerRegistration = ownerReadRegistration(
+      () => {
+        handlerCalls += 1;
+      },
+      (resolvedScope) => ownerPermissionTarget(resolvedScope, 'fresh-subject'),
+    );
+    const trustedScope = trustVerifiedGatewayPrincipalContext(
+      {
+        ...scope,
+        legalEntityId: '00000000-0000-4000-8000-000000000002',
+        trustedStorefrontId: 'storefront-a',
+      },
+      approvedCompositionRevision,
+    );
+    interface ActorOptions {
+      onOwnerPermissionPrincipal: (
+        principal: Readonly<{ readonly principalId: string; readonly tenantId: string }>,
+      ) => void;
+      ownerPermissionDecision: 'allowed' | 'denied';
+      resolvedScope: typeof trustedScope;
+    }
+    const options: ActorOptions = {
+      onOwnerPermissionPrincipal: ({ principalId, tenantId }) => {
+        checkedPrincipals.push({ principalId, tenantId });
+      },
+      ownerPermissionDecision: 'allowed',
+      resolvedScope: trustedScope,
+    };
+    const harness = yield* makeHarness(options);
+    expect(
+      yield* harness.runtime.runRead({
+        input: {},
+        principal: trustedScope,
+        registration: ownerRegistration,
+        transport: { correlationId: scope.correlationId },
+      }),
+    ).toBe('ok');
+    options.ownerPermissionDecision = 'denied';
+    const nextPrincipals = [
+      { ...trustedScope, principalId: '00000000-0000-4000-8000-000000000009' },
+      { ...trustedScope, tenantId: '00000000-0000-4000-8000-000000000099' },
+    ];
+    for (const nextPrincipal of nextPrincipals) {
+      const current = trustVerifiedGatewayPrincipalContext(nextPrincipal, approvedCompositionRevision);
+      options.resolvedScope = current;
+      const failure = yield* Effect.flip(
+        harness.runtime.runRead({
+          input: {},
+          principal: current,
+          registration: ownerRegistration,
+          transport: { correlationId: scope.correlationId },
+        }),
+      );
+      expect(Predicate.isTagged(failure, 'ReadPermissionDenied')).toBe(true);
+    }
+    expect(checkedPrincipals).toEqual(
+      [trustedScope, ...nextPrincipals].map(({ principalId, tenantId }) => ({ principalId, tenantId })),
+    );
+    expect(harness.ownerPermissionChecks).toHaveLength(3);
+    expect(handlerCalls).toBe(1);
+  }),
+);
+
+it.effect('rejects payload-selected foreign contracts and copied definitions before a permissive Current check', () =>
+  Effect.gen(function* rejectsOwnerDefinitionSubstitution() {
+    let handlerCalls = 0;
+    const base = ownerReadRegistration(() => {
+      handlerCalls += 1;
+    });
+    const ownerRegistration = defineRead(
+      {
+        ...base.descriptor,
+        inputSchema: Schema.Struct({ variant: Schema.Literals(['valid', 'foreign-contract', 'copied-definition']) }),
+      },
+      () => {
+        handlerCalls += 1;
+        return Effect.succeed({ evidence: { resultCount: 1 }, result: 'ok' });
+      },
+      () => Effect.succeed({}),
+      defineReadOwnerPermission<{ readonly variant: 'valid' | 'foreign-contract' | 'copied-definition' }>(
+        fixtureOwnerContract,
+        ({ variant }, resolvedScope) => {
+          const target = ownerPermissionTarget(resolvedScope, 'definition-bound');
+          if (variant === 'foreign-contract') {
+            const definition = Object.freeze({ ...target.definition, owningCapability: 'commerce.foreign' });
+            return Object.freeze({
+              ...target,
+              contract: Object.freeze({
+                ...fixtureOwnerContract,
+                owningCapability: 'commerce.foreign',
+                permissions: Object.freeze([definition]),
+              }),
+              definition,
+            });
+          }
+          return variant === 'copied-definition'
+            ? Object.freeze({ ...target, definition: Object.freeze({ ...target.definition }) })
+            : target;
+        },
+      ),
+    );
+    const trustedScope = trustVerifiedGatewayPrincipalContext(
+      {
+        ...scope,
+        legalEntityId: '00000000-0000-4000-8000-000000000002',
+        trustedStorefrontId: 'storefront-a',
+      },
+      approvedCompositionRevision,
+    );
+    const harness = yield* makeHarness({ ownerPermissionDecision: 'allowed', resolvedScope: trustedScope });
+    expect(
+      yield* harness.runtime.runRead({
+        input: { variant: 'valid' },
+        principal: trustedScope,
+        registration: ownerRegistration,
+        transport: { correlationId: scope.correlationId },
+      }),
+    ).toBe('ok');
+    for (const variant of ['foreign-contract', 'copied-definition'] as const) {
+      const failure = yield* Effect.flip(
+        harness.runtime.runRead({
+          input: { variant },
+          principal: trustedScope,
+          registration: ownerRegistration,
+          transport: { correlationId: scope.correlationId },
+        }),
+      );
+      expect(Predicate.isTagged(failure, 'ReadHandlerExecutionError')).toBe(true);
+    }
+    expect(harness.ownerPermissionChecks).toHaveLength(1);
+    expect(handlerCalls).toBe(1);
+  }),
 );
 
 it.effect('retains owner-declared tenant and Legal Entity scope without a fallback', () =>

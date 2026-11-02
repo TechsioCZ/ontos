@@ -78,6 +78,34 @@ it('retains an exact owner permission resolver as an immutable read declaration'
   expect(Object.keys(registration)).toEqual(['descriptor']);
   expect(registration.descriptor.permissionTarget).toBe('owner_permission');
   expect(Object.isFrozen(registration.descriptor)).toBe(true);
+  const foreignEntrypoint = defineTenantModuleEntrypoint({
+    access: 'read',
+    authorization: { kind: 'context_permission', permission: 'fixture.read' },
+    entrypointKey: 'commerce.foreign.configuration',
+    moduleKey: 'commerce.foreign',
+    role: 'api',
+  });
+  expect(() =>
+    defineRead(
+      {
+        ...registration.descriptor,
+        entrypoint: foreignEntrypoint,
+        owningModuleKey: 'commerce.foreign',
+        readKey: 'commerce.foreign.configuration',
+      },
+      () => Effect.succeed({ evidence: { resultCount: 1 }, result: 'ok' }),
+      () => Effect.succeed({}),
+      defineReadOwnerPermission(fixtureOwnerContract, (_input, scope) => ownerPermissionTarget(scope)),
+    ),
+  ).toThrow();
+  expect(() =>
+    defineRead(
+      registration.descriptor,
+      () => Effect.succeed({ evidence: { resultCount: 1 }, result: 'ok' }),
+      () => Effect.succeed({}),
+      (_input, scope) => ({ kind: 'owner_permission', ownerPermission: ownerPermissionTarget(scope) }),
+    ),
+  ).toThrow();
 });
 it('requires an explicit valid owner-scoped read entrypoint', () => {
   expect(() =>
