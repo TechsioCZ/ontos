@@ -171,7 +171,7 @@ export const siamparkGuide: DemoGuide = {
           title: 'Jen svěřené obchodní případy',
         },
         {
-          click: 'Najděte úkol Předání nájemního prostoru R101 a ukažte omezené menu.',
+          click: 'Najděte úkol Prohlídka volného bytu A102 se zájemcem a ukažte omezené menu.',
           id: 'siampark-externista-prace',
           persona: external,
           say: 'Externista může řešit svoji práci, ale neprochází finance firmy.',

@@ -65,6 +65,9 @@ it('uses Nájempark consistently in displayed copy and every rental persona logi
   ].join(' ');
   expect(displayedCopy).not.toMatch(/siampark/iu);
   expect(steps.find((step) => step.id === 'siampark-uvod')?.click).toContain('firmu Nájempark');
+  expect(steps.find((step) => step.id === 'siampark-externista-prace')?.click).toContain(
+    'Prohlídka volného bytu A102 se zájemcem',
+  );
   const operations = steps.find((step) => step.id === 'siampark-externista-provoz');
   expect(operations?.click).toContain('Nájempark přidělil');
   expect(operations?.say).toContain('Nájempark přidělil');
