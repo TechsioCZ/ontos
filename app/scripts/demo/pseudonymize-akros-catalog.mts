@@ -193,11 +193,26 @@ const galleryChange = (
   id: string,
   change: Extract<(typeof Payload.Type)['command'], { _tag: 'ChangeProductImages' }>['change'],
 ) => command(client, { _tag: 'ChangeProductImages', change, id }, 0);
+/**
+ * True when the public storefront serves the path as an image to an anonymous visitor. The storefront may redirect the
+ * root-relative path to its default market (`/obrazky/…` → `/cs/obrazky/…`); only same-origin redirects are followed.
+ */
 const publicImage = (publicOrigin: string, path: string) =>
   Effect.gen(function* fetchPublicImage() {
     const http = yield* HttpClient.HttpClient;
-    const response = yield* http.get(`${publicOrigin}${path}`).pipe(Effect.timeout('20 seconds'));
-    return response.status === 200 && (response.headers['content-type'] ?? '').startsWith('image/');
+    let url = new URL(path, publicOrigin);
+    for (let hop = 0; hop < 3; hop += 1) {
+      const response = yield* http.get(url.href).pipe(Effect.timeout('20 seconds'));
+      const { location } = response.headers;
+      if (response.status < 300 || response.status >= 400 || location === undefined) {
+        return response.status === 200 && (response.headers['content-type'] ?? '').startsWith('image/');
+      }
+      url = new URL(location, url);
+      if (url.origin !== new URL(publicOrigin).origin) {
+        return false;
+      }
+    }
+    return false;
   });
 
 /**
@@ -629,6 +644,17 @@ const representativeImage = (client: SeedClient, productId: string | undefined, 
     const path = mediaPath(product.id, main);
     return (yield* publicImage(publicOrigin, path)) ? path : '';
   });
+const imageReplaced = (before: CatalogCategory) => isBrandedCatalogImage(before.imageSrc) || before.imageSrc === '';
+/** The category image the plan intends: the representative's deliverable photo for a replaced image, else unchanged. */
+const plannedCategoryImage = (
+  client: SeedClient,
+  before: CatalogCategory,
+  representative: CatalogProduct | undefined,
+  publicOrigin: string,
+) =>
+  imageReplaced(before)
+    ? representativeImage(client, representative?.id, publicOrigin)
+    : Effect.succeed(before.imageSrc);
 const applyCategory = (
   client: SeedClient,
   root: string,
@@ -638,16 +664,15 @@ const applyCategory = (
 ) =>
   Effect.gen(function* applyCatalogCategory() {
     const { category: live, revision } = yield* readCategory(client, before.id);
-    const imageSrc =
-      isBrandedCatalogImage(before.imageSrc) || before.imageSrc === ''
-        ? yield* representativeImage(client, representative?.id, publicOrigin)
-        : before.imageSrc;
+    const imageSrc = yield* plannedCategoryImage(client, before, representative, publicOrigin);
+    // A replaced image may already be cleared by an earlier run (e.g. a representative that was not yet deliverable).
+    const ownState = live.imageSrc === imageSrc || (live.imageSrc === '' && imageReplaced(before));
     if (
       digest(categoryTextPatch(live)) !== digest(categoryTextPatch(before)) ||
       live.slug !== before.slug ||
       live.parentId !== before.parentId ||
       live.position !== before.position ||
-      (live.imageSrc !== before.imageSrc && live.imageSrc !== imageSrc)
+      (live.imageSrc !== before.imageSrc && !ownState)
     ) {
       return yield* fail('Category changed since plan.');
     }
@@ -711,9 +736,18 @@ const verifyProduct = (client: SeedClient, entry: PlannedProduct) =>
       ? product.id
       : yield* fail('Catalog verification failed: brand, gallery or protected product changes.');
   });
-const verifyCategory = (client: SeedClient, before: CatalogCategory, publicOrigin: string) =>
+const verifyCategory = (
+  client: SeedClient,
+  before: CatalogCategory,
+  representative: CatalogProduct | undefined,
+  publicOrigin: string,
+) =>
   Effect.gen(function* verifyCatalogCategory() {
     const { category } = yield* readCategory(client, before.id);
+    // A cleared image where the representative has a deliverable photo is an incomplete apply, not a pass.
+    if (category.imageSrc !== (yield* plannedCategoryImage(client, before, representative, publicOrigin))) {
+      return yield* fail(`Catalog verification failed: category ${before.id} does not show its planned image.`);
+    }
     if (
       categoryHasBrand(category) ||
       category.slug !== before.slug ||
@@ -736,6 +770,7 @@ const verifyBatch = (client: SeedClient, root: string, approved: string, publicO
     if (digest(plan) !== approved) {
       return yield* fail('Verification fingerprint mismatch.');
     }
+    const reps = representativesOf(plan.products, plan.categories, hasPhoto);
     const cursorFile = `${root}/verify.json`;
     let { cursor } = (yield* fs.exists(cursorFile)) ? yield* jsonRead(cursorFile, Cursor) : { cursor: 0 };
     const total = plan.products.length + plan.categories.length;
@@ -748,7 +783,7 @@ const verifyBatch = (client: SeedClient, root: string, approved: string, publicO
       } else if (category === undefined) {
         return yield* fail('Incomplete verification inventory.');
       } else {
-        yield* verifyCategory(client, category.before, publicOrigin);
+        yield* verifyCategory(client, category.before, reps.get(category.before.id), publicOrigin);
       }
       cursor += 1;
       yield* jsonWrite(cursorFile, Cursor, { cursor });
