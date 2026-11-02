@@ -59,8 +59,9 @@ export const OrderLineEditor = ({ canRemove, error, line, onChange, onRecord, on
   const variant = variants.find((entry) => entry.id === line.variantId);
   return (
     <div className={`${surfaceTileClassName} flex flex-col gap-100 p-150`}>
-      <div className="grid grid-cols-[minmax(0,1fr)_7rem_auto] items-end gap-150">
-        <div className="min-w-0">
+      {/* On a phone the product search takes its own row; quantity and removal sit below it. */}
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-150 sm:grid-cols-[minmax(0,1fr)_7rem_auto]">
+        <div className="col-span-2 min-w-0 sm:col-span-1">
           <ProductSearchCombobox
             activeOnly
             errorMessage={t(key('create.productsFailed'))}

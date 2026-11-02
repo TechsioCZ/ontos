@@ -45,3 +45,25 @@
     animation: none;
   }
 }
+
+/*
+ * UI kit DataTable pagination keeps the page buttons and the page-size select on one line, which runs past a phone
+ * screen once a table has many pages. Let the controls wrap inside the bar instead.
+ */
+.bg-data-table-pagination-bg > :last-child {
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/*
+ * Dialog and side-panel footer buttons have a fixed height, so a long label squeezed onto a phone breaks into two
+ * clipped lines. Keep each label on one line and move a button to the next row when the footer runs out of space.
+ */
+.gap-dialog-actions.pt-dialog-actions-top {
+  flex-wrap: wrap;
+}
+
+.gap-dialog-actions.pt-dialog-actions-top > button {
+  white-space: nowrap;
+}

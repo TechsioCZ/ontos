@@ -3,7 +3,7 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { EmptyState, foldSearchText } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { DateTime, Schema } from 'effect';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import type { Tone } from '../../../../ui/ops-agenda/model.ts';
@@ -397,6 +397,22 @@ const renderCalendarGrid = (
   return <ListView lang={input.lang} onOpen={handleOpen} rows={input.rows} today={input.today} />;
 };
 
+// A seven-column month grid leaves a phone one or two letters per event, so phones open the list unless a view was
+// chosen (in the URL or with the mode switch).
+const narrowViewportQuery = '(max-width: 39.99rem)';
+const subscribeNarrowViewport = (onChange: () => void) => {
+  const query = globalThis.matchMedia(narrowViewportQuery);
+  query.addEventListener('change', onChange);
+  return () => query.removeEventListener('change', onChange);
+};
+const useNarrowViewport = () =>
+  useSyncExternalStore(
+    subscribeNarrowViewport,
+    () => globalThis.matchMedia(narrowViewportQuery).matches,
+    // The server render keeps the month grid; the first client render corrects it.
+    () => false,
+  );
+
 const calendarRange = (mode: CalendarMode, cursor: string) => {
   if (mode === 'tyden') {
     const start = weekStart(cursor);
@@ -433,7 +449,11 @@ export const CalendarView = ({
 }) => {
   const { language, t } = useModernI18n();
   const lang = langOf(language);
-  const [mode, setMode] = useState<CalendarMode>(initialMode);
+  const narrow = useNarrowViewport();
+  const [chosenMode, setChosenMode] = useState<CalendarMode | undefined>(
+    initialMode === 'mesic' ? undefined : initialMode,
+  );
+  const mode: CalendarMode = chosenMode ?? (narrow ? 'seznam' : 'mesic');
   const [cursor, setCursor] = useState(today);
   const [hidden, setHidden] = useState<ReadonlySet<SourceId>>(new Set());
   const [mineOnly, setMineOnly] = useState(false);
@@ -576,7 +596,7 @@ export const CalendarView = ({
                 className="facilityoperations:cursor-pointer facilityoperations:rounded-md facilityoperations:border-0 facilityoperations:px-3 facilityoperations:py-1.5 facilityoperations:text-sm facilityoperations:font-medium"
                 data-mode={value}
                 key={value}
-                onClick={() => setMode(value)}
+                onClick={() => setChosenMode(value)}
                 style={{
                   background: mode === value ? '#ffffff' : 'transparent',
                   boxShadow: mode === value ? '0 1px 2px rgba(0,0,0,.08)' : 'none',

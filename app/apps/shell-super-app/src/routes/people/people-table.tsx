@@ -376,11 +376,17 @@ export const PeopleTable = ({
       <EmptyState title="V tomto rozsahu nejsou žádná evidovaná členství." />
     );
   if (!wide) {
-    return visible.length === 0 && !loading ? (
-      empty()
-    ) : (
-      <CompactPeopleList catalog={catalog} onEdit={onEdit} onOpen={onOpen} people={visible} scope={scope} />
-    );
+    if (visible.length === 0) {
+      // The compact list has no skeleton rows, so a phone would show a blank page until the people arrive.
+      return loading ? (
+        <output aria-live="polite" className="block py-200 text-fg-secondary text-sm">
+          {tableTranslations.loadingLabel}
+        </output>
+      ) : (
+        empty()
+      );
+    }
+    return <CompactPeopleList catalog={catalog} onEdit={onEdit} onOpen={onOpen} people={visible} scope={scope} />;
   }
   return (
     <DataTable
