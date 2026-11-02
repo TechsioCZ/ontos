@@ -26,12 +26,13 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
 import type { BulkByTagResult } from './pipeline-bulk-by-tag.tsx';
-import type { FormCommand } from './pipeline-dialogs.tsx';
+import type { CreateCommand, OpportunityAutosave } from './pipeline-dialogs.tsx';
+import { opportunityAutosaveResult } from './opportunity-draft.ts';
 import type { DialogState, Target } from './pipeline-dialog-host.tsx';
 import { PipelineDialogHost, ownerCommand, requestedCount, stageCommand } from './pipeline-dialog-host.tsx';
 import { PipelineDetailPanel } from './pipeline-detail-panel.tsx';
 import { PipelineFilters, PipelineStats } from './pipeline-filters.tsx';
-import { applyPipelineCommand } from './pipeline-api.ts';
+import { applyPipelineCommand, applyPipelineCommandIfUnchanged } from './pipeline-api.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
 import { containsFolded, pipelineConflictKey, skipTally, sortNewestFirst } from './pipeline-model.ts';
 import type { EmployeeId, OpportunityStage, SkipTally } from './pipeline-model.ts';
@@ -57,12 +58,6 @@ const K = 'sales-pipeline.pages.records';
 
 type PartyId = typeof PartyIdSchema.Type;
 type Selection = Record<string, true>;
-
-const formToastKey = (command: FormCommand): string =>
-  Match.value(command).pipe(
-    Match.tag('CreateOpportunity', () => `${K}.toasts.created`),
-    Match.orElse(() => `${K}.toasts.updated`),
-  );
 
 /**
  * Rows that pass search, the unassigned toggle and the tag set (`undefined` when no tag filter is set),
@@ -336,6 +331,13 @@ const usePipelineCommands = (revision: number, reload: () => void) => {
   const toaster = useToast();
   const [busy, setBusy] = useState(false);
   const [dialogError, setDialogError] = useState<string>();
+  type CommandError = Effect.Error<ReturnType<typeof applyPipelineCommand>>;
+  const failureMessage = (error: CommandError) =>
+    Match.value(error).pipe(
+      Match.tag('ApplyCommandActionConflictProblem', (problem) => t(pipelineConflictKey(problem.code))),
+      Match.tag('ApplyCommandActionForbiddenProblem', () => t(`${K}.errors.forbidden`)),
+      Match.orElse(() => t(`${K}.errors.generic`)),
+    );
   const runCommand = (command: PipelineCommand, onDone: (result: ApplyCommandResult) => void) => {
     setBusy(true);
     setDialogError(undefined);
@@ -344,11 +346,7 @@ const usePipelineCommands = (revision: number, reload: () => void) => {
         Effect.match({
           onFailure: (error) => {
             setBusy(false);
-            const message = Match.value(error).pipe(
-              Match.tag('ApplyCommandActionConflictProblem', (problem) => t(pipelineConflictKey(problem.code))),
-              Match.tag('ApplyCommandActionForbiddenProblem', () => t(`${K}.errors.forbidden`)),
-              Match.orElse(() => t(`${K}.errors.generic`)),
-            );
+            const message = failureMessage(error);
             setDialogError(message);
             if (Predicate.isTagged(command, 'ArchiveOpportunity')) {
               toaster.create({ title: message, type: 'error' });
@@ -364,7 +362,36 @@ const usePipelineCommands = (revision: number, reload: () => void) => {
       ),
     );
   };
-  return { busy, dialogError, runCommand, setDialogError };
+  /**
+   * Autosave of the edit panel. The saved opportunity reaches the list through the live reread; a revision conflict
+   * shows in the panel's status line, any other failure as its message.
+   */
+  const autosave: OpportunityAutosave = (command, expectedRevision, unchanged) =>
+    opportunityAutosaveResult(
+      applyPipelineCommandIfUnchanged(command, expectedRevision, unchanged).pipe(
+        Effect.tapError((problem) =>
+          Effect.sync(() =>
+            setDialogError(
+              Predicate.isTagged(problem, 'ApplyCommandActionConflictProblem') &&
+                problem.code === 'sales_pipeline_revision_conflict'
+                ? undefined
+                : failureMessage(problem),
+            ),
+          ),
+        ),
+        Effect.tap(() => Effect.sync(() => setDialogError(undefined))),
+      ),
+    );
+  return { autosave, busy, dialogError, runCommand, setDialogError };
+};
+
+/** The open dialog with its opportunity as the list has it now, so the edit panel follows live rereads. */
+const liveDialog = (dialog: DialogState | undefined, items: readonly Opportunity[]): DialogState | undefined => {
+  if (dialog?.kind !== 'form' || dialog.opportunity === undefined) {
+    return dialog;
+  }
+  const { id } = dialog.opportunity;
+  return { ...dialog, opportunity: items.find((item) => item.id === id) ?? dialog.opportunity };
 };
 
 const RecordsPageContent = ({
@@ -402,7 +429,7 @@ const RecordsPageContent = ({
   );
   const canWrite = response?.canWrite === true;
   const revision = response?.revision ?? 0;
-  const { busy, dialogError, runCommand, setDialogError } = usePipelineCommands(revision, reload);
+  const { autosave, busy, dialogError, runCommand, setDialogError } = usePipelineCommands(revision, reload);
 
   const items = response?.items ?? [];
   const opportunityTags = useTagsFor('opportunity', toSubjectIds(items.map((item) => item.id)));
@@ -437,10 +464,10 @@ const RecordsPageContent = ({
     setDialog(undefined);
   };
 
-  const submitForm = (command: FormCommand) =>
+  const submitForm = (command: CreateCommand) =>
     runCommand(command, () => {
       closeDialog();
-      toaster.create({ title: t(formToastKey(command)), type: 'success' });
+      toaster.create({ title: t(`${K}.toasts.created`), type: 'success' });
     });
 
   const submitStage = (stage: OpportunityStage, note: string | undefined) => {
@@ -619,7 +646,7 @@ const RecordsPageContent = ({
         busy={busy}
         customerLabel={customerLabel}
         customers={customers}
-        dialog={dialog}
+        dialog={liveDialog(dialog, items)}
         employees={employees}
         error={dialogError}
         onArchiveSubmit={(opportunity) => {
@@ -632,10 +659,12 @@ const RecordsPageContent = ({
         onBulkByTagDone={finishBulkByTag}
         onBulkTagsDone={finishBulkTags}
         onClose={closeDialog}
+        onFormAutosave={autosave}
         onFormSubmit={submitForm}
         onOwnerSubmit={submitOwner}
         onStageSubmit={submitStage}
         products={products}
+        revision={revision}
       />
     </>
   );

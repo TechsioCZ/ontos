@@ -8,7 +8,7 @@ import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
 import { BulkByTagDialog } from './pipeline-bulk-by-tag.tsx';
 import type { BulkByTagResult } from './pipeline-bulk-by-tag.tsx';
-import type { FormCommand } from './pipeline-dialogs.tsx';
+import type { CreateCommand, OpportunityAutosave } from './pipeline-dialogs.tsx';
 import { OpportunityFormDialog, OwnerDialog, StageDialog } from './pipeline-dialogs.tsx';
 import type { EmployeeId, OpportunityStage } from './pipeline-model.ts';
 import { toSubjectIds } from './pipeline-references.ts';
@@ -64,10 +64,12 @@ interface PipelineDialogHostProps {
   readonly onBulkByTagDone: (result: BulkByTagResult) => void;
   readonly onBulkTagsDone: () => void;
   readonly onClose: () => void;
-  readonly onFormSubmit: (command: FormCommand) => void;
+  readonly onFormAutosave: OpportunityAutosave;
+  readonly onFormSubmit: (command: CreateCommand) => void;
   readonly onOwnerSubmit: (owner: EmployeeId | null) => void;
   readonly onStageSubmit: (stage: OpportunityStage, note: string | undefined) => void;
   readonly products: LoadState<readonly ProductOption[]>;
+  readonly revision: number;
 }
 
 /** Renders the one dialog that is open, if any. */
@@ -83,10 +85,12 @@ export const PipelineDialogHost = ({
   onBulkByTagDone,
   onBulkTagsDone,
   onClose,
+  onFormAutosave,
   onFormSubmit,
   onOwnerSubmit,
   onStageSubmit,
   products,
+  revision,
 }: PipelineDialogHostProps) => {
   const { t } = useModernI18n();
   const close = (open: boolean) => {
@@ -130,9 +134,11 @@ export const PipelineDialogHost = ({
         customers={customers}
         employees={employees}
         initial={dialog.opportunity}
+        onAutosave={onFormAutosave}
         onOpenChange={close}
         onSubmit={onFormSubmit}
         products={products}
+        revision={revision}
         serverError={error}
       />
     );

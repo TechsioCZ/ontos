@@ -215,7 +215,6 @@
           },
           "skipped": "Skipped: {{total}} ({{reasons}})",
           "stageChanged": "Stage changed",
-          "updated": "Opportunity saved",
           "bulkChanged": "Changed {{changed}}, skipped {{skipped}}"
         },
         "errors": {
@@ -256,7 +255,7 @@
         "edit": {
           "title": "Edit opportunity",
           "description": "Change the owner with the Assign owner action. Lines keep the prices fixed when they were added.",
-          "submit": "Save changes"
+          "close": "Close"
         },
         "unknownOwner": "Unknown owner"
       },

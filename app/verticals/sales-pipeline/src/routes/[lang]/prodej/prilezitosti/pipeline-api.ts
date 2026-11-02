@@ -1,5 +1,6 @@
 import { Effect, Random } from 'effect';
 import type { ApplyCommandPayload } from '../../../../../shared/actions/apply-command.ts';
+import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
 import type { PartyIdSchema } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeRecords } from '../../../../api/records-consumer.ts';
@@ -41,6 +42,29 @@ export const applyPipelineCommand = (command: PipelineCommand, expectedRevision:
         ? Random.nextInt.pipe(
             Effect.flatMap((nonce) => executeRecords({}, `sales-pipeline:revision:${nonce}`)),
             Effect.flatMap(({ revision }) => sendPipelineCommand(command, revision)),
+          )
+        : Effect.fail(conflict),
+    ),
+  );
+
+/**
+ * An edit against the revision its draft builds on. A revision conflict is resent once against a fresh read only while
+ * `unchanged` holds for the opportunities read then: a change elsewhere in the pipeline does not block the edit, a
+ * change of the edited opportunity reaches the caller as the conflict.
+ */
+export const applyPipelineCommandIfUnchanged = (
+  command: PipelineCommand,
+  expectedRevision: number,
+  unchanged: (items: readonly Opportunity[]) => boolean,
+) =>
+  sendPipelineCommand(command, expectedRevision).pipe(
+    Effect.catchTag('ApplyCommandActionConflictProblem', (conflict) =>
+      conflict.code === 'sales_pipeline_revision_conflict'
+        ? Random.nextInt.pipe(
+            Effect.flatMap((nonce) => executeRecords({}, `sales-pipeline:revision:${nonce}`)),
+            Effect.flatMap(({ items, revision }) =>
+              unchanged(items) ? sendPipelineCommand(command, revision) : Effect.fail(conflict),
+            ),
           )
         : Effect.fail(conflict),
     ),
