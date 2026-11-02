@@ -3,6 +3,7 @@
 // (addresses, paths, identifiers) is ever shown.
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Icon } from '@techsio/ui-kit/atoms/icon';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FileUpload } from '@techsio/ui-kit/molecules/file-upload';
 import { SectionCard, surfaceTileClassName } from '@app/admin-ui';
@@ -369,7 +370,7 @@ export const ProductImageGalleryView = ({
                 }}
                 tabIndex={0}
               >
-                <span aria-hidden="true" className="icon-[mdi--image-plus-outline] size-8 text-fg-secondary" />
+                <Icon aria-hidden="true" color="secondary" icon="icon-[mdi--image-plus-outline]" size="2xl" />
                 <span className="font-medium">
                   {remaining === 0
                     ? t('merchandise.pages.products.gallery.dropzoneFull', { limit: PRODUCT_GALLERY_LIMIT })
