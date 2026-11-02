@@ -2420,14 +2420,13 @@ const hasPublishedContractRoutine = (
   const callableReferences = new Set<SchemaNode>();
   const erased = new Set<SchemaNode>();
   traverseFast(binding.expression, (node) => {
-    if (node.type === 'CallExpression' || node.type === 'NewExpression') {
-      let { callee } = node;
-      while (callee.type === 'MemberExpression') {
-        callee = callee.object;
-      }
-      if (callee.type === 'Identifier') {
-        callableReferences.add(callee);
-      }
+    if (
+      node.type === 'NewExpression' &&
+      node.callee.type === 'Identifier' &&
+      node.callee.name === 'Set' &&
+      state.graph.isUnboundReference(binding.module, node.callee)
+    ) {
+      callableReferences.add(node.callee);
     }
     if ('typeAnnotation' in node && node.typeAnnotation !== null && node.typeAnnotation !== undefined) {
       traverseFast(node.typeAnnotation, (typeNode) => {
@@ -2449,7 +2448,10 @@ const hasPublishedContractRoutine = (
         value.kind === 'node' || value.kind === 'unresolved'
           ? privateImplementationPath.test(nodePath.relative(state.root, value.module.path))
           : value.kind === 'external' &&
-            (value.specifier === 'effect/Effect' || (value.specifier === 'effect' && value.name === 'Effect')),
+            (!nativeContractProviders.has(value.specifier) ||
+              isNativeEffectClientConstructor(value) ||
+              value.specifier === 'effect/Effect' ||
+              (value.specifier === 'effect' && value.name === 'Effect')),
       )
   );
 };

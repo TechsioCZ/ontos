@@ -5465,3 +5465,34 @@ for (const privateSelection of [false, true]) {
     }),
   );
 }
+
+for (const [origin, addition] of [
+  [
+    'global network authority',
+    "export const privateRuntimeDispatch = () => globalThis.fetch('/private-owner-operation');",
+  ],
+  [
+    'process execution authority',
+    "import { execFileSync } from 'node:child_process';\nexport const privateRuntimeDispatch = () => execFileSync('private-owner-operation');",
+  ],
+] as const) {
+  it.live(`rejects published neutral routine ${origin}`, () =>
+    Effect.gen(function* privateRoutineAuthority() {
+      const file = 'verticals/catalog/shared/domain/catalog-selection-purpose.ts';
+      const root = yield* makeActualCatalogSelectionFixture(file);
+      const original = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
+      yield* write(root, file, `${original}\n${addition}\n`);
+      yield* write(
+        root,
+        'apps/shell-super-app/src/catalog-runtime-consumer.ts',
+        "import { privateRuntimeDispatch } from '@app/catalog/domain/catalog-selection-purpose';\n",
+      );
+      const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+      expect(Exit.isFailure(result), origin).toBe(true);
+      if (Exit.isFailure(result)) {
+        expect(Cause.pretty(result.cause)).toContain(file);
+        expect(Cause.pretty(result.cause)).toContain(FOREIGN_PRIVATE_DIAGNOSTIC);
+      }
+    }),
+  );
+}
