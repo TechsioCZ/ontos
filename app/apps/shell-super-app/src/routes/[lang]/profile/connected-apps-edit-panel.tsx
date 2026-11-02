@@ -1,11 +1,13 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Effect } from 'effect';
 import type { ConnectionSummary } from '@app/shared-contracts/agent-access';
+import { AutosaveStatus, useAutosave } from '@app/admin-ui';
+import type { AutosaveOutcome } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { updateConnectionAccess } from './connected-apps-client.ts';
@@ -37,8 +39,31 @@ export const ConnectedAppsEditPanel = ({
 }) => {
   const { t } = useModernI18n();
   const [draft, setDraft] = useState<EditDraft>(() => draftFromConnection(connection));
-  const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | undefined>();
+  // The access of an existing connection saves itself: every choice is one narrowing the server re-checks.
+  const saved = useRef(false);
+  const autosave = useAutosave<EditDraft, never>({
+    isValid: (value) => draftProblem(value) === undefined,
+    runtime: browserRuntime,
+    save: (value): Effect.Effect<AutosaveOutcome> =>
+      updateConnectionAccess(draftToRequest(connection.grantId, value)).pipe(
+        Effect.map((outcome): AutosaveOutcome => {
+          if (outcome.status === 'ok') {
+            saved.current = true;
+            setFailure(undefined);
+            return 'saved';
+          }
+          if (isStale(outcome.reason)) {
+            onStale(failureText(outcome.reason, outcome.detail));
+            onClose();
+            return 'saved';
+          }
+          setFailure(failureText(outcome.reason, outcome.detail));
+          return 'failed';
+        }),
+      ),
+    value: draft,
+  });
   const problem = draftProblem(draft);
   const { name } = connection.client;
   const policies = policyChoices(connection);
@@ -48,52 +73,31 @@ export const ConnectedAppsEditPanel = ({
     setDraft((current) => setModuleChoice(current, moduleId, choice));
   };
 
-  const save = () => {
-    if (problem !== undefined || busy) {
-      return;
+  const handleRetry = autosave.retry;
+  const close = () => {
+    autosave.flush();
+    if (saved.current) {
+      onSaved(name);
     }
-    setBusy(true);
-    setFailure(undefined);
-    browserRuntime.runFork(
-      updateConnectionAccess(draftToRequest(connection.grantId, draft)).pipe(
-        Effect.andThen((outcome) =>
-          Effect.sync(() => {
-            if (outcome.status === 'ok') {
-              onSaved(name);
-              onClose();
-              return;
-            }
-            if (isStale(outcome.reason)) {
-              onStale(failureText(outcome.reason, outcome.detail));
-              onClose();
-              return;
-            }
-            setBusy(false);
-            setFailure(failureText(outcome.reason, outcome.detail));
-          }),
-        ),
-      ),
-    );
+    onClose();
   };
 
   return (
     <Dialog
       actions={
         <>
-          <Button onClick={onClose} theme="outlined" variant="secondary">
-            Zrušit
-          </Button>
-          <Button disabled={busy || problem !== undefined} onClick={save} variant="primary">
-            Uložit změny
+          <AutosaveStatus onReloadLatest={close} onRetry={handleRetry} status={autosave.status} />
+          <Button onClick={close} theme="outlined" variant="secondary">
+            Zavřít
           </Button>
         </>
       }
       closeLabel="Zavřít"
       customTrigger
-      description={widenHint}
+      description={`${widenHint} Změny se ukládají samy.`}
       onOpenChange={(details) => {
         if (!details.open) {
-          onClose();
+          close();
         }
       }}
       open
