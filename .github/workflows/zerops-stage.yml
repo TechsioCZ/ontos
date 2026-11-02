@@ -1,8 +1,11 @@
 name: Zerops Stage Deploy
 
 # Deploys the sales demo branch to stage, which runs only on Zerops: one `app` service (the Shell, every owner and
-# the Outbox Worker host in one container, see app/scripts/zerops/app-host.mts) and one `storefront` service (AKROS).
-# Zerops builds both from app/zerops.yaml. The app container runs the owner migrations and publishes the Application
+# the Outbox Worker host in one container, see app/scripts/zerops/app-host.mts) and two storefront services built from the
+# same `storefront` setup: `storefront` (AKROS, ontos-stage-akros) and `shop` (the pseudonymous demo e-shop,
+# ontos-stage-shop). Each storefront service holds its own key, tenant and brand in its service variables
+# (ONTOS_AKROS_STOREFRONT_API_KEY, STOREFRONT_BRAND, ONTOS_STOREFRONT_APP_ID, ONTOS_STOREFRONT_LEGAL_ENTITY_ID).
+# Zerops builds them from app/zerops.yaml. The app container runs the owner migrations and publishes the Application
 # Composition itself when it starts, and Zerops switches traffic only after /_host/ready answers.
 # Cloudflare stays in front of stage only as DNS, WAF and Access.
 on:
@@ -29,6 +32,7 @@ concurrency:
 env:
   STAGE_SHELL_URL: https://ontos-stage.web-revolution.cz
   STAGE_STOREFRONT_URL: https://ontos-stage-akros.web-revolution.cz
+  STAGE_SHOP_URL: https://ontos-stage-shop.web-revolution.cz
 
 jobs:
   # The units build on GitHub runners, a shard each, in parallel: the Zerops build container holds only two unit
@@ -115,6 +119,7 @@ jobs:
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_APP_SERVICE_ID: ${{ vars.ZEROPS_APP_SERVICE_ID }}
       ZEROPS_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_STOREFRONT_SERVICE_ID }}
+      ZEROPS_SHOP_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_SHOP_STOREFRONT_SERVICE_ID }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -147,7 +152,7 @@ jobs:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: bash app/scripts/zerops/sync-service-secret.sh "$ZEROPS_APP_SERVICE_ID" ONTOS_OWNER_SECRETS_JSON OWNER_SECRETS
 
-      - name: Push the app and the storefront
+      - name: Push the app and the storefronts
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: |
@@ -156,10 +161,14 @@ jobs:
           # The builds overlap, the uploads do not: two uploads at once each run past Zerops' ~30 s upload limit.
           until grep -q '^build and deploy process' "$RUNNER_TEMP/push-app.log" || ! kill -0 "$app" 2>/dev/null; do sleep 1; done
           PUSH_EXCLUDE=app/.zerops-prebuilt.tar.zst bash app/scripts/zerops/push-service.sh "$ZEROPS_STOREFRONT_SERVICE_ID" storefront "$GITHUB_SHA" >"$RUNNER_TEMP/push-storefront.log" 2>&1 & storefront=$!
+          until grep -q '^build and deploy process' "$RUNNER_TEMP/push-storefront.log" || ! kill -0 "$storefront" 2>/dev/null; do sleep 1; done
+          # The pseudonymous demo e-shop runs the same storefront setup; its brand and key are service variables.
+          PUSH_EXCLUDE=app/.zerops-prebuilt.tar.zst bash app/scripts/zerops/push-service.sh "$ZEROPS_SHOP_STOREFRONT_SERVICE_ID" storefront "$GITHUB_SHA" >"$RUNNER_TEMP/push-shop.log" 2>&1 & shop=$!
           status=0
           wait "$app" || status=1
           wait "$storefront" || status=1
-          for setup in app storefront; do
+          wait "$shop" || status=1
+          for setup in app storefront shop; do
             echo "::group::push $setup"
             cat "$RUNNER_TEMP/push-$setup.log"
             echo "::endgroup::"
