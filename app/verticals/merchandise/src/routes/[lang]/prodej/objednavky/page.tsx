@@ -423,6 +423,72 @@ const renderOrderBulkActions = ({
     </>
   );
 
+/** Empty content belongs to the visible table viewport, not the full column width. */
+const renderOrdersEmpty = ({
+  canEditOrders,
+  filtered,
+  load,
+  refilter,
+  setCreateOpen,
+  setSearch,
+  setStatusFilter,
+  state,
+  t,
+  tagFilter,
+}: ReturnType<typeof useOrdersPage>) => {
+  if (state.kind === 'error') {
+    return (
+      <EmptyState
+        action={
+          <Button onClick={load} size="sm" theme="outlined" variant="secondary">
+            {t(key('states.retry'))}
+          </Button>
+        }
+        description={t(key('states.errorDescription'))}
+        title={t(key('states.errorTitle'))}
+      />
+    );
+  }
+  if (state.kind === 'forbidden') {
+    return <EmptyState title={t(key('states.forbiddenTitle'))} />;
+  }
+  if (filtered) {
+    return (
+      <EmptyState
+        action={
+          <Button
+            onClick={() => {
+              setSearch('');
+              setStatusFilter(null);
+              tagFilter.setTagId(null);
+              refilter();
+            }}
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
+            {t(key('states.clearFilters'))}
+          </Button>
+        }
+        title={t(key('states.filteredTitle'))}
+      />
+    );
+  }
+  return (
+    <EmptyState
+      action={
+        canEditOrders ? (
+          <Button onClick={() => setCreateOpen(true)} size="sm" theme="outlined" variant="secondary">
+            {t(key('create.title'))}
+          </Button>
+        ) : undefined
+      }
+      description={t(key('states.firstDescription'))}
+      title={t(key('states.firstTitle'))}
+    />
+  );
+};
+
 const OrdersPageContent = (props: OrdersPageContentProps) => {
   const model = useOrdersPage(props);
   const {
@@ -432,7 +498,6 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
     createOpen,
     detail,
     directory,
-    filtered,
     load,
     orders,
     orderTags,
@@ -525,6 +590,7 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
         {renderOrderBulkActions(model)}
 
         <DataTable
+          className="@container"
           columnPinning={{ end: [], start: ['__select', 'number'] }}
           columns={ordersColumns(t, directory, orderTags.tagsOf)}
           // A failed tag read never shows the unfiltered list as if it matched the tag.
@@ -545,59 +611,7 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
           pageSizeOptions={[50, 100, 200]}
           pagination={pagination}
           paginationProps={paginationProps(t)}
-          renderEmpty={() => {
-            if (state.kind === 'error') {
-              return (
-                <EmptyState
-                  action={
-                    <Button onClick={load} size="sm" theme="outlined" variant="secondary">
-                      {t(key('states.retry'))}
-                    </Button>
-                  }
-                  description={t(key('states.errorDescription'))}
-                  title={t(key('states.errorTitle'))}
-                />
-              );
-            }
-            if (state.kind === 'forbidden') {
-              return <EmptyState title={t(key('states.forbiddenTitle'))} />;
-            }
-            if (filtered) {
-              return (
-                <EmptyState
-                  action={
-                    <Button
-                      onClick={() => {
-                        setSearch('');
-                        setStatusFilter(null);
-                        tagFilter.setTagId(null);
-                        refilter();
-                      }}
-                      size="sm"
-                      theme="outlined"
-                      variant="secondary"
-                    >
-                      {t(key('states.clearFilters'))}
-                    </Button>
-                  }
-                  title={t(key('states.filteredTitle'))}
-                />
-              );
-            }
-            return (
-              <EmptyState
-                action={
-                  canEditOrders ? (
-                    <Button onClick={() => setCreateOpen(true)} size="sm" theme="outlined" variant="secondary">
-                      {t(key('create.title'))}
-                    </Button>
-                  ) : undefined
-                }
-                description={t(key('states.firstDescription'))}
-                title={t(key('states.firstTitle'))}
-              />
-            );
-          }}
+          renderEmpty={() => <div className="sticky start-0 w-[100cqi] max-w-full">{renderOrdersEmpty(model)}</div>}
           rowCount={tagFilter.status === 'error' ? 0 : totalOrders}
           rowSelection={selection}
           size="sm"
