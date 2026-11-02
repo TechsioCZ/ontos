@@ -1,6 +1,7 @@
 // Asset card (S02) in a resizable SidePanel: card, value/event timeline, revisions and depreciation (S03).
-// Every action switches the panel body to its form; the footer carries Zpět + the submit button. Owned by ops-assets.
-import { DetailList, SidePanel, formatMoney, surfaceTileClassName } from '@app/admin-ui';
+// Every action switches the panel body to its form; the footer carries Zpět + the submit button, except for the card
+// edit, which saves itself and shows the inline autosave status there. Owned by ops-assets.
+import { AutosaveStatus, DetailList, SidePanel, formatMoney, surfaceTileClassName } from '@app/admin-ui';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -8,6 +9,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { Effect, Match } from 'effect';
+import type { CommandOutcome } from '../../../../ui/use-agenda.ts';
 import type { TOptions } from 'i18next';
 import { useState } from 'react';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -21,6 +23,9 @@ import type {
   ServiceRecord,
 } from '../../../../../shared/domain/assets.ts';
 import { assetStatusOf, currentServiceRecords, isActiveAsset } from '../../../../../shared/domain/assets.ts';
+import { assetCardDraftOf } from './asset-card-draft.ts';
+import type { AssetCardDraft } from './asset-card-draft.ts';
+import { useAssetCardAutosave } from './asset-card-autosave.ts';
 import {
   ArchiveForm,
   AssetCardForm,
@@ -507,6 +512,8 @@ interface AssetDetailProps {
   readonly onOpenAsset: (asset: Asset) => void;
   /** Runs the command; returns true when it was saved (the page reloads data and toasts). */
   readonly onSubmit: (command: OpsCommand, successKey: string) => Effect.Effect<boolean>;
+  /** The agenda's own runner: the card edit autosaves through it, so a revision conflict reaches the status line. */
+  readonly run: (command: OpsCommand) => Effect.Effect<CommandOutcome>;
   readonly state: AssetsState;
 }
 
@@ -522,11 +529,22 @@ const AssetDetailContent = ({
   onClose,
   onOpenAsset,
   onSubmit,
+  run,
   state,
 }: AssetDetailProps & { readonly asset: Asset }) => {
   const k = useK();
   const [mode, setMode] = useState<DetailMode>({ kind: 'view' });
   const [tab, setTab] = useState('card');
+  // The card draft lives here, so the panel footer can autosave an edit and show its status.
+  const [draft, setDraft] = useState<AssetCardDraft>(() => assetCardDraftOf(asset));
+  const changeDraft = (patch: Partial<AssetCardDraft>) => setDraft((current) => ({ ...current, ...patch }));
+  const autosave = useAssetCardAutosave({ applyStored: setDraft, asset, draft, run });
+  const closePanel = () => {
+    autosave.flush();
+    onClose();
+  };
+  const handleReloadLatest = autosave.reloadLatest;
+  const handleRetry = autosave.retry;
   const active = isActiveAsset(asset);
   const submit = (successKey: string, nextTab?: string) => (command: OpsCommand) => {
     void browserRuntime.runPromise(
@@ -569,7 +587,14 @@ const AssetDetailContent = ({
       />
     )),
     Match.when({ kind: 'edit' }, () => (
-      <AssetCardForm asset={asset} formId={FORM_ID} onSubmit={submit('messages.updated')} state={state} />
+      <AssetCardForm
+        asset={asset}
+        draft={draft}
+        formId={FORM_ID}
+        onChange={changeDraft}
+        onSubmit={submit('messages.updated')}
+        state={state}
+      />
     )),
     Match.when({ kind: 'value' }, () => (
       <ValueChangeForm asset={asset} formId={FORM_ID} onSubmit={submit('messages.valueChanged', 'history')} />
@@ -670,68 +695,86 @@ const AssetDetailContent = ({
     Match.exhaustive,
   );
 
+  /**
+   * The panel footer: the card edit saves itself, so it swaps the submit button for the inline autosave status.
+   */
+  const footerActions = () => {
+    if (mode.kind === 'view') {
+      return (
+        <>
+          <Button onClick={closePanel} theme="outlined" variant="secondary">
+            {k('actions.close')}
+          </Button>
+          {canWrite && !active && asset.archive === undefined && (
+            <Button
+              disabled={busy}
+              onClick={() => {
+                setMode({ kind: 'archive' });
+              }}
+              theme="outlined"
+              variant="danger"
+            >
+              {k(ARCHIVE_LABEL)}
+            </Button>
+          )}
+          {canWrite && asset.archive !== undefined && (
+            <Button
+              disabled={busy}
+              onClick={() => {
+                void browserRuntime.runPromise(
+                  onSubmit({ _tag: 'AssetArchiveRestore', assetId: asset.id }, 'messages.restored'),
+                );
+              }}
+              theme="outlined"
+              variant="secondary"
+            >
+              {k('actions.restoreArchived')}
+            </Button>
+          )}
+          {canWrite && active && (
+            <>
+              <Button onClick={() => setMode({ kind: 'dispose' })} theme="outlined" variant="danger">
+                {k('actions.dispose')}
+              </Button>
+              <Button onClick={() => setMode({ kind: 'edit' })} variant="primary">
+                {k('actions.edit')}
+              </Button>
+            </>
+          )}
+        </>
+      );
+    }
+    if (mode.kind === 'edit') {
+      return (
+        <>
+          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <Button onClick={() => setMode({ kind: 'view' })} theme="outlined" variant="secondary">
+            {k('actions.back')}
+          </Button>
+        </>
+      );
+    }
+    return (
+      <>
+        <Button onClick={() => setMode({ kind: 'view' })} theme="outlined" variant="secondary">
+          {k('actions.back')}
+        </Button>
+        <Button
+          form={FORM_ID}
+          isLoading={busy}
+          loadingText={k('saving')}
+          type="submit"
+          variant={mode.kind === 'dispose' || mode.kind === 'archive' ? 'danger' : 'primary'}
+        >
+          {mode.kind === 'dispose' ? k('actions.confirmDispose') : saveLabel}
+        </Button>
+      </>
+    );
+  };
+
   return (
     <SidePanel
-      actions={
-        mode.kind === 'view' ? (
-          <>
-            <Button onClick={onClose} theme="outlined" variant="secondary">
-              {k('actions.close')}
-            </Button>
-            {canWrite && !active && asset.archive === undefined && (
-              <Button
-                disabled={busy}
-                onClick={() => {
-                  setMode({ kind: 'archive' });
-                }}
-                theme="outlined"
-                variant="danger"
-              >
-                {k(ARCHIVE_LABEL)}
-              </Button>
-            )}
-            {canWrite && asset.archive !== undefined && (
-              <Button
-                disabled={busy}
-                onClick={() => {
-                  void browserRuntime.runPromise(
-                    onSubmit({ _tag: 'AssetArchiveRestore', assetId: asset.id }, 'messages.restored'),
-                  );
-                }}
-                theme="outlined"
-                variant="secondary"
-              >
-                {k('actions.restoreArchived')}
-              </Button>
-            )}
-            {canWrite && active && (
-              <>
-                <Button onClick={() => setMode({ kind: 'dispose' })} theme="outlined" variant="danger">
-                  {k('actions.dispose')}
-                </Button>
-                <Button onClick={() => setMode({ kind: 'edit' })} variant="primary">
-                  {k('actions.edit')}
-                </Button>
-              </>
-            )}
-          </>
-        ) : (
-          <>
-            <Button onClick={() => setMode({ kind: 'view' })} theme="outlined" variant="secondary">
-              {k('actions.back')}
-            </Button>
-            <Button
-              form={FORM_ID}
-              isLoading={busy}
-              loadingText={k('saving')}
-              type="submit"
-              variant={mode.kind === 'dispose' || mode.kind === 'archive' ? 'danger' : 'primary'}
-            >
-              {mode.kind === 'dispose' ? k('actions.confirmDispose') : saveLabel}
-            </Button>
-          </>
-        )
-      }
+      actions={footerActions()}
       className="lg:min-w-[62rem]"
       description={
         <span className="flex flex-wrap items-center gap-100">
@@ -744,7 +787,7 @@ const AssetDetailContent = ({
       }
       onOpenChange={(next) => {
         if (!next) {
-          onClose();
+          closePanel();
         }
       }}
       open
