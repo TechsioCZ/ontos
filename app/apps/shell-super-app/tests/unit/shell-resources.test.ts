@@ -974,20 +974,22 @@ it.effect("the search gateway posts to the provider's own BFF route on the appro
   }),
 );
 
-it.effect('the search gateway reports a refused provider or a foreign search key as unavailable', () =>
+it.effect('the search gateway reads an owner refusal as no readable results and an outage as unavailable', () =>
   Effect.gen(function* searchGatewayFailsClosed() {
     const request = yield* providerRequest;
     let calls = 0;
-    const gateway = makeModuleSearchProviderGateway(() =>
-      Effect.sync(() => {
-        calls += 1;
-        return Response.json({ _tag: 'UnitSearchProviderForbiddenProblem' }, { status: 403 });
-      }),
-    );
-    const refused = yield* Effect.flip(gateway.search(request));
-    expect(Schema.is(ShellProviderUnavailableError)(refused)).toBe(true);
-    const foreign = yield* Effect.flip(gateway.search({ ...request, searchKey: 'party.registry.parties' }));
+    const respondWith = (status: number) =>
+      makeModuleSearchProviderGateway(() =>
+        Effect.sync(() => {
+          calls += 1;
+          return Response.json({ _tag: 'UnitSearchProviderProblem' }, { status });
+        }),
+      );
+    expect(yield* respondWith(403).search(request)).toEqual([]);
+    const outage = yield* Effect.flip(respondWith(503).search(request));
+    expect(Schema.is(ShellProviderUnavailableError)(outage)).toBe(true);
+    const foreign = yield* Effect.flip(respondWith(200).search({ ...request, searchKey: 'party.registry.parties' }));
     expect(Schema.is(ShellProviderUnavailableError)(foreign)).toBe(true);
-    expect(calls).toBe(1);
+    expect(calls).toBe(2);
   }),
 );

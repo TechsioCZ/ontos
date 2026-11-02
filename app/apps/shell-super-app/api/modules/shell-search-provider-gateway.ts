@@ -63,6 +63,11 @@ export const makeModuleSearchProviderGateway = (transport: ModuleReleaseTranspor
         input.module,
       );
       const body = yield* Effect.tryPromise(response.text.bind(response)).pipe(Effect.timeout('10 seconds'));
+      // The Shell already admitted the module; an owner refusing the rows means nothing here is readable by this person,
+      // which is an empty result, not an outage.
+      if (response.status === 403) {
+        return [];
+      }
       if (!response.ok) {
         return yield* new ShellProviderUnavailableError({ cause: { body, status: response.status } });
       }
