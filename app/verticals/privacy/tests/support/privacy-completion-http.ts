@@ -1,3 +1,4 @@
+import { HttpApi } from 'effect/http-api';
 import { createHash } from 'node:crypto';
 import nodePath from 'node:path';
 import { build } from 'esbuild';
@@ -5,6 +6,13 @@ import { build } from 'esbuild';
 import {
   ActionAuthorizationPreflightDatabaseLive,
   ContextAccessLive,
+  extractVerticalRuntimeSafeDescriptors,
+  canonicalOntosPublicApiKey,
+  OntosActionContractSchema,
+  OntosApiContractSchema,
+  OntosOperationContractSchema,
+  OntosOutboxSubscriptionContractSchema,
+  OntosModuleRequirementsSchema,
   CorePersistenceLive,
   DatabaseConfigLive,
   GatewayAssertionRedemptionService,
@@ -42,6 +50,8 @@ import { Hex } from 'effect/encoding';
 import { ChildProcess } from 'effect/process';
 
 import { makePrivacyApiRuntime } from '../../api/index.ts';
+import { privacyRegistration } from '../../vertical.registration.ts';
+import { privacyManifest } from '../../vertical.manifest.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { OwnerExecutionAuthority } from '../../src/actions/privacy-owner-execution-authority.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-repository.ts';
@@ -488,9 +498,36 @@ const serve = Effect.scoped(
   }),
 );
 
-const describe = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(ultramodernApiMarker).pipe(
-  Effect.flatMap((line) => Effect.sync(() => process.stdout.write(`${line}\n`))),
-);
+const ownerRuntime = extractVerticalRuntimeSafeDescriptors(privacyRegistration);
+const descriptionSchema = Schema.Struct({
+  marker: Schema.Unknown,
+  runtime: Schema.Struct({
+    actions: Schema.Array(OntosActionContractSchema),
+    api: Schema.Array(OntosApiContractSchema),
+    operationContracts: Schema.Array(OntosOperationContractSchema),
+    outboxSubscriptions: Schema.Array(OntosOutboxSubscriptionContractSchema),
+    requirements: Schema.optionalKey(OntosModuleRequirementsSchema),
+  }),
+});
+const describe = Schema.encodeEffect(Schema.fromJsonString(descriptionSchema))({
+  marker: ultramodernApiMarker,
+  runtime: {
+    ...ownerRuntime,
+    api: Object.entries(privacyManifest.publicSurface.api).map(([key, api]) => {
+      if (!HttpApi.isHttpApi(api)) {
+        throw new Error('The actual owner public API declaration is not a genuine HttpApi');
+      }
+      return {
+        key: canonicalOntosPublicApiKey(ownerRuntime.moduleId, key),
+        operationKeys: Object.values(api.groups).flatMap((group) =>
+          Object.values(group.endpoints).map((endpoint) =>
+            group.topLevel ? endpoint.identifier : `${group.identifier}.${endpoint.identifier}`,
+          ),
+        ),
+      };
+    }),
+  },
+}).pipe(Effect.flatMap((line) => Effect.sync(() => process.stdout.write(`${line}\n`))));
 runMain(
   Effect.scoped(
     Effect.gen(function* completionProcessEntry() {

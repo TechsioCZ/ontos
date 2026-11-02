@@ -32,6 +32,7 @@ import { makeAuthenticationService } from '../../api/auth/service.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { createShellRuntimeContract } from '../../../../scripts/generate-ontos-shell-runtime-contract.mts';
 import {
   loadPrivacyCompletionResponseSocket,
   PrivacyCompletionReadySchema,
@@ -318,6 +319,7 @@ const describe = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
   protocolVersion: 2,
   responseSocketEnvironment: privacyCompletionResponseEnvironment,
   responseTransport: privacyCompletionResponseTransport,
+  runtimeContract: createShellRuntimeContract(ultramodernDeliveryUnit.buildMarker),
 }).pipe(Effect.flatMap((line) => Effect.sync(() => process.stdout.write(`${line}\n`))));
 NodeRuntime.runMain(
   Effect.scoped(

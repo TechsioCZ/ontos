@@ -1,3 +1,4 @@
+import { HttpApi } from 'effect/http-api';
 // TEST process driver; the registration, gateway and Core matching/ACK are real.
 import {
   ApplicationCompositionAuthorityError,
@@ -6,6 +7,12 @@ import {
   CorePersistenceLive,
   DatabaseConfigLive,
   extractOutboxWorkerSubscriptions,
+  extractVerticalRuntimeSafeDescriptors,
+  canonicalOntosPublicApiKey,
+  OntosActionContractSchema,
+  OntosApiContractSchema,
+  OntosOperationContractSchema,
+  OntosModuleRequirementsSchema,
   OntosOutboxSubscriptionContractSchema,
   OutboxRepositoryLive,
   OutboxRuntime,
@@ -35,7 +42,7 @@ import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
-import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
+import { partyRegistryBackendRegistration, partyRegistryRuntimeManifest } from '../../vertical.runtime-declaration.ts';
 import { outboxWorkerHandlerLayers } from '../../src/worker-host/layer.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
 import {
@@ -45,6 +52,30 @@ import {
 } from '../../src/workers/privacy-measure-owner-gateway.ts';
 
 const subscriptions = extractOutboxWorkerSubscriptions(outboxWorkers);
+const runtimeDescriptionSchema = Schema.Struct({
+  actions: Schema.Array(OntosActionContractSchema),
+  api: Schema.Array(OntosApiContractSchema),
+  operationContracts: Schema.Array(OntosOperationContractSchema),
+  outboxSubscriptions: Schema.Array(OntosOutboxSubscriptionContractSchema),
+  requirements: Schema.optionalKey(OntosModuleRequirementsSchema),
+});
+const ownerRuntime = extractVerticalRuntimeSafeDescriptors(partyRegistryBackendRegistration);
+const runtimeDescription = {
+  ...ownerRuntime,
+  api: Object.entries(partyRegistryRuntimeManifest.publicSurface.api).map(([key, api]) => {
+    if (!HttpApi.isHttpApi(api)) {
+      throw new Error('The actual owner public API declaration is not a genuine HttpApi');
+    }
+    return {
+      key: canonicalOntosPublicApiKey(ownerRuntime.moduleId, key),
+      operationKeys: Object.values(api.groups).flatMap((group) =>
+        Object.values(group.endpoints).map((endpoint) =>
+          group.topLevel ? endpoint.identifier : `${group.identifier}.${endpoint.identifier}`,
+        ),
+      ),
+    };
+  }),
+};
 const workerMessageSchema = Schema.Union([
   Schema.Struct({ type: Schema.Literal('barrier'), stage: Schema.Literals(['after-execute', 'after-report']) }),
   Schema.Struct({
@@ -81,6 +112,7 @@ const workerMessageSchema = Schema.Union([
       version: Schema.String,
     }),
     subscriptions: Schema.Array(OntosOutboxSubscriptionContractSchema),
+    runtime: runtimeDescriptionSchema,
   }),
 ]);
 const writeWorkerMessage = Effect.fn('PrivacyCompletionWorker.writeMessage')(
@@ -391,9 +423,11 @@ const run = Effect.scoped(
 );
 
 const program = process.argv.includes('--describe')
-  ? Schema.decodeUnknownEffect(workerMessageSchema)({ marker: ultramodernApiMarker, subscriptions }).pipe(
-      Effect.flatMap(writeWorkerMessage),
-    )
+  ? Schema.decodeUnknownEffect(workerMessageSchema)({
+      marker: ultramodernApiMarker,
+      subscriptions,
+      runtime: runtimeDescription,
+    }).pipe(Effect.flatMap(writeWorkerMessage))
   : run.pipe(
       Effect.matchEffect({
         onFailure: (cause) =>

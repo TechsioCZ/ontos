@@ -6,6 +6,10 @@ import {
   ActiveApplicationCompositionSnapshotSchema,
   canonicalizeApplicationComposition,
   OntosModuleDeploymentContractSchema,
+  OntosActionContractSchema,
+  OntosApiContractSchema,
+  OntosOperationContractSchema,
+  OntosModuleRequirementsSchema,
   OntosOutboxSubscriptionContractSchema,
   OntosShellRuntimeContractSchema,
   TrustedPrincipalContextSchema,
@@ -115,6 +119,7 @@ const shellDescriptionSchema = Schema.Struct({
   protocolVersion: Schema.Literal(2),
   responseSocketEnvironment: Schema.Literal('ONTOS_1258_TEST_RESPONSE_SOCKET'),
   responseTransport: Schema.Literal('private-unix-socket'),
+  runtimeContract: OntosShellRuntimeContractSchema,
 });
 const shellReadySchema = Schema.Struct({
   ...readySchema.fields,
@@ -126,8 +131,17 @@ const shellReadySchema = Schema.Struct({
   responseTransport: Schema.Literal('private-unix-socket'),
   tenantId: TrustedPrincipalContextSchema.fields.tenantId,
 });
+const runtimeDescriptionSchema = Schema.Struct({
+  actions: Schema.Array(OntosActionContractSchema),
+  api: Schema.Array(OntosApiContractSchema),
+  operationContracts: Schema.Array(OntosOperationContractSchema),
+  outboxSubscriptions: Schema.Array(OntosOutboxSubscriptionContractSchema),
+  requirements: Schema.optionalKey(OntosModuleRequirementsSchema),
+});
+const privacyDescriptionSchema = Schema.Struct({ marker: markerSchema, runtime: runtimeDescriptionSchema });
 const partyDescriptionSchema = Schema.Struct({
   marker: markerSchema,
+  runtime: runtimeDescriptionSchema,
   subscriptions: Schema.Array(OntosOutboxSubscriptionContractSchema),
 });
 const cycleSchema = Schema.Struct({
@@ -722,6 +736,8 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
           '--platform=node',
           '--format=esm',
           '--packages=external',
+          // These test drivers start explicitly; imported generation CLIs must remain inactive.
+          '--define:import.meta.main=false',
           `--outfile=${entry.output}`,
         ],
         {},
@@ -730,9 +746,10 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
     const shellDescription = yield* describe(paths.shell).pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(shellDescriptionSchema))),
     );
-    const privacyMarker = yield* describe(paths.privacy).pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(markerSchema))),
+    const privacyDescription = yield* describe(paths.privacy).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(privacyDescriptionSchema))),
     );
+    const privacyMarker = privacyDescription.marker;
     const party = yield* describe(paths.worker).pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(partyDescriptionSchema))),
     );
@@ -743,14 +760,29 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
         const isParty = value.deployment.appId === party.marker.appId;
         const marker = isParty ? party.marker : privacyMarker;
         const moduleId = isParty ? partyModuleKey : privacyModuleKey;
-        const contract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(
-          makeModuleContractFixture({
-            appId: marker.appId,
-            buildMarker: marker.buildMarker,
-            moduleId,
-            outboxSubscriptions: isParty ? party.subscriptions : [],
-          }),
-        );
+        const ownerRuntime = isParty ? party.runtime : privacyDescription.runtime;
+        const fixture = makeModuleContractFixture({
+          appId: marker.appId,
+          buildMarker: marker.buildMarker,
+          moduleId,
+          outboxSubscriptions: ownerRuntime.outboxSubscriptions,
+        });
+        const manifest = {
+          ...fixture.manifest,
+          publicSurface: {
+            ...fixture.manifest.publicSurface,
+            actions: ownerRuntime.actions,
+            api: ownerRuntime.api,
+            operationContracts: ownerRuntime.operationContracts,
+          },
+        };
+        if (ownerRuntime.requirements !== undefined) {
+          Object.assign(manifest, { requirements: ownerRuntime.requirements });
+        }
+        const contract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)({
+          ...fixture,
+          manifest,
+        });
         const document = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
           contract,
         );
@@ -767,18 +799,17 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
       }),
       { concurrency: 2 },
     );
-    const shellDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))({
-      contributionAbi: base.composition.shell.contributionAbi,
-      coreCapabilities: base.composition.shell.coreCapabilities,
-      deployment: shellDescription.marker,
-      schemaVersion: '2',
-    });
+    const shellDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+      shellDescription.runtimeContract,
+    );
     const composition = {
       ...base.composition,
       modules,
       shell: {
         ...base.composition.shell,
-        deployment: shellDescription.marker,
+        contributionAbi: shellDescription.runtimeContract.contributionAbi,
+        coreCapabilities: shellDescription.runtimeContract.coreCapabilities,
+        deployment: shellDescription.runtimeContract.deployment,
         runtimeContract: { ...base.composition.shell.runtimeContract, sha256: digest(shellDocument) },
       },
     };
