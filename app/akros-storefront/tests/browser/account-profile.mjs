@@ -10,10 +10,12 @@ assert.ok(
   email && password,
   "Supply a real verified AKROS_CUSTOMER_EMAIL and AKROS_CUSTOMER_PASSWORD",
 );
-const { openTab } = await import(
-  process.env.AKROS_SHARED_BROWSER_CLIENT ??
-    "/Volumes/TraceDecayKingston/techsio-demo/shared-browser/client.mjs"
+// Shared browser client module (exports `openTab`); machine-specific, so it is configured, never hard-coded.
+assert.ok(
+  process.env.AKROS_SHARED_BROWSER_CLIENT,
+  "Set AKROS_SHARED_BROWSER_CLIENT to the shared browser client module (exports openTab)",
 );
+const { openTab } = await import(process.env.AKROS_SHARED_BROWSER_CLIENT);
 const tab = await openTab({ viewport: { width: 1440, height: 1000 } });
 try {
   const { page, context } = tab;

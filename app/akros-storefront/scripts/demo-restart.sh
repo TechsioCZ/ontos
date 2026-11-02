@@ -3,7 +3,7 @@
 set -euo pipefail
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(dirname "$APP")"
-export TMPDIR="${TMPDIR:-/Volumes/DevWork/agent-scratch/ontos-demo}"
+export TMPDIR="${TMPDIR:-$ROOT/.scratch/tmp}"
 export NEXT_TELEMETRY_DISABLED=1
 mkdir -p "$TMPDIR" "$ROOT/.scratch/demo-logs" "$ROOT/.scratch/demo-pids" "$ROOT/.scratch/demo-build"
 cd "$APP"

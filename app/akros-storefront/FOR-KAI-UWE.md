@@ -397,7 +397,7 @@ All 21 commits of `origin/feat/akros` (97b937f77..f1b74b02a, 2026-10-20 → 10-2
 OntOS storefront (not a git merge: your `mock-storefront` layer no longer exists here). Commits:
 `ba2077152` (variant weights index + your plans), `37a8f61ca` (the frontend: catalog/search, product detail + modal +
 favourites, cart weight + Smart Address, account reorder/content, your tokens/styles), `5116b291f` (sk/en chrome for
-auth, contacts, account and checkout steps). Kept: live OntOS data, markets `/cs /sk /en`, cs/sk/en dictionaries (all your
+auth, contacts, account and checkout steps), `6093322e5` (sk/en editorial pages, server messages, last leftovers). Kept: live OntOS data, markets `/cs /sk /en`, cs/sk/en dictionaries (all your
 new copy is in `src/i18n/*`, Czech word for word), the OntOS cart quote/order, `STOREFRONT_BRAND` and the `sf-` prefix
 (your `akros-*` classes/tokens/data attributes are `sf-*`; CSS partial file names and storage keys kept).
 How it was merged: a prefix-normalised 3-way merge per file (one-off operator script, not kept in the repo).
@@ -442,5 +442,17 @@ How it was merged: a prefix-normalised 3-way merge per file (one-off operator sc
   catalog; the warning is development-only. Follow-up: add the hunk to `app/patches/@techsio__ui-kit@0.57.0.patch`.
 - Your browser scripts are copied (`/cs` URLs) and listed in `package.json` (`pnpm run test:browser`); several still assume
   mock flows (header notes). `content.mjs` form part would create real OntOS inquiries on stage.
-- Still Czech on `/sk` `/en`: server error sentences from `src/app/api/ontos/*` and the quote, editorial/legal pages and
-  brand data, the IČ/DIČ order note sent to OntOS.
+- `/sk` and `/en` carry no Czech except OntOS product data, branch names/addresses (brand data) and the IČ/DIČ order
+  note sent to OntOS (`6093322e5`): editorial/legal pages per language for both brands (`src/content/pages.ts`,
+  `src/content/editorial.ts`, brand copy), server messages of the routes and the quote from the market dictionary
+  (`requestDictionary()` in `src/ontos/http.ts`, header `x-akros-market-locale`; no header = Czech), price-unavailable
+  reasons as codes worded at render time (`priceUnavailableText`), cart toasts and errors localized.
+
+### Stage check (2026-11-02, release `67799adb3`)
+
+Isolated headless Chrome on https://ontos-stage-akros.web-revolution.cz and https://ontos-stage-shop.web-revolution.cz,
+`/cs` `/sk` `/en`, side by side with your Vercel build: home, category, product (20 and 386 variants, 1.0–3.1 s),
+search incl. exact SKU, variant modal, contacts, login, favourites; add to cart → two OntOS quotes HTTP 200, cart shows
+the OntOS-verified line and „Celková hmotnost“. No console errors. Remaining Czech on `/sk` `/en` was product data and
+AKROS branch addresses; the ŠroubShop contact disclaimer was translated afterwards. On the shop host the only „akros“ in
+HTML are product photo URLs on www.akros.cz (OntOS product data, moved to Core Media by the pseudonymisation operator).

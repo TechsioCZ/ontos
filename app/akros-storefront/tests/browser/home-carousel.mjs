@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { homeCarouselSlides } from "../../src/content/home-carousel.ts";
 
 // Snap points, scrolling and pointer drags require a layout engine, not jsdom geometry shims.
-const { openTab } = await import(
-  process.env.AKROS_SHARED_BROWSER_CLIENT ??
-    "/Volumes/TraceDecayKingston/techsio-demo/shared-browser/client.mjs"
+// Shared browser client module (exports `openTab`); machine-specific, so it is configured, never hard-coded.
+assert.ok(
+  process.env.AKROS_SHARED_BROWSER_CLIENT,
+  "Set AKROS_SHARED_BROWSER_CLIENT to the shared browser client module (exports openTab)",
 );
+const { openTab } = await import(process.env.AKROS_SHARED_BROWSER_CLIENT);
 const tab = await openTab({
   viewport: { width: 1440, height: 1000 },
   reducedMotion: "reduce",
