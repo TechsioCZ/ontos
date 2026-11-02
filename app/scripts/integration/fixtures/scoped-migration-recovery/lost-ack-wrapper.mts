@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { NodeServices } from '@effect/platform-node';
-import { Config, Console, Effect, Exit, FileSystem, Layer, Schema } from 'effect';
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
+import { Config, Console, Effect, FileSystem, Layer, Schema } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 
@@ -88,8 +88,7 @@ const program = Effect.gen(function* observeOrCommitThenLoseAcknowledgement() {
 });
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  const exit = await Effect.runPromiseExit(
+  NodeRuntime.runMain(
     program.pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
   );
-  process.exitCode = Exit.match(exit, { onFailure: () => 1, onSuccess: () => 0 });
 }
