@@ -388,22 +388,39 @@ ONTOS_AGENT_SETUP_PASSWORD=… node scripts/demo/pseudonymize-akros-catalog.mts 
 --checkpoint .scratch/pseudonym-catalog`, repeat until the summary prints, then `--mode apply` and `--mode verify`
 with `--approved <fingerprint>` (storefront on http://localhost:3070). Only the stage and local demo are accepted.
 
+**Operator rights.** Catalog edits in the demo company need a tenant administrator (merchandise command guard)
+with the company's merchandise rights. `pseudonymize-akros-catalog-grants.mts` (reviewed plan → apply → verify)
+adds exactly that for the tenant superadmin `obchod@demo.ontos`: `demo.merchandise.read_all` + `write_all` in the
+demo company and only the `demo.merchandise.apply-command` Action. Verify proves the grant, that the other
+companies' merchandise rights are unchanged and that nothing opens in the akros-playground tenant. Side effect: the
+superadmin can also edit the ŠroubShop catalog in the staff app (as in every other company).
+
 ### Stage runbook — plan first; apply only after lane T cutover and parent approval
 
-Every run stops starting new records after 200 s, so one `run-remote.sh` call (300 s limit) never times out; repeat
-a mode until it prints `complete=true`. Never run two batches at once. The checkpoint lives in the app container
-(`/var/www/ontos-pseudonym-catalog-v2`), which **every deploy replaces**: after each batch copy it back, and before a
-batch restore it when the container is new (after a deploy, re-pin the SSH host key first). A deploy during a batch
-kills it without output; restore and rerun, the plan resumes from the last backup. macOS tar must not add
-AppleDouble (`._*`) files to the archive (flags below).
+Operator-local inputs (set them in your shell; nothing here depends on a particular checkout):
+
+| Variable                       | Meaning                                                                                                                                                                                                                                                                |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ONTOS_STAGE_REMOTE_RUNNER`    | Remote runner: pipes a committed `scripts/demo/*.mts` script into the stage app container over the Zerops VPN SSH host `app` (pinned known_hosts, `StrictHostKeyChecking=yes`), with the operator credentials on stdin, never argv/env. Each call is limited to 300 s. |
+| `ONTOS_STAGE_KNOWN_HOSTS`      | Pinned known_hosts file for `app`. Every deploy replaces the container and its host key: re-pin it after each deploy (from the key the authenticated Zerops control plane reports), never with trust-on-first-use.                                                     |
+| `ONTOS_CATALOG_CHECKPOINT_DIR` | Owner-only local copy of the operator checkpoint (mode 700).                                                                                                                                                                                                           |
+
+Every run stops starting new records after 200 s, so one remote call never times out; repeat a mode until it prints
+`complete=true`. Never run two batches at once. The checkpoint lives in the app container
+(`/var/www/ontos-pseudonym-catalog-v2`), which **every deploy replaces**: back it up after each batch and restore it
+before a batch when the container is new. A deploy during a batch kills it without output; re-pin, restore and
+rerun, the operator resumes from the last backup. macOS tar must not add AppleDouble (`._*`) files to the archive
+(flags below).
 
 ```sh
-REMOTE=/Users/satan/workspace/techsio/agent-scratch/eshop-markets/run-remote.sh
-KNOWN=/Users/satan/workspace/techsio/agent-scratch/eshop-markets/known_hosts.app
-LOCAL=/Users/satan/workspace/techsio/agent-scratch/akros-pseudonym/p-b/checkpoint   # owner-only copy
-SSH="ssh -o UserKnownHostsFile=$KNOWN -o StrictHostKeyChecking=yes -o BatchMode=yes app"
+REMOTE=$ONTOS_STAGE_REMOTE_RUNNER
+LOCAL=$ONTOS_CATALOG_CHECKPOINT_DIR
+SSH="ssh -o UserKnownHostsFile=$ONTOS_STAGE_KNOWN_HOSTS -o StrictHostKeyChecking=yes -o BatchMode=yes app"
 restore() { [ ! -d "$LOCAL" ] || $SSH test -d /var/www/ontos-pseudonym-catalog-v2 || COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C "$LOCAL" -cf - . | $SSH 'mkdir -m 700 -p /var/www/ontos-pseudonym-catalog-v2 && tar -C /var/www/ontos-pseudonym-catalog-v2 -xf -'; }
 backup() { mkdir -m 700 -p "$LOCAL" && $SSH tar -C /var/www/ontos-pseudonym-catalog-v2 -cf - . | tar --no-xattrs -C "$LOCAL" -xf -; }
+# 0. Operator rights (once): plan, review, apply the printed fingerprint (the plan file lives in the container).
+"$REMOTE" scripts/demo/pseudonymize-akros-catalog-grants.mts --mode plan --plan /var/www/catalog-grants-plan.json
+"$REMOTE" scripts/demo/pseudonymize-akros-catalog-grants.mts --mode apply --plan /var/www/catalog-grants-plan.json --reviewed-plan-sha256 <fingerprint>
 # 1. Plan (read-only), repeat until complete=true and the summary JSON is printed:
 restore; "$REMOTE" scripts/demo/pseudonymize-akros-catalog.mts --mode plan; backup
 # Review "$LOCAL/summary.json"; only the lane P parent authorizes apply.

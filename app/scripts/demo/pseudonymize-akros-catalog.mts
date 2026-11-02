@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Governed, fixed-demo-scope catalog migration: plan (frozen snapshot + photo bytes) → apply → verify.
 // No SQL, no generated source edits; plan and verify never dispatch writes. Every run stops starting new records
-// after TIME_BUDGET_MS so one `run-remote.sh` call stays below its 300 s limit; rerun to continue.
+// after TIME_BUDGET_MS so one remote operator call stays below its 300 s limit; rerun to continue.
 import { NodeServices } from '@effect/platform-node';
 import { detectImageMimeType } from '@app/core-runtime/media/image-contract';
 import { Clock, Config, Console, Effect, Exit, FileSystem, Layer, Option, Schema } from 'effect';
