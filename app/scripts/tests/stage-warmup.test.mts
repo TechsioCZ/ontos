@@ -1,4 +1,4 @@
-import { Effect, Ref } from 'effect';
+import { Effect, Exit, Ref } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { demoTenantId } from '../demo/fixture-ids.mts';
@@ -7,10 +7,22 @@ import { warmupAccounts } from '../demo/warmup-accounts.mts';
 import { stageWarmupRelationships } from '../demo/seed-stage-warmup.mts';
 import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
 import { warmupRequestAllowed, WARMUP_BUDGET_MS } from '../ops/stage-warmup.mts';
+import { checkStageVisibleText } from '../ops/stage-visible-text.mts';
 import { createOwnerWarmState } from '../zerops/owner-warm-state.mts';
 import { observeFirstSpiceDbRpc } from '../../packages/core-runtime/src/permissions/spicedb-client-observability.ts';
 
 const taskOwner = 'work-tasks';
+
+it.effect('fails stage verification for rendered identifiers while allowing human business codes', () =>
+  Effect.gen(function* visibleTextGuard() {
+    const rejected = yield* Effect.exit(
+      checkStageVisibleText('/cs/prodej/zakaznici', 'Subjekt fbdd110f-e514-53e9-9832-20f6e4cb1f9d'),
+    );
+    expect(Exit.isFailure(rejected)).toBe(true);
+    yield* checkStageVisibleText('/cs/prodej/objednavky', 'OBJ-2026-0009 · IČO 25741136 · SKU AKROS_001 · R301');
+  }),
+);
+
 it('seeds one clearly named external reader per demo company, without inherited administrators or write grants', () => {
   expect(warmupAccounts).toHaveLength(5);
   expect(new Set(warmupAccounts.map(({ legalEntityId }) => legalEntityId)).size).toBe(5);

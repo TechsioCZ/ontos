@@ -6,6 +6,7 @@ import { chromium } from 'playwright-core';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 
 import { warmupAccounts } from '../demo/warmup-accounts.mts';
+import { checkStageVisibleText, renderedPageText, StageVisibleIdentifierError } from './stage-visible-text.mts';
 
 export class StageWarmupError extends Schema.TaggedError<StageWarmupError>()('StageWarmupError', {
   phase: Schema.String,
@@ -152,9 +153,12 @@ const visitDestination = (page: Page, destination: string) =>
         await page.waitForFunction(() => performance.getEntriesByName('ontos:visible-reads-complete').length > 0);
       }
       await page.locator('main').waitFor({ state: 'visible' });
-      return destination;
+      return { destination, text: await page.evaluate(renderedPageText) };
     },
-  });
+  }).pipe(
+    Effect.tap(({ destination: path, text }) => checkStageVisibleText(path, text)),
+    Effect.map(({ destination: path }) => path),
+  );
 
 const warmPersona = Effect.fn('Stage.warmPersona')(function* warmPersona(
   browser: Browser,
@@ -195,7 +199,7 @@ export const stageWarmup = Effect.gen(function* warmStage() {
         ({ email }) =>
           warmPersona(browser, email, password).pipe(
             Effect.scoped,
-            Effect.catch((error) =>
+            Effect.catchTag('StageWarmupError', (error) =>
               Console.warn(
                 `::warning title=Stage warm-up::${error.phase} did not finish; native verification still runs`,
               ),
@@ -207,11 +211,13 @@ export const stageWarmup = Effect.gen(function* warmStage() {
     Effect.timeout('85 seconds'),
     Effect.scoped,
     Effect.catch((error) =>
-      Console.warn(
-        Schema.is(StageWarmupError)(error)
-          ? `::warning title=Stage warm-up::${error.phase} unavailable; native verification still runs`
-          : '::warning title=Stage warm-up::Warm-up budget exhausted; native verification still runs',
-      ),
+      Schema.is(StageVisibleIdentifierError)(error)
+        ? Effect.fail(error)
+        : Console.warn(
+            Schema.is(StageWarmupError)(error)
+              ? `::warning title=Stage warm-up::${error.phase} unavailable; native verification still runs`
+              : '::warning title=Stage warm-up::Warm-up budget exhausted; native verification still runs',
+          ),
     ),
   );
   const durationMs = (yield* Clock.currentTimeMillis) - started;
