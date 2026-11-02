@@ -29,6 +29,8 @@ export const VisitCorrectionSchema = Schema.Struct({
 export type VisitCorrection = typeof VisitCorrectionSchema.Type;
 
 export const VisitSchema = Schema.Struct({
+  /** Retained audit evidence, excluded from active timelines and contact statistics. */
+  archive: Schema.optionalKey(Schema.Struct({ at: IsoTimeSchema, by: PrincipalIdSchema, reason: ShortTextSchema })),
   /** Principal who wrote the record. */
   authorPrincipalId: PrincipalIdSchema,
   clientId: EntityIdSchema,
@@ -85,7 +87,7 @@ export const initialVisitsSlice: VisitsSlice = { items: [], plan: [] };
 
 /** Read projection: only visits / plan items of visible clients. */
 export const projectVisitsSlice = (slice: VisitsSlice, visible: ReadonlySet<string>): VisitsSlice => ({
-  items: slice.items.filter((visit) => visible.has(visit.clientId)),
+  items: slice.items.filter((visit) => visit.archive === undefined && visible.has(visit.clientId)),
   plan: slice.plan.filter((item) => visible.has(item.clientId)),
 });
 
@@ -93,7 +95,7 @@ const byOccurredDesc = (left: Visit, right: Visit) => DateTime.Order(right.occur
 
 /** Visits of one client, newest first. */
 export const visitsOfClient = (visits: readonly Visit[], clientId: string): readonly Visit[] =>
-  visits.filter((visit) => visit.clientId === clientId).toSorted(byOccurredDesc);
+  visits.filter((visit) => visit.archive === undefined && visit.clientId === clientId).toSorted(byOccurredDesc);
 
 /** Latest recorded contact with the client (any kind), or undefined. Fact for the client card (C02/C06). */
 export const lastVisitOf = (visits: readonly Visit[], clientId: string): Visit | undefined =>

@@ -19,7 +19,16 @@ import type { CrmState } from '../domain/state.ts';
 import { VisitKindSchema } from '../domain/visits.ts';
 import type { PlanItem, Visit, VisitCorrection } from '../domain/visits.ts';
 
-import { conflict, denied, definedOnly, invalid, newId, notFound, requireWritableClient } from './context.ts';
+import {
+  conflict,
+  denied,
+  definedOnly,
+  invalid,
+  newId,
+  notFound,
+  requireWritableClient,
+  requireWriteAll,
+} from './context.ts';
 import type { CommandContext, Reducer } from './context.ts';
 
 /** Calendar day YYYY-MM-DD (plan due dates are days, not instants). */
@@ -70,6 +79,11 @@ export const visitsCommandSchemas = [
     planItemId: EntityIdSchema,
     /** Optionally record the contact that fulfilled the plan item in the same step. */
     visit: Schema.optionalKey(Schema.Struct(VisitInputFields)),
+  }),
+  // Append: AiOperationSchema intentionally references the existing PlanContact tuple position.
+  Schema.TaggedStruct('ArchiveVisit', {
+    reason: ShortTextSchema,
+    visitId: EntityIdSchema,
   }),
 ] as const;
 export const VisitsCommandSchema = Schema.Union(visitsCommandSchemas);
@@ -231,6 +245,9 @@ export const applyVisitsCommand: Reducer<VisitsCommand> = (state, command, conte
           return yield* notFound('Záznam návštěvy neexistuje nebo k němu nemáte přístup');
         }
         yield* requireWritableClient(state, context, visit.clientId);
+        if (visit.archive !== undefined) {
+          return yield* conflict('Archivovaný záznam návštěvy nelze upravit');
+        }
         if (value.occurredAt !== undefined) {
           yield* requirePast(context, value.occurredAt);
         }
@@ -289,6 +306,37 @@ export const applyVisitsCommand: Reducer<VisitsCommand> = (state, command, conte
             visits: {
               ...state.visits,
               items: state.visits.items.map((entry) => (entry.id === visit.id ? corrected : entry)),
+            },
+          },
+        };
+      }),
+    ),
+    Match.tag(
+      'ArchiveVisit',
+      Effect.fn('Crm.archiveVisit')(function* archiveVisit(
+        value: Extract<VisitsCommand, { readonly _tag: 'ArchiveVisit' }>,
+      ) {
+        yield* requireWriteAll(context);
+        const visit = state.visits.items.find((entry) => entry.id === value.visitId);
+        if (visit === undefined) {
+          return yield* notFound('Záznam návštěvy neexistuje nebo k němu nemáte přístup');
+        }
+        yield* requireWritableClient(state, context, visit.clientId);
+        if (visit.archive !== undefined) {
+          return { entityIds: [visit.id], state };
+        }
+        const archived: Visit = {
+          ...visit,
+          archive: { at: context.now, by: context.viewer.principalId, reason: value.reason },
+          updatedAt: context.now,
+        };
+        return {
+          entityIds: [visit.id],
+          state: {
+            ...state,
+            visits: {
+              ...state.visits,
+              items: state.visits.items.map((entry) => (entry.id === visit.id ? archived : entry)),
             },
           },
         };

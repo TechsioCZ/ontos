@@ -27,6 +27,7 @@ export const crmMcpContribution = defineOntosMcpContribution({
     AiProposeChanges: 'hidden',
     AiRevertBatch: 'hidden',
     ArchiveClient: { title: { cs: 'Archivovat klienta', en: 'Archive a client' } },
+    ArchiveVisit: 'hidden',
     AssignClient: { title: { cs: 'Přiřadit klienta obchodníkovi', en: 'Assign a client to a salesperson' } },
     CompletePlanItem: { title: { cs: 'Dokončit plánovaný kontakt', en: 'Complete a planned contact' } },
     CorrectVisit: { title: { cs: 'Opravit návštěvu', en: 'Correct a visit' } },
