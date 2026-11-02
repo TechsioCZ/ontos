@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { useDictionary } from "@/ontos/market-context";
+import { marketRequestHeaders } from "@/ontos/market-locale";
 
 const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
@@ -24,7 +25,7 @@ export function VerificationResendForm() {
     try {
       const response = await fetch("/api/ontos/account", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...marketRequestHeaders() },
         body: JSON.stringify({ operation: "resend-verification", email }),
       });
       const result = (await response.json()) as { message?: string; outcome?: string };

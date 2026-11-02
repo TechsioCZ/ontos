@@ -10,6 +10,7 @@ import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import StoreLink from "@/components/store-link";
 import { VerificationResendForm } from "@/components/verification-resend-form";
 import type { AccountSubmissionResponse } from "@/ontos/account";
+import { marketRequestHeaders } from "@/ontos/market-locale";
 
 const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
@@ -39,7 +40,7 @@ async function submitAccount(
   const fields = new FormData(form);
   const response = await fetch("/api/ontos/account", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...marketRequestHeaders() },
     body: JSON.stringify({
       ...Object.fromEntries(fields),
       operation,
