@@ -217,6 +217,7 @@ const ACTION_FILE = 'verticals/inventory-stock/src/actions/reserve.action.ts';
 
 const WORKER_FILE = 'verticals/inventory-stock/src/workers/project.worker.ts';
 
+const SHARED_CLIENT_RUNTIME_SOURCE_PATH = 'packages/shared-contracts/src/client-runtime.ts';
 const PARTY_API_CLIENT_EXPORT = './api/client';
 
 const PARTY_API_CLIENT_SPECIFIER = '@app/party-registry/api/client';
@@ -4926,7 +4927,11 @@ const makeActualPartyClientFixture = Effect.fn(function* actualPartyClientFixtur
   for (const [file, source] of sources) {
     yield* write(root, file, source);
   }
-  for (const file of [SHARED_CONTRACTS_PACKAGE_JSON_PATH, SHARED_PROBLEM_DETAILS_SOURCE_PATH]) {
+  for (const file of [
+    SHARED_CONTRACTS_PACKAGE_JSON_PATH,
+    SHARED_PROBLEM_DETAILS_SOURCE_PATH,
+    SHARED_CLIENT_RUNTIME_SOURCE_PATH,
+  ]) {
     yield* write(root, file, yield* Effect.promise(() => readFile(path.join(workspace, file), 'utf-8')));
   }
   yield* write(
@@ -5074,7 +5079,7 @@ const makeActualQuantityClientFixture = Effect.fn(function* actualQuantityClient
   for (const file of [
     SHARED_CONTRACTS_PACKAGE_JSON_PATH,
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
-    'packages/shared-contracts/src/client-runtime.ts',
+    SHARED_CLIENT_RUNTIME_SOURCE_PATH,
   ]) {
     yield* write(root, file, yield* Effect.promise(() => readFile(path.join(workspace, file), 'utf-8')));
   }
@@ -5135,7 +5140,7 @@ const makeActualMarketClientFixture = Effect.fn(function* actualMarketClientFixt
   for (const file of [
     SHARED_CONTRACTS_PACKAGE_JSON_PATH,
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
-    'packages/shared-contracts/src/client-runtime.ts',
+    SHARED_CLIENT_RUNTIME_SOURCE_PATH,
   ]) {
     yield* write(root, file, yield* Effect.promise(() => readFile(path.join(workspace, file), 'utf-8')));
   }

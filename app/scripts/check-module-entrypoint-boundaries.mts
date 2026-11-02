@@ -1723,6 +1723,37 @@ const isPublishedClientApiArgument = (
   );
 };
 
+const isCanonicalGovernedWrapperCall = (
+  state: BoundaryCheckState,
+  source: SourceModule,
+  call: Extract<SchemaNode, { readonly type: 'CallExpression' }>,
+  consumerFile: string,
+): boolean => {
+  const [argument] = call.arguments;
+  if (
+    argument?.type !== 'Identifier' ||
+    state.graph.isUnboundReference(source, argument) ||
+    state.graph.resolveReference(source, argument)?.kind === 'declaration'
+  ) {
+    return false;
+  }
+  const canonical = ownershipDeclarationTarget(state, consumerFile, '@app/shared-contracts/client-runtime');
+  if (canonical === undefined || nodePath.relative(state.root, source.path).replaceAll('\\', '/') !== canonical) {
+    return false;
+  }
+  const wrapper = state.graph.resolve(source, 'makeGovernedEffectBffClient', 'export');
+  if (wrapper?.kind !== 'declaration' || wrapper.module.path !== source.path || !isFunction(wrapper.expression)) {
+    return false;
+  }
+  let contained = false;
+  traverseFast(wrapper.expression, (node) => {
+    if (node === call) {
+      contained = true;
+    }
+  });
+  return contained;
+};
+
 const hasNativeClientApi = (
   state: BoundaryCheckState,
   binding: { readonly expression: SchemaNode; readonly module: SourceModule },
@@ -1764,7 +1795,7 @@ const hasNativeClientApi = (
       const [argument] = node.arguments;
       if (isPublishedClientApiArgument(state, entry.module, argument, api)) {
         native = true;
-      } else {
+      } else if (!isCanonicalGovernedWrapperCall(state, entry.module, node, file)) {
         foreignApi = true;
       }
     });
