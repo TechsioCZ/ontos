@@ -901,7 +901,8 @@ const orderCapabilities = (
   invoiceCount: number,
 ) => {
   const persisted = order.status !== 'draft' && order.status !== 'cancelled';
-  const invoiceDraft = persisted && supplier !== undefined && invoiceCount === 0 && finance.status === 'ready';
+  const invoiceDraft =
+    persisted && order.currency === 'CZK' && supplier !== undefined && invoiceCount === 0 && finance.status === 'ready';
   return {
     cancellable:
       (order.status === 'draft' || order.status === 'approved' || order.status === 'ordered') &&

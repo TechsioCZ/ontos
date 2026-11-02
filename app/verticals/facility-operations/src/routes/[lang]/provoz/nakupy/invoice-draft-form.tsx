@@ -6,14 +6,16 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
-import { Effect, Random } from 'effect';
+import { Effect, Option, Random } from 'effect';
 import { useRef, useState } from 'react';
 import type { PurchaseOrder, Supplier } from '../../../../../shared/domain/purchasing.ts';
 import { applyFinanceCommand, readFinance } from '../../../../api/finance-reads.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { formatAmount, todayIso } from './purchasing-model.ts';
+import { purchaseInvoiceCommandOf } from './purchase-invoice-command.ts';
 
 const vatRates = [0, 10, 12, 21] as const;
+const saveFailure = 'Návrh se nepodařilo uložit. Obnovte detail objednávky a ověřte, zda již návrh existuje.';
 type VatRate = (typeof vatRates)[number];
 interface SubmitInvoiceDraftInput {
   readonly dueDate: IsoDate;
@@ -44,6 +46,11 @@ const submitInvoiceDraft = Effect.fn('FacilityOperations.Purchasing.submitInvoic
       setError('Vyberte sazbu DPH a zkontrolujte datum vystavení a splatnost.');
       return;
     }
+    const command = purchaseInvoiceCommandOf({ dueDate, issueDate, lines, order, supplier, totalMinor });
+    if (Option.isNone(command)) {
+      setError(saveFailure);
+      return;
+    }
     submitting.current = true;
     setBusy(true);
     setError(undefined);
@@ -56,17 +63,7 @@ const submitInvoiceDraft = Effect.fn('FacilityOperations.Purchasing.submitInvoic
       }
       yield* applyFinanceCommand(
         {
-          command: {
-            _tag: 'RecordIncomingInvoice',
-            documentNumber: `NÁVRH-${order.number}`,
-            dueDate,
-            issueDate,
-            lines,
-            note: `Návrh z nákupní objednávky ${order.number}. Číslo a sazbu DPH ověří účetní podle dokladu dodavatele.`,
-            sourceOrder: { id: order.id, number: order.number },
-            supplierName: supplier.name,
-            totalMinor,
-          },
+          command: command.value,
           expectedRevision: snapshot.revision,
         },
         'facility-operations.invoice-draft.create',
@@ -86,7 +83,7 @@ const submitInvoiceDraft = Effect.fn('FacilityOperations.Purchasing.submitInvoic
     } else if (result.status === 'forbidden') {
       setError('Návrh faktury může připravit jen účetní nebo vedení. Vaše role má ve Financích jen čtení.');
     } else {
-      setError('Návrh se nepodařilo uložit. Obnovte detail objednávky a ověřte, zda již návrh existuje.');
+      setError(saveFailure);
     }
   },
 );
