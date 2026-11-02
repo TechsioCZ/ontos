@@ -125,7 +125,7 @@ const TextFactField = ({
 }) => {
   const autosave = useAutosaveDraft<string, never>({
     equals: (left, right) => left.trim() === right.trim(),
-    isValid: (value) => value.trim() !== '' && value.trim() !== original.trim() && basisFilled,
+    isValid: (value) => value.trim() !== '' && basisFilled,
     runtime: browserRuntime,
     save: (value) => save(value.trim()),
     server: original,
@@ -160,7 +160,7 @@ const ContactFactFields = ({
   const { t } = useModernI18n();
   const autosave = useAutosaveDraft<CustomerContactFields, never>({
     equals: sameContactFields,
-    isValid: (value) => basisFilled && !sameContactFields(value, server) && !contactFieldsInvalid(type, value),
+    isValid: (value) => basisFilled && !contactFieldsInvalid(type, value),
     runtime: browserRuntime,
     save: (value) => save(value),
     server,

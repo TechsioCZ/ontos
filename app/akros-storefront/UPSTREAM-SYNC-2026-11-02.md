@@ -1,10 +1,12 @@
 # Aktualizace integrační větve AKROS, 2. 11. 2026
 
 Aktualizace navazuje na `demo/sales-crm-updated` na `a1af9c3ac8289db4d533671b7dabcdb047383218`
-a připojuje 333 commitů z `demo/sales-crm` do `cfbe79a6ce3ddb6edcd8fae313e6372816d8785f`.
+a připojuje 334 commitů z `demo/sales-crm` do `c81272bb8ca7a774760c5aef0f56844d6f193415`.
 První merge do `0a29546ea795f9a20ec4f44d67f390262ac6c7ef` je commit `8e0588377`.
 Poslední dva upstream commity upravují autosave identity zákazníka v interním CRM a vysvětlení
 prázdného důvodu změny. Nemění storefront ani níže uvedené zákaznické API mezery.
+Při závěrečné kontrole přibyla ještě dvouřádková oprava návratu rozepsaného údaje do původního
+stavu při reloadu (`c81272bb8`); také se připojila bez konfliktů.
 Referencí opraveného FE zůstává `feat/akros` na `f1b74b02aa9ca978300a88189721c7813ef02e06`
 a [jeho Vercel deploy](https://akros-l1k8fzuvl-kaiuweczes-projects.vercel.app/).
 
@@ -48,6 +50,7 @@ Kontrola zdrojových kontraktů není důkazem úspěšného živého průchodu.
 - Poslední dva upstream commity se připojily bez konfliktů.
   `mise exec -- pnpm --filter @app/party-registry exec rstest run --project unit customer-fact-fields`:
   všechny tři přidané testy zákaznických kontaktních údajů prošly.
+- Pre-commit druhého merge také prošel (Shell UI kandidáti, formát a lint).
 - Pre-commit odhalil false positive pravidla `no-service-constructor-imports` pro aktuální
   Shell API. Model nyní rozpoznává neměnné importované literální klíče stejného vlastníka a
   složený transport `Layer.mergeAll`; nadále odmítá dynamické klíče, cizí vlastníky a úniky
