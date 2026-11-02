@@ -46,6 +46,7 @@ import type {
 import { fullOrderTotals, lineGrossMinor, nextOrderNumber, orderTotals } from '../../shared/domain/order-totals.ts';
 import {
   AKROS_LEGAL_ENTITY_ID,
+  isAkrosCompany,
   staffCommandAllowed,
   staffMarketCommandAllowed,
 } from '../../shared/actions/command-guard.ts';
@@ -1799,7 +1800,7 @@ const recordCapabilities = (
 > => {
   const staff = !storefront;
   const isAdministrator = storefront ? false : grants.administrator;
-  const canManageCatalog = canWrite && (legalEntityId !== AKROS_LEGAL_ENTITY_ID || isAdministrator);
+  const canManageCatalog = canWrite && staffCommandAllowed(legalEntityId, isAdministrator, 'UpdateProduct');
   return {
     canCleanupDemo: staff && canWrite && isAdministrator,
     canEditOrders: staff && canManageCatalog,
@@ -2401,7 +2402,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
             productCount: page.products.length,
             stockValueMinor: 0,
           };
-      const storefrontOrigin = legalEntityId === AKROS_LEGAL_ENTITY_ID ? AKROS_STOREFRONT_ORIGIN : undefined;
+      const storefrontOrigin = isAkrosCompany(legalEntityId) ? AKROS_STOREFRONT_ORIGIN : undefined;
       const response: Mutable<RecordsResponse> = {
         ...catalogMetadata,
         ...marketMetadata,

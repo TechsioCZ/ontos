@@ -11,7 +11,7 @@ import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import type { RecordsRequest } from '../../shared/apis/records.ts';
 import { merchandiseRecordsGrants, persistenceService } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import { AKROS_LEGAL_ENTITY_ID, storefrontReadRequest } from '../../shared/actions/command-guard.ts';
+import { isAkrosCompany, storefrontReadRequest } from '../../shared/actions/command-guard.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
@@ -36,7 +36,7 @@ const moduleKey = 'demo.merchandise';
 /** The AKROS service key reads only the public storefront catalog. */
 const akrosServiceKeyGuard = (input: RecordsRequest, scope: OperationalScope) =>
   scope.authMethod === 'api_key' &&
-  scope.legalEntityId === AKROS_LEGAL_ENTITY_ID &&
+  isAkrosCompany(scope.legalEntityId) &&
   (input.view?.storefront !== true ||
     input.view.orderClientRequestId !== undefined ||
     input.view.orderStatus !== undefined)
