@@ -13,7 +13,7 @@
 }
 
 /* Calm admin controls, shared by the shell and federated pages; keep validation and focus tokens intact. */
-:root.light[data-theme='akros'] {
+:root.light[data-theme] {
   --border-width-form-control: 1px;
   --color-form-control-bg: var(--color-base);
   --color-form-control-border: var(--color-border-primary);
@@ -26,7 +26,7 @@
  * Calm surfaces: one outlined level. Tables keep light row dividers but lose their outer box and grey fill, tabs and
  * accordions sit on the page colour, dialogs and side panels are white, and every divider is one light hairline.
  */
-:root.light[data-theme='akros'] {
+:root.light[data-theme] {
   --border-width-data-table: 0px;
   --color-table-bg: var(--color-base);
   --color-table-header-bg: transparent;

@@ -505,7 +505,7 @@
       "orderWorkflow": "Průběh objednávky",
       "removalReason": "Důvod odstranění (audit)",
       "changeHistory": "Historie změn",
-      "resetAkrosDemo": "Obnovit ukázková data AKROS?",
+      "resetAkrosDemo": "Obnovit ukázková data e-shopu?",
       "auditReason": "Důvod (zapíše se do auditu)",
       "shipping": "Doprava",
       "shippingMethod": "Způsob dopravy",

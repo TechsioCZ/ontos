@@ -53,6 +53,7 @@ import {
 import { resetToAkrosBaseline } from './akros-demo-reset.ts';
 import { applyMerchandiseAiCommand, isMerchandiseAiCommand } from './ai-changes.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
+import { storefrontBrandOf } from '../../shared/domain/storefront-brand.ts';
 import { assignCategory, updateCategoryCommand, withContentHistory } from './catalog-content.ts';
 import {
   categoryTrailsOf,
@@ -144,9 +145,11 @@ const nextOrderNumberOf = (state: MerchandiseState) =>
     state.lastOrderNumber === undefined ? state.orders : [...state.orders, { number: state.lastOrderNumber }],
   );
 
-/** An imported source catalog (AKROS) labels personal pickup as AKROS. */
+/** An imported source catalog names personal pickup after the company's own e-shop brand. */
 const isSourceCatalog = (state: MerchandiseState) =>
   state.sourceCatalog ?? state.products.some((product) => product.sourceGroupId !== undefined);
+const pickupBrandOf = (state: MerchandiseState, input: MerchandiseCommandInput) =>
+  isSourceCatalog(state) ? input.storefrontBrand : undefined;
 
 /** Result of applying one command to the state. */
 export interface MerchandiseChange {
@@ -165,6 +168,8 @@ export interface MerchandiseCommandInput {
   readonly now: DateTime.Utc;
   /** Server-minted identity for commands that create a record (invocation id). */
   readonly resourceId: string;
+  /** The company's e-shop brand (`storefrontBrandOf`), set by persistence; names personal pickup. */
+  readonly storefrontBrand?: string;
   /** Set only by persistence after Core Media already applied the gallery change. */
   readonly trustedGallery?: boolean;
 }
@@ -1059,8 +1064,9 @@ const storefrontShippingOf = (
   value: CommandOf<'PlaceStorefrontOrder'>,
   state: MerchandiseState,
   market: OrderMarket | undefined,
+  input: MerchandiseCommandInput,
 ) => {
-  const method = shippingMethodFor(value.shippingMethod, isSourceCatalog(state));
+  const method = shippingMethodFor(value.shippingMethod, pickupBrandOf(state, input));
   return {
     label: method.label,
     method: value.shippingMethod,
@@ -1135,7 +1141,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     }),
     { concurrency: 1, discard: true },
   );
-  const shipping = storefrontShippingOf(value, state, market);
+  const shipping = storefrontShippingOf(value, state, market, input);
   const shippingIssue = shippingIssueOf(value, shipping.priceMinor, market);
   if (shippingIssue !== undefined) {
     issues.push(shippingIssue);
@@ -1388,7 +1394,7 @@ const editedOrderDetails = (
   const history: OrderHistoryEntry[] = [];
   const reason = value.reason === undefined || value.reason === '' ? {} : { reason: value.reason };
   if (value.shipping !== undefined) {
-    const method = shippingMethodFor(value.shipping.method, isSourceCatalog(state));
+    const method = shippingMethodFor(value.shipping.method, pickupBrandOf(state, input));
     const shipping = {
       label: method.label,
       method: value.shipping.method,
@@ -2059,11 +2065,15 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
               command.lines.map((line) => line.productId),
             ).pipe(Effect.mapError(unavailable))
           : undefined;
-      const change = yield* evolveMerchandiseState(
-        working.state,
-        command,
-        market === undefined ? { actor, now, resourceId } : { actor, market, now, resourceId },
-      );
+      const commandInput: Mutable<MerchandiseCommandInput> = { actor, now, resourceId };
+      if (market !== undefined) {
+        commandInput.market = market;
+      }
+      const storefrontBrand = storefrontBrandOf(legalEntityId);
+      if (storefrontBrand !== undefined) {
+        commandInput.storefrontBrand = storefrontBrand;
+      }
+      const change = yield* evolveMerchandiseState(working.state, command, commandInput);
       const revision = yield* persist(working, change.state, now);
       return change.storefrontOrder === undefined
         ? { entityIds: [...change.entityIds], revision }

@@ -20,7 +20,7 @@ interface ResetDemoDialogProps {
 }
 
 /**
- * AKROS administrators only. Replaces the company's catalog, categories, stock and orders with the predictable demo
+ * Administrators of the e-shop demo company only. Replaces the company's catalog, categories, stock and orders with the predictable demo
  * baseline (six sample orders). The server scopes the write to the signed-in company; nothing else changes.
  */
 export const ResetDemoDialog = ({ onDismiss, onReset, open, revision }: ResetDemoDialogProps) => {
@@ -58,7 +58,7 @@ export const ResetDemoDialog = ({ onDismiss, onReset, open, revision }: ResetDem
             setBusy(false);
             setTyped('');
             setReason(DEFAULT_REASON);
-            onReset('Ukázková data AKROS jsou obnovená do výchozího stavu.');
+            onReset('Ukázková data e-shopu jsou obnovená do výchozího stavu.');
           },
         }),
       ),
@@ -85,7 +85,7 @@ export const ResetDemoDialog = ({ onDismiss, onReset, open, revision }: ResetDem
       }
       closeLabel={dialogCloseLabel}
       customTrigger
-      description="Katalog, kategorie, skladové zásoby a objednávky AKROS se vrátí do výchozího stavu ukázky se šesti vzorovými objednávkami. Pozdější úpravy produktů, pohyby skladu a testovací objednávky se odstraní. Ostatní firmy ani odeslané e-maily se nezmění. Akci nelze vrátit."
+      description="Katalog, kategorie, skladové zásoby a objednávky e-shopu se vrátí do výchozího stavu ukázky se šesti vzorovými objednávkami. Pozdější úpravy produktů, pohyby skladu a testovací objednávky se odstraní. Ostatní firmy ani odeslané e-maily se nezmění. Akci nelze vrátit."
       onOpenChange={({ open: next }) => {
         if (!next && !busy) {
           close();

@@ -226,6 +226,8 @@ interface OrderEditFormProps {
   readonly onCancel: () => void;
   readonly onSaved: (message: string) => void;
   readonly order: Order;
+  /** The e-shop brand that names personal pickup of this company's orders (`shippingMethodFor`). */
+  readonly pickupBrand?: string | undefined;
   /** Full records of the products on the order's lines. */
   readonly products: readonly ProductRecord[];
   readonly revision: number;
@@ -236,7 +238,15 @@ interface OrderEditFormProps {
  * totals and writes a before/after history entry per changed area. The price list never changes; when the order
  * already took goods from stock, quantity changes write the matching ORDER movements.
  */
-const useOrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revision }: OrderEditFormProps) => {
+const useOrderEditForm = ({
+  movesStock,
+  onCancel,
+  onSaved,
+  order,
+  pickupBrand,
+  products,
+  revision,
+}: OrderEditFormProps) => {
   const { t } = useModernI18n();
   const [draft, setDraft] = useState<Draft>(() => draftOf(order));
   const sequence = useRef(0);
@@ -398,11 +408,10 @@ const useOrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revi
     clearPick();
   };
 
-  const akros = products.some((product) => product.sourceGroupId !== undefined);
   const methodItems = shippingOptions.map((option) =>
     selectItem(
       option.method,
-      `${shippingMethodFor(option.method, akros).label} · ${formatMoney(inOrderCurrency(order, option.priceMinor), orderCurrency(order))}`,
+      `${shippingMethodFor(option.method, pickupBrand).label} · ${formatMoney(inOrderCurrency(order, option.priceMinor), orderCurrency(order))}`,
     ),
   );
 

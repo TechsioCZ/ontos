@@ -505,7 +505,7 @@
       "orderWorkflow": "Order progress",
       "removalReason": "Reason for removal (audit)",
       "changeHistory": "Change history",
-      "resetAkrosDemo": "Reset AKROS demo data?",
+      "resetAkrosDemo": "Reset the e-shop demo data?",
       "auditReason": "Reason (recorded in the audit log)",
       "shipping": "Shipping",
       "shippingMethod": "Shipping method",

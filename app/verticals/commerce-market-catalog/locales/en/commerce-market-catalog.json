@@ -61,7 +61,7 @@
     },
     "form": {
       "code": "Market code",
-      "codeHelp": "Capital letters, digits and hyphens, for example AKROS-SK.",
+      "codeHelp": "Capital letters, digits and hyphens, for example ESHOP-SK.",
       "codeError": "Enter a code of 2 to 64 characters: capital letters, digits, hyphens.",
       "purpose": "Market name",
       "purposeError": "Enter the market name (at most 500 characters).",

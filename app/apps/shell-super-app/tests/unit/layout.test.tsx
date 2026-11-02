@@ -15,6 +15,7 @@ import { AppIdSchema } from '../../shared/api';
 import { ultramodernUiMarker } from '../../shared/ultramodern-build.ts';
 import Layout from '../../src/routes/layout';
 import { AuthenticatedDashboardLayout, buildShellNavigation } from '../../src/routes/shell-frame';
+import { staffThemeFor } from '../../src/routes/staff-brand';
 
 type HtmlAttributes = NonNullable<HelmetProps['htmlAttributes']>;
 
@@ -213,10 +214,43 @@ afterEach(() => {
   tenantValueChangeHandlers.length = 0;
 });
 
-test('selects the light Akros ui-kit theme on the server-rendered html element', () => {
+test('selects the neutral light ui-kit theme on the server-rendered html element', () => {
   render(<Layout />);
 
-  expect(helmetHtmlAttributes.at(-1)).toEqual({ className: 'light', 'data-theme': 'akros' });
+  expect(helmetHtmlAttributes.at(-1)).toEqual({ className: 'light', 'data-theme': 'business' });
+});
+
+const akrosPlaygroundTenantId = 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9';
+const demoTenantId = '70000000-0000-4000-8000-000000000020';
+const demoShopCompanyId = '71000000-0000-4000-8000-000000000024';
+
+test('wears the AKROS theme only in the AKROS tenant and the neutral theme in every other workspace', () => {
+  expect(staffThemeFor(akrosPlaygroundTenantId)).toBe('akros');
+  expect(staffThemeFor(akrosPlaygroundTenantId, 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7')).toBe('akros');
+  expect(staffThemeFor(demoTenantId, demoShopCompanyId)).toBe('business');
+  expect(staffThemeFor(demoTenantId)).toBe('business');
+  expect(staffThemeFor('tenant-without-brand')).toBe('business');
+});
+
+test.each([
+  { tenantId: akrosPlaygroundTenantId, theme: 'akros' },
+  { tenantId: demoTenantId, theme: 'business' },
+])('sets the $theme theme on the html element of the $tenantId dashboard', ({ tenantId, theme }) => {
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      currentLegalEntityId={demoShopCompanyId}
+      currentTenantId={tenantId}
+      identity={identity}
+      logoutPending={false}
+      navigation={navigation}
+      onLogout={noopLogout}
+    >
+      <section>Page-specific content</section>
+    </AuthenticatedDashboardLayout>,
+  );
+
+  expect(helmetHtmlAttributes).toContainEqual({ 'data-theme': theme });
 });
 
 test('leaves route content free of global user-perceivable UI', () => {

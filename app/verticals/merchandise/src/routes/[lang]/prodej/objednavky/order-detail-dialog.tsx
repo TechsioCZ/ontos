@@ -20,7 +20,7 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { removeDemoOrder } from './orders-records.ts';
 import type { OrderDetailState } from './orders-records.ts';
 import { useState } from 'react';
-import type { Order } from '../../../../../shared/apis/records.ts';
+import type { Order, ProductRecord } from '../../../../../shared/apis/records.ts';
 import { orderCurrency } from '../../../../../shared/domain/merchandise-model.ts';
 import type { OrderStatus } from '../../../../../shared/domain/merchandise-model.ts';
 import { lineGrossMinor } from '../../../../../shared/domain/order-totals.ts';
@@ -40,6 +40,8 @@ import {
 import { actionLabelKey, transitionsFrom } from './orders-model.ts';
 
 interface OrderDetailDialogProps {
+  /** The company's e-shop brand (`storefrontBrandOf`); names e-shop orders and personal pickup. */
+  readonly brand?: string | undefined;
   readonly busy: boolean;
   readonly canCleanupDemo?: boolean;
   readonly canEditOrders?: boolean;
@@ -72,13 +74,13 @@ const workflowColor = (active: boolean, done: boolean) => {
 
 const orderSourceValue = (
   storefront: boolean,
-  akros: boolean,
+  brand: string | undefined,
   opportunityId: string | undefined,
   opportunityHref: string,
   t: ReturnType<typeof useModernI18n>['t'],
 ) => {
   if (storefront) {
-    return akros ? 'E-shop AKROS (DEMO)' : 'E-shop Kavárna Doma (DEMO)';
+    return brand === undefined ? 'E-shop (DEMO)' : `E-shop ${brand} (DEMO)`;
   }
   return opportunityId === undefined ? (
     t('merchandise.pages.orders.source.manual')
@@ -304,18 +306,24 @@ const orderDetailAffordances = (
   };
 };
 
+/** Only an imported source catalog names its pickup point after the e-shop brand (as `shippingMethodFor` stores it). */
+const pickupBrandOf = (products: readonly ProductRecord[], brand: string | undefined) =>
+  products.some((product) => product.sourceGroupId !== undefined) ? brand : undefined;
+
 const renderOrderFields = ({
-  akros,
+  brand,
   customers,
   opportunityHref,
   order,
+  pickupBrand,
   storefront,
   t,
 }: {
-  readonly akros: boolean;
+  readonly brand: string | undefined;
   readonly customers: CustomerDirectory;
   readonly opportunityHref: string;
   readonly order: Order;
+  readonly pickupBrand: string | undefined;
   readonly storefront: boolean;
   readonly t: ReturnType<typeof useModernI18n>['t'];
 }) => (
@@ -348,7 +356,8 @@ const renderOrderFields = ({
         : [
             {
               label: 'Doprava',
-              value: `${akros ? order.shipping.label.replace('Kavárna Doma, Brno', 'AKROS') : order.shipping.label} · ${formatMoney(order.shipping.priceMinor, orderCurrency(order))}`,
+              // Seeded pickup orders of an imported catalog name the seed's pickup point; show the company's own.
+              value: `${pickupBrand === undefined ? order.shipping.label : order.shipping.label.replace('Kavárna Doma, Brno', pickupBrand)} · ${formatMoney(order.shipping.priceMinor, orderCurrency(order))}`,
             },
           ]),
       ...(order.market === undefined
@@ -370,7 +379,7 @@ const renderOrderFields = ({
       ...(order.note === undefined || order.note === '' ? [] : [{ label: 'Poznámka', value: order.note }]),
       {
         label: t('merchandise.pages.orders.detail.source'),
-        value: orderSourceValue(storefront, akros, order.opportunityId, opportunityHref, t),
+        value: orderSourceValue(storefront, brand, order.opportunityId, opportunityHref, t),
       },
       {
         label: t('merchandise.pages.orders.detail.createdAt'),
@@ -386,6 +395,7 @@ const renderOrderFields = ({
 
 /** One order: workflow, customer, delivery, lines, totals and audited history; editable until the hand-over. */
 export const OrderDetailDialog = ({
+  brand,
   busy,
   canCleanupDemo = false,
   canWrite,
@@ -431,7 +441,7 @@ export const OrderDetailDialog = ({
   }
   const { movesStock: orderMovesStock, order, products } = detail;
   const editing = editingId === order.id;
-  const akros = products.some((product) => product.sourceGroupId !== undefined);
+  const pickupBrand = pickupBrandOf(products, brand);
   const { cancel, forward, showCleanup, showCustomerConversion, showEdit, storefront } = orderDetailAffordances(
     order,
     customers,
@@ -517,6 +527,7 @@ export const OrderDetailDialog = ({
               onEdited(message);
             }}
             order={order}
+            pickupBrand={pickupBrand}
             products={products}
             revision={revision}
           />
@@ -578,7 +589,7 @@ export const OrderDetailDialog = ({
             />
           )}
           <WorkflowSteps status={order.status} />
-          {renderOrderFields({ akros, customers, opportunityHref, order, storefront, t })}
+          {renderOrderFields({ brand, customers, opportunityHref, order, pickupBrand, storefront, t })}
           <SectionCard flush title={t('merchandise.pages.orders.detail.lines')}>
             <Table size="sm" variant="line">
               <Table.Header>

@@ -40,19 +40,26 @@ export const historyKindLabels = {
   STATUS: 'Změna stavu',
 } as const satisfies Readonly<Record<OrderHistoryKind, string>>;
 
+const eshopAdministrator = 'Správce e-shopu';
+const fulfilment = 'Expedice';
+
 /** Known demo principals, so the history names people instead of opaque ids. */
 const knownPrincipals = new Map<string, string>(
   Object.entries({
-    '1aaf0c53-beaf-50b6-819e-fa0c055f5b26': 'Správce e-shopu AKROS',
+    '140ed05d-e8c1-5b56-a0b0-9328a9370586': fulfilment,
+    '1aaf0c53-beaf-50b6-819e-fa0c055f5b26': eshopAdministrator,
     '2bdc200d-ad86-5101-b48f-a52339718354': 'Obchodník',
     '3952547a-564f-5468-9038-8dce11185c44': 'Skladník',
     '3f488baf-7be5-5d9d-994d-186eb91d2f3f': 'AI asistent',
     '493dafec-c9b1-5a84-89cb-bee630de3c34': 'Vedoucí obchodu',
     '4f94471b-1d15-5aa9-a836-c87e0f8a449d': 'Účetní',
+    '52f863a1-c09c-5758-af37-74db4ee9c69f': eshopAdministrator,
     '63bb4d05-3edf-59dd-89c8-4a1ffc761154': 'Expedice (expedice@kavarna.demo)',
     '98068f06-a5d7-59eb-860e-0f8fcf5a3888': 'E-shop (storefront)',
-    'a36f17f1-aafb-529b-b05e-835b255f6a27': 'Expedice AKROS',
+    'a36f17f1-aafb-529b-b05e-835b255f6a27': fulfilment,
+    'c272619c-19a2-5cf8-8860-9614446e02d1': fulfilment,
     'cdfa4353-77ab-5b46-9dc9-b1119ae0d5a9': 'Správce e-shopu (eshop@kavarna.demo)',
+    'd347e2d5-1d78-51b5-a0d9-2bb313afe250': eshopAdministrator,
   }),
 );
 

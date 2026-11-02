@@ -61,7 +61,7 @@
     },
     "form": {
       "code": "Kód trhu",
-      "codeHelp": "Velká písmena, číslice a pomlčky, například AKROS-SK.",
+      "codeHelp": "Velká písmena, číslice a pomlčky, například ESHOP-SK.",
       "codeError": "Zadejte kód o 2 až 64 znacích: velká písmena, číslice, pomlčky.",
       "purpose": "Název trhu",
       "purposeError": "Zadejte název trhu (nejvýše 500 znaků).",

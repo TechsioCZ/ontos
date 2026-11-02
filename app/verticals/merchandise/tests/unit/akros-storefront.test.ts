@@ -174,10 +174,11 @@ it.effect('AKROS pickup retains company identity when editing shipping and persi
           id: placed.state.orders[0].id,
           shipping: { method: 'OSOBNI_ODBER', priceMinor: 1000 },
         }),
-        { actor, now: DateTime.makeUnsafe(at), resourceId: 'shipping-edit' },
+        // Persistence supplies the company's e-shop brand; only an imported source catalog names pickup with it.
+        { actor, now: DateTime.makeUnsafe(at), resourceId: 'shipping-edit', storefrontBrand: 'AKROS' },
       );
       const [order] = edited.state.orders;
-      const company = akros ? 'AKROS' : 'Osobní odběr';
+      const company = akros ? 'Osobní odběr – AKROS' : 'Osobní odběr';
       expect(order.shipping?.label).toContain(company);
       expect(order.history?.at(-1)?.after).toContain(company);
       if (akros) {

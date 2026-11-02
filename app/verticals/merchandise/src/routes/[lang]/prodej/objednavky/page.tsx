@@ -24,6 +24,7 @@ import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { useState } from 'react';
 import type { Order } from '../../../../../shared/apis/records.ts';
 import type { OrderStatus } from '../../../../../shared/domain/merchandise-model.ts';
+import { storefrontBrandOf } from '../../../../../shared/domain/storefront-brand.ts';
 import csResource from '../../../../../locales/cs/merchandise.json';
 import enResource from '../../../../../locales/en/merchandise.json';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -614,6 +615,7 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
         />
 
         <OrderDetailDialog
+          brand={storefrontBrandOf(props.legalEntityId)}
           busy={busy}
           canCleanupDemo={ready?.records.canCleanupDemo === true}
           canEditOrders={ready?.records.canEditOrders ?? canWrite}

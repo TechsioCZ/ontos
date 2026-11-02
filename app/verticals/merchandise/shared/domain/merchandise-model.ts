@@ -324,10 +324,13 @@ export const shippingMethods = {
   ZASILKOVNA: { grossPriceMinor: 7900, label: 'Zásilkovna – výdejní místo' },
 } satisfies Readonly<Record<ShippingMethod, { readonly grossPriceMinor: number; readonly label: string }>>;
 
-/** Keep pickup identity consistent across storefront placement, staff editing and audit snapshots. */
-export const shippingMethodFor = (method: ShippingMethod, akros = false) =>
-  method === 'OSOBNI_ODBER' && akros
-    ? { ...shippingMethods[method], label: 'Osobní odběr – AKROS' }
+/**
+ * Keep pickup identity consistent across storefront placement, staff editing and audit snapshots. A branded e-shop
+ * (`storefrontBrandOf`) names its own pickup point; without a brand pickup stays unnamed.
+ */
+export const shippingMethodFor = (method: ShippingMethod, brand?: string) =>
+  method === 'OSOBNI_ODBER' && brand !== undefined
+    ? { ...shippingMethods[method], label: `Osobní odběr – ${brand}` }
     : shippingMethods[method];
 
 export const OrderShippingSchema = Schema.Struct({

@@ -22,6 +22,7 @@ import { Effect } from 'effect';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { withoutRecordedPageReads } from './browser-request-cache.ts';
 import { staffRoutePreloads } from './route-preload-scheduler.ts';
+import { staffThemeFor } from './staff-brand.ts';
 import type { RoutePreloadPriority } from './route-preload-scheduler.ts';
 
 import type { ShellLabel, ShellUnavailableDeployment } from '../../shared/api.ts';
@@ -851,7 +852,7 @@ const useDashboardRoutePreload = (props: AuthenticatedDashboardLayoutProps) =>
   );
 
 /**
- * Akros admin frame: a compact full-width top bar (brand, search, current trail, account) above a collapsible,
+ * Admin frame: a compact full-width top bar (brand, search, current trail, account) above a collapsible,
  * grouped navigation Sidebar. Below the Sidebar breakpoint the same panel opens as a drawer from the top bar.
  * Routed content renders in `<main>` with token spacing and no max width, so dense tables use the full column.
  */
@@ -908,7 +909,8 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
 
   return (
     <StaffRoutePreloadContext value={preload}>
-      <Helmet>
+      {/* The selected workspace's theme wins over the neutral one of the document layout. */}
+      <Helmet htmlAttributes={{ 'data-theme': staffThemeFor(props.currentTenantId, props.currentLegalEntityId) }}>
         <title>{`${props.title ?? model.current?.link.label ?? t('shell.dashboard.home.title')} | OntOS`}</title>
       </Helmet>
       {props.compositionRevision === undefined ? null : (
