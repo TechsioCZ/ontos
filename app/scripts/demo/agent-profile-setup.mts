@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { v1 } from '@authzed/authzed-node';
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { Context, Effect, FileSystem, Schema } from 'effect';
+import { Array as EffectArray, Context, Effect, FileSystem, Order, Schema } from 'effect';
 
 import { ActionPermission } from '../../packages/core-runtime/src/permissions/service.ts';
 import { ActionRuntime } from '../../packages/core-runtime/src/actions/runtime.ts';
@@ -24,7 +24,10 @@ import {
   currentAgentProfileRelationships,
   readCurrentAgentNamedPermissions,
 } from '../../packages/core-runtime/src/permissions/agent-profile-lifecycle.ts';
-import { planAgentScopedRoleReplacement } from '../../packages/core-runtime/src/install/agent-scoped-role-policy.ts';
+import {
+  agentNamedPermissionScopeRelationships,
+  planAgentScopedRoleReplacement,
+} from '../../packages/core-runtime/src/install/agent-scoped-role-policy.ts';
 import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { openSpiceDbRpc } from '../../packages/core-runtime/src/permissions/spicedb-transaction-guard.ts';
 import { ShellInstalledModuleCatalog } from '../../apps/shell-super-app/api/modules/installed-module-catalog.ts';
@@ -66,6 +69,32 @@ export const ReviewedAgentProfilesSchema = Schema.Struct({
 });
 export const AgentProfileSetupModeSchema = Schema.Literals(['dry-run', 'apply', 'verify']);
 export type AgentProfileSetupMode = typeof AgentProfileSetupModeSchema.Type;
+export interface ReviewedAgentPolicyRepair {
+  readonly input: AgentProfileSetupInput;
+  readonly missing: readonly string[];
+}
+/** An audited reconciliation never lets a fresh seed preparation expand or delete its reviewed tuple delta. */
+export const isExactAdditiveAgentPolicy = (
+  approved: readonly string[],
+  updates: readonly v1.RelationshipUpdate[],
+): boolean => {
+  const allowed = new Set(approved);
+  return (
+    allowed.size === approved.length &&
+    updates.length === approved.length &&
+    updates.every(
+      (update) =>
+        update.operation === v1.RelationshipUpdate_Operation.TOUCH &&
+        update.relationship !== undefined &&
+        allowed.has(v1.Relationship.toJsonString(update.relationship)),
+    ) &&
+    new Set(
+      updates.flatMap((update) =>
+        update.relationship === undefined ? [] : [v1.Relationship.toJsonString(update.relationship)],
+      ),
+    ).size === updates.length
+  );
+};
 
 export const readReviewedAgentProfiles = Effect.fn('AgentProfileSetup.readReviewed')(function* readReviewed(
   path: string,
@@ -90,7 +119,7 @@ export const readReviewedAgentProfiles = Effect.fn('AgentProfileSetup.readReview
   return document;
 });
 
-const readProfile = Effect.fn('AgentProfileSetup.readProfile')(function* readProfile(input: {
+export const readProfile = Effect.fn('AgentProfileSetup.readProfile')(function* readProfile(input: {
   readonly legalEntityId: string;
   readonly principalId: string;
   readonly tenantId: string;
@@ -199,6 +228,7 @@ export const runAgentProfileSetup = Effect.fn('AgentProfileSetup.run')(function*
   inputs: readonly AgentProfileSetupInput[],
   mode: AgentProfileSetupMode,
   sourceFingerprint: string,
+  reviewedPolicy?: readonly ReviewedAgentPolicyRepair[],
 ) {
   const runtime = yield* ActionRuntime;
   const permission = yield* ActionPermission;
@@ -282,7 +312,31 @@ export const runAgentProfileSetup = Effect.fn('AgentProfileSetup.run')(function*
         desired,
       });
       const graphMatches = plan.updates.length === 0;
-      return { desired, graphMatches, input, profileMatches: profileMatches(yield* readProfile(input), input) };
+      if (reviewedPolicy !== undefined) {
+        const bound = reviewedPolicy.find(
+          (row) =>
+            row.input.tenantId === input.tenantId &&
+            row.input.legalEntityId === input.legalEntityId &&
+            row.input.principalId === input.principalId,
+        );
+        if (
+          bound === undefined ||
+          !Schema.toEquivalence(AgentProfileSetupInputSchema)(bound.input, input) ||
+          !profileMatches(yield* readProfile(input), input) ||
+          !isExactAdditiveAgentPolicy(bound.missing, plan.updates)
+        ) {
+          return yield* fail(
+            'Fresh native preparation differs from the exact reviewed additive agent-policy delta; no Actions run',
+          );
+        }
+      }
+      return {
+        desired,
+        graphMatches,
+        input,
+        policyUpdates: plan.updates,
+        profileMatches: profileMatches(yield* readProfile(input), input),
+      };
     }),
     { concurrency: 1 },
   );
@@ -304,6 +358,39 @@ export const runAgentProfileSetup = Effect.fn('AgentProfileSetup.run')(function*
           tenantId: input.tenantId,
         })),
       mode,
+      policies: prepared.map((row) => ({
+        expected: EffectArray.sort(
+          [
+            ...row.desired,
+            ...agentNamedPermissionScopeRelationships({
+              ...row.input,
+              currentPrincipalRelationships: [],
+              desired: row.desired,
+            }),
+          ]
+            .map((relationship) => v1.Relationship.toJsonString(relationship))
+            .filter((relationship, index, all) => all.indexOf(relationship) === index),
+          Order.String,
+        ),
+        input: row.input,
+        missing: EffectArray.sort(
+          row.policyUpdates
+            .filter((update) => update.operation === v1.RelationshipUpdate_Operation.TOUCH)
+            .flatMap((update) =>
+              update.relationship === undefined ? [] : [v1.Relationship.toJsonString(update.relationship)],
+            ),
+          Order.String,
+        ),
+        profileMatches: row.profileMatches,
+        unexpected: EffectArray.sort(
+          row.policyUpdates
+            .filter((update) => update.operation === v1.RelationshipUpdate_Operation.DELETE)
+            .flatMap((update) =>
+              update.relationship === undefined ? [] : [v1.Relationship.toJsonString(update.relationship)],
+            ),
+          Order.String,
+        ),
+      })),
       rows: prepared.length,
       verified: prepared.every((row) => row.graphMatches && row.profileMatches),
     };
