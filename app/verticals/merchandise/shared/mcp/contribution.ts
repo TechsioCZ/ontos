@@ -2,7 +2,7 @@
 import { OntosMcpHidden, defineOntosMcpContribution } from '@app/core-runtime';
 
 export const merchandiseMcpContribution = defineOntosMcpContribution({
-  actions: { 'bootstrap-playground-catalog': 'hidden' },
+  actions: { 'bootstrap-playground-catalog': 'hidden', 'request-search-rebuild': 'hidden' },
   approvalReview: { read: 'agent-review' },
   approvals: true,
   approvalsPage: { label: { cs: 'Otevřít v Prodeji', en: 'Open in Sales' }, path: '/prodej/schvalovani-ai' },

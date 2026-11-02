@@ -18,6 +18,7 @@ import type { BusinessPermissionCode } from './business-permission.ts';
 import {
   PricingAuthorizationResourceIdSchema,
   toBusinessPermissionAccessObjectId,
+  toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
   toResourceAccessObjectId,
 } from './context-access.ts';
@@ -51,6 +52,11 @@ type OwnerModuleAccessReference = Readonly<SpiceDbResourceReference & { readonly
  * the `resource#module` edge that places one owner resource in its own module's exact Legal Entity scope.
  */
 export type ResourceContainmentRelationship =
+  | Readonly<{
+      readonly container: SpiceDbResourceReference;
+      readonly relation: 'people_company' | 'people_tenant';
+      readonly resource: OwnerResourceReference;
+    }>
   | Readonly<{
       readonly container: OwnerModuleAccessReference;
       readonly relation: 'module';
@@ -227,6 +233,32 @@ const validModuleContainmentRelationship = ({ container, resource }: ResourceCon
 };
 
 const validContainmentRelationship = (relationship: ResourceContainmentRelationship): boolean => {
+  if (relationship.relation === 'people_company' || relationship.relation === 'people_tenant') {
+    const parts = decodeScopedObjectParts(relationship.resource, 'resource', 5);
+    if (parts === undefined) {
+      return false;
+    }
+    const [tenantId, legalEntityId, moduleId, resourceType, resourceId] = parts;
+    if (
+      tenantId === undefined ||
+      legalEntityId === undefined ||
+      resourceId === undefined ||
+      moduleId !== 'core.identity' ||
+      resourceType !== 'core.identity.person' ||
+      !Schema.is(TenantIdSchema)(tenantId) ||
+      !isLegalEntityId(legalEntityId) ||
+      resourceId.slice(0, 37) !== `${legalEntityId}.` ||
+      !Schema.is(Schema.String.check(Schema.isUUID()))(resourceId.slice(37)) ||
+      toResourceAccessObjectId(tenantId, legalEntityId, { moduleId, resourceId, resourceType }) !==
+        relationship.resource.objectId
+    ) {
+      return false;
+    }
+    return relationship.relation === 'people_company'
+      ? relationship.container.objectType === 'legal_entity' &&
+          relationship.container.objectId === toLegalEntityAccessObjectId(tenantId, legalEntityId)
+      : relationship.container.objectType === 'tenant' && relationship.container.objectId === tenantId;
+  }
   if (relationship.relation === 'module') {
     return validModuleContainmentRelationship(relationship);
   }

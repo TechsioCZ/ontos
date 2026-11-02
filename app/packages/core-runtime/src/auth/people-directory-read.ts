@@ -145,7 +145,7 @@ type PeopleServices = ReturnType<typeof peopleDirectoryServices>;
 type LoadedPeople = Effect.Success<ReturnType<PeopleServices['list']>>;
 
 /** None for a system service account (see isSystemServiceRoleKey), which people administration never lists. */
-const rolesOf = Effect.fn('PeopleDirectory.rolesOf')(function* rolesOf(
+export const peopleDirectoryRolesOf = Effect.fn('PeopleDirectory.rolesOf')(function* rolesOf(
   client: SpiceDbRpc,
   input: { readonly legalEntityId?: string; readonly principalId: string; readonly tenantId: string },
 ) {
@@ -277,7 +277,7 @@ const finish = Effect.fn('PeopleDirectory.finish')(function* finish(
           const principalRef = { principalId: row.principalId, tenantId };
           const identity = legalEntityId === undefined ? principalRef : { ...principalRef, legalEntityId };
           const [roles, selectedCompanyMembershipProjection] = yield* Effect.all(
-            [rolesOf(client, identity), membershipProjection(client, row, tenantId)],
+            [peopleDirectoryRolesOf(client, identity), membershipProjection(client, row, tenantId)],
             { concurrency: 2 },
           );
           if (Option.isNone(roles)) {

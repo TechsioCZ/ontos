@@ -503,9 +503,9 @@ const associationContent = (association: CopySnapshot['catalog']['associations']
     : association.storefrontRef,
 });
 
-export const verifyCopy = (client: CopyClient, plan: CopyPlan) =>
+export const verifyCopy = (client: CopyClient, plan: CopyPlan, checkpointRoot?: string) =>
   Effect.gen(function* verifyFrozenCopy() {
-    const destination = yield* captureCopySnapshot(client, plan.snapshot.origin, akrosCopyDestination);
+    const destination = yield* captureCopySnapshot(client, plan.snapshot.origin, akrosCopyDestination, checkpointRoot);
     const differences = yield* catalogDifferences(plan.snapshot, destination.products);
     if (
       differences.length > 0 ||
@@ -575,7 +575,7 @@ export const verifyCopy = (client: CopyClient, plan: CopyPlan) =>
     return snapshotStats(destination);
   });
 
-export const applyCopyAfterBootstrap = (client: CopyClient, plan: CopyPlan) =>
+export const applyCopyAfterBootstrap = (client: CopyClient, plan: CopyPlan, checkpointRoot?: string) =>
   Effect.gen(function* applyApprovedFrozenCopy() {
     if (plan.copyScope.marketIds.length !== 5 || sourceCopyOffers(plan.snapshot).length !== 5) {
       return yield* new AkrosPlaygroundCopyError({
@@ -586,7 +586,7 @@ export const applyCopyAfterBootstrap = (client: CopyClient, plan: CopyPlan) =>
     yield* copyGallery(client, plan.snapshot);
     yield* copyStorefrontAndMarkets(client, plan.snapshot);
     yield* copyOffers(client, plan.snapshot);
-    return yield* verifyCopy(client, plan);
+    return yield* verifyCopy(client, plan, checkpointRoot);
   });
 
 const main = (mode: 'plan' | 'bootstrap' | 'apply' | 'verify', file: string, fingerprint: string) =>
@@ -643,13 +643,16 @@ const main = (mode: 'plan' | 'bootstrap' | 'apply' | 'verify', file: string, fin
       (session) => session.signOut.pipe(Effect.ignore),
     );
     const execute = () => {
+      // Separate apply/verify caches keep the explicit verify a fresh observation. Each cache is
+      // further namespaced by origin + tenant + company + catalog revision inside captureCopySnapshot.
+      const captureCheckpoint = `${file}.destination-${mode}.capture`;
       if (mode === 'bootstrap') {
         return bootstrapFrozenCatalog(client, plan);
       }
       if (mode === 'apply') {
-        return applyCopyAfterBootstrap(client, plan);
+        return applyCopyAfterBootstrap(client, plan, captureCheckpoint);
       }
-      return verifyCopy(client, plan);
+      return verifyCopy(client, plan, captureCheckpoint);
     };
     const stats = yield* execute();
     return yield* Console.log(canonicalCopyJson({ fingerprint, mode, stats }));

@@ -2,11 +2,10 @@
 // @ontos-resource-owner demo.merchandise
 // @ontos-resource-slug product
 import type { OntosResourceType } from '@app/core-runtime';
+import { ResourceIdentitySchema } from '@app/shared-contracts/resource-identity';
 import { Schema } from 'effect';
 
-const ResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
-  Schema.brand('demo.merchandise.product.ResourceId'),
-);
+const ResourceIdSchema = ResourceIdentitySchema.pipe(Schema.brand('demo.merchandise.product.ResourceId'));
 const TenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
 
 export const ProductRefSchema = Schema.Struct({
@@ -22,7 +21,7 @@ export const productResourceDescriptor = {
     graphVisible: false,
     linkable: false,
     mediaAttachable: false,
-    searchable: false,
+    searchable: true,
     timelineVisible: false,
   },
   description: 'Product resource.',

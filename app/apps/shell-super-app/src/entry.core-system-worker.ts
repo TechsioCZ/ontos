@@ -5,7 +5,12 @@ import {
   ActionAuthorizationLifecycleLive,
   CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS,
   coreSystemOutboxWorkers,
+  corePeopleSearchOutboxWorkers,
   OutboxRuntimeLive,
+  PeopleSearchProjectorLive,
+  PeopleSearchSourceLive,
+  PeopleSearchVisibilityLive,
+  peopleSearchIngestionRegistrations,
   ScopedRoleMembershipLifecycleLive,
   SpiceDbConfigLive,
 } from '@app/core-runtime/outbox/core-system-worker';
@@ -15,6 +20,10 @@ import {
   DatabaseConfigLive,
   defineOutboxWorkerEntry,
   OutboxRepositoryLive,
+  CoreSearchWorkerSnapshotLive,
+  CoreSearchProjectionStoreLive,
+  ResourceContainmentRelationshipMutationLive,
+  coreSearchIngestionRegistryLayer,
 } from '@app/core-runtime/outbox/worker';
 import { NodeCrypto } from '@effect/platform-node';
 import { Layer } from 'effect';
@@ -36,11 +45,26 @@ const compositionLive = ActiveApplicationCompositionConfigLive.pipe(
   ),
 );
 
+const peopleSearchSnapshotLive = CoreSearchWorkerSnapshotLive.pipe(
+  Layer.provide(coreSearchIngestionRegistryLayer(peopleSearchIngestionRegistrations)),
+);
+const peopleSearchLive = PeopleSearchProjectorLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      PeopleSearchSourceLive.pipe(Layer.provide(peopleSearchSnapshotLive)),
+      PeopleSearchVisibilityLive,
+      CoreSearchProjectionStoreLive,
+      ResourceContainmentRelationshipMutationLive,
+    ),
+  ),
+);
+
 /** Public Node process root pinned to the same compiled Core/Shell deployment as its Actions. */
 export const outboxWorkerEntry = defineOutboxWorkerEntry({
   claimOwnerPrefix: 'core.authorization-outbox-worker',
   expectedDeployment: ultramodernDeliveryUnit,
   layer: Layer.mergeAll(
+    peopleSearchLive,
     OutboxRuntimeLive.pipe(Layer.provide(OutboxRepositoryLive)),
     ActionAuthorizationLifecycleLive.pipe(
       Layer.provide(ScopedRoleMembershipLifecycleLive),
@@ -54,6 +78,6 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provideMerge(databaseIdentitiesLive),
     Layer.provide(NodeCrypto.layer),
   ),
-  registrations: coreSystemOutboxWorkers,
+  registrations: [...coreSystemOutboxWorkers, ...corePeopleSearchOutboxWorkers],
   subscriptions: CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS,
 });

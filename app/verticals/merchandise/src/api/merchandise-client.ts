@@ -12,13 +12,18 @@ export const getMerchandiseReadiness = Effect.fn('Merchandise.readiness')(functi
 });
 
 // <generated-action-http-client-exports>
+export { executeApplyCommand, executeApplyCommandWithAuthorization } from './apply-command-action-client.ts';
+export type { ApplyCommandActionClientOptions } from './apply-command-action-client.ts';
+export {
+  executeRequestSearchRebuild,
+  executeRequestSearchRebuildWithAuthorization,
+} from './request-search-rebuild-action-client.ts';
+export type { RequestSearchRebuildActionClientOptions } from './request-search-rebuild-action-client.ts';
 export {
   executeBootstrapPlaygroundCatalog,
   executeBootstrapPlaygroundCatalogWithAuthorization,
 } from './bootstrap-playground-catalog-action-client.ts';
 export type { BootstrapPlaygroundCatalogActionClientOptions } from './bootstrap-playground-catalog-action-client.ts';
-export { executeApplyCommand, executeApplyCommandWithAuthorization } from './apply-command-action-client.ts';
-export type { ApplyCommandActionClientOptions } from './apply-command-action-client.ts';
 // </generated-action-http-client-exports>
 
 // <generated-module-api-client-exports>

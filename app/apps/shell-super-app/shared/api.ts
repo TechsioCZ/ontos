@@ -1,7 +1,13 @@
-import { ResourceIdentitySchema } from '@app/shared-contracts/resource-identity';
+import {
+  RequestPeopleSearchRebuildHttpPayloadSchema,
+  RequestPeopleSearchRebuildHttpResponseSchema,
+  RequestPeopleSearchRebuildHttpHeadersSchema,
+  peopleSearchRebuildHttpPath,
+} from './core-actions/request-people-search-rebuild.ts';
 import { GatewayContextApiGroup } from '@app/shared-contracts';
 import { EmailReceiptsApi } from '@app/email-delivery/receipt-api';
 import { ExternalIdentityApiGroup } from '@app/shared-contracts/external-identity';
+import { ResourceIdentitySchema } from '@app/shared-contracts/resource-identity';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import {
@@ -1222,6 +1228,14 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   )
   .add(
     HttpApiGroup.make('peopleAdministration')
+      .add(
+        HttpApiEndpoint.post('requestPeopleSearchRebuild', peopleSearchRebuildHttpPath, {
+          error: identityErrors,
+          headers: RequestPeopleSearchRebuildHttpHeadersSchema,
+          payload: RequestPeopleSearchRebuildHttpPayloadSchema,
+          success: RequestPeopleSearchRebuildHttpResponseSchema,
+        }),
+      )
       .add(
         HttpApiEndpoint.post('listCompanyRoleCatalog', PEOPLE_PATHS.companyRoleCatalog, {
           error: identityErrors,

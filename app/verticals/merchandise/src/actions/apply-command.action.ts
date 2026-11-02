@@ -18,24 +18,52 @@ import {
   ApplyCommandPayloadSchema,
   ApplyCommandResultSchema,
   MerchandiseErrorSchema,
+  MerchandiseScopeMismatch,
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
 import { withCommandGuard } from '../../shared/actions/command-guard.ts';
+import { OutboxPayloadSchema } from '../../shared/outbox/demo-merchandise-search-refresh-requested-v1.ts';
+import { createApplyCommandDemoMerchandiseSearchRefreshRequestedV1OutboxMessage } from './apply-command-demo-merchandise-search-refresh-requested-v1.outbox-message.ts';
+import { merchandiseSearchRefreshTarget } from '../services/merchandise-search-projection.ts';
 import { merchandiseRecordsGrants, persistenceService } from '../services/persistence.service.ts';
+
+const MODULE = 'demo.merchandise';
+const SEARCH_REFRESH_EVENT = 'demo.merchandise.search-refresh-requested.v1';
+const domainEvents = { [SEARCH_REFRESH_EVENT]: OutboxPayloadSchema } as const;
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 /** What the handler and its permission preflight need from the Action host. */
 type Requirements =
   | Effect.Services<ReturnType<typeof merchandiseRecordsGrants>>
   | Effect.Services<ReturnType<Services['apply']>>;
-const handleApplyCommand = (
+const handleApplyCommand = Effect.fn('Merchandise.handleApplyCommand')(function* handleApplyCommand(
   payload: ApplyCommandPayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
-): Effect.Effect<
-  Effect.Success<ReturnType<Services['apply']>>,
-  Effect.Error<ReturnType<Services['apply']>>,
-  Requirements
-> => context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId);
+  context: ActionHandlerContext<typeof domainEvents, Services>,
+) {
+  const result = yield* context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId);
+  if (context.scope.legalEntityId === undefined) {
+    return yield* new MerchandiseScopeMismatch({
+      code: 'merchandise_scope_mismatch',
+      reason: 'Merchandise search update requires company scope',
+    });
+  }
+  const target = merchandiseSearchRefreshTarget(payload.command, result.entityIds, context.scope.legalEntityId);
+  if (target.rebuild || target.productIds.length > 0 || target.orderIds.length > 0) {
+    const event = yield* context.addDomainEvent({
+      eventType: SEARCH_REFRESH_EVENT,
+      payloadJson: target,
+      producerModuleKey: MODULE,
+      subjectModuleKey: 'core.identity',
+      subjectResourceId: context.scope.tenantId,
+      subjectResourceType: 'tenant',
+    });
+    yield* context.addOutboxMessage(
+      event,
+      createApplyCommandDemoMerchandiseSearchRefreshRequestedV1OutboxMessage(target),
+    );
+  }
+  return result;
+});
 
 const samePrincipal = Schema.toEquivalence(TrustedPrincipalContextSchema);
 const PREPARED_GRANTS_TTL_MS = 30_000;
@@ -86,17 +114,17 @@ export const applyCommandAction = defineAction(
     actionKey: 'demo.merchandise.apply-command',
     auditProfile: 'standard',
     domainErrorSchema: MerchandiseErrorSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'action_execution', provisioning: 'explicit' },
       entrypointKey: 'demo.merchandise.apply-command',
-      moduleKey: 'demo.merchandise',
+      moduleKey: MODULE,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'required',
-    owningModuleKey: 'demo.merchandise',
+    owningModuleKey: MODULE,
     payloadSchema: ApplyCommandPayloadSchema,
     policies: [],
     resultSchema: ApplyCommandResultSchema,
@@ -108,4 +136,9 @@ export const applyCommandAction = defineAction(
 );
 
 // <generated-outbox-message-exports>
+export { ApplyCommandDemoMerchandiseSearchRefreshRequestedV1OutboxPayloadSchema } from './apply-command-demo-merchandise-search-refresh-requested-v1.outbox-message.ts';
+export { ApplyCommandDemoMerchandiseSearchRefreshRequestedV1OutboxProducerModuleKey } from './apply-command-demo-merchandise-search-refresh-requested-v1.outbox-message.ts';
+export { ApplyCommandDemoMerchandiseSearchRefreshRequestedV1OutboxTopic } from './apply-command-demo-merchandise-search-refresh-requested-v1.outbox-message.ts';
+export { createApplyCommandDemoMerchandiseSearchRefreshRequestedV1OutboxMessage } from './apply-command-demo-merchandise-search-refresh-requested-v1.outbox-message.ts';
+export type { ApplyCommandDemoMerchandiseSearchRefreshRequestedV1OutboxPayload } from './apply-command-demo-merchandise-search-refresh-requested-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

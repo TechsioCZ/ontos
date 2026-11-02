@@ -17,7 +17,7 @@ import type {
   makeTenantModuleStateService,
 } from '@app/core-runtime';
 import { makeLegalEntityNavigationExclusions } from '@app/core-runtime/modules/legal-entity-navigation-exclusions';
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Schema } from 'effect';
 
 import {
   ResourceRefSchema,
@@ -41,6 +41,7 @@ import {
   GovernedResolveModuleTargetPayloadSchema,
 } from './shell-governed-read-schemas.ts';
 import { searchProviderModuleIds, ShellResourceServicesFactory } from './shell-resources.ts';
+import { ShellSystemSearch, mergeShellSystemSearch } from './shell-system-search.ts';
 import type { ShellProviderAssertionIssuer, ShellResourceGateways } from './shell-resources.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
@@ -145,6 +146,7 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
   ]
 ) {
   const contextAccess = yield* ContextAccess;
+  const systemSearch = yield* Effect.serviceOption(ShellSystemSearch);
   const moduleStates = yield* TenantModuleStateService;
   const compositionFactory = yield* ShellCompositionFactory;
   const resourceServicesFactory = yield* ShellResourceServicesFactory;
@@ -246,24 +248,30 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
           Effect.orElseSucceed((): readonly string[] => []),
           Effect.flatMap((moduleIds) => loadModuleStates(context.services, context.scope.tenantId, moduleIds)),
         ),
-      finish: (request, context) =>
-        resourceServicesFactory
+      finish: (request, context) => {
+        const business = resourceServicesFactory
           .createSearch({ ...dependencies, moduleStates: committedModuleStates(context.loaded) }, gateways.search)
-          .search(context.scope, request)
-          .pipe(
-            Effect.map((result) => ({
-              evidence: { resultCount: result.results.length },
-              result,
-            })),
-            Effect.catchTag('ShellProviderUnavailableError', () =>
-              Effect.fail(
+          .search(context.scope, request);
+        const combined =
+          Option.isSome(systemSearch) && context.scope.legalEntityId !== undefined && request.query.trim().length > 0
+            ? mergeShellSystemSearch(business, systemSearch.value.search(context.scope, request.query))
+            : business;
+        return combined.pipe(
+          Effect.map((result) => ({ evidence: { resultCount: result.results.length }, result })),
+          Effect.catchTag('ShellProviderUnavailableError', (cause) =>
+            Effect.fail(
+              Object.defineProperty(
                 new ReadHandlerUnavailable({
                   code: 'read_handler_unavailable',
                   reason: 'Shell search is temporarily unavailable',
                 }),
+                'cause',
+                { value: cause },
               ),
             ),
           ),
+        );
+      },
       // oxlint-enable perfectionist/sort-objects
     },
     serviceFactory,

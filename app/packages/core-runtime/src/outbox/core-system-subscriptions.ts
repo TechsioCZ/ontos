@@ -1,3 +1,8 @@
+import {
+  projectPeopleLifecycleSearchSubscription,
+  projectPeopleRoleSearchSubscription,
+  rebuildPeopleSearchSubscription,
+} from '../people/people-search-subscriptions.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
 import type { OutboxWorkerSubscription } from './definition.ts';
 import { outboxProducerModuleKey, outboxTopic } from './core-modules-tenant-module-state-changed-v1.ts';
@@ -66,6 +71,9 @@ export const coreScopedRoleMembershipSubscription = Object.freeze({
 });
 
 export const CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS: readonly OutboxWorkerSubscription[] = Object.freeze([
+  projectPeopleLifecycleSearchSubscription,
+  projectPeopleRoleSearchSubscription,
+  rebuildPeopleSearchSubscription,
   coreModuleInstallationSubscription,
   corePrincipalBindingSubscription,
   corePrincipalLifecycleSubscription,

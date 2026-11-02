@@ -1,3 +1,7 @@
+import { PeopleSearchReadLive } from '@app/core-runtime/people/search';
+import { ShellPeopleSystemSearchLive } from './modules/shell-system-search.ts';
+import { requestPeopleSearchRebuild } from './people-search-rebuild.ts';
+import { RequestPeopleSearchRebuildHttpResponseSchema } from '../shared/core-actions/request-people-search-rebuild.ts';
 import {
   ActionAuthorizationLifecycleLive,
   ScopedRoleMembershipLifecycleLive,
@@ -25,6 +29,7 @@ import {
   IdentityAdministrationDeniedAuditLive,
   ContextAccessLive,
   CorePersistenceLive,
+  CoreSearchProjectionStoreLive,
   DatabaseConfig,
   DatabaseConfigLive,
   GatewayScopeGrantRegistrarLive,
@@ -2815,6 +2820,13 @@ const peopleAdministrationGroupLive = HttpApiBuilder.group(
         ? failIdentityProblem(shellInternalProblem())
         : failIdentityProblem(identityProblem(error));
     return handlers
+      .handle('requestPeopleSearchRebuild', ({ headers, payload, request }) =>
+        Effect.gen(function* rebuildPeopleSearchHandler() {
+          const context = yield* commandContext(request, headers, 'tenant');
+          const result = yield* requestPeopleSearchRebuild(context, payload).pipe(Effect.catch(failure));
+          return yield* decodeResponse(RequestPeopleSearchRebuildHttpResponseSchema, result, shellInternalProblem);
+        }).pipe(connectionsAdminDefect(request)),
+      )
       .handle('invitePerson', ({ headers, payload, request }) =>
         Effect.gen(function* invitePersonHandler() {
           const context = yield* commandContext(request, headers, 'company');
@@ -3269,6 +3281,21 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provide(issuerLayer),
     Layer.provide(
       Layer.mergeAll(
+        ShellPeopleSystemSearchLive.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              readRuntimeLayer,
+              contextAccessLayer,
+              PeopleSearchReadLive.pipe(
+                Layer.provide(
+                  CoreSearchProjectionStoreLive.pipe(
+                    Layer.provide(Layer.mergeAll(corePersistenceLive, databaseIdentitiesLive)),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
         readRuntimeLayer,
         moduleStateLayer,
         moduleCatalogLayer,

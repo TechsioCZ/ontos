@@ -372,6 +372,35 @@ const usesForbiddenAlternativeTenantPermission = (target: AtomicResolvedReadPerm
 const canonicalPermissionTarget = (target: ResolvedReadPermissionTarget): AtomicResolvedReadPermissionTarget =>
   target.kind === 'any_of' ? target.targets[0] : target;
 
+interface SelectedPeopleResultDescriptor {
+  readonly accessKind: string;
+  readonly entrypoint: ModuleEntrypointDescriptor;
+  readonly legalEntityScope: string;
+  readonly owningModuleKey: string;
+  readonly readKey: string;
+}
+
+/** The approved system directory alternative still requires every selected-company resource check. */
+const allowsSelectedPeopleResultChecks = (
+  descriptor: SelectedPeopleResultDescriptor,
+  permissionTarget: ResolvedReadPermissionTarget,
+  scope: OperationalScope,
+): boolean =>
+  permissionTarget.kind === 'any_of' &&
+  descriptor.readKey === 'core.identity.search.people' &&
+  descriptor.owningModuleKey === 'core.identity' &&
+  descriptor.entrypoint.scope === 'system' &&
+  descriptor.accessKind === 'search' &&
+  descriptor.legalEntityScope === 'required' &&
+  scope.legalEntityId !== undefined &&
+  permissionTarget.targets.length === 2 &&
+  permissionTarget.targets[0].kind === 'tenant' &&
+  permissionTarget.targets[0].permission === 'read_people' &&
+  permissionTarget.targets[1].kind === 'legal_entity' &&
+  permissionTarget.targets[1].permission === 'read_people' &&
+  (permissionTarget.targets[1].legalEntityId === undefined ||
+    permissionTarget.targets[1].legalEntityId === scope.legalEntityId);
+
 const targetIsValid = (
   declared: 'assortment_permission' | 'business_permission' | 'legal_entity' | 'module' | 'resource' | 'tenant',
   target: ResolvedReadPermissionTarget,
@@ -1001,7 +1030,9 @@ const resolveReadPermissionTarget = Effect.fn('Runtime.resolveReadPermissionTarg
       });
       if (
         !targetIsValid(registration.descriptor.permissionTarget, permissionTarget, scope) ||
-        (getReadResultPermissionTargetResolver(registration) !== undefined && permissionTarget.kind === 'any_of')
+        (getReadResultPermissionTargetResolver(registration) !== undefined &&
+          permissionTarget.kind === 'any_of' &&
+          !allowsSelectedPeopleResultChecks(registration.descriptor, permissionTarget, scope))
       ) {
         if (
           permissionTarget.kind === 'assortment_permission' &&

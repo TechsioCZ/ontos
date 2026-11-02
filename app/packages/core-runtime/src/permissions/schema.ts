@@ -78,9 +78,12 @@ definition module_access {
 
 definition resource {
   relation module: module_access
+  // Core people containment inherits the directory permission, never a module reader grant.
+  relation people_company: legal_entity
+  relation people_tenant: tenant
   relation reader: principal | scoped_role#member
   relation writer: principal | scoped_role#member
-  permission read = (reader + module->read_all) & module->access
+  permission read = ((reader + module->read_all) & module->access) + ((people_company->read_people + people_tenant->read_people) & people_company->access)
   permission write = (writer + module->write_all) & module->access
 }
 

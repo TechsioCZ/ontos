@@ -1,3 +1,8 @@
+import {
+  projectPeopleLifecycleSearch,
+  projectPeopleRoleSearch,
+  rebuildPeopleSearch,
+} from '../people/people-search-workers.ts';
 import { Effect } from 'effect';
 
 import { ActionAuthorizationLifecycleError } from '../permissions/action-authorization-lifecycle-error.ts';
@@ -118,7 +123,20 @@ const scopedRoleMembershipWorker = defineOutboxWorker(
   ),
 );
 
+export {
+  PeopleSearchProjectorLive,
+  PeopleSearchSourceLive,
+  PeopleSearchVisibilityLive,
+  peopleSearchIngestionRegistrations,
+} from '../people/people-search-worker-layer.ts';
+
 /** The application root supplies persistence, composition authority and process-local resources. */
+export const corePeopleSearchOutboxWorkers = Object.freeze([
+  projectPeopleLifecycleSearch,
+  projectPeopleRoleSearch,
+  rebuildPeopleSearch,
+] as const);
+
 export const coreSystemOutboxWorkers = Object.freeze([
   installationWorker,
   principalBindingWorker,

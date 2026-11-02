@@ -149,6 +149,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     readPrincipalBinding: '/auth/identity/external/bindings/read',
     readWithApiKeyGatewayContext: '/auth/api-key/gateway-read',
     replaceAgentOperators: '/auth/identity/agent-entities/operators',
+    requestPeopleSearchRebuild: '/core.identity/actions/request-people-search-rebuild',
     reservePrincipalBinding: '/auth/identity/external/bindings/reserve',
     resolveExternalSubject: '/auth/identity/external/resolve',
     resolveModuleTarget: '/shell/module-target',

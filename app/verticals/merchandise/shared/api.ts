@@ -8,11 +8,14 @@ import type { MicroVerticalReadiness, MicroVerticalOperationContext } from '@mod
 import { identity } from 'effect';
 
 // <generated-governed-http-api-imports>
-import { BootstrapPlaygroundCatalogActionApi } from './apis/bootstrap-playground-catalog-action.ts';
 import { AgentReviewApi } from './apis/agent-review.ts';
 import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
+import { BootstrapPlaygroundCatalogActionApi } from './apis/bootstrap-playground-catalog-action.ts';
 import { MediaApi } from './apis/media.ts';
+import { OrdersSearchApi } from './apis/orders-search.ts';
+import { ProductsSearchApi } from './apis/products-search.ts';
 import { RecordsApi } from './apis/records.ts';
+import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
 // </generated-governed-http-api-imports>
 
 export type MerchandiseReadiness = MicroVerticalReadiness;
@@ -37,11 +40,14 @@ export const merchandiseFoundationApi = HttpApi.make('MerchandiseApiFoundation')
 export const merchandiseApi = HttpApi.make('MerchandiseApi')
   .addHttpApi(merchandiseFoundationApi)
   // <generated-governed-http-api-additions>
-  .addHttpApi(BootstrapPlaygroundCatalogActionApi)
   .addHttpApi(AgentReviewApi)
   .addHttpApi(ApplyCommandActionApi)
+  .addHttpApi(BootstrapPlaygroundCatalogActionApi)
   .addHttpApi(MediaApi)
+  .addHttpApi(OrdersSearchApi)
+  .addHttpApi(ProductsSearchApi)
   .addHttpApi(RecordsApi)
+  .addHttpApi(RequestSearchRebuildActionApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

@@ -5,19 +5,22 @@ import {
   defineOntosModuleManifest,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
+  ShellSearchContributionSchema,
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
-import { bootstrapPlaygroundCatalogAction } from './src/actions/bootstrap-playground-catalog.action.ts';
 import { AgentReviewApi } from './shared/apis/agent-review.ts';
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { bootstrapPlaygroundCatalogAction } from './src/actions/bootstrap-playground-catalog.action.ts';
 import { merchandiseReadAllPermission } from './shared/permissions/merchandise-read-all.ts';
 import { merchandiseWriteAllPermission } from './shared/permissions/merchandise-write-all.ts';
+import { orderResourceDescriptor } from './shared/resources/order.ts';
 import { OrdersPage } from './src/routes/[lang]/prodej/objednavky/page.tsx';
 import { ProductDetailPage } from './src/routes/[lang]/provoz/produkty/[id]/page.tsx';
 import { productResourceDescriptor } from './shared/resources/product.ts';
 import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/provoz/produkty/page.tsx';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 // </generated-module-manifest-imports>
 import { merchandiseMcpContribution } from './shared/mcp/contribution.ts';
 
@@ -28,6 +31,9 @@ const navigationContribution = (value: NavigationContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellNavigationContributionSchema)(value));
 const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
+
+const searchContribution = (value: typeof ShellSearchContributionSchema.Encoded) =>
+  Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
 
 const moduleKey = 'demo.merchandise';
 const recordsPageKey = 'demo.merchandise.page.products';
@@ -51,8 +57,9 @@ export const merchandiseManifest = defineOntosModuleManifest({
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
-      bootstrapPlaygroundCatalogAction,
       applyCommandAction,
+      bootstrapPlaygroundCatalogAction,
+      requestSearchRebuildAction,
       // </generated-module-manifest-actions>
     ],
     api: {
@@ -82,11 +89,24 @@ export const merchandiseManifest = defineOntosModuleManifest({
     ],
     resourceTypes: [
       // <generated-module-manifest-resources>
+      orderResourceDescriptor,
       productResourceDescriptor,
       // </generated-module-manifest-resources>
     ],
     search: [
       // <generated-module-manifest-search>
+      {
+        accessFiltering: 'resource_permission',
+        key: 'demo.merchandise.orders',
+        owningModuleId: moduleKey,
+        resourceType: 'demo.merchandise.order',
+      },
+      {
+        accessFiltering: 'resource_permission',
+        key: 'demo.merchandise.products',
+        owningModuleId: moduleKey,
+        resourceType: 'demo.merchandise.product',
+      },
       // </generated-module-manifest-search>
     ],
     shellContributions: {
@@ -152,7 +172,7 @@ export const merchandiseManifest = defineOntosModuleManifest({
             access: 'read',
             authorization: { kind: 'context_permission', permission: 'demo.merchandise.read_all' },
             entrypointKey: 'demo.merchandise.page.product-detail',
-            moduleKey: 'demo.merchandise',
+            moduleKey,
             role: 'page',
             scope: 'tenant',
           },
@@ -186,6 +206,30 @@ export const merchandiseManifest = defineOntosModuleManifest({
       resourceDetails: [],
       search: [
         // <generated-module-shell-search>
+        searchContribution({
+          contributionKey: 'demo.merchandise.search.orders',
+          entrypoint: {
+            access: 'read',
+            authorization: moduleAccess,
+            entrypointKey: 'demo.merchandise.search.orders',
+            moduleKey,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'demo.merchandise.orders',
+        }),
+        searchContribution({
+          contributionKey: 'demo.merchandise.search.products',
+          entrypoint: {
+            access: 'read',
+            authorization: moduleAccess,
+            entrypointKey: 'demo.merchandise.search.products',
+            moduleKey,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'demo.merchandise.products',
+        }),
         // </generated-module-shell-search>
       ],
       timelines: [],

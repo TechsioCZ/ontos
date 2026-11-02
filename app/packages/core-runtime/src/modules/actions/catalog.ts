@@ -7,14 +7,15 @@ import { changePrincipalBindingStatusAction } from './change-principal-binding-s
 import { changePrincipalStatusAction } from './change-principal-status.action.ts';
 import { changeTenantModuleStateAction } from './change-tenant-module-state.action.ts';
 import { configureAgentAction } from './configure-agent.action.ts';
-import { manageAgentStatusAction } from './manage-agent-status.action.ts';
-import { mutateAgentProposalsAction } from './mutate-agent-proposals.action.ts';
 import { configureDemoCompaniesAction } from './configure-demo-companies.action.ts';
 import { createNonHumanPrincipalAction } from './create-non-human-principal.action.ts';
 import { invitePersonAction } from './invite-person.action.ts';
+import { manageAgentStatusAction } from './manage-agent-status.action.ts';
 import { manageDemoAccountAction } from './manage-demo-account.action.ts';
+import { mutateAgentProposalsAction } from './mutate-agent-proposals.action.ts';
 import { recordSupportImpersonationAction } from './record-support-impersonation.action.ts';
 import { replaceAgentOperatorsAction } from './replace-agent-operators.action.ts';
+import { requestPeopleSearchRebuildAction } from './request-people-search-rebuild.action.ts';
 import { reservePrincipalBindingAction } from './reserve-principal-binding.action.ts';
 import { setCompanyMembershipAction } from './set-company-membership.action.ts';
 import { setManagedApiKeyBindingStatusAction } from './set-managed-api-key-binding-status.action.ts';
@@ -33,14 +34,15 @@ export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze(
   changePrincipalStatusAction.descriptor,
   changeTenantModuleStateAction.descriptor,
   configureAgentAction.descriptor,
-  manageAgentStatusAction.descriptor,
-  mutateAgentProposalsAction.descriptor,
   configureDemoCompaniesAction.descriptor,
   createNonHumanPrincipalAction.descriptor,
   invitePersonAction.descriptor,
+  manageAgentStatusAction.descriptor,
   manageDemoAccountAction.descriptor,
+  mutateAgentProposalsAction.descriptor,
   recordSupportImpersonationAction.descriptor,
   replaceAgentOperatorsAction.descriptor,
+  requestPeopleSearchRebuildAction.descriptor,
   reservePrincipalBindingAction.descriptor,
   setCompanyMembershipAction.descriptor,
   setManagedApiKeyBindingStatusAction.descriptor,
@@ -48,3 +50,14 @@ export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze(
   setSelfApiKeyBindingStatusAction.descriptor,
   // </generated-core-action-catalog-values>
 ]);
+
+/** Core system Actions have native gateways, never business-module MCP dispatch endpoints. */
+export const coreActionMcpCatalog = Object.freeze(
+  coreActionCatalog.map(({ actionKey }) =>
+    Object.freeze({
+      actionKey,
+      exposure: 'hidden' as const,
+      reason: 'Core system Actions require their dedicated governed gateway and explicit execution authority',
+    }),
+  ),
+);

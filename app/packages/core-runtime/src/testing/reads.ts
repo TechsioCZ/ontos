@@ -18,6 +18,7 @@ import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/modul
 import { makeOperationalScopeResolver } from '../operations/context.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import { ContextAccess, toBusinessPermissionAccessKey } from '../permissions/context-access.ts';
+import type { TenantPermissionKey, LegalEntityPermissionKey } from '../permissions/context-permissions.ts';
 import type {
   BusinessPermissionAccessTarget,
   ContextAccessDecision,
@@ -41,10 +42,12 @@ export interface ReadTestHarnessOptions {
   readonly databaseIdentities?: DatabaseIdentityEnrollment;
   /** Explicit driver rows for owner SQL; unexpected statements must fail rather than supply empty. */
   readonly executeOwnerQuery: (query: ReadTestOwnerQuery) => Effect.Effect<readonly object[], SqlError>;
+  readonly legalEntityPermissionDecisions?: Readonly<Partial<Record<LegalEntityPermissionKey, ContextAccessDecision>>>;
   readonly operationTime: Date;
   readonly ownerAuthorizationDecision?: ContextAccessDecision;
   readonly permissionDecision?: ContextAccessDecision;
   readonly scope: OperationalScope;
+  readonly tenantPermissionDecisions?: Readonly<Partial<Record<TenantPermissionKey, ContextAccessDecision>>>;
 }
 
 const scopeValuesSchema = Schema.Tuple([Schema.String, Schema.String]);
@@ -244,7 +247,13 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
           key: toBusinessPermissionAccessKey(target),
         })),
       ),
-    legalEntities: ({ legalEntityIds }) => Effect.succeed(legalEntityIds.map((key) => ({ decision, key }))),
+    legalEntities: ({ legalEntityIds, permission = 'access' }) =>
+      Effect.succeed(
+        legalEntityIds.map((key) => ({
+          decision: options.legalEntityPermissionDecisions?.[permission] ?? decision,
+          key,
+        })),
+      ),
     modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision, key }))),
     resources: ({ resources }) =>
       Effect.succeed(
@@ -253,7 +262,13 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
           key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
         })),
       ),
-    tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision, key }))),
+    tenants: ({ permission, tenantIds }) =>
+      Effect.succeed(
+        tenantIds.map((key) => ({
+          decision: options.tenantPermissionDecisions?.[permission] ?? decision,
+          key,
+        })),
+      ),
   };
   const scopeResolver = yield* makeOperationalScopeResolver(
     {

@@ -1004,7 +1004,7 @@ export type {
   VerticalRuntimeSafeDescriptors,
 } from './modules/runtime-registration.ts';
 
-export { coreActionCatalog } from './modules/actions/catalog.ts';
+export { coreActionCatalog, coreActionMcpCatalog } from './modules/actions/catalog.ts';
 export type { CoreActionDescriptor } from './modules/actions/catalog.ts';
 export { ONTOS_SPICEDB_SCHEMA } from './permissions/schema.ts';
 
@@ -1018,16 +1018,7 @@ export type { ResolveExternalSubjectInput, ResolveExternalSubjectResult } from '
 export type { ExternalIdentityAdmissionContext } from './auth/external-identity/repository.ts';
 export { externalIdentitySubjectForBinding } from './auth/external-identity/repository.ts';
 
-// <generated-core-action-exports>
-export { activatePrincipalBindingAction } from './modules/actions/activate-principal-binding.action.ts';
-export { bindManagedApiKeyAction } from './modules/actions/bind-managed-api-key.action.ts';
-export { bindSelfApiKeyAction } from './modules/actions/bind-self-api-key.action.ts';
-export { changePrincipalBindingStatusAction } from './modules/actions/change-principal-binding-status.action.ts';
-export { changePrincipalStatusAction } from './modules/actions/change-principal-status.action.ts';
-export { changeTenantModuleStateAction } from './modules/actions/change-tenant-module-state.action.ts';
-export { configureDemoCompaniesAction } from './modules/actions/configure-demo-companies.action.ts';
 export {
-  manageDemoAccountAction,
   ManageDemoAccountAuditEvidenceSchema,
   ManageDemoAccountPayloadSchema,
 } from './modules/actions/manage-demo-account.action.ts';
@@ -1047,9 +1038,20 @@ export {
   relationshipModuleAccess,
 } from './install/agent-entity-grants.ts';
 export type { AgentGrantAccess, AgentGrantModule, AgentGrantWritePolicy } from './install/agent-entity-grants.ts';
+
+// <generated-core-action-exports>
+export { activatePrincipalBindingAction } from './modules/actions/activate-principal-binding.action.ts';
+export { bindManagedApiKeyAction } from './modules/actions/bind-managed-api-key.action.ts';
+export { bindSelfApiKeyAction } from './modules/actions/bind-self-api-key.action.ts';
+export { changePrincipalBindingStatusAction } from './modules/actions/change-principal-binding-status.action.ts';
+export { changePrincipalStatusAction } from './modules/actions/change-principal-status.action.ts';
+export { changeTenantModuleStateAction } from './modules/actions/change-tenant-module-state.action.ts';
+export { configureDemoCompaniesAction } from './modules/actions/configure-demo-companies.action.ts';
 export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
+export { manageDemoAccountAction } from './modules/actions/manage-demo-account.action.ts';
 export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';
 export { replaceAgentOperatorsAction } from './modules/actions/replace-agent-operators.action.ts';
+export { requestPeopleSearchRebuildAction } from './modules/actions/request-people-search-rebuild.action.ts';
 export { reservePrincipalBindingAction } from './modules/actions/reserve-principal-binding.action.ts';
 export { setCompanyMembershipAction } from './modules/actions/set-company-membership.action.ts';
 export { setManagedApiKeyBindingStatusAction } from './modules/actions/set-managed-api-key-binding-status.action.ts';

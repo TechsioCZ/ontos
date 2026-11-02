@@ -4,15 +4,19 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { merchandiseManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
-import { bootstrapPlaygroundCatalogAction } from './src/actions/bootstrap-playground-catalog.action.ts';
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { bootstrapPlaygroundCatalogAction } from './src/actions/bootstrap-playground-catalog.action.ts';
+import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
+import { refreshSearchWorker } from './src/workers/refresh-search.worker.ts';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 // </generated-module-registration-imports>
 
 export const merchandiseRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
-    bootstrapPlaygroundCatalogAction,
     applyCommandAction,
+    bootstrapPlaygroundCatalogAction,
+    requestSearchRebuildAction,
     // </generated-module-registration-actions>
   ],
   entrypoints: {
@@ -39,12 +43,16 @@ export const merchandiseRegistration = defineVerticalRuntimeRegistration({
     },
     search: {
       // <generated-module-registration-search>
+      orders: () => import('./src/api/orders-search-client.ts'),
+      products: () => import('./src/api/products-search-client.ts'),
       // </generated-module-registration-search>
     },
   },
   manifest: merchandiseManifest,
   outboxWorkers: [
     // <generated-module-registration-workers>
+    rebuildSearchWorker,
+    refreshSearchWorker,
     // </generated-module-registration-workers>
   ],
 });

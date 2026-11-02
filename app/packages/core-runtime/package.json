@@ -56,7 +56,11 @@
     "./modules/mcp-contribution": "./src/modules/mcp-contribution.ts",
     "./outbox/core-modules-tenant-module-state-changed-v1": "./src/outbox/core-modules-tenant-module-state-changed-v1.ts",
     "./outbox/core-system-worker": "./src/outbox/core-system-worker-entry.ts",
-    "./resources/scoped-resource-id": "./src/resources/scoped-resource-id.ts"
+    "./resources/scoped-resource-id": "./src/resources/scoped-resource-id.ts",
+    "./outbox/core-identity-people-search-rebuild-requested-v1": "./src/outbox/core-identity-people-search-rebuild-requested-v1.ts",
+    "./resources/person": "./src/resources/person.ts",
+    "./people/search": "./src/people/system-search-provider.ts",
+    "./people/search-rebuild": "./src/modules/actions/request-people-search-rebuild.action.ts"
   },
   "imports": {
     "#database-runtime": {
