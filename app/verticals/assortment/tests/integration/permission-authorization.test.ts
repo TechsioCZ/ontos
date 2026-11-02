@@ -78,6 +78,8 @@ it.live(
           purpose: 'implementation-1290-assortment-authorization',
         });
         yield* isolated.assertClonedSchema();
+        // Clone-local test SQL privileges only; source/base and production ACL readiness remain unchanged.
+        yield* isolated.prepareAssortmentAuthorizationRuntime();
         const fixture = yield* makeNativeReadTestContext(
           {
             connections: {
