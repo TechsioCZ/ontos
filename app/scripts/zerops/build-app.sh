@@ -19,6 +19,7 @@ root="$PWD"
 
 : "${ONTOS_PUBLIC_ORIGIN:?ONTOS_PUBLIC_ORIGIN (the public HTTPS origin of the Shell) is required}"
 : "${ONTOS_STOREFRONT_ORIGIN:?ONTOS_STOREFRONT_ORIGIN (the public HTTPS origin of the AKROS storefront) is required}"
+: "${ONTOS_SHOP_STOREFRONT_ORIGIN:?ONTOS_SHOP_STOREFRONT_ORIGIN (the public HTTPS origin of the demo company e-shop) is required}"
 jobs_limit="${BUILD_JOBS:-2}"
 log_dir="${BUILD_LOG_DIR:-.zerops/build-logs}"
 entry='dist/zerops-entry.mjs'
@@ -39,6 +40,7 @@ fi
 
 export ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP="$ONTOS_PUBLIC_ORIGIN"
 export ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT="$ONTOS_STOREFRONT_ORIGIN"
+export ULTRAMODERN_PUBLIC_URL_SHOP_STOREFRONT="$ONTOS_SHOP_STOREFRONT_ORIGIN"
 # Every unit sees every public URL: the Shell build names each remote.
 for unit in $all_units; do
   [ "$unit" = shell-super-app ] || export "$(env_name "$unit")=$ONTOS_PUBLIC_ORIGIN/_m/$unit"
@@ -71,7 +73,7 @@ unit_inputs() {
 unit_digest() {
   inputs="$(unit_inputs "$1")"
   {
-    printf '%s\n' "$ONTOS_PUBLIC_ORIGIN" "$ONTOS_STOREFRONT_ORIGIN"
+    printf '%s\n' "$ONTOS_PUBLIC_ORIGIN" "$ONTOS_STOREFRONT_ORIGIN" "$ONTOS_SHOP_STOREFRONT_ORIGIN"
     for input in $inputs packages scripts/zerops/owner-entry.mts scripts/generate-ontos-module-contract.mts topology \
       package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json module-federation.shared.ts; do
       printf '%s %s\n' "$input" "$(git rev-parse "HEAD:app/$input")"

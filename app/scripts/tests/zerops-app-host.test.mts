@@ -192,13 +192,14 @@ describe('processEnvironment', () => {
 });
 
 const STOREFRONT = 'https://akros.example';
+const SHOP = 'https://shop.example';
 /** Owner runtime keys are derived from the shared configuration, so read them as entries of the overlay. */
 const derivedValue = (derived: ReturnType<typeof derivedEnvironment>, key: string) =>
   new Map<string, unknown>(Object.entries(derived)).get(key);
 
 describe('derivedEnvironment', () => {
   it('uses immutable release metadata without compression probes or production debug request logs', () => {
-    const derivedValues = derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map());
+    const derivedValues = derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map(), SHOP);
     expect(derivedValues.MODERN_SERVER_IMMUTABLE_ASSETS).toBe('true');
     expect(derivedValues.MODERN_SERVER_PRECOMPRESSED_ASSETS).toBe('false');
     expect(derivedValues.MODERN_SERVER_LOG_LEVEL).toBe('info');
@@ -211,19 +212,16 @@ describe('derivedEnvironment', () => {
     expect(hosted.environment.MODERN_SERVER_IMMUTABLE_ASSETS).toBe('true');
   });
 
-  it('trusts every deployed storefront host for Shell and portal sign-in, with the primary one as the portal URL', () => {
-    const shop = 'https://shop.example';
-    const derivedValues = derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map(), [shop]);
-    expect(derivedValues.BETTER_AUTH_TRUSTED_ORIGINS).toBe(`${ORIGIN},${STOREFRONT},${shop}`);
-    expect(derivedValues.COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS).toBe(`${ORIGIN},${STOREFRONT},${shop}`);
+  it('trusts both storefront hosts for sign-in, names the portal by the AKROS host and links demo e-mails to the shop', () => {
+    const derivedValues = derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map(), SHOP);
+    expect(derivedValues.BETTER_AUTH_TRUSTED_ORIGINS).toBe(`${ORIGIN},${STOREFRONT},${SHOP}`);
+    expect(derivedValues.COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS).toBe(`${ORIGIN},${STOREFRONT},${SHOP}`);
     expect(derivedValues.COMMERCE_PORTAL_AUTH_URL).toBe(STOREFRONT);
-    expect(derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map()).COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS).toBe(
-      `${ORIGIN},${STOREFRONT}`,
-    );
+    expect(derivedValues.AKROS_STOREFRONT_PUBLIC_URL).toBe(SHOP);
   });
 
   it('uses the public origin as the issuer and auth URL', () => {
-    const derivedValues = derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map([['price-group-catalog', 4204]]));
+    const derivedValues = derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map([['price-group-catalog', 4204]]), SHOP);
     expect(derivedValues.ONTOS_GATEWAY_ISSUER).toBe(ORIGIN);
     expect(derivedValues.BETTER_AUTH_URL).toBe(ORIGIN);
     expect(derivedValues.ONTOS_OAUTH_ISSUER).toBe(`${ORIGIN}/shell-super-app-api/oauth`);
@@ -242,6 +240,7 @@ describe('derivedEnvironment', () => {
         ['commerce-customer-context', 4103],
         ['commerce-cart', 4115],
       ]),
+      SHOP,
     );
     expect(derivedValue(derivedValues, 'ONTOS_COMMERCE_CART_API_BASE_URL')).toBe(
       'http://127.0.0.1:4115/commerce-cart-api',
@@ -261,7 +260,7 @@ describe('derivedEnvironment', () => {
   });
 
   it('points the composition source at the host loopback port', () => {
-    expect(derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map()).ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL).toBe(
+    expect(derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map(), SHOP).ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL).toBe(
       'http://127.0.0.1:3000/_host/composition',
     );
   });

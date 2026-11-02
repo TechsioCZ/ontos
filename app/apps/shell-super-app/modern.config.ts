@@ -110,6 +110,8 @@ export default defineConfig(
           ...ontos.source.globalVars,
           'globalThis.ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT':
             getBuildConfigEnvironment('ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT') ?? 'http://localhost:3070',
+          'globalThis.ULTRAMODERN_PUBLIC_URL_SHOP_STOREFRONT':
+            getBuildConfigEnvironment('ULTRAMODERN_PUBLIC_URL_SHOP_STOREFRONT') ?? '',
         },
       },
       splitChunks: { chunks: 'async' },

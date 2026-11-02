@@ -17,7 +17,7 @@ import {
   MerchandiseNotFound,
 } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseCommand, StorefrontIssue, StorefrontOrderResult } from '../../shared/actions/apply-command.ts';
-import { AKROS_STOREFRONT_ORIGIN } from '../../shared/storefront-urls.ts';
+import { AKROS_STOREFRONT_ORIGIN, SHOP_STOREFRONT_ORIGIN } from '../../shared/storefront-urls.ts';
 import type { MerchandiseState, RecordsRequest, RecordsResponse, RecordsView } from '../../shared/apis/records.ts';
 import {
   EntityIdSchema,
@@ -107,6 +107,14 @@ import {
   unconfiguredStorefrontMarket,
 } from './market-pricing.ts';
 import type { OrderMarketContext } from './market-pricing.ts';
+
+/** The demo company sells through the pseudonymous e-shop; the AKROS playground company through the AKROS host. */
+const storefrontOriginOf = (legalEntityId: string | undefined): string | undefined => {
+  if (legalEntityId === AKROS_LEGAL_ENTITY_ID) {
+    return SHOP_STOREFRONT_ORIGIN;
+  }
+  return isAkrosCompany(legalEntityId) ? AKROS_STOREFRONT_ORIGIN : undefined;
+};
 
 const MERCHANDISE_MODULE_ID = 'demo.merchandise';
 
@@ -2402,7 +2410,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
             productCount: page.products.length,
             stockValueMinor: 0,
           };
-      const storefrontOrigin = isAkrosCompany(legalEntityId) ? AKROS_STOREFRONT_ORIGIN : undefined;
+      const storefrontOrigin = storefrontOriginOf(legalEntityId);
       const response: Mutable<RecordsResponse> = {
         ...catalogMetadata,
         ...marketMetadata,

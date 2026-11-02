@@ -214,14 +214,15 @@ export const derivedEnvironment = (
   storefrontOrigin: string,
   hostPort: number,
   ports: ReadonlyMap<string, number>,
-  alternateStorefrontOrigins: readonly string[] = [],
+  shopStorefrontOrigin: string,
 ) => {
   const shellGateway = unitApiBaseUrl(loopbackOrigin(SHELL_PORT), SHELL_ID);
-  // Every deployed storefront host signs customers in through the one portal realm; the primary one names it.
-  const trustedOrigins = [origin, storefrontOrigin, ...alternateStorefrontOrigins].join(',');
+  // Both deployed storefront hosts sign customers in through the one portal realm; the AKROS host names it.
+  const trustedOrigins = [origin, storefrontOrigin, shopStorefrontOrigin].join(',');
   return {
     ...ownerRuntimeEnvironment(ports),
-    AKROS_STOREFRONT_PUBLIC_URL: storefrontOrigin,
+    // The e-mail dispatcher writes for the demo company only, whose e-shop is the pseudonymous one.
+    AKROS_STOREFRONT_PUBLIC_URL: shopStorefrontOrigin,
     BETTER_AUTH_TRUSTED_ORIGINS: trustedOrigins,
     BETTER_AUTH_URL: origin,
     COMMERCE_CORE_IDENTITY_BASE_URL: shellGateway,
@@ -591,14 +592,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   const publicPort = yield* Config.Int('PORT').pipe(Config.withDefault(3000));
   const publicOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_PUBLIC_ORIGIN')).origin;
   const storefrontOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_STOREFRONT_ORIGIN')).origin;
-  const alternateStorefrontOrigins = yield* Config.String('ONTOS_STOREFRONT_ALTERNATE_ORIGINS').pipe(
-    Config.withDefault(''),
-    Effect.flatMap((list) =>
-      Schema.decodeUnknownEffect(Schema.Array(PublicOriginSchema))(list.split(',').filter((entry) => entry !== '')),
-    ),
-    Effect.map((urls) => urls.map((url) => url.origin)),
-    Effect.mapError(() => failure('ONTOS_STOREFRONT_ALTERNATE_ORIGINS must list bare HTTPS origins, comma separated')),
-  );
+  const shopStorefrontOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_SHOP_STOREFRONT_ORIGIN')).origin;
   const ownerSecrets = yield* Config.Redacted('ONTOS_OWNER_SECRETS_JSON').pipe(
     Config.withDefault(Redacted.make('{}')),
     Effect.flatMap((encoded) => Schema.decodeEffect(OwnerSecretsSchema)(Redacted.value(encoded))),
@@ -606,7 +600,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   );
   const units = yield* readHostedUnits;
   const ports = new Map(units.map(({ id, port }) => [id, port]));
-  const derived = derivedEnvironment(publicOrigin, storefrontOrigin, publicPort, ports, alternateStorefrontOrigins);
+  const derived = derivedEnvironment(publicOrigin, storefrontOrigin, publicPort, ports, shopStorefrontOrigin);
   const node = process.execPath;
   const runtime = yield* shellRuntime;
   const published = yield* Ref.make(false);
