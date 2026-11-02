@@ -512,12 +512,12 @@ it.live('observes the original profile handler cause before mapping while public
           profileRetailPermissionReaderFactoryLive.pipe(
             Layer.provide(
               Layer.succeed(ContextAccess, {
-                assortmentPermissions: unusedPermission,
                 businessPermissions: unusedPermission,
                 contextPermissions: unusedPermission,
                 identityNamespaces: unusedPermission,
                 legalEntities: unusedPermission,
                 modules: unusedPermission,
+                ownerPermissions: unusedPermission,
                 resources: unusedPermission,
                 tenantResources: unusedPermission,
                 tenants: unusedPermission,

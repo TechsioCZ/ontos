@@ -295,8 +295,14 @@ it.live(
           const { legalEntityId: selectedLegalEntityId, ...tenantPrincipal } = fixture.principal;
           expect(selectedLegalEntityId).toBeDefined();
           const effectiveAt = DateTime.formatIso(yield* DateTime.now);
+          const publishedRetirementDescriptor = retireRuleAction.descriptor;
+          const registeredOwner = assortmentRegistration;
+          const publishedSnapshot = yield* Schema.encodeEffect(
+            Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
+          )(snapshot);
           const retirePayload = yield* Schema.decodeUnknownEffect(Schema.toEncoded(RetireRulePayloadSchema))({
-            effectiveAt,
+            // Keep owner Current valid during the later revoke check; retirement is scheduled, not yet effective.
+            effectiveAt: DateTime.formatIso(DateTime.add(yield* DateTime.now, { days: 1 })),
             expectedBasisFingerprint: assortmentMeaningFingerprint({
               latestRevisionId: created.rule.initialRuleRevisionId,
               latestRevisionNumber: created.rule.initialRevisionNumber,
@@ -373,6 +379,27 @@ it.live(
           });
           expect(retired).toMatchObject({ retired: true, stableRuleRef });
           expect((yield* history()).retirements).toEqual([{ total: 1 }]);
+          const afterSuccessfulRetirement = yield* history();
+          yield* fixture.revokeActionOwnerPermission(retireRuleAction, retirePayload);
+          const revokedRetirement = yield* actionRuntime
+            .runAction({
+              audience: ownerModule.deployment.appId,
+              payload: retirePayload,
+              principal: tenantPrincipal,
+              registration: retireRuleAction,
+              transport: {
+                correlationId: 'native-assortment-retire-revoked',
+                idempotencyKey: 'native-assortment-retire-revoked',
+              },
+            })
+            .pipe(Effect.flip);
+          expect(Schema.is(ActionPermissionDenied)(revokedRetirement)).toBe(true);
+          expect(yield* history()).toEqual(afterSuccessfulRetirement);
+          expect(retireRuleAction.descriptor).toBe(publishedRetirementDescriptor);
+          expect(assortmentRegistration).toBe(registeredOwner);
+          expect(
+            yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(snapshot),
+          ).toBe(publishedSnapshot);
 
           const createPayload = yield* Schema.decodeUnknownEffect(Schema.toEncoded(CreateRulePayloadSchema))({
             effect: 'ALLOW',

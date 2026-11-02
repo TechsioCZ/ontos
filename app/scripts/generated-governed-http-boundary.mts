@@ -1664,7 +1664,7 @@ const hasReadDescriptorPolicy = (read: string, allowedAccessKinds: ReadonlySet<s
     matches(objectProperty(read, 'legalEntityScope'), /^['"](?:required|optional|forbidden)['"]$/u) &&
     matches(
       objectProperty(read, 'permissionTarget'),
-      /^['"](?:assortment_permission|business_permission|conditional|legal_entity|module|resource|tenant)['"]$/u,
+      /^['"](?:assortment_permission|business_permission|conditional|legal_entity|module|owner_permission|resource|tenant)['"]$/u,
     ) &&
     policies !== undefined &&
     policies.startsWith('[') &&
@@ -2553,6 +2553,81 @@ export const hasOwnerLocalReadServiceFactoryResult = (
   );
 };
 
+const READ_OWNER_PERMISSION_CALL = /^(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)(?:<[\s\S]+>)?\(/u;
+
+const isCoreReadOwnerPermissionDeclaration = (source: string, value: string): boolean => {
+  const binding = READ_OWNER_PERMISSION_CALL.exec(value)?.groups?.binding;
+  const imported = binding === undefined ? undefined : namedSourceImport(source, binding);
+  return (
+    wholeCallArguments(value, READ_OWNER_PERMISSION_CALL, true)?.length === 2 &&
+    imported?.modulePath === CORE_RUNTIME_MODULE &&
+    imported.imported === 'defineReadOwnerPermission'
+  );
+};
+
+const hasOwnerReadPermissionFactoryExport = (source: string, binding: string): boolean => {
+  if (
+    topLevelBindingDeclarations(source, binding).length !== 1 ||
+    !new RegExp(`\\bexport\\s+const\\s+${escapeRegExp(binding)}\\s*=`, 'u').test(maskComments(source))
+  ) {
+    return false;
+  }
+  const initializer = constInitializer(source, binding);
+  if (initializer === undefined) {
+    return false;
+  }
+  const [arrow] = topLevelSeparators(maskNonCode(initializer), '=', 0, initializer.length, true);
+  if (arrow === undefined || initializer.slice(arrow, arrow + 2) !== '=>') {
+    return false;
+  }
+  const returned = initializer.slice(arrow + 2).trim();
+  const coreBinding = READ_OWNER_PERMISSION_CALL.exec(returned)?.groups?.binding;
+  return (
+    coreBinding !== undefined &&
+    !new RegExp(`\\b${escapeRegExp(coreBinding)}\\b`, 'u').test(initializer.slice(0, arrow)) &&
+    isCoreReadOwnerPermissionDeclaration(source, returned)
+  );
+};
+
+/** Recognize the opaque Core declaration itself, or one expression-bodied owner-local factory for it. */
+export const hasReadOwnerPermissionDeclaration = (
+  sources: ReadonlyMap<string, string>,
+  readFile: string,
+  ownerPath: string,
+  candidate: string | undefined,
+): boolean => {
+  const source = sources.get(readFile);
+  if (
+    source === undefined ||
+    candidate === undefined ||
+    path.posix.normalize(ownerPath) !== ownerPath ||
+    path.posix.normalize(readFile) !== readFile ||
+    !readFile.startsWith(`${ownerPath}/`)
+  ) {
+    return false;
+  }
+  const expression = /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate) ? constInitializer(source, candidate) : candidate;
+  if (expression === undefined) {
+    return false;
+  }
+  if (isCoreReadOwnerPermissionDeclaration(source, expression)) {
+    return true;
+  }
+  const binding = READ_OWNER_PERMISSION_CALL.exec(expression)?.groups?.binding;
+  const imported = binding === undefined ? undefined : namedSourceImport(source, binding);
+  if (
+    imported === undefined ||
+    !isWholeCallExpression(expression, READ_OWNER_PERMISSION_CALL) ||
+    !/^\.\.?\//u.test(imported.modulePath) ||
+    !imported.modulePath.endsWith('.ts')
+  ) {
+    return false;
+  }
+  const wrapperFile = path.posix.normalize(path.posix.join(path.posix.dirname(readFile), imported.modulePath));
+  const wrapperSource = wrapperFile.startsWith(`${ownerPath}/`) ? sources.get(wrapperFile) : undefined;
+  return wrapperSource !== undefined && hasOwnerReadPermissionFactoryExport(wrapperSource, imported.imported);
+};
+
 const hasReadCallbacks = (
   source: string,
   readExpression: string,
@@ -2604,6 +2679,15 @@ const hasReadCallbacks = (
     (isReadHandlerCallback(handler, source) || isOwnerLocalImportedFactoryResult(handler)) &&
     callbacks.every((index) => {
       const callback = callArgument(readExpression, /^defineRead\(/u, index);
+      if (
+        index === 3 &&
+        matches(
+          objectProperty(objectArgument(readExpression, /^defineRead\(/u) ?? '', 'permissionTarget'),
+          /^['"]owner_permission['"]$/u,
+        )
+      ) {
+        return hasReadOwnerPermissionDeclaration(sources, readFile, ownerPath, callback);
+      }
       return (
         isExecutableCallback(callback, source) ||
         isOwnerLocalImportedCallback(callback) ||

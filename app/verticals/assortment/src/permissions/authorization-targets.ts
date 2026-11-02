@@ -19,19 +19,6 @@ const ruleCreatePermissionCode = 'assortment.rule.create';
 const ruleRevisionCreatePermissionCode = 'assortment.rule.revision.create';
 const ruleRetirePermissionCode = 'assortment.rule.retire';
 
-const AssortmentPermissionCodeSchema = Schema.Literals([
-  bindingCreatePermissionCode,
-  bindingEndPermissionCode,
-  boundaryCreatePermissionCode,
-  boundaryEndPermissionCode,
-  configurationReadPermissionCode,
-  decisionExplainPermissionCode,
-  ruleCreatePermissionCode,
-  ruleRevisionCreatePermissionCode,
-  ruleRetirePermissionCode,
-]);
-export type AssortmentPermissionCode = typeof AssortmentPermissionCodeSchema.Type;
-
 export interface AssortmentPermissionSelector {
   readonly kind: 'ALL' | 'CATEGORY' | 'PRODUCT' | 'VARIANT' | 'PACKAGE_OPTION';
   readonly target?: ResourceAccessTarget;
@@ -206,10 +193,6 @@ export const assortmentPermissionTargetRequiresLegalEntity = (target: Assortment
   }
   return target.kind !== 'assortment_rule';
 };
-
-export interface AssortmentPermissionAccessTargetWithTrustedStorefront {
-  readonly target: AssortmentPermissionAccessTarget;
-}
 
 const ContextAccessObjectIdParts = Schema.fromJsonString(Schema.Array(Schema.String));
 const encodeContextAccessObjectIdParts = Schema.encodeResult(ContextAccessObjectIdParts);
@@ -664,23 +647,4 @@ export const assortmentPermissionTargetIsValid = (
     return assortmentBindingTargetIsValid(target, scope);
   }
   return assortmentBoundaryTargetIsValid(target, scope);
-};
-
-export const assortmentPermissionTargetHasTrustedStorefrontMismatch = (
-  target: AssortmentPermissionAccessTarget,
-  scope: OperationalScope,
-): boolean => {
-  const storefront =
-    target.kind === 'assortment_decision' ||
-    (target.kind === 'assortment_binding' && target.mode === 'create') ||
-    (target.kind === 'assortment_boundary' && target.mode === 'create')
-      ? target.commercialScope.storefront
-      : undefined;
-  if (storefront === undefined) {
-    return false;
-  }
-  return (
-    scope.trustedStorefrontId !== storefront.resourceId &&
-    assortmentPermissionTargetIsValid(target, { ...scope, trustedStorefrontId: storefront.resourceId })
-  );
 };
