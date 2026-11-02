@@ -338,7 +338,14 @@
         "serviceExample": "e.g. Parking space – covered parking",
         "code": "Code (optional)",
         "unitExamples": "month, m², pcs, hr",
-        "netPrice": "Price excluding VAT (CZK)"
+        "netPrice": "Price excluding VAT (CZK)",
+        "addTitle": "New price list item",
+        "save": "Save",
+        "close": "Close",
+        "priceHint": "Unit price excluding VAT, in CZK.",
+        "nameRequired": "Enter the item name.",
+        "priceRequired": "Enter a price excluding VAT, e.g. 1500 or 1500.50.",
+        "editTitle": "Edit price list item"
       },
       "recurring": {
         "period": "Period",
