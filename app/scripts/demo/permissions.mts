@@ -937,6 +937,17 @@ export const marketRetirementPrincipal = {
   principalId: demoId(principalResource, 'market-retirement-authority'),
 } as const;
 
+/**
+ * Kavárna's Market owner gateway: API keys are bound to one company, so Kavárna's markets validate their storefront
+ * (and reserve their retirement) through their own key (`ONTOS_COMMERCE_MARKET_CATALOG_COMPANY_GATEWAY_API_KEYS`).
+ */
+export const kavarnaMarketAuthorityPrincipal = {
+  apiKeyName: 'kavarna-market-authority',
+  displayName: 'Market · Kavárna owner gateway',
+  legalEntityId: eshopDemoLegalEntityId,
+  principalId: demoId(principalResource, 'kavarna-market-authority'),
+} as const;
+
 export const COMMERCE_PORTAL_NAMESPACE = 'ontos.commerce.portal.better-auth.v1';
 /** Exact company-scoped native reads; the Actions below are granted one by one. */
 const commercePortalRole: DemoRole = {
@@ -1020,8 +1031,10 @@ export const privacyConsentAuthorityRelationships = (actions: readonly DemoActio
 export const marketRetirementActionKeys: readonly string[] = ['commerce.customer-context.reserve-market-retirement'];
 
 /** Market reads share one permission; retirement execution is restricted to exact company-scoped descriptors. */
-export const marketRetirementRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
-  const { legalEntityId, principalId } = marketRetirementPrincipal;
+const marketOwnerGatewayRelationships = (
+  { legalEntityId, principalId }: { readonly legalEntityId: string; readonly principalId: string },
+  actions: readonly DemoAction[],
+): readonly DemoRelationship[] => {
   const marketModuleAccess = toModuleAccessObjectId(demoTenantId, legalEntityId, marketModule) ?? '';
   const storefrontModuleAccess = toModuleAccessObjectId(demoTenantId, legalEntityId, storefrontRegistryModule) ?? '';
   const roleId = toScopedRoleObjectId({
@@ -1069,6 +1082,12 @@ export const marketRetirementRelationships = (actions: readonly DemoAction[]): r
     roleRelationship('module_access', storefrontModuleAccess, 'reader_role', roleId),
   ];
 };
+
+export const marketRetirementRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] =>
+  marketOwnerGatewayRelationships(marketRetirementPrincipal, actions);
+
+export const kavarnaMarketAuthorityRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] =>
+  marketOwnerGatewayRelationships(kavarnaMarketAuthorityPrincipal, actions);
 
 const intakeName = 'crm-party-intake';
 

@@ -17,7 +17,7 @@ import {
 } from '@app/core-runtime';
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { Config, Console, Effect, Exit, FileSystem, Layer, Option, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, Console, Effect, Exit, FileSystem, Layer, Option, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { FetchHttpClient } from 'effect/http';
 
@@ -43,12 +43,15 @@ import {
   companyHumanAccounts,
   demoHumanAccounts,
   eshopDemoRoles,
+  kavarnaMarketAuthorityPrincipal,
+  kavarnaMarketAuthorityRelationships,
   marketRetirementRelationships,
   principalRelationships,
   tenantAdministratorCrmRelationships,
 } from './permissions.mts';
 import { readMissingServiceGrants, reconcileServiceGrants } from './reconcile-stage-service-grants.mts';
 import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
+import { reconcileStageServicePrincipals } from '@app/core-runtime/install/stage-context-bootstrap';
 
 class EshopMarketGrantError extends Schema.TaggedError<EshopMarketGrantError>()('EshopMarketGrantError', {
   reason: Schema.String,
@@ -160,6 +163,7 @@ export const eshopMarketGrantSource = (actions: readonly DemoAction[]): readonly
     akrosDemoLegalEntityId,
   ),
   ...marketRetirementRelationships(actions),
+  ...kavarnaMarketAuthorityRelationships(actions),
   ...[akrosDemoLegalEntityId, eshopDemoLegalEntityId].flatMap((legalEntityId) =>
     containmentRelationship(legalEntityId, {
       moduleId: marketModule,
@@ -216,8 +220,23 @@ export const eshopMarketPermissionChecks = (): readonly EshopPermissionCheck[] =
   const kavarnaAdmin = principalIdOf('eshop@kavarna.demo');
   const akrosFulfilment = principalIdOf('expedice@akros.demo');
   const storefront = akrosStorefrontPrincipal.principalId;
+  const kavarnaGateway = kavarnaMarketAuthorityPrincipal.principalId;
   const create = 'commerce.market-catalog.create-market';
   return [
+    {
+      expected: true,
+      label: "Kavárna's Market gateway reads Kavárna storefronts",
+      permission: 'access',
+      principalId: kavarnaGateway,
+      resource: moduleObject(eshopDemoLegalEntityId, storefrontRegistryModule),
+    },
+    {
+      expected: false,
+      label: "Kavárna's Market gateway stays out of AKROS storefronts",
+      permission: 'access',
+      principalId: kavarnaGateway,
+      resource: moduleObject(akrosDemoLegalEntityId, storefrontRegistryModule),
+    },
     {
       expected: true,
       label: 'AKROS admin opens Market',
@@ -401,6 +420,18 @@ const main = (mode: (typeof modes)[number], planPath: string, reviewed: Option.O
       return yield* fail('The exact reviewed plan, fingerprint and composition are required');
     }
     if (mode === 'apply') {
+      // Kavárna's Market gateway principal and its tenant/company membership come from the Core stage installer.
+      yield* reconcileStageServicePrincipals(
+        [
+          {
+            displayName: kavarnaMarketAuthorityPrincipal.displayName,
+            legalEntityId: kavarnaMarketAuthorityPrincipal.legalEntityId,
+            principalId: kavarnaMarketAuthorityPrincipal.principalId,
+            tenantId: demoTenantId,
+          },
+        ],
+        yield* ConfigProvider.ConfigProvider,
+      );
       yield* reconcileServiceGrants(rpc, desired, 'apply');
     }
     yield* reconcileServiceGrants(rpc, desired, 'verify');

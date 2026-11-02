@@ -149,6 +149,12 @@ it('grants only the scoped Market read permission and the real reserve Action th
       resourceId: toModuleAccessObjectId(demoTenantId, akrosDemoLegalEntityId, marketModule),
       resourceType: 'module_access',
     },
+    // The same gateway validates Storefront Application currentness before an association.
+    {
+      relation: 'reader_role',
+      resourceId: toModuleAccessObjectId(demoTenantId, akrosDemoLegalEntityId, 'commerce.storefront-registry'),
+      resourceType: 'module_access',
+    },
   ]);
   expect(rows.filter((row) => row.resourceType === 'scoped_role')).toEqual([
     {
