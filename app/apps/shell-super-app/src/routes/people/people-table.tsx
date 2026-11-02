@@ -142,7 +142,7 @@ export const PersonActionsMenu = ({
 );
 
 const statusOptions = [
-  { label: 'Aktuální členové', value: 'current' },
+  { label: 'Aktuální', value: 'current' },
   { label: 'Všechny stavy', value: 'all' },
   ...PersonStatusKeySchema.literals.map((value) => ({ label: personStatusPresentation[value].label, value })),
 ] as const;
