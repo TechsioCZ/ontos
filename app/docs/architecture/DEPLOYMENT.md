@@ -17,7 +17,8 @@ Stage runs on Zerops only. Cloudflare serves only its DNS, outgoing email and th
 Stage is the Zerops project `t1ljmn3DRDafgi8AuPvhdQ` (LIGHT core).
 
 - `app`: one Node container. It serves the Shell, every owner in `topology/application-release-intent.json`, and the Outbox Worker host.
-- `storefront`: the AKROS Next.js standalone server, on port 3070. It calls the Shell at `http://app:3000`.
+- `storefront`: the real customer's Next.js standalone server, on port 3070. It calls the Shell at `http://app:3000` with its own tenant key.
+- `shop`: ŠroubShop, the demo tenant's pseudonymous storefront, built from the same artifact. Its service variables (`STOREFRONT_BRAND=sroubshop`, `ONTOS_STOREFRONT_APP_ID=sroubshop-storefront`, `ONTOS_AKROS_STOREFRONT_API_KEY`) are set once the reviewed operator cutover in `scripts/demo/pseudonymize-akros-demo.md` has run. Deployment never runs that data migration.
 - `db18`: PostgreSQL.
 - `spicedb`: SpiceDB.
 - `migrator`: keeps only its secrets, the database identity passwords that the app references as `${migrator_…}`. The app container runs the migrations itself.

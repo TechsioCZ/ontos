@@ -5,7 +5,7 @@
  * natural key resolved through public reads at seed time: customer display name, employee login e-mail,
  * business case title. Tags are matched by name and tasks by title, so a re-run only adds what is missing.
  *
- * The e-shop companies (Kavárna Doma 0023, AKROS 0024) hold read-only Štítky; their catalogues live in the tagging
+ * The e-shop companies (Kavárna Doma 0023, Šroubárna Vysočina 0024) hold read-only Štítky; their catalogues live in the tagging
  * owner seed (`verticals/tagging/scripts/reset-demo.mts`) because their product and order IDs are deterministic.
  */
 import type { TaskPrioritySchema, TaskState } from '@app/work-tasks/contracts/records';

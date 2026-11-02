@@ -250,7 +250,7 @@ sleep 3
 kill -0 "$(cat "$PID_DIR/outbox-worker-host.pid")" 2>/dev/null ||
   say "WARN outbox worker host exited; see $LOG_DIR/outbox-worker-host.log"
 
-# Real e-mail: after-commit dispatcher (AKROS order e-mails, Nájempark payment reminders) over SMTP (Mailpit by default).
+# Real e-mail: after-commit dispatcher (ŠroubShop order e-mails, Nájempark payment reminders) over SMTP (Mailpit by default).
 say "starting the e-mail dispatcher (SMTP ${SMTP_HOST:-127.0.0.1}:${SMTP_PORT:-1025})"
 start email-dispatcher "${WITH_ENV[@]}" node scripts/demo/email-dispatcher/main.mts
 wait_http "http://127.0.0.1:${EMAIL_DISPATCHER_PORT:-3096}/healthz" 60 email-dispatcher
@@ -281,7 +281,7 @@ step agent-operators env ONTOS_AGENT_SETUP_EMAIL=obchod@demo.ontos \
   "${WITH_ENV[@]}" node scripts/demo/setup-agent-operators.mts --mode apply
 # CRM.md §3: key of the CRM's Party Registry intake principal (read by the crm server per intake, no restart).
 step crm-party-intake pnpm_ demo:crm-party-intake
-# AKROS customer accounts: publish the two workload identities/keys and Shell provider configuration first.
+# ŠroubShop customer accounts: publish the two workload identities/keys and Shell provider configuration first.
 step commerce-portal pnpm_ demo:commerce-portal
 reload_env_keys COMMERCE_CORE_IDENTITY_BASE_URL COMMERCE_CORE_IDENTITY_API_KEY \
   ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT \
@@ -326,11 +326,11 @@ if [ "${DEMO_RESET:-1}" != 0 ]; then
   step demo-seed-company-content env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" \
     node scripts/demo/seed-company-content.mts --apply
 fi
-# AKROS remains an independent Next.js app. Its helper owns :3070 and registers the PID for down.sh.
+# ŠroubShop remains an independent Next.js app. Its helper owns :3070 and registers the PID for down.sh.
 step akros-storefront "$APP/akros-storefront/scripts/demo-restart.sh"
 cat <<EOF
 
-[demo] AKROS: http://localhost:3070 (OntOS-backed standalone Next.js storefront)
+[demo] ŠroubShop: http://localhost:3070 (OntOS-backed standalone Next.js storefront)
 [demo] E-maily (Mailpit): http://localhost:8025   SMTP 127.0.0.1:1025   testovací adresy: http://localhost:8026   dispatcher: http://127.0.0.1:${EMAIL_DISPATCHER_PORT:-3096}/healthz
 [demo] UP. Shell: http://localhost:$SHELL_PORT/cs   (composition :$COMPOSITION_PORT)
 [demo] Verticals: ${VERTICALS[*]}
