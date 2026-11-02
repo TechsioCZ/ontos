@@ -50,6 +50,58 @@ interface DraftErrors {
   responsibleEmployeeIds?: DraftError;
 }
 type Unit = RecordsResponse['units'][number];
+
+/**
+ * The free-text responsible person of an older building that has no employee reference yet. It stays as stored until
+ * someone picks employees: opening the editor or editing another field never turns the name into an employee.
+ */
+const legacyResponsiblePerson = (draft: PropertyDraft): string | undefined => {
+  const { property } = draft;
+  if (
+    property === undefined ||
+    property.responsibleEmployeeIds !== undefined ||
+    draft.responsibleEmployeeIds.length > 0
+  ) {
+    return undefined;
+  }
+  const name = property.responsiblePerson?.trim() ?? '';
+  return name.length === 0 ? undefined : name;
+};
+
+/** A responsible employee as the editor shows it; `name` is undefined when the employee register cannot show it. */
+export interface ResponsibleChoice {
+  readonly id: Employee['id'];
+  readonly name: string | undefined;
+}
+
+/** What the responsible-person picker offers and shows as chosen for a draft. */
+export interface ResponsibleSelection {
+  /** The stored name of an older building without employee references, shown until employees are picked. */
+  readonly legacyName: string | undefined;
+  /** Active employees, plus every chosen one (inactive or unreadable) so the choice stays visible and removable. */
+  readonly options: readonly ResponsibleChoice[];
+  readonly selected: readonly ResponsibleChoice[];
+}
+
+export const responsibleSelection = (
+  draft: PropertyDraft,
+  employees: readonly EmployeeOption[] | undefined,
+): ResponsibleSelection => {
+  const chosen = new Set(draft.responsibleEmployeeIds);
+  const names = new Map((employees ?? []).map((employee) => [employee.id, employee.fullName]));
+  const selected = draft.responsibleEmployeeIds.map((id) => ({ id, name: names.get(id) }));
+  return {
+    legacyName: legacyResponsiblePerson(draft),
+    options: [
+      ...(employees ?? []).flatMap((employee) =>
+        employee.active || chosen.has(employee.id) ? [{ id: employee.id, name: employee.fullName }] : [],
+      ),
+      ...selected.filter((choice) => choice.name === undefined),
+    ],
+    selected,
+  };
+};
+
 /** Translation keys for invalid draft fields; empty when the editable fields are valid. */
 export const propertyDraftErrors = (draft: PropertyDraft, records?: RecordsResponse): DraftErrors => {
   let fields: readonly TextField[] =
@@ -66,7 +118,12 @@ export const propertyDraftErrors = (draft: PropertyDraft, records?: RecordsRespo
       errors[field] = 'tooLong';
     }
   }
-  if (draft.unit === undefined && draft.unitFor === undefined && draft.responsibleEmployeeIds.length === 0) {
+  if (
+    draft.unit === undefined &&
+    draft.unitFor === undefined &&
+    draft.responsibleEmployeeIds.length === 0 &&
+    legacyResponsiblePerson(draft) === undefined
+  ) {
     errors.responsibleEmployeeIds = 'responsibleRequired';
   }
   const code = draft.code.trim();
@@ -83,25 +140,17 @@ export const propertyDraftErrors = (draft: PropertyDraft, records?: RecordsRespo
   return errors;
 };
 
-/** The draft of an existing building, read from the register. */
-export const propertyDraftOf = (
-  property: Property,
-  employees: readonly EmployeeOption[] | undefined,
-): PropertyDraft => {
-  const legacyEmployees = employees?.filter((employee) => employee.fullName === property.responsiblePerson) ?? [];
-  return {
-    address: property.address,
-    code: property.code,
-    lifecycleState: property.lifecycleState,
-    name: property.name,
-    note: property.note ?? '',
-    property,
-    propertyType: property.propertyType ?? '',
-    responsibleEmployeeIds:
-      property.responsibleEmployeeIds ??
-      (legacyEmployees.length === 1 ? legacyEmployees.map((employee) => employee.id) : []),
-  };
-};
+/** The draft of an existing building, read from the register; only stored employee references are preselected. */
+export const propertyDraftOf = (property: Property): PropertyDraft => ({
+  address: property.address,
+  code: property.code,
+  lifecycleState: property.lifecycleState,
+  name: property.name,
+  note: property.note ?? '',
+  property,
+  propertyType: property.propertyType ?? '',
+  responsibleEmployeeIds: property.responsibleEmployeeIds ?? [],
+});
 
 /** The draft of an existing unit, read from the register. */
 export const unitDraftOf = (unit: Unit): PropertyDraft => ({
@@ -122,7 +171,10 @@ export const sameEditDraft = (left: PropertyDraft, right: PropertyDraft): boolea
   left.propertyType.trim() === right.propertyType.trim() &&
   left.responsibleEmployeeIds.join(',') === right.responsibleEmployeeIds.join(',');
 
-/** The update an edit draft sends; None while a field is invalid, so an invalid draft is never saved. */
+/**
+ * The update an edit draft sends; None while a field is invalid, so an invalid draft is never saved. An older building
+ * keeps its stored responsible person until employees are picked, because the update then leaves it out.
+ */
 export const editCommandOf = (draft: PropertyDraft, records?: RecordsResponse): Option.Option<PropertyCommand> => {
   if (Object.keys(propertyDraftErrors(draft, records)).length > 0) {
     return Option.none();
@@ -136,7 +188,7 @@ export const editCommandOf = (draft: PropertyDraft, records?: RecordsResponse): 
     });
   }
   if (draft.property !== undefined) {
-    return Option.some({
+    const update: PropertyCommand = {
       _tag: 'UpdateProperty',
       address: draft.address,
       lifecycleState: draft.lifecycleState,
@@ -144,18 +196,18 @@ export const editCommandOf = (draft: PropertyDraft, records?: RecordsResponse): 
       note: draft.note.trim() || null,
       propertyRef: draft.property.propertyRef,
       propertyType: draft.propertyType,
-      responsibleEmployeeIds: draft.responsibleEmployeeIds,
-    });
+    };
+    return Option.some(
+      draft.responsibleEmployeeIds.length === 0
+        ? update
+        : { ...update, responsibleEmployeeIds: draft.responsibleEmployeeIds },
+    );
   }
   return Option.none();
 };
 
 /** The edited record as the register has it now, in the draft's shape; undefined once it is gone. */
-export const currentEditDraft = (
-  base: PropertyDraft,
-  records: RecordsResponse,
-  employees: readonly EmployeeOption[] | undefined,
-): PropertyDraft | undefined => {
+export const currentEditDraft = (base: PropertyDraft, records: RecordsResponse): PropertyDraft | undefined => {
   if (base.unit !== undefined) {
     const { resourceId } = base.unit.unitRef;
     const unit = records.units.find((item) => item.unitRef.resourceId === resourceId);
@@ -163,14 +215,14 @@ export const currentEditDraft = (
   }
   const resourceId = base.property?.propertyRef.resourceId;
   const property = records.properties.find((item) => item.propertyRef.resourceId === resourceId);
-  return property === undefined ? undefined : propertyDraftOf(property, employees);
+  return property === undefined ? undefined : propertyDraftOf(property);
 };
 
 /** Whether the register still holds the edited record as the draft's base version. */
 export const editUnchangedSince =
-  (base: PropertyDraft, employees: readonly EmployeeOption[] | undefined) =>
+  (base: PropertyDraft) =>
   (records: RecordsResponse): boolean => {
-    const current = currentEditDraft(base, records, employees);
+    const current = currentEditDraft(base, records);
     return current !== undefined && sameEditDraft(current, base);
   };
 
@@ -251,7 +303,7 @@ export const usePropertyEditor = (
       setDraft(emptyDraft);
       return;
     }
-    setEditing(propertyDraftOf(property, employees));
+    setEditing(propertyDraftOf(property));
   };
   const submit = (raw: PropertyCommand) => {
     if (records === undefined || busy || blocked) {

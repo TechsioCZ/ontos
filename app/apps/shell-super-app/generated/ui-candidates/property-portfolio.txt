@@ -14,8 +14,10 @@ border-border-primary
 border-border-primary/60
 border-s
 fixed
+gap-100
 gap-200
 gap-250
+gap-50
 icon-[mdi--office-building-outline]
 icon-[mdi--view-dashboard-outline]
 last:border-b-0
@@ -27,4 +29,5 @@ space-y-200
 space-y-250
 space-y-300
 transition
+visible
 z

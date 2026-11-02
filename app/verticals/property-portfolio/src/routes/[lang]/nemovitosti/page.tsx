@@ -25,6 +25,7 @@ import {
   editCommandOf,
   editUnchangedSince,
   propertyDraftErrors,
+  responsibleSelection,
   sameEditDraft,
   usePropertyEditor,
   withLifecycle,
@@ -32,6 +33,7 @@ import {
   withTextField,
 } from './use-property-editor.ts';
 import type { PropertyDraft } from './use-property-editor.ts';
+import { ResponsibleEmployeesField } from './responsible-employees-field.tsx';
 import { AutosaveStatus, useAutosaveDraft } from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import type { PropertyCommand } from '../../../../shared/actions/apply-command.ts';
@@ -499,49 +501,30 @@ const RecordsEditorFields = ({
   onText,
 }: EditorFieldsProps) => {
   const { key, t } = model;
-  const selectedEmployeeIds = new Set(draft.responsibleEmployeeIds);
-  const availableEmployeeIds = new Set(model.employees?.map((employee) => employee.id));
   const propertyDraft = draft.unitFor === undefined && draft.unit === undefined;
   return (
     <>
       {fields.map((field) => {
         if (field === 'responsibleEmployeeIds') {
           return (
-            <Combobox
-              allowCustomValue={false}
-              closeOnSelect={false}
+            <ResponsibleEmployeesField
+              copy={{
+                empty: t(`${key}.editor.employeesEmpty`),
+                label: t(`${key}.editor.responsiblePerson`),
+                loading: t(`${key}.editor.employeesLoading`),
+                placeholder: t(`${key}.editor.employeesPlaceholder`),
+                required: t(`${key}.editor.responsibleRequired`),
+                retry: t(`${key}.editor.employeesRetry`),
+                unavailable: t(`${key}.editor.employeeUnknown`),
+              }}
               disabled={disabled}
               error={model.employeesMessage}
-              id="property-responsible-employees"
-              items={[
-                ...(model.employees ?? []).flatMap((employee) =>
-                  employee.active || selectedEmployeeIds.has(employee.id)
-                    ? [{ label: employee.fullName, value: employee.id }]
-                    : [],
-                ),
-                ...(draft.responsibleEmployeeIds ?? []).flatMap((id) =>
-                  availableEmployeeIds.has(id)
-                    ? []
-                    : [{ label: t(`${key}.editor.employeeUnknown`, { id }), value: id }],
-                ),
-              ]}
+              invalid={errors.responsibleEmployeeIds !== undefined}
               key={field}
-              label={t(`${key}.editor.responsiblePerson`)}
               loading={model.recordsLoading}
-              loadingMessage={t(`${key}.editor.employeesLoading`)}
-              multiple
-              name="responsibleEmployeeIds"
-              noResultsMessage={t(`${key}.editor.employeesEmpty`)}
               onChange={onEmployees}
               onRetry={() => model.refresh()}
-              openOnClick
-              placeholder={t(`${key}.editor.employeesPlaceholder`)}
-              required
-              retryLabel={t(`${key}.editor.employeesRetry`)}
-              value={[...draft.responsibleEmployeeIds]}
-              {...(errors.responsibleEmployeeIds === undefined
-                ? {}
-                : { helpText: t(`${key}.editor.responsibleRequired`), validateStatus: 'error' as const })}
+              selection={responsibleSelection(draft, model.employees)}
             />
           );
         }
@@ -609,7 +592,7 @@ const propertyFields = ['code', 'name', 'address', 'propertyType', 'responsibleE
 const RecordsEditPanel = ({ base: opened, view }: { readonly base: PropertyDraft; readonly view: RecordsView }) => {
   const { editor, model } = view;
   const { key, records, t } = model;
-  const server = (records === undefined ? undefined : currentEditDraft(opened, records, model.employees)) ?? opened;
+  const server = (records === undefined ? undefined : currentEditDraft(opened, records)) ?? opened;
   /** The version of the record the draft builds on: what it opened with, last saved or reloaded. */
   const base = useRef(server);
   const rememberSaved = (value: PropertyDraft, result: RevisionedSaveResult) => {
@@ -618,7 +601,7 @@ const RecordsEditPanel = ({ base: opened, view }: { readonly base: PropertyDraft
     }
   };
   const send = (value: PropertyDraft, expectedRevision: number, command: PropertyCommand) =>
-    autosavePropertyEdit(command, expectedRevision, editUnchangedSince(base.current, model.employees)).pipe(
+    autosavePropertyEdit(command, expectedRevision, editUnchangedSince(base.current)).pipe(
       Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))),
     );
   const autosave = useAutosaveDraft<PropertyDraft, never>({

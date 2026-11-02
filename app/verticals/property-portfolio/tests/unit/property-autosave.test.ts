@@ -69,8 +69,8 @@ it.effect('compares edit drafts by their stored values, not by the record snapsh
   Effect.gen(function* editDraftComparison() {
     const records = yield* recordsEffect;
     const property = yield* Effect.fromNullishOr(records.properties[0]);
-    const saved = propertyDraftOf(property, []);
-    expect(sameEditDraft(saved, propertyDraftOf(property, []))).toBe(true);
+    const saved = propertyDraftOf(property);
+    expect(sameEditDraft(saved, propertyDraftOf(property))).toBe(true);
     expect(sameEditDraft(saved, { ...saved, name: 'Park House ' })).toBe(true);
     expect(sameEditDraft(saved, { ...saved, name: 'Park House II' })).toBe(false);
     expect(sameEditDraft(saved, { ...saved, note: 'Poznámka' })).toBe(false);
@@ -86,7 +86,7 @@ it.effect('sends an UpdateProperty for a changed building and an UpdateUnit for 
     const records = yield* recordsEffect;
     const property = yield* Effect.fromNullishOr(records.properties[0]);
     const unit = yield* Effect.fromNullishOr(records.units[0]);
-    const propertyDraft = propertyDraftOf(property, []);
+    const propertyDraft = propertyDraftOf(property);
     const propertyCommand = Option.getOrThrow(editCommandOf({ ...propertyDraft, name: 'Park House II' }, records));
     expect(Schema.is(PropertyCommandSchema.cases.UpdateProperty)(propertyCommand)).toBe(true);
     expect(propertyCommand).toMatchObject({ address: '12 Park Street', name: 'Park House II', propertyRef });
@@ -103,7 +103,7 @@ it.effect('never turns an invalid building draft into a command', () =>
   Effect.gen(function* invalidEditDraft() {
     const records = yield* recordsEffect;
     const property = yield* Effect.fromNullishOr(records.properties[0]);
-    const draft = propertyDraftOf(property, []);
+    const draft = propertyDraftOf(property);
     expect(Option.isNone(editCommandOf({ ...draft, name: '  ' }, records))).toBe(true);
     expect(Option.isNone(editCommandOf({ ...draft, responsibleEmployeeIds: [] }, records))).toBe(true);
     // A draft without a record is a create, never an autosaved edit.
@@ -117,22 +117,22 @@ it.effect('follows the register: an edit is resendable only while the stored rec
     const records = yield* recordsEffect;
     const property = yield* Effect.fromNullishOr(records.properties[0]);
     const unit = yield* Effect.fromNullishOr(records.units[0]);
-    const propertyBase = propertyDraftOf(property, []);
+    const propertyBase = propertyDraftOf(property);
     const unitBase = unitDraftOf(unit);
-    expect(editUnchangedSince(propertyBase, [])(records)).toBe(true);
-    expect(editUnchangedSince(unitBase, [])(records)).toBe(true);
+    expect(editUnchangedSince(propertyBase)(records)).toBe(true);
+    expect(editUnchangedSince(unitBase)(records)).toBe(true);
 
     const changedProperty = yield* Schema.decodeUnknownEffect(RecordsResponseSchema)({
       ...records,
       properties: [{ ...property, name: 'Renamed by someone else', updatedAt: '2026-10-29T09:00:00.000Z' }],
     });
-    expect(editUnchangedSince(propertyBase, [])(changedProperty)).toBe(false);
-    expect(currentEditDraft(propertyBase, changedProperty, [])).toMatchObject({ name: 'Renamed by someone else' });
+    expect(editUnchangedSince(propertyBase)(changedProperty)).toBe(false);
+    expect(currentEditDraft(propertyBase, changedProperty)).toMatchObject({ name: 'Renamed by someone else' });
 
     const gone = yield* Schema.decodeUnknownEffect(RecordsResponseSchema)({ ...records, properties: [], units: [] });
-    expect(editUnchangedSince(propertyBase, [])(gone)).toBe(false);
-    expect(editUnchangedSince(unitBase, [])(gone)).toBe(false);
-    expect(currentEditDraft(propertyBase, gone, [])).toBeUndefined();
+    expect(editUnchangedSince(propertyBase)(gone)).toBe(false);
+    expect(editUnchangedSince(unitBase)(gone)).toBe(false);
+    expect(currentEditDraft(propertyBase, gone)).toBeUndefined();
   }),
 );
 
