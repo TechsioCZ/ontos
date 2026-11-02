@@ -8,6 +8,7 @@
 [&_.ontos-tile]:bg-base
 bg-surface
 block
+blur
 border-b
 border-border-primary
 border-border-primary/60

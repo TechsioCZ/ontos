@@ -53,6 +53,7 @@
     "@techsio/ui-kit": "catalog:",
     "@effect/sql-pg": "4.0.7",
     "@effect/platform-node": "4.0.7",
+    "@app/admin-ui": "workspace:*",
     "@app/legal-agreements": "workspace:*",
     "@app/property-leasing": "workspace:*",
     "@app/finance-billing": "workspace:*",

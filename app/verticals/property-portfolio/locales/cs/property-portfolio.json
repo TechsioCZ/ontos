@@ -144,6 +144,7 @@
         "editor": {
           "create": "Přidat nemovitost",
           "edit": "Upravit nemovitost",
+          "close": "Zavřít",
           "code": "Kód",
           "name": "Název",
           "address": "Adresa",

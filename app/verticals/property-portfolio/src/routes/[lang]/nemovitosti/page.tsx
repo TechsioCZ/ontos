@@ -11,15 +11,30 @@ import { executeRecords as readFinance } from '@app/finance-billing/clients/reco
 import { executeRecords as readWork } from '@app/work-tasks/clients/records';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
-import { DateTime, Effect, Match, Random, Result, Schema } from 'effect';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { DateTime, Effect, Match, Option, Random, Result, Schema } from 'effect';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { listEmployees } from '@app/workforce/clients/records';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { usePropertyEditor } from './use-property-editor.ts';
+import {
+  autosavePropertyEdit,
+  currentEditDraft,
+  editCommandOf,
+  editUnchangedSince,
+  propertyDraftErrors,
+  sameEditDraft,
+  usePropertyEditor,
+  withLifecycle,
+  withResponsibleEmployees,
+  withTextField,
+} from './use-property-editor.ts';
+import type { PropertyDraft } from './use-property-editor.ts';
+import { AutosaveStatus, useAutosaveDraft } from '@app/admin-ui';
+import type { RevisionedSaveResult } from '@app/admin-ui';
+import type { PropertyCommand } from '../../../../shared/actions/apply-command.ts';
 import { UnitStory, pragueToday } from './unit-story.tsx';
 import type { LeaseBlock } from './unit-story.tsx';
 import { executeRecords } from '../../../api/records-client';
@@ -459,12 +474,240 @@ const unitLeaseBlock = (
   return 'outOfService';
 };
 
+interface EditorFieldsProps {
+  readonly disabled: boolean;
+  readonly draft: PropertyDraft;
+  readonly errors: PropertyEditor['errors'];
+  readonly fields: PropertyEditor['fields'];
+  readonly model: RecordsModel;
+  readonly onBlur: () => void;
+  readonly onEmployees: (value: string | string[]) => void;
+  readonly onLifecycle: (value: string) => void;
+  readonly onText: (field: Exclude<PropertyEditor['fields'][number], 'responsibleEmployeeIds'>, value: string) => void;
+}
+
+/** The fields of a building or unit, shared by the create dialog and the autosaving edit dialog. */
+const RecordsEditorFields = ({
+  disabled,
+  draft,
+  errors,
+  fields,
+  model,
+  onBlur,
+  onEmployees,
+  onLifecycle,
+  onText,
+}: EditorFieldsProps) => {
+  const { key, t } = model;
+  const selectedEmployeeIds = new Set(draft.responsibleEmployeeIds);
+  const availableEmployeeIds = new Set(model.employees?.map((employee) => employee.id));
+  const propertyDraft = draft.unitFor === undefined && draft.unit === undefined;
+  return (
+    <>
+      {fields.map((field) => {
+        if (field === 'responsibleEmployeeIds') {
+          return (
+            <Combobox
+              allowCustomValue={false}
+              closeOnSelect={false}
+              disabled={disabled}
+              error={model.employeesMessage}
+              id="property-responsible-employees"
+              items={[
+                ...(model.employees ?? []).flatMap((employee) =>
+                  employee.active || selectedEmployeeIds.has(employee.id)
+                    ? [{ label: employee.fullName, value: employee.id }]
+                    : [],
+                ),
+                ...(draft.responsibleEmployeeIds ?? []).flatMap((id) =>
+                  availableEmployeeIds.has(id)
+                    ? []
+                    : [{ label: t(`${key}.editor.employeeUnknown`, { id }), value: id }],
+                ),
+              ]}
+              key={field}
+              label={t(`${key}.editor.responsiblePerson`)}
+              loading={model.recordsLoading}
+              loadingMessage={t(`${key}.editor.employeesLoading`)}
+              multiple
+              name="responsibleEmployeeIds"
+              noResultsMessage={t(`${key}.editor.employeesEmpty`)}
+              onChange={onEmployees}
+              onRetry={() => model.refresh()}
+              openOnClick
+              placeholder={t(`${key}.editor.employeesPlaceholder`)}
+              required
+              retryLabel={t(`${key}.editor.employeesRetry`)}
+              value={[...draft.responsibleEmployeeIds]}
+              {...(errors.responsibleEmployeeIds === undefined
+                ? {}
+                : { helpText: t(`${key}.editor.responsibleRequired`), validateStatus: 'error' as const })}
+            />
+          );
+        }
+        if (field === 'note') {
+          return (
+            <FormTextarea
+              disabled={disabled}
+              id="property-note"
+              key={field}
+              label={t(`${key}.editor.note`)}
+              onBlur={onBlur}
+              onChange={(event) => onText('note', event.target.value)}
+              value={draft.note}
+            />
+          );
+        }
+        return (
+          <FormInput
+            disabled={disabled || (field === 'code' && draft.property !== undefined)}
+            id={`property-${field}`}
+            key={field}
+            label={t(`${key}.editor.${field}`)}
+            onBlur={onBlur}
+            onChange={(event) => onText(field, event.target.value)}
+            required
+            value={draft[field]}
+            {...(errors[field] === undefined
+              ? {}
+              : {
+                  helpText: t(`${key}.editor.${errors[field]}`, { field: t(`${key}.editor.${field}`) }),
+                  validateStatus: 'error' as const,
+                })}
+          />
+        );
+      })}
+      {propertyDraft && (
+        <Combobox
+          allowCustomValue={false}
+          disabled={disabled}
+          id="property-lifecycle"
+          items={(['PLANNED', 'ACTIVE', 'INACTIVE', 'DISPOSED'] as const).map((value) => ({
+            label: t(`${key}.states.${value}`),
+            value,
+          }))}
+          label={t(`${key}.state`)}
+          onChange={(value) => onLifecycle(Array.isArray(value) ? (value[0] ?? '') : value)}
+          value={[draft.lifecycleState]}
+        />
+      )}
+    </>
+  );
+};
+
+const noBlur = () => {
+  // A new record is saved only on "Uložit".
+};
+
+const unitFields = ['name', 'note'] as const;
+const propertyFields = ['code', 'name', 'address', 'propertyType', 'responsibleEmployeeIds', 'note'] as const;
+
+/**
+ * Edit an existing building or unit. Changes save themselves (debounced, on blur and on Zavřít) against the revision
+ * the draft builds on; when someone else changed the record, the dialog offers the current version instead.
+ */
+const RecordsEditPanel = ({ base: opened, view }: { readonly base: PropertyDraft; readonly view: RecordsView }) => {
+  const { editor, model } = view;
+  const { key, records, t } = model;
+  const server = (records === undefined ? undefined : currentEditDraft(opened, records, model.employees)) ?? opened;
+  /** The version of the record the draft builds on: what it opened with, last saved or reloaded. */
+  const base = useRef(server);
+  const rememberSaved = (value: PropertyDraft, result: RevisionedSaveResult) => {
+    if (result !== 'conflict' && result !== 'failed') {
+      base.current = value;
+    }
+  };
+  const send = (value: PropertyDraft, expectedRevision: number, command: PropertyCommand) =>
+    autosavePropertyEdit(command, expectedRevision, editUnchangedSince(base.current, model.employees)).pipe(
+      Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))),
+    );
+  const autosave = useAutosaveDraft<PropertyDraft, never>({
+    equals: sameEditDraft,
+    isValid: (value) => Option.isSome(editCommandOf(value, records)),
+    revision: records?.revision ?? 0,
+    runtime: browserRuntime,
+    save: (value, expectedRevision) =>
+      Option.match(editCommandOf(value, records), {
+        onNone: () => Effect.succeed<RevisionedSaveResult>('failed'),
+        onSome: (command) => send(value, expectedRevision, command),
+      }),
+    server,
+  });
+  const settledOnServer = !autosave.pending && sameEditDraft(autosave.draft, server);
+  useEffect(() => {
+    if (settledOnServer) {
+      base.current = server;
+    }
+  }, [base, server, settledOnServer]);
+  const { draft } = autosave;
+  const close = () => {
+    autosave.flush();
+    editor.closeEdit();
+  };
+  const handleBlur = autosave.flush;
+  const handleRetry = autosave.retry;
+  const handleReloadLatest = autosave.reloadLatest;
+  const isUnit = draft.unit !== undefined;
+  return (
+    <Dialog
+      actions={
+        <>
+          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <Button onClick={close} theme="outlined" variant="secondary">
+            {t(`${key}.editor.close`)}
+          </Button>
+        </>
+      }
+      closeLabel={t(`${key}.editor.close`)}
+      customTrigger
+      onOpenChange={({ open }) => {
+        if (!open) {
+          close();
+        }
+      }}
+      open
+      size="lg"
+      title={t(`${key}.editor.${isUnit ? 'editUnit' : 'edit'}`, {
+        name: draft.unit?.name ?? draft.property?.name ?? '',
+      })}
+    >
+      <form
+        className="propertyportfolio:grid gap-250"
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          autosave.flush();
+        }}
+      >
+        <RecordsEditorFields
+          disabled={false}
+          draft={draft}
+          errors={propertyDraftErrors(draft, records)}
+          fields={isUnit ? unitFields : propertyFields}
+          model={model}
+          onBlur={handleBlur}
+          onEmployees={(value) => autosave.setDraft((current) => withResponsibleEmployees(current, value))}
+          onLifecycle={(value) => autosave.setDraft((current) => withLifecycle(current, value))}
+          onText={(field, value) => autosave.setDraft((current) => withTextField(current, field, value))}
+        />
+      </form>
+    </Dialog>
+  );
+};
+
 const RecordsEditorForm = ({ view }: { readonly view: RecordsView }) => {
   const { editor, model } = view;
   const { key, t } = model;
-  const { draft } = editor;
-  const selectedEmployeeIds = new Set(draft?.responsibleEmployeeIds);
-  const availableEmployeeIds = new Set(model.employees?.map((employee) => employee.id));
+  const { draft, editing } = editor;
+  if (editing !== undefined) {
+    return (
+      <RecordsEditPanel
+        base={editing}
+        key={editing.unit?.unitRef.resourceId ?? editing.property?.propertyRef.resourceId}
+        view={view}
+      />
+    );
+  }
   if (draft === undefined) {
     return null;
   }
@@ -511,91 +754,17 @@ const RecordsEditorForm = ({ view }: { readonly view: RecordsView }) => {
           editor.save();
         }}
       >
-        {editor.fields.map((field) => {
-          if (field === 'responsibleEmployeeIds') {
-            return (
-              <Combobox
-                allowCustomValue={false}
-                closeOnSelect={false}
-                disabled={editor.busy}
-                error={model.employeesMessage}
-                id="property-responsible-employees"
-                items={[
-                  ...(model.employees ?? []).flatMap((employee) =>
-                    employee.active || selectedEmployeeIds.has(employee.id)
-                      ? [{ label: employee.fullName, value: employee.id }]
-                      : [],
-                  ),
-                  ...(draft.responsibleEmployeeIds ?? []).flatMap((id) =>
-                    availableEmployeeIds.has(id)
-                      ? []
-                      : [{ label: t(`${key}.editor.employeeUnknown`, { id }), value: id }],
-                  ),
-                ]}
-                key={field}
-                label={t(`${key}.editor.responsiblePerson`)}
-                loading={model.recordsLoading}
-                loadingMessage={t(`${key}.editor.employeesLoading`)}
-                multiple
-                name="responsibleEmployeeIds"
-                noResultsMessage={t(`${key}.editor.employeesEmpty`)}
-                onChange={(value) => editor.changeResponsibleEmployees(value)}
-                onRetry={() => model.refresh()}
-                openOnClick
-                placeholder={t(`${key}.editor.employeesPlaceholder`)}
-                required
-                retryLabel={t(`${key}.editor.employeesRetry`)}
-                value={[...draft.responsibleEmployeeIds]}
-                {...(editor.errors.responsibleEmployeeIds === undefined
-                  ? {}
-                  : { helpText: t(`${key}.editor.responsibleRequired`), validateStatus: 'error' as const })}
-              />
-            );
-          }
-          if (field === 'note') {
-            return (
-              <FormTextarea
-                disabled={editor.busy}
-                id="property-note"
-                key={field}
-                label={t(`${key}.editor.note`)}
-                onChange={(event) => editor.change('note', event.target.value)}
-                value={draft.note}
-              />
-            );
-          }
-          return (
-            <FormInput
-              disabled={editor.busy || (field === 'code' && draft.property !== undefined)}
-              id={`property-${field}`}
-              key={field}
-              label={t(`${key}.editor.${field}`)}
-              onChange={(event) => editor.change(field, event.target.value)}
-              required
-              value={draft[field]}
-              {...(editor.errors[field] === undefined
-                ? {}
-                : {
-                    helpText: t(`${key}.editor.${editor.errors[field]}`, { field: t(`${key}.editor.${field}`) }),
-                    validateStatus: 'error' as const,
-                  })}
-            />
-          );
-        })}
-        {propertyDraft && (
-          <Combobox
-            allowCustomValue={false}
-            disabled={editor.busy}
-            id="property-lifecycle"
-            items={(['PLANNED', 'ACTIVE', 'INACTIVE', 'DISPOSED'] as const).map((value) => ({
-              label: t(`${key}.states.${value}`),
-              value,
-            }))}
-            label={t(`${key}.state`)}
-            onChange={(value) => editor.changeLifecycle(Array.isArray(value) ? (value[0] ?? '') : value)}
-            value={[draft.lifecycleState]}
-          />
-        )}
+        <RecordsEditorFields
+          disabled={editor.busy}
+          draft={draft}
+          errors={editor.errors}
+          fields={editor.fields}
+          model={model}
+          onBlur={noBlur}
+          onEmployees={(value) => editor.changeResponsibleEmployees(value)}
+          onLifecycle={(value) => editor.changeLifecycle(value)}
+          onText={(field, value) => editor.change(field, value)}
+        />
         {editor.feedback !== undefined && <output>{t(`${key}.editor.${editor.feedback}`)}</output>}
       </form>
     </Dialog>
@@ -1035,15 +1204,6 @@ const RecordsFilters = ({ view }: { readonly view: RecordsView }) => {
           onCheckedChange={(checked) => model.updateSearch({ ...search, includeArchived: checked ? true : undefined })}
         />
       )}
-      <Button
-        disabled={editor.busy}
-        isLoading={model.recordsLoading}
-        onClick={() => model.refresh()}
-        theme="outlined"
-        variant="secondary"
-      >
-        {t(`${key}.refresh`)}
-      </Button>
     </div>
   );
 };
