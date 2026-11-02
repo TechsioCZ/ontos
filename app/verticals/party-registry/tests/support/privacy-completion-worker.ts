@@ -2,6 +2,7 @@
 import {
   ApplicationCompositionAuthorityError,
   ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
   CorePersistenceLive,
   DatabaseConfigLive,
   extractOutboxWorkerSubscriptions,
@@ -11,6 +12,7 @@ import {
   OutboxRuntimeLive,
   OutboxWorkerDescriptorError,
 } from '@app/core-runtime';
+import type { ActiveApplicationCompositionUnavailableError, OutboxCycleError } from '@app/core-runtime';
 import { defineOutboxWorkerEntry } from '@app/core-runtime/outbox/worker';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { NodeCrypto, NodeRuntime, NodeServices, NodeStream } from '@effect/platform-node';
@@ -62,6 +64,7 @@ const workerMessageSchema = Schema.Union([
     type: Schema.Literal('failed'),
     code: Schema.Literals(['composition-unavailable', 'worker-unavailable']),
     reasonCode: Schema.Literals(['native-claim-admission', 'other']),
+    diagnostic: Schema.Array(Schema.Struct({ tag: Schema.String, code: Schema.String, reason: Schema.String })),
   }),
   Schema.Struct({
     marker: Schema.Struct({
@@ -95,6 +98,45 @@ const failureReasonCode = (cause: unknown) =>
   cause.reason === 'The worker claim intrinsic admission could not be verified'
     ? ('native-claim-admission' as const)
     : ('other' as const);
+const declaredFailureSchema = Schema.Struct({
+  _tag: Schema.String.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9_]{0,95}$/u)),
+  code: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9_]{0,95}$/u))),
+  reason: Schema.optionalKey(Schema.String),
+  cause: Schema.optionalKey(Schema.Unknown),
+});
+const publicFailureReasons = new Set([
+  'The worker claim intrinsic admission could not be verified',
+  'The native worker claim has no current verified receiving authority',
+  'The required module operation could not be checked safely',
+  'The required module operation is not supported by the admitted composition',
+  'The compiled Outbox Worker subscription contract is invalid',
+  'The compiled Outbox Worker owner artifact is not approved by this Application Composition',
+  'The compiled Outbox Worker subscriptions differ from the complete approved owner contract',
+  'The complete Application Composition subscription catalog is unavailable',
+  'The genuine hosted worker cycle failed',
+]);
+const failureDiagnostic = (cause: unknown) => {
+  const diagnostic: { tag: string; code: string; reason: string }[] = [];
+  let current = cause;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const declared = Schema.decodeUnknownOption(declaredFailureSchema)(current);
+    if (Option.isNone(declared)) {
+      break;
+    }
+    const { _tag, code, reason } = declared.value;
+    diagnostic.push({
+      tag: _tag,
+      code: code ?? 'not-declared',
+      // Only declared machine reasons and these exact public constants may leave the child.
+      reason:
+        reason !== undefined && (publicFailureReasons.has(reason) || /^[A-Za-z][A-Za-z0-9_]{0,95}$/u.test(reason))
+          ? reason
+          : 'redacted-unclassified-reason',
+    });
+    current = declared.value.cause;
+  }
+  return diagnostic;
+};
 const ownsWorkerConnection = (address: URL, database: string, user: string) =>
   database.startsWith('ontos_test_party_gateway_') &&
   ['postgres:', 'postgresql:'].includes(address.protocol) &&
@@ -204,7 +246,12 @@ const run = Effect.scoped(
     const actualRuntime = Context.get(context, OutboxRuntime);
     const advances =
       retrySession === 'dead-letter' ? [0, 2000, 5000, 10_000, 19_000, 36_000, 69_000, 130_000, 200_000] : [advanceMs];
-    const completed = yield* Deferred.make<true, PrivacyCompletionWorkerFailure>();
+    const completed = yield* Deferred.make<
+      true,
+      PrivacyCompletionWorkerFailure | OutboxCycleError | ActiveApplicationCompositionUnavailableError
+    >();
+    const recordActualFailure = (cause: OutboxCycleError | ActiveApplicationCompositionUnavailableError) =>
+      Deferred.fail(completed, cause).pipe(Effect.asVoid);
     const acknowledgements = yield* Queue.make<true, PrivacyCompletionWorkerFailure>({ capacity: 1 });
     yield* Effect.addFinalizer(() => Queue.shutdown(acknowledgements));
     let received = 0;
@@ -292,9 +339,9 @@ const run = Effect.scoped(
             yield* Deferred.succeed(completed, true);
           }
           return cycle;
-        }),
+        }).pipe(Effect.tapError(recordActualFailure)),
     };
-    const authority = ActiveApplicationCompositionConfigLive.pipe(
+    const sourceAuthority = ActiveApplicationCompositionConfigLive.pipe(
       Layer.provide(
         ActiveApplicationCompositionSourceLive.pipe(
           Layer.provide(
@@ -305,6 +352,13 @@ const run = Effect.scoped(
         ),
       ),
     );
+    const authority = Layer.effect(
+      ActiveApplicationCompositionService,
+      Effect.gen(function* observeActualCompositionSourceFailure() {
+        const actualAuthority = yield* ActiveApplicationCompositionService;
+        return { load: actualAuthority.load.pipe(Effect.tapError(recordActualFailure)) };
+      }),
+    ).pipe(Layer.provide(sourceAuthority));
     const entry = defineOutboxWorkerEntry({
       claimOwnerPrefix: 'privacy-completion-test',
       expectedDeployment: ultramodernApiMarker,
@@ -348,6 +402,7 @@ const program = process.argv.includes('--describe')
               ? 'composition-unavailable'
               : 'worker-unavailable',
             reasonCode: failureReasonCode(cause),
+            diagnostic: failureDiagnostic(cause),
             type: 'failed',
           }).pipe(Effect.andThen(Effect.fail(cause))),
         onSuccess: () => Effect.void,

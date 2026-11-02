@@ -143,6 +143,7 @@ const cycleSchema = Schema.Struct({
 });
 const workerFailureSchema = Schema.Struct({
   code: Schema.Literals(['composition-unavailable', 'worker-unavailable']),
+  diagnostic: Schema.Array(Schema.Struct({ code: Schema.String, reason: Schema.String, tag: Schema.String })),
   reasonCode: Schema.Literals(['native-claim-admission', 'other']),
   type: Schema.Literal('failed'),
 });
@@ -549,6 +550,7 @@ const readActualWorkerCycle = Effect.fn('PrivacyPublicSession.readActualWorkerCy
     const workerExit = yield* Effect.exit(worker.child.exitCode);
     yield* Effect.logError('Real Party public completion worker refused its cycle', {
       code: cycle.code,
+      diagnostic: cycle.diagnostic,
       exitCode: Exit.isSuccess(workerExit) ? workerExit.value : 'unavailable',
       reasonCode: cycle.reasonCode,
     });
