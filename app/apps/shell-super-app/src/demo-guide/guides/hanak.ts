@@ -71,10 +71,10 @@ export const hanakGuide: DemoGuide = {
           title: 'Import objednávek z CSV',
         },
         {
-          click: 'Historie importů → 04-rijmove-objednavky.csv.',
+          click: 'Historie importů → 01-uvodni-import-objednavek.csv → výsledek po řádcích. Nic neimportujte.',
           id: 'hanak-import-historie',
           persona: vedouci,
-          say: 'Platné řádky se uložily a chybné zůstaly čitelně dohledatelné v historii dávky.',
+          say: 'Každá dávka si pamatuje výsledek po řádcích: co se založilo, co změnilo stav a co čeká na kontrolu nebo na napárování s klientem.',
           target: { kind: 'app', path: importsPath },
           title: 'Historie importů',
         },
