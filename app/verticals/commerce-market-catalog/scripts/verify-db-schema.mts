@@ -8,6 +8,7 @@ import { CommerceMarketCatalogDatabase, CommerceMarketCatalogDatabaseLive } from
 import { COMMERCE_MARKET_CATALOG_SCHEMA_NAME, COMMERCE_MARKET_CATALOG_TABLES } from '../src/database/schema.ts';
 
 class VerificationError extends Schema.TaggedError<VerificationError>()('CommerceMarketCatalogVerificationError', {
+  actual: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.Boolean, Schema.Number]))),
   reason: Schema.String,
 }) {}
 
@@ -178,6 +179,7 @@ const verification = Effect.gen(function* verifyDatabase() {
     infrastructure.role_bypass_rls
   ) {
     return yield* new VerificationError({
+      actual: infrastructure,
       reason:
         'Commerce Market Catalog ownership, RLS, routine, trigger, journal, or least-privilege verification failed',
     });
