@@ -80,9 +80,15 @@ interface CustomerChangeBasisProps {
 /** Evidence and reason every save of the panel records. */
 const CustomerChangeBasis = ({ evidence, onEvidenceChange, onReasonChange, reason }: CustomerChangeBasisProps) => {
   const { t } = useModernI18n();
+  const filled = evidence.trim() !== '' && reason.trim() !== '';
   return (
     <>
       <p className="text-fg-secondary text-sm">{t(`${KEY}.separateSaves`)}</p>
+      {!filled && (
+        <StatusText showIcon size="sm" status="warning">
+          Bez dokladu a důvodu se změny neukládají
+        </StatusText>
+      )}
       <FormInput
         id="customer-evidence"
         label={t(`${KEY}.evidence`)}
