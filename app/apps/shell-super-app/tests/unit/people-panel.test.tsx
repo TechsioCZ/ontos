@@ -170,7 +170,21 @@ it.live('keeps committed membership changes processing while the actual projecti
         },
       }),
     );
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Potvrdit změnu' })));
+    // The audited membership change saves itself once the reason is filled in: there is no confirm button.
+    expect(screen.queryByRole('button', { name: 'Potvrdit změnu' })).toBeNull();
+    yield* Effect.promise(() =>
+      waitFor(
+        () =>
+          expect(commands.membership).toHaveBeenCalledWith({
+            affiliation: 'external',
+            expectedRevision: 1,
+            principalRef,
+            reason: 'Odchod z firmy',
+            status: 'departed',
+          }),
+        { timeout: 4000 },
+      ),
+    );
     yield* Effect.promise(() => screen.findByText(/Zpracovává se 1 změna\./u));
     // An ended membership leaves the default view of current members, but stays one filter away.
     yield* Effect.promise(() => screen.findByText('Filtrům nikdo neodpovídá.'));

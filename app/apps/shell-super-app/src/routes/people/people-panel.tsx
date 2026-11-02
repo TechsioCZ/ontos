@@ -1,19 +1,17 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { czechPlural } from '@app/shared-contracts';
+import { AutosaveStatus, useAutosave } from '@app/admin-ui';
+import type { AutosaveOutcome } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { Effect, Fiber, Match, Option, Schema } from 'effect';
-import { useEffect, useEffectEvent, useState } from 'react';
+import type { HttpClient } from 'effect/http';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 
-import type {
-  PeopleList,
-  PeopleRoleCatalog,
-  Person,
-  SetPeopleCompanyMembershipRequest,
-} from '../../../shared/people-api.ts';
+import type { PeopleList, PeopleRoleCatalog, Person } from '../../../shared/people-api.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import type { PeopleOutcome } from './people-client.ts';
 import { changeCompanyMembership, changeScopedRole, loadAllPeople, loadRoleCatalog } from './people-client.ts';
@@ -28,6 +26,8 @@ import {
 import { InvitePersonButton } from './invite-person-button.tsx';
 import type { PeopleEditKind, PeopleFilters, PendingPeopleChange } from './people-model.ts';
 import { PeopleTable, PeopleToolbar, PersonStatusDot } from './people-table.tsx';
+import { baseOf, membershipDraftOf, membershipEditOf, sameMembershipDraft } from './people-membership-draft.ts';
+import type { MembershipBase, MembershipDraft } from './people-membership-draft.ts';
 
 interface Editor {
   readonly kind: PeopleEditKind;
@@ -104,42 +104,80 @@ const PeopleEditor = ({
   const { person } = editor;
   const membership = person.selectedCompanyMembership;
   const { kind, principalRef } = person;
-  const [affiliation, setAffiliation] = useState<'employee' | 'external'>(membership?.affiliation ?? 'external');
-  const [status, setStatus] = useState<SetPeopleCompanyMembershipRequest['status']>(membership?.status ?? 'invited');
   const [roleKey, setRoleKey] = useState('');
   const [operation, setOperation] = useState<'assign' | 'revoke'>('assign');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const title = editor.kind === 'role' ? 'Přiřadit nebo odebrat roli' : 'Členství ve firmě';
+  // The company membership of an existing person saves itself: the change is audited, so it is sent only once the
+  // reason is filled in, and the revision the server answered with is the one the next change builds on.
+  const openedBase: MembershipBase = {
+    affiliation: membership?.affiliation ?? null,
+    status: membership?.status ?? 'invited',
+  };
+  const base = useRef<MembershipBase>(openedBase);
+  const revision = useRef(membership?.revision ?? 0);
+  const [membershipDraft, setMembershipDraft] = useState<MembershipDraft>(() => membershipDraftOf(openedBase));
+  const autosave = useAutosave<MembershipDraft, HttpClient.HttpClient>({
+    equals: sameMembershipDraft,
+    isValid: (value) => Option.isSome(membershipEditOf(value, base.current)),
+    runtime: browserRuntime,
+    save: (value) =>
+      Option.match(membershipEditOf(value, base.current), {
+        onNone: () => Effect.succeed<AutosaveOutcome>('saved'),
+        onSome: (edit) =>
+          changeCompanyMembership({
+            affiliation: kind === 'agent' ? null : edit.affiliation,
+            expectedRevision: revision.current,
+            principalRef,
+            reason: edit.reason,
+            status: edit.status,
+          }).pipe(
+            Effect.map((outcome): AutosaveOutcome => {
+              if (outcome.status === 'failed') {
+                setError(outcome.message);
+                return 'failed';
+              }
+              const changed = outcome.value.membership;
+              revision.current = changed.revision;
+              base.current = { affiliation: changed.affiliation, status: changed.status };
+              setError('');
+              onCommitted({ kind: 'membership', result: outcome.value });
+              return 'saved';
+            }),
+          ),
+      }),
+    value: membershipDraft,
+  });
+  const patchMembership = (patch: Partial<MembershipDraft>) =>
+    setMembershipDraft((current) => ({ ...current, ...patch }));
+  const close = () => {
+    autosave.flush();
+    onClose();
+  };
+  const handleRetry = autosave.retry;
+  const handleReloadLatest = () => autosave.adopt(membershipDraftOf(baseOf(person)));
+  const requestClose = () => {
+    if (editor.kind === 'role') {
+      if (!busy) {
+        onClose();
+      }
+      return;
+    }
+    close();
+  };
   const submit = () => {
-    if (busy || reason.trim() === '' || (editor.kind === 'role' && roleKey.trim() === '')) {
+    if (busy || reason.trim() === '' || roleKey.trim() === '') {
       return;
     }
     setBusy(true);
     setError('');
-    const command =
-      editor.kind === 'role'
-        ? changeScopedRole(scope, { operation, principalRef, reason: reason.trim(), roleKey: roleKey.trim() }).pipe(
-            Effect.map((outcome): PeopleOutcome<PendingPeopleChange> =>
-              outcome.status === 'failed' ? outcome : { status: 'ok', value: { kind: 'role', result: outcome.value } },
-            ),
-          )
-        : changeCompanyMembership({
-            affiliation: kind === 'agent' ? null : affiliation,
-            expectedRevision: membership?.revision ?? 0,
-            principalRef,
-            reason: reason.trim(),
-            status,
-          }).pipe(
-            Effect.map((outcome): PeopleOutcome<PendingPeopleChange> =>
-              outcome.status === 'failed'
-                ? outcome
-                : { status: 'ok', value: { kind: 'membership', result: outcome.value } },
-            ),
-          );
     void browserRuntime.runPromise(
-      command.pipe(
+      changeScopedRole(scope, { operation, principalRef, reason: reason.trim(), roleKey: roleKey.trim() }).pipe(
+        Effect.map((outcome): PeopleOutcome<PendingPeopleChange> =>
+          outcome.status === 'failed' ? outcome : { status: 'ok', value: { kind: 'role', result: outcome.value } },
+        ),
         Effect.andThen((outcome) =>
           Effect.sync(() => {
             setBusy(false);
@@ -156,24 +194,29 @@ const PeopleEditor = ({
   return (
     <Dialog
       actions={
-        <>
-          <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
-            Zrušit
-          </Button>
-          <Button
-            disabled={busy || reason.trim() === '' || (editor.kind === 'role' && roleKey.trim() === '')}
-            onClick={submit}
-            variant="primary"
-          >
-            {busy ? 'Odesílám…' : 'Potvrdit změnu'}
-          </Button>
-        </>
+        editor.kind === 'role' ? (
+          <>
+            <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
+              Zrušit
+            </Button>
+            <Button disabled={busy || reason.trim() === '' || roleKey.trim() === ''} onClick={submit} variant="primary">
+              {busy ? 'Odesílám…' : 'Potvrdit změnu'}
+            </Button>
+          </>
+        ) : (
+          <>
+            <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+            <Button onClick={close} theme="outlined" variant="secondary">
+              Zavřít
+            </Button>
+          </>
+        )
       }
       closeLabel="Zavřít"
       customTrigger
       onOpenChange={(details) => {
-        if (!details.open && !busy) {
-          onClose();
+        if (!details.open) {
+          requestClose();
         }
       }}
       open
@@ -214,8 +257,10 @@ const PeopleEditor = ({
                 Zařazení ve firmě
                 <select
                   className={selectClass}
-                  onChange={(event) => setAffiliation(event.target.value === 'employee' ? 'employee' : 'external')}
-                  value={affiliation}
+                  onChange={(event) =>
+                    patchMembership({ affiliation: event.target.value === 'employee' ? 'employee' : 'external' })
+                  }
+                  value={membershipDraft.affiliation}
                 >
                   <option value="employee">Zaměstnanec</option>
                   <option value="external">Externí osoba</option>
@@ -232,10 +277,10 @@ const PeopleEditor = ({
                   onChange={(event) => {
                     const { value } = event.target;
                     if (value === 'active' || value === 'disabled' || value === 'departed' || value === 'invited') {
-                      setStatus(value);
+                      patchMembership({ status: value });
                     }
                   }}
-                  value={status}
+                  value={membershipDraft.status}
                 >
                   {Object.entries(membershipLabels).map(([value, label]) => (
                     <option key={value} value={value}>
@@ -254,9 +299,11 @@ const PeopleEditor = ({
         <FormInput
           label={t('shell.people.changeReason')}
           maxLength={500}
-          onChange={(event) => setReason(event.target.value)}
+          onChange={(event) =>
+            editor.kind === 'role' ? setReason(event.target.value) : patchMembership({ reason: event.target.value })
+          }
           required
-          value={reason}
+          value={editor.kind === 'role' ? reason : membershipDraft.reason}
         />
         {error === '' ? null : (
           <StatusText role="alert" status="error">
