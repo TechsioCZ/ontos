@@ -2009,6 +2009,24 @@ interface SelectedContractDeclaration {
   readonly module: SourceModule;
 }
 
+const exportedConstPatternIdentifiers = (module: SourceModule, name: string) =>
+  module.file.program.body.flatMap((statement) => {
+    if (
+      statement.type !== 'ExportNamedDeclaration' ||
+      statement.declaration?.type !== 'VariableDeclaration' ||
+      statement.declaration.kind !== 'const'
+    ) {
+      return [];
+    }
+    return statement.declaration.declarations.flatMap((declaration) => {
+      if (declaration.id.type !== 'ObjectPattern') {
+        return [];
+      }
+      const identifier = getBindingIdentifiers(declaration.id)[name];
+      return identifier === undefined ? [] : [identifier];
+    });
+  });
+
 const evaluatedOwnerExport = (
   state: BoundaryCheckState,
   module: SourceModule,
@@ -2025,17 +2043,12 @@ const evaluatedOwnerExport = (
     return direct;
   }
   let resolved: SelectedContractDeclaration | undefined;
-  for (const statement of module.file.program.body) {
-    if (statement.type === 'ExportNamedDeclaration' && statement.declaration?.type === 'VariableDeclaration') {
-      const identifier = getBindingIdentifiers(statement.declaration)[name];
-      if (identifier !== undefined) {
-        const [value, ...extra] = state.graph.evaluate(module, identifier);
-        if (extra.length > 0 || value?.kind !== 'node') {
-          return undefined;
-        }
-        resolved = { expression: value.node, module: value.module };
-      }
+  for (const identifier of exportedConstPatternIdentifiers(module, name)) {
+    const [value, ...extra] = state.graph.evaluate(module, identifier);
+    if (extra.length > 0 || value?.kind !== 'node') {
+      return undefined;
     }
+    resolved = { expression: value.node, module: value.module };
   }
   for (const candidate of contractReexportCandidates(state, module, name)) {
     const value = evaluatedOwnerExport(
@@ -2083,13 +2096,6 @@ const resolveSelectedOwnerBinding = (
   }
   if (binding?.kind === 'declaration') {
     return binding;
-  }
-  const values = state.graph.evaluate(consumerModule, imported.local);
-  if (values.length === 1 && values[0]?.kind === 'node') {
-    const [value] = values;
-    if (value?.kind === 'node') {
-      return { expression: value.node, module: value.module };
-    }
   }
   return evaluatedOwnerExport(state, ownerModule, exportedName);
 };
