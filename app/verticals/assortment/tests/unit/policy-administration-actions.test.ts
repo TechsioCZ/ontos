@@ -1,10 +1,12 @@
+import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { assortmentRegistration } from '../../vertical.registration.ts';
 import {
   toAssortmentPermissionAccessKey,
   toAssortmentPermissionAccessObjectId,
   toAssortmentPermissionAccessObjectIdForTargets,
 } from '../../src/permissions/authorization-targets.ts';
 import type { DomainEvent, DomainEventReference, OperationalScope, OutboxMessage } from '@app/core-runtime';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   CreateApplicabilityBindingPayloadSchema,
@@ -38,7 +40,10 @@ import { handleCreateRule } from '../../src/actions/create-rule.action.ts';
 import { handleCreateApplicabilityBinding } from '../../src/actions/create-applicability-binding.action.ts';
 import { handleCreateRuleRevision } from '../../src/actions/create-rule-revision.action.ts';
 import { handleEndApplicabilityBinding } from '../../src/actions/end-applicability-binding.action.ts';
-import { handleReplaceApplicabilityBinding } from '../../src/actions/replace-applicability-binding.action.ts';
+import {
+  replaceApplicabilityBindingAction,
+  handleReplaceApplicabilityBinding,
+} from '../../src/actions/replace-applicability-binding.action.ts';
 import { handleRetireRule } from '../../src/actions/retire-rule.action.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -692,3 +697,50 @@ it('requires exact replay identity for all six policy mutations', () => {
     expect(matchesReplacementReplay(replayReplaceBinding, replayReplaceEnd, changed)).toBe(false);
   }
 });
+
+it.effect('denies the actual binding Replace before owner effects when proposed Create lacks Current permission', () =>
+  Effect.gen(function* checksActualReplaceConjunction() {
+    const encodedPayload = yield* Schema.encodeEffect(ReplaceApplicabilityBindingPayloadSchema)(replacePayload);
+    let ownerEffects = 0;
+    const service = services({
+      replaceBinding: () => {
+        ownerEffects += 1;
+        return Effect.die('Denied replacement reached owner effects');
+      },
+    });
+    for (const proposed of ['denied', 'unavailable', 'absent'] as const) {
+      const options = {
+        actionPermission: 'allowed' as const,
+        ownerRegistration: assortmentRegistration,
+        services: [bindActionTestServices(replaceApplicabilityBindingAction, service)],
+      };
+      const harness = yield* makeActionTestHarness(
+        proposed === 'absent' ? options : { ...options, ownerPermissionDecisions: ['allowed', proposed] },
+      );
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: encodedPayload,
+          principal: { ...scope, authBindingId: '40000000-0000-4000-8000-000000000001' },
+          registration: replaceApplicabilityBindingAction,
+          transport: { correlationId: 'assortment-binding-conjunction', idempotencyKey: `replace-${proposed}` },
+        }),
+      );
+      expect(
+        Predicate.isTagged(failure, proposed === 'denied' ? 'ActionPermissionDenied' : 'ActionPermissionCheckError'),
+      ).toBe(true);
+      const snapshot = harness.snapshot();
+      expect(snapshot.ownerPermissionTargets.map((target) => target.definition.key)).toEqual([
+        'assortment.binding.end',
+        'assortment.binding.create',
+      ]);
+      expect(snapshot.ownerPermissionTargets.map((target) => target.transportObjectId)).toEqual([
+        'asp_1ebaf436f966008d51b0ed9b54de4594b027ec9ff3422a4bb00d587d8939d646',
+        'asp_1ebaf436f966008d51b0ed9b54de4594b027ec9ff3422a4bb00d587d8939d646',
+      ]);
+      expect(snapshot.stages.includes('handler_executed')).toBe(false);
+      expect(snapshot.committed).toEqual([]);
+      expect(snapshot.permissionDenials).toHaveLength(proposed === 'denied' ? 1 : 0);
+      expect(ownerEffects).toBe(0);
+    }
+  }),
+);

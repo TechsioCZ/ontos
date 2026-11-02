@@ -1,3 +1,5 @@
+import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { assortmentRegistration } from '../../vertical.registration.ts';
 import {
   toAssortmentPermissionAccessKey,
   toAssortmentPermissionAccessObjectId,
@@ -11,7 +13,7 @@ import type {
   ScopedRoutineDefinition,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   CreateClosedAssortmentBoundaryPayloadSchema,
@@ -32,7 +34,10 @@ import {
 } from '../../src/actions/boundary-administration-support.ts';
 import { handleCreateClosedAssortmentBoundary } from '../../src/actions/create-closed-assortment-boundary.action.ts';
 import { handleEndClosedAssortmentBoundary } from '../../src/actions/end-closed-assortment-boundary.action.ts';
-import { handleReplaceClosedAssortmentBoundary } from '../../src/actions/replace-closed-assortment-boundary.action.ts';
+import {
+  replaceClosedAssortmentBoundaryAction,
+  handleReplaceClosedAssortmentBoundary,
+} from '../../src/actions/replace-closed-assortment-boundary.action.ts';
 import type { BoundaryAdministrationService } from '../../src/services/boundary-administration.service.ts';
 import {
   boundaryIntervalsOverlap,
@@ -841,5 +846,55 @@ it.effect('replaces the covering Boundary against the combined resulting state b
       yield* service.replace({ ...replaceInput, effectiveAt: at, proposedCommercialScope, proposedEffectiveFrom: at }),
     ).toEqual({ createdBoundaryId: 'new-cover', replaced: true });
     expect(events.indexOf('insert:1')).toBeGreaterThan(events.indexOf('select:5'));
+  }),
+);
+
+it.effect('denies the actual boundary Replace before owner effects when proposed Create lacks Current permission', () =>
+  Effect.gen(function* checksActualReplaceConjunction() {
+    const encodedPayload = yield* Schema.encodeEffect(ReplaceClosedAssortmentBoundaryPayloadSchema)({
+      ...replacePayload,
+      existingBoundaryRef: { ...replacePayload.existingBoundaryRef, resourceId: 'boundary-1' },
+    });
+    let ownerEffects = 0;
+    const service = boundaryServices({
+      replace: () => {
+        ownerEffects += 1;
+        return Effect.die('Denied replacement reached owner effects');
+      },
+    });
+    for (const proposed of ['denied', 'unavailable', 'absent'] as const) {
+      const options = {
+        actionPermission: 'allowed' as const,
+        ownerRegistration: assortmentRegistration,
+        services: [bindActionTestServices(replaceClosedAssortmentBoundaryAction, service)],
+      };
+      const harness = yield* makeActionTestHarness(
+        proposed === 'absent' ? options : { ...options, ownerPermissionDecisions: ['allowed', proposed] },
+      );
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: encodedPayload,
+          principal: { ...scope, authBindingId: '40000000-0000-4000-8000-000000000001' },
+          registration: replaceClosedAssortmentBoundaryAction,
+          transport: { correlationId: 'assortment-boundary-conjunction', idempotencyKey: `replace-${proposed}` },
+        }),
+      );
+      expect(
+        Predicate.isTagged(failure, proposed === 'denied' ? 'ActionPermissionDenied' : 'ActionPermissionCheckError'),
+      ).toBe(true);
+      const snapshot = harness.snapshot();
+      expect(snapshot.ownerPermissionTargets.map((target) => target.definition.key)).toEqual([
+        'assortment.boundary.end',
+        'assortment.boundary.create',
+      ]);
+      expect(snapshot.ownerPermissionTargets.map((target) => target.transportObjectId)).toEqual([
+        'asp_a07a475709ca09b2febea45793a233ddb250f37d6c22a8c38c824a8d291c0427',
+        'asp_a07a475709ca09b2febea45793a233ddb250f37d6c22a8c38c824a8d291c0427',
+      ]);
+      expect(snapshot.stages.includes('handler_executed')).toBe(false);
+      expect(snapshot.committed).toEqual([]);
+      expect(snapshot.permissionDenials).toHaveLength(proposed === 'denied' ? 1 : 0);
+      expect(ownerEffects).toBe(0);
+    }
   }),
 );
