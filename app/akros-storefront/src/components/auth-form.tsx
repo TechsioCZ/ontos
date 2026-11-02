@@ -1,16 +1,35 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
+import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import StoreLink from "@/components/store-link";
 import { VerificationResendForm } from "@/components/verification-resend-form";
 import type { AccountSubmissionResponse } from "@/ontos/account";
 
 const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
+
+// Keep LinkButton's event handlers inside a client boundary for the auth server pages.
+export function AuthPageLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <LinkButton
+      as={StoreLink}
+      href={href}
+      data-sf-auth-link
+      theme="borderless"
+      variant="secondary"
+      size="current"
+      className="inline"
+    >
+      {children}
+    </LinkButton>
+  );
+}
 
 async function submitAccount(
   form: HTMLFormElement,

@@ -26,10 +26,13 @@ describe("FeaturedProductGrid", () => {
       expect(card.getByRole("img").getAttribute("loading")).toBe(index < 4 ? "eager" : "lazy");
     }
     expect(screen.getAllByRole("link", { name: "Vybrat variantu" })).toHaveLength(products.length);
-    expect(screen.getAllByRole("link", { name: "Zobrazit oblíbené produkty" })).toHaveLength(
+    expect(screen.getAllByRole("button", { name: /^Vybrat oblíbené varianty:/ })).toHaveLength(
       products.length,
     );
-    expect(screen.getByText(/^od 0,08 Kč$/)).toBeDefined();
+    expect(screen.queryByText(/^od \d/)).toBeNull();
+    expect(screen.getAllByText("Cena dle varianty")).toHaveLength(
+      products.filter((product) => product.priceIsFrom).length,
+    );
     expect(screen.getByText("Kód produktu: 3tykv021")).toBeDefined();
     expect(screen.getAllByText("Více variant")).toHaveLength(products.length);
   });

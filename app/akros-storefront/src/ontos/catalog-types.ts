@@ -128,6 +128,7 @@ export type CatalogPurchaseProduct = Pick<
   | "priceMinor"
   | "availabilityUnknown"
   | "priceUnavailableReason"
+  | "netWeight"
 > & { detail: Pick<CatalogProductDetail, "priceTiers"> };
 export type CatalogPurchaseVariant = Omit<
   CatalogProductVariant,

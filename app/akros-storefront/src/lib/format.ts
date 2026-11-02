@@ -75,3 +75,12 @@ export function describeOfferPrice(
     label: `${priceIsFrom ? `${from} ` : ""}${formatPrice(priceMinor, money)}`,
   };
 }
+
+/**
+ * Kilograms with the source precision (up to six decimals), e.g. „0,0034 kg“. Unknown, zero or invalid weights
+ * return `null` so callers never show them as a zero weight. `locale` follows the market (`money.locale`).
+ */
+export const formatWeight = (weightKg?: number, locale = "cs-CZ") =>
+  weightKg !== undefined && Number.isFinite(weightKg) && weightKg > 0
+    ? `${new Intl.NumberFormat(locale, { maximumFractionDigits: 6 }).format(weightKg)} kg`
+    : null;

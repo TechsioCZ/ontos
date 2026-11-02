@@ -34,6 +34,11 @@ export const parseStoredCart = (value: string | null): CartState => {
         }
 
         const item = {
+          ...(typeof line.unitWeightKg === "number" &&
+          Number.isFinite(line.unitWeightKg) &&
+          line.unitWeightKg > 0
+            ? { unitWeightKg: line.unitWeightKg }
+            : {}),
           productId: line.productId,
           ...(typeof line.variantId === "string" ? { variantId: line.variantId } : {}),
           slug: line.slug,

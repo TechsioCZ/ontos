@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { fixtureCatalog } from "../support/catalog-fixture";
+import { matchSearchVariants, searchHitPath } from "@/ontos/search-suggestions";
+import { fixtureCatalog, fixtureProducts } from "../support/catalog-fixture";
 
 const {
   getCategoryBySlug,
@@ -108,5 +109,49 @@ describe("catalog model", () => {
         status: "in-stock",
       },
     });
+  });
+
+  it("shows a price for a single-variant group, but not a lower bound for several variants", () => {
+    const single = fixtureProducts.find((product) => product.variantSummary.count === 1)!;
+    const group = fixtureProducts.find((product) => product.variantSummary.count > 1)!;
+    expect(toProductSummary(single)).toMatchObject({ hasVariants: true, priceIsFrom: false });
+    expect(toProductSummary(group)).toMatchObject({ hasVariants: true, priceIsFrom: true });
+  });
+});
+
+describe("search variant routing", () => {
+  const match = (slug: string, query: string) =>
+    matchSearchVariants(getProductBySlug(slug)!, query).matching.map((variant) => variant.id);
+
+  it("keeps an exact SKU distinct from a longer SKU with the same prefix", () => {
+    expect(match("matice-nytovaci-se-zapustnou-hlavou-an-1972-a2", "10197200040300")).toEqual([
+      "item-9025",
+    ]);
+  });
+
+  it("preserves all exact variants when the source reuses a SKU", () => {
+    expect(match("dvojniply-typ-310-mat-1-4404", "3dn31028000000025").sort()).toEqual([
+      "item-2238",
+      "item-37855",
+    ]);
+  });
+
+  it("needs no variant when the product itself matches", () => {
+    const product = getProductBySlug("vruty-se-zapustnou-hlavou-s-krizovou-drazkou-din-7997-a2")!;
+    expect(matchSearchVariants(product, product.name).matching).toEqual([]);
+  });
+
+  it("links one hit exactly, several hits through the query filter and no hit to the product", () => {
+    const one = { matching: [{ id: "item-9025" }] } as Parameters<typeof searchHitPath>[3];
+    const two = { matching: [{ id: "a" }, { id: "b" }] } as Parameters<typeof searchHitPath>[3];
+    expect(searchHitPath("matice", "1019", true, one)).toBe(
+      "/produkt/matice?variantIds=item-9025#product-variants",
+    );
+    expect(searchHitPath("matice", " M6 ", true, two)).toBe(
+      "/produkt/matice?variant=M6#product-variants",
+    );
+    expect(searchHitPath("matice", "M6", true, { matching: [] })).toBe("/produkt/matice");
+    expect(searchHitPath("matice", "M6", true)).toBe("/produkt/matice?variant=M6#product-variants");
+    expect(searchHitPath("matice", "M6", false)).toBe("/produkt/matice");
   });
 });

@@ -317,8 +317,38 @@ try {
     },
   );
 
+  await page.goto(new URL("/muj-ucet", baseUrl).href, { waitUntil: "domcontentloaded" });
+  await page.locator("#account-email").waitFor();
+  const heading = page.locator("[data-account-section-heading]").first();
+  await probe(heading, { "--spacing-button-md": "18px" }, async () => {
+    assert.equal(await style(heading.locator("button"), "columnGap"), "18px");
+  });
+  const consent = page.locator("#account-privacy").locator("..");
+  const consentControl = consent.locator('[data-part="control"]');
+  assert.equal(await style(consentControl, "borderTopWidth"), "2px");
+  await probe(consent, { "--border-width-checkbox": "4px" }, async () => {
+    assert.equal(await style(consentControl, "borderTopWidth"), "4px");
+  });
+  if (await page.locator("#account-privacy").isChecked()) await consentControl.click();
+  if (!(await page.locator("#account-newsletter").isChecked()))
+    await page.getByText("Chci odebírat novinky", { exact: true }).click();
+  await page.getByRole("button", { name: "Změnit údaje", exact: true }).click();
+  await page.locator('#account-privacy[aria-invalid="true"]').waitFor({ state: "attached" });
+  assert.equal(await style(consentControl, "borderTopWidth"), "2px");
+  await probe(consent, { "--border-width-validation": "4px" }, async () => {
+    assert.equal(await style(consentControl, "borderTopWidth"), "4px");
+  });
+
+  await page.goto(new URL("/detail-objednavky", baseUrl).href, { waitUntil: "domcontentloaded" });
+  const headingAction = page
+    .locator("[data-account-heading-actions] [data-account-action]")
+    .first();
+  await probe(headingAction, { "--height-form-control-sm": "100px" }, async () => {
+    assert.equal(await style(headingAction, "height"), "100px");
+  });
+
   console.log(
-    "UI-kit theme checks passed: carousel, product cards/details, header, mini-cart and checkout tokens.",
+    "UI-kit theme checks passed: carousel, product cards/details, header, mini-cart, checkout and account tokens.",
   );
 } finally {
   await browser.close();

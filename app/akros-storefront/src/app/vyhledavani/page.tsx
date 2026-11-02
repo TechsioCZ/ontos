@@ -5,26 +5,14 @@ import { ProductGrid, type ProductGridItem } from "@/components/product-grid";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { getDictionary } from "@/ontos/active-market";
-import { getCatalogPage, type CatalogModel } from "@/ontos/catalog-server";
-import { placeholdersLast } from "@/ontos/search-suggestions";
-import type { CatalogProduct } from "@/ontos/catalog-types";
+import { getCatalogPage } from "@/ontos/catalog-server";
+import { placeholdersLast, toSearchGridItem } from "@/ontos/search-suggestions";
+import { readSearchVariantMatches } from "@/ontos/search-variants";
 
 export async function generateMetadata(): Promise<Metadata> {
   return { title: (await getDictionary()).search.results };
 }
 const productsPerPage = 24;
-
-// Listing cards carry no variant records: a variant group opens with its variant table filtered by the query.
-const toSearchGridItem = (
-  product: CatalogProduct,
-  query: string,
-  toProductSummary: CatalogModel["toProductSummary"],
-): ProductGridItem => {
-  const summary = toProductSummary(product);
-  if (!summary.hasVariants) return summary;
-  const params = new URLSearchParams({ variant: query });
-  return { ...summary, detailHref: `/produkt/${product.slug}?${params.toString()}` };
-};
 
 export default async function SearchPage({
   searchParams,
@@ -47,8 +35,12 @@ export default async function SearchPage({
       listing = await getCatalogPage({ q: term, page: lastPage, pageSize: productsPerPage });
     // Kai's placeholder group "AKCE" matches almost every query: keep it, but after real goods.
     const { toProductSummary } = listing.model;
-    items = placeholdersLast(listing.products).map((product) =>
-      toSearchGridItem(product, term, toProductSummary),
+    const products = placeholdersLast(listing.products);
+    // Listing cards carry no variant records: the page's variant groups are read in full to route each hit
+    // to its exact variant (one hit) or to the variant table filtered by the query (several hits).
+    const matches = await readSearchVariantMatches(products, term);
+    items = products.map((product) =>
+      toSearchGridItem(toProductSummary(product), term, cs, matches.get(product.id)),
     );
     itemCount = listing.total;
     currentPage = Math.min(requested, lastPage);
@@ -65,7 +57,7 @@ export default async function SearchPage({
       >
         <div className="sf-category-heading">
           <h1 id="search-results-title">{cs.search.results}</h1>
-          {q && <p>Dotaz: „{q}“</p>}
+          {q && <p>{cs.search.query(q)}</p>}
         </div>
         {itemCount > 0 && items.length > 0 ? (
           <>

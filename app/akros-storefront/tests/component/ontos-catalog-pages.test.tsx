@@ -10,12 +10,21 @@ import type { ProductPage } from "@/ontos/catalog-projection";
 import { asCard, fixtureCatalog, fixtureCategoryProducts } from "../support/catalog-fixture";
 
 vi.mock("@/ontos/catalog-server", async () => {
-  const { fixtureCatalog } = await import("../support/catalog-fixture");
+  const { fixtureCatalog, fixtureProducts } = await import("../support/catalog-fixture");
   return {
     CATEGORY_PAGE_SIZE: 24,
     getCatalog: async () => fixtureCatalog,
     getCatalogPage: vi.fn(),
     getCategoryListing: vi.fn(),
+    // Full product reads (search variant routing): the fixture records with their variants.
+    readProducts: vi.fn(async ({ productIds = [] }: { productIds?: string[] }) => ({
+      products: fixtureProducts.filter((product) => productIds.includes(product.id)),
+      total: productIds.length,
+      page: 1,
+      pageSize: productIds.length,
+      revision: 1,
+      homepageFeaturedProductIds: [],
+    })),
   };
 });
 // The active-branch navigation is an async server wrapper; shell rendering is covered elsewhere.
@@ -120,5 +129,42 @@ describe("OntOS category and search pages", () => {
     vi.mocked(getCatalogPage).mockClear();
     await SearchPage({ searchParams: Promise.resolve({ q: "  " }) });
     expect(getCatalogPage).not.toHaveBeenCalled();
+  });
+  it("routes search hits to the exact variant or to the query-filtered variant table", async () => {
+    const exact = fixtureCatalog.getProductBySlug(
+      "matice-nytovaci-se-zapustnou-hlavou-an-1972-a2",
+    )!;
+    const shared = fixtureCatalog.getProductBySlug("dvojniply-typ-310-mat-1-4404")!;
+    const variant = exact.detail.variants.find((item) => item.id === "item-9025")!;
+    for (const [query, product] of [
+      ["10197200040300", exact],
+      ["3dn31028000000025", shared],
+    ] as const) {
+      vi.mocked(getCatalogPage).mockResolvedValueOnce({
+        ...ownerPage(1),
+        products: [asCard(product)],
+        page: 1,
+      });
+      render(
+        <CartProvider storage={null}>
+          {await SearchPage({ searchParams: Promise.resolve({ q: query }) })}
+        </CartProvider>,
+      );
+    }
+    const [exactCard, sharedCard] = screen.getAllByRole("article");
+    expect(exactCard.querySelector("a")?.getAttribute("href")).toBe(
+      `/produkt/${exact.slug}?variantIds=item-9025#product-variants`,
+    );
+    expect(exactCard.textContent).toContain(`Varianta: ${variant.label} · SKU ${variant.sku}`);
+    expect(exactCard.querySelector("[data-sf-product-price]")?.textContent).not.toContain(
+      "Cena dle varianty",
+    );
+    expect(sharedCard.querySelector("a")?.getAttribute("href")).toBe(
+      `/produkt/${shared.slug}?variant=3dn31028000000025#product-variants`,
+    );
+    expect(sharedCard.textContent).toContain("2 odpovídajících variant");
+    expect(sharedCard.querySelector("[data-sf-product-price]")?.textContent).toBe(
+      "Cena dle varianty",
+    );
   });
 });

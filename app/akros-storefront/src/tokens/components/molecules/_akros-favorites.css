@@ -1,0 +1,50 @@
+:root {
+  --sf-favorites-width: 960px;
+  --sf-favorites-height: 760px;
+  --sf-favorites-gap: var(--dimension-16);
+  --sf-favorites-inset: var(--dimension-24);
+  --z-dialog-backdrop: 40;
+  --z-dialog-positioner: 50;
+}
+
+.sf-favorites-dialog {
+  --spacing-dialog-content: var(--sf-favorites-gap);
+  --padding-dialog-content: var(--sf-favorites-inset);
+  --text-dialog-title: var(--text-xl);
+  --color-dialog-content-bg: var(--color-base);
+  --container-dialog-center-w-max: var(--sf-favorites-width);
+  --container-dialog-center-h-max: calc(100dvh - var(--dimension-32));
+  --height-form-control-md: var(--dimension-44);
+  --size-checkbox: var(--dimension-20);
+  --radius-checkbox: var(--radius-xs);
+  --color-checkbox-border-base: var(--color-fg-secondary);
+  --text-table-sm: var(--text-sm);
+  --padding-table-cell-sm: var(--dimension-8);
+  --text-button-md: var(--text-sm);
+  --text-input-md: var(--text-base);
+  --text-label-md: var(--text-sm);
+}
+
+.sf-favorites-dialog,
+.sf-share-content {
+  --color-button-border-secondary: var(--color-border-primary);
+  --color-button-bg-outlined-secondary-hover: var(--color-fill-surface);
+  --color-button-bg-outlined-secondary-active: var(--color-fill-highlight);
+  --color-button-fg-outlined-secondary: var(--color-fg-primary);
+  --color-button-fg-secondary-borderless: var(--color-fg-primary);
+  --radius-button-md: var(--radius-sm);
+}
+
+.sf-share-content {
+  --color-popover-bg: var(--color-base);
+  --color-popover-border: var(--color-border-primary);
+  --height-form-control-md: var(--dimension-44);
+  --text-button-md: var(--text-sm);
+  --text-input-md: var(--text-sm);
+}
+
+.sf-product-card__favorite[data-favorite-selected],
+.sf-product-detail__favorite[data-favorite-selected] {
+  --color-button-fg-secondary-borderless: var(--color-fg-primary);
+  --color-button-fg-secondary: var(--color-fg-primary);
+}

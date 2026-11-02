@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import StoreLink from "@/components/store-link";
 
-import { RegistrationForm } from "@/components/auth-form";
+import { AuthPageLink, RegistrationForm } from "@/components/auth-form";
 import { StorefrontWideShell } from "@/components/storefront-shell";
 
 export const metadata: Metadata = { title: "Registrace" };
@@ -32,7 +31,7 @@ export default function RegistrationPage() {
           </header>
           <RegistrationForm />
           <p>
-            Již jste registrováni? <StoreLink href="/prihlaseni">Přihlaste se zde</StoreLink>
+            Již jste registrováni? <AuthPageLink href="/prihlaseni">Přihlaste se zde</AuthPageLink>
           </p>
         </div>
         <aside className="sf-benefit-card">

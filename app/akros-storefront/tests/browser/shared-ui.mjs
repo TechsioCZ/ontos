@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
 import { chromium } from "playwright-core";
 
 const baseUrl = process.env.AKROS_TEST_BASE_URL ?? "http://localhost:3000";
@@ -8,6 +9,22 @@ const browser = await chromium.launch(
     : { channel: "chrome" },
 );
 const widths = [320, 390, 760, 761, 768, 1023, 1024, 1100, 1101, 1280, 1440, 1920];
+// The demo storefront prefixes every internal link with the market locale.
+const market = "/cs";
+const informationPaths = [
+  "/obchodni-podminky",
+  "/o-nas",
+  "/blog",
+  "/partnersky-program",
+  "/reklamace",
+  "/kontakty",
+].map((path) => `${market}${path}`);
+const catalogPaths = [
+  "/kategorie/nerezovy-spojovaci-material",
+  "/kategorie/nerezovy-hutni-material",
+].map((path) => `${market}${path}`);
+const hrefs = (locator) =>
+  locator.locator("a").evaluateAll((links) => links.map((link) => link.getAttribute("href")));
 const style = (locator, property) =>
   locator.evaluate((element, name) => getComputedStyle(element)[name], property);
 
@@ -27,9 +44,15 @@ async function probe(scope, tokens, assertions) {
 }
 
 try {
+  await mkdir("test-results/shared-ui", { recursive: true });
   const page = await browser.newPage({ reducedMotion: "reduce" });
   page.setDefaultTimeout(15000);
   page.setDefaultNavigationTimeout(120000);
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error" && /hydrat/i.test(message.text())) errors.push(message.text());
+  });
   await page.goto(new URL("/", baseUrl).href, { waitUntil: "networkidle" });
   await page.evaluate(async () => document.fonts.ready);
   const search = page.getByRole("combobox", { name: "Vyhledat v katalogu" });
@@ -64,7 +87,12 @@ try {
 
     if (width >= 1024) {
       const nav = page.locator(".sf-header__utility-links");
-      const home = nav.locator('a[href="/"]');
+      assert.deepEqual(await hrefs(nav), informationPaths);
+      assert.equal(
+        await page.locator("[data-sf-header-login]").getAttribute("href"),
+        "/cs/prihlaseni",
+      );
+      const terms = nav.locator('a[href="/cs/obchodni-podminky"]');
       await probe(
         nav,
         {
@@ -73,11 +101,21 @@ try {
           "--text-button-sm": "18px",
         },
         async () => {
-          assert.equal(await style(home, "padding"), "0px 6px");
-          assert.equal(await style(home, "fontWeight"), "600");
-          assert.equal(await style(home, "fontSize"), "18px");
+          assert.equal(await style(terms, "padding"), "0px 6px");
+          assert.equal(await style(terms, "fontWeight"), "600");
+          assert.equal(await style(terms, "fontSize"), "18px");
         },
       );
+      for (const href of catalogPaths)
+        assert.equal(await page.locator(`.sf-sidebar a[href="${href}"]`).isVisible(), true);
+      assert.equal(
+        await page.locator('.sf-sidebar a[href="https://www.akroscz.cz/"]').isVisible(),
+        true,
+      );
+      if (width === 1920)
+        await page
+          .locator(".sf-header")
+          .screenshot({ path: "test-results/shared-ui/header-1920.png" });
     }
     await probe(
       page.locator(".sf-header__search"),
@@ -118,7 +156,7 @@ try {
       const menu = page.getByRole("dialog", { name: "Menu" });
       await menu.waitFor();
       const links = menu.locator(".sf-mobile-menu__links").first();
-      const account = links.locator('a[href="/muj-ucet"]');
+      const account = links.locator('a[href="/cs/muj-ucet"]');
       assert.equal(await style(account, "height"), "44px");
       await probe(
         links,
@@ -134,13 +172,64 @@ try {
         },
       );
       const current = menu.locator('.sf-mobile-menu__links a[aria-current="page"]');
-      assert.equal(await current.getAttribute("href"), "/");
+      assert.equal(await current.count(), 0);
+      assert.deepEqual(
+        await hrefs(menu.getByRole("navigation", { name: "Mobilní navigace" })),
+        informationPaths,
+      );
+      const catalog = menu.locator("[data-sf-catalog]");
+      for (const href of catalogPaths)
+        assert.equal(await catalog.locator(`a[href="${href}"]`).isVisible(), true);
+      if (!(await catalog.locator('a[href="https://www.akroscz.cz/"]').isVisible())) {
+        await catalog.getByRole("button", { name: "Speciální kategorie", exact: true }).click();
+      }
+      assert.equal(await catalog.locator('a[href="https://www.akroscz.cz/"]').isVisible(), true);
+      if ([320, 390].includes(width)) {
+        await menu.getByRole("navigation", { name: "Mobilní navigace" }).scrollIntoViewIfNeeded();
+        await menu.screenshot({ path: `test-results/shared-ui/menu-${width}.png` });
+      }
       await page.keyboard.press("Escape");
       await menu.waitFor({ state: "hidden" });
       await page.waitForFunction(
         () => document.activeElement?.getAttribute("aria-label") === "Otevřít navigaci",
       );
       assert.equal(await trigger.evaluate((element) => element === document.activeElement), true);
+    }
+  }
+
+  for (const width of [1920, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const destination of [...informationPaths, ...catalogPaths]) {
+      await page.goto(new URL("/", baseUrl).href, { waitUntil: "networkidle" });
+      let scope;
+      if (width < 1024) {
+        await page.getByRole("button", { name: "Otevřít navigaci" }).click();
+        scope = page.getByRole("dialog", { name: "Menu" });
+      } else
+        scope = destination.startsWith(`${market}/kategorie/`)
+          ? page.locator(".sf-sidebar")
+          : page.locator(".sf-header__utility-links");
+      const link = scope.locator(`a[href="${destination}"]`);
+      await link.focus();
+      await page.keyboard.press("Enter");
+      await page.waitForURL((url) => url.pathname === destination);
+      if (width < 1024)
+        await page.getByRole("dialog", { name: "Menu" }).waitFor({ state: "hidden" });
+      if (informationPaths.includes(destination)) {
+        if (width < 1024) await page.getByRole("button", { name: "Otevřít navigaci" }).click();
+        const nav =
+          width < 1024
+            ? page.getByRole("navigation", { name: "Mobilní navigace" })
+            : page.locator(".sf-header__utility-links");
+        assert.equal(await nav.locator('a[aria-current="page"]').getAttribute("href"), destination);
+        if (width < 1024) await page.keyboard.press("Escape");
+      }
+      const brand = page
+        .getByRole("link", { name: "AKROS – domovská stránka", exact: true })
+        .first();
+      await brand.focus();
+      await page.keyboard.press("Enter");
+      await page.waitForURL((url) => url.pathname === "/");
     }
   }
 
@@ -171,7 +260,7 @@ try {
     await search.fill("retez");
     await page.getByRole("link", { name: /Zobrazit všechny produkty/ }).click();
     await page.waitForURL(
-      (url) => url.pathname === "/vyhledavani" && url.searchParams.get("q") === "retez",
+      (url) => url.pathname === "/cs/vyhledavani" && url.searchParams.get("q") === "retez",
     );
     await page.goto(new URL("/", baseUrl).href, { waitUntil: "networkidle" });
   }
@@ -181,17 +270,18 @@ try {
     .getByRole("dialog", { name: "Menu" })
     .getByRole("link", { name: "Kontakty", exact: true })
     .click();
-  await page.waitForURL((url) => url.pathname === "/kontakty");
+  await page.waitForURL((url) => url.pathname === "/cs/kontakty");
   await page.getByRole("dialog", { name: "Menu" }).waitFor({ state: "hidden" });
   await page.setViewportSize({ width: 1920, height: 1000 });
   assert.equal(
     await page
-      .locator('.sf-header__utility-links a[href="/kontakty"]')
+      .locator('.sf-header__utility-links a[href="/cs/kontakty"]')
       .getAttribute("aria-current"),
     "page",
   );
-  await page.locator('.sf-footer__bottom-links a[href="/gdpr"]').click();
-  await page.waitForURL((url) => url.pathname === "/gdpr");
+  await page.locator('.sf-footer__bottom-links a[href="/cs/gdpr"]').click();
+  await page.waitForURL((url) => url.pathname === "/cs/gdpr");
+  assert.deepEqual(errors, []);
   console.log(
     `Shared UI passed ${widths.length} widths: navigation/footer/search tokens, suggestions, keyboard navigation, menu close and footer links.`,
   );

@@ -58,6 +58,7 @@ export const purchaseProductOf = (product: CatalogProduct): CatalogPurchaseProdu
   priceMinor: product.priceMinor,
   availabilityUnknown: product.availabilityUnknown,
   priceUnavailableReason: product.priceUnavailableReason,
+  netWeight: product.netWeight,
   detail: { priceTiers: product.detail.priceTiers },
 });
 

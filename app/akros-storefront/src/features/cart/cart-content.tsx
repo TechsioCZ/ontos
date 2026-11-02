@@ -7,6 +7,7 @@ import { useCart } from "./cart-provider";
 import { CartItemsTable } from "@/features/checkout/cart-items-table";
 import { CartServices } from "@/features/checkout/cart-services";
 import { useDictionary } from "@/ontos/market-context";
+import { CartWeight } from "./cart-weight";
 
 export function CartContent() {
   const cs = useDictionary();
@@ -39,6 +40,7 @@ export function CartContent() {
         {cs.cart.itemsTitle}
       </h1>
       <CartItemsTable />
+      <CartWeight />
       <CartServices />
     </section>
   );

@@ -3,7 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SiteHeader } from "@/components/site-header";
+import { akros } from "@/brand/akros";
 import { CartProvider } from "@/features/cart/cart-provider";
+import { cs } from "@/i18n/cs";
+import { formatPrice } from "@/lib/format";
 import type {
   RemoteCategorySuggestion,
   RemoteSearchResponse,
@@ -176,11 +179,64 @@ describe("SiteHeader search", () => {
     await user.paste("766-A4-8");
     const option = await screen.findByRole("option", { name: /Řetěz DIN 766/ });
     expect(option.getAttribute("href")).toBe(
-      `/produkt/retez-din-766?${new URLSearchParams({ variant: "766-A4-8" })}`,
+      `/produkt/retez-din-766?${new URLSearchParams({ variant: "766-A4-8" })}#product-variants`,
     );
     await user.click(option);
     expect(push).toHaveBeenCalledOnce();
     expect(push).toHaveBeenCalledWith(option.getAttribute("href"));
+  });
+
+  it("routes an exact SKU hit to the exact variant with its own price", async () => {
+    respondWith({
+      total: 1,
+      items: [
+        {
+          ...product,
+          hasVariants: true,
+          priceIsFrom: false,
+          priceMinor: 2_54,
+          variantLabel: "8 x 1000 mm",
+          variantSku: "766A48",
+          path: "/produkt/retez-din-766?variantIds=item-9025#product-variants",
+        },
+      ],
+      categories: [],
+    });
+    const user = userEvent.setup();
+    render(
+      <CartProvider storage={null}>
+        <SiteHeader />
+      </CartProvider>,
+    );
+    await user.click(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }));
+    await user.paste("766A48");
+    const option = await screen.findByRole("option", { name: /Řetěz DIN 766 – 8 x 1000 mm/ });
+    expect(option.getAttribute("href")).toBe(
+      "/produkt/retez-din-766?variantIds=item-9025#product-variants",
+    );
+    expect(within(option).getByText(formatPrice(2_54).replace(/\s/g, " "))).toBeTruthy();
+    expect(within(option).queryByText("Cena dle varianty")).toBeNull();
+    await user.click(option);
+    expect(push).toHaveBeenCalledWith(option.getAttribute("href"));
+  });
+
+  it("shows a variant-price prompt instead of a lower-bound price in group suggestions", async () => {
+    respondWith({
+      total: 1,
+      items: [{ ...product, hasVariants: true, priceIsFrom: true }],
+      categories: [],
+    });
+    const user = userEvent.setup();
+    render(
+      <CartProvider storage={null}>
+        <SiteHeader />
+      </CartProvider>,
+    );
+    await user.click(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }));
+    await user.paste("DIN 766");
+    const option = await screen.findByRole("option", { name: /Řetěz DIN 766/ });
+    expect(within(option).getByText("Cena dle varianty")).toBeTruthy();
+    expect(option.textContent).not.toMatch(/od \d|Kč/);
   });
 
   it("submits a trimmed query through an accessible icon button", async () => {
@@ -208,7 +264,7 @@ describe("SiteHeader search", () => {
     expect(push).toHaveBeenCalledWith("/vyhledavani?q=M8%20A4");
   });
 
-  it("marks the current page in both desktop and mobile navigation", async () => {
+  it("marks only the active information page and keeps home on the logo", async () => {
     const user = userEvent.setup();
     const { rerender } = render(
       <CartProvider storage={null}>
@@ -216,13 +272,18 @@ describe("SiteHeader search", () => {
       </CartProvider>,
     );
 
+    expect(
+      screen.getByRole("link", { name: cs.footer.homeLinkLabel(akros.name) }).getAttribute("href"),
+    ).toBe("/");
+
     for (const name of ["Pomocná navigace", "Mobilní navigace"]) {
       if (name === "Mobilní navigace")
         await user.click(screen.getByRole("button", { name: "Otevřít navigaci" }));
       const navigation = within(screen.getByRole("navigation", { name }));
-      expect(navigation.getByRole("link", { name: "Domů" }).getAttribute("aria-current")).toBe(
-        "page",
-      );
+      expect(navigation.queryByRole("link", { name: "Domů" })).toBeNull();
+      expect(
+        navigation.getAllByRole("link").some((link) => link.hasAttribute("aria-current")),
+      ).toBe(false);
       expect(navigation.getByRole("link", { name: "Blog" }).hasAttribute("aria-current")).toBe(
         false,
       );
@@ -245,9 +306,9 @@ describe("SiteHeader search", () => {
       expect(navigation.getByRole("link", { name: "Blog" }).getAttribute("aria-current")).toBe(
         "page",
       );
-      expect(navigation.getByRole("link", { name: "Domů" }).hasAttribute("aria-current")).toBe(
-        false,
-      );
+      expect(
+        navigation.getByRole("link", { name: "Obchodní podmínky" }).hasAttribute("aria-current"),
+      ).toBe(false);
     }
   });
 

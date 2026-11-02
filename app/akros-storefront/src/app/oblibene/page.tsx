@@ -1,19 +1,20 @@
 import type { Metadata } from "next";
 import { AccountLink } from "@/features/account/account-link";
 import { AccountShell } from "@/components/account-shell";
-import { ProductGrid } from "@/components/product-grid";
+import { FavoritesList } from "@/features/favorites/favorites-list";
 import { AccountHeading } from "@/features/account/account-content";
-import { getCatalog } from "@/ontos/catalog-server";
+import { getDictionary } from "@/ontos/active-market";
 
-export const metadata: Metadata = { title: "Oblíbené produkty" };
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getDictionary()).favorites.pageTitle };
+}
+
+/** Browser-saved favorite variants; their catalogue data is read live from OntOS by the list. */
 export default async function FavoritesPage() {
-  const { getProducts, toProductSummary } = await getCatalog();
+  const cs = await getDictionary();
   return (
     <AccountShell active="favorites">
-      <AccountHeading
-        title="Oblíbené produkty"
-        description="Ukázkový seznam často nakupovaných produktů."
-      >
+      <AccountHeading title={cs.favorites.pageTitle} description={cs.favorites.pageDescription}>
         <AccountLink
           href="/muj-ucet/prehled"
           data-account-action
@@ -21,15 +22,10 @@ export default async function FavoritesPage() {
           theme="outlined"
           variant="secondary"
         >
-          Zpět na přehled
+          {cs.favorites.backToOverview}
         </AccountLink>
       </AccountHeading>
-      <div data-account-products>
-        <ProductGrid
-          products={getProducts().slice(0, 6).map(toProductSummary)}
-          columns="featured"
-        />
-      </div>
+      <FavoritesList />
     </AccountShell>
   );
 }

@@ -1,17 +1,16 @@
 "use client";
 
-import { useCallback, useId, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
-import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
-import { Pagination } from "@techsio/ui-kit/molecules/pagination";
-import { Slider } from "@techsio/ui-kit/molecules/slider";
 import { Table } from "@techsio/ui-kit/organisms/table";
+import { ProductVariantLink } from "@/components/product-variant-link";
 
 import { useCart } from "@/features/cart/cart-provider";
 import { useDictionary, useFormatPrice, useMoney } from "@/ontos/market-context";
-import { currencySymbol } from "@/lib/format";
 import type { Dictionary } from "@/i18n";
+import { getVariantRangeFilters, type NumericRange } from "@/lib/product-variant-filters";
+import { VariantRangeFilter } from "./variant-range-filter";
 import {
   matchesProductVariantSearch,
   normalizeCatalogSearchTerm,
@@ -26,7 +25,6 @@ interface ProductPurchaseFormProps {
   initialVariantSearch?: string;
 }
 
-const variantsPerPage = 5;
 const variantListOnlyClassName =
   "hidden @min-sf-variant-list/sf-variants:@max-sf-variant-table/sf-variants:block";
 const noVariants: CatalogPurchaseVariant[] = [];
@@ -34,170 +32,6 @@ const variantCollator = new Intl.Collator("cs-CZ", {
   numeric: true,
   sensitivity: "base",
 });
-const measurementFormatter = new Intl.NumberFormat("cs-CZ", {
-  maximumFractionDigits: 2,
-});
-const priceInputFormatter = new Intl.NumberFormat("cs-CZ", {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-
-type NumericRange = [number, number];
-
-interface VariantDimensions {
-  diameter: number;
-  length: number;
-}
-
-const parseVariantDimensions = (label: string): VariantDimensions | null => {
-  const match = label.match(/(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)/i);
-  if (!match?.[1] || !match[2]) return null;
-
-  const diameter = Number(match[1].replace(",", "."));
-  const length = Number(match[2].replace(",", "."));
-
-  return Number.isFinite(diameter) && Number.isFinite(length) ? { diameter, length } : null;
-};
-
-const getRange = (values: number[]): NumericRange | null => {
-  if (values.length === 0) return null;
-
-  return [Math.min(...values), Math.max(...values)];
-};
-
-const isWithinRange = (value: number, [minimum, maximum]: NumericRange) =>
-  value >= minimum && value <= maximum;
-
-const filterGroupClassName =
-  "min-w-0 border-base-dark border-b-(length:--border-sm) py-(--dimension-12) md:border-b-0 md:border-r-(length:--border-sm) md:px-(--dimension-12) md:py-0";
-
-interface VariantRangeFilterProps {
-  bounds: NumericRange;
-  label: string;
-  onChange: (value: NumericRange) => void;
-  price?: boolean;
-  step: number;
-  value: NumericRange;
-}
-
-function VariantRangeFilter({
-  bounds,
-  label,
-  onChange,
-  price = false,
-  step,
-  value,
-}: VariantRangeFilterProps) {
-  const cs = useDictionary();
-  const formatPrice = useFormatPrice();
-  const scale = price ? 100 : 1;
-  const priceInputStyle: CSSProperties & {
-    "--sf-variant-filter-price-characters"?: number;
-  } = price
-    ? {
-        "--sf-variant-filter-price-characters": Math.max(
-          ...bounds.map((bound) => priceInputFormatter.format(bound / scale).length),
-        ),
-      }
-    : {};
-  // Keep the NumericInput editing buffer (empty text and decimal separators).
-  // Slider changes replace that buffer with the newly selected range.
-  const [sliderRevision, setSliderRevision] = useState(0);
-  const updateEndpoint = (index: 0 | 1, nextValue: number) => {
-    if (!Number.isFinite(nextValue)) return;
-    const next = price ? Math.round(nextValue * scale) : nextValue;
-    if (next < bounds[0] || next > bounds[1]) return;
-    if (index === 0 && next > value[1]) return;
-    if (index === 1 && next < value[0]) return;
-    onChange(index === 0 ? [next, value[1]] : [value[0], next]);
-  };
-
-  return (
-    <div
-      style={priceInputStyle}
-      className={`sf-variant-filter-range ${filterGroupClassName} w-full md:shrink-0 md:@max-sf-variant-table/sf-variants:grow ${price ? "sf-variant-filter-range--price md:w-(--sf-variant-filter-price-width)" : "md:w-(--sf-variant-filter-measurement-width)"}`}
-    >
-      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-end gap-(--dimension-8)">
-        <NumericInput
-          key={`minimum-${sliderRevision}`}
-          className="w-(--sf-variant-filter-input-width)"
-          locale="cs-CZ"
-          min={bounds[0] / scale}
-          max={value[1] / scale}
-          precision={2}
-          step={step / scale}
-          defaultValue={value[0] / scale}
-          onChange={(next) => updateEndpoint(0, next)}
-          size="sm"
-        >
-          <NumericInput.Control>
-            <NumericInput.Input aria-label={`${cs.filters.minimum} – ${label}`} />
-          </NumericInput.Control>
-        </NumericInput>
-        <Slider
-          className="[&>div:first-child]:justify-center [&_label]:whitespace-nowrap [&_label]:text-(length:--sf-variant-filter-label-font-size) [&_label]:leading-(--sf-variant-filter-label-line-height) [&_[data-part=control]]:min-h-(--height-form-control-sm)"
-          formatValue={price ? formatPrice : (next) => measurementFormatter.format(next)}
-          label={label}
-          max={bounds[1]}
-          min={bounds[0]}
-          minStepsBetweenThumbs={0}
-          onChange={(next) => {
-            if (next[0] !== undefined && next[1] !== undefined) {
-              onChange([next[0], next[1]]);
-              setSliderRevision((revision) => revision + 1);
-            }
-          }}
-          size="sm"
-          step={step}
-          value={value}
-        />
-        <NumericInput
-          key={`maximum-${sliderRevision}`}
-          className="w-(--sf-variant-filter-input-width)"
-          locale="cs-CZ"
-          min={value[0] / scale}
-          max={bounds[1] / scale}
-          precision={2}
-          step={step / scale}
-          defaultValue={value[1] / scale}
-          onChange={(next) => updateEndpoint(1, next)}
-          size="sm"
-        >
-          <NumericInput.Control>
-            <NumericInput.Input aria-label={`${cs.filters.maximum} – ${label}`} />
-          </NumericInput.Control>
-        </NumericInput>
-      </div>
-    </div>
-  );
-}
-
-const materialPattern =
-  /\b(?:A[124](?:\s*-\s*\d+)?|AL(?:\/AL)?|1\.\d{4}|chrom|nerez|ocel|pozink|zinek)\b/i;
-
-const normalizeMaterial = (material: string) => {
-  const normalized = material.trim().replace(/\s+/g, " ");
-  const commonMaterial = normalized.toLocaleLowerCase("cs-CZ");
-
-  if (["chrom", "nerez", "ocel", "pozink", "zinek"].includes(commonMaterial)) {
-    return commonMaterial.charAt(0).toLocaleUpperCase("cs-CZ") + commonMaterial.slice(1);
-  }
-
-  return normalized.toLocaleUpperCase("cs-CZ");
-};
-
-const getVariantMaterial = (product: CatalogPurchaseProduct, variant: CatalogPurchaseVariant) => {
-  const materialParameter = variant.parameters.find((parameter) =>
-    parameter.label.toLocaleLowerCase("cs-CZ").includes("material"),
-  );
-  if (materialParameter?.value.trim()) return normalizeMaterial(materialParameter.value);
-
-  const variantMaterial = variant.label.match(materialPattern)?.[0];
-  if (variantMaterial) return normalizeMaterial(variantMaterial);
-
-  const productMaterial = product.name.match(materialPattern)?.[0];
-  return productMaterial ? normalizeMaterial(productMaterial) : null;
-};
 
 const formatVariantLabel = (variant: CatalogPurchaseVariant) => {
   const dimension = variant.label.match(/\bM\s*(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)/i);
@@ -230,6 +64,8 @@ const getVariantCartItem = (product: CatalogPurchaseProduct, variant: CatalogPur
   priceExcludingVatMinor: variant.priceTiers.find((tier) => tier.priceMinor === variant.priceMinor)
     ?.priceExcludingVatMinor,
   variantLabel: formatVariantLabel(variant),
+  // kg per sales unit from the source feed index; the server quote refreshes it from OntOS projection.
+  ...(variant.sourceNetWeight ? { unitWeightKg: variant.sourceNetWeight } : {}),
 });
 
 interface VariantOrderControlProps {
@@ -241,6 +77,7 @@ interface VariantOrderControlProps {
 
 function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderControlProps) {
   const cs = useDictionary();
+  const money = useMoney();
   const inputId = useId();
   const isPackage = mode === "package";
   const packageQuantity = variant.packageQuantity ?? variant.minimumQuantity;
@@ -295,8 +132,12 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
       </NumericInput>
       <Button
         aria-label={isPackage ? cs.product.buyPackageOf(label) : cs.product.buyItem(label)}
-        block
-        className="sf-variant-table__buy-button @max-sf-variant-table/sf-variants:min-h-(--dimension-44) @max-sf-variant-table/sf-variants:whitespace-normal! @max-sf-variant-table/sf-variants:[&>span]:flex-col! @max-sf-variant-table/sf-variants:[&>span]:items-center! @max-sf-variant-table/sf-variants:[&>span]:leading-(--sf-variant-table-compact-button-line-height)! @max-sf-variant-table/sf-variants:[&_small]:text-xs!"
+        block={!isPackage}
+        className={
+          isPackage
+            ? "sf-variant-table__buy-button sf-variant-table__buy-button--package w-(--sf-variant-table-package-button-width) max-w-full justify-self-end"
+            : "sf-variant-table__buy-button @max-sf-variant-table/sf-variants:min-h-(--dimension-44) @max-sf-variant-table/sf-variants:whitespace-normal! @max-sf-variant-table/sf-variants:[&>span]:flex-col! @max-sf-variant-table/sf-variants:[&>span]:items-center! @max-sf-variant-table/sf-variants:[&>span]:leading-(--sf-variant-table-compact-button-line-height)! @max-sf-variant-table/sf-variants:[&_small]:text-xs!"
+        }
         disabled={disabled}
         onClick={() => onAdd(variant, quantityToAdd)}
         size="sm"
@@ -305,9 +146,11 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
       >
         {isPackage ? (
           <span>
-            {cs.product.buyWholePackage}
+            {cs.variants.buyWhole}
+            <br />
+            {cs.variants.wholePackage}{" "}
             <small>
-              ({packageQuantity.toLocaleString("cs-CZ")} {variant.unit})
+              ({packageQuantity.toLocaleString(money.locale)} {variant.unit})
             </small>
           </span>
         ) : (
@@ -328,105 +171,33 @@ export function ProductPurchaseForm({
 }: ProductPurchaseFormProps) {
   const { addItem, adding } = useCart();
   const cs = useDictionary();
-  const money = useMoney();
   const formatPrice = useFormatPrice();
   const sourceVariants = variants ?? noVariants;
-  const variantDimensions = useMemo(
-    () => new Map(sourceVariants.map((item) => [item.id, parseVariantDimensions(item.label)])),
-    [sourceVariants],
-  );
-  const dimensionBounds = useMemo(() => {
-    const dimensions = [...variantDimensions.values()];
-    if (dimensions.length < 2 || dimensions.some((item) => item === null)) return null;
-
-    const parsedDimensions = dimensions.filter((item): item is VariantDimensions => item !== null);
-    const diameter = getRange(parsedDimensions.map((item) => item.diameter));
-    const length = getRange(parsedDimensions.map((item) => item.length));
-
-    return diameter && length
-      ? {
-          diameter,
-          diameterStep: parsedDimensions.every((item) => Number.isInteger(item.diameter)) ? 1 : 0.1,
-          length,
-          lengthStep: parsedDimensions.every((item) => Number.isInteger(item.length)) ? 1 : 0.1,
-        }
-      : null;
-  }, [variantDimensions]);
-  const priceBounds = useMemo(
-    () => getRange(sourceVariants.map((item) => item.priceMinor)),
-    [sourceVariants],
-  );
-  const variantMaterials = useMemo(
-    () => new Map(sourceVariants.map((item) => [item.id, getVariantMaterial(product, item)])),
+  // Only dimensions read reliably from the source labels/parameters become filters; they apply live.
+  const filters = useMemo(
+    () => getVariantRangeFilters(product, sourceVariants),
     [product, sourceVariants],
   );
-  const materialOptions = useMemo(() => {
-    const materials = [...variantMaterials.values()];
-    if (materials.length === 0 || materials.some((material) => material === null)) return [];
-
-    return [...new Set(materials.filter((material): material is string => material !== null))].sort(
-      (left, right) => variantCollator.compare(left, right),
-    );
-  }, [variantMaterials]);
-  const initialDiameterRange: NumericRange = dimensionBounds?.diameter ?? [0, 0];
-  const initialLengthRange: NumericRange = dimensionBounds?.length ?? [0, 0];
-  const initialPriceRange: NumericRange = priceBounds ?? [0, 0];
+  const [ranges, setRanges] = useState<Record<string, NumericRange>>({});
+  const [filterRevision, setFilterRevision] = useState(0);
   const [quantity, setQuantity] = useState(variant?.minimumQuantity ?? product.minimumQuantity);
-  const [page, setPage] = useState(1);
-  const [selectedMaterials, setSelectedMaterials] = useState(materialOptions);
-  const [appliedMaterials, setAppliedMaterials] = useState(materialOptions);
-  const [diameterRange, setDiameterRange] = useState<NumericRange>(initialDiameterRange);
-  const [appliedDiameterRange, setAppliedDiameterRange] =
-    useState<NumericRange>(initialDiameterRange);
-  const [lengthRange, setLengthRange] = useState<NumericRange>(initialLengthRange);
-  const [appliedLengthRange, setAppliedLengthRange] = useState<NumericRange>(initialLengthRange);
-  const [priceRange, setPriceRange] = useState<NumericRange>(initialPriceRange);
-  const [appliedPriceRange, setAppliedPriceRange] = useState<NumericRange>(initialPriceRange);
   const normalizedSearchTerm = normalizeCatalogSearchTerm(initialVariantSearch ?? "");
   const visibleVariants = useMemo(
     () =>
       sourceVariants
-        .filter((item) => {
-          const matchesSearch = normalizedSearchTerm
-            ? matchesProductVariantSearch(item, normalizedSearchTerm)
-            : true;
-          const dimensions = variantDimensions.get(item.id);
-          const matchesDiameter =
-            !dimensionBounds ||
-            (dimensions != null && isWithinRange(dimensions.diameter, appliedDiameterRange));
-          const matchesLength =
-            !dimensionBounds ||
-            (dimensions != null && isWithinRange(dimensions.length, appliedLengthRange));
-          const matchesPrice = !priceBounds || isWithinRange(item.priceMinor, appliedPriceRange);
-          const material = variantMaterials.get(item.id);
-          const matchesMaterial =
-            materialOptions.length === 0 ||
-            (material !== null && material !== undefined && appliedMaterials.includes(material));
-
-          return (
-            matchesSearch && matchesDiameter && matchesLength && matchesPrice && matchesMaterial
-          );
-        })
+        .filter(
+          (item) =>
+            (!normalizedSearchTerm || matchesProductVariantSearch(item, normalizedSearchTerm)) &&
+            filters.every((filter) => {
+              const range = ranges[filter.id];
+              const value = filter.values.get(item.id);
+              return !range || (value !== undefined && value >= range[0] && value <= range[1]);
+            }),
+        )
         .sort((left, right) =>
           variantCollator.compare(formatVariantLabel(left), formatVariantLabel(right)),
         ),
-    [
-      appliedDiameterRange,
-      appliedLengthRange,
-      appliedMaterials,
-      appliedPriceRange,
-      dimensionBounds,
-      materialOptions.length,
-      normalizedSearchTerm,
-      priceBounds,
-      sourceVariants,
-      variantDimensions,
-      variantMaterials,
-    ],
-  );
-  const paginatedVariants = visibleVariants.slice(
-    (page - 1) * variantsPerPage,
-    page * variantsPerPage,
+    [sourceVariants, normalizedSearchTerm, filters, ranges],
   );
   const addVariant = useCallback(
     (variant: CatalogPurchaseVariant, selectedQuantity: number) => {
@@ -437,6 +208,8 @@ export function ProductPurchaseForm({
 
   if (!variants?.length) {
     const purchaseItem = variant ?? product;
+    // kg per sales unit (source feed index); absent stays unknown.
+    const unitWeightKg = variant ? variant.sourceNetWeight : product.netWeight;
     const productCartItem = {
       vatRate: product.vatRate,
       productId: product.id,
@@ -455,6 +228,7 @@ export function ProductPurchaseForm({
         (tier) => tier.priceMinor === purchaseItem.priceMinor,
       )?.priceExcludingVatMinor,
       variantLabel: variant ? formatVariantLabel(variant) : undefined,
+      ...(unitWeightKg ? { unitWeightKg } : {}),
     };
     const maximumQuantity = getMaximumOrderQuantity(productCartItem);
 
@@ -526,104 +300,55 @@ export function ProductPurchaseForm({
     );
   }
 
-  const applyFilters = () => {
-    setAppliedMaterials(selectedMaterials);
-    setAppliedDiameterRange(diameterRange);
-    setAppliedLengthRange(lengthRange);
-    setAppliedPriceRange(priceRange);
-    setPage(1);
-  };
-
   return (
     <div className="sf-variant-purchase @container/sf-variants">
-      <section className="w-full max-w-full rounded-sm border-(length:--border-sm) border-base-dark bg-base p-(--sf-variant-filter-padding) md:w-fit md:@max-sf-variant-table/sf-variants:w-full">
-        <form
-          aria-label={cs.product.variantFilters}
-          className="sf-variant-purchase__filter-bar flex flex-col gap-y-(--dimension-12) md:flex-row md:flex-wrap md:items-center"
-          onSubmit={(event) => {
-            event.preventDefault();
-            applyFilters();
-          }}
-        >
-          {dimensionBounds && dimensionBounds.diameter[0] < dimensionBounds.diameter[1] && (
-            <VariantRangeFilter
-              bounds={dimensionBounds.diameter}
-              label={cs.product.diameter}
-              onChange={setDiameterRange}
-              step={dimensionBounds.diameterStep}
-              value={diameterRange}
-            />
-          )}
-
-          {dimensionBounds && dimensionBounds.length[0] < dimensionBounds.length[1] && (
-            <VariantRangeFilter
-              bounds={dimensionBounds.length}
-              label={cs.product.length}
-              onChange={setLengthRange}
-              step={dimensionBounds.lengthStep}
-              value={lengthRange}
-            />
-          )}
-
-          {materialOptions.length > 0 && (
-            <fieldset className={`${filterGroupClassName} m-0 min-w-0`}>
-              <legend className="mx-auto mb-(--dimension-6) text-(length:--sf-variant-filter-label-font-size) leading-(--sf-variant-filter-label-line-height) font-medium">
-                {cs.product.material}
-              </legend>
-              <div
-                className={`grid gap-x-(--dimension-12) gap-y-(--dimension-4) ${materialOptions.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}
-              >
-                {materialOptions.map((material) => (
-                  <FormCheckbox
-                    className="[&_[data-part=indicator][data-state=checked]]:token-icon-sf-checkbox-selected"
-                    checked={selectedMaterials.includes(material)}
-                    key={material}
-                    label={material}
-                    onCheckedChange={(checked) =>
-                      setSelectedMaterials((current) =>
-                        checked
-                          ? [...current, material]
-                          : current.filter((item) => item !== material),
-                      )
-                    }
-                    size="sm"
-                  />
-                ))}
-              </div>
-            </fieldset>
-          )}
-
-          <div className="flex min-w-0 flex-col gap-y-(--dimension-12) md:flex-row md:items-center md:gap-x-(--dimension-12) md:@max-sf-variant-table/sf-variants:grow">
-            {priceBounds && priceBounds[0] < priceBounds[1] && (
+      {filters.length > 0 && (
+        <section className="w-full max-w-full rounded-sm border-(length:--border-sm) border-base-dark bg-base p-(--sf-variant-filter-padding) md:w-fit md:@max-sf-variant-table/sf-variants:w-full">
+          <form
+            aria-label={cs.product.variantFilters}
+            className="sf-variant-purchase__filter-bar flex flex-col gap-y-(--dimension-12) md:flex-row md:flex-wrap md:items-baseline-last"
+            onSubmit={(event) => event.preventDefault()}
+          >
+            {filters.map((filter) => (
               <VariantRangeFilter
-                bounds={priceBounds}
-                label={cs.product.variantPriceFilter(currencySymbol(money), product.unit)}
-                onChange={setPriceRange}
-                price
-                step={1}
-                value={priceRange}
+                key={filter.id + filterRevision}
+                filter={filter}
+                value={ranges[filter.id] ?? filter.bounds}
+                onChange={(value) =>
+                  setRanges((current) => {
+                    const previous = current[filter.id] ?? filter.bounds;
+                    return previous[0] === value[0] && previous[1] === value[1]
+                      ? current
+                      : { ...current, [filter.id]: value };
+                  })
+                }
               />
-            )}
-
+            ))}
             <Button
-              className="sf-variant-filter-submit w-full md:ml-auto md:w-(--sf-variant-filter-submit-width)"
+              type="button"
               size="sm"
-              type="submit"
-              uppercase
-              variant="primary"
+              theme="outlined"
+              variant="secondary"
+              onClick={() => {
+                setRanges({});
+                setFilterRevision((revision) => revision + 1);
+              }}
             >
-              {cs.product.applyVariantFilters}
+              {cs.variants.resetFilters}
             </Button>
-          </div>
-        </form>
-      </section>
+          </form>
+        </section>
+      )}
+      <output className="block m-0 text-sm text-fg-secondary">
+        {cs.variants.shown(visibleVariants.length, sourceVariants.length)}
+      </output>
 
       <>
         <div className="sf-variant-data-table flex w-full flex-col overflow-hidden rounded-data-table border-(length:--border-width-data-table) border-data-table-border">
           <div className="relative w-full overflow-auto">
             <Table
               aria-label={cs.product.variantsTitle}
-              aria-rowcount={paginatedVariants.length + 1}
+              aria-rowcount={visibleVariants.length + 1}
               className="sf-variant-data-table__table @max-sf-variant-table/sf-variants:block @max-sf-variant-table/sf-variants:[&_thead]:sr-only @max-sf-variant-table/sf-variants:[&_tbody]:grid @max-sf-variant-table/sf-variants:[&_tbody]:min-w-0 @max-sf-variant-table/sf-variants:[&_tbody]:gap-(--dimension-12)"
               showColumnBorder
               size="sm"
@@ -635,7 +360,7 @@ export function ProductPurchaseForm({
                   <Table.ColumnHeader
                     className="group/header relative"
                     style={{
-                      width: "12%",
+                      width: "auto",
                       backgroundColor: "var(--color-data-table-bg)",
                       backgroundImage:
                         "linear-gradient(var(--color-data-table-header-bg), var(--color-data-table-header-bg))",
@@ -702,7 +427,7 @@ export function ProductPurchaseForm({
                     align="center"
                     className="group/header relative"
                     style={{
-                      width: "47%",
+                      width: "var(--sf-variant-table-purchase-column-width)",
                       backgroundColor: "var(--color-data-table-bg)",
                       backgroundImage:
                         "linear-gradient(var(--color-data-table-header-bg), var(--color-data-table-header-bg))",
@@ -715,7 +440,7 @@ export function ProductPurchaseForm({
                 </Table.Row>
               </Table.Header>
               <Table.Body>
-                {paginatedVariants.map((item, index) => {
+                {visibleVariants.map((item, index) => {
                   const label = formatVariantLabel(item);
                   const isAvailable =
                     !item.availabilityUnknown && item.stockCount >= item.minimumQuantity;
@@ -729,23 +454,25 @@ export function ProductPurchaseForm({
                       aria-rowindex={index + 2}
                       className="sf-variant-data-table__row"
                     >
-                      <Table.Cell style={{ width: "12%" }}>
+                      <Table.Cell style={{ width: "auto" }}>
                         <div className="sf-variant-table__name min-w-0">
-                          <span className="@max-sf-variant-table/sf-variants:hidden">
-                            {product.name}
-                          </span>
                           <strong className="min-w-0 whitespace-normal wrap-anywhere @max-sf-variant-table/sf-variants:text-(length:--text-base)!">
-                            {label}
+                            <ProductVariantLink
+                              slug={product.slug}
+                              imageSrc={product.imageSrc}
+                              variant={item}
+                              label={label}
+                            />
                           </strong>
                           <p
-                            className={`${variantListOnlyClassName} mt-(--dimension-8) text-xs font-normal text-fg-secondary`}
+                            className={`${variantListOnlyClassName} mt-(--dimension-8) whitespace-nowrap text-xs font-normal text-fg-secondary`}
                           >
                             {cs.product.code}: {item.sku}
                           </p>
                         </div>
                       </Table.Cell>
                       <Table.Cell style={{ width: "16%" }}>
-                        <span className="sf-variant-table__sku block whitespace-normal break-all @max-sf-variant-table/sf-variants:text-xs @max-sf-variant-table/sf-variants:font-normal @max-sf-variant-table/sf-variants:text-fg-secondary">
+                        <span className="sf-variant-table__sku block whitespace-nowrap @max-sf-variant-table/sf-variants:text-xs @max-sf-variant-table/sf-variants:font-normal @max-sf-variant-table/sf-variants:text-fg-secondary">
                           <span className="sf-variant-table__mobile-label @max-sf-variant-table/sf-variants:inline!">
                             {cs.product.code}:{" "}
                           </span>
@@ -808,7 +535,10 @@ export function ProductPurchaseForm({
                           )}
                         </div>
                       </Table.Cell>
-                      <Table.Cell align="center" style={{ width: "47%" }}>
+                      <Table.Cell
+                        align="center"
+                        style={{ width: "var(--sf-variant-table-purchase-column-width)" }}
+                      >
                         <div className="sf-variant-table__purchase-cell @max-sf-variant-table/sf-variants:grid-cols-1! @max-sf-variant-table/sf-variants:gap-(--dimension-8)">
                           {item.quantityStep && (
                             <small className="col-span-full text-fg-secondary">
@@ -845,7 +575,7 @@ export function ProductPurchaseForm({
                     </Table.Row>
                   );
                 })}
-                {paginatedVariants.length === 0 && (
+                {visibleVariants.length === 0 && (
                   <Table.Row>
                     <Table.Cell colSpan={6}>
                       <p className="sf-variant-purchase__empty">
@@ -858,20 +588,6 @@ export function ProductPurchaseForm({
             </Table>
           </div>
         </div>
-        {visibleVariants.length > variantsPerPage && (
-          <Pagination
-            aria-label={cs.product.variantsPagination}
-            className="sf-pagination"
-            count={visibleVariants.length}
-            getPageUrl={() => "#product-variants"}
-            onChange={setPage}
-            page={page}
-            pageSize={variantsPerPage}
-            showPrevNext
-            size="md"
-            variant="filled"
-          />
-        )}
       </>
     </div>
   );

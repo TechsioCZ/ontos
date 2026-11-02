@@ -112,7 +112,7 @@ describe("password-manager form semantics with the published UI-kit", () => {
     );
   });
 
-  it("shows the authenticated account and does not simulate password changes", () => {
+  it("shows the authenticated account and keeps the demo password change outside the profile form", () => {
     render(
       <AppRouterContext.Provider value={router}>
         <PathnameContext.Provider value="/muj-ucet">
@@ -137,7 +137,11 @@ describe("password-manager form semantics with the published UI-kit", () => {
       </AppRouterContext.Provider>,
     );
 
-    expect(document.getElementById("account-password")).toBeNull();
+    // OntOS has no signed-in password change: the separate demo block is never part of the profile save.
+    const passwordChange = document.getElementById("zmena-hesla");
+    expect(passwordChange?.closest("form")).toBeNull();
+    expect(document.querySelector('form input[type="password"]')).toBeNull();
+    expect(passwordChange?.textContent).toContain("heslo zůstává beze změny");
     const email = expectInput("account-email", {
       name: "email",
       type: "email",

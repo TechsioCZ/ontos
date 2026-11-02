@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { AccountShell } from "@/components/account-shell";
 import { AccountOrderDetail } from "@/features/account/account-order-detail";
 import { requireCustomerAccount } from "@/ontos/account";
+import { getDictionary } from "@/ontos/active-market";
 import { readCustomerOrders } from "@/ontos/customer-orders";
 export const dynamic = "force-dynamic";
 
@@ -19,7 +20,10 @@ export default async function OrderDetailPage({
   const order = orders[0];
   if (!order) notFound();
   return (
-    <AccountShell active="orders" title={`Objednávka ${order.number}`}>
+    <AccountShell
+      active="orders"
+      title={(await getDictionary()).account.orderDetail.title(order.number)}
+    >
       <AccountOrderDetail order={order} />
     </AccountShell>
   );

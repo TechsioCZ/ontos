@@ -36,7 +36,6 @@
   --sf-cart-primary-weight: var(--font-weight-medium);
   --sf-cart-price-weight: var(--font-weight-extrabold);
   --padding-table-cell-sm: var(--padding-table-cell-sm-y) var(--sf-cart-cell-padding);
-  --font-weight-link: var(--sf-cart-primary-weight);
 }
 
 [data-sf-cart-quantity] {

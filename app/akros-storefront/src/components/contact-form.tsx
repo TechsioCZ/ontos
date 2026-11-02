@@ -16,11 +16,14 @@ export function ContactForm({
   kind = "CONTACT",
   productId,
   productName,
+  defaultMessage,
 }: {
   compact?: boolean;
   kind?: InquiryKind;
   productId?: string;
   productName?: string;
+  /** Prefilled message, e.g. the product and variants a product-question link selected. */
+  defaultMessage?: string;
 }) {
   const brand = useBrand();
   const [pending, setPending] = useState(false);
@@ -142,6 +145,7 @@ export function ContactForm({
           id={compact ? "faq-message" : "contact-message"}
           label="Zpráva"
           name="message"
+          defaultValue={defaultMessage?.slice(0, 1500)}
           maxLength={1500}
           placeholder={
             kind === "COMPLAINT"

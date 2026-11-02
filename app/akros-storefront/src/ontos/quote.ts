@@ -209,8 +209,12 @@ export async function quoteCart(cart: CartState, deliveryId?: unknown): Promise<
         code: "PACKAGE_QUANTITY",
         message: `${label}: objednejte celé balení po ${step} ${item.unit}.`,
       });
+    const { unitWeightKg: _clientWeight, ...verifiedLine } = line;
+    // Fresh kg per sales unit from the projection (source feed index); unknown stays absent.
+    const unitWeightKg = v ? v.sourceNetWeight : p.netWeight;
     return {
-      ...line,
+      ...(unitWeightKg === undefined ? {} : { unitWeightKg }),
+      ...verifiedLine,
       name: p.name,
       vatRate: p.vatRate,
       slug: p.slug,

@@ -3,29 +3,33 @@ import Image from "next/image";
 import { notFound } from "next/navigation";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
 
-import { ProductDetailActions, ProductFavoriteButton } from "@/components/product-detail-actions";
+import { getBrand } from "@/brand";
+import { ContentLink } from "@/components/content-link";
+import { ProductDetailActions } from "@/components/product-detail-actions";
 import { ProductGrid } from "@/components/product-grid";
+import { ProductVariantDetail } from "@/components/product-variant-detail";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { CategoryBranch } from "@/ontos/category-branch";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
-import { formatPrice } from "@/lib/format";
+import { FavoriteButton } from "@/features/favorites/favorite-button";
+import { formatPrice, formatWeight } from "@/lib/format";
+import { getProductDescriptionParagraphs } from "@/lib/product-description";
+import { parseVariantIds, resolveVariantSelection } from "@/lib/product-variant-links";
 import {
   matchesProductVariantSearch,
   normalizeCatalogSearchTerm,
 } from "@/lib/product-variant-search";
-import { getDictionary, getMoney } from "@/ontos/active-market";
+import { getDictionary, getMoney, marketHref } from "@/ontos/active-market";
 import { getCatalog, getCatalogPage } from "@/ontos/catalog-server";
 import { purchaseProductOf, purchaseVariantOf } from "@/ontos/catalog-projection";
 import { isImagePlaceholder } from "@/ontos/media-path";
 
 interface ProductPageProps {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ variant?: string | string[] }>;
+  /** `variant`: a search term that narrows the variant table; `variantIds`: a shared/exact variant selection. */
+  searchParams: Promise<{ variant?: string | string[]; variantIds?: string | string[] }>;
 }
-
-const isQuantityPricingCopy = (paragraph: string) =>
-  /množstevních slev|snížená cena|snížení ceny/i.test(paragraph);
 
 /** The one `full` read: this product with its variants, parameters and description. */
 const getProductDetail = async (slug: string) =>
@@ -50,7 +54,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
     cs,
     money,
   ] = await Promise.all([getCatalog(), getProductDetail(slug), getDictionary(), getMoney()]);
-  const { variant: requestedVariantSearch } = await searchParams;
+  const { variant: requestedVariantSearch, variantIds: requestedVariantIds } = await searchParams;
   const product = getProductBySlug(slug);
   if (!product) notFound();
 
@@ -58,9 +62,22 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
   const categoryTrail = category ? getCategoryTrail(category) : [];
   const detail = product.detail;
   const purchaseProduct = purchaseProductOf(product);
+  // One array for the table and the variant modal, so the RSC payload carries the variants once.
+  const purchaseVariants = detail.variants.map(purchaseVariantOf);
+  const sharedIds = parseVariantIds(requestedVariantIds);
+  const sharedVariantIds = new Set(
+    resolveVariantSelection(detail.variants, requestedVariantIds).map((variant) => variant.id),
+  );
+  const sharedVariants = purchaseVariants.filter((variant) => sharedVariantIds.has(variant.id));
   const singleVariant = detail.variants.length === 1 ? detail.variants[0] : undefined;
   const hasMultipleVariants = detail.variants.length > 1;
+  const invalidSingleSelection =
+    sharedIds.length > 0 && !hasMultipleVariants && !sharedVariants.length;
   const purchaseItem = singleVariant ?? product;
+  const productWeight = formatWeight(
+    singleVariant ? singleVariant.sourceNetWeight : product.netWeight,
+    money.locale,
+  );
   const purchasePriceTiers = singleVariant?.priceTiers.length
     ? singleVariant.priceTiers
     : detail.priceTiers;
@@ -84,14 +101,17 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
     : requestedVariantSearch;
   const normalizedVariantSearch = normalizeCatalogSearchTerm(variantSearch ?? "");
   const initialVariantSearch =
+    !sharedIds.length &&
     normalizedVariantSearch &&
     detail.variants.some((variant) => matchesProductVariantSearch(variant, normalizedVariantSearch))
       ? variantSearch?.trim()
       : undefined;
-  const productDescriptionParagraphs = detail.descriptionParagraphs.filter(
-    (paragraph) => !isQuantityPricingCopy(paragraph),
+  const productDescriptionParagraphs = getProductDescriptionParagraphs(
+    detail.descriptionParagraphs,
   );
-  const [summaryDescription, ...remainingDescriptionParagraphs] = productDescriptionParagraphs;
+  // The printed sheet names the market's own product address.
+  const productPath = await marketHref(`/produkt/${product.slug}`);
+  const brand = getBrand();
   const materialMarkers = product.name.match(/\bA[1-5]\b|\b1\.\d{4}\b/gi) ?? [];
   const recommendationScore = (candidateName: string) =>
     materialMarkers.filter((marker) =>
@@ -143,6 +163,14 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
       />
 
       <article className="sf-product-detail">
+        {invalidSingleSelection && (
+          <div data-shared-variant-selection>
+            <p>{cs.productPage.sharedSelectionGone}</p>
+            <ContentLink href={`/produkt/${product.slug}`}>
+              {cs.productPage.showCurrentProduct}
+            </ContentLink>
+          </div>
+        )}
         <section className="sf-product-detail__overview" aria-labelledby="product-title">
           <div className="sf-product-detail__gallery">
             <Image
@@ -201,10 +229,6 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
               )}
             </header>
 
-            {summaryDescription && (
-              <p className="sf-product-detail__description">{summaryDescription}</p>
-            )}
-
             <dl className="sf-product-detail__facts">
               {packageQuantity > purchaseItem.minimumQuantity && (
                 <div>
@@ -218,10 +242,10 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                 <dt>{cs.product.sku}</dt>
                 <dd>{purchaseItem.sku}</dd>
               </div>
-              {product.netWeight && (
+              {!hasMultipleVariants && productWeight && (
                 <div>
-                  <dt>{cs.product.netWeight}</dt>
-                  <dd>{number(product.netWeight, 6)}</dd>
+                  <dt>{cs.productPage.weight}</dt>
+                  <dd>{productWeight}</dd>
                 </div>
               )}
               <div>
@@ -262,93 +286,139 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                   {simpleStockLabel}
                 </p>
 
-                <div className="sf-product-detail__buying">
-                  {purchasePriceTiers.length > 1 && !priceUnavailableReason && (
-                    <dl className="sf-price-tiers" aria-label={cs.product.quantityPricing}>
-                      {purchasePriceTiers.map((tier) => (
-                        <div key={tier.minimumQuantity}>
-                          <dt>
-                            {cs.product.from} {number(tier.minimumQuantity)} {purchaseItem.unit}
-                          </dt>
-                          <dd>{formatPrice(tier.priceMinor, money)}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  )}
+                {!invalidSingleSelection && (
+                  <div className="sf-product-detail__buying">
+                    {purchasePriceTiers.length > 1 && !priceUnavailableReason && (
+                      <dl className="sf-price-tiers" aria-label={cs.product.quantityPricing}>
+                        {purchasePriceTiers.map((tier) => (
+                          <div key={tier.minimumQuantity}>
+                            <dt>
+                              {cs.product.from} {number(tier.minimumQuantity)} {purchaseItem.unit}
+                            </dt>
+                            <dd>{formatPrice(tier.priceMinor, money)}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
 
-                  {priceUnavailableReason ? (
-                    <div className="sf-product-detail__price-unavailable" role="note">
-                      <p className="sf-product-detail__price-row sf-product-detail__price-row--total">
-                        <span>{cs.product.price}</span>
-                        <strong>{cs.product.priceUnavailable}</strong>
-                      </p>
-                      <p className="sf-product-detail__price-reason">
-                        {priceUnavailableReason} {cs.product.cannotBuyNow}
-                      </p>
-                    </div>
-                  ) : (
-                    <>
-                      {basePriceTier && (
-                        <p className="sf-product-detail__price-row">
-                          <span>{cs.product.priceExcludingVat}</span>
-                          <strong>
-                            {formatPrice(basePriceTier.priceExcludingVatMinor, money)}
-                          </strong>
+                    {priceUnavailableReason ? (
+                      <div className="sf-product-detail__price-unavailable" role="note">
+                        <p className="sf-product-detail__price-row sf-product-detail__price-row--total">
+                          <span>{cs.product.price}</span>
+                          <strong>{cs.product.priceUnavailable}</strong>
                         </p>
-                      )}
-                      <p className="sf-product-detail__price-row sf-product-detail__price-row--total">
-                        <span>{cs.product.priceIncludingVat}</span>
-                        <strong>{formatPrice(purchaseItem.priceMinor, money)}</strong>
+                        <p className="sf-product-detail__price-reason">
+                          {priceUnavailableReason} {cs.product.cannotBuyNow}
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        {basePriceTier && (
+                          <p className="sf-product-detail__price-row">
+                            <span>{cs.product.priceExcludingVat}</span>
+                            <strong>
+                              {formatPrice(basePriceTier.priceExcludingVatMinor, money)}
+                            </strong>
+                          </p>
+                        )}
+                        <p className="sf-product-detail__price-row sf-product-detail__price-row--total">
+                          <span>{cs.product.priceIncludingVat}</span>
+                          <strong>{formatPrice(purchaseItem.priceMinor, money)}</strong>
+                        </p>
+                      </>
+                    )}
+                    {purchaseItem.availabilityUnknown && !priceUnavailableReason && (
+                      <p className="sf-product-detail__price-reason" role="note">
+                        {cs.product.availabilityCannotConfirm}
                       </p>
-                    </>
-                  )}
-                  {purchaseItem.availabilityUnknown && !priceUnavailableReason && (
-                    <p className="sf-product-detail__price-reason" role="note">
-                      {cs.product.availabilityCannotConfirm}
-                    </p>
-                  )}
+                    )}
 
-                  <div className="sf-product-detail__purchase-row">
-                    <ProductPurchaseForm
-                      product={purchaseProduct}
-                      variant={singleVariant ? purchaseVariantOf(singleVariant) : undefined}
-                    />
-                    <ProductFavoriteButton productId={product.id} productName={product.name} />
+                    <div className="sf-product-detail__purchase-row">
+                      <ProductPurchaseForm
+                        product={purchaseProduct}
+                        variant={singleVariant ? purchaseVariants[0] : undefined}
+                      />
+                      <FavoriteButton
+                        productId={product.id}
+                        productName={product.name}
+                        productSlug={product.slug}
+                        variantId={singleVariant?.id ?? null}
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
               </>
             )}
 
-            <ProductDetailActions productId={product.id} productName={product.name} />
+            <ProductDetailActions
+              productId={product.id}
+              productName={product.name}
+              productSlug={product.slug}
+              showVariantFavorites={hasMultipleVariants}
+            />
+            <section
+              className="sf-product-detail__delivery"
+              aria-labelledby="product-delivery-title"
+            >
+              <h2 id="product-delivery-title">{cs.productPage.deliveryTitle}</h2>
+              <p>{cs.productPage.deliveryText}</p>
+              <ContentLink
+                href="/doprava-a-platba"
+                theme="borderless"
+                variant="secondary"
+                size="current"
+                className="justify-self-start"
+              >
+                {cs.productPage.deliveryLink}
+              </ContentLink>
+            </section>
           </div>
         </section>
 
-        {(remainingDescriptionParagraphs.length > 0 || detail.parameters.length > 0) && (
-          <section className="sf-product-detail__surface" aria-labelledby="description-title">
-            <h2 id="description-title">{cs.product.details}</h2>
-            {remainingDescriptionParagraphs.map((paragraph) => (
-              <p key={paragraph}>{paragraph}</p>
-            ))}
-            {detail.parameters.length > 0 && (
-              <ul className="sf-product-parameters">
-                {detail.parameters.map((parameter) => (
-                  <li key={parameter.label}>
-                    {parameter.label}: {parameter.value}
-                    {parameter.unit && ` ${parameter.unit}`}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        )}
+        <section className="sf-product-detail__surface" aria-labelledby="description-title">
+          <h2 id="description-title">{cs.product.details}</h2>
+          {productDescriptionParagraphs.length > 0 ? (
+            productDescriptionParagraphs.map((paragraph) => <p key={paragraph}>{paragraph}</p>)
+          ) : (
+            <p>{cs.productPage.descriptionUnavailable}</p>
+          )}
+          {detail.parameters.length > 0 && (
+            <ul className="sf-product-parameters">
+              {detail.parameters.map((parameter) => (
+                <li key={parameter.label}>
+                  {parameter.label}: {parameter.value}
+                  {parameter.unit && ` ${parameter.unit}`}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
 
         {hasMultipleVariants && (
-          <section id="product-variants" aria-label={cs.product.variantsTitle}>
-            <ProductPurchaseForm
-              initialVariantSearch={initialVariantSearch}
-              product={purchaseProduct}
-              variants={detail.variants.map(purchaseVariantOf)}
-            />
+          <section id="product-variants" aria-label={cs.product.variantsTitle} tabIndex={-1}>
+            {sharedIds.length > 0 && (
+              <div className="sf-shared-selection" data-shared-variant-selection>
+                <p>
+                  {sharedVariants.length
+                    ? cs.productPage.sharedSelection(sharedVariants.length)
+                    : cs.productPage.sharedSelectionGone}
+                  {sharedVariants.length > 0 &&
+                    sharedVariants.length < sharedIds.length &&
+                    ` ${cs.productPage.sharedSelectionPartial}`}
+                </p>
+                <ContentLink href={`/produkt/${product.slug}#product-variants`}>
+                  {cs.productPage.showAllVariants}
+                </ContentLink>
+              </div>
+            )}
+            {(!sharedIds.length || sharedVariants.length > 0) && (
+              <ProductPurchaseForm
+                key={sharedIds.join(",") || "all"}
+                initialVariantSearch={initialVariantSearch}
+                product={purchaseProduct}
+                variants={sharedIds.length ? sharedVariants : purchaseVariants}
+              />
+            )}
           </section>
         )}
 
@@ -366,6 +436,53 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
           </section>
         )}
       </article>
+
+      {hasMultipleVariants && (
+        <ProductVariantDetail
+          product={purchaseProduct}
+          variants={purchaseVariants}
+          descriptionParagraphs={productDescriptionParagraphs}
+        />
+      )}
+
+      {/* Printed by the print action only (display: none on screen); hidden from assistive technology. */}
+      <section className="sf-print-sheet" aria-hidden="true">
+        <p>{cs.productPage.printHeading(brand.name)}</p>
+        <h1>{product.name}</h1>
+        <Image
+          src={product.imageSrc}
+          alt={product.imageAlt}
+          width={1000}
+          height={824}
+          sizes="(max-width: 760px) 100vw, 50vw"
+          loading="eager"
+        />
+        <p>{cs.productPage.printSku(purchaseItem.sku)}</p>
+        {!hasMultipleVariants && (
+          <p>
+            {cs.productPage.printPrice(
+              priceUnavailableReason
+                ? cs.product.priceUnavailable
+                : `${formatPrice(purchaseItem.priceMinor, money)} / ${purchaseItem.unit}`,
+            )}
+          </p>
+        )}
+        {hasMultipleVariants && <p>{cs.productPage.printVariants(detail.variants.length)}</p>}
+        {productDescriptionParagraphs.map((paragraph) => (
+          <p key={paragraph}>{paragraph}</p>
+        ))}
+        <dl>
+          {detail.parameters.map((parameter) => (
+            <div key={parameter.label}>
+              <dt>{parameter.label}</dt>
+              <dd>
+                {parameter.value} {parameter.unit}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        <p>{cs.productPage.printLink(productPath)}</p>
+      </section>
     </StorefrontShell>
   );
   // The browser navigation gets only this category branch, not the whole tree.

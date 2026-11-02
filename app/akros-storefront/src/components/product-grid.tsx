@@ -7,13 +7,24 @@ import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 
 import { AddToCartButton } from "@/features/cart/add-to-cart-button";
+import { FavoriteButton } from "@/features/favorites/favorite-button";
 import { useDictionary, useMoney } from "@/ontos/market-context";
 import { formatPrice } from "@/lib/format";
+import { describeCatalogPrice } from "@/lib/product-price";
 import { productStockTone } from "@/lib/product-stock";
 import type { CatalogProductSummary } from "@/ontos/catalog-types";
 
 export interface ProductGridItem extends CatalogProductSummary {
   detailHref?: string;
+  /** Search results: which variant(s) of the group the query hit. */
+  searchMatchLabel?: string;
+  /** The concrete variant this card stands for (a single search hit). */
+  variantId?: string;
+  /** Favourite target of the card: `null` = the whole product, absent = `variantId`. */
+  favoriteVariantId?: string | null;
+  variantLabel?: string;
+  /** The product name when `name` describes a variant. */
+  productName?: string;
 }
 
 export function ProductGrid({
@@ -49,10 +60,10 @@ export function ProductGrid({
           product.priceMinor > 0 &&
           product.stock.kind === "quantity" &&
           product.stock.status === "in-stock";
-        const priceUnavailable = !!product.priceUnavailableReason || product.priceMinor <= 0;
-        const priceLabel = priceUnavailable
-          ? cs.product.priceUnavailable
-          : `${product.priceIsFrom ? `${cs.product.from} ` : ""}${formatPrice(product.priceMinor, money)}`;
+        // Only a concrete item shows a price; a group of several variants shows the variant-price prompt.
+        const price = describeCatalogPrice(product, cs, money);
+        const priceUnavailable = price.kind === "unavailable";
+        const priceLabel = price.label;
         const supportingText = product.description.trim() || `${cs.product.sku}: ${product.sku}`;
         const comparisonPrice = product.originalPriceMinor;
         const hasDiscount =
@@ -67,7 +78,7 @@ export function ProductGrid({
           : undefined;
 
         return (
-          <article className="min-w-0" key={product.id}>
+          <article className="min-w-0" key={product.variantId ?? product.id}>
             <ProductCard
               className="sf-product-card sf-catalog-product-card shadow-(--shadow-sm)"
               layout="column"
@@ -118,16 +129,16 @@ export function ProductGrid({
                     </div>
                   )}
                 </StoreLink>
-                <LinkButton
-                  aria-label="Zobrazit oblíbené produkty"
-                  as={StoreLink}
-                  className="sf-product-card__favorite absolute top-0 right-0 size-11 rounded-full p-0"
-                  href="/oblibene"
-                  icon="icon-[mdi--heart-outline]"
-                  iconSize="lg"
-                  size="current"
-                  theme="borderless"
-                  variant="secondary"
+                <FavoriteButton
+                  productId={product.id}
+                  productName={product.productName ?? product.name}
+                  productSlug={product.slug}
+                  variantId={
+                    product.favoriteVariantId !== undefined
+                      ? product.favoriteVariantId
+                      : (product.variantId ?? (product.hasVariants ? undefined : null))
+                  }
+                  placement="card"
                 />
               </div>
 
@@ -154,8 +165,14 @@ export function ProductGrid({
               <p className="sf-product-card__description m-0 line-clamp-2 min-h-[2.8em] text-sm leading-normal text-(--color-fg-secondary)">
                 {supportingText}
               </p>
+              {product.searchMatchLabel && (
+                <p className="sf-product-card__search-match m-0 text-xs leading-[1.4] text-(--color-fg-secondary)">
+                  {product.searchMatchLabel}
+                </p>
+              )}
 
               <ProductCard.Price
+                data-sf-product-price
                 className={`mt-auto mb-0 text-center ${columns === "checkout" ? "leading-(--sf-checkout-heading-leading)" : ""}`}
               >
                 {hasDiscount ? (
@@ -174,10 +191,7 @@ export function ProductGrid({
                 ) : priceUnavailable ? (
                   <span
                     className="sf-product-card__price-unavailable"
-                    title={
-                      product.priceUnavailableReason ??
-                      "OntOS pro tuto položku nevrátil platnou cenu."
-                    }
+                    title={price.kind === "unavailable" ? price.reason : undefined}
                   >
                     {priceLabel}
                   </span>
@@ -191,8 +205,9 @@ export function ProductGrid({
                   <AddToCartButton
                     item={{
                       productId: product.id,
+                      ...(product.variantId ? { variantId: product.variantId } : {}),
                       slug: product.slug,
-                      name: product.name,
+                      name: product.productName ?? product.name,
                       sku: product.sku,
                       imageSrc: product.imageSrc,
                       imageAlt: product.imageAlt,
@@ -202,6 +217,7 @@ export function ProductGrid({
                       stockCount: product.stock.stockCount,
                       priceMinor: product.priceMinor,
                       priceExcludingVatMinor: product.priceExcludingVatMinor,
+                      ...(product.variantLabel ? { variantLabel: product.variantLabel } : {}),
                     }}
                     quantity={product.stock.minimumQuantity}
                   />

@@ -1,139 +1,191 @@
 "use client";
 
 import StoreLink from "@/components/store-link";
+import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Table } from "@techsio/ui-kit/organisms/table";
 import { AccountHeading, AccountPanel } from "./account-content";
-import { orderMoney, orderStatusLabels, type CustomerOrder } from "@/ontos/order-model";
+import { ReorderAction } from "./reorder-action";
+import { formatQuantity } from "@/features/cart/cart-state";
 import { formatPrice } from "@/lib/format";
+import { useDictionary, useMarket } from "@/ontos/market-context";
+import { orderMoney, type CustomerOrder } from "@/ontos/order-model";
 
-export function AccountOrderDetail({ order }: { order: CustomerOrder }) {
+const lineKey = (line: CustomerOrder["lines"][number]) =>
+  `${line.productId}:${line.variantId ?? ""}`;
+const lineName = (line: CustomerOrder["lines"][number]) =>
+  `${line.productName}${line.variantName ? ` – ${line.variantName}` : ""}`;
+
+export function AccountOrderDetail({
+  order,
+  repeatable = true,
+}: {
+  order: CustomerOrder;
+  /** „Objednat znovu“ in the account; the order confirmation right after checkout hides it. */
+  repeatable?: boolean;
+}) {
+  const cs = useDictionary();
+  const text = cs.account.orderDetail;
+  const locale = useMarket()?.formatLocale ?? "cs-CZ";
   const address = order.deliveryAddress;
   const money = orderMoney(order);
+  const status = cs.account.orderStatus[order.status];
+  const lineTotal = (line: CustomerOrder["lines"][number]) =>
+    formatPrice(Math.round(line.unitPriceMinor * line.quantity), money);
   return (
     <>
       <AccountHeading
-        title={`Objednávka ${order.number}`}
-        description={`Vytvořeno ${new Date(order.createdAt).toLocaleDateString("cs-CZ")} · ${orderStatusLabels[order.status]}`}
+        title={text.title(order.number)}
+        description={text.created(new Date(order.createdAt).toLocaleDateString(locale), status)}
       >
-        <StoreLink className="underline" href="/historie-objednavek">
-          Zpět na objednávky
-        </StoreLink>
-        <StoreLink
-          className="underline"
-          href={`/sledovani-zasilky?order=${encodeURIComponent(order.id)}`}
+        {repeatable && (
+          <ReorderAction
+            orderId={order.id}
+            orderNumber={order.number}
+            lineCount={order.lines.length}
+          />
+        )}
+        <LinkButton
+          as={StoreLink}
+          href="/historie-objednavek"
+          data-account-action
+          size="sm"
+          theme="outlined"
+          variant="secondary"
         >
-          Stav objednávky
-        </StoreLink>
+          {text.back}
+        </LinkButton>
+        <LinkButton
+          as={StoreLink}
+          href={`/sledovani-zasilky?order=${encodeURIComponent(order.id)}`}
+          data-account-action
+          size="sm"
+          theme="outlined"
+          variant="secondary"
+        >
+          {order.status === "SHIPPED" ? text.trackShipment : text.orderState}
+        </LinkButton>
       </AccountHeading>
-      <div className="mb-8 grid gap-6 md:grid-cols-2">
-        <AccountPanel title="Kontakt a dodací adresa">
+      <div className="mb-(--dimension-32) grid gap-(--dimension-24) md:grid-cols-2">
+        <AccountPanel title={text.contact}>
           {order.contact && (
-            <p>
+            <p className="wrap-anywhere">
               {order.contact.name}
               <br />
               {order.contact.email}
-              <br />
-              {order.contact.phone}
+              {order.contact.phone && (
+                <>
+                  <br />
+                  {order.contact.phone}
+                </>
+              )}
             </p>
           )}
           {address && (
-            <p className="mt-4">
+            <p className="mt-(--dimension-16)">
               {address.street}
               <br />
               {address.postalCode} {address.city}
-              <br />
-              {address.country}
+              {address.country && (
+                <>
+                  <br />
+                  {address.country}
+                </>
+              )}
             </p>
           )}
         </AccountPanel>
-        <AccountPanel title="Přehled objednávky">
-          <dl className="grid gap-4">
-            <div className="flex justify-between gap-4">
-              <dt>Stav</dt>
-              <dd>{orderStatusLabels[order.status]}</dd>
+        <AccountPanel title={text.summary}>
+          <dl className="grid gap-(--dimension-16)">
+            <div className="flex flex-wrap justify-between gap-(--dimension-16)">
+              <dt>{text.status}</dt>
+              <dd className="font-bold">{status}</dd>
             </div>
-            <div className="flex justify-between gap-4">
-              <dt>Počet položek</dt>
-              <dd>{order.lines.length}</dd>
+            <div className="flex flex-wrap justify-between gap-(--dimension-16)">
+              <dt>{text.lineCount}</dt>
+              <dd className="tabular-nums">{order.lines.length}</dd>
             </div>
             {order.shipping && (
-              <div className="flex justify-between gap-4">
+              <div className="flex flex-wrap justify-between gap-(--dimension-16)">
                 <dt>{order.shipping.label}</dt>
-                <dd>{formatPrice(order.shipping.priceMinor, money)}</dd>
+                <dd className="tabular-nums">{formatPrice(order.shipping.priceMinor, money)}</dd>
               </div>
             )}
-            <div className="flex justify-between gap-4">
-              <dt>DPH</dt>
-              <dd>{formatPrice(order.totalVatMinor, money)}</dd>
+            <div className="flex flex-wrap justify-between gap-(--dimension-16)">
+              <dt>{text.vat}</dt>
+              <dd className="tabular-nums">{formatPrice(order.totalVatMinor, money)}</dd>
             </div>
-            <div className="flex justify-between gap-4">
-              <dt>Celkem s DPH</dt>
-              <dd className="font-bold">{formatPrice(order.totalMinor, money)}</dd>
+            <div className="flex flex-wrap justify-between gap-(--dimension-16)">
+              <dt>{text.totalWithVat}</dt>
+              <dd className="font-bold tabular-nums">{formatPrice(order.totalMinor, money)}</dd>
             </div>
           </dl>
-          <p className="mt-4 text-sm">
-            Částky jsou uložené při objednání. Online platba ani stav úhrady nejsou v OntOS pro tuto
-            objednávku dostupné.
+          <p className="mt-(--dimension-16) text-(length:--dimension-16) text-(--sf-account-muted)">
+            {text.savedAmounts}
           </p>
         </AccountPanel>
       </div>
       <section aria-labelledby="account-order-lines">
-        <h2 id="account-order-lines" className="mb-6 font-bold">
-          Objednané položky
+        <h2
+          id="account-order-lines"
+          className="mb-(--dimension-24) text-(length:--sf-account-section-size) font-bold leading-(--sf-account-heading-leading)"
+        >
+          {text.lines}
         </h2>
         <div data-account-table className="hidden xl:block">
           <Table size="sm" variant="line">
             <Table.Header>
               <Table.Row>
-                <Table.ColumnHeader>Produkt</Table.ColumnHeader>
-                <Table.ColumnHeader numeric>Množství</Table.ColumnHeader>
-                <Table.ColumnHeader numeric>Cena za kus</Table.ColumnHeader>
-                <Table.ColumnHeader numeric>Celkem</Table.ColumnHeader>
+                <Table.ColumnHeader>{text.product}</Table.ColumnHeader>
+                <Table.ColumnHeader numeric>{text.quantity}</Table.ColumnHeader>
+                <Table.ColumnHeader numeric>{text.unitPrice}</Table.ColumnHeader>
+                <Table.ColumnHeader numeric>{text.lineTotal}</Table.ColumnHeader>
               </Table.Row>
             </Table.Header>
             <Table.Body>
               {order.lines.map((line) => (
-                <Table.Row key={`${line.productId}:${line.variantId ?? ""}`}>
+                <Table.Row key={lineKey(line)}>
                   <Table.Cell>
-                    <p>
-                      {line.productName}
-                      {line.variantName ? ` – ${line.variantName}` : ""}
+                    <p>{lineName(line)}</p>
+                    <p className="text-(length:--dimension-16) text-(--sf-account-muted)">
+                      {text.code(line.sku)}
                     </p>
-                    <p className="text-sm">Kód: {line.sku}</p>
                   </Table.Cell>
-                  <Table.Cell numeric>{line.quantity}</Table.Cell>
-                  <Table.Cell numeric>{formatPrice(line.unitPriceMinor, money)}</Table.Cell>
-                  <Table.Cell numeric>
-                    {formatPrice(Math.round(line.unitPriceMinor * line.quantity), money)}
+                  <Table.Cell numeric className="whitespace-nowrap tabular-nums">
+                    {formatQuantity(line.quantity)}
+                  </Table.Cell>
+                  <Table.Cell numeric className="whitespace-nowrap tabular-nums">
+                    {formatPrice(line.unitPriceMinor, money)}
+                  </Table.Cell>
+                  <Table.Cell numeric className="whitespace-nowrap font-bold tabular-nums">
+                    {lineTotal(line)}
                   </Table.Cell>
                 </Table.Row>
               ))}
             </Table.Body>
           </Table>
         </div>
-        <ul className="grid gap-6 xl:hidden">
+        <ul className="grid gap-(--dimension-24) xl:hidden">
           {order.lines.map((line) => (
             <li
-              key={`${line.productId}:${line.variantId ?? ""}`}
-              className="rounded-(--dimension-8) bg-(--sf-account-surface) p-6"
+              key={lineKey(line)}
+              className="min-w-0 wrap-anywhere rounded-(--dimension-8) bg-(--sf-account-surface) p-(--dimension-24) max-sm:p-(--dimension-16)"
             >
-              <h3 className="font-bold">
-                {line.productName}
-                {line.variantName ? ` – ${line.variantName}` : ""}
-              </h3>
-              <p>Kód: {line.sku}</p>
-              <dl className="mt-4 grid gap-2">
-                <div className="flex justify-between">
-                  <dt>Množství</dt>
-                  <dd>{line.quantity}</dd>
+              <h3 className="font-bold">{lineName(line)}</h3>
+              <p className="mt-(--dimension-8) text-(length:--dimension-16) text-(--sf-account-muted)">
+                {text.code(line.sku)}
+              </p>
+              <dl className="mt-(--dimension-24) grid gap-(--dimension-8)">
+                <div className="flex flex-wrap justify-between gap-(--dimension-8)">
+                  <dt>{text.quantity}</dt>
+                  <dd className="tabular-nums">{formatQuantity(line.quantity)}</dd>
                 </div>
-                <div className="flex justify-between">
-                  <dt>Cena za kus</dt>
-                  <dd>{formatPrice(line.unitPriceMinor, money)}</dd>
+                <div className="flex flex-wrap justify-between gap-(--dimension-8)">
+                  <dt>{text.unitPrice}</dt>
+                  <dd className="tabular-nums">{formatPrice(line.unitPriceMinor, money)}</dd>
                 </div>
-                <div className="flex justify-between">
-                  <dt>Celkem</dt>
-                  <dd>{formatPrice(Math.round(line.unitPriceMinor * line.quantity), money)}</dd>
+                <div className="flex flex-wrap justify-between gap-(--dimension-8)">
+                  <dt>{text.lineTotal}</dt>
+                  <dd className="font-bold tabular-nums">{lineTotal(line)}</dd>
                 </div>
               </dl>
             </li>

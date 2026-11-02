@@ -6,6 +6,8 @@ import { CartProvider, useCart } from "@/features/cart/cart-provider";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
 import type { CatalogProduct, CatalogProductVariant } from "@/ontos/catalog-types";
 
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
+
 const variants: CatalogProductVariant[] = [
   {
     id: "item-1",
@@ -46,7 +48,7 @@ const product: CatalogProduct = {
   id: "product-hex-bolt",
   slug: "hex-bolt",
   categoryId: "bolts",
-  name: "DIN 933/A2",
+  name: "ŠROUBY S ŠESTIHRANNOU HLAVOU DIN 933/A2",
   sku: "10093300",
   description: "",
   priceMinor: 84,
@@ -104,7 +106,7 @@ describe("ProductPurchaseForm", () => {
     expect(lines[0].quantity % live.packageQuantity).toBe(0);
   });
 
-  it("synchronizes typed range limits and slider values, applying them only on submit", async () => {
+  it("filters immediately and synchronizes typed range limits with the slider", async () => {
     const user = userEvent.setup();
     render(
       <CartProvider storage={null}>
@@ -116,39 +118,57 @@ describe("ProductPurchaseForm", () => {
     await user.type(minimum, "3");
     const sliders = screen.getAllByRole("slider", { name: /Průměr/ });
     expect(sliders[0].getAttribute("aria-valuenow")).toBe("3");
-    expect(screen.getByRole("button", { name: /Koupit M 2/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Koupit M 2/ })).toBeNull();
     await user.click(sliders[0]);
     await user.keyboard("{ArrowLeft}");
     minimum = screen.getByRole("spinbutton", { name: "Minimum – Průměr (mm)" });
     expect((minimum as HTMLInputElement).value).toBe("2");
     await user.clear(minimum);
     await user.type(minimum, "3");
-    await user.click(screen.getByRole("button", { name: "Filtruj" }));
     expect(screen.queryByRole("button", { name: /Koupit M 2/ })).toBeNull();
     expect(screen.getByRole("button", { name: /Koupit M 4/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Filtruj" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Obnovit filtry" }));
+    expect(screen.getByRole("button", { name: /Koupit M 2/ })).toBeTruthy();
   });
 
-  it("converts Czech decimal price inputs to minor units without changing quantity inputs", async () => {
+  it("preserves the Czech decimal editing buffer and focus while filtering", async () => {
     const user = userEvent.setup();
     render(
       <CartProvider storage={null}>
-        <ProductPurchaseForm product={product} variants={variants} />
+        <ProductPurchaseForm
+          product={product}
+          variants={variants.map((item, index) => ({ ...item, label: `M ${index + 3.5} × 16` }))}
+        />
       </CartProvider>,
     );
-    const minimum = screen.getByRole("spinbutton", { name: "Minimum – Cena (Kč/ks)" });
+    const minimum = screen.getByRole("spinbutton", { name: "Minimum – Průměr (mm)" });
     await user.click(minimum);
     // Dispatch the resulting input text without relying on jsdom's caret emulation.
-    fireEvent.input(minimum, { target: { value: "1,25" } });
-    expect((minimum as HTMLInputElement).value).toBe("1,25");
-    await user.tab();
-    expect(screen.getAllByRole("slider", { name: /Cena/ })[0].getAttribute("aria-valuenow")).toBe(
-      "125",
+    fireEvent.input(minimum, { target: { value: "" } });
+    expect((minimum as HTMLInputElement).value).toBe("");
+    fireEvent.input(minimum, { target: { value: "3," } });
+    expect((minimum as HTMLInputElement).value).toBe("3,");
+    fireEvent.input(minimum, { target: { value: "3,6" } });
+    expect((minimum as HTMLInputElement).value).toBe("3,6");
+    expect(document.activeElement).toBe(minimum);
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("slider", { name: /Průměr/ })[0].getAttribute("aria-valuenow"),
+      ).toBe("3.6"),
     );
-    await user.click(screen.getByRole("button", { name: "Filtruj" }));
-    expect(screen.queryByRole("button", { name: /Koupit M 2/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Koupit M 3.5/ })).toBeNull();
     expect(
-      (screen.getByRole("spinbutton", { name: "Množství M 4 × 16" }) as HTMLInputElement).value,
+      (screen.getByRole("spinbutton", { name: "Množství M 4.5 × 16" }) as HTMLInputElement).value,
     ).toBe("10");
+    await user.click(screen.getByRole("button", { name: "Obnovit filtry" }));
+    const resetMinimum = screen.getByRole("spinbutton", { name: "Minimum – Průměr (mm)" });
+    await user.click(resetMinimum);
+    fireEvent.input(resetMinimum, { target: { value: "3.6" } });
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Koupit M 3.5/ })).toBeNull());
+    await user.tab();
+    // ui-kit 0.57 writes a controlled string value back in the next animation frame.
+    await waitFor(() => expect((resetMinimum as HTMLInputElement).value).toBe("3,6"));
   });
 
   it("keeps range limits ordered when an input exceeds the other endpoint", async () => {
@@ -205,6 +225,39 @@ describe("ProductPurchaseForm", () => {
     ).toBe("0");
   });
 
+  it("shows every variant without repeating the container name or requiring another page", async () => {
+    const user = userEvent.setup();
+    const allVariants = Array.from({ length: 8 }, (_, index) => ({
+      ...variants[0],
+      id: `item-${index + 1}`,
+      sku: `100933000${index + 2}0005`,
+      label: `M ${index + 2} × 5`,
+    }));
+    render(
+      <CartProvider storage={null}>
+        <ProductPurchaseForm product={product} variants={allVariants} />
+        <CartLines />
+      </CartProvider>,
+    );
+
+    const table = screen.getByRole("table", { name: "Varianty produktu" });
+    expect(within(table).getAllByRole("row")).toHaveLength(allVariants.length + 1);
+    expect(within(table).queryByText(product.name)).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Stránkování variant" })).toBeNull();
+    for (const item of allVariants) {
+      expect(within(table).getByRole("link", { name: item.label })).toBeTruthy();
+      expect(within(table).getByText(item.sku)).toBeTruthy();
+    }
+
+    const quantity = screen.getByRole("spinbutton", { name: "Množství M 9 × 5" });
+    await user.clear(quantity);
+    await user.type(quantity, "30");
+    await user.click(screen.getByRole("button", { name: "Koupit M 9 × 5" }));
+    expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toEqual([
+      expect.objectContaining({ variantId: "item-8", sku: allVariants[7].sku, quantity: 30 }),
+    ]);
+  });
+
   it("adds the selected source variant with its minimum order quantity", async () => {
     const user = userEvent.setup();
 
@@ -225,6 +278,30 @@ describe("ProductPurchaseForm", () => {
         priceMinor: 194,
         quantity: 10,
       }),
+    ]);
+  });
+
+  it("carries the source-feed weight of the variant and of a product without variants", async () => {
+    const user = userEvent.setup();
+    render(
+      <CartProvider storage={null}>
+        <ProductPurchaseForm
+          product={product}
+          variants={[{ ...variants[0], sourceNetWeight: 0.0034 }, variants[1]]}
+        />
+        <ProductPurchaseForm product={{ ...product, id: "plain", netWeight: 1.25 }} />
+        <CartLines />
+      </CartProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Koupit M 2 × 5" }));
+    await user.click(screen.getByRole("button", { name: "Koupit M 4 × 16" }));
+    await user.click(screen.getByRole("button", { name: "Koupit" }));
+    const lines = JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]");
+    expect(lines).toEqual([
+      expect.objectContaining({ variantId: "item-1", unitWeightKg: 0.0034 }),
+      expect.not.objectContaining({ unitWeightKg: expect.anything() }),
+      expect.objectContaining({ productId: "plain", unitWeightKg: 1.25 }),
     ]);
   });
 
@@ -276,8 +353,7 @@ describe("ProductPurchaseForm", () => {
     expect(screen.queryByRole("button", { name: /Koupit M 2/ })).toBeNull();
   });
 
-  it("filters variants by their material after submitting the filters", async () => {
-    const user = userEvent.setup();
+  it("keeps variants with different materials and prices without those filters", () => {
     const materialVariants = [
       { ...variants[0], label: "M 2 × 5 /A2" },
       { ...variants[1], label: "M 4 × 16 /A4" },
@@ -289,11 +365,20 @@ describe("ProductPurchaseForm", () => {
       </CartProvider>,
     );
 
-    await user.click(screen.getByRole("checkbox", { name: "A2" }));
-    await user.click(screen.getByRole("button", { name: "Filtruj" }));
-
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByRole("spinbutton", { name: /Cena/ })).toBeNull();
     expect(screen.getByRole("button", { name: /Koupit M 4/ })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Koupit M 2/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /Koupit M 2/ })).toBeTruthy();
+  });
+
+  it("omits an empty filter panel when the source dimensions are unknown", () => {
+    render(
+      <CartProvider storage={null}>
+        <ProductPurchaseForm product={{ ...product, name: "KOHOUTY" }} variants={variants} />
+      </CartProvider>,
+    );
+    expect(screen.queryByRole("form", { name: "Filtrování variant" })).toBeNull();
+    expect(screen.getByRole("table", { name: "Varianty produktu" })).toBeTruthy();
   });
 
   it("adds a decimal source minimum without truncating it", async () => {

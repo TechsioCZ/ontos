@@ -17,6 +17,12 @@
   --text-xs--line-height: var(--sf-checkout-body-leading);
   --sf-checkout-payment-heading-size: 30px;
   --font-weight-label: var(--font-weight-medium);
+  --sf-checkout-shipping-icon-size: 54px;
+  --sf-checkout-return-icon-size: var(--dimension-48);
+  --sf-checkout-progress-width: 429px;
+  --sf-checkout-progress-height: var(--dimension-6);
+  --sf-checkout-progress-radius: var(--dimension-4);
+  --sf-checkout-progress-track: #ededed;
   --color-fill-surface: #f8f9fa;
   --color-button-bg-primary-base: #fdc533;
   --color-button-fg-primary: var(--sf-checkout-ink);
@@ -63,7 +69,6 @@
   --color-button-bg-outlined-secondary-hover: var(--color-fill-hover);
   --color-button-bg-outlined-secondary-active: var(--color-fill-active);
   --height-form-control-sm: var(--dimension-60);
-  --height-numeric-input-sm: var(--height-form-control-sm);
   --width-phone-input-trigger: max-content;
   --size-icon-control-md: var(--dimension-44);
   --color-table-bg: var(--color-base);

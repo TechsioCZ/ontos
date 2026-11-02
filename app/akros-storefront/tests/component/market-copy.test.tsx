@@ -1,15 +1,27 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CategoryFilters } from "@/components/category-filters";
-import { ProductDetailActions, ProductFavoriteButton } from "@/components/product-detail-actions";
+import { ProductDetailActions } from "@/components/product-detail-actions";
 import { CartProvider } from "@/features/cart/cart-provider";
 import { CartContent } from "@/features/cart/cart-content";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
 import { CheckoutProvider } from "@/features/checkout/checkout-provider";
+import { FavoriteButton } from "@/features/favorites/favorite-button";
 import { parseCategoryFilters } from "@/ontos/category-filters";
 import { MarketProvider, type ClientMarket } from "@/ontos/market-context";
 import type { CatalogProduct, CatalogProductVariant } from "@/ontos/catalog-types";
+
+// The product actions navigate with the app router; isolated renders have none.
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
+  useRouter: () => ({
+    push: vi.fn<(href: string) => void>(),
+    replace: vi.fn<(href: string) => void>(),
+    back: vi.fn<() => void>(),
+  }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 const live: ClientMarket["live"] = [
   { locale: "cs", marketCode: "AKROS-CZ", label: "CZ", currency: "CZK" },
@@ -225,7 +237,8 @@ describe("market copy outside the product cards", () => {
     );
 
     expect(screen.getByRole("table", { name: "Varianty produktu" })).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Filtruj" })).not.toBeNull();
+    expect(screen.getByText("Zobrazené 2 z 2 variantov")).not.toBeNull();
+    expect(screen.getByRole("link", { name: "M 2 × 5" })).not.toBeNull();
     expect(screen.getByText("Názov")).not.toBeNull();
     expect(screen.getByText("M.J.")).not.toBeNull();
     expect(screen.getAllByText("Skladom").length).toBeGreaterThan(0);
@@ -251,18 +264,36 @@ describe("market copy outside the product cards", () => {
   it("shows the English product actions", () => {
     render(
       <MarketProvider market={enMarket}>
-        <ProductDetailActions productId="product-hex-bolt" productName="DIN 933/A2" />
-        <ProductFavoriteButton productId="product-hex-bolt" productName="DIN 933/A2" />
+        <ProductDetailActions
+          productId="product-hex-bolt"
+          productName="DIN 933/A2"
+          productSlug="hex-bolt"
+          showVariantFavorites
+        />
+        <FavoriteButton
+          productId="product-hex-bolt"
+          productName="DIN 933/A2"
+          productSlug="hex-bolt"
+          variantId={null}
+        />
       </MarketProvider>,
     );
 
-    expect(screen.getByRole("link", { name: "Ask about the product" })).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Send to a friend" })).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Add DIN 933/A2 to favourites" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Ask about the product" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Watch product" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Share" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Print" })).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Choose favourite variants: DIN 933/A2, 0 saved" }),
+    ).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Save DIN 933/A2 to favourites" })).not.toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add DIN 933/A2 to favourites" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save DIN 933/A2 to favourites" }));
     expect(
       screen.getByRole("button", { name: "Remove DIN 933/A2 from favourites" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Choose favourite variants: DIN 933/A2, 1 saved" }),
     ).not.toBeNull();
   });
 });

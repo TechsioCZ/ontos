@@ -9,7 +9,6 @@ import { CatalogHelpNavigation, CatalogNavigation } from "@/components/catalog-s
 import { HeaderSearch } from "@/components/header-search";
 
 import { useBrand } from "@/brand/brand-context";
-import type { ClientBrand } from "@/brand/types";
 import { MiniCart } from "@/features/cart/mini-cart";
 import type { Dictionary } from "@/i18n";
 import { useCatalog } from "@/ontos/catalog-provider";
@@ -18,20 +17,12 @@ import { MarketSwitcher } from "@/ontos/market-switcher";
 
 const isElement = (value: EventTarget): value is Element => Element.prototype.isPrototypeOf(value);
 
-const utilityLinks = (cs: Dictionary, brand: ClientBrand) => [
-  { href: "/", label: cs.header.home },
+// Informational pages only: home stays on the logo, catalogue entries live in the catalogue navigation.
+const utilityLinks = (cs: Dictionary) => [
   { href: "/obchodni-podminky", label: cs.header.terms },
   { href: "/o-nas", label: cs.header.about },
-  {
-    href: "/kategorie/nerezovy-spojovaci-material",
-    label: cs.header.fasteners,
-  },
-  { href: "/kategorie/nerezovy-hutni-material", label: cs.header.steel },
   { href: "/blog", label: cs.header.blog },
   { href: "/partnersky-program", label: cs.header.partnerProgram },
-  ...(brand.production
-    ? [{ href: brand.production.path, label: brand.production.headerLabel }]
-    : []),
   { href: "/reklamace", label: cs.header.claims },
   { href: "/kontakty", label: cs.header.contacts },
 ];
@@ -39,7 +30,6 @@ const utilityLinks = (cs: Dictionary, brand: ClientBrand) => [
 function MobileNavigation({ pathname }: { pathname: string }) {
   const { getSidebarCategories } = useCatalog();
   const cs = useDictionary();
-  const brand = useBrand();
   const [open, setOpen] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
   const activeSlug = pathname.startsWith("/kategorie/") ? pathname.split("/")[2] : undefined;
@@ -149,7 +139,7 @@ function MobileNavigation({ pathname }: { pathname: string }) {
                 <section>
                   <h3 className="sf-mobile-menu__section-title">{cs.header.information}</h3>
                   <nav aria-label="Mobilní navigace" className="sf-mobile-menu__links">
-                    {utilityLinks(cs, brand).map((item) => (
+                    {utilityLinks(cs).map((item) => (
                       <LinkButton
                         key={item.href}
                         as={StoreLink}
@@ -186,7 +176,7 @@ export function SiteHeader() {
       <div className="sf-header__utility-bar">
         <div className="sf-header__utility">
           <nav className="sf-header__utility-links" aria-label="Pomocná navigace">
-            {utilityLinks(cs, brand).map((item) => (
+            {utilityLinks(cs).map((item) => (
               <LinkButton
                 key={item.href}
                 as={StoreLink}

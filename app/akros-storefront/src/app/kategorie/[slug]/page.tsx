@@ -105,7 +105,7 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
     <StorefrontShell activeCategorySlug={category.slug}>
       <StorefrontBreadcrumbs items={breadcrumbItems} />
       <section className="sf-section sf-product-listing-section" aria-labelledby="category-title">
-        <div className="sf-category-heading">
+        <div className="sf-category-heading sf-category-heading--centered">
           <h1 id="category-title">{category.name}</h1>
           {description && <p>{description}</p>}
         </div>

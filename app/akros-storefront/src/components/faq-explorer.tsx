@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
+import { Button } from "@techsio/ui-kit/atoms/button";
 import { Input } from "@techsio/ui-kit/atoms/input";
 import { Accordion } from "@techsio/ui-kit/molecules/accordion";
 
@@ -49,7 +50,6 @@ export function FaqExplorer({ faqGroups }: { faqGroups: FaqGroups }) {
           </span>
           <Input
             aria-label="Hledat v často kladených otázkách"
-            className="sf-faq-search__input"
             onChange={(event) => setQuery(event.currentTarget.value)}
             placeholder="Hledejte v často kladených otázkách (např. normy, dodání, certifikáty)…"
             size="md"
@@ -62,9 +62,13 @@ export function FaqExplorer({ faqGroups }: { faqGroups: FaqGroups }) {
         <nav aria-label="Kategorie často kladených otázek" className="sf-faq-categories">
           <h2>Kategorie témat</h2>
           {faqGroups.map((group) => (
-            <button
+            <Button
               aria-current={!normalizedQuery && group.id === activeGroup.id ? "page" : undefined}
               key={group.id}
+              theme="borderless"
+              variant="secondary"
+              size="sm"
+              className="justify-start"
               onClick={() => {
                 setActiveGroupId(group.id);
                 setQuery("");
@@ -73,7 +77,7 @@ export function FaqExplorer({ faqGroups }: { faqGroups: FaqGroups }) {
             >
               <span aria-hidden="true">{faqGroupIcons[group.id]}</span>
               {group.title}
-            </button>
+            </Button>
           ))}
         </nav>
         <section className="sf-faq-results" aria-live="polite">

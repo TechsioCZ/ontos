@@ -2,6 +2,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ProductGrid } from "@/components/product-grid";
+import { formatPrice } from "@/lib/format";
 import { fixtureCatalog } from "../support/catalog-fixture";
 
 const { getProductBySlug, getProducts, toProductSummary } = fixtureCatalog;
@@ -47,15 +48,15 @@ describe("ProductGrid", () => {
     const { container } = render(<ProductGrid products={[toProductSummary(product!)]} />);
     expect(container.firstElementChild?.className).toBe("sf-product-grid");
 
-    expect(screen.getByText(/^od 10,36 Kč$/)).toBeDefined();
+    expect(screen.getByText("Cena dle varianty")).toBeDefined();
+    expect(screen.queryByText(/^od /)).toBeNull();
+    expect(screen.queryByText(/10,36/)).toBeNull();
     expect(screen.getByText("Skladem")).toBeDefined();
     expect(screen.getByText("Více variant")).toBeDefined();
     expect(screen.getByRole("link", { name: "Vybrat variantu" }).getAttribute("href")).toBe(
       `/produkt/${product!.slug}`,
     );
-    expect(
-      screen.getByRole("link", { name: "Zobrazit oblíbené produkty" }).getAttribute("href"),
-    ).toBe("/oblibene");
+    expect(screen.getByRole("button", { name: /^Vybrat oblíbené varianty: / })).toBeDefined();
     expect(screen.queryByText(/2[\s\u00a0]?929,4\s+ks/)).toBeNull();
   });
 
@@ -162,8 +163,64 @@ describe("ProductGrid", () => {
     };
     const { container } = render(<ProductGrid action="detail" products={[product]} />);
 
-    expect(screen.getByText("od 2,54 Kč")).toBeDefined();
+    expect(screen.getByText("Cena dle varianty")).toBeDefined();
+    expect(screen.queryByText(/2,54 Kč/)).toBeNull();
     expect(container.querySelector("del")).toBeNull();
     expect(screen.queryByText("-23%")).toBeNull();
+  });
+
+  it("shows the exact price when the group has only one source variant", () => {
+    const product = getProducts().find(
+      (item) => item.detail.variants.length === 1 && item.detail.variants[0].priceMinor > 0,
+    )!;
+    const summary = toProductSummary(product);
+    expect(summary.priceIsFrom).toBe(false);
+    render(<ProductGrid products={[summary]} />);
+    expect(
+      screen.getByText(formatPrice(product.detail.variants[0].priceMinor).replace(/\s/g, " ")),
+    ).toBeDefined();
+    expect(screen.queryByText("Cena dle varianty")).toBeNull();
+    expect(screen.queryByText(/^od /)).toBeNull();
+  });
+
+  it("shows „Cena není dostupná“ with the reason for an unpriced concrete item", () => {
+    const product = {
+      ...toProductSummary(getProducts()[0]),
+      priceIsFrom: false,
+      hasVariants: false,
+      priceMinor: 0,
+    };
+    const { container } = render(<ProductGrid products={[product]} />);
+    expect(screen.getByText("Cena není dostupná")).toBeDefined();
+    expect(screen.queryByText("0,00 Kč")).toBeNull();
+    expect(container.querySelector("[data-sf-product-price] [title]")?.getAttribute("title")).toBe(
+      "Cena v OntOS je nulová, položku proto nelze objednat.",
+    );
+  });
+
+  it("shows which variant a search hit stands for and toggles that variant as a favourite", () => {
+    const product = getProducts().find((item) => item.detail.variants.length > 2)!;
+    const [variant] = product.detail.variants;
+    render(
+      <ProductGrid
+        products={[
+          {
+            ...toProductSummary(product),
+            priceIsFrom: false,
+            priceMinor: variant.priceMinor,
+            variantId: variant.id,
+            searchMatchLabel: `Varianta: ${variant.label} · SKU ${variant.sku}`,
+            detailHref: `/produkt/${product.slug}?variantIds=${variant.id}#product-variants`,
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText(`Varianta: ${variant.label} · SKU ${variant.sku}`)).toBeDefined();
+    expect(
+      screen.getByRole("button", { name: `Uložit ${product.name} do oblíbených` }),
+    ).toBeDefined();
+    expect(screen.getByRole("link", { name: "Vybrat variantu" }).getAttribute("href")).toBe(
+      `/produkt/${product.slug}?variantIds=${variant.id}#product-variants`,
+    );
   });
 });

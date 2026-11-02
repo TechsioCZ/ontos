@@ -13,10 +13,15 @@ import {
   type SearchSuggestionGroup,
 } from "@techsio/ui-kit/templates/search-suggestions";
 
-import { describeOfferPrice, type StoreCurrency } from "@/lib/format";
+import type { StoreCurrency } from "@/lib/format";
+import { describeCatalogPrice } from "@/lib/product-price";
 import { useDictionary, useMoney, useStoreHref } from "@/ontos/market-context";
 import { marketRequestHeaders } from "@/ontos/market-locale";
-import type { RemoteCategorySuggestion, RemoteSearchResponse } from "@/ontos/search-suggestions";
+import {
+  searchHitPath,
+  type RemoteCategorySuggestion,
+  type RemoteSearchResponse,
+} from "@/ontos/search-suggestions";
 
 const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
@@ -134,12 +139,12 @@ export function HeaderSearch() {
         id: "products",
         label: cs.search.suggestions,
         items: remoteItems.map((item) => {
-          // A variant group opens with its variant table filtered by the query (when a variant matches).
-          const params = new URLSearchParams({ variant: trimmedQuery });
+          // The BFF routes an exact variant hit to that variant and several hits to the filtered table.
+          const path = item.path ?? searchHitPath(item.slug, trimmedQuery, item.hasVariants);
           return {
             value: `product:${item.productId}`,
-            label: item.name,
-            href: href(`/produkt/${item.slug}${item.hasVariants ? `?${params}` : ""}`),
+            label: item.variantLabel ? `${item.name} – ${item.variantLabel}` : item.name,
+            href: href(path),
             data: {
               kind: "product",
               imageSrc: item.imageSrc,
@@ -279,8 +284,8 @@ export function HeaderSearch() {
 }
 
 function SuggestionPrice(data: Extract<SuggestionData, { kind: "product" }>) {
-  const price = describeOfferPrice(data, useMoney(), useDictionary().product.from);
-  return price.available ? (
+  const price = describeCatalogPrice(data, useDictionary(), useMoney());
+  return price.kind !== "unavailable" ? (
     <strong className="shrink-0 whitespace-nowrap text-sm">{price.label}</strong>
   ) : (
     <span

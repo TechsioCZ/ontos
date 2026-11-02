@@ -196,7 +196,7 @@ describe("AKROS brand (default)", () => {
     expect(markup).toContain("akros%2Ffooter%2Flogo.png");
     expect(markup).toContain('href="tel:+420737591849"');
     expect(markup).toContain('href="mailto:akros@akros.cz"');
-    expect(markup).toContain('href="/cs/kategorie/akroscz-vyroba"');
+    // Production is reached from the catalogue sidebar; the utility bar lists informational pages only.
     expect(markup).toContain('href="https://www.akroscz.cz/"');
     expect(markup).toContain("Copyright (c) 2014–2026 AKROS b2c");
     expect(await generateMetadata()).toMatchObject({

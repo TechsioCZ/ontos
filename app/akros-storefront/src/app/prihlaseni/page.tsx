@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { getBrand } from "@/brand";
-import StoreLink from "@/components/store-link";
 
-import { LoginForm } from "@/components/auth-form";
+import { AuthPageLink, LoginForm } from "@/components/auth-form";
 import { StorefrontWideShell } from "@/components/storefront-shell";
 
 export const metadata: Metadata = { title: "Přihlášení" };
@@ -21,7 +20,8 @@ export default function LoginPage() {
             <span>nebo</span>
           </div>
           <p>
-            Ještě u nás nemáte účet? <StoreLink href="/registrace">Vytvořte si ho zde</StoreLink>
+            Ještě u nás nemáte účet?{" "}
+            <AuthPageLink href="/registrace">Vytvořte si ho zde</AuthPageLink>
           </p>
         </div>
       </section>

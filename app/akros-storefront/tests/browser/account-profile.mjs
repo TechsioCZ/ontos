@@ -38,7 +38,30 @@ try {
   await page.locator("#account-phone").waitFor();
   assert.equal(await page.locator("#account-email").inputValue(), email);
   assert.equal(await page.locator("#account-email").getAttribute("readonly"), "");
-  assert.equal(await page.locator('input[type="password"]').count(), 0);
+  // Password inputs exist only in the separate password-change block, never in the profile form.
+  assert.equal(await page.locator('form input[type="password"]').count(), 0);
+  assert.equal(await page.locator('#zmena-hesla input[type="password"]').count(), 2);
+  const passwordRequests = [];
+  page.on("request", (request) => {
+    if (request.postData()?.includes("never-persist-me")) passwordRequests.push(request.url());
+  });
+  await page.getByRole("button", { name: "Změnit heslo", exact: true }).click();
+  await page.getByText("Vyplňte nové heslo.", { exact: true }).waitFor();
+  await page.locator("#account-password").fill("never-persist-me");
+  await page.locator("#account-password-confirmation").fill("different");
+  await page.getByRole("button", { name: "Změnit heslo", exact: true }).click();
+  await page.getByText("Hesla se neshodují.", { exact: true }).waitFor();
+  await page.locator("#account-password-confirmation").fill("never-persist-me");
+  await page.locator("#account-password-confirmation").press("Enter");
+  // OntOS offers no signed-in password change: the demo form says so and never claims success.
+  await page
+    .getByText("Změna hesla zatím není připojena k účtu. Ostatní údaje můžete uložit samostatně.", {
+      exact: true,
+    })
+    .waitFor();
+  assert.deepEqual(passwordRequests, [], "The demo password form must not send the password");
+  await page.locator("#account-password").fill("");
+  await page.locator("#account-password-confirmation").fill("");
   const beforeResponse = await context.request.get(profileUrl);
   assert.equal(beforeResponse.status(), 200);
   const { profile: before } = await beforeResponse.json();

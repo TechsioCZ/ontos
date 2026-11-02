@@ -16,7 +16,7 @@ export function OrderConfirmation({ order }: { order: CustomerOrder }) {
       {order.contact?.email && (
         <OrderEmailStatus email={order.contact.email} orderNumber={order.number} />
       )}
-      <AccountOrderDetail order={order} />
+      <AccountOrderDetail order={order} repeatable={false} />
       <StoreLink className="underline" href="/historie-objednavek">
         Moje objednávky
       </StoreLink>

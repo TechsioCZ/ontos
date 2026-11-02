@@ -113,7 +113,8 @@ export function createCatalog(catalogData: CatalogData, categoryData: CategoryDa
       ? { priceUnavailableReason: product.priceUnavailableReason }
       : {}),
     hasVariants: product.variantSummary.count > 0,
-    priceIsFrom: product.variantSummary.count > 0,
+    // Only a group of several variants has no single price; one variant is a concrete item.
+    priceIsFrom: product.variantSummary.count > 1,
     stock: summarizeProductStock(product),
   });
 

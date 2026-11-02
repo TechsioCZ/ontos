@@ -55,6 +55,14 @@
   @apply sf-product-icon-[sf-product-actions--email];
 }
 
+@utility token-icon-sf-product-share {
+  @apply icon-[mdi--share-variant-outline];
+}
+
+@utility token-icon-sf-product-print {
+  @apply icon-[mdi--printer-outline];
+}
+
 @utility token-icon-sf-facebook {
   @apply sf-icon-[sf--facebook];
 }
@@ -65,9 +73,4 @@
 
 @utility token-icon-sf-youtube {
   @apply sf-icon-[sf--youtube];
-}
-
-@utility token-icon-sf-checkbox-selected {
-  @apply sf-icon-[sf--checkbox-selected];
-  @apply size-(--sf-variant-filter-checkbox-indicator-size);
 }
