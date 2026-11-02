@@ -825,14 +825,15 @@ const writePlan = Effect.fn('PseudonymAccount.writePlan')(function* writePlan(
   const accounts = yield* discoverAccounts(rpc);
   const agents = yield* discoverAgents(rpc, operator, accounts);
   const workforce = yield* openWorkforce('plan');
-  const plan = yield* Schema.decodeUnknownEffect(PseudonymAccountPlanSchema)({
+  // Already-decoded values (Options included): the codec validates them on encode, apply decodes the frozen text.
+  const plan: PseudonymAccountPlan = {
     accounts,
     agents,
     employees: yield* discoverPseudonymEmployees(workforce, accounts),
     operatorPrincipalId: operator.principal.principalId,
     schemaVersion: 2,
     tenantId: demoTenantId,
-  });
+  };
   if (!validatePseudonymAccountPlan(plan)) {
     return yield* fail('Account mapping is empty, ambiguous or contains a foreign identity');
   }

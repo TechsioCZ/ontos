@@ -1,5 +1,5 @@
 import { v1 } from '@authzed/authzed-node';
-import { Array as Arr, Effect, Exit, Option, Order } from 'effect';
+import { Array as Arr, Effect, Exit, Option, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -20,6 +20,7 @@ import {
   agentOperatorsAfterRetire,
   isAgentOperatorEdge,
   isPseudonymSource,
+  PseudonymAccountPlanSchema,
   pseudonymAccountIdentity,
   pseudonymAgent,
   pseudonymRoleId,
@@ -294,3 +295,23 @@ it('never copies agent operator edges; the governed operator command owns them',
   expect(isAgentOperatorEdge(edge('principal', old, 'self'), old)).toBe(false);
   expect(isAgentOperatorEdge(edge('resource', marketRoot, 'writer'), old)).toBe(false);
 });
+
+it.effect('freezes a plan with agents and unlinked employees as JSON and reads back the same reviewed values', () =>
+  Effect.gen(function* roundTrip() {
+    const moved = pseudonymAgent(directoryAgent, akrosDemoLegalEntityId, [account]);
+    const employee = {
+      email: 'sklad@sroubarna.demo',
+      fullName: 'Sklad ŠroubShop',
+      id: demoId('workforce.employee', 'sklad'),
+      newPrincipalId: Option.none(),
+      oldEmail: 'sklad@akros.demo',
+      oldFullName: 'Sklad AKROS',
+      oldPrincipalId: Option.none(),
+    };
+    const frozen = { ...plan, agents: Option.toArray(moved), employees: [employee] };
+    const codec = Schema.fromJsonString(PseudonymAccountPlanSchema);
+    const text = yield* Schema.encodeEffect(codec)(frozen);
+    expect(text).toContain('"oldOwnerPrincipalId"');
+    expect(yield* Schema.decodeUnknownEffect(codec, { onExcessProperty: 'error' })(text)).toEqual(frozen);
+  }),
+);
