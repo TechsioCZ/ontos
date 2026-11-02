@@ -8,7 +8,15 @@ import { optionalField } from '../../../../../shared/domain/common.ts';
 // and counterparty (CreateInvoiceDraft), so a later quote edit never changes an issued invoice.
 import { listCustomers } from '@app/party-registry/api/client';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
-import { DetailList, EmptyState, SectionCard, SidePanel, formatDate, surfaceTileClassName } from '@app/admin-ui';
+import {
+  AutosaveStatus,
+  DetailList,
+  EmptyState,
+  SectionCard,
+  SidePanel,
+  formatDate,
+  surfaceTileClassName,
+} from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import type { BadgeProps } from '@techsio/ui-kit/atoms/badge';
@@ -34,6 +42,9 @@ import { ChangeHistory } from '../../../../ui/change-history.tsx';
 import { applyFinanceCommand, readFinance } from '../../../../api/finance-reads.ts';
 import { useIncomingInvoiceLinks } from './finance-links.tsx';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { quoteDraftOf } from './sales-quote-draft.ts';
+import type { QuoteDraft } from './sales-quote-draft.ts';
+import { useQuoteAutosave } from './sales-quote-autosave.ts';
 import { addDays } from '../../../../ui/ops-agenda/deadlines.ts';
 import {
   dateTimeIso,
@@ -375,10 +386,13 @@ export const SalesQuoteFormPanel = ({
   const k = usePurchasingT();
   const { t } = useModernI18n();
   const customers = useCustomers();
-  const [customerId, setCustomerId] = useState(quote?.customer.counterpartyId ?? '');
-  const [date, setDate] = useState(quote?.date ?? todayIso());
-  const [validUntil, setValidUntil] = useState(quote?.validUntil ?? addDays(todayIso(), 30));
-  const [note, setNote] = useState(quote?.note ?? '');
+  // Customer, dates and note of the quote as typed; the lines keep their own state because of their row keys.
+  const [draft, setDraft] = useState<QuoteDraft>(() => ({
+    ...quoteDraftOf(quote),
+    date: quote?.date ?? todayIso(),
+    validUntil: quote?.validUntil ?? addDays(todayIso(), 30),
+  }));
+  const updateDraft = (patch: Partial<QuoteDraft>) => setDraft((current) => ({ ...current, ...patch }));
   const linePrefix = useId();
   const lineSequence = useRef(0);
   const [lines, setLines] = useState<readonly LineDraft[]>(
@@ -423,17 +437,73 @@ export const SalesQuoteFormPanel = ({
 
   const submit = (status: 'draft' | 'sent') =>
     submitSalesQuoteDraft(
-      { customerId, customers, date, k, note, onSaved, parsed, quote, run, setBusy, setError, t, valid, validUntil },
+      {
+        customerId: draft.customerId,
+        customers,
+        date: draft.date,
+        k,
+        note: draft.note,
+        onSaved,
+        parsed,
+        quote,
+        run,
+        setBusy,
+        setError,
+        t,
+        valid,
+        validUntil: draft.validUntil,
+      },
       status,
     );
+
+  /** The customer the draft is billed to; only a ready customer read can resolve one. */
+  const customerOf = (value: QuoteDraft) =>
+    customers.status === 'ready'
+      ? customers.customers.find((entry) => entry.counterpartyId === value.customerId)
+      : undefined;
+  const autosaveValue: QuoteDraft = {
+    ...draft,
+    lines: lines.map((line) => ({
+      description: line.description,
+      price: line.price,
+      quantity: line.quantity,
+      vat: line.vat,
+    })),
+  };
+  const autosave = useQuoteAutosave({
+    applyStored: (stored) => {
+      setDraft(stored);
+      setLines(stored.lines.map((line, index) => ({ ...line, key: `${linePrefix}-reload-${index}` })));
+    },
+    customerOf,
+    draft: autosaveValue,
+    quote,
+    run,
+  });
+  const close = () => {
+    autosave.flush();
+    onClose();
+  };
+  const handleReloadLatest = autosave.reloadLatest;
+  const handleRetry = autosave.retry;
 
   return (
     <SidePanel
       actions={
         <>
-          <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
-            {t(cancelLabelKey)}
-          </Button>
+          {quote !== undefined && (
+            <>
+              <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+              <Button onClick={close} theme="outlined" variant="secondary">
+                {t('facility-operations.common.close')}
+              </Button>
+            </>
+          )}
+          {quote === undefined && (
+            <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
+              {t(cancelLabelKey)}
+            </Button>
+          )}
           {quote === undefined && (
             <Button
               disabled={busy}
@@ -446,15 +516,17 @@ export const SalesQuoteFormPanel = ({
               {k('sales.form.saveDraft')}
             </Button>
           )}
-          <Button
-            isLoading={busy}
-            onClick={() => {
-              browserRuntime.runFork(submit('sent'));
-            }}
-            variant="primary"
-          >
-            {quote === undefined ? k('sales.form.saveSent') : k('sales.form.saveChanges')}
-          </Button>
+          {quote === undefined && (
+            <Button
+              isLoading={busy}
+              onClick={() => {
+                browserRuntime.runFork(submit('sent'));
+              }}
+              variant="primary"
+            >
+              {k('sales.form.saveSent')}
+            </Button>
+          )}
         </>
       }
       onOpenChange={(open) => {
@@ -487,10 +559,10 @@ export const SalesQuoteFormPanel = ({
             }))}
             label={k(customerLabelKey)}
             name="sales-customer"
-            onValueChange={({ value }) => setCustomerId(value[0] ?? '')}
+            onValueChange={({ value }) => updateDraft({ customerId: value[0] ?? '' })}
             placeholder={k('sales.form.pickCustomer')}
             size="md"
-            value={customerId === '' ? [] : [customerId]}
+            value={draft.customerId === '' ? [] : [draft.customerId]}
           />
         ) : (
           <p className="text-fg-secondary text-sm">
@@ -501,17 +573,17 @@ export const SalesQuoteFormPanel = ({
           <FormInput
             id="sales-quote-date"
             label={k('sales.fields.date')}
-            onChange={(event) => setDate(event.target.value)}
+            onChange={(event) => updateDraft({ date: event.target.value })}
             required
             type="date"
-            value={date}
+            value={draft.date}
           />
           <FormInput
             id="sales-quote-valid"
             label={k('sales.fields.validUntil')}
-            onChange={(event) => setValidUntil(event.target.value)}
+            onChange={(event) => updateDraft({ validUntil: event.target.value })}
             type="date"
-            value={validUntil}
+            value={draft.validUntil}
           />
         </div>
         <fieldset className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
@@ -586,9 +658,9 @@ export const SalesQuoteFormPanel = ({
         <FormTextarea
           id="sales-quote-note"
           label={k(noteLabelKey)}
-          onChange={(event) => setNote(event.target.value)}
+          onChange={(event) => updateDraft({ note: event.target.value })}
           rows={2}
-          value={note}
+          value={draft.note}
         />
       </div>
     </SidePanel>
