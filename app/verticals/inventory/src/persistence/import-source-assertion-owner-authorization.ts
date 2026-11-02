@@ -13,6 +13,10 @@ import { inventoryBackendConfigurationPersistenceForScope } from './inventory-ba
 import { stockPositionPersistenceForScope } from './stock-position-repository.ts';
 import { inventoryStockPositions } from './stock-position-table.ts';
 
+const OwnerResourceModuleId = Schema.String.pipe(Schema.brand('InventoryOwnerResourceModuleId'));
+const OwnerResourceId = Schema.String.pipe(Schema.brand('InventoryOwnerResourceId'));
+const OwnerTenantId = Schema.String.pipe(Schema.brand('InventoryOwnerTenantId'));
+
 /** Owner-state admission only; Core still checks the executor and exact business permission. */
 export const importSourceAssertionOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = Object.freeze({
   authorize: Effect.fn('InventoryImportOwnerAuthorization.authorize')(function* authorize(
@@ -30,23 +34,34 @@ export const importSourceAssertionOwnerAuthorizationOverlay: OwnerAuthorizationO
     if (
       target === undefined ||
       unexpected.length !== 0 ||
-      target.kind !== 'business_permission' ||
-      target.target.kind !== 'inventory_resource'
+      target.kind !== 'owner_permission' ||
+      !Schema.is(
+        Schema.Struct({
+          kind: Schema.Literal('inventory_resource'),
+          resource: Schema.Struct({
+            moduleId: OwnerResourceModuleId,
+            resourceId: OwnerResourceId,
+            resourceType: Schema.String,
+          }),
+          tenantId: OwnerTenantId,
+        }),
+      )(target.target.target)
     ) {
       return 'unavailable';
     }
     if (
-      target.permission !== 'inventory.migration.manage' ||
-      target.target.tenantId !== input.scope.tenantId ||
+      target.target.definition.key !== 'inventory.migration.manage' ||
+      target.target.scope.tenantId !== input.scope.tenantId ||
+      target.target.target.tenantId !== input.scope.tenantId ||
       input.scope.legalEntityId !== undefined ||
       input.scope.trustedStorefrontId !== undefined ||
-      target.trustedStorefrontId !== undefined
+      target.target.requiredStorefrontId !== undefined
     ) {
       return 'denied';
     }
     const decoded = Schema.decodeUnknownResult(StockPositionRefSchema)({
-      ...target.target.resource,
-      tenantId: target.target.tenantId,
+      ...target.target.target.resource,
+      tenantId: target.target.scope.tenantId,
     });
     if (Result.isFailure(decoded)) {
       return 'denied';

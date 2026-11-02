@@ -1,3 +1,4 @@
+import { commerceCustomerContextAuthorizationContract } from '../../shared/permissions/authorization-contract.ts';
 import { ReadHandlerUnavailable, ReadPermissionDenied, defineReadConditionalPermission } from '@app/core-runtime';
 import type { ReadConditionalPermissionDeclaration, ReadHandlerContext, ReadHandlerResult } from '@app/core-runtime';
 import { Effect } from 'effect';
@@ -39,14 +40,14 @@ export const makePurchaseResolutionPermission = <Input extends PurchaseResolutio
         resolve: () => [{ kind: 'module', moduleId: 'commerce.customer-context' }],
       },
       PROFILE: {
-        requiredKinds: ['business_permission', 'resource_read'],
+        requiredKinds: ['owner_permission', 'resource_read'],
         resolve: (_input, { profile }, scope) => [
           profileTarget({ profile }, scope),
           { kind: 'resource_read', permission: 'read', resource: profile.profileRef },
         ],
       },
       PROFILE_SAVED_ADDRESS: {
-        requiredKinds: ['business_permission', 'resource_read', 'resource_read'],
+        requiredKinds: ['owner_permission', 'resource_read', 'resource_read'],
         resolve: (_input, { profile, savedAddressRef }, scope) => [
           profileTarget({ profile }, scope),
           { kind: 'resource_read', permission: 'read', resource: profile.profileRef },
@@ -54,6 +55,7 @@ export const makePurchaseResolutionPermission = <Input extends PurchaseResolutio
         ],
       },
     },
+    ownerContract: commerceCustomerContextAuthorizationContract,
     permissionKey: 'module.access',
     select: (input) => {
       const { subject } = input;

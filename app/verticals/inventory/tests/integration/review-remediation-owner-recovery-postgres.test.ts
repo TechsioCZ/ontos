@@ -19,7 +19,6 @@ import {
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { toBusinessPermissionAccessKey } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/permissions/owner-authorization-overlay.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
@@ -118,13 +117,11 @@ const allowedPermission = {
 };
 
 const contextAccess: ContextAccessService = {
-  businessPermissions: ({ targets }) =>
-    Effect.succeed(
-      targets.map((target) => ({ decision: 'allowed' as const, key: toBusinessPermissionAccessKey(target) })),
-    ),
   legalEntities: ({ legalEntityIds }) =>
     Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
   modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+  ownerPermissions: ({ targets }) =>
+    Effect.succeed(targets.map((target) => ({ decision: 'allowed' as const, key: target.target.key }))),
   resources: ({ resources }) =>
     Effect.succeed(
       resources.map(({ moduleId, resourceId, resourceType }) => ({

@@ -1,3 +1,5 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
+import { priceGroupOwnerPermissionTarget } from '@app/price-group-catalog/testing/server-owner-native';
 import { createRequire } from 'node:module';
 import {
   classifyPriceGroupReadDiagnostic,
@@ -1041,10 +1043,9 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
   const business = Context.get(businessContext, BusinessPermissionRelationshipMutation);
   const principal = { principalId: native.actor.principalId, tenantId: native.actor.tenantId };
   const grant = Effect.fn('TemporalNative.grantExactBusinessPermission')(function* grantExactBusinessPermission(
-    permission: Parameters<typeof business.mutate>[0]['permission'],
     target: Parameters<typeof business.mutate>[0]['target'],
   ) {
-    const input = { permission, principal, target };
+    const input = { principal, target };
     yield* business.mutate({ ...input, operation: 'grant' });
     yield* Effect.addFinalizer(() => Effect.orDie(business.mutate({ ...input, operation: 'revoke' })));
   });
@@ -1066,11 +1067,19 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
   expect(yield* Schema.decodeUnknownEffect(TemporalNativeFailure)(businessDenied)).toMatchObject({
     stage: 'CREATE_FORBIDDEN',
   });
-  yield* grant('pricing.price_group.create', {
-    kind: 'pricing_catalog',
-    pricingCatalogId: principal.tenantId,
-    tenantId: principal.tenantId,
-  });
+  yield* grant(
+    priceGroupOwnerPermissionTarget(
+      {
+        permission: 'pricing.price_group.create',
+        target: {
+          kind: 'pricing_catalog',
+          pricingCatalogId: principal.tenantId,
+          tenantId: principal.tenantId,
+        },
+      },
+      'read',
+    ),
+  );
   const createGroup = Effect.fn('TemporalNative.createRealCatalogGroup')(function* createRealCatalogGroup(
     type: 'CREATE_G1' | 'CREATE_G2' | 'CREATE_INCOMPATIBLE',
   ) {
@@ -1090,7 +1099,7 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
       'pricing.price_group.revision.create',
       'pricing.price_group.retire',
     ] as const) {
-      yield* grant(permission, target);
+      yield* grant(priceGroupOwnerPermissionTarget({ permission, target }, 'read'));
     }
     return result;
   });
@@ -1137,12 +1146,17 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
   );
   yield* resource(retail.profileRef);
   yield* resource(counterpartyProfile.profileRef);
-  yield* grant('retail.profile.read', {
-    kind: 'retail_profile',
-    legalEntityId: native.fixture.legalEntityId,
-    profileId: retail.profileRef.resourceId,
-    tenantId: principal.tenantId,
-  });
+  yield* grant(
+    customerOwnerPermissionTarget({
+      permission: 'retail.profile.read',
+      target: {
+        kind: 'retail_profile',
+        legalEntityId: native.fixture.legalEntityId,
+        profileId: retail.profileRef.resourceId,
+        tenantId: principal.tenantId,
+      },
+    }),
+  );
   const bindingDenied = yield* Effect.flip(
     executeCustomerPriceGroupResolutionWithAuthorization(
       {
@@ -1170,8 +1184,13 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
     legalEntityId: native.fixture.legalEntityId,
     tenantId: principal.tenantId,
   };
-  yield* grant('counterparty.profile.read', counterpartyTarget);
-  yield* grant('counterparty.settings.price_group.manage', counterpartyTarget);
+  yield* grant(customerOwnerPermissionTarget({ permission: 'counterparty.profile.read', target: counterpartyTarget }));
+  yield* grant(
+    customerOwnerPermissionTarget({
+      permission: 'counterparty.settings.price_group.manage',
+      target: counterpartyTarget,
+    }),
+  );
   // Real Core business/executor permission alone cannot replace the owner-local grant.
   const ownerDenied = yield* Effect.flip(
     executeAssignCounterpartyPriceGroupWithAuthorization(
@@ -1219,9 +1238,11 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
     }
     yield* business.mutate({
       operation: 'grant',
-      permission,
       principal,
-      target: { ...counterpartyTarget, counterpartyId: counterpartyRef.resourceId },
+      target: customerOwnerPermissionTarget({
+        permission,
+        target: { ...counterpartyTarget, counterpartyId: counterpartyRef.resourceId },
+      }),
     });
     const [active] = yield* native.fixture
       .prepareOwner(
@@ -2141,12 +2162,20 @@ const catalogScopeScenario = Effect.fn('TemporalNative.catalogScope')(function* 
     yield* Schema.decodeUnknownEffect(AssignCustomerPriceGroupActionIneligibleProblemSchema)(incompatibleFailure),
   ).toMatchObject({ code: 'customer_price_group_catalog_rejected', status: 422 });
   const missingGroupRef = { ...subjects.first.identity.priceGroupRef, resourceId: yield* nextId };
-  yield* subjects.grant('pricing.price_group.read', {
-    kind: 'price_group',
-    priceGroupId: missingGroupRef.resourceId,
-    pricingCatalogId: native.actor.tenantId,
-    tenantId: native.actor.tenantId,
-  });
+  yield* subjects.grant(
+    priceGroupOwnerPermissionTarget(
+      {
+        permission: 'pricing.price_group.read',
+        target: {
+          kind: 'price_group',
+          priceGroupId: missingGroupRef.resourceId,
+          pricingCatalogId: native.actor.tenantId,
+          tenantId: native.actor.tenantId,
+        },
+      },
+      'read',
+    ),
+  );
   const beforeMissing = yield* nativeOwnerInventory(native);
   const missingGroup = yield* Effect.flip(assignRetail(missingGroupRef, futureAt));
   expect(
@@ -2190,12 +2219,17 @@ const catalogScopeScenario = Effect.fn('TemporalNative.catalogScope')(function* 
   expect(Schema.is(CustomerPriceGroupResolutionForbiddenProblemSchema)(deniedRead)).toBe(true);
   const absentProfile = { ...retail, resourceId: yield* nextId };
   yield* subjects.resource(absentProfile);
-  yield* subjects.grant('retail.profile.read', {
-    kind: 'retail_profile',
-    legalEntityId: native.fixture.legalEntityId,
-    profileId: absentProfile.resourceId,
-    tenantId: native.actor.tenantId,
-  });
+  yield* subjects.grant(
+    customerOwnerPermissionTarget({
+      permission: 'retail.profile.read',
+      target: {
+        kind: 'retail_profile',
+        legalEntityId: native.fixture.legalEntityId,
+        profileId: absentProfile.resourceId,
+        tenantId: native.actor.tenantId,
+      },
+    }),
+  );
   const absent = yield* Effect.flip(publicResolution(native, absentProfile, start, retailSubject));
   // The existing owner authorization overlay cannot establish authority over an absent profile;
   // it maps that lookup failure to unavailable before the generated Read handler is entered.
@@ -2300,12 +2334,17 @@ const catalogScopeScenario = Effect.fn('TemporalNative.catalogScope')(function* 
   );
   expect(siblingProfile.profileRef.resourceId).not.toBe(subjects.counterpartyProfile.profileRef.resourceId);
   yield* subjects.resource(siblingProfile.profileRef);
-  yield* subjects.grant('counterparty.settings.price_group.manage', {
-    counterpartyId: siblingCounterparty.counterpartyRef.resourceId,
-    kind: 'counterparty',
-    legalEntityId: native.fixture.legalEntityId,
-    tenantId: native.actor.tenantId,
-  });
+  yield* subjects.grant(
+    customerOwnerPermissionTarget({
+      permission: 'counterparty.settings.price_group.manage',
+      target: {
+        counterpartyId: siblingCounterparty.counterpartyRef.resourceId,
+        kind: 'counterparty',
+        legalEntityId: native.fixture.legalEntityId,
+        tenantId: native.actor.tenantId,
+      },
+    }),
+  );
   yield* subjects.grantCounterpartyOwner(
     'counterparty.settings.price_group.manage',
     siblingCounterparty.counterpartyRef,
@@ -2397,8 +2436,12 @@ const executorDeniedScenario = Effect.fn('TemporalNative.executorDenied')(functi
       tenantId: native.actor.tenantId,
     },
   };
-  yield* business.mutate({ ...grant, operation: 'grant' });
-  yield* Effect.addFinalizer(() => Effect.orDie(business.mutate({ ...grant, operation: 'revoke' })));
+  yield* business.mutate({ ...grant, operation: 'grant', target: priceGroupOwnerPermissionTarget(grant, 'read') });
+  yield* Effect.addFinalizer(() =>
+    Effect.orDie(
+      business.mutate({ ...grant, operation: 'revoke', target: priceGroupOwnerPermissionTarget(grant, 'read') }),
+    ),
+  );
   const denied = yield* Effect.flip(native.receiver.invoke('CREATE_G1'));
   expect(yield* Schema.decodeUnknownEffect(TemporalNativeFailure)(denied)).toMatchObject({
     stage: 'CREATE_FORBIDDEN',

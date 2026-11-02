@@ -1,4 +1,4 @@
-import type { OperationalScope } from '@app/core-runtime';
+import type { OperationalScope, OwnerPermissionAccessTarget } from '@app/core-runtime';
 import { Effect, Predicate, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { getReadServiceFactory } from '../../../../packages/core-runtime/src/reads/definition.ts';
@@ -23,6 +23,11 @@ import {
   validatePriceGroupCompatibilityFromServices,
 } from '../../src/api/validate-price-group-compatibility.read.ts';
 import type { ValidatePriceGroupCompatibilityServices } from '../../src/api/validate-price-group-compatibility.read.ts';
+
+const permissionRequest = (target: OwnerPermissionAccessTarget) => ({
+  businessPermission: { permission: target.definition.key, target: target.target },
+  kind: 'business_permission',
+});
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const otherTenantId = '99999999-9999-4999-8999-999999999999';
@@ -404,14 +409,14 @@ describe('Validate Price Group Compatibility governed Read', () => {
 
     expect(validatePriceGroupCompatibilityRead.descriptor).toMatchObject({
       legalEntityScope: 'forbidden',
-      permissionTarget: 'business_permission',
+      permissionTarget: 'owner_permission',
       readKey: 'pricing.price-group-catalog.api.validate-price-group-compatibility',
       schemaVersion: '1',
     });
     expect(getReadServiceFactory(validatePriceGroupCompatibilityRead).toString()).toContain(
       'priceGroupCatalogPersistenceForScope',
     );
-    expect(validatePriceGroupCompatibilityPermissionTarget(inputWithoutExpected, scope)).toEqual({
+    expect(permissionRequest(validatePriceGroupCompatibilityPermissionTarget(inputWithoutExpected, scope))).toEqual({
       businessPermission: {
         permission: 'pricing.price_group.read',
         target: {

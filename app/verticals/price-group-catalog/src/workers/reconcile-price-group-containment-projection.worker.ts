@@ -3,7 +3,7 @@
 // @ontos-outbox-worker-owner pricing.price-group-catalog
 // @ontos-outbox-worker-producer pricing.price-group-catalog
 // @ontos-outbox-worker-topic pricing.price-group.containment-projection-requested
-import { BusinessPermissionCodeSchema, toBusinessPermissionAccessObjectId } from '@app/core-runtime';
+import { BusinessPermissionCodeSchema } from '@app/core-runtime';
 import {
   defineOutboxWorker,
   defineOutboxWorkerCompletion,
@@ -25,6 +25,7 @@ import {
 } from '@app/price-group-catalog/outbox/pricing-price-group-created';
 import { DateTime, Effect, Schema } from 'effect';
 
+import { priceGroupPermissionIdentity } from '../permissions/authorization.ts';
 import { PriceGroupDefinitionRevisionSchema } from '../../shared/domain/price-group.ts';
 import { priceGroupContainmentProjectionRepositoryFromRoutineInvoker } from '../persistence/containment-projection-repository.ts';
 
@@ -67,17 +68,23 @@ export const priceGroupContainmentRelationships = (
   const pricingCatalogId = request.pricingCatalogRef.resourceId;
   const priceGroupId = request.priceGroupRef.resourceId;
   const pairs = childPermissions.map((permission) => ({
-    catalog: toBusinessPermissionAccessObjectId(permission, {
-      kind: 'pricing_catalog',
-      pricingCatalogId,
-      tenantId,
-    }),
-    group: toBusinessPermissionAccessObjectId(permission, {
-      kind: 'price_group',
-      priceGroupId,
-      pricingCatalogId,
-      tenantId,
-    }),
+    catalog: priceGroupPermissionIdentity({
+      permission,
+      target: {
+        kind: 'pricing_catalog',
+        pricingCatalogId,
+        tenantId,
+      },
+    }).objectId,
+    group: priceGroupPermissionIdentity({
+      permission,
+      target: {
+        kind: 'price_group',
+        priceGroupId,
+        pricingCatalogId,
+        tenantId,
+      },
+    }).objectId,
   }));
   const [read, revise, retire] = pairs;
   if (

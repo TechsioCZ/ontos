@@ -13,8 +13,8 @@ import type { SpiceDbPermissionClient } from './client.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
 import { loadSpiceDbConfig } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
-import { BusinessPermissionDescriptorSchema, isTaxSellingLegalEntityPermission } from './business-permission.ts';
-import type { BusinessPermissionCode, BusinessPermissionDescriptor } from './business-permission.ts';
+import { BusinessPermissionDescriptorSchema } from './business-permission.ts';
+import type { BusinessPermissionDescriptor } from './business-permission.ts';
 import type { PrincipalRef } from './principal-ref.ts';
 import type {
   IdentityNamespacePermissionKey,
@@ -47,13 +47,15 @@ export type OwnerPermissionScope =
   | Readonly<{ readonly kind: 'legal_entity'; readonly legalEntityId: string; readonly tenantId: string }>;
 
 export interface OwnerPermissionContract {
-  readonly owningCapability: string;
+  readonly ownerStateRequired?: boolean;
+  readonly owningModuleKey: string;
   readonly permissions: readonly BusinessPermissionDescriptor[];
   readonly schemaVersion: '1';
   readonly targetResourceType: string;
 }
 
 export interface OwnerPermissionAccessTarget {
+  readonly alternativeObjectIds?: readonly string[];
   readonly contract: OwnerPermissionContract;
   readonly definition: BusinessPermissionDescriptor;
   readonly key: string;
@@ -65,6 +67,7 @@ export interface OwnerPermissionAccessTarget {
   readonly target: object;
   readonly transportModuleKey: string;
   readonly transportObjectId: string;
+  readonly transportResourceType?: string;
 }
 
 const ownerPermissionIdentifier = Schema.String.check(Schema.isMinLength(1));
@@ -76,12 +79,14 @@ const OwnerPermissionTransportModuleKeySchema = ownerPermissionIdentifier.pipe(
   Schema.brand('OwnerPermissionTransportModuleKey'),
 );
 const OwnerPermissionContractSchema = Schema.Struct({
-  owningCapability: ownerPermissionIdentifier,
+  ownerStateRequired: Schema.optionalKey(Schema.Boolean),
+  owningModuleKey: ownerPermissionIdentifier.pipe(Schema.brand('OwnerPermissionModuleKey')),
   permissions: Schema.Array(BusinessPermissionDescriptorSchema).check(Schema.isMinLength(1)),
   schemaVersion: Schema.Literal('1'),
   targetResourceType: ownerPermissionIdentifier,
 });
 const OwnerPermissionTargetMetadataSchema = Schema.Struct({
+  alternativeObjectIds: Schema.optionalKey(Schema.Array(OwnerPermissionObjectIdSchema)),
   contract: OwnerPermissionContractSchema,
   definition: BusinessPermissionDescriptorSchema,
   key: ownerPermissionIdentifier,
@@ -98,20 +103,25 @@ const OwnerPermissionTargetMetadataSchema = Schema.Struct({
   scopeKind: ownerPermissionIdentifier,
   transportModuleKey: OwnerPermissionTransportModuleKeySchema,
   transportObjectId: OwnerPermissionObjectIdSchema,
+  transportResourceType: Schema.optionalKey(ownerPermissionIdentifier),
 });
 
 export const isOwnerPermissionContract = (contract: OwnerPermissionContract): boolean =>
   Schema.is(OwnerPermissionContractSchema)(contract) &&
   Object.isFrozen(contract) &&
   Object.isFrozen(contract.permissions) &&
-  contract.permissions.every(
-    (definition) => Object.isFrozen(definition) && definition.owningCapability === contract.owningCapability,
-  );
+  contract.permissions.every((definition) => Object.isFrozen(definition));
 
 export const createOwnerPermissionAccessTarget = (
   contract: OwnerPermissionContract,
   input: Omit<OwnerPermissionAccessTarget, 'contract'>,
-): OwnerPermissionAccessTarget => Object.freeze({ ...input, contract, scope: Object.freeze({ ...input.scope }) });
+): OwnerPermissionAccessTarget => {
+  const { alternativeObjectIds, ...target } = input;
+  const scopedTarget = { ...target, contract, scope: Object.freeze({ ...input.scope }) };
+  return alternativeObjectIds === undefined
+    ? Object.freeze(scopedTarget)
+    : Object.freeze({ ...scopedTarget, alternativeObjectIds: Object.freeze([...alternativeObjectIds]) });
+};
 
 export const isOwnerPermissionAccessTargetMetadataValid = (target: OwnerPermissionAccessTarget): boolean =>
   Schema.is(OwnerPermissionTargetMetadataSchema)(target) &&
@@ -119,11 +129,17 @@ export const isOwnerPermissionAccessTargetMetadataValid = (target: OwnerPermissi
   Object.isFrozen(target.scope) &&
   isOwnerPermissionContract(target.contract) &&
   target.contract.schemaVersion === '1' &&
-  target.definition.owningCapability === target.contract.owningCapability &&
   target.contract.permissions.includes(target.definition) &&
   target.definition.allowedScopeKinds.includes(target.scopeKind) &&
   target.key.length > 0 &&
   target.objectId.length > 0 &&
+  target.objectId.length <= 1024 &&
+  (target.alternativeObjectIds === undefined ||
+    (Object.isFrozen(target.alternativeObjectIds) &&
+      target.alternativeObjectIds.every(
+        (objectId) => objectId.length > 0 && objectId.length <= 1024 && objectId !== target.objectId,
+      ) &&
+      new Set(target.alternativeObjectIds).size === target.alternativeObjectIds.length)) &&
   target.transportObjectId.length > 0 &&
   target.contract.targetResourceType.length > 0;
 
@@ -134,10 +150,10 @@ export const isOwnerPermissionAccessTargetValid = (
     readonly tenantId: string;
     readonly trustedStorefrontId?: string;
   }>,
-  owningCapability?: string,
+  owningModuleKey?: string,
 ): boolean =>
   isOwnerPermissionAccessTargetMetadataValid(target) &&
-  (owningCapability === undefined || target.contract.owningCapability === owningCapability) &&
+  (owningModuleKey === undefined || target.contract.owningModuleKey === owningModuleKey) &&
   target.scope.tenantId === scope.tenantId &&
   scope.tenantId.length > 0 &&
   (target.scope.kind === 'tenant' ||
@@ -146,123 +162,7 @@ export const isOwnerPermissionAccessTargetValid = (
       target.scope.legalEntityId === scope.legalEntityId)) &&
   (target.requiredStorefrontId === undefined || target.requiredStorefrontId === scope.trustedStorefrontId);
 
-export type BusinessAccessTarget =
-  | Readonly<{
-      kind: 'retail_profile';
-      legalEntityId: string;
-      profileId: string;
-      tenantId: string;
-    }>
-  | Readonly<{
-      counterpartyId: string;
-      kind: 'counterparty';
-      legalEntityId: string;
-      tenantId: string;
-    }>
-  | Readonly<{
-      counterpartyId: string;
-      kind: 'counterparty_storefront';
-      legalEntityId: string;
-      storefrontId: string;
-      tenantId: string;
-    }>
-  | Readonly<{
-      kind: 'pricing_catalog';
-      pricingCatalogId: string;
-      tenantId: string;
-    }>
-  | Readonly<{
-      kind: 'price_group';
-      priceGroupId: string;
-      pricingCatalogId: string;
-      tenantId: string;
-    }>
-  | Readonly<{
-      kind: 'inventory_resource';
-      resource: Readonly<{
-        moduleId: 'commerce.inventory';
-        resourceId: string;
-        resourceType: string;
-      }>;
-      tenantId: string;
-    }>
-  | Readonly<{
-      kind: 'tax_selling_legal_entity';
-      legalEntityId: string;
-      tenantId: string;
-    }>;
-
-const canonicalPricingAuthorizationResourceId = Schema.String.check(Schema.isUUID());
-
-/** Stable Pricing authorization identity. Business codes and display values are never valid targets. */
-export const PricingAuthorizationResourceIdSchema = canonicalPricingAuthorizationResourceId.pipe(
-  Schema.brand('PricingAuthorizationResourceId'),
-  Schema.decodeTo(canonicalPricingAuthorizationResourceId),
-);
-
-const canonicalInventoryAuthorizationResourceId = Schema.String.check(Schema.isUUID());
-const canonicalInventoryAuthorizationResourceType = Schema.String.check(
-  Schema.isPattern(/^commerce\.inventory\.[a-z][a-z0-9-]*$/u),
-);
-
-/** Durable Inventory resource identity. Location/item tuples and display keys are never valid targets. */
-export const InventoryAuthorizationResourceIdSchema = canonicalInventoryAuthorizationResourceId.pipe(
-  Schema.brand('InventoryAuthorizationResourceId'),
-  Schema.decodeTo(canonicalInventoryAuthorizationResourceId),
-);
-
-export const InventoryAuthorizationResourceTypeSchema = canonicalInventoryAuthorizationResourceType.pipe(
-  Schema.brand('InventoryAuthorizationResourceType'),
-  Schema.decodeTo(canonicalInventoryAuthorizationResourceType),
-);
-
-export interface BusinessPermissionAccessTarget {
-  readonly permission: BusinessPermissionCode;
-  readonly target: BusinessAccessTarget;
-}
-
-export const hasCanonicalPricingAuthorizationTargetIds = (target: BusinessAccessTarget): boolean =>
-  target.kind !== 'pricing_catalog' && target.kind !== 'price_group'
-    ? true
-    : Schema.is(PricingAuthorizationResourceIdSchema)(target.pricingCatalogId) &&
-      (target.kind !== 'price_group' || Schema.is(PricingAuthorizationResourceIdSchema)(target.priceGroupId));
-
-export const hasCanonicalInventoryAuthorizationTarget = (target: BusinessAccessTarget): boolean =>
-  target.kind !== 'inventory_resource' ||
-  (target.resource.moduleId === 'commerce.inventory' &&
-    Schema.is(InventoryAuthorizationResourceIdSchema)(target.resource.resourceId) &&
-    Schema.is(InventoryAuthorizationResourceTypeSchema)(target.resource.resourceType));
-
-/** Keeps every business Permission family on its declared authorization target vocabulary. */
-export const isBusinessPermissionTargetCompatible = ({
-  permission,
-  target,
-}: BusinessPermissionAccessTarget): boolean => {
-  if (permission.startsWith('pricing.price_group.')) {
-    return target.kind === 'pricing_catalog' || target.kind === 'price_group';
-  }
-  if (permission.startsWith('retail.')) {
-    return target.kind === 'retail_profile';
-  }
-  if (permission.startsWith('inventory.')) {
-    return target.kind === 'inventory_resource';
-  }
-  if (isTaxSellingLegalEntityPermission(permission)) {
-    return target.kind === 'tax_selling_legal_entity';
-  }
-  return (
-    permission.startsWith('counterparty.') &&
-    (target.kind === 'counterparty' || target.kind === 'counterparty_storefront')
-  );
-};
-
 export interface ContextAccessService {
-  readonly businessPermissions?: (input: {
-    readonly principal: PrincipalRef;
-    readonly targets: readonly BusinessPermissionAccessTarget[];
-    /** Storefront identity resolved by a trusted application boundary, never raw client input. */
-    readonly trustedStorefrontId?: string;
-  }) => Effect.Effect<readonly ContextAccessResult[]>;
   /**
    * Checks an exact named entrypoint permission in trusted Tenant/Legal Entity scope.
    * Optional for compatibility with older adapters; runtimes must treat absence as unavailable.
@@ -374,47 +274,6 @@ export const toResourceAccessObjectId = (
 
 export const toTenantResourceAccessObjectId = (tenantId: string, resource: ResourceAccessTarget): string | undefined =>
   encodeObjectId([tenantId, resource.moduleId, resource.resourceType, resource.resourceId]);
-
-const businessTargetParts = (target: BusinessAccessTarget): readonly string[] => {
-  if (target.kind === 'retail_profile') {
-    return [target.tenantId, target.legalEntityId, target.kind, target.profileId];
-  }
-  if (target.kind === 'counterparty') {
-    return [target.tenantId, target.legalEntityId, target.kind, target.counterpartyId];
-  }
-  if (target.kind === 'counterparty_storefront') {
-    return [target.tenantId, target.legalEntityId, target.kind, target.counterpartyId, target.storefrontId];
-  }
-  if (target.kind === 'pricing_catalog') {
-    return [target.tenantId, target.kind, target.pricingCatalogId];
-  }
-  if (target.kind === 'price_group') {
-    return [target.tenantId, target.kind, target.pricingCatalogId, target.priceGroupId];
-  }
-  if (target.kind === 'tax_selling_legal_entity') {
-    return [target.tenantId, target.legalEntityId, target.kind];
-  }
-  return [
-    target.tenantId,
-    target.kind,
-    target.resource.moduleId,
-    target.resource.resourceType,
-    target.resource.resourceId,
-  ];
-};
-
-export const toBusinessPermissionAccessObjectId = (
-  permission: BusinessPermissionCode,
-  target: BusinessAccessTarget,
-): string | undefined =>
-  isBusinessPermissionTargetCompatible({ permission, target }) &&
-  hasCanonicalPricingAuthorizationTargetIds(target) &&
-  hasCanonicalInventoryAuthorizationTarget(target)
-    ? encodeObjectId([permission, ...businessTargetParts(target)])
-    : undefined;
-
-export const toBusinessPermissionAccessKey = ({ permission, target }: BusinessPermissionAccessTarget): string =>
-  [permission, ...businessTargetParts(target)].join(':');
 
 export const toContextPermissionAccessKey = ({ moduleId, permission }: ContextPermissionAccessTarget): string =>
   `${moduleId}:${permission}`;
@@ -545,75 +404,6 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
   };
 
   const service: ContextAccessService = {
-    businessPermissions: ({ principal, targets, trustedStorefrontId }) => {
-      const alternatives = targets.map((target) => {
-        const hasTrustedTenant = target.target.tenantId === principal.tenantId;
-        const hasCompatibleTarget =
-          isBusinessPermissionTargetCompatible(target) &&
-          hasCanonicalPricingAuthorizationTargetIds(target.target) &&
-          hasCanonicalInventoryAuthorizationTarget(target.target);
-        const hasTrustedStorefront =
-          target.target.kind !== 'counterparty_storefront' ||
-          (trustedStorefrontId !== undefined && trustedStorefrontId === target.target.storefrontId);
-        const requestedKey = toBusinessPermissionAccessKey(target);
-        if (!hasTrustedTenant || !hasCompatibleTarget || !hasTrustedStorefront) {
-          const noItems: readonly BatchItem[] = [];
-          return { items: noItems, requestedKey };
-        }
-        const exactItem: BatchItem = {
-          key: requestedKey,
-          permission: 'use',
-          resourceId: toBusinessPermissionAccessObjectId(target.permission, target.target) ?? '',
-          resourceType: 'business_permission',
-        };
-        if (target.target.kind !== 'counterparty_storefront') {
-          return { items: [exactItem], requestedKey };
-        }
-        const counterpartyTarget: BusinessPermissionAccessTarget = {
-          permission: target.permission,
-          target: {
-            counterpartyId: target.target.counterpartyId,
-            kind: 'counterparty',
-            legalEntityId: target.target.legalEntityId,
-            tenantId: target.target.tenantId,
-          },
-        };
-        const counterpartyKey = toBusinessPermissionAccessKey(counterpartyTarget);
-        return {
-          items: [
-            exactItem,
-            {
-              key: counterpartyKey,
-              permission: 'use',
-              resourceId:
-                toBusinessPermissionAccessObjectId(counterpartyTarget.permission, counterpartyTarget.target) ?? '',
-              resourceType: 'business_permission',
-            },
-          ],
-          requestedKey,
-        };
-      });
-      if (alternatives.some(({ items }) => items.length === 0)) {
-        return Effect.succeed(unavailable(alternatives.map(({ requestedKey }) => requestedKey)));
-      }
-      const batchItems = alternatives.flatMap(({ items: alternativeItems }) => alternativeItems);
-      const uniqueBatchItems = [...new Map(batchItems.map((item) => [item.key, item])).values()];
-      return checkBatch(uniqueBatchItems, principal.principalId).pipe(
-        Effect.map((results) => {
-          const resultsByKey = new Map(results.map((result) => [result.key, result]));
-          return alternatives.map(({ items: targetItems, requestedKey }) => {
-            const targetResults = resultsForBatchItems(targetItems, resultsByKey);
-            return {
-              decision:
-                targetResults.length === targetItems.length
-                  ? foldAlternativeDecisions(contextAccessDecisions(targetResults))
-                  : ('unavailable' as const),
-              key: requestedKey,
-            };
-          });
-        }),
-      );
-    },
     contextPermissions: ({ legalEntityId, principalId, targets, tenantId }) =>
       checkBatch(
         targets.map((target) => ({
@@ -661,19 +451,29 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
       const keys = targets.map(({ target }) => target.key);
       if (
         principal.principalId.length === 0 ||
-        targets.some(({ target }) => !isOwnerPermissionAccessTargetValid(target, scope)) ||
-        new Set(keys).size !== targets.length
+        targets.some(({ target }) => !isOwnerPermissionAccessTargetValid(target, scope))
       ) {
         return Effect.succeed(unavailable(keys));
       }
-      return checkBatch(
-        targets.map(({ target }): BatchItem => ({
-          key: target.key,
+      const alternatives = targets.map(({ target }) => ({
+        items: [target.objectId, ...(target.alternativeObjectIds ?? [])].map((objectId): BatchItem => ({
+          key: objectId,
           permission: 'use',
-          resourceId: target.objectId,
+          resourceId: objectId,
           resourceType: 'business_permission',
         })),
-        principal.principalId,
+        requestedKey: target.key,
+      }));
+      const batchItems = alternatives.flatMap(({ items }) => items);
+      const uniqueBatchItems = [...new Map(batchItems.map((item) => [item.key, item])).values()];
+      return checkBatch(uniqueBatchItems, principal.principalId).pipe(
+        Effect.map((results) => {
+          const resultsByKey = new Map(results.map((result) => [result.key, result]));
+          return alternatives.map(({ items, requestedKey }) => ({
+            decision: foldAlternativeDecisions(contextAccessDecisions(resultsForBatchItems(items, resultsByKey))),
+            key: requestedKey,
+          }));
+        }),
       );
     },
     resources: ({ legalEntityId, permission = 'read', principalId, resources, tenantId }) =>
@@ -712,7 +512,6 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
 
 const unavailableContextAccess = (): ContextAccessService => {
   const service: ContextAccessService = {
-    businessPermissions: ({ targets }) => Effect.succeed(unavailable(targets.map(toBusinessPermissionAccessKey))),
     contextPermissions: ({ targets }) => Effect.succeed(unavailable(targets.map(toContextPermissionAccessKey))),
     identityNamespaces: ({ authenticationNamespaceIds }) => Effect.succeed(unavailable(authenticationNamespaceIds)),
     legalEntities: ({ legalEntityIds }) => Effect.succeed(unavailable(legalEntityIds)),

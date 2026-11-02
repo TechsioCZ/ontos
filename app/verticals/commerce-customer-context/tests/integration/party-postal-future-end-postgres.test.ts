@@ -1,3 +1,4 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
 import { createHash, randomUUID } from 'node:crypto';
@@ -752,13 +753,17 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
               profileId,
               state: 'PENDING_GRANT',
             });
-            yield* business.mutate({ ...grant, operation: 'grant' });
+            yield* business.mutate({ ...grant, operation: 'grant', target: customerOwnerPermissionTarget(grant) });
             yield* transaction.invoke(finalizeBindingIntent, [intent.mutationId, 'grant', 'ACTIVE']);
           }),
         'required',
       )
       .pipe(Effect.provideContext(context));
-    yield* Effect.addFinalizer(() => business.mutate({ ...grant, operation: 'revoke' }).pipe(Effect.orDie));
+    yield* Effect.addFinalizer(() =>
+      business
+        .mutate({ ...grant, operation: 'revoke', target: customerOwnerPermissionTarget(grant) })
+        .pipe(Effect.orDie),
+    );
   }
   yield* fixture
     .prepareOwner(

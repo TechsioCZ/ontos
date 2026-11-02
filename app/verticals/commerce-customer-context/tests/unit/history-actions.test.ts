@@ -1,11 +1,12 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import {
-  getActionBusinessPermissionTargetResolver,
+  getActionOwnerPermissionTargetResolver,
   getActionHandler,
   getActionResourcePermissionTargetResolver,
-} from '../../../../packages/core-runtime/src/actions/definition.ts';
+} from '@app/core-runtime/testing/actions';
 import { repeatCounterpartyOrderAction } from '../../src/actions/repeat-counterparty-order.action.ts';
 import type { RepeatCounterpartyOrderPayload } from '../../src/actions/repeat-counterparty-order.action.ts';
 import { repeatRetailOrderAction } from '../../src/actions/repeat-retail-order.action.ts';
@@ -227,28 +228,33 @@ it('declares exact pre-handler business and Order resource permissions', () => {
     sourceOrderRef: orderRef,
     storefrontId: 'storefront-1',
   };
-  expect(getActionBusinessPermissionTargetResolver(repeatRetailOrderAction)?.(retailPayload, scope)).toMatchObject({
-    permission: 'retail.repeat_order',
-    target: { kind: 'retail_profile' },
-  });
-  expect(
-    getActionBusinessPermissionTargetResolver(repeatCounterpartyOrderAction)?.(counterpartyPayload, scope),
-  ).toEqual({
-    permission: 'counterparty.purchase.prepare',
-    target: {
-      counterpartyId: counterpartyRef.resourceId,
-      kind: 'counterparty_storefront',
-      legalEntityId,
-      storefrontId: 'storefront-1',
-      tenantId,
+  expect(getActionOwnerPermissionTargetResolver(repeatRetailOrderAction)?.(retailPayload, scope)).toMatchObject([
+    {
+      definition: { key: 'retail.repeat_order' },
+      target: { kind: 'retail_profile' },
     },
-  });
+  ]);
+  expect(getActionOwnerPermissionTargetResolver(repeatCounterpartyOrderAction)?.(counterpartyPayload, scope)).toEqual([
+    customerOwnerPermissionTarget(
+      {
+        permission: 'counterparty.purchase.prepare',
+        target: {
+          counterpartyId: counterpartyRef.resourceId,
+          kind: 'counterparty_storefront',
+          legalEntityId,
+          storefrontId: 'storefront-1',
+          tenantId,
+        },
+      },
+      'action',
+    ),
+  ]);
   expect(
-    getActionBusinessPermissionTargetResolver(repeatCounterpartyOrderAction)?.(counterpartyPayload, {
+    getActionOwnerPermissionTargetResolver(repeatCounterpartyOrderAction)?.(counterpartyPayload, {
       ...scope,
       trustedStorefrontId: 'gateway-storefront',
     }),
-  ).toMatchObject({ trustedStorefrontId: 'gateway-storefront' });
+  ).toMatchObject([{ requiredStorefrontId: 'storefront-1', target: { storefrontId: 'storefront-1' } }]);
   expect(getActionResourcePermissionTargetResolver(repeatRetailOrderAction)?.(retailPayload, scope)).toEqual({
     permission: 'read',
     resource: orderRef,

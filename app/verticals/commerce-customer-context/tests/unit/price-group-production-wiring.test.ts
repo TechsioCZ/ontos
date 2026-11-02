@@ -5,7 +5,11 @@ import {
   makeApplicationCompositionSnapshotFixture,
   makeModuleContractFixture,
 } from '@app/core-runtime/testing/module-contract';
-import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import {
+  bindActionTestServices,
+  makeActionTestHarness,
+  getActionServiceFactory,
+} from '@app/core-runtime/testing/actions';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { CustomerPriceGroupCatalogUnavailable } from '../../shared/domain/price-group-errors.ts';
 import {
@@ -21,8 +25,7 @@ import type { OperationalScope } from '@app/core-runtime';
 import { Effect, Layer, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';
-import { getReadServiceFactory } from '../../../../packages/core-runtime/src/reads/definition.ts';
+import { getReadServiceFactory } from '@app/core-runtime/testing/reads';
 
 import { PriceGroupCatalogGatewayCredentialService } from '../../shared/domain/price-group-catalog-gateway-credential.ts';
 import { assignCounterpartyPriceGroupAction } from '../../src/actions/assign-counterparty-price-group.action.ts';

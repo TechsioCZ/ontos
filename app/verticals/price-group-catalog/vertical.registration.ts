@@ -4,6 +4,7 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { priceGroupCatalogManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
+import { priceGroupDefinitionRead } from './src/api/price-group-definition.read.ts';
 import { createPriceGroupAction } from './src/actions/create-price-group.action.ts';
 import { createPriceGroupDefinitionRevisionAction } from './src/actions/create-price-group-definition-revision.action.ts';
 import { reconcilePriceGroupContainmentProjectionWorker } from './src/workers/reconcile-price-group-containment-projection.worker.ts';
@@ -51,6 +52,7 @@ export const priceGroupCatalogRegistration = defineVerticalRuntimeRegistration({
   ],
   reads: [
     // <generated-module-registration-reads>
+    priceGroupDefinitionRead,
     validatePriceGroupCompatibilityRead,
     // </generated-module-registration-reads>
   ],

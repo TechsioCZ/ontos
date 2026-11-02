@@ -144,27 +144,27 @@ it.layer(NodeCrypto.layer)('purchase resolution conditional authority', (suite) 
         Effect.gen(function* reachesOwnerBoundary() {
           const calls: string[] = [];
           const harness = yield* makeReadTestHarness({
-            businessPermissionDecision: (target) => {
+            compositionRevision,
+            executeOwnerQuery: () => Effect.die('Unexpected owner SQL before missing Current evidence'),
+            operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-19T10:00:00.000Z')),
+            ownerAuthorizationDecision: 'allowed',
+            ownerPermissionDecision: (target) => {
               calls.push('business');
               if (input.subject.kind === 'PROFILE') {
                 expect(target).toMatchObject(
                   input.subject.profile.kind === 'COUNTERPARTY'
                     ? {
-                        permission: 'counterparty.address_book.use',
+                        definition: { key: 'counterparty.address_book.use' },
                         target: { counterpartyId, kind: 'counterparty', legalEntityId, tenantId },
                       }
                     : {
-                        permission: 'retail.address_book.use',
+                        definition: { key: 'retail.address_book.use' },
                         target: { kind: 'retail_profile', legalEntityId, profileId, tenantId },
                       },
                 );
               }
               return 'allowed';
             },
-            compositionRevision,
-            executeOwnerQuery: () => Effect.die('Unexpected owner SQL before missing Current evidence'),
-            operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-19T10:00:00.000Z')),
-            ownerAuthorizationDecision: 'allowed',
             ownerRegistration: commerceCustomerContextRegistration,
             permissionDecision: 'allowed',
             scope,
@@ -230,11 +230,11 @@ it.layer(NodeCrypto.layer)('purchase resolution conditional authority', (suite) 
       suite.effect(`${read.name} fails closed when the business requirement is ${decision}`, () =>
         Effect.gen(function* businessConjunction() {
           const harness = yield* makeReadTestHarness({
-            businessPermissionDecision: () => decision,
             compositionRevision,
             executeOwnerQuery: () => Effect.die('Denied business plan must not read owner SQL'),
             operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-19T10:00:00.000Z')),
             ownerAuthorizationDecision: 'allowed',
+            ownerPermissionDecision: () => decision,
             ownerRegistration: commerceCustomerContextRegistration,
             permissionDecision: 'allowed',
             scope,

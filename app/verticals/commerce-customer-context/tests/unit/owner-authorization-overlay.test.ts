@@ -1,3 +1,7 @@
+import { createOwnerPermissionAccessTarget, defineBusinessPermission } from '@app/core-runtime';
+import type { CustomerPermissionRequest } from '../../src/permissions/authorization.ts';
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
+import { counterpartyAccessManagePermission } from '../../shared/permissions/counterparty-access-manage.ts';
 /* eslint-disable anti-slop/no-chained-type-assertions, typescript/no-unsafe-type-assertion -- The test harness decodes fixture rows through each owner routine schema before exposing Core's private branded transaction capability; expires: 2027-03-31. */
 import type { OwnerAuthorizationInput, ScopedRoutineDefinition, ScopedTransactionExecutor } from '@app/core-runtime';
 import { DateTime, Deferred, Effect, Fiber, Schema } from 'effect';
@@ -87,7 +91,7 @@ const readerFactory: ProfileRetailPermissionReaderFactoryService = {
 };
 
 const input = (
-  target: Extract<OwnerAuthorizationInput['targets'][number], { readonly kind: 'business_permission' }>,
+  target: Extract<OwnerAuthorizationInput['targets'][number], { readonly kind: 'owner_permission' }>,
 ): OwnerAuthorizationInput => ({
   operation: 'action',
   operationAt,
@@ -99,30 +103,23 @@ const input = (
 
 const counterpartyTarget = (
   storefrontId?: string,
-): Extract<OwnerAuthorizationInput['targets'][number], { readonly kind: 'business_permission' }> =>
-  storefrontId === undefined
-    ? {
-        kind: 'business_permission',
-        permission: 'counterparty.access.manage',
-        target: {
-          counterpartyId,
-          kind: 'counterparty',
-          legalEntityId,
-          tenantId,
-        },
-      }
-    : {
-        kind: 'business_permission',
-        permission: 'counterparty.access.manage',
-        target: {
-          counterpartyId,
-          kind: 'counterparty_storefront',
-          legalEntityId,
-          storefrontId,
-          tenantId,
-        },
-        trustedStorefrontId: storefrontId,
-      };
+): Extract<OwnerAuthorizationInput['targets'][number], { readonly kind: 'owner_permission' }> => {
+  const request: CustomerPermissionRequest = {
+    permission: 'counterparty.access.manage',
+    target:
+      storefrontId === undefined
+        ? { counterpartyId, kind: 'counterparty', legalEntityId, tenantId }
+        : { counterpartyId, kind: 'counterparty_storefront', legalEntityId, storefrontId, tenantId },
+  };
+  if (storefrontId === undefined) {
+    return { kind: 'owner_permission', target: customerOwnerPermissionTarget(request) };
+  }
+  return {
+    kind: 'owner_permission',
+    target: customerOwnerPermissionTarget({ ...request, trustedStorefrontId: storefrontId }),
+    trustedStorefrontId: storefrontId,
+  };
+};
 
 it.effect('denies a stale Core tuple when the owner row is pending revoke', () =>
   Effect.gen(function* ownerPendingRevoke() {
@@ -179,27 +176,33 @@ it.effect('rejects Pricing business targets before entering Counterparty persist
       operationKey: 'pricing.price-group.read',
       owningModuleKey: 'commerce.customer-context',
       scope,
-      targets: [
-        {
-          kind: 'business_permission',
-          permission: 'pricing.price_group.read',
-          target: {
-            kind: 'pricing_catalog',
-            pricingCatalogId: 'catalog-one',
-            tenantId,
-          },
-        },
-        {
-          kind: 'business_permission',
-          permission: 'pricing.price_group.read',
-          target: {
-            kind: 'price_group',
-            priceGroupId: 'price-group-one',
-            pricingCatalogId: 'catalog-one',
-            tenantId,
-          },
-        },
-      ],
+      targets: ['pricing_catalog', 'price_group'].map((scopeKind) => {
+        const definition = defineBusinessPermission({
+          ...counterpartyAccessManagePermission,
+          allowedScopeKinds: ['pricing_catalog', 'price_group'],
+          key: 'pricing.price_group.read',
+          owningCapability: 'pricing.price-group-catalog',
+        });
+        const contract = Object.freeze({
+          owningModuleKey: 'pricing.price-group-catalog',
+          permissions: [definition],
+          schemaVersion: '1' as const,
+          targetResourceType: 'business_permission',
+        });
+        return {
+          kind: 'owner_permission' as const,
+          target: createOwnerPermissionAccessTarget(contract, {
+            definition,
+            key: `pricing.price_group.read:${scopeKind}`,
+            objectId: `pricing-${scopeKind}`,
+            scope: { kind: 'tenant', tenantId },
+            scopeKind,
+            target: { kind: scopeKind, pricingCatalogId: 'catalog-one', tenantId },
+            transportModuleKey: 'pricing.price-group-catalog',
+            transportObjectId: 'catalog-one',
+          }),
+        };
+      }),
     });
 
     expect(decision).toBe('unavailable');

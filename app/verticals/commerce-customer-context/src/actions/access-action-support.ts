@@ -1,5 +1,5 @@
+import type { CustomerPermissionRequest } from '../permissions/authorization.ts';
 import type {
-  ActionBusinessPermissionTarget,
   ActionHandlerContext,
   DomainEventContractMap,
   OperationalScope,
@@ -112,7 +112,7 @@ export const accessManagementPermissionTarget = (
     readonly scope: CounterpartyPermissionScope;
   },
   operationalScope: OperationalScope,
-): ActionBusinessPermissionTarget => {
+): CustomerPermissionRequest => {
   if (payload.scope.kind === 'counterparty') {
     return {
       permission: 'counterparty.access.manage',
@@ -124,7 +124,7 @@ export const accessManagementPermissionTarget = (
       },
     };
   }
-  const target: ActionBusinessPermissionTarget = {
+  const target: CustomerPermissionRequest = {
     permission: 'counterparty.access.manage',
     target: {
       counterpartyId: payload.counterpartyRef.resourceId,

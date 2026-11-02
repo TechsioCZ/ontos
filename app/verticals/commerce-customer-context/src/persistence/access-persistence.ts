@@ -1,7 +1,8 @@
+import { customerOwnerPermissionTarget, customerPermissionKey } from '../permissions/authorization.ts';
+import type { CustomerPermissionTarget } from '../permissions/authorization.ts';
 import {
   AuthorizationMutationReconciliationUnavailable,
   BusinessPermissionCodeSchema,
-  toBusinessPermissionAccessKey,
   AuthorizationMutationSagaError,
   ContextAccess,
   defineScopedRoutine,
@@ -11,7 +12,6 @@ import {
 import type {
   AuthorizationMutationJournalEntry,
   AuthorizationMutationReconcilerService,
-  BusinessAccessTarget,
   BusinessPermissionRelationshipMutationService,
   ContextAccessService,
   OperationalScope,
@@ -537,7 +537,7 @@ const businessTarget = (
   scope: Readonly<{ readonly legalEntityId: string; readonly tenantId: string }>,
   counterpartyId: string,
   permissionScope: CounterpartyPermissionScope,
-): BusinessAccessTarget =>
+): CustomerPermissionTarget =>
   permissionScope.kind === 'counterparty'
     ? {
         counterpartyId,
@@ -742,7 +742,7 @@ const requireEligible = Effect.fn('AccessPersistence.requireEligible')(function*
 
 export interface CounterpartyAccessPersistenceContext {
   readonly claimAuthority: CounterpartyInvitationClaimAuthorityService;
-  readonly contextAccess: Pick<ContextAccessService, 'businessPermissions'>;
+  readonly contextAccess: Pick<ContextAccessService, 'ownerPermissions'>;
   /** Current owner state is conjunctive with Core authorization for protected checks. */
   readonly currentOwnerAccess?: CurrentOwnerAccessDecisionReader;
   readonly eligibility: PrincipalEligibilityService;
@@ -804,17 +804,23 @@ const requireCurrentInviterAuthority = (
   counterpartyRef: CounterpartyRef,
   permissionScope: CounterpartyPermissionScope,
 ): Effect.Effect<void, CounterpartyAccessDomainError> => {
-  const check = dependencies.contextAccess.businessPermissions;
+  const check = dependencies.contextAccess.ownerPermissions;
   if (check === undefined || !isTrustedPermissionScope(dependencies, permissionScope)) {
     return Effect.fail(accessUnavailable());
   }
   const verifyCoreAuthority = Effect.gen(function* recheckInviterAuthority() {
     const [result] = yield* check({
+      legalEntityId: dependencies.scope.legalEntityId,
       principal: inviter,
       targets: [
         {
-          permission: accessManagementPermission,
-          target: businessTarget(dependencies.scope, counterpartyRef.resourceId, permissionScope),
+          target: customerOwnerPermissionTarget({
+            permission: accessManagementPermission,
+            target: businessTarget(dependencies.scope, counterpartyRef.resourceId, permissionScope),
+            ...(dependencies.trustedStorefrontId === undefined
+              ? {}
+              : { trustedStorefrontId: dependencies.trustedStorefrontId }),
+          }),
         },
       ],
       ...(permissionScope.kind === 'storefront' && dependencies.trustedStorefrontId !== undefined
@@ -1221,7 +1227,7 @@ export const readEnrollmentInvitationClaimCurrent = Effect.fn('AccessPersistence
       row.claimed_by_principal_id !== input.principalId ||
       row.state !== 'CLAIMED' ||
       (input.expectedAttestation !== undefined && input.expectedAttestation !== row.attestation_reference) ||
-      contextAccess?.businessPermissions === undefined
+      contextAccess?.ownerPermissions === undefined
     ) {
       return Option.some({ ...accepted, current: false });
     }
@@ -1254,10 +1260,16 @@ export const readEnrollmentInvitationClaimCurrent = Effect.fn('AccessPersistence
         ),
       { concurrency: 1 },
     );
-    const expectedKeys = targets.map(toBusinessPermissionAccessKey);
-    const decisions = yield* contextAccess.businessPermissions({
+    const expectedKeys = targets.map(customerPermissionKey);
+    const decisions = yield* contextAccess.ownerPermissions({
+      legalEntityId: scope.legalEntityId,
       principal,
-      targets,
+      targets: targets.map((requested) => ({
+        target: customerOwnerPermissionTarget({
+          ...requested,
+          ...(invitation.scope.kind === 'storefront' ? { trustedStorefrontId: invitation.scope.storefrontKey } : {}),
+        }),
+      })),
       // This owner recovery read is bounded by the original accepted invitation scope, like its worker.
       ...(invitation.scope.kind === 'storefront' ? { trustedStorefrontId: invitation.scope.storefrontKey } : {}),
     });
@@ -1495,15 +1507,26 @@ export const counterpartyAccessPortForTransaction = (
           principalRefs: [input.principal],
         }) ||
         !isTrustedPermissionScope(dependencies, input.scope) ||
-        dependencies.contextAccess.businessPermissions === undefined
+        dependencies.contextAccess.ownerPermissions === undefined
       ) {
         return Effect.succeed('UNAVAILABLE' as const);
       }
       const target = businessTarget(dependencies.scope, input.counterpartyRef.resourceId, input.scope);
       const checkCore = dependencies.contextAccess
-        .businessPermissions({
+        .ownerPermissions({
+          legalEntityId: dependencies.scope.legalEntityId,
           principal: input.principal,
-          targets: [{ permission: input.permission, target }],
+          targets: [
+            {
+              target: customerOwnerPermissionTarget({
+                permission: input.permission,
+                target,
+                ...(dependencies.trustedStorefrontId === undefined
+                  ? {}
+                  : { trustedStorefrontId: dependencies.trustedStorefrontId }),
+              }),
+            },
+          ],
           ...(input.scope.kind === 'storefront' && dependencies.trustedStorefrontId !== undefined
             ? { trustedStorefrontId: dependencies.trustedStorefrontId }
             : {}),
@@ -1754,7 +1777,7 @@ export const counterpartyAccessPortForScopedTransaction = Effect.fn(
 const reconciliationEntry = (
   dependencies: AccessAuthorizationReconciliationContext,
   row: typeof ReconciliationRowSchema.Type,
-): AuthorizationMutationJournalEntry => {
+): AuthorizationMutationJournalEntry<CustomerPermissionTarget> => {
   const permissionScope: CounterpartyPermissionScope =
     row.storefront_resource_id === null
       ? { kind: 'counterparty' }
@@ -1782,24 +1805,36 @@ const reconcileAccessEntry = (
   row: typeof ReconciliationRowSchema.Type,
 ) => {
   const entry = reconciliationEntry(dependencies, row);
-  return reconcileCommittedAuthorizationMutation(entry, mutation, {
-    finalize: ({ mutationId, to }) =>
-      transitionGrant(dependencies, row.grant_id, mutationId, row.recovery_operation, to).pipe(
-        Effect.map((completed) => ({ ...entry, state: completed.state })),
-        Effect.mapError((cause) =>
-          Object.defineProperty(
-            new AuthorizationMutationSagaError({
-              code: 'authorization_mutation_finalization_indeterminate',
-              externalMutationMayHaveSucceeded: true,
-              reason: 'The access grant finalization remains indeterminate',
-              retryable: true,
-            }),
-            'cause',
-            { enumerable: false, value: cause },
+  return reconcileCommittedAuthorizationMutation(
+    entry,
+    mutation,
+    {
+      finalize: ({ mutationId, to }) =>
+        transitionGrant(dependencies, row.grant_id, mutationId, row.recovery_operation, to).pipe(
+          Effect.map((completed) => ({ ...entry, state: completed.state })),
+          Effect.mapError((cause) =>
+            Object.defineProperty(
+              new AuthorizationMutationSagaError({
+                code: 'authorization_mutation_finalization_indeterminate',
+                externalMutationMayHaveSucceeded: true,
+                reason: 'The access grant finalization remains indeterminate',
+                retryable: true,
+              }),
+              'cause',
+              { enumerable: false, value: cause },
+            ),
           ),
         ),
-      ),
-  });
+    },
+    (current) =>
+      customerOwnerPermissionTarget({
+        permission: current.permission,
+        target: current.businessTarget,
+        ...(current.businessTarget.kind === 'counterparty_storefront'
+          ? { trustedStorefrontId: current.businessTarget.storefrontId }
+          : {}),
+      }),
+  );
 };
 
 const reconcileAccessRow = (
@@ -2026,7 +2061,7 @@ const claimRootMatchesRequest = (root: DurableClaimRoot, request: DurableClaimRe
   claimRootRequestScopeMatches(root, request);
 
 const claimInviterAuthorityDecision = (
-  contextAccess: Pick<ContextAccessService, 'businessPermissions'>,
+  contextAccess: Pick<ContextAccessService, 'ownerPermissions'>,
   scope: OutboxWorkerLegalEntityScope,
   root: typeof InvitationClaimReconciliationRowSchema.Type,
   ownerAccessReader?: typeof currentOwnerAccessForTransaction,
@@ -2036,16 +2071,20 @@ const claimInviterAuthorityDecision = (
       ? { kind: 'counterparty' }
       : { kind: 'storefront', storefrontKey: root.storefront_resource_id };
   const verifyCoreAuthority = () => {
-    if (contextAccess.businessPermissions === undefined) {
+    if (contextAccess.ownerPermissions === undefined) {
       return Effect.succeed('unavailable' as const);
     }
     return contextAccess
-      .businessPermissions({
+      .ownerPermissions({
+        legalEntityId: scope.legalEntityId,
         principal: { principalId: root.invited_by, tenantId: scope.tenantId },
         targets: [
           {
-            permission: accessManagementPermission,
-            target: businessTarget(scope, root.counterparty_resource_id, permissionScope),
+            target: customerOwnerPermissionTarget({
+              permission: accessManagementPermission,
+              target: businessTarget(scope, root.counterparty_resource_id, permissionScope),
+              ...(root.storefront_resource_id === null ? {} : { trustedStorefrontId: root.storefront_resource_id }),
+            }),
           },
         ],
         ...(root.storefront_resource_id === null ? {} : { trustedStorefrontId: root.storefront_resource_id }),
@@ -2314,7 +2353,7 @@ const reconcileDurableClaim = Effect.fn('AccessPersistence.reconcileDurableClaim
     scope: OutboxWorkerLegalEntityScope,
     request: DurableClaimRequest,
     root: DurableClaimRoot,
-    contextAccess: Pick<ContextAccessService, 'businessPermissions'>,
+    contextAccess: Pick<ContextAccessService, 'ownerPermissions'>,
     mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
     ownerAccessReader?: typeof currentOwnerAccessForTransaction,
   ) {
@@ -2341,7 +2380,7 @@ const reconcileDurableClaim = Effect.fn('AccessPersistence.reconcileDurableClaim
 const reconcileInvitationClaimForWorker = (
   scope: OutboxWorkerLegalEntityScope,
   request: Extract<AccessAuthorizationMutationRequest, { readonly operation: 'claim' }>,
-  contextAccess: Pick<ContextAccessService, 'businessPermissions'>,
+  contextAccess: Pick<ContextAccessService, 'ownerPermissions'>,
   mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
   ownerAccessReader?: typeof currentOwnerAccessForTransaction,
 ) =>
@@ -2363,7 +2402,7 @@ const reconcileInvitationClaimForWorker = (
 
 /** Production worker adapter. Every target fact is loaded from owner routines before mutation. */
 export const accessAuthorizationMutationReconciliationForWorker = (
-  contextAccess: Pick<ContextAccessService, 'businessPermissions'>,
+  contextAccess: Pick<ContextAccessService, 'ownerPermissions'>,
   mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
   ownerAccessReader?: typeof currentOwnerAccessForTransaction,
 ): AccessAuthorizationMutationReconciliationService => {

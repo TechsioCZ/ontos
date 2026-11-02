@@ -1,3 +1,4 @@
+import { customerPermissionObjectId } from '../../src/permissions/authorization.ts';
 import { randomUUID } from 'node:crypto';
 
 import { v1 } from '@authzed/authzed-node';
@@ -18,8 +19,6 @@ import { acquireFixturePgClient } from './fixture-pg-client.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import {
   ContextAccess,
-  toBusinessPermissionAccessKey,
-  toBusinessPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
 } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
@@ -239,11 +238,14 @@ const spiceDbSpecsFor = (
     'the Commerce module',
   );
   const administrationObjectId = requireObjectId(
-    toBusinessPermissionAccessObjectId(ACCESS_MANAGEMENT_PERMISSION, {
-      counterpartyId: realm.counterpartyResourceId,
-      kind: 'counterparty',
-      legalEntityId: realm.legalEntityId,
-      tenantId: realm.tenantId,
+    customerPermissionObjectId({
+      permission: ACCESS_MANAGEMENT_PERMISSION,
+      target: {
+        counterpartyId: realm.counterpartyResourceId,
+        kind: 'counterparty',
+        legalEntityId: realm.legalEntityId,
+        tenantId: realm.tenantId,
+      },
     }),
     'the Counterparty administration permission',
   );
@@ -343,10 +345,10 @@ const eligiblePrincipals: PrincipalEligibilityService = {
 /** Context authorization is granted wholesale for issuance; the claim reads the real SpiceDB. */
 const allowed = (keys: readonly string[]) => Effect.succeed(keys.map((key) => ({ decision: 'allowed' as const, key })));
 const openContextAccess: ContextAccessService = {
-  businessPermissions: ({ targets }) => allowed(targets.map(toBusinessPermissionAccessKey)),
   identityNamespaces: ({ authenticationNamespaceIds }) => allowed(authenticationNamespaceIds),
   legalEntities: ({ legalEntityIds }) => allowed(legalEntityIds),
   modules: ({ moduleIds }) => allowed(moduleIds),
+  ownerPermissions: ({ targets }) => allowed(targets.map(({ target }) => target.key)),
   resources: ({ resources }) =>
     allowed(resources.map(({ moduleId, resourceId, resourceType }) => `${moduleId}:${resourceType}:${resourceId}`)),
   tenants: ({ tenantIds }) => allowed(tenantIds),

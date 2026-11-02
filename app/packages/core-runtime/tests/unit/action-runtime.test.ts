@@ -1,3 +1,5 @@
+import { historicalOwnerContract, historicalOwnerTarget } from '../support/historical-owner-targets.ts';
+import type { OperationalScope } from '../../src/operations/context.ts';
 import { remainingPermissionBaselines } from './owner-permission-baseline.ts';
 import {
   fixtureOwnerContract,
@@ -35,7 +37,6 @@ import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
 import {
   defineAction,
   defineActionOwnerPermissions,
-  defineActionBusinessPermission,
   defineActionResourcePermission,
   getActionHandler,
 } from '../../src/actions/definition.ts';
@@ -91,10 +92,22 @@ import {
 import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../../src/modules/module-state-gate.ts';
 import type { TenantModuleState } from '../../src/modules/tenant-module-state-service.ts';
 import type { ActionPermissionDecision, CheckActionPermissionInput } from '../../src/permissions/service.ts';
-import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
-import { toBusinessPermissionAccessKey } from '../../src/permissions/context-access.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestDatabase } from '../support/database.ts';
+
+const historicalActionPermissions = <Payload>(
+  permission: string,
+  resolver: (
+    payload: Payload,
+    scope: OperationalScope,
+  ) => Readonly<{ readonly permission: string; readonly target: object }>,
+) =>
+  defineActionOwnerPermissions(historicalOwnerContract(permission), (payload: Payload, scope) => {
+    const resolved = resolver(payload, scope);
+    return [historicalOwnerTarget(resolved.permission, resolved.target)];
+  });
+
+const FixturePermissionCodeSchema = Schema.String;
 
 const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   authBindingId: '00000000-0000-4000-8000-000000000004',
@@ -208,6 +221,12 @@ const historicalFixtureOwner = (moduleId: string) => {
   });
   return defineVerticalRuntimeRegistration({ actions: [], manifest, outboxWorkers: [] });
 };
+
+interface HistoricalPermissionCheckObservation {
+  readonly principal: { readonly principalId: string; readonly tenantId: string };
+  readonly targets: readonly { readonly permission: string; readonly target: object }[];
+  trustedStorefrontId?: string;
+}
 
 const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}) {
   const finalized: FinalizeActionPolicyDenialInput[] = [];
@@ -530,16 +549,6 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         };
   let runtimeOptions: ActionRuntimeOptions = {
     contextAccess: {
-      businessPermissions: (input) => {
-        options.onBusinessPermissionCheck?.();
-        businessPermissionChecks.push(input);
-        return Effect.succeed(
-          input.targets.map((target) => ({
-            decision: options.businessPermissionDecision ?? ('allowed' as const),
-            key: toBusinessPermissionAccessKey(target),
-          })),
-        );
-      },
       legalEntities: (input) => {
         legalEntityChecks.push(input);
         return Effect.succeed(
@@ -551,6 +560,23 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       },
       modules: () => Effect.succeed([]),
       ownerPermissions: (input) => {
+        if (input.targets.every(({ target }) => target.contract.targetResourceType === 'historical_owner_permission')) {
+          options.onBusinessPermissionCheck?.();
+          const projected: HistoricalPermissionCheckObservation = {
+            principal: input.principal,
+            targets: input.targets.map(({ target }) => ({ permission: target.definition.key, target: target.target })),
+          };
+          if (input.trustedStorefrontId !== undefined) {
+            projected.trustedStorefrontId = input.trustedStorefrontId;
+          }
+          businessPermissionChecks.push(projected);
+          return Effect.succeed(
+            input.targets.map(({ target }) => ({
+              decision: options.businessPermissionDecision ?? ('allowed' as const),
+              key: target.key,
+            })),
+          );
+        }
         ownerPermissionChecks.push(...input.targets);
         ownerPermissionInputs.push(input);
         options.onOwnerPermissionCheck?.(input.targets);
@@ -2054,7 +2080,7 @@ it.effect(
     const observed: string[] = [];
     let handlerCalls = 0;
     let policyCalls = 0;
-    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(
+    const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)(
       'retail.settings.payment_term_preference.manage',
     );
     const action = defineAction(
@@ -2065,17 +2091,6 @@ it.effect(
         },
         actionKey: 'commerce.customer-context.change-payment-term',
         auditProfile: 'sensitive',
-        businessPermission: defineActionBusinessPermission<{ readonly profileId: RetailProfileId }>(
-          ({ profileId }, scope) => ({
-            permission,
-            target: {
-              kind: 'retail_profile',
-              legalEntityId: scope.legalEntityId ?? '',
-              profileId,
-              tenantId: scope.tenantId,
-            },
-          }),
-        ),
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
@@ -2090,6 +2105,18 @@ it.effect(
         }),
         idempotency: 'required',
         legalEntityScope: 'required',
+        ownerPermissions: historicalActionPermissions<{ readonly profileId: RetailProfileId }>(
+          permission,
+          ({ profileId }, scope) => ({
+            permission,
+            target: {
+              kind: 'retail_profile',
+              legalEntityId: scope.legalEntityId ?? '',
+              profileId,
+              tenantId: scope.tenantId,
+            },
+          }),
+        ),
         owningModuleKey: 'commerce.customer-context',
         payloadSchema: Schema.Struct({ profileId: RetailProfileIdSchema }),
         policies: [
@@ -2183,7 +2210,7 @@ it.effect(
 it.effect(
   'enforces tenant-only Price Group targets and persists their canonical authorization evidence',
   Effect.fn(function* testPriceGroupBusinessPermission() {
-    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');
+    const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)('pricing.price_group.read');
     const PriceGroupIdSchema = Schema.String.pipe(Schema.brand('PriceGroupId'));
     const PricingCatalogIdSchema = Schema.String.pipe(Schema.brand('PricingCatalogId'));
     const TargetTenantIdSchema = Schema.String.pipe(Schema.brand('TargetTenantId'));
@@ -2201,15 +2228,6 @@ it.effect(
         },
         actionKey: 'pricing.price-group.inspect',
         auditProfile: 'sensitive',
-        businessPermission: defineActionBusinessPermission<typeof InputSchema.Type>((payload) => ({
-          permission,
-          target: {
-            kind: 'price_group',
-            priceGroupId: payload.priceGroupId,
-            pricingCatalogId: payload.pricingCatalogId,
-            tenantId: payload.targetTenantId,
-          },
-        })),
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
@@ -2224,6 +2242,15 @@ it.effect(
         }),
         idempotency: 'required',
         legalEntityScope: 'forbidden',
+        ownerPermissions: historicalActionPermissions<typeof InputSchema.Type>(permission, (payload) => ({
+          permission,
+          target: {
+            kind: 'price_group',
+            priceGroupId: payload.priceGroupId,
+            pricingCatalogId: payload.pricingCatalogId,
+            tenantId: payload.targetTenantId,
+          },
+        })),
         owningModuleKey: 'pricing.price-group-catalog',
         payloadSchema: InputSchema,
         policies: [],
@@ -2323,7 +2350,7 @@ it.effect(
 it.effect(
   'enforces exact tenant-qualified Inventory Resource permissions and preserves the durable ResourceRef in evidence',
   Effect.fn(function* testInventoryResourceBusinessPermission() {
-    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('inventory.stock.correct');
+    const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)('inventory.stock.correct');
     const InventoryResourceIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('InventoryResourceId'));
     const TargetTenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('InventoryTargetTenantId'));
     const InputSchema = Schema.Struct({
@@ -2339,18 +2366,6 @@ it.effect(
         },
         actionKey: 'commerce.inventory.correct-stock-position',
         auditProfile: 'sensitive',
-        businessPermission: defineActionBusinessPermission<typeof InputSchema.Type>((payload) => ({
-          permission,
-          target: {
-            kind: 'inventory_resource',
-            resource: {
-              moduleId: 'commerce.inventory',
-              resourceId: payload.resourceId,
-              resourceType: 'commerce.inventory.stock-position',
-            },
-            tenantId: payload.targetTenantId,
-          },
-        })),
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
@@ -2362,6 +2377,18 @@ it.effect(
         }),
         idempotency: 'required',
         legalEntityScope: 'optional',
+        ownerPermissions: historicalActionPermissions<typeof InputSchema.Type>(permission, (payload) => ({
+          permission,
+          target: {
+            kind: 'inventory_resource',
+            resource: {
+              moduleId: 'commerce.inventory',
+              resourceId: payload.resourceId,
+              resourceType: 'commerce.inventory.stock-position',
+            },
+            tenantId: payload.targetTenantId,
+          },
+        })),
         owningModuleKey: 'commerce.inventory',
         payloadSchema: InputSchema,
         policies: [],
@@ -2430,7 +2457,7 @@ it.effect(
 it.effect(
   'enforces TAX management only on the exact trusted Selling Legal Entity and never on another seller',
   Effect.fn(function* testTaxSellingLegalEntityBusinessPermission() {
-    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('tax.rule.manage');
+    const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)('tax.rule.manage');
     const SellerIdSchema = Schema.String.pipe(Schema.brand('TaxSellerLegalEntityId'));
     const InputSchema = Schema.Struct({ sellerLegalEntityId: SellerIdSchema });
     let handlerCalls = 0;
@@ -2442,14 +2469,6 @@ it.effect(
         },
         actionKey: 'commerce.tax.create-tax-rule',
         auditProfile: 'sensitive',
-        businessPermission: defineActionBusinessPermission<typeof InputSchema.Type>((payload, scope) => ({
-          permission,
-          target: {
-            kind: 'tax_selling_legal_entity',
-            legalEntityId: payload.sellerLegalEntityId,
-            tenantId: scope.tenantId,
-          },
-        })),
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
@@ -2461,6 +2480,14 @@ it.effect(
         }),
         idempotency: 'required',
         legalEntityScope: 'required',
+        ownerPermissions: historicalActionPermissions<typeof InputSchema.Type>(permission, (payload, scope) => ({
+          permission,
+          target: {
+            kind: 'tax_selling_legal_entity',
+            legalEntityId: payload.sellerLegalEntityId,
+            tenantId: scope.tenantId,
+          },
+        })),
         owningModuleKey: 'commerce.tax',
         payloadSchema: InputSchema,
         policies: [],
@@ -2524,7 +2551,7 @@ it.effect(
 it.effect(
   'rejects a Pricing permission resolved onto a Counterparty target before checks, persistence, or handler code',
   Effect.fn(function* rejectMismatchedBusinessPermissionTarget() {
-    const pricingPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');
+    const pricingPermission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)('pricing.price_group.read');
     const MismatchedTargetPayloadSchema = Schema.Struct({ counterpartyId: CounterpartyIdSchema });
     let handlerCalls = 0;
     const action = defineAction(
@@ -2535,15 +2562,6 @@ it.effect(
         },
         actionKey: 'pricing.price-group.mismatched-target',
         auditProfile: 'sensitive',
-        businessPermission: defineActionBusinessPermission<typeof MismatchedTargetPayloadSchema.Type>((payload) => ({
-          permission: pricingPermission,
-          target: {
-            counterpartyId: payload.counterpartyId,
-            kind: 'counterparty',
-            legalEntityId: principalLegalEntityId,
-            tenantId: principal.tenantId,
-          },
-        })),
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
@@ -2555,6 +2573,18 @@ it.effect(
         }),
         idempotency: 'required',
         legalEntityScope: 'required',
+        ownerPermissions: historicalActionPermissions<typeof MismatchedTargetPayloadSchema.Type>(
+          pricingPermission,
+          (payload) => ({
+            permission: pricingPermission,
+            target: {
+              counterpartyId: payload.counterpartyId,
+              kind: 'counterparty',
+              legalEntityId: principalLegalEntityId,
+              tenantId: principal.tenantId,
+            },
+          }),
+        ),
         owningModuleKey: 'pricing.price-group-catalog',
         payloadSchema: MismatchedTargetPayloadSchema,
         policies: [],
@@ -2587,7 +2617,7 @@ it.effect(
 it.effect(
   'accepts Storefront business targets only from exact gateway-verified scope',
   Effect.fn(function* testTrustedStorefrontBusinessPermission() {
-    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('counterparty.purchase.submit');
+    const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)('counterparty.purchase.submit');
     const StorefrontIdSchema = Schema.String.pipe(Schema.brand('StorefrontId'));
     let handlerCalls = 0;
     const action = defineAction(
@@ -2598,21 +2628,6 @@ it.effect(
         },
         actionKey: 'commerce.customer-context.storefront-command',
         auditProfile: 'sensitive',
-        businessPermission: defineActionBusinessPermission<{
-          readonly counterpartyId: CounterpartyId;
-          readonly storefrontId: string;
-        }>(({ counterpartyId, storefrontId }, scope) => ({
-          permission,
-          target: {
-            counterpartyId,
-            kind: 'counterparty_storefront',
-            legalEntityId: scope.legalEntityId ?? '',
-            storefrontId,
-            tenantId: scope.tenantId,
-          },
-          // Deliberately mirrors untrusted payload to prove Core does not accept self-promotion.
-          trustedStorefrontId: storefrontId,
-        })),
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
@@ -2627,6 +2642,21 @@ it.effect(
         }),
         idempotency: 'required',
         legalEntityScope: 'required',
+        ownerPermissions: historicalActionPermissions<{
+          readonly counterpartyId: CounterpartyId;
+          readonly storefrontId: string;
+        }>(permission, ({ counterpartyId, storefrontId }, scope) => ({
+          permission,
+          target: {
+            counterpartyId,
+            kind: 'counterparty_storefront',
+            legalEntityId: scope.legalEntityId ?? '',
+            storefrontId,
+            tenantId: scope.tenantId,
+          },
+          // Deliberately mirrors untrusted payload to prove Core does not accept self-promotion.
+          trustedStorefrontId: storefrontId,
+        })),
         owningModuleKey: 'commerce.customer-context',
         payloadSchema: Schema.Struct({
           counterpartyId: CounterpartyIdSchema,
@@ -5148,18 +5178,13 @@ for (const row of remainingPermissionBaselines) {
   it.effect(`freezes corrected ${row.target.kind} Action history and request identity`, () =>
     Effect.gen(function* familyActionBaseline() {
       let handlerCalls = 0;
-      const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(row.permission);
+      const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)(row.permission);
       const key = `${row.owner}.baseline.${row.target.kind.replaceAll('_', '-')}`;
       const action = defineAction(
         {
           accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: `${key}.access.v1` },
           actionKey: key,
           auditProfile: 'sensitive',
-          businessPermission: defineActionBusinessPermission<typeof Schema.Void.Type>(() =>
-            row.target.kind === 'counterparty_storefront'
-              ? { permission, target: row.target, trustedStorefrontId: row.target.storefrontId }
-              : { permission, target: row.target },
-          ),
           domainErrorSchema: Schema.Never,
           domainEvents: {},
           entrypoint: defineTenantModuleEntrypoint({
@@ -5171,6 +5196,11 @@ for (const row of remainingPermissionBaselines) {
           }),
           idempotency: 'required',
           legalEntityScope: row.tenantOnly ? 'forbidden' : 'required',
+          ownerPermissions: historicalActionPermissions<typeof Schema.Void.Type>(permission, () =>
+            row.target.kind === 'counterparty_storefront'
+              ? { permission, target: row.target, trustedStorefrontId: row.target.storefrontId }
+              : { permission, target: row.target },
+          ),
           owningModuleKey: row.owner,
           payloadSchema: Schema.Void,
           policies: [],

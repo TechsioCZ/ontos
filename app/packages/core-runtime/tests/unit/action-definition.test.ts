@@ -1,3 +1,4 @@
+import { historicalOwnerContract, historicalOwnerTarget } from '../support/historical-owner-targets.ts';
 import {
   fixtureOwnerContract,
   fixtureOwnerModule,
@@ -13,13 +14,11 @@ import {
   decodeActionResult,
   defineAction,
   defineActionOwnerPermissions,
-  defineActionBusinessPermission,
   defineActionResourcePermission,
   validateActionDescriptorInput,
 } from '../../src/actions/definition.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy } from '../../src/actions/policy.ts';
 import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
 
 const counterActionDescriptor = () =>
   ({
@@ -101,15 +100,15 @@ it('accepts conjunctive business and Resource permission declarations', () => {
     moduleKey: 'commerce.customer-context',
     role: 'action',
   });
-  const businessPermission = defineActionBusinessPermission((_payload, scope) => ({
-    permission: Schema.decodeSync(BusinessPermissionCodeSchema)('retail.settings.payment_term_preference.manage'),
-    target: {
+  const permission = 'retail.settings.payment_term_preference.manage';
+  const ownerPermissions = defineActionOwnerPermissions(historicalOwnerContract(permission), (_payload, scope) => [
+    historicalOwnerTarget(permission, {
       kind: 'retail_profile',
       legalEntityId: scope.legalEntityId ?? '',
       profileId: 'profile-1',
       tenantId: scope.tenantId,
-    },
-  }));
+    }),
+  ]);
   const resourcePermission = defineActionResourcePermission(() => ({
     permission: 'write',
     resource: {
@@ -121,9 +120,9 @@ it('accepts conjunctive business and Resource permission declarations', () => {
 
   expect(() =>
     validateActionDescriptorInput({
-      businessPermission,
       entrypoint,
       legalEntityScope: 'required',
+      ownerPermissions,
       owningModuleKey: 'commerce.customer-context',
       policies: [],
       resourcePermission,

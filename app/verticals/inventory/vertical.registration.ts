@@ -30,6 +30,15 @@ import { resolveInventorySourceConflictAction } from './src/actions/resolve-inve
 import { selectInventoryBackendAction } from './src/actions/select-inventory-backend.action.ts';
 import { stockIssueAction } from './src/actions/stock-issue.action.ts';
 import { stockReceiptAction } from './src/actions/stock-receipt.action.ts';
+import { catalogToStockBindingResolutionRead } from './src/api/catalog-to-stock-binding-resolution.read.ts';
+import { commitmentProtectionVerificationRead } from './src/api/commitment-protection-verification.read.ts';
+import { currentRelevantStockPositionSetRead } from './src/api/current-relevant-stock-position-set.read.ts';
+import { currentStockEvidenceForAvailabilityRead } from './src/api/current-stock-evidence-for-availability.read.ts';
+import { inventoryEffectOutcomeRead } from './src/api/inventory-effect-outcome.read.ts';
+import { inventoryReconciliationEvidenceRead } from './src/api/inventory-reconciliation-evidence.read.ts';
+import { inventoryReservationDetailRead } from './src/api/inventory-reservation-detail.read.ts';
+import { reservationConfirmationVerificationRead } from './src/api/reservation-confirmation-verification.read.ts';
+import { stockSharingEligibilityResolutionRead } from './src/api/stock-sharing-eligibility-resolution.read.ts';
 // </generated-module-registration-imports>
 
 export const inventoryRegistration = defineVerticalRuntimeRegistration({
@@ -103,6 +112,17 @@ export const inventoryRegistration = defineVerticalRuntimeRegistration({
     executeStockIssueWorker,
     executeStockReceiptWorker,
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    catalogToStockBindingResolutionRead,
+    commitmentProtectionVerificationRead,
+    currentRelevantStockPositionSetRead,
+    currentStockEvidenceForAvailabilityRead,
+    inventoryEffectOutcomeRead,
+    inventoryReconciliationEvidenceRead,
+    inventoryReservationDetailRead,
+    reservationConfirmationVerificationRead,
+    stockSharingEligibilityResolutionRead,
   ],
 });
 

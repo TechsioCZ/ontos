@@ -9,14 +9,13 @@ import {
   trustVerifiedGatewayPrincipalContext,
   isVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime';
-import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { makeActionTestHarness, getActionHandler } from '@app/core-runtime/testing/actions';
 import {
   purchasingApprovalCurrentnessServicesForScope,
   purchasingApprovalPermissionTarget,
 } from '../../src/actions/purchasing-approval-action-support.ts';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import type { ActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import type { DomainEventContractMap } from '../../../../packages/core-runtime/src/actions/events.ts';
 import type {
   CreatePurchaseProposalRevisionPayload,
@@ -1219,7 +1218,7 @@ it.effect(
               expect(outcome.failure.reason).toBe(
                 trusted === storefrontId
                   ? 'The authorization service could not determine permission safely'
-                  : 'The declared business permission target does not match trusted scope',
+                  : 'The declared owner permission targets do not match trusted scope',
               );
             }
           }

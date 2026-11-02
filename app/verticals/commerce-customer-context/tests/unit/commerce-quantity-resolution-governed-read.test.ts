@@ -2,10 +2,7 @@ import { Effect, Schema } from 'effect';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 
-import {
-  getReadConditionalPermissionPlan,
-  getReadServiceFactory,
-} from '../../../../packages/core-runtime/src/reads/definition.ts';
+import { getReadConditionalPermissionPlan, getReadServiceFactory } from '@app/core-runtime/testing/reads';
 
 import {
   CommerceQuantityResolutionRequestSchema,

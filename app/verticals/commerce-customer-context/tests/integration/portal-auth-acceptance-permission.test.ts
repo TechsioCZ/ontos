@@ -1,3 +1,4 @@
+import { customerPermissionObjectId } from '../../src/permissions/authorization.ts';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -60,10 +61,7 @@ import { makeModuleStateGate } from '../../../../packages/core-runtime/src/modul
 import { makeTenantModuleStateService } from '../../../../packages/core-runtime/src/modules/tenant-module-state-service.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { acquireOutlivingCleanup, makeTestPgClient } from '../../../../packages/core-runtime/tests/support/database.ts';
-import {
-  toBusinessPermissionAccessObjectId,
-  toLegalEntityAccessObjectId,
-} from '../../../../packages/core-runtime/src/permissions/context-access.ts';
+import { toLegalEntityAccessObjectId } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { makeCommerceCustomerContextApiRuntime } from '../../api/index.ts';
 import { commercePortalAuthRealmUnavailableLive } from '../../api/portal-auth/realm-unavailable.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
@@ -320,11 +318,14 @@ const seedSpiceDbContext = Effect.fnUntraced(function* seedSpiceDbContext(subjec
   return (counterpartyId: string) => {
     const businessPermissionObject = v1.ObjectReference.create({
       objectId: requiredObjectId(
-        toBusinessPermissionAccessObjectId('counterparty.address_book.use', {
-          counterpartyId,
-          kind: 'counterparty',
-          legalEntityId: subject.legalEntityId,
-          tenantId: subject.tenantId,
+        customerPermissionObjectId({
+          permission: 'counterparty.address_book.use',
+          target: {
+            counterpartyId,
+            kind: 'counterparty',
+            legalEntityId: subject.legalEntityId,
+            tenantId: subject.tenantId,
+          },
         }),
         'The Counterparty address-book permission object',
       ),

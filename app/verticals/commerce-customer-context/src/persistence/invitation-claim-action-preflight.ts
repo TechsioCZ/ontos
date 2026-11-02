@@ -81,7 +81,7 @@ const runInvitationClaimPreflight = Effect.fn('InvitationClaimActionPreflight.ru
   function* runInvitationClaimPreflight(
     // oxlint-disable-next-line effect-native/no-dependency-parameters -- The operation captures the already-yielded Core preflight database seam; expires: 2027-03-31.
     database: ActionAuthorizationPreflightDatabaseService,
-    contextAccess: Pick<(typeof ContextAccess)['Service'], 'businessPermissions'>,
+    contextAccess: Pick<(typeof ContextAccess)['Service'], 'ownerPermissions'>,
     // oxlint-disable-next-line effect-native/no-dependency-parameters -- The operation captures the already-yielded eligibility service for this owner-local preflight; expires: 2027-03-31.
     eligibility: (typeof PrincipalEligibility)['Service'],
     input: ActionAuthorizationPreflightInput,
@@ -143,7 +143,7 @@ const runInvitationClaimPreflight = Effect.fn('InvitationClaimActionPreflight.ru
 export const makeInvitationClaimActionAuthorizationPreflight = (
   // oxlint-disable-next-line effect-native/no-dependency-parameters -- The factory captures the already-yielded Core preflight database seam; expires: 2027-03-31.
   database: ActionAuthorizationPreflightDatabaseService,
-  contextAccess: Pick<(typeof ContextAccess)['Service'], 'businessPermissions'>,
+  contextAccess: Pick<(typeof ContextAccess)['Service'], 'ownerPermissions'>,
   // oxlint-disable-next-line effect-native/no-dependency-parameters -- The factory captures the already-yielded eligibility service for this owner-local preflight; expires: 2027-03-31.
   eligibility: (typeof PrincipalEligibility)['Service'],
 ): ActionAuthorizationPreflightService =>

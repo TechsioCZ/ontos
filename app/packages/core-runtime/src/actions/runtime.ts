@@ -50,16 +50,7 @@ import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
 import { ModuleStateGate } from '../modules/module-state-gate.ts';
 import type { OperationalScope, OperationalScopeResolverService } from '../operations/context.ts';
 import { OperationalScopeResolver } from '../operations/context.ts';
-import {
-  ContextAccess,
-  InventoryAuthorizationResourceIdSchema,
-  InventoryAuthorizationResourceTypeSchema,
-  PricingAuthorizationResourceIdSchema,
-  isBusinessPermissionTargetCompatible,
-  isOwnerPermissionAccessTargetValid,
-  toBusinessPermissionAccessKey,
-} from '../permissions/context-access.ts';
-import { BusinessPermissionCodeSchema } from '../permissions/business-permission.ts';
+import { ContextAccess, isOwnerPermissionAccessTargetValid } from '../permissions/context-access.ts';
 import { ActionAuthorizationPreflight } from '../permissions/action-authorization-preflight.ts';
 import type { ActionAuthorizationPreflightService } from '../permissions/action-authorization-preflight.ts';
 import {
@@ -83,7 +74,6 @@ import {
 import type {
   ActionPostAttemptOutcome,
   ActionOwnerPermissionTarget,
-  ActionBusinessPermissionTarget,
   ActionDeniedAuditEvidenceDeclaration,
   ActionLegalEntityPermission,
   ActionRegistration,
@@ -96,7 +86,6 @@ import {
   decodeActionPayload,
   decodeActionResult,
   getActionDecodedSuccessHook,
-  getActionBusinessPermissionTargetResolver,
   getActionOwnerPermissionTargetResolver,
   getActionHandler,
   getActionResourcePermissionTargetResolver,
@@ -482,168 +471,6 @@ const resolveActionResourcePermissionTarget = <Payload>(
     );
   });
 
-const BusinessTenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('BusinessTenantId'),
-  Schema.decodeTo(Schema.String),
-);
-const BusinessLegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('BusinessLegalEntityId'),
-  Schema.decodeTo(Schema.String),
-);
-const BusinessProfileIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
-  Schema.brand('BusinessProfileId'),
-  Schema.decodeTo(Schema.String),
-);
-const BusinessCounterpartyIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
-  Schema.brand('BusinessCounterpartyId'),
-  Schema.decodeTo(Schema.String),
-);
-const BusinessStorefrontIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
-  Schema.brand('BusinessStorefrontId'),
-  Schema.decodeTo(Schema.String),
-);
-const BusinessAccessTargetSchema = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literal('retail_profile'),
-    legalEntityId: BusinessLegalEntityIdSchema,
-    profileId: BusinessProfileIdSchema,
-    tenantId: BusinessTenantIdSchema,
-  }),
-  Schema.Struct({
-    counterpartyId: BusinessCounterpartyIdSchema,
-    kind: Schema.Literal('counterparty'),
-    legalEntityId: BusinessLegalEntityIdSchema,
-    tenantId: BusinessTenantIdSchema,
-  }),
-  Schema.Struct({
-    counterpartyId: BusinessCounterpartyIdSchema,
-    kind: Schema.Literal('counterparty_storefront'),
-    legalEntityId: BusinessLegalEntityIdSchema,
-    storefrontId: BusinessStorefrontIdSchema,
-    tenantId: BusinessTenantIdSchema,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal('pricing_catalog'),
-    pricingCatalogId: PricingAuthorizationResourceIdSchema,
-    tenantId: BusinessTenantIdSchema,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal('price_group'),
-    priceGroupId: PricingAuthorizationResourceIdSchema,
-    pricingCatalogId: PricingAuthorizationResourceIdSchema,
-    tenantId: BusinessTenantIdSchema,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal('inventory_resource'),
-    resource: Schema.Struct({
-      moduleId: Schema.Literal('commerce.inventory'),
-      resourceId: InventoryAuthorizationResourceIdSchema,
-      resourceType: InventoryAuthorizationResourceTypeSchema,
-    }),
-    tenantId: BusinessTenantIdSchema,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal('tax_selling_legal_entity'),
-    legalEntityId: BusinessLegalEntityIdSchema,
-    tenantId: BusinessTenantIdSchema,
-  }),
-]);
-const ActionBusinessPermissionTargetSchema = Schema.Struct({
-  permission: BusinessPermissionCodeSchema,
-  target: BusinessAccessTargetSchema,
-  trustedStorefrontId: Schema.optionalKey(BusinessStorefrontIdSchema),
-});
-
-const businessTargetResourceId = (target: ActionBusinessPermissionTarget['target']): string => {
-  if (target.kind === 'retail_profile') {
-    return target.profileId;
-  }
-  if (target.kind === 'counterparty') {
-    return target.counterpartyId;
-  }
-  if (target.kind === 'counterparty_storefront') {
-    return `${target.counterpartyId}:${target.storefrontId}`;
-  }
-  if (target.kind === 'pricing_catalog') {
-    return target.pricingCatalogId;
-  }
-  if (target.kind === 'price_group') {
-    return `${target.pricingCatalogId}:${target.priceGroupId}`;
-  }
-  if (target.kind === 'tax_selling_legal_entity') {
-    return target.legalEntityId;
-  }
-  return target.resource.resourceId;
-};
-
-const resolveActionBusinessPermissionTarget = <Payload>(
-  payload: Payload,
-  scope: OperationalScope,
-  resolver: ((payload: Payload, scope: OperationalScope) => ActionBusinessPermissionTarget) | undefined,
-): Effect.Effect<Option.Option<ActionBusinessPermissionTarget>, ActionPermissionCheckError> =>
-  Effect.suspend(() => {
-    if (resolver === undefined) {
-      return Effect.succeed(Option.none<ActionBusinessPermissionTarget>());
-    }
-    return Effect.try({
-      catch: (cause) =>
-        attachFailureCause(
-          new ActionPermissionCheckError({
-            code: 'action_permission_check_failed',
-            reason: 'The declared business permission target could not be resolved safely',
-          }),
-          cause,
-        ),
-      try: () => resolver(payload, scope),
-    }).pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(ActionBusinessPermissionTargetSchema)),
-      Effect.filterOrFail(
-        (resolved) => {
-          if (!isBusinessPermissionTargetCompatible(resolved)) {
-            return false;
-          }
-          if (resolved.target.tenantId !== scope.tenantId) {
-            return false;
-          }
-          if (resolved.target.kind === 'pricing_catalog' || resolved.target.kind === 'price_group') {
-            return (
-              scope.legalEntityId === undefined &&
-              scope.trustedStorefrontId === undefined &&
-              resolved.trustedStorefrontId === undefined
-            );
-          }
-          if (resolved.target.kind === 'inventory_resource') {
-            return resolved.trustedStorefrontId === undefined;
-          }
-          return (
-            resolved.target.legalEntityId === scope.legalEntityId &&
-            (resolved.target.kind === 'counterparty_storefront'
-              ? scope.trustedStorefrontId === resolved.target.storefrontId &&
-                resolved.trustedStorefrontId === scope.trustedStorefrontId
-              : resolved.trustedStorefrontId === undefined)
-          );
-        },
-        () =>
-          new ActionPermissionCheckError({
-            code: 'action_permission_check_failed',
-            reason: 'The declared business permission target does not match trusted scope',
-          }),
-      ),
-      Effect.mapError((cause) =>
-        Schema.is(ActionPermissionCheckError)(cause)
-          ? cause
-          : attachFailureCause(
-              new ActionPermissionCheckError({
-                code: 'action_permission_check_failed',
-                reason: 'The declared business permission target is invalid',
-              }),
-              cause,
-            ),
-      ),
-      Effect.asSome,
-    );
-  });
-
 const resolveActionOwnerPermissionTargets = <Payload>(
   payload: Payload,
   scope: OperationalScope,
@@ -906,6 +733,42 @@ interface ActionAttemptState<Payload, DomainError> {
   revision: string | undefined;
 }
 
+// oxlint-disable-next-line effect-native/no-wide-factory-signature -- Trusted scope and the four resolved optional permission targets are cohesive authorization data for this Action run.
+const buildOwnerAuthorizationTargets = (
+  scope: OperationalScope,
+  tenantPermission: Option.Option<ActionTenantPermission>,
+  legalEntityPermission: ActionLegalEntityPermission | undefined,
+  ownerPermissionTargets: readonly ActionOwnerPermissionTarget[],
+  resourcePermissionTarget: Option.Option<ActionResourcePermissionTarget>,
+): readonly OwnerAuthorizationTarget[] => {
+  const targets: OwnerAuthorizationTarget[] = [];
+  if (Option.isSome(tenantPermission)) {
+    targets.push({ kind: 'tenant', permission: tenantPermission.value, tenantId: scope.tenantId });
+  }
+  if (legalEntityPermission !== undefined && scope.legalEntityId !== undefined) {
+    targets.push({
+      kind: 'legal_entity',
+      legalEntityId: scope.legalEntityId,
+      permission: legalEntityPermission,
+    });
+  }
+
+  for (const target of ownerPermissionTargets) {
+    targets.push({
+      kind: 'owner_permission',
+      target,
+    });
+  }
+  if (Option.isSome(resourcePermissionTarget)) {
+    targets.push({
+      kind: 'resource',
+      permission: resourcePermissionTarget.value.permission,
+      resource: resourcePermissionTarget.value.resource,
+    });
+  }
+  return Object.freeze(targets);
+};
+
 export const makeActionRuntime = (...construction: ActionRuntimeConstruction): ActionRuntimeService => {
   const [database, repository, permission, operationalScopeResolver, options] = construction;
   const operationAuthority = options.expectedDeployment === undefined ? undefined : options.applicationComposition;
@@ -1038,39 +901,6 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       );
   };
 
-  const checkActionBusinessPermission = (
-    scope: OperationalScope,
-    businessTarget: Option.Option<ActionBusinessPermissionTarget>,
-  ): Effect.Effect<'allowed' | 'denied', ActionPermissionCheckError> => {
-    if (Option.isNone(businessTarget)) {
-      return Effect.succeed('allowed');
-    }
-    if (contextAccess?.businessPermissions === undefined) {
-      return Effect.fail(permissionUnavailable());
-    }
-    const resolved = businessTarget.value;
-    const checkInput = withOptionalProperty(
-      {
-        principal: { principalId: scope.principalId, tenantId: scope.tenantId },
-        targets: [{ permission: resolved.permission, target: resolved.target }],
-      },
-      scope.trustedStorefrontId !== undefined,
-      'trustedStorefrontId',
-      scope.trustedStorefrontId,
-      {},
-    );
-    return contextAccess
-      .businessPermissions(checkInput)
-      .pipe(
-        Effect.flatMap(([decision]) =>
-          decision?.key === toBusinessPermissionAccessKey(resolved) &&
-          (decision.decision === 'allowed' || decision.decision === 'denied')
-            ? Effect.succeed(decision.decision)
-            : Effect.fail(permissionUnavailable()),
-        ),
-      );
-  };
-
   const checkActionOwnerPermissions = (
     scope: OperationalScope,
     ownerTargets: readonly ActionOwnerPermissionTarget[],
@@ -1178,58 +1008,6 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           },
         );
 
-        // oxlint-disable-next-line effect-native/no-wide-factory-signature -- Trusted scope and the four resolved optional permission targets are cohesive authorization data for this Action run.
-        const buildOwnerAuthorizationTargets = (
-          scope: OperationalScope,
-          tenantPermission: Option.Option<ActionTenantPermission>,
-          legalEntityPermission: ActionLegalEntityPermission | undefined,
-          businessPermissionTarget: Option.Option<ActionBusinessPermissionTarget>,
-          ownerPermissionTargets: readonly ActionOwnerPermissionTarget[],
-          resourcePermissionTarget: Option.Option<ActionResourcePermissionTarget>,
-        ): readonly OwnerAuthorizationTarget[] => {
-          const targets: OwnerAuthorizationTarget[] = [];
-          if (Option.isSome(tenantPermission)) {
-            targets.push({ kind: 'tenant', permission: tenantPermission.value, tenantId: scope.tenantId });
-          }
-          if (legalEntityPermission !== undefined && scope.legalEntityId !== undefined) {
-            targets.push({
-              kind: 'legal_entity',
-              legalEntityId: scope.legalEntityId,
-              permission: legalEntityPermission,
-            });
-          }
-          if (Option.isSome(businessPermissionTarget)) {
-            const businessTarget = businessPermissionTarget.value;
-            targets.push(
-              withOptionalProperty(
-                {
-                  kind: 'business_permission' as const,
-                  permission: businessTarget.permission,
-                  target: businessTarget.target,
-                },
-                businessTarget.trustedStorefrontId !== undefined,
-                'trustedStorefrontId',
-                businessTarget.trustedStorefrontId,
-                {},
-              ),
-            );
-          }
-          for (const target of ownerPermissionTargets) {
-            targets.push({
-              kind: 'owner_permission',
-              target,
-            });
-          }
-          if (Option.isSome(resourcePermissionTarget)) {
-            targets.push({
-              kind: 'resource',
-              permission: resourcePermissionTarget.value.permission,
-              resource: resourcePermissionTarget.value.resource,
-            });
-          }
-          return Object.freeze(targets);
-        };
-
         type ActionTransportTarget = Pick<
           ActionTransportMetadata,
           'targetModuleKey' | 'targetResourceId' | 'targetResourceType'
@@ -1257,7 +1035,6 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         const prepareGovernedTarget = (
           transport: ActionTransportMetadata,
           _scope: OperationalScope,
-          businessPermissionTarget: Option.Option<ActionBusinessPermissionTarget>,
           ownerPermissionTargets: readonly ActionOwnerPermissionTarget[],
           resourcePermissionTarget: Option.Option<ActionResourcePermissionTarget>,
           hasCanonicalScopeTarget: boolean,
@@ -1265,29 +1042,15 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           actionTarget: Pick<ActionTransportMetadata, 'targetModuleKey' | 'targetResourceId' | 'targetResourceType'>;
           governedTransport: ActionTransportMetadata;
         }> => {
-          if (Option.isSome(businessPermissionTarget)) {
-            const { permission: targetPermission, target } = businessPermissionTarget.value;
-            if (target.kind === 'inventory_resource') {
-              const actionTarget = {
-                targetModuleKey: target.resource.moduleId,
-                targetResourceId: target.resource.resourceId,
-                targetResourceType: target.resource.resourceType,
-              };
-              return { actionTarget, governedTransport: buildGovernedTransport(transport, actionTarget) };
-            }
-            const actionTarget = {
-              targetModuleKey: input.registration.descriptor.owningModuleKey,
-              targetResourceId: businessTargetResourceId(target),
-              targetResourceType: `${target.kind}:${targetPermission}`,
-            };
-            return { actionTarget, governedTransport: buildGovernedTransport(transport, actionTarget) };
-          }
           if (ownerPermissionTargets.length > 0) {
             const [singleTarget] = ownerPermissionTargets;
             const actionTarget = {
-              targetModuleKey: input.registration.descriptor.owningModuleKey,
+              targetModuleKey: singleTarget?.transportModuleKey ?? input.registration.descriptor.owningModuleKey,
               targetResourceId: singleTarget?.transportObjectId ?? 'owner-permission-unavailable',
-              targetResourceType: singleTarget?.contract.targetResourceType ?? 'owner-permission-unavailable',
+              targetResourceType:
+                singleTarget?.transportResourceType ??
+                singleTarget?.contract.targetResourceType ??
+                'owner-permission-unavailable',
             };
             return { actionTarget, governedTransport: buildGovernedTransport(transport, actionTarget) };
           }
@@ -1353,13 +1116,8 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               ? Option.none<ActionTenantPermission>()
               : yield* resolveActionTenantPermission(payload, input.registration.descriptor.tenantPermission);
             const { legalEntityPermission } = input.registration.descriptor;
-            const [businessPermissionTarget, ownerPermissionTargets, resourcePermissionTarget] = yield* Effect.all(
+            const [ownerPermissionTargets, resourcePermissionTarget] = yield* Effect.all(
               [
-                resolveActionBusinessPermissionTarget(
-                  payload,
-                  scope,
-                  getActionBusinessPermissionTargetResolver(input.registration),
-                ),
                 resolveActionOwnerPermissionTargets(
                   payload,
                   scope,
@@ -1376,27 +1134,23 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             const hasCanonicalScopeTarget =
               Option.isSome(tenantPermission) ||
               legalEntityPermission !== undefined ||
-              Option.isSome(businessPermissionTarget) ||
               ownerPermissionTargets.length > 0;
             const frozenOwnerAuthorizationTargets = buildOwnerAuthorizationTargets(
               scope,
               tenantPermission,
               legalEntityPermission,
-              businessPermissionTarget,
               ownerPermissionTargets,
               resourcePermissionTarget,
             );
             const { actionTarget, governedTransport } = prepareGovernedTarget(
               transport,
               scope,
-              businessPermissionTarget,
               ownerPermissionTargets,
               resourcePermissionTarget,
               hasCanonicalScopeTarget,
             );
             return {
               actionTarget,
-              businessPermissionTarget,
               earlyCompositionRevision,
               frozenOwnerAuthorizationTargets,
               governedTransport,
@@ -1517,7 +1271,6 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         );
         const {
           actionTarget,
-          businessPermissionTarget,
           deniedAuditEvidence,
           earlyCompositionRevision,
           frozenOwnerAuthorizationTargets,
@@ -1624,7 +1377,6 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           const tenantPermissionDecision = yield* checkTenantActionPermission(principal, tenantPermission);
           const legalEntityPermissionDecision = yield* checkActionLegalEntityPermission(scope, legalEntityPermission);
           const resourcePermissionDecision = yield* checkActionResourcePermission(scope, resourcePermissionTarget);
-          const businessPermissionDecision = yield* checkActionBusinessPermission(scope, businessPermissionTarget);
           const ownerPermissionDecision = yield* checkActionOwnerPermissions(scope, ownerPermissionTargets);
           return (
             preflightDenied ||
@@ -1632,7 +1384,6 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             tenantPermissionDecision === 'denied' ||
             legalEntityPermissionDecision === 'denied' ||
             resourcePermissionDecision === 'denied' ||
-            businessPermissionDecision === 'denied' ||
             ownerPermissionDecision === 'denied'
           );
         });

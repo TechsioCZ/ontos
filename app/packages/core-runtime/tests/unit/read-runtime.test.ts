@@ -1,3 +1,4 @@
+import { historicalOwnerContract, historicalOwnerReadTarget } from '../support/historical-owner-targets.ts';
 import { remainingPermissionBaselines } from './owner-permission-baseline.ts';
 import { fixtureOwnerContract, ownerPermissionTarget } from '../support/owner-permission-target.ts';
 import type { ActiveApplicationCompositionServiceContract } from '../../src/modules/active-application-composition.ts';
@@ -36,12 +37,7 @@ import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-prin
 import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { OperationContextUnavailable } from '../../src/operations/errors.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
-import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
-import { toBusinessPermissionAccessKey } from '../../src/permissions/context-access.ts';
-import type {
-  OwnerPermissionAccessTarget,
-  BusinessPermissionAccessTarget,
-} from '../../src/permissions/context-access.ts';
+import type { OwnerPermissionAccessTarget } from '../../src/permissions/context-access.ts';
 import type {
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
@@ -62,6 +58,8 @@ import {
 import { makeReadRuntime, READ_RUNTIME_STAGES } from '../../src/reads/runtime.ts';
 import { makeTestDatabase } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
+
+const FixturePermissionCodeSchema = Schema.String;
 
 const scope: OperationalScope = Object.freeze({
   ...Schema.decodeSync(TrustedPrincipalContextSchema)({
@@ -125,7 +123,9 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly modulePermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly omitOwnerAuthorizationOverlay?: boolean;
     readonly omitOwnerRegistration?: boolean;
-    readonly onBusinessPermissionTarget?: (target: BusinessPermissionAccessTarget) => void;
+    readonly onBusinessPermissionTarget?: (
+      target: Readonly<{ readonly permission: string; readonly target: object }>,
+    ) => void;
     readonly onContextPermissionTarget?: (target: { readonly moduleId: string; readonly permission: string }) => void;
     readonly onLegalEntityPermission?: (permission: string | undefined) => void;
     readonly onLegalEntityTarget?: (legalEntityId: string, tenantId: string) => void;
@@ -288,20 +288,6 @@ const makeHarness = Effect.fn(function* makeHarness(
       openModuleEntrypointGateway,
       { resolve: () => Effect.succeed(options.resolvedScope ?? scope) },
       {
-        businessPermissions: ({ targets, trustedStorefrontId }) => {
-          businessPermissionChecks += 1;
-          options.onTrustedStorefrontId?.(trustedStorefrontId);
-          const [target] = targets;
-          if (target !== undefined) {
-            options.onBusinessPermissionTarget?.(target);
-          }
-          return Effect.succeed(
-            targets.map((businessTarget) => ({
-              decision: options.businessPermissionDecision ?? options.permissionDecision ?? ('unavailable' as const),
-              key: toBusinessPermissionAccessKey(businessTarget),
-            })),
-          );
-        },
         contextPermissions: ({ targets }) => {
           contextPermissionChecks += 1;
           const [target] = targets;
@@ -334,7 +320,21 @@ const makeHarness = Effect.fn(function* makeHarness(
               key,
             })),
           ),
-        ownerPermissions: ({ principal, targets }) => {
+        ownerPermissions: ({ principal, targets, trustedStorefrontId }) => {
+          if (targets.every(({ target }) => target.contract.targetResourceType === 'historical_owner_permission')) {
+            businessPermissionChecks += 1;
+            options.onTrustedStorefrontId?.(trustedStorefrontId);
+            const first = targets[0]?.target;
+            if (first !== undefined) {
+              options.onBusinessPermissionTarget?.({ permission: first.definition.key, target: first.target });
+            }
+            return Effect.succeed(
+              targets.map(({ target }) => ({
+                decision: options.businessPermissionDecision ?? options.permissionDecision ?? ('unavailable' as const),
+                key: target.key,
+              })),
+            );
+          }
           ownerPermissionChecks.push(...targets);
           options.onOwnerPermissionPrincipal?.(principal);
           return Effect.succeed(
@@ -704,7 +704,7 @@ it.effect('rejects payload-selected foreign contracts and copied definitions bef
               ...target,
               contract: Object.freeze({
                 ...fixtureOwnerContract,
-                owningCapability: 'commerce.foreign',
+                owningModuleKey: 'commerce.foreign',
                 permissions: Object.freeze([definition]),
               }),
               definition,
@@ -742,7 +742,12 @@ it.effect('rejects payload-selected foreign contracts and copied definitions bef
           transport: { correlationId: scope.correlationId },
         }),
       );
-      expect(Predicate.isTagged(failure, 'ReadHandlerExecutionError')).toBe(true);
+      expect(
+        Predicate.isTagged(
+          failure,
+          variant === 'foreign-contract' ? 'ReadHandlerExecutionError' : 'ReadPermissionUnavailable',
+        ),
+      ).toBe(true);
     }
     expect(harness.ownerPermissionChecks).toHaveLength(1);
     expect(handlerCalls).toBe(1);
@@ -818,7 +823,7 @@ it.effect('retains owner-declared tenant and Legal Entity scope without a fallba
         transport: { correlationId: scope.correlationId },
       }),
     );
-    expect(Predicate.isTagged(unknownFailure, 'ReadHandlerExecutionError')).toBe(true);
+    expect(Predicate.isTagged(unknownFailure, 'ReadPermissionUnavailable')).toBe(true);
     expect(unknownType.ownerPermissionChecks).toHaveLength(0);
     expect(handlerCalls).toBe(1);
   }),
@@ -1503,7 +1508,7 @@ it.effect(
     };
     const observed: string[] = [];
     let handlerCalls = 0;
-    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(
+    const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)(
       'retail.settings.payment_term_preference.manage',
     );
     const currencyRead = defineRead(
@@ -1526,7 +1531,7 @@ it.effect(
         inputSchema: CurrencyReadInputSchema,
         legalEntityScope: 'required',
         owningModuleKey: 'commerce.customer-context',
-        permissionTarget: 'business_permission',
+        permissionTarget: 'owner_permission',
         policies: [],
         readKey: 'commerce.customer-context.payment-term-preference',
         resourcePermission: defineReadResourcePermission<CurrencyReadInput>(({ requestedProfileId }) => ({
@@ -1546,18 +1551,14 @@ it.effect(
         return Effect.succeed({ evidence: { resultCount: 1 }, result: 'CZK' });
       },
       () => Effect.succeed({}),
-      ({ authorizationProfileId }, trustedScope) => ({
-        businessPermission: {
-          permission,
-          target: {
-            kind: 'retail_profile',
-            legalEntityId: trustedScope.legalEntityId ?? '',
-            profileId: authorizationProfileId,
-            tenantId: trustedScope.tenantId,
-          },
-        },
-        kind: 'business_permission',
-      }),
+      defineReadOwnerPermission(historicalOwnerContract(permission), ({ authorizationProfileId }, trustedScope) =>
+        historicalOwnerReadTarget(permission, {
+          kind: 'retail_profile',
+          legalEntityId: trustedScope.legalEntityId ?? '',
+          profileId: authorizationProfileId,
+          tenantId: trustedScope.tenantId,
+        }),
+      ),
     );
     const run = (harness: Effect.Success<ReturnType<typeof makeHarness>>) =>
       harness.runtime.runRead({
@@ -1671,7 +1672,7 @@ it.effect(
 it.effect('rejects payload Storefront promotion and requires an exact trusted scope match', () =>
   Effect.gen(function* checkTrustedStorefrontReadScope() {
     const legalEntityId = '00000000-0000-4000-8000-000000000004';
-    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('counterparty.order_history.read');
+    const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)('counterparty.order_history.read');
     const StorefrontCounterpartyIdSchema = Schema.String.pipe(Schema.brand('StorefrontCounterpartyId'));
     const StorefrontIdSchema = Schema.String.pipe(Schema.brand('StorefrontId'));
     const StorefrontInputSchema = Schema.Struct({
@@ -1699,7 +1700,7 @@ it.effect('rejects payload Storefront promotion and requires an exact trusted sc
         inputSchema: StorefrontInputSchema,
         legalEntityScope: 'required',
         owningModuleKey: 'commerce.customer-context',
-        permissionTarget: 'business_permission',
+        permissionTarget: 'owner_permission',
         policies: [],
         readKey: 'commerce.customer-context.storefront-orders',
         resultSchema: Schema.Array(Schema.String),
@@ -1710,21 +1711,15 @@ it.effect('rejects payload Storefront promotion and requires an exact trusted sc
         return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
       },
       () => Effect.succeed({}),
-      ({ counterpartyId, storefrontId }, trustedScope) => ({
-        businessPermission: {
-          permission,
-          target: {
-            counterpartyId,
-            kind: 'counterparty_storefront',
-            legalEntityId: trustedScope.legalEntityId ?? '',
-            storefrontId,
-            tenantId: trustedScope.tenantId,
-          },
-        },
-        kind: 'business_permission',
-        // Deliberately mirrors payload to prove this field is not itself a trust source.
-        trustedStorefrontId: storefrontId,
-      }),
+      defineReadOwnerPermission(historicalOwnerContract(permission), ({ counterpartyId, storefrontId }, trustedScope) =>
+        historicalOwnerReadTarget(permission, {
+          counterpartyId,
+          kind: 'counterparty_storefront',
+          legalEntityId: trustedScope.legalEntityId ?? '',
+          storefrontId,
+          tenantId: trustedScope.tenantId,
+        }),
+      ),
     );
     const run = (harness: Effect.Success<ReturnType<typeof makeHarness>>, storefrontId: string) =>
       harness.runtime.runRead({
@@ -1779,8 +1774,8 @@ it.effect('rejects payload Storefront promotion and requires an exact trusted sc
 
 it.effect('governs tenant-only Price Group reads with stable target evidence and fail-closed outcomes', () =>
   Effect.gen(function* governsPriceGroupRead() {
-    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');
-    const counterpartyPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(
+    const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)('pricing.price_group.read');
+    const counterpartyPermission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)(
       'counterparty.order_history.read',
     );
     const PriceGroupIdSchema = Schema.String.pipe(Schema.brand('PriceGroupId'));
@@ -1813,7 +1808,7 @@ it.effect('governs tenant-only Price Group reads with stable target evidence and
           inputSchema: InputSchema,
           legalEntityScope: 'forbidden',
           owningModuleKey: 'pricing.price-group-catalog',
-          permissionTarget: 'business_permission',
+          permissionTarget: 'owner_permission',
           policies: [],
           readKey: 'pricing.price-group.read',
           resultSchema: Schema.String,
@@ -1824,18 +1819,14 @@ it.effect('governs tenant-only Price Group reads with stable target evidence and
           return Effect.succeed({ evidence: { resultCount: 1 }, result: handledPriceGroupId });
         },
         () => Effect.succeed({}),
-        (input) => ({
-          businessPermission: {
-            permission: targetPermission,
-            target: {
-              kind: 'price_group',
-              priceGroupId: input.priceGroupId,
-              pricingCatalogId: input.pricingCatalogId,
-              tenantId: input.targetTenantId,
-            },
-          },
-          kind: 'business_permission',
-        }),
+        defineReadOwnerPermission(historicalOwnerContract(permission), (input) =>
+          historicalOwnerReadTarget(targetPermission, {
+            kind: 'price_group',
+            priceGroupId: input.priceGroupId,
+            pricingCatalogId: input.pricingCatalogId,
+            tenantId: input.targetTenantId,
+          }),
+        ),
       );
     const read = makePriceGroupRead(permission);
     const input = {
@@ -1915,7 +1906,7 @@ it.effect('governs tenant-only Price Group reads with stable target evidence and
         contextPermissionDecision: 'allowed',
       });
       expect(
-        Predicate.isTagged(yield* Effect.flip(run(invalidIdentifier, invalidInput)), 'ReadHandlerExecutionError'),
+        Predicate.isTagged(yield* Effect.flip(run(invalidIdentifier, invalidInput)), 'ReadPermissionUnavailable'),
       ).toBe(true);
       expect(invalidIdentifier.permissionChecks().businessPermissionChecks).toBe(0);
       expect(invalidIdentifier.evidence()).toBe(0);
@@ -1946,7 +1937,7 @@ it.effect('governs tenant-only Price Group reads with stable target evidence and
 
 it.effect('governs one exact Inventory Resource read without deriving authority from selected context', () =>
   Effect.gen(function* governsInventoryResourceRead() {
-    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('inventory.resource.read');
+    const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)('inventory.resource.read');
     const InventoryResourceIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('InventoryResourceId'));
     const TenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('InventoryReadTenantId'));
     const InputSchema = Schema.Struct({
@@ -1968,7 +1959,7 @@ it.effect('governs one exact Inventory Resource read without deriving authority 
         inputSchema: InputSchema,
         legalEntityScope: 'optional',
         owningModuleKey: 'commerce.inventory',
-        permissionTarget: 'business_permission',
+        permissionTarget: 'owner_permission',
         policies: [],
         readKey: 'commerce.inventory.stock-position.read',
         resultSchema: Schema.String,
@@ -1979,21 +1970,17 @@ it.effect('governs one exact Inventory Resource read without deriving authority 
         return Effect.succeed({ evidence: { resultCount: 1 }, result: resourceId });
       },
       () => Effect.succeed(Object.freeze({})),
-      (input) => ({
-        businessPermission: {
-          permission,
-          target: {
-            kind: 'inventory_resource',
-            resource: {
-              moduleId: 'commerce.inventory',
-              resourceId: input.resourceId,
-              resourceType: 'commerce.inventory.stock-position',
-            },
-            tenantId: input.tenantId,
+      defineReadOwnerPermission(historicalOwnerContract(permission), (input) =>
+        historicalOwnerReadTarget(permission, {
+          kind: 'inventory_resource',
+          resource: {
+            moduleId: 'commerce.inventory',
+            resourceId: input.resourceId,
+            resourceType: 'commerce.inventory.stock-position',
           },
-        },
-        kind: 'business_permission',
-      }),
+          tenantId: input.tenantId,
+        }),
+      ),
     );
     const resourceId = '70000000-0000-4000-8000-000000000001';
     const input = { resourceId, tenantId: scope.tenantId };
@@ -2897,7 +2884,7 @@ it.effect('executes only the selected finite conditional authorization branch', 
     const InputSchema = Schema.Struct({ subject: SubjectSchema });
     type Input = typeof InputSchema.Type;
     type Subject = typeof SubjectSchema.Type;
-    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('retail.profile.read');
+    const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)('retail.profile.read');
     const conditional = defineReadConditionalPermission<Input, Subject>({
       branches: {
         GUEST: {
@@ -2905,19 +2892,16 @@ it.effect('executes only the selected finite conditional authorization branch', 
           resolve: () => [{ kind: 'module', moduleId: 'commerce.customer-context' }],
         },
         PROFILE: {
-          requiredKinds: ['business_permission', 'resource_read'],
+          requiredKinds: ['owner_permission', 'resource_read'],
           resolve: (_input, subject, trustedScope) => [
             {
-              businessPermission: {
-                permission,
-                target: {
-                  kind: 'retail_profile',
-                  legalEntityId: trustedScope.legalEntityId ?? '',
-                  profileId: subject.profileId,
-                  tenantId: trustedScope.tenantId,
-                },
-              },
-              kind: 'business_permission',
+              kind: 'owner_permission',
+              ownerPermission: historicalOwnerReadTarget(permission, {
+                kind: 'retail_profile',
+                legalEntityId: trustedScope.legalEntityId ?? '',
+                profileId: subject.profileId,
+                tenantId: trustedScope.tenantId,
+              }),
             },
             {
               kind: 'resource_read',
@@ -2931,6 +2915,7 @@ it.effect('executes only the selected finite conditional authorization branch', 
           ],
         },
       },
+      ownerContract: historicalOwnerContract(permission),
       permissionKey: 'module.access',
       select: ({ subject }) => subject,
     });
@@ -3513,7 +3498,7 @@ for (const row of remainingPermissionBaselines) {
   it.effect(`freezes corrected ${row.target.kind} Read history and query identity`, () =>
     Effect.gen(function* familyReadBaseline() {
       let handlerCalls = 0;
-      const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(row.permission);
+      const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)(row.permission);
       const key = `${row.owner}.baseline.${row.target.kind.replaceAll('_', '-')}`;
       const read = defineRead(
         {
@@ -3529,7 +3514,7 @@ for (const row of remainingPermissionBaselines) {
           inputSchema: Schema.Struct({ value: Schema.String }),
           legalEntityScope: row.tenantOnly ? 'forbidden' : 'required',
           owningModuleKey: row.owner,
-          permissionTarget: 'business_permission',
+          permissionTarget: 'owner_permission',
           policies: [],
           readKey: key,
           resultSchema: Schema.String,
@@ -3540,14 +3525,9 @@ for (const row of remainingPermissionBaselines) {
           return Effect.succeed({ evidence: { resultCount: 1 }, result: 'baseline' });
         },
         () => Effect.succeed({}),
-        () =>
-          row.target.kind === 'counterparty_storefront'
-            ? {
-                businessPermission: { permission, target: row.target },
-                kind: 'business_permission',
-                trustedStorefrontId: row.target.storefrontId,
-              }
-            : { businessPermission: { permission, target: row.target }, kind: 'business_permission' },
+        defineReadOwnerPermission(historicalOwnerContract(permission), () =>
+          historicalOwnerReadTarget(permission, row.target),
+        ),
       );
       const actor = row.tenantOnly ? scope : counterpartyReadPrincipal('00000000-0000-4000-8000-000000000002');
       const resolved = row.tenantOnly ? scope : { ...scope, legalEntityId: '00000000-0000-4000-8000-000000000002' };

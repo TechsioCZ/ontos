@@ -2,8 +2,9 @@
 // @ontos-action-owner pricing.price-group-catalog
 // @ontos-action-slug retire-price-group
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
+import { definePriceGroupActionPermissions } from '../permissions/authorization.ts';
 
 import {
   RetirePriceGroupPayloadSchema,
@@ -103,15 +104,6 @@ export const retirePriceGroupAction = defineAction(
     actionKey: 'pricing.price-group-catalog.retire-price-group',
     auditEvidenceSchema: RetirePriceGroupAuditEvidenceSchema,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<RetirePriceGroupPayload>((payload) => ({
-      permission: 'pricing.price_group.retire',
-      target: {
-        kind: 'price_group',
-        priceGroupId: payload.expectedCurrent.priceGroupRef.resourceId,
-        pricingCatalogId: payload.expectedCurrent.priceGroupRef.tenantId,
-        tenantId: payload.expectedCurrent.priceGroupRef.tenantId,
-      },
-    })),
     domainErrorSchema: PriceGroupOwnerFailureSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
@@ -123,6 +115,15 @@ export const retirePriceGroupAction = defineAction(
     }),
     idempotency: 'required',
     legalEntityScope: 'forbidden',
+    ownerPermissions: definePriceGroupActionPermissions<RetirePriceGroupPayload>((payload) => ({
+      permission: 'pricing.price_group.retire',
+      target: {
+        kind: 'price_group',
+        priceGroupId: payload.expectedCurrent.priceGroupRef.resourceId,
+        pricingCatalogId: payload.expectedCurrent.priceGroupRef.tenantId,
+        tenantId: payload.expectedCurrent.priceGroupRef.tenantId,
+      },
+    })),
     owningModuleKey: MODULE_KEY,
     payloadSchema: RetirePriceGroupPayloadSchema,
     policies: [],

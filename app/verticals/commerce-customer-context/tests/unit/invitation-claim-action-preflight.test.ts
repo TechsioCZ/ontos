@@ -54,8 +54,8 @@ const input = {
   scope: principal,
 } as const;
 
-const contextAccess: Pick<ContextAccessService, 'businessPermissions'> = {
-  businessPermissions: () => Effect.succeed([]),
+const contextAccess: Pick<ContextAccessService, 'ownerPermissions'> = {
+  ownerPermissions: () => Effect.succeed([]),
 };
 
 const eligible = {

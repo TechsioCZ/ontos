@@ -2,6 +2,7 @@ import type { OwnerAuthorizationInput } from '@app/core-runtime';
 import { DateTime } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { priceGroupCatalogOwnerAuthorizationDecision } from '../../api/index.ts';
+import { priceGroupOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const foreignTenantId = '22222222-2222-4222-8222-222222222222';
@@ -12,6 +13,8 @@ const scope = {
   principalId: '44444444-4444-4444-8444-444444444444',
   tenantId,
 };
+const catalog = { kind: 'pricing_catalog' as const, pricingCatalogId: tenantId, tenantId };
+const group = { kind: 'price_group' as const, priceGroupId: groupId, pricingCatalogId: tenantId, tenantId };
 const create: OwnerAuthorizationInput = {
   operation: 'action',
   operationAt: DateTime.makeUnsafe('2026-10-22T00:00:00.000Z'),
@@ -20,13 +23,11 @@ const create: OwnerAuthorizationInput = {
   scope,
   targets: [
     {
-      kind: 'business_permission',
-      permission: 'pricing.price_group.create',
-      target: { kind: 'pricing_catalog', pricingCatalogId: tenantId, tenantId },
+      kind: 'owner_permission',
+      target: priceGroupOwnerPermissionTarget({ permission: 'pricing.price_group.create', target: catalog }, 'action'),
     },
   ],
 };
-const groupTarget = { kind: 'price_group' as const, priceGroupId: groupId, pricingCatalogId: tenantId, tenantId };
 const contracts = [
   {
     operation: 'action',
@@ -56,14 +57,14 @@ describe('Price Group Catalog exact owner policy', () => {
   });
   for (const contract of contracts) {
     it(`admits only its declared group tuple ${contract.operationKey}`, () => {
+      const target = priceGroupOwnerPermissionTarget(
+        { permission: contract.permission, target: group },
+        contract.operation,
+      );
       expect(
         priceGroupCatalogOwnerAuthorizationDecision(
           { tenantId },
-          {
-            ...create,
-            ...contract,
-            targets: [{ kind: 'business_permission', permission: contract.permission, target: groupTarget }],
-          },
+          { ...create, ...contract, targets: [{ kind: 'owner_permission', target }] },
         ),
       ).toBe('allowed');
     });
@@ -78,63 +79,41 @@ describe('Price Group Catalog exact owner policy', () => {
     { ...create, targets: [] },
     { ...create, targets: [...create.targets, ...create.targets] },
     { ...create, targets: [{ kind: 'module', moduleId: 'pricing.price-group-catalog' }] },
+    ...[
+      { permission: 'pricing.price_group.read', target: catalog },
+      { permission: 'pricing.price_group.create', target: { ...catalog, pricingCatalogId: foreignTenantId } },
+      { permission: 'pricing.price_group.create', target: { ...catalog, tenantId: foreignTenantId } },
+    ].map((request): OwnerAuthorizationInput => ({
+      ...create,
+      targets: [{ kind: 'owner_permission', target: priceGroupOwnerPermissionTarget(request, 'action') }],
+    })),
     {
       ...create,
       targets: [
         {
-          kind: 'business_permission',
-          permission: 'pricing.price_group.read',
-          target: { kind: 'pricing_catalog', pricingCatalogId: tenantId, tenantId },
-        },
-      ],
-    },
-    {
-      ...create,
-      targets: [{ kind: 'business_permission', permission: 'pricing.price_group.create', target: groupTarget }],
-    },
-    {
-      ...create,
-      targets: [
-        {
-          kind: 'business_permission',
-          permission: 'pricing.price_group.create',
-          target: { kind: 'pricing_catalog', pricingCatalogId: foreignTenantId, tenantId },
-        },
-      ],
-    },
-    {
-      ...create,
-      targets: [
-        {
-          kind: 'business_permission',
-          permission: 'pricing.price_group.create',
-          target: { kind: 'pricing_catalog', pricingCatalogId: tenantId, tenantId: foreignTenantId },
-        },
-      ],
-    },
-    {
-      ...create,
-      targets: [
-        {
-          kind: 'business_permission',
-          permission: 'pricing.price_group.create',
-          target: { kind: 'pricing_catalog', pricingCatalogId: tenantId, tenantId },
+          kind: 'owner_permission',
+          target: priceGroupOwnerPermissionTarget(
+            { permission: 'pricing.price_group.create', target: catalog },
+            'action',
+          ),
           trustedStorefrontId: groupId,
         },
       ],
     },
   ];
   for (const [index, input] of invalid.entries()) {
-    it(`fails closed for a mismatching scope, descriptor or target ${index}`, () => {
+    it(`rejects tuple outside the finite owner policy ${index}`, () => {
       expect(priceGroupCatalogOwnerAuthorizationDecision({ tenantId }, input)).toBe('unavailable');
     });
   }
-  it('rejects an unexpected transaction Legal Entity even when the request is tenant scoped', () => {
+  it('fails closed for a transaction with a selected Legal Entity', () => {
     expect(priceGroupCatalogOwnerAuthorizationDecision({ legalEntityId: groupId, tenantId }, create)).toBe(
       'unavailable',
     );
   });
-  it('rejects a transaction Tenant mismatch before trusting the request target', () => {
-    expect(priceGroupCatalogOwnerAuthorizationDecision({ tenantId: foreignTenantId }, create)).toBe('unavailable');
+  it('rejects a permission whose published scope excludes groups', () => {
+    expect(() =>
+      priceGroupOwnerPermissionTarget({ permission: 'pricing.price_group.create', target: group }, 'action'),
+    ).toThrow();
   });
 });

@@ -4,7 +4,7 @@ import { Effect, Match, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
 import { IndeterminateInventoryEffectResultSchema } from '../../shared/domain/inventory-effect-recovery.ts';
 import {
   RecoverInventoryEffectActionRejected,
@@ -257,7 +257,11 @@ describe('Recover Inventory Effect Action', () => {
       kind: 'action_execution',
       provisioning: 'explicit',
     });
-    expect(getActionBusinessPermissionTargetResolver(recoverInventoryEffectAction)?.(payload, actionScope)).toEqual({
+    expect(
+      getActionOwnerPermissionTargetResolver(recoverInventoryEffectAction)?.(payload, actionScope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
+    ).toEqual({
       permission: 'inventory.recovery.execute',
       target: {
         kind: 'inventory_resource',

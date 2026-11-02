@@ -1,11 +1,6 @@
 import { inventoryRegistration } from '../../vertical.registration.ts';
 import type { OperationalScope } from '@app/core-runtime';
-import {
-  ReadHandlerNotFound,
-  ReadPermissionDenied,
-  allowOwnerAuthorizationOverlay,
-  toBusinessPermissionAccessKey,
-} from '@app/core-runtime';
+import { ReadHandlerNotFound, ReadPermissionDenied, allowOwnerAuthorizationOverlay } from '@app/core-runtime';
 import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
 import { expect, it } from 'effect-rstest';
 import { Effect, Option, Predicate, Schema } from 'effect';
@@ -239,13 +234,14 @@ it('binds both reads to inventory.resource.read for the exact requested Resource
     reservationRef,
   });
 
-  expect(inventoryReservationDetailRead.descriptor.permissionTarget).toBe('business_permission');
+  expect(inventoryReservationDetailRead.descriptor.permissionTarget).toBe('owner_permission');
   const reservationResolver = getReadPermissionTargetResolver(inventoryReservationDetailRead);
   expect(Predicate.isFunction(reservationResolver)).toBe(true);
   if (Predicate.isFunction(reservationResolver)) {
-    expect(reservationResolver(reservationInput, scope)).toEqual({
-      businessPermission: {
-        permission: 'inventory.resource.read',
+    expect(reservationResolver(reservationInput, scope)).toMatchObject({
+      kind: 'owner_permission',
+      ownerPermission: {
+        definition: { key: 'inventory.resource.read' },
         target: {
           kind: 'inventory_resource',
           resource: {
@@ -256,17 +252,17 @@ it('binds both reads to inventory.resource.read for the exact requested Resource
           tenantId,
         },
       },
-      kind: 'business_permission',
     });
   }
 
-  expect(reservationConfirmationVerificationRead.descriptor.permissionTarget).toBe('business_permission');
+  expect(reservationConfirmationVerificationRead.descriptor.permissionTarget).toBe('owner_permission');
   const confirmationResolver = getReadPermissionTargetResolver(reservationConfirmationVerificationRead);
   expect(Predicate.isFunction(confirmationResolver)).toBe(true);
   if (Predicate.isFunction(confirmationResolver)) {
-    expect(confirmationResolver(confirmationInput, scope)).toEqual({
-      businessPermission: {
-        permission: 'inventory.resource.read',
+    expect(confirmationResolver(confirmationInput, scope)).toMatchObject({
+      kind: 'owner_permission',
+      ownerPermission: {
+        definition: { key: 'inventory.resource.read' },
         target: {
           kind: 'inventory_resource',
           resource: {
@@ -277,7 +273,6 @@ it('binds both reads to inventory.resource.read for the exact requested Resource
           tenantId,
         },
       },
-      kind: 'business_permission',
     });
   }
 });
@@ -323,16 +318,16 @@ it.effect('denies the exact Inventory Resource before opening owner persistence 
       openModuleEntrypointGateway,
       { resolve: () => Effect.succeed(scope) },
       {
-        businessPermissions: ({ targets }) =>
-          Effect.succeed(
-            targets.map((target) => ({
-              decision: 'denied' as const,
-              key: toBusinessPermissionAccessKey(target),
-            })),
-          ),
         legalEntities: ({ legalEntityIds }) =>
           Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
         modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+        ownerPermissions: ({ targets }) =>
+          Effect.succeed(
+            targets.map((target) => ({
+              decision: 'denied' as const,
+              key: target.target.key,
+            })),
+          ),
         resources: ({ resources }) =>
           Effect.succeed(
             resources.map((resource) => ({

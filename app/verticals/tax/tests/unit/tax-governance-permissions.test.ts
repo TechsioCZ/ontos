@@ -1,9 +1,8 @@
-import { toBusinessPermissionAccessObjectId } from '@app/core-runtime';
-import type { BusinessPermissionAccessTarget, OperationalScope } from '@app/core-runtime';
+import type { OperationalScope, OwnerPermissionAccessTarget } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
 
 import {
   CorrectTaxRuleRevisionPayloadSchema,
@@ -18,6 +17,11 @@ import { createTaxRuleAction } from '../../src/actions/create-tax-rule.action.ts
 import { declareSellerVatRegimeAction } from '../../src/actions/declare-seller-vat-regime.action.ts';
 import { endTaxRuleRevisionAction } from '../../src/actions/end-tax-rule-revision.action.ts';
 import { importSellerVatRegimeDeclarationsAction } from '../../src/actions/import-seller-vat-regime-declarations.action.ts';
+
+const permissionRequest = (targets: readonly OwnerPermissionAccessTarget[] | undefined) => {
+  const first = targets?.[0];
+  return first === undefined ? undefined : { permission: first.definition.key, target: first.target };
+};
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
@@ -52,7 +56,11 @@ const czechRevision = {
 const attribution = { provenanceRef: 'test:tax-governance-permissions', reason: 'Governed tax change' };
 const ruleRevisionRef = ref('commerce.tax.tax-rule-revision', 'revision-1');
 
-type ResolveFor = (scope: OperationalScope) => BusinessPermissionAccessTarget | undefined;
+interface TaxRequest {
+  readonly permission: string;
+  readonly target: object;
+}
+type ResolveFor = (scope: OperationalScope) => TaxRequest | undefined;
 
 const governedActions = Effect.gen(function* decodeGovernedActions() {
   const createRule = yield* Schema.decodeUnknownEffect(CreateTaxRulePayloadSchema)({
@@ -82,21 +90,21 @@ const governedActions = Effect.gen(function* decodeGovernedActions() {
   });
   return {
     [correctTaxRuleRevisionAction.descriptor.actionKey]: (scope) =>
-      getActionBusinessPermissionTargetResolver(correctTaxRuleRevisionAction)?.(correctRevision, scope),
+      permissionRequest(getActionOwnerPermissionTargetResolver(correctTaxRuleRevisionAction)?.(correctRevision, scope)),
     [createTaxRuleAction.descriptor.actionKey]: (scope) =>
-      getActionBusinessPermissionTargetResolver(createTaxRuleAction)?.(createRule, scope),
+      permissionRequest(getActionOwnerPermissionTargetResolver(createTaxRuleAction)?.(createRule, scope)),
     [createTaxRuleRevisionAction.descriptor.actionKey]: (scope) =>
-      getActionBusinessPermissionTargetResolver(createTaxRuleRevisionAction)?.(createRevision, scope),
+      permissionRequest(getActionOwnerPermissionTargetResolver(createTaxRuleRevisionAction)?.(createRevision, scope)),
     [endTaxRuleRevisionAction.descriptor.actionKey]: (scope) =>
-      getActionBusinessPermissionTargetResolver(endTaxRuleRevisionAction)?.(endRevision, scope),
+      permissionRequest(getActionOwnerPermissionTargetResolver(endTaxRuleRevisionAction)?.(endRevision, scope)),
   } satisfies Record<string, ResolveFor>;
 });
 
 /** Core's exact SpiceDB object identity: a grant admits only the identical permission, Tenant and seller. */
-const grantedTo = (grants: readonly BusinessPermissionAccessTarget[]) => {
-  const objectIds = new Set(grants.map((grant) => toBusinessPermissionAccessObjectId(grant.permission, grant.target)));
-  return (resolved: BusinessPermissionAccessTarget | undefined): boolean =>
-    resolved !== undefined && objectIds.has(toBusinessPermissionAccessObjectId(resolved.permission, resolved.target));
+const grantedTo = (grants: readonly TaxRequest[]) => {
+  const identities = new Set(grants.map((grant) => JSON.stringify(grant)));
+  return (resolved: TaxRequest | undefined): boolean =>
+    resolved !== undefined && identities.has(JSON.stringify(resolved));
 };
 
 it('#950 F14-F15 declares the Tax Rule management permission on the exact Selling Legal Entity scope', () => {
@@ -151,7 +159,7 @@ it.effect('#950 BDD Czech jurisdiction is not global administrator scope', () =>
 );
 
 it('#907 Unit 10 declaring a Seller VAT Regime has no business Permission target (explicit Action provisioning instead)', () => {
-  expect(getActionBusinessPermissionTargetResolver(declareSellerVatRegimeAction)).toBeUndefined();
+  expect(getActionOwnerPermissionTargetResolver(declareSellerVatRegimeAction)).toBeUndefined();
   expect(declareSellerVatRegimeAction.descriptor.entrypoint.authorization).toEqual({
     kind: 'action_execution',
     provisioning: 'explicit',
@@ -159,7 +167,7 @@ it('#907 Unit 10 declaring a Seller VAT Regime has no business Permission target
 });
 
 it('907-Q08 #960 importing Seller VAT Regime declarations has no business Permission target (explicit Action provisioning instead)', () => {
-  expect(getActionBusinessPermissionTargetResolver(importSellerVatRegimeDeclarationsAction)).toBeUndefined();
+  expect(getActionOwnerPermissionTargetResolver(importSellerVatRegimeDeclarationsAction)).toBeUndefined();
   expect(importSellerVatRegimeDeclarationsAction.descriptor.entrypoint.authorization).toEqual({
     kind: 'action_execution',
     provisioning: 'explicit',

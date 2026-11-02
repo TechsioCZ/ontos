@@ -1,3 +1,8 @@
+import {
+  historicalOwnerTarget,
+  historicalPermissionKey as toBusinessPermissionAccessKey,
+  historicalPermissionObjectId as toBusinessPermissionAccessObjectId,
+} from '../support/historical-owner-targets.ts';
 import { remainingPermissionBaselines } from './owner-permission-baseline.ts';
 import { ownerPermissionTarget } from '../support/owner-permission-target.ts';
 import { v1 } from '@authzed/authzed-node';
@@ -8,8 +13,6 @@ import { spiceDbPermissionClientError } from '../../src/permissions/client.ts';
 import type { SpiceDbPermissionClient } from '../../src/permissions/client.ts';
 import {
   makeContextAccess,
-  toBusinessPermissionAccessKey,
-  toBusinessPermissionAccessObjectId,
   toContextPermissionAccessKey,
   toContextPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
@@ -57,12 +60,23 @@ const makeClient = (handle: SpiceDbPermissionClient['checkBulkPermissions']): Sp
 
 const requireBusinessPermissions = (
   access: ReturnType<typeof makeContextAccess>,
-): NonNullable<ReturnType<typeof makeContextAccess>['businessPermissions']> => {
-  const check = access.businessPermissions;
+  selectedLegalEntityId: string = legalEntityId,
+) => {
+  const check = access.ownerPermissions;
   if (check === undefined) {
-    throw new Error('Expected business permission access');
+    throw new Error('Expected owner permission access');
   }
-  return check;
+  return (input: {
+    readonly legalEntityId?: string;
+    readonly principal: { readonly principalId: string; readonly tenantId: string };
+    readonly targets: readonly { readonly permission: string; readonly target: object }[];
+    readonly trustedStorefrontId?: string;
+  }) =>
+    check({
+      ...input,
+      legalEntityId: input.legalEntityId ?? selectedLegalEntityId,
+      targets: input.targets.map(({ permission, target }) => ({ target: historicalOwnerTarget(permission, target) })),
+    });
 };
 
 const requireContextPermissions = (
@@ -855,6 +869,7 @@ it.effect('freezes every remaining family identity and independent Current outco
       );
       const check = requireBusinessPermissions(access);
       const input = {
+        legalEntityId: 'legalEntityId' in row.target ? row.target.legalEntityId : legalEntityId,
         principal: { principalId, tenantId: row.target.tenantId },
         targets: [{ permission, target: row.target }],
         trustedStorefrontId: 'storefront-a',
@@ -912,7 +927,10 @@ it.effect('freezes exact-first Counterparty inheritance order and repeated-targe
       ),
     );
     expect(
-      yield* requireBusinessPermissions(access)({
+      yield* requireBusinessPermissions(
+        access,
+        row.target.legalEntityId,
+      )({
         principal: { principalId, tenantId: row.target.tenantId },
         targets: [
           { permission, target: row.target },

@@ -119,24 +119,21 @@ const scope = {
 it('binds the read permission to the requested exact Selection under trusted Tenant scope', () => {
   expect(catalogToStockBindingResolutionRead.descriptor).toMatchObject({
     legalEntityScope: 'forbidden',
-    permissionTarget: 'business_permission',
+    permissionTarget: 'owner_permission',
   });
   const resolver = getReadPermissionTargetResolver(catalogToStockBindingResolutionRead);
   expect(Predicate.isFunction(resolver)).toBe(true);
   expect(catalogToStockBindingResolutionPermissionTarget(input, scope)).toEqual({
-    businessPermission: {
-      permission: 'inventory.resource.read',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: 'commerce.inventory',
-          resourceId: productId,
-          resourceType: 'commerce.inventory.catalog-to-stock-binding',
-        },
-        tenantId,
+    permission: 'inventory.resource.read',
+    target: {
+      kind: 'inventory_resource',
+      resource: {
+        moduleId: 'commerce.inventory',
+        resourceId: productId,
+        resourceType: 'commerce.inventory.catalog-to-stock-binding',
       },
+      tenantId,
     },
-    kind: 'business_permission',
   });
   expect(
     catalogToStockBindingResolutionPermissionTarget(
@@ -154,7 +151,7 @@ it('binds the read permission to the requested exact Selection under trusted Ten
       }),
       scope,
     ),
-  ).toMatchObject({ businessPermission: { target: { tenantId: '' } } });
+  ).toMatchObject({ target: { tenantId: '' } });
 });
 
 it.effect('resolves through the trusted configuration and returns metadata evidence with the exact demand', () =>

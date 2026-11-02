@@ -18,7 +18,7 @@ import { CreateCounterpartyPurchasingProfileActionUnavailableProblemSchema } fro
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Layer, Redacted, Schema, Tracer } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionHandler } from '@app/core-runtime/testing/actions';
 import { archiveCustomerProfileAction } from '../../src/actions/archive-customer-profile.action.ts';
 import { attributeGuestRetailCustomerAction } from '../../src/actions/attribute-guest-retail-customer.action.ts';
 import { bindRetailPortalProfileAction } from '../../src/actions/bind-retail-portal-profile.action.ts';
@@ -512,7 +512,6 @@ it.live('observes the original profile handler cause before mapping while public
           profileRetailPermissionReaderFactoryLive.pipe(
             Layer.provide(
               Layer.succeed(ContextAccess, {
-                businessPermissions: unusedPermission,
                 contextPermissions: unusedPermission,
                 identityNamespaces: unusedPermission,
                 legalEntities: unusedPermission,

@@ -1,3 +1,4 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import { cp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -200,14 +201,16 @@ export const makeEnrollmentCurrentAccessFixture = Effect.fn('EnrollmentCurrentAc
         (permission) =>
           mutation.mutate({
             operation: 'revoke',
-            permission,
             principal: { principalId: fixture.manager.principalId, tenantId: fixture.tenantId },
-            target: {
-              kind: 'retail_profile',
-              legalEntityId: fixture.legalEntityId,
-              profileId: prepared.profileRef.resourceId,
-              tenantId: fixture.tenantId,
-            },
+            target: customerOwnerPermissionTarget({
+              permission,
+              target: {
+                kind: 'retail_profile',
+                legalEntityId: fixture.legalEntityId,
+                profileId: prepared.profileRef.resourceId,
+                tenantId: fixture.tenantId,
+              },
+            }),
           }),
         { concurrency: 1 },
       ).pipe(Effect.orDie, Effect.asVoid),
@@ -521,8 +524,12 @@ export const prepareEnrollmentCurrentAccessInvitation = Effect.fn('EnrollmentCur
         tenantId: native.fixture.tenantId,
       },
     };
-    yield* mutation.mutate({ ...management, operation: 'grant' });
-    yield* Effect.addFinalizer(() => mutation.mutate({ ...management, operation: 'revoke' }).pipe(Effect.orDie));
+    yield* mutation.mutate({ ...management, operation: 'grant', target: customerOwnerPermissionTarget(management) });
+    yield* Effect.addFinalizer(() =>
+      mutation
+        .mutate({ ...management, operation: 'revoke', target: customerOwnerPermissionTarget(management) })
+        .pipe(Effect.orDie),
+    );
     yield* native.fixture
       .prepareOwner(
         (transaction) =>
@@ -551,8 +558,12 @@ export const prepareEnrollmentCurrentAccessInvitation = Effect.fn('EnrollmentCur
       return yield* Effect.die('Native observer grant unavailable');
     }
     const observer = { ...management, permission: 'counterparty.access.read' as const };
-    yield* mutation.mutate({ ...observer, operation: 'grant' });
-    yield* Effect.addFinalizer(() => mutation.mutate({ ...observer, operation: 'revoke' }).pipe(Effect.orDie));
+    yield* mutation.mutate({ ...observer, operation: 'grant', target: customerOwnerPermissionTarget(observer) });
+    yield* Effect.addFinalizer(() =>
+      mutation
+        .mutate({ ...observer, operation: 'revoke', target: customerOwnerPermissionTarget(observer) })
+        .pipe(Effect.orDie),
+    );
     yield* native.fixture
       .prepareOwner(
         (transaction) =>
@@ -569,14 +580,16 @@ export const prepareEnrollmentCurrentAccessInvitation = Effect.fn('EnrollmentCur
       mutation
         .mutate({
           operation: 'revoke',
-          permission: 'counterparty.profile.read',
           principal: { principalId: managerId, tenantId: native.fixture.tenantId },
-          target: {
-            counterpartyId: counterpartyRef.resourceId,
-            kind: 'counterparty',
-            legalEntityId: native.fixture.legalEntityId,
-            tenantId: native.fixture.tenantId,
-          },
+          target: customerOwnerPermissionTarget({
+            permission: 'counterparty.profile.read',
+            target: {
+              counterpartyId: counterpartyRef.resourceId,
+              kind: 'counterparty',
+              legalEntityId: native.fixture.legalEntityId,
+              tenantId: native.fixture.tenantId,
+            },
+          }),
         })
         .pipe(Effect.orDie),
     );

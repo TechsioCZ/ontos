@@ -1,6 +1,5 @@
 import { Context, Schema } from 'effect';
 import type { Effect } from 'effect';
-import type { BusinessAccessTarget } from './context-access.ts';
 import type { BusinessPermissionCode } from './business-permission.ts';
 import type { PrincipalRef } from './principal-ref.ts';
 
@@ -27,9 +26,9 @@ export const canTransitionAuthorizationMutation = (
   to: AuthorizationMutationState,
 ): boolean => from === to || AUTHORIZATION_MUTATION_TRANSITIONS[from].some((candidate) => candidate === to);
 
-export interface AuthorizationMutationJournalEntry {
+export interface AuthorizationMutationJournalEntry<Target extends object = object> {
   readonly attemptCount: number;
-  readonly businessTarget: BusinessAccessTarget;
+  readonly businessTarget: Target;
   // oxlint-disable-next-line effect-native/no-threaded-correlation-parameter -- This is persisted journal evidence, not ambient request-context threading.
   readonly correlationId: string;
   readonly lastFailureCode?: string;

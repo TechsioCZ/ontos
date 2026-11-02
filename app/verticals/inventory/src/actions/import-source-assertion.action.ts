@@ -2,8 +2,9 @@
 // @ontos-action-owner commerce.inventory
 // @ontos-action-slug import-source-assertion
 /* oxlint-disable unicorn/no-array-method-this-argument -- Effect.forEach's curried overload takes concurrency options, not Array#forEach thisArg; expires: 2027-03-31. */
+import { defineInventoryActionPermissions } from '../permissions/authorization.ts';
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 import {
@@ -94,18 +95,6 @@ export const importSourceAssertionAction = defineAction(
     },
     actionKey: ACTION_KEY,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<ImportSourceAssertionPayload>((payload, scope) => ({
-      permission: 'inventory.migration.manage',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.authorizationTargetRef.moduleId,
-          resourceId: payload.authorizationTargetRef.resourceId,
-          resourceType: payload.authorizationTargetRef.resourceType,
-        },
-        tenantId: payload.authorizationTargetRef.tenantId === scope.tenantId ? scope.tenantId : '',
-      },
-    })),
     domainErrorSchema: ImportSourceAssertionErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
@@ -117,6 +106,18 @@ export const importSourceAssertionAction = defineAction(
     }),
     idempotency: 'required',
     legalEntityScope: 'forbidden',
+    ownerPermissions: defineInventoryActionPermissions<ImportSourceAssertionPayload>((payload, scope) => ({
+      permission: 'inventory.migration.manage',
+      target: {
+        kind: 'inventory_resource',
+        resource: {
+          moduleId: payload.authorizationTargetRef.moduleId,
+          resourceId: payload.authorizationTargetRef.resourceId,
+          resourceType: payload.authorizationTargetRef.resourceType,
+        },
+        tenantId: payload.authorizationTargetRef.tenantId === scope.tenantId ? scope.tenantId : '',
+      },
+    })),
     owningModuleKey: MODULE_KEY,
     payloadSchema: ImportSourceAssertionPayloadSchema,
     policies: [],

@@ -1,3 +1,4 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { ReadHandlerUnavailable } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 import { Effect, Match, Option, Predicate, Schema } from 'effect';
@@ -211,7 +212,8 @@ it.effect('profile reads expose fail-closed reconciliation, trading, and Guest d
 
 it('targets the exact requested owner business Permission, never broad module authority', () => {
   const expectedProfileTarget = {
-    businessPermission: {
+    kind: 'owner_permission',
+    ownerPermission: customerOwnerPermissionTarget({
       permission: 'retail.profile.read',
       target: {
         kind: 'retail_profile',
@@ -219,8 +221,7 @@ it('targets the exact requested owner business Permission, never broad module au
         profileId: retailProfileRef.resourceId,
         tenantId,
       },
-    },
-    kind: 'business_permission',
+    }),
   };
   const scope = {
     authBindingId: '55555555-5555-4555-8555-555555555555',
@@ -252,11 +253,11 @@ it('targets the exact requested owner business Permission, never broad module au
       scope,
     ),
   ).toEqual({
-    businessPermission: {
+    kind: 'owner_permission',
+    ownerPermission: customerOwnerPermissionTarget({
       permission: 'counterparty.purchase.submit',
       target: { counterpartyId: 'counterparty-1', kind: 'counterparty', legalEntityId, tenantId },
-    },
-    kind: 'business_permission',
+    }),
   });
   expect(
     customerProfileReadPermissionTarget(
@@ -267,11 +268,11 @@ it('targets the exact requested owner business Permission, never broad module au
       scope,
     ),
   ).toEqual({
-    businessPermission: {
+    kind: 'owner_permission',
+    ownerPermission: customerOwnerPermissionTarget({
       permission: 'counterparty.profile.read',
       target: { counterpartyId: 'counterparty-1', kind: 'counterparty', legalEntityId, tenantId },
-    },
-    kind: 'business_permission',
+    }),
   });
   expect(
     retailAccessDecisionPermissionTarget(
@@ -282,7 +283,8 @@ it('targets the exact requested owner business Permission, never broad module au
       scope,
     ),
   ).toEqual({
-    businessPermission: {
+    kind: 'owner_permission',
+    ownerPermission: customerOwnerPermissionTarget({
       permission: 'retail.profile.read',
       target: {
         kind: 'retail_profile',
@@ -290,8 +292,7 @@ it('targets the exact requested owner business Permission, never broad module au
         profileId: retailProfileRef.resourceId,
         tenantId,
       },
-    },
-    kind: 'business_permission',
+    }),
   });
   expect(retailPrincipalResolutionPermissionTarget({ profileRef: retailProfileRef }, scope)).toEqual(
     expectedProfileTarget,

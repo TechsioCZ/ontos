@@ -1,14 +1,13 @@
 import { v1 } from '@authzed/authzed-node';
-import { Context, Effect, Layer, Option, Schema } from 'effect';
+import { Context, Effect } from 'effect';
 import type { Scope } from 'effect';
 
 import { SPICEDB_CHECK_TIMEOUT_MS } from './client.ts';
 import { loadSpiceDbConfig } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
-import { BusinessPermissionCodeSchema } from './business-permission.ts';
-import type { BusinessPermissionCode } from './business-permission.ts';
-import { PricingAuthorizationResourceIdSchema, toBusinessPermissionAccessObjectId } from './context-access.ts';
+import { isOwnerPermissionAccessTargetMetadataValid } from './context-access.ts';
+import type { OwnerPermissionAccessTarget } from './context-access.ts';
 import {
   createPermissionRelationshipMutationClient,
   // eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Generic scoped factory consumed by this owning Layer.
@@ -24,23 +23,21 @@ export interface SpiceDbResourceReference {
   readonly objectType: string;
 }
 
-type PricingBusinessPermissionReference = Readonly<
-  SpiceDbResourceReference & { readonly objectType: 'business_permission' }
->;
+type BusinessPermissionReference = Readonly<SpiceDbResourceReference & { readonly objectType: 'business_permission' }>;
 
-type PricingTenantReference = Readonly<SpiceDbResourceReference & { readonly objectType: 'tenant' }>;
+type TenantReference = Readonly<SpiceDbResourceReference & { readonly objectType: 'tenant' }>;
 
-/** The only topology mutations exposed to owner workers are exact Pricing scope and catalog-containment edges. */
+/** Existing bounded provider relations; owner preparation supplies their exact qualified endpoint meanings. */
 export type ResourceContainmentRelationship =
   | Readonly<{
-      readonly container: PricingTenantReference;
+      readonly container: TenantReference;
       readonly relation: 'tenant';
-      readonly resource: PricingBusinessPermissionReference;
+      readonly resource: BusinessPermissionReference;
     }>
   | Readonly<{
-      readonly container: PricingBusinessPermissionReference;
+      readonly container: BusinessPermissionReference;
       readonly relation: 'containing_catalog';
-      readonly resource: PricingBusinessPermissionReference;
+      readonly resource: BusinessPermissionReference;
     }>;
 
 export interface ResourceContainmentRelationshipMutationInput {
@@ -70,122 +67,79 @@ const unavailable = (cause?: unknown): ResourceContainmentMutationUnavailable =>
     reason: 'The resource containment relationship mutation could not be completed safely',
   });
 
-const ContextAccessObjectIdParts = Schema.fromJsonString(Schema.Array(Schema.String));
-const decodeContextAccessObjectIdParts = Schema.decodeUnknownOption(ContextAccessObjectIdParts);
-const TenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
-type TenantId = typeof TenantIdSchema.Type;
+/** Installed by the owner runtime, never selected by an input descriptor. */
+export type ResourceContainmentPreparation = (
+  input: ResourceContainmentRelationshipMutationInput,
+) => readonly OwnerPermissionAccessTarget[] | undefined;
 
-type PricingPermissionObjectIdentity =
-  | Readonly<{
-      kind: 'pricing_catalog';
-      permission: BusinessPermissionCode;
-      pricingCatalogId: string;
-      tenantId: TenantId;
-    }>
-  | Readonly<{
-      kind: 'price_group';
-      permission: BusinessPermissionCode;
-      priceGroupId: string;
-      pricingCatalogId: string;
-      tenantId: TenantId;
-    }>;
-
-const decodePricingPermissionObjectIdentity = (
-  reference: SpiceDbResourceReference,
-): PricingPermissionObjectIdentity | undefined => {
+const validRelationships = (
+  relationships: ResourceContainmentRelationshipMutationInput['relationships'],
+  targets: readonly OwnerPermissionAccessTarget[],
+): boolean => {
   if (
-    reference.objectType !== 'business_permission' ||
-    reference.objectId.length > 1024 ||
-    !reference.objectId.startsWith('ctx_')
+    relationships.length === 0 ||
+    targets.length === 0 ||
+    targets.some((target) => !isOwnerPermissionAccessTargetMetadataValid(target))
   ) {
-    return undefined;
+    return false;
   }
-  const serialized = Buffer.from(reference.objectId.slice(4), 'base64url').toString('utf-8');
-  const parts = decodeContextAccessObjectIdParts(serialized).pipe(Option.getOrUndefined);
-  if (parts === undefined) {
-    return undefined;
-  }
-  const [permission, tenantId, kind, pricingCatalogId, priceGroupId] = parts;
+  const [first] = targets;
   if (
-    permission === undefined ||
-    tenantId === undefined ||
-    pricingCatalogId === undefined ||
-    !Schema.is(BusinessPermissionCodeSchema)(permission) ||
-    !permission.startsWith('pricing.price_group.') ||
-    !Schema.is(TenantIdSchema)(tenantId) ||
-    !Schema.is(PricingAuthorizationResourceIdSchema)(pricingCatalogId)
+    first === undefined ||
+    targets.some(
+      (target) =>
+        target.contract !== first.contract ||
+        target.definition !== first.definition ||
+        target.scope.tenantId !== first.scope.tenantId ||
+        target.scope.kind !== first.scope.kind ||
+        (target.scope.kind === 'legal_entity' &&
+          (first.scope.kind !== 'legal_entity' || target.scope.legalEntityId !== first.scope.legalEntityId)),
+    )
   ) {
-    return undefined;
+    return false;
   }
-  if (kind === 'pricing_catalog' && parts.length === 4) {
-    const identity = { kind, permission, pricingCatalogId, tenantId } as const;
-    return toBusinessPermissionAccessObjectId(permission, identity) === reference.objectId ? identity : undefined;
-  }
-  if (
-    kind === 'price_group' &&
-    parts.length === 5 &&
-    priceGroupId !== undefined &&
-    Schema.is(PricingAuthorizationResourceIdSchema)(priceGroupId)
-  ) {
-    const identity = { kind, permission, priceGroupId, pricingCatalogId, tenantId } as const;
-    return toBusinessPermissionAccessObjectId(permission, identity) === reference.objectId ? identity : undefined;
-  }
-  return undefined;
+  const seen = new Set<string>();
+  return relationships.every(({ container, relation, resource }) => {
+    const key = `${resource.objectType}:${resource.objectId}:${relation}:${container.objectType}:${container.objectId}`;
+    if (seen.has(key) || resource.objectType !== 'business_permission') {
+      return false;
+    }
+    seen.add(key);
+    const target = targets.find((candidate) => candidate.objectId === resource.objectId);
+    if (target === undefined) {
+      return false;
+    }
+    if (relation === 'tenant') {
+      return container.objectType === 'tenant' && container.objectId === target.scope.tenantId;
+    }
+    return (
+      relation === 'containing_catalog' &&
+      container.objectType === 'business_permission' &&
+      container.objectId !== resource.objectId &&
+      targets.some((candidate) => candidate.objectId === container.objectId) &&
+      relationships.some(
+        (candidate) =>
+          candidate.resource.objectId === resource.objectId &&
+          candidate.relation === 'tenant' &&
+          candidate.container.objectId === target.scope.tenantId,
+      )
+    );
+  });
 };
-
-const validTenantRelationship = ({ container, resource }: ResourceContainmentRelationship): boolean => {
-  const pricingResource = decodePricingPermissionObjectIdentity(resource);
-  return (
-    container.objectType === 'tenant' &&
-    Schema.is(TenantIdSchema)(container.objectId) &&
-    pricingResource !== undefined &&
-    pricingResource.tenantId === container.objectId
-  );
-};
-
-const validCatalogContainmentRelationship = ({ container, resource }: ResourceContainmentRelationship): boolean => {
-  const catalog = decodePricingPermissionObjectIdentity(container);
-  const group = decodePricingPermissionObjectIdentity(resource);
-  return (
-    catalog?.kind === 'pricing_catalog' &&
-    group?.kind === 'price_group' &&
-    catalog.tenantId === group.tenantId &&
-    catalog.permission === group.permission &&
-    catalog.pricingCatalogId === group.pricingCatalogId
-  );
-};
-
-const validPricingRelationship = (relationship: ResourceContainmentRelationship): boolean => {
-  if (relationship.relation === 'tenant') {
-    return validTenantRelationship(relationship);
-  }
-  return relationship.relation === 'containing_catalog' && validCatalogContainmentRelationship(relationship);
-};
-
-const relationshipKey = ({ container, relation, resource }: ResourceContainmentRelationship): string =>
-  `${resource.objectType}:${resource.objectId}#${relation}@${container.objectType}:${container.objectId}`;
-
-const membershipKey = ({ relation, resource }: ResourceContainmentRelationship): string =>
-  `${resource.objectType}:${resource.objectId}#${relation}`;
-
-const validRelationships = (relationships: readonly ResourceContainmentRelationship[]): boolean =>
-  relationships.length > 0 &&
-  relationships.length <= 100 &&
-  relationships.every(validPricingRelationship) &&
-  new Set(relationships.map(relationshipKey)).size === relationships.length &&
-  new Set(relationships.map(membershipKey)).size === relationships.length;
 
 const objectReference = ({ objectId, objectType }: SpiceDbResourceReference) =>
   v1.ObjectReference.create({ objectId, objectType });
 
 export const makeResourceContainmentRelationshipMutation = (
   client: Pick<ResourceContainmentRelationshipMutationClient, 'writeRelationships'>,
+  prepare: ResourceContainmentPreparation,
 ): ResourceContainmentRelationshipMutationService =>
   Object.freeze({
     touch: Effect.fn('ResourceContainmentRelationshipMutation.touch')(function* touchResourceContainment(
       input: ResourceContainmentRelationshipMutationInput,
     ) {
-      if (!validRelationships(input.relationships)) {
+      const targets = yield* Effect.try({ catch: unavailable, try: () => prepare(input) });
+      if (targets === undefined || !validRelationships(input.relationships, targets)) {
         return yield* unavailable();
       }
       const updates = input.relationships.map(({ container, relation, resource }) =>
@@ -212,21 +166,19 @@ const unavailableService = (cause?: unknown): ResourceContainmentRelationshipMut
   Object.freeze({ touch: () => Effect.fail(unavailable(cause)) });
 
 export const makeResourceContainmentRelationshipMutationLive = (
-  clientFactory: (
-    configuration: SpiceDbConfigValue,
-    timeoutMilliseconds: number,
-  ) => ResourceContainmentRelationshipMutationClient = createResourceContainmentRelationshipMutationClient,
-  loadConfiguration: () => Effect.Effect<SpiceDbConfigValue, SpiceDbConfigError> = loadSpiceDbConfig,
+  prepare: ResourceContainmentPreparation,
+  options: Readonly<{
+    clientFactory?: (
+      configuration: SpiceDbConfigValue,
+      timeoutMilliseconds: number,
+    ) => ResourceContainmentRelationshipMutationClient;
+    loadConfiguration?: () => Effect.Effect<SpiceDbConfigValue, SpiceDbConfigError>;
+  }> = {},
 ): Effect.Effect<ResourceContainmentRelationshipMutationService, never, Scope.Scope> =>
   makePermissionRelationshipMutationLive({
-    clientFactory,
-    loadConfiguration,
-    makeService: makeResourceContainmentRelationshipMutation,
+    clientFactory: options.clientFactory ?? createResourceContainmentRelationshipMutationClient,
+    loadConfiguration: options.loadConfiguration ?? loadSpiceDbConfig,
+    makeService: (client) => makeResourceContainmentRelationshipMutation(client, prepare),
     unavailable,
     unavailableService,
   });
-
-export const ResourceContainmentRelationshipMutationLive = Layer.effect(
-  ResourceContainmentRelationshipMutation,
-  makeResourceContainmentRelationshipMutationLive(),
-);

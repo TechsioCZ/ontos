@@ -1,5 +1,7 @@
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
+import type { OwnerPermissionAccessTarget } from '@app/core-runtime';
+
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -24,6 +26,11 @@ import type {
   PriceGroupCatalogPersistence,
   RetirePriceGroupInput,
 } from '../../src/persistence/price-group-catalog-persistence.ts';
+
+const permissionRequest = (targets: readonly OwnerPermissionAccessTarget[] | undefined) => {
+  const first = targets?.[0];
+  return first === undefined ? undefined : { permission: first.definition.key, target: first.target };
+};
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const compositionRevision = 'b'.repeat(64);
@@ -82,9 +89,9 @@ const services = (
 });
 
 it('requires the exact Price Group permission from the payload and forbids Legal Entity scope', () => {
-  const resolve = getActionBusinessPermissionTargetResolver(retirePriceGroupAction);
+  const resolve = getActionOwnerPermissionTargetResolver(retirePriceGroupAction);
   expect(retirePriceGroupAction.descriptor.legalEntityScope).toBe('forbidden');
-  expect(resolve?.(payload, scope)).toEqual({
+  expect(permissionRequest(resolve?.(payload, scope))).toEqual({
     permission: 'pricing.price_group.retire',
     target: {
       kind: 'price_group',
@@ -96,15 +103,17 @@ it('requires the exact Price Group permission from the payload and forbids Legal
 
   const foreignTenantId = '88888888-8888-4888-8888-888888888888';
   expect(
-    resolve?.(
-      {
-        ...payload,
-        expectedCurrent: {
-          ...payload.expectedCurrent,
-          priceGroupRef: { ...priceGroupRef, tenantId: foreignTenantId },
+    permissionRequest(
+      resolve?.(
+        {
+          ...payload,
+          expectedCurrent: {
+            ...payload.expectedCurrent,
+            priceGroupRef: { ...priceGroupRef, tenantId: foreignTenantId },
+          },
         },
-      },
-      scope,
+        scope,
+      ),
     ),
   ).toMatchObject({ target: { pricingCatalogId: foreignTenantId, tenantId: foreignTenantId } });
 });

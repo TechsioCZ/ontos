@@ -1,3 +1,4 @@
+import { CustomerPermissionTargetSchema } from '../../src/permissions/authorization.ts';
 import { ContextAccess, TrustedPrincipalContextSchema, trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import type { ContextAccessService } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
@@ -65,11 +66,6 @@ it.layer(NodeCrypto.layer)('retail access decision runtime authorization', (suit
         Effect.gen(function* exactPermissionAdmitted() {
           const businessTargets: string[] = [];
           const harness = yield* makeReadTestHarness({
-            businessPermissionDecision: (target) => {
-              businessTargets.push(target.permission);
-              expect(target.target).toEqual({ kind: 'retail_profile', legalEntityId, profileId, tenantId });
-              return target.permission === input.requiredPermission ? 'allowed' : 'denied';
-            },
             compositionRevision,
             executeOwnerQuery: (query) => {
               expect(query.sql).toContain('resolve_retail_principal');
@@ -79,6 +75,11 @@ it.layer(NodeCrypto.layer)('retail access decision runtime authorization', (suit
             },
             operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-22T10:00:00.000Z')),
             ownerAuthorizationDecision: 'allowed',
+            ownerPermissionDecision: (target) => {
+              businessTargets.push(target.definition.key);
+              expect(target.target).toEqual({ kind: 'retail_profile', legalEntityId, profileId, tenantId });
+              return target.definition.key === input.requiredPermission ? 'allowed' : 'denied';
+            },
             ownerRegistration: commerceCustomerContextRegistration,
             permissionDecision: 'allowed',
             scope,
@@ -107,17 +108,19 @@ it.layer(NodeCrypto.layer)('retail access decision runtime authorization', (suit
     suite.effect(`${deniedTarget} is denied before owner SQL`, () =>
       Effect.gen(function* deniedAuthority() {
         const harness = yield* makeReadTestHarness({
-          businessPermissionDecision: (target) =>
-            target.target.kind === 'retail_profile' &&
-            target.target.profileId === profileId &&
-            target.target.tenantId === tenantId &&
-            deniedTarget !== 'business'
-              ? 'allowed'
-              : 'denied',
           compositionRevision,
           executeOwnerQuery: () => Effect.die('Denied authority must not reach owner SQL'),
           operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-22T10:00:00.000Z')),
           ownerAuthorizationDecision: 'allowed',
+          ownerPermissionDecision: (target) => {
+            const decoded = Schema.decodeUnknownSync(CustomerPermissionTargetSchema)(target.target);
+            return decoded.kind === 'retail_profile' &&
+              decoded.profileId === profileId &&
+              decoded.tenantId === tenantId &&
+              deniedTarget !== 'business'
+              ? 'allowed'
+              : 'denied';
+          },
           ownerRegistration: commerceCustomerContextRegistration,
           permissionDecision: 'allowed',
           scope,

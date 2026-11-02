@@ -12,9 +12,9 @@ import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/modul
 import { makeOperationalScopeResolver } from '../operations/context.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
-import { ContextAccess, toBusinessPermissionAccessKey } from '../permissions/context-access.ts';
+import { ContextAccess } from '../permissions/context-access.ts';
 import type {
-  BusinessPermissionAccessTarget,
+  OwnerPermissionAccessTarget,
   ContextAccessDecision,
   ContextAccessService,
 } from '../permissions/context-access.ts';
@@ -29,12 +29,12 @@ export interface ReadTestOwnerQuery {
 }
 
 export interface ReadTestHarnessOptions {
-  readonly businessPermissionDecision?: (target: BusinessPermissionAccessTarget) => ContextAccessDecision;
   readonly compositionRevision?: string;
   /** Explicit driver rows for owner SQL; unexpected statements must fail rather than supply empty. */
   readonly executeOwnerQuery: (query: ReadTestOwnerQuery) => Effect.Effect<readonly object[], SqlError>;
   readonly operationTime: Date;
   readonly ownerAuthorizationDecision?: ContextAccessDecision;
+  readonly ownerPermissionDecision?: (target: OwnerPermissionAccessTarget) => ContextAccessDecision;
   readonly ownerRegistration?: VerticalRuntimeRegistration;
   readonly permissionDecision?: ContextAccessDecision;
   readonly scope: OperationalScope;
@@ -147,15 +147,15 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
   );
   const decision = options.permissionDecision ?? 'denied';
   const contextAccess: ContextAccessService = {
-    businessPermissions: ({ targets }) =>
-      Effect.succeed(
-        targets.map((target) => ({
-          decision: options.businessPermissionDecision?.(target) ?? decision,
-          key: toBusinessPermissionAccessKey(target),
-        })),
-      ),
     legalEntities: ({ legalEntityIds }) => Effect.succeed(legalEntityIds.map((key) => ({ decision, key }))),
     modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision, key }))),
+    ownerPermissions: ({ targets }) =>
+      Effect.succeed(
+        targets.map(({ target }) => ({
+          decision: options.ownerPermissionDecision?.(target) ?? decision,
+          key: target.key,
+        })),
+      ),
     resources: ({ resources }) =>
       Effect.succeed(
         resources.map((resource) => ({
@@ -230,3 +230,11 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
 
 /** Test-owned access to the original registration factory. */
 export { getReadServiceFactory } from '../reads/definition.ts';
+
+export {
+  getReadPermissionTargetResolver,
+  getReadResourcePermissionTargetResolver,
+  getReadResultPermissionTargetResolver,
+  getReadConditionalPermissionPlan,
+  getReadHandler,
+} from '../reads/definition.ts';

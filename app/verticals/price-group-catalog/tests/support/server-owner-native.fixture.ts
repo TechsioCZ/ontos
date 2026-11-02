@@ -61,3 +61,4 @@ export const migratePriceGroupCatalogNativeBaseline = Effect.fn('PriceGroupCatal
     return yield* Effect.void;
   },
 );
+export { priceGroupOwnerPermissionTarget } from '../../src/permissions/authorization.ts';

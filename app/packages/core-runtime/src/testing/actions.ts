@@ -578,3 +578,8 @@ export type { LiveOperationFixtureRuntimeHandoff, LiveOperationFixtureBootstrapR
 /** Test-owned access to the original registration, without publishing private storage in production. */
 export { createActionCollector } from '../actions/collector.ts';
 export { getActionHandler, getActionServiceFactory } from '../actions/definition.ts';
+
+export {
+  getActionOwnerPermissionTargetResolver,
+  getActionResourcePermissionTargetResolver,
+} from '../actions/definition.ts';

@@ -1,5 +1,5 @@
 import { inventoryRegistration } from '../../vertical.registration.ts';
-import { ReadPermissionDenied, allowOwnerAuthorizationOverlay, toBusinessPermissionAccessKey } from '@app/core-runtime';
+import { ReadPermissionDenied, allowOwnerAuthorizationOverlay } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 import { Effect, Predicate, Schema } from 'effect';
 
@@ -59,7 +59,7 @@ const input = Schema.decodeSync(CurrentStockEvidenceForAvailabilityRequestSchema
 });
 
 it('binds the Read and public client to the exact Stock Position contract', () => {
-  expect(currentStockEvidenceForAvailabilityRead.descriptor.permissionTarget).toBe('business_permission');
+  expect(currentStockEvidenceForAvailabilityRead.descriptor.permissionTarget).toBe('owner_permission');
   expect(inventoryResourceReadPermission.protectedEntrypoints).toEqual([
     'commerce.inventory.api.catalog-to-stock-binding-resolution',
     'commerce.inventory.api.commitment-protection-verification',
@@ -74,9 +74,10 @@ it('binds the Read and public client to the exact Stock Position contract', () =
   const resolver = getReadPermissionTargetResolver(currentStockEvidenceForAvailabilityRead);
   expect(Predicate.isFunction(resolver)).toBe(true);
   if (Predicate.isFunction(resolver)) {
-    expect(resolver(input, scope)).toEqual({
-      businessPermission: {
-        permission: 'inventory.resource.read',
+    expect(resolver(input, scope)).toMatchObject({
+      kind: 'owner_permission',
+      ownerPermission: {
+        definition: { key: 'inventory.resource.read' },
         target: {
           kind: 'inventory_resource',
           resource: {
@@ -87,7 +88,6 @@ it('binds the Read and public client to the exact Stock Position contract', () =
           tenantId,
         },
       },
-      kind: 'business_permission',
     });
   }
 
@@ -116,18 +116,18 @@ it.effect('denies the exact Stock Position before owner services are resolved', 
       openModuleEntrypointGateway,
       { resolve: () => Effect.succeed(scope) },
       {
-        businessPermissions: ({ targets }) => {
+        legalEntities: ({ legalEntityIds }) =>
+          Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
+        modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+        ownerPermissions: ({ targets }) => {
           businessChecks += 1;
           return Effect.succeed(
             targets.map((target) => ({
               decision: 'denied' as const,
-              key: toBusinessPermissionAccessKey(target),
+              key: target.target.key,
             })),
           );
         },
-        legalEntities: ({ legalEntityIds }) =>
-          Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-        modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
         resources: ({ resources }) => {
           resourceChecks += 1;
           return Effect.succeed(
