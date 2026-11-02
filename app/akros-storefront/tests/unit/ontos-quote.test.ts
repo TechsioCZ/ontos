@@ -202,9 +202,9 @@ describe("cart quote messages follow the market language", () => {
       project({ revision: 3, products: [product({ packageQuantity: 50 })] }),
     );
     const sk = await (await ask({ cart: cart(10, 121) }, "sk")).json();
-    expect(sk.issues).toContain("Vruty (3,5 × 16): objednajte celé balenie po 50 ks.");
+    expect(sk.issues).toContain("Vruty (3,5 × 16): objednajte celé balenia po 50 ks.");
     const en = await (await ask({ cart: cart(10, 121) }, "en")).json();
-    expect(en.issues).toContain("Vruty (3,5 × 16): order whole packs of 50 ks.");
+    expect(en.issues).toContain("Vruty (3,5 × 16): order whole packages of 50 ks.");
     const cs = await (await ask({ cart: cart(10, 121) })).json();
     expect(cs.issues).toContain("Vruty (3,5 × 16): objednejte celé balení po 50 ks.");
   });

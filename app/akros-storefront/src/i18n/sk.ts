@@ -39,7 +39,7 @@ export const sk: Dictionary = {
     utilityNavigation: "Pomocná navigácia",
   },
   search: {
-    placeholder: "hľadať na stránke...",
+    placeholder: "hľadať na stránke…",
     label: "Vyhľadať v katalógu",
     results: "Výsledky vyhľadávania",
     suggestions: "Produkty",
@@ -47,9 +47,9 @@ export const sk: Dictionary = {
     noSuggestions: "Pre zadaný výraz sme nenašli žiadne produkty ani kategórie.",
     allResults: (count: number) => `Zobraziť všetky produkty (${count.toLocaleString("sk-SK")})`,
     noResults: "Pre zadaný výraz sme nenašli žiadne produkty.",
-    query: (query: string) => `Dopyt: „${query}“`,
+    query: (query: string) => `Hľadaný výraz: „${query}“`,
     variantMatch: (label: string, sku: string) => `Variant: ${label} · SKU ${sku}`,
-    matchingVariants: (matches: number) => `${count(matches)} zodpovedajúcich variantov`,
+    matchingVariants: (matches: number) => `Zodpovedajúce varianty: ${count(matches)}`,
     unavailable: "Vyhľadávanie v OntOS je teraz nedostupné.",
     loading: "Hľadám v katalógu OntOS…",
     failed: "Vyhľadávanie sa nepodarilo.",
@@ -92,7 +92,7 @@ export const sk: Dictionary = {
     },
     availabilityByVariant: "Dostupnosť podľa variantu",
     from: "od",
-    variantPrice: "Cena podľa varianty",
+    variantPrice: "Cena podľa variantu",
     inStock: "Skladom",
     unitPrice: "Cena za jednotku",
     sku: "Kód produktu",
@@ -128,7 +128,7 @@ export const sk: Dictionary = {
     variantsUnknown: "Dostupnosť variantov teraz nemožno overiť",
     variantsOutOfStock: "Momentálne nie je skladom žiadny variant",
     imageNumber: (index: number) => `obrázok ${index}`,
-    technicalDrawing: (name: string) => `Technický nákres: ${name}`,
+    technicalDrawing: (name: string) => `Technický výkres: ${name}`,
     price: "Cena",
     priceExcludingVat: "Cena bez DPH",
     priceIncludingVat: "Cena s DPH",
@@ -138,7 +138,7 @@ export const sk: Dictionary = {
     availabilityCannotConfirm:
       "OntOS teraz nemôže potvrdiť skladovú dostupnosť, preto položku nemožno vložiť do košíka.",
     otherActions: "Ďalšie akcie produktu",
-    askQuestion: "Otázka na produkt",
+    askQuestion: "Otázka k produktu",
     sendToFriend: "Poslať priateľovi",
     addFavorite: (name: string) => `Pridať ${name} k obľúbeným`,
     removeFavorite: (name: string) => `Odobrať ${name} z obľúbených`,
@@ -148,7 +148,7 @@ export const sk: Dictionary = {
     length: "Dĺžka (mm)",
     material: "Materiál",
     variantPriceFilter: (symbol: string, unit: string) => `Cena (${symbol}/${unit})`,
-    applyVariantFilters: "Filtruj",
+    applyVariantFilters: "Filtrovať",
     variantsPagination: "Stránkovanie variantov",
     variantAvailability: {
       unknown: "Nemožno overiť",
@@ -184,7 +184,7 @@ export const sk: Dictionary = {
     table: {
       name: "Názov",
       code: "Kód",
-      unit: "M.J.",
+      unit: "MJ",
       availability: "Dostupnosť",
       price: "Cena",
       quantity: "Množstvo",
@@ -268,8 +268,8 @@ export const sk: Dictionary = {
     saveWatch: "Uložiť stráženie",
     watchDescription: "V tejto ukážke sa výber stráženia ukladá len v tomto prehliadači.",
     watchSelectionSaved: "Výber stráženia uložený v tomto prehliadači.",
-    askVariant: "Otázka na variant",
-    questionTitle: "Otázka na varianty",
+    askVariant: "Otázka k variantu",
+    questionTitle: "Otázka k variantom",
     continueToQuestion: "Pokračovať k otázke",
     share: "Zdieľať",
     shareVariant: "Zdieľať variant",
@@ -281,7 +281,7 @@ export const sk: Dictionary = {
     copyUnavailable: "Kopírovanie nie je dostupné. Skopírujte odkaz z poľa nižšie.",
     linkToCopy: "Odkaz na skopírovanie",
     close: "Zavrieť",
-    print: "Tlač",
+    print: "Tlačiť",
   },
   favorites: {
     pageTitle: "Obľúbené produkty",
@@ -297,14 +297,14 @@ export const sk: Dictionary = {
     variantsActionCount: (saved: number) => `Obľúbené varianty (${count(saved)})`,
     saved: "Variant uložený do obľúbených.",
     removed: "Variant odobratý z obľúbených.",
-    saveFailed: "Obľúbené sa nepodarilo uložiť. Skúste to znova.",
+    saveFailed: "Obľúbené položky sa nepodarilo uložiť. Skúste to znova.",
     selectionSaved: "Výber obľúbených variantov uložený.",
     dialogTitle: "Obľúbené varianty",
     confirm: "Uložiť výber",
     storageFailed: "Výber sa nepodarilo uložiť. Skontrolujte povolenie úložiska a skúste to znova.",
     loading: "Načítavam obľúbené varianty…",
     unavailable:
-      "Obľúbené nie je možné načítať. Povoľte miestne úložisko prehliadača a obnovte stránku.",
+      "Obľúbené položky nemožno načítať. Povoľte miestne úložisko prehliadača a obnovte stránku.",
     empty: "Zatiaľ nemáte uložený žiadny obľúbený variant.",
     browse: "Prezrieť produkty",
     savedCount: (saved: number) =>
@@ -339,14 +339,14 @@ export const sk: Dictionary = {
     shippingPrice: "Podľa zvolenej dopravy",
     totalWithVat: "Spolu s DPH",
     loading: "Načítavam košík…",
-    demoCheckoutNotice: "Pokladňa nie je súčasťou tejto klikacej ukážky.",
+    demoCheckoutNotice: "Pokladňa nie je súčasťou tejto interaktívnej ukážky.",
     defaultCarts: {
       default: "Predvolený košík",
       commission: "Komisný košík",
     },
     add: {
       notReady: "Košík nie je pripravený.",
-      verifyFailed: "Cenu a sklad teraz nemožno overiť v OntOS. Tovar nebol pridaný.",
+      verifyFailed: "Cenu a skladovú dostupnosť teraz nemožno overiť v OntOS. Tovar nebol pridaný.",
       priceChanged:
         "Cena sa zmenila. Obnovte stránku alebo overte existujúci košík a pridajte tovar za aktuálnu cenu.",
       notConfirmed: "OntOS nepotvrdil dostupnosť tovaru. Tovar nebol pridaný.",
@@ -387,7 +387,7 @@ export const sk: Dictionary = {
       NOT_AVAILABLE: "Nie je v ponuke",
       NOT_OFFERED_IN_MARKET: "Nie je v ponuke trhu",
       OUT_OF_STOCK: "Nie je skladom",
-      INSUFFICIENT_STOCK: "Nedostatok kusov",
+      INSUFFICIENT_STOCK: "Nedostatočná zásoba",
       MINIMUM_QUANTITY: "Upravte množstvo",
       PACKAGE_QUANTITY: "Upravte množstvo",
     },
@@ -403,10 +403,10 @@ export const sk: Dictionary = {
       checking: "Overujem aktuálnu cenu a dostupnosť v OntOS…",
       blockedTitle: "Objednávku teraz nemožno dokončiť",
       blockedHint:
-        "Upravte množstvo alebo blokované položky z košíka odoberte. Pokračovať možno, až OntOS potvrdí celý košík.",
+        "Upravte množstvo alebo blokované položky z košíka odoberte. Pokračovať môžete, až keď OntOS potvrdí celý košík.",
       priceChangedTitle: "Cena sa zmenila – prijať novú cenu",
       priceChangedHint:
-        "Ceny s DPH. Nové ceny použijeme až po vašom súhlase; objednávka sa zatiaľ neodoslala.",
+        "Ceny s DPH. Nové ceny použijeme až po vašom súhlase; objednávka zatiaľ nebola odoslaná.",
       priceChangeLine: (quantity: string, unit: string) => `Za ${quantity} ${unit}:`,
       goodsTotal: "Spolu za tovar",
       acceptPrices: "Prijať nové ceny",
@@ -458,7 +458,7 @@ export const sk: Dictionary = {
   checkout: {
     title: "Objednávka",
     demoNotice:
-      "Toto je klikacia ukážka. Údaje sa nikam neposielajú a nevznikne skutočná objednávka.",
+      "Toto je interaktívna ukážka. Údaje sa nikam neposielajú a nevznikne skutočná objednávka.",
     contactTitle: "Kontaktné a dodacie údaje",
     name: "Meno a priezvisko",
     email: "E-mail",
@@ -504,13 +504,13 @@ export const sk: Dictionary = {
       delivery: "Doprava a platba",
       toBeChosen: "Bude vybrané",
       vat: "DPH",
-      net: "Spolu bez dane",
+      net: "Spolu bez DPH",
       totalWithVat: "Spolu s DPH",
-      vatByOntos: "DPH a sumy bez dane vypočítal OntOS pri overení košíka.",
+      vatByOntos: "DPH a sumy bez DPH vypočítal OntOS pri overení košíka.",
     },
     totalsNote: {
       checking: "DPH vypočíta OntOS po overení košíka…",
-      pending: "DPH a cenu bez dane ukážeme, až OntOS potvrdí celý košík.",
+      pending: "DPH a cenu bez DPH zobrazíme, až keď OntOS potvrdí celý košík.",
       deliveryUnconfirmed:
         "Zvolený spôsob dopravy OntOS nepotvrdil; vyberte dopravu z aktuálnej ponuky.",
     },
@@ -525,7 +525,7 @@ export const sk: Dictionary = {
     fields: {
       firstName: "Meno",
       lastName: "Priezvisko",
-      street: "Ulica, č. d.",
+      street: "Ulica a číslo domu",
       city: "Mesto",
       postalCode: "PSČ",
       country: "Krajina",
@@ -610,7 +610,7 @@ export const sk: Dictionary = {
       marketClosed:
         "Tento trh teraz objednávky neprijíma. Košík zostáva zachovaný, skúste to prosím neskôr.",
       notOfferedInMarket:
-        "Niektorý tovar nie je v ponuke tohto trhu. Odoberte ho z košíka a objednávku odošlite znova.",
+        "Časť tovaru nie je v ponuke tohto trhu. Odoberte ho z košíka a objednávku odošlite znova.",
       stockAdjust: (messages: string) =>
         `${messages} Upravte množstvo v košíku a objednávku odošlite znova.`,
       stockUnavailable:
@@ -769,7 +769,7 @@ export const sk: Dictionary = {
       notConfirmed: "OntOS nepotvrdil uloženie súhlasu. Načítajte aktuálny stav znova.",
       changeUnconfirmed: "Zmenu súhlasu nemožno potvrdiť.",
       acknowledgement:
-        "Zaškrtnutím potvrdzujem oboznámenie sa s uvedenými informáciami. Súhlas je dobrovoľný a možno ho tu kedykoľvek odvolať odškrtnutím. Nesúvisí s prijatím obchodných podmienok.",
+        "Zaškrtnutím potvrdzujem oboznámenie sa s uvedenými informáciami. Súhlas je dobrovoľný a možno ho tu kedykoľvek odvolať zrušením zaškrtnutia. Nesúvisí s prijatím obchodných podmienok.",
       label: "Súhlasím so zasielaním newslettera e-mailom",
       state: "Stav v OntOS:",
       granted: "súhlas udelený",
@@ -839,14 +839,14 @@ export const sk: Dictionary = {
       status: "Stav",
       lineCount: "Počet položiek",
       vat: "DPH",
-      totalWithVat: "Celkom s DPH",
+      totalWithVat: "Spolu s DPH",
       savedAmounts:
         "Sumy sú uložené pri objednaní. Online platba ani stav úhrady nie sú v OntOS pre túto objednávku dostupné.",
       lines: "Objednané položky",
       product: "Produkt",
       quantity: "Množstvo",
       unitPrice: "Cena za kus",
-      lineTotal: "Celkom",
+      lineTotal: "Spolu",
       code: (sku: string) => `Kód: ${sku}`,
     },
     reorder: {
@@ -870,7 +870,7 @@ export const sk: Dictionary = {
     password: {
       title: "Zmena hesla",
       newPassword: "Nové heslo",
-      confirmation: "Potvrdiť heslo",
+      confirmation: "Potvrdenie hesla",
       submit: "Zmeniť heslo",
       pending: "Mením heslo…",
       required: "Vyplňte nové heslo.",
@@ -957,7 +957,7 @@ export const sk: Dictionary = {
     resend: {
       failed: "Overovací e-mail sa nepodarilo odoslať.",
       notConfirmed: "Odoslanie overovacieho e-mailu nebolo potvrdené.",
-      unavailable: "Overovací e-mail je dočasne nedostupný.",
+      unavailable: "Odosielanie overovacích e-mailov je dočasne nedostupné.",
       label: "E-mail na overenie",
       sending: "Odosielam…",
       submit: "Poslať overovací e-mail znova",
@@ -1000,7 +1000,7 @@ export const sk: Dictionary = {
       unavailable: "Tento trh je dočasne nedostupný.",
     },
     outage: {
-      cart: "Spojenie s OntOS sa nepodarilo. Košík zostáva zachovaný. Skúste to prosím znova.",
+      cart: "Nepodarilo sa spojiť s OntOS. Košík zostáva zachovaný. Skúste to prosím znova.",
       orderStatus:
         "Stav objednávky sa teraz nepodarilo načítať z OntOS. Skúste to prosím o chvíľu.",
       search: "Vyhľadávanie v OntOS je teraz nedostupné. Skúste to prosím o chvíľu.",
@@ -1021,9 +1021,9 @@ export const sk: Dictionary = {
       insufficientStock: (label: string, stock: number, unit: string) =>
         `${label}: k dispozícii je len ${count(stock)} ${unit}.`,
       minimumQuantity: (label: string, minimum: number, unit: string) =>
-        `${label}: minimálne množstvo je ${minimum} ${unit}.`,
+        `${label}: minimálne množstvo je ${count(minimum)} ${unit}.`,
       packageQuantity: (label: string, step: number, unit: string) =>
-        `${label}: objednajte celé balenie po ${step} ${unit}.`,
+        `${label}: objednajte celé balenia po ${count(step)} ${unit}.`,
     },
     orders: {
       signIn: "Prihláste sa do svojho účtu.",
@@ -1032,7 +1032,7 @@ export const sk: Dictionary = {
       cartChanged: "Košík sa zmenil. Skontrolujte ceny a dostupnosť.",
     },
     orderStatus: {
-      invalid: "Neplatný dopyt na stav objednávky.",
+      invalid: "Neplatná požiadavka na stav objednávky.",
       notYet: "Stav objednávky zatiaľ nie je k dispozícii.",
     },
     orderEmails: {
@@ -1069,7 +1069,7 @@ export const sk: Dictionary = {
       missingRegistrationId: "Chýba identifikátor registrácie.",
       missingCredentials: "Zadajte e-mail a heslo.",
       invalidEmail: "Zadajte platnú e-mailovú adresu.",
-      twoFactorRequired: "Účet vyžaduje dvojfázové overenie v zákazníckom portáli.",
+      twoFactorRequired: "Účet vyžaduje dvojfaktorové overenie v zákazníckom portáli.",
       enrollmentNotFound: "Pre tento účet nie je dostupná registrácia v tomto obchode.",
       enrollmentSignIn: "Na zobrazenie registrácie sa prihláste overeným účtom.",
     },
@@ -1093,7 +1093,7 @@ export const sk: Dictionary = {
     },
   },
   errorPages: {
-    notFoundHeading: "Vyzerá to, že ste sa stratili v našom sklade...",
+    notFoundHeading: "Vyzerá to, že ste sa stratili v našom sklade…",
     notFoundText:
       "Požadovaná stránka nebola nájdená. Pravdepodobne bola presunutá, zmazaná alebo je odkaz, na ktorý ste klikli, nesprávny.",
     searchAgain: "Skúste materiál vyhľadať znova:",
@@ -1105,7 +1105,7 @@ export const sk: Dictionary = {
     backHome: "Späť na hlavnú stránku",
     unavailableTitle: "Katalóg je dočasne nedostupný",
     unavailableText:
-      "Spojenie s OntOS sa nepodarilo. Ceny ani sklad nenahrádzame ukážkovými údajmi. Váš košík zostáva uložený v prehliadači.",
+      "Nepodarilo sa spojiť s OntOS. Ceny ani skladové zásoby nenahrádzame ukážkovými údajmi. Váš košík zostáva uložený v prehliadači.",
     retry: "Skúsiť znova",
     demoNote: "DEMO – objednávka nebude doručená.",
   },
@@ -1115,14 +1115,14 @@ export const sk: Dictionary = {
     details: "Detail objednávky",
     historyHeading: "História objednávky v OntOS",
     historyNote:
-      "OntOS neposkytuje sledovanie prepravcu, polohu kuriéra ani odhad doručenia. Nižšie sú skutočné uložené zmeny stavu objednávky.",
+      "OntOS neposkytuje sledovanie zásielky u dopravcu, polohu kuriéra ani odhad doručenia. Nižšie sú skutočné uložené zmeny stavu objednávky.",
     noHistory: "História zmien nie je pri tejto objednávke uložená.",
     dateLocale: "sk-SK",
     statuses: {
       NEW: "Nová",
-      CONFIRMED: "Spracováva sa",
+      CONFIRMED: "Spracúva sa",
       PACKING: "Pripravená na odovzdanie",
-      SHIPPED: "Odovzdaná prepravcovi",
+      SHIPPED: "Odovzdaná dopravcovi",
       DELIVERED: "Dokončená",
       CANCELLED: "Stornovaná",
     },
@@ -1130,7 +1130,7 @@ export const sk: Dictionary = {
   confirmation: {
     title: "Ukážková objednávka je hotová",
     description:
-      "Košík sme vyprázdnili. Žiadne údaje neboli odoslané ani uložené mimo tento prehliadač.",
+      "Košík sme vyprázdnili. Žiadne údaje neboli odoslané ani uložené mimo tohto prehliadača.",
   },
   footer: {
     contact: "Kontakt",

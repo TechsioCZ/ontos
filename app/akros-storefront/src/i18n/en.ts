@@ -39,7 +39,7 @@ export const en: Dictionary = {
     utilityNavigation: "Utility navigation",
   },
   search: {
-    placeholder: "search the shop...",
+    placeholder: "search the shop…",
     label: "Search the catalogue",
     results: "Search results",
     suggestions: "Products",
@@ -47,9 +47,9 @@ export const en: Dictionary = {
     noSuggestions: "We found no products or categories for this search.",
     allResults: (count: number) => `Show all products (${count.toLocaleString("en")})`,
     noResults: "We found no products for this search.",
-    query: (query: string) => `Query: “${query}”`,
+    query: (query: string) => `Search term: “${query}”`,
     variantMatch: (label: string, sku: string) => `Variant: ${label} · SKU ${sku}`,
-    matchingVariants: (matches: number) => `${count(matches)} matching variants`,
+    matchingVariants: (matches: number) => `Matching variants: ${count(matches)}`,
     unavailable: "OntOS search is unavailable right now.",
     loading: "Searching the OntOS catalogue…",
     failed: "Search failed.",
@@ -86,9 +86,9 @@ export const en: Dictionary = {
     tags: {
       recommended: "Recommended",
       sale: "Clearance",
-      action: "Offer",
-      saleVariants: "Clearance of selected variants. See the product detail for more.",
-      actionVariants: "Special offer on selected variants. See the product detail for more.",
+      action: "Special offer",
+      saleVariants: "Clearance of selected variants. See the product page for details.",
+      actionVariants: "Special offer on selected variants. See the product page for details.",
     },
     availabilityByVariant: "Availability by variant",
     from: "from",
@@ -118,15 +118,15 @@ export const en: Dictionary = {
     minimumOrder: "Minimum order",
     minimumOrderByVariant: "Depends on the variant – whole packages only",
     variantCount: "Variants",
-    inStockCount: (quantity: number, unit: string) => `In stock ${count(quantity)} ${unit}`,
+    inStockCount: (quantity: number, unit: string) => `In stock: ${count(quantity)} ${unit}`,
     limitedStockCount: (quantity: number, unit: string) =>
       `Limited quantity: ${count(quantity)} ${unit}`,
     availabilityNowUnknown: "Availability cannot be verified right now",
     outOfStock: "Out of stock",
     variantsInStock: (available: number, total: number) =>
-      `In stock ${count(available)} of ${count(total)} variants`,
+      `${count(available)} of ${count(total)} variants in stock`,
     variantsUnknown: "Variant availability cannot be verified right now",
-    variantsOutOfStock: "No variant is in stock right now",
+    variantsOutOfStock: "No variants are in stock right now",
     imageNumber: (index: number) => `image ${index}`,
     technicalDrawing: (name: string) => `Technical drawing: ${name}`,
     price: "Price",
@@ -233,7 +233,8 @@ export const en: Dictionary = {
     packaging: "Package",
     weightUnknown: "Not stated",
     actions: "Variant actions",
-    browserOnlyNote: "In this demo, favourites and watches are saved in this browser only.",
+    browserOnlyNote:
+      "In this demo, favourites and watched variants are saved in this browser only.",
     variantDescription: "Variant description",
     sharedDescription: "Shared product description",
     notInCatalog: "The requested variant is no longer in this product's catalogue.",
@@ -260,12 +261,12 @@ export const en: Dictionary = {
     watchVariant: "Watch variant",
     unwatchVariant: "Stop watching variant",
     watchProduct: "Watch product",
-    editWatch: (watched: number) => `Edit watches (${count(watched)})`,
+    editWatch: (watched: number) => `Edit watch list (${count(watched)})`,
     watchSaved: "Variant watch saved in this browser.",
-    watchRemoved: "Variant watch removed in this browser.",
+    watchRemoved: "Variant watch removed from this browser.",
     watchFailed: "The watch could not be saved. Please try again.",
     watchTitle: "Watch variants",
-    saveWatch: "Save watches",
+    saveWatch: "Save watch list",
     watchDescription: "In this demo, the watch selection is saved in this browser only.",
     watchSelectionSaved: "Watch selection saved in this browser.",
     askVariant: "Ask about the variant",
@@ -285,7 +286,7 @@ export const en: Dictionary = {
   },
   favorites: {
     pageTitle: "Favourite products",
-    pageDescription: "Your saved product variants in this browser.",
+    pageDescription: "Product variants saved in this browser.",
     backToOverview: "Back to overview",
     save: (name: string) => `Save ${name} to favourites`,
     remove: (name: string) => `Remove ${name} from favourites`,
@@ -305,7 +306,7 @@ export const en: Dictionary = {
       "The selection could not be saved. Check that browser storage is allowed and try again.",
     loading: "Loading favourite variants…",
     unavailable: "Favourites cannot be loaded. Allow local browser storage and reload the page.",
-    empty: "You have not saved any favourite variant yet.",
+    empty: "You have not saved any favourite variants yet.",
     browse: "Browse products",
     savedCount: (saved: number) =>
       `Saved variants: ${count(saved)}. The list is stored in this browser.`,
@@ -339,7 +340,7 @@ export const en: Dictionary = {
     shippingPrice: "Depends on the shipping method",
     totalWithVat: "Total incl. VAT",
     loading: "Loading cart…",
-    demoCheckoutNotice: "Checkout is not part of this clickable demo.",
+    demoCheckoutNotice: "Checkout is not part of this interactive demo.",
     defaultCarts: {
       default: "Default cart",
       commission: "Commission cart",
@@ -347,14 +348,14 @@ export const en: Dictionary = {
     add: {
       notReady: "The cart is not ready.",
       verifyFailed:
-        "Price and stock cannot be verified in OntOS right now. The goods were not added.",
+        "Price and stock cannot be verified in OntOS right now. The item was not added.",
       priceChanged:
-        "The price has changed. Reload the page or check your current cart and add the goods at the current price.",
-      notConfirmed: "OntOS did not confirm the goods are available. The goods were not added.",
+        "The price has changed. Reload the page or check your cart and add the item at the current price.",
+      notConfirmed: "OntOS did not confirm availability. The item was not added.",
       cartChanged: "The cart changed during verification. Add the item again.",
     },
     toast: {
-      limitedTitle: "No more can be added",
+      limitedTitle: "Quantity limit reached",
       restoredTitle: "Item restored",
       addedTitle: "Added to cart",
       alreadyAtMaximum: "You already have the available quantity in your cart.",
@@ -385,10 +386,10 @@ export const en: Dictionary = {
     issue: {
       AVAILABILITY_UNKNOWN: "Cannot verify",
       PRICE_UNAVAILABLE: "Price unavailable",
-      NOT_AVAILABLE: "Not offered",
+      NOT_AVAILABLE: "Not available",
       NOT_OFFERED_IN_MARKET: "Not offered in this market",
       OUT_OF_STOCK: "Out of stock",
-      INSUFFICIENT_STOCK: "Not enough items",
+      INSUFFICIENT_STOCK: "Insufficient stock",
       MINIMUM_QUANTITY: "Adjust the quantity",
       PACKAGE_QUANTITY: "Adjust the quantity",
     },
@@ -396,7 +397,7 @@ export const en: Dictionary = {
     quote: {
       label: "Current prices and availability from OntOS",
       sectionLabel: "Cart verification in OntOS",
-      failure: "The cart verification in OntOS failed. Your cart is kept.",
+      failure: "Cart verification in OntOS failed. Your cart has been kept.",
       errorTitle: "Prices and availability could not be verified right now.",
       errorHint: (error: string) =>
         `${error} You can continue to shipping and payment once the verification succeeds.`,
@@ -405,7 +406,7 @@ export const en: Dictionary = {
       blockedTitle: "The order cannot be completed right now",
       blockedHint:
         "Adjust the quantity or remove the blocked items from the cart. You can continue once OntOS confirms the whole cart.",
-      priceChangedTitle: "The price changed – accept the new price",
+      priceChangedTitle: "The price has changed – accept the new price",
       priceChangedHint:
         "Prices incl. VAT. We apply the new prices only after you agree; the order has not been submitted.",
       priceChangeLine: (quantity: string, unit: string) => `Per ${quantity} ${unit}:`,
@@ -414,7 +415,7 @@ export const en: Dictionary = {
       verified: "Prices, quantities and availability were verified in OntOS.",
       notConfirmed: (failure: string) => `OntOS did not confirm the cart. ${failure}`,
       blocked: {
-        checking: "Wait, the cart is being verified in OntOS…",
+        checking: "Please wait, the cart is being verified in OntOS…",
         error: "You can continue once the cart verification succeeds.",
         priceChanged: "Confirm the new prices first.",
         issues: "Resolve the items that cannot be ordered first.",
@@ -446,12 +447,12 @@ export const en: Dictionary = {
     availabilityAll: "All products",
     availabilityInStock: "In stock",
     availabilityOutOfStock: "Out of stock",
-    sort: "Sorting",
+    sort: "Sort by",
     sortName: "Name A–Z",
     sortPriceAsc: "Price, lowest first",
     sortPriceDesc: "Price, highest first",
     found: "Products found",
-    unitPriceNote: "Unit price incl. VAT; for variants the lowest „from“ price.",
+    unitPriceNote: "Unit price incl. VAT; for variants, the lowest “from” price.",
     clear: "Clear filters",
     submit: "Filter",
     invalidRange:
@@ -459,7 +460,7 @@ export const en: Dictionary = {
   },
   checkout: {
     title: "Order",
-    demoNotice: "This is a clickable demo. No data is sent and no real order is created.",
+    demoNotice: "This is an interactive demo. No data is sent and no real order is created.",
     contactTitle: "Contact and delivery details",
     name: "Full name",
     email: "E-mail",
@@ -492,7 +493,7 @@ export const en: Dictionary = {
       removeAria: (name: string) => `Delete the cart ${name}`,
       add: "Add a cart",
       removeTitle: "Delete the cart?",
-      removeDescription: (name: string) => `The cart „${name}“ and its items will be deleted.`,
+      removeDescription: (name: string) => `The cart “${name}” and its items will be deleted.`,
       cancel: "Cancel",
       remove: "Delete the cart",
       name: "Cart name",
@@ -505,15 +506,15 @@ export const en: Dictionary = {
       delivery: "Shipping and payment",
       toBeChosen: "To be chosen",
       vat: "VAT",
-      net: "Total excl. tax",
+      net: "Total excl. VAT",
       totalWithVat: "Total incl. VAT",
-      vatByOntos: "OntOS calculated the VAT and the amounts excl. tax when it verified the cart.",
+      vatByOntos: "OntOS calculated the VAT and the amounts excl. VAT when it verified the cart.",
     },
     totalsNote: {
       checking: "OntOS calculates the VAT after verifying the cart…",
-      pending: "We show the VAT and the amount excl. tax once OntOS confirms the whole cart.",
+      pending: "We will show the VAT and the amount excl. VAT once OntOS confirms the whole cart.",
       deliveryUnconfirmed:
-        "OntOS did not confirm the selected shipping method; choose shipping from the current offer.",
+        "OntOS did not confirm the selected shipping method; choose one of the current shipping options.",
     },
     unconfirmed: {
       label: "Unconfirmed order",
@@ -597,11 +598,12 @@ export const en: Dictionary = {
     errors: {
       methodsUnavailable: "Shipping options cannot be verified in OntOS right now.",
       storageUnavailable:
-        "Your details in progress cannot be saved in the browser. Allow storage for this website.",
+        "Your unfinished details cannot be saved in the browser. Allow storage for this website.",
       enableStorage: "Allow storage for this website.",
       previousUnconfirmed:
         "The previous order has not been confirmed yet. Restore the original items and delivery details and try sending it again, or check the order status in your account. A changed order cannot be sent now.",
-      priceChanged: "The price has changed – accept the new price in the cart check and try again.",
+      priceChanged:
+        "The price has changed – accept the new price in the cart verification and try again.",
       cartUnverifiable: (issues: string) =>
         `The cart cannot be verified right now. ${issues} Go back to the cart and check availability and quantities.`,
       saveUnconfirmed:
@@ -650,7 +652,7 @@ export const en: Dictionary = {
       preparing: "The confirmation e-mail is being prepared for sending.",
       pickupReady: "Ready for collection",
       events: {
-        ORDER_CREATED: "Order received confirmation",
+        ORDER_CREATED: "Order receipt confirmation",
         CONFIRMED: "Order is being processed",
         SHIPPED: "Handed over to the carrier",
         DELIVERED: "Order completed",
@@ -682,13 +684,13 @@ export const en: Dictionary = {
     variantLine: (sku: string, label: string) => `Variant: ${sku} — ${label}`,
     question: "My question:",
     form: {
-      complaintSubject: "Complaint notice",
+      complaintSubject: "Complaint request",
       productSubject: "Product enquiry",
       defaultSubject: "Online shop enquiry",
       productSubjectValue: (name: string) => `Product enquiry: ${name}`,
       responseUnconfirmed: "Receipt of your enquiry could not be confirmed.",
       notConfirmed: "Receipt of your enquiry was not confirmed.",
-      connectionFailed: "The connection failed. Keep your details and try again.",
+      connectionFailed: "The connection failed. Keep the details you entered and try again.",
       success: (store: string, taskId: string) =>
         `Thank you. We have passed your enquiry to the ${store} team. Request number: ${taskId}.`,
       contactLegend: "Contact enquiry",
@@ -754,7 +756,7 @@ export const en: Dictionary = {
       name: "Name",
       loginEmail: "Sign-in e-mail",
       loginEmailNote: "The sign-in e-mail cannot be changed by editing your contact details.",
-      phone: "Phone contact",
+      phone: "Phone",
       contactEmail: "Contact e-mail",
       storedNote:
         "Contact details are stored in OntOS. Changing them does not change your sign-in e-mail or password.",
@@ -828,7 +830,7 @@ export const en: Dictionary = {
       NEW: "New",
       CONFIRMED: "Being processed",
       PACKING: "Ready for dispatch",
-      SHIPPED: "Handed to the carrier",
+      SHIPPED: "Handed over to the carrier",
       DELIVERED: "Completed",
       CANCELLED: "Cancelled",
     },
@@ -855,14 +857,15 @@ export const en: Dictionary = {
     },
     reorder: {
       action: "Order again",
-      actionLabel: (orderNumber: string) => `Order again ${orderNumber}`,
+      actionLabel: (orderNumber: string) => `Order ${orderNumber} again`,
       pending: "Adding…",
-      unavailable: "The items of this order are not available.",
+      unavailable: "The items in this order are not available.",
       resultTitle: (orderNumber: string) => `Order ${orderNumber}`,
       added: (lines: number) => `Items added: ${count(lines)}.`,
-      currentPrices: "Items are in the basket at current prices, not the prices of the order.",
-      goToCart: "Go to basket",
-      failed: "The order could not be repeated.",
+      currentPrices:
+        "The items are in your cart at current prices, not at the prices from the order.",
+      goToCart: "Go to cart",
+      failed: "The order could not be placed again.",
       retry: "Please try again.",
       notOffered: (sku: string) => `${sku}: this variant is no longer offered.`,
       priceUnavailable: (sku: string) => `${sku}: price not available.`,
@@ -942,7 +945,7 @@ export const en: Dictionary = {
     registrationNotAccepted: "The registration was not accepted.",
     registrationFailed: "Registration failed.",
     registrationAccepted:
-      "Your registration has been received. Confirm your e-mail address using the link in the message we sent you. You can sign in once your e-mail address is verified. After signing in you can check the status and resume a registration in progress.",
+      "Your registration has been received. Confirm your e-mail address using the link in the message we sent you. You can sign in once your e-mail address is verified. After signing in, you can check the status and resume a registration in progress.",
     verification: {
       title: "E-mail verification",
       verified: "Your e-mail address has been verified. You can now sign in to your account.",
@@ -962,7 +965,7 @@ export const en: Dictionary = {
     resend: {
       failed: "The verification e-mail could not be sent.",
       notConfirmed: "Sending of the verification e-mail was not confirmed.",
-      unavailable: "The verification e-mail is temporarily unavailable.",
+      unavailable: "Sending verification e-mails is temporarily unavailable.",
       label: "E-mail for verification",
       sending: "Sending…",
       submit: "Resend verification e-mail",
@@ -974,19 +977,19 @@ export const en: Dictionary = {
       temporarilyUnavailable: "The registration status is temporarily unavailable.",
       unavailable: "The registration status is unavailable.",
       failed:
-        "The original registration was rejected. You can start a new admission with the same verified account; details already confirmed are kept and the rejected step is not repeated.",
+        "The original registration was rejected. You can start a new account application with the same verified account; details already confirmed are kept and the rejected step is not repeated.",
       terminated:
-        "The registration has been closed and cannot be resumed. Contact support for a new account admission; the rejected step is not repeated.",
+        "The registration has been closed and cannot be resumed. Contact support about a new account application; the rejected step is not repeated.",
       completeChecking: "Registration is complete. Checking access to your account.",
       completeDenied:
         "Registration is complete, but access to the account is not permitted at the moment. Resuming the registration does not grant access.",
       admitted: "Your account is ready.",
       intro:
-        "Signing in does not complete the registration by itself. Here you can check that your account has been admitted and resume any steps in progress.",
+        "Signing in does not complete the registration by itself. Here you can check that your account has been approved and resume any steps in progress.",
       checking: "Checking…",
       check: "Check status",
       resume: "Resume registration",
-      restart: "Start a new account admission",
+      restart: "Start a new account application",
       logIn: "Sign in with a verified account",
     },
   },
@@ -1026,9 +1029,9 @@ export const en: Dictionary = {
       insufficientStock: (label: string, stock: number, unit: string) =>
         `${label}: only ${count(stock)} ${unit} available.`,
       minimumQuantity: (label: string, minimum: number, unit: string) =>
-        `${label}: the minimum quantity is ${minimum} ${unit}.`,
+        `${label}: the minimum quantity is ${count(minimum)} ${unit}.`,
       packageQuantity: (label: string, step: number, unit: string) =>
-        `${label}: order whole packs of ${step} ${unit}.`,
+        `${label}: order whole packages of ${count(step)} ${unit}.`,
     },
     orders: {
       signIn: "Sign in to your account.",
@@ -1069,14 +1072,14 @@ export const en: Dictionary = {
       tooManyAttempts: "Too many attempts. Please try again later.",
       invalidInput:
         "Check the details you entered. The password must be 12 to 128 characters long.",
-      refused: "The account cannot be signed in or created. Check your details and try again.",
+      refused: "We cannot sign you in or create the account. Check your details and try again.",
       unavailable: "The account service is temporarily unavailable. Please try again.",
       invalidRegistration:
         "Check your details, consent and that the passwords match (12 to 128 characters).",
       missingRegistrationId: "The registration identifier is missing.",
       missingCredentials: "Enter your e-mail and password.",
       invalidEmail: "Enter a valid e-mail address.",
-      twoFactorRequired: "This account requires two-factor verification in the customer portal.",
+      twoFactorRequired: "This account requires two-factor authentication in the customer portal.",
       enrollmentNotFound: "No registration in this shop is available for this account.",
       enrollmentSignIn: "Sign in with a verified account to view the registration.",
     },
@@ -1103,7 +1106,7 @@ export const en: Dictionary = {
     },
   },
   errorPages: {
-    notFoundHeading: "Looks like you got lost in our warehouse...",
+    notFoundHeading: "Looks like you got lost in our warehouse…",
     notFoundText:
       "The page you requested could not be found. It has probably been moved or deleted, or the link you clicked is incorrect.",
     searchAgain: "Try searching for the material again:",
@@ -1132,14 +1135,14 @@ export const en: Dictionary = {
       NEW: "New",
       CONFIRMED: "Being processed",
       PACKING: "Ready for dispatch",
-      SHIPPED: "Handed to carrier",
+      SHIPPED: "Handed over to the carrier",
       DELIVERED: "Completed",
       CANCELLED: "Cancelled",
     },
   },
   confirmation: {
     title: "The demo order is complete",
-    description: "We emptied the cart. No data was sent or stored outside this browser.",
+    description: "We have emptied the cart. No data was sent or stored outside this browser.",
   },
   footer: {
     contact: "Contact",
@@ -1162,7 +1165,7 @@ export const en: Dictionary = {
     carriers: "Carriers",
     secureShopping: "Secure shopping",
     privacy: "GDPR",
-    createdBy: "Shop by:",
+    createdBy: "Online shop by:",
     cookies: "Cookies",
     personalDataProtection: "Privacy policy",
   },

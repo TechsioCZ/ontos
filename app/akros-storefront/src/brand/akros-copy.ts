@@ -69,7 +69,7 @@ export const akrosCopy: Readonly<Record<BrandLocale, BrandCopy>> = {
           content: [
             "Pravidelne pre vás budeme ",
             { strong: "rozširovať sortiment o nové produkty" },
-            ". Odporúčame sledovať aj výpredaj a tovar v akcii.",
+            ". Odporúčame sledovať aj výpredaj a akciový tovar.",
           ],
         },
         {
@@ -79,7 +79,7 @@ export const akrosCopy: Readonly<Record<BrandLocale, BrandCopy>> = {
             { strong: "sériovou zámočníckou výrobou a výrobou na zákazku" },
             ", napríklad ",
             { strong: "výrobkami z nerezovej ocele" },
-            " ako zábradlia alebo ",
+            " ako sú zábradlia alebo ",
             { strong: "schodiská" },
             ".",
           ],
@@ -115,14 +115,14 @@ export const akrosCopy: Readonly<Record<BrandLocale, BrandCopy>> = {
           content: [
             "We regularly ",
             { strong: "add new products to the range" },
-            ". Keep an eye on our sale and special offers as well.",
+            ". Keep an eye on our clearance and special offers too.",
           ],
         },
         {
           id: "production",
           content: [
             "We also provide ",
-            { strong: "series and custom metalwork" },
+            { strong: "batch and custom-made metalwork" },
             ", including ",
             { strong: "stainless steel products" },
             " such as railings and ",

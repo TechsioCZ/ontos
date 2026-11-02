@@ -252,7 +252,7 @@ describe("market copy outside the product cards", () => {
     expect(screen.getByText("Zobrazené 2 z 2 variantov")).not.toBeNull();
     expect(screen.getByRole("link", { name: "M 2 × 5" })).not.toBeNull();
     expect(screen.getByText("Názov")).not.toBeNull();
-    expect(screen.getByText("M.J.")).not.toBeNull();
+    expect(screen.getByText("MJ")).not.toBeNull();
     expect(screen.getAllByText("Skladom").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Nie je skladom").length).toBeGreaterThan(0);
     expect(screen.queryByText("Skladem")).toBeNull();
@@ -477,7 +477,7 @@ describe("market copy outside the product cards", () => {
     renderAdd(skMarket);
     fireEvent.click(await screen.findByRole("button", { name: /Washer/ }));
     expect((await screen.findByRole("alert")).textContent).toBe(
-      "Cenu a sklad teraz nemožno overiť v OntOS. Tovar nebol pridaný.",
+      "Cenu a skladovú dostupnosť teraz nemožno overiť v OntOS. Tovar nebol pridaný.",
     );
   });
 });

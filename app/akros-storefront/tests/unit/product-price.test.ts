@@ -12,7 +12,7 @@ describe("catalog price label", () => {
     );
     expect(
       getCatalogPriceLabel({ priceIsFrom: true, priceMinor: 254, currency: "EUR" }, sk, eur),
-    ).toBe("Cena podľa varianty");
+    ).toBe("Cena podľa variantu");
   });
   it("formats an exact price in the market currency", () => {
     expect(

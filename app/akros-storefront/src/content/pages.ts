@@ -29,12 +29,12 @@ export const termsPage: PerLocale<(name: string) => TextPage> = {
   }),
   sk: (name) => ({
     title: "Obchodné podmienky",
-    lead: `Skrátené informácie pre prezentačný e-shop ${name}.`,
+    lead: `Skrátené informácie pre ukážkový e-shop ${name}.`,
     sections: [
       {
         title: "Objednávka a cena",
         paragraphs: [
-          "DEMO objednávka sa uloží do oddeleného prezentačného prostredia. Nevzniká platobný záväzok, nič neplatíte a tovar nebude odoslaný ani doručený. Ceny a dostupnosť preberáme z OntOS.",
+          "DEMO objednávka sa uloží do oddeleného ukážkového prostredia. Nevzniká platobný záväzok, nič neplatíte a tovar nebude odoslaný ani doručený. Ceny a dostupnosť preberáme z OntOS.",
         ],
       },
       {
@@ -47,18 +47,18 @@ export const termsPage: PerLocale<(name: string) => TextPage> = {
   }),
   en: (name) => ({
     title: "Terms and conditions",
-    lead: `Summary terms for the ${name} presentation shop.`,
+    lead: `Summary terms for the ${name} demo shop.`,
     sections: [
       {
         title: "Order and price",
         paragraphs: [
-          "A DEMO order is saved in a separate presentation environment. No payment obligation arises, you pay nothing, and no goods are shipped or delivered. Prices and availability come from OntOS.",
+          "A DEMO order is saved in a separate demo environment. No payment obligation arises, you pay nothing, and no goods are shipped or delivered. Prices and availability come from OntOS.",
         ],
       },
       {
         title: "Withdrawal and complaints",
         paragraphs: [
-          `The contact form passes your request to the ${name} team as a task in OntOS. A complaint is not automatically opened as a claim case. The operator must supply the full rules for orders, withdrawal and complaints before production use.`,
+          `The contact form passes your request to the ${name} team as a task in OntOS. A complaint request is not automatically registered as a formal complaint. The operator must supply the full rules for orders, withdrawal and complaints before the shop goes live.`,
         ],
       },
     ],
@@ -87,7 +87,7 @@ export const privacyPage: PerLocale<(name: string) => TextPage> = {
   }),
   sk: (name) => ({
     title: "Ochrana osobných údajov",
-    lead: `Informácie o spracúvaní údajov v prezentačnom prostredí ${name}.`,
+    lead: `Informácie o spracúvaní údajov v ukážkovom prostredí ${name}.`,
     sections: [
       {
         title: "Aké údaje spracúvame",
@@ -98,25 +98,25 @@ export const privacyPage: PerLocale<(name: string) => TextPage> = {
       {
         title: "Marketing a ďalšie informácie",
         paragraphs: [
-          "Odoslanie otázky nie je súhlasom s marketingom a neprihlasuje vás do newslettera. Úplné právne informácie vrátane dôb uchovávania a uplatnenia práv musí doplniť prevádzkovateľ pred produkčnou prevádzkou. Do prezentačného prostredia nevkladajte citlivé údaje.",
+          "Odoslanie otázky nie je súhlasom s marketingom a neprihlasuje vás do newslettera. Úplné právne informácie vrátane dôb uchovávania a uplatnenia práv musí doplniť prevádzkovateľ pred produkčnou prevádzkou. Do ukážkového prostredia nevkladajte citlivé údaje.",
         ],
       },
     ],
   }),
   en: (name) => ({
     title: "Privacy policy",
-    lead: `Information on how data is processed in the ${name} presentation environment.`,
+    lead: `Information on how data is processed in the ${name} demo environment.`,
     sections: [
       {
         title: "What data we process",
         paragraphs: [
-          `The contact form sends your name, e-mail and message to OntOS, where a task for the ${name} team is created. Complaints and product questions are handled by the same team. The notification about your enquiry is processed through the platform's e-mail service. Carts are stored in your browser.`,
+          `The contact form sends your name, e-mail and message to OntOS, where a task for the ${name} team is created. Complaint requests and product enquiries are handled by the same team. The notification about your enquiry is processed through the platform's e-mail service. Carts are stored in your browser.`,
         ],
       },
       {
         title: "Marketing and other information",
         paragraphs: [
-          "Sending an enquiry is not consent to marketing and does not subscribe you to our newsletter. The operator must provide the full legal information, including retention periods and how to exercise your rights, before production use. Do not enter sensitive data into this presentation environment.",
+          "Sending an enquiry is not consent to marketing and does not subscribe you to our newsletter. The operator must provide the full legal information, including retention periods and how to exercise your rights, before the shop goes live. Do not enter sensitive data into this demo environment.",
         ],
       },
     ],
@@ -163,12 +163,12 @@ export const partnerPage: PerLocale<(name: string) => TextPage> = {
   }),
   en: (name) => ({
     title: `${name} partner programme`,
-    lead: "Benefits for regular customers and business accounts.",
+    lead: "Benefits for regular and business customers.",
     sections: [
       {
         title: "Individual terms",
         paragraphs: [
-          "In this prototype, the partner programme shows a future approach to individual prices, order history and faster ordering.",
+          "In this prototype, the partner programme previews future access to individual prices, order history and faster ordering.",
         ],
       },
       {
@@ -225,7 +225,7 @@ export const shippingCopy: PerLocale<{
     metadataTitle: "Doprava a platba",
     methodsHeading: "Spôsoby dopravy",
     methodNote:
-      "Aktuálny cenník z OntOS. Termín doručenia ani rezervácia prepravcu nie sú dostupné.",
+      "Aktuálny cenník z OntOS. Termín doručenia ani rezervácia dopravcu nie sú dostupné.",
     noMethods: "Žiadny spôsob dopravy nie je dostupný.",
     paymentHeading: "Platba",
     paymentText:
@@ -240,7 +240,7 @@ export const shippingCopy: PerLocale<{
     noMethods: "No delivery method is available.",
     paymentHeading: "Payment",
     paymentText:
-      "We pass your order to the shop for processing. You can see its status in your account. The online shop does not offer online payment at the moment; sending an order does not make a payment.",
+      "We pass your order to the shop for processing. You can see its status in your account. The online shop does not currently offer online payment; placing an order does not make a payment.",
   },
 };
 
@@ -272,29 +272,29 @@ export const newsCopy: PerLocale<{
   },
   sk: {
     title: "Novinky a akcie",
-    heroAlt: "Imbusové skrutky vo automatizovanej výrobe",
+    heroAlt: "Imbusové skrutky v automatizovanej výrobe",
     badge: "PONUKA Z KATALÓGU",
     heading: "Novinky a akcie",
     intro:
       "Pozrite si výber noviniek a produkty označené v katalógu ako akciové. Zobrazené predajné ceny vychádzajú z katalógu OntOS.",
-    heroAction: "Zobraziť akčnú ponuku",
+    heroAction: "Zobraziť akciovú ponuku",
     newHeading: "Nové nerezové produkty v ponuke",
     newAll: "Zobraziť všetky novinky",
-    saleHeading: "Akčné ponuky a výpredaj",
-    saleAll: "Zobraziť celú akčnú ponuku",
+    saleHeading: "Akciové ponuky a výpredaj",
+    saleAll: "Zobraziť celú akciovú ponuku",
   },
   en: {
     title: "New products and offers",
-    heroAlt: "Hex socket bolts in automated production",
+    heroAlt: "Hex socket screws in automated production",
     badge: "FROM THE CATALOGUE",
     heading: "New products and offers",
     intro:
-      "Browse our new products and the items marked as offers in the catalogue. The sale prices shown come from the OntOS catalogue.",
-    heroAction: "View offers",
+      "Browse our new products and the items marked as special offers in the catalogue. The selling prices shown come from the OntOS catalogue.",
+    heroAction: "View special offers",
     newHeading: "New stainless steel products",
     newAll: "View all new products",
     saleHeading: "Special offers and clearance",
-    saleAll: "View the full offer",
+    saleAll: "View all special offers",
   },
 };
 
@@ -357,12 +357,12 @@ export const blogCopy: PerLocale<{
   },
   en: {
     title: "Blog",
-    featuredAlt: "Stainless steel A2 and A4 bolts",
+    featuredAlt: "A2 and A4 stainless steel screws",
     badge: "GUIDES AND ADVICE",
     date: "12 February 2026",
     featuredTitle: "Stainless steel A2 vs A4: the complete guide to choosing the right one",
     featuredExcerpt:
-      "We are often asked which stainless fastener to choose. Is A2 better for an outdoor terrace, or is the acid-resistant A4 the better option? We look at salt resistance and practical examples from the field.",
+      "We are often asked which stainless steel fasteners to choose. Which is better for an outdoor terrace: A2 or acid-resistant A4? We look at resistance to salt and at practical examples.",
     readFull: "Read the full article",
     readingTime: "Reading time: 6 min",
     latest: "Latest posts",

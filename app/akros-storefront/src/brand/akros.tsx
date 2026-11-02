@@ -252,16 +252,16 @@ const aboutEn = (
     <header className="sf-content-page__heading">
       <h1>About us</h1>
       <p>
-        AKROS is a leading supplier of stainless steel, steel and fastening materials for industrial
-        applications. Our aim is a quality range, professional advice and fast dispatch from our
-        warehouses in Prague, Ostrava and Údlice.
+        AKROS is a leading supplier of stainless steel, steel products and fasteners for industrial
+        applications. We aim to offer a quality range, professional advice and fast dispatch from
+        our warehouses in Prague, Ostrava and Údlice.
       </p>
     </header>
 
     <section className="sf-content-panel" aria-labelledby="company-history-title">
       <h2 id="company-history-title">AKROS, s.r.o.</h2>
       <p>
-        AKROS, s.r.o. specialises in supplying stainless steel, steel and fastening materials. We
+        AKROS, s.r.o. specialises in supplying stainless steel, steel products and fasteners. We
         offer both a standard range and custom manufacturing for industry, construction and
         technical projects.
       </p>
@@ -296,8 +296,8 @@ const aboutEn = (
 
     <section className="sf-content-section" aria-labelledby="finishing-title">
       <div className="sf-content-panel">
-        <h2 id="finishing-title">Galvanic surface treatments</h2>
-        <p>We also offer galvanic surface treatments for selected materials.</p>
+        <h2 id="finishing-title">Electroplating</h2>
+        <p>We also offer electroplated surface finishes for selected materials.</p>
       </div>
       <ContentGallery items={manufacturingGalleryEn} />
     </section>
@@ -394,15 +394,15 @@ const productionEn = (
     <section className="sf-content-panel" aria-labelledby="manufacturing-services-title">
       <h2 id="manufacturing-services-title">Manufacturing services</h2>
       <p>
-        AKROS CZ offers custom manufacturing, laser cutting, welding and sheet forming. Galvanic
-        surface treatments for selected materials are also available.
+        AKROS CZ offers custom manufacturing, laser cutting, welding and sheet forming.
+        Electroplated surface finishes for selected materials are also available.
       </p>
       <ul className="sf-service-list">
         <li>Custom manufacturing</li>
         <li>Laser cutting</li>
         <li>Welding</li>
         <li>Sheet forming</li>
-        <li>Galvanic surface treatments</li>
+        <li>Electroplating</li>
       </ul>
     </section>
     <section className="sf-content-panel" aria-labelledby="manufacturing-contact-title">
@@ -451,12 +451,12 @@ export const akros: Brand = {
     defaultTitle: {
       cs: "AKROS | Nerezový a spojovací materiál",
       sk: "AKROS | Nerezový a spojovací materiál",
-      en: "AKROS | Stainless and fastening materials",
+      en: "AKROS | Stainless steel and fasteners",
     },
     description: {
       cs: "E-shop AKROS s nerezovým, hutním a spojovacím materiálem v prezentačním prostředí OntOS.",
-      sk: "E-shop AKROS s nerezovým, hutníckym a spojovacím materiálom v prezentačnom prostredí OntOS.",
-      en: "AKROS online shop for stainless, steel and fastening materials, in the OntOS presentation environment.",
+      sk: "E-shop AKROS s nerezovým, hutníckym a spojovacím materiálom v ukážkovom prostredí OntOS.",
+      en: "AKROS online shop for stainless steel, steel products and fasteners in the OntOS demo environment.",
     },
     icon: "/akros/icon.svg",
   },
@@ -488,7 +488,7 @@ export const akros: Brand = {
       alt: {
         cs: "AKROS CZ. Od ledna třikrát výkonnější laser. Rychlejší, čistší a kvalitnější řez materiálů do 40 mm.",
         sk: "AKROS CZ. Od januára trikrát výkonnejší laser. Rýchlejší, čistejší a kvalitnejší rez materiálov do 40 mm.",
-        en: "AKROS CZ. Since January, a laser three times more powerful. Faster, cleaner and better cuts in materials up to 40 mm.",
+        en: "AKROS CZ. Since January, a laser that is three times more powerful. Faster, cleaner and better cuts in materials up to 40 mm.",
       },
       href: "https://www.akroscz.cz/",
     },
@@ -497,8 +497,8 @@ export const akros: Brand = {
       src: "/akros/home/carousel/69dde68adb8d0.jpg",
       alt: {
         cs: "Nerezový sortiment v černé barvě. Novinka v nabídce: nerezová odolnost A4 v novém designu. Prohlédnout si.",
-        sk: "Nerezový sortiment v čiernej farbe. Novinka v ponuke: nerezová odolnosť A4 v novom dizajne. Pozrieť si.",
-        en: "Stainless range in black. New in our offer: A4 stainless corrosion resistance in a new design. Take a look.",
+        sk: "Nerezový sortiment v čiernej farbe. Novinka v ponuke: nerezová odolnosť A4 v novom dizajne. Pozrite si.",
+        en: "Stainless steel range in black. New in our range: A4 stainless corrosion resistance in a new design. Take a look.",
       },
       href: "https://www.akros.cz/nerez-cerny-design-product-37766",
     },

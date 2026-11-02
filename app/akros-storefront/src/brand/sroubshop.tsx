@@ -60,7 +60,7 @@ const warehouseGalleryEn: readonly GalleryImage[] = [
   {
     src: "/storefront/content/about-railing.png",
     alt: "Installed stainless steel railing",
-    caption: "Stainless for outdoor use",
+    caption: "Stainless steel for outdoor use",
   },
 ];
 
@@ -149,7 +149,7 @@ const aboutEn = (
     <header className="sf-content-page__heading">
       <h1>About us</h1>
       <p>
-        {NAME} is a demo online shop for fasteners and stainless materials. It shows the OntOS
+        {NAME} is a demo online shop for fasteners and stainless steel. It demonstrates the OntOS
         platform: the range, prices and stock are real OntOS data, while the company and its
         contacts are fictional.
       </p>
@@ -201,8 +201,8 @@ export const sroubshop: Brand = {
     },
     description: {
       cs: `Ukázkový e-shop ${NAME} fiktivní firmy ${LEGAL_NAME} se spojovacím a nerezovým materiálem v prezentačním prostředí OntOS.`,
-      sk: `Ukážkový e-shop ${NAME} fiktívnej firmy ${LEGAL_NAME} so spojovacím a nerezovým materiálom v prezentačnom prostredí OntOS.`,
-      en: `Demo shop ${NAME} of the fictional company ${LEGAL_NAME}, selling fasteners and stainless steel in the OntOS presentation environment.`,
+      sk: `Ukážkový e-shop ${NAME} fiktívnej firmy ${LEGAL_NAME} so spojovacím a nerezovým materiálom v ukážkovom prostredí OntOS.`,
+      en: `${NAME}, the demo shop of the fictional company ${LEGAL_NAME}, selling fasteners and stainless steel in the OntOS demo environment.`,
     },
     icon: "/sroubshop/icon.svg",
   },
@@ -262,13 +262,13 @@ export const sroubshop: Brand = {
             content: [
               "Sortiment, ceny aj dostupnosť preberáme ",
               { strong: "priamo z OntOS" },
-              ". Odporúčame sledovať aj výpredaj a tovar v akcii.",
+              ". Odporúčame sledovať aj výpredaj a akciový tovar.",
             ],
           },
           {
             id: "contact",
             content: [
-              "Ide o prezentačné prostredie: objednávky sa neplatia ani nedoručujú a uvedené kontakty sú ",
+              "Ide o ukážkové prostredie: objednávky sa neplatia ani nedoručujú a uvedené kontakty sú ",
               { strong: "iba ukážkové" },
               ".",
             ],
@@ -297,13 +297,13 @@ export const sroubshop: Brand = {
             content: [
               "Products, prices and availability come ",
               { strong: "straight from OntOS" },
-              ". Keep an eye on our sale and special offers as well.",
+              ". Keep an eye on our clearance and special offers too.",
             ],
           },
           {
             id: "contact",
             content: [
-              "This is a presentation environment: orders are neither paid nor delivered, and the contacts shown are ",
+              "This is a demo environment: orders are neither paid nor delivered, and the contacts shown are ",
               { strong: "demo placeholders only" },
               ". Product descriptions are provided in Czech.",
             ],

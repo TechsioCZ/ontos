@@ -191,8 +191,8 @@ const faqSk = (inquiryEmail: string): FaqCopy => ({
           question: "Ako dlho trvá vybavenie objednávky?",
           answer: "Tovar na sklade expedujeme do 24 hodín od prijatia objednávky.",
           details: [
-            "Objednávky prijaté v pracovný deň spracúvame priebežne. Pri položkách na sklade zvyčajne odovzdáme zásielku prepravcovi do 24 hodín a potvrdenie o expedícii pošleme e-mailom.",
-            "Pri tovare na objednávku vám pred potvrdením nákupu upresníme dostupnosť aj očakávaný termín. Väčšie alebo kombinované objednávky môžu vyžadovať dlhšie komplektovanie, o ktorom vás budeme priebežne informovať.",
+            "Objednávky prijaté v pracovný deň spracúvame priebežne. Pri položkách na sklade zvyčajne odovzdáme zásielku dopravcovi do 24 hodín a potvrdenie o expedícii pošleme e-mailom.",
+            "Pri tovare na objednávku vám pred potvrdením nákupu spresníme dostupnosť aj očakávaný termín. Väčšie alebo kombinované objednávky môžu vyžadovať dlhšie komplektovanie, o ktorom vás budeme priebežne informovať.",
           ],
         },
         {
@@ -204,11 +204,11 @@ const faqSk = (inquiryEmail: string): FaqCopy => ({
           ],
         },
         {
-          question: "Aký je rozdiel medzi nerezou A2 a A4?",
+          question: "Aký je rozdiel medzi nerezom A2 a A4?",
           answer:
-            "A2 je klasická potravinárska nerez. A4 obsahuje molybdén a odolá aj kyselinám a morskej vode.",
+            "A2 je klasický potravinársky nerez. A4 obsahuje molybdén a odolá aj kyselinám a morskej vode.",
           details: [
-            "Nerez A2 je vhodná pre väčšinu bežných aplikácií v interiéri, v potravinárstve a pri menej agresívnom vonkajšom prostredí. A4 obsahuje molybdén, a preto lepšie odoláva chloridom, kyselinám a dlhodobému pôsobeniu vlhkosti.",
+            "Nerez A2 je vhodný pre väčšinu bežných aplikácií v interiéri, v potravinárstve a pri menej agresívnom vonkajšom prostredí. A4 obsahuje molybdén, a preto lepšie odoláva chloridom, kyselinám a dlhodobému pôsobeniu vlhkosti.",
             "Pri inštaláciách pri bazénoch, v chemických prevádzkach alebo v prímorskom prostredí preto zvyčajne odporúčame A4. Ak rozhoduje konkrétna norma alebo certifikácia, pošlite nám opis použitia a vhodnú akosť spoločne overíme.",
           ],
         },
@@ -223,9 +223,9 @@ const faqSk = (inquiryEmail: string): FaqCopy => ({
         },
         {
           question: "Môžem zmeniť položky v už odoslanej objednávke?",
-          answer: "Zmena je možná telefonicky, kým zásielka nie je odovzdaná prepravcovi.",
+          answer: "Zmena je možná telefonicky, kým zásielka nie je odovzdaná dopravcovi.",
           details: [
-            "Ak objednávka ešte nebola odovzdaná do skladu ani prepravcovi, pokúsime sa upraviť množstvo, variant aj dodacie údaje. Pripravte si číslo objednávky a kontaktujte nás čo najskôr telefonicky alebo e-mailom.",
+            "Ak objednávka ešte nebola odovzdaná do skladu ani dopravcovi, pokúsime sa upraviť množstvo, variant aj dodacie údaje. Pripravte si číslo objednávky a kontaktujte nás čo najskôr telefonicky alebo e-mailom.",
             "Po začatí balenia nemusí byť zmena vždy možná a po expedícii už obsah zásielky upraviť nie je možné. V takom prípade s vami dohodneme najvhodnejší ďalší postup alebo vytvorenie doplnkovej objednávky.",
           ],
         },
@@ -236,11 +236,11 @@ const faqSk = (inquiryEmail: string): FaqCopy => ({
       title: "Doprava a doručenie",
       items: [
         {
-          question: "Akých prepravcov môžem využiť?",
+          question: "Akých dopravcov môžem využiť?",
           answer:
             "Objednávku doručíme prostredníctvom PPL, DPD alebo Zásielkovne. K dispozícii je aj osobný odber.",
           details: [
-            "Konkrétna ponuka prepravcov sa riadi rozmermi, hmotnosťou a cieľovou adresou zásielky. Pri nadrozmernom hutnom materiáli sa môže zobraziť iba paletová preprava alebo individuálne ocenenie.",
+            "Konkrétna ponuka dopravcov sa riadi rozmermi, hmotnosťou a cieľovou adresou zásielky. Pri nadrozmernom hutníckom materiáli sa môže zobraziť iba paletová preprava alebo individuálne ocenenie.",
             "Všetky dostupné možnosti, cenu a orientačný termín doručenia uvidíte v pokladni ešte pred odoslaním objednávky. Osobný odber je možný po potvrdení pripravenosti tovaru.",
           ],
         },
@@ -249,8 +249,8 @@ const faqSk = (inquiryEmail: string): FaqCopy => ({
           answer:
             "Po expedícii dostanete číslo zásielky. V prototype si môžete otvoriť ukážkové sledovanie zásielky.",
           details: [
-            "Po prevzatí zásielky prepravcom vám pošleme e-mail s číslom balíka a odkazom na sledovanie. Aktualizácia sa môže u prepravcu zobraziť s krátkym oneskorením po prvom naskenovaní.",
-            "Registrovaní zákazníci nájdu stav aj v histórii objednávok. Ak sa stav niekoľko pracovných dní nezmení, kontaktujte nás a zásielku preveríme priamo u prepravcu.",
+            "Po prevzatí zásielky dopravcom vám pošleme e-mail s číslom balíka a odkazom na sledovanie. Aktualizácia sa môže u dopravcu zobraziť s krátkym oneskorením po prvom naskenovaní.",
+            "Registrovaní zákazníci nájdu stav aj v histórii objednávok. Ak sa stav niekoľko pracovných dní nezmení, kontaktujte nás a zásielku preveríme priamo u dopravcu.",
           ],
         },
       ],
@@ -286,16 +286,16 @@ const faqSk = (inquiryEmail: string): FaqCopy => ({
           answer: "Norma je uvedená v názve produktu, v kóde a v technickom popise produktu.",
           details: [
             "Označenie normy nájdete v názve produktu, v technickom popise a často aj v tabuľke variantov. Pri niektorých položkách uvádzame viacero ekvivalentných noriem DIN, ISO alebo STN.",
-            "Ak hľadáte náhradu staršej normy alebo výrobok podľa výkresu, pošlite nám označenie a základné rozmery. Technická podpora pomôže overiť kompatibilitu aj dostupnú materiálovú variantu.",
+            "Ak hľadáte náhradu staršej normy alebo výrobok podľa výkresu, pošlite nám označenie a základné rozmery. Technická podpora pomôže overiť kompatibilitu aj dostupný materiálový variant.",
           ],
         },
         {
           question: "Pomôžete mi s výberom materiálu?",
           answer:
-            "Áno. Pošlite nám opis použitia alebo výkres a odporúčame vhodnú akosť aj rozmer.",
+            "Áno. Pošlite nám opis použitia alebo výkres a odporučíme vhodnú akosť aj rozmer.",
           details: [
             "Na odporúčanie potrebujeme poznať prostredie použitia, očakávané zaťaženie, teplotu a prípadný kontakt s chemikáliami alebo slanou vodou. Pri spojovacom materiáli pomôže aj informácia o protikuse a spôsobe montáže.",
-            "Na základe týchto údajov navrhneme vhodnú akosť nerezi, rozmer a zodpovedajúcu normu. Pri bezpečnostne dôležitých aplikáciách odporúčanie doplníme požiadavkou na overenie projektantom alebo konštruktérom.",
+            "Na základe týchto údajov navrhneme vhodnú akosť nerezu, rozmer a zodpovedajúcu normu. Pri bezpečnostne dôležitých aplikáciách odporúčanie doplníme požiadavkou na overenie projektantom alebo konštruktérom.",
           ],
         },
       ],
@@ -331,7 +331,7 @@ const faqEn = (inquiryEmail: string): FaqCopy => ({
           ],
         },
         {
-          question: "Can I order stainless fasteners made to order?",
+          question: "Can I order custom-made stainless steel fasteners?",
           answer: `Yes, we offer custom manufacturing to drawings. Contact us at ${inquiryEmail}.`,
           details: [
             "We can supply non-standard sizes, unusual lengths and parts made to a technical drawing. Please include the required standard, material, surface finish and approximate quantity in your enquiry.",
@@ -496,7 +496,7 @@ const blogArticlesSk = (images: readonly string[]): readonly BlogArticle[] => [
     date: "28. januára 2026",
     category: "Technická podpora",
     excerpt:
-      "Pretiahnutie skrutky z nerezovej ocele môže spôsobiť jej zadretie. Naučte sa správne uťahovacie momenty pre závity M4 až M20.",
+      "Prílišné utiahnutie nerezovej skrutky môže spôsobiť jej zadretie. Naučte sa správne uťahovacie momenty pre závity M4 až M20.",
     imageSrc: images[1] ?? "",
   },
   {
@@ -504,7 +504,7 @@ const blogArticlesSk = (images: readonly string[]): readonly BlogArticle[] => [
     date: "15. januára 2026",
     category: "Novinky",
     excerpt:
-      "Rozširujeme skladové zásoby spojovacieho materiálu o ďalšie tisíce kusov certifikovaných noriem DIN a ISO.",
+      "Rozširujeme skladové zásoby spojovacieho materiálu o ďalšie tisíce kusov výrobkov certifikovaných podľa noriem DIN a ISO.",
     imageSrc: images[2] ?? "",
   },
   {
@@ -512,7 +512,7 @@ const blogArticlesSk = (images: readonly string[]): readonly BlogArticle[] => [
     date: "3. januára 2026",
     category: "Fotovoltika",
     excerpt:
-      "Montáž solárnych panelov na strechu vyžaduje robustné a koróziu odolné nerezové profily aj spojovací materiál.",
+      "Montáž solárnych panelov na strechu vyžaduje robustné a voči korózii odolné nerezové profily aj spojovací materiál.",
     imageSrc: images[3] ?? "",
   },
 ];
