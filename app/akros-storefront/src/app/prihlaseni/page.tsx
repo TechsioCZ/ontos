@@ -3,25 +3,29 @@ import { getBrand } from "@/brand";
 
 import { AuthPageLink, LoginForm } from "@/components/auth-form";
 import { StorefrontWideShell } from "@/components/storefront-shell";
+import { getDictionary } from "@/ontos/active-market";
 
-export const metadata: Metadata = { title: "Přihlášení" };
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getDictionary()).auth.loginTitle };
+}
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  const copy = (await getDictionary()).auth;
   return (
     <StorefrontWideShell>
       <section className="sf-auth-page">
         <div className="sf-auth-card">
           <header>
-            <h1>Přihlášení partnera</h1>
-            <p>Vítejte zpět v e-shopu {getBrand().name}</p>
+            <h1>{copy.loginHeading}</h1>
+            <p>{copy.welcomeBack(getBrand().name)}</p>
           </header>
           <LoginForm />
           <div className="sf-auth-divider">
-            <span>nebo</span>
+            <span>{copy.or}</span>
           </div>
           <p>
-            Ještě u nás nemáte účet?{" "}
-            <AuthPageLink href="/registrace">Vytvořte si ho zde</AuthPageLink>
+            {copy.noAccount}{" "}
+            <AuthPageLink href="/registrace">{copy.createAccountLink}</AuthPageLink>
           </p>
         </div>
       </section>

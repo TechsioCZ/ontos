@@ -2,7 +2,7 @@
 
 import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { useStoreHref } from "@/ontos/market-context";
+import { useDictionary, useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
@@ -55,6 +55,7 @@ async function submitAccount(
 export function LoginForm() {
   const router = useRouter();
   const storeHref = useStoreHref();
+  const copy = useDictionary().auth;
   const [error, setError] = useState("");
   const [verificationRequired, setVerificationRequired] = useState(false);
   const [pending, setPending] = useState(false);
@@ -69,15 +70,15 @@ export function LoginForm() {
       const result = await submitAccount(form, "login");
       if (!result.ok) {
         setVerificationRequired(result.code === "verification_required");
-        setError(result.message ?? "Účet je dočasně nedostupný.");
+        setError(result.message ?? copy.accountUnavailable);
         return;
       }
-      if (result.outcome !== "SESSION_CREATED") throw new Error("Přihlášení nebylo potvrzeno.");
+      if (result.outcome !== "SESSION_CREATED") throw new Error(copy.loginNotConfirmed);
       form.reset();
       router.push(storeHref("/dokonceni-registrace"));
       router.refresh();
     } catch (cause) {
-      setError(isError(cause) ? cause.message : "Přihlášení se nepodařilo.");
+      setError(isError(cause) ? cause.message : copy.loginFailed);
     } finally {
       setPending(false);
     }
@@ -90,7 +91,7 @@ export function LoginForm() {
           autoComplete="username"
           id="login-email"
           name="email"
-          label="Přihlašovací e-mail"
+          label={copy.loginEmail}
           required
           size="sm"
           type="email"
@@ -99,16 +100,16 @@ export function LoginForm() {
           autoComplete="current-password"
           id="login-password"
           name="password"
-          label="Heslo"
+          label={copy.password}
           required
           size="sm"
           type="password"
         />
         <div className="sf-auth-form__row">
-          <FormCheckbox name="rememberMe" label="Zapamatovat si mě" size="sm" />
+          <FormCheckbox name="rememberMe" label={copy.rememberMe} size="sm" />
         </div>
         <Button block disabled={pending} size="md" type="submit" variant="primary">
-          {pending ? "Přihlašuji…" : "Přihlásit se"}
+          {pending ? copy.loggingIn : copy.logIn}
         </Button>
         {error && <p role="alert">{error}</p>}
       </form>
@@ -118,6 +119,7 @@ export function LoginForm() {
 }
 
 export function RegistrationForm() {
+  const copy = useDictionary().auth;
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -128,7 +130,7 @@ export function RegistrationForm() {
     const form = event.currentTarget;
     const fields = new FormData(form);
     if (fields.get("password") !== fields.get("passwordConfirmation")) {
-      setError("Hesla se neshodují.");
+      setError(copy.passwordMismatch);
       return;
     }
     requestId.current ??= crypto.randomUUID();
@@ -136,12 +138,12 @@ export function RegistrationForm() {
     setError("");
     try {
       const result = await submitAccount(form, "register", requestId.current);
-      if (!result.ok) throw new Error(result.message ?? "Účet je dočasně nedostupný.");
-      if (result.outcome !== "ENROLLMENT_STARTED") throw new Error("Registrace nebyla přijata.");
+      if (!result.ok) throw new Error(result.message ?? copy.accountUnavailable);
+      if (result.outcome !== "ENROLLMENT_STARTED") throw new Error(copy.registrationNotAccepted);
       form.reset();
       setSubmitted(true);
     } catch (cause) {
-      setError(isError(cause) ? cause.message : "Registrace se nepodařila.");
+      setError(isError(cause) ? cause.message : copy.registrationFailed);
     } finally {
       setPending(false);
     }
@@ -154,7 +156,7 @@ export function RegistrationForm() {
           autoComplete="given-name"
           id="register-first-name"
           name="firstName"
-          label="Jméno"
+          label={copy.firstName}
           required
           size="sm"
           type="text"
@@ -163,7 +165,7 @@ export function RegistrationForm() {
           autoComplete="family-name"
           id="register-last-name"
           name="lastName"
-          label="Příjmení"
+          label={copy.lastName}
           required
           size="sm"
           type="text"
@@ -172,7 +174,7 @@ export function RegistrationForm() {
           autoComplete="username"
           id="register-email"
           name="email"
-          label="E-mailová adresa"
+          label={copy.email}
           required
           size="sm"
           type="email"
@@ -181,7 +183,7 @@ export function RegistrationForm() {
           autoComplete="tel"
           id="register-phone"
           name="phone"
-          label="Telefonní číslo"
+          label={copy.phone}
           required
           size="sm"
           type="tel"
@@ -190,7 +192,7 @@ export function RegistrationForm() {
           autoComplete="new-password"
           id="register-password"
           name="password"
-          label="Heslo (minimálně 12 znaků)"
+          label={copy.passwordWithHint}
           minLength={12}
           {...{ passwordrules: "minlength: 12;" }}
           required
@@ -201,7 +203,7 @@ export function RegistrationForm() {
           autoComplete="new-password"
           id="register-password-confirm"
           name="passwordConfirmation"
-          label="Potvrzení hesla"
+          label={copy.passwordConfirmation}
           minLength={12}
           {...{ passwordrules: "minlength: 12;" }}
           required
@@ -209,23 +211,12 @@ export function RegistrationForm() {
           type="password"
         />
       </div>
-      <FormCheckbox
-        name="privacyConsent"
-        label="Souhlasím s obchodními podmínkami a zásadami zpracování osobních údajů"
-        required
-        size="sm"
-      />
+      <FormCheckbox name="privacyConsent" label={copy.consent} required size="sm" />
       <Button disabled={pending || submitted} size="md" type="submit" variant="primary">
-        {pending ? "Vytvářím účet…" : "Vytvořit účet"}
+        {pending ? copy.creating : copy.create}
       </Button>
       {error && <p role="alert">{error}</p>}
-      {submitted && (
-        <output className="sf-form-success">
-          Registrace byla přijata. Potvrďte svůj e-mail odkazem v doručené zprávě. Přihlášení bude
-          dostupné po ověření e-mailu. Po přihlášení můžete zkontrolovat stav a obnovit
-          rozpracovanou registraci.
-        </output>
-      )}
+      {submitted && <output className="sf-form-success">{copy.registrationAccepted}</output>}
     </form>
   );
 }

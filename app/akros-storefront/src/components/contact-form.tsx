@@ -6,6 +6,7 @@ import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { FormTextarea } from "@techsio/ui-kit/molecules/form-textarea";
 import { useBrand } from "@/brand/brand-context";
 import type { InquiryKind } from "@/ontos/inquiry-model";
+import { useDictionary } from "@/ontos/market-context";
 import { marketRequestHeaders } from "@/ontos/market-locale";
 
 const isError = (value: unknown): value is Error =>
@@ -26,6 +27,7 @@ export function ContactForm({
   defaultMessage?: string;
 }) {
   const brand = useBrand();
+  const copy = useDictionary().contact.form;
   const [pending, setPending] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -41,10 +43,10 @@ export function ContactForm({
       subject:
         String(data.get("subject") ?? "").trim() ||
         (kind === "COMPLAINT"
-          ? "Podnět k reklamaci"
+          ? copy.complaintSubject
           : kind === "PRODUCT_QUESTION"
-            ? "Dotaz na produkt"
-            : "Dotaz z e-shopu"),
+            ? copy.productSubject
+            : copy.defaultSubject),
       message: String(data.get("message") ?? ""),
       ...(productId ? { productId } : {}),
     };
@@ -67,7 +69,7 @@ export function ContactForm({
             "message" in body &&
             typeof body.message === "string"
             ? body.message
-            : "Přijetí dotazu se nepodařilo potvrdit.",
+            : copy.responseUnconfirmed,
         );
       if (
         typeof body !== "object" ||
@@ -75,22 +77,16 @@ export function ContactForm({
         !("taskId" in body) ||
         typeof body.taskId !== "string"
       )
-        throw new Error("Přijetí dotazu nebylo potvrzeno.");
+        throw new Error(copy.notConfirmed);
       setTaskId(body.taskId);
     } catch (cause) {
-      setError(
-        isError(cause) ? cause.message : "Spojení se nezdařilo. Údaje zachovejte a zkuste znovu.",
-      );
+      setError(isError(cause) ? cause.message : copy.connectionFailed);
     } finally {
       setPending(false);
     }
   };
   if (taskId !== null)
-    return (
-      <output className="sf-form-success">
-        Děkujeme. Dotaz jsme předali týmu {brand.name} k vyřízení. Číslo požadavku: {taskId}.
-      </output>
-    );
+    return <output className="sf-form-success">{copy.success(brand.name, taskId)}</output>;
   return (
     <form
       className="sf-contact-form"
@@ -101,13 +97,13 @@ export function ContactForm({
     >
       <fieldset disabled={pending} className="grid gap-4 border-0 p-0">
         <legend className="sr-only">
-          {kind === "COMPLAINT" ? "Podnět k reklamaci" : "Kontaktní dotaz"}
+          {kind === "COMPLAINT" ? copy.complaintSubject : copy.contactLegend}
         </legend>
         <div className="sf-form-grid">
           <FormInput
             autoComplete="name"
             id={compact ? "faq-name" : "contact-name"}
-            label="Jméno"
+            label={copy.name}
             name="name"
             maxLength={120}
             required
@@ -117,7 +113,7 @@ export function ContactForm({
             autoComplete="email"
             id={compact ? "faq-email" : "contact-email"}
             inputMode="email"
-            label="E-mail"
+            label={copy.email}
             name="email"
             maxLength={254}
             required
@@ -127,46 +123,35 @@ export function ContactForm({
         </div>
         {productName && (
           <p>
-            Dotaz na produkt: <strong>{productName}</strong>
+            {copy.productQuestion} <strong>{productName}</strong>
           </p>
         )}
         {!compact && (
           <FormInput
             id="contact-subject"
-            label="Předmět"
+            label={copy.subject}
             name="subject"
-            defaultValue={productName ? `Dotaz na produkt: ${productName}`.slice(0, 160) : ""}
+            defaultValue={productName ? copy.productSubjectValue(productName).slice(0, 160) : ""}
             maxLength={160}
-            placeholder="S čím vám můžeme pomoci?"
+            placeholder={copy.subjectPlaceholder}
             size="md"
           />
         )}
         <FormTextarea
           id={compact ? "faq-message" : "contact-message"}
-          label="Zpráva"
+          label={copy.message}
           name="message"
           defaultValue={defaultMessage?.slice(0, 1500)}
           maxLength={1500}
-          placeholder={
-            kind === "COMPLAINT"
-              ? "Uveďte číslo objednávky, kód produktu a popis problému."
-              : "Popište detail svého požadavku"
-          }
+          placeholder={kind === "COMPLAINT" ? copy.complaintPlaceholder : copy.messagePlaceholder}
           required
           rows={compact ? 4 : 6}
           size={compact ? "sm" : "md"}
         />
-        <p>
-          Údaje odešleme týmu {brand.name} k vyřízení vašeho dotazu. Nejde o přihlášení k
-          newsletteru.
-        </p>
-        {kind === "COMPLAINT" && (
-          <p>
-            Odesláním vznikne úkol pro podporu, nikoli automaticky zaevidovaný reklamační případ.
-          </p>
-        )}
+        <p>{copy.privacyNote(brand.name)}</p>
+        {kind === "COMPLAINT" && <p>{copy.complaintNote}</p>}
         <Button size={compact ? "md" : undefined} type="submit" variant="primary">
-          {pending ? "Odesílání…" : "Odeslat dotaz"}
+          {pending ? copy.sending : copy.submit}
         </Button>
       </fieldset>
       {error && <p role="alert">{error}</p>}

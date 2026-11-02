@@ -2,6 +2,9 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CategoryFilters } from "@/components/category-filters";
+import { LoginForm } from "@/components/auth-form";
+import { ContactForm } from "@/components/contact-form";
+import { AddressStep } from "@/features/checkout/address-step";
 import { ProductDetailActions } from "@/components/product-detail-actions";
 import { CartProvider } from "@/features/cart/cart-provider";
 import { CartContent } from "@/features/cart/cart-content";
@@ -295,5 +298,104 @@ describe("market copy outside the product cards", () => {
     expect(
       screen.getByRole("button", { name: "Choose favourite variants: DIN 933/A2, 1 saved" }),
     ).not.toBeNull();
+  });
+
+  it("shows the Slovak login form", () => {
+    render(
+      <MarketProvider market={skMarket}>
+        <LoginForm />
+      </MarketProvider>,
+    );
+
+    expect(screen.getByLabelText(/Prihlasovací e-mail/)).not.toBeNull();
+    expect(screen.getByLabelText(/Heslo/)).not.toBeNull();
+    expect(screen.getByText("Zapamätať si ma")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Prihlásiť sa" })).not.toBeNull();
+    expect(screen.queryByText("Přihlásit se")).toBeNull();
+  });
+
+  it("shows the English login form", () => {
+    render(
+      <MarketProvider market={enMarket}>
+        <LoginForm />
+      </MarketProvider>,
+    );
+
+    expect(screen.getByLabelText(/Sign-in e-mail/)).not.toBeNull();
+    expect(screen.getByLabelText(/Password/)).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Sign in" })).not.toBeNull();
+  });
+
+  it("shows the Slovak and English contact form", () => {
+    render(
+      <MarketProvider market={skMarket}>
+        <ContactForm />
+      </MarketProvider>,
+    );
+    expect(screen.getByLabelText(/Predmet/)).not.toBeNull();
+    expect(screen.getByLabelText(/Správa/)).not.toBeNull();
+    expect(screen.getByPlaceholderText("S čím vám môžeme pomôcť?")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Odoslať otázku" })).not.toBeNull();
+    expect(screen.queryByText(/vyřízení/)).toBeNull();
+    cleanup();
+
+    render(
+      <MarketProvider market={enMarket}>
+        <ContactForm kind="COMPLAINT" />
+      </MarketProvider>,
+    );
+    expect(screen.getByLabelText(/Subject/)).not.toBeNull();
+    expect(screen.getByLabelText(/Message/)).not.toBeNull();
+    expect(screen.getByText(/This is not a newsletter subscription/)).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Send enquiry" })).not.toBeNull();
+  });
+
+  it("shows the Slovak delivery details step and its validation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ shippingMethods: [], account: null })),
+    );
+    render(
+      <MarketProvider market={skMarket}>
+        <CartProvider storage={window.localStorage}>
+          <CheckoutProvider storage={window.sessionStorage}>
+            <AddressStep />
+          </CheckoutProvider>
+        </CartProvider>
+      </MarketProvider>,
+    );
+
+    expect(screen.getByRole("heading", { name: "Dodacie údaje" })).not.toBeNull();
+    expect(screen.getByText("Fakturačná adresa")).not.toBeNull();
+    expect(screen.getByLabelText(/Priezvisko/)).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Súhrn objednávky" })).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Súhrn objednávky" }));
+    await waitFor(() => expect(screen.getByText("Zadajte platný e-mail.")).not.toBeNull());
+    expect(screen.getAllByText("Vyplňte toto pole.").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Zadejte platný e-mail.")).toBeNull();
+    expect(screen.queryByText("Fakturační adresa")).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the English delivery details step", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ shippingMethods: [], account: null })),
+    );
+    render(
+      <MarketProvider market={enMarket}>
+        <CartProvider storage={window.localStorage}>
+          <CheckoutProvider storage={window.sessionStorage}>
+            <AddressStep />
+          </CheckoutProvider>
+        </CartProvider>
+      </MarketProvider>,
+    );
+
+    expect(screen.getByRole("heading", { name: "Delivery details" })).not.toBeNull();
+    expect(screen.getByText("Billing address")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Order summary" })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Back to shipping and payment" })).not.toBeNull();
+    vi.unstubAllGlobals();
   });
 });

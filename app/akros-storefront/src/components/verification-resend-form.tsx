@@ -3,11 +3,13 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { useDictionary } from "@/ontos/market-context";
 
 const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
 
 export function VerificationResendForm() {
+  const copy = useDictionary().auth.resend;
   const [pending, setPending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
@@ -26,13 +28,11 @@ export function VerificationResendForm() {
         body: JSON.stringify({ operation: "resend-verification", email }),
       });
       const result = (await response.json()) as { message?: string; outcome?: string };
-      if (!response.ok)
-        throw new Error(result.message ?? "Ověřovací e-mail se nepodařilo odeslat.");
-      if (result.outcome !== "EMAIL_VERIFICATION_STARTED")
-        throw new Error("Odeslání ověřovacího e-mailu nebylo potvrzeno.");
+      if (!response.ok) throw new Error(result.message ?? copy.failed);
+      if (result.outcome !== "EMAIL_VERIFICATION_STARTED") throw new Error(copy.notConfirmed);
       setSent(true);
     } catch (cause) {
-      setError(isError(cause) ? cause.message : "Ověřovací e-mail je dočasně nedostupný.");
+      setError(isError(cause) ? cause.message : copy.unavailable);
     } finally {
       setPending(false);
     }
@@ -43,7 +43,7 @@ export function VerificationResendForm() {
       <FormInput
         autoComplete="email"
         id="verification-resend-email"
-        label="E-mail pro ověření"
+        label={copy.label}
         maxLength={320}
         name="email"
         required
@@ -51,15 +51,10 @@ export function VerificationResendForm() {
         type="email"
       />
       <Button disabled={pending} size="md" type="submit" variant="secondary">
-        {pending ? "Odesílám…" : "Poslat ověřovací e-mail znovu"}
+        {pending ? copy.sending : copy.submit}
       </Button>
       {error && <p role="alert">{error}</p>}
-      {sent && (
-        <output>
-          Pokud účet s tímto e-mailem čeká na ověření, poslali jsme nový ověřovací odkaz.
-          Zkontrolujte také nevyžádanou poštu.
-        </output>
-      )}
+      {sent && <output>{copy.sent}</output>}
     </form>
   );
 }

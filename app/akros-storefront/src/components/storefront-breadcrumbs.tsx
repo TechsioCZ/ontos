@@ -3,6 +3,7 @@
 import StoreLink from "@/components/store-link";
 import { Breadcrumb } from "@techsio/ui-kit/molecules/breadcrumb";
 import { Fragment } from "react";
+import { useDictionary } from "@/ontos/market-context";
 
 interface BreadcrumbItem {
   href?: string;
@@ -16,8 +17,9 @@ export function StorefrontBreadcrumbs({
   items: BreadcrumbItem[];
   className?: string;
 }) {
+  const { breadcrumbs } = useDictionary().header;
   return (
-    <Breadcrumb aria-label="Drobečková navigace" className={className} size="sm">
+    <Breadcrumb aria-label={breadcrumbs} className={className} size="sm">
       <Breadcrumb.List>
         {items.map((item, index) => {
           const isCurrent = index === items.length - 1;

@@ -5,12 +5,14 @@ import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { isCustomerNewsletterConsent } from "@/ontos/consent-model";
 import type { CustomerNewsletterConsent } from "@/ontos/consent-model";
+import { useDictionary } from "@/ontos/market-context";
 
 const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
 
 /** Only an actual owner projection reveals the control; unavailable authorization never becomes a default choice. */
 export function CustomerNewsletterConsentForm() {
+  const copy = useDictionary().account.newsletter;
   const [consent, setConsent] = useState<CustomerNewsletterConsent | null>(null);
   const [pending, setPending] = useState(true);
   const [error, setError] = useState("");
@@ -21,7 +23,7 @@ export function CustomerNewsletterConsentForm() {
       .then(async (response) => {
         const result = (await response.json()) as { consent?: unknown; message?: string };
         if (!response.ok || !isCustomerNewsletterConsent(result.consent)) {
-          throw new Error(result.message ?? "Stav souhlasu nelze ověřit v OntOS.");
+          throw new Error(result.message ?? copy.unverifiable);
         }
         return result.consent;
       })
@@ -31,7 +33,7 @@ export function CustomerNewsletterConsentForm() {
       .catch((cause) => {
         if (signal?.aborted) return;
         setConsent(null);
-        setError(isError(cause) ? cause.message : "Souhlas je dočasně nedostupný.");
+        setError(isError(cause) ? cause.message : copy.unavailable);
       })
       .finally(() => {
         if (!signal?.aborted) setPending(false);
@@ -66,7 +68,7 @@ export function CustomerNewsletterConsentForm() {
       if (response.status === 409) {
         request.current = null;
         await load();
-        setError(result.message ?? "Stav se změnil. Zkontrolujte aktuální volbu.");
+        setError(result.message ?? copy.changed);
         return;
       }
       if (
@@ -74,36 +76,31 @@ export function CustomerNewsletterConsentForm() {
         !isCustomerNewsletterConsent(result.consent) ||
         result.consent.decision !== fields.decision
       ) {
-        throw new Error(
-          result.message ?? "OntOS nepotvrdil uložení souhlasu. Načtěte aktuální stav znovu.",
-        );
+        throw new Error(result.message ?? copy.notConfirmed);
       }
       setConsent(result.consent);
       request.current = null;
       setSaved(true);
     } catch (cause) {
       setConsent(null);
-      setError(isError(cause) ? cause.message : "Změnu souhlasu nelze potvrdit.");
+      setError(isError(cause) ? cause.message : copy.changeUnconfirmed);
     } finally {
       setPending(false);
     }
   }
   return (
     <section aria-labelledby="newsletter-consent-heading" className="sf-auth-form">
-      <h2 id="newsletter-consent-heading">Newsletter</h2>
+      <h2 id="newsletter-consent-heading">{copy.title}</h2>
       {consent ? (
         <>
           <p className="whitespace-pre-wrap" lang={consent.notice.language}>
             {consent.notice.wording}
           </p>
-          <p>
-            Zaškrtnutím potvrzuji seznámení s uvedenými informacemi. Souhlas je dobrovolný a lze jej
-            zde kdykoli odvolat odškrtnutím. Nesouvisí s přijetím obchodních podmínek.
-          </p>
+          <p>{copy.acknowledgement}</p>
           <FormCheckbox
             id="account-newsletter"
             name="newsletterConsent"
-            label="Souhlasím se zasíláním newsletteru e-mailem"
+            label={copy.label}
             size="sm"
             checked={consent.decision === "GRANTED"}
             disabled={pending}
@@ -112,21 +109,17 @@ export function CustomerNewsletterConsentForm() {
             }}
           />
           <p>
-            Stav v OntOS:{" "}
+            {copy.state}{" "}
             {consent.decision === "GRANTED"
-              ? "souhlas udělen"
+              ? copy.granted
               : consent.decision === "WITHDRAWN"
-                ? "souhlas odvolán"
-                : "souhlas neudělen"}
+                ? copy.withdrawn
+                : copy.notGranted}
             .
           </p>
         </>
       ) : (
-        <p>
-          {pending
-            ? "Načítám aktuální informace z OntOS…"
-            : "Bez aktuálního znění a ověřeného stavu nelze souhlas měnit."}
-        </p>
+        <p>{pending ? copy.loading : copy.locked}</p>
       )}
       {error && <p role="alert">{error}</p>}
       {!consent && !pending && (
@@ -139,10 +132,10 @@ export function CustomerNewsletterConsentForm() {
             void load();
           }}
         >
-          Načíst souhlas znovu
+          {copy.reload}
         </Button>
       )}
-      {saved && <output>Volba byla uložena v OntOS.</output>}
+      {saved && <output>{copy.saved}</output>}
     </section>
   );
 }

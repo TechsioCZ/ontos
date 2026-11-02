@@ -1,6 +1,22 @@
 "use client";
-/** `storeName`: the brand's name, absent when the root layout itself failed (global error, no brand chrome). */
-export function Unavailable({ reset, storeName }: { reset: () => void; storeName?: string }) {
+import type { Dictionary } from "@/i18n";
+import { useDictionary } from "./market-context";
+
+/**
+ * `storeName`: the brand's name, absent when the root layout itself failed (global error, no brand chrome).
+ * `dictionary`: the chrome language when no market provider is mounted (global error); else the market's.
+ */
+export function Unavailable({
+  reset,
+  storeName,
+  dictionary,
+}: {
+  reset: () => void;
+  storeName?: string;
+  dictionary?: Dictionary;
+}) {
+  const marketDictionary = useDictionary();
+  const copy = (dictionary ?? marketDictionary).errorPages;
   return (
     <main
       style={{
@@ -36,11 +52,10 @@ export function Unavailable({ reset, storeName }: { reset: () => void; storeName
           id="unavailable-title"
           style={{ fontSize: 28, lineHeight: 1.25, fontWeight: 700, marginBottom: 16 }}
         >
-          Katalog je dočasně nedostupný
+          {copy.unavailableTitle}
         </h1>
         <p style={{ fontSize: 16, lineHeight: 1.6, color: "#4b5563", marginBottom: 24 }}>
-          Spojení s OntOS se nepodařilo. Ceny ani sklad nenahrazujeme ukázkovými daty. Váš košík
-          zůstává uložený v prohlížeči.
+          {copy.unavailableText}
         </p>
         <button
           onClick={reset}
@@ -55,11 +70,9 @@ export function Unavailable({ reset, storeName }: { reset: () => void; storeName
             cursor: "pointer",
           }}
         >
-          Zkusit znovu
+          {copy.retry}
         </button>
-        <p style={{ marginTop: 24, fontSize: 13, color: "#6b7280" }}>
-          DEMO – objednávka nebude doručena.
-        </p>
+        <p style={{ marginTop: 24, fontSize: 13, color: "#6b7280" }}>{copy.demoNote}</p>
       </section>
     </main>
   );

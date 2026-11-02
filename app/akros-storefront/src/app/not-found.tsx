@@ -2,7 +2,7 @@
 
 import StoreLink from "@/components/store-link";
 import { useRouter } from "next/navigation";
-import { useStoreHref } from "@/ontos/market-context";
+import { useDictionary, useStoreHref } from "@/ontos/market-context";
 import type { FormEvent } from "react";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { SearchForm } from "@techsio/ui-kit/molecules/search-form";
@@ -12,6 +12,7 @@ import { StorefrontWideShell } from "@/components/storefront-shell";
 export default function NotFoundPage() {
   const router = useRouter();
   const storeHref = useStoreHref();
+  const { errorPages: copy, actions } = useDictionary();
 
   const handleSearch = (event: FormEvent<HTMLFormElement>) => {
     const query = new FormData(event.currentTarget).get("q");
@@ -32,14 +33,11 @@ export default function NotFoundPage() {
           <span>4</span>
         </div>
         <div className="sf-not-found__copy">
-          <h1 id="not-found-title">Vypadá to, že jste se ztratili v našem skladu...</h1>
-          <p>
-            Požadovaná stránka nebyla nalezena. Pravděpodobně byla přesunuta, smazána, nebo odkaz,
-            na který jste klikli, je nesprávný.
-          </p>
+          <h1 id="not-found-title">{copy.notFoundHeading}</h1>
+          <p>{copy.notFoundText}</p>
         </div>
         <div className="sf-not-found__search">
-          <strong>Zkuste vyhledat materiál znovu:</strong>
+          <strong>{copy.searchAgain}</strong>
           <SearchForm
             action={storeHref("/vyhledavani")}
             method="get"
@@ -47,13 +45,13 @@ export default function NotFoundPage() {
             size="sm"
           >
             <SearchForm.Control>
-              <SearchForm.Input name="q" placeholder="Hledat matici, šroub…" />
-              <SearchForm.Button>Hledat</SearchForm.Button>
+              <SearchForm.Input name="q" placeholder={copy.searchPlaceholder} />
+              <SearchForm.Button>{actions.search}</SearchForm.Button>
             </SearchForm.Control>
           </SearchForm>
         </div>
         <div className="sf-not-found__categories">
-          <strong>Nebo přejděte rovnou do hlavních kategorií:</strong>
+          <strong>{copy.categoriesIntro}</strong>
           <div>
             <LinkButton
               as={StoreLink}
@@ -62,7 +60,7 @@ export default function NotFoundPage() {
               theme="outlined"
               variant="primary"
             >
-              Nerezové šrouby
+              {copy.screws}
             </LinkButton>
             <LinkButton
               as={StoreLink}
@@ -71,7 +69,7 @@ export default function NotFoundPage() {
               theme="outlined"
               variant="primary"
             >
-              Nerezové matice
+              {copy.nuts}
             </LinkButton>
             <LinkButton
               as={StoreLink}
@@ -80,12 +78,12 @@ export default function NotFoundPage() {
               theme="outlined"
               variant="primary"
             >
-              Závitové tyče
+              {copy.threadedRods}
             </LinkButton>
           </div>
         </div>
         <LinkButton as={StoreLink} href="/" size="md" theme="solid" variant="primary">
-          Zpět na hlavní stránku
+          {copy.backHome}
         </LinkButton>
       </section>
     </StorefrontWideShell>

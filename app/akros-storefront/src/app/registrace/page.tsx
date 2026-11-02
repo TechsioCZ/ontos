@@ -2,42 +2,38 @@ import type { Metadata } from "next";
 
 import { AuthPageLink, RegistrationForm } from "@/components/auth-form";
 import { StorefrontWideShell } from "@/components/storefront-shell";
+import { getDictionary } from "@/ontos/active-market";
 
-export const metadata: Metadata = { title: "Registrace" };
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getDictionary()).auth.registrationTitle };
+}
 
-const benefits = [
-  [
-    "Historie a správa objednávek",
-    "Mějte přehled o všech fakturách, dodacích listech a stavu doručení.",
-  ],
-  [
-    "Rychlejší příští nákup",
-    "Uložené fakturační a dodací adresy pro bleskové dokončení objednávek.",
-  ],
-  ["Individuální slevové akce", "Speciální partnerské ceny pro stálé odběratele a stavební firmy."],
-  ["Seznam přání", "Uložte si často objednávané položky nerezového materiálu na později."],
-] as const;
-
-export default function RegistrationPage() {
+export default async function RegistrationPage() {
+  const copy = (await getDictionary()).auth;
+  const benefits = [
+    copy.benefits.orders,
+    copy.benefits.faster,
+    copy.benefits.discounts,
+    copy.benefits.wishlist,
+  ];
   return (
     <StorefrontWideShell>
       <section className="sf-registration-page">
         <div className="sf-registration-card">
           <header>
-            <h1>Registrace nového zákazníka</h1>
-            <p>
-              Vytvořte si profesionální účet a získejte okamžitý přístup k velkoobchodním výhodám.
-            </p>
+            <h1>{copy.registrationHeading}</h1>
+            <p>{copy.registrationIntro}</p>
           </header>
           <RegistrationForm />
           <p>
-            Již jste registrováni? <AuthPageLink href="/prihlaseni">Přihlaste se zde</AuthPageLink>
+            {copy.alreadyRegistered}{" "}
+            <AuthPageLink href="/prihlaseni">{copy.loginLink}</AuthPageLink>
           </p>
         </div>
         <aside className="sf-benefit-card">
-          <h2>Velkoobchodní výhody</h2>
+          <h2>{copy.benefitsTitle}</h2>
           <ul>
-            {benefits.map(([title, text]) => (
+            {benefits.map(({ title, text }) => (
               <li key={title}>
                 <strong>{title}</strong>
                 <span>{text}</span>

@@ -6,36 +6,33 @@ import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
+import { useDictionary } from "@/ontos/market-context";
 
+/** Account tabs; the label is the `account.shell` dictionary key, tabs without `href` are not in the prototype. */
 const navigation = [
-  { key: "overview", label: "Přehled účtu", href: "/muj-ucet/prehled" },
-  { key: "profile", label: "Můj účet", href: "/muj-ucet" },
-  { key: "orders", label: "Objednávky", href: "/historie-objednavek" },
-  { key: "invoices", label: "Přehled faktur" },
-  { key: "watchdog", label: "Hlídací pes" },
-  { key: "claims", label: "Reklamace", href: "/muj-ucet/reklamace" },
-  { key: "commission", label: "Komisní prodej" },
-  { key: "service", label: "Servisní knížka" },
-];
+  { key: "overview", href: "/muj-ucet/prehled" },
+  { key: "profile", href: "/muj-ucet" },
+  { key: "orders", href: "/historie-objednavek" },
+  { key: "invoices" },
+  { key: "watchdog" },
+  { key: "claims", href: "/muj-ucet/reklamace" },
+  { key: "commission" },
+  { key: "service" },
+] as const;
 type AccountSection = "overview" | "profile" | "orders" | "favorites" | "tracking" | "claims";
-const titles: Record<AccountSection, string> = {
-  overview: "Přehled účtu",
-  profile: "Můj účet",
-  orders: "Objednávky",
-  favorites: "Oblíbené produkty",
-  tracking: "Sledování zásilky",
-  claims: "Reklamace",
-};
 
 export function AccountShell({
   active,
-  title = titles[active],
+  title: customTitle,
   children,
 }: {
   active: AccountSection;
   title?: string;
   children: ReactNode;
 }) {
+  const { header, account } = useDictionary();
+  const labels = account.shell;
+  const title = customTitle ?? labels[active];
   const parent = active === "favorites" ? "overview" : active === "tracking" ? "orders" : active;
   return (
     <div className="min-h-screen bg-(--color-base)">
@@ -48,8 +45,8 @@ export function AccountShell({
           <StorefrontBreadcrumbs
             className="mb-(--dimension-20)"
             items={[
-              { label: "Domů", href: "/" },
-              ...(active === "profile" ? [] : [{ label: "Můj účet", href: "/muj-ucet" }]),
+              { label: header.home, href: "/" },
+              ...(active === "profile" ? [] : [{ label: labels.profile, href: "/muj-ucet" }]),
               { label: title },
             ]}
           />
@@ -58,7 +55,7 @@ export function AccountShell({
             className="min-w-0 rounded-(--dimension-8) bg-(--color-base) p-(--dimension-32) max-sm:p-(--dimension-16)"
           >
             <nav
-              aria-label="Navigace účtu"
+              aria-label={labels.navigation}
               data-account-navigation
               className="mb-(--dimension-40) flex flex-wrap border-b border-(--sf-account-divider)"
             >
@@ -66,15 +63,15 @@ export function AccountShell({
                 <LinkButton
                   as={StoreLink}
                   key={item.key}
-                  href={item.href ?? "#"}
-                  disabled={!item.href}
-                  title={!item.href ? "Tato sekce není v prototypu dostupná" : undefined}
+                  href={"href" in item ? item.href : "#"}
+                  disabled={!("href" in item)}
+                  title={"href" in item ? undefined : labels.unavailableSection}
                   size="sm"
                   theme="unstyled"
                   aria-current={item.key === parent ? "page" : undefined}
                   className="shrink-0 whitespace-nowrap hover:underline data-disabled:opacity-50 aria-[current=page]:border-b-(length:--sf-account-tab-border) aria-[current=page]:border-(--sf-account-accent)"
                 >
-                  {item.label}
+                  {labels[item.key]}
                 </LinkButton>
               ))}
             </nav>

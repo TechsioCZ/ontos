@@ -1,4 +1,9 @@
 import { type CartState, getCartSubtotal } from "@/features/cart/cart-state";
+import type { Dictionary } from "@/i18n";
+import { cs } from "@/i18n/cs";
+
+/** Validation messages of the market (`checkout.validation`); the order route validates with the Czech ones. */
+export type CheckoutValidationMessages = Dictionary["checkout"]["validation"];
 
 export interface DeliveryMethod {
   id: string;
@@ -80,31 +85,31 @@ export function selectDelivery(draft: CheckoutDraft, deliveryId: string): Checko
 export function validateMethods(
   draft: CheckoutDraft,
   methods: readonly DeliveryMethod[],
+  messages: CheckoutValidationMessages = cs.checkout.validation,
 ): CheckoutErrors {
-  return getDelivery(draft, methods)
-    ? {}
-    : { deliveryId: "Vyberte způsob dopravy z nabídky OntOS." };
+  return getDelivery(draft, methods) ? {} : { deliveryId: messages.deliveryRequired };
 }
 
-export function validateAddresses(draft: CheckoutDraft): CheckoutErrors {
+export function validateAddresses(
+  draft: CheckoutDraft,
+  messages: CheckoutValidationMessages = cs.checkout.validation,
+): CheckoutErrors {
   const errors: CheckoutErrors = {};
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.email.trim()))
-    errors.email = "Zadejte platný e-mail.";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.email.trim())) errors.email = messages.email;
   const validateAddress = (address: CheckoutAddress, prefix: string) => {
     for (const key of ["firstName", "lastName", "street", "city"] as const) {
-      if (!address[key].trim()) errors[`${prefix}.${key}`] = "Vyplňte toto pole.";
+      if (!address[key].trim()) errors[`${prefix}.${key}`] = messages.required;
     }
     if (!/^\d{3}\s?\d{2}$/.test(address.postalCode.trim()))
-      errors[`${prefix}.postalCode`] = "Zadejte PSČ ve tvaru 123 45.";
-    if (address.country !== "CZ")
-      errors[`${prefix}.country`] = "Doručení je podporováno pouze v České republice.";
+      errors[`${prefix}.postalCode`] = messages.postalCode;
+    if (address.country !== "CZ") errors[`${prefix}.country`] = messages.country;
     if (!/^(?:\+420)?\d{9}$/.test(address.phone.replace(/[\s()-]/g, "")))
-      errors[`${prefix}.phone`] = "Zadejte platné české telefonní číslo.";
+      errors[`${prefix}.phone`] = messages.phone;
   };
   validateAddress(draft.billing, "billing");
   if (draft.differentDeliveryAddress) validateAddress(draft.delivery, "delivery");
   if (draft.companyId && !/^\d{8}$/.test(draft.companyId.trim()))
-    errors.companyId = "IČ musí obsahovat 8 číslic.";
+    errors.companyId = messages.companyId;
   return errors;
 }
 

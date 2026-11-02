@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { useStoreHref } from "@/ontos/market-context";
+import { useDictionary, useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { AccountShell } from "@/components/account-shell";
@@ -26,6 +26,7 @@ export function AccountProfilePage({
 }) {
   const router = useRouter();
   const storeHref = useStoreHref();
+  const { profile: copy, shell } = useDictionary().account;
   const [pending, setPending] = useState<"save" | "logout" | null>(null);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
@@ -56,15 +57,15 @@ export function AccountProfilePage({
         profile?: unknown;
       };
       if (!response.ok) {
-        throw new Error(result.message ?? "Uložení údajů se nepodařilo.");
+        throw new Error(result.message ?? copy.saveFailed);
       }
       if (result.outcome !== "PROFILE_SAVED" || !isCustomerProfile(result.profile)) {
-        throw new Error("OntOS nepotvrdil uložení údajů. Obnovte stránku a zkontrolujte je.");
+        throw new Error(copy.saveNotConfirmed);
       }
       setValues(result.profile);
       setSaved(true);
     } catch (error) {
-      setError(isError(error) ? error.message : "Uložení údajů se nepodařilo.");
+      setError(isError(error) ? error.message : copy.saveFailed);
     } finally {
       setPending(null);
       // A refused multi-command save can have completed some native commands; show the owner's real state.
@@ -84,12 +85,12 @@ export function AccountProfilePage({
         method: "POST",
       });
       if (!response.ok) {
-        throw new Error("Odhlášení se nepodařilo. Zkuste to znovu.");
+        throw new Error(copy.logoutFailedRetry);
       }
       router.replace(storeHref("/prihlaseni"));
       router.refresh();
     } catch (error) {
-      setError(isError(error) ? error.message : "Odhlášení se nepodařilo.");
+      setError(isError(error) ? error.message : copy.logoutFailed);
     } finally {
       setPending(null);
     }
@@ -100,7 +101,7 @@ export function AccountProfilePage({
   };
   return (
     <AccountShell active="profile">
-      <h1>Můj účet</h1>
+      <h1>{shell.profile}</h1>
       <form
         action="/api/ontos/account/profile"
         className="sf-auth-form"
@@ -111,7 +112,7 @@ export function AccountProfilePage({
           autoComplete="name"
           disabled={pending !== null}
           id="account-name"
-          label="Jméno"
+          label={copy.name}
           maxLength={300}
           name="displayName"
           onChange={(event) => edit("displayName", event.target.value)}
@@ -122,19 +123,19 @@ export function AccountProfilePage({
         <FormInput
           autoComplete="username"
           id="account-email"
-          label="Přihlašovací e-mail"
+          label={copy.loginEmail}
           name="email"
           readOnly
           size="sm"
           type="email"
           value={account.email}
         />
-        <p>Přihlašovací e-mail nelze změnit úpravou kontaktních údajů.</p>
+        <p>{copy.loginEmailNote}</p>
         <FormInput
           autoComplete="tel"
           disabled={pending !== null}
           id="account-phone"
-          label="Telefonní kontakt"
+          label={copy.phone}
           maxLength={100}
           name="phone"
           onChange={(event) => edit("phone", event.target.value)}
@@ -145,7 +146,7 @@ export function AccountProfilePage({
         <FormInput
           disabled={pending !== null}
           id="account-contact-email"
-          label="Kontaktní e-mail"
+          label={copy.contactEmail}
           maxLength={320}
           name="contactEmail"
           onChange={(event) => edit("contactEmail", event.target.value)}
@@ -153,11 +154,9 @@ export function AccountProfilePage({
           type="email"
           value={values.contactEmail}
         />
-        <p>
-          Kontaktní údaje se ukládají do OntOS. Jejich změna nemění přihlašovací e-mail ani heslo.
-        </p>
+        <p>{copy.storedNote}</p>
         <Button disabled={pending !== null} size="sm" type="submit" variant="primary">
-          {pending === "save" ? "Ukládám…" : "Uložit změny"}
+          {pending === "save" ? copy.saving : copy.save}
         </Button>
         <Button
           disabled={pending !== null}
@@ -166,9 +165,9 @@ export function AccountProfilePage({
           type="button"
           variant="primary"
         >
-          {pending === "logout" ? "Odhlašuji…" : "Odhlásit se"}
+          {pending === "logout" ? copy.loggingOut : copy.logout}
         </Button>
-        {saved && <output>Údaje byly uloženy v OntOS a znovu načteny.</output>}
+        {saved && <output>{copy.saved}</output>}
         {error && <p role="alert">{error}</p>}
       </form>
       {/* OntOS offers no signed-in password change yet: the form validates but never claims success. */}

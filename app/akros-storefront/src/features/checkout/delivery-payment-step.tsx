@@ -2,7 +2,7 @@
 import StoreLink from "@/components/store-link";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useMoney, useStoreHref } from "@/ontos/market-context";
+import { useDictionary, useMoney, useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { RadioGroup } from "@techsio/ui-kit/molecules/radio-group";
@@ -13,12 +13,14 @@ import { useCartQuote } from "@/ontos/cart-revalidation";
 
 export function DeliveryPaymentStep() {
   const money = useMoney();
+  const { checkout } = useDictionary();
+  const copy = checkout.delivery;
   const { draft, methods, methodsError, updateDraft } = useCheckout();
   const router = useRouter();
   const storeHref = useStoreHref();
   const formRef = useRef<HTMLFormElement>(null);
   const [attempted, setAttempted] = useState(false);
-  const errors = attempted ? validateMethods(draft, methods) : {};
+  const errors = attempted ? validateMethods(draft, methods, checkout.validation) : {};
   const quote = useCartQuote();
   const blocked = !methods.length || (quote ? !quote.canContinue : true);
   return (
@@ -29,7 +31,7 @@ export function DeliveryPaymentStep() {
         event.preventDefault();
         if (blocked) return;
         setAttempted(true);
-        const invalid = validateMethods(draft, methods);
+        const invalid = validateMethods(draft, methods, checkout.validation);
         if (Object.keys(invalid).length) {
           const selector = invalid.deliveryId ? 'input[name="delivery"]' : '[role="combobox"]';
           requestAnimationFrame(() =>
@@ -49,7 +51,7 @@ export function DeliveryPaymentStep() {
             id="delivery-title"
             className="mb-4 text-(length:--sf-checkout-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
           >
-            Doprava
+            {copy.title}
           </h1>
           <RadioGroup
             id="checkout-delivery"
@@ -62,7 +64,7 @@ export function DeliveryPaymentStep() {
               if (id) updateDraft((current) => selectDelivery(current, id));
             }}
           >
-            <RadioGroup.Label className="sr-only">Způsob dopravy</RadioGroup.Label>
+            <RadioGroup.Label className="sr-only">{copy.methodLabel}</RadioGroup.Label>
             <RadioGroup.ItemGroup>
               {methods.map((method) => {
                 const price = method.priceMinor;
@@ -76,14 +78,12 @@ export function DeliveryPaymentStep() {
                     <RadioGroup.ItemControl />
                     <RadioGroup.ItemContent className="col-start-3 max-[24rem]:col-span-2">
                       <RadioGroup.ItemText>{method.title}</RadioGroup.ItemText>
-                      <RadioGroup.ItemDescription>
-                        Cena podle aktuálního ceníku OntOS
-                      </RadioGroup.ItemDescription>
+                      <RadioGroup.ItemDescription>{copy.priceNote}</RadioGroup.ItemDescription>
                     </RadioGroup.ItemContent>
                     <span
                       className={`col-start-4 row-start-1 whitespace-nowrap text-sm max-[24rem]:col-span-2 max-[24rem]:col-start-3 max-[24rem]:row-start-2 ${price === 0 ? "text-(--color-fg-status-success) uppercase" : "font-extrabold text-(--sf-checkout-muted)"}`}
                     >
-                      {price === 0 ? "Zdarma" : formatCheckoutPrice(price, money)}
+                      {price === 0 ? copy.free : formatCheckoutPrice(price, money)}
                     </span>
                   </RadioGroup.Item>
                 );
@@ -93,27 +93,19 @@ export function DeliveryPaymentStep() {
               <RadioGroup.StatusText status="error">{errors.deliveryId}</RadioGroup.StatusText>
             )}
           </RadioGroup>
-          {!methods.length && (
-            <p role="status">{methodsError || "Načítám aktuální dopravu z OntOS…"}</p>
-          )}
-          <p className="mt-4 text-sm">
-            Rezervace dopravce, výdejní místa a termín doručení nejsou v OntOS dostupné. Volba
-            dopravy se uloží do objednávky; automatickou expedici nezajišťuje.
-          </p>
+          {!methods.length && <p role="status">{methodsError || copy.loading}</p>}
+          <p className="mt-4 text-sm">{copy.carrierNote}</p>
         </section>
         <section aria-labelledby="payment-title">
           <h2
             id="payment-title"
             className="mb-4 text-(length:--sf-checkout-payment-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
           >
-            Platba
+            {copy.paymentTitle}
           </h2>
           <div className="rounded-sm border border-(--color-border-primary) p-4">
-            <p className="font-bold">Objednávka bez online platby</p>
-            <p className="mt-2 text-sm text-(--color-fg-secondary)">
-              Objednávku předáme obchodu k vyřízení. Její stav najdete ve svém účtu. Odesláním
-              objednávky neprovádíte platbu.
-            </p>
+            <p className="font-bold">{copy.noOnlinePayment}</p>
+            <p className="mt-2 text-sm text-(--color-fg-secondary)">{copy.paymentNote}</p>
           </div>
         </section>
       </div>
@@ -127,7 +119,7 @@ export function DeliveryPaymentStep() {
           className="leading-(--sf-checkout-heading-leading)"
           uppercase
         >
-          Vrátit se o krok zpět
+          {copy.back}
         </LinkButton>
         <div className="grid gap-2">
           <Button
@@ -140,7 +132,7 @@ export function DeliveryPaymentStep() {
             disabled={blocked}
             aria-describedby={blocked ? "methods-blocked" : undefined}
           >
-            Dodací údaje
+            {copy.next}
           </Button>
           {blocked && (
             <p id="methods-blocked" className="max-w-xs text-xs text-(--color-fg-secondary)">

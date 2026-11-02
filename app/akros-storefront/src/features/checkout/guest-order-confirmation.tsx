@@ -3,6 +3,7 @@ import { useSyncExternalStore } from "react";
 import StoreLink from "@/components/store-link";
 import { LiveOrderStatus } from "./live-order-status";
 import { OrderEmailStatus } from "./order-email-status";
+import { useDictionary } from "@/ontos/market-context";
 
 /** The last guest order of this browser tab; a guest has no account to read the receipt from. */
 export const guestOrderKey = "sf-guest-order";
@@ -41,39 +42,32 @@ function readStoredGuestOrder() {
 const subscribe = () => () => {};
 
 export function GuestOrderConfirmation({ orderId }: { orderId: string }) {
+  const copy = useDictionary().checkout.placed;
   const stored = useSyncExternalStore(subscribe, readStoredGuestOrder, () => undefined);
-  if (stored === undefined) return <output>Načítám potvrzení…</output>;
+  if (stored === undefined) return <output>{copy.loading}</output>;
   const order = parseGuestOrder(stored);
   if (!order || order.orderId !== orderId)
     return (
       <section data-sf-checkout className="mx-auto grid max-w-5xl gap-4 py-8">
-        <h1 className="text-lg font-bold">Potvrzení objednávky zde není k dispozici</h1>
-        <p>
-          Potvrzení objednávky bez registrace se zobrazí jen v okně, ze kterého byla odeslána. Stav
-          objednávky posíláme na e-mail uvedený v objednávce.
-        </p>
+        <h1 className="text-lg font-bold">{copy.unavailableTitle}</h1>
+        <p>{copy.unavailableText}</p>
         <StoreLink className="underline" href="/">
-          Zpět do obchodu
+          {copy.backToShop}
         </StoreLink>
       </section>
     );
   return (
     <section data-sf-checkout className="mx-auto grid max-w-5xl gap-8 py-8">
       <header className="grid gap-4">
-        <h1 className="text-lg font-bold">
-          Objednávka č. {order.orderNumber} byla uložena do OntOS
-        </h1>
-        <p>
-          Objednávku jsme předali obchodu k vyřízení. Objednávali jste bez registrace, potvrzení a
-          změny stavu proto posíláme na e-mail. Odesláním objednávky nebyla provedena platba.
-        </p>
+        <h1 className="text-lg font-bold">{copy.saved(order.orderNumber)}</h1>
+        <p>{copy.guestText}</p>
         <LiveOrderStatus orderId={order.orderId} clientRequestId={order.clientRequestId} />
       </header>
       <OrderEmailStatus email={order.email} orderNumber={order.orderNumber} />
       <p>
-        Chcete mít přehled o objednávkách na jednom místě?{" "}
+        {copy.accountPrompt}{" "}
         <StoreLink className="underline" href="/registrace">
-          Vytvořte si zákaznický účet
+          {copy.createAccount}
         </StoreLink>
       </p>
     </section>

@@ -9,7 +9,9 @@ import { getDictionary } from "@/ontos/active-market";
 import { readProducts } from "@/ontos/catalog-server";
 import { getBrand } from "@/brand";
 
-export const metadata: Metadata = { title: "Kontakty" };
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getDictionary()).header.contacts };
+}
 
 const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
 /** `variantIds=a,b` (or repeated): unique, non-empty, bounded. */
@@ -46,7 +48,7 @@ export default async function ContactsPage({
   const variants = product
     ? product.detail.variants.filter((variant) => variantIds.includes(variant.id))
     : [];
-  const contact = (await getDictionary()).contact;
+  const { contact, header } = await getDictionary();
   const defaultMessage = product
     ? [
         contact.productLine(product.name),
@@ -60,11 +62,13 @@ export default async function ContactsPage({
   const { branches } = getBrand().pages;
   return (
     <StorefrontShell>
-      <StorefrontBreadcrumbs items={[{ href: "/", label: "Domů" }, { label: "Kontakty" }]} />
+      <StorefrontBreadcrumbs
+        items={[{ href: "/", label: header.home }, { label: header.contacts }]}
+      />
       <article className="sf-content-page">
         <header className="sf-content-page__heading">
-          <h1>Kontakty</h1>
-          <nav className="sf-anchor-nav" aria-label="Pobočky a kontaktní formulář">
+          <h1>{header.contacts}</h1>
+          <nav className="sf-anchor-nav" aria-label={contact.page.anchorNavigation}>
             {branches.map((branch) => (
               <ContentLink
                 href={`#${branch.id}`}
@@ -84,7 +88,7 @@ export default async function ContactsPage({
               size="sm"
               className="block"
             >
-              Přímé kontakty
+              {contact.page.directContacts}
             </ContentLink>
           </nav>
         </header>
@@ -95,7 +99,7 @@ export default async function ContactsPage({
             <div className="sf-branch__body">
               {branch.mapSrc && (
                 <Image
-                  alt={`Mapa pobočky ${branch.city}`}
+                  alt={contact.page.mapAlt(branch.city)}
                   height={420}
                   loading="lazy"
                   sizes="(max-width: 760px) 100vw, 520px"
@@ -108,17 +112,21 @@ export default async function ContactsPage({
                 {branch.details && <span>{branch.details}</span>}
                 {branch.phone && (
                   <a href={`tel:+420${branch.phone.replaceAll(" ", "")}`}>
-                    Telefon: {branch.phone}
+                    {contact.page.phone}: {branch.phone}
                   </a>
                 )}
-                {branch.email && <a href={`mailto:${branch.email}`}>E-mail: {branch.email}</a>}
+                {branch.email && (
+                  <a href={`mailto:${branch.email}`}>
+                    {contact.page.email}: {branch.email}
+                  </a>
+                )}
               </address>
             </div>
           </section>
         ))}
 
         <section className="sf-content-section" id="primy-kontakt">
-          <h2>Kontaktní formulář</h2>
+          <h2>{contact.page.formTitle}</h2>
           <ContactForm
             key={`${product?.id ?? "general"}:${variants.map((item) => item.id).join(",")}`}
             kind={productId ? "PRODUCT_QUESTION" : "CONTACT"}

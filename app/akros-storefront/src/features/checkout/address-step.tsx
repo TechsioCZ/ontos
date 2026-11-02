@@ -2,7 +2,7 @@
 import StoreLink from "@/components/store-link";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useStoreHref } from "@/ontos/market-context";
+import { useDictionary, useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
@@ -16,12 +16,14 @@ export function AddressStep() {
   const { draft, updateDraft, accountEmail } = useCheckout();
   const router = useRouter();
   const storeHref = useStoreHref();
+  const { checkout } = useDictionary();
+  const copy = checkout.address;
   const formRef = useRef<HTMLFormElement>(null);
   const [editing, setEditing] = useState(true);
   const [attempted, setAttempted] = useState(false);
   const quote = useCartQuote();
   const blocked = quote ? !quote.canContinue : false;
-  const errors = attempted ? validateAddresses(draft) : {};
+  const errors = attempted ? validateAddresses(draft, checkout.validation) : {};
   const focusError = () =>
     requestAnimationFrame(() =>
       formRef.current
@@ -29,7 +31,10 @@ export function AddressStep() {
         ?.focus(),
     );
   function saveBilling() {
-    const errors = validateAddresses({ ...draft, differentDeliveryAddress: false });
+    const errors = validateAddresses(
+      { ...draft, differentDeliveryAddress: false },
+      checkout.validation,
+    );
     if (Object.keys(errors).length) {
       setAttempted(true);
       focusError();
@@ -46,7 +51,7 @@ export function AddressStep() {
         event.preventDefault();
         if (blocked) return;
         setAttempted(true);
-        const invalid = validateAddresses(draft);
+        const invalid = validateAddresses(draft, checkout.validation);
         if (Object.keys(invalid).length) {
           if (Object.keys(invalid).some((key) => !key.startsWith("delivery."))) setEditing(true);
           focusError();
@@ -64,18 +69,16 @@ export function AddressStep() {
             id="address-title"
             className="mb-6 text-(length:--sf-checkout-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
           >
-            Dodací údaje
+            {checkout.steps.address}
           </h1>
           <p className="mb-4 rounded-sm border border-(--color-border-primary) p-4 text-sm">
-            {accountEmail
-              ? "Vyplňte skutečné dodací údaje. Kontakt objednávky bude spojen s přihlášeným zákaznickým účtem."
-              : "Vyplňte skutečné kontaktní a dodací údaje. Objednáváte bez registrace, potvrzení a změny stavu objednávky pošleme na zadaný e-mail."}
+            {accountEmail ? copy.accountIntro : copy.guestIntro}
           </p>
           {editing ? (
             <div className="grid gap-4 sm:grid-cols-2">
               <FormInput
                 id="checkout-email"
-                label="E-mail"
+                label={checkout.email}
                 type="email"
                 autoComplete="email"
                 size="sm"
@@ -89,7 +92,7 @@ export function AddressStep() {
               />
               <FormInput
                 id="checkout-company"
-                label="Firma (volitelné)"
+                label={copy.company}
                 autoComplete="organization"
                 size="sm"
                 value={draft.company}
@@ -99,7 +102,7 @@ export function AddressStep() {
               />
               <FormInput
                 id="checkout-company-id"
-                label="IČ (volitelné)"
+                label={copy.companyId}
                 size="sm"
                 value={draft.companyId}
                 onChange={(event) =>
@@ -110,7 +113,7 @@ export function AddressStep() {
               />
               <FormInput
                 id="checkout-vat-id"
-                label="DIČ (volitelné)"
+                label={copy.vatId}
                 size="sm"
                 value={draft.vatId}
                 onChange={(event) =>
@@ -125,15 +128,15 @@ export function AddressStep() {
               </p>
               <p>{draft.email}</p>
               {draft.company && <p>{draft.company}</p>}
-              {draft.companyId && <p>IČ: {draft.companyId}</p>}
-              {draft.vatId && <p>DIČ: {draft.vatId}</p>}
+              {draft.companyId && <p>{copy.companyIdValue(draft.companyId)}</p>}
+              {draft.vatId && <p>{copy.vatIdValue(draft.vatId)}</p>}
               <p>{draft.billing.phone}</p>
             </div>
           )}
         </div>
         <div className="grid gap-4">
           <h2 className="text-(length:--sf-checkout-choice-size) leading-(--sf-checkout-heading-leading) font-bold">
-            Fakturační adresa
+            {copy.billingAddress}
           </h2>
           {editing ? (
             <AddressFields
@@ -157,20 +160,20 @@ export function AddressStep() {
             uppercase
             data-sf-checkout-action
             className="w-fit min-w-40 leading-(--sf-checkout-heading-leading)"
-            aria-label={editing ? "Uložit údaje" : "Změnit fakturační údaje"}
+            aria-label={editing ? copy.save : copy.editBilling}
             onClick={() => (editing ? saveBilling() : setEditing(true))}
           >
-            {editing ? "Uložit údaje" : "Změnit"}
+            {editing ? copy.save : copy.edit}
           </Button>
         </div>
         <div className="grid gap-4">
           <h2 className="text-(length:--sf-checkout-choice-size) leading-(--sf-checkout-heading-leading) font-bold">
-            Dodací adresa
+            {copy.deliveryAddress}
           </h2>
           <FormCheckbox
             id="different-delivery-address"
             size="sm"
-            label="Zboží chci doručit na jinou adresu než fakturační"
+            label={copy.differentDelivery}
             checked={draft.differentDeliveryAddress}
             onCheckedChange={(differentDeliveryAddress) =>
               updateDraft((current) => ({ ...current, differentDeliveryAddress }))
@@ -196,7 +199,7 @@ export function AddressStep() {
           size="sm"
           uppercase
         >
-          Zpět k dopravě a platbě
+          {copy.back}
         </LinkButton>
         <div className="grid gap-2">
           <Button
@@ -209,7 +212,7 @@ export function AddressStep() {
             disabled={blocked}
             aria-describedby={blocked ? "address-blocked" : undefined}
           >
-            Souhrn objednávky
+            {copy.next}
           </Button>
           {blocked && (
             <p id="address-blocked" className="max-w-xs text-xs text-(--color-fg-secondary)">

@@ -8,6 +8,10 @@ import { CatalogProvider } from "@/ontos/catalog-provider";
 
 // Exercise the real providers, not the legacy suite-wide catalog substitution.
 vi.unmock("@/ontos/catalog-provider");
+// The proxy sets the market locale of every page request; this landing page is the Czech market's.
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers({ "x-akros-market-locale": "cs" }),
+}));
 afterEach(cleanup);
 
 const unexpectedNavigation = (): never => {

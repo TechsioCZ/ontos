@@ -3,10 +3,13 @@ import { readRequestAccount } from "@/ontos/account";
 import { readCustomerOrders } from "@/ontos/customer-orders";
 export const dynamic = "force-dynamic";
 import type { Metadata } from "next";
+import { getDictionary } from "@/ontos/active-market";
 import { StorefrontWideShell } from "@/components/storefront-shell";
 import { OrderConfirmation } from "@/features/checkout/order-confirmation";
 import { GuestOrderConfirmation } from "@/features/checkout/guest-order-confirmation";
-export const metadata: Metadata = { title: "Potvrzení objednávky" };
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getDictionary()).checkout.placed.title };
+}
 export default async function OrderConfirmationPage({
   searchParams,
 }: {

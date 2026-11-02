@@ -3,8 +3,11 @@ import { readCustomerOrders } from "@/ontos/customer-orders";
 import type { Metadata } from "next";
 import { AccountShell } from "@/components/account-shell";
 import { AccountOrders } from "@/features/account/account-orders";
+import { getDictionary } from "@/ontos/active-market";
 
-export const metadata: Metadata = { title: "Objednávky" };
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getDictionary()).account.shell.orders };
+}
 export const dynamic = "force-dynamic";
 export default async function OrderHistoryPage({
   searchParams,

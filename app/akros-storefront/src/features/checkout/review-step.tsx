@@ -2,7 +2,7 @@
 import { useRef, useState } from "react";
 import StoreLink from "@/components/store-link";
 import { useRouter } from "next/navigation";
-import { useMoney, useStoreHref } from "@/ontos/market-context";
+import { useDictionary, useMoney, useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Link } from "@techsio/ui-kit/atoms/link";
@@ -22,6 +22,8 @@ import { useServerTotals } from "./server-totals";
 
 export function ReviewStep() {
   const money = useMoney();
+  const { checkout } = useDictionary();
+  const copy = checkout.review;
   const { cart } = useCart();
   const { draft, methods, accountEmail, completeOrder, submitted, storageError } = useCheckout();
   const router = useRouter();
@@ -58,36 +60,34 @@ export function ReviewStep() {
           id="review-title"
           className="mb-4 text-(length:--sf-checkout-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
         >
-          Shrnutí objednávky
+          {checkout.steps.summary}
         </h1>
         <CartItemsTable showHeader />
         <dl className="divide-y divide-(--color-border-primary) border-b border-(--color-border-primary) text-sm">
           <div className="flex justify-between gap-4 py-4">
             <dt className="grid gap-2">
-              <span>Způsob dopravy – {getDelivery(draft, methods)?.title}</span>
+              <span>{copy.deliveryMethod(getDelivery(draft, methods)?.title ?? "")}</span>
               <span>{getDeliveryLocation(draft)}</span>
               <Link as={StoreLink} href="/kosik/doprava-platba" className="w-fit">
-                Změnit dopravu
+                {copy.changeDelivery}
               </Link>
             </dt>
             <dd className="whitespace-nowrap">
-              {totals.shipping === 0 ? "Zdarma" : formatPrice(totals.shipping ?? 0, money)}
+              {totals.shipping === 0
+                ? checkout.delivery.free
+                : formatPrice(totals.shipping ?? 0, money)}
             </dd>
           </div>
           <div className="flex justify-between gap-4 py-4">
-            <dt>Platba</dt>
-            <dd>Objednávka bez online platby</dd>
+            <dt>{checkout.delivery.paymentTitle}</dt>
+            <dd>{checkout.delivery.noOnlinePayment}</dd>
           </div>
           <div className="flex justify-between gap-4 py-4">
-            <dt>Cena bez DPH</dt>
-            <dd>
-              {totals.net !== null
-                ? formatPrice(totals.net, money)
-                : "Spočítá OntOS po ověření košíku"}
-            </dd>
+            <dt>{copy.netPrice}</dt>
+            <dd>{totals.net !== null ? formatPrice(totals.net, money) : copy.netPending}</dd>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-4 py-4">
-            <dt>Celková cena s DPH</dt>
+            <dt>{copy.totalWithVat}</dt>
             <dd className="text-(length:--sf-checkout-body-size) font-extrabold" aria-live="polite">
               {formatPrice(totals.total, money)}
             </dd>
@@ -99,14 +99,14 @@ export function ReviewStep() {
               id="billing-review-title"
               className="mb-4 text-(length:--sf-checkout-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
             >
-              Fakturační údaje
+              {copy.billingTitle}
             </h2>
             <AddressText address={draft.billing} />
             <div className="text-sm leading-(--sf-checkout-body-leading)">
               <p>{draft.email}</p>
               <p>{draft.company}</p>
-              {draft.companyId && <p>IČ: {draft.companyId}</p>}
-              {draft.vatId && <p>DIČ: {draft.vatId}</p>}
+              {draft.companyId && <p>{checkout.address.companyIdValue(draft.companyId)}</p>}
+              {draft.vatId && <p>{checkout.address.vatIdValue(draft.vatId)}</p>}
             </div>
           </section>
           <section aria-labelledby="delivery-review-title">
@@ -114,7 +114,7 @@ export function ReviewStep() {
               id="delivery-review-title"
               className="mb-4 text-(length:--sf-checkout-heading-size) leading-(--sf-checkout-heading-leading) font-medium"
             >
-              Dodací údaje
+              {checkout.steps.address}
             </h2>
             <AddressText address={getDeliveryAddress(draft)} />
             <p className="text-sm">{draft.email}</p>
@@ -131,7 +131,7 @@ export function ReviewStep() {
           size="sm"
           uppercase
         >
-          Zpět k dodacím údajům
+          {copy.back}
         </LinkButton>
         <div className="grid max-w-sm gap-3">
           {storageError && (
@@ -146,7 +146,7 @@ export function ReviewStep() {
             role="note"
             className="rounded-sm border border-(--color-border-primary) bg-(--color-base) p-4 text-sm font-bold"
           >
-            Objednávka bude uložena do OntOS. Platba se zde neprovádí.
+            {copy.ontosNote}
           </p>
           <Button
             type="submit"
@@ -158,7 +158,7 @@ export function ReviewStep() {
             disabled={sending || submitted || !cart.lines.length || blocked}
             aria-describedby={blocked ? "review-blocked" : undefined}
           >
-            {sending ? "Odesílám do OntOS…" : "Odeslat objednávku"}
+            {sending ? copy.sending : copy.submit}
           </Button>
           {blocked && (
             <p id="review-blocked" className="text-center text-xs text-(--color-fg-secondary)">
@@ -166,9 +166,7 @@ export function ReviewStep() {
             </p>
           )}
           <p className="text-center text-xs text-(--color-fg-secondary)">
-            {accountEmail
-              ? "Stav objednávky můžete sledovat ve svém účtu."
-              : `Objednáváte bez registrace. Potvrzení a změny stavu pošleme na ${draft.email}.`}
+            {accountEmail ? copy.accountNote : copy.guestNote(draft.email)}
           </p>
         </div>
       </div>

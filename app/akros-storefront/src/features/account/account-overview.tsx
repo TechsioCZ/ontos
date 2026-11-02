@@ -1,17 +1,18 @@
+"use client";
+
 import StoreLink from "@/components/store-link";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { AccountHeading, AccountPanel } from "./account-content";
 import type { CustomerAccount } from "@/ontos/account";
+import { useDictionary } from "@/ontos/market-context";
 
 export function AccountOverview({ account }: { account: CustomerAccount }) {
+  const { overview, shell } = useDictionary().account;
   return (
     <>
-      <AccountHeading
-        title={`Dobrý den, ${account.name}`}
-        description="Váš zákaznický účet a historie nákupů na jednom místě."
-      />
+      <AccountHeading title={overview.greeting(account.name)} description={overview.description} />
       <div className="grid gap-(--dimension-24) lg:grid-cols-2">
-        <AccountPanel title="Váš účet">
+        <AccountPanel title={overview.accountTitle}>
           <p>{account.email}</p>
           <LinkButton
             as={StoreLink}
@@ -21,11 +22,11 @@ export function AccountOverview({ account }: { account: CustomerAccount }) {
             theme="outlined"
             variant="secondary"
           >
-            Kontaktní údaje
+            {overview.contactDetails}
           </LinkButton>
         </AccountPanel>
-        <AccountPanel title="Objednávky">
-          <p>Historie nákupů a podrobnosti vašich objednávek.</p>
+        <AccountPanel title={shell.orders}>
+          <p>{overview.ordersText}</p>
           <LinkButton
             as={StoreLink}
             href="/historie-objednavek"
@@ -33,7 +34,7 @@ export function AccountOverview({ account }: { account: CustomerAccount }) {
             size="sm"
             variant="primary"
           >
-            Zobrazit objednávky
+            {overview.showOrders}
           </LinkButton>
         </AccountPanel>
       </div>

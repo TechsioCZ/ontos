@@ -4,8 +4,11 @@ import StoreLink from "@/components/store-link";
 import { AccountProfilePage } from "@/features/account/account-profile-page";
 import { requireCustomerAccount } from "@/ontos/account";
 import { readCustomerProfile } from "@/ontos/customer-profile";
+import { getDictionary } from "@/ontos/active-market";
 
-export const metadata: Metadata = { title: "Můj účet" };
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getDictionary()).account.shell.profile };
+}
 
 export default async function AccountPage() {
   const account = await requireCustomerAccount();
@@ -14,15 +17,13 @@ export default async function AccountPage() {
     () => ({ state: "unavailable" }) as const,
   );
   if (result.state === "unavailable") {
+    const { profile, shell } = (await getDictionary()).account;
     return (
       <AccountShell active="profile">
-        <h1>Můj účet</h1>
-        <p>Přihlašovací e-mail: {account.email}</p>
-        <p role="alert">
-          Kontaktní údaje se teď nepodařilo načíst z OntOS. Úpravy budou dostupné po načtení
-          aktuálních údajů.
-        </p>
-        <StoreLink href="/muj-ucet">Zkusit načíst údaje znovu</StoreLink>
+        <h1>{shell.profile}</h1>
+        <p>{profile.loginEmailValue(account.email)}</p>
+        <p role="alert">{profile.loadFailed}</p>
+        <StoreLink href="/muj-ucet">{profile.retry}</StoreLink>
       </AccountShell>
     );
   }

@@ -5,16 +5,9 @@ import { PhoneInput } from "@techsio/ui-kit/molecules/phone-input";
 import { CheckoutSelect } from "./checkout-select";
 import type { CheckoutAddress, CheckoutErrors } from "@/features/checkout/checkout-state";
 import { AddressAutocomplete } from "./address-autocomplete";
+import { useDictionary } from "@/ontos/market-context";
 
-const countries = [{ value: "CZ", label: "Česká republika" }];
-const phoneCountries = [
-  {
-    value: "CZ" as const,
-    label: "Česká republika",
-    callingCode: "420",
-    flag: <Image src="/storefront/checkout/czechia.svg" width={40} height={40} alt="" />,
-  },
-];
+const czechiaFlag = <Image src="/storefront/checkout/czechia.svg" width={40} height={40} alt="" />;
 
 export function AddressFields({
   address,
@@ -28,15 +21,20 @@ export function AddressFields({
   errors: CheckoutErrors;
 }) {
   const section = prefix === "billing" ? "billing" : "shipping";
+  const fields = useDictionary().checkout.fields;
+  const countries = [{ value: "CZ", label: fields.czechia }];
+  const phoneCountries = [
+    { value: "CZ" as const, label: fields.czechia, callingCode: "420", flag: czechiaFlag },
+  ];
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       {(
         [
-          ["firstName", "Jméno", "given-name"],
-          ["lastName", "Příjmení", "family-name"],
-          ["street", "Ulice, č.p.", "street-address"],
-          ["city", "Město", "address-level2"],
-          ["postalCode", "PSČ", "postal-code"],
+          ["firstName", fields.firstName, "given-name"],
+          ["lastName", fields.lastName, "family-name"],
+          ["street", fields.street, "street-address"],
+          ["city", fields.city, "address-level2"],
+          ["postalCode", fields.postalCode, "postal-code"],
         ] as const
       ).map(([key, label, autocomplete]) =>
         key === "street" ? (
@@ -67,7 +65,7 @@ export function AddressFields({
       )}
       <CheckoutSelect
         id={`${prefix}-country`}
-        label="Země"
+        label={fields.country}
         value={address.country}
         items={countries}
         onChange={(country) => onChange({ ...address, country })}
@@ -84,10 +82,10 @@ export function AddressFields({
         nativeValidation={false}
         validateStatus={errors[`${prefix}.phone`] ? "error" : "default"}
       >
-        <PhoneInput.Label>Telefon</PhoneInput.Label>
+        <PhoneInput.Label>{fields.phone}</PhoneInput.Label>
         <PhoneInput.Control>
-          <PhoneInput.CountryPicker triggerProps={{ "aria-label": "Telefonní předvolba" }} />
-          <PhoneInput.Input placeholder="Telefonní číslo" autoComplete={`${section} tel`} />
+          <PhoneInput.CountryPicker triggerProps={{ "aria-label": fields.phonePrefix }} />
+          <PhoneInput.Input placeholder={fields.phonePlaceholder} autoComplete={`${section} tel`} />
         </PhoneInput.Control>
         {errors[`${prefix}.phone`] && (
           <PhoneInput.StatusText status="error">{errors[`${prefix}.phone`]}</PhoneInput.StatusText>
@@ -98,6 +96,7 @@ export function AddressFields({
 }
 
 export function AddressText({ address }: { address: CheckoutAddress }) {
+  const fields = useDictionary().checkout.fields;
   return (
     <address className="text-sm leading-(--sf-checkout-body-leading) not-italic">
       <p>
@@ -107,7 +106,7 @@ export function AddressText({ address }: { address: CheckoutAddress }) {
       <p>
         {address.postalCode} {address.city}
       </p>
-      <p>Česká republika</p>
+      <p>{fields.czechia}</p>
       <p>{address.phone}</p>
     </address>
   );

@@ -7,7 +7,9 @@ import { getDictionary } from "@/ontos/active-market";
 import { readCustomerOrders } from "@/ontos/customer-orders";
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = { title: "Detail objednávky" };
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getDictionary()).account.shell.orderDetail };
+}
 export default async function OrderDetailPage({
   searchParams,
 }: {

@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useStoreHref } from "@/ontos/market-context";
+import { useDictionary, useStoreHref } from "@/ontos/market-context";
+import type { Dictionary } from "@/i18n";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import StoreLink from "@/components/store-link";
 
@@ -15,6 +16,7 @@ const terminal = (state?: string) =>
 
 async function loadProgress(
   operation: "read" | "resume" | "restart",
+  copy: Dictionary["auth"]["enrollment"],
   signal?: AbortSignal,
 ): Promise<Progress> {
   const response = await fetch("/api/ontos/enrollment", {
@@ -26,7 +28,7 @@ async function loadProgress(
       : {}),
   });
   const result = (await response.json()) as Progress;
-  if (!response.ok) throw new Error(result.message ?? "Stav registrace je dočasně nedostupný.");
+  if (!response.ok) throw new Error(result.message ?? copy.temporarilyUnavailable);
   return result;
 }
 
@@ -53,6 +55,7 @@ function waitForProgressRecheck(signal: AbortSignal, delay: number): Promise<voi
 export function EnrollmentProgress() {
   const router = useRouter();
   const storeHref = useStoreHref();
+  const copy = useDictionary().auth.enrollment;
   const [progress, setProgress] = useState<Progress>({});
   const [pending, setPending] = useState(true);
   const [error, setError] = useState("");
@@ -64,7 +67,7 @@ export function EnrollmentProgress() {
       const controller = new AbortController();
       request.current = controller;
       const { signal } = controller;
-      return loadProgress(operation, signal)
+      return loadProgress(operation, copy, signal)
         .then(async (initial) => {
           let result = initial;
           signal.throwIfAborted();
@@ -76,7 +79,7 @@ export function EnrollmentProgress() {
             afterLogin &&
             (result.state === "IN_PROGRESS" || result.state === "VERIFICATION_REQUIRED")
           ) {
-            result = await loadProgress("resume", signal);
+            result = await loadProgress("resume", copy, signal);
             signal.throwIfAborted();
             setProgress(result);
             resumed = true;
@@ -91,12 +94,12 @@ export function EnrollmentProgress() {
             attempt++
           ) {
             await waitForProgressRecheck(signal, pendingRecheckDelay);
-            result = await loadProgress("read", signal);
+            result = await loadProgress("read", copy, signal);
             signal.throwIfAborted();
             setProgress(result);
           }
           if ((operation !== "read" || resumed) && result.state === "COMPLETE") {
-            result = await loadProgress("read", signal);
+            result = await loadProgress("read", copy, signal);
             signal.throwIfAborted();
           }
           setProgress(result);
@@ -108,7 +111,7 @@ export function EnrollmentProgress() {
             attempt++
           ) {
             await waitForProgressRecheck(signal, admissionRecheckDelay);
-            result = await loadProgress("read", signal);
+            result = await loadProgress("read", copy, signal);
             signal.throwIfAborted();
             setProgress(result);
           }
@@ -116,7 +119,7 @@ export function EnrollmentProgress() {
         })
         .catch((cause: unknown) => {
           if (!signal.aborted) {
-            setError(isError(cause) ? cause.message : "Stav registrace je nedostupný.");
+            setError(isError(cause) ? cause.message : copy.unavailable);
           }
         })
         .finally(() => {
@@ -126,7 +129,7 @@ export function EnrollmentProgress() {
           }
         });
     },
-    [router, storeHref],
+    [copy, router, storeHref],
   );
 
   useEffect(() => {
@@ -148,16 +151,16 @@ export function EnrollmentProgress() {
     <div className="sf-auth-form">
       <output>
         {progress.state === "FAILED"
-          ? "Původní registrace byla zamítnuta. Můžete zahájit nové přijetí se stejným ověřeným účtem; již potvrzené údaje se zachovají a původní zamítnutý krok se neopakuje."
+          ? copy.failed
           : progress.state === "TERMINATED"
-            ? "Registrace byla ukončena a nelze ji obnovit. Kontaktujte podporu pro nové přijetí účtu; původní zamítnutý krok se neopakuje."
+            ? copy.terminated
             : progress.state === "COMPLETE"
               ? pending
-                ? "Registrace byla dokončena. Ověřuji přístup k účtu."
-                : "Registrace byla dokončena, ale přístup k účtu nyní není povolen. Obnovení registrace neopravňuje přístup."
+                ? copy.completeChecking
+                : copy.completeDenied
               : progress.state === "ADMITTED"
-                ? "Účet je připraven."
-                : "Přihlášení samo o sobě nedokončuje registraci. Zde ověříte přijetí účtu a obnovíte rozpracované kroky."}
+                ? copy.admitted
+                : copy.intro}
       </output>
       {error && <p role="alert">{error}</p>}
       <Button
@@ -167,7 +170,7 @@ export function EnrollmentProgress() {
         }}
         variant="primary"
       >
-        {pending ? "Ověřuji…" : "Ověřit stav"}
+        {pending ? copy.checking : copy.check}
       </Button>
       {!terminal(progress.state) && progress.state && progress.state !== "ADMITTED" && (
         <Button
@@ -177,7 +180,7 @@ export function EnrollmentProgress() {
           }}
           variant="secondary"
         >
-          Obnovit registraci
+          {copy.resume}
         </Button>
       )}
       {progress.state === "FAILED" && (
@@ -188,10 +191,10 @@ export function EnrollmentProgress() {
           }}
           variant="secondary"
         >
-          Zahájit nové přijetí účtu
+          {copy.restart}
         </Button>
       )}
-      <StoreLink href="/prihlaseni">Přihlásit se ověřeným účtem</StoreLink>
+      <StoreLink href="/prihlaseni">{copy.logIn}</StoreLink>
     </div>
   );
 }

@@ -1,33 +1,23 @@
 "use client";
 import { useEffect, useState } from "react";
+import type { Dictionary } from "@/i18n";
+import { useDictionary, useMoney } from "@/ontos/market-context";
 
 type Receipt = { event: string; eventLabel?: string | null; status: string; sentAt: string | null };
 type State =
   | { kind: "loading" }
   | { kind: "unavailable" }
   | { kind: "ready"; deliveries: Receipt[] };
-const eventLabels: Record<string, string> = {
-  ORDER_CREATED: "Potvrzení přijetí objednávky",
-  CONFIRMED: "Objednávka se zpracovává",
-  SHIPPED: "Předáno dopravci",
-  DELIVERED: "Objednávka dokončena",
-  CANCELLED: "Objednávka stornována",
-};
-const statusLabels: Record<string, string> = {
-  SENT: "Odesláno e-mailem",
-  SENDING: "Odesílá se…",
-  RETRY: "Čeká na odeslání – e-mailový server je dočasně nedostupný",
-  FAILED: "Odeslání selhalo",
-  SKIPPED: "Přeskočeno – nedoručitelná adresa příjemce",
-  UNKNOWN: "Odeslání nelze potvrdit",
-};
+type EmailCopy = Dictionary["checkout"]["emails"];
+const label = (labels: Readonly<Record<string, string>>, key: string) =>
+  Object.hasOwn(labels, key) ? labels[key] : undefined;
 /** The dispatcher labels pickup orders „Připraveno k vyzvednutí“ instead of „Předáno dopravci“. */
-const receiptLabel = (d: Receipt) =>
+const receiptLabel = (d: Receipt, copy: EmailCopy) =>
   d.event === "SHIPPED" && d.eventLabel === "Připraveno k vyzvednutí"
-    ? "Připraveno k vyzvednutí"
-    : (eventLabels[d.event] ?? d.event);
-const formatTime = (iso: string) =>
-  new Intl.DateTimeFormat("cs-CZ", {
+    ? copy.pickupReady
+    : (label(copy.events, d.event) ?? d.event);
+const formatTime = (iso: string, locale: string) =>
+  new Intl.DateTimeFormat(locale, {
     dateStyle: "medium",
     timeStyle: "short",
     timeZone: "Europe/Prague",
@@ -35,6 +25,8 @@ const formatTime = (iso: string) =>
 
 export function OrderEmailStatus({ email, orderNumber }: { email: string; orderNumber: string }) {
   const [state, setState] = useState<State>({ kind: "loading" });
+  const copy = useDictionary().checkout.emails;
+  const { locale } = useMoney();
   useEffect(() => {
     let cancelled = false;
     let polls = 0;
@@ -71,25 +63,21 @@ export function OrderEmailStatus({ email, orderNumber }: { email: string; orderN
       className="grid grid-cols-1 gap-2 rounded-sm border border-(--color-border-primary) p-4 text-sm"
     >
       <h2 id="order-emails-title" className="font-bold">
-        E-maily k objednávce
+        {copy.title}
       </h2>
-      <p className="wrap-anywhere text-(--color-fg-secondary)">
-        Potvrzení a změny stavu posíláme na {email}.
-      </p>
-      {state.kind === "loading" && <p>Ověřuji odeslání potvrzovacího e-mailu…</p>}
-      {state.kind === "unavailable" && <p>Stav e-mailů se nepodařilo ověřit.</p>}
-      {state.kind === "ready" && state.deliveries.length === 0 && (
-        <p>Potvrzovací e-mail se připravuje k odeslání.</p>
-      )}
+      <p className="wrap-anywhere text-(--color-fg-secondary)">{copy.recipient(email)}</p>
+      {state.kind === "loading" && <p>{copy.loading}</p>}
+      {state.kind === "unavailable" && <p>{copy.unavailable}</p>}
+      {state.kind === "ready" && state.deliveries.length === 0 && <p>{copy.preparing}</p>}
       {state.kind === "ready" && state.deliveries.length > 0 && (
         <ul className="grid gap-1">
           {state.deliveries.map((d) => (
             <li key={d.event} className="flex flex-wrap justify-between gap-2">
-              <span>{receiptLabel(d)}</span>
+              <span>{receiptLabel(d, copy)}</span>
               <strong>
                 {d.status === "SENT" && d.sentAt
-                  ? `${statusLabels.SENT} · ${formatTime(d.sentAt)}`
-                  : (statusLabels[d.status] ?? d.status)}
+                  ? `${copy.statuses.SENT} · ${formatTime(d.sentAt, locale)}`
+                  : (label(copy.statuses, d.status) ?? d.status)}
               </strong>
             </li>
           ))}

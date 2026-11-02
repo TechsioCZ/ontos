@@ -2,12 +2,15 @@ import type { Metadata } from "next";
 import StoreLink from "@/components/store-link";
 import { VerificationResendForm } from "@/components/verification-resend-form";
 import { StorefrontWideShell } from "@/components/storefront-shell";
+import { getDictionary } from "@/ontos/active-market";
 
-export const metadata: Metadata = {
-  title: "Ověření e-mailu",
-  robots: { index: false, follow: false },
-  referrer: "no-referrer",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  return {
+    title: (await getDictionary()).auth.verification.title,
+    robots: { index: false, follow: false },
+    referrer: "no-referrer",
+  };
+}
 
 export default async function EmailVerificationPage({
   searchParams,
@@ -15,31 +18,32 @@ export default async function EmailVerificationPage({
   searchParams: Promise<{ stav?: string | string[] }>;
 }) {
   const { stav } = await searchParams;
+  const copy = (await getDictionary()).auth.verification;
   const verified = stav === "overeno";
   const message = verified
-    ? "Váš e-mail byl úspěšně ověřen. Nyní se můžete přihlásit ke svému účtu."
+    ? copy.verified
     : stav === "nedostupne"
-      ? "Ověření e-mailu je dočasně nedostupné. Zkuste prosím znovu otevřít odkaz z e-mailu později."
+      ? copy.unavailable
       : stav === "limit"
-        ? "Příliš mnoho pokusů o ověření. Zkuste prosím znovu otevřít odkaz z e-mailu později."
+        ? copy.limit
         : stav === "podpora"
-          ? "E-mail se nepodařilo ověřit. Pro dokončení ověření prosím kontaktujte naši podporu."
-          : "Odkaz pro ověření e-mailu je neplatný, již použitý nebo jeho platnost vypršela. Můžete požádat o nový ověřovací e-mail.";
+          ? copy.support
+          : copy.invalid;
   return (
     <StorefrontWideShell>
       <section className="sf-auth-page">
         <div className="sf-auth-card">
-          <h1>{verified ? "E-mail byl ověřen" : "E-mail nebyl ověřen"}</h1>
+          <h1>{verified ? copy.verifiedHeading : copy.notVerifiedHeading}</h1>
           <p>
             <output>{message}</output>
           </p>
           <p>
-            <StoreLink href="/prihlaseni">Přejít k přihlášení</StoreLink>
+            <StoreLink href="/prihlaseni">{copy.goToLogin}</StoreLink>
           </p>
           {!verified && <VerificationResendForm />}
           {!verified && (
             <p>
-              <StoreLink href="/kontakty">Kontaktovat podporu</StoreLink>
+              <StoreLink href="/kontakty">{copy.contactSupport}</StoreLink>
             </p>
           )}
         </div>

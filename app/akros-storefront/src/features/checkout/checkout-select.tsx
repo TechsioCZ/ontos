@@ -1,5 +1,6 @@
 "use client";
 import { Select } from "@techsio/ui-kit/molecules/select";
+import { useDictionary } from "@/ontos/market-context";
 
 export function CheckoutSelect({
   id,
@@ -16,6 +17,7 @@ export function CheckoutSelect({
   onChange: (value: string) => void;
   error?: string;
 }) {
+  const { selectPlaceholder } = useDictionary().checkout.fields;
   return (
     <Select
       className="sf-select"
@@ -30,7 +32,7 @@ export function CheckoutSelect({
       <Select.Label>{label}</Select.Label>
       <Select.Control>
         <Select.Trigger aria-describedby={error ? `${id}-error` : undefined}>
-          <Select.ValueText placeholder="Vyberte možnost" />
+          <Select.ValueText placeholder={selectPlaceholder} />
         </Select.Trigger>
       </Select.Control>
       <Select.Positioner>

@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
+import { getDictionary } from "@/ontos/active-market";
 import { DeliveryPaymentStep } from "@/features/checkout/delivery-payment-step";
-export const metadata: Metadata = { title: "Doprava a platba" };
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getDictionary()).checkout.steps.delivery };
+}
 export default function DeliveryPaymentPage() {
   return <DeliveryPaymentStep />;
 }

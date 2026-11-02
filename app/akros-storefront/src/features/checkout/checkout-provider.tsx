@@ -24,13 +24,16 @@ import {
   getDeliveryAddress,
   parseCheckoutDraft,
 } from "@/features/checkout/checkout-state";
+import { useDictionary } from "@/ontos/market-context";
 import { marketRequestHeaders } from "@/ontos/market-locale";
 import { guestOrderKey } from "./guest-order-confirmation";
 
-const isError = (value: unknown): value is Error =>
-  value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
 const isCheckoutRejectionError = (value: unknown): value is CheckoutRejectionError =>
   value !== null && value !== undefined && CheckoutRejectionError.prototype.isPrototypeOf(value);
+/** A cart check that refused the order: its message (price change, cart issues) is shown as is. */
+class CartCheckError extends Error {}
+const isCartCheckError = (value: unknown): value is CartCheckError =>
+  value !== null && value !== undefined && CartCheckError.prototype.isPrototypeOf(value);
 
 interface PlacedOrder {
   id: string;
@@ -118,6 +121,7 @@ function CheckoutCartProvider({
     loadedAt: 0,
   });
   const [methodsError, setMethodsError] = useState("");
+  const errors = useDictionary().checkout.errors;
   const [now, setNow] = useState(Date.now);
   const [accountReady, setAccountReady] = useState(false);
   const [accountEmail, setAccountEmail] = useState<string | null>(null);
@@ -137,14 +141,13 @@ function CheckoutCartProvider({
         });
         const body = await response.json();
         if (!response.ok || !Array.isArray(body.shippingMethods))
-          throw new Error("Možnosti dopravy nyní nelze ověřit v OntOS.");
+          throw new Error(errors.methodsUnavailable);
         if (!controller.signal.aborted) {
           setOptions({ methods: body.shippingMethods, loadedAt: started });
           setMethodsError("");
         }
       } catch {
-        if (!controller.signal.aborted)
-          setMethodsError("Možnosti dopravy nyní nelze ověřit v OntOS.");
+        if (!controller.signal.aborted) setMethodsError(errors.methodsUnavailable);
       } finally {
         busy = false;
       }
@@ -165,7 +168,7 @@ function CheckoutCartProvider({
       window.removeEventListener("focus", visible);
       document.removeEventListener("visibilitychange", visible);
     };
-  }, []);
+  }, [errors.methodsUnavailable]);
   useEffect(() => {
     const controller = new AbortController();
     fetch("/api/ontos/account", {
@@ -210,10 +213,10 @@ function CheckoutCartProvider({
       checkoutDispatch({
         type: "hydrate",
         draft: createCheckoutDraft(),
-        error: "Rozpracované údaje nelze uložit v prohlížeči. Povolte úložiště pro tento web.",
+        error: errors.storageUnavailable,
       });
     }
-  }, [storage, draftStorageKey, pendingKey]);
+  }, [storage, draftStorageKey, pendingKey, errors.storageUnavailable]);
 
   useEffect(() => {
     if (!hydrated || !storageRef.current) return;
@@ -223,10 +226,10 @@ function CheckoutCartProvider({
     } catch {
       checkoutDispatch({
         type: "storage-result",
-        error: "Rozpracované údaje nelze uložit v prohlížeči. Povolte úložiště pro tento web.",
+        error: errors.storageUnavailable,
       });
     }
-  }, [draft, hydrated, draftStorageKey]);
+  }, [draft, hydrated, draftStorageKey, errors.storageUnavailable]);
 
   async function completeOrder(): Promise<PlacedOrder | null> {
     if (completed.current && cart.lines.length === 0) return completed.current;
@@ -237,7 +240,7 @@ function CheckoutCartProvider({
     let order: PlacedOrder;
     submitting.current = true;
     try {
-      if (!storageRef.current) throw new Error("Povolte úložiště pro tento web.");
+      if (!storageRef.current) throw new Error(errors.enableStorage);
       const key = pendingKey;
       // Match the order route's inputs, not refreshed catalog/display metadata or unused draft fields.
       const signature = JSON.stringify({
@@ -264,8 +267,7 @@ function CheckoutCartProvider({
       if (previous?.sent && previous.signature !== signature) {
         checkoutDispatch({
           type: "submit-error",
-          error:
-            "Předchozí objednávka zatím nebyla potvrzena. Obnovte původní položky a dodací údaje a zkuste odeslání znovu, nebo ověřte stav objednávky ve svém účtu. Změněnou objednávku nyní nelze odeslat.",
+          error: errors.previousUnconfirmed,
         });
         return null;
       }
@@ -290,13 +292,10 @@ function CheckoutCartProvider({
         });
         const check = await readCheckoutQuote(checkResponse);
         if (!check.canCheckout)
-          throw new Error(
+          throw new CartCheckError(
             check.priceChanged
-              ? "Cena se změnila – přijmout novou cenu v ověření košíku a zkusit znovu."
-              : `Košík nyní nelze ověřit. ${check.issues.join(" ")} Vraťte se do košíku a zkontrolujte dostupnost a množství.`.replace(
-                  /\s+/g,
-                  " ",
-                ),
+              ? errors.priceChanged
+              : errors.cartUnverifiable(check.issues.join(" ")).replace(/\s+/g, " "),
           );
       }
       // Persist before sending; an uncertain retry must replay these exact bytes, even after refresh.
@@ -334,10 +333,7 @@ function CheckoutCartProvider({
       checkoutDispatch({
         type: "submit-error",
         error:
-          isCheckoutRejectionError(error) ||
-          (isError(error) &&
-            (error.message.startsWith("Cena se změnila") ||
-              error.message.startsWith("Košík nyní nelze ověřit")))
+          isCheckoutRejectionError(error) || isCartCheckError(error)
             ? error.message
             : checkoutSaveError,
       });

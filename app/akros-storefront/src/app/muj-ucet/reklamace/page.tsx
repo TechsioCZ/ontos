@@ -2,20 +2,19 @@ import type { Metadata } from "next";
 import { AccountLink } from "@/features/account/account-link";
 import { AccountShell } from "@/components/account-shell";
 import { AccountHeading, AccountPanel } from "@/features/account/account-content";
+import { getDictionary } from "@/ontos/active-market";
 
-export const metadata: Metadata = { title: "Reklamace v účtu" };
-export default function AccountClaimsPage() {
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getDictionary()).account.claims.pageTitle };
+}
+export default async function AccountClaimsPage() {
+  const { claims, shell } = (await getDictionary()).account;
   return (
     <AccountShell active="claims">
-      <AccountHeading
-        title="Reklamace"
-        description="Připravte si údaje k objednávce a popište problém."
-      />
+      <AccountHeading title={shell.claims} description={claims.description} />
       <div className="grid gap-(--dimension-24) md:grid-cols-2">
-        <AccountPanel title="Najděte objednávku">
-          <p className="mb-(--dimension-24)">
-            Poznamenejte si číslo objednávky, kód produktu a stručný popis závady.
-          </p>
+        <AccountPanel title={claims.findOrder}>
+          <p className="mb-(--dimension-24)">{claims.findOrderText}</p>
           <AccountLink
             href="/historie-objednavek"
             data-account-action
@@ -23,15 +22,13 @@ export default function AccountClaimsPage() {
             theme="outlined"
             variant="secondary"
           >
-            Otevřít objednávky
+            {claims.openOrders}
           </AccountLink>
         </AccountPanel>
-        <AccountPanel title="Kontaktujte podporu">
-          <p className="mb-(--dimension-24)">
-            V kontaktním formuláři můžete připravit zprávu. V tomto prototypu se neodesílá.
-          </p>
+        <AccountPanel title={claims.contactSupport}>
+          <p className="mb-(--dimension-24)">{claims.contactSupportText}</p>
           <AccountLink href="/kontakty" data-account-action size="sm" variant="primary">
-            Přejít na kontakty
+            {claims.goToContacts}
           </AccountLink>
         </AccountPanel>
       </div>
