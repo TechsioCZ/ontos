@@ -18,8 +18,9 @@ import {
   ActivityReferenceUnavailable,
   ActivityRevisionConflict,
   ActivityScopeMismatch,
+  ActivityCommandSchema,
 } from '../../shared/actions/apply-command.ts';
-import type { ActivityCommand } from '../../shared/actions/apply-command.ts';
+import type { ApplyCommandPayload, ActivityCommand } from '../../shared/actions/apply-command.ts';
 import { RelationshipsStateSchema } from '../../shared/apis/records.ts';
 import type { Activity, RecordsRequest, RelationshipsState } from '../../shared/apis/records.ts';
 import { ActivityRefSchema } from '../../shared/resources/activity.ts';
@@ -378,8 +379,48 @@ export const finishCrmActivitiesRecords = Effect.fn('Relationships.finishRecords
   };
 });
 
+export const prepareActivityCommand = Effect.fn('Relationships.prepareCommand')(function* prepareCommand(
+  command: ActivityCommand,
+  scope: OperationalScope,
+) {
+  if (!(yield* contextGrant(scope, 'write_all'))) {
+    return yield* new ActivityPermissionDenied({
+      code: 'activity_permission_denied',
+      reason: 'Recording Activity requires Relationships write permission',
+    });
+  }
+  if (command.ownerPrincipalRef.tenantId !== scope.tenantId) {
+    return yield* new ActivityScopeMismatch({
+      code: 'activity_scope_mismatch',
+      reason: 'Principal must belong to the trusted tenant',
+    });
+  }
+  const injectedVerifier = yield* Effect.serviceOption(ActivityReferenceVerifier);
+  const verifier = yield* Option.match(injectedVerifier, {
+    onNone: () =>
+      makeReferenceGatewayCredentialSource(scope).pipe(
+        Effect.mapError(referenceUnavailable),
+        Effect.map(makeActivityReferenceVerifier),
+      ),
+    onSome: Effect.succeed,
+  });
+  return yield* verifier.verify(command, scope);
+});
+const sameCommand = Schema.toEquivalence(ActivityCommandSchema);
+
 export const persistenceService = Effect.fn('Relationships.persistenceService')(
-  function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
+  function* makePersistence(
+    transaction: ScopedTransactionExecutor,
+    options: {
+      readonly prepared?: {
+        readonly actionInvocationId: string;
+        readonly partyRef: PartyRef;
+        readonly payload: ApplyCommandPayload;
+      };
+      readonly scope: OperationalScope;
+    },
+  ) {
+    const { prepared, scope } = options;
     const { legalEntityId } = scope;
     if (
       legalEntityId === undefined ||
@@ -392,9 +433,6 @@ export const persistenceService = Effect.fn('Relationships.persistenceService')(
       });
     }
     const principalEligibility = principalEligibilityForTransaction(transaction);
-    const injectedVerifier = yield* Effect.serviceOption(ActivityReferenceVerifier);
-    const source = yield* makeReferenceGatewayCredentialSource(scope).pipe(Effect.mapError(referenceUnavailable));
-    const verifier = Option.getOrElse(injectedVerifier, () => makeActivityReferenceVerifier(source));
     const whereScope = and(
       eq(relationshipsStates.tenantId, scope.tenantId),
       eq(relationshipsStates.legalEntityId, legalEntityId),
@@ -420,17 +458,13 @@ export const persistenceService = Effect.fn('Relationships.persistenceService')(
       expectedRevision: number,
       resourceId: string,
     ) {
-      if (!(yield* contextGrant(scope, 'write_all'))) {
-        return yield* new ActivityPermissionDenied({
-          code: 'activity_permission_denied',
-          reason: 'Recording Activity requires Relationships write permission',
-        });
-      }
-      if (command.ownerPrincipalRef.tenantId !== scope.tenantId) {
-        return yield* new ActivityScopeMismatch({
-          code: 'activity_scope_mismatch',
-          reason: 'Principal must belong to the trusted tenant',
-        });
+      if (
+        prepared === undefined ||
+        prepared.actionInvocationId !== resourceId ||
+        prepared.payload.expectedRevision !== expectedRevision ||
+        !sameCommand(prepared.payload.command, command)
+      ) {
+        return yield* referenceUnavailable();
       }
       const principal = yield* principalEligibility.resolve(command.ownerPrincipalRef);
       if (principal.decision === 'unavailable') {
@@ -449,7 +483,7 @@ export const persistenceService = Effect.fn('Relationships.persistenceService')(
           reason: 'Activities changed; refresh before another operation',
         });
       }
-      const canonical = yield* verifier.verify(command, scope);
+      const canonical = prepared;
       const now = yield* DateTime.now;
       const change = yield* evolveRelationshipsState(snapshot.state, command, {
         now,
