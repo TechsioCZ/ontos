@@ -1,6 +1,7 @@
 import { OntosMcpHidden, defineOntosMcpContribution } from '@app/core-runtime';
 
 export const propertyLeasingMcpContribution = defineOntosMcpContribution({
+  actions: { 'request-search-rebuild': 'hidden' },
   approvalReview: { read: 'agent-review' },
   approvals: true,
   commandFieldLabels: {

@@ -20,7 +20,7 @@ export const occupancyResourceDescriptor = {
     graphVisible: false,
     linkable: false,
     mediaAttachable: false,
-    searchable: false,
+    searchable: true,
     timelineVisible: false,
   },
   description: 'Occupancy resource.',

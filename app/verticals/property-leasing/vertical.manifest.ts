@@ -5,6 +5,7 @@ import {
   defineOntosModuleManifest,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
+  ShellSearchContributionSchema,
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
@@ -13,9 +14,14 @@ import { applyCommandAction } from './src/actions/apply-command.action.ts';
 import { occupancyResourceDescriptor } from './shared/resources/occupancy.ts';
 import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/najmy/page.tsx';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 // </generated-module-manifest-imports>
 import { propertyLeasingMcpContribution } from './shared/mcp/contribution.ts';
 
+const searchContribution = (value: typeof ShellSearchContributionSchema.Encoded) =>
+  Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
+
+const accessPermission = 'module.access';
 const OWNER_MODULE_KEY = 'property.leasing';
 const RECORDS_PAGE_KEY = 'property.leasing.page.records';
 
@@ -45,6 +51,7 @@ export const propertyLeasingManifest = defineOntosModuleManifest({
     actions: [
       // <generated-module-manifest-actions>
       applyCommandAction,
+      requestSearchRebuildAction,
       // </generated-module-manifest-actions>
     ],
     api: {
@@ -75,6 +82,13 @@ export const propertyLeasingManifest = defineOntosModuleManifest({
     ],
     search: [
       // <generated-module-manifest-search>
+      {
+        accessFiltering: 'resource_permission',
+        key: 'property.leasing.leases',
+        owningModuleId: 'property.leasing',
+        requestFilters: ['includeArchived'],
+        resourceType: 'property.leasing.occupancy',
+      },
       // </generated-module-manifest-search>
     ],
     shellContributions: {
@@ -85,7 +99,7 @@ export const propertyLeasingManifest = defineOntosModuleManifest({
           contributionKey: 'property.leasing.navigation.records',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'context_permission', permission: accessPermission },
             entrypointKey: RECORDS_PAGE_KEY,
             moduleKey: OWNER_MODULE_KEY,
             role: 'page',
@@ -107,7 +121,7 @@ export const propertyLeasingManifest = defineOntosModuleManifest({
           contributionKey: RECORDS_PAGE_KEY,
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'context_permission', permission: accessPermission },
             entrypointKey: RECORDS_PAGE_KEY,
             moduleKey: OWNER_MODULE_KEY,
             role: 'page',
@@ -129,6 +143,18 @@ export const propertyLeasingManifest = defineOntosModuleManifest({
       resourceDetails: [],
       search: [
         // <generated-module-shell-search>
+        searchContribution({
+          contributionKey: 'property.leasing.search.leases',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: accessPermission },
+            entrypointKey: 'property.leasing.search.leases',
+            moduleKey: OWNER_MODULE_KEY,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'property.leasing.leases',
+        }),
         // </generated-module-shell-search>
       ],
       timelines: [],

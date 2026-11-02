@@ -14,7 +14,9 @@ import type {
 // <generated-governed-http-api-imports>
 import { AgentReviewApi } from './apis/agent-review.ts';
 import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
+import { LeasesSearchApi } from './apis/leases-search.ts';
 import { RecordsApi } from './apis/records.ts';
+import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
 // </generated-governed-http-api-imports>
 
 export type PropertyLeasingMarker = MicroVerticalBuildMarker;
@@ -40,7 +42,9 @@ export const propertyLeasingApi = HttpApi.make('PropertyLeasingApi')
   // <generated-governed-http-api-additions>
   .addHttpApi(AgentReviewApi)
   .addHttpApi(ApplyCommandActionApi)
+  .addHttpApi(LeasesSearchApi)
   .addHttpApi(RecordsApi)
+  .addHttpApi(RequestSearchRebuildActionApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);
