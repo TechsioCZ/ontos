@@ -120,7 +120,7 @@ async function ownerDryRun(
   const command = {
     _tag: "PlaceStorefrontOrder",
     dryRun: true,
-    clientRequestId: `akros-quote-${digest}`,
+    clientRequestId: `sf-quote-${digest}`,
     shippingMethod: method ?? "OSOBNI_ODBER",
     lines,
     // The owner checks the market offer and prices in the market currency.
@@ -131,7 +131,7 @@ async function ownerDryRun(
     "apply-command",
     { command, expectedRevision: revision },
     // A dry run saves nothing, and OntOS refuses a reused key (409 action_already_committed): fresh key per check.
-    `akros-quote-${randomUUID()}`,
+    `sf-quote-${randomUUID()}`,
   )) as OwnerDryRun;
   const order = result.storefrontOrder;
   if (!order || !["VALID", "REJECTED"].includes(order.outcome ?? ""))

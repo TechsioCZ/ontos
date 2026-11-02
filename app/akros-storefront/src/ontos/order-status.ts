@@ -23,7 +23,7 @@ export function parseOrderStatusRequest(value: unknown): OrderStatusRequest | nu
   if (!value || typeof value !== "object") return null;
   const { orderId, clientRequestId } = value as Record<string, unknown>;
   if (typeof orderId !== "string" || !/^[A-Za-z0-9-]{8,120}$/.test(orderId)) return null;
-  if (typeof clientRequestId !== "string" || !/^akros-[a-f0-9-]{36}$/.test(clientRequestId))
+  if (typeof clientRequestId !== "string" || !/^sf-[a-f0-9-]{36}$/.test(clientRequestId))
     return null;
   return { orderId, clientRequestId };
 }

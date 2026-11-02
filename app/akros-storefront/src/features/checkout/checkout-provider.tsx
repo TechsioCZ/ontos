@@ -270,9 +270,7 @@ function CheckoutCartProvider({
         return null;
       }
       const clientRequestId =
-        previous?.signature === signature
-          ? previous.clientRequestId
-          : `akros-${crypto.randomUUID()}`;
+        previous?.signature === signature ? previous.clientRequestId : `sf-${crypto.randomUUID()}`;
       const pending =
         previous?.signature === signature
           ? previous

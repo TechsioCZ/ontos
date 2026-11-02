@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { LiveOrderStatus } from "@/features/checkout/live-order-status";
 
 const orderId = "e12a77c6-c624-46bf-88fe-13d8c386e099";
-const clientRequestId = "akros-12345678-1234-4234-8234-123456789abc";
+const clientRequestId = "sf-12345678-1234-4234-8234-123456789abc";
 
 afterEach(() => {
   cleanup();

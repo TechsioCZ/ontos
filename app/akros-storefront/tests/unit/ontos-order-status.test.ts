@@ -7,7 +7,7 @@ vi.mock("@/ontos/config", () => ({ isOntos: () => true }));
 vi.mock("@/ontos/gateway", () => ({ readRecords: vi.fn() }));
 
 const orderId = "e12a77c6-c624-46bf-88fe-13d8c386e099";
-const clientRequestId = "akros-12345678-1234-4234-8234-123456789abc";
+const clientRequestId = "sf-12345678-1234-4234-8234-123456789abc";
 const ask = (body: unknown, origin = "http://localhost:3070") =>
   POST(
     new Request("http://localhost:3070/api/ontos/order-status", {

@@ -52,7 +52,7 @@ export async function POST(request: Request) {
     assertCart(cart);
     if (
       typeof clientRequestId !== "string" ||
-      !/^akros-[a-f0-9-]{36}$/.test(clientRequestId) ||
+      !/^sf-[a-f0-9-]{36}$/.test(clientRequestId) ||
       !isCheckoutDraft(draft) ||
       Object.keys(validateAddresses(draft)).length ||
       Object.keys(validateMethods(draft, options.shippingMethods)).length
@@ -117,7 +117,7 @@ export async function POST(request: Request) {
           "merchandise",
           "apply-command",
           payload,
-          `akros-${clientRequestId}-${digest}`,
+          `sf-${clientRequestId}-${digest}`,
         )) as {
           storefrontOrder?: {
             outcome: string;

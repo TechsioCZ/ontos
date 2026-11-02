@@ -97,7 +97,7 @@ it("confirms a guest order from this tab's receipt with live status and e-mail r
     JSON.stringify({
       orderId: "guest-order-1",
       orderNumber: "OBJ-2026-0100",
-      clientRequestId: "akros-12345678-1234-4234-8234-123456789abc",
+      clientRequestId: "sf-12345678-1234-4234-8234-123456789abc",
       email: "guest@example.test",
     }),
   );
@@ -121,7 +121,7 @@ it("confirms a guest order from this tab's receipt with live status and e-mail r
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       orderId: "guest-order-1",
-      clientRequestId: "akros-12345678-1234-4234-8234-123456789abc",
+      clientRequestId: "sf-12345678-1234-4234-8234-123456789abc",
     }),
     cache: "no-store",
   });
@@ -139,7 +139,7 @@ it("does not confirm a guest order that this tab did not place", async () => {
     JSON.stringify({
       orderId: "other-order",
       orderNumber: "OBJ-2026-0101",
-      clientRequestId: "akros-12345678-1234-4234-8234-123456789abc",
+      clientRequestId: "sf-12345678-1234-4234-8234-123456789abc",
       email: "guest@example.test",
     }),
   );
