@@ -18,6 +18,7 @@ import {
   prepareApplicationMigrationPlan,
 } from '../application-migration-runtime.mts';
 
+const coreOwner = 'core-runtime';
 const first = { hash: 'a'.repeat(64), name: '20260101000000_first' };
 const second = { hash: 'b'.repeat(64), name: '20260102000000_second' };
 const stream: ApplicationMigrationStream = {
@@ -146,6 +147,7 @@ it('does not initialize credentials for role-dependent migrations already journa
     ],
   };
   expect(pendingMigrationRuntimeIdentityIds(withRoleRequirement, [second])).toEqual(['shared_runtime']);
+  expect(pendingMigrationRuntimeIdentityIds(withRoleRequirement, [])).toEqual([]);
   expect(pendingMigrationRuntimeIdentityIds(withRoleRequirement, [first, second])).toEqual([
     'shared_runtime',
     'party_registry_request',
@@ -159,7 +161,7 @@ it.effect(
     Effect.gen(function* actualSourceInventory() {
       const inventory = yield* loadApplicationMigrationInventory();
       expect(inventory.filter((owner) => !owner.optional).map((owner) => owner.ownerId)).toEqual([
-        'core-runtime',
+        coreOwner,
         'shell-super-app',
         'party-registry-contacts',
         'party-registry',
@@ -181,10 +183,22 @@ it.effect(
       expect(inventory.find((owner) => owner.ownerId === 'commerce-customer-context-portal-auth')?.optional).toBe(true);
       expect(
         inventory
-          .find((owner) => owner.ownerId === 'core-runtime')
+          .find((owner) => owner.ownerId === coreOwner)
           ?.migrationRuntimeIdentityRequirements?.find(
             (requirement) => requirement.migrationName === '20261020063004_dedicated-identity-core-policies',
           )?.identityIds,
       ).toEqual(['shared_runtime', 'party_registry_request', 'party_registry_worker']);
+      const coreStreams = inventory.filter((owner) => owner.ownerId === coreOwner);
+      expect(coreStreams).toHaveLength(1);
+      for (const core of coreStreams) {
+        expect(core.runtimeIdentityIds).toEqual(['shared_runtime', 'shell_gateway_issuer']);
+        expect(pendingMigrationRuntimeIdentityIds(core, core.migrations)).toEqual([
+          'shared_runtime',
+          'shell_gateway_issuer',
+          'party_registry_request',
+          'party_registry_worker',
+        ]);
+        expect(pendingMigrationRuntimeIdentityIds(core, [])).toEqual([]);
+      }
     }).pipe(Effect.provide(NodeServices.layer)),
 );

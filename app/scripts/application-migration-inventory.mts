@@ -68,13 +68,17 @@ const primary = (
 });
 // Preserve the actual Core/Auth/Contacts -> Party order of the existing runner.
 const orderedSources: readonly OwnerStreamSource[] = [
-  primary(
-    'core-runtime',
-    'packages/core-runtime',
-    ['core', 'trust'],
-    ['packages/core-runtime/scripts/verify-db-schema.mts'],
-    [],
-  ),
+  {
+    ...primary(
+      'core-runtime',
+      'packages/core-runtime',
+      ['core', 'trust'],
+      ['packages/core-runtime/scripts/verify-db-schema.mts'],
+      [],
+    ),
+    // Core's own verifier checks the registrar's exclusive executor before Shell migrations run.
+    runtimeIdentityIds: ['shared_runtime', 'shell_gateway_issuer'],
+  },
   {
     ...primary(
       'shell-super-app',
@@ -257,6 +261,9 @@ export const pendingMigrationRuntimeIdentityIds = (
   stream: ApplicationMigrationStream,
   pendingMigrations: ApplicationMigrationOwnerInventory['migrations'],
 ): readonly string[] => {
+  if (pendingMigrations.length === 0) {
+    return [];
+  }
   const pendingNames = new Set(pendingMigrations.map((migration) => migration.name));
   return [
     ...new Set([
