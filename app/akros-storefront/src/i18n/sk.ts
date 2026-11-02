@@ -130,6 +130,15 @@ export const sk: Dictionary = {
     selectQuantity: "Zvoľte množstvo",
     productActions: "Akcie produktu",
     perUnit: "za jednotku",
+    stockStatus: {
+      "in-stock": "Skladom",
+      "limited-stock": "Obmedzene skladom",
+      "out-of-stock": "Nie je skladom",
+      unknown: "Dostupnosť nemožno overiť",
+    },
+    priceUnavailable: "Cena nie je dostupná",
+    moreVariants: "Viac variantov",
+    chooseVariant: "Vybrať variant",
   },
   cart: {
     title: "Nákupný košík",

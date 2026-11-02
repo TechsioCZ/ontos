@@ -130,6 +130,15 @@ export const en: Dictionary = {
     selectQuantity: "Choose quantity",
     productActions: "Product actions",
     perUnit: "per unit",
+    stockStatus: {
+      "in-stock": "In stock",
+      "limited-stock": "Limited stock",
+      "out-of-stock": "Out of stock",
+      unknown: "Availability cannot be verified",
+    },
+    priceUnavailable: "Price unavailable",
+    moreVariants: "More variants",
+    chooseVariant: "Choose a variant",
   },
   cart: {
     title: "Shopping cart",

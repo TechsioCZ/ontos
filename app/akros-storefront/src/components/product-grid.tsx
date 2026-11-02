@@ -9,7 +9,7 @@ import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 import { AddToCartButton } from "@/features/cart/add-to-cart-button";
 import { useDictionary, useMoney } from "@/ontos/market-context";
 import { formatPrice } from "@/lib/format";
-import { productStockLabels, productStockTone } from "@/lib/product-stock";
+import { productStockTone } from "@/lib/product-stock";
 import type { CatalogProductSummary } from "@/ontos/catalog-types";
 
 export interface ProductGridItem extends CatalogProductSummary {
@@ -51,9 +51,9 @@ export function ProductGrid({
           product.stock.status === "in-stock";
         const priceUnavailable = !!product.priceUnavailableReason || product.priceMinor <= 0;
         const priceLabel = priceUnavailable
-          ? "Cena není dostupná"
+          ? cs.product.priceUnavailable
           : `${product.priceIsFrom ? `${cs.product.from} ` : ""}${formatPrice(product.priceMinor, money)}`;
-        const supportingText = product.description.trim() || `Kód produktu: ${product.sku}`;
+        const supportingText = product.description.trim() || `${cs.product.sku}: ${product.sku}`;
         const comparisonPrice = product.originalPriceMinor;
         const hasDiscount =
           !product.priceIsFrom &&
@@ -142,11 +142,11 @@ export function ProductGrid({
                   className="akros-catalog-product-card__stock m-0 uppercase"
                   status={productStockTone(product.stock.status)}
                 >
-                  {productStockLabels[product.stock.status]}
+                  {cs.product.stockStatus[product.stock.status]}
                 </ProductCard.Stock>
                 {product.hasVariants && (
                   <Badge className="whitespace-nowrap" size="sm" variant="secondary">
-                    Více variant
+                    {cs.product.moreVariants}
                   </Badge>
                 )}
               </div>
@@ -217,7 +217,7 @@ export function ProductGrid({
                     uppercase
                     variant="primary"
                   >
-                    {product.hasVariants ? "Vybrat variantu" : cs.actions.viewDetail}
+                    {product.hasVariants ? cs.product.chooseVariant : cs.actions.viewDetail}
                   </LinkButton>
                 )}
               </ProductCard.Actions>

@@ -128,6 +128,15 @@ export const cs = {
     selectQuantity: "Zvolte množství",
     productActions: "Akce produktu",
     perUnit: "za jednotku",
+    stockStatus: {
+      "in-stock": "Skladem",
+      "limited-stock": "Omezeně skladem",
+      "out-of-stock": "Není skladem",
+      unknown: "Dostupnost nelze ověřit",
+    },
+    priceUnavailable: "Cena není dostupná",
+    moreVariants: "Více variant",
+    chooseVariant: "Vybrat variantu",
   },
   cart: {
     title: "Nákupní košík",
