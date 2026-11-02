@@ -14,7 +14,14 @@ on:
       - demo/sales-crm
     paths-ignore:
       - 'docs/**'
-      - '**/*.md'
+      - 'app/docs/**'
+      - '**/README.md'
+      - '**/AGENTS.md'
+      - '**/CLAUDE.md'
+      - '**/CONTRIBUTING.md'
+      - '**/SECURITY.md'
+      - '**/CHANGELOG.md'
+      - '**/LICENSE.md'
   workflow_dispatch:
 
 permissions:
@@ -35,11 +42,78 @@ env:
   STAGE_SHOP_URL: https://ontos-stage-shop.web-revolution.cz
 
 jobs:
+  plan:
+    name: Plan selective delivery
+    if: github.ref == 'refs/heads/demo/sales-crm'
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.plan.outputs.app }}
+      storefront: ${{ steps.plan.outputs.storefront }}
+      shop: ${{ steps.plan.outputs.shop }}
+      any: ${{ steps.plan.outputs.any }}
+      full: ${{ steps.plan.outputs.full }}
+      receipt: ${{ steps.plan.outputs.receipt }}
+    steps:
+      - name: Checkout the complete release history
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+        with:
+          install-args: --trust-lockfile
+
+      # A verified ledger is a cache hint, never proof by itself. Match it to the immediately preceding
+      # successful workflow attempt; a failed/missing run, cache eviction or API failure forces all services.
+      - name: Restore the last verified service source pins
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/zerops-delivery/last-success
+          key: zerops-stage-delivery-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: zerops-stage-delivery-v1-
+
+      - name: Read the preceding workflow result
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/zerops-delivery"
+          # This repository is public. An anonymous bounded read needs no additional token permissions.
+          # Rate limits, malformed responses and missing history all fall back to a full deployment.
+          curl --fail --silent --show-error --max-time 30 \
+            "https://api.github.com/repos/$REPOSITORY/actions/workflows/zerops-stage.yml/runs?branch=demo%2Fsales-crm&per_page=30" \
+            -o "$RUNNER_TEMP/zerops-delivery/prior-runs.json" ||
+            printf '{"workflow_runs":[]}\n' >"$RUNNER_TEMP/zerops-delivery/prior-runs.json"
+
+      # A failed or old rerun can change stage even outside the bounded API history page.
+      # Every deploy attempt publishes this marker BEFORE any remote mutation.
+      - name: Restore the latest attempted delivery
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/zerops-delivery/last-attempt
+          key: zerops-stage-attempt-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: zerops-stage-attempt-v1-
+
+      - name: Plan from the last verified release, never HEAD parent
+        id: plan
+        working-directory: app
+        run: mise exec -- node scripts/zerops/delivery-plan-cli.mts plan "$RUNNER_TEMP/zerops-delivery"
+
+      - name: Retain the delivery decision
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zerops-delivery-plan
+          path: ${{ runner.temp }}/zerops-delivery/plan.json
+          retention-days: 30
+
   # The units build on GitHub runners, a shard each, in parallel: the Zerops build container holds only two unit
   # builds at a time. A unit whose committed inputs are unchanged reuses its last build from the Actions cache
   # (scripts/zerops/build-app.sh), and Zerops then keeps every unit the push carries.
   build:
     name: Build units (shard ${{ matrix.shard }})
+    needs: [plan]
+    if: needs.plan.outputs.app == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     strategy:
@@ -53,6 +127,7 @@ jobs:
       ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
       ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
       ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
+      ZEROPS_FORCE_BUILD: ${{ needs.plan.outputs.full }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -110,7 +185,10 @@ jobs:
 
   deploy:
     name: Build and deploy on Zerops
-    needs: [build]
+    needs: [plan, build]
+    if: >-
+      always() && needs.plan.result == 'success' && needs.plan.outputs.any == 'true' &&
+      (needs.plan.outputs.app == 'false' || needs.build.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 75
     environment:
@@ -129,6 +207,7 @@ jobs:
           persist-credentials: false
 
       - name: Download the unit builds
+        if: needs.plan.outputs.app == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: zerops-units-*
@@ -139,46 +218,74 @@ jobs:
       # The units travel as one zstd archive inside the push, which keeps the package small enough to upload in one
       # go; the Zerops build unpacks it and keeps every unit whose digest it carries.
       - name: Pack the unit builds for the push
+        if: needs.plan.outputs.app == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/dists"
           for archive in "$RUNNER_TEMP"/units/*/units.tar.zst; do tar --extract --zstd --file "$archive" -C "$RUNNER_TEMP/dists"; done
           tar --create --file - -C "$RUNNER_TEMP/dists" . | zstd -q -12 -T0 -o app/.zerops-prebuilt.tar.zst
           ls -lh app/.zerops-prebuilt.tar.zst
 
+      - name: Mark the actual deployment attempt
+        # A partial job rerun must not reuse a selective plan made before some other deployment.
+        # Rerun all jobs to recover, so the planner re-reads the actual latest attempt.
+        env:
+          PLANNED_RECEIPT: ${{ needs.plan.outputs.receipt }}
+        run: |
+          printf '%s\n' "$PLANNED_RECEIPT" |
+            jq -e --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+              '.runId==$runId and .runAttempt==$runAttempt' >/dev/null
+          mkdir -p "$RUNNER_TEMP/zerops-delivery/last-attempt"
+          jq -n --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --arg sourceRevision "$GITHUB_SHA" '{runId:$runId,runAttempt:$runAttempt,sourceRevision:$sourceRevision}' \
+            >"$RUNNER_TEMP/zerops-delivery/last-attempt/attempt.json"
+
+      - name: Persist the attempted delivery before any remote mutation
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/zerops-delivery/last-attempt
+          key: zerops-stage-attempt-v1-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # Cache save errors may warn rather than fail. Prove this exact marker can be restored or DO NOT deploy.
+      - name: Require the durable attempt marker
+        id: durable-attempt
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/zerops-delivery/last-attempt
+          key: zerops-stage-attempt-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          fail-on-cache-miss: true
+
+      - name: Check the actual attempted source
+        env:
+          CACHE_HIT: ${{ steps.durable-attempt.outputs.cache-hit }}
+        run: |
+          test "$CACHE_HIT" = true
+          jq -e --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --arg sourceRevision "$GITHUB_SHA" \
+            '.runId==$runId and .runAttempt==$runAttempt and .sourceRevision==$sourceRevision' \
+            "$RUNNER_TEMP/zerops-delivery/last-attempt/attempt.json" >/dev/null
+
       # The owner secret bundle is the one GitHub copy of every owner's runtime secrets. The app host hands each owner
       # only its own entries; the bundle itself never leaves the supervisor.
       - name: Sync the owner secret bundle to the app service
+        if: needs.plan.outputs.app == 'true'
         env:
           OWNER_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: bash app/scripts/zerops/sync-service-secret.sh "$ZEROPS_APP_SERVICE_ID" ONTOS_OWNER_SECRETS_JSON OWNER_SECRETS
 
-      - name: Push the app and the storefronts
+      - name: Download the delivery plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: zerops-delivery-plan
+          path: ${{ runner.temp }}/zerops-delivery
+
+      - name: Push only services whose inputs changed
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: |
-          started="$(date +%s)"
-          bash app/scripts/zerops/push-service.sh "$ZEROPS_APP_SERVICE_ID" app "$GITHUB_SHA" >"$RUNNER_TEMP/push-app.log" 2>&1 & app=$!
-          # The builds overlap, the uploads do not: two uploads at once each run past Zerops' ~30 s upload limit.
-          until grep -q '^build and deploy process' "$RUNNER_TEMP/push-app.log" || ! kill -0 "$app" 2>/dev/null; do sleep 1; done
-          PUSH_EXCLUDE=app/.zerops-prebuilt.tar.zst bash app/scripts/zerops/push-service.sh "$ZEROPS_STOREFRONT_SERVICE_ID" storefront "$GITHUB_SHA" >"$RUNNER_TEMP/push-storefront.log" 2>&1 & storefront=$!
-          until grep -q '^build and deploy process' "$RUNNER_TEMP/push-storefront.log" || ! kill -0 "$storefront" 2>/dev/null; do sleep 1; done
-          # The pseudonymous demo e-shop runs the same storefront setup; its brand and key are service variables.
-          PUSH_EXCLUDE=app/.zerops-prebuilt.tar.zst bash app/scripts/zerops/push-service.sh "$ZEROPS_SHOP_STOREFRONT_SERVICE_ID" storefront "$GITHUB_SHA" >"$RUNNER_TEMP/push-shop.log" 2>&1 & shop=$!
-          status=0
-          wait "$app" || status=1
-          wait "$storefront" || status=1
-          wait "$shop" || status=1
-          for setup in app storefront shop; do
-            echo "::group::push $setup"
-            cat "$RUNNER_TEMP/push-$setup.log"
-            echo "::endgroup::"
-          done
-          echo "Zerops build and deploy took $(( $(date +%s) - started ))s" | tee -a "$GITHUB_STEP_SUMMARY"
-          exit "$status"
+        run: bash app/scripts/zerops/push-delivery.sh "$RUNNER_TEMP/zerops-delivery/plan.json"
 
       - name: Show the app log after a failed deploy
-        if: failure()
+        if: failure() && needs.plan.outputs.app == 'true'
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: |
@@ -189,6 +296,7 @@ jobs:
   verify:
     name: Verify stage
     needs: [deploy]
+    if: always() && needs.deploy.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -224,26 +332,42 @@ jobs:
         working-directory: app
         run: mise exec -- node scripts/ops/stage-demo-verify.mjs
 
-      # The newsletter proof only warns: its failure is reported and does not fail the run.
-      - name: Prove the native newsletter grant and withdrawal
-        id: newsletter-proof
+      # node24 configures these two PUBLIC resource UUIDs from actual Privacy publication results.
+      # Missing account/IDs/publication/read permission stays a visible non-blocking failure, never a fake pass.
+      - name: Read native newsletter evidence
+        id: newsletter-evidence
         if: success() || failure()
         continue-on-error: true
         working-directory: app
         env:
-          AKROS_TEST_BASE_URL: ${{ env.STAGE_STOREFRONT_URL }}
+          NEWSLETTER_PURPOSE_ID: ${{ vars.NEWSLETTER_PURPOSE_ID }}
+          NEWSLETTER_NOTICE_ID: ${{ vars.NEWSLETTER_NOTICE_ID }}
+        run: mise exec -- node scripts/ops/newsletter-evidence.mts
+
+      # The newsletter proof only warns: its failure is reported and does not fail the run.
+      - name: Prove the native newsletter grant and withdrawal
+        id: newsletter-proof
+        if: (success() || failure()) && steps.newsletter-evidence.outcome == 'success'
+        continue-on-error: true
+        working-directory: app
+        env:
+          AKROS_TEST_BASE_URL: ${{ env.STAGE_SHOP_URL }}
           AKROS_EVIDENCE_DIR: ${{ runner.temp }}/newsletter-consent
+          NEWSLETTER_PURPOSE_READ_FILE: ${{ runner.temp }}/newsletter-native/processing-purposes.json
+          NEWSLETTER_NOTICE_READ_FILE: ${{ runner.temp }}/newsletter-native/notice-versions.json
         run: |
           E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
           export E2E_PLAYWRIGHT_MODULE
           mise exec -- node akros-storefront/tests/browser/newsletter-consent.mjs
 
       - name: Warn about a failed newsletter proof
-        if: (success() || failure()) && steps.newsletter-proof.outcome == 'failure'
+        if: >-
+          (success() || failure()) &&
+          (steps.newsletter-evidence.outcome == 'failure' || steps.newsletter-proof.outcome == 'failure')
         run: |
-          echo '::warning title=Newsletter proof::The native newsletter grant and withdrawal proof failed; see its step log and the newsletter-consent artifact.'
+          echo '::warning title=Newsletter proof::Native Privacy evidence or the newsletter grant and withdrawal proof failed; see the evidence/proof step logs and any newsletter-consent artifact.'
           echo '> [!WARNING]' >>"$GITHUB_STEP_SUMMARY"
-          echo '> The newsletter grant and withdrawal proof failed (non-blocking).' >>"$GITHUB_STEP_SUMMARY"
+          echo '> Native Privacy evidence or the newsletter grant and withdrawal proof failed (non-blocking, not verified).' >>"$GITHUB_STEP_SUMMARY"
 
       - name: Upload the newsletter screenshots
         if: always()
@@ -274,3 +398,38 @@ jobs:
           path: ${{ runner.temp }}/mcp-oauth-e2e
           if-no-files-found: ignore
           retention-days: 14
+
+  record:
+    name: Record verified service source pins
+    needs: [plan, build, deploy, verify]
+    if: >-
+      always() && needs.plan.result == 'success' &&
+      (needs.plan.outputs.any == 'false' ||
+      (needs.deploy.result == 'success' && needs.verify.result == 'success'))
+    runs-on: ubuntu-latest
+    steps:
+      # validatedHead is the input-comparison base, NOT every service's deployed revision. A reused
+      # service retains its real older source pin. The app still publishes its own composition at readiness.
+      - name: Write the verified ledger
+        env:
+          RECEIPT: ${{ needs.plan.outputs.receipt }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/zerops-delivery/last-success"
+          # A partial rerun must re-plan before publishing a new ledger.
+          printf '%s\n' "$RECEIPT" |
+            jq -e --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+              '.runId==$runId and .runAttempt==$runAttempt' >/dev/null
+          printf '%s\n' "$RECEIPT" >"$RUNNER_TEMP/zerops-delivery/last-success/receipt.json"
+
+      - name: Save the verified source pins
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/zerops-delivery/last-success
+          key: zerops-stage-delivery-v1-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Retain the verified ledger
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zerops-verified-delivery
+          path: ${{ runner.temp }}/zerops-delivery/last-success/receipt.json
+          retention-days: 30

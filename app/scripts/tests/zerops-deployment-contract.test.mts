@@ -368,7 +368,12 @@ it('runs the pseudonymous demo e-shop on shared CPU and pushes it from the store
   expect(shop.getIn(['verticalAutoscaling', 'cpuMode'])).toBe('SHARED');
   expect(shop.getIn(['verticalAutoscaling', 'maxRam'])).toBe(1);
   expect(shop.get('maxContainers')).toBe(1);
-  expect(workflow).toContain('push-service.sh "$ZEROPS_SHOP_STOREFRONT_SERVICE_ID" storefront "$GITHUB_SHA"');
+  expect(workflow).toContain('bash app/scripts/zerops/push-delivery.sh');
+  const pushDelivery = readFileSync(new URL('../zerops/push-delivery.sh', import.meta.url), 'utf-8');
+  expect(pushDelivery).toContain(
+    `shop) id="\${ZEROPS_SHOP_STOREFRONT_SERVICE_ID:?shop service id is required}"; setup=storefront`,
+  );
+  expect(pushDelivery).toContain('push-service.sh" "$id" "$setup" "$GITHUB_SHA"');
 });
 
 it('declares no project-level variable that could carry a database credential', () => {

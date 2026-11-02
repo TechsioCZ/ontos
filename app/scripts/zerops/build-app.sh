@@ -48,37 +48,10 @@ done
 export ULTRAMODERN_DISABLE_BUILD_TS_CHECKER="${ULTRAMODERN_DISABLE_BUILD_TS_CHECKER:-1}"
 export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=2048}"
 
-# Workspace verticals one unit depends on, transitively (packages/ is hashed whole).
-unit_inputs() {
-  node -e '
-    const fs = require("node:fs");
-    const path = require("node:path");
-    const seen = new Set();
-    const visit = (dir) => {
-      if (seen.has(dir)) return;
-      seen.add(dir);
-      const manifest = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
-      for (const [name, range] of Object.entries({ ...manifest.dependencies, ...manifest.devDependencies })) {
-        if (String(range).startsWith("workspace:")) {
-          visit(path.relative(process.cwd(), fs.realpathSync(path.join(dir, "node_modules", name))));
-        }
-      }
-    };
-    visit(process.argv[1]);
-    for (const dir of seen) if (!dir.startsWith("packages/")) console.log(dir);
-  ' "$1"
-}
-
-# The committed Git object ids of every input of one unit, hashed with the public origins.
+# Use the same committed dependency closure as the delivery planner. Common/unknown inputs fail closed,
+# including root dependency policy, patches, installer and migration scripts, not just a short build-file list.
 unit_digest() {
-  inputs="$(unit_inputs "$1")"
-  {
-    printf '%s\n' "$ONTOS_PUBLIC_ORIGIN" "$ONTOS_STOREFRONT_ORIGIN" "$ONTOS_SHOP_STOREFRONT_ORIGIN"
-    for input in $inputs packages scripts/zerops/owner-entry.mts scripts/generate-ontos-module-contract.mts topology \
-      package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json module-federation.shared.ts; do
-      printf '%s %s\n' "$input" "$(git rev-parse "HEAD:app/$input")"
-    done
-  } | sha256sum | cut -d' ' -f1
+  node "$root/scripts/zerops/delivery-plan-cli.mts" digest "$1"
 }
 
 # Restores a unit's cached build when its inputs are unchanged; succeeds only when the unit can be kept.
@@ -86,6 +59,9 @@ keep_unit() {
   unit="$1"
   dir="$(unit_dir "$unit")"
   digest="$(unit_digest "$dir")" || { echo "cannot compute the input digest of $unit" >&2; return 2; }
+  # CI full/unknown/manual delivery bypasses cached artifacts. The provider still keeps the NEW prebuilt
+  # archive CI supplies, so this flag is intentionally not part of zerops.yaml's provider environment.
+  [ "${ZEROPS_FORCE_BUILD:-false}" != true ] || return 1
   if [ "$(cat "$unit_cache/$unit/.zerops-build-digest" 2>/dev/null || true)" = "$digest" ]; then
     rm -rf "$dir/dist" && cp -a "$unit_cache/$unit" "$dir/dist"
   fi
