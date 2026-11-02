@@ -235,7 +235,8 @@
           "previous": "Předchozí",
           "next": "Další",
           "page": "{{from}}–{{to}} z {{total}}"
-        }
+        },
+        "retired": "Trh je vyřazen: jeho ceník zůstává jen pro přehled a e-shopy na něm nic neprodávají."
       },
       "lifecycle": {
         "activateTitle": "Aktivovat trh {{code}}?",

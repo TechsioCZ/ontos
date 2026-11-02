@@ -411,20 +411,22 @@ export const AssortmentSection = ({
     },
   };
   const offeredByDefault = settings?.offerMode !== 'SELECTED_PRODUCTS';
+  const retired = market.lifecycle === 'RETIRED';
   return (
     <SectionCard title={text('detail.assortment.title')}>
       <PriceList
-        canManage={records.canManageMarkets === true}
+        canManage={canManage}
         market={market}
         onDone={onDone}
         refresh={refreshSettings}
         revision={records.revision}
         settings={settings}
       />
-      {!canManage && settings !== undefined && (
+      {retired && <p className="text-fg-secondary text-sm">{text('detail.assortment.retired')}</p>}
+      {!retired && !canManage && settings !== undefined && (
         <p className="text-fg-secondary text-sm">{text('detail.assortment.readOnly')}</p>
       )}
-      {settings !== undefined && (
+      {!retired && settings !== undefined && (
         <section className="flex flex-col gap-150">
           <h3 className="font-semibold text-sm">{text('detail.assortment.exceptions.title')}</h3>
           <p className="text-fg-secondary text-sm">

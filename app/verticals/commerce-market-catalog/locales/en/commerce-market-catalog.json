@@ -235,7 +235,8 @@
           "previous": "Previous",
           "next": "Next",
           "page": "{{from}}–{{to}} of {{total}}"
-        }
+        },
+        "retired": "The market is retired: its price list stays for reference only and no e-shop sells in it."
       },
       "lifecycle": {
         "activateTitle": "Activate market {{code}}?",
