@@ -28,6 +28,10 @@ export const canonicalPathFromRequest = (request: Request, language: string): st
   const canonicalPath = pathname.slice(prefix.length - 1);
   const normalizedPath =
     canonicalPath.length > 1 && canonicalPath.endsWith('/') ? canonicalPath.slice(0, -1) : canonicalPath;
+  // Older documents may still request a localized favicon. It is an asset, never an installed module page.
+  if (normalizedPath === '/favicon.ico') {
+    return undefined;
+  }
   return Object.hasOwn(routeMeta.localisedPaths, language) && pathname.startsWith(prefix) ? normalizedPath : undefined;
 };
 

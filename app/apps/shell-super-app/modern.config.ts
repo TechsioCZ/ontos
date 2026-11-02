@@ -78,6 +78,7 @@ export default defineConfig(
               '/@mf-types',
               '/assets',
               '/bundles',
+              '/favicon.ico',
               '/shell-super-app-api',
               '/locales',
               '/mf-manifest.json',
