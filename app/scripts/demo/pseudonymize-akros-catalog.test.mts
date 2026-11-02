@@ -16,6 +16,7 @@ import {
   productTextPatch,
   protectedProduct,
   twinReference,
+  uniqueVariantSkus,
 } from './pseudonymize-akros-catalog-policy.mts';
 
 const fixture = Effect.gen(function* catalogFixture() {
@@ -228,5 +229,23 @@ describe('photos published twice under different names', () => {
     expect(
       galleryOrder([images[0]?.source ?? '', images[1]?.source ?? '', images[2]?.source ?? ''], twinResolve),
     ).toEqual(['media:one', 'media:two']);
+  });
+});
+
+describe('repeated variant SKUs from the source', () => {
+  it('numbers a later repeat so the owner accepts the update, keeping the first and every other SKU', () => {
+    const variants = [
+      { id: 'item-1', sku: '3dn31028000000025' },
+      { id: 'item-2', sku: 'other' },
+      { id: 'item-3', sku: '3DN31028000000025 ' },
+      { id: 'item-4' },
+    ];
+    expect(uniqueVariantSkus(variants).map(({ sku }) => sku)).toEqual([
+      '3dn31028000000025',
+      'other',
+      '3DN31028000000025-2',
+      undefined,
+    ]);
+    expect(uniqueVariantSkus([{ sku: 'a' }, { sku: 'b' }])).toEqual([{ sku: 'a' }, { sku: 'b' }]);
   });
 });

@@ -44,6 +44,35 @@ const parametersWithoutBrand = (parameters: NonNullable<CatalogProduct['paramete
     value: neutralCatalogText(parameter.value),
   }));
 
+/**
+ * Two imported products repeat a variant SKU (a source defect the owner refuses on any variant update). A later
+ * repeat gets a numbered suffix (`…-2`), the only data change besides presentation; ids, prices and stock stay.
+ */
+export const uniqueVariantSkus = <Variant extends { readonly sku?: string | undefined }>(
+  variants: readonly Variant[],
+): readonly Variant[] => {
+  const taken = new Set(variants.flatMap(({ sku }) => (sku === undefined ? [] : [sku.trim().toLowerCase()])));
+  const seen = new Set<string>();
+  return variants.map((variant) => {
+    if (variant.sku === undefined) {
+      return variant;
+    }
+    const key = variant.sku.trim().toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      return variant;
+    }
+    let suffix = 2;
+    while (taken.has(`${key}-${String(suffix)}`)) {
+      suffix += 1;
+    }
+    const sku = `${variant.sku.trim()}-${String(suffix)}`;
+    taken.add(sku.toLowerCase());
+    seen.add(sku.toLowerCase());
+    return { ...variant, sku };
+  });
+};
+
 /** Only display content changes. Preserve all IDs, prices, histories, SKU, flags, quantities and order. */
 export const productTextPatch = (product: CatalogProduct): typeof ProductPatch.Type => {
   const patch: Types.Mutable<typeof ProductPatch.Type> = {
@@ -57,7 +86,7 @@ export const productTextPatch = (product: CatalogProduct): typeof ProductPatch.T
     patch.parameters = parametersWithoutBrand(product.parameters);
   }
   if (product.variants !== undefined) {
-    patch.variants = product.variants.map((variant) => {
+    patch.variants = uniqueVariantSkus(product.variants).map((variant) => {
       const next: Types.Mutable<typeof variant> = {
         ...variant,
         attributes: neutralCatalogText(variant.attributes),
@@ -191,9 +220,12 @@ export const protectedProduct = (product: CatalogProduct) => ({
   stockOnHand: product.stockOnHand,
   stockTracked: product.stockTracked,
   unit: product.unit,
-  variants: product.variants?.map(
-    ({ attributes: _attributes, imageSrc: _image, name: _name, parameters: _parameters, ...variant }) => variant,
-  ),
+  variants:
+    product.variants === undefined
+      ? undefined
+      : uniqueVariantSkus(product.variants).map(
+          ({ attributes: _attributes, imageSrc: _image, name: _name, parameters: _parameters, ...variant }) => variant,
+        ),
   variantStock: product.variantRecords?.map(({ id, stockOnHand }) => ({ id, stockOnHand })),
   vatRate: product.vatRate,
 });
