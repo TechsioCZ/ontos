@@ -141,9 +141,11 @@ export const salesInsightsManifest = defineOntosModuleManifest({
             scope: 'tenant',
           },
           expose: './CrmDashboard',
-          // Sales dashboard on Home; it reads opportunities, tasks and invoices, so it needs those modules too.
+          // Sales dashboard on Home; it reads opportunities, tasks and invoices, so it needs those modules too. It comes
+          // before single-module summaries such as the CRM's (order 100): a person with the whole sales agenda sees it,
+          // and a company without it (Velkoobchod Hanák) falls through to the CRM summary.
           home: {
-            order: 200,
+            order: 50,
             requiresModules: [moduleKey, 'demo.sales-pipeline', 'work.tasks', 'finance.billing'],
           },
         }),
