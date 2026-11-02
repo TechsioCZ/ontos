@@ -9,7 +9,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import type { DataTableRowAction } from '@techsio/ui-kit/organisms/data-table';
+import type { DataTableProps, DataTableRowAction } from '@techsio/ui-kit/organisms/data-table';
 import { Effect, Match, Option, Predicate, Schema } from 'effect';
 import type { Dispatch, SetStateAction } from 'react';
 import { useReducer, useState } from 'react';
@@ -49,6 +49,7 @@ import type { RecordsLoadError } from './pipeline-records.ts';
 import { referenceStatusOf } from './pipeline-reference-labels.ts';
 import type { CustomerOption, EmployeeOption, LoadState } from './pipeline-references.ts';
 import { toSubjectIds, usePipelineReferences, useSubjectIdsWithTag } from './pipeline-references.ts';
+import { collapseRowActions, RowActionsMenu, useNarrowViewport } from './pipeline-row-actions.tsx';
 
 const salesPipelineI18nResources = {
   cs: { 'sales-pipeline': csResource },
@@ -174,6 +175,7 @@ const PipelineTable = ({
 }: PipelineTableProps) => {
   const { t } = useModernI18n();
   const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>(defaultColumnVisibility);
+  const narrow = useNarrowViewport();
   const writeActions: DataTableRowAction<Opportunity>[] = canWrite
     ? [
         {
@@ -214,8 +216,24 @@ const PipelineTable = ({
     },
     ...writeActions,
   ];
+  // On a phone the actions share one menu button so the pinned title stays readable.
+  const actionsProps: Pick<DataTableProps<Opportunity>, 'renderRowActions' | 'rowActions'> = collapseRowActions(
+    narrow,
+    rowActions,
+  )
+    ? {
+        renderRowActions: (row) => (
+          <RowActionsMenu
+            actions={rowActions}
+            label={`${t('sales-pipeline.table.actionsLabel')}: ${row.original.title}`}
+            row={row}
+          />
+        ),
+      }
+    : { rowActions };
   return (
     <DataTable
+      {...actionsProps}
       // The row-selection column must stay first, so it is pinned ahead of the title.
       columnPinning={{ end: [], start: ['__select', 'title'] }}
       columns={buildColumns(t, lookups)}
@@ -249,7 +267,6 @@ const PipelineTable = ({
           onRetry={onRetry}
         />
       )}
-      rowActions={rowActions}
       rowSelection={selection}
       size="sm"
       stickyHeader

@@ -5,6 +5,7 @@
 --color-border-primary
 --color-surface
 --delete-outline
+--dots-vertical
 --open-in-new
 --pencil-outline
 --plus
@@ -19,6 +20,7 @@ block
 blur
 border-border-primary
 border-t
+collapse
 filter
 fixed
 flex
@@ -39,6 +41,7 @@ hidden
 icon-[mdi--account-arrow-right-outline]
 icon-[mdi--archive-outline]
 icon-[mdi--delete-outline]
+icon-[mdi--dots-vertical]
 icon-[mdi--open-in-new]
 icon-[mdi--pencil-outline]
 icon-[mdi--plus]
@@ -72,6 +75,7 @@ resize
 running
 shrink-0
 size-250
+sticky
 table
 tabular-nums
 text-end
