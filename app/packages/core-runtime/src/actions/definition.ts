@@ -1,4 +1,5 @@
-import { Effect, Schema, Predicate } from 'effect';
+import { isOwnerPermissionContract } from '../permissions/context-access.ts';
+import { Array as EffectArray, Effect, Schema, Predicate } from 'effect';
 import type { ActionHandlerContext, CommittedActionDomainRejection } from './context.ts';
 import { ActionPayloadValidationError, ActionResultValidationError } from './errors.ts';
 import type { ActionCollectorError, ActionCoreError } from './errors.ts';
@@ -12,7 +13,8 @@ import { LEGAL_ENTITY_SCOPES } from '../operations/legal-entity-scope.ts';
 import type { LegalEntityScope } from '../operations/legal-entity-scope.ts';
 import type { OperationContextUnavailable } from '../operations/errors.ts';
 import type {
-  AssortmentPermissionAccessTarget,
+  OwnerPermissionAccessTarget,
+  OwnerPermissionContract,
   BusinessPermissionAccessTarget,
   ResourceAccessTarget,
 } from '../permissions/context-access.ts';
@@ -21,15 +23,15 @@ import type { TenantPermissionKey } from '../permissions/context-permissions.ts'
 const actionRegistration: unique symbol = Symbol('@app/core-runtime/actions/registration');
 const actionResourcePermissionDeclaration: unique symbol = Symbol('@app/core-runtime/actions/resource-permission');
 const actionBusinessPermissionDeclaration: unique symbol = Symbol('@app/core-runtime/actions/business-permission');
-const actionAssortmentPermissionDeclaration: unique symbol = Symbol('@app/core-runtime/actions/assortment-permissions');
+const actionOwnerPermissionDeclaration: unique symbol = Symbol('@app/core-runtime/actions/owner-permissions');
 
 class ActionPrivateStorage<Value> {
   declare readonly [actionRegistration]?: true;
   declare readonly [actionResourcePermissionDeclaration]?: true;
   declare readonly [actionBusinessPermissionDeclaration]?: true;
-  declare readonly [actionAssortmentPermissionDeclaration]?: true;
+  declare readonly [actionOwnerPermissionDeclaration]?: true;
   declare readonly descriptor?: unknown;
-  declare readonly kind?: 'assortment_permission' | 'business_permission' | 'resource';
+  declare readonly kind?: 'owner_permission' | 'business_permission' | 'resource';
   readonly #value: Value;
 
   constructor(value: Value) {
@@ -104,16 +106,17 @@ export type ActionBusinessPermissionDeclaration<Payload> = ActionPrivateStorage<
   readonly kind: 'business_permission';
 };
 
-export type ActionAssortmentPermissionTarget = AssortmentPermissionAccessTarget;
-export type ActionAssortmentPermissionTargetResolver<Payload> = (
+export type ActionOwnerPermissionTarget = OwnerPermissionAccessTarget;
+export type ActionOwnerPermissionTargetResolver<Payload> = (
   payload: Payload,
   scope: OperationalScope,
-) => readonly ActionAssortmentPermissionTarget[];
-export type ActionAssortmentPermissionDeclaration<Payload> = ActionPrivateStorage<
-  ActionAssortmentPermissionTargetResolver<Payload>
+) => readonly ActionOwnerPermissionTarget[];
+export type ActionOwnerPermissionDeclaration<Payload> = ActionPrivateStorage<
+  ActionOwnerPermissionTargetResolver<Payload>
 > & {
-  readonly [actionAssortmentPermissionDeclaration]: true;
-  readonly kind: 'assortment_permission';
+  readonly [actionOwnerPermissionDeclaration]: true;
+  readonly contract: OwnerPermissionContract;
+  readonly kind: 'owner_permission';
 };
 
 const ActionDefinitionInvariantError = Schema.TaggedError<Error>()('ActionDefinitionInvariantError', {
@@ -150,16 +153,18 @@ export const defineActionBusinessPermission = <Payload>(
   });
 };
 
-/** Declares one or more exact Assortment policy meanings checked conjunctively. */
-export const defineActionAssortmentPermissions = <Payload>(
-  resolver: ActionAssortmentPermissionTargetResolver<Payload>,
-): ActionAssortmentPermissionDeclaration<Payload> => {
-  if (!Predicate.isFunction(resolver)) {
-    return failActionDefinition('Action Assortment permission resolver must be a function');
+/** Declares one or more exact owner policy meanings checked conjunctively. */
+export const defineActionOwnerPermissions = <Payload>(
+  contract: OwnerPermissionContract,
+  resolver: ActionOwnerPermissionTargetResolver<Payload>,
+): ActionOwnerPermissionDeclaration<Payload> => {
+  if (!Predicate.isFunction(resolver) || !isOwnerPermissionContract(contract)) {
+    return failActionDefinition('Action owner permission resolver and contract must be valid');
   }
   return ActionPrivateStorage.create(resolver, {
-    [actionAssortmentPermissionDeclaration]: true as const,
-    kind: 'assortment_permission' as const,
+    [actionOwnerPermissionDeclaration]: true as const,
+    contract,
+    kind: 'owner_permission' as const,
   });
 };
 
@@ -181,13 +186,13 @@ const ActionBusinessPermissionDeclarationSchema = Schema.instanceOf(ActionPrivat
       : 'Expected an immutable Action business permission declaration',
   ),
 );
-const ActionAssortmentPermissionDeclarationSchema = Schema.instanceOf(ActionPrivateStorage).check(
+const ActionOwnerPermissionDeclarationSchema = Schema.instanceOf(ActionPrivateStorage).check(
   Schema.makeFilter((declaration) =>
-    declaration[actionAssortmentPermissionDeclaration] === true &&
-    declaration.kind === 'assortment_permission' &&
+    declaration[actionOwnerPermissionDeclaration] === true &&
+    declaration.kind === 'owner_permission' &&
     Object.isFrozen(declaration)
       ? undefined
-      : 'Expected an immutable Action Assortment permission declaration',
+      : 'Expected an immutable Action owner permission declaration',
   ),
 );
 
@@ -206,8 +211,6 @@ export interface ActionDescriptor<
    * target resources must never replace or derive it.
    */
   readonly actionKey: string;
-  /** Declares one or more exact Assortment permission targets checked conjunctively. */
-  readonly assortmentPermissions?: ActionAssortmentPermissionDeclaration<PayloadSchema['Type']>;
   readonly auditEvidenceSchema?: Schema.ConstraintDecoder<unknown>;
   readonly auditProfile: ActionAuditProfile;
   /** Declares one exact business permission resolved from decoded input and trusted scope. */
@@ -221,6 +224,8 @@ export interface ActionDescriptor<
   /** Requires a permission on the Legal Entity selected by trusted operational scope. */
   readonly legalEntityPermission?: ActionLegalEntityPermission;
   readonly legalEntityScope: LegalEntityScope;
+  /** Declares one or more exact owner permission targets checked conjunctively. */
+  readonly ownerPermissions?: ActionOwnerPermissionDeclaration<PayloadSchema['Type']>;
   readonly owningModuleKey: Owner;
   readonly payloadSchema: PayloadSchema;
   readonly policies: readonly ActionPolicy<PayloadSchema['Type'], NoInfer<Owner>>[];
@@ -396,11 +401,11 @@ export type ActionRequirements<Registration> =
     : never;
 
 export interface ActionDescriptorValidationInput<Policy> {
-  readonly assortmentPermissions?: ActionAssortmentPermissionDeclaration<never>;
   readonly businessPermission?: ActionBusinessPermissionDeclaration<never>;
   readonly entrypoint: ModuleEntrypointDescriptor;
   readonly legalEntityPermission?: unknown;
   readonly legalEntityScope: string;
+  readonly ownerPermissions?: ActionOwnerPermissionDeclaration<never>;
   readonly owningModuleKey: string;
   readonly policies?: readonly Policy[];
   readonly resourcePermission?: ActionResourcePermissionDeclaration<never>;
@@ -435,8 +440,9 @@ const validateActionLegalEntityScope = <Policy>(descriptor: ActionDescriptorVali
 };
 const validateActionPermissions = <Policy>(descriptor: ActionDescriptorValidationInput<Policy>): void => {
   if (
-    (descriptor.assortmentPermissions !== undefined &&
-      !Schema.is(ActionAssortmentPermissionDeclarationSchema)(descriptor.assortmentPermissions)) ||
+    (descriptor.ownerPermissions !== undefined &&
+      (!Schema.is(ActionOwnerPermissionDeclarationSchema)(descriptor.ownerPermissions) ||
+        descriptor.ownerPermissions.contract.owningCapability !== descriptor.owningModuleKey)) ||
     (descriptor.businessPermission !== undefined &&
       !Schema.is(ActionBusinessPermissionDeclarationSchema)(descriptor.businessPermission)) ||
     (descriptor.resourcePermission !== undefined &&
@@ -829,7 +835,7 @@ export const getActionBusinessPermissionTargetResolver = <
     ? undefined
     : ActionPrivateStorage.getValue(registration.descriptor.businessPermission);
 
-export const getActionAssortmentPermissionTargetResolver = <
+export const getActionOwnerPermissionTargetResolver = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
@@ -847,10 +853,20 @@ export const getActionAssortmentPermissionTargetResolver = <
     Services,
     HandlerRequirements
   >,
-): ActionAssortmentPermissionTargetResolver<PayloadSchema['Type']> | undefined =>
-  registration.descriptor.assortmentPermissions === undefined
+): ActionOwnerPermissionTargetResolver<PayloadSchema['Type']> | undefined =>
+  registration.descriptor.ownerPermissions === undefined
     ? undefined
-    : ActionPrivateStorage.getValue(registration.descriptor.assortmentPermissions);
+    : (payload, scope) => {
+        const declaration = registration.descriptor.ownerPermissions;
+        if (declaration === undefined) {
+          return [];
+        }
+        const targets = ActionPrivateStorage.getValue(declaration)(payload, scope);
+        if (!EffectArray.isArray(targets) || targets.some((target) => target.contract !== declaration.contract)) {
+          return failActionDefinition('Owner permission target belongs to another declaration');
+        }
+        return targets;
+      };
 
 const preserveFailureCause = <Failure extends object>(failure: Failure, cause: unknown): Failure => {
   Object.defineProperty(failure, 'cause', {

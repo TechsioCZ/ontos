@@ -2,7 +2,7 @@ import {
   toAssortmentPermissionAccessKey,
   toAssortmentPermissionAccessObjectId,
   toAssortmentPermissionAccessObjectIdForTargets,
-} from '@app/core-runtime';
+} from '../../src/permissions/authorization-targets.ts';
 import type {
   DomainEvent,
   DomainEventReference,

@@ -1,3 +1,8 @@
+import {
+  isOwnerPermissionAccessTargetMetadataValid,
+  isOwnerPermissionContract,
+} from '../permissions/context-access.ts';
+import { ReadPermissionUnavailable } from './errors.ts';
 /* oxlint-disable anti-slop/no-chained-type-assertions, anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-unknown-parameters, typescript/no-unsafe-type-assertion -- Opaque declarations validate and freeze finite keys before their one private representation cast; expires: 2027-03-31. */
 import { Predicate, Schema } from 'effect';
 import type { Effect } from 'effect';
@@ -11,7 +16,8 @@ import { LEGAL_ENTITY_SCOPES } from '../operations/legal-entity-scope.ts';
 import type { LegalEntityScope } from '../operations/legal-entity-scope.ts';
 import type { OperationContextUnavailable } from '../operations/errors.ts';
 import type {
-  AssortmentPermissionAccessTarget,
+  OwnerPermissionAccessTarget,
+  OwnerPermissionContract,
   BusinessPermissionAccessTarget,
   ResourceAccessTarget,
 } from '../permissions/context-access.ts';
@@ -20,15 +26,17 @@ import type { ReadHandlerContext, ReadHandlerResult } from './context.ts';
 
 const registrationMarker: unique symbol = Symbol('@app/core-runtime/reads/registration');
 const resourcePermissionDeclarationMarker: unique symbol = Symbol('@app/core-runtime/reads/resource-permission');
+const ownerPermissionDeclarationMarker: unique symbol = Symbol('@app/core-runtime/reads/owner-permission');
 const conditionalPermissionDeclarationMarker: unique symbol = Symbol('@app/core-runtime/reads/conditional-permission');
 
 class ReadPrivateStorage<Value> {
   declare readonly [registrationMarker]?: true;
   declare readonly [resourcePermissionDeclarationMarker]?: true;
   declare readonly [conditionalPermissionDeclarationMarker]?: true;
+  declare readonly [ownerPermissionDeclarationMarker]?: true;
   declare readonly branchTags?: readonly string[];
   declare readonly descriptor?: unknown;
-  declare readonly kind?: 'conditional' | 'resource';
+  declare readonly kind?: 'conditional' | 'owner_permission' | 'resource';
   declare readonly permissionKey?: string;
   readonly #value: Value;
 
@@ -59,7 +67,7 @@ export type ReadAccessKind = (typeof READ_ACCESS_KINDS)[number];
 export const READ_EVIDENCE_CAPTURE_MODES = ['hash_only', 'metadata_only'] as const;
 export type ReadEvidenceCaptureMode = (typeof READ_EVIDENCE_CAPTURE_MODES)[number];
 export const READ_PERMISSION_TARGETS = [
-  'assortment_permission',
+  'owner_permission',
   'business_permission',
   'conditional',
   'legal_entity',
@@ -76,8 +84,8 @@ export interface ReadPolicyDescriptor {
 export type ReadAlternativeTenantPermission = Exclude<TenantPermissionKey, 'access' | 'impersonate'>;
 export type AtomicResolvedReadPermissionTarget =
   | Readonly<{
-      readonly assortmentPermission: AssortmentPermissionAccessTarget;
-      readonly kind: 'assortment_permission';
+      readonly kind: 'owner_permission';
+      readonly ownerPermission: OwnerPermissionAccessTarget;
     }>
   | Readonly<{
       businessPermission: BusinessPermissionAccessTarget;
@@ -103,6 +111,7 @@ export type AlternativeResolvedReadPermissionTarget =
   | Exclude<
       AtomicResolvedReadPermissionTarget,
       | Readonly<{ readonly kind: 'business_permission' }>
+      | Readonly<{ readonly kind: 'owner_permission' }>
       | Readonly<{
           readonly kind: 'tenant';
           readonly permission: TenantPermissionKey;
@@ -127,6 +136,92 @@ export type ReadPermissionTargetResolver<Input> = (
   input: Input,
   scope: OperationalScope,
 ) => ResolvedReadPermissionTarget;
+export type ReadOwnerPermissionDeclaration<Input> = ReadPrivateStorage<
+  (input: Input, scope: OperationalScope) => OwnerPermissionAccessTarget
+> & {
+  readonly contract: OwnerPermissionContract;
+  readonly kind: 'owner_permission';
+  readonly [ownerPermissionDeclarationMarker]: true;
+};
+
+const ReadDefinitionInvariantError = Schema.TaggedError<Error>()('ReadDefinitionInvariantError', {
+  message: Schema.String,
+});
+
+const failReadDefinition = (message: string): never => {
+  throw new ReadDefinitionInvariantError({ message });
+};
+
+export const defineReadOwnerPermission = <Input>(
+  contract: OwnerPermissionContract,
+  resolver: (input: Input, scope: OperationalScope) => OwnerPermissionAccessTarget,
+): ReadOwnerPermissionDeclaration<Input> => {
+  if (!Predicate.isFunction(resolver) || !isOwnerPermissionContract(contract)) {
+    return failReadDefinition('Read owner permission resolver and contract must be valid');
+  }
+  return ReadPrivateStorage.create(resolver, {
+    contract,
+    kind: 'owner_permission' as const,
+    [ownerPermissionDeclarationMarker]: true as const,
+  });
+};
+
+const ReadOwnerPermissionDeclarationSchema = Schema.instanceOf(ReadPrivateStorage).check(
+  Schema.makeFilter((declaration) =>
+    ReadPrivateStorage.ownsValue(declaration) &&
+    declaration[ownerPermissionDeclarationMarker] === true &&
+    declaration.kind === 'owner_permission' &&
+    Object.isFrozen(declaration)
+      ? undefined
+      : 'Expected an immutable Read owner permission declaration',
+  ),
+);
+
+const isReadOwnerPermissionDeclaration = <Input>(
+  value:
+    | ReadOwnerPermissionDeclaration<Input>
+    | ReadConditionalPermissionDeclaration<Input>
+    | ReadPermissionTargetResolver<Input>,
+): value is ReadOwnerPermissionDeclaration<Input> => Schema.is(ReadOwnerPermissionDeclarationSchema)(value);
+
+const normalizeOwnerPermissionResolver = <Input>(
+  declared: ReadPermissionTarget,
+  owningModuleKey: string,
+  resolver:
+    | ReadOwnerPermissionDeclaration<Input>
+    | ReadConditionalPermissionDeclaration<Input>
+    | ReadPermissionTargetResolver<Input>,
+): ReadConditionalPermissionDeclaration<Input> | ReadPermissionTargetResolver<Input> => {
+  if (declared !== 'owner_permission') {
+    if (isReadOwnerPermissionDeclaration(resolver)) {
+      return failReadDefinition('Owner permission declaration requires its exact Read target kind');
+    }
+    return resolver;
+  }
+  if (!isReadOwnerPermissionDeclaration(resolver) || resolver.contract.owningCapability !== owningModuleKey) {
+    return failReadDefinition('Owner permission Read requires its own opaque contract declaration');
+  }
+  const declaration = resolver;
+  return (input, scope) => {
+    const target = ReadPrivateStorage.getValue(declaration)(input, scope);
+    if (target.contract !== declaration.contract) {
+      return failReadDefinition('Owner permission target belongs to another declaration');
+    }
+    if (
+      isOwnerPermissionAccessTargetMetadataValid(target) &&
+      target.scope.tenantId === scope.tenantId &&
+      target.scope.kind === 'legal_entity' &&
+      scope.legalEntityId === undefined
+    ) {
+      throw new ReadPermissionUnavailable({
+        code: 'read_permission_unavailable',
+        reason: 'The owner permission requires a selected Legal Entity',
+      });
+    }
+    return { kind: 'owner_permission', ownerPermission: target };
+  };
+};
+
 export type ReadResultPermissionTargetResolver<Result> = (
   result: Result,
   scope: OperationalScope,
@@ -201,14 +296,6 @@ export type ReadConditionalPermissionDeclaration<Input> = ReadPrivateStorage<
   readonly [conditionalPermissionDeclarationMarker]: true;
   readonly kind: 'conditional';
   readonly permissionKey: string;
-};
-
-const ReadDefinitionInvariantError = Schema.TaggedError<Error>()('ReadDefinitionInvariantError', {
-  message: Schema.String,
-});
-
-const failReadDefinition = (message: string): never => {
-  throw new ReadDefinitionInvariantError({ message });
 };
 
 const stableConditionalKey = (value: string): boolean =>
@@ -592,13 +679,19 @@ export const defineRead = <
     serviceFactory: ReadServiceFactory<Services, Requirements>,
     permissionTargetResolver:
       | ReadConditionalPermissionDeclaration<InputSchema['Type']>
+      | ReadOwnerPermissionDeclaration<InputSchema['Type']>
       | ReadPermissionTargetResolver<InputSchema['Type']>,
     resultPermissionTargetResolver?: ReadResultPermissionTargetResolver<ResultSchema['Type']>,
     executablePolicies?: readonly ActionPolicy<InputSchema['Type'], NoInfer<Owner>>[],
   ]
 ): ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema> => {
-  const [handler, serviceFactory, permissionTargetResolver, resultPermissionTargetResolver, executablePolicies = []] =
+  const [handler, serviceFactory, declaredPermissionResolver, resultPermissionTargetResolver, executablePolicies = []] =
     definition;
+  const permissionTargetResolver = normalizeOwnerPermissionResolver(
+    descriptor.permissionTarget,
+    descriptor.owningModuleKey,
+    declaredPermissionResolver,
+  );
   validateReadDescriptorInput(descriptor);
   validateReadVocabulary(descriptor, permissionTargetResolver, resultPermissionTargetResolver);
   if (

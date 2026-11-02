@@ -27,6 +27,25 @@ Provider cleanup is not an Action retry disguised as a new mutation. Shell compa
 
 Support start creates an Auth-owned non-secret recovery record after the provider session is initialized and before the started checkpoint commits; support stop therefore always has durable recovery state before Better Auth deletes or expires the impersonated session. The record carries only safe correlation, OntOS principal/binding IDs, reason, tenant, and safe session reference—not a token or cookie. Stopped evidence is idempotent; post-restore evidence or recovery cleanup failure still forwards the restored cookie and a repeated stop resumes the checkpoint. The recovery context is accepted only for the exact generated Action and a decoded `stopped` payload; it still performs the Action's normal SpiceDB permission check. Mechanical session termination therefore remains independent of evidence availability, while a denied or unavailable checkpoint remains pending instead of fabricating authorization.
 
+## Owner business permission targets
+
+A module publishes versioned Business Permission Definitions through its existing public contract.
+The definition identifies the permission meaning and permitted targets; it grants no Principal a
+permission. The owner binds target resolution to its private Action or Read registration. Decoded
+business input cannot select another definition or a broader permission variant.
+
+Owner-specific validation and canonical target construction stay with that owner. Core receives exact
+permission requests, verifies their trusted Tenant, Legal Entity and Storefront constraints, and
+performs the normal Current permission checks for the original Principal. Multiple required targets
+remain an ordered conjunction with exact response correlation. Publishing a descriptor, receiving a
+positive business outcome, or succeeding on an earlier invocation never substitutes for these checks.
+
+Assortment owns selector, purpose, audience and admission-set meaning. Its canonical permission keys
+and `asp_` object identities remain stable when this implementation moves. Replace requires the old
+target's End permission followed by the proposed target's Create permission; combining or reordering
+these targets changes the authorization meaning. Core retains independent executor, context, module
+state and atomic admission gates.
+
 ## Invocation Lifecycle
 
 Process every Action request in this order:

@@ -2,7 +2,7 @@ import {
   toAssortmentPermissionAccessKey,
   toAssortmentPermissionAccessObjectId,
   toAssortmentPermissionAccessObjectIdForTargets,
-} from '@app/core-runtime';
+} from '../../src/permissions/authorization-targets.ts';
 import type { DomainEvent, DomainEventReference, OperationalScope, OutboxMessage } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';

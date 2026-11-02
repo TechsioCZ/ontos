@@ -2,7 +2,7 @@ import { Context, Effect, Layer, Schema } from 'effect';
 import type { DateTime } from 'effect';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import type { BusinessAccessTarget, AssortmentPermissionAccessTarget, ResourceAccessTarget } from './context-access.ts';
+import type { BusinessAccessTarget, OwnerPermissionAccessTarget, ResourceAccessTarget } from './context-access.ts';
 import type { LegalEntityPermissionKey, TenantPermissionKey } from './context-permissions.ts';
 import type { BusinessPermissionCode } from './business-permission.ts';
 
@@ -23,8 +23,8 @@ export type OwnerAuthorizationTarget =
       readonly trustedStorefrontId?: string;
     }>
   | Readonly<{
-      readonly kind: 'assortment_permission';
-      readonly target: AssortmentPermissionAccessTarget;
+      readonly kind: 'owner_permission';
+      readonly target: OwnerPermissionAccessTarget;
       readonly trustedStorefrontId?: string;
     }>
   | Readonly<{
@@ -103,7 +103,7 @@ const isCoreDecidedBusinessTarget = (
 export const failClosedOwnerAuthorizationDecision = (input: OwnerAuthorizationInput): OwnerAuthorizationDecision =>
   input.targets.some(
     (target) =>
-      target.kind === 'assortment_permission' ||
+      target.kind === 'owner_permission' ||
       (target.kind === 'business_permission' && !isCoreDecidedBusinessTarget(target, input.scope)),
   )
     ? 'unavailable'

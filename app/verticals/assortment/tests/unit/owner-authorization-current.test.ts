@@ -1,6 +1,7 @@
+import type { AssortmentPermissionAccessTarget } from '../../src/permissions/authorization-targets.ts';
+import { assortmentOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { failClosedOwnerAuthorizationOverlay, OwnerAuthorizationOverlay } from '@app/core-runtime';
 import type {
-  AssortmentPermissionAccessTarget,
   OperationalScope,
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
@@ -310,7 +311,10 @@ const ownerInput = (
   operationKey: 'commerce.assortment.rule.revision.create',
   owningModuleKey: 'commerce.assortment',
   scope,
-  targets: targets.map((target) => ({ kind: 'assortment_permission', target })),
+  targets: targets.map((target) => ({
+    kind: 'owner_permission',
+    target: assortmentOwnerPermissionTarget(scope, target),
+  })),
   ...overrides,
 });
 
@@ -609,7 +613,7 @@ it.effect('preserves Core fallback continuity for neutral targets and refuses ot
     } as const;
     for (const targets of [
       [business],
-      [business, { kind: 'assortment_permission' as const, target: revisionTarget }],
+      [business, { kind: 'owner_permission' as const, target: assortmentOwnerPermissionTarget(scope, revisionTarget) }],
     ]) {
       expect(yield* assortmentOwnerAuthorizationOverlay.authorize(noReads, ownerInput([], { targets }))).toBe(
         'unavailable',

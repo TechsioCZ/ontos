@@ -7,7 +7,20 @@ import {
   withoutModuleOperationExecution,
 } from '../modules/module-operation-execution.ts';
 import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
-import { Cause, Context, Effect, Exit, Match, Predicate, Layer, Option, Ref, Result, Schema } from 'effect';
+import {
+  Array as EffectArray,
+  Cause,
+  Context,
+  Effect,
+  Exit,
+  Match,
+  Predicate,
+  Layer,
+  Option,
+  Ref,
+  Result,
+  Schema,
+} from 'effect';
 import type { SqlError } from 'effect/sql/SqlError';
 import { ConnectionError, UnknownError, isSqlError } from 'effect/sql/SqlError';
 
@@ -43,11 +56,7 @@ import {
   InventoryAuthorizationResourceTypeSchema,
   PricingAuthorizationResourceIdSchema,
   isBusinessPermissionTargetCompatible,
-  toAssortmentPermissionAccessKey,
-  toAssortmentPermissionAccessObjectId,
-  toAssortmentPermissionAccessObjectIdForTargets,
-  isAssortmentPermissionTargetValid,
-  assortmentPermissionTargetRequiresLegalEntity,
+  isOwnerPermissionAccessTargetValid,
   toBusinessPermissionAccessKey,
 } from '../permissions/context-access.ts';
 import { BusinessPermissionCodeSchema } from '../permissions/business-permission.ts';
@@ -73,7 +82,7 @@ import {
 } from './context.ts';
 import type {
   ActionPostAttemptOutcome,
-  ActionAssortmentPermissionTarget,
+  ActionOwnerPermissionTarget,
   ActionBusinessPermissionTarget,
   ActionDeniedAuditEvidenceDeclaration,
   ActionLegalEntityPermission,
@@ -88,7 +97,7 @@ import {
   decodeActionResult,
   getActionDecodedSuccessHook,
   getActionBusinessPermissionTargetResolver,
-  getActionAssortmentPermissionTargetResolver,
+  getActionOwnerPermissionTargetResolver,
   getActionHandler,
   getActionResourcePermissionTargetResolver,
   getActionServiceFactory,
@@ -635,157 +644,11 @@ const resolveActionBusinessPermissionTarget = <Payload>(
     );
   });
 
-const AssortmentResourceTargetSchema = Schema.Struct({
-  moduleId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
-    Schema.brand('AssortmentModuleId'),
-  ),
-  resourceId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
-    Schema.brand('AssortmentResourceId'),
-  ),
-  resourceType: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
-});
-const AssortmentSelectorKindSchema = Schema.Literals(['ALL', 'CATEGORY', 'PRODUCT', 'VARIANT', 'PACKAGE_OPTION']);
-const AssortmentPurposeSchema = Schema.Literals(['VISIBILITY', 'PURCHASE']);
-const AssortmentEffectSchema = Schema.Literals(['ALLOW', 'DENY']);
-const AssortmentSubjectKindSchema = Schema.Literals(['RETAIL_CUSTOMER_PROFILE', 'COUNTERPARTY']);
-const AssortmentSelectorSchema = Schema.Struct({
-  kind: AssortmentSelectorKindSchema,
-  target: Schema.optionalKey(AssortmentResourceTargetSchema),
-}).check(
-  Schema.makeFilter((selector) =>
-    (selector.kind === 'ALL') === (selector.target === undefined)
-      ? undefined
-      : 'Assortment ALL selectors cannot carry a target and other selectors require one',
-  ),
-);
-const AssortmentScopeSchema = Schema.Struct({
-  channel: AssortmentResourceTargetSchema,
-  market: Schema.optionalKey(AssortmentResourceTargetSchema),
-  storefront: Schema.optionalKey(AssortmentResourceTargetSchema),
-});
-const AssortmentSubjectSchema = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal('GUEST') }),
-  Schema.Struct({
-    kind: AssortmentSubjectKindSchema,
-    ref: AssortmentResourceTargetSchema,
-  }),
-]);
-const AssortmentAdmissionSetSchema = Schema.Union([
-  Schema.Struct({
-    contentHash: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)),
-    entries: Schema.Tuple([]),
-    memberCount: Schema.Literal(0),
-    setKind: Schema.Literal('EMPTY'),
-  }),
-  Schema.Struct({
-    contentHash: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)),
-    entries: Schema.Array(AssortmentSelectorSchema).check(Schema.isMinLength(1)),
-    memberCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
-    setKind: Schema.Literal('ENTRIES'),
-  }).check(
-    Schema.makeFilter((set) =>
-      set.entries.length === set.memberCount ? undefined : 'Admission Set count must match its complete entries',
-    ),
-  ),
-]);
-const AssortmentPermissionTargetSchema = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literal('assortment_configuration'),
-    permission: Schema.Literal('assortment.configuration.read'),
-    resource: AssortmentResourceTargetSchema,
-  }),
-  Schema.Struct({
-    catalogSelection: AssortmentResourceTargetSchema,
-    commercialScope: AssortmentScopeSchema,
-    kind: Schema.Literal('assortment_decision'),
-    permission: Schema.Literal('assortment.decision.explain'),
-    purpose: AssortmentPurposeSchema,
-    subject: AssortmentSubjectSchema,
-  }),
-  Schema.Struct({
-    effect: AssortmentEffectSchema,
-    kind: Schema.Literal('assortment_rule'),
-    mode: Schema.Literal('create'),
-    permission: Schema.Literal('assortment.rule.create'),
-    purpose: AssortmentPurposeSchema,
-    selector: AssortmentSelectorSchema,
-    stableCode: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
-  }),
-  Schema.Struct({
-    effect: AssortmentEffectSchema,
-    kind: Schema.Literal('assortment_rule'),
-    mode: Schema.Literal('revision_create'),
-    permission: Schema.Literal('assortment.rule.revision.create'),
-    purpose: AssortmentPurposeSchema,
-    selector: AssortmentSelectorSchema,
-    stableRule: AssortmentResourceTargetSchema,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal('assortment_rule'),
-    mode: Schema.Literal('retire'),
-    permission: Schema.Literal('assortment.rule.retire'),
-    stableRule: AssortmentResourceTargetSchema,
-  }),
-  Schema.Struct({
-    audience: Schema.Union([
-      Schema.Struct({ kind: Schema.Literal('SHARED') }),
-      Schema.Struct({ group: AssortmentResourceTargetSchema, kind: Schema.Literal('COMMERCE_CUSTOMER_GROUP') }),
-      Schema.Struct({
-        kind: Schema.Literal('SUBJECT'),
-        subject: Schema.Union([
-          Schema.Struct({
-            kind: AssortmentSubjectKindSchema,
-            ref: AssortmentResourceTargetSchema,
-          }),
-        ]),
-      }),
-    ]),
-    commercialScope: AssortmentScopeSchema,
-    effectiveFrom: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
-    kind: Schema.Literal('assortment_binding'),
-    mode: Schema.Literal('create'),
-    permission: Schema.Literal('assortment.binding.create'),
-    ruleRevision: AssortmentResourceTargetSchema,
-  }),
-  Schema.Struct({
-    binding: AssortmentResourceTargetSchema,
-    kind: Schema.Literal('assortment_binding'),
-    mode: Schema.Literal('end'),
-    permission: Schema.Literal('assortment.binding.end'),
-  }),
-  Schema.Struct({
-    admissionSet: AssortmentAdmissionSetSchema,
-    commercialScope: AssortmentScopeSchema,
-    effectiveFrom: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
-    kind: Schema.Literal('assortment_boundary'),
-    mode: Schema.Literal('create'),
-    permission: Schema.Literal('assortment.boundary.create'),
-    purpose: AssortmentPurposeSchema,
-    subject: Schema.Union([
-      Schema.Struct({
-        kind: AssortmentSubjectKindSchema,
-        ref: AssortmentResourceTargetSchema,
-      }),
-    ]),
-  }),
-  Schema.Struct({
-    boundary: AssortmentResourceTargetSchema,
-    kind: Schema.Literal('assortment_boundary'),
-    mode: Schema.Literal('end'),
-    permission: Schema.Literal('assortment.boundary.end'),
-  }),
-]);
-const AssortmentPermissionTargetsSchema = Schema.Array(AssortmentPermissionTargetSchema).check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(8),
-);
-const AssortmentTargetJsonSchema = Schema.fromJsonString(Schema.Unknown);
-
-const resolveActionAssortmentPermissionTargets = <Payload>(
+const resolveActionOwnerPermissionTargets = <Payload>(
   payload: Payload,
   scope: OperationalScope,
-  resolver: ((payload: Payload, scope: OperationalScope) => readonly ActionAssortmentPermissionTarget[]) | undefined,
-): Effect.Effect<readonly ActionAssortmentPermissionTarget[], ActionPermissionCheckError> =>
+  resolver: ((payload: Payload, scope: OperationalScope) => readonly ActionOwnerPermissionTarget[]) | undefined,
+): Effect.Effect<readonly ActionOwnerPermissionTarget[], ActionPermissionCheckError> =>
   Effect.suspend(() => {
     if (resolver === undefined) {
       return Effect.succeed([]);
@@ -795,53 +658,25 @@ const resolveActionAssortmentPermissionTargets = <Payload>(
         attachFailureCause(
           new ActionPermissionCheckError({
             code: 'action_permission_check_failed',
-            reason: 'The declared Assortment permission targets could not be resolved safely',
+            reason: 'The declared owner permission targets could not be resolved safely',
           }),
           cause,
         ),
       try: () => resolver(payload, scope),
     }).pipe(
-      Effect.flatMap((targets) => Schema.decodeUnknownEffect(AssortmentPermissionTargetsSchema)(targets)),
       Effect.filterOrFail(
         (targets) =>
-          targets.every((target) =>
-            target.kind === 'assortment_rule' && target.mode !== 'retire'
-              ? target.purpose === 'PURCHASE' || !['VARIANT', 'PACKAGE_OPTION'].includes(target.selector.kind)
-              : true,
-          ) &&
-          new Set(
-            targets.map((target) =>
-              Result.getOrElse(Schema.encodeResult(AssortmentTargetJsonSchema)(target), () => ''),
-            ),
-          ).size === targets.length &&
-          targets.every((target) => {
-            const storefront =
-              target.kind === 'assortment_decision' ||
-              (target.kind === 'assortment_binding' && target.mode === 'create') ||
-              (target.kind === 'assortment_boundary' && target.mode === 'create')
-                ? target.commercialScope.storefront
-                : undefined;
-            return storefront === undefined
-              ? true
-              : scope.trustedStorefrontId !== undefined && scope.trustedStorefrontId === storefront.resourceId;
-          }),
+          EffectArray.isArray(targets) &&
+          targets.length > 0 &&
+          targets.length <= 8 &&
+          targets.every((target) => isOwnerPermissionAccessTargetValid(target, scope)) &&
+          new Set(targets.map((target) => target.key)).size === targets.length &&
+          targets.every((target) => target.transportObjectId === targets[0]?.transportObjectId),
         () =>
           new ActionPermissionCheckError({
             code: 'action_permission_check_failed',
-            reason: 'The declared Assortment permission targets do not match trusted scope',
+            reason: 'The declared owner permission targets do not match trusted scope',
           }),
-      ),
-      Effect.map((targets) => Object.freeze(targets.map((target) => Object.freeze({ ...target })))),
-      Effect.mapError((cause) =>
-        Schema.is(ActionPermissionCheckError)(cause)
-          ? cause
-          : attachFailureCause(
-              new ActionPermissionCheckError({
-                code: 'action_permission_check_failed',
-                reason: 'The declared Assortment permission targets are invalid',
-              }),
-              cause,
-            ),
       ),
     );
   });
@@ -1236,24 +1071,23 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       );
   };
 
-  const checkActionAssortmentPermissions = (
+  const checkActionOwnerPermissions = (
     scope: OperationalScope,
-    assortmentTargets: readonly ActionAssortmentPermissionTarget[],
+    ownerTargets: readonly ActionOwnerPermissionTarget[],
   ): Effect.Effect<'allowed' | 'denied', ActionPermissionCheckError> => {
-    if (assortmentTargets.length === 0) {
+    if (ownerTargets.length === 0) {
       return Effect.succeed('allowed');
     }
     if (
-      contextAccess?.assortmentPermissions === undefined ||
-      assortmentTargets.some((target) => !isAssortmentPermissionTargetValid(target)) ||
-      (scope.legalEntityId === undefined && assortmentTargets.some(assortmentPermissionTargetRequiresLegalEntity))
+      contextAccess?.ownerPermissions === undefined ||
+      ownerTargets.some((target) => !isOwnerPermissionAccessTargetValid(target, scope))
     ) {
       return Effect.fail(permissionUnavailable());
     }
     const { legalEntityId } = scope;
     const checkInputBase = {
       principal: { principalId: scope.principalId, tenantId: scope.tenantId },
-      targets: assortmentTargets.map((entry) => ({ target: entry })),
+      targets: ownerTargets.map((entry) => ({ target: entry })),
     };
     const checkInputWithStorefront =
       scope.trustedStorefrontId === undefined
@@ -1261,16 +1095,13 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         : { ...checkInputBase, trustedStorefrontId: scope.trustedStorefrontId };
     const checkInput =
       legalEntityId === undefined ? checkInputWithStorefront : { ...checkInputWithStorefront, legalEntityId };
-    return contextAccess.assortmentPermissions(checkInput).pipe(
+    return contextAccess.ownerPermissions(checkInput).pipe(
       Effect.flatMap((decisions) => {
         if (
-          decisions.length !== assortmentTargets.length ||
+          decisions.length !== ownerTargets.length ||
           decisions.some(
             (decision, index) =>
-              decision.key !==
-                (assortmentTargets[index] === undefined
-                  ? undefined
-                  : toAssortmentPermissionAccessKey(scope.tenantId, legalEntityId, assortmentTargets[index])) ||
+              decision.key !== (ownerTargets[index] === undefined ? undefined : ownerTargets[index]?.key) ||
               decision.decision === 'unavailable',
           )
         ) {
@@ -1353,7 +1184,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           tenantPermission: Option.Option<ActionTenantPermission>,
           legalEntityPermission: ActionLegalEntityPermission | undefined,
           businessPermissionTarget: Option.Option<ActionBusinessPermissionTarget>,
-          assortmentPermissionTargets: readonly ActionAssortmentPermissionTarget[],
+          ownerPermissionTargets: readonly ActionOwnerPermissionTarget[],
           resourcePermissionTarget: Option.Option<ActionResourcePermissionTarget>,
         ): readonly OwnerAuthorizationTarget[] => {
           const targets: OwnerAuthorizationTarget[] = [];
@@ -1383,9 +1214,9 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               ),
             );
           }
-          for (const target of assortmentPermissionTargets) {
+          for (const target of ownerPermissionTargets) {
             targets.push({
-              kind: 'assortment_permission',
+              kind: 'owner_permission',
               target,
             });
           }
@@ -1425,9 +1256,9 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         /* oxlint-disable anti-slop/no-known-value-widening -- The normalized governed-target result intentionally preserves the existing owner authorization contract across all branches. */
         const prepareGovernedTarget = (
           transport: ActionTransportMetadata,
-          scope: OperationalScope,
+          _scope: OperationalScope,
           businessPermissionTarget: Option.Option<ActionBusinessPermissionTarget>,
-          assortmentPermissionTargets: readonly ActionAssortmentPermissionTarget[],
+          ownerPermissionTargets: readonly ActionOwnerPermissionTarget[],
           resourcePermissionTarget: Option.Option<ActionResourcePermissionTarget>,
           hasCanonicalScopeTarget: boolean,
         ): Readonly<{
@@ -1451,20 +1282,12 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             };
             return { actionTarget, governedTransport: buildGovernedTransport(transport, actionTarget) };
           }
-          if (assortmentPermissionTargets.length > 0) {
-            const [singleTarget] = assortmentPermissionTargets;
-            const assortmentTargetResourceId =
-              assortmentPermissionTargets.length === 1 && singleTarget !== undefined
-                ? toAssortmentPermissionAccessObjectId(scope.tenantId, scope.legalEntityId, singleTarget)
-                : toAssortmentPermissionAccessObjectIdForTargets(
-                    scope.tenantId,
-                    scope.legalEntityId,
-                    assortmentPermissionTargets,
-                  );
+          if (ownerPermissionTargets.length > 0) {
+            const [singleTarget] = ownerPermissionTargets;
             const actionTarget = {
               targetModuleKey: input.registration.descriptor.owningModuleKey,
-              targetResourceId: assortmentTargetResourceId ?? 'assortment-unavailable',
-              targetResourceType: 'assortment_permission',
+              targetResourceId: singleTarget?.transportObjectId ?? 'owner-permission-unavailable',
+              targetResourceType: singleTarget?.contract.targetResourceType ?? 'owner-permission-unavailable',
             };
             return { actionTarget, governedTransport: buildGovernedTransport(transport, actionTarget) };
           }
@@ -1530,17 +1353,17 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               ? Option.none<ActionTenantPermission>()
               : yield* resolveActionTenantPermission(payload, input.registration.descriptor.tenantPermission);
             const { legalEntityPermission } = input.registration.descriptor;
-            const [businessPermissionTarget, assortmentPermissionTargets, resourcePermissionTarget] = yield* Effect.all(
+            const [businessPermissionTarget, ownerPermissionTargets, resourcePermissionTarget] = yield* Effect.all(
               [
                 resolveActionBusinessPermissionTarget(
                   payload,
                   scope,
                   getActionBusinessPermissionTargetResolver(input.registration),
                 ),
-                resolveActionAssortmentPermissionTargets(
+                resolveActionOwnerPermissionTargets(
                   payload,
                   scope,
-                  getActionAssortmentPermissionTargetResolver(input.registration),
+                  getActionOwnerPermissionTargetResolver(input.registration),
                 ),
                 resolveActionResourcePermissionTarget(
                   payload,
@@ -1554,32 +1377,32 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               Option.isSome(tenantPermission) ||
               legalEntityPermission !== undefined ||
               Option.isSome(businessPermissionTarget) ||
-              assortmentPermissionTargets.length > 0;
+              ownerPermissionTargets.length > 0;
             const frozenOwnerAuthorizationTargets = buildOwnerAuthorizationTargets(
               scope,
               tenantPermission,
               legalEntityPermission,
               businessPermissionTarget,
-              assortmentPermissionTargets,
+              ownerPermissionTargets,
               resourcePermissionTarget,
             );
             const { actionTarget, governedTransport } = prepareGovernedTarget(
               transport,
               scope,
               businessPermissionTarget,
-              assortmentPermissionTargets,
+              ownerPermissionTargets,
               resourcePermissionTarget,
               hasCanonicalScopeTarget,
             );
             return {
               actionTarget,
-              assortmentPermissionTargets,
               businessPermissionTarget,
               earlyCompositionRevision,
               frozenOwnerAuthorizationTargets,
               governedTransport,
               intrinsicDependencies,
               legalEntityPermission,
+              ownerPermissionTargets,
               resourcePermissionTarget,
               tenantPermission,
             };
@@ -1694,7 +1517,6 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         );
         const {
           actionTarget,
-          assortmentPermissionTargets,
           businessPermissionTarget,
           deniedAuditEvidence,
           earlyCompositionRevision,
@@ -1703,6 +1525,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           intrinsicDependencies,
           invocation,
           legalEntityPermission,
+          ownerPermissionTargets,
           payload,
           principal,
           requestHash,
@@ -1802,10 +1625,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           const legalEntityPermissionDecision = yield* checkActionLegalEntityPermission(scope, legalEntityPermission);
           const resourcePermissionDecision = yield* checkActionResourcePermission(scope, resourcePermissionTarget);
           const businessPermissionDecision = yield* checkActionBusinessPermission(scope, businessPermissionTarget);
-          const assortmentPermissionDecision = yield* checkActionAssortmentPermissions(
-            scope,
-            assortmentPermissionTargets,
-          );
+          const ownerPermissionDecision = yield* checkActionOwnerPermissions(scope, ownerPermissionTargets);
           return (
             preflightDenied ||
             permissionDecision === 'denied' ||
@@ -1813,7 +1633,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             legalEntityPermissionDecision === 'denied' ||
             resourcePermissionDecision === 'denied' ||
             businessPermissionDecision === 'denied' ||
-            assortmentPermissionDecision === 'denied'
+            ownerPermissionDecision === 'denied'
           );
         });
 
