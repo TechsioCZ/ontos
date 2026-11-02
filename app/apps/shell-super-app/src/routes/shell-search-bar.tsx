@@ -13,7 +13,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
 
-import { searchHitState } from './search-hit-state.ts';
+import { shellSearchGroupIcon } from './shell-search-resource-types.ts';
 import type { ShellSearchSuggestion, ShellSearchSuggestionsState } from './shell-search-suggestions.ts';
 
 type SuggestionLinkProps = ComponentProps<typeof LocalizedLink>;
@@ -71,13 +71,7 @@ const SuggestionRow = ({
         onClick={onOpen}
         onKeyDown={onKeyDown}
         onMouseDown={keepFieldFocus}
-        params={{
-          moduleId: suggestion.ref.moduleId,
-          resourceId: suggestion.ref.resourceId,
-          resourceType: suggestion.ref.resourceType,
-        }}
-        state={searchHitState(suggestion.title)}
-        to="/resources/$moduleId/$resourceType/$resourceId"
+        {...suggestion.target}
       >
         <span className="min-w-0 truncate">{suggestion.title}</span>
         <span className="flex shrink-0 gap-100">
@@ -240,7 +234,11 @@ export const ShellSearchBar = ({
         {suggestions.status === 'ready'
           ? suggestions.groups.map((group) => (
               <div className="grid gap-50" key={group.key}>
-                <h2 className="px-200 font-medium text-fg-secondary text-xs uppercase" id={`${panelId}-${group.key}`}>
+                <h2
+                  className="flex items-center gap-100 px-200 font-medium text-fg-secondary text-xs uppercase"
+                  id={`${panelId}-${group.key}`}
+                >
+                  <Icon aria-hidden icon={shellSearchGroupIcon[group.key]} size="sm" />
                   {t(`shell.search.groups.${group.key}`)}
                 </h2>
                 <ul aria-labelledby={`${panelId}-${group.key}`} className="grid gap-50">

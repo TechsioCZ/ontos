@@ -302,6 +302,25 @@
       "groups": {
         "counterparty": "Zákazníci a dodavatelé",
         "party": "Kontakty",
+        "person": "Lidé",
+        "crmClient": "Klienti",
+        "crmContact": "Kontaktní osoby",
+        "opportunity": "Obchodní příležitosti",
+        "product": "Produkty",
+        "sku": "Varianty (SKU)",
+        "order": "Objednávky",
+        "task": "Úkoly",
+        "invoice": "Faktury",
+        "financeDocument": "Finanční doklady",
+        "contract": "Smlouvy",
+        "legalDocument": "Právní dokumenty",
+        "property": "Nemovitosti",
+        "unit": "Jednotky",
+        "lease": "Nájmy",
+        "asset": "Majetek",
+        "device": "Zařízení a měřidla",
+        "facilityDocument": "Provozní dokumenty",
+        "market": "Trhy",
         "resource": "Další záznamy"
       },
       "suggestions": {
@@ -314,12 +333,10 @@
       "agenda_hint": "Hledání je teď nedostupné. Zkuste to za chvíli znovu, nebo otevřete agendu a hledejte přímo v ní.",
       "alias_match": "Shoda přes alias",
       "archived": "Archivováno",
-      "counterparty": "Obchodní protistrana",
       "empty": "Nebyly nalezeny žádné autorizované výsledky.",
       "label": "Hledat",
       "legal_entity": "Právní subjekt",
       "partial": "Někteří poskytovatelé vyhledávání jsou dočasně nedostupní. Zobrazujeme dostupné výsledky.",
-      "party": "Subjekt",
       "reconciliation_required": "Vyžaduje sjednocení",
       "roles": {
         "CUSTOMER": "Zákazník",
@@ -330,7 +347,7 @@
       "title": "Výsledky hledání",
       "unavailable": "Vyhledávání je dočasně nedostupné. Zkuste to znovu.",
       "clear": "Vymazat hledání",
-      "placeholder": "Hledat zákazníky a dodavatele…"
+      "placeholder": "Hledat klienty, úkoly, faktury, smlouvy…"
     },
     "resource": {
       "found_in_agenda": "Podrobnosti tohoto záznamu najdete v agendě, ke které patří.",
@@ -357,7 +374,8 @@
         "title": "Časová osa"
       },
       "title": "Zdroj",
-      "unavailable": "Zdroj je dočasně nedostupný. Zkuste to znovu."
+      "unavailable": "Zdroj je dočasně nedostupný. Zkuste to znovu.",
+      "open_record": "Otevřít záznam"
     },
     "remoteUnavailable": "Remote vertical je nedostupný",
     "remotes": {},

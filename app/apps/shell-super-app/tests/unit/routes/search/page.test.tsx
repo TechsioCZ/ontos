@@ -12,6 +12,7 @@ import {
   ResourceIdSchema,
   TenantIdSchema,
 } from '../../../../shared/api.ts';
+import type { ShellSearchResult } from '../../../../shared/api.ts';
 import type { HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
 import type { SearchPageModel } from '../../../../src/routes/[lang]/search/search-page-model.ts';
 import SearchPage from '../../../../src/routes/[lang]/search/page.tsx';
@@ -66,6 +67,9 @@ const translations = new Map(
     'shell.search.agenda_hint': 'Open an authorized agenda and use its search.',
     'shell.search.agenda_title': 'Search within an agenda',
     'shell.search.empty': 'No results',
+    'shell.search.groups.invoice': 'Invoices',
+    'shell.search.groups.resource': 'Other records',
+    'shell.search.groups.task': 'Tasks',
     'shell.search.label': 'Search',
     'shell.search.selection_required': 'Select a legal entity first',
     'shell.search.title': 'Search',
@@ -166,17 +170,27 @@ const authenticatedShell = (): HomePageModel => ({
   },
 });
 
+/** A generic owner hit as the Shell receives it, scoped to the trusted selected company. */
+const resourceHit = (
+  moduleId: string,
+  resourceType: string,
+  resourceId: typeof plainResourceId,
+  title: string,
+): ShellSearchResult => {
+  const hit = {
+    kind: 'resource' as const,
+    ref: { moduleId: Schema.decodeUnknownSync(ModuleIdSchema)(moduleId), resourceId, resourceType, tenantId },
+    selectedLegalEntityId: legalEntityId,
+    title,
+  };
+  return hit;
+};
+
 const readyModel = (resourceType: string, resourceId: typeof plainResourceId): SearchPageModel => ({
   query: 'unit',
   response: {
     partial: false,
-    results: [
-      {
-        kind: 'resource',
-        ref: { moduleId: inventoryModuleId, resourceId, resourceType },
-        title: 'Unit 1',
-      },
-    ],
+    results: [resourceHit('inventory.stock', resourceType, resourceId, 'Unit 1')],
   },
   shell: authenticatedShell(),
   state: 'ready',
@@ -244,6 +258,40 @@ test('resource path segments stay percent-encoded per segment', () => {
   expect(screen.getByRole('link', { name: 'Unit 1' }).getAttribute('href')).toBe(
     '/en/resources/inventory.stock/stock%20item/unit%20%231%2F2',
   );
+});
+
+test('results are grouped under named record types and open their owner record page when it has one', () => {
+  const invoiceId = Schema.decodeUnknownSync(ResourceIdSchema)('00000000-0000-4000-8000-000000000401');
+  const taskId = Schema.decodeUnknownSync(ResourceIdSchema)('00000000-0000-4000-8000-000000000402');
+  useLoaderDataMock.mockReturnValue({
+    query: 'novák',
+    response: {
+      partial: false,
+      results: [
+        resourceHit('inventory.stock', 'stock-item', plainResourceId, 'Novák sklad'),
+        resourceHit('finance.billing', 'finance.billing.invoice', invoiceId, 'Faktura Novák'),
+        resourceHit('work.tasks', 'work.tasks.task', taskId, 'Zavolat Novákovi'),
+      ],
+    },
+    shell: authenticatedShell(),
+    state: 'ready',
+  } satisfies SearchPageModel);
+  render(<SearchPage />);
+
+  expect(screen.getAllByRole('heading', { level: 3 }).map(({ textContent }) => textContent)).toEqual([
+    'Tasks',
+    'Invoices',
+    'Other records',
+  ]);
+  const invoices = screen.getByRole('region', { name: 'Invoices' });
+  expect(invoices.textContent).toContain('Faktura Novák');
+  const linkProps = localizedLinkMock.mock.calls.map(([props]) => props);
+  expect(linkProps.find(({ to }) => to === '/finance')).toMatchObject({ search: { resourceId: invoiceId } });
+  expect(linkProps.find(({ to }) => to === '/ukoly')).toMatchObject({ search: { resourceId: taskId } });
+  expect(new Set(resourceLinkCalls().map(({ params }) => params?.['resourceType']))).toEqual(new Set(['stock-item']));
+  // Group names replace technical type keys.
+  expect(screen.queryByText('finance.billing.invoice')).toBeNull();
+  expect(screen.queryByText('work.tasks.task')).toBeNull();
 });
 
 test('an empty result set exposes no resource affordance', () => {

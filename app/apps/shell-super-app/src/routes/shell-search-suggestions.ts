@@ -1,26 +1,32 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Effect, Schema } from 'effect';
+import { Effect } from 'effect';
 import { useRef, useState } from 'react';
 
 import type { ShellSearchResult } from '../../shared/api.ts';
 import { searchResources } from '../api/auth-client.ts';
 import type { ShellSearchClientError } from '../api/auth-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { shellSearchGroupOf, shellSearchGroupOrder, shellSearchLinkTarget } from './shell-search-resource-types.ts';
+import type { ShellSearchGroupKey, ShellSearchLinkTarget } from './shell-search-resource-types.ts';
 
-export const ShellSearchSuggestionGroupKeySchema = Schema.Literals(['counterparty', 'party', 'resource']);
-export type ShellSearchSuggestionGroupKey = typeof ShellSearchSuggestionGroupKeySchema.Type;
 type PartyRole = Extract<ShellSearchResult, { readonly kind: 'counterparty' }>['currentRoles'][number];
 
 export interface ShellSearchSuggestion {
   readonly archived: boolean;
   readonly key: string;
-  readonly ref: ShellSearchResult['ref'];
   readonly roles: readonly PartyRole[];
+  /** Where the hit opens: its owner's record page, else the Shell record page. */
+  readonly target: ShellSearchLinkTarget;
   readonly title: string;
 }
 
+export interface ShellSearchResultGroup<Item> {
+  readonly items: readonly Item[];
+  readonly key: ShellSearchGroupKey;
+}
+
 export interface ShellSearchSuggestionGroup {
-  readonly key: ShellSearchSuggestionGroupKey;
+  readonly key: ShellSearchGroupKey;
   readonly suggestions: readonly ShellSearchSuggestion[];
   /** All matches of the group; the typeahead shows the first few. */
   readonly total: number;
@@ -40,7 +46,6 @@ export type ShellSearchSuggestionsState =
 /** Shorter queries match too much to be useful while typing; Enter still searches them on the results page. */
 export const SUGGESTION_MINIMUM_QUERY_LENGTH = 2;
 const SUGGESTIONS_PER_GROUP = 5;
-const groupOrder = ShellSearchSuggestionGroupKeySchema.literals;
 
 const resultKey = ({ moduleId, resourceId, resourceType }: ShellSearchResult['ref']) =>
   `${moduleId}:${resourceType}:${resourceId}`;
@@ -50,41 +55,50 @@ const toSuggestion = (result: ShellSearchResult): ShellSearchSuggestion => {
     return {
       archived: result.party.archived,
       key: resultKey(result.ref),
-      ref: result.ref,
       roles: result.currentRoles,
+      target: shellSearchLinkTarget(result.ref, result.title),
       title: result.title,
     };
   }
   return {
     archived: result.kind === 'party' && result.archived,
     key: resultKey(result.ref),
-    ref: result.ref,
     roles: [],
+    target: shellSearchLinkTarget(result.ref, result.title),
     title: result.title,
   };
 };
 
 /**
- * Groups results by kind in a fixed order. A Party already shown through its customer or supplier relationship in the
- * selected company is not repeated as a contact.
+ * Groups results by what they are (the owner's resource type) in a fixed group order, keeping the search's own order
+ * inside each group. A Party already shown through its customer or supplier relationship in the selected company is
+ * not repeated as a contact.
  */
 export const groupShellSearchResults = (
   results: readonly ShellSearchResult[],
-  perGroup = SUGGESTIONS_PER_GROUP,
-): readonly ShellSearchSuggestionGroup[] => {
+): readonly ShellSearchResultGroup<ShellSearchResult>[] => {
   const partiesWithRelationship = new Set(
     results.flatMap((result) => (result.kind === 'counterparty' ? [resultKey(result.party.ref)] : [])),
   );
   const visible = results.filter(
     (result) => result.kind !== 'party' || !partiesWithRelationship.has(resultKey(result.ref)),
   );
-  return groupOrder.flatMap((key) => {
-    const members = visible.filter((result) => result.kind === key);
-    return members.length === 0
-      ? []
-      : [{ key, suggestions: members.slice(0, perGroup).map(toSuggestion), total: members.length }];
+  return shellSearchGroupOrder.flatMap((key) => {
+    const items = visible.filter((result) => shellSearchGroupOf(result) === key);
+    return items.length === 0 ? [] : [{ items, key }];
   });
 };
+
+/** The typeahead's groups: the first few hits of each. */
+export const groupShellSearchSuggestions = (
+  results: readonly ShellSearchResult[],
+  perGroup = SUGGESTIONS_PER_GROUP,
+): readonly ShellSearchSuggestionGroup[] =>
+  groupShellSearchResults(results).map(({ items, key }) => ({
+    key,
+    suggestions: items.slice(0, perGroup).map(toSuggestion),
+    total: items.length,
+  }));
 
 /**
  * Typeahead for the top-bar search. Each change cancels the previous request; the request leaves only after a short
@@ -116,7 +130,7 @@ export const useShellSearchSuggestions = (compositionRevision: string | undefine
         Effect.match({
           onFailure: (error): ShellSearchSuggestionsState => ({ failure: error, query, status: 'unavailable' }),
           onSuccess: (response): ShellSearchSuggestionsState => ({
-            groups: groupShellSearchResults(response.results),
+            groups: groupShellSearchSuggestions(response.results),
             partial: response.partial,
             query,
             status: 'ready',

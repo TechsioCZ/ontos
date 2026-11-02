@@ -14,6 +14,7 @@ import type { ShellNavigationItem } from '../../../../../../../shared/api.ts';
 import { searchHitTitleOf } from '../../../../../search-hit-state.ts';
 import { ShellContentLayout } from '../../../../../shell-content-layout.tsx';
 import { buildShellNavigation, ShellRouteLink } from '../../../../../shell-frame.tsx';
+import { ownerRecordTarget } from '../../../../../shell-search-resource-types.ts';
 import { ShellStatusPanel, shellStatusTitleKey } from '../../../../../shell-status-panel.tsx';
 import { SignInRedirect } from '../../../../../sign-in-redirect.tsx';
 import { useShellControls } from '../../../../../use-shell-controls.ts';
@@ -150,7 +151,9 @@ const ResourcePage = () => {
   const model = useLoaderData({
     from: '/$lang/resources/$moduleId/$resourceType/$resourceId',
   });
-  const { moduleId } = useParams({ from: '/$lang/resources/$moduleId/$resourceType/$resourceId' });
+  const { moduleId, resourceId, resourceType } = useParams({
+    from: '/$lang/resources/$moduleId/$resourceType/$resourceId',
+  });
   const [mediaState, setMediaState] = useState<MediaState>('idle');
   const [attachmentReloadRequired, setAttachmentReloadRequired] = useState(false);
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
@@ -211,11 +214,17 @@ const ResourcePage = () => {
     searchHitTitle !== undefined && (model.state === 'not_found' || model.state === 'unavailable')
       ? searchHitTitle
       : null;
+  const ownerRecord = foundElsewhere === null ? undefined : ownerRecordTarget({ moduleId, resourceId, resourceType });
   const closedContent =
     foundElsewhere !== null ? (
       // The page title already names the record; only the way to its details is missing here.
       <>
         <StatusText status="default">{t('shell.resource.found_in_agenda')}</StatusText>
+        {ownerRecord === undefined ? null : (
+          <LinkButton as={ShellRouteLink} className="justify-self-start" variant="primary" {...ownerRecord}>
+            {t('shell.resource.open_record')}
+          </LinkButton>
+        )}
         <OwningAgendaLinks moduleId={moduleId} navigation={model.shell.navigation.items} />
       </>
     ) : (

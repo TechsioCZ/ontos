@@ -302,6 +302,25 @@
       "groups": {
         "counterparty": "Customers and suppliers",
         "party": "Contacts",
+        "person": "People",
+        "crmClient": "Clients",
+        "crmContact": "Contact people",
+        "opportunity": "Opportunities",
+        "product": "Products",
+        "sku": "Variants (SKU)",
+        "order": "Orders",
+        "task": "Tasks",
+        "invoice": "Invoices",
+        "financeDocument": "Finance documents",
+        "contract": "Contracts",
+        "legalDocument": "Legal documents",
+        "property": "Properties",
+        "unit": "Units",
+        "lease": "Leases",
+        "asset": "Assets",
+        "device": "Devices and meters",
+        "facilityDocument": "Operations documents",
+        "market": "Markets",
         "resource": "Other records"
       },
       "suggestions": {
@@ -314,12 +333,10 @@
       "agenda_hint": "Search is unavailable right now. Try again shortly, or open an agenda and search there.",
       "alias_match": "Alias match",
       "archived": "Archived",
-      "counterparty": "Counterparty",
       "empty": "No authorized results found.",
       "label": "Search",
       "legal_entity": "Legal Entity",
       "partial": "Some search providers are temporarily unavailable. The available results are shown.",
-      "party": "Party",
       "reconciliation_required": "Reconciliation required",
       "roles": {
         "CUSTOMER": "Customer",
@@ -330,7 +347,7 @@
       "title": "Search results",
       "unavailable": "Search is temporarily unavailable. Try again.",
       "clear": "Clear search",
-      "placeholder": "Search customers and suppliers…"
+      "placeholder": "Search clients, tasks, invoices, contracts…"
     },
     "resource": {
       "found_in_agenda": "This record’s details are in the agenda it belongs to.",
@@ -357,7 +374,8 @@
         "title": "Timeline"
       },
       "title": "Resource",
-      "unavailable": "The resource is temporarily unavailable. Try again."
+      "unavailable": "The resource is temporarily unavailable. Try again.",
+      "open_record": "Open the record"
     },
     "remoteUnavailable": "Remote vertical unavailable",
     "remotes": {},

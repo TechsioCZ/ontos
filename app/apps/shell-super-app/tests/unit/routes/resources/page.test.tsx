@@ -31,6 +31,7 @@ const {
   browserRunPromiseMock,
   dashboardRenders,
   navigateMock,
+  routeParams,
   routerHistoryState,
   shellControlsMock,
   useLoaderDataMock,
@@ -41,6 +42,7 @@ const {
     browserRunPromiseMock: rstest.fn(),
     dashboardRenders: renders,
     navigateMock: rstest.fn(),
+    routeParams: { moduleId: 'billing.invoices', resourceId: '', resourceType: '' },
     routerHistoryState: { searchHitTitle: '' },
     shellControlsMock: rstest.fn(),
     useLoaderDataMock: rstest.fn(),
@@ -65,6 +67,7 @@ const translations = new Map(
     'shell.resource.media.unavailable': 'Media attachment is unavailable',
     'shell.resource.not_found': 'This resource does not exist',
     'shell.resource.open_in_agenda': 'Open in its agenda',
+    'shell.resource.open_record': 'Open the record',
     'shell.resource.selection_required': 'Select a legal entity first',
     'shell.resource.timeline.empty': 'No timeline entries yet',
     'shell.resource.timeline.lagging': 'The timeline is catching up',
@@ -85,7 +88,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   useLoaderData: useLoaderDataMock,
   useNavigate: () => navigateMock,
-  useParams: () => ({ moduleId: 'billing.invoices' }),
+  useParams: () => routeParams,
   useRouterState: ({
     select,
   }: {
@@ -376,6 +379,42 @@ it('names a record opened from search and points to its agenda instead of callin
     expect(screen.queryByText('This resource does not exist')).toBeNull();
   } finally {
     routerHistoryState.searchHitTitle = '';
+  }
+});
+
+it('opens a record found by search on its owner page when the owner has one', () => {
+  routerHistoryState.searchHitTitle = 'Faktura 2026/14';
+  Object.assign(routeParams, {
+    moduleId: 'finance.billing',
+    resourceId: '00000000-0000-4000-8000-000000000401',
+    resourceType: 'finance.billing.invoice',
+  });
+  try {
+    renderResourcePage({ shell: authenticatedShellFixture(), state: 'unavailable' });
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Faktura 2026/14' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open the record' }).getAttribute('href')).toBe('/finance');
+  } finally {
+    routerHistoryState.searchHitTitle = '';
+    Object.assign(routeParams, { moduleId: 'billing.invoices', resourceId: '', resourceType: '' });
+  }
+});
+
+it('offers no record link for a search hit whose owner has no record page', () => {
+  routerHistoryState.searchHitTitle = 'Serverovna';
+  Object.assign(routeParams, {
+    moduleId: 'demo.sales-pipeline',
+    resourceId: '00000000-0000-4000-8000-000000000402',
+    resourceType: 'demo.sales-pipeline.opportunity',
+  });
+  try {
+    renderResourcePage({ shell: authenticatedShellFixture(), state: 'not_found' });
+
+    expect(screen.getByText('Its details are in the agenda it belongs to.')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Open the record' })).toBeNull();
+  } finally {
+    routerHistoryState.searchHitTitle = '';
+    Object.assign(routeParams, { moduleId: 'billing.invoices', resourceId: '', resourceType: '' });
   }
 });
 

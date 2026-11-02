@@ -1,13 +1,15 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Icon } from '@techsio/ui-kit/atoms/icon';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Match } from 'effect';
 
 import type { ShellSearchResult } from '../../../../shared/api.ts';
-import { searchHitState } from '../../search-hit-state.ts';
 import { buildShellNavigation, ShellRouteLink } from '../../shell-frame.tsx';
+import { shellSearchGroupIcon, shellSearchLinkTarget } from '../../shell-search-resource-types.ts';
+import { groupShellSearchResults } from '../../shell-search-suggestions.ts';
 import { SignInRedirect } from '../../sign-in-redirect.tsx';
 import { ShellContentLayout } from '../../shell-content-layout.tsx';
 import { useShellControls } from '../../use-shell-controls.ts';
@@ -20,34 +22,12 @@ const SearchResultItem = ({ result }: { readonly result: ShellSearchResult }) =>
     Match.when({ kind: 'counterparty' }, (counterparty) => counterparty.party),
     Match.exhaustive,
   );
-  const resultKindLabel = (): string => {
-    if (result.kind === 'resource') {
-      return result.ref.resourceType;
-    }
-    return result.kind === 'party' ? t('shell.search.party') : t('shell.search.counterparty');
-  };
   return (
-    <li
-      className="shell:grid shell:gap-2"
-      key={`${result.ref.moduleId}:${result.ref.resourceType}:${result.ref.resourceId}`}
-    >
-      <LinkButton
-        as={ShellRouteLink}
-        params={{
-          moduleId: result.ref.moduleId,
-          resourceId: result.ref.resourceId,
-          resourceType: result.ref.resourceType,
-        }}
-        state={searchHitState(result.title)}
-        to="/resources/$moduleId/$resourceType/$resourceId"
-        variant="secondary"
-      >
+    <li className="shell:grid shell:gap-2">
+      <LinkButton as={ShellRouteLink} variant="secondary" {...shellSearchLinkTarget(result.ref, result.title)}>
         {result.title}
       </LinkButton>
-      <div className="shell:flex shell:flex-wrap shell:gap-2">
-        <Badge size="sm" variant="outline">
-          {resultKindLabel()}
-        </Badge>
+      <div className="shell:flex shell:flex-wrap shell:gap-2 shell:empty:hidden">
         {party?.archived === true ? (
           <Badge size="sm" variant="warning">
             {t('shell.search.archived')}
@@ -142,14 +122,25 @@ const SearchPage = () => {
         {ready.response.results.length === 0 ? (
           <StatusText status="default">{t('shell.search.empty')}</StatusText>
         ) : (
-          <ul className="shell:grid shell:gap-3">
-            {ready.response.results.map((result) => (
-              <SearchResultItem
-                key={`${result.ref.moduleId}:${result.ref.resourceType}:${result.ref.resourceId}`}
-                result={result}
-              />
-            ))}
-          </ul>
+          groupShellSearchResults(ready.response.results).map((group) => (
+            <section aria-labelledby={`search-group-${group.key}`} className="shell:grid shell:gap-3" key={group.key}>
+              <h3
+                className="shell:flex shell:items-center shell:gap-2 shell:text-title-md"
+                id={`search-group-${group.key}`}
+              >
+                <Icon aria-hidden icon={shellSearchGroupIcon[group.key]} size="sm" />
+                {t(`shell.search.groups.${group.key}`)}
+              </h3>
+              <ul className="shell:grid shell:gap-3">
+                {group.items.map((result) => (
+                  <SearchResultItem
+                    key={`${result.ref.moduleId}:${result.ref.resourceType}:${result.ref.resourceId}`}
+                    result={result}
+                  />
+                ))}
+              </ul>
+            </section>
+          ))
         )}
       </section>
     )),
