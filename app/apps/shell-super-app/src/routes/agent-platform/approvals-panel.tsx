@@ -102,25 +102,19 @@ const ChangeDiff = ({ item }: { readonly item: AgentQueueItem }) => (
   <table aria-label={`Porovnání: ${item.summary}`} className="ai-review-diff block w-full">
     <thead className="block">
       <tr className="ai-review-diff-head">
-        <th className="px-75 py-50 text-left" scope="col">
-          Údaj
-        </th>
-        <th className="px-75 py-50 text-left" scope="col">
-          Před změnou
-        </th>
-        <th className="px-75 py-50 text-left" scope="col">
-          Po schválení
-        </th>
+        <th scope="col">Údaj</th>
+        <th scope="col">Před změnou</th>
+        <th scope="col">Po schválení</th>
       </tr>
     </thead>
     <tbody className="block">
       {item.diff.map((line) => (
         <tr className="ai-review-diff-row" key={line.field}>
-          <th className="px-75 py-50 text-left font-medium" scope="row">
+          <th className="font-medium" scope="row">
             {line.label}
           </th>
-          <td className="ai-review-before px-75 py-50">{line.before ?? '—'}</td>
-          <td className="ai-review-after px-75 py-50">{line.after ?? 'Vymazáno'}</td>
+          <td className="ai-review-before">{line.before ?? '—'}</td>
+          <td className="ai-review-after">{line.after ?? 'Vymazáno'}</td>
         </tr>
       ))}
     </tbody>

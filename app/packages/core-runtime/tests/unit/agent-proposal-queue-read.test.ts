@@ -46,8 +46,9 @@ const scope = {
     tenantId,
   }),
   correlationId: 'original-proposal-queue-request',
+  traceId: 'original-proposal-queue-trace',
 };
-const transport = { correlationId: scope.correlationId };
+const transport = { correlationId: scope.correlationId, traceId: scope.traceId };
 const operationTime = DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-25T12:00:00.000Z'));
 
 const rawProposal = {
@@ -536,8 +537,15 @@ it.layer(
             Effect.provideService(ActionAuthority, authority()),
             Effect.provideService(AgentProposalQueueModuleReview, {
               review: (input) => {
-                expect(input.principal).toMatchObject(scope);
+                expect(
+                  Schema.decodeUnknownSync(TrustedPrincipalContextSchema, { onExcessProperty: 'error' })(
+                    input.principal,
+                  ),
+                ).toEqual(Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(scope));
+                expect(input.principal).not.toHaveProperty('correlationId');
+                expect(input.principal).not.toHaveProperty('traceId');
                 expect(input.transport.correlationId).toBe(transport.correlationId);
+                expect(input.transport.traceId).toBe(transport.traceId);
                 expect(input.compositionRevision).toBe(composition.revision);
                 expect(input.path).toBe('/reads/agent-review');
                 expect(input.subjects).toEqual([

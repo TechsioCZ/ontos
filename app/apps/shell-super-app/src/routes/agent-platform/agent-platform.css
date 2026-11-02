@@ -101,12 +101,18 @@
   font-weight: 500;
   font-size: 0.75rem;
   background: var(--color-bg-secondary, #f1f5f9);
-  color: #334155;
+  color: var(--color-fg-secondary, #334155);
 }
-.ai-review-diff-head > span,
-.ai-review-diff-row > span {
+/* Semantic table cells laid out on the row grid; padding lives here, not in spacing utilities. */
+.ai-review-diff-head > :is(th, td),
+.ai-review-diff-row > :is(th, td) {
+  min-width: 0;
   padding: 0.65rem 0.75rem;
+  text-align: start;
   overflow-wrap: anywhere;
+}
+.ai-review-diff-row > th {
+  color: var(--color-fg-primary);
 }
 .ai-review-diff-row {
   border-top: 1px solid color-mix(in oklab, var(--color-border-primary) 60%, transparent);
@@ -170,8 +176,8 @@
     grid-template-columns: minmax(4.5rem, 0.75fr) minmax(0, 1fr) minmax(0, 1fr);
     font-size: 0.75rem;
   }
-  .ai-review-diff-head > span,
-  .ai-review-diff-row > span {
+  .ai-review-diff-head > :is(th, td),
+  .ai-review-diff-row > :is(th, td) {
     padding: 0.5rem 0.4rem;
   }
   .ai-review-instruction {

@@ -11,6 +11,7 @@ import { ContextAccess } from '../permissions/context-access.ts';
 import type { ReadPrepareContext, ReadLoadContext, ReadFinishContext } from '../reads/context.ts';
 import { defineRead } from '../reads/definition.ts';
 import { proposalLifecycleAdministrator } from './agent-proposal-command-preparation.ts';
+import { decodeTrustedPrincipalContext } from './system-principal-context-provenance.ts';
 import {
   AGENT_PROPOSAL_COMMAND_RECOVERY_MODE,
   AgentProposalQueueInputSchema,
@@ -145,6 +146,9 @@ const moduleVisibility = Effect.fn('AgentProposalQueueRead.moduleVisibility')(fu
     return rows.map((row) => row.proposalId);
   }
   const reviewer = yield* AgentProposalQueueModuleReview;
+  // Operational transport is not part of the strict gateway principal contract.
+  // Decode the admitted identity while retaining its verified provenance.
+  const principal = yield* decodeTrustedPrincipalContext(context.scope).pipe(Effect.mapError(unavailable));
   const chunks = Array.from({ length: Math.ceil(rows.length / 300) }, (_, index) =>
     rows.slice(index * 300, (index + 1) * 300),
   );
@@ -156,7 +160,7 @@ const moduleVisibility = Effect.fn('AgentProposalQueueRead.moduleVisibility')(fu
           appId: action.appId,
           compositionRevision: context.prepared.revision,
           path: review.path,
-          principal: context.scope,
+          principal,
           subjects: chunk.map((row) => ({
             actionSlug: row.actionSlug,
             command: row.command,
