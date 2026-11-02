@@ -483,9 +483,11 @@ export const ProductDetailView = ({
   const [movementDraft, setMovementDraft] = useState(EMPTY_MOVEMENT_DRAFT);
   const [tab, setTab] = useState('detail');
   // The revision the next save must expect: the one the page passed, then the one each save returns.
+  // The page's snapshot is the authority after a reload; a save moves it to the revision the server answered with,
+  // and a conflict is healed by reloading the product, so the next save never builds on a revision nobody has.
   const revisionRef = useRef(revision);
   useEffect(() => {
-    revisionRef.current = Math.max(revisionRef.current, revision);
+    revisionRef.current = revision;
   }, [revision]);
   // Every change of the product fields saves itself, debounced; the page re-reads the product after each save.
   const autosave = useAutosave<DetailDraft, never>({
