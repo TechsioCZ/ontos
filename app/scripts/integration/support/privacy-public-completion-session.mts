@@ -63,6 +63,7 @@ import { HttpServer, HttpServerResponse } from 'effect/http';
 import { Socket } from 'effect/socket';
 import { sql, eq, and } from 'drizzle-orm';
 import { CoreDatabase } from '../../../packages/core-runtime/src/db/client.ts';
+import { deriveModuleIntrinsicRequirements } from '../../../packages/core-runtime/src/modules/module-dependency-contracts.ts';
 import {
   applicationCompositionAuthority,
   applicationCompositionDurableWork,
@@ -789,6 +790,7 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
         const hash = digest(document);
         return {
           ...value,
+          ...deriveModuleIntrinsicRequirements(contract.manifest.requirements),
           backend: { baseUrl: `https://${marker.appId}.fixture.example.test/`, transport: 'node-http' as const },
           contract: { ...value.contract, sha256: hash },
           contractDocument: document,
