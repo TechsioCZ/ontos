@@ -4,6 +4,7 @@ import { useState } from "react";
 import StoreLink from "@/components/store-link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
+import { useDictionary } from "@/ontos/market-context";
 
 const isDOMException = (value: unknown): value is DOMException =>
   value !== null && value !== undefined && DOMException.prototype.isPrototypeOf(value);
@@ -14,6 +15,7 @@ interface ProductDetailActionsProps {
 }
 
 export function ProductFavoriteButton({ productId, productName }: ProductDetailActionsProps) {
+  const cs = useDictionary();
   const storageKey = `akros-favorite-${productId}`;
   const [isFavorite, setIsFavorite] = useState(false);
 
@@ -26,7 +28,7 @@ export function ProductFavoriteButton({ productId, productName }: ProductDetailA
   return (
     <Button
       aria-label={
-        isFavorite ? `Odebrat ${productName} z oblíbených` : `Přidat ${productName} k oblíbeným`
+        isFavorite ? cs.product.removeFavorite(productName) : cs.product.addFavorite(productName)
       }
       aria-pressed={isFavorite}
       className="akros-product-detail__favorite"
@@ -41,6 +43,7 @@ export function ProductFavoriteButton({ productId, productName }: ProductDetailA
 }
 
 export function ProductDetailActions({ productId, productName }: ProductDetailActionsProps) {
+  const cs = useDictionary();
   const shareProduct = async () => {
     const shareData = { title: productName, url: window.location.href };
     if (navigator.share) {
@@ -60,7 +63,7 @@ export function ProductDetailActions({ productId, productName }: ProductDetailAc
   return (
     <div
       className="akros-product-actions -mt-(--akros-product-actions-offset) flex flex-wrap gap-x-(--akros-product-actions-column-gap) gap-y-(--dimension-8) pt-(--dimension-4) [&>*]:min-h-(--akros-product-actions-min-height)"
-      aria-label="Další akce produktu"
+      aria-label={cs.product.otherActions}
     >
       <LinkButton
         as={StoreLink}
@@ -72,7 +75,7 @@ export function ProductDetailActions({ productId, productName }: ProductDetailAc
         theme="borderless"
         variant="secondary"
       >
-        Dotaz na produkt
+        {cs.product.askQuestion}
       </LinkButton>
       <Button
         className="akros-product-actions__email hover:underline focus-visible:underline"
@@ -83,7 +86,7 @@ export function ProductDetailActions({ productId, productName }: ProductDetailAc
         theme="borderless"
         variant="secondary"
       >
-        Poslat kamarádovi
+        {cs.product.sendToFriend}
       </Button>
     </div>
   );

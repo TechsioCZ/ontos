@@ -32,9 +32,12 @@ const getProductDetail = async (slug: string) =>
 
 export async function generateMetadata({ params }: ProductPageProps): Promise<Metadata> {
   const { slug } = await params;
-  const product = (await getProductDetail(slug)).getProductBySlug(slug);
+  const [product, cs] = await Promise.all([
+    getProductDetail(slug).then((catalog) => catalog.getProductBySlug(slug)),
+    getDictionary(),
+  ]);
 
-  return { title: product?.name ?? "Produkt" };
+  return { title: product?.name ?? cs.product.title };
 }
 
 export default async function ProductPage({ params, searchParams }: ProductPageProps) {
@@ -70,9 +73,11 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
   const unknownVariantCount = detail.variants.filter(
     (variant) => variant.availabilityUnknown,
   ).length;
+  const number = (value: number, maximumFractionDigits = 0) =>
+    value.toLocaleString(money.locale, { maximumFractionDigits });
   const priceUnavailableReason =
     purchaseItem.priceUnavailableReason ??
-    (purchaseItem.priceMinor > 0 ? undefined : "OntOS pro tuto položku nevrátil platnou cenu.");
+    (purchaseItem.priceMinor > 0 ? undefined : cs.product.noValidPrice);
   const variantSearch = Array.isArray(requestedVariantSearch)
     ? requestedVariantSearch[0]
     : requestedVariantSearch;
@@ -108,12 +113,12 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
     .slice(0, 3);
 
   const simpleStockLabel = purchaseItem.availabilityUnknown
-    ? "Dostupnost nyní nelze ověřit"
+    ? cs.product.availabilityNowUnknown
     : purchaseItem.stockCount >= purchaseItem.minimumQuantity
-      ? `Skladem ${purchaseItem.stockCount.toLocaleString("cs-CZ")} ${purchaseItem.unit}`
+      ? cs.product.inStockCount(purchaseItem.stockCount, purchaseItem.unit)
       : purchaseItem.stockCount > 0
-        ? `Omezené množství: ${purchaseItem.stockCount.toLocaleString("cs-CZ")} ${purchaseItem.unit}`
-        : "Není skladem";
+        ? cs.product.limitedStockCount(purchaseItem.stockCount, purchaseItem.unit)
+        : cs.product.outOfStock;
   const stockState = purchaseItem.availabilityUnknown
     ? "limited"
     : purchaseItem.stockCount >= purchaseItem.minimumQuantity
@@ -152,7 +157,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
               <div className="akros-product-detail__thumbnails">
                 {product.additionalImageSrcs.map((src, index) => (
                   <Image
-                    alt={`${product.name} – obrázek ${index + 2}`}
+                    alt={`${product.name} – ${cs.product.imageNumber(index + 2)}`}
                     className="akros-product-detail__image akros-product-detail__image--thumbnail"
                     height={244}
                     key={src}
@@ -167,7 +172,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
               product.secondaryImageSrc && (
                 <div className="akros-product-detail__thumbnails">
                   <Image
-                    alt={`Technický nákres: ${product.name}`}
+                    alt={cs.product.technicalDrawing(product.name)}
                     className="akros-product-detail__image akros-product-detail__image--thumbnail"
                     height={244}
                     loading="lazy"
@@ -189,7 +194,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                   size="md"
                   variant="secondary"
                 >
-                  Více variant
+                  {cs.product.moreVariants}
                 </Badge>
               )}
               {singleVariant && (
@@ -198,7 +203,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                   size="md"
                   variant="secondary"
                 >
-                  Jedna varianta
+                  {cs.product.oneVariant}
                 </Badge>
               )}
             </header>
@@ -210,44 +215,40 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
             <dl className="akros-product-detail__facts">
               {packageQuantity > purchaseItem.minimumQuantity && (
                 <div>
-                  <dt>Počet v balení</dt>
+                  <dt>{cs.product.packageQuantity}</dt>
                   <dd>
-                    {packageQuantity.toLocaleString("cs-CZ")} {purchaseItem.unit}
+                    {number(packageQuantity)} {purchaseItem.unit}
                   </dd>
                 </div>
               )}
               <div>
-                <dt>Kód produktu</dt>
+                <dt>{cs.product.sku}</dt>
                 <dd>{purchaseItem.sku}</dd>
               </div>
               {product.netWeight && (
                 <div>
-                  <dt>Váha</dt>
-                  <dd>
-                    {product.netWeight.toLocaleString("cs-CZ", {
-                      maximumFractionDigits: 6,
-                    })}
-                  </dd>
+                  <dt>{cs.product.netWeight}</dt>
+                  <dd>{number(product.netWeight, 6)}</dd>
                 </div>
               )}
               <div>
-                <dt>Měrná jednotka</dt>
+                <dt>{cs.product.measurementUnit}</dt>
                 <dd>{purchaseItem.unit}</dd>
               </div>
               {purchaseItem.minimumQuantity > 1 && (
                 <div>
-                  <dt>Minimální odběr</dt>
+                  <dt>{cs.product.minimumOrder}</dt>
                   <dd>
                     {hasMultipleVariants && product.quantityStep
-                      ? "Dle zvolené varianty – pouze celá balení"
-                      : `${purchaseItem.minimumQuantity.toLocaleString("cs-CZ")} ${purchaseItem.unit}`}
+                      ? cs.product.minimumOrderByVariant
+                      : `${number(purchaseItem.minimumQuantity)} ${purchaseItem.unit}`}
                   </dd>
                 </div>
               )}
               {hasMultipleVariants && (
                 <div>
-                  <dt>Počet variant</dt>
-                  <dd>{detail.variants.length.toLocaleString("cs-CZ")}</dd>
+                  <dt>{cs.product.variantCount}</dt>
+                  <dd>{number(detail.variants.length)}</dd>
                 </div>
               )}
             </dl>
@@ -257,10 +258,10 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                 className={`akros-product-detail__stock${availableVariantCount > 0 ? "" : " akros-product-detail__stock--unavailable"}`}
               >
                 {availableVariantCount > 0
-                  ? `Skladem ${availableVariantCount.toLocaleString("cs-CZ")} z ${detail.variants.length.toLocaleString("cs-CZ")} variant`
+                  ? cs.product.variantsInStock(availableVariantCount, detail.variants.length)
                   : unknownVariantCount > 0
-                    ? "Dostupnost variant nyní nelze ověřit"
-                    : "Momentálně není skladem žádná varianta"}
+                    ? cs.product.variantsUnknown
+                    : cs.product.variantsOutOfStock}
               </p>
             ) : (
               <>
@@ -276,7 +277,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                       {purchasePriceTiers.map((tier) => (
                         <div key={tier.minimumQuantity}>
                           <dt>
-                            od {tier.minimumQuantity.toLocaleString("cs-CZ")} {purchaseItem.unit}
+                            {cs.product.from} {number(tier.minimumQuantity)} {purchaseItem.unit}
                           </dt>
                           <dd>{formatPrice(tier.priceMinor, money)}</dd>
                         </div>
@@ -287,33 +288,32 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                   {priceUnavailableReason ? (
                     <div className="akros-product-detail__price-unavailable" role="note">
                       <p className="akros-product-detail__price-row akros-product-detail__price-row--total">
-                        <span>Cena</span>
-                        <strong>Cena není dostupná</strong>
+                        <span>{cs.product.price}</span>
+                        <strong>{cs.product.priceUnavailable}</strong>
                       </p>
                       <p className="akros-product-detail__price-reason">
-                        {priceUnavailableReason} Koupit ji proto nyní nelze.
+                        {priceUnavailableReason} {cs.product.cannotBuyNow}
                       </p>
                     </div>
                   ) : (
                     <>
                       {basePriceTier && (
                         <p className="akros-product-detail__price-row">
-                          <span>Cena bez DPH</span>
+                          <span>{cs.product.priceExcludingVat}</span>
                           <strong>
                             {formatPrice(basePriceTier.priceExcludingVatMinor, money)}
                           </strong>
                         </p>
                       )}
                       <p className="akros-product-detail__price-row akros-product-detail__price-row--total">
-                        <span>Cena s DPH</span>
+                        <span>{cs.product.priceIncludingVat}</span>
                         <strong>{formatPrice(purchaseItem.priceMinor, money)}</strong>
                       </p>
                     </>
                   )}
                   {purchaseItem.availabilityUnknown && !priceUnavailableReason && (
                     <p className="akros-product-detail__price-reason" role="note">
-                      OntOS nyní nemůže potvrdit skladovou dostupnost, proto položku nelze vložit do
-                      košíku.
+                      {cs.product.availabilityCannotConfirm}
                     </p>
                   )}
 
@@ -352,7 +352,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
         )}
 
         {hasMultipleVariants && (
-          <section id="product-variants" aria-label="Varianty produktu">
+          <section id="product-variants" aria-label={cs.product.variantsTitle}>
             <ProductPurchaseForm
               initialVariantSearch={initialVariantSearch}
               product={purchaseProduct}
