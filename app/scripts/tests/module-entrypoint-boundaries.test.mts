@@ -4983,6 +4983,29 @@ for (const [name, source, allowed] of [
   );
 }
 
+for (const [name, imported, allowed] of [
+  ['public selected problem schema', 'PartyCommandNotFoundProblemSchema', true],
+  [PRIVATE_COLOCATED_CALLABLE_CASE, 'privatePartyApiCallable', false],
+] as const) {
+  it.live(`checks actual Party public API ${name}`, () =>
+    Effect.gen(function* actualPartyPublicApiPublication() {
+      const root = yield* makeActualPartyClientFixture();
+      const apiFile = `${PARTY_VERTICAL_PATH}/shared/api.ts`;
+      const source = yield* Effect.promise(() => readFile(path.join(root, apiFile), 'utf-8'));
+      yield* write(root, apiFile, `${source}\nexport const privatePartyApiCallable = () => globalThis;\n`);
+      const consumer = 'apps/shell-super-app/src/party-api-consumer.ts';
+      yield* write(root, consumer, `import { ${imported} } from '@app/party-registry/api';\n`);
+      const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+      const diagnostic = Exit.isFailure(result) ? Cause.pretty(result.cause) : name;
+      if (Exit.isFailure(result)) {
+        expect(diagnostic).toContain(consumer);
+        expect(diagnostic).toContain(apiFile);
+      }
+      expect(Exit.isSuccess(result), diagnostic).toBe(allowed);
+    }),
+  );
+}
+
 it.live('checks actual Party typed client foreign API contamination', () =>
   Effect.gen(function* foreignApiInPartyDelegate() {
     const root = yield* makeActualPartyClientFixture();

@@ -1075,7 +1075,11 @@ const nativeContractLeaf = (value: GraphValue): boolean =>
   nativeContractProviders.has(value.specifier) &&
   (value.specifier === EFFECT_SCHEMA_PROVIDER ||
     value.specifier === 'effect/SchemaGetter' ||
-    ['Schema', 'SchemaGetter', 'HttpApi', 'HttpApiEndpoint', 'HttpApiGroup'].includes(value.name));
+    ['Schema', 'SchemaGetter', 'HttpApi', 'HttpApiEndpoint', 'HttpApiGroup'].includes(value.name) ||
+    ((value.specifier === EFFECT_CLIENT_PROVIDER || value.specifier === 'effect/http-api') &&
+      value.name === 'HttpApiMiddleware' &&
+      value.members.length === 1 &&
+      value.members[0] === 'Service'));
 
 // The native graph deliberately represents results of opaque Schema/HttpApi
 // constructors as unresolved calls. Prove their actual callees, not their names.
@@ -1105,11 +1109,11 @@ const hasOnlyNativeContractLeaves = (
     return cached;
   }
   visited.add(expression);
-  const result = state.graph.reachable(module, expression).every((value) => {
+  const result = state.graph.evaluate(module, expression).every((value) => {
     if (nativeContractLeaf(value) || isProblemDetailsFactory(value)) {
       return true;
     }
-    if (value.kind !== 'unresolved') {
+    if (value.kind !== 'unresolved' && value.kind !== 'node') {
       return false;
     }
     const { node } = value;
@@ -1132,7 +1136,7 @@ const hasOnlyNativeContractLeaves = (
       return false;
     }
     const receiver = node.type === 'CallExpression' ? node.callee : node.object;
-    const values = state.graph.reachable(value.module, receiver);
+    const values = state.graph.evaluate(value.module, receiver);
     return values.length > 0 && hasOnlyNativeContractLeaves(state, value.module, receiver, new Set(visited), completed);
   });
   nodeProofs.set(remainingDepth, result);
@@ -1993,14 +1997,7 @@ const hasSelectedContractConstructor = (
     ? state.graph.resolve(ownerModule, `${toPascalCase(selection.name)}Api`, 'local')
     : undefined;
   const selectedApi = apiBinding?.kind === 'declaration' && apiBinding.expression === binding.expression;
-  const constructorBinding = state.graph.resolveReference(binding.module, binding.expression.callee);
-  const problemSchema =
-    constructorBinding?.kind === 'declaration' &&
-    isProblemDetailsFactory({
-      kind: 'node',
-      module: constructorBinding.module,
-      node: constructorBinding.expression,
-    });
+  const problemSchema = state.graph.evaluate(binding.module, binding.expression.callee).some(isProblemDetailsFactory);
   const canonicalSchema = hasCanonicalSchemaConstructor(state, binding.module, binding.expression);
   return (
     (selectedApi || problemSchema || canonicalSchema) &&
@@ -2073,13 +2070,20 @@ const hasNativeGeneratedOwnerApi = (
   name: string,
   source: string,
   appId: string | undefined,
-): boolean =>
-  exportKey === `./api/${name}` &&
-  target === `${owner}/shared/apis/${name}.ts` &&
-  hasGeneratedSourceHeader(source, MODULE_API_GENERATOR_HEADER) &&
-  hasGeneratedModuleApiContract(source, `${toPascalCase(name)}Api`, toCamelCase(name), name) &&
-  appId !== undefined &&
-  hasCachedCompleteModuleApiSeam(state, `${owner}/shared/api.ts`, appId);
+): boolean => {
+  const aggregate =
+    exportKey === './api' && target === `${owner}/shared/api.ts` && governedApiBinding(source) !== undefined;
+  const generatedLeaf =
+    exportKey === `./api/${name}` &&
+    target === `${owner}/shared/apis/${name}.ts` &&
+    hasGeneratedSourceHeader(source, MODULE_API_GENERATOR_HEADER) &&
+    hasGeneratedModuleApiContract(source, `${toPascalCase(name)}Api`, toCamelCase(name), name);
+  return (
+    (aggregate || generatedLeaf) &&
+    appId !== undefined &&
+    hasCachedCompleteModuleApiSeam(state, `${owner}/shared/api.ts`, appId)
+  );
+};
 
 const enrolledOwnerClientModules = (
   state: BoundaryCheckState,
