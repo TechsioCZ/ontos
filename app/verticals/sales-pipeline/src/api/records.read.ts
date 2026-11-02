@@ -49,7 +49,7 @@ const makeRecordsServices: ReadServiceFactory<Services, Effect.Services<ReturnTy
   transaction,
   scope,
 ) =>
-  persistenceService(transaction, scope).pipe(
+  persistenceService(transaction, { scope }).pipe(
     Effect.mapError((cause) =>
       Object.defineProperty(
         new OperationContextUnavailable({
