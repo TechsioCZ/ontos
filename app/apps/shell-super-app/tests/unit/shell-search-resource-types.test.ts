@@ -5,6 +5,7 @@ import { LegalEntityIdSchema, ModuleIdSchema, ResourceIdSchema, TenantIdSchema }
 import type { ShellSearchResult } from '../../shared/api.ts';
 import {
   ownerRecordTarget,
+  recordAgendaPaths,
   shellSearchGroupOf,
   shellSearchLinkTarget,
 } from '../../src/routes/shell-search-resource-types.ts';
@@ -41,6 +42,10 @@ const partyRef = {
 };
 
 const covered = [
+  ['core.identity', 'core.identity.person', 'person'],
+  ['demo.crm', 'demo.crm.contact', 'crmContact'],
+  ['demo.merchandise', 'demo.merchandise.order', 'order'],
+  ['finance.billing', 'finance.billing.document', 'financeDocument'],
   ['demo.crm', 'demo.crm.client', 'crmClient'],
   ['demo.sales-pipeline', 'demo.sales-pipeline.opportunity', 'opportunity'],
   ['demo.merchandise', 'demo.merchandise.product', 'product'],
@@ -85,6 +90,35 @@ test('records with an owner page open there, by path segment or query parameter'
     params: { id: market.ref.resourceId },
     to: '/prodej/eshopy/trhy/$id',
   });
+});
+
+test('a merchandise order opens the orders agenda with the order selected', () => {
+  const order = resourceHit('demo.merchandise', 'demo.merchandise.order', 'Objednávka Novák');
+  expect(shellSearchLinkTarget(order.ref, order.title)).toEqual({
+    search: { orderId: order.ref.resourceId },
+    to: '/prodej/objednavky',
+  });
+});
+
+test.each([
+  ['core.identity', 'core.identity.person', 'Jana Nováková', '/sprava/lide-a-role'],
+  ['demo.crm', 'demo.crm.contact', 'Petr Svoboda', '/crm/klienti'],
+  ['finance.billing', 'finance.billing.document', 'Dobropis 7', '/finance'],
+] as const)(
+  '%s %s without a record page opens the Shell record page and names only its agenda',
+  (moduleId, resourceType, title, agenda) => {
+    const hit = resourceHit(moduleId, resourceType, title);
+    expect(ownerRecordTarget(hit.ref)).toBeUndefined();
+    expect(shellSearchLinkTarget(hit.ref, hit.title)).toMatchObject({
+      to: '/resources/$moduleId/$resourceType/$resourceId',
+    });
+    expect(recordAgendaPaths(hit.ref)).toEqual([agenda]);
+  },
+);
+
+test('a type without named agendas, or a forged owner, falls back to the owning module agendas', () => {
+  expect(recordAgendaPaths(resourceHit('work.tasks', 'work.tasks.task', 'Úkol').ref)).toBeUndefined();
+  expect(recordAgendaPaths(resourceHit('demo.crm', 'core.identity.person', 'Podvržená osoba').ref)).toBeUndefined();
 });
 
 test('records without an owner page open the Shell record page carrying only the found title', () => {

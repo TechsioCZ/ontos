@@ -70,6 +70,11 @@ type RecordRoute =
   | { readonly kind: 'query'; readonly param: string; readonly to: string };
 
 interface ResourceTypePresentation {
+  /**
+   * Canonical paths of the agendas that list these records, for the Shell record page when there is no record page.
+   * Without it the page offers every agenda of the owning module.
+   */
+  readonly agendas?: readonly string[];
   readonly group: ShellSearchGroupKey;
   readonly moduleId: string;
   readonly record?: RecordRoute;
@@ -83,16 +88,25 @@ const portfolio = { moduleId: 'property.portfolio', record: query('/nemovitosti'
  * leave out `record` until the owner has a page that opens that record, so the hit opens the Shell record page.
  */
 const resourceTypes = new Map<string, ResourceTypePresentation>([
+  // A person of the company is a Core identity record; the Shell's own people administration lists them, and the
+  // Shell offers it only to people who may open it.
+  ['core.identity.person', { agendas: ['/sprava/lide-a-role'], group: 'person', moduleId: 'core.identity' }],
   ['party.registry.counterparty', { group: 'counterparty', moduleId: 'party.registry' }],
   ['party.registry.party', { group: 'party', moduleId: 'party.registry' }],
   ['demo.crm.client', { group: 'crmClient', moduleId: 'demo.crm', record: query('/crm/klienti', 'klient') }],
+  ['demo.crm.contact', { agendas: ['/crm/klienti'], group: 'crmContact', moduleId: 'demo.crm' }],
   ['demo.sales-pipeline.opportunity', { group: 'opportunity', moduleId: 'demo.sales-pipeline' }],
   [
     'demo.merchandise.product',
     { group: 'product', moduleId: 'demo.merchandise', record: { kind: 'path', to: '/provoz/produkty/$id' } },
   ],
+  [
+    'demo.merchandise.order',
+    { group: 'order', moduleId: 'demo.merchandise', record: query('/prodej/objednavky', 'orderId') },
+  ],
   ['work.tasks.task', { group: 'task', moduleId: 'work.tasks', record: query('/ukoly') }],
   ['finance.billing.invoice', { group: 'invoice', moduleId: 'finance.billing', record: query('/finance') }],
+  ['finance.billing.document', { agendas: ['/finance'], group: 'financeDocument', moduleId: 'finance.billing' }],
   ['legal.agreements.contract', { group: 'contract', moduleId: 'legal.agreements', record: query('/smlouvy') }],
   ['legal.agreements.document', { group: 'legalDocument', moduleId: 'legal.agreements' }],
   ['property.portfolio.property', { ...portfolio, group: 'property' }],
@@ -143,6 +157,9 @@ export type ShellSearchLinkTarget =
       readonly state: ReturnType<typeof searchHitState>;
       readonly to: '/resources/$moduleId/$resourceType/$resourceId';
     };
+
+/** Agendas listing this record when the type names them; otherwise the owning module's agendas apply. */
+export const recordAgendaPaths = (ref: SearchRef): readonly string[] | undefined => presentationOf(ref)?.agendas;
 
 /** The owner page that opens this record, when the owner has one. */
 export const ownerRecordTarget = (ref: SearchRef): ShellSearchLinkTarget | undefined => {

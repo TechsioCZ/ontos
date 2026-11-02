@@ -14,7 +14,7 @@ import type { ShellNavigationItem } from '../../../../../../../shared/api.ts';
 import { searchHitTitleOf } from '../../../../../search-hit-state.ts';
 import { ShellContentLayout } from '../../../../../shell-content-layout.tsx';
 import { buildShellNavigation, ShellRouteLink } from '../../../../../shell-frame.tsx';
-import { ownerRecordTarget } from '../../../../../shell-search-resource-types.ts';
+import { ownerRecordTarget, recordAgendaPaths } from '../../../../../shell-search-resource-types.ts';
 import { ShellStatusPanel, shellStatusTitleKey } from '../../../../../shell-status-panel.tsx';
 import { SignInRedirect } from '../../../../../sign-in-redirect.tsx';
 import { useShellControls } from '../../../../../use-shell-controls.ts';
@@ -99,19 +99,28 @@ const ResourceDetails = ({
   );
 };
 
-/** When the Shell cannot show a record itself, its owning module's own agendas stay one click away. */
+/**
+ * When the Shell cannot show a record itself, the agendas that list it stay one click away: the ones its type names
+ * (also Shell pages, e.g. people administration for a person), else every agenda of the owning module. Only
+ * destinations in the person's own navigation appear, so a link is shown only when it may be opened.
+ */
 const OwningAgendaLinks = ({
+  agendaPaths,
   moduleId,
   navigation,
 }: {
+  readonly agendaPaths: readonly string[] | undefined;
   readonly moduleId: string;
   readonly navigation: readonly ShellNavigationItem[];
 }) => {
   const { language, t } = useModernI18n();
+  const agendas = agendaPaths === undefined ? undefined : new Set(agendaPaths);
   const links = buildShellNavigation(
     {
       language: language ?? '',
-      navigation: navigation.filter((item) => item.moduleId === moduleId),
+      navigation: navigation.filter((item) =>
+        agendas === undefined ? item.moduleId === moduleId : agendas.has(item.href ?? ''),
+      ),
       unavailableDeployments: [],
     },
     t,
@@ -214,7 +223,9 @@ const ResourcePage = () => {
     searchHitTitle !== undefined && (model.state === 'not_found' || model.state === 'unavailable')
       ? searchHitTitle
       : null;
-  const ownerRecord = foundElsewhere === null ? undefined : ownerRecordTarget({ moduleId, resourceId, resourceType });
+  const recordRef = { moduleId, resourceId, resourceType };
+  const ownerRecord = foundElsewhere === null ? undefined : ownerRecordTarget(recordRef);
+  const agendaPaths = recordAgendaPaths(recordRef);
   const closedContent =
     foundElsewhere !== null ? (
       // The page title already names the record; only the way to its details is missing here.
@@ -225,14 +236,14 @@ const ResourcePage = () => {
             {t('shell.resource.open_record')}
           </LinkButton>
         )}
-        <OwningAgendaLinks moduleId={moduleId} navigation={model.shell.navigation.items} />
+        <OwningAgendaLinks agendaPaths={agendaPaths} moduleId={moduleId} navigation={model.shell.navigation.items} />
       </>
     ) : (
       // Distinct states: forbidden (lock), not found (search), temporarily unavailable (retry).
       <>
         <ShellStatusPanel messageKey={`shell.resource.${model.state}`} status={model.state} />
         {model.state === 'forbidden' ? null : (
-          <OwningAgendaLinks moduleId={moduleId} navigation={model.shell.navigation.items} />
+          <OwningAgendaLinks agendaPaths={agendaPaths} moduleId={moduleId} navigation={model.shell.navigation.items} />
         )}
       </>
     );

@@ -418,6 +418,52 @@ it('offers no record link for a search hit whose owner has no record page', () =
   }
 });
 
+const shellWithNavigation = (items: readonly ReturnType<typeof navigationItem>[]) => ({
+  ...authenticatedShellFixture(),
+  navigation: {
+    deniedAppIds: [],
+    items: Schema.decodeUnknownSync(Schema.Array(ShellNavigationItemSchema))(items),
+    moduleIds: [],
+    state: 'available' as const,
+    unavailableDeployments: [],
+  },
+});
+
+it('points a person found by search to people administration only when the person may open it', () => {
+  routerHistoryState.searchHitTitle = 'Jana Nováková';
+  Object.assign(routeParams, {
+    moduleId: 'core.identity',
+    resourceId: '00000000-0000-4000-8000-000000000201.00000000-0000-4000-8000-000000000001',
+    resourceType: 'core.identity.person',
+  });
+  try {
+    const { unmount } = renderResourcePage({
+      shell: shellWithNavigation([
+        navigationItem('shell-super-app', 'People and roles', '/sprava/lide-a-role'),
+        navigationItem('billing.invoices', 'Invoices', '/finance'),
+      ]),
+      state: 'not_found',
+    });
+    expect(screen.getByRole('heading', { level: 1, name: 'Jana Nováková' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Open the record' })).toBeNull();
+    const agendas = screen.getByRole('navigation', { name: 'Open in its agenda' });
+    expect([...agendas.querySelectorAll('a')].map((link) => link.getAttribute('href'))).toEqual([
+      '/sprava/lide-a-role',
+    ]);
+    unmount();
+
+    renderResourcePage({
+      shell: shellWithNavigation([navigationItem('billing.invoices', 'Invoices', '/finance')]),
+      state: 'not_found',
+    });
+    expect(screen.getByText('Its details are in the agenda it belongs to.')).toBeTruthy();
+    expect(screen.queryByRole('navigation', { name: 'Open in its agenda' })).toBeNull();
+  } finally {
+    routerHistoryState.searchHitTitle = '';
+    Object.assign(routeParams, { moduleId: 'billing.invoices', resourceId: '', resourceType: '' });
+  }
+});
+
 it('titles the dashboard from the resource and scopes it to the owning module', () => {
   renderResourcePage(readyModel());
 
