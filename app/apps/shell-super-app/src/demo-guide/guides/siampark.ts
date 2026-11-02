@@ -121,12 +121,21 @@ export const siamparkGuide: DemoGuide = {
       steps: [
         {
           click:
-            'Otevře se faktura FV-2026-0007: sekce Úhrady, pod ní Upomínky. Nic nového neúčtujte ani neodesílejte.',
-          id: 'siampark-castecna-uhrada',
+            'Otevře se faktura FV-2026-0007 za R101. Ukažte sekci Úhrady a vpravo Platební historii protistrany. Nic nezaznamenávejte.',
+          id: 'siampark-uhrazena-faktura',
           persona: finance,
-          say: 'Finance vidí doklad, evidovanou částečnou platbu i upomínky odeslané e-mailem. Platba je ruční evidence, ne napojení na banku.',
-          target: { kind: 'app', path: '/finance?resourceId=c9f16710-c669-43ca-91d6-8e9f0bd70a4b' },
-          title: 'Částečná úhrada a upomínky',
+          say: 'Úhrada je ručně potvrzený záznam s datem, částkou a poznámkou. OntOS ji nestahuje z banky. Kavárna U Parku má všechny čtyři potvrzené faktury uhrazené.',
+          target: { kind: 'app', path: '/finance?resourceId=42813e23-ffd4-414c-9344-168f7024afde' },
+          title: 'Uhrazená faktura',
+        },
+        {
+          click:
+            'Otevře se faktura FV-2026-0011 za R201 s hláškou Faktura je po splatnosti. Ukažte Úhrady s nulovou částkou, Platební historii protistrany a v sekci Upomínky tlačítko Připravit upomínku. Na tlačítko neklikejte.',
+          id: 'siampark-po-splatnosti',
+          persona: finance,
+          say: 'Ateliér Horák má dvě faktury po splatnosti a neuhrazeno 87 604 Kč. Upomínku k neuhrazené faktuře účetní připraví přímo tady. K této faktuře zatím žádná neodešla.',
+          target: { kind: 'app', path: '/finance?resourceId=3d2d16cf-21af-4fae-9c01-01911932b317' },
+          title: 'Faktura po splatnosti a upomínka',
         },
         {
           click: 'Záložka Historie, potom Odpisy.',
@@ -180,10 +189,10 @@ export const siamparkGuide: DemoGuide = {
         },
         {
           click:
-            'Provoz › Agenda: jen událost Prohlídka R101 se zájemcem, kterou mu Nájempark přidělil, a poznámka Agendu máte jen pro čtení. Bez tlačítka Nová událost; v Měřidlech jen odečty bez cen a bez úprav.',
+            'Provoz › Moje agenda: v kalendáři jsou jen termíny úkolů, které mu Nájempark přidělil, tedy Prohlídka volného bytu A102 se zájemcem a Připravit nabídku pronájmu skladu S01. Nahoře je poznámka Agendu máte jen pro čtení a chybí tlačítko Nová událost. V Měřidlech jsou jen odečty bez cen a bez úprav.',
           id: 'siampark-externista-provoz',
           persona: external,
-          say: 'Z provozu dostane jen to, co mu Nájempark přidělil. Události kolegů ani ceny energií neuvidí a nic nezmění – hlídá to server.',
+          say: 'Z provozu dostane jen to, co mu Nájempark přidělil. Termíny kolegů ani ceny energií neuvidí a nic nezmění. Hlídá to server.',
           target: { kind: 'app', path: '/provoz/agenda' },
           title: 'Provoz jen pro čtení',
         },

@@ -94,9 +94,49 @@ it('keeps the rental guide identity and links the current stage records', () => 
     '/smlouvy?resourceId=a0ac0359-d251-5b37-bed2-b9a0db201a77',
     '/finance?resourceId=8fdfcb33-7ec0-4402-b7cd-aafa1c34eb80',
     '/provoz/majetek?asset=siampark-asset-002',
-    '/finance?resourceId=c9f16710-c669-43ca-91d6-8e9f0bd70a4b',
+    '/finance?resourceId=42813e23-ffd4-414c-9344-168f7024afde',
+    '/finance?resourceId=3d2d16cf-21af-4fae-9c01-01911932b317',
     '/provoz/majetek?asset=siampark-asset-001',
   ]);
+});
+
+it('tells the rental finance story from the invoices Nájempark actually holds', () => {
+  const chapter = demoGuideFor(legalEntities.siampark)?.chapters.find((item) => item.id === 'finance');
+  expect(chapter?.steps.map((step) => step.id)).toEqual([
+    'siampark-uhrazena-faktura',
+    'siampark-po-splatnosti',
+    'siampark-odpisy',
+  ]);
+  const [paid, overdue] = chapter?.steps ?? [];
+  // FV-2026-0007 (R101) is fully paid by one manually confirmed payment; its tenant has paid all four invoices.
+  expect(paid?.persona?.email).toBe('finance@najempark.demo');
+  expect(paid?.target).toEqual({ kind: 'app', path: '/finance?resourceId=42813e23-ffd4-414c-9344-168f7024afde' });
+  expect(paid?.click).toContain('FV-2026-0007');
+  expect(paid?.click).toContain('Nic nezaznamenávejte');
+  expect(paid?.say).toContain('ručně potvrzený záznam');
+  // FV-2026-0011 (R201) is overdue and unpaid with no reminder yet; the presenter only shows the reminder button.
+  expect(overdue?.persona?.email).toBe('finance@najempark.demo');
+  expect(overdue?.target).toEqual({ kind: 'app', path: '/finance?resourceId=3d2d16cf-21af-4fae-9c01-01911932b317' });
+  expect(overdue?.click).toContain('FV-2026-0011');
+  expect(overdue?.click).toContain('Připravit upomínku');
+  expect(overdue?.click).toContain('Na tlačítko neklikejte');
+  expect(overdue?.say).toContain('zatím žádná neodešla');
+  // No seeded or live rental invoice is partially paid and none has a sent reminder.
+  const financeCopy = JSON.stringify(chapter);
+  expect(financeCopy).not.toMatch(/částečn|odeslan[éá] e-mailem|c9f16710/iu);
+});
+
+it('shows the external agent only the agenda deadlines Nájempark assigned', () => {
+  const steps = demoGuideFor(legalEntities.siampark)?.chapters.flatMap((chapter) => chapter.steps) ?? [];
+  const agenda = steps.find((step) => step.id === 'siampark-externista-provoz');
+  expect(agenda?.persona?.email).toBe('external@najempark.demo');
+  expect(agenda?.target).toEqual({ kind: 'app', path: '/provoz/agenda' });
+  expect(agenda?.click).toContain('Provoz › Moje agenda');
+  expect(agenda?.click).toContain('Prohlídka volného bytu A102 se zájemcem');
+  expect(agenda?.click).toContain('Připravit nabídku pronájmu skladu S01');
+  expect(agenda?.click).toContain('Agendu máte jen pro čtení');
+  // The seed has no R101 viewing event; the guide must not promise one.
+  expect(JSON.stringify(steps)).not.toContain('Prohlídka R101');
 });
 
 it.each(demoGuides.map((guide) => [guide.id, guide] as const))('guide %s is complete and well formed', (id, guide) => {
