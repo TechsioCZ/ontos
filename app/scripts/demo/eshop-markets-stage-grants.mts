@@ -9,7 +9,12 @@
  */
 import { createHash } from 'node:crypto';
 
-import { ownerResourceModuleContainment, toModuleAccessObjectId, toResourceAccessObjectId } from '@app/core-runtime';
+import {
+  ownerResourceModuleContainment,
+  toContextPermissionAccessObjectId,
+  toModuleAccessObjectId,
+  toResourceAccessObjectId,
+} from '@app/core-runtime';
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { Config, Console, Effect, Exit, FileSystem, Layer, Option, Redacted, Schema } from 'effect';
@@ -25,14 +30,22 @@ import { parseSpiceDbConfig } from '../../packages/core-runtime/src/permissions/
 import { toSpiceDbActionObjectId } from '../../packages/core-runtime/src/permissions/service.ts';
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
-import { akrosDemoLegalEntityId, demoTenantId, eshopDemoLegalEntityId } from './fixture-ids.mts';
+import {
+  akrosDemoLegalEntityId,
+  crmDemoLegalEntityId,
+  demoLegalEntityId,
+  demoTenantId,
+  eshopDemoLegalEntityId,
+} from './fixture-ids.mts';
 import type { DemoAction, DemoRelationship, DemoRole } from './permissions.mts';
 import {
   akrosStorefrontPrincipal,
   companyHumanAccounts,
+  demoHumanAccounts,
   eshopDemoRoles,
   marketRetirementRelationships,
   principalRelationships,
+  tenantAdministratorCrmRelationships,
 } from './permissions.mts';
 import { readMissingServiceGrants, reconcileServiceGrants } from './reconcile-stage-service-grants.mts';
 import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
@@ -152,6 +165,8 @@ export const eshopMarketGrantSource = (actions: readonly DemoAction[]): readonly
       resourceType: 'commerce.storefront-registry.storefront-application',
     }),
   ),
+  // Additive follow-up: the tenant superadmin sees and manages every client of the CRM company (admins can do everything).
+  ...tenantAdministratorCrmRelationships(actions),
 ];
 
 const relationshipKey = (item: DemoRelationship) =>
@@ -270,6 +285,27 @@ export const eshopMarketPermissionChecks = (): readonly EshopPermissionCheck[] =
       permission: 'execute',
       principalId: storefront,
       resource: actionObject(create, akrosDemoLegalEntityId),
+    },
+    {
+      expected: true,
+      label: 'Tenant superadmin opens CRM in Obchodní firma',
+      permission: 'access',
+      principalId: demoHumanAccounts[0].principalId,
+      resource: moduleObject(demoLegalEntityId, 'demo.crm'),
+    },
+    {
+      expected: true,
+      label: 'Tenant superadmin reads every Hanák CRM client',
+      permission: 'access',
+      principalId: demoHumanAccounts[0].principalId,
+      resource: {
+        objectId:
+          toContextPermissionAccessObjectId(demoTenantId, crmDemoLegalEntityId, {
+            moduleId: 'demo.crm',
+            permission: 'demo.crm.read_all',
+          }) ?? '',
+        objectType: 'context_permission',
+      },
     },
   ];
 };

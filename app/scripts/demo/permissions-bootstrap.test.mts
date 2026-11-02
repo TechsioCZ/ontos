@@ -35,6 +35,7 @@ import {
   commercePortalRelationships,
   companyPermissionRelationships,
   crmIntakeRelationships,
+  tenantAdministratorCrmRelationships,
   demoCompanyMemberships,
   demoHumanAccounts,
   demoPermissionRelationships,
@@ -99,6 +100,7 @@ const existingRolePolicy = (actions: readonly DemoAction[]) =>
       ...privacyConsentAuthorityRelationships(actions),
       ...marketRetirementRelationships(actions),
       ...crmIntakeRelationships(actions),
+      ...tenantAdministratorCrmRelationships(actions),
     ],
     demoCompanyMemberships.map(({ principalId }) => ({ principalId, tenantId: demoTenantId })),
   );

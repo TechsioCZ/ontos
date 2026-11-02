@@ -1089,6 +1089,38 @@ export const crmIntakeActionKeys: readonly string[] = [
 ];
 const crmIntakePermissions = [crmReadAll, crmWriteAll] as const;
 
+/**
+ * Tenant superadmin (obchod@demo.ontos): administrators can do everything, so in every company that uses the CRM
+ * (Obchodní firma, Nájempark, Velkoobchod Hanák) it opens `demo.crm` with the CRM manager permissions
+ * (`demo.crm.read_all` + `write_all` + `assign`) and its write Actions. Additive only: no SQL membership and no
+ * Tenant or company membership edge (the superadmin is already admitted to these companies).
+ */
+export const tenantAdministratorCrmLegalEntityIds: readonly string[] = [
+  demoLegalEntityId,
+  rentalDemoLegalEntityId,
+  crmDemoLegalEntityId,
+];
+export const tenantAdministratorCrmRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
+  const [administrator] = demoHumanAccounts;
+  return tenantAdministratorCrmLegalEntityIds.flatMap((legalEntityId) =>
+    principalRelationships(
+      administrator.principalId,
+      {
+        contextPermissions: { 'demo.crm': crmManagerPermissions },
+        label: 'Správce tenantu',
+        modules: { 'demo.crm': 'write' },
+      },
+      actions,
+      legalEntityId,
+      demoTenantId,
+      'tenant-administrator-crm',
+    ).filter(
+      (item) =>
+        !(item.relation === 'member' && (item.resourceType === 'tenant' || item.resourceType === 'legal_entity')),
+    ),
+  );
+};
+
 export const crmIntakeRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
   const { principalId } = crmPartyIntakePrincipal;
   const relationships = crmIntakeLegalEntityIds.flatMap((legalEntityId) => {
@@ -1194,6 +1226,7 @@ export const demoPermissionRelationships = (
     ...privacyConsentAuthorityRelationships(actions),
     ...marketRetirementRelationships(actions),
     ...crmIntakeRelationships(actions),
+    ...tenantAdministratorCrmRelationships(actions),
   ];
   const all = [
     ...demoTopologyRelationships(actions, installation),
