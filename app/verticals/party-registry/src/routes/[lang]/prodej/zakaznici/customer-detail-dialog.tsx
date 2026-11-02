@@ -1,17 +1,21 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { Option } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { DetailList, SidePanel, formatDate } from '@app/admin-ui';
+import { AutosaveStatus, DetailList, SidePanel, formatDate, useAutosaveDraft } from '@app/admin-ui';
+import type { AutosaveOutcome } from '@app/admin-ui';
 import type { CustomerListItem } from '../../../../api/customers-client.ts';
 import { DiscardDialog } from './customer-discard-dialog.tsx';
-import { useCustomerDetail } from './customers-data.ts';
-import type { CustomerDetailSnapshot } from './customers-data.ts';
+import { customerDetailFailureKey, saveCustomerFact, useCustomerDetail } from './customers-data.ts';
+import type { CustomerDetailSnapshot, CustomerFactChange } from './customers-data.ts';
+import type { Party } from '../../../../../shared/domain/identity-contracts.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import {
+  contactFieldsInvalid,
   customerContactFields,
   customerContactInput,
   customerIdentitySummary,
@@ -20,7 +24,9 @@ import {
   customerContactFieldLabel,
   customerContactRequiresAuthoritativeEdit,
   relatedCustomerUrl,
+  sameContactFields,
 } from './customers-model.ts';
+import type { CustomerContactFields, CustomerContactRow } from './customers-model.ts';
 
 const KEY = 'party-registry.pages.customers.detail';
 const STATUS_KEY = 'party-registry.pages.customers.status';
@@ -97,6 +103,254 @@ const CustomerChangeBasis = ({ evidence, onEvidenceChange, onReasonChange, reaso
   );
 };
 
+/** One text fact of the identity. It saves itself, and only while the change basis (evidence + reason) is filled in. */
+const TextFactField = ({
+  basisFilled,
+  id,
+  label,
+  original,
+  save,
+}: {
+  readonly basisFilled: boolean;
+  readonly id: string;
+  readonly label: string;
+  readonly original: string;
+  readonly save: (value: string) => Effect.Effect<AutosaveOutcome>;
+}) => {
+  const autosave = useAutosaveDraft<string, never>({
+    equals: (left, right) => left.trim() === right.trim(),
+    isValid: (value) => value.trim() !== '' && value.trim() !== original.trim() && basisFilled,
+    runtime: browserRuntime,
+    save: (value) => save(value.trim()),
+    server: original,
+  });
+  const handleChange = (event: { target: { value: string } }) => autosave.setDraft(event.target.value);
+  const handleReloadLatest = autosave.reloadLatest;
+  const handleRetry = autosave.retry;
+  return (
+    <div className="flex flex-col gap-100">
+      <FormInput id={id} label={label} onChange={handleChange} required value={autosave.draft} />
+      <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+    </div>
+  );
+};
+
+/** The contact point of one row. Same autosave, field by field, plus the registry-owned address notice. */
+const ContactFactFields = ({
+  basisFilled,
+  id,
+  registeredAddress,
+  save,
+  server,
+  type,
+}: {
+  readonly basisFilled: boolean;
+  readonly id: string;
+  readonly registeredAddress: boolean;
+  readonly save: (value: CustomerContactFields) => Effect.Effect<AutosaveOutcome>;
+  readonly server: CustomerContactFields;
+  readonly type: CustomerContactRow['type'];
+}) => {
+  const { t } = useModernI18n();
+  const autosave = useAutosaveDraft<CustomerContactFields, never>({
+    equals: sameContactFields,
+    isValid: (value) => basisFilled && !sameContactFields(value, server) && !contactFieldsInvalid(type, value),
+    runtime: browserRuntime,
+    save: (value) => save(value),
+    server,
+  });
+  const handleReloadLatest = autosave.reloadLatest;
+  const handleRetry = autosave.retry;
+  return (
+    <>
+      <div className="grid grid-cols-1 gap-150 md:grid-cols-2">
+        {(type === 'ADDRESS' ? addressFields : (['value'] as const)).map((field) => (
+          <FormInput
+            helpText={
+              type === 'EMAIL' && field === 'value' && contactFieldsInvalid(type, autosave.draft)
+                ? 'Zadejte platný e-mail'
+                : undefined
+            }
+            id={`${id}-${field}`}
+            key={field}
+            label={t(customerContactFieldLabel(type, field))}
+            onChange={(event) => autosave.setDraft((current) => ({ ...current, [field]: event.target.value }))}
+            value={autosave.draft[field] ?? ''}
+          />
+        ))}
+      </div>
+      {registeredAddress && <StatusText status="default">{t(`${KEY}.registeredAddress`)}</StatusText>}
+      <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+    </>
+  );
+};
+
+type CustomerDetail = ReturnType<typeof useCustomerDetail>;
+
+/** The identity's facts below the rename: official identifiers and contact points, each saving itself. */
+const CustomerFacts = ({
+  basisFilled,
+  detail,
+  saveFact,
+  snapshot,
+}: {
+  readonly basisFilled: boolean;
+  readonly detail: CustomerDetail;
+  readonly saveFact: (build: (owner: Party) => CustomerFactChange) => Effect.Effect<AutosaveOutcome>;
+  readonly snapshot: CustomerDetailSnapshot;
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <>
+      <h3 className="font-semibold">{t(`${KEY}.identifiers`)}</h3>
+      {snapshot.identifiers.status === 'ready' ? (
+        detail.identifierRows.map(({ existing, id, type }) => {
+          const key = `identifier-${id}`;
+          const original = existing?.normalizedValue ?? '';
+          return (
+            <div className="flex flex-col gap-150" key={key}>
+              {existing === undefined || detail.party === undefined ? (
+                <>
+                  <FormInput
+                    disabled={detail.party === undefined}
+                    id={key}
+                    label={t(`${KEY}.${type === 'ICO' ? 'companyId' : 'vatId'}`)}
+                    onChange={(event) => detail.changeDraft(key, event.target.value, original)}
+                    value={detail.value(key, original)}
+                  />
+                  <Button
+                    disabled={
+                      detail.busy || detail.stale || detail.party === undefined || detail.draft[key] === undefined
+                    }
+                    onClick={() =>
+                      detail.save(
+                        {
+                          existing,
+                          identifierType: type,
+                          kind: 'identifier',
+                          value: detail.value(key, original),
+                        },
+                        [key],
+                      )
+                    }
+                    variant="primary"
+                  >
+                    {t(`${KEY}.saveIdentifier`)}
+                  </Button>
+                </>
+              ) : (
+                <TextFactField
+                  basisFilled={basisFilled}
+                  id={key}
+                  label={t(`${KEY}.${type === 'ICO' ? 'companyId' : 'vatId'}`)}
+                  original={original}
+                  save={(next) => saveFact(() => ({ existing, identifierType: type, kind: 'identifier', value: next }))}
+                />
+              )}
+              {existing !== undefined && (
+                <Button
+                  disabled={
+                    detail.busy || detail.stale || detail.party === undefined || detail.draft[key] !== undefined
+                  }
+                  onClick={() => detail.save({ existing, kind: 'endIdentifier' }, [])}
+                  theme="outlined"
+                  variant="secondary"
+                >
+                  {t(`${KEY}.endIdentifier`)}
+                </Button>
+              )}
+            </div>
+          );
+        })
+      ) : (
+        <StatusText status="error">{t(`${KEY}.${snapshot.identifiers.status}`)}</StatusText>
+      )}
+      <h3 className="font-semibold">{t(`${KEY}.contacts`)}</h3>
+      {snapshot.contacts.status === 'ready' ? (
+        detail.contactRows.map(({ existing, id, type }) => {
+          const fields = existing === undefined ? emptyCustomerContactFields(type) : customerContactFields(existing);
+          const keys = Object.keys(fields).map((field) => `${id}-${field}`);
+          const editable = customerContactEditable(existing, detail.party !== undefined);
+          const values = Object.fromEntries(
+            Object.entries(fields).map(([field, original]) => [field, detail.value(`${id}-${field}`, original)]),
+          );
+          return (
+            <div className="flex flex-col gap-150" key={id}>
+              <p className="font-medium">
+                {t(`${KEY}.contactTypes.${type}`)} {existing === undefined ? t(`${KEY}.newContact`) : ''}
+              </p>
+              {existing !== undefined && editable ? (
+                <ContactFactFields
+                  basisFilled={basisFilled}
+                  id={id}
+                  registeredAddress={customerContactRequiresAuthoritativeEdit(existing)}
+                  save={(next) =>
+                    saveFact(() => ({
+                      existing,
+                      kind: 'contact',
+                      value: customerContactInput(type, next, existing),
+                    }))
+                  }
+                  server={fields}
+                  type={type}
+                />
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 gap-150 md:grid-cols-2">
+                    {(type === 'ADDRESS' ? addressFields : ['value']).map((field) => (
+                      <FormInput
+                        disabled={!editable}
+                        id={`${id}-${field}`}
+                        key={field}
+                        label={t(customerContactFieldLabel(type, field))}
+                        onChange={(event) =>
+                          detail.changeDraft(`${id}-${field}`, event.target.value, fields[field] ?? '')
+                        }
+                        value={values[field] ?? ''}
+                      />
+                    ))}
+                  </div>
+                  {customerContactRequiresAuthoritativeEdit(existing) && (
+                    <StatusText status="default">{t(`${KEY}.registeredAddress`)}</StatusText>
+                  )}
+                  <Button
+                    disabled={
+                      detail.busy || detail.stale || !editable || !keys.some((key) => detail.draft[key] !== undefined)
+                    }
+                    onClick={() =>
+                      detail.save(
+                        { existing, kind: 'contact', value: customerContactInput(type, values, existing) },
+                        keys,
+                      )
+                    }
+                    variant="primary"
+                  >
+                    {t(`${KEY}.saveContact`)}
+                  </Button>
+                </>
+              )}
+              {existing !== undefined && (
+                <Button
+                  disabled={
+                    detail.busy || detail.stale || !editable || keys.some((key) => detail.draft[key] !== undefined)
+                  }
+                  onClick={() => detail.save({ existing, kind: 'endContact' }, [])}
+                  theme="outlined"
+                  variant="secondary"
+                >
+                  {t(`${KEY}.endContact`)}
+                </Button>
+              )}
+            </div>
+          );
+        })
+      ) : (
+        <StatusText status="error">{t(`${KEY}.${snapshot.contacts.status}`)}</StatusText>
+      )}
+    </>
+  );
+};
+
 const CustomerDetailView = ({
   customer,
   failure,
@@ -109,17 +363,23 @@ const CustomerDetailView = ({
   const toaster = useToast();
   const location = useRouterState({ select: (state) => state.location.pathname });
   const language = location.split('/')[1] === 'en' ? 'en' : 'cs';
+  const detail = useCustomerDetail(
+    customer,
+    initialSnapshot,
+    onOpenChange,
+    onRenamed,
+    () => {
+      toaster.create({ title: t(`${KEY}.toastRenamed`), type: 'success' });
+    },
+    t,
+  );
   const {
     busy,
-    changeDraft,
     confirmDiscard,
-    contactRows,
     dirty,
     discardOpen,
-    draft,
     evidence,
     history,
-    identifierRows,
     identity,
     notice,
     party,
@@ -133,19 +393,32 @@ const CustomerDetailView = ({
     setReason,
     snapshot,
     stale,
-    value,
-  } = useCustomerDetail(
-    customer,
-    initialSnapshot,
-    onOpenChange,
-    onRenamed,
-    () => {
-      toaster.create({ title: t(`${KEY}.toastRenamed`), type: 'success' });
-    },
-    t,
-  );
+  } = detail;
 
   const { name, status } = customerIdentitySummary(customer, party);
+
+  /** Evidence and a reason are the change basis of a governed identity change: nothing is sent without them. */
+  const basisFilled = reason.trim() !== '' && evidence.trim() !== '';
+  const saveFact = (build: (owner: Party) => CustomerFactChange): Effect.Effect<AutosaveOutcome> =>
+    party === undefined
+      ? Effect.succeed<AutosaveOutcome>('failed')
+      : saveCustomerFact(party.partyRef, build(party), reason.trim(), evidence.trim()).pipe(
+          Effect.matchEffect({
+            onFailure: (error) =>
+              Effect.sync<AutosaveOutcome>(() =>
+                customerDetailFailureKey(error) === 'conflict' ? 'conflict' : 'failed',
+              ),
+            onSuccess: (result) =>
+              Effect.sync<AutosaveOutcome>(() => {
+                if (Schema.is(Schema.Struct({ outcome: Schema.Literal('BLOCKED') }))(result)) {
+                  return 'failed';
+                }
+                // The panel shows what the owner now has, so the next change builds on the confirmed facts.
+                refresh();
+                return 'saved';
+              }),
+          }),
+        );
 
   return (
     <>
@@ -197,20 +470,13 @@ const CustomerDetailView = ({
                 <CustomerIdentityNotice forbidden={identity?.status === 'forbidden'} />
               ) : (
                 <>
-                  <FormInput
+                  <TextFactField
+                    basisFilled={basisFilled}
                     id="customer-rename"
                     label={t(`${KEY}.rename`)}
-                    onChange={(event) => changeDraft('name', event.target.value, name)}
-                    required
-                    value={value('name', name)}
+                    original={name}
+                    save={(next) => saveFact((owner) => ({ kind: 'name', party: owner, value: next }))}
                   />
-                  <Button
-                    disabled={busy || stale || draft['name'] === undefined}
-                    onClick={() => save({ kind: 'name', party, value: value('name', name) }, ['name'])}
-                    variant="primary"
-                  >
-                    {t(`${KEY}.saveName`)}
-                  </Button>
                   <p className="text-fg-secondary text-sm">{t(`${KEY}.sharedIdentity`)}</p>
                   <Button
                     disabled={busy || stale || dirty}
@@ -222,102 +488,7 @@ const CustomerDetailView = ({
                   </Button>
                 </>
               )}
-              <h3 className="font-semibold">{t(`${KEY}.identifiers`)}</h3>
-              {snapshot.identifiers.status === 'ready' ? (
-                identifierRows.map(({ existing, id, type }) => {
-                  const key = `identifier-${id}`;
-                  const original = existing?.normalizedValue ?? '';
-                  return (
-                    <div className="flex flex-col gap-150" key={key}>
-                      <FormInput
-                        disabled={party === undefined}
-                        id={key}
-                        label={t(`${KEY}.${type === 'ICO' ? 'companyId' : 'vatId'}`)}
-                        onChange={(event) => changeDraft(key, event.target.value, original)}
-                        value={value(key, original)}
-                      />
-                      <Button
-                        disabled={busy || stale || party === undefined || draft[key] === undefined}
-                        onClick={() =>
-                          save({ existing, identifierType: type, kind: 'identifier', value: value(key, original) }, [
-                            key,
-                          ])
-                        }
-                        variant="primary"
-                      >
-                        {t(`${KEY}.saveIdentifier`)}
-                      </Button>
-                      {existing !== undefined && (
-                        <Button
-                          disabled={busy || stale || party === undefined || draft[key] !== undefined}
-                          onClick={() => save({ existing, kind: 'endIdentifier' }, [])}
-                          theme="outlined"
-                          variant="secondary"
-                        >
-                          {t(`${KEY}.endIdentifier`)}
-                        </Button>
-                      )}
-                    </div>
-                  );
-                })
-              ) : (
-                <StatusText status="error">{t(`${KEY}.${snapshot.identifiers.status}`)}</StatusText>
-              )}
-              <h3 className="font-semibold">{t(`${KEY}.contacts`)}</h3>
-              {snapshot.contacts.status === 'ready' ? (
-                contactRows.map(({ existing, id, type }) => {
-                  const fields =
-                    existing === undefined ? emptyCustomerContactFields(type) : customerContactFields(existing);
-                  const keys = Object.keys(fields).map((field) => `${id}-${field}`);
-                  const editable = customerContactEditable(existing, party !== undefined);
-                  const values = Object.fromEntries(
-                    Object.entries(fields).map(([field, original]) => [field, value(`${id}-${field}`, original)]),
-                  );
-                  return (
-                    <div className="flex flex-col gap-150" key={id}>
-                      <p className="font-medium">
-                        {t(`${KEY}.contactTypes.${type}`)} {existing === undefined ? t(`${KEY}.newContact`) : ''}
-                      </p>
-                      <div className="grid grid-cols-1 gap-150 md:grid-cols-2">
-                        {(type === 'ADDRESS' ? addressFields : ['value']).map((field) => (
-                          <FormInput
-                            disabled={!editable}
-                            id={`${id}-${field}`}
-                            key={field}
-                            label={t(customerContactFieldLabel(type, field))}
-                            onChange={(event) => changeDraft(`${id}-${field}`, event.target.value, fields[field] ?? '')}
-                            value={values[field] ?? ''}
-                          />
-                        ))}
-                      </div>
-                      {customerContactRequiresAuthoritativeEdit(existing) && (
-                        <StatusText status="default">{t(`${KEY}.registeredAddress`)}</StatusText>
-                      )}
-                      <Button
-                        disabled={busy || stale || !editable || !keys.some((key) => draft[key] !== undefined)}
-                        onClick={() =>
-                          save({ existing, kind: 'contact', value: customerContactInput(type, values, existing) }, keys)
-                        }
-                        variant="primary"
-                      >
-                        {t(`${KEY}.saveContact`)}
-                      </Button>
-                      {existing !== undefined && (
-                        <Button
-                          disabled={busy || stale || !editable || keys.some((key) => draft[key] !== undefined)}
-                          onClick={() => save({ existing, kind: 'endContact' }, [])}
-                          theme="outlined"
-                          variant="secondary"
-                        >
-                          {t(`${KEY}.endContact`)}
-                        </Button>
-                      )}
-                    </div>
-                  );
-                })
-              ) : (
-                <StatusText status="error">{t(`${KEY}.${snapshot.contacts.status}`)}</StatusText>
-              )}
+              <CustomerFacts basisFilled={basisFilled} detail={detail} saveFact={saveFact} snapshot={snapshot} />
               <h3 className="font-semibold">{t(`${KEY}.history`)}</h3>
               {history.map((item) => (
                 <p key={item.id}>

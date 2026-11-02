@@ -415,3 +415,20 @@ export const customerHistoryRows = (
         ],
   ),
 ];
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
+
+/** Whether two contact-point drafts say the same thing; every field is compared trimmed, so spacing alone is no change. */
+export const sameContactFields = (left: CustomerContactFields, right: CustomerContactFields): boolean =>
+  [...new Set([...Object.keys(left), ...Object.keys(right)])].every(
+    (field) => (left[field] ?? '').trim() === (right[field] ?? '').trim(),
+  );
+
+/** What makes a contact-point draft unusable: the address line or the value is missing, or an e-mail is not one. */
+export const contactFieldsInvalid = (type: CustomerContactRow['type'], value: CustomerContactFields): boolean => {
+  if (type === 'ADDRESS') {
+    return (value['addressLine1'] ?? '').trim() === '';
+  }
+  const text = (value['value'] ?? '').trim();
+  return text === '' || (type === 'EMAIL' && !EMAIL_PATTERN.test(text));
+};

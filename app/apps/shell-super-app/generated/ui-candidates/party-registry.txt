@@ -15,6 +15,7 @@ flex-col
 flex-wrap
 font-medium
 font-semibold
+gap-100
 gap-150
 gap-200
 gap-250
