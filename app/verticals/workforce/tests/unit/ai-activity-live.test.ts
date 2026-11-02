@@ -1,3 +1,4 @@
+import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { Effect } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import React, { createElement } from 'react';
@@ -39,6 +40,31 @@ describe('AI activity updates without a manual refresh', () => {
       yield* aiActivityData.preload('company-a');
       expect(records).toHaveBeenCalledTimes(1);
       expect(records.mock.calls[0]?.[0]).toEqual({ includeAiActivity: true });
+    }),
+  );
+});
+
+// The card used to re-read every 10 s. It now follows the shared live channel: the Shell dispatches one window event
+// per change committed elsewhere, and page data revalidates only the entries a mounted reader shows.
+describe('AI activity follows the live channel instead of a timer', () => {
+  it.live('a reported change reloads the AI activity of the shown company once', () =>
+    Effect.gen(function* liveChange() {
+      const events = new EventTarget();
+      rstest.stubGlobal('addEventListener', events.addEventListener.bind(events));
+      rstest.stubGlobal('dispatchEvent', events.dispatchEvent.bind(events));
+      rstest.stubGlobal('removeEventListener', events.removeEventListener.bind(events));
+      rstest.stubGlobal('document', {});
+      yield* aiActivityData.preload('company-a');
+      yield* aiActivityData.preload('company-b');
+      expect(records).toHaveBeenCalledTimes(2);
+      // A subscribed, snapshotted consumer is what a mounted card looks like to page data.
+      const unsubscribe = aiActivityData.subscribe(() => {
+        aiActivityData.snapshot('company-a');
+      });
+      events.dispatchEvent(new Event(moduleChangeEvent));
+      yield* Effect.sleep('10 millis');
+      expect(records).toHaveBeenCalledTimes(3);
+      unsubscribe();
     }),
   );
 });

@@ -2,17 +2,13 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { EmptyState, SectionCard } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
-import { useEffect } from 'react';
 import type { ComponentProps } from 'react';
-import { DateTime, Effect, Fiber, Option, Schedule, Schema } from 'effect';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { DateTime, Option, Schema } from 'effect';
 import { usePageData } from '../../../../runtime/use-page-data.ts';
 import type { AiActivityEntry } from '../../../../../shared/apis/records.ts';
 import { aiActivityData } from './employees-data.ts';
 
 const key = 'workforce.pages.employees.aiActivity';
-/** The list refreshes itself while the page is open, so an AI action appears without a reload. */
-const REFRESH_INTERVAL = '10 seconds';
 
 type BadgeVariant = Exclude<NonNullable<ComponentProps<typeof Badge>['variant']>, 'dynamic'>;
 
@@ -56,26 +52,13 @@ const noEntries: readonly AiActivityEntry[] = [];
 
 /**
  * "AI aktivita": the latest Core audit events of non-human principals (AI agents A/B/C, integrations) in the selected
- * company — who, what, result, when. Read from the real Core audit, refreshed every 10 s. The page's `preloadPage`
- * starts the read with the page; it is secondary, so the card keeps its own skeleton until the read settles.
+ * company — who, what, result, when. Read from the real Core audit; the shared live channel revalidates it while the
+ * page is shown, so an AI action appears without a poll or a reload. The page's `preloadPage` starts the read with the
+ * page; it is secondary, so the card keeps its own skeleton until the read settles.
  */
 export const AiActivityCard = ({ legalEntityId }: { readonly legalEntityId: string }) => {
   const { language, t } = useModernI18n();
   const feed = usePageData(aiActivityData, legalEntityId);
-  // Delay the first tick; each later tick starts a read without waiting for the previous read.
-  // Page-data owns in-flight reads, so unmount interrupts the ticker while a started read may settle.
-  useEffect(() => {
-    const timer = browserRuntime.runFork(
-      Effect.suspend(() =>
-        document.visibilityState === 'visible'
-          ? aiActivityData.refresh(legalEntityId).pipe(Effect.forkDetach, Effect.asVoid)
-          : Effect.void,
-      ).pipe(Effect.repeat(Schedule.fixed(REFRESH_INTERVAL)), Effect.delay(REFRESH_INTERVAL)),
-    );
-    return () => {
-      browserRuntime.runFork(Fiber.interrupt(timer));
-    };
-  }, [legalEntityId]);
 
   const timeFormat = language === 'en' ? timeFormats.en : timeFormats.cs;
   const label = (group: string, value: string, fallback: string) =>
