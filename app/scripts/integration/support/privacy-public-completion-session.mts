@@ -141,6 +141,11 @@ const cycleSchema = Schema.Struct({
   matched: Schema.Struct({ deliveriesCreated: Schema.Int, messagesMatched: Schema.Int }),
   type: Schema.Literal('cycle'),
 });
+const workerFailureSchema = Schema.Struct({
+  code: Schema.Literals(['composition-unavailable', 'worker-unavailable']),
+  reasonCode: Schema.Literals(['native-claim-admission', 'other']),
+  type: Schema.Literal('failed'),
+});
 const childEnvironment = (
   transport: {
     readonly PATH: string;
@@ -532,6 +537,24 @@ const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
         )
       : Deferred.await(line),
   };
+});
+
+const readActualWorkerCycle = Effect.fn('PrivacyPublicSession.readActualWorkerCycle')(function* readActualWorkerCycle(
+  worker: Effect.Success<ReturnType<typeof start>>,
+) {
+  const cycle = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(Schema.Union([cycleSchema, workerFailureSchema])),
+  )(worker.line);
+  if (cycle.type === 'failed') {
+    const workerExit = yield* Effect.exit(worker.child.exitCode);
+    yield* Effect.logError('Real Party public completion worker refused its cycle', {
+      code: cycle.code,
+      exitCode: Exit.isSuccess(workerExit) ? workerExit.value : 'unavailable',
+      reasonCode: cycle.reasonCode,
+    });
+    return yield* failure(`Party completion worker refused cycle: ${cycle.code}/${cycle.reasonCode}`);
+  }
+  return cycle;
 });
 
 const bootstrapOwnerCapabilities = Effect.fn('PrivacyPublicSession.bootstrapOwnerCapabilities')(
@@ -996,7 +1019,7 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
           false,
           ownedPids,
         );
-        const cycle = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(cycleSchema))(worker.line);
+        const cycle = yield* readActualWorkerCycle(worker);
         if ((yield* worker.child.exitCode) !== 0 || cycle.cycle.succeeded !== 1) {
           return yield* failure('Real Party public completion cycle failed');
         }
