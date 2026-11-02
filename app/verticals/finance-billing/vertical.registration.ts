@@ -6,12 +6,16 @@ import { financeBillingManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
 import { draftInvoiceFromWonOpportunityWorker } from './src/workers/draft-invoice-from-won-opportunity.worker.ts';
+import { projectSearchWorker } from './src/workers/project-search.worker.ts';
+import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 // </generated-module-registration-imports>
 
 export const financeBillingRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
     applyCommandAction,
+    requestSearchRebuildAction,
     // </generated-module-registration-actions>
   ],
   entrypoints: {
@@ -35,6 +39,8 @@ export const financeBillingRegistration = defineVerticalRuntimeRegistration({
     },
     search: {
       // <generated-module-registration-search>
+      documents: () => import('./src/api/documents-search-client.ts'),
+      invoices: () => import('./src/api/invoices-search-client.ts'),
       // </generated-module-registration-search>
     },
   },
@@ -42,6 +48,8 @@ export const financeBillingRegistration = defineVerticalRuntimeRegistration({
   outboxWorkers: [
     // <generated-module-registration-workers>
     draftInvoiceFromWonOpportunityWorker,
+    projectSearchWorker,
+    rebuildSearchWorker,
     // </generated-module-registration-workers>
   ],
 });

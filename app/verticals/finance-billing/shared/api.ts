@@ -9,7 +9,10 @@ import type { MicroVerticalBuildMarker, MicroVerticalOperationContext } from '@m
 
 // <generated-governed-http-api-imports>
 import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
+import { DocumentsSearchApi } from './apis/documents-search.ts';
+import { InvoicesSearchApi } from './apis/invoices-search.ts';
 import { RecordsApi } from './apis/records.ts';
+import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
 // </generated-governed-http-api-imports>
 
 export type FinanceBillingMarker = MicroVerticalBuildMarker;
@@ -39,7 +42,10 @@ export const financeBillingApi = HttpApi.make('FinanceBillingApi')
   .addHttpApi(financeBillingFoundationApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(ApplyCommandActionApi)
+  .addHttpApi(DocumentsSearchApi)
+  .addHttpApi(InvoicesSearchApi)
   .addHttpApi(RecordsApi)
+  .addHttpApi(RequestSearchRebuildActionApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

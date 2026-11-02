@@ -32,6 +32,10 @@ import { makeFinanceValidators } from '../services/reference-validation.ts';
 
 import type { FinanceValidatorRequirements } from '../services/reference-validation.ts';
 
+import { OutboxPayloadSchema as SearchChangedPayloadSchema } from '../../shared/outbox/finance-billing-search-changed-v1.ts';
+import { createApplyCommandFinanceBillingSearchChangedV1OutboxMessage } from './apply-command-finance-billing-search-changed-v1.outbox-message.ts';
+
+const domainEvents = { 'finance.billing.search-changed.v1': SearchChangedPayloadSchema };
 const financeModuleKey = 'finance.billing';
 const unavailable = (cause: unknown) =>
   Object.defineProperty(
@@ -57,7 +61,7 @@ const samePayload = Schema.toEquivalence(ApplyCommandPayloadSchema);
 const samePrincipal = Schema.toEquivalence(TrustedPrincipalContextSchema);
 const handleApplyCommand = Effect.fn('Finance.applyCommand')(function* handleApplyCommand(
   payload: ApplyCommandPayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
+  context: ActionHandlerContext<typeof domainEvents, Services>,
 ): Effect.fn.Return<typeof ApplyCommandResultSchema.Type, ActionCollectorError | FinanceError> {
   const current = yield* context.services.load();
   yield* requireFinanceRevision(current.revision, payload.expectedRevision);
@@ -88,6 +92,18 @@ const handleApplyCommand = Effect.fn('Finance.applyCommand')(function* handleApp
         }),
       { concurrency: 1, discard: true },
     );
+  }
+  if (result.changed) {
+    const searchChange = { data: { revision } };
+    const event = yield* context.addDomainEvent({
+      eventType: 'finance.billing.search-changed.v1',
+      payloadJson: searchChange,
+      producerModuleKey: financeModuleKey,
+      subjectModuleKey: 'core.identity',
+      subjectResourceId: context.scope.tenantId,
+      subjectResourceType: 'tenant',
+    });
+    yield* context.addOutboxMessage(event, createApplyCommandFinanceBillingSearchChangedV1OutboxMessage(searchChange));
   }
   return result.invoice === undefined
     ? { changed: result.changed, revision }
@@ -173,7 +189,7 @@ export const applyCommandAction = defineAction(
     actionKey: 'finance.billing.apply-command',
     auditProfile: 'standard',
     domainErrorSchema: FinanceErrorSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'action_execution', provisioning: 'explicit' },
@@ -195,4 +211,9 @@ export const applyCommandAction = defineAction(
 );
 
 // <generated-outbox-message-exports>
+export { ApplyCommandFinanceBillingSearchChangedV1OutboxPayloadSchema } from './apply-command-finance-billing-search-changed-v1.outbox-message.ts';
+export { ApplyCommandFinanceBillingSearchChangedV1OutboxProducerModuleKey } from './apply-command-finance-billing-search-changed-v1.outbox-message.ts';
+export { ApplyCommandFinanceBillingSearchChangedV1OutboxTopic } from './apply-command-finance-billing-search-changed-v1.outbox-message.ts';
+export { createApplyCommandFinanceBillingSearchChangedV1OutboxMessage } from './apply-command-finance-billing-search-changed-v1.outbox-message.ts';
+export type { ApplyCommandFinanceBillingSearchChangedV1OutboxPayload } from './apply-command-finance-billing-search-changed-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

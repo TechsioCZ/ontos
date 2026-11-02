@@ -5,18 +5,22 @@ import {
   defineOntosModuleManifest,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
+  ShellSearchContributionSchema,
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { documentResourceDescriptor } from './shared/resources/document.ts';
 import { financialPlanEntryResourceDescriptor } from './shared/resources/financial-plan-entry.ts';
 import { invoiceResourceDescriptor } from './shared/resources/invoice.ts';
 import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/finance/page.tsx';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 // </generated-module-manifest-imports>
 import { financeBillingMcpContribution } from './shared/mcp/contribution.ts';
 
 const moduleId = 'finance.billing';
+const accessPermission = 'module.access';
 const recordsPageKey = 'finance.billing.page.records';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
@@ -26,6 +30,9 @@ const navigationContribution = (value: NavigationContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellNavigationContributionSchema)(value));
 const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
+
+const searchContribution = (value: typeof ShellSearchContributionSchema.Encoded) =>
+  Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
 
 export const financeBillingManifest = defineOntosModuleManifest({
   activation: {
@@ -45,6 +52,7 @@ export const financeBillingManifest = defineOntosModuleManifest({
     actions: [
       // <generated-module-manifest-actions>
       applyCommandAction,
+      requestSearchRebuildAction,
       // </generated-module-manifest-actions>
     ],
     api: {
@@ -69,12 +77,27 @@ export const financeBillingManifest = defineOntosModuleManifest({
     ],
     resourceTypes: [
       // <generated-module-manifest-resources>
+      documentResourceDescriptor,
       financialPlanEntryResourceDescriptor,
       invoiceResourceDescriptor,
       // </generated-module-manifest-resources>
     ],
     search: [
       // <generated-module-manifest-search>
+      {
+        accessFiltering: 'resource_permission',
+        key: 'finance.billing.documents',
+        owningModuleId: moduleId,
+        requestFilters: ['includeArchived'],
+        resourceType: 'finance.billing.document',
+      },
+      {
+        accessFiltering: 'resource_permission',
+        key: 'finance.billing.invoices',
+        owningModuleId: moduleId,
+        requestFilters: ['includeArchived'],
+        resourceType: 'finance.billing.invoice',
+      },
       // </generated-module-manifest-search>
     ],
     shellContributions: {
@@ -85,7 +108,7 @@ export const financeBillingManifest = defineOntosModuleManifest({
           contributionKey: 'finance.billing.navigation.records',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'context_permission', permission: accessPermission },
             entrypointKey: recordsPageKey,
             moduleKey: moduleId,
             role: 'page',
@@ -107,7 +130,7 @@ export const financeBillingManifest = defineOntosModuleManifest({
           contributionKey: recordsPageKey,
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'context_permission', permission: accessPermission },
             entrypointKey: recordsPageKey,
             moduleKey: moduleId,
             role: 'page',
@@ -129,6 +152,30 @@ export const financeBillingManifest = defineOntosModuleManifest({
       resourceDetails: [],
       search: [
         // <generated-module-shell-search>
+        searchContribution({
+          contributionKey: 'finance.billing.search.documents',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: accessPermission },
+            entrypointKey: 'finance.billing.search.documents',
+            moduleKey: moduleId,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'finance.billing.documents',
+        }),
+        searchContribution({
+          contributionKey: 'finance.billing.search.invoices',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: accessPermission },
+            entrypointKey: 'finance.billing.search.invoices',
+            moduleKey: moduleId,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'finance.billing.invoices',
+        }),
         // </generated-module-shell-search>
       ],
       timelines: [],
