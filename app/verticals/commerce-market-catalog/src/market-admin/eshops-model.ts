@@ -16,9 +16,11 @@ export type MarketChannel = CurrentMarket['channels'][number];
 /** Display names of the demo e-shops; any other registration is numbered instead of showing its key. */
 const AKROS_STOREFRONT = 'akros-storefront';
 const KAVARNA_STOREFRONT = 'kavarna-doma-eshop';
+const SHOP_STOREFRONT = 'sroubshop-storefront';
 const storefrontNames = new Map([
   [AKROS_STOREFRONT, 'AKROS e-shop'],
   [KAVARNA_STOREFRONT, 'Kavárna doma e-shop'],
+  [SHOP_STOREFRONT, 'ŠroubShop e-shop'],
 ]);
 
 /**
@@ -26,12 +28,18 @@ const storefrontNames = new Map([
  * a company sees its own e-shop and every e-shop one of its markets sells in, never another company's idle e-shop.
  */
 const storefrontOwners = new Map([
-  [AKROS_STOREFRONT, '71000000-0000-4000-8000-000000000024'],
+  // The AKROS playground company in its own Tenant.
+  [AKROS_STOREFRONT, 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7'],
   [KAVARNA_STOREFRONT, '71000000-0000-4000-8000-000000000023'],
+  // The demo company Šroubárna Vysočina s.r.o.
+  [SHOP_STOREFRONT, '71000000-0000-4000-8000-000000000024'],
 ]);
 
 /** Public origins of the deployed e-shops; the market path follows it (`/cs`, `/sk`, `/en`). */
-const storefrontOrigins = new Map([[AKROS_STOREFRONT, 'https://ontos-stage-akros.web-revolution.cz']]);
+const storefrontOrigins = new Map([
+  [AKROS_STOREFRONT, 'https://ontos-stage-akros.web-revolution.cz'],
+  [SHOP_STOREFRONT, 'https://ontos-stage-shop.web-revolution.cz'],
+]);
 
 /** The e-shop's display name; `unnamed(position)` labels a registration without a known name. */
 export const storefrontName = (appId: string, position: number, unnamed: (position: number) => string): string =>
@@ -107,7 +115,9 @@ export const eshopsOverview = (input: {
   readonly storefronts: readonly StorefrontApplicationSummary[];
   readonly unnamed: (position: number) => string;
 }): EshopsOverview => {
-  const marketsById = new Map(input.markets.map((market) => [market.marketRef.resourceId, market]));
+  // A retired market is history: it is never sold again, so the overview leaves it out.
+  const liveMarkets = input.markets.filter((market) => market.lifecycle !== 'RETIRED');
+  const marketsById = new Map(liveMarkets.map((market) => [market.marketRef.resourceId, market]));
   const eshops = input.storefronts
     .flatMap((storefront, index): EshopCard[] => {
       const markets = input.associations
@@ -119,7 +129,10 @@ export const eshopsOverview = (input: {
         })
         .toSorted(byCode);
       const owner = storefrontOwners.get(storefront.storefrontAppId);
-      if (markets.length === 0 && owner !== undefined && owner !== input.legalEntityId) {
+      if (
+        markets.length === 0 &&
+        ((owner !== undefined && owner !== input.legalEntityId) || storefront.lifecycle === 'RETIRED')
+      ) {
         return [];
       }
       const firstLocale = markets.find((chip) => chip.locale !== undefined)?.locale;
@@ -136,7 +149,7 @@ export const eshopsOverview = (input: {
     })
     .toSorted((left, right) => left.name.localeCompare(right.name, 'cs'));
   const associated = new Set(input.associations.map((association) => association.marketRef.resourceId));
-  const unassigned = input.markets
+  const unassigned = liveMarkets
     .flatMap((market) => (associated.has(market.marketRef.resourceId) ? [] : [chipOf(market, input.settings)]))
     .toSorted(byCode);
   return { eshops, unassigned };

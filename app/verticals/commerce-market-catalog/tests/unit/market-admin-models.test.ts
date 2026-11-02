@@ -187,6 +187,35 @@ describe('E-shops overview model', () => {
     });
     expect(overview.eshops.map((eshop) => eshop.name)).toEqual(['Kavárna doma e-shop']);
   });
+
+  it('shows the demo company its ŠroubShop e-shop, never the AKROS playground e-shop or retired history', () => {
+    const shop = storefront('sroubshop-storefront', '77777777-7777-4777-8777-777777777774');
+    const retiredShop = storefront('pilot-shop', '77777777-7777-4777-8777-777777777775', 'RETIRED');
+    const retired = market({
+      code: 'OLD-CZ',
+      definitionId: '66666666-6666-4666-8666-666666666664',
+      lifecycle: 'RETIRED',
+      locales: ['cs-CZ'],
+      marketId: '55555555-5555-4555-8555-555555555559',
+    });
+    const overview = eshopsOverview({
+      associations: [
+        association('sroubshop-storefront', cz, '88888888-8888-4888-8888-888888888883'),
+        association('sroubshop-storefront', retired, '88888888-8888-4888-8888-888888888884'),
+      ],
+      legalEntityId: '71000000-0000-4000-8000-000000000024',
+      markets: [cz, retired, pl],
+      settings: [],
+      storefronts: [akros, shop, retiredShop],
+      unnamed: (position) => `E-shop ${String(position)}`,
+    });
+    expect(overview.eshops.map((eshop) => eshop.name)).toEqual(['ŠroubShop e-shop']);
+    expect(overview.eshops[0]?.markets.map((chip) => [chip.code, chip.url])).toEqual([
+      ['AKROS-CZ', 'https://ontos-stage-shop.web-revolution.cz/cs'],
+    ]);
+    expect(overview.unassigned.map((chip) => chip.code)).toEqual(['AKROS-PL']);
+    expect(storefrontName('sroubshop-storefront', 1, () => 'x')).toBe('ŠroubShop e-shop');
+  });
 });
 
 describe('market form model', () => {
