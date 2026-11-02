@@ -1,6 +1,7 @@
 import { defineOntosMcpContribution } from '@app/core-runtime';
 
 export const facilityOperationsMcpContribution = defineOntosMcpContribution({
+  actions: { 'request-search-rebuild': 'hidden' },
   approvals: true,
   commandFieldLabels: {
     amountMinor: 'Částka',

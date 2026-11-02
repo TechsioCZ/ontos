@@ -14,6 +14,11 @@ export const getFacilityOperationsReadiness = Effect.fn('FacilityOperations.read
 // <generated-action-http-client-exports>
 export { executeApplyCommand, executeApplyCommandWithAuthorization } from './apply-command-action-client.ts';
 export type { ApplyCommandActionClientOptions } from './apply-command-action-client.ts';
+export {
+  executeRequestSearchRebuild,
+  executeRequestSearchRebuildWithAuthorization,
+} from './request-search-rebuild-action-client.ts';
+export type { RequestSearchRebuildActionClientOptions } from './request-search-rebuild-action-client.ts';
 // </generated-action-http-client-exports>
 
 // <generated-module-api-client-exports>

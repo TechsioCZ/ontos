@@ -23,12 +23,46 @@ import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts'
 import { withCommandGuard } from '../../shared/actions/command-guard.ts';
 import { facilityOperationsGrants, persistenceService } from '../services/persistence.service.ts';
 
+import {
+  outboxProducerModuleKey,
+  outboxTopic,
+  OutboxPayloadSchema,
+} from '../../shared/outbox/facility-operations-search-refresh-requested-v1.ts';
+import { createApplyCommandFacilityOperationsSearchRefreshRequestedV1OutboxMessage } from './apply-command-facility-operations-search-refresh-requested-v1.outbox-message.ts';
+import { facilitySearchChanged } from '../services/facility-search-projection.ts';
+
+const domainEvents = { [outboxTopic]: OutboxPayloadSchema } as const;
+
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
-const handleApplyCommand = (
+const handleApplyCommand = Effect.fn('FacilityOperations.applyAndEnqueue')(function* applyAndEnqueue(
   payload: ApplyCommandPayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
-): Effect.Effect<Effect.Success<ReturnType<Services['apply']>>, Effect.Error<ReturnType<Services['apply']>>> =>
-  context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId, payload.baseUpdatedAt);
+  context: ActionHandlerContext<typeof domainEvents, Services>,
+) {
+  const result = yield* context.services.apply(
+    payload.command,
+    payload.expectedRevision,
+    context.actionInvocationId,
+    payload.baseUpdatedAt,
+  );
+  if (facilitySearchChanged(result)) {
+    const refresh = yield* Schema.decodeUnknownEffect(OutboxPayloadSchema)({
+      requestId: context.actionInvocationId,
+    }).pipe(Effect.orDie);
+    const event = yield* context.addDomainEvent({
+      eventType: outboxTopic,
+      payloadJson: refresh,
+      producerModuleKey: outboxProducerModuleKey,
+      subjectModuleKey: 'core.identity',
+      subjectResourceId: context.scope.tenantId,
+      subjectResourceType: 'tenant',
+    });
+    yield* context.addOutboxMessage(
+      event,
+      createApplyCommandFacilityOperationsSearchRefreshRequestedV1OutboxMessage(refresh),
+    );
+  }
+  return result;
+});
 
 const samePrincipal = Schema.toEquivalence(TrustedPrincipalContextSchema);
 
@@ -76,7 +110,7 @@ export const applyCommandAction = defineAction(
     actionKey: 'facility.operations.apply-command',
     auditProfile: 'standard',
     domainErrorSchema: FacilityOperationsErrorSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'action_execution', provisioning: 'explicit' },
@@ -98,4 +132,9 @@ export const applyCommandAction = defineAction(
 );
 
 // <generated-outbox-message-exports>
+export { ApplyCommandFacilityOperationsSearchRefreshRequestedV1OutboxPayloadSchema } from './apply-command-facility-operations-search-refresh-requested-v1.outbox-message.ts';
+export { ApplyCommandFacilityOperationsSearchRefreshRequestedV1OutboxProducerModuleKey } from './apply-command-facility-operations-search-refresh-requested-v1.outbox-message.ts';
+export { ApplyCommandFacilityOperationsSearchRefreshRequestedV1OutboxTopic } from './apply-command-facility-operations-search-refresh-requested-v1.outbox-message.ts';
+export { createApplyCommandFacilityOperationsSearchRefreshRequestedV1OutboxMessage } from './apply-command-facility-operations-search-refresh-requested-v1.outbox-message.ts';
+export type { ApplyCommandFacilityOperationsSearchRefreshRequestedV1OutboxPayload } from './apply-command-facility-operations-search-refresh-requested-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

@@ -4,13 +4,17 @@
 import {
   defineOntosModuleManifest,
   ShellNavigationContributionSchema,
+  ShellSearchContributionSchema,
   ShellPageContributionSchema,
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
 import { AgendaPage } from './src/routes/[lang]/provoz/agenda/page.tsx';
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { assetResourceDescriptor } from './shared/resources/asset.ts';
 import { AssetsPage } from './src/routes/[lang]/provoz/majetek/page.tsx';
+import { deviceResourceDescriptor } from './shared/resources/device.ts';
+import { documentResourceDescriptor } from './shared/resources/document.ts';
 import { DocumentsPage } from './src/routes/[lang]/provoz/dokumenty/page.tsx';
 import { facilityOperationsReadAllPermission } from './shared/permissions/facility-operations-read-all.ts';
 import { facilityOperationsReadOperationalPermission } from './shared/permissions/facility-operations-read-operational.ts';
@@ -21,6 +25,7 @@ import { OverviewApi } from './shared/apis/overview.ts';
 import { OverviewPage } from './src/routes/[lang]/provoz/prehled/page.tsx';
 import { PurchasingPage } from './src/routes/[lang]/provoz/nakupy/page.tsx';
 import { RecordsApi } from './shared/apis/records.ts';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 import { SecurityPage } from './src/routes/[lang]/provoz/bezpecnost/page.tsx';
 // </generated-module-manifest-imports>
 import { facilityOperationsMcpContribution } from './shared/mcp/contribution.ts';
@@ -32,6 +37,9 @@ const navigationContribution = (value: NavigationContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellNavigationContributionSchema)(value));
 const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
+
+const searchContribution = (value: typeof ShellSearchContributionSchema.Encoded) =>
+  Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
 
 const moduleKey = 'facility.operations';
 const facilityNavigationGroupKey = 'shell.navigation.facility';
@@ -58,6 +66,7 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
     actions: [
       // <generated-module-manifest-actions>
       applyCommandAction,
+      requestSearchRebuildAction,
       // </generated-module-manifest-actions>
     ],
     api: {
@@ -93,10 +102,31 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
     ],
     resourceTypes: [
       // <generated-module-manifest-resources>
+      assetResourceDescriptor,
+      deviceResourceDescriptor,
+      documentResourceDescriptor,
       // </generated-module-manifest-resources>
     ],
     search: [
       // <generated-module-manifest-search>
+      {
+        accessFiltering: 'resource_permission',
+        key: 'facility.operations.assets',
+        owningModuleId: moduleKey,
+        resourceType: 'facility.operations.asset',
+      },
+      {
+        accessFiltering: 'resource_permission',
+        key: 'facility.operations.devices',
+        owningModuleId: moduleKey,
+        resourceType: 'facility.operations.device',
+      },
+      {
+        accessFiltering: 'resource_permission',
+        key: 'facility.operations.documents',
+        owningModuleId: moduleKey,
+        resourceType: 'facility.operations.document',
+      },
       // </generated-module-manifest-search>
     ],
     shellContributions: {
@@ -334,6 +364,42 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
       resourceDetails: [],
       search: [
         // <generated-module-shell-search>
+        searchContribution({
+          contributionKey: 'facility.operations.search.assets',
+          entrypoint: {
+            access: 'read',
+            authorization: restrictedAccess,
+            entrypointKey: 'facility.operations.search.assets',
+            moduleKey,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'facility.operations.assets',
+        }),
+        searchContribution({
+          contributionKey: 'facility.operations.search.devices',
+          entrypoint: {
+            access: 'read',
+            authorization: restrictedAccess,
+            entrypointKey: 'facility.operations.search.devices',
+            moduleKey,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'facility.operations.devices',
+        }),
+        searchContribution({
+          contributionKey: 'facility.operations.search.documents',
+          entrypoint: {
+            access: 'read',
+            authorization: restrictedAccess,
+            entrypointKey: 'facility.operations.search.documents',
+            moduleKey,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'facility.operations.documents',
+        }),
         // </generated-module-shell-search>
       ],
       timelines: [],
