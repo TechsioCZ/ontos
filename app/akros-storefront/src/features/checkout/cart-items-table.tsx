@@ -16,28 +16,28 @@ import {
 import { formatCheckoutPrice } from "./checkout-format";
 import { formatCartProductName } from "./cart-product-name";
 import { useCartQuote, type CartQuoteState } from "@/ontos/cart-revalidation";
-import { useMoney } from "@/ontos/market-context";
+import { useDictionary, useMoney } from "@/ontos/market-context";
+import type { Dictionary } from "@/i18n";
 
-const blockedLabels: Record<string, string> = {
-  AVAILABILITY_UNKNOWN: "Nelze ověřit",
-  PRICE_UNAVAILABLE: "Cena není dostupná",
-  NOT_AVAILABLE: "Není v nabídce",
-  NOT_OFFERED_IN_MARKET: "Není v nabídce trhu",
-  OUT_OF_STOCK: "Není skladem",
-  INSUFFICIENT_STOCK: "Nedostatek kusů",
-  MINIMUM_QUANTITY: "Upravte množství",
-  PACKAGE_QUANTITY: "Upravte množství",
-};
+const blockedLabel = (cs: Dictionary, code: string) =>
+  code in cs.cart.issue
+    ? cs.cart.issue[code as keyof Dictionary["cart"]["issue"]]
+    : cs.cart.lineState.blocked;
 
 function LineAvailability({ line, quote }: { line: CartLine; quote: CartQuoteState | null }) {
+  const cs = useDictionary();
   const base =
     "text-(length:--akros-cart-secondary-size) font-(weight:--akros-cart-primary-weight) uppercase";
   if (!quote?.enabled)
-    return <span className={`${base} text-(--color-fg-status-success)`}>Skladem</span>;
+    return (
+      <span className={`${base} text-(--color-fg-status-success)`}>
+        {cs.cart.lineState.inStock}
+      </span>
+    );
   if (quote.status !== "ready")
     return (
       <span className={`${base} text-(--color-fg-secondary)`} data-akros-line-state="unverified">
-        {quote.status === "error" ? "Neověřeno" : "Ověřuji…"}
+        {quote.status === "error" ? cs.cart.lineState.unchecked : cs.cart.lineState.checking}
       </span>
     );
   const [issue] = quote.lineIssues(line.productId, line.variantId);
@@ -48,17 +48,18 @@ function LineAvailability({ line, quote }: { line: CartLine; quote: CartQuoteSta
         data-akros-line-state="blocked"
         title={issue.message}
       >
-        {blockedLabels[issue.code] ?? "Nelze objednat"}
+        {blockedLabel(cs, issue.code)}
       </span>
     );
   return (
     <span className={`${base} text-(--color-fg-status-success)`} data-akros-line-state="verified">
-      Skladem
+      {cs.cart.lineState.inStock}
     </span>
   );
 }
 
 function CartQuantity({ line }: { line: CartLine }) {
+  const cs = useDictionary();
   const id = useId();
   const { dispatch } = useCart();
   const [draftQuantity, setDraftQuantity] = useState<number | null>(null);
@@ -107,12 +108,12 @@ function CartQuantity({ line }: { line: CartLine }) {
           className="w-(--akros-cart-control-width) shrink-0 gap-(--akros-cart-control-gap) overflow-visible"
         >
           <NumericInput.DecrementTrigger
-            aria-label={`Snížit množství: ${line.variantLabel ?? line.name}`}
+            aria-label={cs.cart.decrementQuantityOf(line.variantLabel ?? line.name)}
             className="h-full w-(--akros-cart-trigger-width) flex-none rounded-(--akros-cart-control-radius) bg-(--akros-cart-trigger-bg)"
             icon="token-icon-minus"
           />
           <NumericInput.Input
-            aria-label={`Množství: ${line.variantLabel ?? line.name}`}
+            aria-label={cs.cart.quantityOf(line.variantLabel ?? line.name)}
             className="min-w-0 flex-1 rounded-(--akros-cart-control-radius)! border-solid! border-(length:--akros-cart-value-border-width)! border-(--akros-cart-value-border-color)! text-center leading-(--akros-checkout-heading-leading)"
             onKeyDown={(event) => {
               if (event.key === "Enter") {
@@ -122,7 +123,7 @@ function CartQuantity({ line }: { line: CartLine }) {
             }}
           />
           <NumericInput.IncrementTrigger
-            aria-label={`Zvýšit množství: ${line.variantLabel ?? line.name}`}
+            aria-label={cs.cart.incrementQuantityOf(line.variantLabel ?? line.name)}
             className="h-full w-(--akros-cart-trigger-width) flex-none rounded-(--akros-cart-control-radius) bg-(--akros-cart-trigger-bg)"
             icon="token-icon-plus"
           />
@@ -133,6 +134,7 @@ function CartQuantity({ line }: { line: CartLine }) {
 }
 
 export function CartItemsTable({ showHeader = false }: { showHeader?: boolean }) {
+  const cs = useDictionary();
   const money = useMoney();
   const { cart, dispatch } = useCart();
   const quote = useCartQuote();
@@ -155,7 +157,7 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
       className="@container/akros-cart min-w-0 font-medium"
     >
       <Table
-        aria-label="Položky objednávky"
+        aria-label={cs.cart.itemsLabel}
         size="sm"
         variant="line"
         className="table-auto @max-akros-cart-wide/akros-cart:block @max-akros-cart-wide/akros-cart:[&_thead]:sr-only @max-akros-cart-wide/akros-cart:[&_tbody]:grid @max-akros-cart-wide/akros-cart:[&_td]:block @max-akros-cart-wide/akros-cart:[&_td]:w-auto! @max-akros-cart-wide/akros-cart:[&_td]:min-w-0 @max-akros-cart-wide/akros-cart:[&_td]:p-0! @max-akros-cart-wide/akros-cart:[&_td:first-child]:col-span-2 @max-akros-cart-wide/akros-cart:[&_td:last-child]:justify-self-end @max-akros-cart-narrow/akros-cart:[&_td:nth-child(2)]:col-span-2 @max-akros-cart-narrow/akros-cart:[&_td:nth-child(3)]:col-span-2 @max-akros-cart-narrow/akros-cart:[&_td:nth-child(3)]:justify-self-start"
@@ -164,30 +166,30 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
           className={`${showHeader ? "" : "sr-only "}[&_th]:text-(length:--akros-cart-secondary-size)`}
         >
           <Table.Row>
-            <Table.ColumnHeader scope="col">Položka</Table.ColumnHeader>
+            <Table.ColumnHeader scope="col">{cs.cart.item}</Table.ColumnHeader>
             <Table.ColumnHeader scope="col" style={{ width: "var(--akros-cart-stock-width)" }}>
-              Dostupnost
+              {cs.cart.availability}
             </Table.ColumnHeader>
             <Table.ColumnHeader
               scope="col"
               align="center"
               style={{ width: "var(--akros-cart-quantity-width)" }}
             >
-              Množství
+              {cs.cart.quantity}
             </Table.ColumnHeader>
             <Table.ColumnHeader
               scope="col"
               align="end"
               style={{ width: "var(--akros-cart-price-width)" }}
             >
-              Cena
+              {cs.cart.price}
             </Table.ColumnHeader>
             <Table.ColumnHeader
               scope="col"
               align="end"
               style={{ width: "var(--akros-cart-remove-width)" }}
             >
-              <span className="sr-only">Odebrat</span>
+              <span className="sr-only">{cs.cart.remove}</span>
             </Table.ColumnHeader>
           </Table.Row>
         </Table.Header>
@@ -237,7 +239,7 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
               </Table.Cell>
               <Table.Cell align="end" style={{ width: "var(--akros-cart-remove-width)" }}>
                 <ActionIcon
-                  aria-label={`Odebrat ${line.name}`}
+                  aria-label={cs.cart.removeItem(line.name)}
                   icon="token-icon-akros-checkout-remove"
                   size="md"
                   onClick={() =>

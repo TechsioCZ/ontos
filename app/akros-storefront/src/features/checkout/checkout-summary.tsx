@@ -4,9 +4,10 @@ import { useCheckout } from "./checkout-provider";
 import { getCheckoutTotals } from "@/features/checkout/checkout-state";
 import { formatCheckoutPrice } from "./checkout-format";
 import { useServerTotals } from "./server-totals";
-import { useMoney } from "@/ontos/market-context";
+import { useMoney, useDictionary } from "@/ontos/market-context";
 
 export function CheckoutSummary() {
+  const cs = useDictionary();
   const money = useMoney();
   const { cart } = useCart();
   const { draft, methods } = useCheckout();
@@ -21,39 +22,39 @@ export function CheckoutSummary() {
         id="checkout-summary-title"
         className="mb-(--dimension-32) text-(length:--akros-checkout-heading-size) leading-(--akros-checkout-heading-leading) font-medium"
       >
-        Shrnutí
+        {cs.checkout.summary.title}
       </h2>
       <dl className="grid gap-(--dimension-24) text-(length:--dimension-16) font-medium">
         <div className="grid gap-1 border-b border-(--color-border-primary) pb-4">
           <div className="flex justify-between gap-3">
-            <dt>Cena celkem</dt>
+            <dt>{cs.checkout.summary.goods}</dt>
             <dd className="text-right">{formatCheckoutPrice(totals.subtotal, money)}</dd>
           </div>
           <div className="flex justify-between gap-3">
-            <dt>Doprava a platba</dt>
+            <dt>{cs.checkout.summary.delivery}</dt>
             <dd className="text-right">
               {totals.shipping === null
-                ? "Bude vybráno"
+                ? cs.checkout.summary.toBeChosen
                 : formatCheckoutPrice(totals.shipping + totals.payment, money)}
             </dd>
           </div>
         </div>
         <div className="grid gap-1 border-b border-(--color-border-primary) pb-4">
           <div className="flex justify-between gap-3">
-            <dt>DPH</dt>
+            <dt>{cs.checkout.summary.vat}</dt>
             <dd className="text-right">
               {totals.vat === null ? "—" : formatCheckoutPrice(totals.vat, money)}
             </dd>
           </div>
           <div className="flex justify-between gap-3">
-            <dt>Celkem bez daně</dt>
+            <dt>{cs.checkout.summary.net}</dt>
             <dd className="text-right">
               {totals.net === null ? "—" : formatCheckoutPrice(totals.net, money)}
             </dd>
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <dt className="text-(length:--dimension-20)">Celkem s DPH</dt>
+          <dt className="text-(length:--dimension-20)">{cs.checkout.summary.totalWithVat}</dt>
           <dd
             className="text-(length:--akros-checkout-total-size) leading-(--akros-checkout-heading-leading) font-extrabold"
             aria-live="polite"
@@ -66,9 +67,7 @@ export function CheckoutSummary() {
         <p className="mt-3 text-xs text-(--color-fg-secondary)">{server.note}</p>
       )}
       {totals.net !== null && (
-        <p className="mt-3 text-xs text-(--color-fg-secondary)">
-          DPH a částky bez daně spočítal OntOS při ověření košíku.
-        </p>
+        <p className="mt-3 text-xs text-(--color-fg-secondary)">{cs.checkout.summary.vatByOntos}</p>
       )}
     </aside>
   );

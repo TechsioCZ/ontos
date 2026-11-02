@@ -1,5 +1,6 @@
 "use client";
 import { useCartQuote } from "@/ontos/cart-revalidation";
+import { useDictionary } from "@/ontos/market-context";
 import type { CheckoutTotals } from "@/features/checkout/checkout-state";
 
 /**
@@ -7,6 +8,7 @@ import type { CheckoutTotals } from "@/features/checkout/checkout-state";
  * displayed gross prices and never computes tax.
  */
 export function useServerTotals(local: CheckoutTotals): { totals: CheckoutTotals; note: string } {
+  const cs = useDictionary();
   const quote = useCartQuote();
   if (!quote?.enabled) return { totals: local, note: "" };
   const server = quote.status === "ready" && quote.quote?.canCheckout ? quote.quote.totals : null;
@@ -16,14 +18,14 @@ export function useServerTotals(local: CheckoutTotals): { totals: CheckoutTotals
       totals: pending,
       note:
         quote.status === "checking"
-          ? "DPH spočítá OntOS po ověření košíku…"
-          : "DPH a cenu bez daně ukážeme, až OntOS potvrdí celý košík.",
+          ? cs.checkout.totalsNote.checking
+          : cs.checkout.totalsNote.pending,
     };
   // Goods-only totals while no supported shipping method is chosen yet.
   if (local.shipping !== null && server.shippingMinor === null)
     return {
       totals: pending,
-      note: "Zvolený způsob dopravy OntOS nepotvrdil; vyberte dopravu z aktuální nabídky.",
+      note: cs.checkout.totalsNote.deliveryUnconfirmed,
     };
   return {
     totals: {

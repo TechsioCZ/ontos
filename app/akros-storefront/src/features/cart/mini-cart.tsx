@@ -190,7 +190,7 @@ export function MiniCart() {
                       )}
                     </span>
                     <strong className="whitespace-nowrap max-md:col-start-2">
-                      Aktuální cenu ověří košík
+                      {cs.cart.priceCheckNote}
                     </strong>
                   </span>
                 ))}
