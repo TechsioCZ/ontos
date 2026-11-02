@@ -330,15 +330,18 @@ it.effect('owner snapshot binds every query to trusted tenant and seller and clo
   Effect.gen(function* ownerSnapshot() {
     const queries: { params: readonly unknown[]; sql: string }[] = [];
     let snapshotOpen = false;
+    const record = {
+      businessCode: 'AKROS-CZ',
+      definitions: [{ effectiveFrom: january, effectiveTo: null, purpose: 'Český maloobchod' }],
+      lifecycles: [{ effectiveFrom: january, effectiveTo: null, lifecycle: 'ACTIVE' }],
+      marketId,
+      sellingLegalEntityId: companyId,
+      tenantId,
+    };
+    let payload = record;
     const connection = testSqlConnection((sql, params) => {
       queries.push({ params, sql });
-      if (sql.includes('"market_definition_revisions"')) {
-        return Effect.succeed([{ effectiveFrom: new Date(january), effectiveTo: null, purpose: 'Český maloobchod' }]);
-      }
-      if (sql.includes('"market_lifecycle_periods"')) {
-        return Effect.succeed([{ effectiveFrom: new Date(january), effectiveTo: null, lifecycle: 'ACTIVE' }]);
-      }
-      return Effect.succeed([{ businessCode: 'AKROS-CZ', marketId, sellingLegalEntityId: companyId, tenantId }]);
+      return Effect.succeed([{ payload }]);
     });
     const database = yield* makeWithDefaults().pipe(
       Effect.provide(scriptedPgClientLayer(Effect.succeed(connection)).pipe(Layer.provide(Reactivity.layer))),
@@ -379,9 +382,11 @@ it.effect('owner snapshot binds every query to trusted tenant and seller and clo
       },
     );
     yield* projector.project(context, { marketId });
-    expect(queries).toHaveLength(3);
+    expect(queries).toHaveLength(1);
     for (const query of queries) {
-      expect(query.params).toEqual([tenantId, companyId, marketId]);
+      expect(query.params).toEqual([tenantId, companyId, JSON.stringify({ marketId })]);
+      expect(query.sql).toContain('commerce_market_catalog.read_market_search_snapshot');
+      expect(query.sql).not.toContain('from "commerce_market_catalog"."markets"');
       expect(query.sql).not.toContain('change_reason');
       expect(query.sql).not.toContain('retirement_impact_assessment');
       expect(query.sql).not.toContain('acting_principal_id');
@@ -400,6 +405,19 @@ it.effect('owner snapshot binds every query to trusted tenant and seller and clo
     expect(
       yield* (yield* makeMarketSearchSource(foreignReader)).load(context, { marketId }).pipe(Effect.flip),
     ).toBeInstanceOf(MarketSearchUnavailable);
+    for (const invalid of [
+      { ...record, tenantId: otherTenant },
+      { ...record, marketId: principalId },
+      { ...record, sellingLegalEntityId: otherCompany },
+      { ...record, definitions: [{ effectiveFrom: 'invalid', effectiveTo: null, purpose: 'invalid period' }] },
+      { ...record, lifecycles: [{ effectiveFrom: january, effectiveTo: null, lifecycle: 'UNKNOWN' }] },
+    ]) {
+      payload = invalid;
+      expect(yield* source.load(context, { marketId }).pipe(Effect.flip)).toBeInstanceOf(MarketSearchUnavailable);
+    }
+    payload = record;
+    expect((yield* source.load(context, { rebuild: true })).projectionVersion).toBe('1');
+    expect(queries.at(-1)?.params).toEqual([tenantId, companyId, '{}']);
   }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
 );
 

@@ -1,15 +1,10 @@
 import { CoreSearchWorkerSnapshot } from '@app/core-runtime';
-import type {
-  CoreSearchSnapshotReadExecutor,
-  CoreSearchWorkerSnapshotView,
-  OutboxWorkerHandlerContext,
-} from '@app/core-runtime';
-import { and, eq } from 'drizzle-orm';
-import { Context, Effect, Layer } from 'effect';
+import type { CoreSearchWorkerSnapshotView, OutboxWorkerHandlerContext } from '@app/core-runtime';
+import { sql } from 'drizzle-orm';
+import { Context, Effect, Layer, Option, Schema } from 'effect';
 
 import type { MarketSearchUnavailable } from '../../shared/domain/market-search-unavailable.ts';
 import { marketSearchUnavailable } from '../../shared/domain/market-search-unavailable.ts';
-import { markets, marketDefinitionRevisions, marketLifecyclePeriods } from '../database/schema.ts';
 
 export const MARKET_SEARCH_MODULE = 'commerce.market-catalog';
 export const MARKET_SEARCH_RESOURCE = 'commerce.market-catalog.market';
@@ -52,45 +47,24 @@ export class MarketSearchSource extends Context.Service<MarketSearchSource, Mark
   '@app/commerce-market-catalog/services/market-search-source/MarketSearchSource',
 ) {}
 
-const readMarketPeriods = Effect.fn('MarketSearchSource.readMarketPeriods')(function* readMarketPeriods(
-  executor: CoreSearchSnapshotReadExecutor,
-  row: Omit<MarketSearchRecord, 'definitions' | 'lifecycles'>,
-) {
-  // Read sequentially on the same snapshot transaction connection.
-  const [definitions, lifecycles] = yield* Effect.all(
-    [
-      executor
-        .select({
-          effectiveFrom: marketDefinitionRevisions.effectiveFrom,
-          effectiveTo: marketDefinitionRevisions.effectiveTo,
-          purpose: marketDefinitionRevisions.purpose,
-        })
-        .from(marketDefinitionRevisions)
-        .where(
-          and(
-            eq(marketDefinitionRevisions.tenantId, row.tenantId),
-            eq(marketDefinitionRevisions.sellingLegalEntityId, row.sellingLegalEntityId),
-            eq(marketDefinitionRevisions.marketId, row.marketId),
-          ),
-        ),
-      executor
-        .select({
-          effectiveFrom: marketLifecyclePeriods.effectiveFrom,
-          effectiveTo: marketLifecyclePeriods.effectiveTo,
-          lifecycle: marketLifecyclePeriods.lifecycle,
-        })
-        .from(marketLifecyclePeriods)
-        .where(
-          and(
-            eq(marketLifecyclePeriods.tenantId, row.tenantId),
-            eq(marketLifecyclePeriods.sellingLegalEntityId, row.sellingLegalEntityId),
-            eq(marketLifecyclePeriods.marketId, row.marketId),
-          ),
-        ),
-    ],
-    { concurrency: 1 },
-  );
-  return { ...row, definitions, lifecycles } satisfies MarketSearchRecord;
+const UuidSchema = Schema.String.check(Schema.isUUID());
+const MarketIdSchema = UuidSchema.pipe(Schema.brand('MarketSearchMarketId'));
+const SellerIdSchema = UuidSchema.pipe(Schema.brand('MarketSearchSellerId'));
+const TenantIdSchema = UuidSchema.pipe(Schema.brand('MarketSearchTenantId'));
+const SearchInputSchema = Schema.Struct({ marketId: Schema.optionalKey(MarketIdSchema) });
+const periodFields = {
+  effectiveFrom: Schema.DateFromString,
+  effectiveTo: Schema.OptionFromNullOr(Schema.DateFromString),
+};
+const MarketSearchRecordSchema = Schema.Struct({
+  businessCode: Schema.String,
+  definitions: Schema.Array(Schema.Struct({ ...periodFields, purpose: Schema.String })),
+  lifecycles: Schema.Array(
+    Schema.Struct({ ...periodFields, lifecycle: Schema.Literals(['ACTIVE', 'SUSPENDED', 'RETIRED']) }),
+  ),
+  marketId: MarketIdSchema,
+  sellingLegalEntityId: SellerIdSchema,
+  tenantId: TenantIdSchema,
 });
 
 const readCompany = Effect.fn('MarketSearchSource.readCompany')(function* readCompany(
@@ -101,21 +75,28 @@ const readCompany = Effect.fn('MarketSearchSource.readCompany')(function* readCo
   return yield* snapshot.forLegalEntity(
     legalEntityId,
     Effect.fn('MarketSearchSource.companySnapshot')(function* companySnapshot(executor) {
-      const rows = yield* executor
-        .select({
-          businessCode: markets.businessCode,
-          marketId: markets.marketId,
-          sellingLegalEntityId: markets.sellingLegalEntityId,
-          tenantId: markets.tenantId,
-        })
-        .from(markets)
-        .where(
-          and(
-            eq(markets.tenantId, snapshot.tenantId),
-            eq(markets.sellingLegalEntityId, legalEntityId),
-            'marketId' in target ? eq(markets.marketId, target.marketId) : undefined,
+      // Invoke the owner routine through Core's restricted read executor. Do not acquire a
+      // separate connection: all companies and all periods share Core's versioned snapshot.
+      const payload = 'marketId' in target ? { marketId: target.marketId } : {};
+      const input = yield* Schema.decodeEffect(SearchInputSchema)(payload).pipe(
+        Effect.mapError(marketSearchUnavailable),
+      );
+      const encodedInput = yield* Schema.encodeEffect(Schema.fromJsonString(SearchInputSchema))(input).pipe(
+        Effect.mapError(marketSearchUnavailable),
+      );
+      const result = yield* executor.select({ payload: sql<unknown>`payload` }).from(
+        sql`commerce_market_catalog.read_market_search_snapshot(
+            ${snapshot.tenantId}::uuid, ${legalEntityId}::uuid, ${encodedInput}::jsonb
+          )`,
+      );
+      const rows = yield* Effect.forEach(
+        result,
+        (row) =>
+          Schema.decodeUnknownEffect(MarketSearchRecordSchema)(row.payload).pipe(
+            Effect.mapError(marketSearchUnavailable),
           ),
-        );
+        { concurrency: 1 },
+      );
       if (
         rows.some(
           (row) =>
@@ -126,7 +107,17 @@ const readCompany = Effect.fn('MarketSearchSource.readCompany')(function* readCo
       ) {
         return yield* marketSearchUnavailable();
       }
-      return yield* Effect.forEach(rows, (row) => readMarketPeriods(executor, row), { concurrency: 1 });
+      return rows.map((row) => ({
+        ...row,
+        definitions: row.definitions.map((definition) => ({
+          ...definition,
+          effectiveTo: Option.getOrNull(definition.effectiveTo),
+        })),
+        lifecycles: row.lifecycles.map((lifecycle) => ({
+          ...lifecycle,
+          effectiveTo: Option.getOrNull(lifecycle.effectiveTo),
+        })),
+      }));
     }),
   );
 });

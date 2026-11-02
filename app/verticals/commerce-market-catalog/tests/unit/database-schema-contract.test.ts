@@ -273,4 +273,30 @@ describe('Commerce Market Catalog database contract', () => {
     expect(migration).toContain('market.selling_legal_entity_id = p_legal_entity_id');
     expect(migration).not.toMatch(/grant\s+(?:select|insert|update|delete)\s+on/iu);
   });
+
+  it('verifies the search snapshot routine in every governed allowlist without permitting raw runtime reads', () => {
+    const verifier = readFileSync(new URL('../../scripts/verify-db-schema.mts', import.meta.url), 'utf-8');
+    const migration = readFileSync(
+      new URL('../../drizzle/20261102164719_market-search-snapshot/migration.sql', import.meta.url),
+      'utf-8',
+    );
+    const routineLists = verifier.split('\n').filter((line) => line.includes('routine.proname '));
+    expect(routineLists).toHaveLength(3);
+    for (const list of routineLists) {
+      expect(list).toContain("'read_market_search_snapshot'");
+    }
+    expect(verifier).toContain('infrastructure.governed_routine_count !== 15');
+    expect(verifier).toContain('infrastructure.unsafe_governed_routine_count !== 0');
+    expect(verifier).toContain('infrastructure.unexpected_runtime_routine_count !== 0');
+    expect(verifier).toContain('infrastructure.private_routine_executable ||');
+    expect(verifier).toContain('infrastructure.runtime_select ||');
+    expect(verifier).toContain('not routine.prosecdef');
+    expect(verifier).toContain('search_path=pg_catalog, pg_temp');
+    const routine = 'commerce_market_catalog.read_market_search_snapshot(uuid, uuid, jsonb)';
+    expect(migration).toContain('security definer');
+    expect(migration).toContain('set search_path = pg_catalog, pg_temp');
+    expect(migration).toContain(`revoke all on function ${routine} from public`);
+    expect(migration).toContain(`grant execute on function ${routine} to ontos_runtime`);
+    expect(migration).not.toMatch(/grant\s+(?:select|insert|update|delete)\s+on/iu);
+  });
 });

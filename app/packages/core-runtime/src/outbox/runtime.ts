@@ -18,6 +18,10 @@ import { OutboxHandlerExecutionError, OutboxPayloadDecodeError, OutboxWorkerDesc
 import type { PersistenceFailure } from '../database/persistence-failure.ts';
 import type { OutboxClaimLostError } from './errors.ts';
 import { OutboxRepository } from './repository.ts';
+import {
+  OutboxDeclaredFailureIdentitySchema,
+  outboxDeclaredFailureDiagnostics,
+} from './declared-failure-diagnostics.ts';
 import type { ApplicationCompositionAuthorityError } from '../modules/application-composition-authority.ts';
 import type { OutboxClaim, OutboxRepositoryService as OutboxRepositoryPort } from './repository.ts';
 
@@ -347,12 +351,15 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
           handlerContext(claim, registration.descriptor.legalEntityScope ?? 'required', execution.compositionRevision),
         ),
       ).pipe(
-        Effect.match({
-          onFailure: (error) => {
-            void error;
-            return 'declared_failure' as const;
-          },
-          onSuccess: () => 'success' as const,
+        Effect.matchEffect({
+          onFailure: (error) =>
+            Effect.annotateLogs(Effect.logWarning('Outbox Worker handler returned a declared failure'), {
+              ...claimAnnotations(claim, 'declared_failure'),
+              ...outboxDeclaredFailureDiagnostics(
+                Schema.decodeUnknownResult(OutboxDeclaredFailureIdentitySchema)(error),
+              ),
+            }).pipe(Effect.as('declared_failure' as const)),
+          onSuccess: () => Effect.succeed('success' as const),
         }),
         Effect.withSpan('OutboxWorker.handle', {
           attributes: claimAnnotations(claim),

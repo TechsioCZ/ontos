@@ -74,6 +74,8 @@ import {
 import { SHELL_ID, SHELL_PORT, readHostedUnits, workspaceRoot } from './hosted-units.mts';
 import type { HostedUnit } from './hosted-units.mts';
 import { STAGE_CIMD_FIXTURE_PATH, stageCimdFixtureResponse } from './stage-cimd-fixture.mts';
+import { listDeadOutboxDeliveries } from '../../packages/core-runtime/src/outbox/dead-delivery-resolution.ts';
+import { startupDeadOutboxInventory, withOutboxDeadStartupGate } from './outbox-dead-startup-gate.mts';
 
 const OUTBOX_HOST_ID = 'outbox-worker-host';
 const OUTBOX_HEALTH_PORT = 4100;
@@ -662,6 +664,21 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   });
 
   const startup = Effect.gen(function* startupSequence() {
+    // Inspect all Tenants and workers before DDL or any authority fence. Failure leaves the old release admitted.
+    const coreSchemaExists = Effect.gen(function* inspectCoreBootstrap() {
+      const rows = yield* database.executor.execute<{ exists: boolean }>(
+        sql`select to_regnamespace('core') is not null as "exists"`,
+        'objects',
+      );
+      const [catalog] = yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ exists: Schema.Boolean })]))(
+        rows,
+      ).pipe(Effect.mapError(() => failure('Unable to verify the Core bootstrap catalog before owner migrations')));
+      return catalog.exists;
+    });
+    yield* withOutboxDeadStartupGate(
+      startupDeadOutboxInventory(coreSchemaExists, listDeadOutboxDeliveries(database.executor, { limit: 10 })),
+      Effect.void,
+    ).pipe(Effect.mapError((problem) => failure(problem.reason)));
     yield* Effect.all(
       [
         runChild('migrator', node, ['scripts/run-zerops-migrator.mjs'], workspaceRoot, { MIGRATOR_ONCE: 'true' }),
