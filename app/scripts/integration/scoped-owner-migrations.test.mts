@@ -287,7 +287,7 @@ it.live(
       yield* native.client.unsafe(`drop schema ${quoteIdentifier('tax')} cascade`);
       yield* native.client.unsafe(`drop table drizzle.${quoteIdentifier(tax.journalName)}`);
       const pending = yield* prepareNative(native.selectedEnvironment, selectedFile);
-      expect(pending.plan.owners.map(({ ownerId }) => ownerId)).toEqual(['core-runtime', 'tax', 'price-group-catalog']);
+      expect(pending.plan.owners.map(({ ownerId }) => ownerId)).toEqual(['core-runtime', 'price-group-catalog', 'tax']);
       expect(
         pending.plan.owners
           .filter(({ pendingMigrations }) => pendingMigrations.length > 0)
