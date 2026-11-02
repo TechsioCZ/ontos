@@ -282,6 +282,9 @@ importers:
       '@app/email-delivery':
         specifier: workspace:*
         version: link:packages/email-delivery
+      '@app/facility-operations':
+        specifier: workspace:*
+        version: link:verticals/facility-operations
       '@app/finance-billing':
         specifier: workspace:*
         version: link:verticals/finance-billing
@@ -291,6 +294,9 @@ importers:
       '@app/legal-agreements':
         specifier: workspace:*
         version: link:verticals/legal-agreements
+      '@app/merchandise':
+        specifier: workspace:*
+        version: link:verticals/merchandise
       '@app/party-registry':
         specifier: workspace:*
         version: link:verticals/party-registry
@@ -306,6 +312,9 @@ importers:
       '@app/property-portfolio':
         specifier: workspace:*
         version: link:verticals/property-portfolio
+      '@app/sales-pipeline':
+        specifier: workspace:*
+        version: link:verticals/sales-pipeline
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:packages/shared-contracts

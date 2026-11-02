@@ -8,6 +8,8 @@ import type { OperationContext } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 
 import {
+  CoreSearchQueryRuntimeLive,
+  CoreSearchProjectionStoreLive,
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
@@ -28,18 +30,20 @@ import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/module
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { Reactivity } from 'effect/reactivity';
 import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
-// <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
-  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionPgClientLive,
+  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
 } from './auth/gateway-assertion-redemption.ts';
+// <generated-governed-http-handler-support-imports>
+import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
 import { applyCommandActionApiLive } from './apply-command-action-server.ts';
+import { contractsReadApiLive } from './contracts-search-server.ts';
 import { recordsReadApiLive } from './records-read-server.ts';
+import { requestSearchRebuildActionApiLive } from './request-search-rebuild-action-server.ts';
 // </generated-governed-http-handler-imports>
 
 const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
@@ -86,22 +90,24 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit)
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
   applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  contractsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  requestSearchRebuildActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
+  GovernedReadLayer.provide(CoreSearchQueryRuntimeLive.pipe(GovernedReadLayer.provide(CoreSearchProjectionStoreLive))),
   // <generated-governed-http-handler-support-layers>
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
       GovernedActionPrincipalVerifierLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-      GovernedGatewayAssertionRedemptionLive.pipe(
-        GovernedReadLayer.provide(GatewayAssertionRedemptionDatabaseLive),
-        GovernedReadLayer.provide(GatewayAssertionPgClientLive),
-        GovernedReadLayer.provide(Reactivity.layer),
-      ),
+      GovernedGatewayAssertionRedemptionLive,
     ),
   ),
   // </generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provide(GovernedReadLayer.empty),
+  GovernedReadLayer.provide(GatewayAssertionRedemptionDatabaseLive),
+  GovernedReadLayer.provide(GatewayAssertionPgClientLive),
+  GovernedReadLayer.provide(Reactivity.layer),
+  GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
 );
 
 const operationAttributes = (operationContext: OperationContext) => {

@@ -12,9 +12,10 @@ import type {
 } from '@modern-js/bff-effect/microvertical-api';
 
 // <generated-governed-http-api-imports>
-
-import { RecordsApi } from './apis/records.ts';
 import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
+import { ContractsSearchApi } from './apis/contracts-search.ts';
+import { RecordsApi } from './apis/records.ts';
+import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
 // </generated-governed-http-api-imports>
 
 export type LegalAgreementsMarker = MicroVerticalBuildMarker;
@@ -39,7 +40,9 @@ export const legalAgreementsApi = HttpApi.make('LegalAgreementsApi')
   .addHttpApi(legalAgreementsFoundationApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(ApplyCommandActionApi)
+  .addHttpApi(ContractsSearchApi)
   .addHttpApi(RecordsApi)
+  .addHttpApi(RequestSearchRebuildActionApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

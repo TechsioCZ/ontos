@@ -5,12 +5,16 @@ import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { legalAgreementsManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { projectSearchWorker } from './src/workers/project-search.worker.ts';
+import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 // </generated-module-registration-imports>
 
 export const legalAgreementsRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
     applyCommandAction,
+    requestSearchRebuildAction,
     // </generated-module-registration-actions>
   ],
   entrypoints: {
@@ -34,12 +38,15 @@ export const legalAgreementsRegistration = defineVerticalRuntimeRegistration({
     },
     search: {
       // <generated-module-registration-search>
+      contracts: () => import('./src/api/contracts-search-client.ts'),
       // </generated-module-registration-search>
     },
   },
   manifest: legalAgreementsManifest,
   outboxWorkers: [
     // <generated-module-registration-workers>
+    projectSearchWorker,
+    rebuildSearchWorker,
     // </generated-module-registration-workers>
   ],
 });

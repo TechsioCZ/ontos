@@ -5,6 +5,7 @@ import {
   defineOntosModuleManifest,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
+  ShellSearchContributionSchema,
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 import { legalAgreementsMcpContribution } from './shared/mcp/contribution.ts';
@@ -14,10 +15,12 @@ import { contractResourceDescriptor } from './shared/resources/contract.ts';
 import { documentResourceDescriptor } from './shared/resources/document.ts';
 import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/smlouvy/page.tsx';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
+// </generated-module-manifest-imports>
 
 const OWNER_MODULE_KEY = 'legal.agreements';
+const accessPermission = 'module.access';
 const RECORDS_PAGE_KEY = 'legal.agreements.page.records';
-// </generated-module-manifest-imports>
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -26,6 +29,9 @@ const navigationContribution = (value: NavigationContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellNavigationContributionSchema)(value));
 const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
+
+const searchContribution = (value: typeof ShellSearchContributionSchema.Encoded) =>
+  Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
 
 export const legalAgreementsManifest = defineOntosModuleManifest({
   activation: {
@@ -45,6 +51,7 @@ export const legalAgreementsManifest = defineOntosModuleManifest({
     actions: [
       // <generated-module-manifest-actions>
       applyCommandAction,
+      requestSearchRebuildAction,
       // </generated-module-manifest-actions>
     ],
     api: {
@@ -75,6 +82,13 @@ export const legalAgreementsManifest = defineOntosModuleManifest({
     ],
     search: [
       // <generated-module-manifest-search>
+      {
+        accessFiltering: 'resource_permission',
+        key: 'legal.agreements.contracts',
+        owningModuleId: OWNER_MODULE_KEY,
+        requestFilters: ['includeArchived'],
+        resourceType: 'legal.agreements.contract',
+      },
       // </generated-module-manifest-search>
     ],
     shellContributions: {
@@ -85,7 +99,7 @@ export const legalAgreementsManifest = defineOntosModuleManifest({
           contributionKey: 'legal.agreements.navigation.records',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'context_permission', permission: accessPermission },
             entrypointKey: RECORDS_PAGE_KEY,
             moduleKey: OWNER_MODULE_KEY,
             role: 'page',
@@ -106,7 +120,7 @@ export const legalAgreementsManifest = defineOntosModuleManifest({
           contributionKey: RECORDS_PAGE_KEY,
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'context_permission', permission: accessPermission },
             entrypointKey: RECORDS_PAGE_KEY,
             moduleKey: OWNER_MODULE_KEY,
             role: 'page',
@@ -128,6 +142,18 @@ export const legalAgreementsManifest = defineOntosModuleManifest({
       resourceDetails: [],
       search: [
         // <generated-module-shell-search>
+        searchContribution({
+          contributionKey: 'legal.agreements.search.contracts',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: accessPermission },
+            entrypointKey: 'legal.agreements.search.contracts',
+            moduleKey: OWNER_MODULE_KEY,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'legal.agreements.contracts',
+        }),
         // </generated-module-shell-search>
       ],
       timelines: [],

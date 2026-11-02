@@ -8,6 +8,7 @@ import { outboxWorkerEntry as commerceMarketCatalogOutboxWorkerEntry } from '@ap
 import { outboxWorkerEntry as priceGroupCatalogOutboxWorkerEntry } from '@app/price-group-catalog/outbox-worker-host';
 import { outboxWorkerEntry as inventoryOutboxWorkerEntry } from '@app/inventory/outbox-worker-host';
 import { outboxWorkerEntry as privacyOutboxWorkerEntry } from '@app/privacy/outbox-worker-host';
+import { outboxWorkerEntry as legalAgreementsOutboxWorkerEntry } from '@app/legal-agreements/outbox-worker-host';
 import { outboxWorkerEntry as financeBillingOutboxWorkerEntry } from '@app/finance-billing/outbox-worker-host';
 import { outboxWorkerEntry as commerceOrderOutboxWorkerEntry } from '@app/commerce-order/outbox-worker-host';
 
@@ -20,6 +21,7 @@ startOutboxWorkerHost({
     priceGroupCatalogOutboxWorkerEntry,
     inventoryOutboxWorkerEntry,
     privacyOutboxWorkerEntry,
+    legalAgreementsOutboxWorkerEntry,
     financeBillingOutboxWorkerEntry,
     commerceOrderOutboxWorkerEntry,
   ],
