@@ -27,7 +27,7 @@ export interface CloseableSpiceDbClient {
 export class SpiceDbPermissionClientError extends Data.TaggedError('SpiceDbPermissionClientError')<{
   readonly cause?: unknown;
   readonly reason: string;
-  readonly rpcCode?: number;
+  readonly rpcCode: number | undefined;
 }> {}
 
 export const spiceDbPermissionClientError = (cause?: unknown, rpcCode?: number): SpiceDbPermissionClientError =>
