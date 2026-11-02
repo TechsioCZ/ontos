@@ -238,7 +238,7 @@ utilities. Header, footer and checkout keep their existing layout.
 - Kai Uwe's feat/akros features (favorites, variant detail modal, all variants with live filters,
   exact search hits, concrete prices, variant weights, cart weight, Smart Address, reorder) run on
   OntOS data in this app; what is backed by OntOS and what falls back is listed in
-  `agent-scratch/eshop-markets/FOR-KAI-UWE.md` ("Kai's feat/akros merged"). Favorites and watched
+  [FOR-KAI-UWE.md](FOR-KAI-UWE.md) ("Kai's feat/akros merged"). Favorites and watched
   variants stay browser-local; variant weights come from the source-feed index
   (`src/ontos/variant-weights.ts`) because OntOS has no variant weight; Smart Address calls the public
   Smart Suggest v1 API through `/api/address-suggestions` (CZ only); reorder re-reads the signed-in
