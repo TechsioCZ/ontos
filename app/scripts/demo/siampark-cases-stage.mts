@@ -12,7 +12,7 @@ import { FetchHttpClient } from 'effect/http';
 import { parseSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { demoTenantId, rentalDemoLegalEntityId } from './fixture-ids.mts';
-import { readMissingServiceGrants, reconcileServiceGrants } from './reconcile-stage-service-grants.mts';
+import { readMissingServiceGrants } from './reconcile-stage-service-grants.mts';
 import { seedSiamparkCaseRecords } from './seed-siampark-cases.mts';
 import { connectSeedClient, DemoSeedError } from './seed-client.mts';
 import type { SeedClient } from './seed-client.mts';
@@ -247,7 +247,16 @@ const run = (
       (channel) => Effect.sync(() => channel.close()),
     );
     if (mode === 'apply') {
-      yield* reconcileServiceGrants(rpc, desired, 'apply');
+      yield* rpc.writeRelationships(
+        v1.WriteRelationshipsRequest.create({
+          updates: desired.map((relationship) =>
+            v1.RelationshipUpdate.create({
+              operation: v1.RelationshipUpdate_Operation.TOUCH,
+              relationship,
+            }),
+          ),
+        }),
+      );
     }
     if ((yield* readMissingServiceGrants(rpc, desired)).length !== 0) {
       return yield* fail('The reviewed case reader grants are incomplete');
