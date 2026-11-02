@@ -165,3 +165,25 @@ it('907-Q08 #960 importing Seller VAT Regime declarations has no business Permis
     provisioning: 'explicit',
   });
 });
+
+it('freezes every published owner descriptor including canonical capability and dormant entrypoints', () => {
+  expect([taxRuleManagePermission]).toEqual([
+    {
+      allowedScopeKinds: ['tax_selling_legal_entity'],
+      auditSensitivity: 'sensitive',
+      authorityGroups: [],
+      customerDelegable: false,
+      internalGrantable: false,
+      key: 'tax.rule.manage',
+      meaning: 'Tax Rule Manage business permission.',
+      owningCapability: 'commerce.tax',
+      protectedEntrypoints: [
+        'commerce.tax.create-tax-rule',
+        'commerce.tax.create-tax-rule-revision',
+        'commerce.tax.correct-tax-rule-revision',
+        'commerce.tax.end-tax-rule-revision',
+      ],
+      schemaVersion: '1',
+    },
+  ]);
+});

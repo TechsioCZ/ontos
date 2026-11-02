@@ -1,3 +1,4 @@
+import { pricingPriceGroupReadPermission } from '../../shared/permissions/pricing-price-group-read.ts';
 import { describe, expect, it } from 'effect-rstest';
 import { Result, Schema } from 'effect';
 
@@ -308,4 +309,65 @@ describe('Price Group management Action contracts', () => {
     expect(Schema.is(PriceGroupRetirementAcceptedOutboxPayloadSchema)(backdatedRetirementAcceptance)).toBe(false);
     expect(Schema.is(PriceGroupCreatedOutboxPayloadSchema)({ data: definition })).toBe(false);
   });
+});
+
+it('freezes every published owner descriptor including canonical capability and dormant entrypoints', () => {
+  expect([
+    pricingPriceGroupCreatePermission,
+    pricingPriceGroupReadPermission,
+    pricingPriceGroupRetirePermission,
+    pricingPriceGroupRevisionCreatePermission,
+  ]).toEqual([
+    {
+      allowedScopeKinds: ['pricing_catalog'],
+      auditSensitivity: 'sensitive',
+      authorityGroups: [],
+      customerDelegable: false,
+      internalGrantable: false,
+      key: 'pricing.price_group.create',
+      meaning: 'Pricing Price Group Create business permission.',
+      owningCapability: 'pricing.price-group-catalog',
+      protectedEntrypoints: ['pricing.price-group-catalog.create-price-group'],
+      schemaVersion: '1',
+    },
+    {
+      allowedScopeKinds: ['pricing_catalog', 'price_group'],
+      auditSensitivity: 'sensitive',
+      authorityGroups: [],
+      customerDelegable: false,
+      internalGrantable: false,
+      key: 'pricing.price_group.read',
+      meaning: 'Read one exact Price Group definition or validate its compatibility in the authorized Tenant.',
+      owningCapability: 'pricing.price-group-catalog',
+      protectedEntrypoints: [
+        'pricing.price-group-catalog.api.price-group-definition',
+        'pricing.price-group-catalog.api.validate-price-group-compatibility',
+      ],
+      schemaVersion: '1',
+    },
+    {
+      allowedScopeKinds: ['pricing_catalog', 'price_group'],
+      auditSensitivity: 'sensitive',
+      authorityGroups: [],
+      customerDelegable: false,
+      internalGrantable: false,
+      key: 'pricing.price_group.retire',
+      meaning: 'Pricing Price Group Retire business permission.',
+      owningCapability: 'pricing.price-group-catalog',
+      protectedEntrypoints: ['pricing.price-group-catalog.retire-price-group'],
+      schemaVersion: '1',
+    },
+    {
+      allowedScopeKinds: ['pricing_catalog', 'price_group'],
+      auditSensitivity: 'sensitive',
+      authorityGroups: [],
+      customerDelegable: false,
+      internalGrantable: false,
+      key: 'pricing.price_group.revision.create',
+      meaning: 'Pricing Price Group Revision Create business permission.',
+      owningCapability: 'pricing.price-group-catalog',
+      protectedEntrypoints: ['pricing.price-group-catalog.create-price-group-definition-revision'],
+      schemaVersion: '1',
+    },
+  ]);
 });

@@ -1,3 +1,5 @@
+import { makeResourceContainmentRelationshipMutation } from '../../src/permissions/resource-containment-mutation.ts';
+import { remainingPermissionBaselines, remainingPriceGroupContainmentBaselines } from './owner-permission-baseline.ts';
 import { v1 } from '@authzed/authzed-node';
 import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -337,5 +339,64 @@ it.effect('sanitizes relationship client diagnostics', () =>
     );
     expect(`${failure._tag}:${failure.reason}`).not.toContain('secret-spicedb-key');
     expect(failure.reason).toBe('The business permission relationship mutation could not be completed safely');
+  }),
+);
+
+it.effect('freezes exact grant and revoke relationship bytes for all remaining scope kinds', () =>
+  Effect.gen(function* familyMutationBaselines() {
+    for (const row of remainingPermissionBaselines) {
+      const requests: v1.WriteRelationshipsRequest[] = [];
+      const service = makeBusinessPermissionRelationshipMutation({
+        writeRelationships: (request) =>
+          Effect.sync(() => {
+            requests.push(request);
+            return v1.WriteRelationshipsResponse.create({});
+          }),
+      });
+      const input = {
+        permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(row.permission),
+        principal: { principalId, tenantId: row.target.tenantId },
+        target: row.target,
+        trustedStorefrontId: 'storefront-a',
+      };
+      yield* service.mutate({ ...input, operation: 'grant' });
+      yield* service.mutate({ ...input, operation: 'revoke' });
+      const actual = requests.map((request) =>
+        request.updates.map(({ operation, relationship }) => ({
+          operation,
+          relation: relationship?.relation,
+          resourceId: relationship?.resource?.objectId,
+          resourceType: relationship?.resource?.objectType,
+          subjectId: relationship?.subject?.object?.objectId,
+          subjectType: relationship?.subject?.object?.objectType,
+        })),
+      );
+      expect(actual).toEqual([row.grantRelationships, row.revokeRelationships]);
+    }
+  }),
+);
+
+it.effect('freezes read, revision and retirement containing-catalog inheritance relationships', () =>
+  Effect.gen(function* freezesPricingInheritance() {
+    for (const row of remainingPriceGroupContainmentBaselines) {
+      const requests: v1.WriteRelationshipsRequest[] = [];
+      const service = makeResourceContainmentRelationshipMutation({
+        writeRelationships: (request) =>
+          Effect.sync(() => {
+            requests.push(request);
+            return v1.WriteRelationshipsResponse.create({});
+          }),
+      });
+      yield* service.touch({ relationships: row.relationships });
+      expect(requests).toHaveLength(1);
+      expect(
+        requests[0]?.updates.map(({ operation, relationship }) => ({
+          container: relationship?.subject?.object,
+          operation,
+          relation: relationship?.relation,
+          resource: relationship?.resource,
+        })),
+      ).toEqual(row.relationships.map((item) => ({ ...item, operation: 2 })));
+    }
   }),
 );

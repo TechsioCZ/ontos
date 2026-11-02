@@ -1,3 +1,4 @@
+import { remainingPermissionBaselines } from './owner-permission-baseline.ts';
 import { fixtureOwnerContract, ownerPermissionTarget } from '../support/owner-permission-target.ts';
 import type { ActiveApplicationCompositionServiceContract } from '../../src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
@@ -3504,3 +3505,96 @@ it.effect('gives bound Shell system Reads no provider-operation execution lease'
     expect(harness.evidence()).toBe(0);
   }),
 );
+
+for (const row of remainingPermissionBaselines) {
+  if (row.target.kind === 'tax_selling_legal_entity') {
+    continue;
+  }
+  it.effect(`freezes corrected ${row.target.kind} Read history and query identity`, () =>
+    Effect.gen(function* familyReadBaseline() {
+      let handlerCalls = 0;
+      const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(row.permission);
+      const key = `${row.owner}.baseline.${row.target.kind.replaceAll('_', '-')}`;
+      const read = defineRead(
+        {
+          accessKind: 'detail',
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: row.permission },
+            entrypointKey: key,
+            moduleKey: row.owner,
+            role: 'api',
+          }),
+          evidencePolicy: { captureMode: 'hash_only', policyKey: `${key}.evidence.v1` },
+          inputSchema: Schema.Struct({ value: Schema.String }),
+          legalEntityScope: row.tenantOnly ? 'forbidden' : 'required',
+          owningModuleKey: row.owner,
+          permissionTarget: 'business_permission',
+          policies: [],
+          readKey: key,
+          resultSchema: Schema.String,
+          schemaVersion: '1',
+        },
+        () => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 1 }, result: 'baseline' });
+        },
+        () => Effect.succeed({}),
+        () =>
+          row.target.kind === 'counterparty_storefront'
+            ? {
+                businessPermission: { permission, target: row.target },
+                kind: 'business_permission',
+                trustedStorefrontId: row.target.storefrontId,
+              }
+            : { businessPermission: { permission, target: row.target }, kind: 'business_permission' },
+      );
+      const actor = row.tenantOnly ? scope : counterpartyReadPrincipal('00000000-0000-4000-8000-000000000002');
+      const resolved = row.tenantOnly ? scope : { ...scope, legalEntityId: '00000000-0000-4000-8000-000000000002' };
+      const resolvedScope =
+        row.target.kind === 'counterparty_storefront'
+          ? trustVerifiedGatewayPrincipalContext(
+              { ...resolved, trustedStorefrontId: row.target.storefrontId },
+              'a'.repeat(64),
+            )
+          : resolved;
+      interface FamilyReadBaselineOptions {
+        businessPermissionDecision: 'allowed' | 'denied' | 'unavailable';
+        contextPermissionDecision: 'allowed';
+        permissionDecision: 'allowed';
+        resolvedScope: typeof resolvedScope;
+      }
+      const options: FamilyReadBaselineOptions = {
+        businessPermissionDecision: 'allowed',
+        contextPermissionDecision: 'allowed',
+        permissionDecision: 'allowed',
+        resolvedScope,
+      };
+      const harness = yield* makeHarness(options);
+      expect(
+        yield* harness.runtime.runRead({
+          input: { value: 'baseline' },
+          principal: actor,
+          registration: read,
+          transport: { correlationId: 'baseline-family-read' },
+        }),
+      ).toBe('baseline');
+      const values = harness.evidenceParameterRows()[0] ?? [];
+      expect(values).toContain(row.readTarget.moduleId);
+      expect(values).toContain(row.readTarget.resourceId);
+      expect(values).toContain(row.readTarget.resourceType);
+      expect(harness.evidenceRows()[0]?.queryHash).toBe(row.readHash);
+      options.businessPermissionDecision = 'denied';
+      const revoked = yield* Effect.flip(
+        harness.runtime.runRead({
+          input: { value: 'baseline' },
+          principal: actor,
+          registration: read,
+          transport: { correlationId: 'baseline-family-read-after-revoke' },
+        }),
+      );
+      expect(Predicate.isTagged(revoked, 'ReadPermissionDenied')).toBe(true);
+      expect(handlerCalls).toBe(1);
+    }),
+  );
+}

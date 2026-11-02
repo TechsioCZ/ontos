@@ -1,3 +1,4 @@
+import { remainingPermissionBaselines } from './owner-permission-baseline.ts';
 import {
   fixtureOwnerContract,
   fixtureOwnerCreatePermission,
@@ -5142,3 +5143,82 @@ it.layer(NodeCrypto.layer)('Action post-attempt runtime', (suite) => {
     }),
   );
 });
+
+for (const row of remainingPermissionBaselines) {
+  it.effect(`freezes corrected ${row.target.kind} Action history and request identity`, () =>
+    Effect.gen(function* familyActionBaseline() {
+      let handlerCalls = 0;
+      const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(row.permission);
+      const key = `${row.owner}.baseline.${row.target.kind.replaceAll('_', '-')}`;
+      const action = defineAction(
+        {
+          accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: `${key}.access.v1` },
+          actionKey: key,
+          auditProfile: 'sensitive',
+          businessPermission: defineActionBusinessPermission<typeof Schema.Void.Type>(() =>
+            row.target.kind === 'counterparty_storefront'
+              ? { permission, target: row.target, trustedStorefrontId: row.target.storefrontId }
+              : { permission, target: row.target },
+          ),
+          domainErrorSchema: Schema.Never,
+          domainEvents: {},
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'write',
+            authorization: { kind: 'action_execution', provisioning: 'explicit' },
+            entrypointKey: key,
+            moduleKey: row.owner,
+            role: 'action',
+          }),
+          idempotency: 'required',
+          legalEntityScope: row.tenantOnly ? 'forbidden' : 'required',
+          owningModuleKey: row.owner,
+          payloadSchema: Schema.Void,
+          policies: [],
+          resultSchema: Schema.Void,
+          schemaVersion: '1',
+        },
+        () => {
+          handlerCalls += 1;
+          return Effect.void;
+        },
+      );
+      const actor = row.tenantOnly ? Struct.omit(principal, ['legalEntityId']) : principal;
+      const admittedActor =
+        row.target.kind === 'counterparty_storefront'
+          ? trustVerifiedGatewayPrincipalContext(
+              { ...actor, trustedStorefrontId: row.target.storefrontId },
+              'a'.repeat(64),
+            )
+          : actor;
+      const harness = yield* makeHarness();
+      yield* harness.runtime.runAction({
+        payload: undefined,
+        principal: admittedActor,
+        registration: action,
+        transport: transport(`baseline-${row.target.kind}`),
+      });
+      expect(harness.flushed[0]?.transport).toEqual({
+        ...row.actionTarget,
+        correlationId: `correlation-baseline-${row.target.kind}`,
+        idempotencyKey: `baseline-${row.target.kind}`,
+      });
+      expect(harness.requestHashes).toEqual([row.actionHash]);
+      for (const [decision, tag] of [
+        ['denied', 'ActionPermissionDenied'],
+        ['unavailable', 'ActionPermissionCheckError'],
+      ] as const) {
+        const checked = yield* makeHarness({ businessPermissionDecision: decision });
+        const failure = yield* Effect.flip(
+          checked.runtime.runAction({
+            payload: undefined,
+            principal: admittedActor,
+            registration: action,
+            transport: transport(`baseline-${row.target.kind}-${decision}`),
+          }),
+        );
+        expect(Predicate.isTagged(failure, tag)).toBe(true);
+      }
+      expect(handlerCalls).toBe(1);
+    }),
+  );
+}
