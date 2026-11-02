@@ -39,6 +39,7 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     outboxWorkerDefinitionLayer,
   ).pipe(
     Layer.provide(outboxWorkerHandlerLayers.projectionSource),
+    Layer.provide(outboxWorkerHandlerLayers.resourceContainment),
     Layer.provide(outboxWorkerHandlerLayers.searchIngestion),
     Layer.provide(outboxWorkerHandlerLayers.searchProjectionStore),
     Layer.provide(outboxWorkerHandlerLayers.searchWorkerSnapshot),

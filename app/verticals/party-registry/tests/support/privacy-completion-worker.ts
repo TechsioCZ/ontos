@@ -8,6 +8,7 @@ import {
   OntosOutboxSubscriptionContractSchema,
   OutboxRepositoryLive,
   OutboxRuntimeLive,
+  ResourceContainmentRelationshipMutation,
   runOutboxCycle,
 } from '@app/core-runtime';
 import { NodeCrypto, NodeRuntime, NodeServices, NodeStream } from '@effect/platform-node';
@@ -158,6 +159,8 @@ const run = Effect.scoped(
     };
     const runtime = Layer.merge(OutboxRuntimeLive, outboxWorkerHandlerLayers.projector).pipe(
       Layer.provide(outboxWorkerHandlerLayers.projectionSource),
+      // SpiceDB topology is not under test in this privacy completion driver.
+      Layer.provide(Layer.succeed(ResourceContainmentRelationshipMutation, { touch: () => Effect.void })),
       Layer.provide(outboxWorkerHandlerLayers.searchIngestion),
       Layer.provide(outboxWorkerHandlerLayers.searchProjectionStore),
       Layer.provide(outboxWorkerHandlerLayers.searchWorkerSnapshot),

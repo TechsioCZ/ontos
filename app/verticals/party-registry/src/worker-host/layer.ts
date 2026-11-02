@@ -12,8 +12,13 @@ import type {
   CoreSearchProjectionStore,
   CoreSearchWorkerSnapshot,
   OutboxRuntime,
+  ResourceContainmentRelationshipMutation,
 } from '@app/core-runtime';
-import { makeDatabaseConfigLive, OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
+import {
+  makeDatabaseConfigLive,
+  OutboxWorkerInfrastructureLive,
+  ResourceContainmentRelationshipMutationLive,
+} from '@app/core-runtime/outbox/worker';
 import { Layer } from 'effect';
 
 import {
@@ -49,9 +54,14 @@ type OutboxWorkerHandlerLayers = Readonly<{
   projector: Layer.Layer<
     PartySearchProjector,
     never,
-    CoreSearchIngestion | CoreSearchProjectionStore | PartySearchProjectionSource
+    | CoreSearchIngestion
+    | CoreSearchProjectionStore
+    | PartySearchProjectionSource
+    | ResourceContainmentRelationshipMutation
   >;
   projectionSource: Layer.Layer<PartySearchProjectionSource, never, CoreSearchWorkerSnapshot>;
+  /** SpiceDB `resource#module` TOUCH for Counterparties; runs post-commit only. */
+  resourceContainment: Layer.Layer<ResourceContainmentRelationshipMutation>;
   searchIngestion: Layer.Layer<CoreSearchIngestion, never, CoreSearchIngestionRegistry | CoreSearchProjectionStore>;
   searchIngestionRegistry: Layer.Layer<CoreSearchIngestionRegistry>;
   searchProjectionStore: Layer.Layer<
@@ -70,6 +80,7 @@ type OutboxWorkerHandlerLayers = Readonly<{
 export const outboxWorkerHandlerLayers: OutboxWorkerHandlerLayers = Object.freeze({
   projector: PartySearchProjectorLive,
   projectionSource: PartySearchProjectionSourceLive,
+  resourceContainment: ResourceContainmentRelationshipMutationLive,
   searchIngestion: CoreSearchIngestionLive,
   searchIngestionRegistry: PartySearchIngestionRegistryLive,
   searchProjectionStore: CoreSearchProjectionStoreLive,
@@ -83,6 +94,7 @@ export const outboxWorkerLayer: Layer.Layer<
   | CoreSearchIngestion
   | CoreSearchProjectionStore
   | PartySearchProjectionSource
+  | ResourceContainmentRelationshipMutation
 > = Layer.mergeAll(
   outboxWorkerInfrastructureLayer,
   outboxWorkerHandlerLayers.projector,
