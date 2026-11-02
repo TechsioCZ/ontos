@@ -7,6 +7,7 @@ import { agentScopedRoleObjectId } from '../../packages/core-runtime/src/permiss
 import {
   AgentPolicyEvidenceSchema,
   agentPolicyFingerprint,
+  reviewedUnscopedAgentExclusion,
   validateDeclaredAgentRepair,
 } from '../demo/agent-policies-stage-model.mts';
 import { demoLegalEntityId, demoTenantId } from '../demo/fixture-ids.mts';
@@ -137,4 +138,34 @@ it('the native seed path rejects any fresh deletion, extra, duplicate or differe
   ).toBe(false);
   expect(isExactAdditiveAgentPolicy([missingLifecycle, missingLifecycle], [touch, touch])).toBe(false);
   expect(isExactAdditiveAgentPolicy([missingLifecycle, 'different'], [touch, touch])).toBe(false);
+});
+
+const unscopedResidue = {
+  companyMembershipCount: 0,
+  declaredSeedSlotPresent: true,
+  directAuthorityCount: 0,
+  displayName: 'Asistent provozu',
+  principalId: '24c3628e-d340-46d1-a87b-5d8f98d0fa87',
+  scopedRoleMembershipCount: 0,
+  sourceDeclaresPrincipal: false,
+};
+it('excludes only the two reviewed unassigned duplicates, leaving their memberships and rights untouched', () => {
+  for (const residuePrincipalId of ['24c3628e-d340-46d1-a87b-5d8f98d0fa87', '301134e3-1bb2-4430-a865-01599ef12df8']) {
+    expect(reviewedUnscopedAgentExclusion({ ...unscopedResidue, principalId: residuePrincipalId })).toContain(
+      'Excluded unchanged',
+    );
+  }
+});
+it('keeps unknown, assigned, source-declared or privileged orphans blocked, and never substitutes a missing seed agent', () => {
+  for (const changed of [
+    { ...unscopedResidue, principalId },
+    { ...unscopedResidue, displayName: 'Jiný asistent' },
+    { ...unscopedResidue, companyMembershipCount: 1 },
+    { ...unscopedResidue, directAuthorityCount: 1 },
+    { ...unscopedResidue, scopedRoleMembershipCount: 1 },
+    { ...unscopedResidue, sourceDeclaresPrincipal: true },
+    { ...unscopedResidue, declaredSeedSlotPresent: false },
+  ]) {
+    expect(reviewedUnscopedAgentExclusion(changed)).toBeUndefined();
+  }
 });

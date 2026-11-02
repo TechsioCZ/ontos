@@ -28,8 +28,11 @@ import {
   AgentPolicyEvidenceSchema,
   AgentPolicyInspectionSchema,
   agentPolicyFingerprint,
+  isReviewedUnscopedAgent,
+  reviewedUnscopedAgentExclusion,
   validateDeclaredAgentRepair,
 } from './agent-policies-stage-model.mts';
+import { demoAgentProfileSetup } from '../../apps/shell-super-app/api/auth/demo-seed/agent-profiles.ts';
 import {
   demoTenantId,
   demoLegalEntityId,
@@ -66,6 +69,13 @@ const AuditRowSchema = Schema.Struct({
 const AuditPlanSchema = Schema.Struct({
   agents: Schema.Array(AuditRowSchema),
   compositionRevision: Schema.String,
+  excluded: Schema.Array(
+    Schema.Struct({
+      displayName: Schema.String,
+      principalId: AgentProfileSetupInputSchema.fields.principalId,
+      reason: Schema.String,
+    }),
+  ),
   inventory: Schema.Array(
     Schema.Struct({
       displayName: Schema.String,
@@ -86,6 +96,8 @@ const sourcePaths = [
   './agent-profile-setup.mts',
   './seed-agent-entities.mts',
   './agent-policies-stage.mts',
+  './agent-policies-stage-model.mts',
+  '../../apps/shell-super-app/api/auth/demo-seed/agent-profiles.ts',
 ];
 const principalTuple = (
   principalId: string,
@@ -285,6 +297,11 @@ const inspectOneAgent = (
         ),
     );
     const undeclared: string[] = [];
+    if (isReviewedUnscopedAgent(agent.principalId) && associations.length > 0) {
+      undeclared.push(
+        `Previously unassigned excluded principal ${agent.principalId} now has company memberships; stop for fresh source review`,
+      );
+    }
     for (const response of roleMembers) {
       const edge = response.relationship;
       if (
@@ -297,9 +314,6 @@ const inspectOneAgent = (
           `Undeclared scoped-role membership of ${agent.principalId}: ${edge === undefined ? 'incomplete edge' : v1.Relationship.toJsonString(edge)}`,
         );
       }
-    }
-    if (associations.length === 0) {
-      undeclared.push(`Agent ${agent.principalId} has no native company membership; no default scope inferred`);
     }
     const rows: Row[] = [];
     for (const membership of associations) {
@@ -319,7 +333,23 @@ const inspectOneAgent = (
     undeclared.push(
       ...unexpected.map((tuple) => `Undeclared direct principal policy of ${agent.principalId}: ${tuple}`),
     );
-    return { rows, undeclared };
+    return {
+      rows,
+      undeclared,
+      unscoped:
+        associations.length === 0
+          ? {
+              companyMembershipCount: associations.length,
+              directAuthorityCount: unexpected.length,
+              displayName: agent.displayName,
+              principalId: agent.principalId,
+              scopedRoleMembershipCount: roleMembers.length,
+              sourceDeclaresPrincipal: demoAgentProfileSetup.some(
+                (profile) => profile.principalId === agent.principalId,
+              ),
+            }
+          : undefined,
+    };
   });
 
 const inspect = (actor: Parameters<typeof runAgentProfileSetup>[0]) =>
@@ -367,6 +397,7 @@ const inspect = (actor: Parameters<typeof runAgentProfileSetup>[0]) =>
     const plan: AuditPlan = {
       agents: [],
       compositionRevision: (yield* (yield* ActiveApplicationCompositionService).load).composition.revision,
+      excluded: [],
       inventory,
       sourceDigests,
       tenantId: demoTenantId,
@@ -377,13 +408,39 @@ const inspect = (actor: Parameters<typeof runAgentProfileSetup>[0]) =>
       (agent) => inspectOneAgent(actor, agent, memberships, rpc, grants),
       { concurrency: 1 },
     );
+    const agents = results.flatMap((result) => result.rows);
+    const declaredSeedSlotPresent = agents.some(
+      (row) =>
+        row.companyId === rentalDemoLegalEntityId &&
+        row.displayName === 'Asistent provozu' &&
+        row.status === 'active' &&
+        row.membershipStatus === 'active' &&
+        row.policy?.profileMatches === true,
+    );
+    const excluded: AuditPlan['excluded'][number][] = [];
+    const unresolved: string[] = [];
+    for (const result of results) {
+      if (result.unscoped === undefined) {
+        continue;
+      }
+      const exclusionReason = reviewedUnscopedAgentExclusion({ ...result.unscoped, declaredSeedSlotPresent });
+      if (exclusionReason === undefined) {
+        unresolved.push(
+          `Agent ${result.unscoped.principalId} has no native company membership; no default scope inferred`,
+        );
+      } else {
+        excluded.push({
+          displayName: result.unscoped.displayName,
+          principalId: result.unscoped.principalId,
+          reason: exclusionReason,
+        });
+      }
+    }
     return {
       ...plan,
-      agents: results.flatMap((result) => result.rows),
-      undeclared: EffectArray.sort(
-        results.flatMap((result) => result.undeclared),
-        Order.String,
-      ),
+      agents,
+      excluded,
+      undeclared: EffectArray.sort([...results.flatMap((result) => result.undeclared), ...unresolved], Order.String),
     };
   }).pipe(Effect.scoped);
 
@@ -440,6 +497,7 @@ const run = (mode: 'plan' | 'apply' | 'verify', path: string, reviewed: Option.O
           agents: current.agents.filter((row) => row.companyId === companyId).length,
           companyId,
         })),
+        excluded: current.excluded,
         fingerprint,
         mode,
         rows: current.agents.map((row) => ({
@@ -494,7 +552,9 @@ const run = (mode: 'plan' | 'apply' | 'verify', path: string, reviewed: Option.O
     }
     return yield* Console.log({
       agents: after.inventory.length,
+      companyProfiles: after.agents.length,
       declaredLifecycleChecksPassed: true,
+      excluded: after.excluded,
       missingTuples: 0,
       mode,
       nativeProfilesPreserved: true,
