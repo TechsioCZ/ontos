@@ -311,6 +311,20 @@ jobs:
         with:
           install-args: --trust-lockfile
 
+      # The complete frozen dependency graph covers BOTH clients, including browser revision overrides.
+      # No restore prefix: another dependency graph or runner architecture is never an exact cache hit.
+      - name: Use the runner-owned verification browser cache
+        run: printf 'PLAYWRIGHT_BROWSERS_PATH=%s/zerops-verify-browsers\n' "$RUNNER_TEMP" >>"$GITHUB_ENV"
+
+      - name: Restore the pinned verification browsers
+        id: verification-browsers
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+          key: zerops-verify-browsers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}
+
+      # Always run both clients' own installers, even on a cache hit. They validate their required
+      # Chromium/headless-shell/ffmpeg revisions and install anything missing. OS dependencies are NOT cached.
       - name: Install headless Chromium for the OAuth consent screens
         working-directory: app
         run: mise exec -- pnpm --filter @app/shell-super-app exec playwright install --with-deps chromium
@@ -319,6 +333,13 @@ jobs:
       - name: Install headless Chromium for the warm-up client
         working-directory: app
         run: mise exec -- pnpm exec playwright-core install chromium
+
+      - name: Save the pinned verification browsers
+        if: steps.verification-browsers.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+          key: zerops-verify-browsers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}
 
       # The operator seed creates independent company-scoped read-only accounts, never administrator copies.
       # Timeouts/permission gaps warn here; the existing verification below remains the broken-app gate.
