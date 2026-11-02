@@ -302,10 +302,6 @@ export const observeApplicationMigrationState = Effect.fn('ApplicationMigrationR
     return { nativeTargets, observations };
   },
 );
-/** Infrastructure catalogs and selected durable journal rows only; never executes a latest owner verifier. */
-export const observeApplicationMigrationOwners = (streams: readonly ApplicationMigrationStream[]) =>
-  observeApplicationMigrationState(streams).pipe(Effect.map((state) => state.observations));
-
 /** Publication's verifier-only path cannot cross into bootstrap or DDL after a changed observation. */
 export const assertMigrationVerificationOnly = Effect.fn('ApplicationMigrationRuntime.assertVerificationOnly')(
   function* assertMigrationVerificationOnlyEffect(plan: ApplicationMigrationPlan) {
