@@ -9,10 +9,8 @@ import {
   formatQuantity,
   type CartState,
 } from "@/features/cart/cart-state";
-import { useFormatPrice } from "./market-context";
+import { useDictionary, useFormatPrice } from "./market-context";
 import { marketRequestHeaders } from "./market-locale";
-
-const cartLabel = "Aktuální ceny a dostupnost z OntOS";
 
 interface QuoteLineIssue {
   productId: string;
@@ -51,10 +49,10 @@ export interface CartQuoteState {
 
 const CartQuoteContext = createContext<CartQuoteState | null>(null);
 
-const quoteFailure = "Ověření košíku v OntOS se nepodařilo. Košík zůstává zachovaný.";
-
 /** One shared OntOS cart verification for every checkout step: the cart, steps and summary read it. */
 export function CartQuoteProvider({ children }: { children: ReactNode }) {
+  const cs = useDictionary();
+  const quoteFailure = cs.cart.quote.failure;
   const { cart, ready, dispatch } = useCart();
   const [verified, setVerified] = useState<{
     quote: Quote;
@@ -143,12 +141,12 @@ export function CartQuoteProvider({ children }: { children: ReactNode }) {
     blockedReason: canContinue
       ? ""
       : status === "checking"
-        ? "Počkejte, ověřuji košík v OntOS…"
+        ? cs.cart.quote.blocked.checking
         : status === "error"
-          ? "Pokračovat lze až po úspěšném ověření košíku."
+          ? cs.cart.quote.blocked.error
           : quote?.priceChanged
-            ? "Nejprve potvrďte nové ceny."
-            : "Nejprve vyřešte položky, které nelze objednat.",
+            ? cs.cart.quote.blocked.priceChanged
+            : cs.cart.quote.blocked.issues,
     lineIssues: (productId, variantId) =>
       (quote?.lineIssues ?? []).filter(
         (issue) =>
@@ -165,6 +163,7 @@ export function useCartQuote(): CartQuoteState | null {
 }
 
 export function CartRevalidation() {
+  const cs = useDictionary();
   const { cart, dispatch } = useCart();
   const formatPrice = useFormatPrice();
   const state = useCartQuote();
@@ -174,45 +173,39 @@ export function CartRevalidation() {
     <section
       aria-live="polite"
       className="mb-(--dimension-16) grid gap-2 rounded-sm bg-(--color-base) p-4 text-sm"
-      aria-label="Ověření košíku v OntOS"
+      aria-label={cs.cart.quote.sectionLabel}
       data-akros-cart-quote={status}
     >
       <p className="font-bold" data-akros-cart-label>
-        {cartLabel}
+        {cs.cart.quote.label}
       </p>
       {status === "error" ? (
         <div role="alert" className="grid gap-3 border-l-4 border-(--color-danger) pl-3">
-          <p className="font-bold">Ceny a dostupnost se teď nepodařilo ověřit.</p>
-          <p>{error} Pokračovat k dopravě a platbě lze až po úspěšném ověření.</p>
+          <p className="font-bold">{cs.cart.quote.errorTitle}</p>
+          <p>{cs.cart.quote.errorHint(error)}</p>
           <Button type="button" size="sm" variant="primary" className="w-fit" onClick={retry}>
-            Zkusit znovu
+            {cs.cart.quote.retry}
           </Button>
         </div>
       ) : status === "checking" ? (
-        <p>Ověřuji aktuální cenu a dostupnost v OntOS…</p>
+        <p>{cs.cart.quote.checking}</p>
       ) : (
         <>
           {quote!.issues.length > 0 && (
             <div role="alert" className="grid gap-2 border-l-4 border-(--color-danger) pl-3">
-              <p className="font-bold">Objednávku teď nelze dokončit</p>
+              <p className="font-bold">{cs.cart.quote.blockedTitle}</p>
               <ul className="grid gap-1">
                 {quote!.issues.map((issue) => (
                   <li key={issue}>{issue}</li>
                 ))}
               </ul>
-              <p>
-                Upravte množství nebo blokované položky z košíku odeberte. Pokračovat lze, až OntOS
-                potvrdí celý košík.
-              </p>
+              <p>{cs.cart.quote.blockedHint}</p>
             </div>
           )}
           {quote!.priceChanged ? (
             <div role="alert">
-              <p className="font-bold">Cena se změnila – přijmout novou cenu</p>
-              <p>
-                Ceny s DPH. Nové ceny použijeme až po vašem souhlasu; objednávka se zatím
-                neodeslala.
-              </p>
+              <p className="font-bold">{cs.cart.quote.priceChangedTitle}</p>
+              <p>{cs.cart.quote.priceChangedHint}</p>
               <ul className="my-4 grid gap-4">
                 {quote!.cart.lines.map((next) => {
                   const previous = cart.lines.find(
@@ -234,7 +227,7 @@ export function CartRevalidation() {
                         <strong>{formatPrice(next.priceMinor)}</strong>
                       </p>
                       <p>
-                        Za {formatQuantity(next.quantity)} {next.unit}:{" "}
+                        {cs.cart.quote.priceChangeLine(formatQuantity(next.quantity), next.unit)}{" "}
                         {formatPrice(getLineTotal(previous))} →{" "}
                         <strong>{formatPrice(getLineTotal(next))}</strong>
                       </p>
@@ -243,7 +236,7 @@ export function CartRevalidation() {
                 })}
               </ul>
               <p className="mb-4 font-bold">
-                Celkem za zboží: {formatPrice(getCartSubtotal(cart))} →{" "}
+                {cs.cart.quote.goodsTotal}: {formatPrice(getCartSubtotal(cart))} →{" "}
                 {formatPrice(getCartSubtotal(quote!.cart))}
               </p>
               <Button
@@ -251,16 +244,16 @@ export function CartRevalidation() {
                 size="sm"
                 onClick={() => dispatch({ type: "revalidate", cart: quote!.cart })}
               >
-                Přijmout nové ceny
+                {cs.cart.quote.acceptPrices}
               </Button>
             </div>
           ) : quote!.canCheckout ? (
-            <p>Ceny, množství a dostupnost byly ověřeny v OntOS.</p>
+            <p>{cs.cart.quote.verified}</p>
           ) : !quote!.issues.length ? (
             <div role="alert" className="grid gap-3">
-              <p>OntOS košík nepotvrdil. {quoteFailure}</p>
+              <p>{cs.cart.quote.notConfirmed(error)}</p>
               <Button type="button" size="sm" variant="primary" className="w-fit" onClick={retry}>
-                Zkusit znovu
+                {cs.cart.quote.retry}
               </Button>
             </div>
           ) : null}

@@ -236,6 +236,10 @@ export const cs = {
     totalWithVat: "Celkem s DPH",
     loading: "Načítám košík…",
     demoCheckoutNotice: "Pokladna není součástí této klikací ukázky.",
+    defaultCarts: {
+      default: "Výchozí košík",
+      commission: "Komisní košík",
+    },
     itemsTitle: "Obsah košíku",
     itemsLabel: "Položky objednávky",
     item: "Položka",
@@ -263,6 +267,33 @@ export const cs = {
       PACKAGE_QUANTITY: "Upravte množství",
     },
     backToShop: "Zpět do obchodu",
+    quote: {
+      label: "Aktuální ceny a dostupnost z OntOS",
+      sectionLabel: "Ověření košíku v OntOS",
+      failure: "Ověření košíku v OntOS se nepodařilo. Košík zůstává zachovaný.",
+      errorTitle: "Ceny a dostupnost se teď nepodařilo ověřit.",
+      errorHint: (error: string) =>
+        `${error} Pokračovat k dopravě a platbě lze až po úspěšném ověření.`,
+      retry: "Zkusit znovu",
+      checking: "Ověřuji aktuální cenu a dostupnost v OntOS…",
+      blockedTitle: "Objednávku teď nelze dokončit",
+      blockedHint:
+        "Upravte množství nebo blokované položky z košíku odeberte. Pokračovat lze, až OntOS potvrdí celý košík.",
+      priceChangedTitle: "Cena se změnila – přijmout novou cenu",
+      priceChangedHint:
+        "Ceny s DPH. Nové ceny použijeme až po vašem souhlasu; objednávka se zatím neodeslala.",
+      priceChangeLine: (quantity: string, unit: string) => `Za ${quantity} ${unit}:`,
+      goodsTotal: "Celkem za zboží",
+      acceptPrices: "Přijmout nové ceny",
+      verified: "Ceny, množství a dostupnost byly ověřeny v OntOS.",
+      notConfirmed: (failure: string) => `OntOS košík nepotvrdil. ${failure}`,
+      blocked: {
+        checking: "Počkejte, ověřuji košík v OntOS…",
+        error: "Pokračovat lze až po úspěšném ověření košíku.",
+        priceChanged: "Nejprve potvrďte nové ceny.",
+        issues: "Nejprve vyřešte položky, které nelze objednat.",
+      },
+    },
     chooseDelivery: "Vybrat dopravu a platbu",
     servicesNote:
       "Aktuální způsoby a ceny dopravy se načítají z OntOS v dalším kroku. Online platba není dostupná.",

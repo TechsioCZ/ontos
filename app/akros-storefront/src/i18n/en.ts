@@ -238,6 +238,10 @@ export const en: Dictionary = {
     totalWithVat: "Total incl. VAT",
     loading: "Loading cart…",
     demoCheckoutNotice: "Checkout is not part of this clickable demo.",
+    defaultCarts: {
+      default: "Default cart",
+      commission: "Commission cart",
+    },
     itemsTitle: "Cart contents",
     itemsLabel: "Order items",
     item: "Item",
@@ -265,6 +269,33 @@ export const en: Dictionary = {
       PACKAGE_QUANTITY: "Adjust the quantity",
     },
     backToShop: "Back to the shop",
+    quote: {
+      label: "Current prices and availability from OntOS",
+      sectionLabel: "Cart verification in OntOS",
+      failure: "The cart verification in OntOS failed. Your cart is kept.",
+      errorTitle: "Prices and availability could not be verified right now.",
+      errorHint: (error: string) =>
+        `${error} You can continue to shipping and payment once the verification succeeds.`,
+      retry: "Try again",
+      checking: "Verifying the current price and availability in OntOS…",
+      blockedTitle: "The order cannot be completed right now",
+      blockedHint:
+        "Adjust the quantity or remove the blocked items from the cart. You can continue once OntOS confirms the whole cart.",
+      priceChangedTitle: "The price changed – accept the new price",
+      priceChangedHint:
+        "Prices incl. VAT. We apply the new prices only after you agree; the order has not been submitted.",
+      priceChangeLine: (quantity: string, unit: string) => `Per ${quantity} ${unit}:`,
+      goodsTotal: "Goods total",
+      acceptPrices: "Accept the new prices",
+      verified: "Prices, quantities and availability were verified in OntOS.",
+      notConfirmed: (failure: string) => `OntOS did not confirm the cart. ${failure}`,
+      blocked: {
+        checking: "Wait, the cart is being verified in OntOS…",
+        error: "You can continue once the cart verification succeeds.",
+        priceChanged: "Confirm the new prices first.",
+        issues: "Resolve the items that cannot be ordered first.",
+      },
+    },
     chooseDelivery: "Choose shipping and payment",
     servicesNote:
       "Current shipping methods and prices are loaded from OntOS in the next step. Online payment is not available.",

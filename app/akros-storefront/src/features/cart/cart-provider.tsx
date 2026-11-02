@@ -25,9 +25,11 @@ import {
 
 import { parseStoredCart } from "@/features/cart/cart-storage";
 import { marketRequestHeaders } from "@/ontos/market-locale";
+import { useDictionary } from "@/ontos/market-context";
 import type { CatalogPriceTier } from "@/ontos/catalog-types";
 import {
   type CartCollection,
+  type DefaultCartNames,
   createCartCollection,
   parseCartCollection,
   snapshotCartCollection,
@@ -282,8 +284,13 @@ export function CartProvider({
 }) {
   const cartKey = marketStorageKey(storageKey, storageScope);
   const collectionKey = marketStorageKey(cartCollectionStorageKey, storageScope);
+  const cs = useDictionary();
+  const defaultCartNames: DefaultCartNames = useMemo(
+    () => ({ default: cs.cart.defaultCarts.default, commission: cs.cart.defaultCarts.commission }),
+    [cs],
+  );
   const [state, providerDispatch] = useReducer(providerReducer, {
-    ...createCartCollection(),
+    ...createCartCollection(createEmptyCart(), defaultCartNames),
     cart: createEmptyCart(),
     ready: false,
     feedback: null,
@@ -393,12 +400,19 @@ export function CartProvider({
       const restored = parseStoredCart(resolvedStorage.getItem(cartKey));
       providerDispatch({
         type: "hydrate",
-        collection: parseCartCollection(resolvedStorage.getItem(collectionKey), restored),
+        collection: parseCartCollection(
+          resolvedStorage.getItem(collectionKey),
+          restored,
+          defaultCartNames,
+        ),
       });
     } else {
-      providerDispatch({ type: "hydrate", collection: createCartCollection() });
+      providerDispatch({
+        type: "hydrate",
+        collection: createCartCollection(createEmptyCart(), defaultCartNames),
+      });
     }
-  }, [resolvedStorage, cartKey, collectionKey]);
+  }, [resolvedStorage, cartKey, collectionKey, defaultCartNames]);
 
   useEffect(() => {
     if (ready && resolvedStorage) {

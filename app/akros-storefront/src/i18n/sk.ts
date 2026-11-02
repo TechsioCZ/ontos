@@ -238,6 +238,10 @@ export const sk: Dictionary = {
     totalWithVat: "Spolu s DPH",
     loading: "Načítavam košík…",
     demoCheckoutNotice: "Pokladňa nie je súčasťou tejto klikacej ukážky.",
+    defaultCarts: {
+      default: "Predvolený košík",
+      commission: "Komisný košík",
+    },
     itemsTitle: "Obsah košíka",
     itemsLabel: "Položky objednávky",
     item: "Položka",
@@ -265,6 +269,33 @@ export const sk: Dictionary = {
       PACKAGE_QUANTITY: "Upravte množstvo",
     },
     backToShop: "Späť do obchodu",
+    quote: {
+      label: "Aktuálne ceny a dostupnosť z OntOS",
+      sectionLabel: "Overenie košíka v OntOS",
+      failure: "Overenie košíka v OntOS sa nepodarilo. Košík zostáva zachovaný.",
+      errorTitle: "Ceny a dostupnosť sa teraz nepodarilo overiť.",
+      errorHint: (error: string) =>
+        `${error} Pokračovať k doprave a platbe možno až po úspešnom overení.`,
+      retry: "Skúsiť znova",
+      checking: "Overujem aktuálnu cenu a dostupnosť v OntOS…",
+      blockedTitle: "Objednávku teraz nemožno dokončiť",
+      blockedHint:
+        "Upravte množstvo alebo blokované položky z košíka odoberte. Pokračovať možno, až OntOS potvrdí celý košík.",
+      priceChangedTitle: "Cena sa zmenila – prijať novú cenu",
+      priceChangedHint:
+        "Ceny s DPH. Nové ceny použijeme až po vašom súhlase; objednávka sa zatiaľ neodoslala.",
+      priceChangeLine: (quantity: string, unit: string) => `Za ${quantity} ${unit}:`,
+      goodsTotal: "Spolu za tovar",
+      acceptPrices: "Prijať nové ceny",
+      verified: "Ceny, množstvo a dostupnosť boli overené v OntOS.",
+      notConfirmed: (failure: string) => `OntOS košík nepotvrdil. ${failure}`,
+      blocked: {
+        checking: "Počkajte, overujem košík v OntOS…",
+        error: "Pokračovať možno až po úspešnom overení košíka.",
+        priceChanged: "Najprv potvrďte nové ceny.",
+        issues: "Najprv vyriešte položky, ktoré nemožno objednať.",
+      },
+    },
     chooseDelivery: "Vybrať dopravu a platbu",
     servicesNote:
       "Aktuálne spôsoby a ceny dopravy sa načítavajú z OntOS v ďalšom kroku. Online platba nie je dostupná.",

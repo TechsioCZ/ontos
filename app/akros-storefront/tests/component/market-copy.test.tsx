@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CategoryFilters } from "@/components/category-filters";
@@ -186,6 +186,24 @@ describe("market copy outside the product cards", () => {
     expect(screen.getByText(/Aktuálne spôsoby a ceny dopravy/)).not.toBeNull();
     expect(screen.queryByText("Obsah košíku")).toBeNull();
     expect(screen.queryByText("Dostupnost")).toBeNull();
+  });
+
+  it("names the starter carts in the market's language", async () => {
+    render(
+      <MarketProvider market={skMarket}>
+        <CartProvider storage={window.localStorage}>
+          <span />
+        </CartProvider>
+      </MarketProvider>,
+    );
+
+    await waitFor(() => {
+      const stored = JSON.parse(window.localStorage.getItem("akros-demo-carts-v1") ?? "{}");
+      expect((stored.carts ?? []).map((cart: { name: string }) => cart.name)).toEqual([
+        "Predvolený košík",
+        "Komisný košík",
+      ]);
+    });
   });
 
   it("shows the English cart", () => {
