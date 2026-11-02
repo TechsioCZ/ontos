@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 // Governed, fixed-demo-scope catalog migration: plan (frozen snapshot + photo bytes) → apply → verify.
 // No SQL, no generated source edits; plan and verify never dispatch writes. Every run stops starting new records
-// after TIME_BUDGET_MS so one remote operator call stays below its 300 s limit; rerun to continue.
+// after a bounded record/time budget so one remote operator call stays below its 300 s limit; rerun to continue.
 import { NodeServices } from '@effect/platform-node';
 import { detectImageMimeType } from '@app/core-runtime/media/image-contract';
-import { Cause, Clock, Config, Console, Effect, Exit, FileSystem, Layer, Option, Schema } from 'effect';
+import { Cause, Clock, Config, Console, Effect, Exit, FileSystem, Layer, Match, Option, Schema } from 'effect';
 import type { Types } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { Base64 } from 'effect/encoding';
 import { FetchHttpClient, HttpClient, HttpClientError } from 'effect/http';
+import type { HttpClientRequest } from 'effect/http';
 import { MerchandiseCommandSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../verticals/merchandise/shared/apis/records.ts';
 import { MediaRequestSchema, MediaResponseSchema } from '../../verticals/merchandise/shared/apis/media.ts';
@@ -28,6 +29,7 @@ import {
   galleryOrder,
   twinReference,
   Category,
+  CategoryPatch,
   Product,
   bytesDigest,
   catalogHasBrand,
@@ -46,6 +48,7 @@ import {
 import type { CatalogCategory, CatalogProduct } from './pseudonymize-akros-catalog-policy.mts';
 
 const TIME_BUDGET_MS = 200_000;
+const APPLY_VERIFY_BUDGET_MS = 45_000;
 const UPLOAD_MAX_BYTES = 5 * 1024 * 1024;
 /** Staff app origin → the storefront that publicly serves `/obrazky/<product>/<asset>` for that deployment. */
 const PUBLIC_STOREFRONT = new Map([
@@ -83,6 +86,12 @@ type PlannedCategory = typeof CategoryEntry.Type;
 const UploadState = Schema.Struct({ mapping: Schema.Record(Schema.String, Schema.String) });
 const Approval = Schema.Struct({ fingerprint: Schema.String, manifest: Manifest });
 const Cursor = Schema.Struct({ cursor: Schema.Int });
+const CategoryIntent = Schema.Struct({
+  beforeDigest: Schema.String,
+  expectedRevision: Schema.Int,
+  patch: CategoryPatch,
+});
+const CatalogBatchSize = Schema.Int.check(Schema.isBetween({ maximum: 100, minimum: 1 }));
 const Summary = Schema.Struct({
   auditHistory: Schema.String,
   brandedGraphics: Schema.Array(
@@ -133,6 +142,111 @@ export const catalogFailureKind = (error: CatalogFailure): string => {
   }
   return Schema.isSchemaError(error) ? 'SchemaError' : 'UnclassifiedError';
 };
+const causeIdentity = {
+  code: Schema.optionalKey(
+    Schema.Literals([
+      'ECONNRESET',
+      'ECONNREFUSED',
+      'ENOTFOUND',
+      'EAI_AGAIN',
+      'ETIMEDOUT',
+      'EPIPE',
+      'ENETUNREACH',
+      'EHOSTUNREACH',
+      'UND_ERR_SOCKET',
+      'UND_ERR_CONNECT_TIMEOUT',
+      'UND_ERR_HEADERS_TIMEOUT',
+      'UND_ERR_BODY_TIMEOUT',
+      'UND_ERR_ABORTED',
+      'ABORT_ERR',
+      'CERT_HAS_EXPIRED',
+      'DEPTH_ZERO_SELF_SIGNED_CERT',
+      'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+      'ERR_TLS_CERT_ALTNAME_INVALID',
+    ]),
+  ),
+  name: Schema.optionalKey(
+    Schema.Literals([
+      'Error',
+      'TypeError',
+      'AbortError',
+      'TimeoutError',
+      'AggregateError',
+      'SocketError',
+      'ConnectTimeoutError',
+      'HeadersTimeoutError',
+      'BodyTimeoutError',
+      'RequestAbortedError',
+    ]),
+  ),
+};
+const TransportCause = Schema.Struct({
+  ...causeIdentity,
+  cause: Schema.optionalKey(Schema.Struct(causeIdentity)),
+});
+interface CatalogStepContext {
+  readonly categoryId: string;
+  readonly phase: 'read-category' | 'representative-image' | 'write-category' | 'readback-category' | 'mark-category';
+}
+const requestDiagnostic = (request: HttpClientRequest.HttpClientRequest) => {
+  if (!URL.canParse(request.url)) {
+    return { hostClass: 'invalid', requestPhase: 'unknown' };
+  }
+  const url = new URL(request.url);
+  let hostClass = 'other';
+  if (PUBLIC_STOREFRONT.has(url.origin)) {
+    hostClass = 'staff';
+  } else if ([...PUBLIC_STOREFRONT.values()].includes(url.origin)) {
+    hostClass = 'shop';
+  }
+  const staffPhases = new Map([
+    ['/shell-super-app-api/auth/gateway-context', 'gateway-assertion'],
+    ['/merchandise-api/reads/records', 'owner-records'],
+    ['/merchandise-api/merchandise/actions/apply-command', 'owner-action'],
+  ]);
+  const imagePath = /^\/(?:(?:cs|sk|en|pl)\/)?obrazky\//u.test(url.pathname);
+  let requestPhase = 'other';
+  if (hostClass === 'staff') {
+    requestPhase = staffPhases.get(url.pathname) ?? 'other';
+  } else if (hostClass === 'shop' && imagePath) {
+    requestPhase = 'public-image';
+  }
+  return { hostClass, requestPhase };
+};
+/** Project only allowlisted identities. Never serialize the request, URL, headers, body, message, socket or stack. */
+export const catalogFailureDiagnostic = (error: CatalogFailure, context?: CatalogStepContext) => {
+  const http = HttpClientError.isHttpClientError(error) ? error : undefined;
+  const decoded =
+    http === undefined
+      ? Option.none()
+      : Match.value(http.reason).pipe(
+          Match.tag('TransportError', (reason) => Schema.decodeUnknownOption(TransportCause)(reason.cause)),
+          Match.orElse(() => Option.none()),
+        );
+  const cause = Option.getOrUndefined(decoded);
+  let categoryId: string | null = null;
+  if (context !== undefined) {
+    categoryId = /^\d{1,12}$/u.test(context.categoryId) ? context.categoryId : 'redacted';
+  }
+  return {
+    categoryId,
+    causeCode: cause?.code ?? null,
+    causeName: cause?.name ?? null,
+    kind: catalogFailureKind(error),
+    nestedCauseCode: cause?.cause?.code ?? null,
+    nestedCauseName: cause?.cause?.name ?? null,
+    phase: context?.phase ?? 'catalog',
+    ...(http === undefined ? { hostClass: 'unknown', requestPhase: 'unknown' } : requestDiagnostic(http.request)),
+  };
+};
+/** Adds failure evidence without wrapping the error, recovering a failed request or changing its invocation identity. */
+export const catalogStep = <A, E extends CatalogFailure, R>(
+  context: CatalogStepContext,
+  effect: Effect.Effect<A, E, R>,
+) =>
+  effect.pipe(
+    Effect.tapError((failure) => Console.error('Catalog diagnostic', catalogFailureDiagnostic(failure, context))),
+  );
 const readRecords = (client: SeedClient, view: (typeof Request.Type)['view']) =>
   client.call('merchandise', '/reads/records', Request, { view }, Response);
 const jsonRead = <S extends Schema.Top>(file: string, schema: S) =>
@@ -171,6 +285,24 @@ const deadline = Effect.gen(function* startDeadline() {
   const start = yield* Clock.currentTimeMillis;
   return { expired: Clock.currentTimeMillis.pipe(Effect.map((now) => now - start > TIME_BUDGET_MS)) };
 });
+/** Each invocation starts at most this many records, without resetting its persisted forward cursor. */
+export const catalogBatchBudget = (maximum: number) =>
+  Effect.gen(function* startCatalogBatchBudget() {
+    const limit = yield* Schema.decodeUnknownEffect(CatalogBatchSize)(maximum);
+    const start = yield* Clock.currentTimeMillis;
+    let started = 0;
+    return {
+      take: Clock.currentTimeMillis.pipe(
+        Effect.map((now) => {
+          if (started >= limit || now - start >= APPLY_VERIFY_BUDGET_MS) {
+            return false;
+          }
+          started += 1;
+          return true;
+        }),
+      ),
+    };
+  });
 const readProduct = (client: SeedClient, id: string) =>
   Effect.gen(function* readOneProduct() {
     const page = yield* readRecords(client, { ordersLimit: 0, productId: id });
@@ -668,7 +800,31 @@ const plannedCategoryImage = (
   imageReplaced(before)
     ? representativeImage(client, representative?.id, publicOrigin)
     : Effect.succeed(before.imageSrc);
-const applyCategory = (
+const categoryStateDigest = (category: CatalogCategory) =>
+  digest({
+    description: category.description,
+    heading: category.heading,
+    id: category.id,
+    imageAlt: category.imageAlt,
+    imageSrc: category.imageSrc,
+    longDescription: category.longDescription,
+    name: category.name,
+    parentId: category.parentId,
+    position: category.position,
+    published: category.published,
+    slug: category.slug,
+  });
+const categoryTreeMatches = (category: CatalogCategory, before: CatalogCategory) =>
+  category.slug === before.slug && category.parentId === before.parentId && category.position === before.position;
+const categoryMatchesSnapshot = (category: CatalogCategory, before: CatalogCategory, imageSrc: string) => {
+  const ownImage = category.imageSrc === imageSrc || (category.imageSrc === '' && imageReplaced(before));
+  return (
+    digest(categoryTextPatch(category)) === digest(categoryTextPatch(before)) &&
+    categoryTreeMatches(category, before) &&
+    (category.imageSrc === before.imageSrc || ownImage)
+  );
+};
+export const applyCategory = (
   client: SeedClient,
   root: string,
   before: CatalogCategory,
@@ -676,44 +832,85 @@ const applyCategory = (
   publicOrigin: string,
 ) =>
   Effect.gen(function* applyCatalogCategory() {
-    const { category: live, revision } = yield* readCategory(client, before.id);
-    const imageSrc = yield* plannedCategoryImage(client, before, representative, publicOrigin);
+    const fs = yield* FileSystem.FileSystem;
+    const { category: live, revision } = yield* catalogStep(
+      { categoryId: before.id, phase: 'read-category' },
+      readCategory(client, before.id),
+    );
+    const imageSrc = yield* catalogStep(
+      { categoryId: before.id, phase: 'representative-image' },
+      plannedCategoryImage(client, before, representative, publicOrigin),
+    );
     // A replaced image may already be cleared by an earlier run (e.g. a representative that was not yet deliverable).
-    const ownState = live.imageSrc === imageSrc || (live.imageSrc === '' && imageReplaced(before));
-    if (
-      digest(categoryTextPatch(live)) !== digest(categoryTextPatch(before)) ||
-      live.slug !== before.slug ||
-      live.parentId !== before.parentId ||
-      live.position !== before.position ||
-      (live.imageSrc !== before.imageSrc && !ownState)
-    ) {
+    if (!categoryMatchesSnapshot(live, before, imageSrc)) {
       return yield* fail('Category changed since plan.');
     }
     const patch = { ...categoryTextPatch(before), imageSrc };
-    if (digest(patch) !== digest({ ...categoryTextPatch(live), imageSrc: live.imageSrc }) || categoryHasBrand(live)) {
-      yield* command(client, { _tag: 'UpdateCategory', id: before.id, patch }, revision);
+    const intentDirectory = `${root}/writes/category-intents`;
+    const intentFile = `${intentDirectory}/${digest(before.id)}.json`;
+    const intent = (yield* fs.exists(intentFile)) ? yield* jsonRead(intentFile, CategoryIntent) : undefined;
+    if (intent !== undefined && digest(intent.patch) !== digest(patch)) {
+      return yield* fail('Pending category intent differs from its planned image/copy; review before any write.');
     }
-    return yield* markDone(categoryDone(root, before.id), imageSrc === '' ? 'cleared' : imageSrc);
+    if (digest(patch) !== digest({ ...categoryTextPatch(live), imageSrc: live.imageSrc }) || categoryHasBrand(live)) {
+      if (
+        intent !== undefined &&
+        (intent.beforeDigest !== categoryStateDigest(live) || intent.expectedRevision !== revision)
+      ) {
+        return yield* fail('Uncertain category write has conflicting native state; no new invocation dispatched.');
+      }
+      if (intent === undefined) {
+        yield* fs.makeDirectory(intentDirectory, { mode: 0o700, recursive: true });
+        yield* jsonWrite(intentFile, CategoryIntent, {
+          beforeDigest: categoryStateDigest(live),
+          expectedRevision: revision,
+          patch,
+        });
+      }
+      yield* catalogStep(
+        { categoryId: before.id, phase: 'write-category' },
+        command(
+          client,
+          { _tag: 'UpdateCategory', id: before.id, patch: intent?.patch ?? patch },
+          intent?.expectedRevision ?? revision,
+        ),
+      );
+      const { category: after } = yield* catalogStep(
+        { categoryId: before.id, phase: 'readback-category' },
+        readCategory(client, before.id),
+      );
+      if (
+        categoryHasBrand(after) ||
+        digest({ ...categoryTextPatch(after), imageSrc: after.imageSrc }) !== digest(patch) ||
+        !categoryTreeMatches(after, before)
+      ) {
+        return yield* fail('Category read-back differs from the committed intent; checkpoint retained without retry.');
+      }
+    }
+    return yield* catalogStep(
+      { categoryId: before.id, phase: 'mark-category' },
+      markDone(categoryDone(root, before.id), imageSrc === '' ? 'cleared' : imageSrc),
+    );
   });
-const applyBatch = (client: SeedClient, root: string, approved: string, publicOrigin: string) =>
+export const applyBatch = (client: SeedClient, root: string, approved: string, publicOrigin: string, maximum: number) =>
   Effect.gen(function* applyCatalogBatch() {
     const fs = yield* FileSystem.FileSystem;
     const plan = yield* loadPlan(root);
     if (digest(plan) !== approved) {
       return yield* fail('Approved fingerprint does not match the complete frozen plan.');
     }
-    const { expired } = yield* deadline;
+    const budget = yield* catalogBatchBudget(maximum);
     let processed = 0;
     let pendingProducts = 0;
     for (const entry of plan.products) {
       if (!(yield* fs.exists(productDone(root, entry.before.id)))) {
         if (!catalogHasBrand(entry.before) && entry.images.length === 0) {
           yield* markDone(productDone(root, entry.before.id), 'unchanged');
-        } else if (yield* expired) {
-          pendingProducts += 1;
-        } else {
+        } else if (yield* budget.take) {
           yield* applyProduct(client, root, entry);
           processed += 1;
+        } else {
+          pendingProducts += 1;
         }
       }
     }
@@ -722,7 +919,7 @@ const applyBatch = (client: SeedClient, root: string, approved: string, publicOr
     if (pendingProducts === 0) {
       const reps = representativesOf(plan.products, plan.categories, hasPhoto);
       for (const { before } of plan.categories) {
-        if (!(yield* fs.exists(categoryDone(root, before.id))) && !(yield* expired)) {
+        if (!(yield* fs.exists(categoryDone(root, before.id))) && (yield* budget.take)) {
           yield* applyCategory(client, root, before, reps.get(before.id), publicOrigin);
           processed += 1;
         }
@@ -776,7 +973,7 @@ const verifyCategory = (
       ? category.id
       : yield* fail('Catalog verification failed: category image is not anonymously deliverable.');
   });
-const verifyBatch = (client: SeedClient, root: string, approved: string, publicOrigin: string) =>
+const verifyBatch = (client: SeedClient, root: string, approved: string, publicOrigin: string, maximum: number) =>
   Effect.gen(function* verifyCatalogBatch() {
     const fs = yield* FileSystem.FileSystem;
     const plan = yield* loadPlan(root);
@@ -787,8 +984,8 @@ const verifyBatch = (client: SeedClient, root: string, approved: string, publicO
     const cursorFile = `${root}/verify.json`;
     let { cursor } = (yield* fs.exists(cursorFile)) ? yield* jsonRead(cursorFile, Cursor) : { cursor: 0 };
     const total = plan.products.length + plan.categories.length;
-    const { expired } = yield* deadline;
-    while (cursor < total && !(yield* expired)) {
+    const budget = yield* catalogBatchBudget(maximum);
+    while (cursor < total && (yield* budget.take)) {
       const product = plan.products[cursor];
       const category = plan.categories[cursor - plan.products.length];
       if (product !== undefined) {
@@ -821,11 +1018,13 @@ if (import.meta.main) {
     {
       approved: Flag.String('approved').pipe(Flag.withDefault('')),
       checkpoint: Flag.String('checkpoint').pipe(Flag.withDefault('/var/www/ontos-pseudonym-catalog-v2')),
+      maximum: Flag.Int('max-records').pipe(Flag.withDefault(50)),
       mode: Flag.Literals('mode', ['plan', 'apply', 'verify', 'summary']).pipe(Flag.withDefault('plan')),
       seedImages: Flag.Boolean('seed-images').pipe(Flag.withDefault(false)),
     },
-    ({ approved, checkpoint: root, mode, seedImages }) =>
+    ({ approved, checkpoint: root, maximum, mode, seedImages }) =>
       Effect.gen(function* runCatalogOperator() {
+        yield* Schema.decodeUnknownEffect(CatalogBatchSize)(maximum);
         const fs = yield* FileSystem.FileSystem;
         for (const directory of ['', '/products', '/categories', '/images', '/uploads', '/done']) {
           yield* fs.makeDirectory(`${root}${directory}`, { mode: 0o700, recursive: true });
@@ -862,9 +1061,9 @@ if (import.meta.main) {
           return yield* planMode(client, target.shellUrl, root, seedImages);
         }
         if (mode === 'apply') {
-          return yield* applyBatch(client, root, approved, publicOrigin);
+          return yield* applyBatch(client, root, approved, publicOrigin, maximum);
         }
-        return yield* verifyBatch(client, root, approved, publicOrigin);
+        return yield* verifyBatch(client, root, approved, publicOrigin, maximum);
       }),
   );
   const exit = await Effect.runPromiseExit(
@@ -876,6 +1075,7 @@ if (import.meta.main) {
           ? Effect.void
           : Console.error(`Catalog stopped (${catalogFailureKind(error)}); checkpoint retained, no automatic retry.`),
       ),
+      Effect.tapError((error) => Console.error('Catalog failure identity', catalogFailureDiagnostic(error))),
       Effect.tapCause((cause) =>
         Console.error(
           `Catalog exit: failure=${Cause.hasFails(cause)}, defect=${Cause.hasDies(cause)}, interrupted=${Cause.hasInterrupts(cause)}.`,
