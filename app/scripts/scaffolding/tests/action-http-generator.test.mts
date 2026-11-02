@@ -12,6 +12,7 @@ import { linkFixtureDependencies, withCreatedFixture } from './fixture-ownership
 import type { JsonValue, OntosVerticalMetadata } from '../shared.mts';
 
 import {
+  collectDomainErrors,
   decodeActionRegistration,
   inspectAction,
   patchRuntimeRoot,
@@ -64,6 +65,17 @@ const vertical = {
   topologyEntry: {},
 } satisfies OntosVerticalMetadata;
 const appRoot = path.resolve(import.meta.dirname, '../../..');
+
+it('accepts Schema.Never as an Action with no domain errors without accepting untagged error values', () => {
+  expect(collectDomainErrors(Schema.Never.ast)).toEqual([]);
+  expect(() => collectDomainErrors(Schema.Struct({ code: Schema.Literal('untagged') }).ast)).toThrow(
+    /every Action domain error must expose one literal _tag sentinel/u,
+  );
+  const problems = renderActionHttpProblems(vertical, FIXTURE_ACTION, []);
+  expect(problems).toMatch(/Match\.exhaustive/u);
+  expect(problems).toContain('mapCoreProblem');
+  expect(problems).not.toContain('Match.tag(');
+});
 
 it('accepts callable Effect union domain schemas and rejects malformed schema descriptors', () => {
   const domainErrorSchema = Schema.Union([

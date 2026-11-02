@@ -226,10 +226,12 @@ const domainErrorIdentitiesFromValues = (values: Map<string, Set<string>>): read
   return [domainErrorIdentity(tag, code, '_tag', tag)];
 };
 
-const collectDomainErrors = (ast: SchemaAstLike): readonly DomainErrorIdentity[] => {
+export const collectDomainErrors = (ast: SchemaAstLike): readonly DomainErrorIdentity[] => {
   const astTypes = ast.types;
   const nodes: readonly SchemaAstLike[] = Predicate.isTagged(ast, 'Union') ? (astTypes ?? []) : [ast];
-  const errors = nodes.flatMap((node) => domainErrorIdentitiesFromValues(collectNodeDomainErrorValues(node)));
+  const errors = nodes.flatMap((node) =>
+    Predicate.isTagged(node, 'Never') ? [] : domainErrorIdentitiesFromValues(collectNodeDomainErrorValues(node)),
+  );
   const identities = new Set(errors.map(({ discriminator, tag, value }) => `${tag}:${discriminator}:${value}`));
   if (identities.size !== errors.length) {
     return raiseScaffoldFailure('Action domain error identities must be unique');

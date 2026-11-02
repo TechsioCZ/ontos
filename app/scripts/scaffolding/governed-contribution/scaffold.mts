@@ -167,6 +167,8 @@ const governedRedemptionImport =
   "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';";
 const governedRedemptionDatabaseImport =
   "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive, GatewayAssertionRedemptionDatabaseLive } from './auth/gateway-assertion-redemption.ts';";
+const governedRedemptionPgClientImport =
+  "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive, GatewayAssertionRedemptionDatabaseLive, GatewayAssertionPgClientLive } from './auth/gateway-assertion-redemption.ts';";
 const governedSupportImports = [governedPrincipalImport, governedRedemptionImport] as const;
 type GovernedSupportImport = (typeof governedSupportImports)[number];
 /** Each supported entry and the generated owner import it satisfies. */
@@ -174,6 +176,7 @@ const supportedGovernedImports = [
   [governedPrincipalImport, governedPrincipalImport],
   [governedRedemptionImport, governedRedemptionImport],
   [governedRedemptionDatabaseImport, governedRedemptionImport],
+  [governedRedemptionPgClientImport, governedRedemptionImport],
 ] as const;
 
 /** Formatter output may wrap or reorder bindings; the module and exact binding set stay fixed. */
