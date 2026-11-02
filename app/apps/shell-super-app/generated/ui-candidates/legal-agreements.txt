@@ -17,4 +17,5 @@ icon-[mdi--key-variant]
 icon-[mdi--office-building-outline]
 icon-[mdi--receipt-text-outline]
 outline
+transition
 visible

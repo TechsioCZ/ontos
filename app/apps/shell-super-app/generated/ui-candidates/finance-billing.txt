@@ -178,6 +178,7 @@ text-label-md
 text-label-sm
 text-sm
 text-xs
+transition
 truncate
 underline
 visible
