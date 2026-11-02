@@ -7,7 +7,7 @@ import type { Effect, PlatformError } from 'effect';
 import type { Occupancy, RecordsResponse } from '../../../../shared/apis/records.ts';
 import type { TenantDirectoryEntry } from './lease-story.tsx';
 import { TenantDossierCard } from './tenant-dossier.tsx';
-import type { DossierChanges } from './tenant-dossier.tsx';
+import type { DossierAutosave, DossierChanges } from './tenant-dossier.tsx';
 
 const stateLabels = {
   ACTIVE: 'Aktivní',
@@ -62,6 +62,7 @@ export const CounterpartyDossierView = ({
   feedbackText,
   language,
   newContactId,
+  onAutosave,
   onUpdate,
   snapshot,
   unitName,
@@ -74,6 +75,7 @@ export const CounterpartyDossierView = ({
   readonly feedbackText: string | undefined;
   readonly language: string;
   readonly newContactId: Effect.Effect<string, PlatformError.PlatformError>;
+  readonly onAutosave: DossierAutosave;
   readonly onUpdate: (changes: DossierChanges) => void;
   readonly snapshot: RecordsResponse | undefined;
   readonly unitName: (id: string) => string;
@@ -123,11 +125,14 @@ export const CounterpartyDossierView = ({
               <TenantDossierCard
                 busy={busy}
                 canWrite={canWrite}
+                counterpartyId={counterpartyId}
                 counterpartyName={name}
                 dossier={dossier}
-                key={`counterparty:${snapshot.revision}`}
+                key={`counterparty:${counterpartyId}`}
                 newContactId={newContactId}
+                onAutosave={onAutosave}
                 onUpdate={onUpdate}
+                revision={snapshot.revision}
               />
             )}
             <SectionCard title={t('property-leasing.documents.filesTitle')}>
