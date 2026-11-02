@@ -6,7 +6,7 @@ import type { ShellSearchResult } from '../../shared/api.ts';
 import { searchResources } from '../api/auth-client.ts';
 import type { ShellSearchClientError } from '../api/auth-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
-import { shellSearchGroupOf, shellSearchGroupOrder, shellSearchLinkTarget } from './shell-search-resource-types.ts';
+import { shellSearchGroupOf, shellSearchGroupOrder, shellSearchResultTarget } from './shell-search-resource-types.ts';
 import type { ShellSearchGroupKey, ShellSearchLinkTarget } from './shell-search-resource-types.ts';
 
 type PartyRole = Extract<ShellSearchResult, { readonly kind: 'counterparty' }>['currentRoles'][number];
@@ -56,7 +56,7 @@ const toSuggestion = (result: ShellSearchResult): ShellSearchSuggestion => {
       archived: result.party.archived,
       key: resultKey(result.ref),
       roles: result.currentRoles,
-      target: shellSearchLinkTarget(result.ref, result.title),
+      target: shellSearchResultTarget(result),
       title: result.title,
     };
   }
@@ -64,7 +64,7 @@ const toSuggestion = (result: ShellSearchResult): ShellSearchSuggestion => {
     archived: result.kind === 'party' && result.archived,
     key: resultKey(result.ref),
     roles: [],
-    target: shellSearchLinkTarget(result.ref, result.title),
+    target: shellSearchResultTarget(result),
     title: result.title,
   };
 };

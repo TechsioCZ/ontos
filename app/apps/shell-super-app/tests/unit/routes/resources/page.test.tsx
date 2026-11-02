@@ -136,9 +136,15 @@ rstest.mock('../../../../src/routes/shell-frame.tsx', () => ({
       },
     ],
   }),
-  ShellRouteLink: ({ children, to }: { readonly children: ReactNode; readonly to: string }) => (
-    <a href={to}>{children}</a>
-  ),
+  ShellRouteLink: ({
+    children,
+    search,
+    to,
+  }: {
+    readonly children: ReactNode;
+    readonly search?: Readonly<Record<string, string>>;
+    readonly to: string;
+  }) => <a href={search === undefined ? to : `${to}?${new URLSearchParams(search).toString()}`}>{children}</a>,
 }));
 
 const shell: ReadyModel['shell'] = authenticatedShellFixture();
@@ -393,7 +399,48 @@ it('opens a record found by search on its owner page when the owner has one', ()
     renderResourcePage({ shell: authenticatedShellFixture(), state: 'unavailable' });
 
     expect(screen.getByRole('heading', { level: 1, name: 'Faktura 2026/14' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Open the record' }).getAttribute('href')).toBe('/finance');
+    expect(screen.getByRole('link', { name: 'Open the record' }).getAttribute('href')).toBe(
+      '/finance?resourceId=00000000-0000-4000-8000-000000000401',
+    );
+  } finally {
+    routerHistoryState.searchHitTitle = '';
+    Object.assign(routeParams, { moduleId: 'billing.invoices', resourceId: '', resourceType: '' });
+  }
+});
+
+const shellWithNavigation = (items: readonly ReturnType<typeof navigationItem>[]) => ({
+  ...authenticatedShellFixture(),
+  navigation: {
+    deniedAppIds: [],
+    items: Schema.decodeUnknownSync(Schema.Array(ShellNavigationItemSchema))(items),
+    moduleIds: [],
+    state: 'available' as const,
+    unavailableDeployments: [],
+  },
+});
+
+it('opens a facility record of the current company by its local ID, never one of another company', () => {
+  const company = authenticatedShellFixture().selectedLegalEntityId ?? '';
+  routerHistoryState.searchHitTitle = 'Plynová kotelna';
+  try {
+    for (const [resourceId, href] of [
+      [`${company}.TEC-001`, '/provoz/majetek?asset=TEC-001'],
+      ['00000000-0000-4000-8000-000000000299.TEC-001', undefined],
+    ] as const) {
+      Object.assign(routeParams, {
+        moduleId: 'facility.operations',
+        resourceId,
+        resourceType: 'facility.operations.asset',
+      });
+      const { unmount } = renderResourcePage({
+        shell: shellWithNavigation([navigationItem('facility.operations', 'Majetek', '/provoz/majetek')]),
+        state: 'not_found',
+      });
+      expect(screen.queryByRole('link', { name: 'Open the record' })?.getAttribute('href')).toBe(href);
+      expect(screen.getByRole('link', { name: 'Majetek' }).getAttribute('href')).toBe('/provoz/majetek');
+      expect(document.body.textContent).not.toContain('TEC-001');
+      unmount();
+    }
   } finally {
     routerHistoryState.searchHitTitle = '';
     Object.assign(routeParams, { moduleId: 'billing.invoices', resourceId: '', resourceType: '' });
@@ -416,17 +463,6 @@ it('offers no record link for a search hit whose owner has no record page', () =
     routerHistoryState.searchHitTitle = '';
     Object.assign(routeParams, { moduleId: 'billing.invoices', resourceId: '', resourceType: '' });
   }
-});
-
-const shellWithNavigation = (items: readonly ReturnType<typeof navigationItem>[]) => ({
-  ...authenticatedShellFixture(),
-  navigation: {
-    deniedAppIds: [],
-    items: Schema.decodeUnknownSync(Schema.Array(ShellNavigationItemSchema))(items),
-    moduleIds: [],
-    state: 'available' as const,
-    unavailableDeployments: [],
-  },
 });
 
 it('points a person found by search to people administration only when the person may open it', () => {

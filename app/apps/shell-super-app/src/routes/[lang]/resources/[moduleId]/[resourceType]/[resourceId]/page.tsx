@@ -224,7 +224,9 @@ const ResourcePage = () => {
       ? searchHitTitle
       : null;
   const recordRef = { moduleId, resourceId, resourceType };
-  const ownerRecord = foundElsewhere === null ? undefined : ownerRecordTarget(recordRef);
+  // The record page itself only knows the current company: a record of another company gets no record link.
+  const ownerRecord =
+    foundElsewhere === null ? undefined : ownerRecordTarget(recordRef, model.shell.selectedLegalEntityId);
   const agendaPaths = recordAgendaPaths(recordRef);
   const closedContent =
     foundElsewhere !== null ? (

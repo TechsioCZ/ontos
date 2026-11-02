@@ -76,12 +76,24 @@ interface ResourceTypePresentation {
    */
   readonly agendas?: readonly string[];
   readonly group: ShellSearchGroupKey;
+  /**
+   * `company`: the owner qualifies its record ID with the company (`<legalEntityId>.<local ID>`) while its page
+   * selects by the local ID. Absent: the page selects by the resource ID as is.
+   */
+  readonly idScope?: 'company';
   readonly moduleId: string;
   readonly record?: RecordRoute;
 }
 
 const query = (to: string, param = 'resourceId'): RecordRoute => ({ kind: 'query', param, to });
 const portfolio = { moduleId: 'property.portfolio', record: query('/nemovitosti') } as const;
+const facility = (to: string, param: string, group: ShellSearchGroupKey): ResourceTypePresentation => ({
+  agendas: [to],
+  group,
+  idScope: 'company',
+  moduleId: 'facility.operations',
+  record: query(to, param),
+});
 
 /**
  * Registered owner resource types the Shell names, by `ref.resourceType`. Adding a searchable type is one entry;
@@ -112,6 +124,9 @@ const resourceTypes = new Map<string, ResourceTypePresentation>([
   ['property.portfolio.property', { ...portfolio, group: 'property' }],
   ['property.portfolio.unit', { ...portfolio, group: 'unit' }],
   ['property.portfolio.asset', { ...portfolio, group: 'asset' }],
+  ['facility.operations.asset', facility('/provoz/majetek', 'asset', 'asset')],
+  ['facility.operations.device', facility('/provoz/bezpecnost', 'device', 'device')],
+  ['facility.operations.document', facility('/provoz/dokumenty', 'doc', 'facilityDocument')],
   ['property.leasing.occupancy', { group: 'lease', moduleId: 'property.leasing', record: query('/najmy') }],
   [
     'commerce.market-catalog.market',
@@ -161,20 +176,62 @@ export type ShellSearchLinkTarget =
 /** Agendas listing this record when the type names them; otherwise the owning module's agendas apply. */
 export const recordAgendaPaths = (ref: SearchRef): readonly string[] | undefined => presentationOf(ref)?.agendas;
 
-/** The owner page that opens this record, when the owner has one. */
-export const ownerRecordTarget = (ref: SearchRef): ShellSearchLinkTarget | undefined => {
-  const record = presentationOf(ref)?.record;
-  if (record === undefined) {
+/**
+ * The ID the owner page selects the record by. A company-qualified ID yields its local part only when it is qualified
+ * with the trusted selected company the result carries; any other company, a missing company or an empty local part
+ * yields nothing, so the hit never opens a record page of another company.
+ */
+const recordIdOf = (
+  presentation: ResourceTypePresentation,
+  ref: SearchRef,
+  selectedLegalEntityId: string | undefined,
+): string | undefined => {
+  if (presentation.idScope === undefined) {
+    return ref.resourceId;
+  }
+  if (selectedLegalEntityId === undefined || selectedLegalEntityId.length === 0) {
     return undefined;
   }
-  return record.kind === 'path'
-    ? { params: { id: ref.resourceId }, to: record.to }
-    : { search: { [record.param]: ref.resourceId }, to: record.to };
+  const prefix = `${selectedLegalEntityId}.`;
+  const localId = ref.resourceId.startsWith(prefix) ? ref.resourceId.slice(prefix.length) : '';
+  return localId.length === 0 ? undefined : localId;
 };
 
-export const shellSearchLinkTarget = (ref: SearchRef, title: string): ShellSearchLinkTarget =>
-  ownerRecordTarget(ref) ?? {
+/**
+ * The owner page that opens this record, when the owner has one. `selectedLegalEntityId` is the trusted selected
+ * company of the result (or of the current Shell context); company-qualified records need it.
+ */
+export const ownerRecordTarget = (
+  ref: SearchRef,
+  selectedLegalEntityId: string | undefined,
+): ShellSearchLinkTarget | undefined => {
+  const presentation = presentationOf(ref);
+  const record = presentation?.record;
+  if (presentation === undefined || record === undefined) {
+    return undefined;
+  }
+  const id = recordIdOf(presentation, ref, selectedLegalEntityId);
+  if (id === undefined) {
+    return undefined;
+  }
+  return record.kind === 'path' ? { params: { id }, to: record.to } : { search: { [record.param]: id }, to: record.to };
+};
+
+export const shellSearchLinkTarget = (
+  ref: SearchRef,
+  title: string,
+  selectedLegalEntityId: string | undefined,
+): ShellSearchLinkTarget =>
+  ownerRecordTarget(ref, selectedLegalEntityId) ?? {
     params: { moduleId: ref.moduleId, resourceId: ref.resourceId, resourceType: ref.resourceType },
     state: searchHitState(title),
     to: '/resources/$moduleId/$resourceType/$resourceId',
   };
+
+/** Where a search hit opens; a generic owner hit carries its trusted selected company. */
+export const shellSearchResultTarget = (result: ShellSearchResult): ShellSearchLinkTarget =>
+  shellSearchLinkTarget(
+    result.ref,
+    result.title,
+    result.kind === 'resource' ? result.selectedLegalEntityId : undefined,
+  );

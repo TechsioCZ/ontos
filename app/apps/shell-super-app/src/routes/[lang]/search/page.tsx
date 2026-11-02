@@ -8,7 +8,7 @@ import { Match } from 'effect';
 
 import type { ShellSearchResult } from '../../../../shared/api.ts';
 import { buildShellNavigation, ShellRouteLink } from '../../shell-frame.tsx';
-import { shellSearchGroupIcon, shellSearchLinkTarget } from '../../shell-search-resource-types.ts';
+import { shellSearchGroupIcon, shellSearchResultTarget } from '../../shell-search-resource-types.ts';
 import { groupShellSearchResults } from '../../shell-search-suggestions.ts';
 import { SignInRedirect } from '../../sign-in-redirect.tsx';
 import { ShellContentLayout } from '../../shell-content-layout.tsx';
@@ -24,7 +24,7 @@ const SearchResultItem = ({ result }: { readonly result: ShellSearchResult }) =>
   );
   return (
     <li className="shell:grid shell:gap-2">
-      <LinkButton as={ShellRouteLink} variant="secondary" {...shellSearchLinkTarget(result.ref, result.title)}>
+      <LinkButton as={ShellRouteLink} variant="secondary" {...shellSearchResultTarget(result)}>
         {result.title}
       </LinkButton>
       <div className="shell:flex shell:flex-wrap shell:gap-2 shell:empty:hidden">

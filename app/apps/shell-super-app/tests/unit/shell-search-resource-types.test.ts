@@ -8,6 +8,7 @@ import {
   recordAgendaPaths,
   shellSearchGroupOf,
   shellSearchLinkTarget,
+  shellSearchResultTarget,
 } from '../../src/routes/shell-search-resource-types.ts';
 import { groupShellSearchResults, groupShellSearchSuggestions } from '../../src/routes/shell-search-suggestions.ts';
 
@@ -16,14 +17,14 @@ const selectedLegalEntityId = Schema.decodeUnknownSync(LegalEntityIdSchema)('000
 let sequence = 0;
 
 /** A generic owner hit as the Shell receives it: owner ref, human title and the trusted selected company. */
-const resourceHit = (moduleId: string, resourceType: string, title: string): ShellSearchResult => {
+const resourceHit = (moduleId: string, resourceType: string, title: string, resourceId?: string): ShellSearchResult => {
   sequence += 1;
   const hit = {
     kind: 'resource' as const,
     ref: {
       moduleId: Schema.decodeUnknownSync(ModuleIdSchema)(moduleId),
       resourceId: Schema.decodeUnknownSync(ResourceIdSchema)(
-        `00000000-0000-4000-8000-${String(sequence).padStart(12, '0')}`,
+        resourceId ?? `00000000-0000-4000-8000-${String(sequence).padStart(12, '0')}`,
       ),
       resourceType,
       tenantId,
@@ -42,6 +43,9 @@ const partyRef = {
 };
 
 const covered = [
+  ['facility.operations', 'facility.operations.asset', 'asset'],
+  ['facility.operations', 'facility.operations.device', 'device'],
+  ['facility.operations', 'facility.operations.document', 'facilityDocument'],
   ['core.identity', 'core.identity.person', 'person'],
   ['demo.crm', 'demo.crm.contact', 'crmContact'],
   ['demo.merchandise', 'demo.merchandise.order', 'order'],
@@ -71,30 +75,65 @@ test('a type the Shell does not know yet, or one claimed by another module, stay
 
 test('records with an owner page open there, by path segment or query parameter', () => {
   const invoice = resourceHit('finance.billing', 'finance.billing.invoice', 'Faktura 2026/14');
-  expect(shellSearchLinkTarget(invoice.ref, invoice.title)).toEqual({
+  expect(shellSearchResultTarget(invoice)).toEqual({
     search: { resourceId: invoice.ref.resourceId },
     to: '/finance',
   });
   const client = resourceHit('demo.crm', 'demo.crm.client', 'Strojírny Vysočina');
-  expect(shellSearchLinkTarget(client.ref, client.title)).toEqual({
+  expect(shellSearchResultTarget(client)).toEqual({
     search: { klient: client.ref.resourceId },
     to: '/crm/klienti',
   });
   const product = resourceHit('demo.merchandise', 'demo.merchandise.product', 'Kotel K-200');
-  expect(shellSearchLinkTarget(product.ref, product.title)).toEqual({
+  expect(shellSearchResultTarget(product)).toEqual({
     params: { id: product.ref.resourceId },
     to: '/provoz/produkty/$id',
   });
   const market = resourceHit('commerce.market-catalog', 'commerce.market-catalog.market', 'Slovensko');
-  expect(shellSearchLinkTarget(market.ref, market.title)).toEqual({
+  expect(shellSearchResultTarget(market)).toEqual({
     params: { id: market.ref.resourceId },
     to: '/prodej/eshopy/trhy/$id',
   });
 });
 
+const otherCompany = '00000000-0000-4000-8000-000000000299';
+
+test.each([
+  ['facility.operations.asset', '/provoz/majetek', 'asset'],
+  ['facility.operations.device', '/provoz/bezpecnost', 'device'],
+  ['facility.operations.document', '/provoz/dokumenty', 'doc'],
+] as const)('%s of the selected company opens %s with its local ID', (resourceType, to, param) => {
+  const hit = resourceHit('facility.operations', resourceType, 'Plynová kotelna', `${selectedLegalEntityId}.TEC-001`);
+  expect(shellSearchResultTarget(hit)).toEqual({ search: { [param]: 'TEC-001' }, to });
+  expect(recordAgendaPaths(hit.ref)).toEqual([to]);
+});
+
+test.each([
+  ['another company', `${otherCompany}.TEC-001`, selectedLegalEntityId],
+  ['no company on the result', `${selectedLegalEntityId}.TEC-001`, undefined],
+  ['an unqualified ID', 'TEC-001', selectedLegalEntityId],
+  ['a company prefix without the separator', `${selectedLegalEntityId}TEC-001`, selectedLegalEntityId],
+  ['an empty local ID', `${selectedLegalEntityId}.`, selectedLegalEntityId],
+] as const)('a facility record qualified with %s never opens an owner page', (_case, resourceId, company) => {
+  const hit = resourceHit('facility.operations', 'facility.operations.asset', 'Plynová kotelna', resourceId);
+  expect(ownerRecordTarget(hit.ref, company)).toBeUndefined();
+  const target = shellSearchLinkTarget(hit.ref, hit.title, company);
+  expect(target).toMatchObject({ to: '/resources/$moduleId/$resourceType/$resourceId' });
+  // The fallback opens the Shell record page named by the found title; no ID reaches the visible text.
+  expect('state' in target ? target.state({}) : undefined).toEqual({ searchHitTitle: 'Plynová kotelna' });
+});
+
+test('native-ID records ignore the company and keep the resource ID as is', () => {
+  const invoice = resourceHit('finance.billing', 'finance.billing.invoice', 'Faktura 2026/14');
+  expect(ownerRecordTarget(invoice.ref, otherCompany)).toEqual({
+    search: { resourceId: invoice.ref.resourceId },
+    to: '/finance',
+  });
+});
+
 test('a merchandise order opens the orders agenda with the order selected', () => {
   const order = resourceHit('demo.merchandise', 'demo.merchandise.order', 'Objednávka Novák');
-  expect(shellSearchLinkTarget(order.ref, order.title)).toEqual({
+  expect(shellSearchResultTarget(order)).toEqual({
     search: { orderId: order.ref.resourceId },
     to: '/prodej/objednavky',
   });
@@ -108,8 +147,8 @@ test.each([
   '%s %s without a record page opens the Shell record page and names only its agenda',
   (moduleId, resourceType, title, agenda) => {
     const hit = resourceHit(moduleId, resourceType, title);
-    expect(ownerRecordTarget(hit.ref)).toBeUndefined();
-    expect(shellSearchLinkTarget(hit.ref, hit.title)).toMatchObject({
+    expect(ownerRecordTarget(hit.ref, selectedLegalEntityId)).toBeUndefined();
+    expect(shellSearchResultTarget(hit)).toMatchObject({
       to: '/resources/$moduleId/$resourceType/$resourceId',
     });
     expect(recordAgendaPaths(hit.ref)).toEqual([agenda]);
@@ -123,8 +162,8 @@ test('a type without named agendas, or a forged owner, falls back to the owning 
 
 test('records without an owner page open the Shell record page carrying only the found title', () => {
   const opportunity = resourceHit('demo.sales-pipeline', 'demo.sales-pipeline.opportunity', 'Serverovna');
-  expect(ownerRecordTarget(opportunity.ref)).toBeUndefined();
-  const target = shellSearchLinkTarget(opportunity.ref, opportunity.title);
+  expect(ownerRecordTarget(opportunity.ref, selectedLegalEntityId)).toBeUndefined();
+  const target = shellSearchResultTarget(opportunity);
   expect(target).toMatchObject({
     params: {
       moduleId: 'demo.sales-pipeline',
@@ -138,7 +177,7 @@ test('records without an owner page open the Shell record page carrying only the
     searchHitTitle: 'Serverovna',
   });
   const forged = resourceHit('demo.crm', 'finance.billing.invoice', 'Podvržená faktura');
-  expect(ownerRecordTarget(forged.ref)).toBeUndefined();
+  expect(ownerRecordTarget(forged.ref, selectedLegalEntityId)).toBeUndefined();
 });
 
 test('groups follow the fixed order and keep the search order inside each group', () => {
