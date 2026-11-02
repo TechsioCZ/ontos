@@ -5,6 +5,7 @@ import {
   defineOntosModuleManifest,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
+  ShellSearchContributionSchema,
   ShellPublicComponentContributionSchema,
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
@@ -12,7 +13,9 @@ import { Result, Schema } from 'effect';
 import { AgentReviewApi } from './shared/apis/agent-review.ts';
 import { AiApprovalsPage } from './src/routes/[lang]/crm/schvalovani-ai/page.tsx';
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { clientResourceDescriptor } from './shared/resources/client.ts';
 import { ClientsPage } from './src/routes/[lang]/crm/klienti/page.tsx';
+import { contactResourceDescriptor } from './shared/resources/contact.ts';
 import { crmAssignPermission } from './shared/permissions/crm-assign.ts';
 import { crmReadAllPermission } from './shared/permissions/crm-read-all.ts';
 import { crmReadAssignedPermission } from './shared/permissions/crm-read-assigned.ts';
@@ -24,6 +27,7 @@ import { PairingPage } from './src/routes/[lang]/crm/parovani/page.tsx';
 import { PlanPage } from './src/routes/[lang]/crm/k-osloveni/page.tsx';
 import { RecordsApi } from './shared/apis/records.ts';
 import { ReportsPage } from './src/routes/[lang]/crm/prehled-prodeju/page.tsx';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 import { VisitsPage } from './src/routes/[lang]/crm/navstevy/page.tsx';
 // </generated-module-manifest-imports>
 import { crmMcpContribution } from './shared/mcp/contribution.ts';
@@ -38,6 +42,9 @@ const pageContribution = (value: PageContributionInput) =>
 
 const publicComponentContribution = (value: typeof ShellPublicComponentContributionSchema.Encoded) =>
   Result.getOrThrow(Schema.decodeResult(ShellPublicComponentContributionSchema)(value));
+
+const searchContribution = (value: typeof ShellSearchContributionSchema.Encoded) =>
+  Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
 
 const moduleAccessPermission = 'module.access';
 const salesNavigationGroup = 'shell.navigation.sales';
@@ -69,6 +76,7 @@ export const crmManifest = defineOntosModuleManifest({
     actions: [
       // <generated-module-manifest-actions>
       applyCommandAction,
+      requestSearchRebuildAction,
       // </generated-module-manifest-actions>
     ],
     api: {
@@ -106,10 +114,24 @@ export const crmManifest = defineOntosModuleManifest({
     ],
     resourceTypes: [
       // <generated-module-manifest-resources>
+      clientResourceDescriptor,
+      contactResourceDescriptor,
       // </generated-module-manifest-resources>
     ],
     search: [
       // <generated-module-manifest-search>
+      {
+        accessFiltering: 'resource_permission',
+        key: 'demo.crm.clients',
+        owningModuleId: 'demo.crm',
+        resourceType: 'demo.crm.client',
+      },
+      {
+        accessFiltering: 'resource_permission',
+        key: 'demo.crm.contacts',
+        owningModuleId: 'demo.crm',
+        resourceType: 'demo.crm.contact',
+      },
       // </generated-module-manifest-search>
     ],
     shellContributions: {
@@ -359,6 +381,30 @@ export const crmManifest = defineOntosModuleManifest({
       resourceDetails: [],
       search: [
         // <generated-module-shell-search>
+        searchContribution({
+          contributionKey: 'demo.crm.search.clients',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
+            entrypointKey: 'demo.crm.search.clients',
+            moduleKey: 'demo.crm',
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'demo.crm.clients',
+        }),
+        searchContribution({
+          contributionKey: 'demo.crm.search.contacts',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
+            entrypointKey: 'demo.crm.search.contacts',
+            moduleKey: 'demo.crm',
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'demo.crm.contacts',
+        }),
         // </generated-module-shell-search>
       ],
       timelines: [],

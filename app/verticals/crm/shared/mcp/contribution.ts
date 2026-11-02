@@ -2,6 +2,7 @@
 import { OntosMcpHidden, defineOntosMcpContribution } from '@app/core-runtime';
 
 export const crmMcpContribution = defineOntosMcpContribution({
+  actions: { 'request-search-rebuild': 'hidden' },
   // Clients are private per salesperson: proposals about clients the reader cannot see stay hidden.
   approvalReview: { privateRecords: true, read: 'agent-review' },
   approvals: true,

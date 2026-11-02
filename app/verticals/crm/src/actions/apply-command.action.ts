@@ -26,12 +26,29 @@ import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts'
 import { assignmentPolicy } from '../services/assignment-policy.ts';
 import { persistenceService, prepareCrmCommand } from '../services/persistence.service.ts';
 
+import { OutboxPayloadSchema } from '../../shared/outbox/demo-crm-search-changed-v1.ts';
+import { createApplyCommandDemoCrmSearchChangedV1OutboxMessage } from './apply-command-demo-crm-search-changed-v1.outbox-message.ts';
+
+const domainEvents = { 'demo.crm.search-changed.v1': OutboxPayloadSchema } as const;
+
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
-const handleApplyCommand = (
+export const handleApplyCommand = Effect.fn('Crm.handleApplyCommand')(function* applyAndQueueSearch(
   payload: ApplyCommandPayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
-): Effect.Effect<Effect.Success<ReturnType<Services['apply']>>, Effect.Error<ReturnType<Services['apply']>>> =>
-  context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId);
+  context: ActionHandlerContext<typeof domainEvents, Services>,
+) {
+  const result = yield* context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId);
+  const changed = { entityIds: result.entityIds };
+  const event = yield* context.addDomainEvent({
+    eventType: 'demo.crm.search-changed.v1',
+    payloadJson: changed,
+    producerModuleKey: 'demo.crm',
+    subjectModuleKey: 'demo.crm',
+    subjectResourceId: context.scope.legalEntityId ?? context.scope.tenantId,
+    subjectResourceType: 'demo.crm.state',
+  });
+  yield* context.addOutboxMessage(event, createApplyCommandDemoCrmSearchChangedV1OutboxMessage(changed));
+  return result;
+});
 
 const samePrincipal = Schema.toEquivalence(TrustedPrincipalContextSchema);
 
@@ -82,7 +99,7 @@ export const applyCommandAction = defineAction(
     actionKey: 'demo.crm.apply-command',
     auditProfile: 'standard',
     domainErrorSchema: CrmErrorSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'action_execution', provisioning: 'explicit' },
@@ -104,4 +121,9 @@ export const applyCommandAction = defineAction(
 );
 
 // <generated-outbox-message-exports>
+export { ApplyCommandDemoCrmSearchChangedV1OutboxPayloadSchema } from './apply-command-demo-crm-search-changed-v1.outbox-message.ts';
+export { ApplyCommandDemoCrmSearchChangedV1OutboxProducerModuleKey } from './apply-command-demo-crm-search-changed-v1.outbox-message.ts';
+export { ApplyCommandDemoCrmSearchChangedV1OutboxTopic } from './apply-command-demo-crm-search-changed-v1.outbox-message.ts';
+export { createApplyCommandDemoCrmSearchChangedV1OutboxMessage } from './apply-command-demo-crm-search-changed-v1.outbox-message.ts';
+export type { ApplyCommandDemoCrmSearchChangedV1OutboxPayload } from './apply-command-demo-crm-search-changed-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

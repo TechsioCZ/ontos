@@ -1,8 +1,6 @@
-import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
-import { layer as nodeFileSystemLayer } from '@effect/platform-node/NodeFileSystem';
-import { layer as nodePathLayer } from '@effect/platform-node/NodePath';
-import { PartyIntakeLive } from '../src/services/party-intake.ts';
 import {
+  CoreSearchQueryRuntimeLive,
+  CoreSearchProjectionStoreLive,
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
@@ -12,6 +10,10 @@ import {
   ReadRuntimeLive as GovernedReadRuntimeLive,
   TenantModuleStateServiceLive as GovernedTenantModuleStateServiceLive,
 } from '@app/core-runtime';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
+import { layer as nodeFileSystemLayer } from '@effect/platform-node/NodeFileSystem';
+import { layer as nodePathLayer } from '@effect/platform-node/NodePath';
+import { PartyIntakeLive } from '../src/services/party-intake.ts';
 import {
   ActionPermissionLive,
   ActionRepositoryLive,
@@ -24,7 +26,6 @@ import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramo
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
 import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
@@ -35,12 +36,16 @@ import { crmApi, crmOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
 
 // <generated-governed-http-handler-support-imports>
+import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
 import { agentReviewReadApiLive } from './agent-review-read-server.ts';
 import { applyCommandActionApiLive } from './apply-command-action-server.ts';
+import { clientsReadApiLive } from './clients-search-server.ts';
+import { contactsReadApiLive } from './contacts-search-server.ts';
 import { recordsReadApiLive } from './records-read-server.ts';
+import { requestSearchRebuildActionApiLive } from './request-search-rebuild-action-server.ts';
 // </generated-governed-http-handler-imports>
 
 const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
@@ -88,7 +93,10 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
   agentReviewReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  clientsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  contactsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  requestSearchRebuildActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   // <generated-governed-http-handler-support-layers>
@@ -102,6 +110,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(PartyIntakeLive, GovernedFetchHttpClient.layer, nodeFileSystemLayer, nodePathLayer),
   ),
+  GovernedReadLayer.provide(CoreSearchQueryRuntimeLive.pipe(GovernedReadLayer.provide(CoreSearchProjectionStoreLive))),
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
 );
 

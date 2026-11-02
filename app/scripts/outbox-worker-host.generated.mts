@@ -10,6 +10,7 @@ import { outboxWorkerEntry as inventoryOutboxWorkerEntry } from '@app/inventory/
 import { outboxWorkerEntry as privacyOutboxWorkerEntry } from '@app/privacy/outbox-worker-host';
 import { outboxWorkerEntry as legalAgreementsOutboxWorkerEntry } from '@app/legal-agreements/outbox-worker-host';
 import { outboxWorkerEntry as financeBillingOutboxWorkerEntry } from '@app/finance-billing/outbox-worker-host';
+import { outboxWorkerEntry as crmOutboxWorkerEntry } from '@app/crm/outbox-worker-host';
 import { outboxWorkerEntry as commerceOrderOutboxWorkerEntry } from '@app/commerce-order/outbox-worker-host';
 
 startOutboxWorkerHost({
@@ -23,6 +24,7 @@ startOutboxWorkerHost({
     privacyOutboxWorkerEntry,
     legalAgreementsOutboxWorkerEntry,
     financeBillingOutboxWorkerEntry,
+    crmOutboxWorkerEntry,
     commerceOrderOutboxWorkerEntry,
   ],
   health: true,
