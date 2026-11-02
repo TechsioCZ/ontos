@@ -110,7 +110,6 @@ const makeHarness = Effect.fn(function* makePricingReadAccessHarness(options: Ha
     }),
   };
   const contextAccess: ContextAccessService = {
-    businessPermissions: () => Effect.die('Currency Support reads must not use business-target permissions'),
     contextPermissions: ({ targets }) =>
       Effect.succeed(
         targets.map((target) => {
@@ -121,6 +120,7 @@ const makeHarness = Effect.fn(function* makePricingReadAccessHarness(options: Ha
     legalEntities: ({ legalEntityIds }) =>
       Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
     modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+    ownerPermissions: () => Effect.die('Currency Support reads must not use business-target permissions'),
     resources: ({ resources }) =>
       Effect.succeed(
         resources.map((resource) => ({

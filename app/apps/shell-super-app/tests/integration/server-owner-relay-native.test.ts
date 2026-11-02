@@ -17,7 +17,11 @@ import {
 } from '@app/shared-contracts/server/gateway-context-api-key';
 import { executeCustomerPriceGroupResolutionWithAuthorization } from '@app/commerce-customer-context/api/customer-price-group-resolution/client';
 import { executeEligibleMarketTuplesWithAuthorization } from '@app/commerce-market-catalog/api/client';
-import { migratePriceGroupCatalogNativeBaseline } from '@app/price-group-catalog/testing/server-owner-native';
+import {
+  migratePriceGroupCatalogNativeBaseline,
+  priceGroupOwnerPermissionTarget,
+} from '@app/price-group-catalog/testing/server-owner-native';
+import { customerOwnerPermissionTarget } from '@app/commerce-customer-context/testing/price-group-temporal-protocol';
 import { PriceGroupRefSchema } from '@app/price-group-catalog/resources/price-group';
 import {
   executeCreatePriceGroupWithAuthorization,
@@ -1007,7 +1011,7 @@ const exerciseFactoryOnlyPostalRejection = Effect.fn('ServerOwnerRelayNative.exe
         },
       }),
     );
-    if (access.businessPermissions === undefined) {
+    if (access.ownerPermissions === undefined) {
       return yield* new PackagedOwnerStartupError({ reason: 'Live resolver permission readers unavailable' });
     }
     const businessTargets = [
@@ -1020,7 +1024,7 @@ const exerciseFactoryOnlyPostalRejection = Effect.fn('ServerOwnerRelayNative.exe
           tenantId: core.tenantId,
         },
       },
-    ];
+    ].map((request) => ({ target: customerOwnerPermissionTarget(request) }));
     const moduleDecisions = yield* access.modules({
       legalEntityId: core.legalEntityId,
       moduleIds: ['commerce.customer-context'],
@@ -1029,7 +1033,8 @@ const exerciseFactoryOnlyPostalRejection = Effect.fn('ServerOwnerRelayNative.exe
     });
     expect(moduleDecisions).toHaveLength(1);
     expect(moduleDecisions.find((decision) => decision.key === 'commerce.customer-context')?.decision).toBe('allowed');
-    const businessDecisions = yield* access.businessPermissions({
+    const businessDecisions = yield* access.ownerPermissions({
+      legalEntityId: core.legalEntityId,
       principal: { principalId, tenantId: core.tenantId },
       targets: businessTargets,
     });
@@ -1043,7 +1048,8 @@ const exerciseFactoryOnlyPostalRejection = Effect.fn('ServerOwnerRelayNative.exe
     });
     expect(resourceDecisions).toHaveLength(2);
     expect(resourceDecisions.every((decision) => decision.decision === 'allowed')).toBe(true);
-    const serviceBusiness = yield* access.businessPermissions({
+    const serviceBusiness = yield* access.ownerPermissions({
+      legalEntityId: core.legalEntityId,
       principal: { principalId: input.serviceId, tenantId: core.tenantId },
       targets: businessTargets,
     });
@@ -1475,18 +1481,20 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
     const crypto = yield* Crypto.Crypto;
     const access = yield* makeContextAccessLive();
     const business = yield* makeBusinessPermissionRelationshipMutationLive();
-    const checkBusinessPermissions = access.businessPermissions;
+    const checkBusinessPermissions = access.ownerPermissions;
     if (checkBusinessPermissions === undefined) {
       return yield* new PackagedOwnerStartupError({ reason: 'Actual subject profile permission reader unavailable' });
     }
     const profileTarget = {
-      permission: 'retail.profile.read' as const,
-      target: {
-        kind: 'retail_profile' as const,
-        legalEntityId: core.legalEntityId,
-        profileId: input.profile.resourceId,
-        tenantId: core.tenantId,
-      },
+      target: customerOwnerPermissionTarget({
+        permission: 'retail.profile.read' as const,
+        target: {
+          kind: 'retail_profile' as const,
+          legalEntityId: core.legalEntityId,
+          profileId: input.profile.resourceId,
+          tenantId: core.tenantId,
+        },
+      }),
     };
     const personalProfilePermission = {
       ...profileTarget,
@@ -1546,6 +1554,7 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
         expect(modules).toHaveLength(1);
         expect(modules[0]?.decision).toBe('allowed');
         const profile = yield* checkBusinessPermissions({
+          legalEntityId: core.legalEntityId,
           principal: { principalId, tenantId: core.tenantId },
           targets: [profileTarget],
         });
@@ -1820,7 +1829,7 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
     const crypto = yield* Crypto.Crypto;
     const business = yield* makeBusinessPermissionRelationshipMutationLive();
     const access = yield* makeContextAccessLive();
-    const checkBusinessPermissions = access.businessPermissions;
+    const checkBusinessPermissions = access.ownerPermissions;
     if (checkBusinessPermissions === undefined) {
       return yield* new PackagedOwnerStartupError({ reason: 'Actual PGC target permission reader unavailable' });
     }
@@ -1836,9 +1845,11 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
     }
     const createTarget = { kind: 'pricing_catalog' as const, pricingCatalogId: core.tenantId, tenantId: core.tenantId };
     const createBinding = {
-      permission: 'pricing.price_group.create' as const,
       principal: { principalId: core.manager.principalId, tenantId: core.tenantId },
-      target: createTarget,
+      target: priceGroupOwnerPermissionTarget(
+        { permission: 'pricing.price_group.create', target: createTarget },
+        'action',
+      ),
     };
     yield* Effect.addFinalizer(() => business.mutate({ operation: 'revoke', ...createBinding }).pipe(Effect.orDie));
     yield* business.mutate({ operation: 'grant', ...createBinding });
@@ -1916,9 +1927,8 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
         operation: 'grant' | 'revoke',
       ) {
         const binding = {
-          permission: 'pricing.price_group.read' as const,
           principal: { principalId, tenantId: core.tenantId },
-          target,
+          target: priceGroupOwnerPermissionTarget({ permission: 'pricing.price_group.read', target }, 'read'),
         };
         if (operation === 'grant') {
           yield* Effect.addFinalizer(() => business.mutate({ operation: 'revoke', ...binding }).pipe(Effect.orDie));
@@ -1926,7 +1936,7 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
         yield* business.mutate({ operation, ...binding });
         const decisions = yield* checkBusinessPermissions({
           principal: binding.principal,
-          targets: [{ permission: binding.permission, target }],
+          targets: [{ target: binding.target }],
         });
         expect(decisions).toHaveLength(1);
         expect(decisions[0]?.decision).toBe(operation === 'grant' ? 'allowed' : 'denied');
@@ -6373,22 +6383,25 @@ it.live(
                   'reader',
                 );
                 const access = yield* makeContextAccessLive();
-                if (access.businessPermissions === undefined) {
+                if (access.ownerPermissions === undefined) {
                   return yield* new PackagedOwnerStartupError({
                     reason: 'Exact native PriceGroup profile permission reader unavailable',
                   });
                 }
-                const profilePermission = yield* access.businessPermissions({
+                const profilePermission = yield* access.ownerPermissions({
+                  legalEntityId: fixture.core.legalEntityId,
                   principal: { principalId: fixture.core.manager.principalId, tenantId: fixture.core.tenantId },
                   targets: [
                     {
-                      permission: 'retail.profile.read',
-                      target: {
-                        kind: 'retail_profile',
-                        legalEntityId: fixture.core.legalEntityId,
-                        profileId: created.result.profileRef.resourceId,
-                        tenantId: fixture.core.tenantId,
-                      },
+                      target: customerOwnerPermissionTarget({
+                        permission: 'retail.profile.read',
+                        target: {
+                          kind: 'retail_profile',
+                          legalEntityId: fixture.core.legalEntityId,
+                          profileId: created.result.profileRef.resourceId,
+                          tenantId: fixture.core.tenantId,
+                        },
+                      }),
                     },
                   ],
                 });
@@ -6855,14 +6868,16 @@ it.live(
             const serviceRetailBusiness = yield* makeBusinessPermissionRelationshipMutationLive();
             yield* serviceRetailBusiness.mutate({
               operation: 'revoke',
-              permission: 'retail.profile.read',
               principal: { principalId: serviceId, tenantId: fixture.core.tenantId },
-              target: {
-                kind: 'retail_profile',
-                legalEntityId: fixture.core.legalEntityId,
-                profileId: created.result.profileRef.resourceId,
-                tenantId: fixture.core.tenantId,
-              },
+              target: customerOwnerPermissionTarget({
+                permission: 'retail.profile.read',
+                target: {
+                  kind: 'retail_profile',
+                  legalEntityId: fixture.core.legalEntityId,
+                  profileId: created.result.profileRef.resourceId,
+                  tenantId: fixture.core.tenantId,
+                },
+              }),
             });
 
             yield* exerciseNativeMarketSubjectRelay({

@@ -50,6 +50,8 @@ import {
 } from 'effect';
 import { Socket } from 'effect/socket';
 
+export { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
+
 const commerceAppId = 'commerce-customer-context';
 const commerceModuleId = 'commerce.customer-context';
 export const priceGroupTemporalProtocol = 'ontos.customer-price-group-temporal.fixture.v1' as const;
