@@ -44,14 +44,17 @@ runs:
       working-directory: app
       run: echo "path=$(mise exec -- pnpm store path)" >> "$GITHUB_OUTPUT"
 
-    # The key covers the pinned pnpm (app/.mise.toml) and the lockfile; there are no restore-keys, so a
-    # stale store never masquerades as a hit.
+    # The exact key covers the pinned pnpm (app/.mise.toml) and the lockfile. A changed lockfile misses
+    # it, so the prefix restore-keys still seed the newest store for this toolchain: pnpm verifies what
+    # it restored and fetches only the changed packages, instead of the whole graph. A partial restore
+    # leaves `cache-hit` empty, so the save below still stores the complete store under the exact key.
     - name: Restore the pnpm store
       id: restore
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.store.outputs.path }}
         key: pnpm-store-${{ runner.os }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml') }}
+        restore-keys: pnpm-store-${{ runner.os }}-
 
     - name: Install dependencies from the frozen lockfile
       shell: bash
