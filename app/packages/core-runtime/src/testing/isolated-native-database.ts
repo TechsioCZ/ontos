@@ -1,5 +1,18 @@
 import { asc, eq, sql } from 'drizzle-orm';
-import { Config, Crypto, DateTime, Effect, Exit, Option, Redacted, Ref, Schema, Scope, Stream } from 'effect';
+import {
+  Config,
+  Crypto,
+  DateTime,
+  Effect,
+  Exit,
+  Option,
+  Redacted,
+  Ref,
+  Schema,
+  Scope,
+  Semaphore,
+  Stream,
+} from 'effect';
 import { ChildProcess } from 'effect/process';
 import type { PlatformError } from 'effect';
 
@@ -485,6 +498,8 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
     let managedInitialRevision: string | undefined;
     let managedInitialObservedAt: number | undefined;
     let managedInitialValidUntil: number | undefined;
+    let latestObservationAt: number | undefined;
+    const observationRenewal = yield* Semaphore.make(1);
     const publishInitialComposition = Effect.fn('IsolatedNativeDatabase.publishInitialComposition')(
       function* publishInitialComposition(candidate: ActiveApplicationCompositionSnapshot) {
         const validated = yield* validateActiveApplicationCompositionSnapshot(candidate).pipe(
@@ -507,6 +522,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
           .pipe(Effect.mapError((cause) => unavailable('Unable to publish initial isolated composition', cause)));
         managedInitialRevision = validated.composition.revision;
         managedInitialObservedAt = DateTime.toEpochMillis(validated.observedAt);
+        latestObservationAt = managedInitialObservedAt;
         managedInitialValidUntil = DateTime.toEpochMillis(validated.validUntil);
       },
     );
@@ -658,6 +674,89 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
           .pipe(Effect.mapError((cause) => unavailable('Unable to control this isolated initial composition', cause)));
       },
     );
+    const renewObservation = Effect.fn('IsolatedNativeDatabase.renewObservation')(function* renewObservation(
+      candidate: ActiveApplicationCompositionSnapshot,
+    ) {
+      return yield* observationRenewal.withPermit(
+        Effect.gen(function* renewOwnedObservation() {
+          const previousObservedAt = latestObservationAt;
+          if (
+            retainedOriginalEnabled ||
+            nativeOwnedIdentity === undefined ||
+            previousObservedAt === undefined ||
+            (yield* Ref.get(controllerClosed))
+          ) {
+            return yield* unavailable('Observation renewal requires a live owned non-retained test controller');
+          }
+          const approved = yield* validateActiveApplicationCompositionSnapshot(candidate).pipe(
+            Effect.mapError((cause) => unavailable('Invalid isolated observation renewal', cause)),
+          );
+          const renewed = yield* runCompositionOperation(
+            Effect.fn('IsolatedNativeDatabase.publishOwnedObservation')(
+              function* publishOwnedObservation(transaction, revision) {
+                const [identity] = yield* transaction.execute<{ readonly owned: boolean }>(
+                  sql`select
+                current_database()=${ownedBoundary.database} and d.oid::text=${nativeOwnedIdentity.databaseOid}
+                and current_user=${ownedBoundary.adminUser} and session_user=${ownedBoundary.adminUser}
+                and pg_get_userbyid(d.datdba)=${ownedBoundary.adminUser}
+                and r.oid::text=${nativeOwnedIdentity.runtimeRoleOid} and not r.rolsuper and not r.rolbypassrls
+                and inet_server_addr()::text is not distinct from ${nativeOwnedIdentity.serverAddress}
+                and inet_server_port() is not distinct from ${nativeOwnedIdentity.serverPort} as owned
+                from pg_database d cross join pg_roles r
+                where d.datname=current_database() and r.rolname=${ownedBoundary.runtimeUser}`,
+                  'objects',
+                );
+                if (identity?.owned !== true) {
+                  return yield* unavailable('Observation renewal cannot target a foreign database, role or endpoint');
+                }
+                const [current] = yield* transaction
+                  .select({
+                    admission: applicationCompositionAuthority.durableWorkAdmission,
+                    phase: applicationCompositionAuthority.phase,
+                    revision: applicationCompositionAuthority.revision,
+                    validUntil: applicationCompositionAuthority.validUntil,
+                  })
+                  .from(applicationCompositionAuthority)
+                  .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+                if (
+                  (yield* Ref.get(controllerClosed)) ||
+                  current === undefined ||
+                  current.revision !== revision ||
+                  approved.composition.revision !== revision ||
+                  DateTime.toEpochMillis(approved.observedAt) <= previousObservedAt ||
+                  DateTime.toEpochMillis(approved.validUntil) <= current.validUntil.getTime()
+                ) {
+                  return yield* unavailable(
+                    'Observation renewal requires the exact owned original revision and strictly later observation times',
+                  );
+                }
+                yield* publishApplicationCompositionAuthority(transaction, approved);
+                const [after] = yield* transaction
+                  .select({
+                    admission: applicationCompositionAuthority.durableWorkAdmission,
+                    phase: applicationCompositionAuthority.phase,
+                    revision: applicationCompositionAuthority.revision,
+                    validUntil: applicationCompositionAuthority.validUntil,
+                  })
+                  .from(applicationCompositionAuthority)
+                  .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+                if (
+                  after?.revision !== revision ||
+                  after.phase !== current.phase ||
+                  after.admission !== current.admission ||
+                  after.validUntil.getTime() !== DateTime.toEpochMillis(approved.validUntil)
+                ) {
+                  return yield* unavailable('Observation renewal changed authority identity or admission state');
+                }
+                return approved;
+              },
+            ),
+          );
+          latestObservationAt = DateTime.toEpochMillis(renewed.observedAt);
+          return renewed;
+        }),
+      );
+    });
     const observeComposition = Effect.fn('IsolatedNativeDatabase.observeInitialComposition')(
       function* observeComposition(transaction: CoreTransaction, revision: string) {
         const [authority] = yield* transaction
@@ -955,6 +1054,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       observe: () => runCompositionOperation(observeComposition),
       observeRetainedOriginal,
       publishReplacement,
+      renewObservation,
       seal: () => runCompositionOperation(sealApplicationCompositionAuthority),
     });
     // Only this scope's new database is reachable; no administrative executor escapes.

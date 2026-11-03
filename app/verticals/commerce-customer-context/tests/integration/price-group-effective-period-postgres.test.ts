@@ -87,6 +87,7 @@ import { executeRemoveCustomerPriceGroupWithAuthorization } from '../../src/api/
 import { executeRemoveCounterpartyPriceGroupWithAuthorization } from '../../src/api/remove-counterparty-price-group-action-client.ts';
 import { executeCustomerPriceGroupResolutionWithAuthorization } from '../../src/api/customer-price-group-resolution-client.ts';
 import { executeCustomerPriceGroupAssignmentReadWithAuthorization } from '../../src/api/customer-price-group-assignment-read-client.ts';
+import { CustomerPriceGroupAssignmentReadResponseSchema } from '../../shared/apis/customer-price-group-assignment-read.ts';
 import {
   AssignCustomerPriceGroupActionConflictProblemSchema,
   AssignCustomerPriceGroupActionIneligibleProblemSchema,
@@ -112,6 +113,7 @@ import type {
 } from '../../shared/domain/price-group-contracts.ts';
 import {
   CustomerPriceGroupAssignedAuditEvidenceSchema,
+  CustomerPriceGroupAssignmentSchema,
   CustomerPriceGroupResolutionSchema,
 } from '../../shared/domain/price-group-contracts.ts';
 
@@ -2001,8 +2003,115 @@ const openAndFiniteScenario = Effect.fn('TemporalNative.openAndFinite')(function
     expect(evidence.requestedEffectiveFrom).toBe(start);
     expect(evidence).not.toHaveProperty('requestedEffectiveTo');
   }
+  // Renew deployment observation only after both finite business intervals have really ended.
+  // Keep the actual accepted assignment and public history bytes, without inventing an Order runtime.
+  const assignmentCodec = Schema.fromJsonString(CustomerPriceGroupAssignmentSchema);
+  const historyCodec = Schema.fromJsonString(CustomerPriceGroupAssignmentReadResponseSchema);
+  const retained = [];
+  for (const target of finite) {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    expect(DateTime.toEpochMillis(DateTime.makeUnsafe(now))).toBeGreaterThan(
+      DateTime.toEpochMillis(DateTime.makeUnsafe(finiteEnd)),
+    );
+    expect(
+      Schema.is(CustomerPriceGroupResolutionSchema.members[1])(
+        (yield* publicResolution(native, target.profile, now, target.authorizationSubject)).resolution,
+      ),
+    ).toBe(true);
+    const history = yield* executeCustomerPriceGroupAssignmentReadWithAuthorization(
+      { authorizationSubject: target.authorizationSubject, profile: target.profile },
+      yield* native.credential(),
+      yield* nextId,
+      { baseUrl: native.receiver.baseUrl, compositionRevision: native.snapshot.composition.revision },
+    );
+    const acceptedBytes = yield* Schema.encodeEffect(assignmentCodec)(target.assignment.assignment);
+    const historical = history.assignments.find(
+      (entry) => entry.assignmentRef.resourceId === target.assignment.assignment.assignmentRef.resourceId,
+    );
+    yield* requireCondition(historical !== undefined, 'finite-assignment-history-missing');
+    if (historical !== undefined) {
+      expect(yield* Schema.encodeEffect(assignmentCodec)(historical)).toBe(acceptedBytes);
+    }
+    retained.push({ acceptedBytes, historyBytes: yield* Schema.encodeEffect(historyCodec)(history), target });
+  }
+  const finiteAssignmentIds = new Set(finite.map((target) => target.assignment.assignment.assignmentRef.resourceId));
+  const originalAudits = (yield* native.fixture.evidence(native.coreEvidenceExecutor)).audits.filter(
+    (audit) =>
+      audit.outcome === 'succeeded' &&
+      Schema.is(CustomerPriceGroupAssignedAuditEvidenceSchema)(audit.evidenceJson) &&
+      finiteAssignmentIds.has(CustomerPriceGroupAssignedAuditEvidenceSchema.make(audit.evidenceJson).assignmentId),
+  );
+  expect(originalAudits).toHaveLength(finiteAssignmentIds.size);
+  const auditCodec = Schema.fromJsonString(CustomerPriceGroupAssignedAuditEvidenceSchema);
+  const originalAuditBytes: string[] = [];
+  for (const audit of originalAudits) {
+    originalAuditBytes.push(
+      yield* Schema.decodeUnknownEffect(CustomerPriceGroupAssignedAuditEvidenceSchema)(audit.evidenceJson).pipe(
+        Effect.flatMap(Schema.encodeEffect(auditCodec)),
+      ),
+    );
+  }
+  const observedAt = yield* DateTime.now;
+  const observationDuration =
+    DateTime.toEpochMillis(native.snapshot.validUntil) - DateTime.toEpochMillis(native.snapshot.observedAt);
+  const refreshed = yield* native.isolated.composition.renewObservation({
+    composition: native.snapshot.composition,
+    observedAt,
+    validUntil: DateTime.addDuration(observedAt, Duration.millis(observationDuration)),
+  });
+  expect(refreshed.composition).toEqual(native.snapshot.composition);
+  expect(refreshed.composition.revision).toBe(native.snapshot.composition.revision);
+  expect(DateTime.toEpochMillis(refreshed.observedAt)).toBeGreaterThan(
+    DateTime.toEpochMillis(DateTime.makeUnsafe(finiteEnd)),
+  );
+  expect(DateTime.toEpochMillis(refreshed.validUntil)).toBeGreaterThan(
+    DateTime.toEpochMillis(native.snapshot.validUntil),
+  );
+  expect(DateTime.toEpochMillis(refreshed.validUntil) - DateTime.toEpochMillis(refreshed.observedAt)).toBe(
+    observationDuration,
+  );
   expect((yield* native.receiver.invoke('stop')).type).toBe('STOPPED');
   expect(yield* native.receiver.child.exitCode).toBe(0);
+  const restart = yield* startReceiver(native.commerce, { ...native.bootstrap, composition: refreshed });
+  expect(restart.partyRuntimeBootstrap).toBe('existing');
+  const refreshedNative = { ...native, receiver: restart, snapshot: refreshed };
+  for (const { acceptedBytes, historyBytes, target } of retained) {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    expect(
+      Schema.is(CustomerPriceGroupResolutionSchema.members[1])(
+        (yield* publicResolution(refreshedNative, target.profile, now, target.authorizationSubject)).resolution,
+      ),
+    ).toBe(true);
+    const history = yield* executeCustomerPriceGroupAssignmentReadWithAuthorization(
+      { authorizationSubject: target.authorizationSubject, profile: target.profile },
+      yield* native.credential(),
+      yield* nextId,
+      { baseUrl: restart.baseUrl, compositionRevision: refreshed.composition.revision },
+    );
+    expect(yield* Schema.encodeEffect(historyCodec)(history)).toBe(historyBytes);
+    const historical = history.assignments.find(
+      (entry) => entry.assignmentRef.resourceId === target.assignment.assignment.assignmentRef.resourceId,
+    );
+    yield* requireCondition(historical !== undefined, 'refreshed-finite-assignment-history-missing');
+    if (historical !== undefined) {
+      expect(yield* Schema.encodeEffect(assignmentCodec)(historical)).toBe(acceptedBytes);
+    }
+  }
+  const retainedAudits = (yield* native.fixture.evidence(native.coreEvidenceExecutor)).audits.filter((audit) =>
+    originalAudits.some((original) => original.auditEventId === audit.auditEventId),
+  );
+  expect(retainedAudits).toEqual(originalAudits);
+  const retainedAuditBytes: string[] = [];
+  for (const audit of retainedAudits) {
+    retainedAuditBytes.push(
+      yield* Schema.decodeUnknownEffect(CustomerPriceGroupAssignedAuditEvidenceSchema)(audit.evidenceJson).pipe(
+        Effect.flatMap(Schema.encodeEffect(auditCodec)),
+      ),
+    );
+  }
+  expect(retainedAuditBytes).toEqual(originalAuditBytes);
+  expect((yield* restart.invoke('stop')).type).toBe('STOPPED');
+  expect(yield* restart.child.exitCode).toBe(0);
   return yield* Effect.void;
 });
 const cancellationScenario = Effect.fn('TemporalNative.cancellations')(function* cancellations() {
@@ -2496,7 +2605,7 @@ it.layer(temporalArtifactsLayer, { excludeTestServices: true, memoMap: temporalA
       timeout: 120_000,
     })((caseIt) => {
       caseIt.effect(
-        'preserves open and finite Retail and Counterparty schedules through same-start replacement and exclusive expiry',
+        'preserves open and finite Retail and Counterparty schedules through same-start replacement, exclusive expiry and same-revision observation renewal',
         () => Effect.scoped(openAndFiniteScenario()),
         120_000,
       );

@@ -1365,53 +1365,52 @@ const publishCommand = Command.make(
   ),
 );
 
-const refreshCommand = Command.make(
-  'refresh',
-  {
-    environment: Flag.String('environment'),
+export const refreshApplicationComposition = Effect.fn('ActiveApplicationComposition.refresh')(
+  function* refreshComposition(environment: string) {
+    const current = yield* readPublishedSnapshot;
+    if (Option.isNone(current)) {
+      return yield* new ActiveApplicationCompositionPublicationError({
+        message: 'composition storage has no approved release to refresh',
+        reason: 'invalid_observation',
+      });
+    }
+    const approved = yield* decodeActiveApplicationCompositionSnapshot(current.value);
+    const candidate: PublicationCandidate = {
+      baseline: {
+        retainedModuleAppIds: approved.composition.modules.map(({ deployment }) => deployment.appId),
+        revision: approved.composition.revision,
+        shellMode: 'retained',
+      },
+      modules: approved.composition.modules.map((module) => {
+        const common = {
+          appId: module.deployment.appId,
+          backend: module.backend,
+          contract: module.contract,
+          deployment: module.deployment,
+        };
+        return module.federation.execution === 'browser'
+          ? { ...common, federationManifest: module.federation.manifest }
+          : common;
+      }),
+      shell: {
+        deployment: approved.composition.shell.deployment,
+        federationManifest: approved.composition.shell.federationManifest,
+        runtimeContract: approved.composition.shell.runtimeContract,
+      },
+    };
+    const snapshot = yield* observeCandidate(environment, candidate, approved.composition);
+    if (snapshot.composition.revision !== approved.composition.revision) {
+      return yield* new ActiveApplicationCompositionPublicationError({
+        message: 'refresh observed different release artifacts; an explicit promotion is required',
+        reason: 'conflicting_revision',
+      });
+    }
+    return yield* publishSnapshot(snapshot, Option.none(), configuredInitialCutover(environment), candidate.baseline);
   },
-  ({ environment }) =>
-    Effect.gen(function* refreshComposition() {
-      const current = yield* readPublishedSnapshot;
-      if (Option.isNone(current)) {
-        return yield* new ActiveApplicationCompositionPublicationError({
-          message: 'composition storage has no approved release to refresh',
-          reason: 'invalid_observation',
-        });
-      }
-      const approved = yield* decodeActiveApplicationCompositionSnapshot(current.value);
-      const candidate: PublicationCandidate = {
-        baseline: {
-          retainedModuleAppIds: approved.composition.modules.map(({ deployment }) => deployment.appId),
-          revision: approved.composition.revision,
-          shellMode: 'retained',
-        },
-        modules: approved.composition.modules.map((module) => {
-          const common = {
-            appId: module.deployment.appId,
-            backend: module.backend,
-            contract: module.contract,
-            deployment: module.deployment,
-          };
-          return module.federation.execution === 'browser'
-            ? { ...common, federationManifest: module.federation.manifest }
-            : common;
-        }),
-        shell: {
-          deployment: approved.composition.shell.deployment,
-          federationManifest: approved.composition.shell.federationManifest,
-          runtimeContract: approved.composition.shell.runtimeContract,
-        },
-      };
-      const snapshot = yield* observeCandidate(environment, candidate, approved.composition);
-      if (snapshot.composition.revision !== approved.composition.revision) {
-        return yield* new ActiveApplicationCompositionPublicationError({
-          message: 'refresh observed different release artifacts; an explicit promotion is required',
-          reason: 'conflicting_revision',
-        });
-      }
-      return yield* publishSnapshot(snapshot, Option.none(), configuredInitialCutover(environment), candidate.baseline);
-    }),
+);
+
+const refreshCommand = Command.make('refresh', { environment: Flag.String('environment') }, ({ environment }) =>
+  refreshApplicationComposition(environment),
 ).pipe(
   Command.provide(() =>
     Layer.mergeAll(

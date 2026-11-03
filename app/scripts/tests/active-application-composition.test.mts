@@ -547,7 +547,7 @@ it('leaves the refresh to the deploy while the Outbox Workers drift from the Out
       condition: "steps.worker-drift.outputs.drift == 'true'",
       name: 'Leave the pending Outbox Worker mode switch to the stage deploy',
     },
-    ...refreshSteps.map((name) => ({ condition: refreshes, name })),
+    ...refreshSteps.slice(3).map((name) => ({ condition: refreshes, name })),
     {
       condition: "steps.worker-drift.outputs.drift == 'true'",
       name: 'Leave the pending Outbox Worker mode switch to the production deploy',
@@ -631,9 +631,13 @@ it('bounds each refresh and yields it to a main deploy in flight', () => {
         expect(step['timeout-minutes']).toBeLessThanOrEqual(5);
       }
     }
-    // The second install must not walk the first one's node_modules: mise-action hashes the whole tree.
     const checkout = job?.steps.find(({ run }) => run?.includes('git checkout --detach') === true);
-    expect(checkout?.run).toMatch(/git checkout --detach "\$DEPLOYED_SHA"\ngit clean -ffdx/u);
+    if (environment === 'production') {
+      // The second install must not walk the first one's node_modules: mise-action hashes the whole tree.
+      expect(checkout?.run).toMatch(/git checkout --detach "\$DEPLOYED_SHA"\ngit clean -ffdx/u);
+    } else {
+      expect(checkout).toBeUndefined();
+    }
   }
   expect(jobs['refresh-stage-edge']).toBeUndefined();
 });

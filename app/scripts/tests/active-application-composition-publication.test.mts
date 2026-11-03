@@ -5,8 +5,10 @@ import {
   Array as EffectArray,
   ConfigProvider,
   DateTime,
+  Duration,
   Effect,
   Exit,
+  Fiber,
   Layer,
   Match,
   Option,
@@ -26,6 +28,7 @@ import {
 } from '../../packages/core-runtime/src/http/module-release-identity.ts';
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
+  ActiveApplicationCompositionUnavailableError,
   OntosModuleDeploymentContractSchema,
   defineTenantModuleEntrypoint,
   validateActiveApplicationCompositionSnapshot,
@@ -38,6 +41,7 @@ import {
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
+  ARTIFACT_FETCH_TIMEOUT,
   ActiveApplicationCompositionPublicationError,
   applicationCompositionRevision,
   deriveActiveApplicationCompositionSnapshot,
@@ -59,6 +63,7 @@ import {
   prepareCandidate,
   publishSnapshot,
   readPublishedSnapshot,
+  refreshApplicationComposition,
   stageBackendUrl,
   validateExpectedApplicationComposition,
 } from '../publish-active-application-composition.mts';
@@ -466,32 +471,174 @@ const candidateObservation = Effect.gen(function* nativeCandidateObservationFixt
       unmatched?: (request: RecordedRequest) => Response,
       artifactOverrides: readonly ObservedArtifact[] = [],
       backendOverrides: ReadonlyMap<string, Response> = new Map(),
+      currentSnapshot?: ActiveApplicationCompositionSnapshot,
     ) =>
-      provider((request) => {
-        const backendOverride = backendOverrides.get(request.url);
-        if (backendOverride !== undefined) {
-          return backendOverride;
-        }
-        const replacement = artifactOverrides.find(({ url }) => url === request.url);
-        if (replacement !== undefined) {
-          return new Response(new Uint8Array(replacement.bytes));
-        }
-        if (backendDocuments.has(request.url)) {
-          return Response.json(backendDocuments.get(request.url));
-        }
-        const observedArtifact = [module.contract, shell.runtimeContract, shell.federationManifest].find(
-          ({ url }) => url === request.url,
-        );
-        return observedArtifact === undefined
-          ? (unmatched?.(request) ?? new Response(null, { status: 404 }))
-          : new Response(observedArtifact.bytes);
-      }),
+      provider(
+        (request) => {
+          const backendOverride = backendOverrides.get(request.url);
+          if (backendOverride !== undefined) {
+            return backendOverride;
+          }
+          const replacement = artifactOverrides.find(({ url }) => url === request.url);
+          if (replacement !== undefined) {
+            return new Response(new Uint8Array(replacement.bytes));
+          }
+          if (backendDocuments.has(request.url)) {
+            return Response.json(backendDocuments.get(request.url));
+          }
+          const observedArtifact = [module.contract, shell.runtimeContract, shell.federationManifest].find(
+            ({ url }) => url === request.url,
+          );
+          return observedArtifact === undefined
+            ? (unmatched?.(request) ?? new Response(null, { status: 404 }))
+            : new Response(observedArtifact.bytes);
+        },
+        KV_URL,
+        true,
+        'retired',
+        currentSnapshot,
+      ),
     module,
     selection,
     shell,
     snapshot,
   };
 });
+
+it.effect('refreshes exact active content and freshness despite an exercised business endpoint failure', () =>
+  Effect.gen(function* refreshesWithoutBusinessHealthAuthority() {
+    for (const businessStatus of [200, 500]) {
+      const fixture = yield* candidateObservation;
+      let pointer = yield* encodeActiveApplicationCompositionSnapshot(fixture.snapshot);
+      const businessUrl = new URL('/api/business-probe', fixture.module.backend.baseUrl).href;
+      const { authority, authorityWrites, layer, proofRequests, requests } = fixture.makeProvider(
+        (request) => {
+          if (request.url === businessUrl) {
+            return new Response(null, { status: businessStatus });
+          }
+          if (request.url !== KV_URL) {
+            return new Response(null, { status: 404 });
+          }
+          if (request.method === 'PUT') {
+            pointer = request.body;
+            return Response.json({ success: true });
+          }
+          return new Response(pointer);
+        },
+        [],
+        new Map(),
+        fixture.snapshot,
+      );
+      const probe = yield* HttpClient.HttpClient.pipe(
+        Effect.flatMap((client) => client.get(businessUrl)),
+        Effect.provide(layer),
+      );
+      expect(probe.status).toBe(businessStatus);
+      yield* TestClock.adjust(ACTIVE_APPLICATION_COMPOSITION_POLICY.refreshInterval);
+      const renewed = yield* refreshApplicationComposition('stage').pipe(Effect.provide(layer));
+      expect(renewed.composition).toEqual(fixture.snapshot.composition);
+      expect(DateTime.toEpochMillis(renewed.observedAt)).toBe(
+        DateTime.toEpochMillis(fixture.snapshot.observedAt) +
+          Duration.toMillis(ACTIVE_APPLICATION_COMPOSITION_POLICY.refreshInterval),
+      );
+      expect(DateTime.toEpochMillis(renewed.validUntil)).toBe(
+        DateTime.toEpochMillis(renewed.observedAt) + Duration.toMillis(ACTIVE_APPLICATION_COMPOSITION_POLICY.validity),
+      );
+      expect(authority()?.revision).toBe(fixture.snapshot.composition.revision);
+      expect(authority()?.phase).toBe('active');
+      expect(authority()?.durableWorkAdmission).toBe('closed');
+      expect(authority()?.validUntil).toEqual(DateTime.toDateUtc(renewed.validUntil));
+      expect(authorityWrites).toHaveLength(1);
+      expect(requests.filter(({ url }) => url === businessUrl)).toHaveLength(1);
+      expect(requests.filter(({ method }) => method === 'PUT').map(({ body }) => body)).toEqual([
+        yield* encodeActiveApplicationCompositionSnapshot(renewed),
+      ]);
+      expect(proofRequests).toEqual([]);
+    }
+  }),
+);
+
+it.effect(
+  'refuses changed artifacts and unavailable backend identity without promotion or extending original expiry',
+  () =>
+    Effect.gen(function* refusesIdentityDriftAndObservationFailure() {
+      for (const fault of ['http', 'changed-artifact', 'backend-identity']) {
+        const fixture = yield* candidateObservation;
+        const encoded = yield* encodeActiveApplicationCompositionSnapshot(fixture.snapshot);
+        const document = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+          new TextDecoder().decode(fixture.module.contract.bytes),
+        );
+        const changed = artifact(fixture.module.contract.url, {
+          ...document,
+          deployment: { ...document.deployment, buildMarker: 'different-refresh-release' },
+        });
+        const deploymentUrl = fixture.backendUrls.find((url) => url.endsWith('/deployments'));
+        if (deploymentUrl === undefined) {
+          return yield* Effect.die('Expected the existing backend deployment observation URL');
+        }
+        const overrides = new Map<string, Response>();
+        if (fault === 'http') {
+          overrides.set(fixture.module.contract.url, new Response(null, { status: 503 }));
+        } else if (fault === 'backend-identity') {
+          overrides.set(
+            deploymentUrl,
+            Response.json({
+              result: {
+                deployments: [{ versions: [{ percentage: 100, version_id: '44444444-4444-4444-8444-444444444444' }] }],
+              },
+              success: true,
+            }),
+          );
+        }
+        const { authority, authorityWrites, layer, proofRequests, requests } = fixture.makeProvider(
+          (request) => (request.url === KV_URL ? new Response(encoded) : new Response(null, { status: 404 })),
+          fault === 'changed-artifact' ? [changed] : [],
+          overrides,
+          fixture.snapshot,
+        );
+        yield* TestClock.adjust(ACTIVE_APPLICATION_COMPOSITION_POLICY.refreshInterval);
+        expect(
+          Exit.isFailure(yield* refreshApplicationComposition('stage').pipe(Effect.provide(layer), Effect.exit)),
+        ).toBe(true);
+        expect(authorityWrites).toEqual([]);
+        expect(authority()?.revision).toBe(fixture.snapshot.composition.revision);
+        expect(authority()?.validUntil).toEqual(DateTime.toDateUtc(fixture.snapshot.validUntil));
+        expect(requests.some(({ method }) => method === 'PUT')).toBe(false);
+        expect(proofRequests).toEqual([]);
+        expect(yield* validateActiveApplicationCompositionSnapshot(fixture.snapshot)).toEqual(fixture.snapshot);
+        yield* TestClock.setTime(DateTime.toEpochMillis(fixture.snapshot.validUntil) + 1);
+        const expired = yield* validateActiveApplicationCompositionSnapshot(fixture.snapshot).pipe(Effect.flip);
+        expect(Schema.is(ActiveApplicationCompositionUnavailableError)(expired)).toBe(true);
+      }
+      return yield* Effect.void;
+    }),
+);
+
+it.effect('bounds stalled identity observation and leaves the original snapshot to expire without renewal', () =>
+  Effect.gen(function* boundsRefreshIdentityTimeout() {
+    const fixture = yield* candidateObservation;
+    const encoded = yield* encodeActiveApplicationCompositionSnapshot(fixture.snapshot);
+    const { authority, authorityWrites, layer, proofRequests, requests } = fixture.makeProvider(
+      (request) => (request.url === KV_URL ? new Response(encoded) : new Response(null, { status: 404 })),
+      [],
+      new Map([[fixture.module.contract.url, new Response(new ReadableStream<Uint8Array>())]]),
+      fixture.snapshot,
+    );
+    yield* TestClock.adjust(ACTIVE_APPLICATION_COMPOSITION_POLICY.refreshInterval);
+    const refreshing = yield* refreshApplicationComposition('stage').pipe(Effect.provide(layer), Effect.forkChild);
+    yield* TestClock.adjust(ARTIFACT_FETCH_TIMEOUT);
+    const failure = yield* Fiber.join(refreshing).pipe(Effect.flip);
+    expect(Schema.is(ActiveApplicationCompositionObservationError)(failure)).toBe(true);
+    expect(failure).toMatchObject({ appId: fixture.module.appId, message: `${fixture.module.contract.url} timed out` });
+    expect(authorityWrites).toEqual([]);
+    expect(authority()?.validUntil).toEqual(DateTime.toDateUtc(fixture.snapshot.validUntil));
+    expect(requests.some(({ method }) => method === 'PUT')).toBe(false);
+    expect(proofRequests).toEqual([]);
+    yield* TestClock.setTime(DateTime.toEpochMillis(fixture.snapshot.validUntil) + 1);
+    const expired = yield* validateActiveApplicationCompositionSnapshot(fixture.snapshot).pipe(Effect.flip);
+    expect(Schema.is(ActiveApplicationCompositionUnavailableError)(expired)).toBe(true);
+  }),
+);
 
 it.effect('binds expected composition to exact reviewed membership partition and immutable candidate pins', () =>
   Effect.gen(function* bindsExpectedComposition() {

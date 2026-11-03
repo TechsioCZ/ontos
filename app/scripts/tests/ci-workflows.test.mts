@@ -874,9 +874,9 @@ const refreshPreservesNativeAction = (preserveScript: string, checkoutScript: st
   }
 };
 
-it('preserves this workflow revision of the native VPN action before checkout and restores it after git clean', () => {
+it('preserves the production workflow revision of the native VPN action before checkout and restores it after git clean', () => {
   const jobs = readVpnWorkflowJobs(REFRESH_WORKFLOW);
-  for (const name of PRIVATE_REFRESH_JOBS) {
+  for (const name of ['refresh-production']) {
     const steps = jobs[name]?.steps ?? [];
     const preserve = steps.find((step) => step.name === REFRESH_VPN_PRESERVE_STEP);
     const checkout = steps.find((step) => step.name === REFRESH_REVISION_STEP);
@@ -1385,6 +1385,45 @@ const readRefreshPublicationJobs = () =>
 const CONFIGURE_SOURCE_COMMAND = 'mise exec -- pnpm active-composition:publish configure-source';
 const COMPOSITION_SOURCE_EXPRESSION = expression(COMPOSITION_URL_SOURCE);
 const CLOUDFLARE_TOKEN_EXPRESSION = expression(CF_TOKEN_SOURCE);
+
+it('refreshes a Node-only stage from current workflow source without requiring deployment history', () => {
+  const refresh = readRefreshPublicationJobs()['refresh-stage'];
+  const renew = refresh.steps.find((step) => step.name === 'Renew the complete approved Application Composition');
+  const runs = refresh.steps.map((step) => step.run ?? '').join('\n');
+  expect(runs).not.toMatch(/deployment-base:resolve|git (?:checkout|clean)|DEPLOYED_SHA/u);
+  expect(
+    refresh.steps.filter((step) => step.uses?.startsWith('actions/checkout@') === true).map(({ name }) => name),
+  ).toEqual(['Checkout main']);
+  expect(refresh.steps.filter((step) => step.uses === './.github/actions/install-app')).toHaveLength(1);
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-node-stage-refresh-'));
+  try {
+    const mise = path.join(directory, 'mise');
+    writeFileSync(
+      mise,
+      `#!/bin/bash
+set -euo pipefail
+if [[ "$*" != 'exec -- pnpm active-composition:publish refresh --environment stage' ]]; then
+  exit 1
+fi
+printf 'renewed=approved-snapshot\\n' >> "$GITHUB_OUTPUT"
+`,
+    );
+    chmodSync(mise, 0o755);
+    // History is unavailable for a Node-only stage. A newer failed/Worker-only rollout's
+    // source must also remain irrelevant: the publisher reobserves the approved payload.
+    for (const deployedSource of ['', 'newer-worker-only-source', 'newer-failed-edge-source']) {
+      expect(
+        runStep(renew?.run ?? 'exit 1', {
+          DEPLOY_TARGET: refresh.env.DEPLOY_TARGET,
+          DEPLOYED_SHA: deployedSource,
+          PATH: `${directory}:${STEP_PATH}`,
+        }),
+      ).toEqual({ renewed: 'approved-snapshot' });
+    }
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
 
 it('selects protected edge credentials while preserving the logical stage, production fallback and publication locks', () => {
   const quiesce = readInitialCutoverJob();
