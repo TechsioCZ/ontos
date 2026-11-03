@@ -78,10 +78,15 @@ export type InvoiceLifecycle = typeof InvoiceLifecycleSchema.Type;
 
 type ExportLike = Pick<AccountingExport, 'invoiceResourceIds' | 'status'>;
 
-/** The latest live (not failed) handover package that contains the invoice. */
+/** The most advanced completed handover; a prepared or failed package cannot undo that evidence. */
 export const latestHandover = <T extends ExportLike>(invoice: Invoice, exports: readonly T[]): T | undefined =>
   exports.findLast(
-    (entry) => entry.status !== 'FAILED' && entry.invoiceResourceIds.some((id) => id === invoice.ref.resourceId),
+    (entry) =>
+      entry.status === 'CONFIRMED_BY_ACCOUNTANT' &&
+      entry.invoiceResourceIds.some((id) => id === invoice.ref.resourceId),
+  ) ??
+  exports.findLast(
+    (entry) => entry.status === 'HANDED_OVER' && entry.invoiceResourceIds.some((id) => id === invoice.ref.resourceId),
   );
 
 export const invoiceLifecycle = (invoice: Invoice, exports: readonly ExportLike[] = []): InvoiceLifecycle => {
