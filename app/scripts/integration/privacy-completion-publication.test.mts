@@ -900,10 +900,11 @@ it.live(
         .transaction((transaction) =>
           lockApplicationCompositionAuthority(transaction, target.composition.revision, 'write'),
         )
-        .pipe(Effect.flip, Effect.flatMap(Schema.decodeUnknownEffect(ApplicationCompositionAuthorityError)));
-      expect(runtimeRejected.reason).toBe(
-        'The requested Application Composition is missing, expired, or no longer active',
-      );
+        .pipe(Effect.flip);
+      expect(Schema.is(ApplicationCompositionAuthorityError)(runtimeRejected)).toBe(true);
+      expect(runtimeRejected).toMatchObject({
+        reason: 'The requested Application Composition is missing, expired, or no longer active',
+      });
 
       const retainedAfterFault = yield* fixture.fs.readDirectory(fixture.evidenceDirectory);
       yield* removeCommitFault;
@@ -1007,9 +1008,10 @@ it.live(
       expect(yield* fixture.observeOwner).toEqual(fixture.initialOwner);
       const retainedNames = yield* fixture.fs.readDirectory(fixture.evidenceDirectory);
       expect(retainedNames.length).toBe(1);
+      const retainedSource = yield* fixture.fs.readFileString(`${fixture.evidenceDirectory}/${retainedNames[0]}`);
       const retained = yield* Schema.decodeUnknownEffect(
         Schema.fromJsonString(Schema.toCodecJson(LegacyCompletionRetainedObservationSchema)),
-      )(yield* fixture.fs.readFileString(`${fixture.evidenceDirectory}/${retainedNames[0]}`));
+      )(retainedSource);
       expect(retained).toMatchObject({
         ownerBinding: { databaseOid: fixture.capability.databaseOid },
         status: 'VERIFIED_ABSENT',
@@ -1041,8 +1043,9 @@ it.live(
       ]);
       expect(yield* fixture.observeOwner).toEqual(fixture.initialOwner);
       const retainedAfterRecovery = yield* fixture.fs.readDirectory(fixture.evidenceDirectory);
-      expect(retainedAfterRecovery).toHaveLength(retainedNames.length + 1);
-      expect(retainedAfterRecovery).toEqual(expect.arrayContaining(retainedNames));
+      // The committed exact-target renewal keeps the original proof rather than claiming a new owner observation.
+      expect(retainedAfterRecovery).toEqual(retainedNames);
+      expect(yield* fixture.fs.readFileString(`${fixture.evidenceDirectory}/${retainedNames[0]}`)).toBe(retainedSource);
     }).pipe(Effect.provide(services)),
 );
 
