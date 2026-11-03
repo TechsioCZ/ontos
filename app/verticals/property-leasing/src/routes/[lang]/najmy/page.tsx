@@ -19,10 +19,9 @@ import { failureFeedback } from '../../../../shared/actions/apply-command.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import type { ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
+import { modulePagePreload } from '@app/shared-contracts/page-data';
 import { createCustomer, listCustomers, loadPartiesClient } from '@app/party-registry/api/client';
 import { PartyDocuments, PropertyEquipment } from '@app/facility-operations/ui/record-discussion';
-import { executeRecords as executeFinanceRecords } from '@app/finance-billing/clients/records';
-import { executeRecords as executeWorkRecords } from '@app/work-tasks/clients/records';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -49,7 +48,6 @@ import {
   monthlyTotal,
   parseCrowns,
 } from './lease-story.tsx';
-import type { LeaseRelated } from './lease-story.tsx';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import csResource from '../../../../locales/cs/property-leasing.json';
@@ -81,10 +79,12 @@ import {
   useLeaseData,
   usePrefetchLeaseOccupants,
   renderedLeaseOccupantRows,
+  prepareLeasePage,
 } from './lease-occupant.ts';
 import type { loadLeaseRecords } from './lease-occupant.ts';
+import { invalidateLeaseRelated, preloadLeaseRelated, useLeaseRelated } from './lease-related.ts';
 
-export { preloadPage } from './lease-occupant.ts';
+export const preloadPage = modulePagePreload((props) => prepareLeasePage(props, preloadLeaseRelated));
 
 const LABEL_CHOOSE = 'property-leasing.demo.choose';
 const LABEL_UNIT = 'property-leasing.demo.unit';
@@ -204,17 +204,27 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
   const [kindFilter, setKindFilter] = useState<'ALL' | 'LONG_TERM_LEASE' | 'SHORT_STAY'>('ALL');
   const [collision, setCollision] = useState<{ readonly href: string; readonly text: string }>();
   const [createError, setCreateError] = useState<string>();
-  const [related, setRelated] = useState<LeaseRelated>({ invoices: Option.none(), tasks: Option.none() });
   const selected = snapshot?.occupancies.find((record) => record.occupancyRef.resourceId === linkedResourceId);
+  const related = useLeaseRelated(
+    selected === undefined || snapshot === undefined
+      ? undefined
+      : { ...leaseInput, record: selected, revision: snapshot.revision },
+  );
   const clearSensitiveState = () => {
     dispatchEditor(occupancyEditorActions.CLEAR({ startDate: DEFAULT_START_DATE }));
-    setRelated({ invoices: Option.none(), tasks: Option.none() });
   };
   /** Re-reads the page's data after the person's own write; the loaded values stay on screen meanwhile. */
   const reload = () =>
-    Effect.all(
-      [leaseRecords.refresh(leaseInput), detailInput === undefined ? Effect.void : leaseOccupant.refresh(detailInput)],
-      { concurrency: 2, discard: true },
+    Effect.sync(invalidateLeaseRelated).pipe(
+      Effect.andThen(
+        Effect.all(
+          [
+            leaseRecords.refresh(leaseInput),
+            detailInput === undefined ? Effect.void : leaseOccupant.refresh(detailInput),
+          ],
+          { concurrency: 2, discard: true },
+        ),
+      ),
     );
   const reportFailure = (failure: { readonly _tag: string; readonly status?: number }) => {
     const nextFeedback = failureFeedback(failure);
@@ -230,32 +240,6 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       run(reload());
     }
   };
-  const loadRelated = (record: Occupancy) =>
-    Effect.all(
-      {
-        invoices: executeFinanceRecords({}, 'property-leasing.lease-invoices').pipe(
-          Effect.map((value) =>
-            value.state.invoices.filter(
-              (invoice) =>
-                invoice.occupancyRef?.resourceId === record.occupancyRef.resourceId ||
-                (invoice.occupancyRef === undefined &&
-                  invoice.unitRef?.resourceId === record.unitRef.resourceId &&
-                  invoice.counterpartyRef.resourceId === record.customerCounterpartyRef?.resourceId),
-            ),
-          ),
-          Effect.orElseSucceed(() => 'unavailable' as const),
-        ),
-        tasks: executeWorkRecords({ contextResourceId: record.unitRef.resourceId }, 'property-leasing.unit-tasks').pipe(
-          Effect.map((value) => value.items),
-          Effect.orElseSucceed(() => 'unavailable' as const),
-        ),
-      },
-      { concurrency: 2 },
-    ).pipe(
-      Effect.tap((value) =>
-        Effect.sync(() => setRelated({ invoices: Option.some(value.invoices), tasks: Option.some(value.tasks) })),
-      ),
-    );
   /** Retries after a refused or failed read: clears the hidden state and reads again. */
   const retry = () => {
     cancellation.current?.abort();
@@ -265,16 +249,6 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     setActionFeedback(undefined);
     run(reload());
   };
-  const loadRelatedOf = useEffectEvent((record: Occupancy) => {
-    run(loadRelated(record));
-  });
-  // Invoices and tasks of the opened lease are secondary: they load once the lease itself is on screen, and again
-  // whenever its records are re-read.
-  useEffect(() => {
-    if (selected !== undefined) {
-      loadRelatedOf(selected);
-    }
-  }, [selected]);
   useEffect(
     () => () => {
       cancellation.current?.abort();
@@ -354,7 +328,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
           executeApplyCommand({ command, expectedRevision: snapshot.revision }, 'property-leasing.command', {
             idempotencyKey,
             referenceCredentials,
-          }),
+          }).pipe(Effect.ensuring(Effect.sync(invalidateLeaseRelated))),
         ),
         Effect.tap(() => reload()),
         Effect.tap((result) => {
@@ -700,6 +674,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     leaseInput,
     renderedLeaseOccupantRows(linkedResourceId, linkedCounterpartyId, visible),
     snapshot?.revision ?? 0,
+    preloadLeaseRelated,
   );
   const tenantOf = (record: Occupancy | undefined) =>
     record?.customerCounterpartyRef === null || record === undefined

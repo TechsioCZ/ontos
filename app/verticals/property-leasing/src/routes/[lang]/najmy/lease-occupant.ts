@@ -124,10 +124,23 @@ const occupantInputs = (
         .slice(0, 200)
         .flatMap((record) => (record.occupancyRef.tenantId === input.tenantId ? [{ ...input, record, revision }] : []))
     : [];
-const preloadInputs = (inputs: readonly LeaseDetailInput[]) =>
-  Effect.forEach(inputs, (input) => leaseOccupant.read(input).pipe(Effect.ignore), { concurrency: 2, discard: true });
-export const preloadLeaseOccupants = (input: LeaseInput, rows: readonly Occupancy[], revision: number) =>
-  preloadInputs(occupantInputs(input, rows, revision));
+type RelatedPreload = (input: LeaseDetailInput) => Effect.Effect<void>;
+const preloadInputs = (inputs: readonly LeaseDetailInput[], related?: RelatedPreload) =>
+  Effect.forEach(
+    inputs,
+    (input) =>
+      leaseOccupant.read(input).pipe(
+        Effect.ignore,
+        Effect.andThen(() => (related === undefined ? Effect.void : related(input))),
+      ),
+    { concurrency: 2, discard: true },
+  );
+export const preloadLeaseOccupants = (
+  input: LeaseInput,
+  rows: readonly Occupancy[],
+  revision: number,
+  related?: RelatedPreload,
+) => preloadInputs(occupantInputs(input, rows, revision), related);
 /** The list is not rendered on a lease or counterparty detail URL. */
 export const renderedLeaseOccupantRows = (
   resourceId: string | undefined,
@@ -135,14 +148,26 @@ export const renderedLeaseOccupantRows = (
   visible: readonly Occupancy[],
 ) => (resourceId === undefined && counterpartyId === undefined ? visible : []);
 /** The plain Table has no hidden sort/page model; these are its exact filtered rows. */
-export const usePrefetchLeaseOccupants = (input: LeaseInput, rows: readonly Occupancy[], revision: number) => {
+export const usePrefetchLeaseOccupants = (
+  input: LeaseInput,
+  rows: readonly Occupancy[],
+  revision: number,
+  related?: RelatedPreload,
+) => {
   const selection = keyOf(occupantInputs(input, rows, revision).map(occupantKey));
   const { scope } = input;
-  const preload = useEffectEvent((currentScope: string) =>
-    preloadLeaseOccupants({ ...input, scope: currentScope }, rows, revision),
-  );
+  const source = leaseRecords.snapshot(input);
+  const preload = useEffectEvent((currentScope: string) => {
+    const current = leaseRecords.snapshot({ ...input, scope: currentScope });
+    return current.state === 'ready' &&
+      !current.refreshing &&
+      current.value.records.revision === revision &&
+      rows.every((row) => current.value.records.occupancies.includes(row))
+      ? preloadLeaseOccupants({ ...input, scope: currentScope }, rows, revision, related)
+      : Effect.void;
+  });
   useEffect(() => {
-    if (selection === '[]') {
+    if (selection === '[]' || source.state !== 'ready' || source.refreshing) {
       return constVoid;
     }
     let fiber = browserRuntime.runFork(preload(scope));
@@ -157,7 +182,7 @@ export const usePrefetchLeaseOccupants = (input: LeaseInput, rows: readonly Occu
       globalThis.removeEventListener(moduleChangeEvent, restart);
       fiber.interruptUnsafe();
     };
-  }, [scope, selection]);
+  }, [scope, selection, source]);
   useSyncExternalStore(
     leaseOccupant.subscribe,
     () =>
@@ -174,7 +199,7 @@ export const usePrefetchLeaseOccupants = (input: LeaseInput, rows: readonly Occu
     return snapshot.state === 'ready' ? snapshot.value : undefined;
   };
 };
-export const preloadPage = modulePagePreload((props) => {
+export const prepareLeasePage = (props: ModulePageProps, related?: RelatedPreload): Effect.Effect<void> => {
   const input = leaseInputOf(props.context);
   if (!input.reusable) {
     return Effect.void;
@@ -185,11 +210,12 @@ export const preloadPage = modulePagePreload((props) => {
       const record = current.records.occupancies.find((row) => row.occupancyRef.resourceId === resourceId);
       return record === undefined
         ? Effect.void
-        : leaseOccupant.preload({ ...input, record, revision: current.records.revision });
+        : preloadInputs([{ ...input, record, revision: current.records.revision }], related);
     }),
     Effect.ignore,
   );
-});
+};
+export const preloadPage = modulePagePreload(prepareLeasePage);
 /** Foreground uses the exact authorized base row/revision and joins a visible-row read. */
 export const useLeaseData = (input: LeaseInput, search: Option.Option<RecordsSearch>) => {
   const resourceId = Option.getOrUndefined(search)?.resourceId;
