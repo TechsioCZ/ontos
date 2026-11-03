@@ -19,6 +19,8 @@ import type { OpsAgendaSummary } from '../../shared/domain/ops-overview.ts';
 import { OverviewResponseSchema } from '../../shared/apis/overview.ts';
 import { RecordsResponseSchema } from '../../shared/apis/records.ts';
 import type { RecordsAgendas, RecordsResponse } from '../../shared/apis/records.ts';
+import { CHANGE_LOG_ROW } from '../../shared/domain/change-log.ts';
+import { MetersStateSchema } from '../../shared/domain/meters.ts';
 import {
   eventDeadlines,
   openOpsIncidents,
@@ -357,3 +359,81 @@ it.effect('the overview response is a fraction of the records read', () =>
     expect(overview).toBeLessThan(records / 2);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+for (const { fullHistory, grants, name } of [
+  {
+    fullHistory: false,
+    grants: { readAll: false, readOperational: true, writeAll: false, writeOperational: false },
+    name: 'operational reader',
+  },
+  {
+    fullHistory: false,
+    grants: { readAll: false, readOperational: false, writeAll: false, writeOperational: true },
+    name: 'operational writer',
+  },
+  {
+    fullHistory: true,
+    grants: { readAll: true, readOperational: false, writeAll: false, writeOperational: false },
+    name: 'full reader',
+  },
+  {
+    fullHistory: true,
+    grants: { readAll: false, readOperational: false, writeAll: true, writeOperational: false },
+    name: 'full writer',
+  },
+  {
+    fullHistory: false,
+    grants: { readAll: false, readOperational: false, writeAll: false, writeOperational: false },
+    name: 'no grants',
+  },
+]) {
+  it.effect(`meter history applies the full-read field boundary for ${name}`, () =>
+    Effect.gen(function* meterHistoryBoundary() {
+      const loaded = yield* seeded;
+      const meters = yield* Schema.decodeUnknownEffect(MetersStateSchema)(loaded.rows.get('meters')?.state);
+      const meterId = meters.meters[0]?.id ?? '';
+      expect(meterId).not.toBe('');
+      const entry = {
+        agenda: 'meters',
+        at: '2026-10-21T08:00:00Z',
+        by: { principalId: principal('21'), tenantId },
+        changes: [
+          { after: 'confidential meter contract', before: 'confidential previous contract', field: 'contract' },
+          { after: '12345', before: '10000', field: 'readings.costMinor' },
+        ],
+        command: 'MeterUpdate',
+        entityId: meterId,
+        kind: 'changed',
+      };
+      const rows = new Map([
+        ...loaded.rows,
+        [
+          CHANGE_LOG_ROW,
+          {
+            revision: 1,
+            state: { entries: [entry] },
+            updatedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-21T08:00:00Z')),
+          },
+        ],
+      ]);
+      const response = yield* finishFacilityRecords(
+        { agendas: ['meters'], historyFor: meterId },
+        { rows },
+        grants,
+        scopeOf(principal('21')),
+      ).pipe(Effect.flatMap((value) => overWire(RecordsResponseSchema, value)));
+      expect(response.history).toHaveLength(fullHistory ? 1 : 0);
+      if (fullHistory) {
+        expect(response.history?.[0]?.changes[0]?.after).toBe('confidential meter contract');
+      } else {
+        expect(JSON.stringify(response)).not.toContain('confidential');
+        expect(JSON.stringify(response)).not.toContain('readings.costMinor');
+      }
+      expect(rows.get(CHANGE_LOG_ROW)?.state).toStrictEqual({ entries: [entry] });
+      if (grants.readOperational || grants.writeOperational) {
+        expect(response.agendas.meters?.canReadFinancial).toBe(false);
+        expect(response.agendas.meters?.state.meters.length).toBeGreaterThan(0);
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}

@@ -288,6 +288,10 @@ export const finishFacilityRecords = Effect.fn('FacilityOperations.finishRecords
       readable.add(entry.agenda);
     }
   }
+  // Meter audit values contain unprojected private fields, unlike the allowlisted operational state.
+  if (!meterAccess(granted).canReadFinancial) {
+    readable.delete('meters');
+  }
   // An operational-only principal sees the history of their own events only, never of other people's.
   if (assignedOnly && request.historyFor !== undefined) {
     if (ownEventIds === undefined) {
