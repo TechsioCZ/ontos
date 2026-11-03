@@ -191,6 +191,13 @@ it('builds every Node service with the pinned toolchain and ships Node instead o
   for (const block of nodeServices) {
     expect(block).toContain(`install-zerops-node.sh ${node} ${pnpm}\n`);
     expect(block).toContain(`"$HOME/.local/node-${node}/bin`);
+    // The official nodejs.org/dist musl Node is dynamically linked against libatomic, which alpine does not ship;
+    // without it the pinned Node cannot start and the build fails with exit status 127. Both the build and the
+    // runtime install it, because the runtime ships and starts that same Node binary.
+    expect(block).toMatch(/sudo apk add --no-cache [^\n]*\blibatomic\b/u);
+    expect(block).toContain(
+      '    run:\n      base: nodejs@24\n      prepareCommands:\n        - sudo apk add --no-cache libatomic\n',
+    );
     expect(block).toMatch(/start: sh -c '.*exec (?:node\/bin\/node|node) /u);
     expect(block).not.toContain('initCommands');
     expect(block).not.toMatch(/virtual-store|VIRTUAL_STORE|--force|reset-workspace-dependencies/u);
