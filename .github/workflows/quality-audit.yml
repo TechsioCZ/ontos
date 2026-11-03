@@ -27,6 +27,8 @@ defaults:
     shell: bash
     working-directory: app
 
+# The machine comes from one place, so a partner runner is a variable change: CI_RUNNER moves every
+# job, CI_RUNNER_HEAVY the CPU-bound audit. Unset keeps GitHub-hosted `ubuntu-latest`.
 concurrency:
   group: quality-audit-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -34,7 +36,7 @@ concurrency:
 jobs:
   quality-audit:
     name: Quality Audit Guardrails
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_HEAVY || vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
       - name: Harden Runner
