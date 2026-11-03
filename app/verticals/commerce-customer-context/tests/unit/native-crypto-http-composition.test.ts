@@ -11,7 +11,7 @@ import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import { ConfigProvider, Crypto, Effect, Layer, Option, Schema } from 'effect';
+import { Clock, ConfigProvider, Crypto, Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
@@ -43,6 +43,7 @@ it.live('provides host Crypto to a deferred business Read without a portal realm
         kid: 'ccc-native-crypto-composition',
         use: 'sig',
       };
+      const issuedAt = Math.floor((yield* Clock.currentTimeMillis) / 1000);
       const token = yield* Effect.promise(
         async () =>
           await new SignJWT({
@@ -61,8 +62,8 @@ it.live('provides host Crypto to a deferred business Read without a portal realm
             .setIssuer(issuer)
             .setAudience('commerce-customer-context')
             .setSubject(principalId)
-            .setIssuedAt()
-            .setExpirationTime('5m')
+            .setIssuedAt(issuedAt)
+            .setExpirationTime(issuedAt + 300)
             .setJti(randomUUID())
             .sign(privateKey),
       );
