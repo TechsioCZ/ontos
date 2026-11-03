@@ -143,3 +143,23 @@ je umístěný wrapperem. Hlubší owner větve jsou VerticalNavigation, nikoli
 vnořené Accordiony. Typografie/barvy komponent pochází z N1 tokenů a kit props;
 zdokumentované globální Dialog role bindingy vyjadřují současnou drawer roli.
 Desktop megamenu59:1743 bylo načtené, zatím není implementované.
+
+## Naplněný minikošík — oprava ověřeného rozložení
+
+Figma59:1074/body311:2164, fresh design context2026-11-04. Obsah384px,
+obrázek64×64 contain, horizontální NumericInput92px (28+36+28),
+odstranění28px a compactsm pokračování. Předešlá Control kompozice
+vtěsnala oba triggery dovnitř inputu a vysoký produkt vytáhl obrázek.
+Používáme skutečné NumericInput části v layout wrapperech a veřejný
+Image.objectFit=contain s NextImage fill v pevném64×64 wrapperu.
+
+Image atom0.57.0 neměl veřejný fit prop; obecný opt-in doplněk stávajícího
+pnpm patche zachovává původní default a adapter props, spotřebuje objectFit
+před DOM spreadem. Žádný ruční object-fit styl v aplikaci. Je to stejný
+fit kontrakt jako již použitý ProductCard.Image. Browser kontrola po buildu:1440px panel384px, mobil390px panel372px
+(x8/right380), bez horizontal overflow. Obrázek64×64 contain, trigger28×32,
+control36×32, remove28×28, continue28px. Skutečně prohlédnuté screenshoty
+filled desktop/mobil a empty mobil; plus mění quantity a native owner quote
+4ks=3836CZK (DPH665,75), odebrání vrací empty a focus na nadpis.
+Barevnost/typografie zůstává canonicalN1; jiné datové texty a chybějící
+finální checkout nejsou prohlášené za pixelovou paritu celého návrhu.

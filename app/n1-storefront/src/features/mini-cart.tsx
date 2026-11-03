@@ -99,8 +99,10 @@ const MiniCartLine = ({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex min-w-0 items-start gap-3">
-        <div className="w-16 shrink-0">
-          {image !== null && <Image alt="" as={NextImage} height={64} src={image} width={64} />}
+        <div className="relative h-16 w-16 shrink-0">
+          {image !== null && (
+            <Image alt="" as={NextImage} fill objectFit="contain" sizes="64px" src={image} />
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <Link as={NextLink} href={target}>
@@ -137,35 +139,45 @@ const MiniCartLine = ({
                 value: next,
               });
             }}
-            size="md"
+            size="sm"
             value={value}
           >
-            <NumericInput.Control>
+            <div className="flex w-7 shrink-0">
               <NumericInput.DecrementTrigger
                 aria-label={d.shopping.decreaseQuantity}
-                icon="token-icon-numeric-input-decrement"
+                block
+                icon="token-icon-minus"
                 theme="outlined"
                 variant="secondary"
               />
-              <NumericInput.Input
-                aria-describedby={`${inputId}-feedback`}
-                aria-label={`${d.quantity}: ${entry.name}`}
-              />
+            </div>
+            <div className="w-9 shrink-0">
+              <NumericInput.Control>
+                <NumericInput.Input
+                  aria-describedby={`${inputId}-feedback`}
+                  aria-label={`${d.quantity}: ${entry.name}`}
+                />
+              </NumericInput.Control>
+            </div>
+            <div className="flex w-7 shrink-0">
               <NumericInput.IncrementTrigger
                 aria-label={d.shopping.increaseQuantity}
-                icon="token-icon-numeric-input-increment"
+                block
+                icon="token-icon-plus"
                 theme="outlined"
                 variant="secondary"
               />
-            </NumericInput.Control>
+            </div>
           </NumericInput>
         </div>
-        <div className="w-7 shrink-0">
+        <div className="flex h-7 w-7 shrink-0">
           <Button
             aria-label={`${d.shopping.remove}: ${entry.name}`}
+            block
             icon="token-icon-trash"
+            iconSize="sm"
             onClick={onRemove}
-            size="sm"
+            size="current"
             theme="borderless"
             variant="secondary"
           />
@@ -256,7 +268,14 @@ const MiniCartStatus = ({
         {d.contact.retry}
       </Button>
     )}
-    <Button block onClick={onContinue} size="sm" theme="solid" variant="secondary">
+    <Button
+      block
+      density="compact"
+      onClick={onContinue}
+      size="sm"
+      theme="solid"
+      variant="secondary"
+    >
       {d.shopping.continueShopping}
     </Button>
   </div>
@@ -383,6 +402,7 @@ export const MiniCart = ({
                 </LinkButton>
                 <Button
                   block
+                  density="compact"
                   onClick={continueShopping}
                   size="sm"
                   theme="outlined"

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@rstest/core";
 import { renderToStaticMarkup } from "react-dom/server";
+import { Image } from "@techsio/ui-kit/atoms/image";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
@@ -43,6 +44,26 @@ describe("published UI-kit patch contract", () => {
     expect(control).not.toMatch(/\sborder-numeric-input-border(?:\s|")/u);
     expect(control).not.toContain("h-form-control-md");
     expect(html).not.toContain("density=");
+  });
+
+  it("contains uncropped thumbnail adapters without changing ordinary images", () => {
+    const ordinary = renderToStaticMarkup(<Image alt="Original" src="/photo.jpg" />);
+    const contained = renderToStaticMarkup(
+      <Image
+        alt="Thumbnail"
+        height={64}
+        objectFit="contain"
+        size="custom"
+        src="/photo.jpg"
+        width={64}
+      />,
+    );
+    expect(ordinary).not.toContain("object-contain");
+    expect(contained).toContain("object-contain");
+    expect(contained).not.toContain("object-cover");
+    expect(contained).not.toContain("objectFit=");
+    expect(contained).toContain('width="64"');
+    expect(contained).toContain('height="64"');
   });
 
   it("opts into flat cards and uncropped photos without leaking appearance props", () => {
