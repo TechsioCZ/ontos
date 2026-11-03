@@ -35,7 +35,8 @@ Původní 418-tokenový mix komponentových snapshotů a App overrides byl nahra
 | Kategorie mobil `38:2185`     | ProductCard Image/Name, PriceBlock, AvailabilityStatus, outlined LinkButton                 | Skladba lišící se od home; vzhledové defaults již nejsou lokálně přepisované                  |
 | Paginace `214:4488/38:2138`   | Pagination filled, NextLink, createPaginationGetPageUrl                                     | Owner total/page/pageSize; q zachováno; compact při 320                                       |
 | Produkt `39:1965/2430`        | Gallery horizontal, LinkButton varianty, PriceBlock, AvailabilityStatus                     | Skutečné owner varianty, URL variantId; key resetuje gallery/množství                         |
-| Množství `39:2500`            | QuantityField md                                                                            | Owner minimum/unit; disabled do skutečné cart/quote integrace                                 |
+| Množství mobil `39:2500`      | QuantityField md, primary/solid/md Button block (44 px)                                     | Owner minimum/unit; sdílený quantity draft s desktopem                                        |
+| Množství desktop `219:2820`   | NumericInput md/compact 104 × 36, secondary/solid/md Button compact                         | Minus 28 + input 48 + plus 28; opt-in knihovní density                                        |
 | Informace `219:2876/2884`     | Tabs line/md; Code Connect DataTable hideHeader                                             | Parametry ownera; sorting vypnutý, line mobil / striped desktop; bez falešné size guide       |
 | Stavy `57:906/2904/3009/3028` | Skeleton, explicitní output, Button retry                                                   | Skutečný refresh; unavailable není empty ani vymyšlená vyprodanost                            |
 
@@ -103,8 +104,9 @@ desktop empty `56:636` / body `321:1550`, mobile empty `56:800`, guest summary
 `319:1778`. Empty body má desktop1280×424, mobile390×196, padding20/gap16;
 max-width a min-height jsou app layout tokeny, nikoli přestylování komponent.
 
-`ProductPurchase` používá existující QuantityField a Button props původního
-produktového návrhu. Naceněná konkrétní dostupná varianta může uložit jen draft
+`ProductPurchase` rozlišuje mobilní QuantityField a desktopový kompaktní NumericInput
+podle aktuálních rámců `39:2430` a `39:1965`. Obě větve sdílejí quantity draft,
+validaci a přidání. Naceněná konkrétní dostupná varianta může uložit jen draft
 do vlastního tenant/seller/market/currency košíku. Nejde o potvrzení skladu/ceny.
 `CartView` skládá LineItem, Image/NextImage, Link/NextLink, QuantityField,
 PriceBlock a TotalsSummary. Jejich appearance řídí kanonické N1 tokeny; žádné

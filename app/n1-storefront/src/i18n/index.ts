@@ -4,6 +4,7 @@ const cs = {
   account: "Můj účet",
   address: "Generála Šišky 1990/8, 143 00 Praha 4 – Modřany",
   addToCart: "DO KOŠÍKU",
+  addToCartDetail: "Přidat do košíku",
   allResults: "Zobrazit všechny výsledky",
   auth: {
     acceptTerms: "Souhlasím s",
@@ -126,6 +127,7 @@ const cs = {
   loadingCatalog: "Načítáme produkty…",
   loadingProduct: "Načítáme produkt…",
   menu: "Kategorie",
+  minimumQuantity: "Minimální množství",
   missing: "Stránka nebyla nalezena",
   news: "Novinky",
   next: "Další",
@@ -236,6 +238,7 @@ const en: typeof cs = {
   account: "My account",
   address: "Generála Šišky 1990/8, 143 00 Praha 4 – Modřany",
   addToCart: "ADD TO CART",
+  addToCartDetail: "Add to cart",
   allResults: "View all results",
   auth: {
     acceptTerms: "I agree to the",
@@ -358,6 +361,7 @@ const en: typeof cs = {
   loadingCatalog: "Loading products…",
   loadingProduct: "Loading product…",
   menu: "Categories",
+  minimumQuantity: "Minimum quantity",
   missing: "Page not found",
   news: "News",
   next: "Next",

@@ -2,8 +2,8 @@
 
 > Rozpracovaný integrační stav. Katalog, varianty, návrh košíku a backendové
 > ověření cen byly ověřené se skutečným lokálním N1 kontextem. Nejde o hotový
-> převod Figmy: zbývá zejména přesná skladba NumericInput na detailu, ořez
-> fotografií a stín ProductCard v kitu 0.57.0 a další vizuální dorovnání.
+> převod všech obrazovek Figmy. Detail nyní rozlišuje desktopový NumericInput
+> a mobilní QuantityField; karty používají contain a vypnutý stín přes knihovní API.
 > Checkout, vytvoření objednávky a úplný zákaznický účet nejsou dokončené.
 > Portal registrace/přihlášení mají implementaci a testy; celý pozitivní živý
 > průchod ještě není doložený. Lokální data ani přístupové údaje nejsou součástí aplikace.
@@ -18,7 +18,8 @@ Aktuální přírůstek obsahuje vlastní workspace, responzivní hlavičku a pa
 N1 logo, knihovní Carousel s jediným doloženým bannerem, statické promo dlaždice,
 češtinu a angličtinu, domovskou stránku a čtení katalogu, kategorií,
 vyhledávání a plných detailových dat přes veřejnou OntOS Shell gateway. Používá publikovaný
-`@techsio/ui-kit` z workspace katalogu. Neimportuje privátní zdroje jiné aplikace.
+`@techsio/ui-kit` z workspace katalogu se sdíleným pnpm patchem popsaným níže.
+Neimportuje privátní zdroje jiné aplikace.
 
 Je to rozpracovaný storefront, nikoliv hotový převod všech obrazovek Figmy. Login,
 registrace a ověření e-mailu mají existující Portal integraci; košík a owner dry-run
@@ -29,7 +30,7 @@ dokončené. Právní texty a obsahové stránky kromě kontaktů čekají na sk
 obsahuje skutečný strom, breadcrumb, podkategorie, počet a serverové stránkování;
 mobilní karty mají vlastní návrhovou skladbu místo přestylování homepage karet.
 Detail zachovává galerie, parametry a aktivní varianty ownera. Výběr varianty v URL
-mění skutečnou cenu, dostupnost, jednotku a minimum; resetuje galerii. QuantityField
+mění skutečnou cenu, dostupnost, jednotku a minimum; resetuje galerii. Ovládání množství
 a přidání do košíku vyžadují skutečný N1 kontext, konkrétní naceněnou dostupnou
 položku a platné množství. Galerie a tabulky velikostí nemají náhradní data.
 Naplněné stavy byly prohlédnuté se skutečným lokálním N1 kontextem;
@@ -59,7 +60,8 @@ implementovaný celý navazující tok. Endpoint žádnou objednávku nevytvář
 
 Čerstvé Figma podklady: empty desktop `56:636`, mobile `56:800` a guest summary
 `319:1778`. Fixture produktu/cen z Figmy ani veřejného referenčního N1 webu se do
-runtime nepřebírá. Naplněný N1 nákup zatím nemá potvrzené live end-to-end ověření.
+runtime nepřebírá. Lokální přidání varianty a VALID owner quote byly ověřené;
+vytvoření objednávky zatím nemá potvrzené live end-to-end ověření.
 Hlavička nyní otevírá mini košík podle rámců `59:1042`/`59:1074` a mini login
 podle `59:1709`. Otevřený zůstává jen jeden header panel. Mini košík sdílí
 skutečný návrh/quote se stránkou košíku; chybějící scope neprezentuje jako empty.
@@ -98,13 +100,20 @@ aktuální rozhodnutí a mezery popisuje `COMPONENT-MAPPING.md`.
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `440:1961`, `440:2153`             | `SearchSuggestions size="sm"`, vlastní knihovní input/trigger, reálné groups/resultSlot a allResultsLink     |
 | `170:2045`, `170:2057`, `170:2067` | Runtime Button tertiary/unstyled/current s originálním assetem přes children; geometrie bez CSS přestylování |
-| `39:2500`                          | QuantityField md; skutečné owner minimum/unit, disabled do zapojení nákupu                                   |
-| `39:2074`                          | Nákupní Button: `secondary / solid / md`; stav integrace stále čeká na implementaci                          |
+| `39:2500`, `39:2527`               | Mobil: QuantityField md a plný primary/solid/md Button (44 px), owner minimum/unit                           |
+| `219:2820`, `39:2074`              | Desktop: NumericInput compact 104 × 36 px a secondary/solid/md Button s density compact (36 px)              |
 
 Tabulka je záznam načtené verze, ne náhrada dalšího čtení Figmy. Footer, katalog,
 produkt a zbývající obrazovky potřebují další kontrolu; zapojení theme samo o sobě
 nedokazuje shodu celého storefrontu. Runtime zachovává knihovní `system-ui`; samotné
 Inter ve Figmě podle handoffu neopravňuje přepis tohoto kontraktu.
+
+Vizuální API rozšiřuje existující `app/patches/@techsio__ui-kit@0.57.0.patch`:
+Button/LinkButton a NumericInput mají opt-in `density="compact"`, ProductCard
+`shadow={false}` a ProductCard.Image `objectFit="contain"`. Výchozí varianty
+zachovávají původní výšku, padding, stín a ořez. Rozměry compact jsou tokeny kitu;
+app nepřepisuje appearance třídami na knihovních komponentách. Instalace vyžaduje
+odpovídající workspace lockfile. Patch není publikovaná nová verze knihovny.
 
 Desktopové hledání má responzivní kontejner 40vw (576/768 px při 1440/1920).
 Na mobilu je podle návrhu skryté; utility bar a ovladatelné menu jsou součástí shellu.
