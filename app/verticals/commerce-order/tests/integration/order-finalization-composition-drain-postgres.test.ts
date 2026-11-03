@@ -16,7 +16,7 @@ import { Effect, Exit, Layer, Option, Redacted, Result, Schema } from 'effect';
 import type { Scope } from 'effect';
 import type { ChildProcessSpawner } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
-import { expect, it, rs } from 'effect-rstest';
+import { afterAll, expect, it, rs } from 'effect-rstest';
 
 import { createPrepareOrderCommitmentCommerceOrderFinalizationWorkOutboxMessage } from '../../src/actions/prepare-order-commitment-commerce-order-finalization-work.outbox-message.ts';
 import type { OrderCommitmentRejected } from '../../shared/domain/order-commitment.ts';
@@ -309,3 +309,14 @@ nativeTest('acknowledges an expired proof delivery without a Confirmation so com
     expect((yield* test.composition.observe()).phase).toBe('draining');
   }),
 );
+
+// With `isolate: false` one module registry is shared by every file a worker runs, so these
+// replacements outlive this file and would leak into whatever runs next. Remove them and drop the
+// modules they replaced, so the next file evaluates the real implementations.
+afterAll(() => {
+  rs.doUnmock('@app/shared-contracts/server/gateway-context-api-key');
+  rs.doUnmock('../../src/api/order-finalization-work-client.ts');
+  rs.doUnmock('../../src/api/complete-order-preparation-action-client.ts');
+  rs.doUnmock('../../src/api/record-order-proof-set-action-client.ts');
+  rs.resetModules();
+});

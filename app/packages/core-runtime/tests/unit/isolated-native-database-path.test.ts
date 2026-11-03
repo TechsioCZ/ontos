@@ -1,6 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
 import { ConfigProvider, Effect, Exit, FileSystem, Layer, Schema } from 'effect';
-import { expect, it, rs } from 'effect-rstest';
+import { afterAll, expect, it, rs } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { parseDatabaseConnectionPair } from '../../src/db/config.ts';
@@ -179,3 +179,11 @@ if (program === 'pg_dump') {
     ),
   5000,
 );
+
+// With `isolate: false` one module registry is shared by every file a worker runs, so these
+// replacements outlive this file and would leak into whatever runs next. Remove them and drop the
+// modules they replaced, so the next file evaluates the real implementations.
+afterAll(() => {
+  rs.doUnmock('../../src/db/client.ts');
+  rs.resetModules();
+});
