@@ -8,7 +8,7 @@
     "./server": "./src/server.ts"
   },
   "scripts": {
-    "test:unit": "rstest --project unit --isolate=false",
+    "test:unit": "rstest --project unit",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
