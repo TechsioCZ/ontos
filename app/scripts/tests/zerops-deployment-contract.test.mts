@@ -413,3 +413,44 @@ it('installs Chromium for the warm-up client before running its bounded browser 
   expect(install).toBeGreaterThanOrEqual(0);
   expect(warmup).toBeGreaterThan(install);
 });
+
+it('proves the durable attempt marker by reading it, retried, before any remote mutation', () => {
+  const source = readFileSync(stageWorkflowPath, 'utf-8');
+  const workflow = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Struct({
+        deploy: Schema.Struct({
+          steps: Schema.Array(
+            Schema.Struct({
+              'continue-on-error': Schema.optional(Schema.Boolean),
+              id: Schema.optional(Schema.String),
+              name: Schema.String,
+              run: Schema.optional(Schema.String),
+              uses: Schema.optional(Schema.String),
+              with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+            }),
+          ),
+        }),
+      }),
+    }),
+  )(parse(source));
+  const { steps } = workflow.jobs.deploy;
+  // The cache index and the restore lookup are different read surfaces with different lag, so a marker
+  // the index already lists can still miss its own restore; only the read proves the marker is readable.
+  const restores = steps.filter(({ uses }) => uses?.startsWith('actions/cache/restore') === true);
+  expect(restores.map(({ id }) => id)).toStrictEqual(['durable-attempt-1', 'durable-attempt-2', 'durable-attempt']);
+  expect(restores.map((step) => step.with?.['fail-on-cache-miss'])).toStrictEqual([false, false, true]);
+  expect(restores.slice(0, 2).every(({ 'continue-on-error': soft }) => soft === true)).toBe(true);
+  // A marker that cannot be read within the bound still stops the deploy, and every wait is bounded.
+  const waits = steps.flatMap(({ run }) =>
+    run === undefined ? [] : [...run.matchAll(/sleep (?<seconds>\d+)/gu)].map((match) => Number(match.groups?.seconds)),
+  );
+  expect(waits.length).toBeGreaterThan(0);
+  expect(Math.max(...waits)).toBeLessThanOrEqual(30);
+  // The proof precedes the first remote mutation, and the index poll that failed to prove it is gone.
+  const proof = steps.findIndex(({ id }) => id === 'durable-attempt');
+  const push = steps.findIndex(({ run }) => run?.includes('push-delivery.sh') === true);
+  expect(proof).toBeGreaterThanOrEqual(0);
+  expect(proof).toBeLessThan(push);
+  expect(source).not.toContain('actions/caches?key=');
+});
