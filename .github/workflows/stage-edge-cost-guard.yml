@@ -18,7 +18,7 @@ concurrency:
 jobs:
   check-usage:
     name: Check stage Workers usage
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
       name: stage-edge
