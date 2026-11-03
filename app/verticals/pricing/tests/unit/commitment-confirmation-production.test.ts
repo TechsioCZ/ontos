@@ -8,7 +8,7 @@ import {
 import type { OperationalScope } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { DateTime, Effect, Layer, Schema } from 'effect';
-import { expect, it, rs } from 'effect-rstest';
+import { afterAll, expect, it, rs } from 'effect-rstest';
 
 import {
   commitmentConfirmationProductionForScope,
@@ -131,3 +131,12 @@ it.layer(Layer.merge(NodeCrypto.layer, pricingCommitmentAlgorithmFactoriesLive))
     );
   },
 );
+
+// With `isolate: false` one module registry is shared by every file a worker runs, so these
+// replacements outlive this file and would leak into whatever runs next. Remove them and drop the
+// modules they replaced, so the next file evaluates the real implementations.
+afterAll(() => {
+  rs.doUnmock('../../src/integrations/commitment-confirmation-owner-proof.ts');
+  rs.doUnmock('../../src/integrations/order-finalization-owner-gateways.ts');
+  rs.resetModules();
+});

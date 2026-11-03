@@ -280,6 +280,22 @@ const normalizeBinding = (record: BindingSelectionRow): ExternalIdentityBindingR
   };
 };
 
+const lookupRegisteredNamespace = (
+  registry: AuthenticationNamespaceRegistryService,
+  decodedNamespaceId: Schema.Schema.Type<typeof AuthenticationNamespaceIdSchema>,
+) =>
+  registry
+    .lookup(decodedNamespaceId)
+    .pipe(
+      Effect.flatMap((registration) =>
+        Effect.fromOption(registration).pipe(
+          Effect.mapError((cause) =>
+            Object.assign(ineligible('The authentication namespace is not registered'), { cause }),
+          ),
+        ),
+      ),
+    );
+
 const registrationFrom = (
   dependencies: ExternalIdentityRepositoryDependencies,
   authenticationNamespaceId: string,
@@ -295,26 +311,11 @@ const registrationFrom = (
         )
       : Effect.fail(invalid('The prepared authentication namespace does not match the binding'));
   }
-  const lookup = (
-    registry: AuthenticationNamespaceRegistryService,
-    decodedNamespaceId: Schema.Schema.Type<typeof AuthenticationNamespaceIdSchema>,
-  ) =>
-    registry
-      .lookup(decodedNamespaceId)
-      .pipe(
-        Effect.flatMap((registration) =>
-          Effect.fromOption(registration).pipe(
-            Effect.mapError((cause) =>
-              Object.assign(ineligible('The authentication namespace is not registered'), { cause }),
-            ),
-          ),
-        ),
-      );
   return Schema.decodeEffect(AuthenticationNamespaceIdSchema)(authenticationNamespaceId).pipe(
     Effect.mapError((cause) => Object.assign(invalid('The authentication namespace is malformed'), { cause })),
     Effect.flatMap((decodedNamespaceId) => {
       if (dependencies.registry !== undefined) {
-        return lookup(dependencies.registry, decodedNamespaceId);
+        return lookupRegisteredNamespace(dependencies.registry, decodedNamespaceId);
       }
       return Effect.serviceOption(
         // The registry is optional at the Context boundary so direct repository
@@ -324,7 +325,7 @@ const registrationFrom = (
         Effect.flatMap((registry) =>
           Option.isNone(registry)
             ? Effect.fail(persistenceFailure('The authentication namespace registry is not configured'))
-            : lookup(registry.value, decodedNamespaceId),
+            : lookupRegisteredNamespace(registry.value, decodedNamespaceId),
         ),
       );
     }),

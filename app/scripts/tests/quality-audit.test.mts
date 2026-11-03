@@ -1,18 +1,20 @@
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Config, Effect, Match, Schema } from 'effect';
+import { Array as EffectArray, Clock, Config, Duration, Effect, Match, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
@@ -37,6 +39,7 @@ const KNIP_REPORT = 'knip/report.ndjson';
 const STOREFRONT_WORKSPACE = 'akros-storefront';
 const STOREFRONT_STYLESHEET = 'akros-storefront/src/storefront.css';
 const COVERAGE_REPORT = 'coverage.json';
+const RUN_INVENTORY = 'source-inventory.json';
 const ProvenanceSchema = Schema.fromJsonString(
   Schema.Struct({
     sourceState: Schema.String,
@@ -305,7 +308,7 @@ it.live(
     const result = yield* summary(output);
     const inventory = yield* Schema.decodeUnknownEffect(
       Schema.fromJsonString(Schema.Struct({ files: Schema.Array(Schema.String) })),
-    )(readFileSync(path.join(result.runDirectory, 'source-inventory.json'), 'utf-8'));
+    )(readFileSync(path.join(result.runDirectory, RUN_INVENTORY), 'utf-8'));
     expect(sources.every((file) => inventory.files.includes(file))).toBe(true);
     const coverage = yield* Schema.decodeUnknownEffect(
       Schema.fromJsonString(
@@ -552,7 +555,7 @@ export function branchHeavy(value: number) {
     yield* runFixture(root, output, 'fallow');
     const result = yield* summary(output);
     const inventory = yield* Schema.decodeEffect(SourceInventorySchema)(
-      readFileSync(path.join(result.runDirectory, 'source-inventory.json'), 'utf-8'),
+      readFileSync(path.join(result.runDirectory, RUN_INVENTORY), 'utf-8'),
     );
     expect(inventory.files).toContain(storefrontSource);
     expect(inventory.files).toContain(databaseSource);
@@ -691,6 +694,7 @@ it.live(
     }
     writeFileSync(path.join(root, 'quality-audit/jscpd.json'), '{invalid unrelated config');
     yield* runFixture(root, output, 'knip');
+    const lastGood = yield* summary(output);
     writeFileSync(path.join(root, KNIP_CONFIG), '{invalid');
     const invalidConfigError = yield* Effect.flip(runFixture(root, output, 'knip'));
     expect(invalidConfigError.message).toMatch(/analysis failed/u);
@@ -701,7 +705,7 @@ it.live(
     expect(readdirSync(path.join(root, '.codex'))).toEqual([CALLER_OWNED_FILE]);
     expect(readFileSync(path.join(root, '.codex/caller-owned.txt'), 'utf-8')).toBe('keep');
     expect(readFileSync(path.join(output, 'summary.md'), 'utf-8')).toMatch(/Malformed .*configs\/knip\.json/u);
-    expect(readFileSync(path.join(first.runDirectory, KNIP_REPORT), 'utf-8').length > 0).toBe(true);
+    expect(readFileSync(path.join(lastGood.runDirectory, KNIP_REPORT), 'utf-8').length > 0).toBe(true);
   }),
 );
 
@@ -756,6 +760,54 @@ it.live(
     writeFileSync(path.join(root, KNIP_CONFIG), '{invalid');
     yield* Effect.flip(runFixture(root, output, 'knip'));
     expect(readdirSync(root).filter((name) => name.startsWith('.quality-audit-model-'))).toEqual([]);
+  }),
+);
+
+const sortedRuns = (entries: readonly string[]) => EffectArray.sort(entries, Order.String);
+const runEntries = (output: string) => sortedRuns(readdirSync(output).filter((entry) => entry.startsWith('run-')));
+const recordedRun = (report: { readonly runDirectory: string }) => {
+  const name = path.basename(report.runDirectory);
+  return [name, `${name}.complete.json`];
+};
+
+it.live(
+  'finished audits delete superseded runs but keep unrecorded runs and the last good run after a failure',
+  Effect.fn(function* testRunRetention() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
+    const jscpdConfig = path.join(root, 'quality-audit/jscpd.json');
+    const validJscpdConfig = readFileSync(jscpdConfig, 'utf-8');
+    yield* runFixture(root, output, 'jscpd');
+    const superseded = yield* summary(output);
+    // A directory without a completion record may be another audit's live run or caller-owned data, however old.
+    const unrecordedRun = 'run-unrecorded';
+    const unrecorded = path.join(output, unrecordedRun);
+    mkdirSync(unrecorded);
+    writeFileSync(path.join(unrecorded, RUN_INVENTORY), '{}');
+    const lastWrite = new Date((yield* Clock.currentTimeMillis) - Duration.toMillis(Duration.days(30)));
+    utimesSync(path.join(unrecorded, RUN_INVENTORY), lastWrite, lastWrite);
+    utimesSync(unrecorded, lastWrite, lastWrite);
+
+    yield* runFixture(root, output, 'jscpd');
+    const good = yield* summary(output);
+    expect(good.status).toBe('reported');
+    expect(existsSync(superseded.runDirectory)).toBe(false);
+    expect(runEntries(output)).toEqual(sortedRuns([...recordedRun(good), unrecordedRun]));
+
+    writeFileSync(jscpdConfig, '{invalid');
+    const failure = yield* Effect.flip(runFixture(root, output, 'jscpd'));
+    expect(failure.message).toMatch(/analysis failed/u);
+    const failed = yield* summary(output);
+    expect(failed.status).toBe('error');
+    expect(runEntries(output)).toEqual(sortedRuns([...recordedRun(good), ...recordedRun(failed), unrecordedRun]));
+    expect(readFileSync(path.join(good.runDirectory, 'jscpd/report.json'), 'utf-8').length > 0).toBe(true);
+
+    writeFileSync(jscpdConfig, validJscpdConfig);
+    yield* runFixture(root, output, 'jscpd');
+    const latest = yield* summary(output);
+    expect(latest.status).toBe('reported');
+    expect(runEntries(output)).toEqual(sortedRuns([...recordedRun(latest), unrecordedRun]));
+    expect(readFileSync(path.join(unrecorded, RUN_INVENTORY), 'utf-8')).toBe('{}');
   }),
 );
 

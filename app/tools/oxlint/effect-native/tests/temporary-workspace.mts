@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
-// Sonar and the repository config require fixtures below the application's topDir.
-// Reports are ignored source inputs; each callback still owns only its fresh child.
+// Fixture workspaces default to the application's ignored report directory, outside the scanned
+// source tree. Each callback still owns only its fresh child.
 const defaultRoot = fileURLToPath(new URL('../../../../.codex/reports/lint-rule-workspaces/', import.meta.url));
 const owned = new Set<string>();
 const release = (directory: string): void => {

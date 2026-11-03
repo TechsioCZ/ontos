@@ -396,6 +396,15 @@ const tenantModuleStateTest3 = Effect.gen(function* allDeclaredTenantModuleState
   const otherModuleKey = testModuleKey('other', tenantOne);
   const targetModuleKey = testModuleKey('independent', tenantOne);
   const transitionCatalog = catalogFrom(installedContract(otherModuleKey), installedContract(targetModuleKey));
+  const withCatalog = <Value, Failure, Requirements>(
+    effect: Effect.Effect<Value, Failure, Requirements | InstalledModuleCatalogService>,
+  ) =>
+    effect.pipe(
+      Effect.provideService(InstalledModuleCatalogService, {
+        load: Effect.succeed(transitionCatalog),
+      }),
+    );
+
   yield* withDatabase((database) =>
     database.executor.insert(tenantModuleStates).values({
       moduleKey: otherModuleKey,
@@ -412,14 +421,6 @@ const tenantModuleStateTest3 = Effect.gen(function* allDeclaredTenantModuleState
       testOperationalScopeResolver,
       moduleStateRuntimeOptions,
     );
-    const withCatalog = <Value, Failure, Requirements>(
-      effect: Effect.Effect<Value, Failure, Requirements | InstalledModuleCatalogService>,
-    ) =>
-      effect.pipe(
-        Effect.provideService(InstalledModuleCatalogService, {
-          load: Effect.succeed(transitionCatalog),
-        }),
-      );
     const states = ['active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived', 'inactive'] as const;
     return Effect.forEach(
       states,

@@ -196,27 +196,28 @@ it.effect('persists a scheduled terminal transition and records separate trusted
   }),
 );
 
+const execute = () => {
+  const collector = createActionCollector(
+    retirePriceGroupAction.descriptor.domainEvents,
+    'pricing.price-group-catalog',
+    retirePriceGroupAction.descriptor.accessEvidencePolicy,
+    retirePriceGroupAction.descriptor.auditEvidenceSchema,
+  );
+  return handleRetirePriceGroup(payload, {
+    actionInvocationId,
+    addDomainEvent: collector.addDomainEvent,
+    addOutboxMessage: collector.addOutboxMessage,
+    compositionRevision,
+    recordAuditEvidence: collector.recordAuditEvidence,
+    recordDataAccess: collector.recordDataAccess,
+    scope,
+    services: services(() => Effect.succeed(persistedRetirement)),
+  });
+};
+
 it.effect('returns equivalent evidence for an owner-confirmed equivalent retry', () =>
   Effect.gen(function* equivalentRetry() {
     yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(trustedOperationAt)));
-    const execute = () => {
-      const collector = createActionCollector(
-        retirePriceGroupAction.descriptor.domainEvents,
-        'pricing.price-group-catalog',
-        retirePriceGroupAction.descriptor.accessEvidencePolicy,
-        retirePriceGroupAction.descriptor.auditEvidenceSchema,
-      );
-      return handleRetirePriceGroup(payload, {
-        actionInvocationId,
-        addDomainEvent: collector.addDomainEvent,
-        addOutboxMessage: collector.addOutboxMessage,
-        compositionRevision,
-        recordAuditEvidence: collector.recordAuditEvidence,
-        recordDataAccess: collector.recordDataAccess,
-        scope,
-        services: services(() => Effect.succeed(persistedRetirement)),
-      });
-    };
     expect(yield* execute()).toEqual(yield* execute());
   }),
 );

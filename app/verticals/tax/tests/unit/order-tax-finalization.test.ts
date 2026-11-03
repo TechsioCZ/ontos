@@ -61,6 +61,11 @@ const withSecondFact = (entry: ReturnType<typeof catalogEntry>, reversed: boolea
   };
 };
 
+const facts = (reversed: boolean) =>
+  intent({
+    catalog: [withSecondFact(catalogEntry('o1', STANDARD_CODE), reversed), catalogEntry('o2', REDUCED_CODE)],
+  });
+
 describe('Final Order Tax intent (#944 F10-F12, #941 F2-F4)', () => {
   it('an unchanged legacy candidate keeps the baseline intent fingerprint without inventing eligibility', () => {
     const { eligibility: _eligibility, ...legacyCandidate } = candidateInput();
@@ -94,11 +99,6 @@ describe('Final Order Tax intent (#944 F10-F12, #941 F2-F4)', () => {
   });
 
   it('#937 F7 the order of material Catalog facts inside one occurrence is not part of the intent', () => {
-    const facts = (reversed: boolean) =>
-      intent({
-        catalog: [withSecondFact(catalogEntry('o1', STANDARD_CODE), reversed), catalogEntry('o2', REDUCED_CODE)],
-      });
-
     expect(facts(true)).toBe(facts(false));
   });
 

@@ -89,7 +89,7 @@ shift
 printf 'locki %s %s\\n' "$command_name" "$*" >>"$TEST_LOG"
 case "$command_name" in
   --version)
-    printf '%s\\n' 'locki, version 0.0.27'
+    printf 'locki, version %s\\n' "\${TEST_LOCKI_VERSION-0.0.32}"
     ;;
   new)
     if [ "\${ESCAPE_TARGET-}" = "true" ]; then
@@ -171,20 +171,31 @@ it.live('creates one sandbox from main, copies .env opaquely, and prepares in or
   }),
 );
 
+const assertRejected = (commandArguments: readonly string[]) =>
+  Effect.gen(function* testEffect6() {
+    const fixture = yield* makeFixture();
+    const result = runWorkflow(fixture, commandArguments);
+    expect(result.code).toBe(2);
+    expect(yield* Effect.flip(Effect.tryPromise(() => readFile(fixture.logPath, 'utf-8')))).toBeDefined();
+  });
+
 it.live('rejects unsafe slugs and alternate options before creating a sandbox', () =>
   Effect.gen(function* testEffect5() {
-    const assertRejected = (commandArguments: readonly string[]) =>
-      Effect.gen(function* testEffect6() {
-        const fixture = yield* makeFixture();
-        const result = runWorkflow(fixture, commandArguments);
-        expect(result.code).toBe(2);
-        expect(yield* Effect.flip(Effect.tryPromise(() => readFile(fixture.logPath, 'utf-8')))).toBeDefined();
-      });
     yield* assertRejected(['Bad Slug']);
     yield* assertRejected(['feature', '--from', 'main']);
   }),
 );
 
+it.live('rejects an older Locki before creating a sandbox', () =>
+  Effect.gen(function* rejectsOldLocki() {
+    const fixture = yield* makeFixture();
+    const result = runWorkflow(fixture, [featureSlug], { TEST_LOCKI_VERSION: '0.0.31' });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('Locki 0.0.32 or newer is required');
+    const log = yield* Effect.tryPromise(() => readFile(fixture.logPath, 'utf-8'));
+    expect(log.includes('locki new')).toBe(false);
+  }),
+);
 it.live('fails before Locki when the source environment is missing', () =>
   Effect.gen(function* testEffect7() {
     const fixture = yield* makeFixture(false);

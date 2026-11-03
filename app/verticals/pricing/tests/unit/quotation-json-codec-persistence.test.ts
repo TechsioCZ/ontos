@@ -222,19 +222,20 @@ describe('Pricing Quotation JSON codec', () => {
   );
 });
 
+const invokeWith = (respond: (statement: SQL) => Effect.Effect<Schema.Json>) => {
+  const statements: SQL[] = [];
+  const transaction = scopedRoutineInvokerFromTransaction(
+    (statement) => {
+      statements.push(statement);
+      return Effect.map(respond(statement), (payload) => [{ payload }]);
+    },
+    { legalEntityId, tenantId },
+  );
+  return { statements, transaction };
+};
+
 describe('Pricing Quotation persistence row shape', () => {
   const dialect = new PgDialect();
-  const invokeWith = (respond: (statement: SQL) => Effect.Effect<Schema.Json>) => {
-    const statements: SQL[] = [];
-    const transaction = scopedRoutineInvokerFromTransaction(
-      (statement) => {
-        statements.push(statement);
-        return Effect.map(respond(statement), (payload) => [{ payload }]);
-      },
-      { legalEntityId, tenantId },
-    );
-    return { statements, transaction };
-  };
   const boundJsonb = (statement: SQL): Effect.Effect<Schema.Json> => {
     const parameter = dialect.sqlToQuery(statement).params.at(-1);
     return PgTypes.isParameter(parameter)

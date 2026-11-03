@@ -2,7 +2,7 @@
 
 set -eu
 
-minimum_locki_version='0.0.27'
+minimum_locki_version='0.0.32'
 development_branch='main'
 
 usage() {

@@ -10,6 +10,9 @@ export class PrincipalCandidatesUnavailable extends Schema.TaggedError<Principal
 
 type HumanPrincipalCandidate = Pick<typeof principals.$inferSelect, 'displayName' | 'principalId'>;
 
+const unavailable = <Failure>(cause: Failure) =>
+  new PrincipalCandidatesUnavailable({ cause, reason: 'Principal candidates are unavailable' });
+
 /** Identity metadata only; the calling owner must separately authorize assignment to its exact target. */
 export const humanPrincipalCandidatesForTransaction = (
   transaction: Pick<ScopedTransactionExecutor, 'select' | 'scope'>,
@@ -20,8 +23,6 @@ export const humanPrincipalCandidatesForTransaction = (
     eq(principals.status, 'active'),
     eq(principals.kind, 'human'),
   );
-  const unavailable = <Failure>(cause: Failure) =>
-    new PrincipalCandidatesUnavailable({ cause, reason: 'Principal candidates are unavailable' });
   return {
     find: (principalId: string) =>
       transaction

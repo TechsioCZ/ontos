@@ -268,6 +268,44 @@ export const decodeCoreSearchDocumentRow = (
     }),
   );
 
+const persistedDeleteMutation = (
+  row: SearchIndexEntry,
+  projectionVersion: string,
+): Extract<CoreSearchProjectionMutation, { readonly kind: 'delete' }> => {
+  const mutation = decodeCoreSearchProjectionMutation({
+    kind: 'delete',
+    projectionVersion,
+    ref: {
+      moduleId: row.sourceModuleKey,
+      resourceId: row.sourceResourceId,
+      resourceType: row.sourceResourceType,
+      tenantId: row.tenantId,
+    },
+  });
+  if (mutation.kind !== 'delete') {
+    throw invalid('Core Search persisted resource reference is invalid');
+  }
+  return mutation;
+};
+
+const decodeMutation = (input: CoreSearchProjectionInput) =>
+  Effect.try({
+    catch: (error) =>
+      Schema.is(CoreSearchProjectionInvalid)(error)
+        ? error
+        : invalid('Core Search mutation does not match its declared contract', error),
+    try: () => decodeCoreSearchProjectionMutation(input),
+  });
+
+const decodeReplacement = (input: CoreSearchProjectionInput) =>
+  Effect.try({
+    catch: (error) =>
+      Schema.is(CoreSearchProjectionInvalid)(error)
+        ? error
+        : invalid('Core Search replacement does not match its declared contract', error),
+    try: () => decodeCoreSearchProjectionReplacement(input),
+  });
+
 const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollment) => {
   const installTenantScope = Effect.fn('CoreSearchPersistence.installTenantScope')(function* installTenantScopeEffect(
     transaction: CoreTransaction,
@@ -468,26 +506,6 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
     return yield* Effect.void;
   });
 
-  const persistedDeleteMutation = (
-    row: SearchIndexEntry,
-    projectionVersion: string,
-  ): Extract<CoreSearchProjectionMutation, { readonly kind: 'delete' }> => {
-    const mutation = decodeCoreSearchProjectionMutation({
-      kind: 'delete',
-      projectionVersion,
-      ref: {
-        moduleId: row.sourceModuleKey,
-        resourceId: row.sourceResourceId,
-        resourceType: row.sourceResourceType,
-        tenantId: row.tenantId,
-      },
-    });
-    if (mutation.kind !== 'delete') {
-      throw invalid('Core Search persisted resource reference is invalid');
-    }
-    return mutation;
-  };
-
   const persistRebuildFloor = Effect.fn('CoreSearchPersistence.persistRebuildFloor')(
     function* persistRebuildFloorEffect(
       transaction: CoreTransaction,
@@ -571,24 +589,6 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
     );
     yield* persistRebuildFloor(transaction, replacement, fingerprint, updatedAt);
   });
-
-  const decodeMutation = (input: CoreSearchProjectionInput) =>
-    Effect.try({
-      catch: (error) =>
-        Schema.is(CoreSearchProjectionInvalid)(error)
-          ? error
-          : invalid('Core Search mutation does not match its declared contract', error),
-      try: () => decodeCoreSearchProjectionMutation(input),
-    });
-
-  const decodeReplacement = (input: CoreSearchProjectionInput) =>
-    Effect.try({
-      catch: (error) =>
-        Schema.is(CoreSearchProjectionInvalid)(error)
-          ? error
-          : invalid('Core Search replacement does not match its declared contract', error),
-      try: () => decodeCoreSearchProjectionReplacement(input),
-    });
 
   const applyMutationTransaction = Effect.fn('CoreSearchPersistence.applyMutationTransaction')(
     function* applyMutationTransactionEffect(

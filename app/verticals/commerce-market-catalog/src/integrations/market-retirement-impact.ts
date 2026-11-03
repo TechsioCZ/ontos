@@ -297,6 +297,9 @@ const finishedReservationMatches = (
   result.reservationToken === assessment.reservation.token &&
   result.reservationVersion === assessment.reservation.version + 1;
 
+const unavailableReservation = () =>
+  Effect.fail(unavailable('The Customer Context Market retirement reservation authority is unavailable'));
+
 const isAlreadyCommitted = Schema.is(ReserveMarketRetirementAlreadyCommittedProblemSchema);
 
 const ownerCall = (input: MarketRetirementOwnerCallContext): MarketRetirementOwnerCallContext => ({
@@ -317,8 +320,6 @@ export const makeMarketRetirementImpactAuthority = <
   } = {},
 ): MarketRetirementImpactAuthority => {
   const { execute: executeReservation, read: readReservation } = reservations;
-  const unavailableReservation = () =>
-    Effect.fail(unavailable('The Customer Context Market retirement reservation authority is unavailable'));
   const finishReservation = (
     operation: 'COMMIT' | 'RELEASE',
     input: MarketRetirementOwnerCallContext & {

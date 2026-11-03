@@ -1,14 +1,9 @@
-import { writeFileSync } from 'node:fs';
-import nodePath from 'node:path';
-
-import { expect, it } from 'effect-rstest';
 import { Clock, Effect, Layer } from 'effect';
+import { describe, expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
-import { appRoot, fixtureConfigPath, runOxlint } from './oxlint.mts';
-import { withTemporaryWorkspace } from './temporary-workspace.mts';
+import { fixtureOptions, testEffectNativeRule, virtualFile, withOptions } from './rule-tester.mts';
 
-const ruleCode = 'effect-native(no-native-timers)';
 const effectImport = "import { Effect } from 'effect';";
 const liveImports = `${effectImport}\nimport { it } from 'effect-rstest';`;
 const waitHelper = "const wait = () => Effect.sleep('1 millis');\nconst bridge = () => wait();";
@@ -19,26 +14,24 @@ interface TimerFixture {
   readonly source: string;
 }
 
+/** Each fixture is one `<name>.test.ts` file linted with the no-native-timers fixture options. */
 const expectTimerFixtures = (fixtures: readonly TimerFixture[]): void => {
-  withTemporaryWorkspace((directory) => {
-    const files = fixtures.map(({ name, source }) => {
-      const file = nodePath.join(directory, `${name}.test.ts`);
-      writeFileSync(file, source);
-      return file;
-    });
-    const result = runOxlint(fixtureConfigPath('no-native-timers'), files, appRoot);
-    expect(result.numberOfFiles).toBe(fixtures.length);
-    expect(result.diagnostics.filter(({ code }) => code !== ruleCode)).toEqual([]);
-    for (const [index, fixture] of fixtures.entries()) {
-      const diagnostics = result.diagnostics.filter(
-        ({ code, filename }) => code === ruleCode && nodePath.resolve(appRoot, filename) === files[index],
-      );
-      expect(diagnostics, `${fixture.name}: ${JSON.stringify(diagnostics)}`).toHaveLength(fixture.expected);
-    }
+  const options = withOptions(fixtureOptions('no-native-timers'));
+  const toCase = ({ name, source }: TimerFixture) => ({
+    code: source,
+    filename: virtualFile(`${name}.test.ts`),
+    name,
+    ...options,
+  });
+  testEffectNativeRule('no-native-timers', {
+    invalid: fixtures
+      .filter(({ expected }) => expected > 0)
+      .map((fixture) => ({ ...toCase(fixture), errors: fixture.expected })),
+    valid: fixtures.filter(({ expected }) => expected === 0).map(toCase),
   });
 };
 
-it('proves only SDK layer suites that explicitly exclude the injected test services', () => {
+describe('proves only SDK layer suites that explicitly exclude the injected test services', () => {
   expectTimerFixtures([
     {
       expected: 0,
@@ -150,7 +143,7 @@ it.layer(layer, { excludeTestServices: true })((suite) => {
   ]);
 });
 
-it('allows Effect sleep and timeoutOrElse inside genuine native live callbacks', () => {
+describe('allows Effect sleep and timeoutOrElse inside genuine native live callbacks', () => {
   expectTimerFixtures([
     {
       expected: 0,
@@ -197,7 +190,7 @@ live('waits on the live clock', () => Effect.sleep('1 millis'));`,
   ]);
 });
 
-it('allows immutable helper chains called only by native live callbacks', () => {
+describe('allows immutable helper chains called only by native live callbacks', () => {
   expectTimerFixtures([
     {
       expected: 0,
@@ -263,7 +256,7 @@ it.live('waits for native process shutdown', () => bridge());`,
   ]);
 });
 
-it('rejects helper chains shared with effect or ordinary tests', () => {
+describe('rejects helper chains shared with effect or ordinary tests', () => {
   expectTimerFixtures([
     {
       expected: 1,
@@ -295,7 +288,7 @@ it.effect('test-clock wait', () => bridge());`,
   ]);
 });
 
-it('rejects foreign, shadowed, type-only, and mutable live runners', () => {
+describe('rejects foreign, shadowed, type-only, and mutable live runners', () => {
   expectTimerFixtures([
     {
       expected: 1,
@@ -336,7 +329,7 @@ runner.live('mutable runner wait', () => Effect.sleep('1 millis'));`,
   ]);
 });
 
-it('rejects mutated live runner methods and aliases passed to opaque code', () => {
+describe('rejects mutated live runner methods and aliases passed to opaque code', () => {
   expectTimerFixtures([
     {
       expected: 1,
@@ -420,7 +413,7 @@ it.live.only('virtual wait', () => Effect.sleep('1 millis'));`,
   ]);
 });
 
-it('rejects mutable, exported, passed, and escaped live helpers', () => {
+describe('rejects mutable, exported, passed, and escaped live helpers', () => {
   expectTimerFixtures([
     {
       expected: 1,
@@ -466,7 +459,7 @@ it.live('returned helper wait', () => bridge());`,
   ]);
 });
 
-it('rejects deferred helper Effects that live callbacks return or store without executing', () => {
+describe('rejects deferred helper Effects that live callbacks return or store without executing', () => {
   const deferredWait = `const wait = () => Effect.gen(function* deferredWait() {
   yield* Effect.sleep('1 millis');
 });`;
@@ -517,7 +510,7 @@ it.live('assigns an unexecuted Effect', () => {
   ]);
 });
 
-it('requires consumed native Effect callbacks before admitting a live timer', () => {
+describe('requires consumed native Effect callbacks before admitting a live timer', () => {
   expectTimerFixtures([
     {
       expected: 1,
@@ -579,7 +572,7 @@ it.live('uses an unrelated ChildProcess namespace', () => Effect.gen(function* l
   ]);
 });
 
-it('keeps Effect time outside live callbacks and native timers inside them forbidden', () => {
+describe('keeps Effect time outside live callbacks and native timers inside them forbidden', () => {
   expectTimerFixtures([
     {
       expected: 2,
@@ -631,7 +624,7 @@ it.live('native imported timer', () => {
   ]);
 });
 
-it('proves deferred immutable programs and native named generator factories independently', () => {
+describe('proves deferred immutable programs and native named generator factories independently', () => {
   const cap = "Effect.timeoutOrElse({ duration: '15 seconds', orElse: () => Effect.fail('startup_timeout') })";
   expectTimerFixtures([
     {
@@ -668,7 +661,7 @@ it.live('third', () => pending.pipe(Effect.provide(services)));`,
   ]);
 });
 
-it('rejects opaque or mixed consumers of deferred program values', () => {
+describe('rejects opaque or mixed consumers of deferred program values', () => {
   const program = "const pending = Effect.gen(function* deferredProgram() { yield* Effect.sleep('1 millis'); });";
   const consumers = [
     ['direct-non-callable-callback', "it.live('live', pending);"],
@@ -724,7 +717,7 @@ const first = second; const second = first; it.live('live', () => condition ? pe
   ]);
 });
 
-it('does not infer native generator factories from names or unsupported overloads', () => {
+describe('does not infer native generator factories from names or unsupported overloads', () => {
   const factories = [
     [
       'fake-builder',
@@ -756,7 +749,7 @@ it.live('live', () => Effect.gen(function* () {
   );
 });
 
-it('models native clock values, context transforms, callable generators and excluded-service layer runners', () => {
+describe('models native clock values, context transforms, callable generators and excluded-service layer runners', () => {
   const imports = `${liveImports}\nimport { DateTime, Layer, Context } from 'effect';`;
   const wait = "Effect.gen(function* () { yield* Effect.sleep('1 millis'); })";
   expectTimerFixtures([
@@ -813,7 +806,7 @@ it('models native clock values, context transforms, callable generators and excl
   ]);
 });
 
-it('keeps native values and excluded-service runner proofs closed', () => {
+describe('keeps native values and excluded-service runner proofs closed', () => {
   const imports = `${liveImports}\nimport { DateTime, Layer, Context } from 'effect';`;
   const work = "const work = Effect.fn('work')(function* workEffect() { yield* DateTime.now; });";
   const registration = "testIt.effect('x', work);";
@@ -915,7 +908,7 @@ it('keeps native values and excluded-service runner proofs closed', () => {
   ]);
 });
 
-it('tracks consumed native scoped forks and direct static Effect.all arrays without admitting escapes', () => {
+describe('tracks consumed native scoped forks and direct static Effect.all arrays without admitting escapes', () => {
   const imports = `${liveImports}\nimport { DateTime } from 'effect';`;
   const helper =
     "const work = Effect.fn('work')(function* workEffect() { return Math.floor(DateTime.toEpochMillis(yield* DateTime.now) / 1000); });";
@@ -1011,7 +1004,7 @@ it('tracks consumed native scoped forks and direct static Effect.all arrays with
   ]);
 });
 
-it('tracks only consumed canonical data-first forEach Effect callbacks on native live owners', () => {
+describe('tracks only consumed canonical data-first forEach Effect callbacks on native live owners', () => {
   const imports = `${liveImports}\nimport { DateTime } from 'effect';`;
   const nativeCallback = '(item) => Effect.gen(function* () { return yield* DateTime.now; })';
   const each = `Effect.forEach([1, 2], ${nativeCallback}, { concurrency: 1 })`;
@@ -1139,7 +1132,7 @@ it.live('actual live callbacks', () => Effect.gen(function* runLive() {
   yield* fixture(nativeClock);
 }));`;
 
-it('proves exact immutable live Clock capture supplied to whole deferred callbacks through local parameters', () => {
+describe('proves exact immutable live Clock capture supplied to whole deferred callbacks through local parameters', () => {
   expectTimerFixtures([
     { expected: 0, name: 'explicit-live-clock-production-port-callbacks', source: explicitClockCallbacks },
     {
@@ -1265,7 +1258,7 @@ it.effect('the innermost provided Clock controls real Effect clock execution des
   }),
 );
 
-it('proves explicitly supplied live Clock through canonical Effect.fn parameters only', () => {
+describe('proves explicitly supplied live Clock through canonical Effect.fn parameters only', () => {
   const source = `import { Clock, DateTime, Effect } from 'effect';
 import { it } from 'effect-rstest';
 const receiver = Effect.fn('receiver')(function* receiver(nativeClock: Clock.Clock) {
@@ -1313,7 +1306,7 @@ it.layer(Layer.empty, ${options})((suite) => {
   suite.effect('real IO', () => Effect.sleep('1 millis'));
 });`;
 
-it('keeps an orthogonal literal layer timeout compatible with explicit real test services', () => {
+describe('keeps an orthogonal literal layer timeout compatible with explicit real test services', () => {
   expectTimerFixtures([
     {
       expected: 0,
@@ -1387,7 +1380,7 @@ it.layer(Layer.empty, { excludeTestServices: true, memoMap: sharedMemoMap, timeo
   });
 });`;
 
-it('confines a shared mutable layer cache to immutable native-only memo-map bindings', () => {
+describe('confines a shared mutable layer cache to immutable native-only memo-map bindings', () => {
   expectTimerFixtures([
     { expected: 0, name: 'native-shared-memo-map', source: sharedMemoMapSource },
     {
@@ -1506,8 +1499,11 @@ const nativeFactoryWithObserver = nativeLayerFactorySource
     "const observe = Effect.fn('observe')(function* observe() { return yield* DateTime.now; }); const authority =",
   );
 
-it('proves captured Clock origins only through fully confined clock-preserving local layer factories', () => {
+it('captured Clock fixtures name the native Clock service key', () => {
   expect(Clock.Clock.key).toBe('effect/Clock');
+});
+
+describe('proves captured Clock origins only through fully confined clock-preserving local layer factories', () => {
   expectTimerFixtures([
     { expected: 0, name: 'native-layer-factory-forwarded-clock', source: nativeLayerFactorySource },
     {
@@ -1620,7 +1616,7 @@ it('proves captured Clock origins only through fully confined clock-preserving l
 
 const clockMillisMember = 'clock.currentTimeMillis';
 
-it('preserves captured Clock provenance through direct readonly time observations', () => {
+describe('preserves captured Clock provenance through direct readonly time observations', () => {
   const source = `import { Clock, DateTime, Effect } from 'effect';
 import { it } from 'effect-rstest';
 const native = Effect.fn('native')(function* native(clock: Clock.Clock) {
@@ -1672,7 +1668,7 @@ it.live('actual IO', () => Effect.gen(function* live() {
 const nativeLayerNodeServicesMerge = 'Layer.provideMerge(NodeServices.layer)';
 const nativeLayerServicesProvision = 'Layer.provide(services)';
 
-it('proves native Layer.effect setup only through exclusively excluded local layer consumers', () => {
+describe('proves native Layer.effect setup only through exclusively excluded local layer consumers', () => {
   const source = `import { Clock, Context, Effect, Layer } from 'effect';
 import { NodeChildProcessSpawner, NodeServices, NodeCrypto } from '@effect/platform-node';
 import { FetchHttpClient } from 'effect/http';
@@ -1822,7 +1818,7 @@ it.layer(retained, { excludeTestServices: true })((suite) => {
 
 const streamHeadMember = 'Stream.runHead';
 
-it('recognizes exact imported data-first Stream terminals as Effect boundaries', () => {
+describe('recognizes exact imported data-first Stream terminals as Effect boundaries', () => {
   const source = `import { Effect, Stream } from 'effect';
 import { it } from 'effect-rstest';
 const first = Effect.fn('first')(function* first(stream) {
@@ -1889,7 +1885,7 @@ it.layer(infrastructure, { excludeTestServices: true, timeout: '60 seconds' })('
   suite.effect('native journey', () => journey().pipe(Effect.scoped, Effect.provide(nativeServices)), 30000);
 });`;
 
-it('proves actual nested native setup and consumed whole-Clock timer boundaries', () => {
+describe('proves actual nested native setup and consumed whole-Clock timer boundaries', () => {
   expectTimerFixtures([
     { expected: 0, name: 'nested-native-actual-boundaries', source: nestedNativeLayerSource },
     {
@@ -2013,7 +2009,7 @@ it.live('native owner observations', () => Effect.gen(function* owner() {
   yield* nested();
 }).pipe(${scopedClockTransforms}));`;
 
-it('preserves an explicit inner native Clock through scoped execution and an outer Layer only', () => {
+describe('preserves an explicit inner native Clock through scoped execution and an outer Layer only', () => {
   expectTimerFixtures([
     { expected: 0, name: 'scoped-clock-outer-layer', source: scopedClockSource },
     {
@@ -2132,7 +2128,7 @@ it.effect('an inner Clock provider wins across scoped execution and an outer Clo
   }),
 );
 
-it('requires the exact immutable public default Clock factory and a fully consumed native timer', () => {
+describe('requires the exact immutable public default Clock factory and a fully consumed native timer', () => {
   expectTimerFixtures([
     { expected: 0, name: 'default-clock-exact-factory', source: defaultClockCallbackSource },
     {
@@ -2212,7 +2208,7 @@ it('requires the exact immutable public default Clock factory and a fully consum
   ]);
 });
 
-it('proves consumed directly provided sleep only in genuine live owners', () => {
+describe('proves consumed directly provided sleep only in genuine live owners', () => {
   const source = `import { Clock, Effect, Layer } from 'effect';
 import { it } from 'effect-rstest';
 const defaultNativeClock = Clock.Clock.defaultValue();

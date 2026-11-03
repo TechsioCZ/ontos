@@ -512,6 +512,8 @@ const readValidityEntry = Effect.fn('EffectiveAttributeValueReads.readValidityEn
   });
 });
 
+const query = <A, E>(effect: Effect.Effect<A, E>) => effect.pipe(Effect.mapError(unavailable));
+
 /** Private owner service; Core supplies the already scoped read transaction and authorizes its caller. */
 export const effectiveAttributeValueReadsForScope = (
   transaction: ScopedTransaction,
@@ -590,7 +592,6 @@ export const effectiveAttributeValueReadsForScope = (
       const productId = input.productRef.resourceId;
       const variantId = input.variantRef.resourceId;
       const definitionId = input.attributeDefinitionRef.resourceId;
-      const query = <A, E>(effect: Effect.Effect<A, E>) => effect.pipe(Effect.mapError(unavailable));
       const [[product], [variant], currentDefinition] = yield* Effect.all(
         [
           query(

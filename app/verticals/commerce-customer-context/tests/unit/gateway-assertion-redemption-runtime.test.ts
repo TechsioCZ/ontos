@@ -4,7 +4,7 @@ import { defineRelations } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { Cause, Clock, Effect, Exit, Fiber, Layer, Result, Schema } from 'effect';
-import { assert, expect, it, rs } from 'effect-rstest';
+import { afterAll, assert, expect, it, rs } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import { Reactivity } from 'effect/reactivity';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
@@ -249,3 +249,11 @@ it.effect('preserves caller interruption instead of turning it into redemption u
     expect(Cause.hasInterrupts(exit.cause)).toBe(true);
   }),
 );
+
+// With `isolate: false` one module registry is shared by every file a worker runs, so these
+// replacements outlive this file and would leak into whatever runs next. Remove them and drop the
+// modules they replaced, so the next file evaluates the real implementations.
+afterAll(() => {
+  rs.doUnmock('../../src/database/schema.ts');
+  rs.resetModules();
+});

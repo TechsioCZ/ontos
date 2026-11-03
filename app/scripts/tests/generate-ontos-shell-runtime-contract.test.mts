@@ -59,6 +59,9 @@ const fixture = Effect.gen(function* makeFixture() {
   return { root, shellDirectory };
 });
 
+const readContract = (file: string) =>
+  Effect.tryPromise(() => readFile(file, 'utf-8')).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Contract)));
+
 it.live('stamps both deployment targets with the actual immutable Shell release identity', () =>
   Effect.gen(function* identifiesPromotedShell() {
     const { root, shellDirectory } = yield* fixture;
@@ -78,8 +81,6 @@ it.live('stamps both deployment targets with the actual immutable Shell release 
           ONTOS_SHELL_RUNTIME_CONTRACT_PATH.slice(1),
         );
       });
-    const readContract = (file: string) =>
-      Effect.tryPromise(() => readFile(file, 'utf-8')).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Contract)));
     const first = yield* readContract(yield* generate('dist'));
     const cloudflare = yield* readContract(yield* generate('cloudflare-dist'));
     expect(first.schemaVersion).toBe('2');

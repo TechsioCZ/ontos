@@ -35,6 +35,7 @@ interface Value {
     | 'policy'
     | 'table'
     | 'column'
+    | 'index-column'
     | 'column-builder'
     | 'pg-schema'
     | 'sequence'
@@ -574,6 +575,13 @@ class DataFactoryProof {
         if (node.decorators?.length || (node.superClass !== null && !safe(node.superClass))) return false;
         for (const member of node.body.body) {
           if (member.decorators?.length || member.type === 'StaticBlock' || (member.computed && !safe(member.key))) return false;
+          if (member.computed) {
+            const computedKey = this.expression(member.key, model, new Map());
+            // Defining a class coerces its computed keys immediately. Object-valued keys can
+            // execute user code through ToPropertyKey even when reading the binding is safe.
+            if (computedKey.kind !== 'data' ||
+              !['string', 'number', 'bigint', 'boolean', 'symbol'].includes(typeof computedKey.literal)) return false;
+          }
           if (member.static && member.value !== null && member.value !== undefined && !safe(member.value)) return false;
         }
         return true;
@@ -613,7 +621,7 @@ class DataFactoryProof {
     return result;
   }
 
-  imported(model: Model, source: string): Model | null {
+  imported(model: Pick<Model, 'filename'>, source: string): Model | null {
     if (!source.startsWith('./') && !source.startsWith('../')) return null;
     const base = path.resolve(path.dirname(model.filename), source);
     for (const filename of path.extname(base) === ''
@@ -1012,6 +1020,8 @@ class DataFactoryProof {
       return name === 'table' ? native('drizzle:pgTable') : name === 'sequence' ? native('drizzle:pgSequence') : BAD;
     if (value.kind === 'column-builder')
       return value.fresh === true ? { ...native(`drizzle:column.${name}`), payload: value } : BAD;
+    if (value.kind === 'column' && name === 'op')
+      return { ...native('drizzle:index-column.op'), payload: value };
     if (value.kind === 'set') return name === 'size' ? DATA : name === 'has' ? native('set:has') : BAD;
     if (value.kind === 'data' && value.native === 'regexp') return native(`regexp:${name}`);
     if (value.kind === 'schema') {
@@ -1267,6 +1277,16 @@ class DataFactoryProof {
       return args.length === 1 && args[0].kind === 'data' ? { kind: 'index-builder', fresh: true } : BAD;
     if (name === 'drizzle:index-builder.on')
       return args.length > 0 && args.every((value) => value.kind === 'column' || value.kind === 'sql')
+        ? { kind: 'index', fresh: true } : BAD;
+    // Native index operator classes are metadata, not SQL chunks or callable column methods.
+    if (name === 'drizzle:index-column.op')
+      return callee.payload?.kind === 'column' && args.length === 1 && args[0].kind === 'data' &&
+        (typeof args[0].literal === 'string' || args[0].native === 'string')
+        ? { kind: 'index-column' } : BAD;
+    if (name === 'drizzle:index-builder.using')
+      return args.length >= 2 && args[0].kind === 'data' &&
+        (typeof args[0].literal === 'string' || args[0].native === 'string') &&
+        args.slice(1).every((value) => ['column', 'index-column', 'sql'].includes(value.kind))
         ? { kind: 'index', fresh: true } : BAD;
     if (name === 'drizzle:index.where')
       return args.length === 1 && args[0].kind === 'sql' ? callee.payload ?? BAD : BAD;
@@ -1617,6 +1637,30 @@ class DataFactoryProof {
       return { kind: 'function', apply: (args) => (args.every(isData) ? DATA : BAD) };
     return value;
   }
+}
+
+/** Resolve an immutable scalar import only through a checked, closed local module graph. */
+export function provenDataImportLiteral(filename: string, source: string, importedName: string): string | number | null {
+  const proof = new DataFactoryProof();
+  const owner = proof.imported({ filename }, source);
+  const exported = owner?.exports.get(importedName);
+  const initialized = new Map<Model, boolean>();
+  const safeModule = (model: Model): boolean => {
+    const known = initialized.get(model);
+    if (known !== undefined) return known;
+    initialized.set(model, false);
+    const safe = proof.safeInitialization(model) && [...model.imports.values()].every((imported) => {
+      if (imported.typeOnly) return true;
+      const dependency = proof.imported(model, imported.source);
+      return dependency !== null && safeModule(dependency);
+    });
+    initialized.set(model, safe);
+    return safe;
+  };
+  if (owner === null || exported === undefined || !safeModule(owner)) return null;
+  const value = proof.value(exported, owner, new Map());
+  return value.kind === 'data' && (typeof value.literal === 'string' || typeof value.literal === 'number')
+    ? value.literal : null;
 }
 
 /** Prove closed DTO/native metadata construction; opaque generics require checked call sites. */

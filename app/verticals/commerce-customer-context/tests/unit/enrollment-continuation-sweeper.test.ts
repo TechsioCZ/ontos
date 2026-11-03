@@ -184,12 +184,13 @@ it.effect('forwards the HTTP verification-yield policy without applying it to wo
   }),
 );
 
+const attemptFor = (): ReadEnrollmentAttemptInput => ({
+  portalEnrollmentAttemptId: attemptId(randomUUID()),
+  tenantId: tenantId(randomUUID()),
+});
+
 it.effect('reads past a whole page of Attempts an earlier budget gave up on', () =>
   Effect.gen(function* pagesPastExhaustedAttempts() {
-    const attemptFor = (): ReadEnrollmentAttemptInput => ({
-      portalEnrollmentAttemptId: attemptId(randomUUID()),
-      tenantId: tenantId(randomUUID()),
-    });
     const [older, oldest, fresh] = [attemptFor(), attemptFor(), attemptFor()];
     const journal = yield* journalOf(due(oldest), due(older));
     const scripted = yield* scriptedContinuation(journal, 'HALTED');

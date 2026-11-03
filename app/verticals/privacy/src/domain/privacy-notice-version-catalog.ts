@@ -47,6 +47,27 @@ const validateContent = (
   return Effect.succeed(input);
 };
 
+const createVersion = (options: {
+  readonly input: CreatePrivacyNoticeVersionInput;
+  readonly noticeId: string;
+  readonly recordedAt: string;
+  readonly tenantId: string;
+  readonly versionId: string;
+  readonly versionNumber: number;
+}): PrivacyNoticeVersion => ({
+  applicableScope: options.input.applicableScope,
+  contentIdentity: options.input.contentIdentity,
+  effectiveFrom: options.input.effectiveFrom ?? options.recordedAt,
+  effectiveTo: options.input.effectiveTo ?? null,
+  evidenceArtifactRef: options.input.evidenceArtifactRef,
+  language: options.input.language,
+  noticeRef: ref(options.tenantId, options.noticeId),
+  recordedAt: options.recordedAt,
+  versionId: options.versionId,
+  versionNumber: options.versionNumber,
+  wording: options.input.wording,
+});
+
 const makeCatalog = (crypto: Crypto.Crypto): PrivacyNoticeVersionCatalog => {
   const notices = new Map<string, PrivacyNoticeVersion[]>();
   const nextIdentifier = (reason: string) =>
@@ -59,26 +80,6 @@ const makeCatalog = (crypto: Crypto.Crypto): PrivacyNoticeVersionCatalog => {
           ),
         ),
       );
-  const createVersion = (options: {
-    readonly input: CreatePrivacyNoticeVersionInput;
-    readonly noticeId: string;
-    readonly recordedAt: string;
-    readonly tenantId: string;
-    readonly versionId: string;
-    readonly versionNumber: number;
-  }): PrivacyNoticeVersion => ({
-    applicableScope: options.input.applicableScope,
-    contentIdentity: options.input.contentIdentity,
-    effectiveFrom: options.input.effectiveFrom ?? options.recordedAt,
-    effectiveTo: options.input.effectiveTo ?? null,
-    evidenceArtifactRef: options.input.evidenceArtifactRef,
-    language: options.input.language,
-    noticeRef: ref(options.tenantId, options.noticeId),
-    recordedAt: options.recordedAt,
-    versionId: options.versionId,
-    versionNumber: options.versionNumber,
-    wording: options.input.wording,
-  });
   return {
     addVersion: Effect.fn('makeInMemoryPrivacyNoticeVersionCatalog.addVersion')(function* addVersion(noticeId, input) {
       const current = notices.get(noticeId);

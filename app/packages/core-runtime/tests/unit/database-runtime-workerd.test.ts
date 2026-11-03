@@ -1,5 +1,5 @@
 import { Config, ConfigProvider, Effect, Predicate } from 'effect';
-import { expect, it, rs } from 'effect-rstest';
+import { afterAll, expect, it, rs } from 'effect-rstest';
 
 import { SHARED_RUNTIME_IDENTITY, SHELL_GATEWAY_ISSUER_IDENTITY } from '../../src/db/database-identities.ts';
 import type { DatabaseIdentity } from '../../src/db/database-identities.ts';
@@ -84,3 +84,11 @@ it.effect('an identity without a Worker binding cannot connect from a Worker', (
     expect(failure.reason).toBe('This database identity has no Cloudflare Worker binding');
   }),
 );
+
+// With `isolate: false` one module registry is shared by every file a worker runs, so these
+// replacements outlive this file and would leak into whatever runs next. Remove them and drop the
+// modules they replaced, so the next file evaluates the real implementations.
+afterAll(() => {
+  rs.doUnmock('cloudflare:workers');
+  rs.resetModules();
+});

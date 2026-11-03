@@ -782,6 +782,8 @@ const runObservedOperatorPublication = Effect.fn('PrivacyCompletionTest.nativeOp
   },
 );
 
+const invalidResponse = () => failure('Invalid real worker retry cycle response');
+
 const fixture = Effect.gen(function* publicCompletionFixture() {
   yield* Effect.logInfo('Privacy fixture setup: initialize');
   const additionalLegalEntity = yield* fixtureAdditionalLegalEntity;
@@ -1327,7 +1329,6 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
       { input: Stream.fromQueue(input).pipe(Stream.encodeText), replies },
     );
     let index = 0;
-    const invalidResponse = () => failure('Invalid real worker retry cycle response');
     return {
       cycle: (advanceMs: number) =>
         Effect.gen(function* nextBoundedRetryCycle() {

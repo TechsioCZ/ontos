@@ -118,6 +118,7 @@ const ROOT_GATE_JOBS = [
 /** Every gate job; the node artifact proofs run inside the node build shards. */
 const GATE_JOBS = ROOT_GATE_JOBS;
 const GatedJobsSchema = Schema.Struct({
+  env: Schema.Record(Schema.String, Schema.String),
   jobs: Schema.Record(
     Schema.String,
     Schema.Struct({ if: Schema.optional(Schema.String), needs: Schema.optional(Schema.Array(Schema.String)) }),
@@ -136,6 +137,14 @@ const stepPasses = (script: string, environment: Readonly<Record<string, string>
     return false;
   }
 };
+
+const sorted = (values: readonly string[]) => EffectArray.sort(values, Order.String);
+
+it('keeps deployment out of the workspace gates and guards Action transaction I/O', () => {
+  const { env, jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
+  expect(env.ONTOS_ACTION_TRANSACTION_IO_GUARD).toBe('true');
+  expect(sorted(Object.keys(jobs))).toEqual(sorted([QUEUE_PROOF_JOB, 'warm-caches', ...GATE_JOBS, 'workspace-gates']));
+});
 
 it('skips the gates on main only for a commit the merge queue already proved', () => {
   const proof = readGatesWorkflow().jobs[QUEUE_PROOF_JOB];
@@ -230,8 +239,6 @@ const TopologyUnitsSchema = Schema.Struct({
   shell: Schema.Struct({ id: Schema.String, path: Schema.String }),
   verticals: Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })),
 });
-
-const sorted = (values: readonly string[]) => EffectArray.sort(values, Order.String);
 
 it('builds every delivery unit of the topology in exactly one build shard of each target', () => {
   const { jobs } = Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(
@@ -355,7 +362,6 @@ const GateCommandsWorkflowSchema = Schema.Struct({
     'static-contracts': Schema.Struct({
       steps: Schema.Array(
         Schema.Struct({
-          parallel: Schema.optional(Schema.Array(Schema.Struct({ run: Schema.String }))),
           run: Schema.optional(Schema.String),
         }),
       ),
@@ -388,6 +394,7 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
     'pnpm typecheck',
     'pnpm typecheck:lint-rules',
     'pnpm test:lint-rules',
+    'pnpm lint:repository-policy',
     'pnpm api:check:ontos',
     'pnpm handler-services:check',
     'pnpm shell:ui-candidates:check',
@@ -399,9 +406,8 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
   }
   // The module entrypoint boundary check runs once.
   expect(commands.filter((command) => command === 'pnpm module-entrypoints:check')).toHaveLength(1);
-  const staticChecks = readGateCommandJobs()['static-contracts'].steps.flatMap(({ parallel, run }) =>
-    parallel ? parallel.map((step) => step.run) : [run ?? ''],
-  );
+  expect(commands).not.toContain('pnpm test:deployment-impact');
+  const staticChecks = readGateCommandJobs()['static-contracts'].steps.map(({ run }) => run ?? '');
   expect(staticChecks).toContain('mise exec -- pnpm database-access:check');
 });
 
@@ -686,7 +692,11 @@ it.effect('proves Node artifacts against a migrated PostgreSQL database with eve
     const node = jobs['node-artifact-build'];
     const environment = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.String))(node.env);
     const service = node.services['proof-postgres'];
-    expect(service?.image).toBe(expression("matrix.proof == 'node' && 'postgres:18.6-alpine' || ''"));
+    expect(service?.image).toBe(
+      expression(
+        "matrix.proof == 'node' && 'postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5' || ''",
+      ),
+    );
     expect(service?.ports).toContain('5433:5432');
     const admin = yield* Schema.decodeUnknownEffect(Schema.URLFromString)(environment.DATABASE_ADMIN_URL);
     expect(admin.username).toBe(service?.env.POSTGRES_USER);

@@ -176,14 +176,15 @@ const record = (row: CategoryRow): CategoryRecord => {
     : { ...result, parentRef: categoryRef(row.tenantId, row.parentCategoryId) };
 };
 
+const query = <A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, CategoryPersistenceUnavailable> =>
+  effect.pipe(Effect.mapError(unavailable));
+
 /** Core has already opened and scoped this transaction; the revision row serializes this tenant's category writes. */
 export const categoryPersistenceForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
 ): Effect.Effect<CategoryPersistence> => {
   const { tenantId } = scope;
-  const query = <A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, CategoryPersistenceUnavailable> =>
-    effect.pipe(Effect.mapError(unavailable));
   const lock = Effect.fn('CategoryPersistence.lock')(function* lock() {
     yield* query(transaction.insert(productCategoryHierarchyRevisions).values({ tenantId }).onConflictDoNothing());
     const [row] = yield* query(

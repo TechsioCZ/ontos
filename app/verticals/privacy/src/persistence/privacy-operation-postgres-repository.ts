@@ -534,6 +534,34 @@ const privacyMeasureHandoffLabel = 'Privacy Measure Handoff';
 
 const PRIVACY_SUBJECT_LABEL = 'Privacy Subject';
 
+const materializeAndValidateDsrOwnerTask = (
+  tenantId: string,
+  legalEntityId: string,
+  authority: DsrOwnerTaskAuthorityResult,
+): Effect.Effect<
+  { readonly request: DsrOwnerTaskRequest; readonly task: DsrOwnerTask },
+  PrivacyOperationPersistenceError
+> => {
+  const task: DsrOwnerTask = {
+    ...authority.task,
+    authorityProvenance: materializeDsrOwnerTaskAuthorityProvenance(authority),
+  };
+  if (!hasValidDsrOwnerTaskAuthorityProvenance(task)) {
+    return Effect.fail(conflict('DSR Owner Task authority provenance is incomplete or inconsistent'));
+  }
+  const request: DsrOwnerTaskRequest = {
+    caseRef: task.caseRef,
+    controllerRef: task.controllerRef,
+    exactScopeRefs: task.exactScopeRefs,
+    idempotencyKey: task.idempotencyKey,
+    ownerModuleId: task.ownerModuleId,
+    right: task.right,
+    taskRef: task.taskRef,
+  };
+  const authorityError = validateDsrOwnerTaskAuthorityResult(request, authority, tenantId, legalEntityId);
+  return authorityError === undefined ? Effect.succeed({ request, task }) : Effect.fail(conflict(authorityError));
+};
+
 const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(function* makeRepositoryEffect(
   transaction: ScopedTransaction,
   configuration: {
@@ -1425,34 +1453,6 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
     }
     return handoff;
   });
-
-  const materializeAndValidateDsrOwnerTask = (
-    tenantId: string,
-    legalEntityId: string,
-    authority: DsrOwnerTaskAuthorityResult,
-  ): Effect.Effect<
-    { readonly request: DsrOwnerTaskRequest; readonly task: DsrOwnerTask },
-    PrivacyOperationPersistenceError
-  > => {
-    const task: DsrOwnerTask = {
-      ...authority.task,
-      authorityProvenance: materializeDsrOwnerTaskAuthorityProvenance(authority),
-    };
-    if (!hasValidDsrOwnerTaskAuthorityProvenance(task)) {
-      return Effect.fail(conflict('DSR Owner Task authority provenance is incomplete or inconsistent'));
-    }
-    const request: DsrOwnerTaskRequest = {
-      caseRef: task.caseRef,
-      controllerRef: task.controllerRef,
-      exactScopeRefs: task.exactScopeRefs,
-      idempotencyKey: task.idempotencyKey,
-      ownerModuleId: task.ownerModuleId,
-      right: task.right,
-      taskRef: task.taskRef,
-    };
-    const authorityError = validateDsrOwnerTaskAuthorityResult(request, authority, tenantId, legalEntityId);
-    return authorityError === undefined ? Effect.succeed({ request, task }) : Effect.fail(conflict(authorityError));
-  };
 
   const requireDsrOwnerTaskObligation = Effect.fn('PrivacyOperationPostgresRepository.requireDsrOwnerTaskObligation')(
     function* requireDsrOwnerTaskObligationEffect(tenantId: string, legalEntityId: string, task: DsrOwnerTask) {

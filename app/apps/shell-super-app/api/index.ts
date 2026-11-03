@@ -1734,6 +1734,27 @@ const requiredIdempotencyKey = (headers: RequestHeaders) => {
   return value === undefined ? failIdentityProblem(shellPreconditionRequiredProblem()) : Effect.succeed(value);
 };
 
+const safeIdentity = <Value, Error, Requirements>(
+  request: RequestWithHeaders,
+  effect: Effect.Effect<Value, Error, Requirements>,
+) =>
+  effect.pipe(
+    recoverUnexpectedDefect(request, 'Unexpected Shell identity defect', () =>
+      failIdentityProblem(shellInternalProblem()),
+    ),
+  );
+
+const keyIssuanceResponse = <Value extends object, Requirements>(
+  effect: Effect.Effect<Value, IdentityLifecycleError, Requirements>,
+) =>
+  Effect.matchEffect(
+    Effect.tap(effect, () => noStore),
+    {
+      onFailure: (error) => pipe(error, identityProblem, failIdentityProblem),
+      onSuccess: (response) => decodeResponse(ApiKeyIssueResponseSchema, response, shellInternalProblem),
+    },
+  );
+
 const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity', (handlers) => {
   const authenticated = Effect.fn('shell.identity.authenticated')((request: RequestWithHeaders) =>
     Effect.gen(function* authenticatedIdentity() {
@@ -1748,25 +1769,6 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       return resolved;
     }),
   );
-  const safeIdentity = <Value, Error, Requirements>(
-    request: RequestWithHeaders,
-    effect: Effect.Effect<Value, Error, Requirements>,
-  ) =>
-    effect.pipe(
-      recoverUnexpectedDefect(request, 'Unexpected Shell identity defect', () =>
-        failIdentityProblem(shellInternalProblem()),
-      ),
-    );
-  const keyIssuanceResponse = <Value extends object, Requirements>(
-    effect: Effect.Effect<Value, IdentityLifecycleError, Requirements>,
-  ) =>
-    Effect.matchEffect(
-      Effect.tap(effect, () => noStore),
-      {
-        onFailure: (error) => pipe(error, identityProblem, failIdentityProblem),
-        onSuccess: (response) => decodeResponse(ApiKeyIssueResponseSchema, response, shellInternalProblem),
-      },
-    );
   const demoAccountCaller = Effect.fn('shell.identity.demoAccountCaller')(function* demoAccountCaller(
     request: RequestWithHeaders,
   ) {
@@ -2779,6 +2781,11 @@ const connectionsAdminDefect = (request: RequestWithHeaders) =>
     failIdentityProblem(shellInternalProblem()),
   );
 
+const peopleAdministrationFailure = (error: IdentityRuntimeError | Schema.SchemaError) =>
+  Schema.isSchemaError(error)
+    ? failIdentityProblem(shellInternalProblem())
+    : failIdentityProblem(identityProblem(error));
+
 const peopleAdministrationGroupLive = HttpApiBuilder.group(
   ShellAuthenticationApi,
   'peopleAdministration',
@@ -2828,22 +2835,20 @@ const peopleAdministrationGroupLive = HttpApiBuilder.group(
       const principal = yield* principalFor(request, scope);
       return { principal, transport: { correlationId: correlationFromRequest(request), idempotencyKey } };
     });
-    const failure = (error: IdentityRuntimeError | Schema.SchemaError) =>
-      Schema.isSchemaError(error)
-        ? failIdentityProblem(shellInternalProblem())
-        : failIdentityProblem(identityProblem(error));
     return handlers
       .handle('requestPeopleSearchRebuild', ({ headers, payload, request }) =>
         Effect.gen(function* rebuildPeopleSearchHandler() {
           const context = yield* commandContext(request, headers, 'tenant');
-          const result = yield* requestPeopleSearchRebuild(context, payload).pipe(Effect.catch(failure));
+          const result = yield* requestPeopleSearchRebuild(context, payload).pipe(
+            Effect.catch(peopleAdministrationFailure),
+          );
           return yield* decodeResponse(RequestPeopleSearchRebuildHttpResponseSchema, result, shellInternalProblem);
         }).pipe(connectionsAdminDefect(request)),
       )
       .handle('invitePerson', ({ headers, payload, request }) =>
         Effect.gen(function* invitePersonHandler() {
           const context = yield* commandContext(request, headers, 'company');
-          const result = yield* invitePeoplePerson(context, payload).pipe(Effect.catch(failure));
+          const result = yield* invitePeoplePerson(context, payload).pipe(Effect.catch(peopleAdministrationFailure));
           return yield* decodeResponse(InvitePeopleResponseSchema, result, shellInternalProblem);
         }).pipe(connectionsAdminDefect(request)),
       )
@@ -2851,7 +2856,7 @@ const peopleAdministrationGroupLive = HttpApiBuilder.group(
         Effect.gen(function* listCompanyRoleCatalogHandler() {
           const principal = yield* principalFor(request, 'company');
           const result = yield* listPeopleRoleCatalog(principal, correlationFromRequest(request)).pipe(
-            Effect.catch(failure),
+            Effect.catch(peopleAdministrationFailure),
           );
           return yield* decodeResponse(PeopleRoleCatalogSchema, result, shellInternalProblem);
         }).pipe(connectionsAdminDefect(request)),
@@ -2860,7 +2865,7 @@ const peopleAdministrationGroupLive = HttpApiBuilder.group(
         Effect.gen(function* listTenantRoleCatalogHandler() {
           const principal = yield* principalFor(request, 'tenant');
           const result = yield* listPeopleRoleCatalog(principal, correlationFromRequest(request)).pipe(
-            Effect.catch(failure),
+            Effect.catch(peopleAdministrationFailure),
           );
           return yield* decodeResponse(PeopleRoleCatalogSchema, result, shellInternalProblem);
         }).pipe(connectionsAdminDefect(request)),
@@ -2869,7 +2874,7 @@ const peopleAdministrationGroupLive = HttpApiBuilder.group(
         Effect.gen(function* listCompanyPeopleHandler() {
           const principal = yield* principalFor(request, 'company');
           const result = yield* listPeople(principal, payload, correlationFromRequest(request)).pipe(
-            Effect.catch(failure),
+            Effect.catch(peopleAdministrationFailure),
           );
           return yield* decodeResponse(PeopleListResponseSchema, result, shellInternalProblem);
         }).pipe(connectionsAdminDefect(request)),
@@ -2878,7 +2883,7 @@ const peopleAdministrationGroupLive = HttpApiBuilder.group(
         Effect.gen(function* listTenantPeopleHandler() {
           const principal = yield* principalFor(request, 'tenant');
           const result = yield* listPeople(principal, payload, correlationFromRequest(request)).pipe(
-            Effect.catch(failure),
+            Effect.catch(peopleAdministrationFailure),
           );
           return yield* decodeResponse(PeopleListResponseSchema, result, shellInternalProblem);
         }).pipe(connectionsAdminDefect(request)),
@@ -2886,21 +2891,23 @@ const peopleAdministrationGroupLive = HttpApiBuilder.group(
       .handle('setPeopleCompanyMembership', ({ headers, payload, request }) =>
         Effect.gen(function* setCompanyMembershipHandler() {
           const context = yield* commandContext(request, headers, 'company');
-          const result = yield* setPeopleCompanyMembership(context, payload).pipe(Effect.catch(failure));
+          const result = yield* setPeopleCompanyMembership(context, payload).pipe(
+            Effect.catch(peopleAdministrationFailure),
+          );
           return yield* decodeResponse(SetPeopleCompanyMembershipResponseSchema, result, shellInternalProblem);
         }).pipe(connectionsAdminDefect(request)),
       )
       .handle('setPeopleCompanyRole', ({ headers, payload, request }) =>
         Effect.gen(function* setCompanyRoleHandler() {
           const context = yield* commandContext(request, headers, 'company');
-          const result = yield* setPeopleScopedRole(context, payload).pipe(Effect.catch(failure));
+          const result = yield* setPeopleScopedRole(context, payload).pipe(Effect.catch(peopleAdministrationFailure));
           return yield* decodeResponse(SetPeopleRoleResponseSchema, result, shellInternalProblem);
         }).pipe(connectionsAdminDefect(request)),
       )
       .handle('setPeopleTenantRole', ({ headers, payload, request }) =>
         Effect.gen(function* setTenantRoleHandler() {
           const context = yield* commandContext(request, headers, 'tenant');
-          const result = yield* setPeopleScopedRole(context, payload).pipe(Effect.catch(failure));
+          const result = yield* setPeopleScopedRole(context, payload).pipe(Effect.catch(peopleAdministrationFailure));
           return yield* decodeResponse(SetPeopleRoleResponseSchema, result, shellInternalProblem);
         }).pipe(connectionsAdminDefect(request)),
       );

@@ -152,6 +152,17 @@ const eurLineOnO2 = () =>
     },
   });
 
+/** NET lines o1 100 @ 21 % and o2 100 @ 12 %, Shipping 99 on both in the given basis. */
+const netLinesWithShipping = (amountBasis: 'GROSS' | 'NET') =>
+  evaluationRequest({
+    pricing: {
+      pricingResultRef: PRICING_RESULT_REF,
+      publishedLines: [pricingLine('o1', '100.00'), pricingLine('o2', '100.00')],
+    },
+    purchase: purchaseBindingInput(['o1', 'o2'], { shippingSourceRef }),
+    shipping: shippingInput({ source: shippingCharge('99.00', amountBasis) }),
+  });
+
 describe('Prospective Launch Tax evaluation', () => {
   it('#936 #935 #942 mixed rates: one Decision with one Result per Taxable Supply Unit, rounded once per unit', () => {
     const outcome = success(evaluate());
@@ -765,17 +776,6 @@ describe('Prospective Launch Tax evaluation', () => {
   });
 
   describe('907-Q07 NET or GROSS Shipping, also for a VAT payer (PO 2026-10-11)', () => {
-    /** NET lines o1 100 @ 21 % and o2 100 @ 12 %, Shipping 99 on both in the given basis. */
-    const netLinesWithShipping = (amountBasis: 'GROSS' | 'NET') =>
-      evaluationRequest({
-        pricing: {
-          pricingResultRef: PRICING_RESULT_REF,
-          publishedLines: [pricingLine('o1', '100.00'), pricingLine('o2', '100.00')],
-        },
-        purchase: purchaseBindingInput(['o1', 'o2'], { shippingSourceRef }),
-        shipping: shippingInput({ source: shippingCharge('99.00', amountBasis) }),
-      });
-
     it('907-Q07 #933 #935 a payer NET Shipping charge 99 is split by gross weights 121:112 in its NET basis and taxed share × r', () => {
       const outcome = success(evaluate(netLinesWithShipping('NET')));
 

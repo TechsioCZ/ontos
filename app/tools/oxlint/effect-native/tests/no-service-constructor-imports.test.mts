@@ -1,19 +1,27 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import nodePath from 'node:path';
 
 import { Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { describe, expect, it } from 'effect-rstest';
 
-import { appRoot, runOxlint, testsDirectory } from './oxlint.mts';
-import type { LintRun } from './oxlint.mts';
-import { withTemporaryWorkspace } from './temporary-workspace.mts';
 import { provesDataFactoryImport } from '../../anti-slop/effect/rules/data-factory-proof.ts';
-import { noServiceConstructorImportsRule } from '../../anti-slop/effect/rules/no-service-constructor-imports.ts';
 import {
   proveDictionaryElementOpenness,
   proveInheritedPropertyLookups,
   replaceOpaqueDecodedValue,
 } from '../../anti-slop/tests/fixtures/no-service-constructor-imports/runtime-counterexamples.ts';
+import {
+  antiSlopEffectRule,
+  appRoot,
+  describeWorkspace,
+  effectNativeRule,
+  productionOptions,
+  ruleTester,
+  withOptions,
+  workspaceCase,
+} from './rule-tester.mts';
+import type { InvalidCase, ValidCase, WorkspaceEntry } from './rule-tester.mts';
+import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
 const bootstrapFilename = 'bootstrap.ts';
 const privacyCompletionProcess = 'verticals/privacy/tests/support/privacy-completion-http.ts';
@@ -28,7 +36,6 @@ const consumerFilename = 'consumer.ts';
 const factorySource = './factory.ts';
 const schemaImport = "import { Schema } from 'effect';";
 const dataFactoryConsumer = "import { makeData } from './factory.ts'; void makeData;";
-const lintConfig = nodePath.join(appRoot, 'oxlint.config.ts');
 const boundSchemaDeclaration = (bound: string) =>
   [
     'import { Schema as S } from "effect";',
@@ -37,244 +44,262 @@ const boundSchemaDeclaration = (bound: string) =>
   ].join('\n');
 
 const fixtureExecutable = () => 'executable';
+const closedSchemaFactorySource = (codec: string, input = '{}'): string =>
+  `${schemaImport}\nconst decode = Schema.decodeUnknownSync(${codec}); export const makeData = () => ({ value: decode(${input}) });`;
 
-const ruleCode = 'anti-slop-effect(no-service-constructor-imports)';
+const serviceRuleTitle = 'anti-slop-effect/no-service-constructor-imports';
+const serviceRule = antiSlopEffectRule('no-service-constructor-imports');
 const serviceConstructorMessage =
   'Do not import Effect service constructor "makeCustomerSchema" into runtime code. Import the owning Layer, yield the contextual service, and allow its requirements to propagate to the composition root.';
 
-const expectServiceReports = (run: LintRun, description: string): void => {
-  expect(
-    run.diagnostics
-      .filter(({ code, filename }) => code === ruleCode && nodePath.basename(filename) === consumerFilename)
-      .map(({ message }) => message),
-    description,
-  ).toEqual([serviceConstructorMessage, serviceConstructorMessage]);
+// Both imports of the constructor in the shared consumer report.
+const serviceReports = [{ message: serviceConstructorMessage }, { message: serviceConstructorMessage }];
+
+/**
+ * Records an on-disk scenario. The rule follows imports into neighbouring files, so every case
+ * snapshots the files written so far into its own workspace (below the ignored
+ * `.codex/reports/lint-rule-workspaces/`), which exists only while that case runs.
+ * Paths are workspace-relative; `directory` is the workspace root, spelled as the empty path.
+ */
+const recordScenario = (title: string, rule = serviceRule, options: Pick<ValidCase, 'options'> = {}) => {
+  const files = new Map<string, string>();
+  const valid: ValidCase[] = [];
+  const invalid: InvalidCase[] = [];
+  const snapshot = (target: string, name?: string): ValidCase => {
+    const code = files.get(target);
+    if (code === undefined) {
+      throw new Error(`${title}: ${target} was not written`);
+    }
+    const workspace = workspaceCase([...files].map(([path, source]) => ({ path, source })));
+    const scenarioCase: ValidCase = { code, filename: workspace.file(target), ...workspace.hooks, ...options };
+    if (name !== undefined) {
+      scenarioCase.name = name;
+    }
+    return scenarioCase;
+  };
+  return {
+    accept: (target: string, name?: string): void => {
+      valid.push(snapshot(target, name));
+    },
+    directory: '',
+    register: (): void => {
+      ruleTester.run(title, rule, { invalid, valid });
+    },
+    reject: (target: string, errors: InvalidCase['errors'], name?: string): void => {
+      invalid.push({ ...snapshot(target, name), errors });
+    },
+    write: (target: string, source: string): void => {
+      files.set(target, source);
+    },
+  };
 };
 
-it('proves schema factory implementations and rejects the same export after it gains a dependency', () => {
-  withTemporaryWorkspace((directory) => {
-    const factory = nodePath.join(directory, factoryFilename);
-    const consumer = nodePath.join(directory, consumerFilename);
-    mkdirSync(directory, { recursive: true });
-    writeFileSync(
-      factory,
-      [
-        schemaImport,
-        '',
-        'export const makeCustomerSchema = (tag: string) => Schema.Struct({',
-        '  tag: Schema.Literal(tag),',
-        '});',
-        '',
-      ].join('\n'),
-    );
-    writeFileSync(
-      consumer,
-      [
-        "import { makeCustomerSchema, makeCustomerSchema as makeAliasedSchema } from './factory.ts';",
-        '',
-        'void makeCustomerSchema;',
-        'void makeAliasedSchema;',
-        '',
-      ].join('\n'),
-    );
-
-    const validRun = runOxlint(lintConfig, [consumer], directory);
-    const validDiagnostics = validRun.diagnostics.filter(({ code }) => code === ruleCode);
-
-    expect(
-      validDiagnostics.filter(({ filename }) => nodePath.basename(filename) === consumerFilename),
-      'a direct and aliased import of a proven schema factory must be accepted',
-    ).toEqual([]);
-
-    writeFileSync(
-      factory,
-      [
-        'interface CustomerSchemaDependency {',
-        '  readonly read: () => number;',
-        '}',
-        '',
-        'export const makeCustomerSchema = (dependency: CustomerSchemaDependency) => dependency;',
-        '',
-      ].join('\n'),
-    );
-
-    const invalidRun = runOxlint(lintConfig, [consumer], directory);
-    expectServiceReports(
-      invalidRun,
-      'changing the same export to a dependency-bearing constructor must restore both diagnostics',
-    );
-
-    writeFileSync(
-      factory,
-      [
-        schemaImport,
-        '',
-        'const toService = () => ({ live: true });',
-        'export const makeCustomerSchema = (tag: string) => Schema.Struct({}).pipe(toService);',
-        '',
-      ].join('\n'),
-    );
-    const pipeRun = runOxlint(lintConfig, [consumer], directory);
-    expectServiceReports(
-      pipeRun,
-      'an arbitrary local function passed to Schema.pipe must remain a service constructor diagnostic',
-    );
-
-    writeFileSync(
-      factory,
-      [
-        "import { HttpApiSchema } from '@modern-js/bff-effect/effect-client';",
-        schemaImport,
-        '',
-        "const schemaRepresentation = HttpApiSchema.asJson({ contentType: 'application/problem+json' });",
-        'export const makeCustomerSchema = () => Schema.Struct({}).pipe(schemaRepresentation);',
-        '',
-      ].join('\n'),
-    );
-    const pipeAliasRun = runOxlint(lintConfig, [consumer], directory);
-    const pipeAliasDiagnostics = pipeAliasRun.diagnostics.filter(({ code }) => code === ruleCode);
-    expect(
-      pipeAliasDiagnostics.filter(({ filename }) => nodePath.basename(filename) === consumerFilename),
-      'an immutable alias of the pure HttpApiSchema JSON annotation must be accepted by Schema.pipe',
-    ).toEqual([]);
-
-    writeFileSync(
-      factory,
-      [
-        schemaImport,
-        '',
-        'const createTransform = (tag: string) => () => ({ live: true });',
-        "const toService = createTransform('customer');",
-        'export const makeCustomerSchema = () => Schema.Struct({}).pipe(toService);',
-        '',
-      ].join('\n'),
-    );
-    const pipeAliasInvalidRun = runOxlint(lintConfig, [consumer], directory);
-    expectServiceReports(
-      pipeAliasInvalidRun,
-      'an alias initialized through a local service-producing transform must remain rejected by Schema.pipe',
-    );
-
-    writeFileSync(
-      factory,
-      [
-        schemaImport,
-        '',
-        'const build = (tag: string) => Schema.Struct({});',
-        'export const makeCustomerSchema = (tag: string) => {',
-        '  const build = (tag: string) => ({ read: () => tag });',
-        '  return build(tag);',
-        '};',
-        '',
-      ].join('\n'),
-    );
-    const shadowRun = runOxlint(lintConfig, [consumer], directory);
-    expectServiceReports(shadowRun, 'a function-local shadow must not resolve to a top-level schema helper');
-
-    writeFileSync(
-      factory,
-      [
-        schemaImport,
-        '',
-        'export let makeCustomerSchema = (tag: string) => Schema.Struct({});',
-        'makeCustomerSchema = () => ({ live: true });',
-        '',
-      ].join('\n'),
-    );
-    const mutationRun = runOxlint(lintConfig, [consumer], directory);
-    expectServiceReports(mutationRun, 'a mutable exported binding and executable reassignment must fail closed');
-
-    writeFileSync(
-      nodePath.join(directory, 'service-types.ts'),
-      [
-        'export declare namespace Schema {',
-        '  namespace Struct {',
-        '    interface Fields {',
-        '      readonly client: { readonly read: () => string };',
-        '    }',
-        '  }',
-        '}',
-        '',
-      ].join('\n'),
-    );
-    writeFileSync(
-      factory,
-      [
-        "import { Schema as S } from 'effect';",
-        '',
-        'export const makeCustomerSchema = <const Fields extends S.Struct.Fields>(',
-        '  fields: Fields,',
-        ') => S.Struct(fields);',
-        '',
-      ].join('\n'),
-    );
-    const genuineSchemaAliasRun = runOxlint(lintConfig, [consumer], directory);
-    const genuineSchemaAliasDiagnostics = genuineSchemaAliasRun.diagnostics.filter(({ code }) => code === ruleCode);
-    expect(
-      genuineSchemaAliasDiagnostics.filter(({ filename }) => nodePath.basename(filename) === consumerFilename),
-      'a generic schema factory using an aliased genuine Effect Schema import must be accepted',
-    ).toEqual([]);
-
-    writeFileSync(
-      factory,
-      [
-        "import { Schema as S } from 'effect';",
-        "import type { Schema } from './service-types.ts';",
-        '',
-        'export const makeCustomerSchema = <const Fields extends Schema.Struct.Fields>(',
-        '  _fields: Fields,',
-        ') => S.Struct({});',
-        '',
-      ].join('\n'),
-    );
-    const counterfeitSchemaAliasRun = runOxlint(lintConfig, [consumer], directory);
-    expectServiceReports(
-      counterfeitSchemaAliasRun,
-      'a type-only counterfeit Schema.Struct.Fields root must not prove a schema factory',
-    );
-  });
+/** Actual repository files, linted in place. */
+const repositoryCase = (file: string): ValidCase => ({
+  code: readFileSync(nodePath.join(appRoot, file), 'utf-8'),
+  filename: nodePath.join(appRoot, file),
+  name: file,
 });
 
-it('accepts literal data factories while preserving dependency, executable, and effectful controls', () => {
-  withTemporaryWorkspace((directory) => {
-    const factory = nodePath.join(directory, factoryFilename);
-    const consumer = nodePath.join(directory, consumerFilename);
-    writeFileSync(
-      consumer,
-      [
-        "import { makeCustomerSchema, makeCustomerSchema as makeAliasedSchema } from './factory.ts';",
-        'void makeCustomerSchema;',
-        'void makeAliasedSchema;',
-      ].join('\n'),
-    );
-    for (const declaration of [
-      'export const makeCustomerSchema = (tag: string) => ({ tag, entries: [], nested: { enabled: true } });',
-      `export const makeCustomerSchema = (tag: string) => { const label = \`module:\${tag}\`; return { label }; };`,
-      'export const makeCustomerSchema = () => [{ label: "module" }];',
-    ]) {
-      writeFileSync(factory, declaration);
-      const run = runOxlint(lintConfig, [consumer], directory);
-      expect(
-        run.diagnostics.filter(({ code }) => code === ruleCode),
-        declaration,
-      ).toEqual([]);
-    }
-    for (const declaration of [
-      'type Dependency = { readonly read: () => string }; export const makeCustomerSchema = (dependency: Dependency) => ({ dependency });',
-      'export const makeCustomerSchema = (tag: string) => ({ read: () => tag });',
-      'export const makeCustomerSchema = (tag: string) => ({ get label() { return tag; } });',
-      'export const makeCustomerSchema = (tag: string) => { const read = (value: string) => fetch(value); return { data: read(tag) }; };',
-      'export const makeCustomerSchema = (tag: string) => ({ value: fetch(tag) });',
-      'export const makeCustomerSchema = (tag: string) => { const value = fetch(tag); return { tag }; };',
-      'export const makeCustomerSchema = (tag: string = fetch("dependency")) => ({ tag });',
-      'export const makeCustomerSchema = (tag: string) => ({ [fetch(tag)]: true });',
-    ]) {
-      writeFileSync(factory, declaration);
-      expectServiceReports(runOxlint(lintConfig, [consumer], directory), declaration);
-    }
-  });
+describe('proves schema factory implementations and rejects the same export after it gains a dependency', () => {
+  const { accept, directory, register, reject, write } = recordScenario(serviceRuleTitle);
+  const factory = nodePath.join(directory, factoryFilename);
+  const consumer = nodePath.join(directory, consumerFilename);
+  write(
+    factory,
+    [
+      schemaImport,
+      '',
+      'export const makeCustomerSchema = (tag: string) => Schema.Struct({',
+      '  tag: Schema.Literal(tag),',
+      '});',
+      '',
+    ].join('\n'),
+  );
+  write(
+    consumer,
+    [
+      "import { makeCustomerSchema, makeCustomerSchema as makeAliasedSchema } from './factory.ts';",
+      '',
+      'void makeCustomerSchema;',
+      'void makeAliasedSchema;',
+      '',
+    ].join('\n'),
+  );
+
+  accept(consumer, 'a direct and aliased import of a proven schema factory must be accepted');
+
+  write(
+    factory,
+    [
+      'interface CustomerSchemaDependency {',
+      '  readonly read: () => number;',
+      '}',
+      '',
+      'export const makeCustomerSchema = (dependency: CustomerSchemaDependency) => dependency;',
+      '',
+    ].join('\n'),
+  );
+
+  reject(
+    consumer,
+    serviceReports,
+    'changing the same export to a dependency-bearing constructor must restore both diagnostics',
+  );
+
+  write(
+    factory,
+    [
+      schemaImport,
+      '',
+      'const toService = () => ({ live: true });',
+      'export const makeCustomerSchema = (tag: string) => Schema.Struct({}).pipe(toService);',
+      '',
+    ].join('\n'),
+  );
+  reject(
+    consumer,
+    serviceReports,
+    'an arbitrary local function passed to Schema.pipe must remain a service constructor diagnostic',
+  );
+
+  write(
+    factory,
+    [
+      "import { HttpApiSchema } from '@modern-js/bff-effect/effect-client';",
+      schemaImport,
+      '',
+      "const schemaRepresentation = HttpApiSchema.asJson({ contentType: 'application/problem+json' });",
+      'export const makeCustomerSchema = () => Schema.Struct({}).pipe(schemaRepresentation);',
+      '',
+    ].join('\n'),
+  );
+  accept(consumer, 'an immutable alias of the pure HttpApiSchema JSON annotation must be accepted by Schema.pipe');
+
+  write(
+    factory,
+    [
+      schemaImport,
+      '',
+      'const createTransform = (tag: string) => () => ({ live: true });',
+      "const toService = createTransform('customer');",
+      'export const makeCustomerSchema = () => Schema.Struct({}).pipe(toService);',
+      '',
+    ].join('\n'),
+  );
+  reject(
+    consumer,
+    serviceReports,
+    'an alias initialized through a local service-producing transform must remain rejected by Schema.pipe',
+  );
+
+  write(
+    factory,
+    [
+      schemaImport,
+      '',
+      'const build = (tag: string) => Schema.Struct({});',
+      'export const makeCustomerSchema = (tag: string) => {',
+      '  const build = (tag: string) => ({ read: () => tag });',
+      '  return build(tag);',
+      '};',
+      '',
+    ].join('\n'),
+  );
+  reject(consumer, serviceReports, 'a function-local shadow must not resolve to a top-level schema helper');
+
+  write(
+    factory,
+    [
+      schemaImport,
+      '',
+      'export let makeCustomerSchema = (tag: string) => Schema.Struct({});',
+      'makeCustomerSchema = () => ({ live: true });',
+      '',
+    ].join('\n'),
+  );
+  reject(consumer, serviceReports, 'a mutable exported binding and executable reassignment must fail closed');
+
+  write(
+    nodePath.join(directory, 'service-types.ts'),
+    [
+      'export declare namespace Schema {',
+      '  namespace Struct {',
+      '    interface Fields {',
+      '      readonly client: { readonly read: () => string };',
+      '    }',
+      '  }',
+      '}',
+      '',
+    ].join('\n'),
+  );
+  write(
+    factory,
+    [
+      "import { Schema as S } from 'effect';",
+      '',
+      'export const makeCustomerSchema = <const Fields extends S.Struct.Fields>(',
+      '  fields: Fields,',
+      ') => S.Struct(fields);',
+      '',
+    ].join('\n'),
+  );
+  accept(consumer, 'a generic schema factory using an aliased genuine Effect Schema import must be accepted');
+
+  write(
+    factory,
+    [
+      "import { Schema as S } from 'effect';",
+      "import type { Schema } from './service-types.ts';",
+      '',
+      'export const makeCustomerSchema = <const Fields extends Schema.Struct.Fields>(',
+      '  _fields: Fields,',
+      ') => S.Struct({});',
+      '',
+    ].join('\n'),
+  );
+  reject(consumer, serviceReports, 'a type-only counterfeit Schema.Struct.Fields root must not prove a schema factory');
+  register();
 });
 
+describe('accepts literal data factories while preserving dependency, executable, and effectful controls', () => {
+  const { accept, directory, register, reject, write } = recordScenario(serviceRuleTitle);
+  const factory = nodePath.join(directory, factoryFilename);
+  const consumer = nodePath.join(directory, consumerFilename);
+  write(
+    consumer,
+    [
+      "import { makeCustomerSchema, makeCustomerSchema as makeAliasedSchema } from './factory.ts';",
+      'void makeCustomerSchema;',
+      'void makeAliasedSchema;',
+    ].join('\n'),
+  );
+  for (const declaration of [
+    'export const makeCustomerSchema = (tag: string) => ({ tag, entries: [], nested: { enabled: true } });',
+    `export const makeCustomerSchema = (tag: string) => { const label = \`module:\${tag}\`; return { label }; };`,
+    'export const makeCustomerSchema = () => [{ label: "module" }];',
+  ]) {
+    write(factory, declaration);
+    accept(consumer, declaration);
+  }
+  for (const declaration of [
+    'type Dependency = { readonly read: () => string }; export const makeCustomerSchema = (dependency: Dependency) => ({ dependency });',
+    'export const makeCustomerSchema = (tag: string) => ({ read: () => tag });',
+    'export const makeCustomerSchema = (tag: string) => ({ get label() { return tag; } });',
+    'export const makeCustomerSchema = (tag: string) => { const read = (value: string) => fetch(value); return { data: read(tag) }; };',
+    'export const makeCustomerSchema = (tag: string) => ({ value: fetch(tag) });',
+    'export const makeCustomerSchema = (tag: string) => { const value = fetch(tag); return { tag }; };',
+    'export const makeCustomerSchema = (tag: string = fetch("dependency")) => ({ tag });',
+    'export const makeCustomerSchema = (tag: string) => ({ [fetch(tag)]: true });',
+  ]) {
+    write(factory, declaration);
+    reject(consumer, serviceReports, declaration);
+  }
+  register();
+});
+
+// provesDataFactoryImport resolves and reads the imported factory module, so the direct proof tests
+// below write real files into a fresh workspace below the ignored `.codex/reports/lint-rule-workspaces/`.
 it('proves closed DTO construction across imports and rejects executable reachable behavior', () => {
   withTemporaryWorkspace((directory) => {
     const factory = nodePath.join(directory, factoryFilename);
@@ -434,15 +459,13 @@ it('proves closed record and template schemas and rejects opaque or executable p
     const factory = nodePath.join(directory, factoryFilename);
     const consumer = nodePath.join(directory, consumerFilename);
     writeFileSync(consumer, dataFactoryConsumer);
-    const declaration = (codec: string, input = '{}'): string =>
-      `${schemaImport}\nconst decode = Schema.decodeUnknownSync(${codec}); export const makeData = () => ({ value: decode(${input}) });`;
     for (const [codec, input] of [
       ['Schema.Record(Schema.String, Schema.String)', '{ label: "data" }'],
       ['Schema.Record(Schema.String, Schema.Json)', '{ nested: { values: [1, "data", null] } }'],
       ['Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))', '0'],
       ['Schema.TemplateLiteral(["icon-[", Schema.String, "]"])', '"icon-[home]"'],
     ] as const) {
-      writeFileSync(factory, declaration(codec, input));
+      writeFileSync(factory, closedSchemaFactorySource(codec, input));
       expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), codec).toBe(true);
     }
     for (const codec of [
@@ -456,7 +479,7 @@ it('proves closed record and template schemas and rejects opaque or executable p
       'Schema.TemplateLiteral(["icon-[", fetch("service"), "]"])',
       'Schema.TemplateLiteral(["icon-[", Schema.String.check(Schema.makeFilter((value) => { fetch(value); return undefined; })), "]"])',
     ]) {
-      writeFileSync(factory, declaration(codec));
+      writeFileSync(factory, closedSchemaFactorySource(codec));
       expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), codec).toBe(false);
     }
   });
@@ -1012,25 +1035,25 @@ it('proves pure byte hashing in generic data calls and rejects executable or unm
       declaration.replace(shaImport, "import { sha512 as sha256 } from '@noble/hashes/sha2.js';"),
     );
     expect(provesDataFactoryImport(consumer, factorySource, 'makePayload')).toBe(false);
-  }, testsDirectory);
+  });
 });
 
-it('rejects typed effectful schema helpers and shadowed native assignments', () => {
-  withTemporaryWorkspace((directory) => {
-    const factory = nodePath.join(directory, factoryFilename);
-    const consumer = nodePath.join(directory, consumerFilename);
-    writeFileSync(
-      consumer,
-      "import { makeCustomerSchema, makeCustomerSchema as makeAliasedSchema } from './factory.ts'; void makeCustomerSchema; void makeAliasedSchema;",
-    );
-    for (const declaration of [
-      'import { Schema } from "effect"; const poisoned = (value: string) => { fetch(value); return Schema.String; }; export const makeCustomerSchema = (tag: string) => Schema.Struct({ value: poisoned(tag) });',
-      'import { Schema } from "effect"; const Object = { assign: (value: string) => fetch(value) }; export const makeCustomerSchema = (tag: string) => Schema.Struct({ value: Object.assign(tag) });',
-    ]) {
-      writeFileSync(factory, declaration);
-      expectServiceReports(runOxlint(lintConfig, [consumer], directory), declaration);
-    }
-  });
+describe('rejects typed effectful schema helpers and shadowed native assignments', () => {
+  const { directory, register, reject, write } = recordScenario(serviceRuleTitle);
+  const factory = nodePath.join(directory, factoryFilename);
+  const consumer = nodePath.join(directory, consumerFilename);
+  write(
+    consumer,
+    "import { makeCustomerSchema, makeCustomerSchema as makeAliasedSchema } from './factory.ts'; void makeCustomerSchema; void makeAliasedSchema;",
+  );
+  for (const declaration of [
+    'import { Schema } from "effect"; const poisoned = (value: string) => { fetch(value); return Schema.String; }; export const makeCustomerSchema = (tag: string) => Schema.Struct({ value: poisoned(tag) });',
+    'import { Schema } from "effect"; const Object = { assign: (value: string) => fetch(value) }; export const makeCustomerSchema = (tag: string) => Schema.Struct({ value: Object.assign(tag) });',
+  ]) {
+    write(factory, declaration);
+    reject(consumer, serviceReports, declaration);
+  }
+  register();
 });
 
 it('proves imported native numeric bounds without trusting shadowed or opaque values', () => {
@@ -1131,91 +1154,94 @@ it('proves the concrete Outbox fixture imports without an ownership or name exem
   ).toBe(true);
 });
 
-it('allows service constructor calls only within proven native service factory callbacks', () => {
-  withTemporaryWorkspace((directory) => {
-    const factory = nodePath.join(directory, factoryFilename);
-    const consumer = nodePath.join(directory, consumerFilename);
-    writeFileSync(factory, 'export const makeCustomerSchema = (value: string) => ({ read: () => value });');
-    const nativeImport = "import type { ActionServiceFactory as NativeFactory } from '@app/core-runtime';";
-    const constructorImport = "import { makeCustomerSchema } from './factory.ts';";
-    for (const declaration of [
-      `${nativeImport} ${constructorImport} const serviceFactory: NativeFactory<unknown, unknown> = (context, scope, revision) => makeCustomerSchema(revision);`,
-      `${constructorImport} import { defineRead as nativeRead } from '@app/core-runtime'; nativeRead({}, (input) => input, (context, scope, revision) => makeCustomerSchema(revision), {});`,
-      `${nativeImport} ${constructorImport} import { Effect as E } from 'effect'; const serviceFactory: NativeFactory<unknown, unknown> = E.fn('service')(function* (context, scope, revision) { return makeCustomerSchema(revision); });`,
-    ]) {
-      writeFileSync(consumer, declaration);
-      expect(
-        runOxlint(lintConfig, [consumer], directory).diagnostics.filter(({ code }) => code === ruleCode),
-        declaration,
-      ).toEqual([]);
-    }
-    for (const declaration of [
-      `${constructorImport} type NativeFactory = (context: unknown) => unknown; const serviceFactory: NativeFactory = (context) => makeCustomerSchema('revision');`,
-      `${constructorImport} import { defineRead } from '@app/core-runtime'; defineRead({}, (input) => makeCustomerSchema('revision'), (context, scope, revision) => ({ value: revision }), {});`,
-      `${constructorImport} import { defineRead } from 'foreign-runtime'; defineRead({}, (input) => input, (context, scope, revision) => makeCustomerSchema(revision), {});`,
-      `${nativeImport} ${constructorImport} const outside = makeCustomerSchema('revision'); const serviceFactory: NativeFactory<unknown, unknown> = (context, scope, revision) => outside;`,
-      `${nativeImport} ${constructorImport} const serviceFactory: NativeFactory<unknown, unknown> = (context, scope, revision) => makeCustomerSchema;`,
-      `${nativeImport} ${constructorImport} const wrap = (callback: unknown) => callback; const serviceFactory: NativeFactory<unknown, unknown> = wrap((context, scope, revision) => makeCustomerSchema(revision));`,
-    ]) {
-      writeFileSync(consumer, declaration);
-      expect(
-        runOxlint(lintConfig, [consumer], directory).diagnostics.filter(({ code }) => code === ruleCode).length,
-        declaration,
-      ).toBe(1);
-    }
-  });
+describe('allows service constructor calls only within proven native service factory callbacks', () => {
+  const { accept, directory, register, reject, write } = recordScenario(serviceRuleTitle);
+  const factory = nodePath.join(directory, factoryFilename);
+  const consumer = nodePath.join(directory, consumerFilename);
+  write(factory, 'export const makeCustomerSchema = (value: string) => ({ read: () => value });');
+  const nativeImport = "import type { ActionServiceFactory as NativeFactory } from '@app/core-runtime';";
+  const constructorImport = "import { makeCustomerSchema } from './factory.ts';";
+  for (const declaration of [
+    `${nativeImport} ${constructorImport} const serviceFactory: NativeFactory<unknown, unknown> = (context, scope, revision) => makeCustomerSchema(revision);`,
+    `${constructorImport} import { defineRead as nativeRead } from '@app/core-runtime'; nativeRead({}, (input) => input, (context, scope, revision) => makeCustomerSchema(revision), {});`,
+    `${nativeImport} ${constructorImport} import { Effect as E } from 'effect'; const serviceFactory: NativeFactory<unknown, unknown> = E.fn('service')(function* (context, scope, revision) { return makeCustomerSchema(revision); });`,
+  ]) {
+    write(consumer, declaration);
+    accept(consumer, declaration);
+  }
+  for (const declaration of [
+    `${constructorImport} type NativeFactory = (context: unknown) => unknown; const serviceFactory: NativeFactory = (context) => makeCustomerSchema('revision');`,
+    `${constructorImport} import { defineRead } from '@app/core-runtime'; defineRead({}, (input) => makeCustomerSchema('revision'), (context, scope, revision) => ({ value: revision }), {});`,
+    `${constructorImport} import { defineRead } from 'foreign-runtime'; defineRead({}, (input) => input, (context, scope, revision) => makeCustomerSchema(revision), {});`,
+    `${nativeImport} ${constructorImport} const outside = makeCustomerSchema('revision'); const serviceFactory: NativeFactory<unknown, unknown> = (context, scope, revision) => outside;`,
+    `${nativeImport} ${constructorImport} const serviceFactory: NativeFactory<unknown, unknown> = (context, scope, revision) => makeCustomerSchema;`,
+    `${nativeImport} ${constructorImport} const wrap = (callback: unknown) => callback; const serviceFactory: NativeFactory<unknown, unknown> = wrap((context, scope, revision) => makeCustomerSchema(revision));`,
+  ]) {
+    write(consumer, declaration);
+    reject(consumer, 1, declaration);
+  }
+  register();
 });
+
+const drizzleMetadataFactorySource = [
+  'import { sql as statement } from "drizzle-orm";',
+  'import { pgPolicy as policy, pgSchema, uuid, text } from "drizzle-orm/pg-core";',
+  'import type { PgPolicy, PgTable } from "drizzle-orm/pg-core";',
+  'import { Schema } from "effect";',
+  'const Invariant = Schema.TaggedError<Error>()("Invariant", { message: Schema.String });',
+  'const table = pgSchema("core").table("items", { tenantId: uuid("tenant_id").notNull(), moduleKey: text("module_key") });',
+  'const trustedTenant = statement`(select trust.current_tenant_id())`;',
+  'const canonical = /^[a-z][a-z0-9_]*$/u;',
+  'const literal = (key: string) => {',
+  '  if (!canonical.test(key)) throw new Invariant({ message: "invalid module key" });',
+  `  return statement.raw(\`'\${key}'\`);`,
+  '};',
+  'const linked = (target: PgTable, value: PgPolicy, scope: { readonly trustedTenant?: true } = {}) => {',
+  '  if (!canonical.test(value.name) || value.name.length > 63) throw new Invariant({ message: "invalid policy name" });',
+  '  if (Array.isArray(value.to)) Object.freeze(value.to);',
+  '  return Object.freeze({ ...scope, policy: Object.freeze(value.link(target)), table: target });',
+  '};',
+  'export const makeData = (keys: readonly string[]) => {',
+  '  const validated = keys.map((key) => key);',
+  '  if (keys.some((key, index) => key !== validated[index])) throw new Invariant({ message: "inconsistent enrollment" });',
+  `  const exclusions = validated.map((key) => statement\`\${table.moduleKey} <> \${literal(key)}\`);`,
+  `  const predicate = statement\`\${table.tenantId} = \${trustedTenant} and \${statement.join(exclusions, statement\` and \`)}\`;`,
+  '  const descriptors = [',
+  '    linked(table, policy("items_select", { for: "select", to: ["runtime"], using: keys.length === 0 ? undefined : predicate, withCheck: keys.length === 0 ? predicate : undefined })),',
+  `    ...validated.flatMap((key) => [linked(table, policy(\`items_\${key}_select\`, { for: "select", to: [key], using: predicate }), { trustedTenant: true })]),`,
+  '  ];',
+  '  if (new Set(descriptors.map(({ policy }) => policy.name)).size !== descriptors.length) throw new Invariant({ message: "duplicate names" });',
+  '  return Object.freeze(descriptors);',
+  '};',
+].join('\n');
 
 it('proves validated, freshly linked Drizzle metadata without a factory-name exemption', () => {
   withTemporaryWorkspace((directory) => {
     const factory = nodePath.join(directory, factoryFilename);
     const consumer = nodePath.join(directory, consumerFilename);
     writeFileSync(consumer, dataFactoryConsumer);
-    const declaration = [
-      'import { sql as statement } from "drizzle-orm";',
-      'import { pgPolicy as policy, pgSchema, uuid, text } from "drizzle-orm/pg-core";',
-      'import type { PgPolicy, PgTable } from "drizzle-orm/pg-core";',
-      'import { Schema } from "effect";',
-      'const Invariant = Schema.TaggedError<Error>()("Invariant", { message: Schema.String });',
-      'const table = pgSchema("core").table("items", { tenantId: uuid("tenant_id").notNull(), moduleKey: text("module_key") });',
-      'const trustedTenant = statement`(select trust.current_tenant_id())`;',
-      'const canonical = /^[a-z][a-z0-9_]*$/u;',
-      'const literal = (key: string) => {',
-      '  if (!canonical.test(key)) throw new Invariant({ message: "invalid module key" });',
-      `  return statement.raw(\`'\${key}'\`);`,
-      '};',
-      'const linked = (target: PgTable, value: PgPolicy, scope: { readonly trustedTenant?: true } = {}) => {',
-      '  if (!canonical.test(value.name) || value.name.length > 63) throw new Invariant({ message: "invalid policy name" });',
-      '  if (Array.isArray(value.to)) Object.freeze(value.to);',
-      '  return Object.freeze({ ...scope, policy: Object.freeze(value.link(target)), table: target });',
-      '};',
-      'export const makeData = (keys: readonly string[]) => {',
-      '  const validated = keys.map((key) => key);',
-      '  if (keys.some((key, index) => key !== validated[index])) throw new Invariant({ message: "inconsistent enrollment" });',
-      `  const exclusions = validated.map((key) => statement\`\${table.moduleKey} <> \${literal(key)}\`);`,
-      `  const predicate = statement\`\${table.tenantId} = \${trustedTenant} and \${statement.join(exclusions, statement\` and \`)}\`;`,
-      '  const descriptors = [',
-      '    linked(table, policy("items_select", { for: "select", to: ["runtime"], using: keys.length === 0 ? undefined : predicate, withCheck: keys.length === 0 ? predicate : undefined })),',
-      `    ...validated.flatMap((key) => [linked(table, policy(\`items_\${key}_select\`, { for: "select", to: [key], using: predicate }), { trustedTenant: true })]),`,
-      '  ];',
-      '  if (new Set(descriptors.map(({ policy }) => policy.name)).size !== descriptors.length) throw new Invariant({ message: "duplicate names" });',
-      '  return Object.freeze(descriptors);',
-      '};',
-    ].join('\n');
+    const declaration = drizzleMetadataFactorySource;
     writeFileSync(factory, declaration);
     expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(true);
-    expect(runOxlint(lintConfig, [consumer], directory).diagnostics.filter(({ code }) => code === ruleCode)).toEqual(
-      [],
-    );
     writeFileSync(
       factory,
       declaration.replace(`return statement.raw(\`'\${key}'\`);`, 'return statement.raw(fetch(key));'),
     );
     expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(false);
-    expect(
-      runOxlint(lintConfig, [consumer], directory).diagnostics.filter(({ code }) => code === ruleCode),
-    ).toHaveLength(1);
   });
+});
+
+describe('reports executable SQL in the validated Drizzle metadata graph', () => {
+  const { accept, register, reject, write } = recordScenario(serviceRuleTitle);
+  write(consumerFilename, dataFactoryConsumer);
+  write(factoryFilename, drizzleMetadataFactorySource);
+  accept(consumerFilename, 'validated native metadata');
+  write(
+    factoryFilename,
+    drizzleMetadataFactorySource.replace(`return statement.raw(\`'\${key}'\`);`, 'return statement.raw(fetch(key));'),
+  );
+  reject(consumerFilename, 1, 'runtime SQL remains a service constructor');
+  register();
 });
 
 it('proves the actual enrollment, identity-policy and migration-schema graphs', () => {
@@ -1507,297 +1533,283 @@ it('accepts reference factories beside native domain contracts but rejects execu
   });
 });
 
-it('accepts only deployment-bound native Layer composition and preserves constructor controls', () => {
-  withTemporaryWorkspace((directory) => {
-    const actualRuntime = nodePath.relative(
-      directory,
-      nodePath.join(appRoot, 'packages/core-runtime/src/actions/runtime.ts'),
-    );
-    const layerFactorySource = './layer-factory.ts';
-    const layerFactory = [
-      'import { Effect, Layer, Context } from "effect";',
-      'const Tag = Context.Service("Tag");',
-      'export const makeRuntime = (deployment) => Layer.effect(Tag, Effect.gen(function* () { return deployment; }));',
-    ].join('\n');
-    writeFileSync(nodePath.join(directory, 'layer-factory.ts'), layerFactory);
-    writeFileSync(
-      nodePath.join(directory, 'effect-factory.ts'),
-      layerFactory.replace(
-        'Layer.effect(Tag, Effect.gen(function* () { return deployment; }))',
-        'Effect.succeed(deployment)',
-      ),
-    );
-    writeFileSync(
-      nodePath.join(directory, 'eager-factory.ts'),
-      layerFactory.replace(
-        'Layer.effect(Tag, Effect.gen(function* () { return deployment; }))',
-        '{ fetch("runtime"); return Layer.effect(Tag, Effect.gen(function* () { return deployment; })); }',
-      ),
-    );
-    writeFileSync(nodePath.join(directory, 'mutated-factory.ts'), `${layerFactory}\nLayer.effect = counterfeit;`);
-    writeFileSync(
-      nodePath.join(directory, 'escaped-factory-namespace.ts'),
-      `${layerFactory}\nObject.assign(Layer, counterfeit);`,
-    );
-    const source = [
-      'import { Effect as Fx, Layer as Layers } from "effect";',
-      'import { ActiveApplicationCompositionService as Composition } from "@app/core-runtime/modules/active-application-composition";',
-      'import { makeRuntime as makeBoundRuntime } from "./layer-factory.ts";',
-      'const runtime = Layers.unwrap(Fx.gen(function* () {',
-      '  const snapshot = yield* (yield* Composition).load;',
-      '  return makeBoundRuntime(snapshot.composition.shell.deployment).pipe(Layers.provide(dependencies));',
-      '}));',
-    ].join('\n');
-    const valid = {
-      'actual-runtime.ts': source
-        .replace('makeRuntime as makeBoundRuntime', 'makeActionRuntimeLive as makeBoundRuntime')
-        .replace(layerFactorySource, actualRuntime),
-      'native-layer.ts': source,
-    };
-    const invalid = {
-      'eager-factory-consumer.ts': source.replace(layerFactorySource, './eager-factory.ts'),
-      'effect-factory-consumer.ts': source.replace(layerFactorySource, './effect-factory.ts'),
-      'escaped-factory-namespace-consumer.ts': source.replace(layerFactorySource, './escaped-factory-namespace.ts'),
-      'escaped-factory.ts': `${source}\nvoid makeBoundRuntime;`,
-      'escaped-layer.ts': `${source}\nObject.assign(Layers, counterfeit);`,
-      'fake-snapshot.ts': source.replace(
-        'yield* (yield* Composition).load',
-        '{ composition: { shell: { deployment: {} } } }',
-      ),
-      'foreign-composition.ts': source.replace(
-        '@app/core-runtime/modules/active-application-composition',
-        './foreign-composition.ts',
-      ),
-      'foreign-effect.ts': source.replace('from "effect"', 'from "foreign-effect"'),
-      'hardcoded-deployment.ts': source.replace(
-        'snapshot.composition.shell.deployment',
-        '{ appId: "shell", buildMarker: "fake" }',
-      ),
-      'laundered-return.ts': source.replace(
-        'return makeBoundRuntime(snapshot.composition.shell.deployment).pipe(Layers.provide(dependencies));',
-        'return Fx.succeed(makeBoundRuntime(snapshot.composition.shell.deployment));',
-      ),
-      'mutated-deployment.ts': source.replace(
-        '  return makeBoundRuntime',
-        '  snapshot.composition.shell.deployment = replacement;\n  return makeBoundRuntime',
-      ),
-      'mutated-factory-consumer.ts': source.replace(layerFactorySource, './mutated-factory.ts'),
-      'mutated-layer.ts': `${source}\nLayers.unwrap = counterfeit;`,
-      'nested-business.ts': source.replace('const runtime =', 'function business() { return').replace('}));', '})); }'),
-      'shadowed-composition.ts': source.replace(
-        '  const snapshot',
-        '  const Composition = fakeService;\n  const snapshot',
-      ),
-      'shadowed-layer.ts': source
-        .replace('const runtime =', 'function business(Layers) { return')
-        .replace('}));', '})); }'),
-      'wrong-deployment.ts': source.replace(
-        'snapshot.composition.shell.deployment',
-        'snapshot.composition.other.deployment',
-      ),
-    };
-    const files = Object.entries({ ...valid, ...invalid }).map(([name, candidate]) => {
-      const filename = nodePath.join(directory, name);
-      writeFileSync(filename, candidate);
-      return filename;
-    });
-    const run = runOxlint(lintConfig, files, directory);
-    expect(run.numberOfFiles).toBe(files.length);
-    for (const name of Object.keys(valid)) {
-      expect(
-        run.diagnostics.filter(({ code, filename }) => code === ruleCode && nodePath.basename(filename) === name),
-        name,
-      ).toEqual([]);
-    }
-    for (const name of Object.keys(invalid)) {
-      expect(
-        run.diagnostics.filter(({ code, filename }) => code === ruleCode && nodePath.basename(filename) === name),
-        name,
-      ).toHaveLength(1);
-      expect(
-        run.diagnostics.find(({ code, filename }) => code === ruleCode && nodePath.basename(filename) === name)
-          ?.message,
-        name,
-      ).toBe(
-        noServiceConstructorImportsRule.meta?.messages?.serviceConstructorImport.replace('{{name}}', 'makeRuntime'),
-      );
-    }
+describe('accepts only deployment-bound native Layer composition and preserves constructor controls', () => {
+  // Entries are complete before RuleTester invokes the workspace hooks.
+  const entries: WorkspaceEntry[] = [];
+  const workspace = workspaceCase(entries);
+  const { directory } = workspace;
+  const write = (path: string, source: string): void => {
+    entries.push({ path: nodePath.relative(directory, path), source });
+  };
+  const actualRuntime = nodePath.relative(
+    directory,
+    nodePath.join(appRoot, 'packages/core-runtime/src/actions/runtime.ts'),
+  );
+  const layerFactorySource = './layer-factory.ts';
+  const layerFactory = [
+    'import { Effect, Layer, Context } from "effect";',
+    'const Tag = Context.Service("Tag");',
+    'export const makeRuntime = (deployment) => Layer.effect(Tag, Effect.gen(function* () { return deployment; }));',
+  ].join('\n');
+  write(nodePath.join(directory, 'layer-factory.ts'), layerFactory);
+  write(
+    nodePath.join(directory, 'effect-factory.ts'),
+    layerFactory.replace(
+      'Layer.effect(Tag, Effect.gen(function* () { return deployment; }))',
+      'Effect.succeed(deployment)',
+    ),
+  );
+  write(
+    nodePath.join(directory, 'eager-factory.ts'),
+    layerFactory.replace(
+      'Layer.effect(Tag, Effect.gen(function* () { return deployment; }))',
+      '{ fetch("runtime"); return Layer.effect(Tag, Effect.gen(function* () { return deployment; })); }',
+    ),
+  );
+  write(nodePath.join(directory, 'mutated-factory.ts'), `${layerFactory}\nLayer.effect = counterfeit;`);
+  write(
+    nodePath.join(directory, 'escaped-factory-namespace.ts'),
+    `${layerFactory}\nObject.assign(Layer, counterfeit);`,
+  );
+  const source = [
+    'import { Effect as Fx, Layer as Layers } from "effect";',
+    'import { ActiveApplicationCompositionService as Composition } from "@app/core-runtime/modules/active-application-composition";',
+    'import { makeRuntime as makeBoundRuntime } from "./layer-factory.ts";',
+    'const runtime = Layers.unwrap(Fx.gen(function* () {',
+    '  const snapshot = yield* (yield* Composition).load;',
+    '  return makeBoundRuntime(snapshot.composition.shell.deployment).pipe(Layers.provide(dependencies));',
+    '}));',
+  ].join('\n');
+  const valid = {
+    'actual-runtime.ts': source
+      .replace('makeRuntime as makeBoundRuntime', 'makeActionRuntimeLive as makeBoundRuntime')
+      .replace(layerFactorySource, actualRuntime),
+    'native-layer.ts': source,
+  };
+  const invalid = {
+    'eager-factory-consumer.ts': source.replace(layerFactorySource, './eager-factory.ts'),
+    'effect-factory-consumer.ts': source.replace(layerFactorySource, './effect-factory.ts'),
+    'escaped-factory-namespace-consumer.ts': source.replace(layerFactorySource, './escaped-factory-namespace.ts'),
+    'escaped-factory.ts': `${source}\nvoid makeBoundRuntime;`,
+    'escaped-layer.ts': `${source}\nObject.assign(Layers, counterfeit);`,
+    'fake-snapshot.ts': source.replace(
+      'yield* (yield* Composition).load',
+      '{ composition: { shell: { deployment: {} } } }',
+    ),
+    'foreign-composition.ts': source.replace(
+      '@app/core-runtime/modules/active-application-composition',
+      './foreign-composition.ts',
+    ),
+    'foreign-effect.ts': source.replace('from "effect"', 'from "foreign-effect"'),
+    'hardcoded-deployment.ts': source.replace(
+      'snapshot.composition.shell.deployment',
+      '{ appId: "shell", buildMarker: "fake" }',
+    ),
+    'laundered-return.ts': source.replace(
+      'return makeBoundRuntime(snapshot.composition.shell.deployment).pipe(Layers.provide(dependencies));',
+      'return Fx.succeed(makeBoundRuntime(snapshot.composition.shell.deployment));',
+    ),
+    'mutated-deployment.ts': source.replace(
+      '  return makeBoundRuntime',
+      '  snapshot.composition.shell.deployment = replacement;\n  return makeBoundRuntime',
+    ),
+    'mutated-factory-consumer.ts': source.replace(layerFactorySource, './mutated-factory.ts'),
+    'mutated-layer.ts': `${source}\nLayers.unwrap = counterfeit;`,
+    'nested-business.ts': source.replace('const runtime =', 'function business() { return').replace('}));', '})); }'),
+    'shadowed-composition.ts': source.replace(
+      '  const snapshot',
+      '  const Composition = fakeService;\n  const snapshot',
+    ),
+    'shadowed-layer.ts': source
+      .replace('const runtime =', 'function business(Layers) { return')
+      .replace('}));', '})); }'),
+    'wrong-deployment.ts': source.replace(
+      'snapshot.composition.shell.deployment',
+      'snapshot.composition.other.deployment',
+    ),
+  };
+  const toCase = ([name, code]: [string, string]) => ({
+    code,
+    filename: workspace.file(name),
+    name,
+    ...workspace.hooks,
+  });
+  for (const [path, fixtureSource] of Object.entries({ ...valid, ...invalid })) {
+    entries.push({ path, source: fixtureSource });
+  }
+  ruleTester.run(serviceRuleTitle, serviceRule, {
+    invalid: Object.entries(invalid).map((entry) => ({
+      ...toCase(entry),
+      errors: [{ data: { name: 'makeRuntime' }, messageId: 'serviceConstructorImport' }],
+    })),
+    valid: Object.entries(valid).map(toCase),
   });
 });
 
-it('recognizes only owner-local executable test process roots for service composition', () => {
-  withTemporaryWorkspace((directory) => {
-    const workspace = nodePath.join(directory, 'app');
-    const runtimeFilename = 'runtime.ts';
-    const cases = [
-      { names: ['makeAuthDatabase', 'makeAuthenticationService', 'makeApiKeyService'], owner: 'apps/shell-super-app' },
-      { names: ['makePrivacyApiRuntime'], owner: 'verticals/privacy' },
-    ];
-    for (const { names, owner } of cases) {
-      const ownerRoot = nodePath.join(workspace, owner);
-      const support = nodePath.join(ownerRoot, supportDirectory);
-      const api = nodePath.join(ownerRoot, 'api');
-      mkdirSync(support, { recursive: true });
-      mkdirSync(api, { recursive: true });
-      const factory = nodePath.join(api, runtimeFilename);
-      writeFileSync(
-        factory,
-        names
-          .map((name) => `export const ${name} = (dependency: { readonly read: () => string }) => dependency;`)
-          .join('\n'),
-      );
-      const consumer = nodePath.join(support, 'privacy-completion.ts');
-      const localImport = `import { ${names.join(', ')} } from '../../api/runtime.ts';`;
-      const runtimeImport = "import { NodeRuntime } from '@effect/platform-node';";
-      const constructors = names.map((name) => `${name}({ read: () => 'fixture' });`).join(' ');
-      const run = directRunMain;
-      const effectImport = "import { Effect } from 'effect';";
-      const count = (path: string, source: string) => {
-        writeFileSync(path, source);
-        return runOxlint(lintConfig, [path], appRoot).diagnostics.filter(({ code }) => code === ruleCode).length;
-      };
-      expect(count(consumer, `${runtimeImport} ${effectImport} ${localImport} ${constructors} ${run}`)).toBe(0);
-      expect(
-        count(
-          consumer,
-          `import { NodeRuntime as Runtime } from '@effect/platform-node'; ${effectImport} ${localImport} ${constructors} Runtime.runMain(Effect.void);`,
-        ),
-      ).toBe(0);
-      const invalidRoots = [
-        `${effectImport} ${localImport} ${constructors}`,
-        `${runtimeImport} ${effectImport} ${localImport} ${constructors} const start = () => { ${run} }; void start;`,
-        `${effectImport} ${localImport} ${constructors} const NodeRuntime = { runMain: (value: unknown) => value }; ${run}`,
-        `import { NodeRuntime } from 'foreign-runtime'; ${effectImport} ${localImport} ${constructors} ${run}`,
-        `${runtimeImport} ${effectImport} ${localImport} ${constructors} NodeRuntime['runMain'](Effect.void);`,
-        `${runtimeImport} ${effectImport} ${localImport} ${constructors} NodeRuntime.runMain = (value: unknown) => value; ${run}`,
-        `${runtimeImport} ${effectImport} ${localImport} ${constructors} const alias = NodeRuntime; alias.runMain(Effect.void);`,
-        `${runtimeImport} ${effectImport} ${localImport} ${constructors} export const helper = () => undefined; ${run}`,
-        `${runtimeImport} ${effectImport} ${localImport} ${constructors} export default {}; ${run}`,
-        `${runtimeImport} ${effectImport} ${localImport} ${constructors} export * from '../../api/runtime.ts'; ${run}`,
-        `${effectImport} ${localImport} ${constructors} // NodeRuntime.runMain(Effect.void);`,
-      ];
-      for (const source of invalidRoots) {
-        expect(count(consumer, source), source).toBe(names.length);
+describe('recognizes only owner-local executable test process roots for service composition', () => {
+  const { accept, directory, register, reject, write } = recordScenario(serviceRuleTitle);
+  const workspace = nodePath.join(directory, 'app');
+  const runtimeFilename = 'runtime.ts';
+  const cases = [
+    { names: ['makeAuthDatabase', 'makeAuthenticationService', 'makeApiKeyService'], owner: 'apps/shell-super-app' },
+    { names: ['makePrivacyApiRuntime'], owner: 'verticals/privacy' },
+  ];
+  for (const { names, owner } of cases) {
+    const ownerRoot = nodePath.join(workspace, owner);
+    const support = nodePath.join(ownerRoot, supportDirectory);
+    const api = nodePath.join(ownerRoot, 'api');
+    const factory = nodePath.join(api, runtimeFilename);
+    write(
+      factory,
+      names
+        .map((name) => `export const ${name} = (dependency: { readonly read: () => string }) => dependency;`)
+        .join('\n'),
+    );
+    const consumer = nodePath.join(support, 'privacy-completion.ts');
+    const localImport = `import { ${names.join(', ')} } from '../../api/runtime.ts';`;
+    const runtimeImport = "import { NodeRuntime } from '@effect/platform-node';";
+    const constructors = names.map((name) => `${name}({ read: () => 'fixture' });`).join(' ');
+    const run = directRunMain;
+    const effectImport = "import { Effect } from 'effect';";
+    const count = (path: string, source: string, expected: number, name?: string) => {
+      write(path, source);
+      if (expected === 0) {
+        accept(path, name);
+      } else {
+        reject(path, expected, name);
       }
-      expect(
-        count(
-          factory,
-          `${runtimeImport} ${effectImport} import { ${names.join(', ')} } from './service.ts'; ${constructors} ${run}`,
-        ),
-      ).toBe(names.length);
-      // Restore the owner source after using its runtime path as the negative consumer.
-      writeFileSync(
-        factory,
-        names
-          .map((name) => `export const ${name} = (dependency: { readonly read: () => string }) => dependency;`)
-          .join('\n'),
-      );
-      const foreign = nodePath.join(workspace, 'verticals/foreign-owner/api');
-      mkdirSync(foreign, { recursive: true });
-      writeFileSync(
-        nodePath.join(foreign, runtimeFilename),
-        names
-          .map((name) => `export const ${name} = (dependency: { readonly read: () => string }) => dependency;`)
-          .join('\n'),
-      );
-      const foreignImport = nodePath.relative(support, nodePath.join(foreign, runtimeFilename)).replaceAll('\\', '/');
-      expect(
-        count(
-          consumer,
-          `${runtimeImport} ${effectImport} import { ${names.join(', ')} } from '${foreignImport}'; ${constructors} ${run}`,
-        ),
-      ).toBe(names.length);
-      const barrel = nodePath.join(api, 'barrel.ts');
-      const foreignFromApi = nodePath.relative(api, nodePath.join(foreign, runtimeFilename)).replaceAll('\\', '/');
-      writeFileSync(barrel, `export { ${names.join(', ')} } from '${foreignFromApi}';`);
-      expect(
-        count(
-          consumer,
-          `${runtimeImport} ${effectImport} import { ${names.join(', ')} } from '../../api/barrel.ts'; ${constructors} ${run}`,
-        ),
-      ).toBe(names.length);
-    }
-  }, testsDirectory);
-});
-
-it('requires locally defined immutable constructors rather than imported declaration aliases', () => {
-  withTemporaryWorkspace((directory) => {
-    const owner = nodePath.join(directory, 'app/verticals/local-owner');
-    const api = nodePath.join(owner, 'api');
-    const support = nodePath.join(owner, supportDirectory);
-    mkdirSync(api, { recursive: true });
-    mkdirSync(support, { recursive: true });
-    const factory = nodePath.join(api, factoryFilename);
-    const consumer = nodePath.join(support, bootstrapFilename);
-    writeFileSync(
-      consumer,
-      "import { NodeRuntime } from '@effect/platform-node'; import { Effect } from 'effect'; import { makeService } from '../../api/factory.ts'; void makeService; NodeRuntime.runMain(Effect.void);",
-    );
-    const dependency = '{ readonly read: () => string }';
-    for (const declaration of [
-      `export function makeService(dependency: ${dependency}) { return dependency; }`,
-      `export const makeService = (dependency: ${dependency}) => dependency;`,
-      `import { Effect as E } from 'effect'; export const makeService = E.fn('service')(function* (dependency: ${dependency}) { return dependency; });`,
-    ]) {
-      writeFileSync(factory, declaration);
-      expect(
-        runOxlint(lintConfig, [consumer], appRoot).diagnostics.filter(({ code }) => code === ruleCode),
-        declaration,
-      ).toEqual([]);
-    }
-    for (const declaration of [
-      "import { makeService as foreign } from '../../../foreign/api/service.ts'; export const makeService = foreign;",
-      "import * as foreign from '../../../foreign/api/service.ts'; export const makeService = foreign.makeService;",
-      `export let makeService = (dependency: ${dependency}) => dependency;`,
-      `export function makeService(dependency: ${dependency}) { return dependency; } makeService = foreign;`,
-      `const E = { fn: () => (value: unknown) => value }; export const makeService = E.fn('service')(function* () {});`,
-      `import { Effect } from 'effect'; import { Effect as Other } from 'effect'; Other.fn = foreign; export const makeService = Effect.fn('service')(function* () {});`,
-      `import { Effect } from 'effect'; const alias = Effect; alias.fn = foreign; export const makeService = Effect.fn('service')(function* () {});`,
-    ]) {
-      writeFileSync(factory, declaration);
-      expect(
-        runOxlint(lintConfig, [consumer], appRoot).diagnostics.filter(({ code }) => code === ruleCode).length,
-        declaration,
-      ).toBe(1);
-    }
-  }, testsDirectory);
-});
-
-it('requires a closed stable NodeRuntime import origin across equivalent module aliases', () => {
-  withTemporaryWorkspace((directory) => {
-    const owner = nodePath.join(directory, 'app/verticals/runtime-owner');
-    const api = nodePath.join(owner, 'api');
-    const support = nodePath.join(owner, supportDirectory);
-    mkdirSync(api, { recursive: true });
-    mkdirSync(support, { recursive: true });
-    writeFileSync(
-      nodePath.join(api, factoryFilename),
-      'export const makeService = (dependency: { readonly read: () => string }) => dependency;',
-    );
-    const consumer = nodePath.join(support, bootstrapFilename);
-    const base =
-      "import { NodeRuntime } from '@effect/platform-node'; import { Effect } from 'effect'; import { makeService } from '../../api/factory.ts'; void makeService;";
-    const main = directRunMain;
-    const findings = (extra: string) => {
-      writeFileSync(consumer, `${base} ${extra} ${main}`);
-      return runOxlint(lintConfig, [consumer], appRoot).diagnostics.filter(({ code }) => code === ruleCode).length;
     };
-    expect(findings("import type { NodeRuntime as Other } from '@effect/platform-node';")).toBe(0);
-    expect(findings("import type * as Platform from '@effect/platform-node';")).toBe(0);
-    for (const extra of [
-      "import { NodeRuntime as Other } from '@effect/platform-node'; Other.runMain = replacement;",
-      "import { NodeRuntime as Other } from '@effect/platform-node'; void Other;",
-      "import * as Platform from '@effect/platform-node'; Platform.NodeRuntime.runMain = replacement;",
-      "import * as Platform from '@effect/platform-node'; const Other = Platform.NodeRuntime; void Other;",
-      "import * as Other from '@effect/platform-node/NodeRuntime'; Other.runMain = replacement;",
-      "import { runMain as other } from '@effect/platform-node/NodeRuntime'; void other;",
-      "import Other from '@effect/platform-node/NodeRuntime'; void Other;",
-      "const Other = await import('@effect/platform-node/NodeRuntime'); void Other;",
-      "const Other = require('@effect/platform-node'); void Other;",
-    ]) {
-      expect(findings(extra), extra).toBe(1);
+    count(consumer, `${runtimeImport} ${effectImport} ${localImport} ${constructors} ${run}`, 0);
+    count(
+      consumer,
+      `import { NodeRuntime as Runtime } from '@effect/platform-node'; ${effectImport} ${localImport} ${constructors} Runtime.runMain(Effect.void);`,
+      0,
+    );
+    const invalidRoots = [
+      `${effectImport} ${localImport} ${constructors}`,
+      `${runtimeImport} ${effectImport} ${localImport} ${constructors} const start = () => { ${run} }; void start;`,
+      `${effectImport} ${localImport} ${constructors} const NodeRuntime = { runMain: (value: unknown) => value }; ${run}`,
+      `import { NodeRuntime } from 'foreign-runtime'; ${effectImport} ${localImport} ${constructors} ${run}`,
+      `${runtimeImport} ${effectImport} ${localImport} ${constructors} NodeRuntime['runMain'](Effect.void);`,
+      `${runtimeImport} ${effectImport} ${localImport} ${constructors} NodeRuntime.runMain = (value: unknown) => value; ${run}`,
+      `${runtimeImport} ${effectImport} ${localImport} ${constructors} const alias = NodeRuntime; alias.runMain(Effect.void);`,
+      `${runtimeImport} ${effectImport} ${localImport} ${constructors} export const helper = () => undefined; ${run}`,
+      `${runtimeImport} ${effectImport} ${localImport} ${constructors} export default {}; ${run}`,
+      `${runtimeImport} ${effectImport} ${localImport} ${constructors} export * from '../../api/runtime.ts'; ${run}`,
+      `${effectImport} ${localImport} ${constructors} // NodeRuntime.runMain(Effect.void);`,
+    ];
+    for (const source of invalidRoots) {
+      count(consumer, source, names.length, source);
     }
-  }, testsDirectory);
+    count(
+      factory,
+      `${runtimeImport} ${effectImport} import { ${names.join(', ')} } from './service.ts'; ${constructors} ${run}`,
+      names.length,
+    );
+    // Restore the owner source after using its runtime path as the negative consumer.
+    write(
+      factory,
+      names
+        .map((name) => `export const ${name} = (dependency: { readonly read: () => string }) => dependency;`)
+        .join('\n'),
+    );
+    const foreign = nodePath.join(workspace, 'verticals/foreign-owner/api');
+    write(
+      nodePath.join(foreign, runtimeFilename),
+      names
+        .map((name) => `export const ${name} = (dependency: { readonly read: () => string }) => dependency;`)
+        .join('\n'),
+    );
+    const foreignImport = nodePath.relative(support, nodePath.join(foreign, runtimeFilename)).replaceAll('\\', '/');
+    count(
+      consumer,
+      `${runtimeImport} ${effectImport} import { ${names.join(', ')} } from '${foreignImport}'; ${constructors} ${run}`,
+      names.length,
+    );
+    const barrel = nodePath.join(api, 'barrel.ts');
+    const foreignFromApi = nodePath.relative(api, nodePath.join(foreign, runtimeFilename)).replaceAll('\\', '/');
+    write(barrel, `export { ${names.join(', ')} } from '${foreignFromApi}';`);
+    count(
+      consumer,
+      `${runtimeImport} ${effectImport} import { ${names.join(', ')} } from '../../api/barrel.ts'; ${constructors} ${run}`,
+      names.length,
+    );
+  }
+  register();
+});
+
+describe('requires locally defined immutable constructors rather than imported declaration aliases', () => {
+  const { accept, directory, register, reject, write } = recordScenario(serviceRuleTitle);
+  const owner = nodePath.join(directory, 'app/verticals/local-owner');
+  const api = nodePath.join(owner, 'api');
+  const support = nodePath.join(owner, supportDirectory);
+  const factory = nodePath.join(api, factoryFilename);
+  const consumer = nodePath.join(support, bootstrapFilename);
+  write(
+    consumer,
+    "import { NodeRuntime } from '@effect/platform-node'; import { Effect } from 'effect'; import { makeService } from '../../api/factory.ts'; void makeService; NodeRuntime.runMain(Effect.void);",
+  );
+  const dependency = '{ readonly read: () => string }';
+  for (const declaration of [
+    `export function makeService(dependency: ${dependency}) { return dependency; }`,
+    `export const makeService = (dependency: ${dependency}) => dependency;`,
+    `import { Effect as E } from 'effect'; export const makeService = E.fn('service')(function* (dependency: ${dependency}) { return dependency; });`,
+  ]) {
+    write(factory, declaration);
+    accept(consumer, declaration);
+  }
+  for (const declaration of [
+    "import { makeService as foreign } from '../../../foreign/api/service.ts'; export const makeService = foreign;",
+    "import * as foreign from '../../../foreign/api/service.ts'; export const makeService = foreign.makeService;",
+    `export let makeService = (dependency: ${dependency}) => dependency;`,
+    `export function makeService(dependency: ${dependency}) { return dependency; } makeService = foreign;`,
+    `const E = { fn: () => (value: unknown) => value }; export const makeService = E.fn('service')(function* () {});`,
+    `import { Effect } from 'effect'; import { Effect as Other } from 'effect'; Other.fn = foreign; export const makeService = Effect.fn('service')(function* () {});`,
+    `import { Effect } from 'effect'; const alias = Effect; alias.fn = foreign; export const makeService = Effect.fn('service')(function* () {});`,
+  ]) {
+    write(factory, declaration);
+    reject(consumer, 1, declaration);
+  }
+  register();
+});
+
+describe('requires a closed stable NodeRuntime import origin across equivalent module aliases', () => {
+  const { accept, directory, register, reject, write } = recordScenario(serviceRuleTitle);
+  const owner = nodePath.join(directory, 'app/verticals/runtime-owner');
+  const api = nodePath.join(owner, 'api');
+  const support = nodePath.join(owner, supportDirectory);
+  write(
+    nodePath.join(api, factoryFilename),
+    'export const makeService = (dependency: { readonly read: () => string }) => dependency;',
+  );
+  const consumer = nodePath.join(support, bootstrapFilename);
+  const base =
+    "import { NodeRuntime } from '@effect/platform-node'; import { Effect } from 'effect'; import { makeService } from '../../api/factory.ts'; void makeService;";
+  const main = directRunMain;
+  const findings = (extra: string, expected: number, name?: string) => {
+    write(consumer, `${base} ${extra} ${main}`);
+    if (expected === 0) {
+      accept(consumer, name);
+    } else {
+      reject(consumer, expected, name);
+    }
+  };
+  findings("import type { NodeRuntime as Other } from '@effect/platform-node';", 0);
+  findings("import type * as Platform from '@effect/platform-node';", 0);
+  for (const extra of [
+    "import { NodeRuntime as Other } from '@effect/platform-node'; Other.runMain = replacement;",
+    "import { NodeRuntime as Other } from '@effect/platform-node'; void Other;",
+    "import * as Platform from '@effect/platform-node'; Platform.NodeRuntime.runMain = replacement;",
+    "import * as Platform from '@effect/platform-node'; const Other = Platform.NodeRuntime; void Other;",
+    "import * as Other from '@effect/platform-node/NodeRuntime'; Other.runMain = replacement;",
+    "import { runMain as other } from '@effect/platform-node/NodeRuntime'; void other;",
+    "import Other from '@effect/platform-node/NodeRuntime'; void Other;",
+    "const Other = await import('@effect/platform-node/NodeRuntime'); void Other;",
+    "const Other = require('@effect/platform-node'); void Other;",
+  ]) {
+    findings(extra, 1, extra);
+  }
+  register();
 });
 
 interface ProcessCapabilityCase {
@@ -1809,43 +1821,47 @@ interface ProcessCapabilityCase {
   readonly name: string;
 }
 const inspectProcessCapabilityCases = (cases: readonly ProcessCapabilityCase[]): void => {
-  withTemporaryWorkspace((directory) => {
-    const files = cases.map((scenario, index) => {
-      const constructorName = scenario.constructorName ?? 'makeService';
-      const owner = nodePath.join(directory, 'app/verticals', `capability-${index}`);
-      const api = nodePath.join(owner, 'api');
-      const support = nodePath.join(owner, supportDirectory);
-      mkdirSync(api, { recursive: true });
-      mkdirSync(support, { recursive: true });
-      writeFileSync(
-        nodePath.join(api, factoryFilename),
-        scenario.declaration ??
+  const file = (scenario: ProcessCapabilityCase, index: number) =>
+    `app/verticals/capability-${index}/${supportDirectory}/${scenario.name}.ts`;
+  const source = (scenario: ProcessCapabilityCase) => {
+    const constructorName = scenario.constructorName ?? 'makeService';
+    return [
+      processImports,
+      `import { ${constructorName} } from '../../api/factory.ts'; void ${constructorName};`,
+      scenario.before ?? '',
+      directRunMain,
+      scenario.after ?? '',
+    ].join('\n');
+  };
+  // The rule follows imports into owner files, so all scenarios share one real workspace, one owner per scenario.
+  describeWorkspace(
+    'process capability workspace',
+    cases.flatMap((scenario, index) => [
+      {
+        path: `app/verticals/capability-${index}/api/${factoryFilename}`,
+        source:
+          scenario.declaration ??
           "import { Effect } from 'effect'; export const makeService = Effect.fn('service')(function* (dependency: { readonly read: () => string }) { return dependency; });",
-      );
-      const file = nodePath.join(support, `${scenario.name}.ts`);
-      writeFileSync(
-        file,
-        [
-          processImports,
-          `import { ${constructorName} } from '../../api/factory.ts'; void ${constructorName};`,
-          scenario.before ?? '',
-          directRunMain,
-          scenario.after ?? '',
-        ].join('\n'),
-      );
-      return file;
-    });
-    const diagnostics = runOxlint(lintConfig, files, appRoot).diagnostics.filter(({ code }) => code === ruleCode);
-    for (const scenario of cases) {
-      expect(
-        diagnostics.filter(({ filename }) => filename.endsWith(`/${scenario.name}.ts`)).length,
-        scenario.name,
-      ).toBe(scenario.expected);
-    }
-  }, testsDirectory);
+      },
+      { path: file(scenario, index), source: source(scenario) },
+    ]),
+    (workspace) => {
+      const toCase = (scenario: ProcessCapabilityCase, index: number) => ({
+        code: source(scenario),
+        filename: workspace.file(file(scenario, index)),
+        name: scenario.name,
+      });
+      ruleTester.run(serviceRuleTitle, serviceRule, {
+        invalid: cases.flatMap((scenario, index) =>
+          scenario.expected === 0 ? [] : [{ ...toCase(scenario, index), errors: scenario.expected }],
+        ),
+        valid: cases.flatMap((scenario, index) => (scenario.expected === 0 ? [toCase(scenario, index)] : [])),
+      });
+    },
+  );
 };
 
-it('recognizes canonical Effect.result observation without permitting capability escape', () => {
+describe('recognizes canonical Effect.result observation without permitting capability escape', () => {
   inspectProcessCapabilityCases([
     {
       before: "const outcome = Effect.fail('typed').pipe(Effect.result); void outcome;",
@@ -1870,7 +1886,7 @@ it('recognizes canonical Effect.result observation without permitting capability
   ]);
 });
 
-it('recognizes canonical optional service lookup without permitting capability escape', () => {
+describe('recognizes canonical optional service lookup without permitting capability escape', () => {
   inspectProcessCapabilityCases([
     { before: 'Effect.serviceOption(Service);', expected: 0, name: 'optional-service-direct' },
     {
@@ -1894,7 +1910,7 @@ it('recognizes canonical optional service lookup without permitting capability e
   ]);
 });
 
-it('closes real executable HTTP observations without admitting evaluator or capability escape', () => {
+describe('closes real executable HTTP observations without admitting evaluator or capability escape', () => {
   const fetchSource = "const fetch = globalThis.fetch; fetch('https://example.test');";
   const mapSource =
     "const choices = new Map([['/read', 'read']]); const operation = choices.get(path); const observed = { read: 'NONE' }; observed[operation] = 'SUCCESS';";
@@ -1952,7 +1968,7 @@ it('closes real executable HTTP observations without admitting evaluator or capa
   ]);
 });
 
-it('permits only data-only native module-relative path metadata', () => {
+describe('permits only data-only native module-relative path metadata', () => {
   const pathSource = "const cwd = new URL('../../', import.meta.url).pathname;";
   inspectProcessCapabilityCases([
     { before: `${pathSource} URL.canParse(candidate);`, expected: 0, name: 'owner-module-path' },
@@ -1973,7 +1989,7 @@ it('permits only data-only native module-relative path metadata', () => {
   ]);
 });
 
-it('classifies fixed non-enumerable local error causes without allowing reflection mutation', () => {
+describe('classifies fixed non-enumerable local error causes without allowing reflection mutation', () => {
   const causeDescriptor = 'configurable: true, value: cause';
   const causeSource =
     "import { Failure } from './failure.ts'; export const makeService = (cause: unknown) => { const failure = new Failure({ reason: 'safe' }); Object.defineProperty(failure, 'cause', { configurable: true, value: cause }); return failure; };";
@@ -1996,7 +2012,7 @@ it('classifies fixed non-enumerable local error causes without allowing reflecti
   ]);
 });
 
-it('recognizes the real owner Party resolver constructor without executing its dependency', () => {
+describe('recognizes the real owner Party resolver constructor without executing its dependency', () => {
   inspectProcessCapabilityCases([
     {
       constructorName: 'makePartyRegistryRetailPartyResolver',
@@ -2013,7 +2029,7 @@ it('recognizes the real owner Party resolver constructor without executing its d
   ]);
 });
 
-it('closes canonical runtime object aliases and every unsupported reference before root eligibility', () => {
+describe('closes canonical runtime object aliases and every unsupported reference before root eligibility', () => {
   inspectProcessCapabilityCases([
     { expected: 0, name: 'positive-floor' },
     {
@@ -2082,7 +2098,7 @@ it('closes canonical runtime object aliases and every unsupported reference befo
   ]);
 });
 
-it('rejects loader and evaluator acquisition itself across import and free-reference forms', () => {
+describe('rejects loader and evaluator acquisition itself across import and free-reference forms', () => {
   inspectProcessCapabilityCases([
     { expected: 0, name: 'ordinary-positive' },
     {
@@ -2159,7 +2175,7 @@ it('rejects loader and evaluator acquisition itself across import and free-refer
   ]);
 });
 
-it('limits canonical process capabilities to ordinary data and direct IO operations', () => {
+describe('limits canonical process capabilities to ordinary data and direct IO operations', () => {
   inspectProcessCapabilityCases([
     {
       before:
@@ -2209,7 +2225,7 @@ it('limits canonical process capabilities to ordinary data and direct IO operati
   ]);
 });
 
-it('closes the full owner definition before proving direct or genuine Effect fn constructors', () => {
+describe('closes the full owner definition before proving direct or genuine Effect fn constructors', () => {
   const genuine =
     "import { Effect } from 'effect'; export const makeService = Effect.fn('service')(function* (dependency: { readonly read: () => string }) { return dependency; });";
   inspectProcessCapabilityCases([
@@ -2304,16 +2320,18 @@ it('closes the full owner definition before proving direct or genuine Effect fn 
   ]);
 });
 
-it('keeps all three actual completion process children clear without source or filename exceptions', () => {
-  const files = [
-    'apps/shell-super-app/tests/support/privacy-completion-shell.ts',
-    privacyCompletionProcess,
-    'verticals/party-registry/tests/support/privacy-completion-worker.ts',
-  ].map((file) => nodePath.join(appRoot, file));
-  expect(runOxlint(lintConfig, files, appRoot).diagnostics.filter(({ code }) => code === ruleCode)).toEqual([]);
+describe('keeps all three actual completion process children clear without source or filename exceptions', () => {
+  ruleTester.run(serviceRuleTitle, serviceRule, {
+    invalid: [],
+    valid: [
+      'apps/shell-super-app/tests/support/privacy-completion-shell.ts',
+      privacyCompletionProcess,
+      'verticals/party-registry/tests/support/privacy-completion-worker.ts',
+    ].map(repositoryCase),
+  });
 });
 
-it('keeps direct pinned Effect try and catch operations inside the canonical closed-use grammar', () => {
+describe('keeps direct pinned Effect try and catch operations inside the canonical closed-use grammar', () => {
   const syncProgram =
     "import { writeSync } from 'node:fs'; const program = Effect.try({ try: () => writeSync(3, 'private'), catch: () => new Error('unavailable') }).pipe(Effect.catch(() => Effect.void)); void program;";
   inspectProcessCapabilityCases([
@@ -2353,7 +2371,7 @@ it('keeps direct pinned Effect try and catch operations inside the canonical clo
   ]);
 });
 
-it('keeps direct canonical tapError and tapCause observation inside the closed process grammar', () => {
+describe('keeps direct canonical tapError and tapCause observation inside the closed process grammar', () => {
   const observe = 'const program = Effect.fail("typed").pipe(Effect.tapError(() => Effect.void)); void program;';
   const cases: readonly ProcessCapabilityCase[] = [
     { before: observe, expected: 0, name: 'tap-error-direct' },
@@ -2463,15 +2481,18 @@ it('keeps direct canonical tapError and tapCause observation inside the closed p
   );
 });
 
-it('keeps the actual typed-error Privacy process floor clear without source exceptions', () => {
-  const file = nodePath.join(appRoot, privacyCompletionProcess);
-  expect(runOxlint(lintConfig, [file], appRoot).diagnostics.filter(({ code }) => code === ruleCode)).toEqual([]);
+describe('keeps the actual typed-error Privacy process floor clear without source exceptions', () => {
+  ruleTester.run(serviceRuleTitle, serviceRule, {
+    invalid: [],
+    valid: [repositoryCase(privacyCompletionProcess)],
+  });
 });
 
 interface BffCase {
   readonly consumer?: string;
   readonly expected: number;
   readonly extra?: string;
+  readonly files?: readonly WorkspaceEntry[];
   readonly name: string;
   readonly replace?: readonly [string, string];
   readonly source?: string;
@@ -2490,36 +2511,41 @@ const bffFactorySource = [
   'const runtime = makeRuntime(); void runtime;',
 ].join('\n');
 const inspectBffCases = (cases: readonly BffCase[]): void => {
-  withTemporaryWorkspace((directory) => {
-    const files = cases.map((scenario) => {
-      const owner = nodePath.join(directory, 'app/verticals', scenario.name);
-      mkdirSync(nodePath.join(owner, 'api'), { recursive: true });
-      mkdirSync(nodePath.join(owner, 'shared'), { recursive: true });
-      mkdirSync(nodePath.join(owner, supportDirectory), { recursive: true });
-      writeFileSync(nodePath.join(owner, 'shared/api.ts'), 'export const Api = {};');
+  const consumerPath = (scenario: BffCase) => `app/verticals/${scenario.name}/${supportDirectory}/${bootstrapFilename}`;
+  const consumerSource = (scenario: BffCase) =>
+    scenario.consumer ??
+    [processImports, "import { makeRuntime } from '../../api/index.ts'; void makeRuntime;", directRunMain].join('\n');
+  // The rule follows imports into owner files, so all scenarios share one real workspace, one owner per scenario.
+  describeWorkspace(
+    'BFF owner workspace',
+    cases.flatMap((scenario) => {
+      const owner = `app/verticals/${scenario.name}`;
       const baseline = scenario.source ?? bffFactorySource;
       const original = scenario.replace === undefined ? baseline : baseline.replace(...scenario.replace);
-      writeFileSync(nodePath.join(owner, 'api/index.ts'), `${original}\n${scenario.extra ?? ''}`);
-      const consumer = nodePath.join(owner, supportDirectory, bootstrapFilename);
-      writeFileSync(
-        consumer,
-        scenario.consumer ??
-          [processImports, "import { makeRuntime } from '../../api/index.ts'; void makeRuntime;", directRunMain].join(
-            '\n',
-          ),
-      );
-      return consumer;
-    });
-    const diagnostics = runOxlint(lintConfig, files, appRoot).diagnostics.filter(({ code }) => code === ruleCode);
-    for (const scenario of cases) {
-      expect(diagnostics.filter(({ filename }) => filename.includes(`/${scenario.name}/`)).length, scenario.name).toBe(
-        scenario.expected,
-      );
-    }
-  }, testsDirectory);
+      return [
+        { path: `${owner}/shared/api.ts`, source: 'export const Api = {};' },
+        ...(scenario.files ?? []).map((entry) => ({ ...entry, path: `${owner}/${entry.path}` })),
+        { path: `${owner}/api/index.ts`, source: `${original}\n${scenario.extra ?? ''}` },
+        { path: consumerPath(scenario), source: consumerSource(scenario) },
+      ];
+    }),
+    (workspace) => {
+      const toCase = (scenario: BffCase) => ({
+        code: consumerSource(scenario),
+        filename: workspace.file(consumerPath(scenario)),
+        name: scenario.name,
+      });
+      ruleTester.run(serviceRuleTitle, serviceRule, {
+        invalid: cases.flatMap((scenario) =>
+          scenario.expected === 0 ? [] : [{ ...toCase(scenario), errors: scenario.expected }],
+        ),
+        valid: cases.flatMap((scenario) => (scenario.expected === 0 ? [toCase(scenario)] : [])),
+      });
+    },
+  );
 };
 
-it('classifies only genuine immutable same-owner canonical BFF assembly factories', () => {
+describe('classifies only genuine immutable same-owner canonical BFF assembly factories', () => {
   inspectBffCases([
     { expected: 0, name: 'bff-canonical' },
     { expected: 1, extra: 'export const empty = Layer.empty; Layer.provide(empty);', name: 'bff-empty-layer-export' },
@@ -2640,7 +2666,7 @@ it('classifies only genuine immutable same-owner canonical BFF assembly factorie
   ]);
 });
 
-it('closes finite data keys over all immutable local helper callers before BFF classification', () => {
+describe('closes finite data keys over all immutable local helper callers before BFF classification', () => {
   inspectBffCases([
     { expected: 0, name: 'bff-key-positive' },
     { expected: 1, extra: 'export { header };', name: 'bff-key-export' },
@@ -2672,7 +2698,7 @@ it('closes finite data keys over all immutable local helper callers before BFF c
   ]);
 });
 
-it('closes strict scalar observations and rejects computed evaluator capabilities or result escapes', () => {
+describe('closes strict scalar observations and rejects computed evaluator capabilities or result escapes', () => {
   const observe =
     'const policy = (map: unknown, key: string) => { const status = map[key]; if (status === 403) return 1; if (status === 409) return 2; if (status !== 422) return 3; return 4; };';
   const carrier =
@@ -2769,32 +2795,191 @@ it('closes strict scalar observations and rejects computed evaluator capabilitie
   ]);
 });
 
-it('proves the actual Shell API composition factory from current owner source without executing it', () => {
-  withTemporaryWorkspace((directory) => {
-    const owner = nodePath.join(directory, 'app/apps/shell-super-app');
-    for (const file of ['api/index.ts', 'api/shell-transport.ts', 'shared/api.ts', 'src/module-api/transport.ts']) {
-      const target = nodePath.join(owner, file);
-      mkdirSync(nodePath.dirname(target), { recursive: true });
-      writeFileSync(target, readFileSync(nodePath.join(appRoot, 'apps/shell-super-app', file), 'utf-8'));
-    }
-    const consumer = nodePath.join(owner, supportDirectory, bootstrapFilename);
-    mkdirSync(nodePath.dirname(consumer), { recursive: true });
-    writeFileSync(
-      consumer,
-      [
-        processImports,
-        "import { makeShellAuthenticationApiRuntime } from '../../api/index.ts'; void makeShellAuthenticationApiRuntime;",
-        directRunMain,
+describe('resolves immutable imported BFF keys without trusting reflective names or executable modules', () => {
+  const extra = [
+    "import { header as importedHeader } from '../shared/keys.ts';",
+    'const value = headers[importedHeader]; void value;',
+    'header({}, importedHeader);',
+  ].join('\n');
+  const keys = 'shared/keys.ts';
+  const constant = "export const header = 'x-ontos-target-source';";
+  inspectBffCases([
+    { expected: 0, extra, files: [{ path: keys, source: constant }], name: 'bff-imported-key' },
+    {
+      expected: 0,
+      extra,
+      files: [
+        { path: keys, source: "export { key as header } from './constant.ts';" },
+        { path: 'shared/constant.ts', source: "const value = 'x-safe'; export const key = value;" },
+      ],
+      name: 'bff-imported-key-reexport',
+    },
+    { expected: 1, extra, name: 'bff-imported-key-missing' },
+    {
+      expected: 0,
+      extra,
+      files: [{ path: keys, source: `const key = 'method'; class Init { [key]() {} } ${constant}` }],
+      name: 'bff-imported-key-primitive-class-key',
+    },
+    {
+      expected: 1,
+      extra: [
+        "import { header as importedHeader } from '../shared/keys.ts';",
+        'const evaluate = (() => {})[importedHeader]; evaluate("return 1")();',
       ].join('\n'),
-    );
-    expect(runOxlint(lintConfig, [consumer], appRoot).diagnostics.filter(({ code }) => code === ruleCode)).toEqual([]);
-  }, testsDirectory);
+      files: [
+        {
+          path: keys,
+          source: [
+            'const state = { name: "x-safe" };',
+            'const key = { toString() { state.name = "constructor"; return "method"; } };',
+            'class Init { [key]() {} }',
+            'export const header = state.name;',
+          ].join('\n'),
+        },
+      ],
+      name: 'bff-imported-key-class-key-coercion',
+    },
+    ...[
+      ['reflective', "export const header = 'constructor';"],
+      ['mutable', "export let header = 'x-safe';"],
+      ['executable', `${constant} fetch('runtime');`],
+      ['callback', "export const header = () => fetch('runtime');"],
+      ['coercion', "export const header = { toString() { return 'x-safe'; } };"],
+      ['unknown', 'export const header = unknownKey;'],
+      ['capability', `import { Effect } from 'effect'; ${constant}`],
+    ].map(([name, source]) => ({
+      expected: 1,
+      extra,
+      files: [{ path: keys, source }],
+      name: `bff-imported-key-${name}`,
+    })),
+    {
+      expected: 1,
+      extra,
+      files: [
+        { path: keys, source: `import { unused } from './runtime.ts'; ${constant}` },
+        { path: 'shared/runtime.ts', source: "export const unused = fetch('module initialization');" },
+      ],
+      name: 'bff-imported-key-transitive-initialization',
+    },
+    {
+      expected: 1,
+      extra: `${extra}\nimportedHeader = 'constructor';`,
+      files: [{ path: keys, source: constant }],
+      name: 'bff-imported-key-written',
+    },
+  ]);
+});
+
+const transportFactorySource = (transport: string) =>
+  bffFactorySource.replace(
+    bffAssemblyReturn,
+    `return assembleEffectBffRuntime({ api: Api, handlers, transport: ${transport} });`,
+  );
+
+describe('proves native transport-layer merges only when every route import stays immutable and owner-local', () => {
+  const extra = ["import { TransportLive } from './transport.ts';", "import { LiveRouteLive } from './live.ts';"].join(
+    '\n',
+  );
+  const files = [
+    { path: 'api/transport.ts', source: "import { Layer } from 'effect'; export const TransportLive = Layer.empty;" },
+    { path: 'api/live.ts', source: "import { Layer } from 'effect'; export const LiveRouteLive = Layer.empty;" },
+  ];
+  const merged = 'Layer.mergeAll(TransportLive, LiveRouteLive)';
+  inspectBffCases([
+    { expected: 0, extra, files, name: 'bff-transport-merge', source: transportFactorySource(merged) },
+    {
+      expected: 0,
+      extra,
+      files,
+      name: 'bff-transport-merge-pipe',
+      source: transportFactorySource(`${merged}.pipe(Layer.provide(group), Layer.orDie)`),
+    },
+    { expected: 0, extra, files, name: 'bff-transport-single', source: transportFactorySource('TransportLive') },
+    ...[
+      ['empty', 'Layer.mergeAll()'],
+      ['spread', 'Layer.mergeAll(...TransportLive, LiveRouteLive)'],
+      ['wrapped', 'Layer.mergeAll(TransportLive, wrap(LiveRouteLive))'],
+      ['callback', 'Layer.mergeAll(TransportLive, () => LiveRouteLive)'],
+      ['unknown-method', 'Layer.unknown(TransportLive, LiveRouteLive)'],
+      ['unknown-transform', `${merged}.pipe(Layer.unknown)`],
+    ].map(([name, transport]) => ({
+      expected: 1,
+      extra,
+      files,
+      name: `bff-transport-merge-${name}`,
+      source: transportFactorySource(transport),
+    })),
+    {
+      expected: 1,
+      extra,
+      files: files.slice(0, 1),
+      name: 'bff-transport-merge-missing',
+      source: transportFactorySource(merged),
+    },
+    {
+      expected: 1,
+      extra: `${extra}\nLiveRouteLive.changed = replacement;`,
+      files,
+      name: 'bff-transport-merge-mutation',
+      source: transportFactorySource(merged),
+    },
+    {
+      expected: 1,
+      extra: `${extra}\nconsume(LiveRouteLive);`,
+      files,
+      name: 'bff-transport-merge-escape',
+      source: transportFactorySource(merged),
+    },
+    {
+      expected: 1,
+      extra: extra.replace("{ LiveRouteLive } from './live.ts'", "{ default as LiveRouteLive } from './live.ts'"),
+      files,
+      name: 'bff-transport-merge-default',
+      source: transportFactorySource(merged),
+    },
+    {
+      expected: 1,
+      extra: extra.replace("'./live.ts'", "'../../outside.ts'"),
+      files: [...files, { path: '../outside.ts', source: files[1].source }],
+      name: 'bff-transport-merge-foreign-owner',
+      source: transportFactorySource(merged),
+    },
+  ]);
+});
+
+describe('proves the actual Shell API composition factory from current owner source without executing it', () => {
+  const { accept, directory, register, write } = recordScenario(serviceRuleTitle);
+  const owner = nodePath.join(directory, 'app/apps/shell-super-app');
+  for (const file of [
+    'api/index.ts',
+    'api/live-changes/transport.ts',
+    'api/shell-transport.ts',
+    'shared/api.ts',
+    'shared/module-target-diagnostics.ts',
+    'src/module-api/transport.ts',
+  ]) {
+    const target = nodePath.join(owner, file);
+    write(target, readFileSync(nodePath.join(appRoot, 'apps/shell-super-app', file), 'utf-8'));
+  }
+  const consumer = nodePath.join(owner, supportDirectory, bootstrapFilename);
+  write(
+    consumer,
+    [
+      processImports,
+      "import { makeShellAuthenticationApiRuntime } from '../../api/index.ts'; void makeShellAuthenticationApiRuntime;",
+      directRunMain,
+    ].join('\n'),
+  );
+  accept(consumer);
+  register();
 });
 
 const finiteKeyParameterProbe = (body: string): string =>
   `const read = (object: unknown, key: string) => { ${body} }; const evaluate = read(() => {}, 'safe'); evaluate('return 1')();`;
 
-it('requires closed immutable finite-key parameter references rather than literal callers alone', () => {
+describe('requires closed immutable finite-key parameter references rather than literal callers alone', () => {
   inspectBffCases([
     {
       expected: 1,
@@ -2887,89 +3072,98 @@ it('requires closed immutable finite-key parameter references rather than litera
   ]);
 });
 
-it('recognizes the real legacy receiver process protocol without weakening owner provenance', () => {
-  const consumer = (body: string) =>
-    [
-      processImports,
-      "import { createInterface } from 'node:readline';",
-      "import { makeRuntime } from '../../api/index.ts';",
-      body,
-      'makeRuntime();',
-      directRunMain,
-    ].join('\n');
+const legacyReceiverConsumer = (body: string) =>
+  [
+    processImports,
+    "import { createInterface } from 'node:readline';",
+    "import { makeRuntime } from '../../api/index.ts';",
+    body,
+    'makeRuntime();',
+    directRunMain,
+  ].join('\n');
+
+describe('recognizes the real legacy receiver process protocol without weakening owner provenance', () => {
   inspectBffCases([
     {
-      consumer: consumer(
+      consumer: legacyReceiverConsumer(
         "const input = createInterface({ input: process.stdin }); process.stdin.on('data', () => {}); process.stdin.destroy(new Error('bounded')); void input;",
       ),
       expected: 0,
       name: 'legacy-stdin-protocol',
     },
     {
-      consumer: consumer('const input = channel; input[Symbol.asyncIterator]();'),
+      consumer: legacyReceiverConsumer('const input = channel; input[Symbol.asyncIterator]();'),
       expected: 0,
       name: 'legacy-async-iterator',
     },
-    { consumer: consumer('Effect.catchCause(() => Effect.void);'), expected: 0, name: 'legacy-cause-recovery' },
     {
-      consumer: consumer('const Symbol = source; channel[Symbol.asyncIterator]();'),
+      consumer: legacyReceiverConsumer('Effect.catchCause(() => Effect.void);'),
+      expected: 0,
+      name: 'legacy-cause-recovery',
+    },
+    {
+      consumer: legacyReceiverConsumer('const Symbol = source; channel[Symbol.asyncIterator]();'),
       expected: 1,
       name: 'legacy-symbol-shadow',
     },
     {
-      consumer: consumer('Symbol.asyncIterator = replacement; channel[Symbol.asyncIterator]();'),
+      consumer: legacyReceiverConsumer('Symbol.asyncIterator = replacement; channel[Symbol.asyncIterator]();'),
       expected: 1,
       name: 'legacy-symbol-mutation',
     },
-    { consumer: consumer('channel[key]();'), expected: 1, name: 'legacy-unknown-protocol-key' },
+    { consumer: legacyReceiverConsumer('channel[key]();'), expected: 1, name: 'legacy-unknown-protocol-key' },
 
     {
-      consumer: consumer("Symbol = { asyncIterator: 'constructor' }; channel[Symbol.asyncIterator]();"),
+      consumer: legacyReceiverConsumer("Symbol = { asyncIterator: 'constructor' }; channel[Symbol.asyncIterator]();"),
       expected: 1,
       name: 'legacy-symbol-global-assignment',
     },
     {
-      consumer: consumer('({ Symbol } = replacement); channel[Symbol.asyncIterator]();'),
+      consumer: legacyReceiverConsumer('({ Symbol } = replacement); channel[Symbol.asyncIterator]();'),
       expected: 1,
       name: 'legacy-symbol-destructured-assignment',
     },
     {
-      consumer: consumer('[Symbol] = replacement; channel[Symbol.asyncIterator]();'),
+      consumer: legacyReceiverConsumer('[Symbol] = replacement; channel[Symbol.asyncIterator]();'),
       expected: 1,
       name: 'legacy-symbol-array-assignment',
     },
     {
-      consumer: consumer('for (Symbol of values) {} channel[Symbol.asyncIterator]();'),
+      consumer: legacyReceiverConsumer('for (Symbol of values) {} channel[Symbol.asyncIterator]();'),
       expected: 1,
       name: 'legacy-symbol-loop-assignment',
     },
     {
-      consumer: consumer('const alias = Symbol; mutate(alias); channel[Symbol.asyncIterator]();'),
+      consumer: legacyReceiverConsumer('const alias = Symbol; mutate(alias); channel[Symbol.asyncIterator]();'),
       expected: 1,
       name: 'legacy-symbol-alias-escape',
     },
 
     {
-      consumer: consumer('const input = process.stdin; consume(input);'),
+      consumer: legacyReceiverConsumer('const input = process.stdin; consume(input);'),
       expected: 1,
       name: 'legacy-stdin-alias-escape',
     },
-    { consumer: consumer('process.stdin.constructor;'), expected: 1, name: 'legacy-stdin-reflection' },
+    { consumer: legacyReceiverConsumer('process.stdin.constructor;'), expected: 1, name: 'legacy-stdin-reflection' },
     {
-      consumer: consumer('const recover = Effect.catchCause; recover(program);'),
+      consumer: legacyReceiverConsumer('const recover = Effect.catchCause; recover(program);'),
       expected: 1,
       name: 'legacy-cause-extraction',
     },
-    { consumer: consumer('Effect.catchCause = replacement;'), expected: 1, name: 'legacy-cause-mutation' },
     {
-      consumer: consumer(
+      consumer: legacyReceiverConsumer('Effect.catchCause = replacement;'),
+      expected: 1,
+      name: 'legacy-cause-mutation',
+    },
+    {
+      consumer: legacyReceiverConsumer(
         "import { createRequire } from 'node:module'; const input = createInterface({ input: process.stdin }); void input; void createRequire;",
       ),
       expected: 1,
       name: 'legacy-loader-with-protocol',
     },
     {
-      consumer: consumer('const NodeRuntime = fake;').replace(
+      consumer: legacyReceiverConsumer('const NodeRuntime = fake;').replace(
         'import { NodeRuntime }',
         'import { NodeRuntime as ActualRuntime }',
       ),
@@ -2977,99 +3171,99 @@ it('recognizes the real legacy receiver process protocol without weakening owner
       name: 'legacy-fake-main',
     },
     {
-      consumer: consumer('').replace('../../api/index.ts', '../../../foreign/api/index.ts'),
+      consumer: legacyReceiverConsumer('').replace('../../api/index.ts', '../../../foreign/api/index.ts'),
       expected: 1,
       name: 'legacy-foreign-owner',
     },
   ]);
 });
 
-it('proves supported subpath test roots and closed exported controls without admitting runtime capabilities', () => {
-  const actualFilename = nodePath.join(appRoot, privacyCompletionProcess);
-  const actualSource = readFileSync(actualFilename, 'utf-8');
-  const control = actualSource.slice(
-    actualSource.indexOf('export const makeReportResponseLossControl'),
-    actualSource.indexOf('// Immutable historical TEST producer'),
-  );
-  expect(control.startsWith('export const makeReportResponseLossControl')).toBe(true);
-  expect(runOxlint(lintConfig, [actualFilename], appRoot).diagnostics.filter(({ code }) => code === ruleCode)).toEqual(
-    [],
-  );
-  withTemporaryWorkspace((directory) => {
-    const owner = nodePath.join(directory, 'app/verticals/privacy');
-    const support = nodePath.join(owner, 'tests/support');
-    const api = nodePath.join(owner, 'api');
-    mkdirSync(support, { recursive: true });
-    mkdirSync(api, { recursive: true });
-    writeFileSync(
-      nodePath.join(api, 'closed-runtime.ts'),
-      'export const makePrivacyApiRuntime = (dependency: {readonly read:()=>string}) => dependency;',
-    );
-    const filename = nodePath.join(support, 'completion.ts');
-    const imports =
-      "import {runMain as main} from '@effect/platform-node/NodeRuntime'; import {Effect} from 'effect'; import {makePrivacyApiRuntime} from '../../api/closed-runtime.ts';";
-    const assemblyCall = "makePrivacyApiRuntime({read:()=> 'fixture'});";
-    const root = 'main(Effect.void);';
-    const count = (source: string) => {
-      writeFileSync(filename, source);
-      return runOxlint(lintConfig, [filename], appRoot).diagnostics.filter(({ code }) => code === ruleCode).length;
-    };
-    const valid = `${imports} ${control} ${assemblyCall} ${root}`;
-    expect(count(valid)).toBe(0);
-    expect(
-      count(
-        `${valid} const startupFlag = '--legacy'; process.argv.includes(startupFlag); void process.ppid; void process.execPath; const legacy = import.meta.fixtureBuild === true;`,
-      ),
-    ).toBe(0);
-    for (const invalid of [
-      valid.replace("'@effect/platform-node/NodeRuntime'", "'foreign-runtime'"),
-      valid
-        .replace('runMain as main', 'runMain as acquired')
-        .replace(root, 'const main = acquired; main(Effect.void);'),
-      valid.replace(root, 'const launch = () => { main(Effect.void); }; launch();'),
-      valid.replace(root, 'main = () => undefined; main(Effect.void);'),
-      valid.replace(root, 'void main; main(Effect.void);'),
-      valid.replace(control, 'export const unrelated = {};'),
-      valid.replace(control, 'export default {};'),
-      valid.replace(control, "export * from '../../api/closed-runtime.ts';"),
-      valid.replace('let armed = false;', 'let armed = process.pid;'),
-      valid.replace('let armed = false;', "let armed = makePrivacyApiRuntime({read:()=> 'bad'});"),
-      valid.replace('close();', 'process.exit();'),
-      valid.replace('close();', 'const callback = close; callback();'),
-      valid.replace('close();', 'return close;'),
-      valid.replace('close();', 'close.constructor();'),
-      valid.replace(
-        'observe: () => ({ armed, committedResponseStatus, discardedResponses })',
-        'observe: () => process.env',
-      ),
-      `${valid} process.ppid = 1;`,
-      `${valid} process.execPath = 'foreign';`,
-      `${valid} let flag = '--legacy'; process.argv.includes(flag);`,
-      `${valid} const flag = process.env.FLAG; process.argv.includes(flag);`,
-      `${valid} import.meta.fixtureBuild();`,
-      `${valid} const metadata = import.meta;`,
-      `${valid} import.meta.fixtureBuild = true;`,
-    ]) {
-      expect(count(invalid), invalid).toBe(1);
-    }
-    const runtimeFile = nodePath.join(owner, 'src/runtime.ts');
-    mkdirSync(nodePath.dirname(runtimeFile), { recursive: true });
-    writeFileSync(runtimeFile, valid);
-    expect(
-      runOxlint(lintConfig, [runtimeFile], appRoot).diagnostics.filter(({ code }) => code === ruleCode),
-    ).toHaveLength(1);
-    const foreignImport = valid.replace("'../../api/closed-runtime.ts'", "'../../../other/api/closed-runtime.ts'");
-    const other = nodePath.join(directory, 'app/verticals/other/api');
-    mkdirSync(other, { recursive: true });
-    writeFileSync(
-      nodePath.join(other, 'closed-runtime.ts'),
-      'export const makePrivacyApiRuntime = (dependency: {readonly read:()=>string}) => dependency;',
-    );
-    expect(count(foreignImport)).toBe(1);
-  }, testsDirectory);
+const actualPrivacySource = readFileSync(nodePath.join(appRoot, privacyCompletionProcess), 'utf-8');
+const privacyControl = actualPrivacySource.slice(
+  actualPrivacySource.indexOf('export const makeReportResponseLossControl'),
+  actualPrivacySource.indexOf('// Immutable historical TEST producer'),
+);
+
+it('extracts the actual Privacy response-loss control', () => {
+  expect(privacyControl.startsWith('export const makeReportResponseLossControl')).toBe(true);
 });
 
-it('closes NodeRuntime subpath capabilities in governed BFF origins', () => {
+describe('proves supported subpath test roots and closed exported controls without admitting runtime capabilities', () => {
+  ruleTester.run(serviceRuleTitle, serviceRule, {
+    invalid: [],
+    valid: [repositoryCase(privacyCompletionProcess)],
+  });
+  const control = privacyControl;
+  const { accept, directory, register, reject, write } = recordScenario(serviceRuleTitle);
+  const owner = nodePath.join(directory, 'app/verticals/privacy');
+  const support = nodePath.join(owner, 'tests/support');
+  const api = nodePath.join(owner, 'api');
+  write(
+    nodePath.join(api, 'closed-runtime.ts'),
+    'export const makePrivacyApiRuntime = (dependency: {readonly read:()=>string}) => dependency;',
+  );
+  const filename = nodePath.join(support, 'completion.ts');
+  const imports =
+    "import {runMain as main} from '@effect/platform-node/NodeRuntime'; import {Effect} from 'effect'; import {makePrivacyApiRuntime} from '../../api/closed-runtime.ts';";
+  const assemblyCall = "makePrivacyApiRuntime({read:()=> 'fixture'});";
+  const root = 'main(Effect.void);';
+  const count = (source: string, expected: number, name?: string) => {
+    write(filename, source);
+    if (expected === 0) {
+      accept(filename, name);
+    } else {
+      reject(filename, expected, name);
+    }
+  };
+  const valid = `${imports} ${control} ${assemblyCall} ${root}`;
+  count(valid, 0);
+  count(
+    `${valid} const startupFlag = '--legacy'; process.argv.includes(startupFlag); void process.ppid; void process.execPath; const legacy = import.meta.fixtureBuild === true;`,
+    0,
+  );
+  for (const invalid of [
+    valid.replace("'@effect/platform-node/NodeRuntime'", "'foreign-runtime'"),
+    valid.replace('runMain as main', 'runMain as acquired').replace(root, 'const main = acquired; main(Effect.void);'),
+    valid.replace(root, 'const launch = () => { main(Effect.void); }; launch();'),
+    valid.replace(root, 'main = () => undefined; main(Effect.void);'),
+    valid.replace(root, 'void main; main(Effect.void);'),
+    valid.replace(control, 'export const unrelated = {};'),
+    valid.replace(control, 'export default {};'),
+    valid.replace(control, "export * from '../../api/closed-runtime.ts';"),
+    valid.replace('let armed = false;', 'let armed = process.pid;'),
+    valid.replace('let armed = false;', "let armed = makePrivacyApiRuntime({read:()=> 'bad'});"),
+    valid.replace('close();', 'process.exit();'),
+    valid.replace('close();', 'const callback = close; callback();'),
+    valid.replace('close();', 'return close;'),
+    valid.replace('close();', 'close.constructor();'),
+    valid.replace(
+      'observe: () => ({ armed, committedResponseStatus, discardedResponses })',
+      'observe: () => process.env',
+    ),
+    `${valid} process.ppid = 1;`,
+    `${valid} process.execPath = 'foreign';`,
+    `${valid} let flag = '--legacy'; process.argv.includes(flag);`,
+    `${valid} const flag = process.env.FLAG; process.argv.includes(flag);`,
+    `${valid} import.meta.fixtureBuild();`,
+    `${valid} const metadata = import.meta;`,
+    `${valid} import.meta.fixtureBuild = true;`,
+  ]) {
+    count(invalid, 1, invalid);
+  }
+  const runtimeFile = nodePath.join(owner, 'src/runtime.ts');
+  write(runtimeFile, valid);
+  reject(runtimeFile, 1, 'the same root outside a test support directory');
+  const foreignImport = valid.replace("'../../api/closed-runtime.ts'", "'../../../other/api/closed-runtime.ts'");
+  const other = nodePath.join(directory, 'app/verticals/other/api');
+  write(
+    nodePath.join(other, 'closed-runtime.ts'),
+    'export const makePrivacyApiRuntime = (dependency: {readonly read:()=>string}) => dependency;',
+  );
+  count(foreignImport, 1);
+  register();
+});
+
+describe('closes NodeRuntime subpath capabilities in governed BFF origins', () => {
   inspectBffCases([
     { expected: 0, name: 'bff-subpath-unchanged-positive' },
     {
@@ -3091,47 +3285,57 @@ it('closes NodeRuntime subpath capabilities in governed BFF origins', () => {
   ]);
 });
 
-it('keeps scoped Effect-valued acquisitions inside the genuine native factory construction boundary', () => {
-  withTemporaryWorkspace((directory) => {
-    const ownerDirectory = nodePath.join(directory, 'verticals', 'module');
-    mkdirSync(ownerDirectory, { recursive: true });
-    const consumer = nodePath.join(ownerDirectory, consumerFilename);
-    writeFileSync(
-      nodePath.join(ownerDirectory, factoryFilename),
-      "import { Effect } from 'effect';\n" +
-        'export const makeScopedService = Effect.gen(function* () { return { verify: Effect.void }; });',
-    );
-    const imports = [
-      "import type { ReadServiceFactory } from '@app/core-runtime';",
-      "import { Context, Effect } from 'effect';",
-      "import { makeScopedService } from './factory.ts';",
-      "class Owner extends Context.Service<Owner, {}>()('Owner') {}",
-    ].join('\n');
-    const acquisition =
-      'const verification = yield* makeScopedService.pipe(Effect.provideService(Owner, {})); return verification;';
-    const native = (body: string) =>
-      `${imports}\nconst makeOwner: ReadServiceFactory<{}> = Effect.fn('owner')(function* (transaction, scope, revision) { ${body} });`;
-    const diagnostics = (source: string) => {
-      writeFileSync(consumer, source);
-      return runOxlint(lintConfig, [consumer], appRoot)
-        .diagnostics.filter(({ code }) => [ruleCode, 'effect-native(no-effect-provide-in-library)'].includes(code))
-        .map(({ code }) => code)
-        .toSorted();
-    };
-    const rejected = [ruleCode, 'effect-native(no-effect-provide-in-library)'].toSorted();
+describe('keeps scoped Effect-valued acquisitions inside the genuine native factory construction boundary', () => {
+  // The production configuration ran both rules over each consumer; each rule's expectation is a case.
+  const service = recordScenario(serviceRuleTitle);
+  const provide = recordScenario(
+    'effect-native/no-effect-provide-in-library',
+    effectNativeRule('no-effect-provide-in-library'),
+    withOptions(productionOptions('effect-native/no-effect-provide-in-library')),
+  );
+  const factory = 'verticals/module/factory.ts';
+  const consumer = 'verticals/module/consumer.ts';
+  const scopedFactorySource =
+    "import { Effect } from 'effect';\n" +
+    'export const makeScopedService = Effect.gen(function* () { return { verify: Effect.void }; });';
+  const imports = [
+    "import type { ReadServiceFactory } from '@app/core-runtime';",
+    "import { Context, Effect } from 'effect';",
+    "import { makeScopedService } from './factory.ts';",
+    "class Owner extends Context.Service<Owner, {}>()('Owner') {}",
+  ].join('\n');
+  const acquisition =
+    'const verification = yield* makeScopedService.pipe(Effect.provideService(Owner, {})); return verification;';
+  const native = (body: string) =>
+    `${imports}\nconst makeOwner: ReadServiceFactory<{}> = Effect.fn('owner')(function* (transaction, scope, revision) { ${body} });`;
+  const expectRules = (source: string, servicePasses: boolean, providePasses: boolean): void => {
+    for (const [scenario, passes] of [
+      [service, servicePasses],
+      [provide, providePasses],
+    ] as const) {
+      scenario.write(factory, scopedFactorySource);
+      scenario.write(consumer, source);
+      if (passes) {
+        scenario.accept(consumer);
+      } else {
+        scenario.reject(consumer, 1);
+      }
+    }
+  };
 
-    expect(diagnostics(native(acquisition))).toEqual([]);
-    expect(diagnostics(`${imports}\nconst program = Effect.gen(function* () { ${acquisition} });`)).toEqual(rejected);
-    expect(diagnostics(native(acquisition).replace("'@app/core-runtime'", "'./lookalike.ts'"))).toEqual(rejected);
-    expect(diagnostics(native(`return { run: () => Effect.gen(function* () { ${acquisition} }) };`))).toEqual(rejected);
-    expect(
-      diagnostics(
-        native(
-          'const verification = makeScopedService.pipe(Effect.provideService(Owner, {})); return yield* verification;',
-        ),
-      ),
-    ).toEqual(rejected);
-    expect(diagnostics(native(acquisition.replace('const verification', 'let verification')))).toEqual(rejected);
-    expect(diagnostics(`${native(acquisition)}\nvoid makeScopedService;`)).toEqual([ruleCode]);
-  });
+  expectRules(native(acquisition), true, true);
+  expectRules(`${imports}\nconst program = Effect.gen(function* () { ${acquisition} });`, false, false);
+  expectRules(native(acquisition).replace("'@app/core-runtime'", "'./lookalike.ts'"), false, false);
+  expectRules(native(`return { run: () => Effect.gen(function* () { ${acquisition} }) };`), false, false);
+  expectRules(
+    native(
+      'const verification = makeScopedService.pipe(Effect.provideService(Owner, {})); return yield* verification;',
+    ),
+    false,
+    false,
+  );
+  expectRules(native(acquisition.replace('const verification', 'let verification')), false, false);
+  expectRules(`${native(acquisition)}\nvoid makeScopedService;`, false, true);
+  service.register();
+  provide.register();
 });
