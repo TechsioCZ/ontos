@@ -1,5 +1,15 @@
-import { GatewayContextApi, GatewayContextRequestSchema, shellGatewayContextContract } from './gateway-context.ts';
-import type { GatewayContextClientError, GatewayContextRequest, GatewayContextResponse } from './gateway-context.ts';
+import {
+  GatewayContextApi,
+  GatewayContextRequestSchema,
+  GatewayRelayRequestSchema,
+  shellGatewayContextContract,
+} from './gateway-context.ts';
+import type {
+  GatewayContextClientError,
+  GatewayContextRequest,
+  GatewayContextResponse,
+  GatewayRelayRequest,
+} from './gateway-context.ts';
 import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { Context, Effect, Option, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
@@ -40,6 +50,15 @@ const apiKeyGatewayContextClient = makeEffectHttpApiClient(GatewayContextApi, {
   ),
 });
 
+/** One request-scoped transport seam shared by the two API-key-authenticated issuer operations. */
+const withApiKeyGatewayContextTransport =
+  (options: ApiKeyGatewayContextTransportOptions) =>
+  <Success, Failure, Requirements>(effect: Effect.Effect<Success, Failure, Requirements>) =>
+    effect.pipe(
+      // oxlint-disable-next-line effect-native/no-effect-provide-in-library -- Request-scoped server transport options must remain private to this server-only client and must not become a caller-visible application service. expires: 2027-03-31.
+      Effect.provideService(ApiKeyGatewayContextTransport, Option.some(options)),
+    );
+
 /**
  * Server-only client for Shell-owned API-key capability issuance.
  *
@@ -61,14 +80,26 @@ export const issueApiKeyGatewayContext = (
         ),
       ),
     ),
-    // oxlint-disable-next-line effect-native/no-effect-provide-in-library -- Request-scoped server transport options must remain private to this server-only client and must not become a caller-visible application service. expires: 2027-03-31.
-    Effect.provideService(
-      ApiKeyGatewayContextTransport,
-      Option.some({
-        baseUrl: options.baseUrl,
-        requestCorrelation: options.requestCorrelation,
-      }),
-    ),
+    withApiKeyGatewayContextTransport(options),
   );
 
 export const defaultShellGatewayApiBaseUrl = shellGatewayContextContract.apiPrefix;
+
+/** Relay preserves the source assertion's actor; the API key authenticates only the source deployment. */
+export const issueRelayedGatewayContext = (
+  payload: GatewayRelayRequest,
+  options: ApiKeyGatewayContextClientOptions,
+): Effect.Effect<GatewayContextResponse, GatewayContextClientError> =>
+  Schema.decodeEffect(GatewayRelayRequestSchema)(payload).pipe(
+    Effect.flatMap((decodedPayload) =>
+      apiKeyGatewayContextClient.pipe(
+        Effect.flatMap((client) =>
+          client.gatewayContext.issueRelayedGatewayContext({
+            headers: { 'x-api-key': Redacted.value(options.apiKey) },
+            payload: decodedPayload,
+          }),
+        ),
+      ),
+    ),
+    withApiKeyGatewayContextTransport(options),
+  );

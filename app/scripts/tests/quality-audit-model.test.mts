@@ -2088,3 +2088,33 @@ it.live(
     }
   }),
 );
+
+it.live(
+  'explicit owner-local postal probe entry retains neighboring unused-file findings',
+  Effect.fn(function* postalProbeEntrypointControls() {
+    const root = yield* fixture();
+    const workspace = 'verticals/commerce-customer-context';
+    const probe = 'tests/integration/registered-postal-factory-native-probe.mts';
+    const neighbor = 'tests/integration/registered-postal-factory-native-helper.mts';
+    write(root, `${workspace}/package.json`, '{"name":"@fixture/postal-probe","private":true,"type":"module"}');
+    write(root, `${workspace}/${probe}`, "process.stdout.write('postal probe'); export {};");
+    write(root, `${workspace}/${neighbor}`, 'export const unusedPostalHelper = 1;');
+    const actualConfig = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(KnipConfigSchema))(
+      readFileSync(path.join(appRoot, 'quality-audit/knip.json'), 'utf-8'),
+    );
+    const base = {
+      workspaces: {
+        '.': { entry: [indexFile], node: false, project: [sourcePattern] },
+        'verticals/*': actualConfig.workspaces?.['verticals/*'] ?? {},
+      },
+    };
+    const consumerPath = path.join(root, auditConsumersFile);
+    const model = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    expect(run.status, run.stderr).toBe(1);
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+    const files = report.issues.flatMap((issue) => issue.files.map((finding) => finding.name));
+    expect(files).not.toContain(`${workspace}/${probe}`);
+    expect(files).toContain(`${workspace}/${neighbor}`);
+  }),
+);

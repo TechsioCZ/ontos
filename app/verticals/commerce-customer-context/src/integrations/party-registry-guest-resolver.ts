@@ -1,12 +1,26 @@
-import { GuestPartyResolutionResponseSchema, executeGuestPartyResolution } from '@app/party-registry/api/client';
-import { Context, DateTime, Effect, Layer, Schema } from 'effect';
+import type { OperationalScope } from '@app/core-runtime';
+import type { Crypto } from 'effect';
+import type { executeGuestPartyResolution } from '@app/party-registry/api/client';
+import type { GatewayRelaySourceError } from '@app/shared-contracts/gateway-context-server';
+import { acquireOwnerGatewayContext } from './server-owner-gateway.ts';
+import {
+  GuestPartyResolutionResponseSchema,
+  executeGuestPartyResolutionWithAuthorization,
+} from '@app/party-registry/api/client';
+import { Redacted, Context, DateTime, Effect, Layer, Schema } from 'effect';
 
 import type { ProfilePersistenceDependencies } from '../persistence/profile-persistence.ts';
 import { ProfilePersistenceDependencyFailure } from '../persistence/profile-persistence.ts';
 import type { GuestPartyResolutionOutcome } from '../../shared/domain/profile-contracts.ts';
 
 type GuestPartyResolver = NonNullable<ProfilePersistenceDependencies['resolveGuestParty']>;
-type GuestPartyResolutionExecutor = typeof executeGuestPartyResolution;
+type GuestPartyResolutionExecutor = (
+  payload: Parameters<typeof executeGuestPartyResolution>[0],
+  correlation: string,
+) => Effect.Effect<
+  Effect.Success<ReturnType<typeof executeGuestPartyResolution>>,
+  Effect.Error<ReturnType<typeof executeGuestPartyResolution>> | GatewayRelaySourceError
+>;
 
 export interface PartyRegistryGuestResolverFactoryInput {
   readonly legalEntityId: string;
@@ -15,7 +29,7 @@ export interface PartyRegistryGuestResolverFactoryInput {
 }
 
 export interface PartyRegistryGuestResolverFactoryService {
-  readonly make: (input: PartyRegistryGuestResolverFactoryInput) => GuestPartyResolver;
+  readonly make: (input: { readonly crypto: Crypto.Crypto; readonly scope: OperationalScope }) => GuestPartyResolver;
 }
 
 export class PartyRegistryGuestResolverFactory extends Context.Service<
@@ -76,10 +90,7 @@ const mapGuestPartyResolution = (
  * it, and a malformed owner result is rejected before CCC profile mutation can run.
  */
 export const makePartyRegistryGuestResolver =
-  (
-    input: PartyRegistryGuestResolverFactoryInput,
-    execute: GuestPartyResolutionExecutor = executeGuestPartyResolution,
-  ): GuestPartyResolver =>
+  (input: PartyRegistryGuestResolverFactoryInput, execute: GuestPartyResolutionExecutor): GuestPartyResolver =>
   (request): ReturnType<GuestPartyResolver> => {
     if (
       request.tenantId !== input.tenantId ||
@@ -116,5 +127,27 @@ export const makePartyRegistryGuestResolver =
 
 export const partyRegistryGuestResolverFactoryLive = Layer.succeed(
   PartyRegistryGuestResolverFactory,
-  Object.freeze({ make: makePartyRegistryGuestResolver }),
+  Object.freeze({
+    make: ({ crypto, scope }: { readonly crypto: Crypto.Crypto; readonly scope: OperationalScope }) =>
+      makePartyRegistryGuestResolver(
+        { legalEntityId: scope.legalEntityId ?? '', requestCorrelation: scope.correlationId, tenantId: scope.tenantId },
+        (payload) =>
+          acquireOwnerGatewayContext(scope, crypto, {
+            audience: 'party-registry',
+            operationKey: 'party.registry.api.guest-party-resolution',
+          }).pipe(
+            Effect.flatMap((issued) =>
+              executeGuestPartyResolutionWithAuthorization(
+                payload,
+                Redacted.value(issued.authorization),
+                scope.correlationId,
+                {
+                  baseUrl: issued.apiUrl,
+                  compositionRevision: issued.compositionRevision,
+                },
+              ),
+            ),
+          ),
+      ),
+  }),
 );

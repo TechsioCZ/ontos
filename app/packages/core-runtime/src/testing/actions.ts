@@ -540,3 +540,7 @@ export {
   LiveOperationFixtureBootstrapResponseSchema,
 } from './live-operations.ts';
 export type { LiveOperationFixtureRuntimeHandoff, LiveOperationFixtureBootstrapRequest } from './live-operations.ts';
+
+/** Test-owned access to the original registration, without publishing private storage in production. */
+export { createActionCollector } from '../actions/collector.ts';
+export { getActionHandler, getActionServiceFactory } from '../actions/definition.ts';

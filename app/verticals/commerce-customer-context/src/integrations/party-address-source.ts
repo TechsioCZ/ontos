@@ -1,12 +1,17 @@
+import type { OperationalScope } from '@app/core-runtime';
+import type { Crypto } from 'effect';
+import type { executePartyContactPointDetail } from '@app/party-registry/api/client';
+import { GatewayRelaySourceError } from '@app/shared-contracts/gateway-context-server';
+import { acquireOwnerGatewayContext } from './server-owner-gateway.ts';
 import {
   PartyContactPointDetailForbiddenProblemSchema,
   PartyContactPointDetailInvalidProblemSchema,
   PartyContactPointDetailNotFoundProblemSchema,
   PartyContactPointDetailPolicyConflictProblemSchema,
   PartyContactPointDetailPolicyProblemSchema,
-  executePartyContactPointDetail,
+  executePartyContactPointDetailWithAuthorization,
 } from '@app/party-registry/api/client';
-import { Context, Effect, Schema } from 'effect';
+import { Context, Redacted, Effect, Function as EffectFunction, Schema } from 'effect';
 
 import type { AddSavedAddressPayload, UpdateSavedAddressPayload } from '../../shared/domain/address-actions.ts';
 import type { PostalAddress, SavedAddress } from '../../shared/domain/address-book.ts';
@@ -20,12 +25,18 @@ type PartyBackedAddressOrigin = Extract<
   NonNullable<PartyBackedAddressPayload['origin']>,
   { readonly kind: 'PARTY_BACKED' }
 >;
-type PartyContactPointDetailExecutor = typeof executePartyContactPointDetail;
-// The default transport is the published owner client. Composition may supply the same
-// typed client with its own credential acquisition, while all source validation stays here.
-export const PartyAddressSourceExecutor = Context.Reference<PartyContactPointDetailExecutor>(
+type PartyContactPointDetailExecutor = (
+  payload: Parameters<typeof executePartyContactPointDetail>[0],
+  correlation: string,
+) => Effect.Effect<
+  Effect.Success<ReturnType<typeof executePartyContactPointDetail>>,
+  Effect.Error<ReturnType<typeof executePartyContactPointDetail>> | GatewayRelaySourceError
+>;
+// A trusted composition may supply an authenticated owner transport explicitly.
+// The default carries no credentials; scope-bound factories acquire their own relay proof.
+export const PartyAddressSourceExecutor = Context.Reference<PartyContactPointDetailExecutor | undefined>(
   '@app/commerce-customer-context/PartyAddressSourceExecutor',
-  { defaultValue: () => executePartyContactPointDetail },
+  { defaultValue: EffectFunction.constUndefined },
 );
 
 type PartyContactPointDetailResponse = Effect.Success<ReturnType<PartyContactPointDetailExecutor>>;
@@ -164,7 +175,11 @@ export const partyBackedAddressSourceValidator =
       return Effect.void;
     }
     return (execute === undefined ? PartyAddressSourceExecutor : Effect.succeed(execute)).pipe(
-      Effect.flatMap((client) => client({ contactPointRef: origin.contactPointRef }, requestCorrelation)),
+      Effect.flatMap((client: PartyContactPointDetailExecutor | undefined) =>
+        client === undefined
+          ? Effect.fail(new GatewayRelaySourceError({ reason: 'An explicit Party owner transport is required' }))
+          : client({ contactPointRef: origin.contactPointRef }, requestCorrelation),
+      ),
       Effect.mapError(validatorFailure),
       Effect.flatMap((contactPoint) => validateCurrentPostalSource(payload, contactPoint)),
     );
@@ -221,9 +236,46 @@ export const partyBackedPostalAddressResolver =
     }
     const { origin } = address;
     return (execute === undefined ? PartyAddressSourceExecutor : Effect.succeed(execute)).pipe(
-      Effect.flatMap((client) => client({ contactPointRef: origin.contactPointRef }, requestCorrelation)),
+      Effect.flatMap((client: PartyContactPointDetailExecutor | undefined) =>
+        client === undefined
+          ? Effect.fail(new GatewayRelaySourceError({ reason: 'An explicit Party owner transport is required' }))
+          : client({ contactPointRef: origin.contactPointRef }, requestCorrelation),
+      ),
       Effect.map((contactPoint) => resolvePartyBackedPostalAddress(origin, contactPoint)),
       // oxlint-disable-next-line promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining.
       Effect.catch(resolverFailure),
     );
   };
+
+const partyContactPointExecutorForScope =
+  (scope: OperationalScope, crypto: Crypto.Crypto): PartyContactPointDetailExecutor =>
+  (payload, correlation) =>
+    PartyAddressSourceExecutor.pipe(
+      Effect.flatMap((execute) => {
+        if (execute !== undefined) {
+          return execute(payload, correlation);
+        }
+        return acquireOwnerGatewayContext(scope, crypto, {
+          audience: 'party-registry',
+          operationKey: 'party.registry.api.party-contact-point-detail',
+        }).pipe(
+          Effect.flatMap((issued) =>
+            executePartyContactPointDetailWithAuthorization(
+              payload,
+              Redacted.value(issued.authorization),
+              scope.correlationId,
+              {
+                baseUrl: issued.apiUrl,
+                compositionRevision: issued.compositionRevision,
+              },
+            ),
+          ),
+        );
+      }),
+    );
+
+export const partyBackedAddressSourceValidatorForScope = (scope: OperationalScope, crypto: Crypto.Crypto) =>
+  partyBackedAddressSourceValidator(scope.correlationId, partyContactPointExecutorForScope(scope, crypto));
+
+export const partyBackedPostalAddressResolverForScope = (scope: OperationalScope, crypto: Crypto.Crypto) =>
+  partyBackedPostalAddressResolver(scope.correlationId, partyContactPointExecutorForScope(scope, crypto));

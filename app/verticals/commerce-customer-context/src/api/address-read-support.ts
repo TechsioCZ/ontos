@@ -1,5 +1,5 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Crypto, Effect } from 'effect';
 import type { AddressBookProfile } from '../../shared/domain/address-book.ts';
 import {
   deliveryDestinationPortsForTransaction,
@@ -7,44 +7,49 @@ import {
   invoiceRecipientPortsForTransaction,
 } from '../persistence/address-persistence.ts';
 import type { AddressExternalResolutionPorts } from '../persistence/address-persistence.ts';
-import { partyBackedPostalAddressResolver } from '../integrations/party-address-source.ts';
+import { partyBackedPostalAddressResolverForScope } from '../integrations/party-address-source.ts';
 
 type DeliveryDestinationReadServices = ReturnType<typeof deliveryDestinationPortsForTransaction>;
 type InvoiceRecipientReadServices = ReturnType<typeof invoiceRecipientPortsForTransaction>;
 
-type AddressExternalResolutionPortsFactory = (scope: OperationalScope) => Partial<AddressExternalResolutionPorts>;
+type AddressExternalResolutionPortsFactory = (
+  scope: OperationalScope,
+  crypto: Crypto.Crypto,
+) => Partial<AddressExternalResolutionPorts>;
 
-const partyAddressResolutionPorts: AddressExternalResolutionPortsFactory = (scope) => ({
-  resolvePartyPostalAddress: partyBackedPostalAddressResolver(scope.correlationId),
+const partyAddressResolutionPorts: AddressExternalResolutionPortsFactory = (scope, crypto) => ({
+  resolvePartyPostalAddress: partyBackedPostalAddressResolverForScope(scope, crypto),
 });
 
-const makeDeliveryDestinationReadServiceFactory =
-  (
-    externalForScope: AddressExternalResolutionPortsFactory = partyAddressResolutionPorts,
-  ): ReadServiceFactory<DeliveryDestinationReadServices> =>
-  (transaction, scope) =>
-    Effect.succeed(
-      deliveryDestinationPortsForTransaction(
+const makeDeliveryDestinationReadServiceFactory = (
+  externalForScope: AddressExternalResolutionPortsFactory = partyAddressResolutionPorts,
+): ReadServiceFactory<DeliveryDestinationReadServices, Crypto.Crypto> =>
+  Effect.fn('AddressReadSupport.makeDeliveryDestinationReadServiceFactory')(
+    function* deliveryDestinationServices(transaction, scope) {
+      const crypto = yield* Crypto.Crypto;
+      return deliveryDestinationPortsForTransaction(
         transaction,
         scope,
-        composeAddressExternalResolutionPorts(externalForScope(scope)),
-      ),
-    );
+        composeAddressExternalResolutionPorts(externalForScope(scope, crypto)),
+      );
+    },
+  );
 
 export const deliveryDestinationReadServiceFactory = makeDeliveryDestinationReadServiceFactory();
 
-const makeInvoiceRecipientReadServiceFactory =
-  (
-    externalForScope: AddressExternalResolutionPortsFactory = partyAddressResolutionPorts,
-  ): ReadServiceFactory<InvoiceRecipientReadServices> =>
-  (transaction, scope) =>
-    Effect.succeed(
-      invoiceRecipientPortsForTransaction(
+const makeInvoiceRecipientReadServiceFactory = (
+  externalForScope: AddressExternalResolutionPortsFactory = partyAddressResolutionPorts,
+): ReadServiceFactory<InvoiceRecipientReadServices, Crypto.Crypto> =>
+  Effect.fn('AddressReadSupport.makeInvoiceRecipientReadServiceFactory')(
+    function* invoiceRecipientServices(transaction, scope) {
+      const crypto = yield* Crypto.Crypto;
+      return invoiceRecipientPortsForTransaction(
         transaction,
         scope,
-        composeAddressExternalResolutionPorts(externalForScope(scope)),
-      ),
-    );
+        composeAddressExternalResolutionPorts(externalForScope(scope, crypto)),
+      );
+    },
+  );
 
 export const invoiceRecipientReadServiceFactory = makeInvoiceRecipientReadServiceFactory();
 

@@ -1,7 +1,5 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
-import type { Server } from 'node:http';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { brotliCompressSync, gzipSync } from 'node:zlib';
@@ -10,14 +8,14 @@ import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules
 import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime/modules/active-application-composition';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
-import { NodeHttpClient } from '@effect/platform-node';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
-import { Clock, Context, DateTime, Effect, Layer, Option, Predicate, Schema, Stream } from 'effect';
+import { Clock, DateTime, Effect, Layer, Option, Predicate, Schema, Stream } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import { HttpClient, HttpClientRequest } from 'effect/http';
 import { HttpApi } from 'effect/http-api';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
+
+import { OwnerProcessStartupError, startNativeHttpServer as startShellServer } from '../support/native-http-server.ts';
 
 import { MODULE_API_REVISION_HEADER } from '../../src/module-api/admission.ts';
 import { dispatchModuleApiRequest, ModuleApiTransportLive } from '../../src/module-api/transport.ts';
@@ -55,83 +53,6 @@ const OwnerEventSchema = Schema.Union([
   Schema.Struct({ event: Schema.Literal('business'), method: Schema.String, path: Schema.String }),
 ]);
 type OwnerEvent = typeof OwnerEventSchema.Type;
-
-class OwnerProcessStartupError extends Schema.TaggedError<OwnerProcessStartupError>()('OwnerProcessStartupError', {
-  reason: Schema.String,
-}) {}
-
-type NativeNodeServerFactory = (handler: (request: Request) => PromiseLike<Response>) => PromiseLike<Server>;
-const NativeNodeAdapterSchema = Schema.Struct({
-  createNodeServer: Schema.declare<NativeNodeServerFactory>((value): value is NativeNodeServerFactory =>
-    Predicate.isFunction(value),
-  ),
-});
-
-const startShellServer = Effect.fn('NativeModuleTransportTest.startShellServer')(function* startNativeShellServer(
-  handler: (request: Request) => PromiseLike<Response>,
-) {
-  const shellRequire = createRequire(path.resolve('package.json'));
-  const bffRequire = createRequire(shellRequire.resolve('@modern-js/bff-effect'));
-  const adapter = yield* Schema.decodeUnknownEffect(NativeNodeAdapterSchema)(bffRequire('@modern-js/server-core/node'));
-  const ingress: { aborted: boolean; connection: string | null; path: string }[] = [];
-  const server = yield* Effect.acquireRelease(
-    Effect.promise(() =>
-      adapter.createNodeServer((request) => {
-        const observed = {
-          aborted: request.signal.aborted,
-          connection: request.headers.get('connection'),
-          path: new URL(request.url).pathname,
-        };
-        ingress.push(observed);
-        request.signal.addEventListener(
-          'abort',
-          () => {
-            observed.aborted = true;
-          },
-          { once: true },
-        );
-        return handler(request);
-      }),
-    ),
-    (ownedServer) =>
-      Effect.callback<true>((resume) => {
-        ownedServer.close(() => resume(Effect.succeed(true)));
-        ownedServer.closeAllConnections();
-      }),
-  );
-  yield* Effect.callback<true, OwnerProcessStartupError>((resume) => {
-    const failed = (error: Error): void => {
-      resume(Effect.fail(new OwnerProcessStartupError({ reason: error.message })));
-    };
-    server.once('error', failed);
-    server.listen(0, '127.0.0.1', () => resume(Effect.succeed(true)));
-    return Effect.sync(() => server.removeListener('error', failed));
-  });
-  const address = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Number }))(server.address());
-  const origin = `http://127.0.0.1:${address.port}`;
-  const clientServices = yield* Layer.build(NodeHttpClient.layerNodeHttp);
-  const client = Context.get(clientServices, HttpClient.HttpClient);
-  const targetRequest = (request: Request) => {
-    const source = new URL(request.url);
-    return new Request(`${origin}${source.pathname}${source.search}`, request);
-  };
-  return {
-    handler: (request: Request) => fetch(targetRequest(request), { redirect: 'manual' }),
-    ingress,
-    nativeHandler: Effect.fn('NativeModuleTransportTest.executeWireRequest')(function* executeNativeRequest(
-      request: Request,
-    ) {
-      const forwarded = targetRequest(request);
-      const nativeRequest = HttpClientRequest.fromWeb(forwarded);
-      if (forwarded.body === null) {
-        return yield* client.execute(nativeRequest);
-      }
-      const body = yield* Effect.promise(() => forwarded.text());
-      return yield* client.execute(HttpClientRequest.bodyText(nativeRequest, body));
-    }),
-    origin,
-  };
-});
 
 const awaitChildExit = (child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals) =>
   Effect.callback<true>((resume) => {
@@ -363,8 +284,8 @@ it.live('retains HEAD and dotted paths through the native router and owner proce
   Effect.gen(function* preservesHead() {
     const fixture = yield* createFixture();
     const authorization = yield* fixture.authorize();
-    const response = yield* Effect.promise(() =>
-      fixture.server.handler(fixture.request('schema.v1.json?format=full', authorization, { method: 'HEAD' })),
+    const response = yield* fixture.server.handler(
+      fixture.request('schema.v1.json?format=full', authorization, { method: 'HEAD' }),
     );
     expect(response.status).toBe(200);
     expect(yield* Effect.promise(() => response.text())).toBe('');
@@ -380,16 +301,14 @@ it.live('returns owner redirects without following them or exposing signed crede
     const externalLocation = `${outside.origin}/unapproved-target`;
     const fixture = yield* createFixture(buildMarker, appId, externalLocation);
     const authorization = yield* fixture.authorize();
-    const response = yield* Effect.promise(() => fixture.server.handler(fixture.request('redirect', authorization)));
+    const response = yield* fixture.server.handler(fixture.request('redirect', authorization));
     expect(response.status).toBe(307);
     expect(response.headers.get('location')).toBe(`/${appId}-api/redirect-target`);
     expect(fixture.owner.events.filter((event) => event.event === 'received')).toHaveLength(1);
     expect(
       fixture.owner.events.some((event) => event.event === 'received' && event.path.endsWith('/redirect-target')),
     ).toBe(false);
-    const externalResponse = yield* Effect.promise(() =>
-      fixture.server.handler(fixture.request('redirect-external', authorization)),
-    );
+    const externalResponse = yield* fixture.server.handler(fixture.request('redirect-external', authorization));
     expect(externalResponse.status).toBe(307);
     // The relay only forwards a Location that resolves to the Shell origin, so a cross-origin owner redirect is
     // dropped rather than turned into an off-origin navigation from the staff-session origin.
@@ -404,7 +323,7 @@ it.live('preserves binary response bytes while stripping owner Set-Cookie header
   Effect.gen(function* preservesBinaryResponse() {
     const fixture = yield* createFixture();
     const authorization = yield* fixture.authorize();
-    const response = yield* Effect.promise(() => fixture.server.handler(fixture.request('binary', authorization)));
+    const response = yield* fixture.server.handler(fixture.request('binary', authorization));
     const bytes = yield* Effect.promise(() => response.arrayBuffer());
     expect([...new Uint8Array(bytes)]).toEqual([0, 255, 1, 128]);
     expect(response.headers.get('content-type')).toBe('application/octet-stream');
@@ -416,7 +335,7 @@ it.live('strips owner cookies even when they share a name across paths', () =>
   Effect.gen(function* preservesDuplicateCookieNames() {
     const fixture = yield* createFixture();
     const authorization = yield* fixture.authorize();
-    const response = yield* Effect.promise(() => fixture.server.handler(fixture.request('cookies', authorization)));
+    const response = yield* fixture.server.handler(fixture.request('cookies', authorization));
     expect(response.status).toBe(200);
     expect(response.headers.getSetCookie()).toEqual([]);
     expect(yield* Effect.promise(() => response.text())).toBe('cookies preserved');
@@ -448,7 +367,7 @@ it.live('lets a native fetch consumer decode a compressed owner response exactly
     const fixture = yield* createFixture();
     const authorization = yield* fixture.authorize();
     for (const endpoint of ['compressed', 'compressed-br']) {
-      const response = yield* Effect.promise(() => fixture.server.handler(fixture.request(endpoint, authorization)));
+      const response = yield* fixture.server.handler(fixture.request(endpoint, authorization));
       expect(response.status).toBe(200);
       const bytes = yield* Effect.promise(() => response.arrayBuffer());
       expect([...new Uint8Array(bytes)]).toEqual([0, 255, 1, 128]);
@@ -465,7 +384,7 @@ it.live('preserves multipart and streamed request bytes in the independent owner
     form.set('attachment', new Blob([new Uint8Array([0, 255, 1, 128])]), 'record.v1.bin');
     const multipart = fixture.request('echo-bytes', authorization, { body: form, method: 'POST' });
     const expected = yield* Effect.promise(() => multipart.clone().arrayBuffer());
-    const multipartResponse = yield* Effect.promise(() => fixture.server.handler(multipart));
+    const multipartResponse = yield* fixture.server.handler(multipart);
     expect(multipartResponse.status).toBe(201);
     expect(multipartResponse.headers.get('content-type')).toBe(multipart.headers.get('content-type'));
     const multipartBytes = yield* Effect.promise(() => multipartResponse.arrayBuffer());
@@ -482,9 +401,7 @@ it.live('preserves multipart and streamed request bytes in the independent owner
       headers: { 'content-type': 'application/octet-stream' },
       method: 'POST',
     } as const;
-    const streamResponse = yield* Effect.promise(() =>
-      fixture.server.handler(fixture.request('echo-bytes', authorization, streamOptions)),
-    );
+    const streamResponse = yield* fixture.server.handler(fixture.request('echo-bytes', authorization, streamOptions));
     expect(streamResponse.status).toBe(201);
     expect(streamResponse.headers.get('content-type')).toBe('application/octet-stream');
     const streamBytes = yield* Effect.promise(() => streamResponse.arrayBuffer());
@@ -496,9 +413,7 @@ it.live('keeps a delayed owner stream alive after the native handler has returne
   Effect.gen(function* preservesDelayedStreaming() {
     const fixture = yield* createFixture();
     const authorization = yield* fixture.authorize();
-    const response = yield* Effect.promise(() =>
-      fixture.server.handler(fixture.request('delayed-stream', authorization)),
-    );
+    const response = yield* fixture.server.handler(fixture.request('delayed-stream', authorization));
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('application/octet-stream');
     const reader = Option.getOrThrow(Option.fromNullOr(response.body)).getReader();
@@ -518,8 +433,8 @@ it.live('cancels the owner stream when the downstream Node client aborts', () =>
     const fixture = yield* createFixture();
     const authorization = yield* fixture.authorize();
     const controller = new AbortController();
-    const response = yield* Effect.promise(() =>
-      fixture.server.handler(fixture.request('abort-stream', authorization, { signal: controller.signal })),
+    const response = yield* fixture.server.handler(
+      fixture.request('abort-stream', authorization, { signal: controller.signal }),
     );
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('application/octet-stream');
@@ -557,7 +472,7 @@ it.live('fails with a typed unavailable response when the approved Node owner or
       Effect.flip,
     );
     expect(Predicate.isTagged(error, 'ModuleReleaseTransportError')).toBe(true);
-    const response = yield* Effect.promise(() => fixture.server.handler(fixture.request('records', authorization)));
+    const response = yield* fixture.server.handler(fixture.request('records', authorization));
     expect(response.status).toBe(503);
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(fixture.owner.events.filter((event) => event.event === 'received')).toEqual([]);
@@ -568,7 +483,7 @@ it.live('requires the receiving process own compiled release to match the signed
   Effect.gen(function* rejectsWrongExecutable() {
     const fixture = yield* createFixture('other-compiled-build');
     const authorization = yield* fixture.authorize();
-    const response = yield* Effect.promise(() => fixture.server.handler(fixture.request('records', authorization)));
+    const response = yield* fixture.server.handler(fixture.request('records', authorization));
     expect(response.status).toBe(403);
     expect(yield* Effect.promise(() => response.text())).toBe('Owner release assertion rejected');
     expect(fixture.owner.events.filter((event) => event.event === 'received')).toHaveLength(1);
@@ -580,7 +495,7 @@ it.live('requires the independently executing owner identity to match the signed
   Effect.gen(function* rejectsWrongOwnerIdentity() {
     const fixture = yield* createFixture(buildMarker, 'other-owner-fixture');
     const authorization = yield* fixture.authorize();
-    const response = yield* Effect.promise(() => fixture.server.handler(fixture.request('records', authorization)));
+    const response = yield* fixture.server.handler(fixture.request('records', authorization));
     expect(response.status).toBe(403);
     expect(fixture.owner.events.filter((event) => event.event === 'received')).toHaveLength(1);
     expect(fixture.owner.events.filter((event) => event.event === 'business')).toEqual([]);
@@ -591,9 +506,7 @@ it.live('rejects stale document revisions before making any owner HTTP request',
   Effect.gen(function* rejectsBeforeOwnerCall() {
     const fixture = yield* createFixture();
     const authorization = yield* fixture.authorize();
-    const response = yield* Effect.promise(() =>
-      fixture.server.handler(fixture.request('records', authorization, {}, 'f'.repeat(64))),
-    );
+    const response = yield* fixture.server.handler(fixture.request('records', authorization, {}, 'f'.repeat(64)));
     expect(response.status).toBe(409);
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(fixture.owner.events.filter((event) => event.event === 'received')).toEqual([]);
@@ -629,7 +542,7 @@ it.live('requires the independent owner to verify the signed revision even when 
   Effect.gen(function* rejectsStaleSignedClaims() {
     const fixture = yield* createFixture();
     const authorization = yield* fixture.authorize('e'.repeat(64));
-    const response = yield* Effect.promise(() => fixture.server.handler(fixture.request('records', authorization)));
+    const response = yield* fixture.server.handler(fixture.request('records', authorization));
     expect(response.status).toBe(403);
     expect(fixture.owner.events.filter((event) => event.event === 'business')).toEqual([]);
   }).pipe(Effect.scoped),

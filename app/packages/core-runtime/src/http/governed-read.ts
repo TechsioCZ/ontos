@@ -179,6 +179,25 @@ export function classifyReadCoreError(
   );
 }
 
+const readCoreErrorDiagnostic = (error: ReadCoreError) =>
+  Match.value(error).pipe(
+    Match.tags({
+      ReadEvidenceValidationError: () => ({
+        failureCategory: 'evidence_validation',
+        reasonCode: 'read_evidence_invalid',
+      }),
+      ReadHandlerExecutionError: () => ({
+        failureCategory: 'core_execution',
+        reasonCode: 'read_handler_execution_failed',
+      }),
+      ReadResultValidationError: () => ({
+        failureCategory: 'result_validation',
+        reasonCode: 'read_result_invalid',
+      }),
+    }),
+    Match.option,
+  );
+
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
@@ -524,7 +543,13 @@ export function makeGovernedReadHttpHandler<
               HttpServerRequest.HttpServerRequest
             > => {
               if (isReadCoreError(error)) {
-                return failProblem(classifyReadCoreError(error, options.problems));
+                const failure = failProblem(classifyReadCoreError(error, options.problems));
+                const diagnostic = readCoreErrorDiagnostic(error);
+                return Option.isNone(diagnostic)
+                  ? failure
+                  : Effect.annotateLogs(Effect.logError('Governed-read HTTP Core failure'), diagnostic.value).pipe(
+                      Effect.andThen(failure),
+                    );
               }
               const { domainErrorSchema } = options.registration.descriptor;
               if (domainErrorSchema === undefined || options.mapDomainError === undefined) {
