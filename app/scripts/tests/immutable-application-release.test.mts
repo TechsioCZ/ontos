@@ -855,6 +855,7 @@ it.effect('builds the publisher candidate only from the exact retained deploymen
     expect(candidate.modules[0]?.contract).toBe(receipt.artifacts.contract);
     expect(candidate.modules[0]?.federationManifest).toBe(receipt.artifacts.federationManifest);
     expect(candidate).toEqual({
+      baseline: { retainedModuleAppIds: [], revision: approved.composition.revision, shellMode: 'retained' },
       modules: [
         {
           appId: receipt.plan.appId,
@@ -864,7 +865,6 @@ it.effect('builds the publisher candidate only from the exact retained deploymen
           federationManifest: receipt.artifacts.federationManifest,
         },
       ],
-      retainedShellRevision: approved.composition.revision,
       shell: {
         deployment: approved.composition.shell.deployment,
         federationManifest: approved.composition.shell.federationManifest,
@@ -1300,7 +1300,11 @@ it.effect(
       });
       expect(candidate.modules[0]?.backend).toEqual(receipt.backend);
       expect(candidate.shell.deployment.buildMarker).toBe(shellReceipt.plan.buildMarker);
-      expect(candidate.retainedShellRevision).toBeUndefined();
+      expect(candidate.baseline).toEqual({
+        retainedModuleAppIds: [APP_ID],
+        revision: approvedBaseline.composition.revision,
+        shellMode: 'fresh',
+      });
       expect(receipt.plan.sourceRevision).toBe(SOURCE_REVISION);
       const oldShell = yield* shellReceiptFor({ buildMarker: BUILD_MARKER, sourceRevision: SOURCE_REVISION });
       const staleShell = yield* makeImmutableApplicationReleasePublicationCandidate({

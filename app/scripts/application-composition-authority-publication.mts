@@ -13,6 +13,7 @@ import {
   Redacted,
   Ref,
   Schedule,
+  Schema,
 } from 'effect';
 import { isSqlError } from 'effect/sql/SqlError';
 
@@ -21,6 +22,7 @@ import type { CoreTransaction } from '../packages/core-runtime/src/db/types.ts';
 import { DatabaseConfig, parseDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 import { applicationCompositionAuthority } from '../packages/core-runtime/src/db/schema.ts';
 import { validateActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/modules/active-application-composition.ts';
+import { ApplicationCompositionSchema } from '../packages/core-runtime/src/modules/application-composition.ts';
 import {
   verifyLegacyCompletionPublication,
   withLegacyCompletionOwnerLeases,
@@ -47,6 +49,38 @@ import {
 
 const unavailable = (reason: string) =>
   new ApplicationCompositionAuthorityError({ code: 'application_composition_authority_unavailable', reason });
+
+const BaselinePreconditionSchema = Schema.Struct({
+  baselineRevision: Schema.toEncoded(Schema.OptionFromNullOr(ApplicationCompositionSchema.fields.revision)),
+  // Expected canonical identity only; actual deployment observation remains a separate gate.
+  targetRevision: ApplicationCompositionSchema.fields.revision,
+});
+export type ApplicationCompositionBaselinePrecondition = typeof BaselinePreconditionSchema.Type;
+
+/** Compare native authority while the caller owns the existing publication session lock. */
+const requireCapturedBaseline = Effect.fn('ApplicationCompositionAuthority.requireCapturedBaseline')(
+  function* requireCapturedBaselineEffect(
+    current: { readonly phase: string; readonly revision: string } | undefined,
+    precondition?: ApplicationCompositionBaselinePrecondition,
+  ) {
+    if (precondition === undefined) {
+      return yield* Effect.void;
+    }
+    yield* Schema.decodeUnknownEffect(BaselinePreconditionSchema, { onExcessProperty: 'error' })(precondition).pipe(
+      Effect.mapError(() => unavailable('The captured publication baseline precondition is invalid')),
+    );
+    // Baseline first: same-revision renewal deliberately preserves Core phase and admission.
+    if ((current?.revision ?? null) === precondition.baselineRevision) {
+      return yield* Effect.void;
+    }
+    if (current?.revision === precondition.targetRevision && current.phase === 'active') {
+      return yield* Effect.void;
+    }
+    return yield* unavailable(
+      'The native publication authority no longer matches the captured baseline or active target',
+    );
+  },
+);
 
 /** Administrative publication uses the existing native pool and distinct configured database identities. */
 const ApplicationCompositionAuthorityAdminDatabaseConfigLive = Layer.effect(
@@ -336,6 +370,7 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
   function* runApplicationCompositionMigration<Value, Failure, Requirements, InitialFailure, InitialRequirements>(
     migration: Effect.Effect<Value, Failure, Requirements>,
     verifyInitialCutover: Effect.Effect<void, InitialFailure, InitialRequirements>,
+    precondition?: ApplicationCompositionBaselinePrecondition,
   ) {
     const database = yield* CoreDatabase;
     return yield* withApplicationCompositionPublicationLock(
@@ -354,6 +389,16 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
               .from(applicationCompositionAuthority)
               .where(eq(applicationCompositionAuthority.authorityKey, 'active')))[0]
           : undefined;
+        yield* requireCapturedBaseline(current, precondition);
+        if (
+          precondition !== undefined &&
+          (precondition.baselineRevision === precondition.targetRevision ||
+            current?.revision === precondition.targetRevision)
+        ) {
+          return yield* unavailable(
+            'Migration requires a distinct unpublished target; reconcile publication without rerunning DDL',
+          );
+        }
         if (current !== undefined && current.phase !== 'migrated') {
           // This opt-in additive Core expansion is safe for old writers. Install and journal it
           // before the verifier selects its columns; incompatible owner DDL remains deferred.
@@ -450,6 +495,7 @@ export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
   snapshot: ActiveApplicationCompositionSnapshot,
   publishProviderPointer: Effect.Effect<Value, Failure, Requirements>,
   verifyInitialCutover: Effect.Effect<void, InitialFailure, InitialRequirements>,
+  precondition?: ApplicationCompositionBaselinePrecondition,
 ) {
   const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot).pipe(
     Effect.mapError(() => unavailable('The complete Application Composition snapshot is invalid or expired')),
@@ -464,6 +510,10 @@ export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
       })
       .from(applicationCompositionAuthority)
       .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+    yield* requireCapturedBaseline(current, precondition);
+    if (precondition !== undefined && precondition.targetRevision !== approved.composition.revision) {
+      return yield* unavailable('The guarded publication target differs from the complete snapshot');
+    }
     if (current?.revision === approved.composition.revision) {
       if (DateTime.toEpochMillis(approved.validUntil) < current.validUntil.getTime()) {
         return yield* unavailable('Application Composition freshness cannot regress');

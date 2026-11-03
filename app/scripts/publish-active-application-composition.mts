@@ -41,6 +41,8 @@ import {
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
   ApplicationCompositionSchema,
+  ApplicationCompositionModuleSchema,
+  canonicalizeApplicationComposition,
   ApplicationCompositionArtifactReferenceSchema,
   ONTOS_MODULE_CONTRACT_PATH,
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
@@ -55,6 +57,7 @@ import {
   ARTIFACT_FETCH_TIMEOUT,
   ActiveApplicationCompositionPublicationError,
   assertNoConflictingPublication,
+  applicationCompositionRevision,
   decodeActiveApplicationCompositionSnapshot,
   deriveActiveApplicationCompositionSnapshot,
   encodeActiveApplicationCompositionSnapshot,
@@ -443,6 +446,71 @@ export const assertRetainedReleaseArtifactPaths = (snapshot: ActiveApplicationCo
     );
   });
 
+const PublicationBaselineSchema = Schema.Struct({
+  retainedModuleAppIds: Schema.Array(OntosDeploymentAppIdSchema).check(
+    Schema.isMaxLength(ONTOS_APPLICATION_COMPOSITION_MAX_MODULES),
+    Schema.makeFilter((ids) => (new Set(ids).size === ids.length ? undefined : 'retained module slots must be unique')),
+  ),
+  revision: Schema.toEncoded(Schema.OptionFromNullOr(ApplicationCompositionSchema.fields.revision)),
+  shellMode: Schema.Literals(['fresh', 'retained']),
+}).check(
+  Schema.makeFilter((baseline) =>
+    baseline.revision !== null || (baseline.retainedModuleAppIds.length === 0 && baseline.shellMode === 'fresh')
+      ? undefined
+      : 'captured absence cannot retain module or Shell artifacts',
+  ),
+);
+type PublicationBaseline = typeof PublicationBaselineSchema.Type;
+
+const requireProviderBaseline = Effect.fn('ActiveApplicationComposition.requireProviderBaseline')(
+  function* requireProviderBaselineEffect(
+    current: Option.Option<string>,
+    target: ActiveApplicationCompositionSnapshot,
+    baseline: PublicationBaseline,
+  ) {
+    if (Option.isNone(current)) {
+      return baseline.revision === null
+        ? yield* Effect.void
+        : yield* providerFailure('the captured provider baseline is missing')();
+    }
+    const previous = yield* decodeActiveApplicationCompositionSnapshot(current.value);
+    if (applicationCompositionRevision(previous.composition) !== previous.composition.revision) {
+      return yield* providerFailure('the current provider revision does not identify its canonical content')();
+    }
+    // Existing assertNoConflictingPublication already checks monotonic observation/freshness.
+    if (
+      canonicalizeApplicationComposition(previous.composition) ===
+      canonicalizeApplicationComposition(target.composition)
+    ) {
+      return yield* Effect.void;
+    }
+    if (previous.composition.revision !== baseline.revision) {
+      return yield* providerFailure('the provider no longer identifies the captured baseline or exact target')();
+    }
+    for (const moduleAppId of baseline.retainedModuleAppIds) {
+      const original = previous.composition.modules.find(({ deployment }) => deployment.appId === moduleAppId);
+      const retained = target.composition.modules.find(({ deployment }) => deployment.appId === moduleAppId);
+      if (
+        original === undefined ||
+        retained === undefined ||
+        !Schema.toEquivalence(ApplicationCompositionModuleSchema)(original, retained)
+      ) {
+        return yield* providerFailure('retained module pins no longer match the captured provider baseline')();
+      }
+    }
+    if (
+      baseline.shellMode === 'retained' &&
+      !Schema.toEquivalence(ApplicationCompositionSchema.fields.shell)(
+        previous.composition.shell,
+        target.composition.shell,
+      )
+    ) {
+      return yield* providerFailure('retained Shell pins no longer match the captured provider baseline')();
+    }
+    return yield* Effect.void;
+  },
+);
+
 export const publishSnapshot = Effect.fn('ActiveApplicationComposition.publishSnapshot')(function* publishSnapshot<
   InitialFailure,
   InitialRequirements,
@@ -450,7 +518,7 @@ export const publishSnapshot = Effect.fn('ActiveApplicationComposition.publishSn
   input: ActiveApplicationCompositionSnapshot,
   snapshotFile: Option.Option<string>,
   verifyInitialCutover: Effect.Effect<void, InitialFailure, InitialRequirements>,
-  retainedShellRevision?: string,
+  baseline?: PublicationBaseline,
 ) {
   const snapshot = yield* validateActiveApplicationCompositionSnapshot(input).pipe(
     Effect.mapError(
@@ -461,29 +529,29 @@ export const publishSnapshot = Effect.fn('ActiveApplicationComposition.publishSn
         }),
     ),
   );
+  if (baseline !== undefined) {
+    yield* Schema.decodeUnknownEffect(PublicationBaselineSchema, { onExcessProperty: 'error' })(baseline);
+    if (
+      baseline.retainedModuleAppIds.some(
+        (id) => !snapshot.composition.modules.some(({ deployment }) => deployment.appId === id),
+      )
+    ) {
+      return yield* providerFailure('retained baseline slots must belong to the complete target')();
+    }
+  }
   yield* assertRetainedReleaseArtifactPaths(snapshot);
   const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
+  const precondition =
+    baseline === undefined
+      ? undefined
+      : { baselineRevision: baseline.revision, targetRevision: snapshot.composition.revision };
   yield* publishApplicationCompositionAuthoritySnapshot(
     snapshot,
     Effect.gen(function* publishProviderPointer() {
       const current = yield* readPublishedSnapshot;
       yield* assertNoConflictingPublication(current, snapshot);
-      if (retainedShellRevision !== undefined) {
-        if (Option.isNone(current)) {
-          return yield* providerFailure('retained Shell pins require their current approved release')();
-        }
-        const previous = yield* decodeActiveApplicationCompositionSnapshot(current.value).pipe(
-          Effect.flatMap(validateActiveApplicationCompositionSnapshot),
-        );
-        if (
-          previous.composition.revision !== retainedShellRevision ||
-          !Schema.toEquivalence(ApplicationCompositionSchema.fields.shell)(
-            previous.composition.shell,
-            snapshot.composition.shell,
-          )
-        ) {
-          return yield* providerFailure('retained Shell pins no longer match their current approved release')();
-        }
+      if (baseline !== undefined) {
+        yield* requireProviderBaseline(current, snapshot, baseline);
       }
       const [client, url] = yield* Effect.all([publicationClient, publicationUrl]);
       const result = yield* client
@@ -538,6 +606,7 @@ export const publishSnapshot = Effect.fn('ActiveApplicationComposition.publishSn
       return snapshot;
     }),
     verifyInitialCutover,
+    precondition,
   );
   if (Option.isSome(snapshotFile)) {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -553,6 +622,7 @@ export const publishSnapshot = Effect.fn('ActiveApplicationComposition.publishSn
 
 /** A reviewed publisher input selects artifacts; placement never installs a module implicitly. */
 export const ApplicationCompositionPublicationCandidateSchema = Schema.Struct({
+  baseline: PublicationBaselineSchema,
   modules: Schema.Array(
     Schema.Struct({
       appId: OntosDeploymentAppIdSchema,
@@ -573,13 +643,18 @@ export const ApplicationCompositionPublicationCandidateSchema = Schema.Struct({
         : 'candidate deployment slots must be unique',
     ),
   ),
-  retainedShellRevision: Schema.optionalKey(ApplicationCompositionSchema.fields.revision),
   shell: Schema.Struct({
     deployment: OntosShellRuntimeContractSchema.fields.deployment,
     federationManifest: ApplicationCompositionArtifactReferenceSchema,
     runtimeContract: ApplicationCompositionArtifactReferenceSchema,
   }),
-});
+}).check(
+  Schema.makeFilter((candidate) =>
+    candidate.baseline.retainedModuleAppIds.every((id) => candidate.modules.some((module) => module.appId === id))
+      ? undefined
+      : 'retained baseline slots must belong to complete candidate membership',
+  ),
+);
 type PublicationCandidate = typeof ApplicationCompositionPublicationCandidateSchema.Type;
 
 const readPublicationCandidate = (file: string) =>
@@ -912,12 +987,7 @@ const publishCommand = Command.make(
       Effect.flatMap((candidate) =>
         observeCandidate(environment, candidate).pipe(
           Effect.flatMap((snapshot) =>
-            publishSnapshot(
-              snapshot,
-              snapshotFile,
-              configuredInitialCutover(environment),
-              candidate.retainedShellRevision,
-            ),
+            publishSnapshot(snapshot, snapshotFile, configuredInitialCutover(environment), candidate.baseline),
           ),
         ),
       ),
@@ -948,6 +1018,11 @@ const refreshCommand = Command.make(
       }
       const approved = yield* decodeActiveApplicationCompositionSnapshot(current.value);
       const candidate: PublicationCandidate = {
+        baseline: {
+          retainedModuleAppIds: approved.composition.modules.map(({ deployment }) => deployment.appId),
+          revision: approved.composition.revision,
+          shellMode: 'retained',
+        },
         modules: approved.composition.modules.map((module) => {
           const common = {
             appId: module.deployment.appId,
@@ -972,7 +1047,7 @@ const refreshCommand = Command.make(
           reason: 'conflicting_revision',
         });
       }
-      return yield* publishSnapshot(snapshot, Option.none(), configuredInitialCutover(environment));
+      return yield* publishSnapshot(snapshot, Option.none(), configuredInitialCutover(environment), candidate.baseline);
     }),
 ).pipe(
   Command.provide(() =>

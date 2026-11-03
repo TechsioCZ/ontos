@@ -45,6 +45,7 @@ const INITIAL_ACCOUNT_ID = 'a'.repeat(32);
 const INITIAL_NAMESPACE_ID = 'b'.repeat(32);
 const INITIAL_NAMESPACE_PATH = `/client/v4/accounts/${INITIAL_ACCOUNT_ID}/storage/kv/namespaces/${INITIAL_NAMESPACE_ID}`;
 const INITIAL_WORKER_NAME = 'old-shell-worker';
+const SESSION_LOCK = 'SESSION LOCK';
 const SESSION_UNLOCK = 'SESSION UNLOCK';
 const MIGRATION_EVENT = 'MIGRATION';
 const COMMITTED_DRAINING = 'COMMITTED draining';
@@ -328,6 +329,7 @@ it.effect('never admits a Shell from missing, malformed, unavailable, or expired
 );
 
 interface MigrationFixtureOptions {
+  readonly currentRevision?: string;
   readonly durableBlocks?: readonly boolean[];
   readonly initialPhase?: 'active' | 'draining' | 'sealed' | 'migrated';
   readonly leaseRemainingMillis?: number;
@@ -344,6 +346,7 @@ interface MigrationFixtureOptions {
 
 const migrationFixture = (options: MigrationFixtureOptions = {}) => {
   let phase = options.initialPhase ?? 'active';
+  const revision = options.currentRevision ?? OLD_REVISION;
   let admission = 'open';
   let progressRead = 0;
   let durableRead = 0;
@@ -401,7 +404,7 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
   };
   const stageAuthorityChange = (params: readonly unknown[]) => {
     const [next, , expectedRevision] = params;
-    if (expectedRevision !== OLD_REVISION || (next === 'sealed' && options.sealRevisionChanged === true)) {
+    if (expectedRevision !== revision || (next === 'sealed' && options.sealRevisionChanged === true)) {
       return [];
     }
     if (next === 'closed' || next === 'open') {
@@ -409,11 +412,11 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
         return [];
       }
       pendingAdmissions[pendingAdmissions.length - 1] = next;
-      return [{ revision: OLD_REVISION }];
+      return [{ revision }];
     }
     if (next === 'active' || next === 'draining' || next === 'sealed' || next === 'migrated') {
       pendingPhases[pendingPhases.length - 1] = next;
-      return [{ revision: OLD_REVISION }];
+      return [{ revision }];
     }
     return [];
   };
@@ -462,7 +465,7 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
             return [{ unlocked: true }];
           }
           if (sql.includes('pg_advisory_lock(')) {
-            events.push('SESSION LOCK');
+            events.push(SESSION_LOCK);
             return [];
           }
           if (sql.includes('as initialized')) {
@@ -477,15 +480,15 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
             }
             // executeValues maps Object.values in projection order; revision-only reads cannot return phase first.
             if (sql.startsWith('select "revision" from')) {
-              return [{ revision: OLD_REVISION }];
+              return [{ revision }];
             }
             if (sql.includes('"durable_work_admission"')) {
               durablePoll = true;
-              return [{ durableWorkAdmission: admission, phase, revision: OLD_REVISION }];
+              return [{ durableWorkAdmission: admission, phase, revision }];
             }
             return sql.includes('"valid_until"')
-              ? [{ phase, revision: OLD_REVISION, validUntil: new Date('2026-10-03T16:00:00.000Z') }]
-              : [{ phase, revision: OLD_REVISION }];
+              ? [{ phase, revision, validUntil: new Date('2026-10-03T16:00:00.000Z') }]
+              : [{ phase, revision }];
           } else if (sql.includes('as blocked')) {
             return blockedWork(sql);
           } else if (sql.startsWith('update "core"."application_composition_authority"')) {
@@ -555,7 +558,7 @@ it.effect('commits draining and sealing before migration, then records completio
 
     const retirementEvents = fixture.proofRequests.map((request) => `PROOF ${request.slice(4)}`);
     expect(fixture.events).toEqual([
-      'SESSION LOCK',
+      SESSION_LOCK,
       'COMMITTED admission closed',
       DURABLE_COMPLETE,
       ...retirementEvents.slice(0, 4),
@@ -816,6 +819,49 @@ it.effect(
           expect(fixture.legacy.retained).toEqual([]);
         }
         expect(fixture.statements.some((statement) => statement.startsWith('SAVEPOINT'))).toBe(false);
+      }
+    }),
+);
+
+it.effect(
+  'reconciles stale absence same-target and already-active-target migration plans before DDL or fence mutation',
+  () =>
+    Effect.gen(function* rejectsStaleMigrationPreconditions() {
+      const currentRevision = 'a'.repeat(64);
+      const otherRevision = 'b'.repeat(64);
+      const targetRevision = 'c'.repeat(64);
+      const cases = [
+        { baselineRevision: otherRevision, missingAuthority: false, targetRevision },
+        { baselineRevision: null, missingAuthority: false, targetRevision },
+        { baselineRevision: otherRevision, missingAuthority: true, targetRevision },
+        { baselineRevision: currentRevision, missingAuthority: false, targetRevision: currentRevision },
+        { baselineRevision: otherRevision, missingAuthority: false, targetRevision: currentRevision },
+      ];
+      for (const scenario of cases) {
+        const fixture = migrationFixture({ currentRevision, missingAuthority: scenario.missingAuthority });
+        let ddlCalls = 0;
+        let initialProofCalls = 0;
+        const failure = yield* runApplicationCompositionMigration(
+          Effect.sync(() => {
+            ddlCalls += 1;
+          }).pipe(Effect.andThen(Effect.die('A rejected precondition cannot execute DDL'))),
+          Effect.sync(() => {
+            initialProofCalls += 1;
+          }).pipe(Effect.andThen(Effect.die('A rejected precondition cannot initialize cutover proof'))),
+          { baselineRevision: scenario.baselineRevision, targetRevision: scenario.targetRevision },
+        ).pipe(Effect.provide(fixture.layer), Effect.flip);
+        expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
+        expect(ddlCalls).toBe(0);
+        expect(initialProofCalls).toBe(0);
+        expect(fixture.phase()).toBe('active');
+        expect(fixture.admission()).toBe('open');
+        expect(fixture.proofRequests).toEqual([]);
+        expect(fixture.legacy.observations).toEqual([]);
+        expect(
+          fixture.statements.some((statement) => /^(?:insert|update|delete|alter|create) /iu.test(statement)),
+        ).toBe(false);
+        expect(fixture.events.filter((event) => event === SESSION_LOCK)).toHaveLength(1);
+        expect(fixture.events.filter((event) => event === SESSION_UNLOCK)).toHaveLength(1);
       }
     }),
 );

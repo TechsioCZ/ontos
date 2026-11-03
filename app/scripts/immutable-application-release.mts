@@ -656,6 +656,11 @@ export const resolveImmutableApplicationReleaseReceipts = Effect.fn('ImmutableAp
 export const makeImmutableApplicationReleasePublicationCandidate = Effect.fn('ImmutableApplicationRelease.candidate')(
   function* publicationCandidateEffect(input: ImmutableApplicationReleaseCandidateInput) {
     const receipts = yield* resolveImmutableApplicationReleaseReceipts(input);
+    const baseline = {
+      retainedModuleAppIds: input.selection.retained.map(({ id }) => id),
+      revision: input.approvedBaseline?.composition.revision ?? null,
+      shellMode: input.selection.shell.mode,
+    };
     const modules = receipts.map((receipt) => {
       const module: ImmutableApplicationReleaseCandidateModule = {
         appId: receipt.plan.appId,
@@ -675,7 +680,7 @@ export const makeImmutableApplicationReleasePublicationCandidate = Effect.fn('Im
       if (input.shellReceipt.plan.sourceRevision !== input.currentSourceRevision) {
         return yield* fail('fresh Shell publication requires its genuine current-source Shell receipt');
       }
-      return { modules, shell };
+      return { baseline, modules, shell };
     }
     if (input.shellReceipt !== undefined || input.approvedBaseline === undefined) {
       return yield* fail('retained Shell publication requires only the captured approved baseline artifact source');
@@ -688,8 +693,8 @@ export const makeImmutableApplicationReleasePublicationCandidate = Effect.fn('Im
     );
     const { deployment, federationManifest, runtimeContract } = approved.composition.shell;
     return {
+      baseline,
       modules,
-      retainedShellRevision: approved.composition.revision,
       shell: { deployment, federationManifest, runtimeContract },
     };
   },

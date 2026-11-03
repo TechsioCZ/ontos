@@ -8,6 +8,7 @@ import { HttpClient, HttpClientResponse } from 'effect/http';
 
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
+import { ApplicationCompositionAuthorityError } from '../../packages/core-runtime/src/modules/application-composition-authority.ts';
 import {
   moduleReleaseAssetWorkerName,
   moduleReleaseWorkerName,
@@ -19,7 +20,6 @@ import {
   validateActiveApplicationCompositionSnapshot,
 } from '../../packages/core-runtime/src/index.ts';
 import type { ActiveApplicationCompositionSnapshot } from '../../packages/core-runtime/src/index.ts';
-import { ApplicationCompositionAuthorityError } from '../../packages/core-runtime/src/modules/application-composition-authority.ts';
 import { ApplicationCompositionCloudflareWorkerBackendSchema } from '../../packages/core-runtime/src/modules/application-composition.ts';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 import {
@@ -97,10 +97,10 @@ const emptyContributions = {
   timelines: [],
 };
 
-const deployedModule = (appId: string, moduleId: string) =>
+const deployedModule = (appId: string, moduleId: string, buildMarker = `${appId}-immutable-build`) =>
   Effect.gen(function* deployedTestModule() {
-    const worker = yield* moduleReleaseAssetWorkerName(appId, `${appId}-immutable-build`);
-    const workerName = yield* moduleReleaseWorkerName(appId, `${appId}-immutable-build`);
+    const worker = yield* moduleReleaseAssetWorkerName(appId, buildMarker);
+    const workerName = yield* moduleReleaseWorkerName(appId, buildMarker);
     return {
       appId,
       backend: yield* Schema.decodeUnknownEffect(ApplicationCompositionCloudflareWorkerBackendSchema)({
@@ -110,7 +110,7 @@ const deployedModule = (appId: string, moduleId: string) =>
         workerName,
       }),
       contract: artifact(`https://${worker}.test-account.workers.dev/.well-known/ontos-module-manifest.json`, {
-        deployment: { appId, buildMarker: `${appId}-immutable-build` },
+        deployment: { appId, buildMarker },
         manifest: {
           activation: {
             defaultState: 'inactive',
@@ -189,6 +189,7 @@ const provider = (
   authorityUnexpired = true,
   oldRuntime: 'retired' | typeof NODE_ACTIVE_STATE | typeof NODE_STOPPED_STATE | typeof WORKER_ACTIVE_STATE = 'retired',
   currentSnapshot?: ActiveApplicationCompositionSnapshot,
+  currentPhase: 'active' | 'draining' | 'sealed' | 'migrated' = 'active',
 ) => {
   const requests: RecordedRequest[] = [];
   const proofRequests: RecordedRequest[] = [];
@@ -203,7 +204,7 @@ const provider = (
       : {
           authorityKey: 'active',
           durableWorkAdmission: 'closed',
-          phase: 'active',
+          phase: currentPhase,
           revision: currentSnapshot.composition.revision,
           subscriptionsJson: [],
           updatedAt: DateTime.toDateUtc(currentSnapshot.observedAt),
@@ -367,6 +368,7 @@ const candidateObservation = Effect.gen(function* nativeCandidateObservationFixt
     return yield* Effect.die('Expected the derived candidate module');
   }
   const candidate = {
+    baseline: { retainedModuleAppIds: [], revision: null, shellMode: 'fresh' as const },
     modules: [
       {
         appId: module.appId,
@@ -481,9 +483,11 @@ it.effect(
         return uploaded ? new Response(encoded) : new Response(null, { status: 404 });
       });
       const observed = yield* observeCandidate('stage', candidate).pipe(Effect.provide(layer));
-      expect(yield* publishSnapshot(observed, Option.none(), initialCutoverProof).pipe(Effect.provide(layer))).toEqual(
-        fixture.snapshot,
-      );
+      expect(
+        yield* publishSnapshot(observed, Option.none(), initialCutoverProof, candidate.baseline).pipe(
+          Effect.provide(layer),
+        ),
+      ).toEqual(fixture.snapshot);
       const write = events.indexOf(`PUT ${KV_URL}`);
       expect(write).toBeGreaterThan(0);
       for (const url of [
@@ -810,23 +814,29 @@ it.effect('retains the exact approved Shell while publishing a changed complete 
     const { candidate: observedCandidate, snapshot } = yield* candidateObservation;
     const candidate = yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema, {
       onExcessProperty: 'error',
-    })({ ...observedCandidate, retainedShellRevision: previous.composition.revision });
+    })({
+      ...observedCandidate,
+      baseline: { retainedModuleAppIds: [], revision: previous.composition.revision, shellMode: 'retained' },
+    });
     const previousEncoded = yield* encodeActiveApplicationCompositionSnapshot(previous);
     const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
-    const { layer, requests } = provider((request, index) =>
-      request.method === 'PUT'
-        ? Response.json({ success: true })
-        : new Response(index === 0 ? previousEncoded : encoded),
+    const { layer, requests } = provider(
+      (request, index) =>
+        request.method === 'PUT'
+          ? Response.json({ success: true })
+          : new Response(index === 0 ? previousEncoded : encoded),
+      KV_URL,
+      true,
+      'retired',
+      previous,
+      'migrated',
     );
 
-    const published = yield* publishSnapshot(
-      snapshot,
-      Option.none(),
-      initialCutoverProof,
-      candidate.retainedShellRevision,
-    ).pipe(Effect.provide(layer));
+    const published = yield* publishSnapshot(snapshot, Option.none(), initialCutoverProof, candidate.baseline).pipe(
+      Effect.provide(layer),
+    );
 
-    expect(candidate.retainedShellRevision).toBe(previous.composition.revision);
+    expect(candidate.baseline.revision).toBe(previous.composition.revision);
     expect(snapshot.composition.revision).not.toBe(previous.composition.revision);
     expect(published.composition.shell).toEqual(previous.composition.shell);
     expect(published).toEqual(snapshot);
@@ -849,24 +859,38 @@ it.effect('refuses a retained Shell publication when its approved release disapp
     const previousEncoded = yield* encodeActiveApplicationCompositionSnapshot(previous);
     const cases = [
       { current: null, retainedRevision: previous.composition.revision, snapshot },
-      { current: previousEncoded, retainedRevision: 'other-approved-revision', snapshot },
+      { current: previousEncoded, retainedRevision: 'f'.repeat(64), snapshot },
       { current: previousEncoded, retainedRevision: previous.composition.revision, snapshot: changedShellSnapshot },
     ];
     for (const scenario of cases) {
-      const { layer, requests, transactionStatements } = provider(() =>
-        scenario.current === null ? new Response(null, { status: 404 }) : new Response(scenario.current),
+      const { authority, authorityWrites, layer, requests, statements, transactionStatements } = provider(
+        () => (scenario.current === null ? new Response(null, { status: 404 }) : new Response(scenario.current)),
+        KV_URL,
+        true,
+        'retired',
+        previous,
+        'migrated',
       );
-      const failure = yield* publishSnapshot(
-        scenario.snapshot,
-        Option.none(),
-        initialCutoverProof,
-        scenario.retainedRevision,
-      ).pipe(Effect.provide(layer), Effect.flip);
+      const failure = yield* publishSnapshot(scenario.snapshot, Option.none(), initialCutoverProof, {
+        retainedModuleAppIds: [],
+        revision: scenario.retainedRevision,
+        shellMode: 'retained',
+      }).pipe(Effect.provide(layer), Effect.flip);
 
-      expect(Schema.is(ActiveApplicationCompositionPublicationError)(failure)).toBe(true);
-      expect(failure).toMatchObject({ reason: 'publication_failed' });
-      expect(requests.map(({ method }) => method)).toEqual(['GET']);
-      expect(transactionStatements.at(-1)).toBe('ROLLBACK');
+      if (scenario.retainedRevision === previous.composition.revision) {
+        expect(Schema.is(ActiveApplicationCompositionPublicationError)(failure)).toBe(true);
+        expect(failure).toMatchObject({ reason: 'publication_failed' });
+        expect(transactionStatements.at(-1)).toBe('ROLLBACK');
+      } else {
+        expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
+        expect(authorityWrites).toEqual([]);
+        expect(statements.some((statement) => /^(?:insert|update|delete) /iu.test(statement))).toBe(false);
+      }
+      expect(requests.map(({ method }) => method)).toEqual(
+        scenario.retainedRevision === previous.composition.revision ? ['GET'] : [],
+      );
+      expect(authority()?.phase).toBe('migrated');
+      expect(authority()?.validUntil).toEqual(DateTime.toDateUtc(previous.validUntil));
     }
   }),
 );
@@ -1286,5 +1310,214 @@ it.effect(
         expect(Schema.is(ActiveApplicationCompositionObservationError)(failure)).toBe(true);
         expect(requests).toHaveLength(1);
       }
+    }),
+);
+
+it.effect('rejects missing or contradictory captured-baseline metadata before observation', () =>
+  Effect.gen(function* rejectsInvalidBaselineMetadata() {
+    const fixture = yield* candidateObservation;
+    const { baseline, ...missingBaseline } = fixture.candidate;
+    expect(baseline.revision).toBeNull();
+    for (const captured of [
+      baseline,
+      { retainedModuleAppIds: ['catalog'], revision: fixture.snapshot.composition.revision, shellMode: 'retained' },
+    ]) {
+      const candidate = yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema)({
+        ...fixture.candidate,
+        baseline: captured,
+      });
+      const codec = Schema.fromJsonString(ApplicationCompositionPublicationCandidateSchema);
+      const encoded = yield* Schema.encodeEffect(codec)(candidate);
+      expect((yield* Schema.decodeEffect(codec)(encoded)).baseline).toEqual(captured);
+      if (captured.revision === null) {
+        expect(encoded).toContain('"revision":null');
+      }
+    }
+    const invalid = [
+      missingBaseline,
+      { ...fixture.candidate, baseline: { retainedModuleAppIds: [], shellMode: 'fresh' } },
+      { ...fixture.candidate, retainedShellRevision: 'a'.repeat(64) },
+      { ...fixture.candidate, baseline: { retainedModuleAppIds: ['catalog'], revision: null, shellMode: 'fresh' } },
+      { ...fixture.candidate, baseline: { retainedModuleAppIds: [], revision: null, shellMode: 'retained' } },
+      {
+        ...fixture.candidate,
+        baseline: { retainedModuleAppIds: ['catalog', 'catalog'], revision: 'a'.repeat(64), shellMode: 'fresh' },
+      },
+      {
+        ...fixture.candidate,
+        baseline: { retainedModuleAppIds: ['inventory'], revision: 'a'.repeat(64), shellMode: 'fresh' },
+      },
+    ];
+    for (const candidate of invalid) {
+      const { layer, requests, statements } = fixture.makeProvider();
+      yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema, {
+        onExcessProperty: 'error',
+      })(candidate).pipe(
+        Effect.flatMap((decoded) => observeCandidate('stage', decoded)),
+        Effect.provide(layer),
+        Effect.flip,
+      );
+      expect(requests).toEqual([]);
+      expect(statements).toEqual([]);
+    }
+  }),
+);
+
+it.effect(
+  'rejects unrelated native authority captured-absence mismatch and nonactive target retry before any publication mutation',
+  () =>
+    Effect.gen(function* nativeBaselinePreconditionFailures() {
+      const { snapshot } = yield* candidateObservation;
+      const other = yield* snapshotAt(OBSERVED_AT);
+      const scenarios = [
+        { current: other, phase: 'active' as const, revision: 'f'.repeat(64) },
+        { current: other, phase: 'active' as const, revision: null },
+        { phase: 'active' as const, revision: other.composition.revision },
+        { current: snapshot, phase: 'draining' as const, revision: other.composition.revision },
+        { current: snapshot, phase: 'sealed' as const, revision: other.composition.revision },
+        { current: snapshot, phase: 'migrated' as const, revision: other.composition.revision },
+      ];
+      for (const scenario of scenarios) {
+        const fixture = provider(
+          () => new Response(null, { status: 404 }),
+          KV_URL,
+          true,
+          'retired',
+          scenario.current,
+          scenario.phase,
+        );
+        const failure = yield* publishSnapshot(snapshot, Option.none(), initialCutoverProof, {
+          retainedModuleAppIds: [],
+          revision: scenario.revision,
+          shellMode: 'fresh',
+        }).pipe(Effect.provide(fixture.layer), Effect.flip);
+        expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
+        expect(fixture.requests).toEqual([]);
+        expect(fixture.proofRequests).toEqual([]);
+        expect(fixture.legacy.observations).toEqual([]);
+        expect(fixture.authorityWrites).toEqual([]);
+        expect(
+          fixture.statements.some((statement) => /^(?:insert|update|delete|alter|create) /iu.test(statement)),
+        ).toBe(false);
+        expect(fixture.statements.filter((statement) => statement === PUBLICATION_LOCK_SQL)).toHaveLength(1);
+        expect(fixture.statements.filter((statement) => statement === PUBLICATION_UNLOCK_SQL)).toHaveLength(1);
+      }
+    }),
+);
+
+it.effect(
+  'keeps baseline-equals-target renewals in their existing phase and admission while accepting active target retries',
+  () =>
+    Effect.gen(function* preservesSameRevisionLifecycle() {
+      const { snapshot } = yield* candidateObservation;
+      const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
+      for (const phase of ['active', 'draining', 'sealed', 'migrated'] as const) {
+        const fixture = provider(
+          (request) => (request.method === 'PUT' ? Response.json({ success: true }) : new Response(encoded)),
+          KV_URL,
+          true,
+          'retired',
+          snapshot,
+          phase,
+        );
+        const result = yield* publishSnapshot(snapshot, Option.none(), initialCutoverProof, {
+          retainedModuleAppIds: snapshot.composition.modules.map(({ deployment }) => deployment.appId),
+          revision: snapshot.composition.revision,
+          shellMode: 'retained',
+        }).pipe(Effect.provide(fixture.layer));
+        expect(result).toEqual(snapshot);
+        expect(fixture.authority()?.phase).toBe(phase);
+        expect(fixture.authority()?.durableWorkAdmission).toBe('closed');
+        expect(fixture.authorityWrites[0]?.slice(0, 4)).toEqual([
+          'active',
+          snapshot.composition.revision,
+          phase,
+          'closed',
+        ]);
+        expect(fixture.requests.map(({ method }) => method)).toEqual(['GET', 'PUT', 'GET']);
+        expect(fixture.proofRequests).toEqual([]);
+        expect(fixture.legacy.observations).toEqual([]);
+        expect(fixture.statements.some((statement) => statement.startsWith('update '))).toBe(false);
+      }
+      const retry = provider(
+        (request) => (request.method === 'PUT' ? Response.json({ success: true }) : new Response(encoded)),
+        KV_URL,
+        true,
+        'retired',
+        snapshot,
+      );
+      expect(
+        yield* publishSnapshot(snapshot, Option.none(), initialCutoverProof, {
+          retainedModuleAppIds: [],
+          revision: 'f'.repeat(64),
+          shellMode: 'fresh',
+        }).pipe(Effect.provide(retry.layer)),
+      ).toEqual(snapshot);
+      expect(retry.authority()?.phase).toBe('active');
+      expect(retry.requests.map(({ method }) => method)).toEqual(['GET', 'PUT', 'GET']);
+      expect(retry.legacy.observations).toEqual([]);
+      expect(retry.proofRequests).toEqual([]);
+    }),
+);
+
+it.effect(
+  'accepts fresh Shell with retained business only from exact baseline or canonical target pointer and rejects changed retained pins',
+  () =>
+    Effect.gen(function* providerBaselineAndExactTargetRetries() {
+      const fixture = yield* candidateObservation;
+      const baseline = fixture.snapshot;
+      yield* TestClock.setTime(Date.parse(PUBLICATION_TIME) + 60_000);
+      const target = yield* deriveActiveApplicationCompositionSnapshot({
+        environment: 'stage',
+        modules: [fixture.module],
+        observedAt: yield* DateTime.now,
+        shell: yield* shellArtifacts('fresh-shell-next-build'),
+        validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
+      });
+      const baselineEncoded = yield* encodeActiveApplicationCompositionSnapshot(baseline);
+      const targetEncoded = yield* encodeActiveApplicationCompositionSnapshot(target);
+      const metadata: (typeof ApplicationCompositionPublicationCandidateSchema.Type)['baseline'] = {
+        retainedModuleAppIds: ['catalog'],
+        revision: baseline.composition.revision,
+        shellMode: 'fresh',
+      };
+      for (const currentPointer of [baselineEncoded, targetEncoded]) {
+        const retry = provider(
+          (request, index) =>
+            request.method === 'PUT'
+              ? Response.json({ success: true })
+              : new Response(index === 0 ? currentPointer : targetEncoded),
+          KV_URL,
+          true,
+          'retired',
+          target,
+        );
+        expect(
+          yield* publishSnapshot(target, Option.none(), initialCutoverProof, metadata).pipe(
+            Effect.provide(retry.layer),
+          ),
+        ).toEqual(target);
+        expect(retry.requests.map(({ method }) => method)).toEqual(['GET', 'PUT', 'GET']);
+        expect(retry.requests[1]?.body).toBe(targetEncoded);
+        expect(retry.legacy.observations).toEqual([]);
+        expect(retry.proofRequests).toEqual([]);
+      }
+      const changedModule = yield* deployedModule('catalog', CATALOG_MODULE_ID, 'changed-retained-catalog-build');
+      const changedTarget = yield* deriveActiveApplicationCompositionSnapshot({
+        environment: 'stage',
+        modules: [changedModule],
+        observedAt: yield* DateTime.now,
+        shell: yield* shellArtifacts('fresh-shell-next-build'),
+        validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
+      });
+      const denied = provider(() => new Response(baselineEncoded), KV_URL, true, 'retired', baseline, 'migrated');
+      const failure = yield* publishSnapshot(changedTarget, Option.none(), initialCutoverProof, metadata).pipe(
+        Effect.provide(denied.layer),
+        Effect.flip,
+      );
+      expect(Schema.is(ActiveApplicationCompositionPublicationError)(failure)).toBe(true);
+      expect(denied.requests.map(({ method }) => method)).toEqual(['GET']);
+      expect(denied.transactionStatements.at(-1)).toBe('ROLLBACK');
+      expect(denied.authority()?.phase).toBe('migrated');
     }),
 );
