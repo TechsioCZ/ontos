@@ -93,6 +93,27 @@ fresh authentication, context, permissions and an approved Composition before lo
 target. Existing document pinning, fail-closed outcomes and the prohibition on forced hot replacement
 remain in force.
 
+## Local remote render failures
+
+The Shell places the existing router React error boundary around resolved remote content inside its
+own layout. A supported remote render or lifecycle exception leaves Shell framing and navigation
+available and shows a localized, accessible failure with a full-document reload action. Displayed
+content does not expose the thrown error, stack or another tenant's data. The boundary reset key is
+the exact approved result identity described above, including revision and expose/component identity.
+
+A boundary reset grants no entrypoint access. Authentication, current Tenant/Principal, Permission
+and Module State rejection remain authoritative outside this render boundary. Recovery reloads the
+document through the existing router path and resolves the target through fresh normal gates; it
+never directly resets and rerenders a previously allowed component. A context or target change must
+not restore old rendered business content. Existing document revision pinning and typed timeout,
+unavailable, forbidden and reload-required states retain their meanings.
+
+Remote modules remain trusted first-party code in the same browser realm. This boundary covers the
+supported synchronous React render/lifecycle exceptions. It does not isolate asynchronous rejections,
+event-handler failures, native DOM mutation exceptions outside the renderer's boundary-aware
+callbacks, infinite JavaScript execution, memory exhaustion or browser/tab crashes.
+Shell SSR continues to render neutral framing/loading content without executing a foreign remote.
+
 ## Dependency requirements at actual execution
 
 An owner's intrinsic requirements and conditional operation requirements have different runtime meanings. Derive intrinsic transitive closure from the admitted Composition and include its distinct tenant module keys in the existing boundary snapshot and Action transaction recheck. Worker eligibility adds the same requirements to the existing claim predicate. This does not add a state query for each provider, automatically activate providers, or change unrelated persisted module states. Conditional providers do not enter this intrinsic closure or a global eager state snapshot.

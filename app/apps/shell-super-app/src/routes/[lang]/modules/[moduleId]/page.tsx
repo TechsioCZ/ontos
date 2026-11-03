@@ -1,5 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
+import { CatchBoundary, useLoaderData, useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Duration, Effect, Predicate, Schema } from 'effect';
 import { useEffect, useState } from 'react';
@@ -14,6 +14,7 @@ import {
   settleModuleEntrypointLoads,
 } from '../../../module-entrypoint-loader.ts';
 import type { ModuleEntrypointNamespace } from '../../../module-entrypoint-loader.ts';
+import { ModuleRenderFailure } from '../../../module-render-failure.tsx';
 import { ShellContentLayout } from '../../../shell-content-layout.tsx';
 import { useShellControls } from '../../../use-shell-controls.ts';
 import type { ModuleTargetPageModel } from './module-page-model.ts';
@@ -140,6 +141,17 @@ interface ModuleTargetViewProps {
   readonly initialModel: ModuleTargetPageModel;
 }
 
+// Framework integration adapter: raw error and boundary.reset are intentionally unused.
+const ModuleRenderError = () => {
+  const navigate = useNavigate();
+  const handleReload = () => {
+    void browserRuntime.runPromiseExit(
+      Effect.tryPromise(() => navigate({ reloadDocument: true, to: '.' })).pipe(Effect.timeout('10 seconds')),
+    );
+  };
+  return <ModuleRenderFailure onReload={handleReload} />;
+};
+
 export const ModuleTargetView = ({ initialModel }: ModuleTargetViewProps) => {
   const { t } = useModernI18n();
   const model = initialModel;
@@ -162,7 +174,12 @@ export const ModuleTargetView = ({ initialModel }: ModuleTargetViewProps) => {
   const status = controls.reloadRequired ? 'reload_required' : model.state;
   const content =
     model.state === 'resolved' && !controls.reloadRequired ? (
-      <ResolvedTarget model={model} />
+      <CatchBoundary
+        errorComponent={ModuleRenderError}
+        getResetKey={() => moduleEntrypointLoadIdentity(model.target).result}
+      >
+        <ResolvedTarget model={model} />
+      </CatchBoundary>
     ) : (
       <StatusText aria-live="polite" showIcon status="error">
         {t(`shell.moduleTarget.${status}`)}

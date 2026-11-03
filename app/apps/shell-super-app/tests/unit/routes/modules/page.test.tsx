@@ -1,12 +1,19 @@
 import { getDocumentCompositionRevision } from '@app/shared-contracts';
+import { CatchBoundary } from '@tanstack/react-router' with { rstest: 'importActual' };
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { Effect, Schema } from 'effect';
 import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 import type { ReactNode } from 'react';
 import { renderToString } from 'react-dom/server';
 
-import { ResolvedModuleTargetSchema } from '../../../../shared/api.ts';
+import { ResolvedModuleTargetSchema, SafeTenantIdentitySchema } from '../../../../shared/api.ts';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts';
+import {
+  moduleEntrypointLoadIdentity,
+  pinBrowserModuleTarget,
+} from '../../../../src/routes/module-entrypoint-loader.ts';
+import { ModuleRenderFailure } from '../../../../src/routes/module-render-failure.tsx';
 import type { ModuleTargetPageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/module-page-model.ts';
 import ModuleTargetPage, { ModuleTargetView } from '../../../../src/routes/[lang]/modules/[moduleId]/page.tsx';
 import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
@@ -16,6 +23,7 @@ type ResolvedPageModel = Extract<ModuleTargetPageModel, { readonly state: 'resol
 const {
   getInstanceMock,
   loadRemotePageMock,
+  navigateMock,
   registerRemotesMock,
   reloadRequiredMock,
   remotePropsMock,
@@ -23,6 +31,7 @@ const {
 } = rstest.hoisted(() => ({
   getInstanceMock: rstest.fn(),
   loadRemotePageMock: rstest.fn(),
+  navigateMock: rstest.fn(),
   registerRemotesMock: rstest.fn(),
   reloadRequiredMock: rstest.fn(),
   remotePropsMock: rstest.fn(),
@@ -34,17 +43,17 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
 }));
 
 rstest.mock('@tanstack/react-router', () => ({
+  CatchBoundary,
   useLoaderData: useLoaderDataMock,
-}));
-
-rstest.mock('@techsio/ui-kit/atoms/status-text', () => ({
-  StatusText: ({ children }: { readonly children: ReactNode }) => <span>{children}</span>,
+  useNavigate: () => navigateMock,
 }));
 
 rstest.mock('@module-federation/modern-js-v3/runtime', () => ({ getInstance: getInstanceMock }));
 
 rstest.mock('../../../../src/routes/shell-frame.tsx', () => ({
-  AuthenticatedDashboardLayout: ({ children }: { readonly children: ReactNode }) => <main>{children}</main>,
+  AuthenticatedDashboardLayout: ({ children }: { readonly children: ReactNode }) => (
+    <main data-testid="shell-framing">{children}</main>
+  ),
 }));
 
 rstest.mock('../../../../src/routes/use-shell-controls.ts', () => ({
@@ -168,6 +177,10 @@ const fixtureRemotePage = ({
   return <div>{`${target.componentKey}:${routeParams['id'] ?? 'static'}`}</div>;
 };
 
+const FailingRemoteFixture = (): never => {
+  throw new Error('1296_PRIVATE_RENDER_SENTINEL');
+};
+
 const blockedPageFixture = (index: number) => {
   const appId = `load-blocker-${index}`;
   const componentKey = `${appId}.core.page`;
@@ -193,6 +206,7 @@ const blockedPageFixture = (index: number) => {
 };
 
 beforeEach(() => {
+  navigateMock.mockImplementation(() => Promise.resolve());
   reloadRequiredMock.mockReturnValue(false);
   loadRemotePageMock.mockResolvedValue({ default: fixtureRemotePage });
   getInstanceMock.mockReturnValue({
@@ -272,6 +286,190 @@ it.live('maps an unreachable approved remote to its safe local diagnostic', () =
 
     expect(yield* Effect.promise(() => screen.findByText('shell.moduleTarget.unavailable'))).toBeTruthy();
   }),
+);
+
+it.live('contains a remote render exception while the Shell framing and healthy exposed page remain mounted', () =>
+  Effect.gen(function* containsOnlyTheFailedRemoteTree() {
+    const healthyModel: ResolvedPageModel = {
+      ...resolvedModel,
+      routeParams: { id: 'healthy-owner' },
+      target: targetFixture('contacts.core.page-customer-detail', 'contacts.core.page.customer-detail'),
+    };
+    loadRemotePageMock.mockResolvedValueOnce({ default: FailingRemoteFixture });
+
+    render(<ModuleTargetView initialModel={resolvedModel} />);
+    render(<ModuleTargetView initialModel={healthyModel} />);
+
+    expect((yield* Effect.promise(() => screen.findByRole('alert'))).textContent).toContain(
+      'shell.moduleTarget.render_failed',
+    );
+    expect(
+      yield* Effect.promise(() => screen.findByText('contacts.core.page-customer-detail:healthy-owner')),
+    ).toBeTruthy();
+    expect(screen.getAllByTestId('shell-framing')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'shell.moduleTarget.reload_page' }).getAttribute('type')).toBe('button');
+    expect(document.body.textContent).not.toContain('1296_PRIVATE_RENDER_SENTINEL');
+  }),
+);
+
+it.live('keeps a failed equivalent target contained and resets only for the newly approved expose', () =>
+  Effect.gen(function* resetsForTheExactApprovedExposedResult() {
+    loadRemotePageMock.mockResolvedValueOnce({ default: FailingRemoteFixture });
+    const view = render(<ModuleTargetView initialModel={resolvedModel} />);
+    yield* Effect.promise(() => screen.findByRole('alert'));
+    const equivalentModel: ResolvedPageModel = {
+      ...resolvedModel,
+      target: targetFixture(resolvedModel.target.componentKey, resolvedModel.target.entrypointKey),
+    };
+
+    view.rerender(<ModuleTargetView initialModel={equivalentModel} />);
+
+    expect(screen.getByRole('alert').textContent).toContain('shell.moduleTarget.render_failed');
+    expect(loadRemotePageMock).toHaveBeenCalledTimes(1);
+    const nextModel: ResolvedPageModel = {
+      ...resolvedModel,
+      routeParams: { id: 'correct-next-expose' },
+      target: targetFixture('contacts.core.page-customer-detail', 'contacts.core.page.customer-detail'),
+    };
+    view.rerender(<ModuleTargetView initialModel={nextModel} />);
+
+    expect(
+      yield* Effect.promise(() => screen.findByText('contacts.core.page-customer-detail:correct-next-expose')),
+    ).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(loadRemotePageMock).toHaveBeenCalledTimes(2);
+    expect(loadRemotePageMock).toHaveBeenLastCalledWith('previouslyUnknownContacts/contacts.core.page-customer-detail');
+  }),
+);
+
+it.live('requests a full document reload instead of locally executing the failed entrypoint again', () =>
+  Effect.gen(function* recoveryRequiresFreshDocumentAdmission() {
+    loadRemotePageMock.mockResolvedValueOnce({ default: FailingRemoteFixture });
+    const view = render(<ModuleTargetView initialModel={resolvedModel} />);
+    yield* Effect.promise(() => screen.findByRole('alert'));
+
+    yield* Effect.promise(() =>
+      userEvent.setup().click(screen.getByRole('button', { name: 'shell.moduleTarget.reload_page' })),
+    );
+    yield* Effect.promise(() =>
+      waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' })),
+    );
+    expect(loadRemotePageMock).toHaveBeenCalledTimes(1);
+    // The navigation driver is controlled here. The browser test proves actual document
+    // replacement and native permission revocation; this unit supplies its denied model.
+    view.rerender(<ModuleTargetView initialModel={{ shell, state: 'forbidden' }} />);
+
+    expect(screen.getByText('shell.moduleTarget.forbidden')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(loadRemotePageMock).toHaveBeenCalledTimes(1);
+  }),
+);
+
+it.live('never restores previous caller content when a changed tenant and principal receive a typed denial', () =>
+  Effect.gen(function* keepsCurrentContextDenialsOutsideTheBoundary() {
+    const view = render(<ModuleTargetView initialModel={resolvedModel} />);
+    yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1'));
+    loadRemotePageMock.mockResolvedValueOnce({ default: FailingRemoteFixture });
+    view.rerender(
+      <ModuleTargetView
+        initialModel={{
+          ...resolvedModel,
+          target: targetFixture('contacts.core.page-customer-detail', 'contacts.core.page.customer-detail'),
+        }}
+      />,
+    );
+    yield* Effect.promise(() => screen.findByRole('alert'));
+    const deniedShell: ResolvedPageModel['shell'] = {
+      ...shell,
+      identity: Schema.decodeUnknownSync(SafeTenantIdentitySchema)({
+        ...shell.identity,
+        principalId: 'current-principal',
+        tenantId: 'current-tenant',
+      }),
+    };
+    remotePropsMock.mockClear();
+
+    view.rerender(<ModuleTargetView initialModel={{ shell: deniedShell, state: 'forbidden' }} />);
+
+    expect(screen.getByText('shell.moduleTarget.forbidden')).toBeTruthy();
+    expect(screen.queryByText('contacts.core.page-customers:customer-1')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(remotePropsMock).not.toHaveBeenCalled();
+    expect(loadRemotePageMock).toHaveBeenCalledTimes(2);
+  }),
+);
+
+it.live(
+  'resets the actual framework boundary for a separately pinned R2 DOM document in a controlled reset-key test',
+  () =>
+    Effect.gen(function* checksRevisionResetWithoutClaimingBrowserNavigation() {
+      const nextTarget = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
+        ...resolvedModel.target,
+        compositionRevision: 'd'.repeat(64),
+      });
+      const nextDocument = document.implementation.createHTMLDocument();
+      yield* pinBrowserModuleTarget(nextTarget, nextDocument);
+      expect(yield* getDocumentCompositionRevision(nextDocument)).toBe(nextTarget.compositionRevision);
+      const view = render(
+        <CatchBoundary
+          errorComponent={() => (
+            <ModuleRenderFailure
+              onReload={() => {
+                navigateMock();
+              }}
+            />
+          )}
+          getResetKey={() => moduleEntrypointLoadIdentity(resolvedModel.target).result}
+        >
+          <FailingRemoteFixture />
+        </CatchBoundary>,
+      );
+      expect(screen.getByRole('alert').textContent).toContain('shell.moduleTarget.render_failed');
+      // This exercises the real boundary's reset with controlled approved-target fixtures,
+      // not a browser navigation or publication proof. The existing R1 document stays pinned.
+      view.rerender(
+        <CatchBoundary
+          errorComponent={() => (
+            <ModuleRenderFailure
+              onReload={() => {
+                navigateMock();
+              }}
+            />
+          )}
+          getResetKey={() => moduleEntrypointLoadIdentity(nextTarget).result}
+        >
+          <div>controlled R2 result</div>
+        </CatchBoundary>,
+      );
+      expect(screen.getByText('controlled R2 result')).toBeTruthy();
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(yield* getDocumentCompositionRevision(document)).toBe(resolvedModel.target.compositionRevision);
+    }),
+);
+
+it.live(
+  'keeps a caller load timeout as its typed diagnostic rather than a render failure',
+  () =>
+    Effect.gen(function* separatesLoadTimeoutFromRenderFailure() {
+      const pending = Promise.withResolvers<{ readonly default: typeof fixtureRemotePage }>();
+      loadRemotePageMock.mockReturnValueOnce(pending.promise);
+      try {
+        render(<ModuleTargetView initialModel={resolvedModel} />);
+        expect(
+          yield* Effect.promise(() => screen.findByText('shell.moduleTarget.timeout', {}, { timeout: 7000 })),
+        ).toBeTruthy();
+        expect(screen.queryByRole('alert')).toBeNull();
+        expect(screen.queryByRole('button', { name: 'shell.moduleTarget.reload_page' })).toBeNull();
+      } finally {
+        yield* Effect.promise(() =>
+          act(async () => {
+            pending.resolve({ default: fixtureRemotePage });
+            await pending.promise;
+          }),
+        );
+      }
+    }),
+  15_000,
 );
 
 it.live('shares equivalent cloned targets while an unmounted caller cannot cancel the remaining page', () =>

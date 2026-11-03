@@ -1,8 +1,16 @@
+import { createHash } from 'node:crypto';
+
 import { expect, test as base } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { Effect, Predicate } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 
-import { shellAuthenticationApiContract } from '../../shared/api.ts';
+import {
+  ResolveModuleTargetPayloadSchema,
+  ResolvedModuleTargetSchema,
+  ShellAuthenticationApi,
+  ShellTargetForbiddenProblemSchema,
+  shellAuthenticationApiContract,
+} from '../../shared/api.ts';
 import { createAuthenticationFixture } from './auth-fixture.ts';
 import type { AuthenticationFixture } from './auth-fixture.ts';
 
@@ -296,6 +304,170 @@ test('keeps authenticated Shell chrome on search and guarded direct-target route
   await expectPersistentShell(
     '/en/resources/not-installed/example/missing',
     'You do not have permission to view this resource.',
+  );
+});
+
+const contactsRenderInitializationFault = 'ontos-e2e-contacts-render-initialization-fault';
+const contactsSectionSelector = 'section[aria-labelledby="contacts-heading"]';
+const compositionRevisionSelector = 'meta[name="ontos-composition-revision"]';
+const moduleTargetPath = `${shellAuthenticationApiContract.apiPrefix}${ShellAuthenticationApi.groups.composition.endpoints.resolveModuleTarget.path}`;
+
+// Redact initializes a newly created detached host inside its guarded renderNode call:
+// renderHost -> applyHostProps -> setAttribute. This exact Contacts attribute injects a
+// RENDER-PHASE HOST INITIALIZATION failure without rewriting approved remote bytes/exports.
+// Unit tests separately cover component-function throws. Raw DOM commits, async errors,
+// CPU stalls and tab crashes are outside this browser assertion's protection claim.
+const installContactsRenderInitializationFault = (page: Page) =>
+  page.evaluateHandle((marker) => {
+    const setAttributeDescriptor: TypedPropertyDescriptor<Element['setAttribute']> | undefined =
+      Object.getOwnPropertyDescriptor(Element.prototype, 'setAttribute');
+    const originalSetAttribute = setAttributeDescriptor?.value;
+    if (setAttributeDescriptor === undefined || originalSetAttribute === undefined) {
+      throw new Error('Native DOM setAttribute descriptor is unavailable');
+    }
+    let fired = false;
+    const restore = () => {
+      Object.defineProperty(Element.prototype, 'setAttribute', setAttributeDescriptor);
+    };
+    Element.prototype.setAttribute = function setAttribute(this: Element, name: string, value: string): void {
+      originalSetAttribute.call(this, name, value);
+      if (
+        !fired &&
+        !this.isConnected &&
+        this.localName === 'section' &&
+        name === 'aria-labelledby' &&
+        value === 'contacts-heading'
+      ) {
+        fired = true;
+        restore();
+        document.documentElement.dataset['e2eContactsRenderInitializationFault'] = 'fired';
+        throw new Error(marker);
+      }
+    };
+    return restore;
+  }, contactsRenderInitializationFault);
+
+test('contains a Contacts render-phase failure and rechecks revoked access across real document reloads', async ({
+  authentication,
+  page,
+}) => {
+  await login(page, 'en', authentication.credentials);
+  const revision = await page.locator(compositionRevisionSelector).getAttribute('content');
+  const payload = Schema.decodeUnknownSync(ResolveModuleTargetPayloadSchema)({
+    canonicalPath: '/contacts',
+    compositionRevision: revision,
+  });
+  const requestOptions = { data: payload, headers: { origin: new URL(page.url()).origin } };
+  const approvedResponse = await page.request.post(moduleTargetPath, requestOptions);
+  expect(approvedResponse.status()).toBe(200);
+  const approved = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)(await approvedResponse.json());
+  expect(approved.appId).toBe('party-registry');
+  expect(approved.componentKey).toBe('party.registry.page-contacts');
+  expect(approved.federation.expose).toBe('./PageContacts');
+  const expectApprovedManifestBytes = async () => {
+    const manifest = await page.request.get(approved.federation.manifest.url);
+    expect(manifest.status()).toBe(200);
+    expect(
+      createHash('sha256')
+        .update(await manifest.body())
+        .digest('hex'),
+    ).toBe(approved.federation.manifest.sha256);
+  };
+  await expectApprovedManifestBytes();
+  const navigation = page.getByRole('navigation', { name: 'Dashboard navigation' });
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard sidebar' });
+  await expect(navigation.getByRole('link', { exact: true, name: 'Party Registry' })).toBeVisible();
+  const restoreFault = await installContactsRenderInitializationFault(page);
+  try {
+    await navigation.getByRole('link', { exact: true, name: 'Party Registry' }).click();
+    const localFailure = page.getByRole('alert');
+    await expect(localFailure).toHaveText('This module could not be displayed. Reload the page to try again.');
+    await expect(localFailure).not.toContainText(contactsRenderInitializationFault);
+    await expect(page.locator('html')).toHaveAttribute('data-e2e-contacts-render-initialization-fault', 'fired');
+    await expect(page.locator(contactsSectionSelector)).toHaveCount(0);
+    await expect(page.getByRole('button', { exact: true, name: 'Reload page' })).toBeEnabled();
+    await expect(page.locator('header[aria-label="Dashboard header"]')).toBeVisible();
+    await expect(sidebar).toBeVisible();
+    await sidebar.getByRole('searchbox', { exact: true, name: 'Search' }).fill('still usable');
+    await expect(sidebar.getByRole('searchbox', { exact: true, name: 'Search' })).toHaveValue('still usable');
+    await sidebar.getByRole('searchbox', { exact: true, name: 'Search' }).clear();
+    await waitForInteractiveAccountMenu(page);
+  } finally {
+    await restoreFault.evaluate((restore) => restore());
+    await restoreFault.dispose();
+  }
+  // This is same-Composition browser evidence. A genuine R1 -> R2 browser publication
+  // remains the separately isolated #1297 joint acceptance; observation renewal is not R2.
+  await Effect.runPromise(
+    Effect.gen(function* useScopedContactsRevocation() {
+      yield* authentication.acquireFirstTenantContactsAccessRevocation();
+      yield* Effect.tryPromise(async () => {
+        await page.evaluate(() => {
+          document.documentElement.dataset['e2eRenderRecoveryDocument'] = 'failed-first-tenant';
+        });
+        const firstDocumentTimeOrigin = await page.evaluate(() => performance.timeOrigin);
+        await Promise.all([
+          page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
+          page.getByRole('button', { exact: true, name: 'Reload page' }).click(),
+        ]);
+        await expect(page.getByText('You do not have permission to open this module.', { exact: true })).toBeVisible();
+        await expect(page.locator('html')).not.toHaveAttribute('data-e2e-render-recovery-document');
+        expect(await page.evaluate(() => performance.timeOrigin)).not.toBe(firstDocumentTimeOrigin);
+        await expect(page.locator(compositionRevisionSelector)).toHaveAttribute(
+          'content',
+          approved.compositionRevision,
+        );
+        await expect(page.locator(contactsSectionSelector)).toHaveCount(0);
+        await expect(page.getByRole('alert')).toHaveCount(0);
+        const deniedResponse = await page.request.post(moduleTargetPath, requestOptions);
+        expect(deniedResponse.status()).toBe(403);
+        const deniedBody = await deniedResponse.json();
+        Schema.decodeUnknownSync(ShellTargetForbiddenProblemSchema)(deniedBody);
+        expect(deniedBody).not.toHaveProperty('federation');
+        await expect(page.locator('header[aria-label="Dashboard header"]')).toBeVisible();
+        await expect(sidebar).toBeVisible();
+        const tenant = page.getByRole('combobox', { name: 'Current tenant' });
+        await expect(tenant).toContainText(authentication.tenants.first.name);
+        await tenant.click();
+        await page.evaluate(() => {
+          document.documentElement.dataset['e2eRenderRecoveryDocument'] = 'denied-first-tenant';
+        });
+        const deniedDocumentTimeOrigin = await page.evaluate(() => performance.timeOrigin);
+        const switchedResponse = page.waitForResponse(
+          (response) =>
+            new URL(response.url()).pathname === shellAuthenticationApiContract.switchTenantPath &&
+            response.request().method() === 'POST',
+        );
+        await Promise.all([
+          page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
+          page.getByRole('option', { name: authentication.tenants.second.name }).click(),
+        ]);
+        const switchResult = await switchedResponse;
+        expect(switchResult.status()).toBe(200);
+        await expect(tenant).toContainText(authentication.tenants.second.name);
+        await expect(page.locator('html')).not.toHaveAttribute('data-e2e-render-recovery-document');
+        expect(await page.evaluate(() => performance.timeOrigin)).not.toBe(deniedDocumentTimeOrigin);
+        await expect(page.getByRole('button', { name: 'E2E user second tenant' })).toBeVisible();
+        await expect(page.locator(compositionRevisionSelector)).toHaveAttribute(
+          'content',
+          approved.compositionRevision,
+        );
+        await expect(page.locator(contactsSectionSelector)).toBeVisible();
+        await expect(page.getByRole('heading', { exact: true, name: 'Contacts' })).toBeVisible();
+        await expect(page.getByRole('alert')).toHaveCount(0);
+        await expect(page.locator('header[aria-label="Dashboard header"]')).toBeVisible();
+        await expect(sidebar).toBeVisible();
+        const secondTargetResponse = await page.request.post(moduleTargetPath, requestOptions);
+        expect(secondTargetResponse.status()).toBe(200);
+        const secondTarget = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)(await secondTargetResponse.json());
+        expect(secondTarget.federation).toEqual(approved.federation);
+        await expectApprovedManifestBytes();
+        // The independent Tenant/Principal retains its own grant while the first remains revoked.
+        await navigation.getByRole('link', { exact: true, name: 'Home' }).click();
+        await expect(page).toHaveURL(/\/en\/?$/u);
+        await expect(page.getByRole('button', { name: 'E2E user second tenant' })).toBeVisible();
+      });
+    }).pipe(Effect.scoped),
   );
 });
 

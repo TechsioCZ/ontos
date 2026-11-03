@@ -127,11 +127,17 @@ const readFingerprint = Effect.fn('IsolatedNativeDatabase.readFingerprint')(func
 });
 
 const schemaOnly = 'schema-only' as const;
+const browserCompositionPurpose = 'implementation-1296-browser-composition';
 const exactDeadlinePurpose = 'stabilization-1271-exact-obligation-deadline';
 const shellAuthPurpose = 'stabilization-1287-shell-auth';
 const assortmentAuthorizationPurpose = 'implementation-1290-assortment-authorization';
 const retainedPrivacyPurpose = 'stabilization-1258-privacy-drain';
 type IsolatedNativeDatabaseInput = (
+  | {
+      readonly compositionSnapshot?: never;
+      readonly mode: typeof schemaOnly;
+      readonly purpose: typeof browserCompositionPurpose;
+    }
   | {
       readonly compositionSnapshot: ActiveApplicationCompositionSnapshot;
       readonly mode: typeof schemaOnly;
@@ -202,6 +208,7 @@ type IsolatedNativeDatabaseInput = (
 const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
   input.mode === schemaOnly
     ? [
+        browserCompositionPurpose,
         'stabilization-1196-product-create',
         'stabilization-1229-payment-entitlement',
         'stabilization-1232-current-access',
@@ -272,7 +279,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       return yield* unavailable('Unsupported isolated database test purpose');
     }
     const snapshot =
-      input.mode === schemaOnly
+      input.mode === schemaOnly && input.purpose !== browserCompositionPurpose
         ? yield* validateActiveApplicationCompositionSnapshot(input.compositionSnapshot).pipe(
             Effect.mapError((cause) => unavailable('Invalid isolated test composition', cause)),
           )
@@ -502,6 +509,9 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
     const observationRenewal = yield* Semaphore.make(1);
     const publishInitialComposition = Effect.fn('IsolatedNativeDatabase.publishInitialComposition')(
       function* publishInitialComposition(candidate: ActiveApplicationCompositionSnapshot) {
+        if (input.purpose === browserCompositionPurpose) {
+          return yield* unavailable('The browser fixture exclusively owns publication of its isolated composition');
+        }
         const validated = yield* validateActiveApplicationCompositionSnapshot(candidate).pipe(
           Effect.mapError((cause) => unavailable('Invalid isolated test composition', cause)),
         );
@@ -524,6 +534,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
         managedInitialObservedAt = DateTime.toEpochMillis(validated.observedAt);
         latestObservationAt = managedInitialObservedAt;
         managedInitialValidUntil = DateTime.toEpochMillis(validated.validUntil);
+        return yield* Effect.void;
       },
     );
     if (snapshot !== undefined) {

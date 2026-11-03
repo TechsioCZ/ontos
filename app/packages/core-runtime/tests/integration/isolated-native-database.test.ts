@@ -17,7 +17,8 @@ import { expect, it } from 'effect-rstest';
 
 import { AuthenticationNamespaceRegistry } from '../../src/auth/external-identity/verifier.ts';
 import { validateActiveApplicationCompositionSnapshot } from '../../src/modules/active-application-composition.ts';
-import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import { DATABASE_IDENTITIES } from '../../src/db/database-identities.ts';
+import { loadDatabaseIdentityConnections, loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { makeLiveOperationFixture } from '../../src/testing/actions.ts';
 import { makeContextAccessLive } from '../../src/permissions/context-access.ts';
 import { LegalEntityRefSchema } from '../../src/resources/legal-entity.ts';
@@ -949,6 +950,92 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
         const closed = yield* renewAfterClose().pipe(Effect.flip);
         expect(Schema.is(IsolatedNativeDatabaseError)(closed)).toBe(true);
         expect(closed.reason).toBe('Observation renewal requires a live owned non-retained test controller');
+      }),
+    60_000,
+  );
+  suite.effect(
+    '#1296 browser clone keeps all schemas and canonical roles but leaves publication to the browser',
+    () =>
+      Effect.gen(function* unpublishedBrowserClone() {
+        const source = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
+        const client = yield* makeTestPgClient(source.admin.connectionString);
+        const sourceCatalog = client<{ fingerprint: string }>`select encode(sha256(convert_to(json_build_object(
+        'relations',(select json_agg(row_to_json(r) order by r.schema,r.name) from (
+          select n.nspname as schema,c.relname as name,c.relkind,c.relowner,c.relacl::text,c.relrowsecurity,c.relforcerowsecurity
+          from pg_class c join pg_namespace n on n.oid=c.relnamespace
+          where n.nspname not in('pg_catalog','information_schema') and n.nspname !~ '^pg_'
+        ) r),
+        'policies',(select json_agg(row_to_json(p) order by p.schemaname,p.tablename,p.policyname) from pg_policies p),
+        'constraints',(select json_agg(row_to_json(k) order by k.schema,k.table_name,k.name) from (
+          select n.nspname as schema,c.relname as table_name,k.conname as name,pg_get_constraintdef(k.oid,true) as definition
+          from pg_constraint k join pg_class c on c.oid=k.conrelid join pg_namespace n on n.oid=c.relnamespace
+          where n.nspname not in('pg_catalog','information_schema')
+        ) k)
+      )::text,'UTF8')),'hex') as fingerprint`;
+        const beforeCatalog = yield* sourceCatalog;
+        const beforeAuthority =
+          yield* client`select * from core.application_composition_authority order by authority_key`;
+        const sourceSchemas = yield* client<{
+          name: string;
+        }>`select nspname as name from pg_namespace where nspname not in('pg_catalog','information_schema') and nspname !~ '^pg_' order by nspname`;
+        const closed = yield* Effect.scoped(
+          Effect.gen(function* ownBrowserDatabase() {
+            const fixture = yield* makeIsolatedNativeDatabaseFixture({
+              mode: 'schema-only',
+              purpose: 'implementation-1296-browser-composition',
+              sourceConnections: { admin: source.admin, runtime: source.runtime.shared_runtime },
+            });
+            const { database } = fixture.connections.admin;
+            expect(database).toMatch(/^ontos_test_party_gateway_[a-f0-9]{32}$/u);
+            expect(database).not.toBe(source.admin.database);
+            const clone = yield* makeTestPgClient(fixture.connections.admin.connectionString);
+            yield* fixture.assertClonedSchema();
+            expect(
+              yield* clone`select nspname as name from pg_namespace where nspname not in('pg_catalog','information_schema') and nspname !~ '^pg_' order by nspname`,
+            ).toEqual(sourceSchemas);
+            expect(yield* clone`select count(*)::int as count from core.application_composition_authority`).toEqual([
+              { count: 0 },
+            ]);
+            expect(yield* clone`select count(*)::int as count from core.tenants`).toEqual([{ count: 0 }]);
+            expect(Exit.isFailure(yield* fixture.composition.observe().pipe(Effect.exit))).toBe(true);
+            const snapshot = yield* makeApplicationCompositionSnapshotFixture([]);
+            expect(Exit.isFailure(yield* fixture.publishInitialComposition(snapshot).pipe(Effect.exit))).toBe(true);
+            expect(yield* clone`select count(*)::int as count from core.application_composition_authority`).toEqual([
+              { count: 0 },
+            ]);
+            const environment = {
+              ...Object.fromEntries(
+                DATABASE_IDENTITIES.map(({ id, urlKey }) => {
+                  const url = new URL(source.runtime[id].connectionString);
+                  url.pathname = `/${database}`;
+                  return [urlKey, url.href];
+                }),
+              ),
+              DATABASE_ADMIN_URL: fixture.connections.admin.connectionString,
+            };
+            const routed = yield* loadDatabaseIdentityConnections({ environment, envPath: '/dev/null' });
+            for (const identity of DATABASE_IDENTITIES) {
+              const connection = routed.runtime[identity.id];
+              expect(connection.database).toBe(database);
+              expect(connection.user).toBe(identity.role);
+              expect(connection.host).toBe(source.runtime[identity.id].host);
+              expect(connection.port).toBe(source.runtime[identity.id].port);
+              const role = yield* makeTestPgClient(connection.connectionString);
+              expect(yield* role`select current_database() as database,current_user as "user"`).toEqual([
+                { database, user: identity.role },
+              ]);
+            }
+            return { database, observe: fixture.composition.observe };
+          }),
+        );
+        expect(Exit.isFailure(yield* closed.observe().pipe(Effect.exit))).toBe(true);
+        expect(
+          yield* client`select exists(select 1 from pg_database where datname=${closed.database}) as present`,
+        ).toEqual([{ present: false }]);
+        expect(yield* sourceCatalog).toEqual(beforeCatalog);
+        expect(yield* client`select * from core.application_composition_authority order by authority_key`).toEqual(
+          beforeAuthority,
+        );
       }),
     60_000,
   );
