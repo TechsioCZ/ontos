@@ -2003,7 +2003,50 @@ const subprocessScope = (facts: SourceFacts, offset: number): ReadonlyMap<string
   return variables;
 };
 
+const adjacentDeclarationExpressionRead = (node: Node, parent: Node): boolean => {
+  if (parent.type === 'CallExpression' || parent.type === 'NewExpression') {
+    return parent.callee === node || parent.arguments.some((argument) => argument === node);
+  }
+  if (parent.type === 'MemberExpression') {
+    return parent.object === node || (parent.computed && parent.property === node);
+  }
+  if (parent.type === 'ReturnStatement' || parent.type === 'AwaitExpression' || parent.type === 'SpreadElement') {
+    return parent.argument === node;
+  }
+  if (parent.type === 'ArrowFunctionExpression') {
+    return parent.body === node;
+  }
+  if (
+    parent.type === 'TSAsExpression' ||
+    parent.type === 'TSSatisfiesExpression' ||
+    parent.type === 'TSNonNullExpression' ||
+    parent.type === 'TSInstantiationExpression' ||
+    parent.type === 'ExpressionStatement'
+  ) {
+    return parent.expression === node;
+  }
+  return false;
+};
+
+const adjacentDeclarationContainerRead = (node: Node, parent: Node): boolean => {
+  if (
+    parent.type === 'Property' ||
+    parent.type === 'MethodDefinition' ||
+    parent.type === 'PropertyDefinition' ||
+    parent.type === 'AccessorProperty'
+  ) {
+    return parent.value === node || (parent.computed && parent.key === node);
+  }
+  if (parent.type === 'VariableDeclarator') {
+    return parent.init === node;
+  }
+  return parent.type === 'ArrayExpression' && parent.elements.some((element) => element === node);
+};
+
 const adjacentDeclarationValueReference = (node: Node, parent: Node, parents: ReadonlyMap<Node, Node>): boolean => {
+  if (!nativeSubprocessRuntimeReference(node, parents)) {
+    return false;
+  }
   if (parent.type === 'ExportSpecifier') {
     const declaration = parents.get(parent);
     return (
@@ -2014,27 +2057,9 @@ const adjacentDeclarationValueReference = (node: Node, parent: Node, parents: Re
       declaration.exportKind !== 'type'
     );
   }
-  if (
-    parent.type === 'LabeledStatement' ||
-    parent.type === 'BreakStatement' ||
-    parent.type === 'ContinueStatement' ||
-    (parent.type.startsWith('TS') &&
-      !['TSAsExpression', 'TSSatisfiesExpression', 'TSNonNullExpression', 'TSInstantiationExpression'].includes(
-        parent.type,
-      )) ||
-    ((parent.type === 'MethodDefinition' ||
-      parent.type === 'PropertyDefinition' ||
-      parent.type === 'AccessorProperty') &&
-      !parent.computed &&
-      parent.key === node)
-  ) {
-    return false;
-  }
-  return (
-    parent.type !== 'ImportSpecifier' &&
-    !nativeSubprocessBindingOrName(node, parent) &&
-    nativeSubprocessRuntimeReference(node, parents)
-  );
+  // Only known expression positions establish a read. Names and unsupported
+  // syntax cannot retain an otherwise unused declaration.
+  return adjacentDeclarationExpressionRead(node, parent) || adjacentDeclarationContainerRead(node, parent);
 };
 
 const adjacentDeclarationImportedBindings = (
@@ -2046,9 +2071,7 @@ const adjacentDeclarationImportedBindings = (
     return [];
   }
   const names = new Set([
-    ...exportedBindings(declaration)
-      .filter((binding) => binding.kind === 'export')
-      .map((binding) => binding.name),
+    ...exportedBindings(declaration).flatMap((binding) => (binding.kind === 'export' ? [binding.name] : [])),
     ...declaration.program.body.flatMap((exported) =>
       exported.type === 'ExportNamedDeclaration' &&
       exported.declaration?.type === 'TSDeclareFunction' &&
@@ -5362,6 +5385,11 @@ const apiAliasTypeReference = (node: Node, parent: Node, names: ReadonlySet<stri
   !nativeSubprocessBindingOrName(node, parent) &&
   parent.type !== 'ImportSpecifier';
 
+const recordApiAliasConsumer = (consumed: Map<string, string>, key: string, reason: string): void => {
+  const existing = consumed.get(key);
+  consumed.set(key, existing?.includes(' endpoint ') === true ? existing : reason);
+};
+
 const apiAliasConsumers = (
   factsByPath: ReadonlyMap<string, SourceFacts>,
   appRoot: string,
@@ -5410,8 +5438,7 @@ const apiAliasConsumers = (
         const binding = apiAliasReference(facts, reference.node, factsByPath, appRoot, path);
         if (binding !== undefined) {
           const key = `${binding.facts.file}#${binding.name}`;
-          const existing = consumed.get(key);
-          consumed.set(key, existing?.includes(' endpoint ') === true ? existing : reference.reason);
+          recordApiAliasConsumer(consumed, key, reference.reason);
         }
       }
       if (apiAliasTypeReference(node, parent, importedTypes)) {
@@ -5419,11 +5446,10 @@ const apiAliasConsumers = (
         const schema = apiAliasSchemaType(binding);
         if (binding !== undefined && schema !== undefined) {
           const key = `${binding.facts.file}#${schema}`;
-          const existing = consumed.get(key);
           const reason = `${facts.file}:${
             facts.source.slice(0, node.start).split('\n').length
           } consumes exported schema-derived type ${binding.name}`;
-          consumed.set(key, existing?.includes(' endpoint ') === true ? existing : reason);
+          recordApiAliasConsumer(consumed, key, reason);
         }
       }
     }

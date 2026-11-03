@@ -3162,6 +3162,8 @@ it.live(
       'accessor-only',
       'function-type-parameter',
       'class-type-parameter',
+      'meta-property',
+      'namespace-export',
     ];
     for (const name of [
       'weights',
@@ -3172,6 +3174,7 @@ it.live(
       write(root, `${owner}/scripts/${name}.d.mts`, declaration);
     }
     write(root, `${owner}/scripts/weights.d.mts`, `${declaration}\nexport function unusedDeclaration(): void;`);
+    write(root, `${owner}/scripts/namespace-target.mjs`, 'export const value = 1;');
     write(root, `${owner}/scripts/orphan.d.mts`, declaration);
     write(
       root,
@@ -3188,6 +3191,8 @@ it.live(
         "import { buildWeights as accessorName } from '../scripts/accessor-only.mjs';",
         "import { buildWeights as typeParameter } from '../scripts/function-type-parameter.mjs';",
         "import { buildWeights as classParameter } from '../scripts/class-type-parameter.mjs';",
+        "import { buildWeights as meta } from '../scripts/meta-property.mjs';",
+        "import { buildWeights as exportedNamespace } from '../scripts/namespace-export.mjs';",
         "import { buildWeights as localReexport } from '../scripts/local-reexport.mjs';",
         'export const result = weights([{ sku: "valid" }]);',
         'export const fake = (shadowed: (values: unknown[]) => unknown) => shadowed([]);',
@@ -3198,6 +3203,8 @@ it.live(
         'export class Accessors { accessor accessorName = 1; }',
         'export function generic<typeParameter>() {}',
         'export class Generic<classParameter> {}',
+        'export const url = import.meta.url;',
+        "export * as exportedNamespace from '../scripts/namespace-target.mjs';",
         'export { localReexport as publicWeights };',
       ].join('\n'),
     );
