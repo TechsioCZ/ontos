@@ -81,6 +81,7 @@ import type {
   ShellSearchPayload,
   ShellSearchResponse,
 } from '../../shared/api.ts';
+import type { PeopleList, PeopleListRequest, PeopleRoleCatalog } from '../../shared/people-api.ts';
 
 export { issueGatewayContext } from '@app/shared-contracts';
 export type {
@@ -301,6 +302,33 @@ export const canManageDemoAccounts = (options: ShellAuthenticationClientOptions 
   invokeShellAuthenticationClient(options, (client) => client.identity.demoAccountCapability({ payload: {} })).pipe(
     Effect.map(({ canManage }) => canManage),
     Effect.orElseSucceed(() => false),
+  );
+
+/** The generated people administration operations; the Shell people page never assembles these paths itself. */
+export const listCompanyPeople = (
+  payload: PeopleListRequest,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<PeopleList, IdentityClientError> =>
+  invokeShellAuthenticationClient(options, (client) => client.peopleAdministration.listCompanyPeople({ payload }));
+
+export const listTenantPeople = (
+  payload: PeopleListRequest,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<PeopleList, IdentityClientError> =>
+  invokeShellAuthenticationClient(options, (client) => client.peopleAdministration.listTenantPeople({ payload }));
+
+export const listCompanyPeopleRoleCatalog = (
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<PeopleRoleCatalog, IdentityClientError> =>
+  invokeShellAuthenticationClient(options, (client) =>
+    client.peopleAdministration.listCompanyRoleCatalog({ payload: {} }),
+  );
+
+export const listTenantPeopleRoleCatalog = (
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<PeopleRoleCatalog, IdentityClientError> =>
+  invokeShellAuthenticationClient(options, (client) =>
+    client.peopleAdministration.listTenantRoleCatalog({ payload: {} }),
   );
 
 export const searchResources = (

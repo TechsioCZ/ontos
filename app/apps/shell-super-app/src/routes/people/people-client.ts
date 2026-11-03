@@ -1,11 +1,17 @@
-import { Effect, Random, Schema } from 'effect';
+import { Effect, Match, Random, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
+import type { Cause } from 'effect';
 
 import {
+  listCompanyPeople,
+  listCompanyPeopleRoleCatalog,
+  listTenantPeople,
+  listTenantPeopleRoleCatalog,
+} from '../../api/auth-client.ts';
+import type { IdentityClientError } from '../../api/auth-client.ts';
+import {
   PEOPLE_PATHS,
-  PeopleRoleCatalogSchema,
   InvitePeopleResponseSchema,
-  PeopleListResponseSchema,
   SetPeopleCompanyMembershipResponseSchema,
   SetPeopleRoleResponseSchema,
 } from '../../../shared/people-api.ts';
@@ -13,6 +19,7 @@ import type {
   InvitePeopleRequest,
   PeopleList,
   PeopleListRequest,
+  PeopleRoleCatalog,
   SetPeopleCompanyMembershipRequest,
   SetPeopleRoleRequest,
 } from '../../../shared/people-api.ts';
@@ -20,6 +27,9 @@ import type {
 export type PeopleOutcome<A> =
   | { readonly status: 'ok'; readonly value: A }
   | { readonly message: string; readonly status: 'failed' };
+
+const failedStatus = 'failed' as const;
+const READ_TIMEOUT = '30 seconds' as const;
 
 const failureMessage = (status: number) => {
   if (status === 401) {
@@ -68,22 +78,43 @@ const call = <A>(
     }
     const response = yield* client.execute(yield* HttpClientRequest.bodyJson(request, body));
     if (response.status !== 200) {
-      return { message: failureMessage(response.status), status: 'failed' } as const;
+      return { message: failureMessage(response.status), status: failedStatus } as const;
     }
     const value = yield* Schema.decodeEffect(schema)(yield* response.json);
     return { status: 'ok', value } as const;
   }).pipe(
-    Effect.timeout('30 seconds'),
-    Effect.orElseSucceed(() => ({ message: failureMessage(503), status: 'failed' }) as const),
+    Effect.timeout(READ_TIMEOUT),
+    Effect.orElseSucceed(() => ({ message: failureMessage(503), status: failedStatus }) as const),
   );
 
-export const loadPeople = (scope: 'company' | 'tenant', request: PeopleListRequest) =>
-  call(
-    scope === 'company' ? PEOPLE_PATHS.companyList : PEOPLE_PATHS.tenantList,
-    request,
-    PeopleListResponseSchema,
-    false,
+const failed = (status: number) => ({ message: failureMessage(status), status: failedStatus });
+
+const failureFromError = (error: IdentityClientError | Cause.TimeoutError) =>
+  Match.value(error).pipe(
+    Match.tag('ShellAuthenticationRequiredProblem', () => failed(401)),
+    Match.tag('ShellTargetForbiddenProblem', () => failed(403)),
+    Match.tag('ShellPolicyConflictProblem', () => failed(409)),
+    Match.tag('ShellInvalidRequestProblem', 'ShellPolicyUnprocessableProblem', () => failed(422)),
+    Match.orElse(() => failed(503)),
   );
+
+/** Reads go through the generated people administration client, including its declared identity failures. */
+const generatedRead = <A>(
+  effect: Effect.Effect<A, IdentityClientError, HttpClient.HttpClient>,
+): Effect.Effect<PeopleOutcome<A>, never, HttpClient.HttpClient> =>
+  effect.pipe(
+    Effect.timeout(READ_TIMEOUT),
+    Effect.match({
+      onFailure: (error) => failureFromError(error),
+      onSuccess: (value): PeopleOutcome<A> => ({ status: 'ok', value }),
+    }),
+  );
+
+export const loadPeople = (
+  scope: 'company' | 'tenant',
+  request: PeopleListRequest,
+): Effect.Effect<PeopleOutcome<PeopleList>, never, HttpClient.HttpClient> =>
+  generatedRead(scope === 'company' ? listCompanyPeople(request) : listTenantPeople(request));
 export const changeCompanyMembership = (request: SetPeopleCompanyMembershipRequest) =>
   call(PEOPLE_PATHS.companyMembership, request, SetPeopleCompanyMembershipResponseSchema, true);
 export const changeScopedRole = (scope: 'company' | 'tenant', request: SetPeopleRoleRequest) =>
@@ -109,7 +140,7 @@ export const loadAllPeople = (scope: 'company' | 'tenant') => {
   ) => Effect.Effect<PeopleOutcome<PeopleList>, never, HttpClient.HttpClient> = Effect.fn('People.loadAllPage')(
     function* loadAllPage(offset, before, pages) {
       const outcome = yield* loadPeople(scope, { limit: 100, offset });
-      if (outcome.status === 'failed') {
+      if (outcome.status === failedStatus) {
         return outcome;
       }
       const items = [...before, ...outcome.value.items];
@@ -118,16 +149,16 @@ export const loadAllPeople = (scope: 'company' | 'tenant') => {
         return { status: 'ok' as const, value: { ...outcome.value, items } };
       }
       if (nextOffset <= offset || pages + 1 >= MAX_PEOPLE_PAGES) {
-        return { message: 'Správa lidí vrátila neplatné stránkování.', status: 'failed' as const };
+        return { message: 'Správa lidí vrátila neplatné stránkování.', status: failedStatus };
       }
       return yield* page(nextOffset, items, pages + 1);
     },
   );
   return Effect.suspend(() => page(0, [], 0)).pipe(
-    Effect.timeout('30 seconds'),
+    Effect.timeout(READ_TIMEOUT),
     Effect.orElseSucceed(() => ({
       message: 'Seznam lidí je nedostupný. Zkusíme ho načíst znovu automaticky.',
-      status: 'failed' as const,
+      status: failedStatus,
     })),
   );
 };
@@ -135,10 +166,7 @@ export const loadAllPeople = (scope: 'company' | 'tenant') => {
 export const invitePerson = (request: InvitePeopleRequest) =>
   call(PEOPLE_PATHS.companyInvite, request, InvitePeopleResponseSchema, true);
 
-export const loadRoleCatalog = (scope: 'company' | 'tenant') =>
-  call(
-    scope === 'company' ? PEOPLE_PATHS.companyRoleCatalog : PEOPLE_PATHS.tenantRoleCatalog,
-    {},
-    PeopleRoleCatalogSchema,
-    false,
-  );
+export const loadRoleCatalog = (
+  scope: 'company' | 'tenant',
+): Effect.Effect<PeopleOutcome<PeopleRoleCatalog>, never, HttpClient.HttpClient> =>
+  generatedRead(scope === 'company' ? listCompanyPeopleRoleCatalog() : listTenantPeopleRoleCatalog());

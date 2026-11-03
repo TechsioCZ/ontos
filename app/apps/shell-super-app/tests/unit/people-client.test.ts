@@ -37,6 +37,18 @@ const principalRef = {
 };
 const legalEntityId = '00000000-0000-4000-8000-000000000002';
 const role = { roleKey: 'admin', scope: { _tag: 'tenant' }, tenantId: principalRef.tenantId };
+const forbiddenProblem = {
+  _tag: 'ShellTargetForbiddenProblem',
+  detail: 'Fixture failure',
+  status: 403,
+  title: 'Fixture failure',
+  type: 'about:blank',
+} as const;
+const forbiddenResponse = () =>
+  Response.json(forbiddenProblem, {
+    headers: { 'content-type': 'application/problem+json' },
+    status: 403,
+  });
 
 it.layer(FetchHttpClient.layer)((test) => {
   test.effect(
@@ -99,7 +111,7 @@ it.layer(FetchHttpClient.layer)((test) => {
 
   test.effect('does not use fake data or fall back to old account reads when governed people read fails', () =>
     Effect.gen(function* testReadFailure() {
-      fetch.mockResolvedValue(new Response(null, { status: 403 }));
+      fetch.mockResolvedValue(forbiddenResponse());
       const outcome = yield* loadPeople('company', { limit: 50, offset: 0 });
       expect(outcome).toEqual({ message: 'K této správě nemáte oprávnění.', status: 'failed' });
       expect(fetch).toHaveBeenCalledTimes(1);
@@ -166,7 +178,7 @@ it.layer(FetchHttpClient.layer)((test) => {
 
   test.effect('stops on denied access instead of inventing people', () =>
     Effect.gen(function* deniedPersonLink() {
-      fetch.mockResolvedValue(new Response(null, { status: 403 }));
+      fetch.mockResolvedValue(forbiddenResponse());
       expect((yield* loadAllPeople('company')).status).toBe('failed');
       expect(fetch).toHaveBeenCalledTimes(1);
     }),

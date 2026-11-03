@@ -681,7 +681,12 @@
       "fullName": "Full name",
       "tabs": "People and agents",
       "title": "People and roles",
-      "changeReason": "Reason for change"
+      "changeReason": "Reason for change",
+      "detail": {
+        "invalidLink": "The person link is not valid. Select a person from the list.",
+        "foreignCompany": "The linked person belongs to another company. Switch to the company from the link; this page will not open the person here.",
+        "companyRequired": "Select a company before opening the person from the link."
+      }
     },
     "agentPlatform": {
       "approvals": {

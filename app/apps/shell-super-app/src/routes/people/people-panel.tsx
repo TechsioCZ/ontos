@@ -416,19 +416,56 @@ const PersonDetail = ({
   </Dialog>
 );
 
-const peopleReadError = (current: PeopleOutcome<PeopleList> | undefined, linkedPerson: string | undefined): string => {
-  const list = current?.status === 'ok' ? current.value : undefined;
-  let error = '';
-  if (current?.status === 'failed') {
-    error = current.message;
-  } else if (
-    linkedPerson !== undefined &&
-    list !== undefined &&
-    !list.items.some((person) => person.principalRef.principalId === linkedPerson)
-  ) {
-    error = 'Osoba z odkazu neexistuje nebo k ní v tomto rozsahu nemáte přístup.';
+const personMatchesLink = (
+  person: PeopleList['items'][number],
+  list: PeopleList,
+  linkedPerson: string,
+  linkedPersonCompanyQualified: boolean,
+  companyId: string | undefined,
+): boolean => {
+  if (person.principalRef.principalId !== linkedPerson || person.principalRef.tenantId !== list.tenantId) {
+    return false;
   }
-  return error;
+  return (
+    !linkedPersonCompanyQualified ||
+    (companyId !== undefined && person.selectedCompanyMembership?.legalEntityId === companyId)
+  );
+};
+
+const linkedPersonOf = (
+  list: PeopleList | undefined,
+  linkedPerson: string | undefined,
+  linkedPersonCompanyQualified: boolean,
+  companyId: string | undefined,
+): Person | undefined => {
+  if (list === undefined || linkedPerson === undefined) {
+    return undefined;
+  }
+  return list.items.find((person) =>
+    personMatchesLink(person, list, linkedPerson, linkedPersonCompanyQualified, companyId),
+  );
+};
+
+const peopleReadError = (
+  current: PeopleOutcome<PeopleList> | undefined,
+  linkedPerson: string | undefined,
+  linkedPersonError: string | undefined,
+  linkedPersonCompanyQualified: boolean,
+  companyId: string | undefined,
+): string => {
+  if (current?.status === 'failed') {
+    return current.message;
+  }
+  if (linkedPersonError !== undefined) {
+    return linkedPersonError;
+  }
+  const list = current?.status === 'ok' ? current.value : undefined;
+  if (list === undefined || linkedPerson === undefined) {
+    return '';
+  }
+  return linkedPersonOf(list, linkedPerson, linkedPersonCompanyQualified, companyId) === undefined
+    ? 'Osoba z odkazu neexistuje nebo k ní v tomto rozsahu nemáte přístup.'
+    : '';
 };
 
 /** Core-owned people data changes arrive as live changes for the pseudo app `shell`; `all` after a reconnect. */
@@ -468,14 +505,21 @@ interface Loaded<Value> {
   readonly outcome: PeopleOutcome<Value>;
 }
 
+const scopeOf = (companyId: string | undefined): 'company' | 'tenant' =>
+  companyId === undefined ? 'tenant' : 'company';
+
 export const PeoplePanel = ({
   companyId,
   linkedPerson,
+  linkedPersonCompanyQualified = false,
+  linkedPersonError,
 }: {
   readonly companyId: string | undefined;
   readonly linkedPerson?: string | undefined;
+  readonly linkedPersonCompanyQualified?: boolean | undefined;
+  readonly linkedPersonError?: string | undefined;
 }) => {
-  const [scope, setScope] = useState<'company' | 'tenant'>(companyId === undefined ? 'tenant' : 'company');
+  const [scope, setScope] = useState<'company' | 'tenant'>(() => scopeOf(companyId));
   const [catalogLoaded, setCatalogLoaded] = useState<Loaded<PeopleRoleCatalog>>();
   const [detail, setDetail] = useState<Person>();
   const [loaded, setLoaded] = useState<Loaded<PeopleList>>();
@@ -483,28 +527,31 @@ export const PeoplePanel = ({
   const [pending, setPending] = useState<readonly PendingPeopleChange[]>([]);
   const [filters, setFilters] = useState<PeopleFilters>(defaultPeopleFilters);
   const [reload, setReload] = useState(0);
-  const viewKey = `${companyId}:${scope}:${linkedPerson}`;
+  const viewKey = `${companyId}:${scope}:${linkedPersonCompanyQualified}:${linkedPerson ?? ''}`;
   // A background reload keeps the rows of the same view on screen; only a new view starts empty.
   const current = loaded?.key === viewKey ? loaded.outcome : undefined;
   const list = current?.status === 'ok' ? current.value : undefined;
   const catalog =
     catalogLoaded?.key === viewKey && catalogLoaded.outcome.status === 'ok' ? catalogLoaded.outcome.value : undefined;
   const loading = current === undefined;
-  const error = peopleReadError(current, linkedPerson);
+  const error = peopleReadError(current, linkedPerson, linkedPersonError, linkedPersonCompanyQualified, companyId);
   const acceptRead = useEffectEvent(
     (key: string, people: PeopleOutcome<PeopleList>, roles: PeopleOutcome<PeopleRoleCatalog>) => {
       const firstRead = loaded?.key !== key;
-      if (people.status === 'ok' || firstRead) {
-        setLoaded({ key, outcome: people });
+      setLoaded({ key, outcome: people });
+      setCatalogLoaded({ key, outcome: roles });
+      if (people.status !== 'ok') {
+        setDetail(undefined);
+        setEditor(undefined);
       }
-      if (roles.status === 'ok' || catalogLoaded?.key !== key) {
-        setCatalogLoaded({ key, outcome: roles });
+      if (roles.status !== 'ok') {
+        setEditor(undefined);
       }
       if (people.status === 'ok') {
         setDetail((selected) => {
           // A deep link opens its person once; a later reload only refreshes a detail the user still has open.
           const principalId = selected?.principalRef.principalId ?? (firstRead ? linkedPerson : undefined);
-          return people.value.items.find((person) => person.principalRef.principalId === principalId);
+          return linkedPersonOf(people.value, principalId, linkedPersonCompanyQualified, companyId);
         });
         setPending((changes) => changes.filter((change) => !isChangeConfirmed(change, people.value)));
       }

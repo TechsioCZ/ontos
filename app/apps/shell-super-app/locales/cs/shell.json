@@ -689,7 +689,12 @@
       "fullName": "Jméno a příjmení",
       "tabs": "Lidé a agenti",
       "title": "Lidé a role",
-      "changeReason": "Důvod změny"
+      "changeReason": "Důvod změny",
+      "detail": {
+        "invalidLink": "Odkaz na osobu není platný. Vyberte osobu ze seznamu.",
+        "foreignCompany": "Osoba z odkazu patří jiné firmě. Přepněte na firmu z odkazu; tady ji neotevřeme.",
+        "companyRequired": "Pro otevření osoby z odkazu nejdřív vyberte firmu."
+      }
     },
     "agentPlatform": {
       "approvals": {

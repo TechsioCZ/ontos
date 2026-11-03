@@ -10,20 +10,22 @@ import { SignInRedirect } from '../sign-in-redirect.tsx';
 import { useShellControls } from '../use-shell-controls.ts';
 import type { PeoplePageModel } from './people-page-model.ts';
 import { AgentEntitiesSection } from './agent-entities-section.tsx';
+import { DetailSearchSchema, peopleDetailQuery } from './people-detail-selection.ts';
+import type { PeopleDetailSelection } from './people-detail-selection.ts';
 import { PeoplePanel } from './people-panel.tsx';
 
-const DetailSearchSchema = Schema.Struct({
-  agent: Schema.optionalKey(Schema.String.check(Schema.isUUID())),
-  person: Schema.optionalKey(Schema.String.check(Schema.isUUID())),
-});
 const PeopleWorkspace = ({
   companyId,
   linkedAgent,
   linkedPerson,
+  linkedPersonCompanyQualified,
+  linkedPersonError,
 }: {
   readonly companyId: string | undefined;
   readonly linkedAgent?: string | undefined;
   readonly linkedPerson?: string | undefined;
+  readonly linkedPersonCompanyQualified?: boolean | undefined;
+  readonly linkedPersonError?: string | undefined;
 }) => {
   const { t } = useModernI18n();
   const [tab, setTab] = useState(linkedAgent === undefined ? 'people' : 'agents');
@@ -53,7 +55,14 @@ const PeopleWorkspace = ({
           {notification}
         </StatusText>
       )}
-      {tab === 'people' && <PeoplePanel companyId={companyId} linkedPerson={linkedPerson} />}
+      {tab === 'people' && (
+        <PeoplePanel
+          companyId={companyId}
+          linkedPerson={linkedPerson}
+          linkedPersonCompanyQualified={linkedPersonCompanyQualified}
+          linkedPersonError={linkedPersonError}
+        />
+      )}
       {tab === 'agents' && companyId === undefined && (
         <StatusText status="warning">Pro správu agentů vyberte firmu.</StatusText>
       )}
@@ -67,11 +76,29 @@ const PeopleWorkspace = ({
   );
 };
 
+const linkedPersonError = (selection: PeopleDetailSelection, t: (key: string) => string): string | undefined => {
+  if (selection.state === 'invalid') {
+    return t('shell.people.detail.invalidLink');
+  }
+  if (selection.state === 'foreign_company') {
+    return t('shell.people.detail.foreignCompany');
+  }
+  if (selection.state === 'company_required') {
+    return t('shell.people.detail.companyRequired');
+  }
+  return undefined;
+};
+
 export const PeopleView = ({ model }: { readonly model: PeoplePageModel }) => {
   const { t } = useModernI18n();
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
+  const selectedLegalEntityId = model.shell.state === 'authenticated' ? model.shell.selectedLegalEntityId : undefined;
   const search = useRouterState({
-    select: (state) => Option.getOrUndefined(Schema.decodeOption(DetailSearchSchema)(state.location.search)),
+    select: (state) =>
+      peopleDetailQuery(
+        Option.getOrElse(Schema.decodeUnknownOption(DetailSearchSchema)(state.location.search), () => ({})),
+        selectedLegalEntityId,
+      ),
   });
   if (model.shell.state === 'anonymous') {
     return <SignInRedirect reason={model.shell.reason} />;
@@ -91,10 +118,14 @@ export const PeopleView = ({ model }: { readonly model: PeoplePageModel }) => {
       title={t('shell.people.title')}
     >
       <PeopleWorkspace
-        companyId={model.shell.selectedLegalEntityId}
-        key={`${model.shell.identity.tenantId}:${model.shell.selectedLegalEntityId}:${search?.agent}:${search?.person}`}
-        linkedAgent={search?.agent}
-        linkedPerson={search?.person}
+        companyId={selectedLegalEntityId}
+        key={`${model.shell.identity.tenantId}:${model.shell.identity.principalId}:${selectedLegalEntityId}:${search.agent}:${search.person.state}:${
+          search.person.state === 'selected' ? search.person.principalId : ''
+        }`}
+        linkedAgent={search.agent}
+        linkedPerson={search.person.state === 'selected' ? search.person.principalId : undefined}
+        linkedPersonCompanyQualified={search.person.state === 'selected' && search.person.companyQualified}
+        linkedPersonError={linkedPersonError(search.person, t)}
       />
     </ShellContentLayout>
   );
