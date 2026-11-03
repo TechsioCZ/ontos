@@ -46,6 +46,7 @@ import {
   publishApplicationCompositionAuthoritySnapshot,
   resumeApplicationCompositionDurableWork,
   runApplicationCompositionMigration,
+  withApplicationCompositionPublicationLock,
 } from '../application-composition-authority-publication.mts';
 import {
   InitialCutoverProviderError,
@@ -191,7 +192,7 @@ const snapshot = Effect.fn(function* snapshot(label: string, freshenByMs: number
 });
 
 it.live(
-  'native publication commits draining, blocks unresolved work, rolls back failed pointers, and serializes publishers',
+  'native publication fences work, serializes publishers, recovers pointers and explicitly rolls back older content',
   () =>
     Effect.gen(function* provesPublicationProtocol() {
       const database = yield* CoreDatabase;
@@ -620,8 +621,19 @@ it.live(
         ).pipe(Effect.flip);
         expect(Schema.is(ApplicationCompositionAuthorityError)(rejectedMigration)).toBe(true);
         expect(rejectedMigration).toMatchObject({ reason: baselineMismatchReason });
+        const rejectedVerification = yield* withApplicationCompositionPublicationLock(
+          Ref.update(rejectedGuardEffects, (calls) => calls + 1),
+          precondition,
+        ).pipe(Effect.flip);
+        expect(Schema.is(ApplicationCompositionAuthorityError)(rejectedVerification)).toBe(true);
+        expect(rejectedVerification).toMatchObject({ reason: baselineMismatchReason });
         expect(yield* observer.executor.select().from(applicationCompositionAuthority)).toEqual(beforeRejectedGuards);
       }
+      yield* withApplicationCompositionPublicationLock(Effect.void, {
+        baselineRevision: third.composition.revision,
+        targetRevision: fourth.composition.revision,
+      });
+      expect(yield* observer.executor.select().from(applicationCompositionAuthority)).toEqual(beforeRejectedGuards);
       const sameRevisionMigration = yield* runApplicationCompositionMigration(guardedDdl, rejectUnexpectedProof, {
         baselineRevision: third.composition.revision,
         targetRevision: third.composition.revision,
@@ -953,6 +965,54 @@ it.live(
         phase: 'active',
         revision: fifth.composition.revision,
       });
+
+      // The old artifact set is explicitly promoted against CURRENT B, with a new observation.
+      // Additive schema remains installed; this does not replay its former publication context.
+      const rollbackObservation = {
+        ...fourth,
+        observedAt: yield* DateTime.now,
+        validUntil: DateTime.add(fifth.validUntil, { milliseconds: 5000 }),
+      };
+      const rollbackWrites = yield* Ref.make(0);
+      const staleRollback = yield* publishApplicationCompositionAuthoritySnapshot(
+        rollbackObservation,
+        Ref.update(rollbackWrites, (calls) => calls + 1),
+        rejectUnexpectedProof,
+        { baselineRevision: third.composition.revision, targetRevision: fourth.composition.revision },
+      ).pipe(Effect.flip);
+      expect(Schema.is(ApplicationCompositionAuthorityError)(staleRollback)).toBe(true);
+      expect(staleRollback).toMatchObject({ reason: baselineMismatchReason });
+      expect(yield* Ref.get(rollbackWrites)).toBe(0);
+      expect(yield* observer.executor.select().from(applicationCompositionAuthority)).toEqual([afterMigratedPromotion]);
+      yield* publishApplicationCompositionAuthoritySnapshot(
+        rollbackObservation,
+        Ref.update(rollbackWrites, (calls) => calls + 1),
+        transitionProvider.proof,
+        { baselineRevision: fifth.composition.revision, targetRevision: fourth.composition.revision },
+      );
+      expect(yield* Ref.get(rollbackWrites)).toBe(1);
+      const [afterExplicitRollback] = yield* observer.executor.select().from(applicationCompositionAuthority);
+      expect(afterExplicitRollback).toMatchObject({
+        durableWorkAdmission: 'open',
+        phase: 'active',
+        revision: fourth.composition.revision,
+      });
+      expect(rollbackObservation.composition).toBe(fourth.composition);
+      expect(
+        yield* observer.executor.execute<{ readonly present: boolean }>(
+          sql`select exists(select 1 from information_schema.columns where table_schema = 'core' and table_name = 'application_composition_authority' and column_name = ${migrationColumn}) as present`,
+          'objects',
+        ),
+      ).toEqual([{ present: true }]);
+      yield* runtime.executor.transaction((transaction) =>
+        lockApplicationCompositionAuthority(transaction, fourth.composition.revision, 'write'),
+      );
+      const replacedRevisionAdmission = yield* runtime.executor
+        .transaction((transaction) =>
+          lockApplicationCompositionAuthority(transaction, fifth.composition.revision, 'write'),
+        )
+        .pipe(Effect.flip);
+      expect(Schema.is(ApplicationCompositionAuthorityError)(replacedRevisionAdmission)).toBe(true);
       expect(database.executor).toBeDefined();
     }).pipe(
       Effect.provide(

@@ -1,11 +1,16 @@
 import nodePath from 'node:path';
 import nodeProcess from 'node:process';
 
+import { parseDocument } from 'yaml';
+
 import { NodeServices } from '@effect/platform-node';
 import {
   canonicalSerializeMicroVerticalReleaseEnvelope,
   createMicroVerticalReleaseEnvelope,
+  MICROVERTICAL_RELEASE_ENVELOPE_KIND,
+  SHELL_RELEASE_ENVELOPE_KIND,
 } from '@modern-js/app-tools-extensions/release-envelope';
+import type { ReleaseEnvelopeKind } from '@modern-js/app-tools-extensions/release-envelope';
 import { MICROVERTICAL_RELEASE_ENVELOPE_PATH } from '@modern-js/app-tools-extensions/release-envelope/framework-output';
 import {
   Array as EffectArray,
@@ -28,7 +33,17 @@ import { HttpClient, HttpClientResponse } from 'effect/http';
 import {
   ImmutableApplicationReleaseError,
   ImmutableApplicationReleaseReceiptSchema,
+  ImmutableNodeReleasePlanSchema,
+  deriveImmutableNodeReleasePlan,
+  immutableNodeBuildEnvironment,
+  makeImmutableNodeReleasePublicationCandidate,
+  observeImmutableNodeCandidateReceipts,
+  materializeImmutableNodePushYaml,
+  readVerifiedNodeReleaseOutput,
+  validateImmutableNodePublicArtifacts,
   deployImmutableApplicationRelease,
+  deployImmutableNodeAssets,
+  deployImmutableNodeRelease,
   immutableAssetsWranglerConfig,
   deriveImmutableApplicationReleasePlan,
   makeImmutableApplicationReleasePublicationCandidate,
@@ -37,14 +52,32 @@ import {
   resolveImmutableApplicationReleaseReceipts,
   validateImmutableApplicationReleaseArtifacts,
 } from '../immutable-application-release.mts';
-import type { ImmutableApplicationReleaseReceipt, ReleaseFile } from '../immutable-application-release.mts';
-import { selectApplicationReleaseUnits } from '../application-release-intent.mts';
+import type {
+  ImmutableApplicationReleaseReceipt,
+  ImmutableNodeAssetReceipt,
+  ImmutableNodeReleasePlan,
+  ReleaseFile,
+} from '../immutable-application-release.mts';
+import {
+  ApplicationReleaseIntentSchema,
+  ApplicationReleaseSelectionSchema,
+  selectApplicationReleaseUnits,
+} from '../application-release-intent.mts';
 import type {
   ApplicationReleaseDeploymentUnit,
   ApplicationReleaseIntent,
   ApplicationReleaseSelection,
 } from '../application-release-intent.mts';
 import type { ActiveApplicationCompositionSnapshot } from '../../packages/core-runtime/src/index.ts';
+import { ApplicationCompositionSchema } from '../../packages/core-runtime/src/modules/application-composition.ts';
+import { ApplicationCompositionAuthorityError } from '../../packages/core-runtime/src/modules/application-composition-authority.ts';
+import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
+import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
+import {
+  ApplicationCompositionPublicationCandidateSchema,
+  serviceIdVariable,
+} from '../publish-active-application-composition.mts';
+import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
 import { ApplicationCompositionBackendSchema } from '../../packages/core-runtime/src/index.ts';
 import { validateImmutableShellReleaseArtifacts } from '../immutable-shell-release.mts';
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';
@@ -59,6 +92,15 @@ import type { OpsCommand } from '../ops/ops-shell.mts';
 import { OpsCommandError } from '../ops/ops-command-error.mts';
 import { releaseUiFor } from './release-envelope-ui.fixture.mts';
 
+const SHELL_RUNTIME_FILE = '.well-known/ontos-shell-runtime.json';
+const PACKAGE_FILE = 'package.json';
+const WORKERS_SUBDOMAIN_PATH = '/workers/subdomain';
+const WRANGLER_VERSION_COMMAND = 'exec wrangler --version';
+const NATIVE_DEPLOYMENTS_PATH = '/deployments';
+const IMMUTABLE_CACHE_HEADER = 'public, max-age=31536000, immutable';
+const PUBLIC_ASSET_STAGE = 'public-assets-retained';
+const PUBLIC_ACCESS_EVENT = 'public-access';
+const FEDERATION_ARTIFACT_RUNTIME = 'module-federation-manifest';
 const APP_ID = 'party-registry';
 const SHELL_APP_ID = 'shell-super-app';
 const GIT_COMMAND = 'git';
@@ -132,7 +174,10 @@ const backendFor = (plan: Parameters<typeof validateImmutableApplicationReleaseA
   });
 
 const artifactInventory = (
-  plan: Parameters<typeof validateImmutableApplicationReleaseArtifacts>[0],
+  plan: Pick<
+    Parameters<typeof validateImmutableApplicationReleaseArtifacts>[0],
+    'appId' | 'assetsOrigin' | 'buildMarker' | 'sourceRevision'
+  >,
   pageJsPath = PAGE_JS_PATH,
 ) => {
   const contract = {
@@ -363,34 +408,36 @@ const baselineFor = (receipts: readonly ImmutableApplicationReleaseReceipt[]) =>
     });
   });
 
+const shellPublicFiles = (plan: Pick<ImmutableNodeReleasePlan, 'assetsOrigin' | 'buildMarker'>) => [
+  file(SHELL_RUNTIME_FILE, json(createShellRuntimeContract(plan.buildMarker))),
+  file(
+    FEDERATION_MANIFEST_PATH,
+    json({
+      exposes: [],
+      metaData: { publicPath: plan.assetsOrigin, remoteEntry: { name: '', path: '', type: 'global' } },
+      name: 'shellSuperApp',
+      remotes: [],
+      shared: governedSharedSingletonPackages.map((name) => ({
+        assets: { css: { async: [], sync: [] }, js: { async: [], sync: [] } },
+        name,
+        requiredVersion: '1.0.0',
+        singleton: true,
+      })),
+    }),
+  ),
+  file(
+    'routes-manifest.json',
+    json({ routeAssets: { index: { assets: [`/${PAGE_JS_PATH}`], referenceCssAssets: [`/${PAGE_CSS_PATH}`] } } }),
+  ),
+  file(PAGE_JS_PATH),
+  file(PAGE_CSS_PATH),
+];
+
 const shellReceiptFor = (identity: { readonly buildMarker: string; readonly sourceRevision: string }) =>
   Effect.gen(function* freshShellReceipt() {
     const plan = yield* planFor(SHELL_APP_ID, identity);
     const artifacts = yield* validateImmutableShellReleaseArtifacts(plan, {
-      assets: [
-        file('.well-known/ontos-shell-runtime.json', json(createShellRuntimeContract(plan.buildMarker))),
-        file(
-          FEDERATION_MANIFEST_PATH,
-          json({
-            exposes: [],
-            metaData: { publicPath: plan.assetsOrigin, remoteEntry: { name: '', path: '', type: 'global' } },
-            name: 'shellSuperApp',
-            remotes: [],
-            shared: governedSharedSingletonPackages.map((name) => ({
-              assets: { css: { async: [], sync: [] }, js: { async: [], sync: [] } },
-              name,
-              requiredVersion: '1.0.0',
-              singleton: true,
-            })),
-          }),
-        ),
-        file(
-          'routes-manifest.json',
-          json({ routeAssets: { index: { assets: [`/${PAGE_JS_PATH}`], referenceCssAssets: [`/${PAGE_CSS_PATH}`] } } }),
-        ),
-        file(PAGE_JS_PATH),
-        file(PAGE_CSS_PATH),
-      ],
+      assets: shellPublicFiles(plan),
     });
     return { artifacts, assetsVersionId: ASSETS_VERSION_ID, plan };
   });
@@ -431,7 +478,7 @@ const writeNativeEnvelope = Effect.fn('test.writeNativeReleaseEnvelope')(functio
       runtime: path.endsWith('.js') ? 'browser' : 'public-asset',
     })),
     { logicalPath: supportFiles[0].path, runtime: 'workerd-effect' },
-    { logicalPath: supportFiles[1].path, runtime: 'module-federation-manifest' },
+    { logicalPath: supportFiles[1].path, runtime: FEDERATION_ARTIFACT_RUNTIME },
     { logicalPath: supportFiles[2].path, runtime: 'commonjs-module' },
   ];
   const envelope = yield* Effect.tryPromise({
@@ -1360,14 +1407,14 @@ const refusesExistingProviderRelease = (existingBackend: boolean) =>
       yield* fileSystem.writeFileString(nodePath.join(publicDirectory, '_headers'), compiledHeaders);
       yield* writeNativeEnvelope(output, plan, inventory.assets);
       yield* fileSystem.writeFileString(
-        nodePath.join(appDirectory, 'package.json'),
+        nodePath.join(appDirectory, PACKAGE_FILE),
         JSON.stringify({ devDependencies: { wrangler: WRANGLER_VERSION } }),
       );
 
       const requests: { readonly method: string; readonly url: string }[] = [];
       const commands: OpsCommand[] = [];
       const client = HttpClient.make((request, destination) => {
-        if (destination.pathname.endsWith('/workers/subdomain')) {
+        if (destination.pathname.endsWith(WORKERS_SUBDOMAIN_PATH)) {
           requests.push({ method: request.method, url: destination.href });
           return Effect.succeed(
             HttpClientResponse.fromWeb(
@@ -1387,7 +1434,7 @@ const refusesExistingProviderRelease = (existingBackend: boolean) =>
             if (command.command === GIT_COMMAND) {
               return Effect.succeed(gitResult(command, appDirectory));
             }
-            if (command.args.join(' ') === 'exec wrangler --version') {
+            if (command.args.join(' ') === WRANGLER_VERSION_COMMAND) {
               return Effect.succeed(WRANGLER_VERSION);
             }
             commands.push(command);
@@ -1525,7 +1572,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   const originalHeaders = '/*\n  Cache-Control: no-cache\n';
   yield* fileSystem.writeFileString(nodePath.join(publicDirectory, '_headers'), originalHeaders);
   yield* fileSystem.writeFileString(
-    nodePath.join(appDirectory, 'package.json'),
+    nodePath.join(appDirectory, PACKAGE_FILE),
     JSON.stringify({ devDependencies: { wrangler: WRANGLER_VERSION } }),
   );
   if (options.omitEnvelope !== true) {
@@ -1590,7 +1637,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
           }),
       ),
       Match.when(
-        (path) => path.endsWith('/workers/subdomain'),
+        (path) => path.endsWith(WORKERS_SUBDOMAIN_PATH),
         () =>
           Effect.sync(() =>
             Response.json({
@@ -1650,7 +1697,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
           ),
       ),
       Match.when(
-        (path) => path.endsWith('/deployments'),
+        (path) => path.endsWith(NATIVE_DEPLOYMENTS_PATH),
         () =>
           Effect.sync(() =>
             Response.json({
@@ -1761,7 +1808,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
         }
         const headers = new Headers({
           'access-control-allow-origin': '*',
-          'cache-control': 'public, max-age=31536000, immutable',
+          'cache-control': IMMUTABLE_CACHE_HEADER,
           'x-content-type-options': 'nosniff',
           ...options.assetHeaders,
         });
@@ -1815,7 +1862,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
             (options.changedSource === true && checkedSource > 0 ? 'b'.repeat(40) : SOURCE_REVISION);
           return gitResult(command, appDirectory, revision);
         }
-        if (command.args.join(' ') === 'exec wrangler --version') {
+        if (command.args.join(' ') === WRANGLER_VERSION_COMMAND) {
           return options.resolvedWranglerVersion ?? WRANGLER_VERSION;
         }
         commands.push(command);
@@ -2722,3 +2769,717 @@ it.effect('requires one backend provider version serving every request before is
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
+
+const nodePlanFor = (id = APP_ID) =>
+  Effect.gen(function* controlledNodePlan() {
+    const placement = yield* planFor(id);
+    return yield* Schema.decodeUnknownEffect(ImmutableNodeReleasePlanSchema)({
+      appId: placement.appId,
+      assetsOrigin: placement.assetsOrigin,
+      assetsScriptName: placement.assetsScriptName,
+      backend: { baseUrl: `https://${id}.backend.example.test/`, transport: 'node-http' },
+      buildMarker: placement.buildMarker,
+      projectId: 'P'.repeat(22),
+      provider: 'zerops',
+      serviceId: 'S'.repeat(22),
+      setup: id,
+      sourceRevision: placement.sourceRevision,
+    });
+  });
+
+const nodeAssetsFor = (plan: ImmutableNodeReleasePlan) => {
+  const build = file(
+    'ultramodern-build.json',
+    json({
+      deliveryUnit: {
+        appId: plan.appId,
+        buildMarker: plan.buildMarker,
+        sourceRevision: plan.sourceRevision,
+        unitId: `app/${plan.appId}`,
+      },
+    }),
+  );
+  return [...receiptInventory(plan).assets, build];
+};
+
+const writeNodeEnvelope = Effect.fn('test.writeNodeEnvelope')(function* writeNodeEnvelopeEffect(
+  output: string,
+  plan: ImmutableNodeReleasePlan,
+  assets: readonly ReleaseFile[],
+  target: 'node' | 'cloudflare' = 'node',
+  kind: ReleaseEnvelopeKind = MICROVERTICAL_RELEASE_ENVELOPE_KIND,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const allBackendFiles = [
+    file('index.js', text('export const ssr = true;')),
+    file('server/effect-api.mjs'),
+    file('server/backend-manifest.json', json({ name: 'controlledOwner' })),
+    file('server/backend-container.cjs'),
+  ];
+  const backendFiles = kind === SHELL_RELEASE_ENVELOPE_KIND ? allBackendFiles.slice(0, 2) : allBackendFiles;
+  const publicPaths = EffectArray.sort(
+    assets.filter(({ path }) => path.endsWith('.js')).map(({ path }) => `public/${path}`),
+    Order.String,
+  );
+  const baseSurfaces = { apiBackend: [allBackendFiles[1].path], ssr: [allBackendFiles[0].path], uiClient: publicPaths };
+  const surfaces =
+    kind === SHELL_RELEASE_ENVELOPE_KIND
+      ? baseSurfaces
+      : {
+          ...baseSurfaces,
+          backendFederation: { container: allBackendFiles[3].path, manifest: allBackendFiles[2].path },
+        };
+  for (const entry of [...backendFiles, ...assets.map((asset) => ({ ...asset, path: `public/${asset.path}` }))]) {
+    const destination = nodePath.join(output, entry.path);
+    yield* fs.makeDirectory(nodePath.dirname(destination), { recursive: true });
+    yield* fs.writeFile(destination, entry.bytes);
+  }
+  const envelope = yield* Effect.tryPromise({
+    catch: (cause) => new ImmutableApplicationReleaseError({ cause, message: 'controlled Node envelope failed' }),
+    try: async () =>
+      await createMicroVerticalReleaseEnvelope({
+        artifactRoot: output,
+        artifacts: [
+          ...backendFiles.map(({ path }, index) => {
+            if (index === 2) {
+              return { logicalPath: path, runtime: FEDERATION_ARTIFACT_RUNTIME };
+            }
+            if (target === 'node') {
+              return { logicalPath: path, runtime: 'nodejs' };
+            }
+            const runtimes = ['workerd', 'workerd-effect', FEDERATION_ARTIFACT_RUNTIME, 'commonjs-module'];
+            return { logicalPath: path, runtime: runtimes[index] ?? 'workerd' };
+          }),
+          ...assets.map(({ path }) => ({
+            logicalPath: `public/${path}`,
+            runtime: path.endsWith('.js') ? 'browser' : 'public-asset',
+          })),
+        ],
+        identity: {
+          buildMarker: plan.buildMarker,
+          releaseVersion: '1.0.0',
+          sourceRevision: plan.sourceRevision,
+          unitId: `app/${plan.appId}`,
+        },
+        kind,
+        surfaces,
+        target,
+        ui: releaseUiFor(plan.appId, plan.buildMarker),
+      }),
+  });
+  const destination = nodePath.join(output, MICROVERTICAL_RELEASE_ENVELOPE_PATH);
+  yield* fs.makeDirectory(nodePath.dirname(destination), { recursive: true });
+  yield* fs.writeFileString(destination, canonicalSerializeMicroVerticalReleaseEnvelope(envelope));
+});
+
+it.effect('keeps Node API origins separate from immutable asset origins and rejects an assets-only backend', () =>
+  Effect.gen(function* nodeOrigins() {
+    const plan = yield* nodePlanFor();
+    const environment = immutableNodeBuildEnvironment(plan);
+    expect(environment.MODERN_ASSET_PREFIX).toBe(plan.assetsOrigin);
+    expect(environment.ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY).toBe(plan.backend.baseUrl);
+    const pins = yield* validateImmutableNodePublicArtifacts(plan, nodeAssetsFor(plan));
+    expect(pins.contract?.url).toBe(new URL(CONTRACT_PATH, plan.assetsOrigin).href);
+    const error = yield* validateImmutableNodePublicArtifacts(
+      { ...plan, backend: { ...plan.backend, baseUrl: plan.assetsOrigin } },
+      nodeAssetsFor(plan),
+    ).pipe(Effect.flip);
+    expect(error.message).toBe('the Node API deployment origin cannot be an assets-only Worker');
+  }),
+);
+
+it.effect('changes only selected Node public origins in a temporary native provider configuration', () =>
+  Effect.gen(function* nodeYaml() {
+    const fs = yield* FileSystem.FileSystem;
+    const plan = yield* nodePlanFor();
+    const sourceDirectory = yield* fs.makeTempDirectoryScoped();
+    const sourceFile = nodePath.join(sourceDirectory, 'zerops.yaml');
+    const original = `zerops:
+  - setup: party-registry
+    build:
+      envVariables:
+        RETAIN: keep
+      buildCommands:
+        - ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" pnpm build
+    run:
+      start: node index.js
+  - setup: other
+    build:
+      envVariables:
+        MODERN_ASSET_PREFIX: untouched
+`;
+    yield* fs.writeFileString(sourceFile, original);
+    const temporary = yield* materializeImmutableNodePushYaml({ plan, sourceFile });
+    expect(nodePath.dirname(temporary)).not.toBe(sourceDirectory);
+    const document = parseDocument(yield* fs.readFileString(temporary));
+    expect(document.getIn(['zerops', 0, 'build', 'envVariables', 'MODERN_ASSET_PREFIX'])).toBe(plan.assetsOrigin);
+    expect(document.getIn(['zerops', 0, 'build', 'envVariables', 'ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY'])).toBe(
+      plan.backend.baseUrl,
+    );
+    expect(document.getIn(['zerops', 0, 'build', 'envVariables', 'ULTRAMODERN_SOURCE_REVISION'])).toBeUndefined();
+    expect(document.getIn(['zerops', 0, 'build', 'envVariables', 'RETAIN'])).toBe('keep');
+    expect(document.getIn(['zerops', 0, 'build', 'buildCommands', 0])).toContain('$(git rev-parse HEAD)');
+    expect(document.getIn(['zerops', 0, 'run', 'start'])).toBe('node index.js');
+    expect(document.getIn(['zerops', 1, 'build', 'envVariables', 'MODERN_ASSET_PREFIX'])).toBe('untouched');
+    expect(yield* fs.readFileString(sourceFile)).toBe(original);
+    yield* fs.writeFileString(
+      sourceFile,
+      `zerops:
+  - setup: party-registry
+    build: {}
+  - setup: party-registry
+    build: {}
+`,
+    );
+    const error = yield* materializeImmutableNodePushYaml({ plan, sourceFile }).pipe(Effect.flip);
+    expect(error.message).toBe('Node push requires exactly one selected executable setup');
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('verifies real SDK Node envelope bytes and rejects a Cloudflare envelope or tampered Node payload', () =>
+  Effect.gen(function* nodeEnvelope() {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped();
+    const output = nodePath.join(directory, '.output');
+    const plan = yield* nodePlanFor();
+    const assets = nodeAssetsFor(plan);
+    yield* writeNodeEnvelope(output, plan, assets);
+    const shell = Layer.succeed(OpsShell, { run: (command) => Effect.succeed(gitResult(command, directory)) });
+    const verified = yield* readVerifiedNodeReleaseOutput(directory, plan).pipe(Effect.provide(shell));
+    expect(verified.artifacts.contract?.url).toBe(new URL(CONTRACT_PATH, plan.assetsOrigin).href);
+    yield* fs.writeFileString(nodePath.join(output, 'index.js'), 'tampered');
+    expect(
+      Schema.is(ImmutableApplicationReleaseError)(
+        yield* readVerifiedNodeReleaseOutput(directory, plan).pipe(Effect.provide(shell), Effect.flip),
+      ),
+    ).toBe(true);
+    yield* writeNodeEnvelope(output, plan, assets, 'cloudflare');
+    expect(
+      Schema.is(ImmutableApplicationReleaseError)(
+        yield* readVerifiedNodeReleaseOutput(directory, plan).pipe(Effect.provide(shell), Effect.flip),
+      ),
+    ).toBe(true);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  'derives the Node plan from genuine clean Git and generated SDK identity rather than a supplied version label',
+  () =>
+    Effect.gen(function* nodePlanIdentity() {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      yield* fs.makeDirectory(nodePath.join(directory, 'shared'));
+      yield* fs.writeFileString(
+        nodePath.join(directory, 'shared/ultramodern-build.json'),
+        JSON.stringify({ deliveryUnit: { appId: APP_ID, buildMarker: 'aaebe4ee5a28e557', unitId: `app/${APP_ID}` } }),
+      );
+      const input: Parameters<typeof deriveImmutableNodeReleasePlan>[0] = {
+        appDirectory: directory,
+        backend: { baseUrl: 'https://node.example.test/', transport: 'node-http' },
+        projectId: 'P'.repeat(22),
+        serviceId: 'S'.repeat(22),
+        setup: APP_ID,
+        workersDevSubdomain: WORKERS_SUBDOMAIN,
+      };
+      const cleanShell = Layer.succeed(OpsShell, { run: (command) => Effect.succeed(gitResult(command, directory)) });
+      const plan = yield* deriveImmutableNodeReleasePlan(input).pipe(Effect.provide(cleanShell));
+      expect(plan.sourceRevision).toBe(SOURCE_REVISION);
+      expect(plan.buildMarker).not.toBe('aaebe4ee5a28e557');
+      expect(plan.buildMarker).toMatch(/^[a-f0-9]{64}$/u);
+      expect(plan).toEqual(yield* deriveImmutableNodeReleasePlan(input).pipe(Effect.provide(cleanShell)));
+      const dirtyShell = Layer.succeed(OpsShell, {
+        run: (command) => Effect.succeed(gitResult(command, directory, SOURCE_REVISION, ' M tracked-source')),
+      });
+      expect(
+        Schema.is(ImmutableApplicationReleaseError)(
+          yield* deriveImmutableNodeReleasePlan(input).pipe(Effect.provide(dirtyShell), Effect.flip),
+        ),
+      ).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('admits asset-only Node evidence only to preflight and refuses to call it a deployed backend receipt', () =>
+  Effect.gen(function* nodeEvidenceStages() {
+    const plan = yield* nodePlanFor();
+    const publicArtifacts = yield* validateImmutableNodePublicArtifacts(plan, nodeAssetsFor(plan));
+    const assets: ImmutableNodeAssetReceipt = {
+      artifacts: publicArtifacts,
+      assetsVersionId: ASSETS_VERSION_ID,
+      plan,
+      stage: PUBLIC_ASSET_STAGE,
+    };
+    const shellPlan = yield* nodePlanFor(SHELL_APP_ID);
+    const shellPublic = yield* shellReceiptFor({ buildMarker: BUILD_MARKER, sourceRevision: SOURCE_REVISION });
+    const shell: ImmutableNodeAssetReceipt = {
+      artifacts: shellPublic.artifacts,
+      assetsVersionId: ASSETS_VERSION_ID,
+      plan: shellPlan,
+      stage: PUBLIC_ASSET_STAGE,
+    };
+    const intent: ApplicationReleaseIntent = { modules: [{ appId: plan.appId }] };
+    const selection: ApplicationReleaseSelection = {
+      ...freshSelection(intent),
+      shell: { mode: 'fresh', unit: unitFor(SHELL_APP_ID) },
+    };
+    const input = {
+      currentSourceRevision: SOURCE_REVISION,
+      freshAssets: [assets],
+      intent,
+      receipts: [],
+      selection,
+      shell,
+    };
+    const candidate = yield* makeImmutableNodeReleasePublicationCandidate({ ...input, phase: 'preflight' });
+    expect(candidate.modules[0]?.backend).toEqual(plan.backend);
+    expect(candidate.modules[0]?.contract).toEqual(publicArtifacts.contract);
+    expect(candidate.baseline.revision).toBeNull();
+    const finalError = yield* makeImmutableNodeReleasePublicationCandidate({ ...input, phase: 'deployed' }).pipe(
+      Effect.flip,
+    );
+    expect(finalError.message).toBe('final Node candidate requires deployed receipts, never asset-only plans');
+    const missing = yield* makeImmutableNodeReleasePublicationCandidate({
+      ...input,
+      freshAssets: [],
+      phase: 'preflight',
+    }).pipe(Effect.flip);
+    const duplicate = yield* makeImmutableNodeReleasePublicationCandidate({
+      ...input,
+      freshAssets: [assets, assets],
+      phase: 'preflight',
+    }).pipe(Effect.flip);
+    expect(Schema.is(ImmutableApplicationReleaseError)(missing)).toBe(true);
+    expect(Schema.is(ImmutableApplicationReleaseError)(duplicate)).toBe(true);
+  }),
+);
+
+it.effect('verifies Node Shell output using the actual SDK Shell envelope kind and source-generation shape', () =>
+  Effect.gen(function* nodeShellOutput() {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped();
+    yield* fs.makeDirectory(nodePath.join(directory, 'shared'));
+    yield* fs.writeFileString(
+      nodePath.join(directory, 'shared/ultramodern-build.json'),
+      JSON.stringify({
+        deliveryUnit: { appId: SHELL_APP_ID, buildMarker: 'a0db691763b92101', unitId: `app/${SHELL_APP_ID}` },
+      }),
+    );
+    const shell = Layer.succeed(OpsShell, { run: (command) => Effect.succeed(gitResult(command, directory)) });
+    const base = yield* nodePlanFor(SHELL_APP_ID);
+    const plan = yield* deriveImmutableNodeReleasePlan({
+      appDirectory: directory,
+      backend: base.backend,
+      projectId: base.projectId,
+      serviceId: base.serviceId,
+      setup: SHELL_APP_ID,
+      workersDevSubdomain: WORKERS_SUBDOMAIN,
+    }).pipe(Effect.provide(shell));
+    const marker = nodeAssetsFor(plan).find(({ path }) => path === 'ultramodern-build.json');
+    if (marker === undefined) {
+      return yield* Effect.die('Controlled Shell marker is required');
+    }
+    const assets = [...shellPublicFiles(plan), marker];
+    const output = nodePath.join(directory, '.output');
+    yield* writeNodeEnvelope(output, plan, assets, 'node', SHELL_RELEASE_ENVELOPE_KIND);
+    const verified = yield* readVerifiedNodeReleaseOutput(directory, plan).pipe(Effect.provide(shell));
+    expect(verified.artifacts.runtimeContract?.url).toBe(new URL(SHELL_RUNTIME_FILE, plan.assetsOrigin).href);
+    expect(verified.artifacts.contract).toBeUndefined();
+    yield* writeNodeEnvelope(output, plan, assets);
+    const wrongKind = yield* readVerifiedNodeReleaseOutput(directory, plan).pipe(Effect.provide(shell), Effect.flip);
+    expect(Schema.is(ImmutableApplicationReleaseError)(wrongKind)).toBe(true);
+    return yield* Effect.void;
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+for (const existing of [false, true]) {
+  it.effect(
+    `retains exact Node public assets without overwriting an existing immutable Worker (existing=${existing})`,
+    () =>
+      Effect.gen(function* nativeNodeAssets() {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        const plan = yield* nodePlanFor();
+        const assets = nodeAssetsFor(plan);
+        yield* writeNodeEnvelope(nodePath.join(directory, '.output'), plan, assets);
+        yield* fs.writeFileString(
+          nodePath.join(directory, PACKAGE_FILE),
+          JSON.stringify({ devDependencies: { wrangler: WRANGLER_VERSION } }),
+        );
+        const uploads: OpsCommand[] = [];
+        const shell = Layer.succeed(OpsShell, {
+          run: (command) => {
+            if (command.command === 'git') {
+              return Effect.succeed(gitResult(command, directory));
+            }
+            if (command.args.join(' ') === WRANGLER_VERSION_COMMAND) {
+              return Effect.succeed(WRANGLER_VERSION);
+            }
+            uploads.push(command);
+            return Effect.succeed('native upload accepted');
+          },
+        });
+        const client = HttpClient.make((request, destination) => {
+          if (destination.pathname.endsWith(WORKERS_SUBDOMAIN_PATH)) {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({ result: { subdomain: WORKERS_SUBDOMAIN }, success: true }),
+              ),
+            );
+          }
+          if (destination.pathname.endsWith(NATIVE_DEPLOYMENTS_PATH)) {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  result: { deployments: [{ versions: [{ percentage: 100, version_id: ASSETS_VERSION_ID }] }] },
+                  success: true,
+                }),
+              ),
+            );
+          }
+          if (destination.hostname === 'api.cloudflare.com') {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response(null, { status: existing ? 200 : 404 })),
+            );
+          }
+          const asset = assets.find(({ path }) => new URL(path, plan.assetsOrigin).href === destination.href);
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(new Uint8Array(asset?.bytes ?? []).buffer, {
+                headers: {
+                  'access-control-allow-origin': '*',
+                  'cache-control': IMMUTABLE_CACHE_HEADER,
+                  'x-content-type-options': 'nosniff',
+                },
+                status: asset === undefined ? 404 : 200,
+              }),
+            ),
+          );
+        });
+        const layer = Layer.mergeAll(
+          shell,
+          Layer.succeed(HttpClient.HttpClient, client),
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+              CLOUDFLARE_API_TOKEN: 'controlled-node-upload-token',
+            }),
+          ),
+        );
+        const receipt = yield* deployImmutableNodeAssets({ appDirectory: directory, plan }).pipe(Effect.provide(layer));
+        expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
+        expect(receipt.stage).toBe(PUBLIC_ASSET_STAGE);
+        expect(uploads.length).toBe(existing ? 0 : 1);
+        expect(uploads.every((command) => command.args.includes('deploy'))).toBe(true);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+const nodePublicationFixture = Effect.fn('test.nodePublication')(function* controlledNodePublication(
+  plan: ImmutableNodeReleasePlan,
+  directory: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const assets = nodeAssetsFor(plan);
+  yield* writeNodeEnvelope(nodePath.join(directory, '.output'), plan, assets);
+  const verified = yield* readVerifiedNodeReleaseOutput(directory, plan);
+  const assetReceipt: ImmutableNodeAssetReceipt = {
+    artifacts: verified.artifacts,
+    assetsVersionId: ASSETS_VERSION_ID,
+    plan,
+    stage: PUBLIC_ASSET_STAGE,
+  };
+  const shellPlan = yield* nodePlanFor(SHELL_APP_ID);
+  const shellAssets = shellPublicFiles(shellPlan);
+  const shellPins = yield* validateImmutableNodePublicArtifacts(shellPlan, shellAssets);
+  const shell: ImmutableNodeAssetReceipt = {
+    artifacts: shellPins,
+    assetsVersionId: ASSETS_VERSION_ID,
+    plan: shellPlan,
+    stage: PUBLIC_ASSET_STAGE,
+  };
+  const intent: ApplicationReleaseIntent = { modules: [{ appId: plan.appId }] };
+  const selection: ApplicationReleaseSelection = {
+    ...freshSelection(intent),
+    shell: { mode: 'fresh', unit: unitFor(SHELL_APP_ID) },
+  };
+  const candidate = yield* makeImmutableNodeReleasePublicationCandidate({
+    currentSourceRevision: SOURCE_REVISION,
+    freshAssets: [assetReceipt],
+    intent,
+    phase: 'preflight',
+    receipts: [],
+    selection,
+    shell,
+  });
+  const contract = assets.find(({ path }) => path === CONTRACT_PATH);
+  const manifest = assets.find(({ path }) => path === FEDERATION_MANIFEST_PATH);
+  const runtime = shellAssets.find(({ path }) => path === SHELL_RUNTIME_FILE);
+  const shellManifest = shellAssets.find(({ path }) => path === FEDERATION_MANIFEST_PATH);
+  if (contract === undefined || manifest === undefined || runtime === undefined || shellManifest === undefined) {
+    return yield* Effect.die('Controlled publication requires actual fixture contract bytes');
+  }
+  const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
+    environment: 'stage',
+    modules: [
+      {
+        appId: plan.appId,
+        backend: plan.backend,
+        contract: { bytes: contract.bytes, url: new URL(contract.path, plan.assetsOrigin).href },
+        federationManifest: { bytes: manifest.bytes, url: new URL(manifest.path, plan.assetsOrigin).href },
+      },
+    ],
+    observedAt: yield* DateTime.now,
+    shell: {
+      federationManifest: { bytes: shellManifest.bytes, url: new URL(shellManifest.path, shellPlan.assetsOrigin).href },
+      runtimeContract: { bytes: runtime.bytes, url: new URL(runtime.path, shellPlan.assetsOrigin).href },
+    },
+    validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
+  });
+  const candidateFile = nodePath.join(directory, 'candidate.json');
+  const expectedCompositionFile = nodePath.join(directory, 'expected.json');
+  const selectionFile = nodePath.join(directory, 'selection.json');
+  const intentFile = nodePath.join(directory, 'intent.json');
+  const zeropsYamlPath = nodePath.join(directory, 'zerops.yaml');
+  yield* fs.writeFileString(
+    candidateFile,
+    yield* Schema.encodeEffect(Schema.fromJsonString(ApplicationCompositionPublicationCandidateSchema))(candidate),
+  );
+  yield* fs.writeFileString(
+    expectedCompositionFile,
+    yield* Schema.encodeEffect(Schema.fromJsonString(ApplicationCompositionSchema))(snapshot.composition),
+  );
+  yield* fs.writeFileString(
+    selectionFile,
+    yield* Schema.encodeEffect(Schema.fromJsonString(ApplicationReleaseSelectionSchema))(selection),
+  );
+  yield* fs.writeFileString(
+    intentFile,
+    yield* Schema.encodeEffect(Schema.fromJsonString(ApplicationReleaseIntentSchema))(intent),
+  );
+  yield* fs.writeFileString(
+    zeropsYamlPath,
+    `zerops:
+  - setup: ${APP_ID}
+    build:
+      envVariables: {}
+      buildCommands: ['git rev-parse HEAD']
+`,
+  );
+  return {
+    appDirectory: directory,
+    assetReceipt,
+    candidateFile,
+    expectedCompositionFile,
+    intentFile,
+    selectionFile,
+    zeropsYamlPath,
+  };
+});
+
+for (const scenario of [
+  { stale: false, succeeds: true, versionChanges: false },
+  { stale: true, succeeds: true, versionChanges: false },
+  { stale: false, succeeds: false, versionChanges: false },
+  { stale: false, succeeds: true, versionChanges: true },
+]) {
+  it.effect(
+    `witnesses Node source push only inside its captured publication guard (stale=${scenario.stale}, succeeds=${scenario.succeeds}, versionChanges=${scenario.versionChanges})`,
+    () =>
+      Effect.gen(function* guardedNodePush() {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        const plan = yield* nodePlanFor();
+        const commands: OpsCommand[] = [];
+        const events: string[] = [];
+        const shell = Layer.succeed(OpsShell, {
+          run: (command) => {
+            if (command.command === 'git') {
+              return Effect.succeed(gitResult(command, directory));
+            }
+            commands.push(command);
+            if (command.command === 'zcli') {
+              events.push('push');
+              return scenario.succeeds
+                ? Effect.succeed('genuine command exit zero')
+                : Effect.fail(new OpsCommandError({ command: 'zcli push', message: 'controlled rejected push' }));
+            }
+            events.push(PUBLIC_ACCESS_EVENT);
+            return Effect.succeed('native public readback verified');
+          },
+        });
+        const input = yield* nodePublicationFixture(plan, directory).pipe(Effect.provide(shell));
+        const assets = nodeAssetsFor(plan);
+        const nativeVersion = {
+          id: 'V'.repeat(22),
+          projectId: plan.projectId,
+          sequence: 1,
+          serviceStackId: plan.serviceId,
+          source: 'CLI',
+          status: 'ACTIVE',
+        };
+        let nativeReads = 0;
+        let retainedVersionChanged = false;
+        const requests: string[] = [];
+        const currentNativeVersion = () =>
+          (scenario.versionChanges || retainedVersionChanged) && nativeReads > 1
+            ? { ...nativeVersion, id: 'W'.repeat(22), sequence: 2 }
+            : nativeVersion;
+        const client = HttpClient.make((request, destination) => {
+          requests.push(destination.href);
+          if (destination.pathname.includes('/service-stack/')) {
+            nativeReads += 1;
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  activeAppVersion: currentNativeVersion(),
+                  id: plan.serviceId,
+                  projectId: plan.projectId,
+                  status: 'ACTIVE',
+                }),
+              ),
+            );
+          }
+          if (destination.pathname.includes('/app-version/')) {
+            return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(currentNativeVersion())));
+          }
+          if (destination.pathname.endsWith(NATIVE_DEPLOYMENTS_PATH)) {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  result: { deployments: [{ versions: [{ percentage: 100, version_id: ASSETS_VERSION_ID }] }] },
+                  success: true,
+                }),
+              ),
+            );
+          }
+          const asset = assets.find(({ path }) => destination.pathname === `/${path}`);
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(new Uint8Array(asset?.bytes ?? []).buffer, {
+                headers: {
+                  'access-control-allow-origin': '*',
+                  'cache-control': IMMUTABLE_CACHE_HEADER,
+                  'x-content-type-options': 'nosniff',
+                },
+                status: asset === undefined ? 404 : 200,
+              }),
+            ),
+          );
+        });
+        const executor = yield* makeTestDatabase((statement) =>
+          Effect.sync(() => {
+            if (statement.includes('pg_advisory_unlock(')) {
+              events.push('unlock');
+              return [{ unlocked: true }];
+            }
+            if (statement.includes('pg_advisory_lock(')) {
+              events.push('lock');
+            }
+            if (statement.includes('application_composition_authority')) {
+              return scenario.stale ? [{ phase: 'active', revision: 'f'.repeat(64) }] : [];
+            }
+            return [];
+          }),
+        );
+        const http = Layer.succeed(HttpClient.HttpClient, client);
+        const layer = Layer.mergeAll(
+          shell,
+          http,
+          ZeropsPublicApiLive.pipe(Layer.provide(http)),
+          Layer.succeed(CoreDatabase, { executor }),
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+              CLOUDFLARE_API_TOKEN: 'controlled-asset-token',
+              ZEROPS_TOKEN: 'controlled-node-token',
+            }),
+          ),
+        );
+        const checkoutFiles = Layer.succeed(FileSystem.FileSystem, {
+          ...fs,
+          realPath: (location) =>
+            location === nodePath.resolve(import.meta.dirname, '../..')
+              ? Effect.succeed(directory)
+              : fs.realPath(location),
+        });
+        const deploy = deployImmutableNodeRelease(input).pipe(Effect.provide(Layer.merge(layer, checkoutFiles)));
+        if (scenario.stale) {
+          const failure = yield* deploy.pipe(Effect.flip);
+          expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
+          expect(commands).toEqual([]);
+          expect(requests).toEqual([]);
+          expect(events).toEqual(['lock', 'unlock']);
+        } else if (!scenario.succeeds) {
+          expect(Schema.is(ImmutableApplicationReleaseError)(yield* deploy.pipe(Effect.flip))).toBe(true);
+          expect(events).toEqual(['lock', 'push', 'unlock']);
+          expect(requests).toEqual([]);
+        } else if (scenario.versionChanges) {
+          const changed = yield* deploy.pipe(Effect.flip);
+          expect(Schema.is(ImmutableApplicationReleaseError)(changed)).toBe(true);
+          expect(changed.message).toBe('the active native Node version changed during exact artifact observation');
+          expect(events).toEqual(['lock', 'push', PUBLIC_ACCESS_EVENT, 'unlock']);
+        } else {
+          const receipt = yield* deploy;
+          expect(receipt.nativeVersion.id).toBe(nativeVersion.id);
+          expect(receipt.sourceEvidence.sourceRevision).toBe(SOURCE_REVISION);
+          expect(events).toEqual(['lock', 'push', PUBLIC_ACCESS_EVENT, 'unlock']);
+          const push = commands.find(({ command }) => command === 'zcli');
+          expect(push?.cwd).toBe(directory);
+          expect(push?.args).toEqual(
+            expect.arrayContaining([
+              '--deploy-git-folder',
+              '--workspace-state',
+              'clean',
+              '--version-name',
+              SOURCE_REVISION,
+            ]),
+          );
+          expect(commands.some(({ args }) => args.includes('ensure-public-access'))).toBe(true);
+          const publicAccess = commands.find(({ args }) => args.includes('ensure-public-access'));
+          const serviceVariables = publicAccess?.env?.STAGE_VARIABLES_JSON;
+          if (serviceVariables === undefined) {
+            return yield* Effect.die('The actual public gateway requires the single planned service ID');
+          }
+          expect(
+            Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)))(
+              Redacted.value(serviceVariables),
+            ),
+          ).toEqual({ [serviceIdVariable(plan.setup)]: plan.serviceId });
+          expect(nativeReads).toBe(2);
+          const plannedShell = yield* nodePlanFor(SHELL_APP_ID);
+          const plannedShellPins = yield* validateImmutableNodePublicArtifacts(
+            plannedShell,
+            shellPublicFiles(plannedShell),
+          );
+          const shellEvidence: ImmutableNodeAssetReceipt = {
+            artifacts: plannedShellPins,
+            assetsVersionId: ASSETS_VERSION_ID,
+            plan: plannedShell,
+            stage: PUBLIC_ASSET_STAGE,
+          };
+          yield* observeImmutableNodeCandidateReceipts({ receipts: [receipt], shell: shellEvidence }).pipe(
+            Effect.provide(layer),
+          );
+          expect(nativeReads).toBe(4);
+          const actualRequests = requests.length;
+          yield* observeImmutableNodeCandidateReceipts({ receipts: [], shell: shellEvidence }).pipe(
+            Effect.provide(layer),
+          );
+          expect(requests.length).toBe(actualRequests);
+          retainedVersionChanged = true;
+          const staleRetained = yield* observeImmutableNodeCandidateReceipts({
+            receipts: [receipt],
+            shell: shellEvidence,
+          }).pipe(Effect.provide(layer), Effect.flip);
+          expect(Schema.is(ImmutableApplicationReleaseError)(staleRetained)).toBe(true);
+          expect(commands.filter(({ command }) => command === 'zcli')).toHaveLength(1);
+        }
+        return yield* Effect.void;
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}

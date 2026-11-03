@@ -11,6 +11,10 @@ import { parse } from 'yaml';
 import { loadDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import { DATABASE_IDENTITIES } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 
+const BASELINE_CAPTURE_JOB = 'capture-application-baseline';
+const CF_TOKEN_SOURCE = 'secrets.CLOUDFLARE_API_TOKEN';
+const COMPOSITION_URL_SOURCE = 'vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL';
+const SHELL_APP_ID = 'shell-super-app';
 const TriggerSchema = Schema.Struct({ 'paths-ignore': Schema.optional(Schema.Array(Schema.String)) });
 const WorkflowSchema = Schema.Struct({
   on: Schema.Struct({
@@ -133,6 +137,8 @@ const EDGE_PLAN_JOB = 'edge-plan';
 const EDGE_BUILD_JOB = 'edge-build';
 const EDGE_RELEASE_JOB = 'deploy-cloudflare';
 const EDGE_PUBLISH_JOB = 'publish-edge-composition';
+const INITIAL_CUTOVER_GUARD_JOB = 'initial-composition-cutover-guard';
+
 const EDGE_PUBLICATION_LOCK = 'zerops-stage';
 const EDGE_UNITS_OUTPUT = expression('needs.edge-plan.outputs.cloudflare');
 
@@ -194,7 +200,7 @@ it('deploys to Cloudflare only when the account, retained artifact origin, backe
   expect(readiness.steps.filter((step) => step.env?.CLOUDFLARE_API_TOKEN !== undefined)).toEqual([check]);
   expect(check?.env).toEqual({
     CLOUDFLARE_ACCOUNT_ID: expression('vars.CLOUDFLARE_ACCOUNT_ID'),
-    CLOUDFLARE_API_TOKEN: expression('secrets.CLOUDFLARE_API_TOKEN'),
+    CLOUDFLARE_API_TOKEN: expression(CF_TOKEN_SOURCE),
     CLOUDFLARE_WORKERS_DEV_SUBDOMAIN: expression('vars.CLOUDFLARE_WORKERS_DEV_SUBDOMAIN'),
     DATABASE_ADMIN_URL: DATABASE_ADMIN_EXPRESSION,
     DATABASE_URL: expression('secrets.DATABASE_URL'),
@@ -205,7 +211,11 @@ it('deploys to Cloudflare only when the account, retained artifact origin, backe
   });
   // A stage that deploys to Zerops only skips the edge; one that targets Cloudflare fails before any
   // Zerops change, since deploy-zerops would otherwise migrate and swap workers beside the old Workers.
-  expect(runStep(check?.run ?? 'exit 1', { DEPLOY_TARGET: 'zerops' })).toEqual({ configured: 'false' });
+  expect(runStep(check?.run ?? 'exit 1', { DEPLOY_TARGET: 'zerops' })).toEqual({
+    assets_configured: 'false',
+    configured: 'false',
+    workers_dev_subdomain: '',
+  });
   expect(runStep(check?.run ?? 'exit 1', { DEPLOY_TARGET: 'cloudflare' })).toBe('failed');
   expect(check?.run).toContain('[[ -n "$CLOUDFLARE_ACCOUNT_ID" ]]');
   expect(check?.run).toContain('[[ -n "$CLOUDFLARE_API_TOKEN" ]]');
@@ -226,9 +236,7 @@ it('deploys to Cloudflare only when the account, retained artifact origin, backe
     })
       .split('\n')
       .filter(Boolean);
-  expect(
-    missingBuildVariables({ buildEnvironment: {}, units: ['commerce-customer-context', 'shell-super-app'] }),
-  ).toEqual([
+  expect(missingBuildVariables({ buildEnvironment: {}, units: ['commerce-customer-context', SHELL_APP_ID] })).toEqual([
     'ULTRAMODERN_MF_DEV_ORIGIN',
     'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID',
     'ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID',
@@ -287,7 +295,11 @@ it('fails edge readiness before migrations when either private-network credentia
     };
     const resolve = (environment: Readonly<Record<string, string>>) =>
       runStep(check?.run ?? 'exit 1', environment, directory);
-    expect(resolve(configured)).toEqual({ configured: 'true', workers_dev_subdomain: 'workers-subdomain' });
+    expect(resolve(configured)).toEqual({
+      assets_configured: 'true',
+      configured: 'true',
+      workers_dev_subdomain: 'workers-subdomain',
+    });
     expect(resolve({ ...configured, ZEROPS_PROJECT_ID: '' })).toBe('failed');
     expect(resolve({ ...configured, ZEROPS_TOKEN: '' })).toBe('failed');
   } finally {
@@ -302,9 +314,10 @@ it('deploys retained edge releases after migrations under the shared environment
   const edge = jobs['deploy-cloudflare'];
   expect(jobs['deploy-zerops'].environment).toBe(DEPLOY_ENVIRONMENT_OUTPUT);
   expect(edge.environment).toEqual({ deployment: false, name: EDGE_ENVIRONMENT });
-  expect(plan.needs).toEqual([DEPLOY_TARGET_JOB, EDGE_READINESS_JOB]);
-  expect(plan.if).toBe(expression("!cancelled() && needs.edge-deploy-readiness.outputs.configured == 'true'"));
-  expect(plan.environment).toBeUndefined();
+  expect(plan.needs).toEqual([DEPLOY_TARGET_JOB, EDGE_READINESS_JOB, BASELINE_CAPTURE_JOB]);
+  expect(plan.if).toContain("needs.edge-deploy-readiness.outputs.configured == 'true'");
+  expect(plan.if).toContain("needs.capture-application-baseline.result == 'success'");
+  expect(plan.environment).toEqual({ deployment: false, name: EDGE_ENVIRONMENT });
   expect(builds.needs).toEqual([EDGE_PLAN_JOB]);
   expect(builds.environment).toBeUndefined();
   expect(builds.strategy.matrix.unit).toBe(expression('fromJSON(needs.edge-plan.outputs.cloudflare)'));
@@ -312,10 +325,16 @@ it('deploys retained edge releases after migrations under the shared environment
   expect(builds.if).toBe(
     expression("!cancelled() && needs.edge-plan.result == 'success' && needs.edge-plan.outputs.cloudflare != '[]'"),
   );
-  expect(edge.needs).toEqual([DEPLOY_TARGET_JOB, MIGRATIONS_JOB, EDGE_PLAN_JOB, EDGE_BUILD_JOB]);
+  expect(edge.needs).toEqual([
+    DEPLOY_TARGET_JOB,
+    INITIAL_CUTOVER_GUARD_JOB,
+    EDGE_PLAN_JOB,
+    EDGE_BUILD_JOB,
+    BASELINE_CAPTURE_JOB,
+  ]);
   expect(edge.if).toBe(
     expression(
-      "!cancelled() && needs.deploy-migrations.result == 'success' && needs.edge-plan.result == 'success' && (needs.edge-build.result == 'success' || (needs.edge-build.result == 'skipped' && needs.edge-plan.outputs.cloudflare == '[]'))",
+      "!cancelled() && needs.initial-composition-cutover-guard.result == 'success' && needs.edge-plan.result == 'success' && (needs.edge-build.result == 'success' || (needs.edge-build.result == 'skipped' && needs.edge-plan.outputs.cloudflare == '[]'))",
     ),
   );
   expect(edge.concurrency).toEqual({ 'cancel-in-progress': false, group: EDGE_PUBLICATION_LOCK });
@@ -394,11 +413,9 @@ it('bounds edge release publication and never automatically rolls back or delete
 });
 
 const DEPLOY_PLAN_JOB = 'deploy-plan';
-const INITIAL_CUTOVER_GUARD_JOB = 'initial-composition-cutover-guard';
-const COMPOSITION_CANDIDATE_ARTIFACT = 'approved-application-composition-candidate';
+const COMPOSITION_CANDIDATE_ARTIFACT = 'prepared-application-release';
 const INITIAL_CUTOVER_RECEIPT_ARTIFACT = 'initial-composition-cutover-receipt';
-const RETAINED_APPROVED_SHELL_ARTIFACT = 'retained-approved-shell-snapshot';
-const DATABASE_MIGRATION_STEP = 'Run verified database migrations';
+const DATABASE_MIGRATION_STEP = 'Run the exact migration prerequisite closure and verifiers';
 const SPICEDB_DEPLOYMENT_STEP = 'Deploy SpiceDB when affected';
 const PublicationWorkflowStepSchema = Schema.Struct({
   env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -410,6 +427,12 @@ const PublicationWorkflowStepSchema = Schema.Struct({
   with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
   'working-directory': Schema.optional(Schema.String),
 });
+
+const assertPublicationEvidenceFlags = (step: typeof PublicationWorkflowStepSchema.Type | undefined) => {
+  for (const flag of ['--candidate-file', '--expected-composition-file', '--selection-file', '--intent-file']) {
+    expect(step?.run).toContain(flag);
+  }
+};
 
 const TargetWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
@@ -516,6 +539,8 @@ const PRIVATE_DELIVERY_JOBS = [
   INITIAL_CUTOVER_GUARD_JOB,
   MIGRATIONS_JOB,
   'deploy-zerops',
+  'deploy-node-backends',
+  'prepare-node-composition',
   EDGE_RELEASE_JOB,
   EDGE_PUBLISH_JOB,
   'finalize-edge-deployment',
@@ -704,7 +729,7 @@ it('connects every private deployment and refresh runner through native Zerops V
     const connectIndex = stepNames.indexOf(connection?.name ?? '');
     const clearIndex = stepNames.indexOf(cleanup?.name ?? '');
     const privateOperations = steps.filter((step) =>
-      /active-composition:publish (?:verify-initial-cutover|capture-approved-snapshot|migrate|publish|refresh)\b|immutable-(?:application|shell)-release\.mts (?:deploy|ingress-deploy)\b/u.test(
+      /active-composition:publish (?:verify-initial-cutover|capture-approved-snapshot|migrate|publish|refresh)\b|immutable-(?:application|shell)-release\.mts (?:deploy|ingress-deploy|node-assets|node-deploy)\b/u.test(
         step.run ?? '',
       ),
     );
@@ -991,21 +1016,28 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
   expect(plan.if).toContain(
     "(needs.deploy-target.outputs.target == 'zerops' || needs.edge-deploy-readiness.outputs.configured == 'true')",
   );
-  expect(plan.needs).toEqual([DEPLOY_TARGET_JOB, EDGE_READINESS_JOB]);
+  expect(plan.needs).toEqual([DEPLOY_TARGET_JOB, EDGE_READINESS_JOB, BASELINE_CAPTURE_JOB]);
   // Only deploy-zerops records the environment's deployment, so a plan or migration before a failed deploy
   // never moves the diff base.
   expect(plan.environment).toEqual({ deployment: false, name: DEPLOY_ENVIRONMENT_OUTPUT });
   expect(migrations.environment).toEqual({ deployment: false, name: PROTECTED_DEPLOY_ENVIRONMENT });
   expect(zerops.environment).toBe(DEPLOY_ENVIRONMENT_OUTPUT);
   // Nothing changes on Zerops before the gates pass or prove skipped on the merge queue's proof.
-  expect(migrations.needs).toEqual(['workspace-gates', DEPLOY_TARGET_JOB, DEPLOY_PLAN_JOB, INITIAL_CUTOVER_GUARD_JOB]);
-  expect(migrations.if).toBe(
-    expression(
-      "!cancelled() && needs.workspace-gates.result == 'success' && needs.deploy-plan.result == 'success' && needs.initial-composition-cutover-guard.result == 'success'",
-    ),
-  );
-  expect(zerops.needs).toEqual([DEPLOY_TARGET_JOB, DEPLOY_PLAN_JOB, MIGRATIONS_JOB]);
-  expect(zerops.if).toBe(expression(`!cancelled() && needs.${MIGRATIONS_JOB}.result == 'success'`));
+  expect(migrations.needs).toEqual([
+    'workspace-gates',
+    DEPLOY_TARGET_JOB,
+    DEPLOY_PLAN_JOB,
+    INITIAL_CUTOVER_GUARD_JOB,
+    EDGE_RELEASE_JOB,
+    'prepare-node-composition',
+  ]);
+  expect(migrations.if).toContain("needs.workspace-gates.result == 'success'");
+  expect(migrations.if).toContain("needs.initial-composition-cutover-guard.result == 'success'");
+  expect(migrations.if).toContain("needs.deploy-cloudflare.result == 'success'");
+  expect(migrations.if).toContain("needs.prepare-node-composition.result == 'success'");
+  expect(zerops.needs).toEqual([DEPLOY_TARGET_JOB, DEPLOY_PLAN_JOB, MIGRATIONS_JOB, 'deploy-node-backends']);
+  expect(zerops.if).toContain(`needs.${MIGRATIONS_JOB}.result == 'success'`);
+  expect(zerops.if).toContain("needs.deploy-node-backends.result == 'success'");
   // Publication shares the environment lock; migrations lock on their own after the initial guard.
   expect(zerops.concurrency.group).toBe(`zerops-${DEPLOY_ENVIRONMENT_EXPRESSION}`);
   expect(migrations.concurrency.group).toBe(`zerops-migrations-${DEPLOY_ENVIRONMENT_EXPRESSION}`);
@@ -1022,11 +1054,9 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
   expect(migrations.env.ZEROPS_TOKEN).toBe(ZEROPS_TOKEN_EXPRESSION);
   // Migrations and SpiceDB run alone, before the edge and the Zerops units; a plan without them only skips steps.
   const migrationSteps = new Map(migrations.steps.map((step) => [step.name, step]));
-  expect(migrationSteps.get(DATABASE_MIGRATION_STEP)?.if).toBe("needs.deploy-plan.outputs.migrator == 'true'");
+  expect(migrationSteps.get(DATABASE_MIGRATION_STEP)?.if).toBeUndefined();
   expect(migrationSteps.get(SPICEDB_DEPLOYMENT_STEP)?.if).toBe("needs.deploy-plan.outputs.spicedb == 'true'");
-  expect(migrations.env.INFRASTRUCTURE).toBe(
-    expression("needs.deploy-plan.outputs.migrator == 'true' || needs.deploy-plan.outputs.spicedb == 'true'"),
-  );
+  expect(migrations.env.INFRASTRUCTURE).toBeUndefined();
   expect(zerops.steps.map(({ name }) => name)).not.toContain(DATABASE_MIGRATION_STEP);
   expect(zerops.steps.map(({ name }) => name)).not.toContain(SPICEDB_DEPLOYMENT_STEP);
   const byName = new Map(plan.steps.map((step) => [step.name, step]));
@@ -1040,7 +1070,9 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
   expect(planRun).not.toContain('--deploy-target');
   expect(plan.outputs).toEqual({
     any: expression('steps.units.outputs.any'),
+    'fresh-units': expression('steps.selection.outputs.fresh'),
     migrator: expression('steps.impact.outputs.migrator'),
+    plan: expression('steps.impact.outputs.plan'),
     providers: expression('steps.units.outputs.providers'),
     shell: expression('steps.units.outputs.shell'),
     spicedb: expression('steps.impact.outputs.spicedb'),
@@ -1048,6 +1080,7 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
   });
   const select = byName.get('Select the Zerops units of the deploy target');
   const impact = {
+    FRESH_UNITS_JSON: '[{"id":"contacts"},{"id":"shell-super-app"}]',
     MIGRATOR: 'false',
     PROVIDERS_JSON: '["contacts","contacts-worker"]',
     SHELL: 'true',
@@ -1057,7 +1090,7 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
   const units = (environment: Readonly<Record<string, string>>) => runStep(select?.run ?? 'exit 1', environment);
   expect(units({ ...impact, DEPLOY_TARGET: 'zerops' })).toEqual({
     any: 'true',
-    providers: impact.PROVIDERS_JSON,
+    providers: impact.WORKERS_JSON,
     shell: 'true',
   });
   expect(units({ ...impact, DEPLOY_TARGET: 'cloudflare' })).toEqual({
@@ -1080,7 +1113,13 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
   }
   // Only stage deploys to the edge, after its migrations and beside its Zerops services.
   expect(jobs['edge-deploy-readiness'].if).toBe("needs.deploy-target.outputs.environment == 'stage'");
-  expect(jobs['deploy-cloudflare'].needs).toEqual([DEPLOY_TARGET_JOB, MIGRATIONS_JOB, EDGE_PLAN_JOB, EDGE_BUILD_JOB]);
+  expect(jobs['deploy-cloudflare'].needs).toEqual([
+    DEPLOY_TARGET_JOB,
+    INITIAL_CUTOVER_GUARD_JOB,
+    EDGE_PLAN_JOB,
+    EDGE_BUILD_JOB,
+    BASELINE_CAPTURE_JOB,
+  ]);
   // One publisher admits the complete approved release after both providers finish.
   const publish = jobs['publish-edge-composition'];
   expect(publish.if).toBe(
@@ -1093,13 +1132,9 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
   expect(publish.env.DEPLOY_TARGET).toBe('cloudflare');
   expect(publish.env.OUTBOX_WORKER_MODE).toBe(OUTBOX_WORKER_MODE_OUTPUT);
   expect(publish.concurrency).toEqual({ 'cancel-in-progress': false, group: 'zerops-stage' });
-  expect(publish.env.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL).toBe(
-    expression('vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL'),
-  );
+  expect(publish.env.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL).toBe(expression(COMPOSITION_URL_SOURCE));
   expect(publish.env.DATABASE_ADMIN_URL).toBe(DATABASE_ADMIN_EXPRESSION);
-  expect(publish.env.COMPOSITION_CANDIDATE_FILE).toBe(
-    '.composition-candidate/active-application-composition-candidate.json',
-  );
+  expect(publish.env.COMPOSITION_CANDIDATE_FILE).toBeUndefined();
   const candidateDownload = publish.steps.find(
     (step) =>
       step.uses?.startsWith('actions/download-artifact@') === true &&
@@ -1107,12 +1142,14 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
   );
   expect(candidateDownload?.with).toEqual({
     name: COMPOSITION_CANDIDATE_ARTIFACT,
-    path: 'app/.composition-candidate',
+    path: `${RUNNER_TEMP_EXPRESSION}/prepared-release`,
   });
   const edgePublication = publish.steps.find(
     ({ name }) => name === 'Publish the complete observed release without restarting consumers',
   );
-  expect(edgePublication?.run).toContain('publish --environment stage --candidate-file "$COMPOSITION_CANDIDATE_FILE"');
+  expect(edgePublication?.run).toContain('publish --environment stage');
+  assertPublicationEvidenceFlags(edgePublication);
+  expect(edgePublication?.run).toContain('$RUNNER_TEMP/prepared-release/candidate.json');
   const publicationStepNames = publish.steps.map((step) => step.name);
   const candidateIndex = publicationStepNames.indexOf(candidateDownload?.name ?? '');
   const publicationIndex = publicationStepNames.indexOf(edgePublication?.name ?? '');
@@ -1181,117 +1218,50 @@ it('requires first-cutover provider quiescence before incompatible migrations', 
   );
 });
 
-it('captures an admitted retained Shell before migrations and archives its exact pins', () => {
-  const { jobs } = readTargetWorkflow();
-  const guard = jobs[INITIAL_CUTOVER_GUARD_JOB];
-  const edge = jobs[EDGE_RELEASE_JOB];
-  const captures = guard.steps.filter(
-    (step) => step.run?.includes('active-composition:publish capture-approved-snapshot') === true,
-  );
-  expect(captures).toHaveLength(1);
-  const [capture] = captures;
-  expect(capture?.['working-directory']).toBe('app');
-  expect(capture?.run).toContain(DEPLOY_ENVIRONMENT_ARGUMENT);
-  expect(capture?.run).toContain('--snapshot-file "$RUNNER_TEMP/retained-approved-shell-snapshot.json"');
-  expect(capture?.if).toContain("needs.deploy-target.outputs.target == 'cloudflare'");
-  expect(capture?.if).toContain("!contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')");
-
-  const uploads = guard.steps.filter((step) => step.with?.name === RETAINED_APPROVED_SHELL_ARTIFACT);
-  expect(uploads).toHaveLength(1);
-  const [upload] = uploads;
-  expect(upload?.uses).toMatch(/^actions\/upload-artifact@/u);
-  expect(upload?.if).toBe(capture?.if);
-  expect(upload?.with).toMatchObject({
-    'if-no-files-found': 'error',
-    name: RETAINED_APPROVED_SHELL_ARTIFACT,
-    path: `${RUNNER_TEMP_EXPRESSION}/retained-approved-shell-snapshot.json`,
-  });
-  const guardStepNames = guard.steps.map((step) => step.name);
-  const captureIndex = guardStepNames.indexOf(capture?.name ?? '');
-  const uploadIndex = guardStepNames.indexOf(upload?.name ?? '');
-  expect(captureIndex).toBeGreaterThanOrEqual(0);
-  expect(captureIndex).toBeLessThan(uploadIndex);
-  // Job dependencies keep both admission and durable artifact upload ahead of incompatible schema writes.
-  expect(jobs[MIGRATIONS_JOB].needs).toContain(INITIAL_CUTOVER_GUARD_JOB);
-  expect(edge.needs).toContain(MIGRATIONS_JOB);
-  expect(edge.steps.map((step) => step.run ?? '').join('\n')).not.toContain('capture-approved-snapshot');
+it('captures the whole original approved baseline before staging and migrations', () => {
+  const workflow = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Record(
+        Schema.String,
+        Schema.Struct({
+          needs: Schema.optionalKey(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+          steps: Schema.Array(
+            Schema.Struct({
+              run: Schema.optionalKey(Schema.String),
+              with: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
+            }),
+          ),
+        }),
+      ),
+    }),
+  )(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
+  const capture = workflow.jobs[BASELINE_CAPTURE_JOB];
+  expect(capture?.steps.some(({ run }) => run?.includes('capture-approved-snapshot') === true)).toBe(true);
+  expect(
+    capture?.steps.some(({ with: settings }) => settings?.name === 'approved-application-composition-baseline'),
+  ).toBe(true);
+  expect(workflow.jobs[EDGE_RELEASE_JOB]?.needs).toContain(BASELINE_CAPTURE_JOB);
+  expect(workflow.jobs['prepare-node-composition']?.needs).toContain(BASELINE_CAPTURE_JOB);
 });
 
-it('hands only the same-run captured Shell artifact to candidate assembly after migrations', () => {
+it('recovers complete retained receipts by the captured exact revision without fabricating a Shell receipt', () => {
   const edge = readTargetWorkflow().jobs[EDGE_RELEASE_JOB];
-  const downloads = edge.steps.filter((step) => step.with?.name === RETAINED_APPROVED_SHELL_ARTIFACT);
-  expect(downloads).toHaveLength(1);
-  const [download] = downloads;
-  expect(download?.uses).toMatch(/^actions\/download-artifact@/u);
-  expect(download?.if).toContain("!contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')");
-  expect(download?.with).toEqual({
-    name: RETAINED_APPROVED_SHELL_ARTIFACT,
-    path: `${RUNNER_TEMP_EXPRESSION}/retained-approved-shell`,
-  });
-  // Omitting run-id intentionally restricts the handoff to this deployment, even after a delayed migration.
-  expect(download?.with).not.toHaveProperty('run-id');
-  const candidate = edge.steps.find((step) => step.id === 'candidate');
-  const edgeStepNames = edge.steps.map((step) => step.name);
-  const downloadIndex = edgeStepNames.indexOf(download?.name ?? '');
-  expect(downloadIndex).toBeGreaterThanOrEqual(0);
-  expect(downloadIndex).toBeLessThan(edgeStepNames.indexOf(candidate?.name ?? ''));
-  expect(candidate?.env).not.toHaveProperty('DATABASE_URL');
-  expect(candidate?.env).not.toHaveProperty('DATABASE_ADMIN_URL');
-  expect(candidate?.run).not.toMatch(/capture-approved-snapshot|jq[^\n]*>[^\n]*shell-super-app\.json/u);
-  expect(candidate?.run).toContain(
-    '--retained-shell-snapshot-file "$RUNNER_TEMP/retained-approved-shell/retained-approved-shell-snapshot.json"',
-  );
+  const recovery = edge.steps.find(({ run }) => run?.includes('original-receipts.zip') === true);
+  expect(recovery?.run).toContain('BASELINE_REVISION');
+  expect(recovery?.run).toContain('application-release-receipts-');
+  expect(recovery?.run).toContain('.workflow_run.head_branch ==');
+  expect(recovery?.run).toContain('Receipt archive');
+  const candidate = edge.steps.find(({ id }) => id === 'candidate');
+  expect(candidate?.run).toContain('--approved-baseline-file');
+  expect(candidate?.run).toContain('shell-super-app.json');
+  expect(candidate?.run).not.toContain('--retained-shell-snapshot-file');
 });
 
-/** Execute the genuine workflow selection script without any provider, database, or release mutation. */
-const candidateShellArguments = (script: string, shellSelected: boolean): readonly string[] => {
-  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-retained-shell-handoff-'));
-  const binaryDirectory = path.join(directory, 'bin');
-  const argumentsFile = path.join(directory, 'arguments');
-  try {
-    mkdirSync(binaryDirectory);
-    const git = path.join(binaryDirectory, 'git');
-    const mise = path.join(binaryDirectory, 'mise');
-    writeFileSync(git, '#!/bin/sh\n[ "$1" = ls-files ] && [ "$2" = --error-unmatch ]\n');
-    writeFileSync(mise, '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$ARGUMENTS_FILE"\n');
-    chmodSync(git, 0o700);
-    chmodSync(mise, 0o700);
-    writeFileSync(path.join(directory, 'intent.json'), JSON.stringify({ modules: [{ appId: 'pricing' }] }));
-    execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', script], {
-      cwd: directory,
-      env: {
-        ARGUMENTS_FILE: argumentsFile,
-        COMPOSITION_INTENT_FILE: 'intent.json',
-        PATH: `${binaryDirectory}:${STEP_PATH}`,
-        RUNNER_TEMP: directory,
-        SHELL_SELECTED: String(shellSelected),
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return readFileSync(argumentsFile, 'utf-8')
-      .split('\n')
-      .filter(Boolean)
-      .map((argument) => argument.replaceAll(directory, '$RUNNER_TEMP'));
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
-  }
-};
-
-it('selects a genuine Shell receipt or the admitted retained snapshot without fabricating a replacement receipt', () => {
-  const candidate = readTargetWorkflow().jobs[EDGE_RELEASE_JOB].steps.find((step) => step.id === 'candidate');
-  expect(candidate?.env?.SHELL_SELECTED).toBe(
-    expression("contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')"),
-  );
-  const retained = candidateShellArguments(candidate?.run ?? 'exit 1', false);
-  expect(retained).toContain('--retained-shell-snapshot-file');
-  expect(retained).toContain('$RUNNER_TEMP/retained-approved-shell/retained-approved-shell-snapshot.json');
-  expect(retained).not.toContain('--shell-receipt-file');
-  expect(retained).toContain('$RUNNER_TEMP/application-release-receipts/pricing.json');
-  // A selected Shell with no generated receipt still selects the receipt path, so the real pure-file CLI fails closed.
-  const selected = candidateShellArguments(candidate?.run ?? 'exit 1', true);
-  expect(selected).toContain('--shell-receipt-file');
-  expect(selected).toContain('$RUNNER_TEMP/application-release-receipts/shell-super-app.json');
-  expect(selected).not.toContain('--retained-shell-snapshot-file');
+it('observes actual CF backends before DDL using trusted candidate credentials', () => {
+  const candidate = readTargetWorkflow().jobs[EDGE_RELEASE_JOB].steps.find(({ id }) => id === 'candidate');
+  expect(candidate?.run).toContain('prepare --environment stage --observe-backends');
+  expect(candidate?.env?.CLOUDFLARE_API_TOKEN).toBe(expression(CF_TOKEN_SOURCE));
+  expect(candidate?.env?.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL).toBe(expression(COMPOSITION_URL_SOURCE));
 });
 
 it('downloads the verified first-cutover receipt onto the Node deployment runner before provider writes', () => {
@@ -1341,13 +1311,16 @@ it('delegates migration and migrator retirement to one native publication sessio
   );
   expect(migrationCommands).toHaveLength(1);
   const [migration] = migrationCommands;
-  expect(migration?.name).toBe(DATABASE_MIGRATION_STEP);
+  expect(migration?.name).toBe('Run the exact migration prerequisite closure and verifiers');
   expect(migration?.id).toBe('migrator');
-  expect(migration?.if).toBe("needs.deploy-plan.outputs.migrator == 'true'");
+  expect(migration?.if).toBeUndefined();
   expect(migration?.['working-directory']).toBe('app');
-  expect(migration?.run?.replaceAll(/\s+/gu, ' ')).toBe(
-    'mise exec -- pnpm active-composition:publish migrate --environment "$DEPLOY_ENVIRONMENT" --zerops-yaml-path "$ZEROPS_YAML_PATH" --project-id "$ZEROPS_PROJECT_ID" --service-id "$ZEROPS_MIGRATOR_SERVICE_ID" --version-name "$GITHUB_SHA"',
-  );
+  assertPublicationEvidenceFlags(migration);
+  for (const argument of ['--zerops-yaml-path', '--project-id', '--service-id', '--version-name']) {
+    expect(migration?.run).toContain(argument);
+  }
+  expect(migration?.run).toContain('.intentFile');
+  expect(migration?.run).toContain(DEPLOY_ENVIRONMENT_ARGUMENT);
   for (const binding of [
     'ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL',
     'ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE',
@@ -1361,9 +1334,7 @@ it('delegates migration and migrator retirement to one native publication sessio
   const receipt = migrations.steps.find((step) => step.with?.name === INITIAL_CUTOVER_RECEIPT_ARTIFACT);
   expect(migrations.permissions.actions).toBe('read');
   expect(receipt?.uses).toMatch(/^actions\/download-artifact@/u);
-  expect(receipt?.if).toBe(
-    "needs.deploy-plan.outputs.migrator == 'true' && vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''",
-  );
+  expect(receipt?.if).toBe("vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''");
   expect(receipt?.with).toEqual({
     'github-token': expression('github.token'),
     name: INITIAL_CUTOVER_RECEIPT_ARTIFACT,
@@ -1412,8 +1383,8 @@ const readRefreshPublicationJobs = () =>
     parse(readFileSync(new URL(`../../../.github/workflows/${REFRESH_WORKFLOW}`, import.meta.url), 'utf-8')),
   ).jobs;
 const CONFIGURE_SOURCE_COMMAND = 'mise exec -- pnpm active-composition:publish configure-source';
-const COMPOSITION_SOURCE_EXPRESSION = expression('vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL');
-const CLOUDFLARE_TOKEN_EXPRESSION = expression('secrets.CLOUDFLARE_API_TOKEN');
+const COMPOSITION_SOURCE_EXPRESSION = expression(COMPOSITION_URL_SOURCE);
+const CLOUDFLARE_TOKEN_EXPRESSION = expression(CF_TOKEN_SOURCE);
 
 it('selects protected edge credentials while preserving the logical stage, production fallback and publication locks', () => {
   const quiesce = readInitialCutoverJob();
@@ -2144,5 +2115,59 @@ it('gives the workerd SSR proof every dedicated Hyperdrive connection from the c
         `export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_${identity.cloudflareHyperdrive.binding}="$${identity.urlKey}"`,
       );
     }
+  }
+});
+
+it('filters fresh Node owners through the existing full planner order, including new owners, with Shell last', () => {
+  const { jobs } = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Record(
+        Schema.String,
+        Schema.Struct({ steps: Schema.Array(Schema.Struct({ run: Schema.optionalKey(Schema.String) })) }),
+      ),
+    }),
+  )(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
+  const source =
+    jobs['node-release-plan']?.steps.find(({ run }) => run?.includes('provider-order.json') === true)?.run ?? '';
+  const projection = source.slice(source.indexOf('jq --slurpfile selection'), source.indexOf('mapfile -t units'));
+  expect(projection).toContain('deployment-order.json');
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-node-deploy-order-'));
+  const plans = path.join(directory, 'node-release-plans');
+  try {
+    mkdirSync(plans);
+    writeFileSync(
+      path.join(plans, 'provider-order.json'),
+      JSON.stringify({
+        phases: [
+          { id: 'foundation', kind: 'provider' },
+          { id: 'consumer', kind: 'provider' },
+          { id: 'new-owner', kind: 'provider' },
+          { id: SHELL_APP_ID, kind: 'shell' },
+        ],
+      }),
+    );
+    for (const fresh of [true, false]) {
+      const shell = { id: SHELL_APP_ID, path: 'apps/shell-super-app' };
+      const selection = {
+        fresh: fresh
+          ? [
+              { id: 'new-owner', path: 'verticals/new-owner' },
+              { id: 'consumer', path: 'verticals/consumer' },
+              { id: 'foundation', path: 'verticals/foundation' },
+            ]
+          : [],
+        shell: { mode: fresh ? 'fresh' : 'retained', unit: shell },
+      };
+      writeFileSync(path.join(plans, 'selection.json'), JSON.stringify(selection));
+      execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', projection], {
+        env: { PATH: STEP_PATH, RUNNER_TEMP: directory },
+      });
+      const ordered = Schema.decodeUnknownSync(
+        Schema.fromJsonString(Schema.Array(Schema.Struct({ id: Schema.String }))),
+      )(readFileSync(path.join(plans, 'deployment-order.json'), 'utf-8'));
+      expect(ordered.map(({ id }) => id)).toEqual(fresh ? ['foundation', 'consumer', 'new-owner', SHELL_APP_ID] : []);
+    }
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
   }
 });

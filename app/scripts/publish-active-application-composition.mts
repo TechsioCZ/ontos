@@ -67,6 +67,7 @@ import {
   applicationCompositionRevision,
   decodeActiveApplicationCompositionSnapshot,
   deriveActiveApplicationCompositionSnapshot,
+  deriveApplicationComposition,
   encodeActiveApplicationCompositionSnapshot,
 } from './active-application-composition.mts';
 import type {
@@ -97,12 +98,21 @@ import {
   verifyInitialApplicationCompositionPublicationEnvironment,
   withApplicationCompositionPublicationLock,
 } from './application-composition-authority-publication.mts';
-import type { ObservedArtifact, ObservedModuleDeployment } from './active-application-composition.mts';
+import type {
+  ApplicationCompositionPinnedArtifacts,
+  ObservedArtifact,
+  ObservedModuleDeployment,
+} from './active-application-composition.mts';
 import { OUTBOX_WORKER_HOST, OutboxWorkerModeSchema, dedicatedOutboxWorkerSetup } from './outbox-worker-delivery.mjs';
 import type { OutboxWorkerMode } from './outbox-worker-delivery.mjs';
 import { ZeropsApiError } from './zerops-public-api-error.mts';
 import { ZeropsPublicApi, ZeropsPublicApiLive } from './zerops-public-api.mts';
 
+const CANDIDATE_FILE_FLAG = 'candidate-file';
+const EXPECTED_COMPOSITION_FILE_FLAG = 'expected-composition-file';
+const RELEASE_INTENT_FILE_FLAG = 'intent-file';
+const DEFAULT_RELEASE_INTENT_FILE = 'topology/application-release-intent.json';
+const RELEASE_SELECTION_FILE_FLAG = 'selection-file';
 const SHELL_APP_ID = 'shell-super-app';
 const SHELL_ZEROPS_SETUP = 'shellsuperapp';
 const MF_MANIFEST_PATH = '/mf-manifest.json';
@@ -340,11 +350,31 @@ export const readPublishedSnapshot = Effect.gen(function* readPublishedSnapshot(
 });
 
 /** Caller holds the publication lock through using these exact approved release pins. */
-export const readCurrentApprovedApplicationCompositionSnapshot = Effect.gen(
-  function* readCurrentApprovedApplicationCompositionSnapshot() {
+const readApprovedApplicationComposition = Effect.fn('ActiveApplicationComposition.readApproved')(
+  function* readApprovedApplicationComposition(allowAbsent: boolean) {
     const stored = yield* readPublishedSnapshot;
     if (Option.isNone(stored)) {
-      return yield* providerFailure('a published Application Composition is required')();
+      if (!allowAbsent) {
+        return yield* providerFailure('a published Application Composition is required')();
+      }
+      const database = yield* CoreDatabase;
+      const [table] = yield* database.executor.execute<{ readonly installed: boolean }>(
+        sql`select to_regclass('core.application_composition_authority') is not null as installed`,
+        'objects',
+      );
+      if (table === undefined) {
+        return yield* providerFailure('native authority presence could not be established')();
+      }
+      if (table.installed) {
+        const [authority] = yield* database.executor
+          .select({ revision: applicationCompositionAuthority.revision })
+          .from(applicationCompositionAuthority)
+          .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+        if (authority !== undefined) {
+          return yield* providerFailure('an absent provider pointer conflicts with existing native authority')();
+        }
+      }
+      return Option.none<ActiveApplicationCompositionSnapshot>();
     }
     const snapshot = yield* decodeActiveApplicationCompositionSnapshot(stored.value);
     const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot);
@@ -362,8 +392,18 @@ export const readCurrentApprovedApplicationCompositionSnapshot = Effect.gen(
         'the published release requires the current active and unexpired database authority',
       )();
     }
-    return approved;
+    return Option.some(approved);
   },
+);
+
+/** Strict approved-release readers never interpret absence as an approved release. */
+export const readCurrentApprovedApplicationCompositionSnapshot = readApprovedApplicationComposition(false).pipe(
+  Effect.flatMap(
+    Option.match({
+      onNone: () => Effect.fail(providerFailure('a published Application Composition is required')()),
+      onSome: Effect.succeed,
+    }),
+  ),
 );
 
 /** Caller holds the publication lock through this check and the native ingress write. */
@@ -456,6 +496,23 @@ export const assertRetainedReleaseArtifactPaths = (snapshot: ActiveApplicationCo
       { discard: true },
     );
   });
+
+/** Capture provider and native absence together while holding the existing publication lock. */
+export const captureApprovedApplicationCompositionSnapshot = Effect.fn('ActiveApplicationComposition.captureApproved')(
+  function* captureApprovedApplicationComposition(
+    options: { readonly allowAbsent?: boolean; readonly baselineOnly?: boolean } = {},
+  ) {
+    return yield* withApplicationCompositionPublicationLock(
+      readApprovedApplicationComposition(options.allowAbsent === true).pipe(
+        Effect.tap((captured) =>
+          Option.isSome(captured) && options.baselineOnly !== true
+            ? assertRetainedReleaseArtifactPaths(captured.value)
+            : Effect.void,
+        ),
+      ),
+    );
+  },
+);
 
 const PublicationBaselineSchema = Schema.Struct({
   retainedModuleAppIds: Schema.Array(OntosDeploymentAppIdSchema).check(
@@ -837,49 +894,146 @@ const readPublicationCandidate = (file: string) =>
     ),
   );
 
-const readExpectedPublication = Effect.fn('ActiveApplicationComposition.readExpected')(function* readExpected(input: {
-  readonly candidateFile: string;
-  readonly expectedCompositionFile: string;
-  readonly intent: ApplicationReleaseIntent;
-  readonly selectionFile: string;
-}) {
-  const candidate = yield* readPublicationCandidate(input.candidateFile);
-  const composition = yield* readPublicationDocument(
-    input.expectedCompositionFile,
-    ONTOS_APPLICATION_COMPOSITION_MAX_BYTES,
-  ).pipe(
-    Effect.flatMap(
-      Schema.decodeEffect(Schema.fromJsonString(ApplicationCompositionSchema), { onExcessProperty: 'error' }),
-    ),
-  );
-  const selection = yield* readPublicationDocument(input.selectionFile, 1024 * 1024).pipe(
-    Effect.flatMap(
-      Schema.decodeEffect(Schema.fromJsonString(ApplicationReleaseSelectionSchema), { onExcessProperty: 'error' }),
-    ),
-  );
-  return {
-    candidate,
-    composition: yield* validateExpectedApplicationComposition({
+export const readExpectedPublication = Effect.fn('ActiveApplicationComposition.readExpected')(
+  function* readExpected(input: {
+    readonly candidateFile: string;
+    readonly expectedCompositionFile: string;
+    readonly intent: ApplicationReleaseIntent;
+    readonly selectionFile: string;
+  }) {
+    const candidate = yield* readPublicationCandidate(input.candidateFile);
+    const composition = yield* readPublicationDocument(
+      input.expectedCompositionFile,
+      ONTOS_APPLICATION_COMPOSITION_MAX_BYTES,
+    ).pipe(
+      Effect.flatMap(
+        Schema.decodeEffect(Schema.fromJsonString(ApplicationCompositionSchema), { onExcessProperty: 'error' }),
+      ),
+    );
+    const selection = yield* readPublicationDocument(input.selectionFile, 1024 * 1024).pipe(
+      Effect.flatMap(
+        Schema.decodeEffect(Schema.fromJsonString(ApplicationReleaseSelectionSchema), { onExcessProperty: 'error' }),
+      ),
+    );
+    return {
       candidate,
-      composition,
-      intent: input.intent,
-      selection,
-    }),
-  };
-});
+      composition: yield* validateExpectedApplicationComposition({
+        candidate,
+        composition,
+        intent: input.intent,
+        selection,
+      }),
+    };
+  },
+);
 
 const fetchPinnedCandidateArtifact = Effect.fn('ActiveApplicationComposition.fetchPinnedArtifact')(
   function* fetchPinnedArtifact(appId: string, expected: typeof ApplicationCompositionArtifactReferenceSchema.Type) {
     const artifact = yield* fetchArtifact(appId, expected.url);
     if (createHash('sha256').update(artifact.bytes).digest('hex') !== expected.sha256) {
       return yield* new ActiveApplicationCompositionPublicationError({
-        message: 'observed module artifact digest differs from the exact approved candidate pin',
+        message:
+          appId === SHELL_APP_ID
+            ? 'observed Shell artifacts differ from the exact approved candidate deployment or digests'
+            : 'observed module artifact digest differs from the exact approved candidate pin',
         reason: 'invalid_observation',
       });
     }
     return artifact;
   },
 );
+
+const fetchCandidatePinnedArtifacts = Effect.fn('ActiveApplicationComposition.fetchCandidatePins')(
+  function* fetchCandidatePinnedArtifacts(environment: string, candidate: PublicationCandidate) {
+    const [modules, runtimeContract, federationManifest] = yield* Effect.all(
+      [
+        Effect.forEach(
+          candidate.modules,
+          (module) =>
+            Effect.gen(function* observeCandidateModule() {
+              const contract = yield* fetchPinnedCandidateArtifact(module.appId, module.contract);
+              const document = yield* Effect.try({
+                catch: (cause) =>
+                  new ActiveApplicationCompositionPublicationError({
+                    cause,
+                    message: 'the pinned module contract is not valid UTF-8',
+                    reason: 'invalid_observation',
+                  }),
+                try: () => new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(contract.bytes),
+              }).pipe(
+                Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))),
+                Effect.mapError(
+                  (cause) =>
+                    new ActiveApplicationCompositionPublicationError({
+                      cause,
+                      message: 'the pinned module contract failed validation',
+                      reason: 'invalid_observation',
+                    }),
+                ),
+              );
+              if (
+                document.deployment.appId !== module.deployment.appId ||
+                document.deployment.buildMarker !== module.deployment.buildMarker
+              ) {
+                return yield* new ActiveApplicationCompositionPublicationError({
+                  message: 'observed module deployment differs from the exact approved candidate deployment',
+                  reason: 'invalid_observation',
+                });
+              }
+              const observedManifest =
+                module.federationManifest === undefined
+                  ? undefined
+                  : yield* fetchPinnedCandidateArtifact(module.appId, module.federationManifest);
+              const common = { appId: module.appId, backend: module.backend, contract };
+              return observedManifest === undefined ? common : { ...common, federationManifest: observedManifest };
+            }),
+          { concurrency: 4 },
+        ),
+        fetchArtifact(SHELL_APP_ID, candidate.shell.runtimeContract.url),
+        fetchArtifact(SHELL_APP_ID, candidate.shell.federationManifest.url),
+      ],
+      { concurrency: 3 },
+    );
+    const artifacts: ApplicationCompositionPinnedArtifacts = {
+      environment,
+      modules,
+      shell: { federationManifest, runtimeContract },
+    };
+    return artifacts;
+  },
+);
+
+const observePinnedCandidateBackends = (artifacts: ApplicationCompositionPinnedArtifacts) =>
+  Effect.forEach(
+    artifacts.modules,
+    (module) =>
+      observeApplicationCompositionBackend({
+        appId: module.appId,
+        backend: module.backend,
+        contract: module.contract,
+      }).pipe(Effect.map((backend) => ({ ...module, backend }))),
+    { concurrency: 4 },
+  );
+
+/** Prepare only content identity: public pinned bytes and declared backends are not deployment approval. */
+export const prepareCandidate = Effect.fn('ActiveApplicationComposition.prepareCandidate')(function* prepareCandidate(
+  environment: string,
+  input: {
+    readonly candidate: PublicationCandidate;
+    readonly intent: ApplicationReleaseIntent;
+    readonly selection: ApplicationReleaseSelection;
+  },
+  options: { readonly observeBackends?: boolean } = {},
+) {
+  const candidate = yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema, {
+    onExcessProperty: 'error',
+  })(input.candidate);
+  const pinned = yield* fetchCandidatePinnedArtifacts(environment, candidate);
+  const artifacts =
+    options.observeBackends === true ? { ...pinned, modules: yield* observePinnedCandidateBackends(pinned) } : pinned;
+  const composition = yield* deriveApplicationComposition(artifacts);
+  return yield* validateExpectedApplicationComposition({ ...input, candidate, composition });
+});
 
 /** Full installation observation. Runtime availability never filters this approved inventory. */
 export const observeCandidate = Effect.fn('ActiveApplicationComposition.observeCandidate')(function* observeCandidate(
@@ -899,61 +1053,10 @@ export const observeCandidate = Effect.fn('ActiveApplicationComposition.observeC
         }),
     ),
   );
-  const [modules, runtimeContract, federationManifest, observedAt] = yield* Effect.all(
-    [
-      Effect.forEach(
-        candidate.modules,
-        (module) =>
-          Effect.gen(function* observeCandidateModule() {
-            const contract = yield* fetchPinnedCandidateArtifact(module.appId, module.contract);
-            const document = yield* Effect.try({
-              catch: (cause) =>
-                new ActiveApplicationCompositionPublicationError({
-                  cause,
-                  message: 'the pinned module contract is not valid UTF-8',
-                  reason: 'invalid_observation',
-                }),
-              try: () => new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(contract.bytes),
-            }).pipe(
-              Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))),
-              Effect.mapError(
-                (cause) =>
-                  new ActiveApplicationCompositionPublicationError({
-                    cause,
-                    message: 'the pinned module contract failed validation',
-                    reason: 'invalid_observation',
-                  }),
-              ),
-            );
-            if (
-              document.deployment.appId !== module.deployment.appId ||
-              document.deployment.buildMarker !== module.deployment.buildMarker
-            ) {
-              return yield* new ActiveApplicationCompositionPublicationError({
-                message: 'observed module deployment differs from the exact approved candidate deployment',
-                reason: 'invalid_observation',
-              });
-            }
-            const observedManifest =
-              module.federationManifest === undefined
-                ? undefined
-                : yield* fetchPinnedCandidateArtifact(module.appId, module.federationManifest);
-            const backend = yield* observeApplicationCompositionBackend({
-              appId: module.appId,
-              backend: module.backend,
-              contract,
-            });
-            const common: ObservedModuleDeployment = { appId: module.appId, backend, contract };
-            return observedManifest === undefined ? common : { ...common, federationManifest: observedManifest };
-          }),
-        { concurrency: 4 },
-      ),
-      fetchArtifact(SHELL_APP_ID, candidate.shell.runtimeContract.url),
-      fetchArtifact(SHELL_APP_ID, candidate.shell.federationManifest.url),
-      DateTime.now,
-    ],
-    { concurrency: 3 },
-  );
+  const pinned = yield* fetchCandidatePinnedArtifacts(environment, candidate);
+  const modules = yield* observePinnedCandidateBackends(pinned);
+  const { federationManifest, runtimeContract } = pinned.shell;
+  const observedAt = yield* DateTime.now;
   const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
     environment,
     modules,
@@ -1063,12 +1166,12 @@ const deployMigrationProvider = Effect.fn('ApplicationCompositionPublication.dep
 const migrateCommand = Command.make(
   'migrate',
   {
-    candidateFile: Flag.String('candidate-file').pipe(Flag.optional),
+    candidateFile: Flag.String(CANDIDATE_FILE_FLAG).pipe(Flag.optional),
     environment: Flag.String('environment'),
-    expectedCompositionFile: Flag.String('expected-composition-file').pipe(Flag.optional),
-    intentFile: Flag.String('intent-file').pipe(Flag.withDefault('topology/application-release-intent.json')),
+    expectedCompositionFile: Flag.String(EXPECTED_COMPOSITION_FILE_FLAG).pipe(Flag.optional),
+    intentFile: Flag.String(RELEASE_INTENT_FILE_FLAG).pipe(Flag.withDefault(DEFAULT_RELEASE_INTENT_FILE)),
     projectId: Flag.String('project-id'),
-    selectionFile: Flag.String('selection-file').pipe(Flag.optional),
+    selectionFile: Flag.String(RELEASE_SELECTION_FILE_FLAG).pipe(Flag.optional),
     serviceId: Flag.String('service-id'),
     versionName: Flag.String('version-name'),
     zeropsYamlPath: Flag.String('zerops-yaml-path'),
@@ -1173,33 +1276,66 @@ const resumeDurableWorkCommand = Command.make(
 const captureApprovedSnapshotCommand = Command.make(
   'capture-approved-snapshot',
   {
+    allowAbsent: Flag.Boolean('allow-absent'),
+    baselineOnly: Flag.Boolean('baseline-only'),
     environment: Flag.Literals('environment', DeploymentEnvironmentSchema.literals),
     snapshotFile: Flag.String('snapshot-file'),
   },
-  ({ environment, snapshotFile }) =>
-    withApplicationCompositionPublicationLock(
-      Effect.gen(function* captureApprovedSnapshot() {
-        const approved = yield* readCurrentApprovedApplicationCompositionSnapshot;
-        yield* assertRetainedReleaseArtifactPaths(approved);
-        const fileSystem = yield* FileSystem.FileSystem;
-        const encoded = yield* encodeActiveApplicationCompositionSnapshot(approved);
-        yield* fileSystem.writeFileString(snapshotFile, encoded);
-        yield* Effect.logInfo('Captured the exact approved release before migration', {
+  ({ allowAbsent, baselineOnly, environment, snapshotFile }) =>
+    Effect.gen(function* captureApprovedSnapshot() {
+      const captured = yield* captureApprovedApplicationCompositionSnapshot({ allowAbsent, baselineOnly });
+      const fileSystem = yield* FileSystem.FileSystem;
+      if (Option.isNone(captured)) {
+        yield* fileSystem.writeFileString(snapshotFile, 'null\n');
+        return yield* Effect.logInfo('Captured actual absence of provider pointer and native authority', {
           environment,
-          revision: approved.composition.revision,
         });
-      }),
-    ),
+      }
+      const encoded = yield* encodeActiveApplicationCompositionSnapshot(captured.value);
+      yield* fileSystem.writeFileString(snapshotFile, encoded);
+      return yield* Effect.logInfo('Captured the exact approved release before migration', {
+        environment,
+        revision: captured.value.composition.revision,
+      });
+    }),
 ).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
+
+const prepareCommand = Command.make(
+  'prepare',
+  {
+    candidateFile: Flag.String(CANDIDATE_FILE_FLAG),
+    environment: Flag.String('environment'),
+    expectedCompositionFile: Flag.String(EXPECTED_COMPOSITION_FILE_FLAG),
+    intentFile: Flag.String(RELEASE_INTENT_FILE_FLAG).pipe(Flag.withDefault(DEFAULT_RELEASE_INTENT_FILE)),
+    observeBackends: Flag.Boolean('observe-backends'),
+    selectionFile: Flag.String(RELEASE_SELECTION_FILE_FLAG),
+  },
+  ({ candidateFile, environment, expectedCompositionFile, intentFile, observeBackends, selectionFile }) =>
+    Effect.gen(function* prepareExpectedComposition() {
+      const intent = yield* readReviewedApplicationReleaseIntent(intentFile);
+      const candidate = yield* readPublicationCandidate(candidateFile);
+      const selection = yield* readPublicationDocument(selectionFile, 1024 * 1024).pipe(
+        Effect.flatMap(
+          Schema.decodeEffect(Schema.fromJsonString(ApplicationReleaseSelectionSchema), { onExcessProperty: 'error' }),
+        ),
+      );
+      const composition = yield* prepareCandidate(environment, { candidate, intent, selection }, { observeBackends });
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.writeFileString(expectedCompositionFile, canonicalizeApplicationComposition(composition));
+      return yield* Effect.logInfo('Prepared expected content identity; deployment observation is still required', {
+        revision: composition.revision,
+      });
+    }),
+);
 
 const publishCommand = Command.make(
   'publish',
   {
-    candidateFile: Flag.String('candidate-file'),
+    candidateFile: Flag.String(CANDIDATE_FILE_FLAG),
     environment: Flag.String('environment'),
-    expectedCompositionFile: Flag.String('expected-composition-file'),
-    intentFile: Flag.String('intent-file').pipe(Flag.withDefault('topology/application-release-intent.json')),
-    selectionFile: Flag.String('selection-file'),
+    expectedCompositionFile: Flag.String(EXPECTED_COMPOSITION_FILE_FLAG),
+    intentFile: Flag.String(RELEASE_INTENT_FILE_FLAG).pipe(Flag.withDefault(DEFAULT_RELEASE_INTENT_FILE)),
+    selectionFile: Flag.String(RELEASE_SELECTION_FILE_FLAG),
     snapshotFile: Flag.String('snapshot-file').pipe(Flag.optional),
   },
   ({ candidateFile, environment, expectedCompositionFile, intentFile, selectionFile, snapshotFile }) =>
@@ -1404,6 +1540,56 @@ const workerModeDriftCommand = Command.make('worker-mode-drift', {}, () =>
   }),
 ).pipe(Command.provide(() => ZeropsPublicApiLive));
 
+const stageBackendOriginUnavailable = providerFailure(
+  'The registered native Node backend origin could not be established',
+);
+
+/** Read only the registered service's automatic public origin; this neither provisions nor activates ingress. */
+export const stageBackendUrl = Effect.fn('ActiveApplicationComposition.stageBackendUrl')(
+  function* discoverStageBackendUrl(setup: string) {
+    const serviceId = yield* stageServiceId(setup);
+    const projectId = yield* Config.String('ZEROPS_PROJECT_ID');
+    if (projectId.trim() === '') {
+      return yield* stageBackendOriginUnavailable();
+    }
+    const api = yield* ZeropsPublicApi;
+    const service = yield* api.serviceStack(serviceId);
+    if (!/^[a-z\d](?:[a-z\d-]*[a-z\d])?$/u.test(service.name)) {
+      return yield* stageBackendOriginUnavailable();
+    }
+    const environment = yield* api.projectEnvFile(projectId);
+    const automatic = environment.get(`${service.name}_zeropsSubdomain`)?.trim();
+    if (automatic === undefined || !/^(?:https:\/\/)?[a-z\d.-]+\/?$/iu.test(automatic)) {
+      return yield* stageBackendOriginUnavailable();
+    }
+    const url = yield* Effect.try({
+      catch: stageBackendOriginUnavailable,
+      try: () => new URL(automatic.includes('://') ? automatic : `https://${automatic}`),
+    });
+    const nativeSuffix = '.zerops.app';
+    const labels = url.hostname.slice(0, -nativeSuffix.length).split('.');
+    if (
+      url.protocol !== 'https:' ||
+      url.username !== '' ||
+      url.password !== '' ||
+      url.port !== '' ||
+      url.search !== '' ||
+      url.hash !== '' ||
+      url.pathname !== '/' ||
+      !url.hostname.endsWith(nativeSuffix) ||
+      labels.some((label) => label === 'localhost' || !/^[a-z\d](?:[a-z\d-]*[a-z\d])?$/u.test(label))
+    ) {
+      return yield* stageBackendOriginUnavailable();
+    }
+    return `${url.origin}/`;
+  },
+  Effect.mapError(stageBackendOriginUnavailable),
+);
+
+const stageBackendUrlCommand = Command.make('stage-backend-url', { setup: Flag.String('setup') }, ({ setup }) =>
+  stageBackendUrl(setup).pipe(Effect.flatMap(Console.log)),
+).pipe(Command.provide(() => ZeropsPublicApiLive));
+
 /** The one service-ID lookup the deploy scripts use, so shell and TypeScript never map setups differently. */
 const stageServiceIdCommand = Command.make('stage-service-id', { setup: Flag.String('setup') }, ({ setup }) =>
   stageServiceId(setup).pipe(Effect.flatMap(Console.log)),
@@ -1517,6 +1703,7 @@ const proveBuildCommand = Command.make('prove-build', {}, () =>
 const cli = Command.make('publish-active-application-composition').pipe(
   Command.withSubcommands([
     captureApprovedSnapshotCommand,
+    prepareCommand,
     publishCommand,
     refreshCommand,
     configureSourceCommand,
@@ -1527,6 +1714,7 @@ const cli = Command.make('publish-active-application-composition').pipe(
     ensurePublicAccessCommand,
     proveBuildCommand,
     stageServiceIdCommand,
+    stageBackendUrlCommand,
     stopServiceCommand,
     workerModeDriftCommand,
   ]),

@@ -101,6 +101,7 @@ export const selectApplicationReleaseUnits = Effect.fn('ApplicationReleaseIntent
   available: readonly ApplicationReleaseDeploymentUnit[],
   impacted: readonly { readonly id: string }[],
   baseline?: ActiveApplicationCompositionSnapshot,
+  target?: 'cloudflare' | 'zerops',
 ) {
   yield* Schema.decodeUnknownEffect(ApplicationReleaseIntentSchema, { onExcessProperty: 'error' })(intent);
   yield* Schema.decodeUnknownEffect(Schema.Array(DeploymentUnitSchema), { onExcessProperty: 'error' })(available);
@@ -128,6 +129,17 @@ export const selectApplicationReleaseUnits = Effect.fn('ApplicationReleaseIntent
     });
   }
   const selected = new Set<string>();
+  const desiredIds = new Set(intent.modules.map(({ appId }) => appId));
+  const changedPlacements = new Set(
+    baseline?.composition.modules
+      .filter(
+        (module) =>
+          target !== undefined &&
+          desiredIds.has(module.deployment.appId) &&
+          module.backend.transport !== (target === 'cloudflare' ? 'cloudflare-worker' : 'node-http'),
+      )
+      .map(({ deployment }) => deployment.appId),
+  );
   const complete: ApplicationReleaseDeploymentUnit[] = [];
   const fresh: ApplicationReleaseDeploymentUnit[] = [];
   const retained: ApplicationReleaseDeploymentUnit[] = [];
@@ -140,7 +152,7 @@ export const selectApplicationReleaseUnits = Effect.fn('ApplicationReleaseIntent
     }
     selected.add(unit.id);
     complete.push(unit);
-    if (baseline === undefined || !prior.has(unit.id) || impactedIds.has(unit.id)) {
+    if (baseline === undefined || !prior.has(unit.id) || impactedIds.has(unit.id) || changedPlacements.has(unit.id)) {
       fresh.push(unit);
     } else {
       retained.push(unit);
@@ -151,7 +163,11 @@ export const selectApplicationReleaseUnits = Effect.fn('ApplicationReleaseIntent
     fresh,
     removed: priorIds.filter((appId) => !selected.has(appId)).map((appId) => ({ appId })),
     retained,
-    shell: { mode: baseline === undefined || impactedIds.has(SHELL_APP_ID) ? 'fresh' : 'retained', unit: shell },
+    shell: {
+      mode:
+        baseline === undefined || impactedIds.has(SHELL_APP_ID) || changedPlacements.size > 0 ? 'fresh' : 'retained',
+      unit: shell,
+    },
   };
   if (intent.migrationRequirements !== undefined) {
     return { ...selection, migrationRequirements: intent.migrationRequirements };
@@ -175,18 +191,22 @@ export const applicationReleaseSelectCommand = Command.make(
     impactedUnitsFile: Flag.String('impacted-units-file'),
     intentFile: Flag.String('intent-file'),
     selectionFile: Flag.String('selection-file'),
+    target: Flag.Literals('target', ['cloudflare', 'zerops']).pipe(Flag.withDefault('cloudflare')),
   },
-  ({ baselineFile, impactedUnitsFile, intentFile, selectionFile }) =>
+  ({ baselineFile, impactedUnitsFile, intentFile, selectionFile, target }) =>
     Effect.gen(function* selectCommandEffect() {
       const fileSystem = yield* FileSystem.FileSystem;
       const intent = yield* readReviewedApplicationReleaseIntent(intentFile);
       const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(TopologySchema))(
         yield* fileSystem.readFileString('topology/reference-topology.json'),
       );
-      const placement = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PlacementSchema))(
-        yield* fileSystem.readFileString('topology/cloudflare-placement.json'),
-      );
       const topologyUnits = [topology.shell, ...topology.verticals];
+      const placement =
+        target === 'cloudflare'
+          ? yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PlacementSchema))(
+              yield* fileSystem.readFileString('topology/cloudflare-placement.json'),
+            )
+          : { units: topologyUnits.map(({ id }) => id) };
       const topologyIds = new Set(topologyUnits.map(({ id }) => id));
       if (
         topology.shell.id !== SHELL_APP_ID ||
@@ -216,11 +236,14 @@ export const applicationReleaseSelectCommand = Command.make(
         ),
       )(yield* fileSystem.readFileString(impactedUnitsFile));
       const baseline = Option.isSome(baselineFile)
-        ? yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema), {
-            onExcessProperty: 'error',
-          })(yield* fileSystem.readFileString(baselineFile.value))
+        ? Option.getOrUndefined(
+            yield* Schema.decodeUnknownEffect(
+              Schema.fromJsonString(Schema.OptionFromNullOr(ActiveApplicationCompositionSnapshotSchema)),
+              { onExcessProperty: 'error' },
+            )(yield* fileSystem.readFileString(baselineFile.value)),
+          )
         : undefined;
-      const selection = yield* selectApplicationReleaseUnits(intent, available, impacted, baseline);
+      const selection = yield* selectApplicationReleaseUnits(intent, available, impacted, baseline, target);
       return yield* fileSystem.writeFileString(
         selectionFile,
         yield* Schema.encodeEffect(Schema.fromJsonString(ApplicationReleaseSelectionSchema))(selection),

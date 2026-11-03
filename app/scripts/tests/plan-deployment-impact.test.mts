@@ -3,11 +3,13 @@ import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promise
 import os from 'node:os';
 import path from 'node:path';
 
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeServices } from '@effect/platform-node';
 import { Cause, Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { ApplicationMigrationPlan } from '../application-migration-plan.mts';
+import { selectApplicationReleaseUnits } from '../application-release-intent.mts';
 import { hashAuthorizationEvidence } from '../check-authorization-readiness.mts';
 import {
   planDeploymentImpact as planDeploymentImpactEffect,
@@ -52,11 +54,13 @@ interface FixtureOptions {
   readonly extraSharedPackages?: readonly FixtureOwner[];
   /** A second vertical, ordered before the first by id, with its own owner, project and setup. */
   readonly extraVerticalId?: string;
+  readonly extraVerticalIds?: readonly string[];
   readonly includeContactOwner?: boolean;
   readonly includeWorker?: boolean;
   readonly omitVerticalWorkerName?: boolean;
   readonly setupIds?: readonly string[];
   readonly shellVerticalRefs?: readonly string[];
+  readonly verticalDependencies?: Readonly<Record<string, readonly string[]>>;
   readonly verticalId?: string;
 }
 
@@ -116,6 +120,8 @@ const SHELL_ID = 'shell-super-app';
 const SHELL_PACKAGE = '@app/shell-super-app';
 const SHELL_WORKER = 'app-shell-super-app';
 const CONTACTS_WORKER = 'app-contacts';
+const CONTACTS_PACKAGE = '@app/contacts';
+const WORKSPACE_DEPENDENCY = 'workspace:*';
 const SHELL_OWNER = {
   id: SHELL_ID,
   package: SHELL_PACKAGE,
@@ -138,12 +144,22 @@ const writeJson = (root: string, relativePath: string, value: FixtureDocument) =
     yield* Effect.tryPromise(() => writeFile(target, `${JSON.stringify(value, undefined, 2)}\n`, 'utf-8'));
   });
 
-const writeWorkspaceProject = (root: string, owner: FixtureOwner) =>
+interface FixturePackageInputs {
+  readonly dependencies?: Readonly<Record<string, string>>;
+  readonly devDependencies?: Readonly<Record<string, string>>;
+  readonly ontosContractOwner?: { readonly appId: string; readonly packageName: string };
+}
+
+const writeWorkspaceProject = (root: string, owner: FixtureOwner, inputs: FixturePackageInputs = {}) =>
   Effect.gen(function* writeWorkspaceProjectEffect() {
     const projectRoot = path.join(root, owner.path);
     yield* Effect.tryPromise(() => mkdir(projectRoot, { recursive: true }));
     yield* Effect.tryPromise(() =>
-      writeFile(path.join(projectRoot, 'package.json'), `${JSON.stringify({ name: owner.package })}\n`, 'utf-8'),
+      writeFile(
+        path.join(projectRoot, 'package.json'),
+        `${JSON.stringify({ ...inputs, name: owner.package })}\n`,
+        'utf-8',
+      ),
     );
   });
 
@@ -154,6 +170,10 @@ const makeFixture = (options: FixtureOptions = {}) =>
       (directory) => Effect.tryPromise(() => rm(directory, { force: true, recursive: true })).pipe(Effect.orDie),
     );
     const verticalId = options.verticalId ?? 'contacts';
+    const extraVerticalIds = [
+      ...(options.extraVerticalId === undefined ? [] : [options.extraVerticalId]),
+      ...(options.extraVerticalIds ?? []),
+    ];
     const verticalPackage = `@app/${verticalId}`;
     const verticalPath = `verticals/${verticalId}`;
     const vertical: FixtureTopology['verticals'][number] = {
@@ -175,29 +195,20 @@ const makeFixture = (options: FixtureOptions = {}) =>
         options.omitVerticalWorkerName === true
           ? vertical
           : { ...vertical, cloudflare: { workerName: `app-${verticalId}` } },
-        ...(options.extraVerticalId === undefined
-          ? []
-          : [
-              {
-                cloudflare: { workerName: `app-${options.extraVerticalId}` },
-                id: options.extraVerticalId,
-                moduleFederation: { remotes: [], verticalRefs: [] },
-                package: `@app/${options.extraVerticalId}`,
-                path: `verticals/${options.extraVerticalId}`,
-              },
-            ]),
+        ...extraVerticalIds.map((id) => ({
+          cloudflare: { workerName: `app-${id}` },
+          id,
+          moduleFederation: { remotes: [], verticalRefs: options.verticalDependencies?.[id] ?? [] },
+          package: `@app/${id}`,
+          path: `verticals/${id}`,
+        })),
       ],
     });
-    const extraVerticalOwners =
-      options.extraVerticalId === undefined
-        ? []
-        : [
-            {
-              id: options.extraVerticalId,
-              package: `@app/${options.extraVerticalId}`,
-              path: `verticals/${options.extraVerticalId}`,
-            },
-          ];
+    const extraVerticalOwners = extraVerticalIds.map((id) => ({
+      id,
+      package: `@app/${id}`,
+      path: `verticals/${id}`,
+    }));
     const placement: FixtureCloudflarePlacement = {
       buildEnvironment: options.cloudflareBuildEnvironment ?? {},
       retiredWorkers: options.cloudflareRetiredWorkers ?? [],
@@ -257,7 +268,7 @@ const makeFixture = (options: FixtureOptions = {}) =>
       'migrator',
       'spicedb',
       verticalId,
-      ...(options.extraVerticalId === undefined ? [] : [options.extraVerticalId]),
+      ...extraVerticalIds,
       ...(options.includeWorker === true ? [`${verticalId}-worker`, OUTBOX_WORKER_HOST_SETUP] : []),
       'shellsuperapp',
     ];
@@ -698,6 +709,164 @@ it.live('expands shared-package changes to every consumer in dependency order', 
   }),
 );
 
+const SELECTIVE_CONTRACT_OWNER = {
+  id: 'contacts-contracts',
+  package: '@app/contacts-contracts',
+  path: 'packages/contacts-contracts',
+} as const satisfies FixtureOwner;
+const TRANSITIVE_CONTRACT_OWNER = {
+  id: 'consumer-contracts',
+  package: '@app/consumer-contracts',
+  path: 'packages/consumer-contracts',
+} as const satisfies FixtureOwner;
+const SELECTIVE_CONTRACT_SOURCE = 'packages/contacts-contracts/src/public.ts';
+const DIRECT_CONSUMER = { id: 'alpha', package: '@app/alpha', path: 'verticals/alpha' } as const;
+const UNRELATED_OWNER = { id: 'unrelated', package: '@app/unrelated', path: 'verticals/unrelated' } as const;
+
+const withSelectivePackageFixture = (run: (root: string) => Effect.Effect<void, unknown>) =>
+  withFixture(
+    (root) =>
+      Effect.gen(function* selectivePackageFixture() {
+        yield* writeWorkspaceProject(root, SELECTIVE_CONTRACT_OWNER, {
+          ontosContractOwner: { appId: 'contacts', packageName: CONTACTS_PACKAGE },
+        });
+        yield* writeWorkspaceProject(root, TRANSITIVE_CONTRACT_OWNER, {
+          dependencies: { [SELECTIVE_CONTRACT_OWNER.package]: WORKSPACE_DEPENDENCY },
+        });
+        yield* writeWorkspaceProject(root, DIRECT_CONSUMER, {
+          dependencies: { [SELECTIVE_CONTRACT_OWNER.package]: WORKSPACE_DEPENDENCY },
+        });
+        yield* writeWorkspaceProject(root, SHELL_OWNER, {
+          devDependencies: { [TRANSITIVE_CONTRACT_OWNER.package]: WORKSPACE_DEPENDENCY },
+        });
+        yield* run(root);
+      }),
+    {
+      cloudflarePlacement: ['contacts', DIRECT_CONSUMER.id, UNRELATED_OWNER.id, SHELL_ID],
+      extraSharedPackages: [SELECTIVE_CONTRACT_OWNER, TRANSITIVE_CONTRACT_OWNER],
+      extraVerticalIds: [DIRECT_CONSUMER.id, UNRELATED_OWNER.id],
+      shellVerticalRefs: [],
+      verticalDependencies: { [DIRECT_CONSUMER.id]: ['contacts'] },
+    },
+  );
+
+it.live('selects a contract producer and direct/build-transitive consumers while retaining unrelated D', () =>
+  withSelectivePackageFixture((root) =>
+    Effect.gen(function* selectiveContractClosure() {
+      const plan = yield* planDeploymentImpact({ changedPaths: [SELECTIVE_CONTRACT_SOURCE], rootDirectory: root });
+      expect(plan.phases.map(({ id }) => id)).toEqual(['contacts', DIRECT_CONSUMER.id, SHELL_ID]);
+      expect(plan.units.cloudflare.map(({ id }) => id)).toEqual(['contacts', DIRECT_CONSUMER.id, SHELL_ID]);
+      expect(plan.units.providers).not.toContain(UNRELATED_OWNER.id);
+      expect(plan.units.migrator).toBe(false);
+      const businessOwners = ['contacts', DIRECT_CONSUMER.id, UNRELATED_OWNER.id];
+      const baseline = yield* makeApplicationCompositionSnapshotFixture(businessOwners);
+      const selection = yield* selectApplicationReleaseUnits(
+        { modules: businessOwners.map((appId) => ({ appId })) },
+        [...businessOwners, SHELL_ID].map((id) => ({
+          id,
+          packageName: `@app/${id}`,
+          path: id === SHELL_ID ? SHELL_OWNER.path : `verticals/${id}`,
+          workerName: `app-${id}`,
+        })),
+        plan.units.cloudflare.map(({ id }) => ({ id })),
+        baseline,
+        'cloudflare',
+      );
+      expect(selection.complete.map(({ id }) => id)).toEqual(businessOwners);
+      expect(selection.fresh.map(({ id }) => id)).toEqual(['contacts', DIRECT_CONSUMER.id]);
+      expect(selection.retained.map(({ id }) => id)).toEqual([UNRELATED_OWNER.id]);
+      expect(selection.shell.mode).toBe('fresh');
+      const core = yield* planDeploymentImpact({
+        changedPaths: ['packages/core-runtime/src/core.ts'],
+        rootDirectory: root,
+      });
+      expect(core.units.providers).toContain(UNRELATED_OWNER.id);
+      expect(core.units.cloudflare.map(({ id }) => id)).toContain(UNRELATED_OWNER.id);
+    }),
+  ),
+);
+
+for (const dependency of [
+  { failure: 'unknown local dependency', name: '@app/missing', version: WORKSPACE_DEPENDENCY },
+  { failure: 'uncertain local dependency', name: 'uncertain', version: 'file:../unmapped' },
+  {
+    failure: 'uncertain local dependency',
+    name: SELECTIVE_CONTRACT_OWNER.package,
+    version: 'workspace:@app/missing@*',
+  },
+]) {
+  it.live(`fails closed for a shared-package impact with ${dependency.failure}`, () =>
+    withSelectivePackageFixture((root) =>
+      Effect.gen(function* uncertainPackageConsumer() {
+        yield* writeWorkspaceProject(root, UNRELATED_OWNER, {
+          dependencies: { [dependency.name]: dependency.version },
+        });
+        const failure = yield* planningFailure(
+          planDeploymentImpact({ changedPaths: [SELECTIVE_CONTRACT_SOURCE], rootDirectory: root }),
+        );
+        expect(failure).toContain(dependency.failure);
+      }),
+    ),
+  );
+}
+
+it.live('resolves source/build dependency cycles without omitting an affected consumer', () =>
+  withSelectivePackageFixture((root) =>
+    Effect.gen(function* cyclicPackageConsumers() {
+      yield* writeWorkspaceProject(root, UNRELATED_OWNER, {
+        dependencies: { [TRANSITIVE_CONTRACT_OWNER.package]: WORKSPACE_DEPENDENCY },
+      });
+      yield* writeWorkspaceProject(root, TRANSITIVE_CONTRACT_OWNER, {
+        dependencies: {
+          [SELECTIVE_CONTRACT_OWNER.package]: WORKSPACE_DEPENDENCY,
+          [UNRELATED_OWNER.package]: WORKSPACE_DEPENDENCY,
+        },
+      });
+      const plan = yield* planDeploymentImpact({ changedPaths: [SELECTIVE_CONTRACT_SOURCE], rootDirectory: root });
+      expect(plan.units.providers).toContain(UNRELATED_OWNER.id);
+      expect(plan.units.cloudflare.map(({ id }) => id)).toContain(UNRELATED_OWNER.id);
+    }),
+  ),
+);
+
+it.live('keeps shared package manifest changes conservative when dependency/owner declarations can change', () =>
+  withSelectivePackageFixture((root) =>
+    Effect.gen(function* changedPackageMetadata() {
+      const plan = yield* planDeploymentImpact({
+        changedPaths: [`${SELECTIVE_CONTRACT_OWNER.path}/package.json`],
+        rootDirectory: root,
+      });
+      expect(plan.units.providers).toContain(UNRELATED_OWNER.id);
+    }),
+  ),
+);
+
+it.live('fails closed for inconsistent contract producer metadata', () =>
+  withSelectivePackageFixture((root) =>
+    Effect.gen(function* inconsistentContractProducer() {
+      yield* writeWorkspaceProject(root, SELECTIVE_CONTRACT_OWNER, {
+        ontosContractOwner: { appId: 'contacts', packageName: '@app/unrelated' },
+      });
+      const failure = yield* planningFailure(
+        planDeploymentImpact({ changedPaths: [SELECTIVE_CONTRACT_SOURCE], rootDirectory: root }),
+      );
+      expect(failure).toContain('unknown or inconsistent producer');
+    }),
+  ),
+);
+
+it.live('conservatively selects all units when a shared package has no proven consumers', () =>
+  withSelectivePackageFixture((root) =>
+    Effect.gen(function* unconsumedPackage() {
+      yield* writeWorkspaceProject(root, SELECTIVE_CONTRACT_OWNER);
+      yield* writeWorkspaceProject(root, DIRECT_CONSUMER);
+      yield* writeWorkspaceProject(root, TRANSITIVE_CONTRACT_OWNER);
+      const plan = yield* planDeploymentImpact({ changedPaths: [SELECTIVE_CONTRACT_SOURCE], rootDirectory: root });
+      expect(plan.units.providers).toContain(UNRELATED_OWNER.id);
+    }),
+  ),
+);
+
 it.live('deploys placed Cloudflare units that are impacted, providers before the Shell', () =>
   Effect.gen(function* plansCloudflareDeployments() {
     yield* withFixture(
@@ -708,7 +877,7 @@ it.live('deploys placed Cloudflare units that are impacted, providers before the
             rootDirectory: root,
           });
           expect(shared.units.cloudflare).toEqual([
-            { id: 'contacts', packageName: '@app/contacts', workerName: CONTACTS_WORKER },
+            { id: 'contacts', packageName: CONTACTS_PACKAGE, workerName: CONTACTS_WORKER },
             { id: SHELL_ID, packageName: SHELL_PACKAGE, workerName: SHELL_WORKER },
           ]);
           const shellOnly = yield* planDeploymentImpact({
@@ -1232,7 +1401,7 @@ it.live('fails closed when shared-package topology and ownership identities disa
             SHELL_OWNER,
             {
               id: 'contacts',
-              package: '@app/contacts',
+              package: CONTACTS_PACKAGE,
               path: 'verticals/contacts',
             },
           ],

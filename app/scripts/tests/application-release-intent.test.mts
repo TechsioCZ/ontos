@@ -65,6 +65,33 @@ it.effect('one impacted owner is fresh while the other complete slot retains its
   }),
 );
 
+it.effect('a provider placement change builds the desired owners and Shell even with zero source impact', () =>
+  Effect.gen(function* changedProviderPlacement() {
+    const baseline = yield* makeApplicationCompositionSnapshotFixture([CATALOG, INVENTORY]);
+    const selected = yield* selectApplicationReleaseUnits({ modules: membership }, available, [], baseline, 'zerops');
+    expect(selected.complete).toEqual([unit(INVENTORY), unit(CATALOG)]);
+    expect(selected.fresh).toEqual(selected.complete);
+    expect(selected.retained).toEqual([]);
+    expect(selected.shell.mode).toBe(FRESH);
+  }),
+);
+
+it.effect('unchanged provider placement retains exact membership without manufacturing source impact', () =>
+  Effect.gen(function* unchangedProviderPlacement() {
+    const baseline = yield* makeApplicationCompositionSnapshotFixture([CATALOG, INVENTORY]);
+    const selected = yield* selectApplicationReleaseUnits(
+      { modules: membership },
+      available,
+      [],
+      baseline,
+      'cloudflare',
+    );
+    expect(selected.fresh).toEqual([]);
+    expect(selected.retained).toEqual(selected.complete);
+    expect(selected.shell.mode).toBe(RETAINED);
+  }),
+);
+
 it.effect('consumes the already-computed shared and transitive impact closure without narrowing it', () =>
   Effect.gen(function* sharedImpactClosure() {
     const baseline = yield* makeApplicationCompositionSnapshotFixture([PARTY, CATALOG, INVENTORY]);

@@ -25,6 +25,26 @@ const ZeropsClientIdSchema = Schema.NonEmptyString.pipe(Schema.brand('ZeropsClie
 const ZeropsEnvIdSchema = Schema.NonEmptyString.pipe(Schema.brand('ZeropsEnvId'));
 const ZeropsProcessIdSchema = Schema.NonEmptyString.pipe(Schema.brand('ZeropsProcessId'));
 
+/** UUIDShort in the native public API; deployment names are not native version identifiers. */
+const ZeropsNativeIdSchema = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9]{22}$/u)).pipe(
+  Schema.brand('ZeropsNativeId'),
+);
+const ActiveAppVersionSchema = Schema.Struct({
+  id: ZeropsNativeIdSchema,
+  projectId: ZeropsNativeIdSchema,
+  sequence: Schema.Int,
+  serviceStackId: ZeropsNativeIdSchema,
+  /** Provider upload origin only; this is not a Git revision or compiled-source attestation. */
+  source: Schema.Literals(['CLI', 'GUI', 'GITHUB', 'GITLAB', 'GIT', 'NONE']),
+  status: Schema.Literal('ACTIVE'),
+});
+const ActiveServiceVersionSchema = Schema.Struct({
+  activeAppVersion: Schema.OptionFromOptionalNullOr(ActiveAppVersionSchema, { onNoneEncoding: 'omit' }),
+  id: ZeropsNativeIdSchema,
+  projectId: ZeropsNativeIdSchema,
+  status: Schema.Literal('ACTIVE'),
+});
+
 const ProcessSchema = Schema.Struct({
   id: ZeropsProcessIdSchema,
   status: Schema.String,
@@ -65,6 +85,7 @@ const ServiceUserDataPageSchema = Schema.Struct({
 /** The page size for service user data listings; `total` tells whether another page follows. */
 const SERVICE_USER_DATA_PAGE = 100;
 
+export type ZeropsActiveAppVersion = typeof ActiveAppVersionSchema.Type;
 export type ZeropsProjectEnv = typeof ProjectEnvSchema.Type;
 export type ZeropsServiceStack = typeof ServiceStackSchema.Type;
 export type ZeropsServiceStackIdentity = typeof ServiceStackIdentitySchema.Type;
@@ -81,6 +102,8 @@ interface ProjectSearchBody {
 }
 
 const failure = (message: string) => (cause: unknown) => new ZeropsApiError({ cause, message });
+const invalidNativeReadback = () =>
+  new ZeropsApiError({ message: 'Zerops active application version readback is invalid' });
 
 const terminalProcessStatuses: ReadonlySet<string> = new Set(['CANCELED', 'FAILED', 'FINISHED']);
 
@@ -97,6 +120,12 @@ export const parseZeropsEnvFile = (envFile: string): ReadonlyMap<string, string>
   );
 
 export interface ZeropsPublicApiService {
+  /** Reads and cross-checks native active-version metadata; source kind/ACTIVE do not prove compiled source identity. */
+  readonly activeAppVersion: (
+    projectId: string,
+    serviceId: string,
+  ) => Effect.Effect<ZeropsActiveAppVersion, ZeropsApiError>;
+
   /** Creates a sensitive secret on one service (a Zerops service "user data" entry) and waits until Zerops applied it. */
   readonly createServiceSecret: (
     serviceId: string,
@@ -282,6 +311,45 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
     return yield* Effect.void;
   });
 
+  const activeAppVersion = Effect.fn('ZeropsPublicApi.activeAppVersion')(function* readActiveAppVersion(
+    projectId: string,
+    serviceId: string,
+  ) {
+    const project = yield* Schema.decodeUnknownEffect(ZeropsNativeIdSchema)(projectId).pipe(
+      Effect.mapError(invalidNativeReadback),
+    );
+    const service = yield* Schema.decodeUnknownEffect(ZeropsNativeIdSchema)(serviceId).pipe(
+      Effect.mapError(invalidNativeReadback),
+    );
+    // Decode only the closed metadata subset and discard errors that could retain provider bodies/user data.
+    const stack = yield* get(
+      `/service-stack/${service}`,
+      ActiveServiceVersionSchema,
+      'active service version read',
+    ).pipe(Effect.mapError(invalidNativeReadback));
+    const selection = stack.activeAppVersion;
+    if (stack.id !== service || stack.projectId !== project || Option.isNone(selection)) {
+      return yield* invalidNativeReadback();
+    }
+    const selected = selection.value;
+    if (selected.projectId !== project || selected.serviceStackId !== service) {
+      return yield* invalidNativeReadback();
+    }
+    const version = yield* get(`/app-version/${selected.id}`, ActiveAppVersionSchema, 'application version read').pipe(
+      Effect.mapError(invalidNativeReadback),
+    );
+    if (
+      version.id !== selected.id ||
+      version.projectId !== project ||
+      version.serviceStackId !== service ||
+      version.sequence !== selected.sequence ||
+      version.source !== selected.source
+    ) {
+      return yield* invalidNativeReadback();
+    }
+    return version;
+  });
+
   const projectEnvs = Effect.fn('ZeropsPublicApi.projectEnvs')(function* readProjectEnvs(projectId: string) {
     const { clientId } = yield* get(`/project/${projectId}`, ProjectSchema, 'project read');
     const search = yield* withJson(
@@ -414,6 +482,7 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
     });
 
   return ZeropsPublicApi.of({
+    activeAppVersion,
     createServiceSecret,
     deleteService,
     enableSubdomainAccess: (serviceId) => serviceAction(serviceId, 'enable-subdomain-access'),

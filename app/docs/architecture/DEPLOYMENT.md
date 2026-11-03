@@ -11,7 +11,9 @@ Application Composition validation and native publication are implemented; live 
 The source-owned publisher is `scripts/publish-active-application-composition.mts`. After the deployed candidate artifacts are observable, the environment's serialized deploy workflow supplies its reviewed candidate file:
 
 ```sh
-mise exec -- pnpm active-composition:publish publish --environment <environment> --candidate-file <reviewed-candidate.json>
+mise exec -- pnpm active-composition:publish publish --environment <environment> \
+  --intent-file <reviewed-intent.json> --selection-file <selection.json> \
+  --candidate-file <candidate.json> --expected-composition-file <expected-composition.json>
 ```
 
 The publisher observes served contracts, Module Federation manifests and Shell runtime evidence with bounded reads, validates the whole candidate, and derives its immutable content revision. It validates the provider-native KV value endpoint from `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`, authenticates publication with the operator's `CLOUDFLARE_API_TOKEN`, performs a native HTTP PUT and waits for matching readback. This is authorized operator/CI publication, not a new snapshot-signature protocol. Runtime readers use a separate read-only credential; neither credentials nor complete snapshots belong in logs.
@@ -25,6 +27,74 @@ Core DB authority coordinates publication and transaction admission with revisio
 For Node source configuration the publisher's `configure-source` command installs the stable URL and read-only token through the existing provider configuration path; Workers placement supplies the native binding. Code or configuration changes may still require normal deployment/restart, but routine snapshot publication/renewal is consumed through these native sources. Do not restore `ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON` or use a restart to bypass missing, expired, inconsistent or draining/sealed authority. Check configured source/binding, published revision/deadline and DB phase, then use the existing authorized publication/recovery path. Readiness and the authenticated smoke suite still gate activation. Installation is not activation, and Tenant Module State never selects a different runtime graph.
 
 Rollback remains an explicit audited promotion of a previously validated immutable revision with compatible artifact evidence (see [Rollback](#rollback)); there is no automatic last-known-good or untrusted fallback. Accepted future manifest/artifact fields in the warning above remain target architecture, not prerequisites that current tooling silently implements.
+
+### Selective releases and original receipts
+
+The reviewed release intent defines the complete business membership **N**. Topology inventories
+available deployments; source impact selects builds. Neither an available package nor a reachable
+service enrolls another member. Shell is a separate mandatory slot. Tenant activation and operation
+availability remain independent of all three sets.
+
+`immutable-application-release.mts select` writes `complete`, `fresh`, `retained`, `removed` and the
+separate Shell mode. It consumes the existing impact closure, including shared contract/runtime/ABI
+consumers. A new member or changed provider placement requires a fresh build. Removing a member does
+not delete its retained artifacts. Zero source impact can retain every slot while still validating the
+complete desired candidate. Migration requirements remain a separate closure, including retained
+owner and Core verification where required.
+
+The workflow captures the approved baseline **B** before selection under the existing publication
+lock. `capture-approved-snapshot --allow-absent --baseline-only` records literal JSON `null` only when
+both native storage and Core authority prove absence. Transport errors, invalid/expired snapshots and
+unapproved pointers are failures. Baseline-only capture permits a valid legacy graph to be replaced by
+an explicit full build; it does not approve reusing mutable legacy URLs. Default capture still requires
+retained artifact paths.
+
+Every retained business slot needs its **original** receipt: original source revision, build marker,
+contract and MF-manifest URL/digest, and backend binding. Fresh slots must match the actual clean Git
+source and verified build. The receipt archive is named by its exact Composition Revision; retrieval
+uses that identity and qualified repository/main-run metadata, then validates the original pins and
+current native evidence. It never substitutes another Composition or reconstructs a source SHA from
+a snapshot. Missing or expired archives stop selective reuse. The first release without complete
+original receipts needs an explicit reviewed full build.
+
+Both backend targets use the existing immutable public asset Workers. Cloudflare retains its named
+backend version; Zerops keeps its Node backend and native application-version identity. Node build
+plans set the immutable asset prefix separately from the registered backend/API origin. The local Node
+SDK envelope proves the public build inventory. `node-assets` produces only retained public-asset
+evidence. `node-deploy` separately witnesses the successful clean-source provider push, preserves the
+provider's genuine Git-derived build marker, and checks the active native version and exact live
+contract before issuing a deployed receipt. An `ACTIVE` status or requested version name alone is not
+source proof; the CI public inventory is not presented as a digest of the provider-built backend.
+Public uploads use the existing deployment gateway credentials, separate from dependency-code builds
+and runtime read credentials. Worker host/dedicated mode remains explicit and independent of target.
+
+Before DDL, the existing publisher's `prepare` command fetches exact pinned public bytes, validates the
+whole graph's supported operation semantics, dependencies, Core capabilities, Shell ABI, exposes and
+singletons, and writes expected content **T**. This file contains a Composition only: no observation
+window, deployment approval or fabricated backend receipt. Fresh Node backends may still be planned;
+retained backends must already have valid native evidence. Migration and verification commands receive
+the candidate, selection and expected Composition. Under the existing native lock they require current
+authority to match B, or the exact already-active T for a legitimate retry, before provider or schema
+effects. `none` still performs no initialization; verification-only does not drain or run pending SQL.
+
+After all actual backend deployments, final observation must derive **exactly T** before promotion.
+Matching deployment-document formats alone do not prove public-operation compatibility. Publication
+keeps the existing global admission, durable-work completion, drain/seal and revocation fences. Native
+storage readback and Core commit remain separate effects with explicit failure/reconciliation states.
+
+The immutable `prepared-application-release` artifact preserves original B, T, reviewed selection and
+receipt/plan evidence for the same run's retry. A completed Node deployment preserves its actual
+deployed receipt handoff before archiving the complete receipt set. Recovery verifies that original
+identity and skips successful deployments; it does not silently redeploy over an existing receipt or
+overwrite immutable asset addresses. Changed native evidence fails closed. New observation freshness
+never changes the Composition Revision or rewrites an Accepted Order Snapshot. Browser documents stay
+pinned to one revision until the existing document-replacement path admits another.
+
+An explicit rollback uses retained executable artifacts with the **current** captured baseline and a
+fresh validated observation of the older content. Do not replay the older candidate's stale baseline,
+remove additive schema, bypass owner verifiers, or assume artifact retention establishes compatibility.
+The existing authenticated smoke, audit and forward-only exceptions in [Rollback](#rollback) still
+apply. There is no automatic fallback, tenant-specific artifact pin or forced document hot-swap.
 
 The rules exist because the first Zerops stage rollout was merged after source-level validation and then required 43 linear repair commits. Stage had become the first production-shaped integration test. Future releases must prove the target artifact and the distributed user journey before promotion.
 
@@ -333,18 +403,18 @@ delivery units run with its `DEPLOY_TARGET` variable, and how its Outbox Workers
 its required `OUTBOX_WORKER_MODE` variable (`dedicated` or `host`, see
 [Outbox Workers](./OUTBOX_WORKERS.md)). The two are independent:
 
-| Environment  | `DEPLOY_TARGET`   | What deploys                                                                                                                                                                                                                          |
-| ------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stage`      | unset or `zerops` | The whole Zerops topology: migrator, SpiceDB, every vertical, its outbox worker and the Shell, each with its own `ZEROPS_*_SERVICE_ID`. Placed units also deploy as Workers when the edge deploy is configured (a shadow deployment). |
-| `stage`      | `cloudflare`      | On Zerops only the migrator, SpiceDB and the outbox workers; every placed unit as a Cloudflare Worker (`deploy-cloudflare`).                                                                                                          |
-| `production` | unset or `zerops` | The whole Zerops topology from `production`'s own variables and secrets. `cloudflare` is rejected: only stage has an edge deploy history (`stage-edge`) and a reviewed edge build environment.                                        |
+| Environment  | `DEPLOY_TARGET`   | What deploys                                                                                                                                                                                                  |
+| ------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stage`      | unset or `zerops` | Fresh reviewed business members and Shell on Zerops; unchanged slots retain original receipts. Public artifacts use the existing immutable asset gateway. Migration/verifier and worker sets are independent. |
+| `stage`      | `cloudflare`      | Fresh reviewed placed members and Shell artifacts on Cloudflare; unchanged slots retain original receipts. Required infrastructure and Outbox Workers remain on Zerops.                                       |
+| `production` | unset or `zerops` | The reviewed Node release uses production configuration and its existing artifact gateway. Cloudflare backend placement remains rejected outside the reviewed stage edge environment.                         |
 
 The deployment planner always emits both plans from the same topology: the Zerops phases (`phases`,
 `units.providers` with each vertical's outbox worker, `units.shell`, `units.workers`) and the edge
-units (`units.cloudflare`). The workflow picks by target, so neither path depends on the other and
-tests assert both for the same diffs. Nothing on the Zerops path is removed for the Cloudflare
-target: `zerops.yaml`, `zerops-import.yaml`, the generators, the materializers and the push script
-keep deploying every environment that targets Zerops.
+units (`units.cloudflare`). The workflow filters business builds through the complete reviewed release
+selection and keeps infrastructure/worker phases separate. Tests cover both backend targets for the
+same diffs. `zerops.yaml`, its generators and materializers remain the source for Node provider builds;
+a source package outside reviewed membership is not automatically deployed or enrolled.
 
 | Environment  | `OUTBOX_WORKER_MODE` | Outbox Workers on Zerops                                                         |
 | ------------ | -------------------- | -------------------------------------------------------------------------------- |
@@ -361,8 +431,10 @@ the run, and so does a configured environment without `OUTBOX_WORKER_MODE`: it h
 environment without its Zerops project or token deploys nothing and records nothing. `deploy-plan`
 then plans in that environment from the environment's last successful deployment and promotes
 authorization for that environment (`--authorization-environment`), so production needs its own
-enforced authorization evidence and context. `deploy-migrations` runs the planned migrations and
-SpiceDB deploy, and `deploy-zerops`, the environment's one deployment record, deploys the rest. Pushes to `main` deploy `stage`. Production deploys
+enforced authorization evidence and context. After the complete expected candidate is prepared,
+`deploy-migrations` runs the independent migration/verifier closure and requested SpiceDB deploy.
+`deploy-node-backends` deploys fresh Node business units and Shell, then `deploy-zerops` handles workers
+and the Node publication in the original environment. Pushes to `main` deploy `stage`. Production deploys
 only on an explicit dispatch:
 
 ```sh
@@ -415,8 +487,8 @@ deployable on its own. Every vertical (UI and headless API) and the Shell are pl
 Worker the Shell binds as a service is placed too. The deployment planner emits the placed,
 impacted units as `units.cloudflare` in dependency order (providers before Shell).
 
-The edge deploy runs only for `stage`, and only when it is configured (below). On the `zerops` target
-it is additive; on the `cloudflare` target it is how the placed units reach stage.
+Cloudflare backend placement runs only for configured `stage`. The Node target reuses the existing
+immutable public-asset gateway; it does not perform an additive shadow deployment of every backend.
 In the `host` Outbox Worker mode, whatever the target, `deploy-zerops` deploys the one
 `outbox-worker-host` service (`ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID`) instead of each owner's
 dedicated worker service; see [Outbox Workers](./OUTBOX_WORKERS.md). The run that deploys one mode's
@@ -424,36 +496,25 @@ workers stops the other mode's. A switch changes no source, so each deploy first
 other mode's workers still run or this mode's do not (`active-composition:publish worker-mode-drift`);
 when either holds, the plan deploys every worker of this mode, whatever the diff, and stops the others.
 
-The edge ships in three jobs. `edge-plan` resolves the last successful `stage-edge` deployment and
-plans the diff from there. `edge-build` builds and verifies each planned unit on its own runner (the
-unit's `cloudflare:deploy` up to its final `wrangler deploy`) and uploads its output; a build is
-CPU-bound, and two builds on one two-core hosted runner take as long as two in a row. Both wait only
-for the deploy target, so they run beside the migrations. `deploy-cloudflare` runs once
-`deploy-migrations` has migrated the database and SpiceDB, beside `deploy-zerops`, in its own
-`stage-edge` environment, one edge deploy at a time (`edge-stage` concurrency group). It unpacks this
-run's builds, deploys them with Wrangler one by one in plan order, runs every unit's `cloudflare:proof`
-side by side, then records each deployed version as proven. Only its Wrangler steps receive
-`CLOUDFLARE_API_TOKEN`; the plan, builds and proof run dependency code and never see it.
+`capture-application-baseline` records B before `edge-plan` partitions the complete reviewed release.
+`edge-build` builds and verifies only fresh slots on separate runners, without deployment credentials.
+After workspace gates and initial-cutover verification, `deploy-cloudflare` retains immutable named
+backend/public-asset versions **before** migrations, under the existing `zerops-stage` environment
+lock. It retrieves original retained receipts, validates complete N, and uses `prepare
+--observe-backends` to verify native backend versions as well as exact public pins before producing T.
+The public Shell ingress remains unchanged during this staging phase.
 
-A version is recorded as proven by redeploying it at 100% with a deployment message starting
-`Proven by cloudflare:proof at`; traffic does not change. Only such a version is a rollback target.
-The active version by itself is not: a secret change or a manual deploy creates a version nobody
-proved, and the provisioning secrets once left every Worker on a version without its ASSETS or
-Hyperdrive bindings. Before the first deploy each Worker's rollback target is read from its
-deployment history: the version of its newest proven deployment, `unproven` when it has none, or no
-Worker at all. A failed deploy or proof returns each Worker this run deployed to its proven version,
-and that restore carries the proven marker too, so failed runs never push the newest proven
-deployment out of the listed history. A Worker the run created is deleted. A Worker with no proven
-version is not rolled back; it is reported and fails the job. A cancelled run restores the same
-way, because its deploy may have stopped after some Workers changed. The restore step verifies that
-state, and any Worker left on the candidate is reported and fails the job. A
-change to the edge workflow or the install action replans every placed unit, and a change to the
-planner itself replans every unit on Zerops and the edge. Because the history is separate, a failed
-edge deploy is replanned by the next run even when Zerops succeeded for the same revision.
+`deploy-migrations` then receives original B/T and the independent migration requirements.
+`deploy-zerops` handles required workers; `publish-edge-composition` reobserves the full candidate and
+performs explicit publication. Only after that succeeds does `finalize-edge-deployment` activate the
+approved Shell ingress and record the successful edge deployment.
 
-Build, deploy, proof, proven-record and retirement-check steps each have a timeout that leaves the restore step
-its own budget inside the job deadline, so a hung deploy still ends with every changed Worker
-restored.
+Failed or cancelled releases preserve their immutable artifacts, original receipt set and prepared
+candidate. They do not automatically restore a historical Worker version, delete newly retained
+artifacts, or infer that an old revision can run against changed schema/queues. Same-run recovery uses
+the original prepared identity and native checks. Explicit compatible rollback follows
+[Rollback](#rollback). Source/build changes continue to be planned from the last successful edge
+deployment, so failed work is not hidden by an unrelated successful worker phase.
 
 Removing a unit from placement, or renaming its Worker, must list the old Worker in
 `retiredWorkers`. The planner compares placement with the last successful edge deployment, in full
@@ -469,8 +530,8 @@ read-only check per deploy.
 The job runs only when the repository is configured for Cloudflare: the `CLOUDFLARE_ACCOUNT_ID`
 variable, the `CLOUDFLARE_API_TOKEN` secret in the `stage-edge` environment, and a complete build
 environment (below). The `edge-deploy-readiness` job checks all three from `stage-edge` without
-creating a deployment. If any is missing, `deploy-cloudflare` is skipped, records nothing, a notice
-names what is missing, and CI stays green. Reading `stage-edge` without a deployment uses
+creating a deployment. Missing required configuration fails a selected Cloudflare target before provider changes. A Node
+target checks the public-asset gateway separately from Cloudflare backend data bindings. Reading `stage-edge` without a deployment uses
 `environment.deployment: false`, which GitHub refuses for environments with custom deployment
 protection rules, so `stage-edge` must not have any.
 
@@ -943,16 +1004,21 @@ The push that lands the commit deploys straight away. `queue-proof` looks for a 
 the queue) runs the gates first. The deploy then runs:
 
 ```text
-deploy-target ──┬─ deploy-plan ───────────────┐
-edge-readiness ─┴─ edge-plan ─ edge-build ─┐  │
-Workspace gates ───────────────────────────┼──┴─ deploy-migrations ─┬─ deploy-zerops ─────┬─ publish-edge-composition
-                                           └────────────────────────┴─ deploy-cloudflare ─┘
+deploy-target + readiness -> capture B -> reviewed selection
+  Cloudflare: edge-build -> immutable deploy + native preparation of T
+  Node:       node-release-build -> immutable public assets + preparation of T
+workspace gates + initial-cutover proof + prepared T
+  -> migration/verifier closure guarded by B/T
+  -> actual Node backend deployment and receipts (Node target)
+  -> requested worker deploy/stop
+  -> full observed T + explicit Composition publication
+  -> approved Shell ingress finalization (Cloudflare target)
 ```
 
-`deploy-plan` and `edge-plan` need no gate, so both plans are ready when the gates pass or prove
-skipped, and the edge builds run while the migrations do. A plan with no migration and no SpiceDB
-change finishes `deploy-migrations` in seconds, so a one-vertical change reaches its Worker within
-minutes of the merge.
+Planning and fresh builds can run alongside workspace verification. Database changes wait for the
+complete prepared candidate; unchanged builds do not remove required owner verifiers. A zero-build
+release still validates the full desired membership. Report measured build/deploy counts and elapsed
+times for the actual run rather than assuming a fixed release duration.
 
 ## Pull-request and release hygiene
 

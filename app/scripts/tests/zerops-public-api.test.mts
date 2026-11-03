@@ -336,3 +336,148 @@ it.effect('does not accept a service-not-found payload on authentication or serv
     }
   }),
 );
+
+const NATIVE_PROJECT_ID = 'P'.repeat(22);
+const NATIVE_SERVICE_ID = 'S'.repeat(22);
+const NATIVE_VERSION_ID = 'V'.repeat(22);
+const nativeVersion = {
+  id: NATIVE_VERSION_ID,
+  projectId: NATIVE_PROJECT_ID,
+  sequence: 7,
+  serviceStackId: NATIVE_SERVICE_ID,
+  source: 'CLI',
+  status: 'ACTIVE',
+};
+const nativeStack = {
+  activeAppVersion: nativeVersion,
+  id: NATIVE_SERVICE_ID,
+  projectId: NATIVE_PROJECT_ID,
+  status: 'ACTIVE',
+};
+
+/** Exercises the real REST adapter while keeping provider responses and credentials entirely local. */
+const activeVersionGateway = (readStack: () => Response, readVersion: () => Response) => {
+  const requests: string[] = [];
+  const client = HttpClient.make((request, url) => {
+    requests.push(`${request.method} ${url.pathname}`);
+    const response =
+      url.pathname === `/api/rest/public/service-stack/${NATIVE_SERVICE_ID}` ? readStack() : readVersion();
+    return Effect.succeed(HttpClientResponse.fromWeb(request, response));
+  });
+  const layer = Layer.merge(
+    ZeropsPublicApiLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
+    ConfigProvider.layer(ConfigProvider.fromUnknown({ ZEROPS_TOKEN: TEST_TOKEN })),
+  );
+  return { layer, requests };
+};
+const readNativeVersion = Effect.gen(function* readNativeVersion() {
+  const api = yield* ZeropsPublicApi;
+  return yield* api.activeAppVersion(NATIVE_PROJECT_ID, NATIVE_SERVICE_ID);
+});
+
+it.effect('cross-checks the native active version and returns only nonsecret identity metadata', () =>
+  Effect.gen(function* readsNativeVersion() {
+    const secretFields = {
+      activationDate: null,
+      build: null,
+      publicGitSource: null,
+      userDataList: [{ content: TEST_TOKEN, key: 'SECRET' }],
+    };
+    const { layer, requests } = activeVersionGateway(
+      () => Response.json({ ...nativeStack, userData: secretFields }),
+      () => Response.json({ ...nativeVersion, ...secretFields }),
+    );
+    const version = yield* readNativeVersion.pipe(Effect.provide(layer));
+    expect(version).toEqual(nativeVersion);
+    expect(JSON.stringify(version)).not.toContain(TEST_TOKEN);
+    expect(requests).toEqual([
+      `GET /api/rest/public/service-stack/${NATIVE_SERVICE_ID}`,
+      `GET /api/rest/public/app-version/${NATIVE_VERSION_ID}`,
+    ]);
+  }),
+);
+
+it.effect('rejects deployment names and malformed native input IDs before any provider request', () =>
+  Effect.gen(function* rejectsInvalidNativeInputs() {
+    const inputs = [
+      { projectId: NATIVE_PROJECT_ID, serviceId: 'release-requested-name' },
+      { projectId: '../project', serviceId: NATIVE_SERVICE_ID },
+      { projectId: NATIVE_PROJECT_ID, serviceId: `${NATIVE_SERVICE_ID}x` },
+    ];
+    for (const { projectId, serviceId } of inputs) {
+      const { layer, requests } = activeVersionGateway(
+        () => Response.json(nativeStack),
+        () => Response.json(nativeVersion),
+      );
+      const error = yield* Effect.gen(function* readInvalidIdentity() {
+        const api = yield* ZeropsPublicApi;
+        return yield* api.activeAppVersion(projectId, serviceId);
+      }).pipe(Effect.provide(layer), Effect.flip);
+      expect(Schema.is(ZeropsApiError)(error)).toBe(true);
+      expect(error.cause).toBeUndefined();
+      expect(requests).toEqual([]);
+    }
+  }),
+);
+
+it.effect('requires the requested project/service and a concrete ACTIVE embedded native version', () =>
+  Effect.gen(function* rejectsInvalidNativeStacks() {
+    const withoutVersion = { id: NATIVE_SERVICE_ID, projectId: NATIVE_PROJECT_ID, status: 'ACTIVE' };
+    const stacks = [
+      withoutVersion,
+      { ...nativeStack, activeAppVersion: null },
+      { ...nativeStack, id: 'X'.repeat(22) },
+      { ...nativeStack, projectId: 'X'.repeat(22) },
+      { ...nativeStack, status: 'STOPPED' },
+      { ...nativeStack, activeAppVersion: { ...nativeVersion, id: 'requested-release-name' } },
+      { ...nativeStack, activeAppVersion: { ...nativeVersion, projectId: 'X'.repeat(22) } },
+      { ...nativeStack, activeAppVersion: { ...nativeVersion, serviceStackId: 'X'.repeat(22) } },
+      { ...nativeStack, activeAppVersion: { ...nativeVersion, status: 'BACKUP' } },
+    ];
+    for (const stack of stacks) {
+      const { layer, requests } = activeVersionGateway(
+        () => Response.json(stack),
+        () => Response.json(nativeVersion),
+      );
+      const error = yield* readNativeVersion.pipe(Effect.provide(layer), Effect.flip);
+      expect(Schema.is(ZeropsApiError)(error)).toBe(true);
+      expect(error.cause).toBeUndefined();
+      expect(requests).toHaveLength(1);
+    }
+  }),
+);
+
+it.effect('rejects mismatched native version details and never exposes provider user data or response causes', () =>
+  Effect.gen(function* rejectsContradictoryNativeDetails() {
+    const versions = [
+      { ...nativeVersion, id: 'X'.repeat(22) },
+      { ...nativeVersion, projectId: 'X'.repeat(22) },
+      { ...nativeVersion, serviceStackId: 'X'.repeat(22) },
+      { ...nativeVersion, sequence: 8 },
+      { ...nativeVersion, sequence: 7.5 },
+      { ...nativeVersion, source: 'GIT' },
+      { ...nativeVersion, source: null },
+      { ...nativeVersion, status: 'BUILDING' },
+    ];
+    for (const version of versions) {
+      const { layer, requests } = activeVersionGateway(
+        () => Response.json(nativeStack),
+        () => Response.json({ ...version, userDataList: [{ content: TEST_TOKEN }] }),
+      );
+      const error = yield* readNativeVersion.pipe(Effect.provide(layer), Effect.flip);
+      expect(Schema.is(ZeropsApiError)(error)).toBe(true);
+      expect(error.cause).toBeUndefined();
+      expect(JSON.stringify(error)).not.toContain(TEST_TOKEN);
+      expect(requests).toHaveLength(2);
+    }
+    for (const status of [401, 403, 500]) {
+      const { layer } = activeVersionGateway(
+        () => Response.json({ error: { message: TEST_TOKEN } }, { status }),
+        () => Response.json(nativeVersion),
+      );
+      const error = yield* readNativeVersion.pipe(Effect.provide(layer), Effect.flip);
+      expect(error.cause).toBeUndefined();
+      expect(JSON.stringify(error)).not.toContain(TEST_TOKEN);
+    }
+  }),
+);
