@@ -126,6 +126,7 @@ export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
     pages: {
       // <generated-module-registration-pages>
       'page-contacts': () => import('./src/routes/[lang]/contacts/page.tsx'),
+      'page-customer-detail': () => import('./src/routes/[lang]/prodej/zakaznici/[id]/page.tsx'),
       'page-customers': () => import('./src/routes/[lang]/prodej/zakaznici/page.tsx'),
       // </generated-module-registration-pages>
     },

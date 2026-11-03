@@ -1,5 +1,5 @@
 // @effect-diagnostics asyncFunction:off -- MF boundary: `preloadPage` is Promise-shaped because Effect is not shared across remotes; the work stays in Effect. expires: 2027-03-31.
-import { Deferred, Effect, Exit, Fiber, MutableRef, Option, Result } from 'effect';
+import { Deferred, Effect, Exit, Fiber, MutableRef, Option, Result, Schema } from 'effect';
 import type { ManagedRuntime } from 'effect';
 
 /**
@@ -20,6 +20,17 @@ export interface ModulePageContext {
   readonly principalId: string;
   readonly tenantId: string;
 }
+
+/** Missing Shell identity never shares a detail cache with an authenticated page. */
+const ScopeKeySchema = Schema.fromJsonString(
+  Schema.Tuple([Schema.String, Schema.String, Schema.String, Schema.String]),
+);
+export const pageDataScopeKey = (context: ModulePageContext | undefined, moduleId: string): string | undefined =>
+  context !== undefined && context.tenantId !== '' && context.principalId !== '' && context.legalEntityId !== ''
+    ? Result.getOrThrow(
+        Schema.encodeResult(ScopeKeySchema)([context.tenantId, context.legalEntityId, context.principalId, moduleId]),
+      )
+    : undefined;
 
 /** Lifetime of a dataset's unfinished loads, including superseded owners. Plain functions cross the MF boundary. */
 export interface PageDataWork {
@@ -58,6 +69,8 @@ export const pageDataPending: PageDataSnapshot<never, never> = Object.freeze({ s
 export interface PageData<I, A, E> {
   /** Fire-and-forget preload; call only from useEffect (cold mounts). */
   readonly ensure: (input: I) => void;
+  /** Invalidates this store after an owner-local write, including writes that have an uncertain outcome. */
+  readonly invalidate: () => void;
   readonly key: (input: I) => string;
   /** Starts or joins the load. Fresh ready entry (<20 s, not invalidated): completes at once. Stale ready entry: completes at once and revalidates in the background. Missing/failed: completes when settled. Never fails. */
   readonly preload: (input: I) => Effect.Effect<void>;
@@ -67,7 +80,8 @@ export interface PageData<I, A, E> {
   readonly refresh: (input: I) => Effect.Effect<void>;
   /** Referentially stable until that entry changes (required by useSyncExternalStore). */
   readonly snapshot: (input: I) => PageDataSnapshot<A, E>;
-  readonly subscribe: (listener: () => void) => () => void;
+  /** An optional input keeps only that mounted strict detail fresh when its TTL expires. */
+  readonly subscribe: (listener: () => void, input?: I) => () => void;
   /** Local optimistic edit of a ready value; no-op otherwise. */
   readonly update: (input: I, f: (value: A) => A) => void;
 }
@@ -106,6 +120,7 @@ interface Entry<I, A, E> {
   changed: Deferred.Deferred<boolean>;
   /** Current generation's result, separate from the last-good snapshot retained after a failed refresh. */
   completion: Deferred.Deferred<A, E>;
+  consumers: number;
   /** Bumped by every load start and write; only the newest run may settle the entry. */
   generation: number;
   inFlight: Option.Option<Fiber.Fiber<unknown, unknown>>;
@@ -145,16 +160,36 @@ const awaitCurrent = <I, A, E>(entry: Entry<I, A, E>): Effect.Effect<void> =>
   });
 
 export const definePageData = <I, A, E, R>(options: {
+  /** Detail stores release unfinished work when their last read/preload is interrupted. Defaults to false. */
+  readonly cancelWhenUnused?: boolean;
   readonly key: (input: I) => string;
   readonly load: (input: I) => Effect.Effect<A, E, R>;
+  /** LRU bound for inactive entries. Active readers are never evicted. */
+  readonly maxEntries?: number;
+  /** False for details whose old data must not survive invalidation or a denied revalidation. */
+  readonly retainStale?: boolean;
   readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
 }): PageData<I, A, E> => {
   const entries = new Map<string, Entry<I, A, E>>();
   const listeners = new Set<() => void>();
+  const mountedKeys = new Map<string, number>();
   let storeRegistered = false;
   /** During a write notification, `snapshot` records the keys mounted readers re-read (React does so inside the listener). */
   let observing = false;
   const observedKeys = new Set<string>();
+  const trim = (): void => {
+    if (options.maxEntries === undefined) {
+      return;
+    }
+    for (const [key, entry] of entries) {
+      if (entries.size <= options.maxEntries) {
+        break;
+      }
+      if (entry.consumers === 0 && Option.isNone(entry.inFlight) && !mountedKeys.has(key)) {
+        entries.delete(key);
+      }
+    }
+  };
 
   const notify = (): void => {
     for (const listener of listeners) {
@@ -175,7 +210,7 @@ export const definePageData = <I, A, E, R>(options: {
       entry.stale = true;
       // A failed revalidation keeps the value on screen instead of flashing an error.
       entry.snapshot =
-        previous.state === 'ready'
+        previous.state === 'ready' && options.retainStale !== false
           ? { refreshing: false, state: 'ready', value: previous.value }
           : { error: result.failure, refreshing: false, state: 'failed' };
     }
@@ -196,13 +231,14 @@ export const definePageData = <I, A, E, R>(options: {
     }
   };
 
-  const expireLater = (entry: Entry<I, A, E>, generation: number): Effect.Effect<void> =>
+  const expireLater = (entry: Entry<I, A, E>, generation: number, onExpired: () => void): Effect.Effect<void> =>
     Effect.forkDetach(
       Effect.sleep(FRESH_FOR).pipe(
         Effect.andThen(
           Effect.sync(() => {
             if (entry.generation === generation) {
               entry.stale = true;
+              onExpired();
             }
           }),
         ),
@@ -210,6 +246,12 @@ export const definePageData = <I, A, E, R>(options: {
     ).pipe(Effect.asVoid);
 
   const startLoad = (entry: Entry<I, A, E>): Fiber.Fiber<void> => {
+    const onExpired = (): void => {
+      const key = options.key(entry.input);
+      if (options.retainStale === false && entries.get(key) === entry && (mountedKeys.get(key) ?? 0) > 0) {
+        startLoad(entry);
+      }
+    };
     const obsolete = supersede(entry);
     const { changed, generation } = entry;
     entry.changed = Deferred.makeUnsafe<boolean>();
@@ -241,7 +283,7 @@ export const definePageData = <I, A, E, R>(options: {
             settled = true;
             settle(entry, generation, result);
             Deferred.doneUnsafe(completion, Effect.fromResult(result));
-            return Result.isSuccess(result) ? expireLater(entry, generation) : Effect.void;
+            return Result.isSuccess(result) ? expireLater(entry, generation, onExpired) : Effect.void;
           }),
         );
       }).pipe(
@@ -270,6 +312,7 @@ export const definePageData = <I, A, E, R>(options: {
         }
         lifetime.listeners.clear();
       }
+      trim();
     });
     // Completing a Deferred may resume waiters synchronously: publish the replacement before waking them.
     Deferred.doneUnsafe(changed, Effect.succeed(true));
@@ -286,6 +329,9 @@ export const definePageData = <I, A, E, R>(options: {
       }
       obsolete.push(supersede(entry));
       entry.stale = true;
+      if (options.retainStale === false) {
+        entry.snapshot = pageDataPending;
+      }
     }
     return () => {
       observedKeys.clear();
@@ -299,8 +345,11 @@ export const definePageData = <I, A, E, R>(options: {
         const entry = entries.get(key);
         if (
           entry !== undefined &&
+          // A background observer restarts its bounded, cancellable batch in its own effect.
+          // Only a leased read or an explicitly mounted key may auto-restart cancellable work here.
+          (options.cancelWhenUnused !== true || entry.consumers > 0 || mountedKeys.has(key)) &&
           // A shown failure retries too: the change may be the recovery the reader is waiting for.
-          (loadingKeys.has(key) || entry.snapshot.state !== 'pending') &&
+          (loadingKeys.has(key) || options.retainStale === false || entry.snapshot.state !== 'pending') &&
           entry.stale &&
           Option.isNone(entry.inFlight)
         ) {
@@ -327,11 +376,14 @@ export const definePageData = <I, A, E, R>(options: {
     const key = options.key(input);
     const existing = entries.get(key);
     if (existing !== undefined) {
+      entries.delete(key);
+      entries.set(key, existing);
       return existing;
     }
     const created: Entry<I, A, E> = {
       changed: Deferred.makeUnsafe<boolean>(),
       completion: Deferred.makeUnsafe<A, E>(),
+      consumers: 0,
       generation: 0,
       inFlight: Option.none(),
       input,
@@ -346,7 +398,7 @@ export const definePageData = <I, A, E, R>(options: {
   /** Returns the run a caller must wait for, or none when the current value may be served at once. */
   const begin = (input: I): Option.Option<Fiber.Fiber<unknown, unknown>> => {
     const entry = entryFor(input);
-    if (entry.snapshot.state === 'ready') {
+    if (entry.snapshot.state === 'ready' && (options.retainStale !== false || !entry.stale)) {
       if (Option.isNone(entry.inFlight) && entry.stale) {
         startLoad(entry);
       }
@@ -373,7 +425,33 @@ export const definePageData = <I, A, E, R>(options: {
     }
   };
 
-  const preload = Effect.fn('PageData.preload')(function* preloadEntry(input: I) {
+  /** A foreground read joining a prefetch keeps the owner alive when that page's prefetch is cancelled. */
+  const usingEntry = <Value, Failure>(
+    input: I,
+    operation: Effect.Effect<Value, Failure>,
+  ): Effect.Effect<Value, Failure> =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const entry = entryFor(input);
+        entry.consumers += 1;
+        trim();
+        return entry;
+      }),
+      () => operation,
+      (entry) =>
+        Effect.sync(() => {
+          entry.consumers -= 1;
+          if (options.cancelWhenUnused === true && entry.consumers === 0 && Option.isSome(entry.inFlight)) {
+            // No replacement owner: interrupt waiters instead of waking them to restart obsolete work.
+            const run = supersede(entry);
+            entry.stale = true;
+            interruptObsolete(run);
+          }
+          trim();
+        }),
+    );
+
+  const preloadEntry = Effect.fn('PageData.preload')(function* preloadEntry(input: I) {
     if (!isBrowser()) {
       return;
     }
@@ -382,8 +460,10 @@ export const definePageData = <I, A, E, R>(options: {
     announceWork(entry);
     yield* Option.isSome(run) ? awaitCurrent(entry) : Effect.void;
   });
+  const preload = (input: I): Effect.Effect<void> =>
+    isBrowser() ? usingEntry(input, preloadEntry(input)) : Effect.void;
 
-  const read = (input: I): Effect.Effect<A, E> =>
+  const readCurrent = (input: I): Effect.Effect<A, E> =>
     Effect.suspend(() => {
       if (!isBrowser()) {
         return Effect.die('PageData.read requires a browser document');
@@ -403,11 +483,12 @@ export const definePageData = <I, A, E, R>(options: {
       ).pipe(
         Effect.flatMap((result) =>
           entry.generation !== generation || Option.isNone(result)
-            ? read(input)
+            ? readCurrent(input)
             : Exit.match(result.value, { onFailure: Effect.failCause, onSuccess: Effect.succeed }),
         ),
       );
     });
+  const read = (input: I): Effect.Effect<A, E> => usingEntry(input, readCurrent(input));
 
   const ensure = (input: I): void => {
     if (isBrowser()) {
@@ -442,17 +523,64 @@ export const definePageData = <I, A, E, R>(options: {
     if (observing) {
       observedKeys.add(key);
     }
-    return entries.get(key)?.snapshot ?? pageDataPending;
+    const entry = entries.get(key);
+    return entry === undefined || (options.retainStale === false && entry.stale && entry.snapshot.state === 'ready')
+      ? pageDataPending
+      : entry.snapshot;
   };
 
-  const subscribe = (listener: () => void): (() => void) => {
+  const subscribe = (listener: () => void, input?: I): (() => void) => {
+    const key = input === undefined ? undefined : options.key(input);
+    if (key !== undefined) {
+      mountedKeys.set(key, (mountedKeys.get(key) ?? 0) + 1);
+    }
     listeners.add(listener);
     return () => {
       listeners.delete(listener);
+      if (key !== undefined) {
+        const count = (mountedKeys.get(key) ?? 1) - 1;
+        if (count === 0) {
+          mountedKeys.delete(key);
+          const entry = entries.get(key);
+          if (
+            options.cancelWhenUnused === true &&
+            entry !== undefined &&
+            entry.consumers === 0 &&
+            Option.isSome(entry.inFlight)
+          ) {
+            // React can unsubscribe/resubscribe synchronously during a render. Cancel only after that turn.
+            options.runtime.runFork(
+              Effect.yieldNow.pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    if (!mountedKeys.has(key) && entry.consumers === 0) {
+                      const obsolete = supersede(entry);
+                      entry.stale = true;
+                      interruptObsolete(obsolete);
+                    }
+                  }),
+                ),
+              ),
+            );
+          }
+        } else {
+          mountedKeys.set(key, count);
+        }
+      }
     };
   };
 
-  return { ensure, key: options.key, preload, read, refresh, snapshot, subscribe, update };
+  return {
+    ensure,
+    invalidate: () => invalidateOnWrite()(),
+    key: options.key,
+    preload,
+    read,
+    refresh,
+    snapshot,
+    subscribe,
+    update,
+  };
 };
 
 const PRELOAD_STEP_CONCURRENCY = 8;

@@ -16,12 +16,19 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import type { CellContext, ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
+import type {
+  CellContext,
+  ColumnDef,
+  DataTableProps,
+  DataTableTranslations,
+  TanstackTable,
+} from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { BulkTagDialog, TagCell, TagFilter } from '@app/tagging/components/tag-controls';
 import type { TagsStatus } from '@app/tagging/components/tag-controls';
 import { pageDataPending } from '@app/shared-contracts/page-data';
+import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { Predicate } from 'effect';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
@@ -38,11 +45,12 @@ import { CustomerCreateDialog } from './customer-create-dialog.tsx';
 import { CustomerDetailDialog } from './customer-detail-dialog.tsx';
 import { CustomerIdentityReviewPanel } from './customer-identity-review-panel.tsx';
 import {
-  allCustomers,
+  customersQuery,
   customerWritesRefused,
   customersData,
   useCustomerDetailSelection,
   useCustomerIdentityReview,
+  usePrefetchCustomerDetails,
   rememberCustomerWriteRefusal,
 } from './customers-data.ts';
 import type { CustomersSnapshot } from './customers-data.ts';
@@ -81,6 +89,14 @@ type Selection = Record<string, true>;
 /** Column visibility as the ui-kit DataTable types it: column id to shown. */
 type ColumnVisibility = Record<string, boolean>;
 
+/** The table's own page state, mirrored so the prefetch follows the rows actually on screen. */
+interface Pagination {
+  readonly pageIndex: number;
+  readonly pageSize: number;
+}
+
+const initialPagination: Pagination = { pageIndex: 0, pageSize: pageSizeOptions[0] ?? 50 };
+
 type CustomersDataSnapshot = ReturnType<typeof customersData.snapshot>;
 
 /** A failed read that is being retried reads as loading again; a refresh of ready rows keeps them on screen. */
@@ -97,11 +113,6 @@ const loadStateOf = (snapshot: CustomersDataSnapshot): LoadState => {
 };
 
 const serverSnapshot = (): CustomersDataSnapshot => pageDataPending;
-const readCustomers = () => customersData.snapshot(allCustomers);
-// Refresh keeps rows on screen; only a failed first load shows an error, so an error never reads as "no records".
-const reload = () => {
-  browserRuntime.runFork(customersData.refresh(allCustomers));
-};
 
 const nameCell = (info: CellContext<CustomerListItem>) => (
   <span className="block truncate font-medium">{orDash(info.row.original.displayName)}</span>
@@ -310,13 +321,41 @@ const CustomersEmpty = ({ filtered, onClearFilters, onCreate, onRetry, status }:
   );
 };
 
-const CustomersContent = () => {
+interface CustomersContentProps {
+  readonly context?: ModulePageContext | undefined;
+}
+
+/** Rendered after DataTable so its controller already holds this render's sorted, paginated rows. */
+const CustomerTableDetailPrefetch = ({
+  context,
+  table,
+}: {
+  readonly context: ModulePageContext | undefined;
+  readonly table: TanstackTable<CustomerListItem> | undefined;
+}) => {
+  usePrefetchCustomerDetails(context, table?.getRowModel().rows.map((row) => row.original) ?? []);
+  return null;
+};
+
+const CustomersContent = ({ context }: CustomersContentProps) => {
   const { t } = useModernI18n();
   // Every customer, archived included, so the stat tiles describe the whole register. The Shell preloads it.
-  const state = loadStateOf(useSyncExternalStore(customersData.subscribe, readCustomers, serverSnapshot));
+  const query = customersQuery(context);
+  const state = loadStateOf(
+    useSyncExternalStore(
+      (listener) => customersData.subscribe(listener, query),
+      () => customersData.snapshot(query),
+      serverSnapshot,
+    ),
+  );
+  // Refresh keeps rows on screen; only a failed first load shows an error, so an error never reads as "no records".
+  const reload = () => {
+    browserRuntime.runFork(customersData.refresh(query));
+  };
   const [search, setSearch] = useState('');
   const [selection, setSelection] = useState<Selection>({});
-  const { closeDetail, detail, detailFailure, detailValue, openDetail, retryDetail } = useCustomerDetailSelection();
+  const { closeDetail, detail, detailFailure, detailValue, openDetail, retryDetail } =
+    useCustomerDetailSelection(context);
   const review = useCustomerIdentityReview(reload);
   const reviewKey = `${key}.identityReview`;
   const [createOpen, setCreateOpen] = useState(false);
@@ -325,6 +364,9 @@ const CustomersContent = () => {
   const [tagOpen, setTagOpen] = useState(false);
   const [segmentFilter, setSegmentFilter] = useState<string>(allSegments);
   const [statusFilter, setStatusFilter] = useState<string>(defaultStatusFilter);
+  const [pagination, setPagination] = useState<Pagination>(initialPagination);
+  const [sorting, setSorting] = useState<NonNullable<DataTableProps<CustomerListItem>['sorting']>>([]);
+  const [table, setTable] = useState<TanstackTable<CustomerListItem>>();
   /** The owner refused a customer write for this role, so create and archive actions are hidden. */
   const [writesRefused, setWritesRefused] = useState(customerWritesRefused);
   const refuseWrites = () => {
@@ -332,7 +374,7 @@ const CustomersContent = () => {
     setWritesRefused(true);
   };
 
-  useEffect(() => customersData.ensure(allCustomers), []);
+  useEffect(() => customersData.ensure(query), [query]);
 
   const data = state.status === 'ready' ? state.data : undefined;
   const items = data?.items ?? [];
@@ -541,17 +583,23 @@ const CustomersContent = () => {
           loadingRowCount={12}
           maxHeight="calc(100dvh - 15rem)"
           onColumnVisibilityChange={setColumnVisibility}
+          onPaginationChange={setPagination}
+          onReady={setTable}
           onRowClick={(row) => openDetail(row.original)}
           onRowSelectionChange={setSelection}
+          onSortingChange={setSorting}
           pageSizeOptions={pageSizeOptions}
+          pagination={pagination}
           paginationProps={{ translations: paginationTranslations }}
           renderEmpty={renderEmpty}
           rowSelection={selection}
           size="sm"
+          sorting={sorting}
           stickyHeader
           tableLayout="fixed"
           translations={translations}
         />
+        <CustomerTableDetailPrefetch context={context} table={table} />
       </div>
 
       <CustomerIdentityReviewPanel review={review} />
@@ -590,14 +638,18 @@ const CustomersContent = () => {
   );
 };
 
-export const CustomersPage = () => (
+interface CustomersPageProps {
+  readonly context?: ModulePageContext | undefined;
+}
+
+export const CustomersPage = ({ context }: CustomersPageProps) => (
   <FederatedI18nBoundary
     defaultNamespace="party-registry"
     fallbackLanguage="en"
     resources={partyRegistryI18nResources}
     supportedLanguages={['en', 'cs']}
   >
-    <CustomersContent />
+    <CustomersContent context={context} key={customersQuery(context)} />
   </FederatedI18nBoundary>
 );
 

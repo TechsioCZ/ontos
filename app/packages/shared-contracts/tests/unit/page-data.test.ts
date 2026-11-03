@@ -4,6 +4,7 @@ import {
   modulePagePreload,
   moduleWriteEvent,
   pageDataPending,
+  pageDataScopeKey,
   pageDataWorkEvent,
 } from '@app/shared-contracts/page-data';
 import type { PageDataWork } from '@app/shared-contracts/page-data';
@@ -46,6 +47,159 @@ const makeCountingStore = (options?: { readonly fail?: () => boolean }) => {
   });
   return { loads: () => loads, store };
 };
+
+it.effect('strict bounded details synchronously reuse complete data, but never stale data after a denial', () =>
+  Effect.gen(function* strictDetails() {
+    let denied = false;
+    let loads = 0;
+    const store = definePageData({
+      key: (id: string) => id,
+      load: (id: string) =>
+        Effect.suspend(() => {
+          loads += 1;
+          return denied ? Effect.fail('denied' as const) : Effect.succeed({ id, lines: ['complete'] });
+        }),
+      maxEntries: 2,
+      retainStale: false,
+      runtime,
+    });
+    yield* store.read('a');
+    const warmed = store.snapshot('a');
+    expect(warmed).toEqual({ refreshing: false, state: 'ready', value: { id: 'a', lines: ['complete'] } });
+    yield* store.read('a');
+    expect(store.snapshot('a')).toBe(warmed);
+    expect(loads).toBe(1);
+    denied = true;
+    store.invalidate();
+    expect(store.snapshot('a')).toBe(pageDataPending);
+    expect(yield* Effect.result(store.read('a'))).toEqual(Result.fail('denied'));
+    expect(store.snapshot('a')).toEqual({ error: 'denied', refreshing: false, state: 'failed' });
+    denied = false;
+    yield* store.read('a');
+    expect(loads).toBe(3);
+    expect(store.snapshot('a').state).toBe('ready');
+  }),
+);
+
+it.effect('bounded details evict the least recently read inactive entry', () =>
+  Effect.gen(function* boundedDetails() {
+    const store = definePageData({
+      key: (id: string) => id,
+      load: (id: string) => Effect.succeed(id),
+      maxEntries: 2,
+      runtime,
+    });
+    yield* store.read('a');
+    yield* store.read('b');
+    yield* store.read('a');
+    yield* store.read('c');
+    expect(store.snapshot('b')).toBe(pageDataPending);
+    expect(store.snapshot('a').state).toBe('ready');
+    expect(store.snapshot('c').state).toBe('ready');
+  }),
+);
+
+it.effect('a background observer cannot start unleased detail work outside its cancellable batch', () =>
+  Effect.gen(function* leasedBackground() {
+    let loads = 0;
+    const store = definePageData({
+      cancelWhenUnused: true,
+      key: (id: string) => id,
+      load: (id: string) =>
+        Effect.sync(() => {
+          loads += 1;
+          return id;
+        }),
+      maxEntries: 2,
+      retainStale: false,
+      runtime,
+    });
+    yield* store.read('a');
+    const unsubscribe = store.subscribe(() => {
+      store.snapshot('a');
+    });
+    store.invalidate();
+    expect(loads).toBe(1);
+    expect(store.snapshot('a')).toBe(pageDataPending);
+    unsubscribe();
+  }),
+);
+
+it.effect('cancelling background prefetch preserves a joined foreground read and releases the last owner', () =>
+  Effect.gen(function* cancellation() {
+    const started = yield* Deferred.make<true>();
+    const stopped = yield* Deferred.make<true>();
+    let loads = 0;
+    const store = definePageData({
+      cancelWhenUnused: true,
+      key: (id: string) => id,
+      load: (_id: string) =>
+        Effect.sync(() => {
+          loads += 1;
+        }).pipe(
+          Effect.andThen(Deferred.succeed(started, true)),
+          Effect.andThen(Effect.never),
+          Effect.ensuring(Deferred.succeed(stopped, true)),
+        ),
+      maxEntries: 2,
+      retainStale: false,
+      runtime,
+    });
+    const background = yield* Effect.forkChild(store.read('a'));
+    yield* Deferred.await(started);
+    const foreground = yield* Effect.forkChild(store.read('a'));
+    yield* Effect.yieldNow;
+    yield* Fiber.interrupt(background);
+    expect(loads).toBe(1);
+    expect(yield* Deferred.isDone(stopped)).toBe(false);
+    yield* Fiber.interrupt(foreground);
+    yield* Deferred.await(stopped);
+    expect(store.snapshot('a')).toBe(pageDataPending);
+  }),
+);
+
+it('detail identity includes the tenant, company, principal and module and rejects missing context', () => {
+  const context = { legalEntityId: 'company', principalId: 'principal', tenantId: 'tenant' };
+  const key = pageDataScopeKey(context, 'orders');
+  expect(pageDataScopeKey(undefined, 'orders')).toBeUndefined();
+  for (const field of ['legalEntityId', 'principalId', 'tenantId'] as const) {
+    expect(pageDataScopeKey({ ...context, [field]: 'other' }, 'orders')).not.toBe(key);
+    expect(pageDataScopeKey({ ...context, [field]: '' }, 'orders')).toBeUndefined();
+  }
+  expect(pageDataScopeKey(context, 'customers')).not.toBe(key);
+});
+
+it.live(
+  'TTL revalidates only the mounted strict detail, not every row warmed by the table',
+  () =>
+    Effect.gen(function* detailTtl() {
+      const loads: string[] = [];
+      const store = definePageData({
+        cancelWhenUnused: true,
+        key: (id: string) => id,
+        load: (id: string) =>
+          Effect.sync(() => {
+            loads.push(id);
+            return id;
+          }),
+        maxEntries: 2,
+        retainStale: false,
+        runtime,
+      });
+      yield* store.read('open');
+      yield* store.read('background');
+      const unsubscribe = store.subscribe(() => {
+        store.snapshot('open');
+      }, 'open');
+      yield* Effect.sleep('20100 millis');
+      expect(loads).toEqual(['open', 'background', 'open']);
+      expect(store.snapshot('open').state).toBe('ready');
+      expect(store.snapshot('background')).toBe(pageDataPending);
+      unsubscribe();
+      expect(store.snapshot('open').state).toBe('ready');
+    }),
+  30_000,
+);
 
 it.effect('concurrent preloads share one load', () =>
   Effect.gen(function* sharedLoad() {

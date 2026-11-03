@@ -1,12 +1,16 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react';
-import { DateTime, Effect, Exit, Match, Option, Predicate, Random, Ref, Schema } from 'effect';
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
+import { Data, DateTime, Effect, Exit, Match, Option, Predicate, Random, Ref, Result, Schema } from 'effect';
+import { constVoid } from 'effect/Function';
 
 import {
   definePageData,
   moduleChangeEvent,
   modulePagePreload,
   moduleWriteEvent,
+  pageDataPending,
+  pageDataScopeKey,
 } from '@app/shared-contracts/page-data';
+import type { ModulePageContext } from '@app/shared-contracts/page-data';
 
 import { executeAresLookup } from '../../../../api/ares-lookup-client.ts';
 import { executeDuplicateCandidateList } from '../../../../api/duplicate-candidate-list-client.ts';
@@ -50,6 +54,7 @@ import { OfficialIdentifierInputSchema } from '../../../../../shared/domain/iden
 import type { OfficialIdentifierAssertion } from '../../../../../shared/domain/identifier-contracts.ts';
 import type { Party } from '../../../../../shared/domain/identity-contracts.ts';
 import type { PartyRef } from '../../../../../shared/resources/party.ts';
+import type { CounterpartyRef } from '../../../../../shared/resources/counterparty.ts';
 import {
   customerContactRows,
   customerIdentifierRows,
@@ -73,21 +78,10 @@ const correlation = (operation: string) =>
     ([first, second]) => `party-registry:${operation}:${first}:${second}`,
   );
 
-/**
- * Set once the segment owner refuses (a non-transient failure) in this document. A role only changes with a
- * sign-out, which reloads the document, so later reads skip the lookup instead of logging the same refusal again.
- */
-const segmentsRefusal = browserRuntime.runSync(Ref.make(false));
-
 /** Segments are best effort: any failure, defects included, yields none instead of failing the customer list. */
 const segmentsOf = Effect.fn('CustomersData.segmentsOf')(function* segmentsOf(items: readonly CustomerListItem[]) {
-  if (yield* Ref.get(segmentsRefusal)) {
-    return Option.none<ReadonlyMap<string, CustomerSegment>>();
-  }
+  // A refusal is not a document-wide authorization cache. A scope change or later grant must retry the owner.
   const exit = yield* Effect.exit(customerSegmentsFor(items));
-  if (Option.exists(Exit.findErrorOption(exit), (failure) => !failure.retryable)) {
-    yield* Ref.set(segmentsRefusal, true);
-  }
   return Exit.getSuccess(exit);
 });
 
@@ -110,20 +104,24 @@ export const loadCustomers = Effect.all(
 
 /** The page reads the whole register and filters it locally, so there is one dataset. */
 export const allCustomers = 'all';
-type CustomersQuery = typeof allCustomers;
+/** The list and its visible-row prefetch must use the same complete Shell identity. */
+export const customersQuery = (context?: ModulePageContext): string =>
+  pageDataScopeKey(context, 'party.registry') ?? allCustomers;
 
 /**
  * The customer list of the signed-in principal. The Shell fills it through `preloadPage` before it reveals the
  * page, so rows, stats and segment labels render in the first commit.
  */
 export const customersData = definePageData({
-  key: (query: CustomersQuery) => query,
-  load: (_query: CustomersQuery) => loadCustomers,
+  key: (query: string) => query,
+  load: (_query: string) => loadCustomers,
+  maxEntries: 8,
+  retainStale: false,
   runtime: browserRuntime,
 });
 
 /** `preloadPage` of the customers page. */
-export const preloadCustomers = modulePagePreload(() => customersData.preload(allCustomers));
+export const preloadCustomers = modulePagePreload((props) => customersData.preload(customersQuery(props.context)));
 
 export const lookupAres = Effect.fn('CustomersData.lookupAres')(function* lookupAresEffect(ico: string) {
   const payload = yield* Schema.decodeEffect(AresLookupRequestSchema)({ ico });
@@ -181,26 +179,111 @@ const section = <Value, Failure>(operation: Effect.Effect<Value, Failure>) =>
     }),
   );
 
-export const loadCustomerDetail = Effect.fn('CustomersData.loadDetail')(function* loadDetail(
-  customer: CustomerListItem,
+/** Direct links use the exact governed commercial-context ref, never membership in a bounded list. */
+export const loadCustomerDetailByRef = Effect.fn('CustomersData.loadDetailByRef')(function* loadDetailByRef(
+  counterpartyRef: CounterpartyRef,
 ) {
   const id = yield* correlation('customer-detail');
   // First prove access to this exact commercial context, independently of broader identity permissions.
-  const counterparty = yield* executeCounterpartyRead({ counterpartyRef: customer.counterpartyRef }, id);
+  const counterparty = yield* executeCounterpartyRead({ counterpartyRef }, id);
   // The panel shows the current identity only. Fact history needs `review_party_identity`, which read-only roles
   // (accounting) do not hold, so asking for it would refuse the whole identity section for them.
   const identity = yield* section(executePartyDetail({ partyRef: counterparty.party.canonicalPartyRef }, id));
-  const partyRef = identity.status === 'ready' ? identity.value.resolution.canonicalPartyRef : customer.partyRef;
+  const partyRef =
+    identity.status === 'ready' ? identity.value.resolution.canonicalPartyRef : counterparty.party.canonicalPartyRef;
   const { contacts, identifiers } = yield* Effect.all(
     {
       contacts: section(executePartyContactPoints({ includeHistorical: true, partyRef }, id)),
       identifiers: section(executePartyOfficialIdentifierHistory({ partyRef }, id)),
     },
-    { concurrency: 2 },
+    { concurrency: 1 },
   );
   return { contacts, counterparty, identifiers, identity, now: yield* DateTime.now };
 });
+export const loadCustomerDetail = (customer: Pick<CustomerListItem, 'counterpartyRef'>) =>
+  loadCustomerDetailByRef(customer.counterpartyRef);
 export type CustomerDetailSnapshot = Effect.Success<ReturnType<typeof loadCustomerDetail>>;
+
+class CustomerDetailSectionsIncomplete extends Data.TaggedError('CustomerDetailSectionsIncomplete')<{
+  readonly value: CustomerDetailSnapshot;
+}> {}
+
+interface CustomerDetailInput {
+  readonly customer: CustomerListItem;
+  readonly scope: string;
+}
+const DetailKeySchema = Schema.fromJsonString(Schema.Array(Schema.String));
+const customerDetailKey = ({ customer, scope }: CustomerDetailInput): string =>
+  Result.getOrThrow(
+    Schema.encodeResult(DetailKeySchema)([
+      scope,
+      customer.counterpartyRef.tenantId,
+      customer.counterpartyRef.resourceId,
+      customer.partyRef.tenantId,
+      customer.partyRef.resourceId,
+      String(customer.partyRevision),
+    ]),
+  );
+
+/** A partial section is renderable for this opening, but is not a reusable authorization decision. */
+export const customerDetailData = definePageData({
+  cancelWhenUnused: true,
+  key: customerDetailKey,
+  load: ({ customer }: CustomerDetailInput) =>
+    loadCustomerDetail(customer).pipe(
+      Effect.flatMap((value) =>
+        value.identity.status === 'ready' && value.contacts.status === 'ready' && value.identifiers.status === 'ready'
+          ? Effect.succeed(value)
+          : Effect.fail(new CustomerDetailSectionsIncomplete({ value })),
+      ),
+    ),
+  maxEntries: 256,
+  retainStale: false,
+  runtime: browserRuntime,
+});
+
+/** Visible current-page rows only. The UI owner supplies its actual paginated row model. */
+export const preloadCustomerDetails = (
+  context: ModulePageContext | undefined,
+  rows: readonly CustomerListItem[],
+): Effect.Effect<void> => {
+  const scope = pageDataScopeKey(context, 'party.registry');
+  return scope === undefined
+    ? Effect.void
+    : Effect.forEach(
+        rows.slice(0, 200),
+        (customer) => customerDetailData.read({ customer, scope }).pipe(Effect.ignore),
+        {
+          concurrency: 2,
+          discard: true,
+        },
+      );
+};
+
+export const usePrefetchCustomerDetails = (
+  context: ModulePageContext | undefined,
+  rows: readonly CustomerListItem[],
+): void => {
+  const scope = pageDataScopeKey(context, 'party.registry');
+  const selection = Result.getOrThrow(
+    Schema.encodeResult(DetailKeySchema)(rows.map((customer) => customerDetailKey({ customer, scope: scope ?? '' }))),
+  );
+  const needsPreload = useSyncExternalStore(
+    customerDetailData.subscribe,
+    () =>
+      scope !== undefined &&
+      rows.slice(0, 200).some((customer) => customerDetailData.snapshot({ customer, scope }).state !== 'ready'),
+    () => false,
+  );
+  const preload = useEffectEvent(() => preloadCustomerDetails(context, rows));
+  useEffect(() => {
+    const fiber =
+      needsPreload && scope !== undefined && selection !== '[]' ? browserRuntime.runFork(preload()) : undefined;
+    return () => {
+      fiber?.interruptUnsafe();
+    };
+  }, [needsPreload, scope, selection]);
+};
 
 export type CustomerFactChange =
   | { readonly kind: 'name'; readonly value: string; readonly party: Party }
@@ -343,6 +426,7 @@ export const saveCustomerFact = Effect.fn('CustomersData.saveFact')(function* sa
         return yield* correctPartyFact(payload, options);
       }),
     }),
+    Effect.ensuring(Effect.sync(() => customerDetailData.invalidate())),
   );
 });
 
@@ -373,19 +457,31 @@ export interface CustomerDetailLoadState {
 export const loadCustomerDetailInto = (
   customer: CustomerListItem,
   onLoaded: (next: CustomerDetailLoadState) => void,
+  context?: ModulePageContext,
 ) => {
-  void browserRuntime.runPromise(
-    loadCustomerDetail(customer).pipe(
+  const scope = pageDataScopeKey(context, 'party.registry');
+  const cached = scope === undefined ? pageDataPending : customerDetailData.snapshot({ customer, scope });
+  if (cached.state === 'ready') {
+    onLoaded({ id: customer.counterpartyId, value: cached.value });
+    return constVoid;
+  }
+  const fiber = browserRuntime.runFork(
+    (scope === undefined ? loadCustomerDetail(customer) : customerDetailData.read({ customer, scope })).pipe(
       Effect.match({
         onFailure: (error) =>
-          onLoaded({
-            failure: Predicate.isTagged(error, 'CounterpartyReadForbiddenProblem') ? 'forbidden' : 'unavailable',
-            id: customer.counterpartyId,
-          }),
+          onLoaded(
+            Predicate.isTagged(error, 'CustomerDetailSectionsIncomplete')
+              ? { id: customer.counterpartyId, value: error.value }
+              : {
+                  failure: Predicate.isTagged(error, 'CounterpartyReadForbiddenProblem') ? 'forbidden' : 'unavailable',
+                  id: customer.counterpartyId,
+                },
+          ),
         onSuccess: (value) => onLoaded({ id: customer.counterpartyId, value }),
       }),
     ),
   );
+  return () => fiber.interruptUnsafe();
 };
 
 type CustomerLeaveIntent = { readonly kind: 'close' } | { readonly href: string; readonly kind: 'navigate' };
@@ -393,7 +489,7 @@ const navigateCustomerDocument = (href: string): void => globalThis.location.ass
 
 /** Application state stays with the owning feature. Each mutation retains unrelated drafts. */
 export const useCustomerDetail = (
-  customer: CustomerListItem,
+  customer: Pick<CustomerListItem, 'counterpartyRef'>,
   initialSnapshot: CustomerDetailSnapshot | undefined,
   onOpenChange: (open: boolean) => void,
   onRenamed: () => void,
@@ -578,20 +674,50 @@ export const useCustomerDetail = (
 };
 
 /** The latest opening owns its response, including rapidly reopening the same customer. */
-export const useCustomerDetailSelection = () => {
+export const useCustomerDetailSelection = (context?: ModulePageContext) => {
+  const scope = pageDataScopeKey(context, 'party.registry');
   const [detail, setDetail] = useState<CustomerListItem | null>(null);
   const [detailSnapshot, setDetailSnapshot] = useState<CustomerDetailLoadState>();
+  const [openingScope, setOpeningScope] = useState(scope);
   const request = useRef(0);
+  const cancel = useRef<() => void>(constVoid);
+  const subscribe = (listener: () => void) =>
+    customerDetailData.subscribe(
+      listener,
+      detail === null || scope === undefined || openingScope !== scope ? undefined : { customer: detail, scope },
+    );
+  const cached = useSyncExternalStore(
+    subscribe,
+    () =>
+      detail === null || scope === undefined || openingScope !== scope
+        ? pageDataPending
+        : customerDetailData.snapshot({ customer: detail, scope }),
+    () => pageDataPending,
+  );
+  const activeScope = useRef(scope);
+  useEffect(() => {
+    activeScope.current = scope;
+    return () => {
+      request.current += 1;
+      cancel.current();
+    };
+  }, [scope]);
   const openDetail = (customer: CustomerListItem) => {
+    cancel.current();
     request.current += 1;
     const opening = request.current;
+    setOpeningScope(scope);
     setDetail(customer);
     setDetailSnapshot({ id: customer.counterpartyId });
-    loadCustomerDetailInto(customer, (next) => {
-      if (request.current === opening) {
-        setDetailSnapshot(next);
-      }
-    });
+    cancel.current = loadCustomerDetailInto(
+      customer,
+      (next) => {
+        if (request.current === opening && activeScope.current === scope) {
+          setDetailSnapshot(next);
+        }
+      },
+      context,
+    );
   };
   const retryDetail = () => {
     if (detail !== null) {
@@ -601,15 +727,33 @@ export const useCustomerDetailSelection = () => {
   const closeDetail = (open: boolean) => {
     if (!open) {
       request.current += 1;
+      cancel.current();
       setDetail(null);
       setDetailSnapshot(undefined);
     }
   };
+  const shown = (): Pick<CustomerDetailLoadState, 'value' | 'failure'> | undefined => {
+    if (scope === undefined) {
+      return detailSnapshot;
+    }
+    if (cached.state === 'ready') {
+      return { value: cached.value };
+    }
+    if (cached.state === 'failed') {
+      return Predicate.isTagged(cached.error, 'CustomerDetailSectionsIncomplete')
+        ? { value: cached.error.value }
+        : {
+            failure: Predicate.isTagged(cached.error, 'CounterpartyReadForbiddenProblem') ? 'forbidden' : 'unavailable',
+          };
+    }
+    return undefined;
+  };
+  const shownSnapshot = shown();
   return {
     closeDetail,
-    detail,
-    detailFailure: detailSnapshot?.failure,
-    detailValue: detailSnapshot?.value,
+    detail: openingScope === scope ? detail : null,
+    detailFailure: shownSnapshot?.failure,
+    detailValue: shownSnapshot?.value,
     openDetail,
     retryDetail,
   };

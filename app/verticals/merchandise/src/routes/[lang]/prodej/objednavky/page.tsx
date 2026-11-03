@@ -17,7 +17,7 @@ import {
   Toaster,
 } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
-import { modulePagePreload } from '@app/shared-contracts/page-data';
+import { modulePagePreload, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { Effect, Option, Schema, SchemaGetter } from 'effect';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
@@ -113,6 +113,7 @@ const statusChangeNotification = (
 };
 
 interface OrdersPageContentProps {
+  readonly context?: ModulePageProps['context'];
   readonly legalEntityId: string;
 }
 
@@ -131,7 +132,7 @@ const OrdersPageQuerySchema = ordersQueryString.pipe(
   }),
 );
 
-const useOrdersPage = ({ legalEntityId }: OrdersPageContentProps) => {
+const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
   const { t } = useModernI18n();
   const toaster = useToast();
   const [search, setSearch] = useState('');
@@ -153,7 +154,7 @@ const useOrdersPage = ({ legalEntityId }: OrdersPageContentProps) => {
     status: statusFilter,
     taggedIds,
   };
-  const orders$ = useOrders(legalEntityId, query);
+  const orders$ = useOrders(legalEntityId, query, context);
   const { state } = orders$;
   // Selected orders by id, kept across pages: bulk actions need each order's status, not only its id.
   const [selectedOrders, setSelectedOrders] = useState<Readonly<Record<string, Order>>>({});
@@ -173,7 +174,11 @@ const useOrdersPage = ({ legalEntityId }: OrdersPageContentProps) => {
   const [busy, setBusy] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
   const [detailVersion, setDetailVersion] = useState(0);
-  const detail = useOrderDetail(detailId, detailVersion);
+  const detail = useOrderDetail(detailId, detailVersion, context, {
+    legalEntityId,
+    query,
+    scope: pageDataScopeKey(context, 'demo.merchandise'),
+  });
   const ready = state.kind === 'ready' ? state : undefined;
   const { canWrite, orders, stats, totalOrders } = ordersPageSummary(ready);
   /** Every change reloads the page, the header counts and the open detail. */
@@ -686,7 +691,9 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
 };
 
 /** The Shell prepares the first page, its header counts and the customer names before it reveals the page. */
-export const preloadPage = modulePagePreload((props) => preloadOrdersPage(legalEntityOf(props), PAGE_SIZE));
+export const preloadPage = modulePagePreload((props) =>
+  preloadOrdersPage(legalEntityOf(props), PAGE_SIZE, props.context),
+);
 
 export const OrdersPage = (props: Partial<ModulePageProps>) => (
   <FederatedI18nBoundary
@@ -695,7 +702,11 @@ export const OrdersPage = (props: Partial<ModulePageProps>) => (
     resources={merchandiseI18nResources}
     supportedLanguages={['en', 'cs']}
   >
-    <OrdersPageContent legalEntityId={legalEntityOf(props)} />
+    <OrdersPageContent
+      context={props.context}
+      key={pageDataScopeKey(props.context, 'demo.merchandise') ?? legalEntityOf(props)}
+      legalEntityId={legalEntityOf(props)}
+    />
   </FederatedI18nBoundary>
 );
 

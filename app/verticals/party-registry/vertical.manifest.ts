@@ -56,6 +56,7 @@ import { counterpartyRoleAddAction } from './src/actions/counterparty-role-add.a
 import { counterpartyRoleEndAction } from './src/actions/counterparty-role-end.action.ts';
 import { createPartyAction } from './src/actions/create-party.action.ts';
 import { createPartyRelationshipAction } from './src/actions/create-party-relationship.action.ts';
+import { CustomerDetailPage } from './src/routes/[lang]/prodej/zakaznici/[id]/page.tsx';
 import { CustomerListApi } from './shared/apis/customer-list.ts';
 import { CustomersPage } from './src/routes/[lang]/prodej/zakaznici/page.tsx';
 import { dismissDuplicateCandidateAction } from './src/actions/dismiss-duplicate-candidate.action.ts';
@@ -175,6 +176,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
     components: {
       // <generated-module-manifest-components>
       'page-contacts': ContactsPage,
+      'page-customer-detail': CustomerDetailPage,
       'page-customers': CustomersPage,
       // </generated-module-manifest-components>
     },
@@ -260,6 +262,20 @@ export const partyRegistryManifest = defineOntosModuleManifest({
           },
           expose: './PageContacts',
           routePath: '/contacts',
+        }),
+        pageContribution({
+          componentKey: 'party.registry.page-customer-detail',
+          contributionKey: 'party.registry.page.customer-detail',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
+            entrypointKey: 'party.registry.page.customer-detail',
+            moduleKey: 'party.registry',
+            role: 'page',
+            scope: 'tenant',
+          },
+          expose: './PageCustomerDetail',
+          routePath: '/prodej/zakaznici/:id',
         }),
         pageContribution({
           componentKey: 'party.registry.page-customers',

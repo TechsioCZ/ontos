@@ -1,7 +1,7 @@
-import { Effect, Exit, Match, Random, Result, Schema } from 'effect';
-import { definePageData, pageDataPending } from '@app/shared-contracts/page-data';
-import type { PageDataSnapshot } from '@app/shared-contracts/page-data';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { Data, Effect, Exit, Match, Predicate, Random, Result, Schema } from 'effect';
+import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
+import type { ModulePageContext, PageDataSnapshot } from '@app/shared-contracts/page-data';
+import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import { ApplyCommandPayloadSchema } from '../../../../../shared/actions/apply-command.ts';
 import type {
@@ -19,6 +19,8 @@ import { useSettledPageData } from '../../../../runtime/page-data-hooks.ts';
 import type { SettledPageData } from '../../../../runtime/page-data-hooks.ts';
 import { readProductRecord } from '../../provoz/produkty/product-reads.ts';
 import { customerDirectoryData } from './customers-directory.ts';
+
+const ORDERS_MODULE = 'demo.merchandise';
 
 /** What the orders table asks the server for: filters and one page, newest first. */
 export interface OrdersQuery {
@@ -107,6 +109,230 @@ const loadCounts = Effect.all(
 
 type LoadFailure = Effect.Error<ReturnType<typeof loadOrders>>;
 
+/** A revision conflict reaches the page as a 409 problem with its own code; other 409s are different conflicts. */
+export const isRevisionConflict = (error: CreateFailure): boolean =>
+  Match.value(error).pipe(
+    Match.tag(
+      'ApplyCommandActionConflictProblem',
+      (problem): boolean => problem.code === 'merchandise_revision_conflict',
+    ),
+    Match.orElse((): boolean => false),
+  );
+
+export const loadFailureKind = (error: LoadFailure): 'error' | 'forbidden' =>
+  Match.value(error).pipe(
+    Match.tag('RecordsForbiddenProblem', (): 'forbidden' => 'forbidden'),
+    Match.orElse((): 'error' => 'error'),
+  );
+
+/** Input of the orders list data: the company and one filtered page. */
+export interface OrdersPageInput {
+  readonly legalEntityId: string;
+  readonly query: OrdersQuery;
+  readonly scope?: string | undefined;
+}
+
+/** Everything `ordersView` sends, in a fixed order: equal requests share one entry. */
+const ordersPageKey = ({ legalEntityId, query, scope }: OrdersPageInput): string => {
+  const search = query.search.trim();
+  return [
+    legalEntityId,
+    scope ?? '',
+    query.limit,
+    query.offset,
+    query.status ?? '',
+    search,
+    search === '' ? '' : query.customerPartyIds.join(','),
+    query.taggedIds === null ? '*' : query.taggedIds.join(','),
+  ].join('|');
+};
+
+/** One page of orders per company and request. */
+export const ordersPageData = definePageData({
+  key: ordersPageKey,
+  load: ({ query }: OrdersPageInput) => loadOrders(query),
+  runtime: browserRuntime,
+});
+
+/** The header counts per authenticated scope; they do not depend on the filters. Legacy standalone keys are companies. */
+export const orderCountsData = definePageData({
+  key: (legalEntityId: string) => legalEntityId,
+  load: () => loadCounts,
+  runtime: browserRuntime,
+});
+
+/** The page the orders list opens with: no filters, newest first. */
+export const firstOrdersPage = (limit: number): OrdersQuery => ({
+  customerPartyIds: [],
+  limit,
+  offset: 0,
+  search: '',
+  status: null,
+  taggedIds: null,
+});
+
+/** Staff with order editing see customer names from the directory; dispatch reads no directory. */
+export const recordsCanEditOrders = (records: RecordsResponse): boolean => records.canEditOrders ?? records.canWrite;
+
+/**
+ * Prepares the first page, the header counts and, for staff who edit orders, the customer directory the names come
+ * from, so the page opens with all of them in place.
+ */
+export const preloadOrdersPage = (
+  legalEntityId: string,
+  limit: number,
+  context?: ModulePageContext,
+): Effect.Effect<void> => {
+  const input: OrdersPageInput = {
+    legalEntityId,
+    query: firstOrdersPage(limit),
+    scope: pageDataScopeKey(context, ORDERS_MODULE),
+  };
+  const firstPageWithNames = ordersPageData.preload(input).pipe(
+    Effect.andThen(
+      Effect.suspend(() => {
+        const page = ordersPageData.snapshot(input);
+        return page.state === 'ready' && recordsCanEditOrders(page.value)
+          ? customerDirectoryData.preload(legalEntityId)
+          : Effect.void;
+      }),
+    ),
+  );
+  return Effect.all([firstPageWithNames, orderCountsData.preload(input.scope ?? legalEntityId)], {
+    concurrency: 2,
+    discard: true,
+  });
+};
+
+/** The page's orders state from the last settled read; a failed count reads as unknown (a dash), never as zero. */
+const ordersState = (
+  settled: SettledPageData<OrdersPageInput, RecordsResponse, LoadFailure> | undefined,
+  counts: PageDataSnapshot<OrderCounts, unknown>,
+): OrdersState => {
+  if (settled === undefined) {
+    return { kind: 'loading' };
+  }
+  const { snapshot } = settled;
+  return snapshot.state === 'failed'
+    ? { kind: loadFailureKind(snapshot.error) }
+    : {
+        counts: counts.state === 'ready' ? counts.value : null,
+        kind: 'ready',
+        query: settled.input.query,
+        records: snapshot.value,
+      };
+};
+
+// Scalar effect dependencies retain array order and distinguish no tag filter from an empty match.
+const QueryIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
+const encodeQueryIds = Schema.encodeResult(QueryIdsJson);
+const decodeQueryIds = Schema.decodeResult(QueryIdsJson);
+
+export interface OrderDetailRecords {
+  /** The order wrote ORDER stock movements (checked on the ledger of its first line's product). */
+  readonly movesStock: boolean;
+  /**
+   * The products on the order's lines: list rows, and full records (with variants) for products a line sells as a
+   * variant, since the variant carries that line's stock and quantity rules.
+   */
+  readonly products: readonly ProductRecord[];
+  readonly revision: number;
+}
+
+/** The products of the order's lines, and whether the order took goods from stock. */
+const loadOrderDetail = Effect.fn('OrdersRecords.loadDetail')(function* loadOrderDetail(order: Order) {
+  const productIds = [...new Set(order.lines.map((line) => line.productId))].slice(0, 250);
+  const variantProductIds = [
+    ...new Set(order.lines.flatMap((line) => (line.variantId === undefined ? [] : [line.productId]))),
+  ];
+  const [rows, full, ledgers] = yield* Effect.all(
+    [
+      correlation('detail-products').pipe(
+        Effect.flatMap((id) =>
+          executeRecords({ view: { limit: productIds.length, ordersLimit: 0, productIds, summary: true } }, id),
+        ),
+      ),
+      Effect.forEach(variantProductIds, readProductRecord, { concurrency: 1 }),
+      // Movements come only with a single `productId`: the first line's product ledger tells whether stock moved.
+      Effect.forEach(
+        productIds.slice(0, 1),
+        (productId) =>
+          correlation('detail-ledger').pipe(
+            Effect.flatMap((id) =>
+              executeRecords({ view: { limit: 1, ordersLimit: 0, productId, summary: true } }, id),
+            ),
+          ),
+        { concurrency: 1 },
+      ),
+    ],
+    // Two background rows leave the third request slot to a foreground detail.
+    { concurrency: 1 },
+  );
+  const fullById = new Map(full.flatMap((product) => (product === undefined ? [] : [[product.id, product] as const])));
+  return {
+    movesStock: ledgers.some((ledger) =>
+      ledger.movements.some((movement) => movement.reason === 'ORDER' && movement.reference === order.number),
+    ),
+    products: rows.products.map((product) => fullById.get(product.id) ?? product),
+    revision: Math.max(rows.revision, ...ledgers.map((ledger) => ledger.revision)),
+  } satisfies OrderDetailRecords;
+});
+
+/** One order by id: the detail reads its own copy, so it is fresh after a change and works from a link. */
+const loadOrderById = (orderId: string) =>
+  correlation('detail-order').pipe(
+    Effect.flatMap((id) => executeRecords({ view: { limit: 0, orderId, ordersLimit: 1 } }, id)),
+    Effect.map((response) => ({
+      order: response.orders.find((order) => order.id === orderId),
+      revision: response.revision,
+    })),
+  );
+
+class OrderDetailNotFound extends Data.TaggedError('OrderDetailNotFound') {}
+
+interface OrderDetailInput {
+  readonly orderId: string;
+  readonly revision?: number | undefined;
+  readonly scope: string;
+  readonly source?: OrdersPageInput | undefined;
+}
+
+const loadDetailInput = Effect.fn('OrdersRecords.loadDetailInput')(function* loadDetailInput(input: OrderDetailInput) {
+  const source = input.source === undefined ? undefined : yield* ordersPageData.read(input.source);
+  const listed = source?.orders.find((order) => order.id === input.orderId);
+  const record =
+    listed === undefined ? yield* loadOrderById(input.orderId) : { order: listed, revision: source?.revision ?? 0 };
+  if (record.order === undefined) {
+    return yield* new OrderDetailNotFound();
+  }
+  const detail = yield* loadOrderDetail(record.order);
+  return { ...detail, order: record.order, revision: Math.max(record.revision, detail.revision) };
+});
+
+/** Only successful governed data is reusable. Missing rows and denials are retried on the next opening. */
+export const orderDetailData = definePageData({
+  cancelWhenUnused: true,
+  key: (input: OrderDetailInput) =>
+    Result.getOrThrow(encodeQueryIds([input.scope, input.orderId, String(input.revision)])),
+  load: loadDetailInput,
+  maxEntries: 256,
+  retainStale: false,
+  runtime: browserRuntime,
+});
+
+/** Caller supplies exactly the authorized current page, not a catalogue or all paginated results. */
+export const preloadOrderDetails = (input: OrdersPageInput, records: RecordsResponse): Effect.Effect<void> =>
+  input.scope === undefined
+    ? Effect.void
+    : Effect.forEach(
+        records.orders.slice(0, Math.min(input.query.limit, 200)),
+        (order) =>
+          orderDetailData
+            .read({ orderId: order.id, revision: records.revision, scope: input.scope ?? '', source: input })
+            .pipe(Effect.ignore),
+        { concurrency: 2, discard: true },
+      );
+
 /** One governed command. Every call carries a fresh idempotency key and the revision the caller last saw. */
 const submitCommand = Effect.fn('OrdersRecords.submitCommand')(function* submitCommand(
   command: MerchandiseCommand,
@@ -115,7 +341,14 @@ const submitCommand = Effect.fn('OrdersRecords.submitCommand')(function* submitC
   const requestCorrelation = yield* correlation('command');
   const idempotencyKey = yield* randomToken;
   const payload = yield* Schema.encodeEffect(ApplyCommandPayloadSchema)({ command, expectedRevision });
-  return yield* executeApplyCommand(payload, requestCorrelation, { idempotencyKey });
+  return yield* executeApplyCommand(payload, requestCorrelation, { idempotencyKey }).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        ordersPageData.invalidate();
+        orderDetailData.invalidate();
+      }),
+    ),
+  );
 });
 
 export const createOrder = Effect.fn('OrdersRecords.createOrder')(function* createOrder(input: {
@@ -145,16 +378,6 @@ export const resetDemoData = Effect.fn('OrdersRecords.resetDemoData')(function* 
 ) {
   return yield* submitCommand({ _tag: 'ResetDemoData', confirmation: 'OBNOVIT', reason }, revision);
 });
-
-/** A revision conflict reaches the page as a 409 problem with its own code; other 409s are different conflicts. */
-export const isRevisionConflict = (error: CreateFailure): boolean =>
-  Match.value(error).pipe(
-    Match.tag(
-      'ApplyCommandActionConflictProblem',
-      (problem): boolean => problem.code === 'merchandise_revision_conflict',
-    ),
-    Match.orElse((): boolean => false),
-  );
 
 /**
  * Sequential on purpose: each change advances the revision the next one must expect.
@@ -203,111 +426,14 @@ export const changeOrderStatuses = (input: {
     (progress, order) => applyStatusStep(progress, order, input.status, input.reason),
   );
 
-export const loadFailureKind = (error: LoadFailure): 'error' | 'forbidden' =>
-  Match.value(error).pipe(
-    Match.tag('RecordsForbiddenProblem', (): 'forbidden' => 'forbidden'),
-    Match.orElse((): 'error' => 'error'),
-  );
-
-/** Input of the orders list data: the company and one filtered page. */
-export interface OrdersPageInput {
-  readonly legalEntityId: string;
-  readonly query: OrdersQuery;
-}
-
-/** Everything `ordersView` sends, in a fixed order: equal requests share one entry. */
-const ordersPageKey = ({ legalEntityId, query }: OrdersPageInput): string => {
-  const search = query.search.trim();
-  return [
-    legalEntityId,
-    query.limit,
-    query.offset,
-    query.status ?? '',
-    search,
-    search === '' ? '' : query.customerPartyIds.join(','),
-    query.taggedIds === null ? '*' : query.taggedIds.join(','),
-  ].join('|');
-};
-
-/** One page of orders per company and request. */
-export const ordersPageData = definePageData({
-  key: ordersPageKey,
-  load: ({ query }: OrdersPageInput) => loadOrders(query),
-  runtime: browserRuntime,
-});
-
-/** The header counts per company; they do not depend on the filters. */
-export const orderCountsData = definePageData({
-  key: (legalEntityId: string) => legalEntityId,
-  load: () => loadCounts,
-  runtime: browserRuntime,
-});
-
-/** The page the orders list opens with: no filters, newest first. */
-export const firstOrdersPage = (limit: number): OrdersQuery => ({
-  customerPartyIds: [],
-  limit,
-  offset: 0,
-  search: '',
-  status: null,
-  taggedIds: null,
-});
-
-/** Staff with order editing see customer names from the directory; dispatch reads no directory. */
-export const recordsCanEditOrders = (records: RecordsResponse): boolean => records.canEditOrders ?? records.canWrite;
-
-/**
- * Prepares the first page, the header counts and, for staff who edit orders, the customer directory the names come
- * from, so the page opens with all of them in place.
- */
-export const preloadOrdersPage = (legalEntityId: string, limit: number): Effect.Effect<void> => {
-  const input: OrdersPageInput = { legalEntityId, query: firstOrdersPage(limit) };
-  const firstPageWithNames = ordersPageData.preload(input).pipe(
-    Effect.andThen(
-      Effect.suspend(() => {
-        const page = ordersPageData.snapshot(input);
-        return page.state === 'ready' && recordsCanEditOrders(page.value)
-          ? customerDirectoryData.preload(legalEntityId)
-          : Effect.void;
-      }),
-    ),
-  );
-  return Effect.all([firstPageWithNames, orderCountsData.preload(legalEntityId)], {
-    concurrency: 2,
-    discard: true,
-  });
-};
-
-/** The page's orders state from the last settled read; a failed count reads as unknown (a dash), never as zero. */
-const ordersState = (
-  settled: SettledPageData<OrdersPageInput, RecordsResponse, LoadFailure> | undefined,
-  counts: PageDataSnapshot<OrderCounts, unknown>,
-): OrdersState => {
-  if (settled === undefined) {
-    return { kind: 'loading' };
-  }
-  const { snapshot } = settled;
-  return snapshot.state === 'failed'
-    ? { kind: loadFailureKind(snapshot.error) }
-    : {
-        counts: counts.state === 'ready' ? counts.value : null,
-        kind: 'ready',
-        query: settled.input.query,
-        records: snapshot.value,
-      };
-};
-
-// Scalar effect dependencies retain array order and distinguish no tag filter from an empty match.
-const QueryIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
-const encodeQueryIds = Schema.encodeResult(QueryIdsJson);
-const decodeQueryIds = Schema.decodeResult(QueryIdsJson);
-
 /**
  * One page of orders for `query` with the header counts. While a new query loads the last page stays on screen
  * (`state.query` tells which query it answers). `load` reads the page and the counts again after a change.
  */
-export const useOrders = (legalEntityId: string, query: OrdersQuery) => {
-  const input: OrdersPageInput = { legalEntityId, query };
+export const useOrders = (legalEntityId: string, query: OrdersQuery, context?: ModulePageContext) => {
+  const scope = pageDataScopeKey(context, ORDERS_MODULE);
+  const countsKey = scope ?? legalEntityId;
+  const input: OrdersPageInput = { legalEntityId, query, scope };
   const page = useSyncExternalStore(
     ordersPageData.subscribe,
     () => ordersPageData.snapshot(input),
@@ -315,7 +441,7 @@ export const useOrders = (legalEntityId: string, query: OrdersQuery) => {
   );
   const counts = useSyncExternalStore(
     orderCountsData.subscribe,
-    () => orderCountsData.snapshot(legalEntityId),
+    () => orderCountsData.snapshot(countsKey),
     () => pageDataPending,
   );
   const { limit, offset, search, status } = query;
@@ -333,80 +459,42 @@ export const useOrders = (legalEntityId: string, query: OrdersQuery) => {
         status,
         taggedIds: taggedIdsJson === null ? null : Result.getOrThrow(decodeQueryIds(taggedIdsJson)),
       },
+      scope,
     });
-  }, [customerPartyIdsJson, legalEntityId, limit, offset, search, status, taggedIdsJson]);
+  }, [customerPartyIdsJson, legalEntityId, limit, offset, scope, search, status, taggedIdsJson]);
   useEffect(() => {
-    orderCountsData.ensure(legalEntityId);
-  }, [legalEntityId]);
+    orderCountsData.ensure(countsKey);
+  }, [countsKey]);
   const settled = useSettledPageData(page, input);
+  const prefetch = useEffectEvent((records: RecordsResponse) => preloadOrderDetails(input, records));
+  // Prefetch only the current request, never the previous page retained while a filter loads.
+  useEffect(() => {
+    const fiber =
+      scope !== undefined && page.state === 'ready' && !page.refreshing
+        ? browserRuntime.runFork(prefetch(page.value))
+        : undefined;
+    return () => {
+      fiber?.interruptUnsafe();
+    };
+  }, [page, scope]);
   return {
     load: () => {
+      orderDetailData.invalidate();
       browserRuntime.runFork(
-        Effect.all([ordersPageData.refresh(input), orderCountsData.refresh(legalEntityId)], {
+        Effect.all([ordersPageData.refresh(input), orderCountsData.refresh(countsKey)], {
           concurrency: 2,
           discard: true,
         }),
       );
     },
-    state: ordersState(settled, counts),
+    state: ordersState(
+      settled !== undefined && settled.input.scope === scope && settled.input.legalEntityId === legalEntityId
+        ? settled
+        : undefined,
+      counts,
+    ),
   };
 };
-
-export interface OrderDetailRecords {
-  /** The order wrote ORDER stock movements (checked on the ledger of its first line's product). */
-  readonly movesStock: boolean;
-  /**
-   * The products on the order's lines: list rows, and full records (with variants) for products a line sells as a
-   * variant, since the variant carries that line's stock and quantity rules.
-   */
-  readonly products: readonly ProductRecord[];
-  readonly revision: number;
-}
-
-/** The products of the order's lines, and whether the order took goods from stock. */
-const loadOrderDetail = Effect.fn('OrdersRecords.loadDetail')(function* loadOrderDetail(order: Order) {
-  const productIds = [...new Set(order.lines.map((line) => line.productId))].slice(0, 250);
-  const variantProductIds = [
-    ...new Set(order.lines.flatMap((line) => (line.variantId === undefined ? [] : [line.productId]))),
-  ];
-  const [rows, full, ledgers] = yield* Effect.all(
-    [
-      correlation('detail-products').pipe(
-        Effect.flatMap((id) =>
-          executeRecords({ view: { limit: productIds.length, ordersLimit: 0, productIds, summary: true } }, id),
-        ),
-      ),
-      Effect.forEach(variantProductIds, readProductRecord, { concurrency: 2 }),
-      // Movements come only with a single `productId`: the first line's product ledger tells whether stock moved.
-      Effect.forEach(
-        productIds.slice(0, 1),
-        (productId) =>
-          correlation('detail-ledger').pipe(
-            Effect.flatMap((id) =>
-              executeRecords({ view: { limit: 1, ordersLimit: 0, productId, summary: true } }, id),
-            ),
-          ),
-        { concurrency: 1 },
-      ),
-    ],
-    { concurrency: 3 },
-  );
-  const fullById = new Map(full.flatMap((product) => (product === undefined ? [] : [[product.id, product] as const])));
-  return {
-    movesStock: ledgers.some((ledger) =>
-      ledger.movements.some((movement) => movement.reason === 'ORDER' && movement.reference === order.number),
-    ),
-    products: rows.products.map((product) => fullById.get(product.id) ?? product),
-    revision: Math.max(rows.revision, ...ledgers.map((ledger) => ledger.revision)),
-  } satisfies OrderDetailRecords;
-});
-
-/** One order by id: the detail reads its own copy, so it is fresh after a change and works from a link. */
-const loadOrderById = (orderId: string) =>
-  correlation('detail-order').pipe(
-    Effect.flatMap((id) => executeRecords({ view: { limit: 0, orderId, ordersLimit: 1 } }, id)),
-    Effect.map((response) => response.orders.find((order) => order.id === orderId)),
-  );
 
 export type OrderDetailState =
   | { readonly status: 'idle' | 'loading' | 'not-found' }
@@ -417,26 +505,51 @@ export type OrderDetailState =
  * The open order with the product records its detail and edit form need. `version` changes after every change the
  * page makes, so the detail reads again.
  */
-export const useOrderDetail = (orderId: string | null, version: number): OrderDetailState => {
+export const useOrderDetail = (
+  orderId: string | null,
+  version: number,
+  context?: ModulePageContext,
+  source?: OrdersPageInput,
+): OrderDetailState => {
+  const scope = pageDataScopeKey(context, ORDERS_MODULE);
+  const list = source === undefined ? pageDataPending : ordersPageData.snapshot(source);
+  const revision = list.state === 'ready' ? list.value.revision : undefined;
+  const input: OrderDetailInput = {
+    orderId: orderId ?? '',
+    revision,
+    scope: scope ?? '',
+    source,
+  };
+  const subscribe = (listener: () => void) =>
+    orderDetailData.subscribe(
+      listener,
+      orderId === null || scope === undefined ? undefined : { orderId, revision, scope },
+    );
+  const cached = useSyncExternalStore(
+    subscribe,
+    () => (scope === undefined || orderId === null ? pageDataPending : orderDetailData.snapshot(input)),
+    () => pageDataPending,
+  );
   // Each answer names the request it answers, so a newer request reads as loading without a synchronous reset.
   const [answer, setAnswer] = useState<{ readonly request: string; readonly state: OrderDetailState } | null>(null);
-  const request = `${orderId ?? ''}:${version}`;
+  const request = Result.getOrThrow(
+    encodeQueryIds([scope ?? '', orderId ?? '', String(version), String(input.revision)]),
+  );
+  const readSelected = useEffectEvent(() =>
+    scope === undefined ? loadDetailInput({ orderId: input.orderId, scope: '' }) : orderDetailData.read(input),
+  );
   useEffect(() => {
     const fiber =
       orderId === null
         ? undefined
         : browserRuntime.runFork(
-            loadOrderById(orderId).pipe(
-              Effect.flatMap((order) =>
-                order === undefined
-                  ? Effect.succeed<OrderDetailState>({ status: 'not-found' })
-                  : loadOrderDetail(order).pipe(
-                      Effect.map((records): OrderDetailState => ({ ...records, order, status: 'ready' })),
-                    ),
-              ),
+            readSelected().pipe(
               Effect.match({
-                onFailure: (cause): OrderDetailState => ({ cause, status: 'error' }),
-                onSuccess: (state): OrderDetailState => state,
+                onFailure: (cause): OrderDetailState =>
+                  Predicate.isTagged(cause, 'OrderDetailNotFound')
+                    ? { status: 'not-found' }
+                    : { cause, status: 'error' },
+                onSuccess: (state): OrderDetailState => ({ ...state, status: 'ready' }),
               }),
               Effect.map((state) => setAnswer({ request, state })),
             ),
@@ -448,11 +561,22 @@ export const useOrderDetail = (orderId: string | null, version: number): OrderDe
   if (orderId === null) {
     return { status: 'idle' };
   }
+  if (scope !== undefined) {
+    if (cached.state === 'ready') {
+      return { ...cached.value, status: 'ready' };
+    }
+    if (cached.state === 'failed') {
+      return Predicate.isTagged(cached.error, 'OrderDetailNotFound')
+        ? { status: 'not-found' }
+        : { cause: cached.error, status: 'error' };
+    }
+    return { status: 'loading' };
+  }
   if (answer?.request === request) {
     return answer.state;
   }
   // A reread after a change keeps showing the same order until the fresh copy lands.
-  return answer?.state.status === 'ready' && answer.state.order.id === orderId ? answer.state : { status: 'loading' };
+  return { status: 'loading' };
 };
 
 export const removeDemoOrder = (id: Order['id'], reason: string, revision: number) =>

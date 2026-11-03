@@ -5,6 +5,10 @@
         "description": "Kanonické strany, protistrany a jejich profily zapojení v jednom modulu.",
         "title": "Kontakty"
       },
+      "customerDetail": {
+        "description": "Úplné údaje zákazníka včetně kontaktů, identifikátorů a historie.",
+        "title": "Zákazník"
+      },
       "customers": {
         "bulk": {
           "edit": "Upravit hromadně",
@@ -47,7 +51,7 @@
           "aresDone": "Údaje načteny z ARES.",
           "aresDuplicate": "Zákazník s tímto IČO už v evidenci je. Nový záznam nebude vytvořen.",
           "aresDuplicateNamed": "Zákazník {{name}} s tímto IČO už v evidenci je. Nový záznam nebude vytvořen.",
-            "aresLoading": "Načítám z ARES…",
+          "aresLoading": "Načítám z ARES…",
           "aresNotFound": "Subjekt s tímto IČO v ARES nebyl nalezen.",
           "aresUnavailable": "ARES není dostupný. Vyplňte údaje ručně.",
           "cancel": "Zrušit",
@@ -104,6 +108,7 @@
           "errorRename": "Změny se nepodařilo uložit. Zkuste to znovu.",
           "name": "Název",
           "nameRequired": "Vyplňte název zákazníka.",
+          "notFound": "Zákazník s tímto odkazem nebyl nalezen.",
           "phone": "Telefon",
           "rename": "Název zákazníka",
           "save": "Uložit změny",
@@ -127,6 +132,7 @@
           "saveContact": "Uložit kontakt",
           "sharedIdentity": "Název, identifikátory, kontakty a archivace patří ke sdílenému subjektu. Změna se projeví i v jeho ostatních obchodních kontextech.",
           "archive": "Archivovat subjekt",
+          "backToList": "Zpět na zákazníky",
           "restore": "Obnovit subjekt",
           "identifiers": "Identifikátory",
           "contacts": "Kontaktní údaje",
@@ -173,9 +179,9 @@
           "title": "Kontrola nejednoznačných identit",
           "description": "Projděte čekající případy a jejich podklady před výběrem existujícího subjektu. Shodný e-mail sám o sobě nepotvrzuje totožnost. Vyřešení případu neslučuje subjekty ani nezakládá obchodní vztah se zákazníkem.",
           "close": "Zavřít",
-            "next": "Další případy",
+          "next": "Další případy",
           "retryQueue": "Zkusit znovu načíst případy",
-        "retryDetail": "Zkusit znovu načíst případ",
+          "retryDetail": "Zkusit znovu načíst případ",
           "loading": "Načítání čekajících případů…",
           "loadingDetail": "Načítání případu a kandidátních subjektů…",
           "empty": "Na této stránce nejsou žádné čekající případy.",
@@ -208,9 +214,25 @@
           "unavailable": "Evidence teď není dostupná. Zkuste to prosím znovu.",
           "uncertain": "Výsledek řešení zatím není potvrzen. Před další změnou ověřte jeho stav; případný bezpečný pokus použije stejný požadavek.",
           "checkStatus": "Ověřit stav a bezpečně zopakovat",
-          "states": { "OPEN": "Otevřený", "NEEDS_EVIDENCE": "Čeká na podklady", "RESOLVED": "Vyřešený", "DISMISSED": "Zamítnutý" },
-          "types": { "PERSON": "Osoba", "ORGANIZATION": "Organizace", "UNRESOLVED": "Neurčený" },
-          "outcomes": { "MATCH_EXISTING": "Přiřazeno k existujícímu subjektu", "CREATE_NEW": "Založen samostatný subjekt", "NEEDS_EVIDENCE": "Vyžádány další podklady", "DISMISSED_AS_NON_SUBJECT": "Zamítnuto jako ne-subjekt", "CONFIRMED_DUPLICATE_PARTIES": "Potvrzeny duplicitní subjekty", "CORRECT_CLAIM_AND_MATCH": "Opraven nárok a přiřazen subjekt" }
+          "states": {
+            "OPEN": "Otevřený",
+            "NEEDS_EVIDENCE": "Čeká na podklady",
+            "RESOLVED": "Vyřešený",
+            "DISMISSED": "Zamítnutý"
+          },
+          "types": {
+            "PERSON": "Osoba",
+            "ORGANIZATION": "Organizace",
+            "UNRESOLVED": "Neurčený"
+          },
+          "outcomes": {
+            "MATCH_EXISTING": "Přiřazeno k existujícímu subjektu",
+            "CREATE_NEW": "Založen samostatný subjekt",
+            "NEEDS_EVIDENCE": "Vyžádány další podklady",
+            "DISMISSED_AS_NON_SUBJECT": "Zamítnuto jako ne-subjekt",
+            "CONFIRMED_DUPLICATE_PARTIES": "Potvrzeny duplicitní subjekty",
+            "CORRECT_CLAIM_AND_MATCH": "Opraven nárok a přiřazen subjekt"
+          }
         },
         "newCustomer": "Nový zákazník",
         "search": {
