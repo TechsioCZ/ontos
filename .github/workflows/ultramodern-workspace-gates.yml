@@ -40,13 +40,6 @@ defaults:
   run:
     shell: bash
 
-# Every job picks its machine from one place, so moving off GitHub's default runners is a variable
-# change, not a workflow rewrite. Unset variables keep today's `ubuntu-latest`; CI_RUNNER moves every
-# job, and CI_RUNNER_HEAVY the CPU-bound gate and build shards, onto faster partner runners such as
-# `blacksmith-4vcpu-ubuntu-2404` or `blacksmith-8vcpu-ubuntu-2404`. Note the image: this repository
-# runs `ubuntu-24.04`, so `2404` matches it, and Blacksmith's `2204` tags are deprecated. A partner
-# runner starts in seconds and, being self-hosted, is not counted against the free plan's 20
-# concurrent GitHub-hosted jobs - the cap that makes a run of this many jobs wait for a slot.
 concurrency:
   group: ultramodern-workspace-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -58,7 +51,7 @@ jobs:
   queue-proof:
     name: Find the merge queue proof of this commit
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       actions: read
@@ -88,7 +81,7 @@ jobs:
   warm-caches:
     name: Warm the gate caches on main
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ${{ vars.CI_RUNNER_HEAVY || vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Harden Runner
@@ -177,7 +170,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [queue-proof]
     if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
-    runs-on: ${{ vars.CI_RUNNER_HEAVY || vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -256,7 +249,7 @@ jobs:
     name: Static Contracts
     needs: [queue-proof]
     if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
-    runs-on: ${{ vars.CI_RUNNER_HEAVY || vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
@@ -395,7 +388,7 @@ jobs:
     name: Format and Lint through the pre-commit hook (${{ matrix.shard }}/2)
     needs: [queue-proof]
     if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
-    runs-on: ${{ vars.CI_RUNNER_HEAVY || vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -445,7 +438,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [queue-proof]
     if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
-    runs-on: ${{ vars.CI_RUNNER_HEAVY || vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -727,7 +720,7 @@ jobs:
       actions: read
       contents: read
     if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
-    runs-on: ${{ vars.CI_RUNNER_HEAVY || vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -871,7 +864,7 @@ jobs:
       actions: read
       contents: read
     if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
-    runs-on: ${{ vars.CI_RUNNER_HEAVY || vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -1108,7 +1101,7 @@ jobs:
         node-artifact-build,
         cloudflare-artifact-build,
       ]
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
     steps:
@@ -1149,7 +1142,7 @@ jobs:
   deploy-target:
     name: Resolve the deploy target of the deployment environment
     if: vars.MAIN_DEPLOY_ENABLED == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     environment:
       name: ${{ inputs.environment || 'stage' }}
@@ -1214,7 +1207,7 @@ jobs:
       && needs.deploy-target.outputs.configured == 'true'
       && (needs.deploy-target.outputs.target == 'zerops' || needs.edge-deploy-readiness.outputs.configured == 'true')
     needs: [deploy-target, edge-deploy-readiness]
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
       name: ${{ needs.deploy-target.outputs.environment }}
@@ -1344,7 +1337,7 @@ jobs:
       ${{ !cancelled() && needs.workspace-gates.result == 'success' && needs.deploy-plan.result == 'success'
       && (needs.deploy-target.outputs.target == 'zerops' || needs.edge-plan.result == 'success') }}
     needs: [workspace-gates, deploy-target, deploy-plan, edge-plan]
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
       name: ${{ needs.deploy-target.outputs.target == 'cloudflare' && needs.deploy-target.outputs.environment == 'stage' && 'stage-edge' || needs.deploy-target.outputs.environment }}
@@ -1431,7 +1424,7 @@ jobs:
     name: Migrate the environment's database and SpiceDB after the gates
     if: ${{ !cancelled() && needs.workspace-gates.result == 'success' && needs.deploy-plan.result == 'success' && needs.initial-composition-cutover-guard.result == 'success' }}
     needs: [workspace-gates, deploy-target, deploy-plan, initial-composition-cutover-guard]
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     environment:
       name: ${{ needs.deploy-target.outputs.target == 'cloudflare' && needs.deploy-target.outputs.environment == 'stage' && 'stage-edge' || needs.deploy-target.outputs.environment }}
@@ -1594,7 +1587,7 @@ jobs:
     name: Deploy the environment's Zerops services after merge to main
     if: ${{ !cancelled() && needs.deploy-migrations.result == 'success' }}
     needs: [deploy-target, deploy-plan, deploy-migrations]
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     # Each Zerops push builds its unit remotely for about 12 minutes and units deploy one after another in
     # plan order, so a full topology deploy (12 units plus publication) needs about 3 hours.
     timeout-minutes: 240
@@ -1761,7 +1754,7 @@ jobs:
     name: Check the Cloudflare edge deploy configuration
     if: needs.deploy-target.outputs.environment == 'stage'
     needs: [deploy-target]
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     environment:
       name: stage-edge
@@ -1828,7 +1821,7 @@ jobs:
     name: Plan the edge units to deploy
     if: ${{ !cancelled() && needs.edge-deploy-readiness.outputs.configured == 'true' }}
     needs: [deploy-target, edge-deploy-readiness]
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
@@ -1931,7 +1924,7 @@ jobs:
     name: Build edge unit ${{ matrix.unit.id }}
     if: ${{ !cancelled() && needs.edge-plan.result == 'success' && needs.edge-plan.outputs.cloudflare != '[]' }}
     needs: [edge-plan]
-    runs-on: ${{ vars.CI_RUNNER_HEAVY || vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -2029,7 +2022,7 @@ jobs:
       ${{ !cancelled() && needs.deploy-migrations.result == 'success' && needs.edge-plan.result == 'success'
       && (needs.edge-build.result == 'success' || (needs.edge-build.result == 'skipped' && needs.edge-plan.outputs.cloudflare == '[]')) }}
     needs: [deploy-target, deploy-migrations, edge-plan, edge-build]
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     # Artifact creation, authority changes, refresh and publication share the environment lock.
     concurrency:
       group: zerops-stage
@@ -2207,7 +2200,7 @@ jobs:
       ${{ !cancelled() && needs.deploy-zerops.result == 'success' && needs.deploy-cloudflare.result == 'success'
       && needs.deploy-target.outputs.target == 'cloudflare' }}
     needs: [deploy-target, deploy-zerops, deploy-cloudflare]
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
       name: stage-edge
@@ -2309,7 +2302,7 @@ jobs:
       && needs.edge-plan.result == 'success' && needs.deploy-cloudflare.result == 'success'
       && needs.publish-edge-composition.result == 'success' }}
     needs: [deploy-target, edge-plan, deploy-cloudflare, publish-edge-composition]
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: stage-edge
     concurrency:
