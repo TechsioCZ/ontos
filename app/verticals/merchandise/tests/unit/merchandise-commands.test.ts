@@ -11,7 +11,7 @@ import { ProductIdSchema } from '../../shared/domain/merchandise-model.ts';
 import type { OrderStatus } from '../../shared/domain/merchandise-model.ts';
 import { orderTotals } from '../../shared/domain/order-totals.ts';
 import { evolveMerchandiseState, percentChangedPriceMinor } from '../../src/services/persistence.service.ts';
-import { stockOnHandOf } from '../../src/services/stock-levels.ts';
+import { computeProductRecords, stockOnHandOf } from '../../src/services/stock-levels.ts';
 
 const actor = {
   principalId: '20000000-0000-4000-8000-000000000002',
@@ -69,6 +69,162 @@ it.effect('CreateProduct uses the invocation id and starts a price history', () 
     expect(product?.id).toBe('product-1');
     expect(product?.currentPriceMinor).toBe(19_900);
     expect(product?.priceHistory).toHaveLength(1);
+    expect(product?.variants).toBeUndefined();
+  }),
+);
+
+it.effect('CreateProduct normalizes priced variants and preserves informational variants', () =>
+  Effect.gen(function* createVariants() {
+    const command: CommandInput = {
+      _tag: 'CreateProduct',
+      active: true,
+      category: 'IT',
+      lowStockThreshold: 0,
+      name: 'Cable',
+      priceMinor: 9900,
+      sku: 'CABLE',
+      unit: 'ks',
+      variants: [
+        { attributes: 'Colour: black', name: 'Black', priceMinor: 1050, sku: 'CABLE-BLACK' },
+        { attributes: 'Colour: white', id: 'white-variant', name: 'White', priceMinor: 0 },
+        { attributes: 'Material: copper', name: 'Material' },
+      ],
+      vatRate: 21,
+    };
+    const created = yield* apply(empty, command, 'variant-product');
+    const variants = created.state.products[0]?.variants;
+    expect(variants).toEqual([
+      {
+        ...command.variants?.[0],
+        id: 'variant-product-v1',
+        priceHistory: [{ changedBy: actor, effectiveFrom: t0, priceMinor: 1050 }],
+      },
+      {
+        ...command.variants?.[1],
+        priceHistory: [{ changedBy: actor, effectiveFrom: t0, priceMinor: 0 }],
+      },
+      command.variants?.[2],
+    ]);
+    expect(command.variants?.[0]?.id).toBeUndefined();
+    const replay = yield* apply(empty, command, 'variant-product');
+    expect(replay.state).toEqual(created.state);
+    const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(created.state);
+    const decoded = yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(encoded);
+    expect(decoded).toEqual(created.state);
+    expect(computeProductRecords(decoded)[0]?.variantRecords?.map((variant) => variant.id)).toEqual([
+      'variant-product-v1',
+      'white-variant',
+    ]);
+  }),
+);
+
+it.effect('new priced variants immediately accept stock and preserve their own order price', () =>
+  Effect.gen(function* useCreatedVariant() {
+    const created = yield* apply(
+      empty,
+      {
+        _tag: 'CreateProduct',
+        active: true,
+        category: 'IT',
+        lowStockThreshold: 0,
+        name: 'Cable',
+        priceMinor: 9900,
+        sku: 'CABLE',
+        unit: 'ks',
+        variants: [{ attributes: 'Colour: black', name: 'Black', priceMinor: 1050 }],
+        vatRate: 21,
+      },
+      'variant-product',
+    );
+    const stocked = yield* apply(
+      created.state,
+      {
+        _tag: 'RecordStockMovement',
+        delta: 5,
+        productId: 'variant-product',
+        reason: 'RECEIPT',
+        variantId: 'variant-product-v1',
+      },
+      'variant-receipt',
+    );
+    expect(computeProductRecords(stocked.state)[0]?.variantRecords?.[0]).toMatchObject({
+      id: 'variant-product-v1',
+      priceMinor: 1050,
+      stockOnHand: 5,
+    });
+    const parentReceipt = yield* receive(stocked.state, 'variant-product', 1, 'parent-receipt').pipe(Effect.flip);
+    expect(isConflict(parentReceipt)).toBe(true);
+    const ordered = yield* apply(
+      stocked.state,
+      {
+        _tag: 'CreateOrder',
+        id: 'variant-order',
+        lines: [{ productId: 'variant-product', quantity: 2, variantId: 'variant-product-v1' }],
+        partyId: 'party-1',
+      },
+      'variant-order',
+    );
+    expect(ordered.state.orders[0]?.lines[0]).toMatchObject({
+      unitPriceMinor: 1050,
+      variantId: 'variant-product-v1',
+      variantName: 'Black',
+    });
+    expect(computeProductRecords(ordered.state)[0]?.variantRecords?.[0]?.stockOnHand).toBe(3);
+  }),
+);
+
+it.effect('CreateProduct rejects duplicate variant identities including generated-id collisions', () =>
+  Effect.gen(function* duplicateVariantIds() {
+    for (const id of ['same-variant', 'variant-product-v1']) {
+      const firstVariant =
+        id === 'same-variant'
+          ? { attributes: '', id, name: 'Black', priceMinor: 1050 }
+          : { attributes: '', name: 'Black', priceMinor: 1050 };
+      const error = yield* apply(
+        empty,
+        {
+          _tag: 'CreateProduct',
+          active: true,
+          category: 'IT',
+          lowStockThreshold: 0,
+          name: 'Cable',
+          priceMinor: 9900,
+          sku: 'CABLE',
+          unit: 'ks',
+          variants: [firstVariant, { attributes: '', id, name: 'White', priceMinor: 1100 }],
+          vatRate: 21,
+        },
+        'variant-product',
+      ).pipe(Effect.flip);
+      expect(isConflict(error)).toBe(true);
+      expect(empty.products).toEqual([]);
+    }
+  }),
+);
+
+it.effect('CreateProduct rejects case-insensitive duplicate variant SKUs', () =>
+  Effect.gen(function* duplicateVariantSkus() {
+    const error = yield* apply(
+      empty,
+      {
+        _tag: 'CreateProduct',
+        active: true,
+        category: 'IT',
+        lowStockThreshold: 0,
+        name: 'Cable',
+        priceMinor: 9900,
+        sku: 'CABLE',
+        unit: 'ks',
+        variants: [
+          { attributes: '', name: 'Black', priceMinor: 1050, sku: 'CABLE-ONE' },
+          { attributes: '', name: 'White', priceMinor: 1100, sku: ' cable-one ' },
+        ],
+        vatRate: 21,
+      },
+      'variant-product',
+    ).pipe(Effect.flip);
+    expect(isConflict(error)).toBe(true);
+    expect(empty.products).toEqual([]);
   }),
 );
 

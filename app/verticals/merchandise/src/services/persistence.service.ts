@@ -350,36 +350,6 @@ const newProductSlug = (products: readonly Product[], name: string, sku: string)
   return slug;
 };
 
-const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
-  state: MerchandiseState,
-  value: CommandOf<'CreateProduct'>,
-  input: MerchandiseCommandInput,
-) {
-  const id = yield* mintId(ProductIdSchema, input.resourceId);
-  if (state.products.some((entry) => entry.id === id)) {
-    return yield* conflict('Product id already exists');
-  }
-  if (state.products.some((entry) => sameSku(entry.sku, value.sku))) {
-    return yield* conflict('A product with this SKU already exists');
-  }
-  if (value.slug !== undefined && slugTaken(state.products, value.slug, id)) {
-    return yield* conflict('Another product already uses this storefront slug');
-  }
-  const { _tag, priceMinor, ...fields } = value;
-  void _tag;
-  const product: Product = {
-    ...fields,
-    createdAt: input.now,
-    currentPriceMinor: priceMinor,
-    id,
-    priceHistory: [{ changedBy: input.actor, effectiveFrom: input.now, priceMinor }],
-    slug: value.slug ?? newProductSlug(state.products, value.name, value.sku),
-    updatedAt: input.now,
-  };
-  const entity = yield* entityIdOf(id);
-  return { entityIds: [entity], state: { ...state, products: [...state.products, product] } };
-});
-
 /**
  * Gives every priced variant a stable identity and keeps per-variant price history: an existing variant keeps
  * its history and appends an entry when the price changes; a new one starts its history now.
@@ -460,6 +430,39 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
     }),
     { concurrency: 1 },
   );
+});
+
+const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
+  state: MerchandiseState,
+  value: CommandOf<'CreateProduct'>,
+  input: MerchandiseCommandInput,
+) {
+  const id = yield* mintId(ProductIdSchema, input.resourceId);
+  if (state.products.some((entry) => entry.id === id)) {
+    return yield* conflict('Product id already exists');
+  }
+  if (state.products.some((entry) => sameSku(entry.sku, value.sku))) {
+    return yield* conflict('A product with this SKU already exists');
+  }
+  if (value.slug !== undefined && slugTaken(state.products, value.slug, id)) {
+    return yield* conflict('Another product already uses this storefront slug');
+  }
+  const { _tag, priceMinor, variants, ...fields } = value;
+  void _tag;
+  const product: Mutable<Product> = {
+    ...fields,
+    createdAt: input.now,
+    currentPriceMinor: priceMinor,
+    id,
+    priceHistory: [{ changedBy: input.actor, effectiveFrom: input.now, priceMinor }],
+    slug: value.slug ?? newProductSlug(state.products, value.name, value.sku),
+    updatedAt: input.now,
+  };
+  if (variants !== undefined) {
+    product.variants = yield* normalizeVariants(product, variants, input);
+  }
+  const entity = yield* entityIdOf(id);
+  return { entityIds: [entity], state: { ...state, products: [...state.products, product] } };
 });
 
 const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updateProduct(
