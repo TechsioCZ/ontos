@@ -23,22 +23,22 @@ Původní 418-tokenový mix komponentových snapshotů a App overrides byl nahra
 
 ## Kompozice
 
-| Oblast / Figma                | Skutečné komponenty                                                                         | Stav / hranice                                                                                |
-| ----------------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Header `33:635/34:915`        | Header vertical/sm; Actions/ActionItem; Button current/unstyled; Image/Link s Next adaptéry | Tmavé role globálně, menu řídí skutečný state; account/cart/favorites disabled                |
-| Search `440:1961/2153`        | SearchSuggestions sm, Label, Image, PriceBlock, LinkButton md/secondary/solid               | Jediný input; skutečný readonly GET, loading/empty/unavailable; běžná keyboard interakce kitu |
-| Hero `33:771/34:954`          | Carousel full/none/none, jeden doložený slide                                               | Žádné falešné kampaně; controls a indicators používají knihovní theme                         |
-| Benefits/promo                | Image s původními samostatnými assety; aplikační layout                                     | Promo bez potvrzeného owner cíle neodkazuje na vymyšlenou kategorii                           |
-| Footer `33:1100/34:1255`      | Footer vertical/col/md/sectionFlow col                                                      | Existující sloty, N1 role a layout; žádná kontaktní/copyright tokenová scope                  |
-| Home karty `33:877`           | ProductCard Name/Image/Stock; PriceBlock; Button nebo LinkButton                            | Jen owner ceny/dostupnost; unknown přes AvailabilityStatus, nákup disabled                    |
-| Kategorie `214:3151/3202`     | Breadcrumb md, přesný home asset; TreeView md; LinkButton md/secondary/outlined             | Skutečný strom, podkategorie a předci; cykly se ukončí                                        |
-| Kategorie mobil `38:2185`     | ProductCard Image/Name, PriceBlock, AvailabilityStatus, outlined LinkButton                 | Skladba lišící se od home; vzhledové defaults již nejsou lokálně přepisované                  |
-| Paginace `214:4488/38:2138`   | Pagination filled, NextLink, createPaginationGetPageUrl                                     | Owner total/page/pageSize; q zachováno; compact při 320                                       |
-| Produkt `39:1965/2430`        | Gallery horizontal, LinkButton varianty, PriceBlock, AvailabilityStatus                     | Skutečné owner varianty, URL variantId; key resetuje gallery/množství                         |
-| Množství mobil `39:2500`      | QuantityField md, primary/solid/md Button block (44 px)                                     | Owner minimum/unit; sdílený quantity draft s desktopem                                        |
-| Množství desktop `219:2820`   | NumericInput md/compact 104 × 36, secondary/solid/md Button compact                         | Minus 28 + input 48 + plus 28; opt-in knihovní density                                        |
-| Informace `219:2876/2884`     | Tabs line/md; Code Connect DataTable hideHeader                                             | Parametry ownera; sorting vypnutý, line mobil / striped desktop; bez falešné size guide       |
-| Stavy `57:906/2904/3009/3028` | Skeleton, explicitní output, Button retry                                                   | Skutečný refresh; unavailable není empty ani vymyšlená vyprodanost                            |
+| Oblast / Figma                | Skutečné komponenty                                                                              | Stav / hranice                                                                                |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| Header `33:635/34:915`        | Header vertical/sm; Actions/ActionItem; Button current/unstyled; Image/Link s Next adaptéry      | Tmavé role globálně, menu řídí skutečný state; account/cart/favorites disabled                |
+| Search `440:1961/2153`        | SearchSuggestions sm, Label, Image, PriceBlock, LinkButton md/secondary/solid                    | Jediný input; skutečný readonly GET, loading/empty/unavailable; běžná keyboard interakce kitu |
+| Hero `33:771/34:954`          | Carousel full/none/none, jeden doložený slide                                                    | Žádné falešné kampaně; controls a indicators používají knihovní theme                         |
+| Benefits/promo                | Image s původními samostatnými assety; aplikační layout                                          | Promo bez potvrzeného owner cíle neodkazuje na vymyšlenou kategorii                           |
+| Footer `33:1100/34:1255`      | Footer vertical/col/md/sectionFlow col                                                           | Existující sloty, N1 role a layout; žádná kontaktní/copyright tokenová scope                  |
+| Home karty `33:877`           | ProductCard featured Name/Image/Stock; PriceBlock; Button nebo LinkButton                        | Samostatné featured tokeny; owner ceny/dostupnost, unknown není in-stock                      |
+| Kategorie `214:3151/3202`     | Breadcrumb md, přesný home asset; TreeView md; LinkButton md/secondary/outlined                  | Skutečný strom, podkategorie a předci; cykly se ukončí                                        |
+| Kategorie mobil `38:2185`     | ProductCard default, Image/NextImage fill v4:3, Name, PriceBlock, AvailabilityStatus, LinkButton | Původní role padding10/medium16/border1; featured appearance se sem nedědí                    |
+| Paginace `214:4488/38:2138`   | Pagination filled, NextLink, createPaginationGetPageUrl                                          | Owner total/page/pageSize; q zachováno; compact při 320                                       |
+| Produkt `39:1965/2430`        | Gallery horizontal, LinkButton varianty, PriceBlock, AvailabilityStatus                          | Skutečné owner varianty, URL variantId; key resetuje gallery/množství                         |
+| Množství mobil `39:2500`      | QuantityField md, primary/solid/md Button block (44 px)                                          | Owner minimum/unit; sdílený quantity draft s desktopem                                        |
+| Množství desktop `219:2820`   | NumericInput md/compact 104 × 36, secondary/solid/md Button compact                              | Minus 28 + input 48 + plus 28; opt-in knihovní density                                        |
+| Informace `219:2876/2884`     | Tabs line/md; Code Connect DataTable hideHeader                                                  | Parametry ownera; sorting vypnutý, line mobil / striped desktop; bez falešné size guide       |
+| Stavy `57:906/2904/3009/3028` | Skeleton, explicitní output, Button retry                                                        | Skutečný refresh; unavailable není empty ani vymyšlená vyprodanost                            |
 
 ## Meze vizuálního tvrzení
 

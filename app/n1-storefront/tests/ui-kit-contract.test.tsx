@@ -60,4 +60,28 @@ describe("published UI-kit patch contract", () => {
     expect(flat).not.toContain("objectFit=");
     expect(flat).not.toContain("shadow=");
   });
+
+  it("isolates featured card tokens from the original listing presentation", () => {
+    const ordinary = renderToStaticMarkup(
+      <ProductCard>
+        <ProductCard.Name>Product</ProductCard.Name>
+        <ProductCard.Stock>Available</ProductCard.Stock>
+      </ProductCard>,
+    );
+    const featured = renderToStaticMarkup(
+      <ProductCard presentation="featured">
+        <ProductCard.Name>Product</ProductCard.Name>
+        <ProductCard.Stock>Available</ProductCard.Stock>
+      </ProductCard>,
+    );
+    expect(ordinary).toContain("p-product-card-padding");
+    expect(ordinary).toContain("font-product-card-name");
+    expect(ordinary).not.toContain("product-card-featured");
+    expect(featured).toContain("p-product-card-featured-padding");
+    expect(featured).toContain("font-product-card-featured-name");
+    expect(featured).toContain("font-product-card-featured-stock");
+    expect(featured).not.toMatch(/\sp-product-card-padding(?:\s|")/u);
+    expect(featured).not.toMatch(/\sfont-product-card-name(?:\s|")/u);
+    expect(featured).not.toContain("presentation=");
+  });
 });

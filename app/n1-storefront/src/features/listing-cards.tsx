@@ -30,15 +30,17 @@ export const ListingCards = ({
             {product.image === null ? (
               <p className="py-12 text-center text-fg-secondary">{d.imageUnavailable}</p>
             ) : (
-              <ProductCard.Image
-                alt={product.name}
-                as={NextImage}
-                height={252}
-                loading="lazy"
-                objectFit="contain"
-                src={product.image}
-                width={336}
-              />
+              <div className="relative mx-auto aspect-4/3 w-full max-w-84">
+                <ProductCard.Image
+                  alt={product.name}
+                  as={NextImage}
+                  fill
+                  loading="lazy"
+                  objectFit="contain"
+                  sizes="(max-width: 767px) calc(100vw - 54px), 336px"
+                  src={product.image}
+                />
+              </div>
             )}
           </Link>
           <div className="min-h-12">
