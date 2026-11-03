@@ -431,9 +431,13 @@ jobs:
   # shard repeats the full service preparation; the root suite and every package that no other shard names
   # run in the first shard, so a new package can never fall out of the gate. A shard that carried several
   # packages' suites always finished last, so the heaviest packages get a job each: a PR waits for the
-  # slowest job, not for the sum of the packages a single job used to run one after another. Commerce
-  # Customer Context keeps two Rstest shards rather than more: one test file alone runs for ten minutes and
-  # Rstest splits shards by file, so extra shards would add jobs without shortening that file.
+  # slowest job, not for the sum of the packages a single job used to run one after another.
+  #
+  # Sharding is set by what a package's own files cost, not by package size. Rstest splits shards by file,
+  # so a package with one dominant file cannot be balanced below that file - but more shards still shorten
+  # it, because fewer other files ride along in the shard that carries it. Commerce Customer Context has a
+  # single 10.3-minute file among 48, so its shards stay under a small share of the rest. Privacy's files
+  # are even (its heaviest is 3.7 minutes of a 14.6-minute job), so two shards halve it outright.
   service-integration:
     name: ${{ matrix.name }}
     needs: [queue-proof]
@@ -461,13 +465,29 @@ jobs:
             name: Pricing and Inventory Integration
             package-filters: --filter ./verticals/pricing --filter ./verticals/inventory
           - suite: integration
-            name: Commerce Customer Context Integration (1/2)
+            name: Commerce Customer Context Integration (1/6)
             package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 1/2
+            rstest-shard: 1/6
           - suite: integration
-            name: Commerce Customer Context Integration (2/2)
+            name: Commerce Customer Context Integration (2/6)
             package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 2/2
+            rstest-shard: 2/6
+          - suite: integration
+            name: Commerce Customer Context Integration (3/6)
+            package-filters: --filter ./verticals/commerce-customer-context
+            rstest-shard: 3/6
+          - suite: integration
+            name: Commerce Customer Context Integration (4/6)
+            package-filters: --filter ./verticals/commerce-customer-context
+            rstest-shard: 4/6
+          - suite: integration
+            name: Commerce Customer Context Integration (5/6)
+            package-filters: --filter ./verticals/commerce-customer-context
+            rstest-shard: 5/6
+          - suite: integration
+            name: Commerce Customer Context Integration (6/6)
+            package-filters: --filter ./verticals/commerce-customer-context
+            rstest-shard: 6/6
           - suite: integration
             name: Market, Order, Payment Term, Price Group, and Storefront Integration
             native-preproposal: true
@@ -476,8 +496,13 @@ jobs:
               --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog
               --filter ./verticals/storefront-registry
           - suite: integration
-            name: Privacy Integration
+            name: Privacy Integration (1/2)
             package-filters: --filter ./verticals/privacy
+            rstest-shard: 1/2
+          - suite: integration
+            name: Privacy Integration (2/2)
+            package-filters: --filter ./verticals/privacy
+            rstest-shard: 2/2
           - suite: integration
             name: Party Registry Integration
             package-filters: --filter ./verticals/party-registry
