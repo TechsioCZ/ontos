@@ -42,7 +42,7 @@ export const ProductView = ({
   const { current, images, parameters, selectionRequired, variant } = selection;
   const pathname = `/${locale}/produkt/${encodeURIComponent(product.slug)}`;
   return (
-    <article className="mx-auto max-w-n1-product-content p-4 md:py-6">
+    <article className="mx-auto max-w-n1-product-content p-4 md:px-0 md:py-6">
       <Breadcrumb aria-label={d.catalog} size="md">
         <Breadcrumb.List>
           <Breadcrumb.Item>
@@ -56,10 +56,13 @@ export const ProductView = ({
           </Breadcrumb.Item>
         </Breadcrumb.List>
       </Breadcrumb>
-      <h1 className="my-8 text-2xl font-bold md:my-6 md:text-xl">
-        {product.name}
-        {variant ? ` – ${variant.name}` : ""}
-      </h1>
+      <div className="my-8 md:my-6">
+        <h1 className="text-2xl font-bold md:text-xl">
+          {product.name}
+          {variant ? ` – ${variant.name}` : ""}
+        </h1>
+        <div aria-hidden="true" className="hidden h-1 w-24 bg-primary md:block" />
+      </div>
       <div className="grid gap-8 md:grid-cols-[minmax(0,28rem)_minmax(0,1fr)]">
         <div className="min-w-0">
           <Gallery
@@ -90,46 +93,75 @@ export const ProductView = ({
             <Gallery.Thumbnails />
           </Gallery>
         </div>
-        <div className="flex min-w-0 flex-col gap-6">
+        <div className="flex min-w-0 flex-col gap-6 md:gap-4">
           {current.sku.length > 0 && (
-            <dl className="flex flex-wrap justify-between gap-2 text-fg-secondary">
+            <dl className="order-0 hidden flex-wrap justify-between gap-2 text-fg-secondary md:flex">
               <dt>{d.productCode}</dt>
               <dd>{current.sku}</dd>
             </dl>
           )}
           {product.variants.length > 0 && (
-            <fieldset>
+            <fieldset className="order-1">
               <legend className="mb-2 font-bold">{d.selectVariant}</legend>
               <div className="flex flex-wrap gap-2">
                 {product.variants.map((item) => (
-                  <LinkButton
-                    aria-current={item.id === variant?.id ? "true" : undefined}
-                    as={NextLink}
-                    href={`${pathname}?${new URLSearchParams({ variantId: item.id })}`}
-                    key={item.id}
-                    prefetch={false}
-                    size="sm"
-                    theme="outlined"
-                    variant="secondary"
-                  >
-                    {item.name}
-                  </LinkButton>
+                  <div key={item.id}>
+                    <div className="hidden md:block">
+                      <LinkButton
+                        aria-current={item.id === variant?.id ? "true" : undefined}
+                        as={NextLink}
+                        href={`${pathname}?${new URLSearchParams({ variantId: item.id })}`}
+                        prefetch={false}
+                        size="sm"
+                        theme="outlined"
+                        variant="secondary"
+                      >
+                        {item.name}
+                      </LinkButton>
+                    </div>
+                    <div className="md:hidden">
+                      <LinkButton
+                        aria-current={item.id === variant?.id ? "true" : undefined}
+                        as={NextLink}
+                        href={`${pathname}?${new URLSearchParams({ variantId: item.id })}`}
+                        prefetch={false}
+                        size="md"
+                        theme={item.id === variant?.id ? "solid" : "outlined"}
+                        variant={item.id === variant?.id ? "primary" : "secondary"}
+                      >
+                        {item.name}
+                      </LinkButton>
+                    </div>
+                  </div>
                 ))}
               </div>
             </fieldset>
           )}
-          <AvailabilityStatus
-            label={selectionRequired ? d.selectVariant : d.stock[current.stock]}
-            status={selectionRequired ? "unknown" : current.stock}
-          />
+          <div className="order-3 md:order-2">
+            <AvailabilityStatus
+              label={selectionRequired ? d.selectVariant : d.stock[current.stock]}
+              status={selectionRequired ? "unknown" : current.stock}
+            />
+          </div>
+          <div aria-hidden="true" className="order-3 hidden h-px bg-border-primary md:block" />
           {variant && (
-            <p>
+            <p className="order-2 md:order-4">
               <strong>{d.selectedVariant}: </strong>
               {variant.name}
             </p>
           )}
-          <PriceBlock {...priceProps(current, d, locale)} />
-          <ProductPurchase dictionary={d} locale={locale} product={product} selection={selection} />
+          <div className="order-4 md:order-5">
+            <PriceBlock {...priceProps(current, d, locale)} />
+          </div>
+          <div className="order-5 md:order-6">
+            <ProductPurchase
+              dictionary={d}
+              locale={locale}
+              product={product}
+              selection={selection}
+            />
+          </div>
+          <div aria-hidden="true" className="order-7 hidden h-px bg-border-primary md:block" />
         </div>
       </div>
       <div className="mt-8 md:mt-1">

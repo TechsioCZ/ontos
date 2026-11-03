@@ -4,6 +4,8 @@
  * Source: N1 storefront Header 33:635 / Footer 33:1100.
  */
 [data-theme="n1"] {
+  --color-numeric-input-compact-border: var(--color-border-secondary);
+  --font-weight-price-block-amount: var(--font-weight-bold);
   /* Homepage31:636/31:637, card33:1018: installed0.57 component
    * defaults are not the N1 screen roles. Keep canonical primitive aliases. */
   --spacing-product-card-padding: var(--dimension-4);

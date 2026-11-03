@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "@rstest/core";
 
 export default defineConfig({
-  include: ["tests/**/*.test.ts"],
+  include: ["tests/**/*.test.{ts,tsx}"],
   resolve: {
     alias: {
       // Route-handler tests run outside Next's server-only module substitution.

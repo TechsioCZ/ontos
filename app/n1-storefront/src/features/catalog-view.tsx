@@ -81,7 +81,7 @@ export const CatalogView = ({
         }
       >
         {catalog.products.map((product) => (
-          <ProductCard key={product.id} layout="column">
+          <ProductCard key={product.id} layout="column" shadow={false}>
             <div className="h-n1-card-name text-center">
               <ProductCard.Name>
                 <Link as={NextLink} href={`/${locale}/produkt/${encodeURIComponent(product.slug)}`}>
@@ -106,6 +106,7 @@ export const CatalogView = ({
                     as={NextImage}
                     height={256}
                     loading="lazy"
+                    objectFit="contain"
                     src={product.image}
                     width={256}
                   />
@@ -131,9 +132,11 @@ export const CatalogView = ({
               {(product.variantCount ?? 0) > 0 ? (
                 <LinkButton
                   as={NextLink}
+                  density="compact"
                   href={`/${locale}/produkt/${encodeURIComponent(product.slug)}`}
                   size="sm"
                   theme="solid"
+                  uppercase
                   variant="secondary"
                 >
                   {d.detail}
@@ -141,6 +144,7 @@ export const CatalogView = ({
               ) : (
                 <Button
                   aria-label={`${d.addToCart}: ${d.commerceUnavailable}`}
+                  density="compact"
                   disabled
                   icon="token-icon-cart"
                   iconPosition="left"
