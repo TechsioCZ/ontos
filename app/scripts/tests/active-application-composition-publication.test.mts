@@ -9,10 +9,12 @@ import {
   Effect,
   Exit,
   Fiber,
+  FileSystem,
   Layer,
   Match,
   Option,
   Order,
+  Path,
   Schema,
 } from 'effect';
 import { TestClock } from 'effect/testing';
@@ -29,6 +31,7 @@ import {
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
   ActiveApplicationCompositionUnavailableError,
+  ActiveApplicationCompositionSnapshotSchema,
   OntosModuleDeploymentContractSchema,
   defineTenantModuleEntrypoint,
   validateActiveApplicationCompositionSnapshot,
@@ -61,6 +64,7 @@ import {
   observeCandidate,
   publicationUrl,
   prepareCandidate,
+  proveBuiltSnapshot,
   publishSnapshot,
   readPublishedSnapshot,
   refreshApplicationComposition,
@@ -197,6 +201,25 @@ const snapshotAt = (observedAt: string) =>
       validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
     });
   });
+
+it.effect('writes the proved snapshot as the exact Core-decodable native fixture input', () =>
+  Effect.scoped(
+    Effect.gen(function* verifyBuildProofSnapshotOutput() {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-build-proof-snapshot-' });
+      const snapshotOutput = path.join(directory, 'composition.json');
+      const snapshot = yield* snapshotAt(OBSERVED_AT);
+      yield* proveBuiltSnapshot({ snapshot, snapshotOutput });
+      const encoded = yield* fileSystem.readFileString(snapshotOutput);
+      const decoded = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
+      )(encoded);
+      expect(decoded.composition.revision).toBe(snapshot.composition.revision);
+      expect(decoded).toEqual(snapshot);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
 
 interface RecordedRequest {
   readonly authorization: string | undefined;

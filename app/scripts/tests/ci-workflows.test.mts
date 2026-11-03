@@ -1541,10 +1541,11 @@ it('hands the edge deployment planner the Outbox Worker mode it requires', () =>
 
 const QUEUE_PROOF_JOB = 'queue-proof';
 const NODE_ARTIFACT_BUILD_JOB = 'node-artifact-build';
+const NODE_BUILD_ARTIFACT_PATTERN = 'node-units-*';
 const CLOUDFLARE_ARTIFACT_BUILD_JOB = 'cloudflare-artifact-build';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 const FORMAT_AND_LINT_JOB = 'format-and-lint';
-/** The gates that start once the merge queue proof is checked. */
+/** Gate jobs rooted at the merge queue proof. */
 const ROOT_GATE_JOBS = [
   WORKSPACE_GATE_JOB,
   'static-contracts',
@@ -1590,7 +1591,9 @@ it('skips the gates on main only for a commit the merge queue already proved', (
   expect(lookup).toContain('actions/runs/$GITHUB_RUN_ID');
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
   for (const gate of ROOT_GATE_JOBS) {
-    expect(jobs[gate]?.needs).toEqual([QUEUE_PROOF_JOB]);
+    expect(jobs[gate]?.needs).toEqual(
+      gate === 'service-integration' ? [QUEUE_PROOF_JOB, NODE_ARTIFACT_BUILD_JOB] : [QUEUE_PROOF_JOB],
+    );
     expect(jobs[gate]?.if).toBe(expression("!cancelled() && needs.queue-proof.outputs.proven != 'true'"));
   }
 });
@@ -1722,7 +1725,7 @@ const readArtifactBuildJobs = () =>
 it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
   const jobs = readArtifactBuildJobs();
   for (const [job, proofs, artifacts] of [
-    [NODE_ARTIFACT_BUILD_JOB, ['node'], 'node-units-*'],
+    [NODE_ARTIFACT_BUILD_JOB, ['node'], NODE_BUILD_ARTIFACT_PATTERN],
     [CLOUDFLARE_ARTIFACT_BUILD_JOB, ['outputs', 'topology'], 'cloudflare-units-*'],
   ] as const) {
     const { name, permissions, steps, strategy } = jobs[job];
@@ -1920,12 +1923,20 @@ it('runs the root unit and component tests of every workspace package in exactly
 const IntegrationShardsWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
     'service-integration': Schema.Struct({
-      steps: Schema.Array(WorkflowStepSchema),
+      needs: Schema.Array(Schema.String),
+      steps: Schema.Array(
+        Schema.Struct({
+          ...WorkflowStepSchema.fields,
+          uses: Schema.optional(Schema.String),
+          with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+        }),
+      ),
       strategy: Schema.Struct({
         matrix: Schema.Struct({
           include: Schema.Array(
             Schema.Struct({
               name: Schema.String,
+              'native-composition': Schema.optional(Schema.Boolean),
               'native-preproposal': Schema.optional(Schema.Boolean),
               'package-filters': Schema.optional(Schema.String),
               'root-suite': Schema.optional(Schema.Boolean),
@@ -1941,6 +1952,98 @@ const IntegrationShardsWorkflowSchema = Schema.Struct({
 
 const shardFilters = (shard: { readonly 'package-filters'?: string | undefined }) =>
   [...(shard['package-filters'] ?? '').matchAll(/--filter (?<filter>\S+)/gu)].map(({ groups }) => groups?.filter ?? '');
+
+it('supplies same-run built Composition only to the two native owner integration shards before their tests', () => {
+  const source: unknown = parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'));
+  const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(source);
+  const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs['service-integration'];
+  // The producer has no integration dependency: the integration -> Node artifacts -> queue proof path is acyclic.
+  expect(integration.needs).toEqual([QUEUE_PROOF_JOB, NODE_ARTIFACT_BUILD_JOB]);
+  expect(jobs[NODE_ARTIFACT_BUILD_JOB]?.needs).toEqual([QUEUE_PROOF_JOB]);
+  const selected = integration.strategy.matrix.include.filter((shard) => shard['native-composition'] === true);
+  expect(selected).toHaveLength(2);
+  expect(selected.every(({ suite }) => suite === 'integration')).toBe(true);
+  expect(selected.filter((shard) => shard['root-suite'] === true)).toHaveLength(1);
+  expect(selected.find((shard) => shard['root-suite'] !== true)?.['package-filters']).toBe(
+    '--filter ./verticals/pricing --filter ./verticals/inventory',
+  );
+  const { steps } = integration;
+  const download = steps.findIndex(({ with: inputs }) => inputs?.pattern === NODE_BUILD_ARTIFACT_PATTERN);
+  const unpack = steps.findIndex(({ run }) => run?.startsWith('bash scripts/unpack-unit-build-outputs.sh') === true);
+  const derive = steps.findIndex(({ run }) => run?.includes('prove-build --snapshot-output') === true);
+  const tests = steps.findIndex(({ env }) => env?.PACKAGE_FILTERS !== undefined);
+  expect(download).toBeGreaterThan(-1);
+  expect(download < unpack && unpack < derive && derive < tests).toBe(true);
+  expect(steps[download]?.uses).toMatch(/^actions\/download-artifact@[a-f0-9]{40}$/u);
+  // Omitting a repository, token and run-id keeps the download bound to this workflow run.
+  expect(steps[download]?.with).toEqual({
+    path: `${expression('runner.temp')}/native-composition-units`,
+    pattern: NODE_BUILD_ARTIFACT_PATTERN,
+  });
+  expect(steps[unpack]?.run).toBe(
+    'bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output',
+  );
+  expect(steps[derive]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
+  for (const index of [download, unpack, derive]) {
+    expect(steps[index]?.if).toBe('matrix.native-composition == true');
+  }
+  expect(steps.filter(({ if: condition }) => condition === 'matrix.native-composition == true')).toHaveLength(3);
+});
+
+it('exports the publisher output path to native tests only after the readonly build proof succeeds', () => {
+  const { steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(
+    parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')),
+  ).jobs['service-integration'];
+  const derive = steps.find(({ run }) => run?.includes('prove-build --snapshot-output') === true);
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-native-composition-step-'));
+  try {
+    for (const exitCode of [0, 37]) {
+      const temporary = path.join(directory, String(exitCode));
+      mkdirSync(temporary);
+      const executable = path.join(temporary, 'mise');
+      // This executable checks only the workflow's CLI boundary, not the publisher codec or native authority.
+      writeFileSync(
+        executable,
+        `#!/bin/bash
+set -euo pipefail
+printf "%s\\n" "$@" > "$PUBLISHER_ARGUMENTS"
+if [[ "$PUBLISHER_EXIT_CODE" != 0 ]]; then exit "$PUBLISHER_EXIT_CODE"; fi
+printf "publisher-output" > "$7"
+`,
+      );
+      chmodSync(executable, 0o755);
+      const environmentFile = path.join(temporary, 'environment');
+      const argumentsFile = path.join(temporary, 'arguments');
+      writeFileSync(environmentFile, '');
+      const passed = stepPasses(derive?.run ?? 'exit 1', {
+        GITHUB_ENV: environmentFile,
+        PATH: `${temporary}:${STEP_PATH}`,
+        PUBLISHER_ARGUMENTS: argumentsFile,
+        PUBLISHER_EXIT_CODE: String(exitCode),
+        RUNNER_TEMP: temporary,
+      });
+      const snapshot = path.join(temporary, 'native-composition-snapshot.json');
+      expect(passed).toBe(exitCode === 0);
+      expect(readFileSync(argumentsFile, 'utf-8').trimEnd().split('\n')).toEqual([
+        'exec',
+        '--',
+        'pnpm',
+        'active-composition:publish',
+        'prove-build',
+        '--snapshot-output',
+        snapshot,
+      ]);
+      expect(readFileSync(environmentFile, 'utf-8')).toBe(
+        exitCode === 0 ? `NATIVE_1290_COMPOSITION_SNAPSHOT_PATH=${snapshot}\n` : '',
+      );
+      if (exitCode === 0) {
+        expect(readFileSync(snapshot, 'utf-8')).toBe('publisher-output');
+      }
+    }
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
 
 it('runs the root integration suite once and every package integration suite in exactly one shard', () => {
   const { scripts } = readRootScripts();

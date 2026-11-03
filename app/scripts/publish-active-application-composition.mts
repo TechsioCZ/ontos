@@ -1681,9 +1681,14 @@ export const deriveBuiltSnapshot = Effect.fn('ActiveApplicationComposition.deriv
   });
 });
 
-const proveBuildCommand = Command.make('prove-build', {}, () =>
-  Effect.gen(function* proveBuild() {
-    const snapshot = yield* deriveBuiltSnapshot(yield* DateTime.now);
+export const proveBuiltSnapshot = Effect.fn('ActiveApplicationComposition.proveBuiltSnapshot')(
+  function* proveBuiltSnapshotEffect({
+    snapshot,
+    snapshotOutput,
+  }: {
+    readonly snapshot: ActiveApplicationCompositionSnapshot;
+    readonly snapshotOutput?: string;
+  }) {
     const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
     const decoded = yield* decodeActiveApplicationCompositionSnapshot(encoded);
     if (decoded.composition.revision !== snapshot.composition.revision) {
@@ -1692,11 +1697,27 @@ const proveBuildCommand = Command.make('prove-build', {}, () =>
         reason: 'invalid_observation',
       });
     }
+    if (snapshotOutput !== undefined) {
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.writeFileString(snapshotOutput, encoded);
+    }
     return yield* Effect.logInfo('Built artifacts form an active Application Composition snapshot consumers decode', {
       modules: decoded.composition.modules.map(({ federation, moduleId }) => `${moduleId} (${federation.execution})`),
       revision: decoded.composition.revision,
     });
-  }),
+  },
+);
+
+const proveBuildCommand = Command.make(
+  'prove-build',
+  { snapshotOutput: Flag.String('snapshot-output').pipe(Flag.optional) },
+  ({ snapshotOutput }) =>
+    Effect.gen(function* proveBuild() {
+      const snapshot = yield* deriveBuiltSnapshot(yield* DateTime.now);
+      yield* proveBuiltSnapshot(
+        Option.isSome(snapshotOutput) ? { snapshot, snapshotOutput: snapshotOutput.value } : { snapshot },
+      );
+    }),
 );
 
 const cli = Command.make('publish-active-application-composition').pipe(

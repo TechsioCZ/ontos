@@ -440,7 +440,7 @@ jobs:
   # are even (its heaviest is 3.7 minutes of a 14.6-minute job), so two shards halve it outright.
   service-integration:
     name: ${{ matrix.name }}
-    needs: [queue-proof]
+    needs: [queue-proof, node-artifact-build]
     if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -450,6 +450,7 @@ jobs:
         include:
           - suite: integration
             name: Database, Migration, RLS, Authorization, and Outbox Integration
+            native-composition: true
             root-suite: true
             package-filters: >-
               --filter !. --filter !./verticals/catalog --filter !./verticals/pricing
@@ -463,6 +464,7 @@ jobs:
             package-filters: --filter ./verticals/catalog
           - suite: integration
             name: Pricing and Inventory Integration
+            native-composition: true
             package-filters: --filter ./verticals/pricing --filter ./verticals/inventory
           - suite: integration
             name: Commerce Customer Context Integration (1/6)
@@ -550,6 +552,29 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+
+      # These two shards run native owner fixtures as part of their ordinary integration suites.
+      # Reuse this run's built artifacts; a source-only checkout cannot supply their receiving contracts.
+      - name: Download the same-run Node artifacts for native owner fixtures
+        if: matrix.native-composition == true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: node-units-*
+          path: ${{ runner.temp }}/native-composition-units
+
+      - name: Unpack the Node artifacts for native owner fixtures
+        if: matrix.native-composition == true
+        working-directory: app
+        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
+
+      - name: Derive the fresh built Composition for native owner fixtures
+        if: matrix.native-composition == true
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+        run: |
+          mise exec -- pnpm active-composition:publish prove-build --snapshot-output "$RUNNER_TEMP/native-composition-snapshot.json"
+          echo "NATIVE_1290_COMPOSITION_SNAPSHOT_PATH=$RUNNER_TEMP/native-composition-snapshot.json" >> "$GITHUB_ENV"
 
       # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
       # Only warm-caches on main saves it, so parallel jobs never race to save.
