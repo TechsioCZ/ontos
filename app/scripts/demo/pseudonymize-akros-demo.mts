@@ -8,7 +8,9 @@
  * application and disables the old principal and its key. Never invoked by deployment or startup.
  * Runbook: scripts/demo/pseudonymize-akros-demo.md.
  */
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
+import nodePath from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
 import { v1 } from '@authzed/authzed-node';
@@ -17,17 +19,19 @@ import {
   Config,
   ConfigProvider,
   Console,
+  Context,
   Effect,
   Exit,
   FileSystem,
   Layer,
+  Match,
   Option,
   Path,
   Redacted,
   Schema,
 } from 'effect';
 import { Command, Flag } from 'effect/cli';
-import { FetchHttpClient } from 'effect/http';
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from 'effect/http';
 
 import {
   ActiveApplicationCompositionConfigLive,
@@ -70,41 +74,291 @@ import {
   reconcileServiceGrants,
   stageServicePrincipals,
 } from './reconcile-stage-service-grants.mts';
-import { connectSeedClient, DemoSeedError } from './seed-client.mts';
+import { connectSeedClient } from './seed-client.mts';
+import type { SeedTarget, SeedWriteCheckpoint } from './seed-client.mts';
+import { seedCheckpointDirectory, seedWriteCheckpoint } from './seed-checkpoint.mts';
 
 const reason = 'Pseudonymizace ukázkové společnosti na ŠroubShop';
 const modes = ['plan', 'apply', 'verify'] as const;
 type Mode = (typeof modes)[number];
 type Phase = Plan['phase'];
 
-const connect = Effect.gen(function* connectOperator() {
-  yield* Config.schema(Schema.Literal('stage'), 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT');
-  const shell = yield* connectPseudonymShell;
-  const password = yield* Config.Redacted('ONTOS_AGENT_SETUP_PASSWORD');
-  const client = yield* Effect.acquireRelease(
-    connectSeedClient(
-      {
-        legalEntityId: akrosDemoLegalEntityId,
-        shellUrl: 'https://ontos-stage.web-revolution.cz',
-        tenantId: demoTenantId,
-      },
-      'obchod@demo.ontos',
-      password,
-    ),
-    (session) => session.signOut.pipe(Effect.ignore),
-  );
-  const composition = yield* (yield* ActiveApplicationCompositionService).load;
-  const actions = yield* discoverCurrentActions(composition);
-  return {
-    client,
-    compositionRevision: composition.composition.revision,
-    desired: pseudonymServiceRelationships(actions),
-    revoked: legacyStorefrontMemberships(actions),
-    shell,
-  };
+/** Fixed caller scope. A different origin/company/tenant must never obtain a new journal implicitly. */
+export const pseudonymSeedTarget = {
+  legalEntityId: akrosDemoLegalEntityId,
+  shellUrl: 'https://ontos-stage.web-revolution.cz',
+  tenantId: demoTenantId,
+} as const;
+const PseudonymTarget = Schema.Struct({
+  legalEntityId: Schema.Literal(akrosDemoLegalEntityId),
+  shellUrl: Schema.Literal(pseudonymSeedTarget.shellUrl),
+  tenantId: Schema.Literal(demoTenantId),
 });
-type Operator = Effect.Success<typeof connect>;
+const CheckpointContext = Schema.Struct({
+  compositionRevision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
+  principalId: Schema.toEncoded(PrincipalIdSchema),
+});
+const writeHash = (audience: string, route: string, payload: string) =>
+  createHash('sha256').update(`${audience}|${route}|${payload}`).digest('hex');
+const checkpointFailure = () =>
+  fail('P21 checkpoint refused: retain the journal and reconcile the exact pending request. No dispatch or retry.');
 
+/** Uses only the native seed journal format. An empty hash-named directory is the pending barrier, not a second journal. */
+export const makePseudonymWriteCheckpoint = (
+  fs: FileSystem.FileSystem,
+  root: string,
+  target: SeedTarget = pseudonymSeedTarget,
+) =>
+  Effect.gen(function* pseudonymCheckpoint() {
+    yield* Schema.decodeUnknownEffect(PseudonymTarget)(target).pipe(Effect.mapError(checkpointFailure));
+    const directory = seedCheckpointDirectory(target, root);
+    const pendingRoot = nodePath.join(directory, 'pending');
+    yield* fs.makeDirectory(root, { mode: 0o700, recursive: true });
+    yield* fs.chmod(root, 0o700);
+    yield* fs.makeDirectory(directory, { mode: 0o700, recursive: true });
+    yield* fs.chmod(directory, 0o700);
+    yield* fs.makeDirectory(pendingRoot, { mode: 0o700, recursive: true });
+    const nativeCheckpoint = seedWriteCheckpoint(fs, directory);
+    let contextHash: string | undefined;
+    let boundContext: typeof CheckpointContext.Type | undefined;
+    const bindContext = (context: typeof CheckpointContext.Type) =>
+      Effect.gen(function* bindAuthenticatedContext() {
+        const checked = yield* Schema.decodeUnknownEffect(CheckpointContext)(context);
+        const hash = writeHash(
+          checked.principalId,
+          checked.compositionRevision,
+          `${target.shellUrl}|${target.tenantId}|${target.legalEntityId}`,
+        );
+        if (contextHash !== undefined && contextHash !== hash) {
+          return yield* checkpointFailure();
+        }
+        contextHash = hash;
+        boundContext = checked;
+        return yield* Effect.void;
+      }).pipe(Effect.mapError(checkpointFailure));
+    const checkpoint: SeedWriteCheckpoint = (audience, route, payload) =>
+      Effect.gen(function* saveNativeWriteIntent() {
+        const hash = writeHash(audience, route, payload);
+        if (contextHash === undefined) {
+          return yield* checkpointFailure();
+        }
+        const marker = `${contextHash}-${hash}`;
+        const pending = yield* fs.readDirectory(pendingRoot);
+        if (pending.length > 1 || (pending.length === 1 && pending[0] !== marker)) {
+          return yield* checkpointFailure();
+        }
+        if (pending.length === 0) {
+          yield* fs.makeDirectory(nodePath.join(pendingRoot, marker), { mode: 0o700 });
+        }
+        return yield* nativeCheckpoint(audience, route, payload);
+      }).pipe(Effect.mapError(checkpointFailure));
+    const acknowledge = (hash: string) =>
+      Effect.gen(function* acknowledgeNativeWrite() {
+        const pending = yield* fs.readDirectory(pendingRoot);
+        if (contextHash === undefined || pending.length !== 1 || pending[0] !== `${contextHash}-${hash}`) {
+          return yield* checkpointFailure();
+        }
+        yield* fs.remove(nodePath.join(pendingRoot, `${contextHash}-${hash}`), { recursive: true });
+        return yield* Effect.void;
+      }).pipe(Effect.mapError(checkpointFailure));
+    const assertComposition = (revision: string | undefined) =>
+      revision !== undefined && revision === boundContext?.compositionRevision ? Effect.void : checkpointFailure();
+    return { acknowledge, assertComposition, bindContext, checkpoint, context: () => boundContext, directory };
+  }).pipe(Effect.mapError(checkpointFailure));
+type PseudonymCheckpoint = Effect.Success<ReturnType<typeof makePseudonymWriteCheckpoint>>;
+class PseudonymCheckpointService extends Context.Service<PseudonymCheckpointService, PseudonymCheckpoint>()(
+  'PseudonymCheckpoint',
+) {}
+
+const shellAudience = 'shell-super-app';
+const marketAudience = 'commerce-market-catalog';
+const writeRoutes = [
+  {
+    actionKey: 'core.identity.configure-demo-companies',
+    audience: shellAudience,
+    route: '/auth/identity/demo-companies',
+  },
+  {
+    actionKey: 'core.identity.bind-managed-api-key',
+    audience: shellAudience,
+    route: '/auth/identity/api-keys/managed',
+  },
+  {
+    actionKey: 'core.identity.set-managed-api-key-binding-status',
+    audience: shellAudience,
+    route: '/auth/identity/api-keys/managed/status',
+  },
+  {
+    actionKey: 'core.identity.change-principal-status',
+    audience: shellAudience,
+    route: '/auth/identity/principal-status',
+  },
+  {
+    actionKey: 'commerce.storefront-registry.register-storefront-application',
+    audience: 'storefront-registry',
+    route: '/storefront-registry/actions/register-storefront-application',
+  },
+  {
+    actionKey: 'commerce.storefront-registry.revise-storefront-application',
+    audience: 'storefront-registry',
+    route: '/storefront-registry/actions/revise-storefront-application',
+  },
+  {
+    actionKey: 'commerce.market-catalog.create-market',
+    audience: marketAudience,
+    route: '/commerce-market-catalog/actions/create-market',
+  },
+  {
+    actionKey: 'commerce.market-catalog.associate-storefront',
+    audience: marketAudience,
+    route: '/commerce-market-catalog/actions/associate-storefront',
+  },
+  {
+    actionKey: 'commerce.market-catalog.remove-storefront-association',
+    audience: marketAudience,
+    route: '/commerce-market-catalog/actions/remove-storefront-association',
+  },
+  {
+    actionKey: 'commerce.market-catalog.retire-market',
+    audience: marketAudience,
+    route: '/commerce-market-catalog/actions/retire-market',
+  },
+  { actionKey: 'demo.merchandise.apply-command', audience: 'merchandise', route: '/merchandise/actions/apply-command' },
+] as const;
+
+/** Fixed action identity only; never print an HTTP error, payload, URL, header, response body or managed key. */
+export const pseudonymWriteDiagnostic = (
+  identity: {
+    actionKey: string;
+    compositionRevision?: string;
+    journalFile: string;
+    principalId?: string;
+    requestHash: string;
+  },
+  step: string,
+  status: number | null,
+) => ({
+  actionKey: identity.actionKey,
+  compositionRevision: identity.compositionRevision,
+  journalFile: identity.journalFile,
+  principalId: identity.principalId,
+  requestHash: identity.requestHash,
+  status,
+  step,
+});
+
+/** Also journals generated Shell Action clients, which do not go through SeedClient.call. */
+export const pseudonymCheckpointHttpClient = (
+  http: HttpClient.HttpClient,
+  journal: PseudonymCheckpoint,
+): HttpClient.HttpClient =>
+  HttpClient.make((request) =>
+    Effect.gen(function* dispatchJournaledPseudonymWrite() {
+      const url = yield* Schema.decodeUnknownEffect(Schema.URLFromString)(request.url);
+      const identity = writeRoutes.find((candidate) =>
+        candidate.audience === shellAudience
+          ? url.pathname === `/shell-super-app-api${candidate.route}`
+          : url.pathname.endsWith(candidate.route) &&
+            url.pathname.startsWith(`/shell-super-app-api/module-api/${candidate.audience}/`),
+      );
+      if (request.headers['idempotency-key'] === undefined && identity === undefined) {
+        return yield* http.execute(request);
+      }
+      if (
+        url.origin !== pseudonymSeedTarget.shellUrl ||
+        url.username ||
+        url.password ||
+        url.search ||
+        url.hash ||
+        request.urlParams.params.length > 0 ||
+        Option.isSome(request.hash) ||
+        identity === undefined ||
+        request.method !== 'POST'
+      ) {
+        return yield* checkpointFailure();
+      }
+      if (identity.audience !== shellAudience) {
+        yield* journal.assertComposition(request.headers['x-ontos-composition-revision']);
+      }
+      const body = yield* Match.value(request.body).pipe(
+        Match.tag('Uint8Array', (value) => Effect.succeed(value.body)),
+        Match.orElse(checkpointFailure),
+      );
+      const payload = new TextDecoder().decode(body);
+      const hash = writeHash(identity.audience, identity.route, payload);
+      const journalFile = nodePath.join(journal.directory, 'writes', `${hash}.json`);
+      const diagnostic = { ...journal.context(), actionKey: identity.actionKey, journalFile, requestHash: hash };
+      const key = yield* journal
+        .checkpoint(identity.audience, identity.route, payload)
+        .pipe(Effect.tapError(() => Console.error(pseudonymWriteDiagnostic(diagnostic, 'checkpoint-refused', null))));
+      yield* Console.log(pseudonymWriteDiagnostic(diagnostic, 'dispatch', null));
+      const response = yield* http.execute(HttpClientRequest.setHeader(request, 'idempotency-key', key)).pipe(
+        Effect.tapError(() => Console.error(pseudonymWriteDiagnostic(diagnostic, 'transport-failed', null))),
+        Effect.onInterrupt(() => Console.error(pseudonymWriteDiagnostic(diagnostic, 'dispatch-interrupted', null))),
+      );
+      yield* response.status >= 200 && response.status < 300
+        ? journal
+            .acknowledge(hash)
+            .pipe(
+              Effect.tapError(() =>
+                Console.error(pseudonymWriteDiagnostic(diagnostic, 'acknowledgement-failed', response.status)),
+              ),
+            )
+        : Console.error(pseudonymWriteDiagnostic(diagnostic, 'http-rejected', response.status));
+      return response;
+    }).pipe(
+      Effect.mapError((cause) =>
+        HttpClientError.isHttpClientError(cause)
+          ? cause
+          : new HttpClientError.HttpClientError({
+              reason: new HttpClientError.EncodeError({
+                cause,
+                description:
+                  'P21 durable checkpoint failed; retain the native journal and reconcile. No automatic retry.',
+                request,
+              }),
+            }),
+      ),
+    ),
+  );
+
+export const connectPseudonymSeedClient = (checkpoint: SeedWriteCheckpoint) =>
+  Effect.gen(function* connectPseudonymSeed() {
+    const password = yield* Config.Redacted('ONTOS_AGENT_SETUP_PASSWORD');
+    return yield* Effect.acquireRelease(
+      connectSeedClient(pseudonymSeedTarget, 'obchod@demo.ontos', password, checkpoint),
+      (session) => session.signOut.pipe(Effect.ignore),
+    );
+  });
+
+const connect = (journal: PseudonymCheckpoint) =>
+  Effect.gen(function* connectOperator() {
+    yield* Config.schema(Schema.Literal('stage'), 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT');
+    const shell = yield* connectPseudonymShell;
+    const client = yield* connectPseudonymSeedClient(journal.checkpoint);
+    const composition = yield* (yield* ActiveApplicationCompositionService).load;
+    const session = yield* shell.authentication.currentSession({});
+    if (
+      session.state !== 'authenticated' ||
+      session.identity.tenantId !== demoTenantId ||
+      session.identity.legalEntityId !== akrosDemoLegalEntityId
+    ) {
+      return yield* checkpointFailure();
+    }
+    yield* journal.bindContext({
+      compositionRevision: composition.composition.revision,
+      principalId: session.identity.principalId,
+    });
+    const actions = yield* discoverCurrentActions(composition);
+    return {
+      client,
+      compositionRevision: composition.composition.revision,
+      desired: pseudonymServiceRelationships(actions),
+      revoked: legacyStorefrontMemberships(actions),
+      shell,
+    };
+  });
+type Operator = Effect.Success<ReturnType<typeof connect>>;
 /** Read-only preconditions of each phase; they hold for plan and apply (apply requires an identical state). */
 const checkPhase = Effect.fn('Pseudonym.checkPhase')(function* checkPhase(phase: Phase, baseline: Snapshot) {
   yield* validatePseudonymSnapshot(baseline);
@@ -294,9 +548,16 @@ const verifyRetired = Effect.fn('Pseudonym.verifyRetired')(function* verifyRetir
   return yield* Effect.void;
 });
 
-const main = (mode: Mode, phase: Phase, planPath: string, reviewed: Option.Option<string>, issueKey: boolean) =>
-  Effect.gen(function* run() {
-    const operator = yield* connect;
+const run = (
+  mode: Mode,
+  phase: Phase,
+  planPath: string,
+  reviewed: Option.Option<string>,
+  issueKey: boolean,
+  journal: PseudonymCheckpoint,
+) =>
+  Effect.gen(function* executePseudonym() {
+    const operator = yield* connect(journal);
     const baseline = yield* readSnapshot(operator.client, operator.shell);
     const current: Plan = {
       baseline,
@@ -344,26 +605,25 @@ const main = (mode: Mode, phase: Phase, planPath: string, reviewed: Option.Optio
     return yield* Console.log({ fingerprint, mode, phase, verified: true });
   }).pipe(Effect.scoped);
 
-const command = Command.make(
-  'pseudonymize-akros-demo',
-  {
-    issueKey: Flag.Boolean('issue-key').pipe(Flag.withDefault(false)),
-    mode: Flag.Literals('mode', modes),
-    phase: Flag.Literals('phase', ['prepare', 'retire']),
-    plan: Flag.String('plan'),
-    reviewed: Flag.String('reviewed-plan-sha256').pipe(Flag.optional),
-  },
-  ({ issueKey, mode, phase, plan, reviewed }) =>
-    main(mode, phase, plan, reviewed, issueKey).pipe(
-      Effect.tapError((failure) =>
-        Console.error(
-          Schema.is(DemoSeedError)(failure)
-            ? failure.reason
-            : 'Pseudonym migration stopped; credentials and provider details withheld. Review a fresh plan before retry.',
+const command = (journal: PseudonymCheckpoint) =>
+  Command.make(
+    'pseudonymize-akros-demo',
+    {
+      issueKey: Flag.Boolean('issue-key').pipe(Flag.withDefault(false)),
+      mode: Flag.Literals('mode', modes),
+      phase: Flag.Literals('phase', ['prepare', 'retire']),
+      plan: Flag.String('plan'),
+      reviewed: Flag.String('reviewed-plan-sha256').pipe(Flag.optional),
+    },
+    ({ issueKey, mode, phase, plan, reviewed }) =>
+      run(mode, phase, plan, reviewed, issueKey, journal).pipe(
+        Effect.tapError(() =>
+          Console.error(
+            'Pseudonym migration stopped; retain the pending native seed journal and reconcile before any explicit resume. No automatic retry.',
+          ),
         ),
       ),
-    ),
-);
+  );
 
 if (import.meta.main) {
   const services = ActiveApplicationCompositionConfigLive.pipe(
@@ -371,8 +631,30 @@ if (import.meta.main) {
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(NodeServices.layer),
   );
+  const checkpointLive = Layer.effect(
+    PseudonymCheckpointService,
+    Effect.gen(function* checkpointRuntime() {
+      const fs = yield* FileSystem.FileSystem;
+      return yield* makePseudonymWriteCheckpoint(
+        fs,
+        nodePath.join(homedir(), '.ontos-operator-checkpoints', 'pseudonymize-akros-demo'),
+      );
+    }),
+  );
+  const journaledHttp = Layer.effect(
+    HttpClient.HttpClient,
+    Effect.gen(function* journaledTransport() {
+      const http = yield* HttpClient.HttpClient;
+      const journal = yield* PseudonymCheckpointService;
+      return pseudonymCheckpointHttpClient(http, journal);
+    }),
+  );
   const exit = await Effect.runPromiseExit(
-    Command.run(command, { version: '1.0.0' }).pipe(
+    Effect.gen(function* operatorRuntime() {
+      return yield* Command.run(command(yield* PseudonymCheckpointService), { version: '1.0.0' });
+    }).pipe(
+      Effect.provide(journaledHttp),
+      Effect.provide(checkpointLive),
       // Operator processes own their database pool registry like every Node host (Core pools are host-scoped).
       Effect.provide(ProcessDatabasePoolsLive),
       Effect.provide(services),
