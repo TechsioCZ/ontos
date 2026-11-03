@@ -9,7 +9,14 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { AgreementsCommand, Feedback } from '../../../../shared/actions/apply-command.ts';
 import type { Contract } from '../../../../shared/apis/records.ts';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
-import { agreements, agreementsView, loadRentalReferences } from './agreements-data.ts';
+import {
+  agreements,
+  agreementsView,
+  loadRentalReferences,
+  useAgreementsDataset,
+  agreementCustomerData,
+  useAgreementDetails,
+} from './agreements-data.ts';
 import type { AgreementsInput, RentalReferences } from './agreements-data.ts';
 import { contractTitle } from './contract-title.ts';
 import { termsAutosaveResult } from './contract-terms-draft.ts';
@@ -75,7 +82,16 @@ export const autosaveTerms = (
   const send = (revision: number) =>
     newUuid.pipe(
       Effect.flatMap((idempotencyKey) =>
-        executeApplyCommand({ command, expectedRevision: revision }, 'legal-agreements.command', { idempotencyKey }),
+        executeApplyCommand({ command, expectedRevision: revision }, 'legal-agreements.command', {
+          idempotencyKey,
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              agreements.invalidate();
+              agreementCustomerData.invalidate();
+            }),
+          ),
+        ),
       ),
     );
   return termsAutosaveResult(
@@ -92,6 +108,7 @@ export const autosaveTerms = (
 };
 export const useRecordsPage = (input: AgreementsInput) => {
   const { language, t } = useModernI18n();
+  const data = useAgreementsDataset(input);
   const navigate = useNavigate();
   const cancellation = useRef<AbortController | null>(null);
   const run = <A, E>(effect: Effect.Effect<A, E>) => {
@@ -100,15 +117,11 @@ export const useRecordsPage = (input: AgreementsInput) => {
     void browserRuntime.runPromiseExit(effect, { signal: controller.signal });
   };
   const page = useSyncExternalStore(
-    agreements.subscribe,
-    () => agreements.snapshot(input),
+    (listener) => data.subscribe(listener, input),
+    () => data.snapshot(input),
     () => pageDataPending,
   );
-  const { legalEntityId, resourceId: linkedResourceId } = input;
-  useEffect(
-    () => agreements.ensure({ legalEntityId, resourceId: linkedResourceId }),
-    [legalEntityId, linkedResourceId],
-  );
+  const { resourceId: linkedResourceId } = input;
   useEffect(
     () => () => {
       cancellation.current?.abort();
@@ -131,8 +144,6 @@ export const useRecordsPage = (input: AgreementsInput) => {
   });
   const {
     contractKind,
-    customerName,
-    customerNameFeedback,
     customers,
     feedback,
     occupancies,
@@ -180,7 +191,7 @@ export const useRecordsPage = (input: AgreementsInput) => {
     setActionFeedback(nextFeedback);
     if (nextFeedback === 'conflict') {
       // Someone changed the agreements meanwhile: show their version before the person tries again.
-      run(agreements.refresh(input));
+      run(data.refresh(input));
     }
   };
   const selectContractKind = (kind: Contract['kind']) => {
@@ -204,7 +215,7 @@ export const useRecordsPage = (input: AgreementsInput) => {
   const retry = () => {
     setActionFeedback('loading');
     setSensitiveHidden(false);
-    run(agreements.refresh(input).pipe(Effect.andThen(Effect.sync(() => setActionFeedback(undefined)))));
+    run(data.refresh(input).pipe(Effect.andThen(Effect.sync(() => setActionFeedback(undefined)))));
   };
   const referenceAudiences = (command: AgreementsCommand): readonly string[] =>
     Match.value(command).pipe(
@@ -243,11 +254,18 @@ export const useRecordsPage = (input: AgreementsInput) => {
           executeApplyCommand({ command, expectedRevision: snapshot.revision }, 'legal-agreements.command', {
             idempotencyKey,
             referenceCredentials,
-          }),
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                data.invalidate();
+                agreementCustomerData.invalidate();
+              }),
+            ),
+          ),
         ),
-        Effect.tap(() => agreements.refresh(input)),
+        Effect.tap(() => data.refresh(input)),
         Effect.tap((result) => {
-          const latest = agreements.snapshot(input);
+          const latest = data.snapshot(input);
           const record = (
             latest.state === 'ready' ? Option.getOrUndefined(latest.value) : undefined
           )?.records.contracts.find((item) => item.contractRef.resourceId === result.resourceRef?.resourceId);
@@ -437,6 +455,7 @@ export const useRecordsPage = (input: AgreementsInput) => {
       t('legal-agreements.demo.unnamedContract'),
     );
   const visible = snapshot?.contracts.filter((record) => !expiringOnly || record.expiringSoon) ?? [];
+  const { customerName, customerNameFeedback } = useAgreementDetails(input, selected, visible, snapshot);
   const busy = feedback === 'loading' || feedback === 'saving';
   const formView = {
     showCommercialCustomer: !editingDraft && contractKind === 'OTHER',

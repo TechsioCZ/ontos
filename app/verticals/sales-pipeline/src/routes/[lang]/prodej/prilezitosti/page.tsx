@@ -1,6 +1,6 @@
 import { BulkActionBar, foldSearchText, PageHeader, Toaster } from '@app/admin-ui';
-import { modulePagePreload } from '@app/shared-contracts/page-data';
-import type { ModulePageProps } from '@app/shared-contracts/page-data';
+import { modulePagePreload, pageDataScopeKey } from '@app/shared-contracts/page-data';
+import type { ModulePageContext, ModulePageProps } from '@app/shared-contracts/page-data';
 import { useTagsFor } from '@app/tagging/components/tag-controls';
 import type { TagId } from '@app/tagging/contracts/records';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -9,7 +9,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import type { DataTableProps, DataTableRowAction } from '@techsio/ui-kit/organisms/data-table';
+import type { DataTableProps, DataTableRowAction, TanstackTable } from '@techsio/ui-kit/organisms/data-table';
 import { Effect, Match, Option, Predicate, Schema } from 'effect';
 import type { Dispatch, SetStateAction } from 'react';
 import { useReducer, useState } from 'react';
@@ -46,6 +46,7 @@ import {
 import type { PipelineLookups } from './pipeline-table.tsx';
 import { initialRecordsInput, pipelineRecords, usePipelineRecords } from './pipeline-records.ts';
 import type { RecordsLoadError } from './pipeline-records.ts';
+import { usePrefetchOpportunityDetails, useVisibleOpportunityRows } from './pipeline-related.ts';
 import { referenceStatusOf } from './pipeline-reference-labels.ts';
 import type { CustomerOption, EmployeeOption, LoadState } from './pipeline-references.ts';
 import { toSubjectIds, usePipelineReferences, useSubjectIdsWithTag } from './pipeline-references.ts';
@@ -135,6 +136,7 @@ const PipelineBulkBar = ({ onClear, onOwner, onStage, onTags, selectedCount, tag
 interface PipelineTableProps {
   readonly canWrite: boolean;
   readonly conflictingFilters: boolean;
+  readonly context?: ModulePageContext | undefined;
   readonly filtersActive: boolean;
   readonly hasResponse: boolean;
   readonly loadError: RecordsLoadError | undefined;
@@ -149,6 +151,7 @@ interface PipelineTableProps {
   readonly onRetry: () => void;
   readonly onSelection: Dispatch<SetStateAction<Selection>>;
   readonly onStage: (opportunity: Opportunity) => void;
+  readonly revision: number;
   readonly rows: Opportunity[];
   readonly selection: Selection;
 }
@@ -156,6 +159,7 @@ interface PipelineTableProps {
 const PipelineTable = ({
   canWrite,
   conflictingFilters,
+  context,
   filtersActive,
   hasResponse,
   loadError,
@@ -170,12 +174,25 @@ const PipelineTable = ({
   onRetry,
   onSelection,
   onStage,
+  revision,
   rows,
   selection,
 }: PipelineTableProps) => {
   const { t } = useModernI18n();
   const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>(defaultColumnVisibility);
   const narrow = useNarrowViewport();
+  const [table, setTable] = useState<TanstackTable<Opportunity>>();
+  const visibleRows = useVisibleOpportunityRows(table);
+  usePrefetchOpportunityDetails(
+    context,
+    loading
+      ? []
+      : visibleRows.map((opportunity) => ({
+          counterpartyId: lookups.customerById.get(opportunity.partyId)?.counterpartyId,
+          opportunity,
+        })),
+    revision,
+  );
   const writeActions: DataTableRowAction<Opportunity>[] = canWrite
     ? [
         {
@@ -251,6 +268,7 @@ const PipelineTable = ({
       loadingRowCount={10}
       maxHeight="calc(100dvh - 22rem)"
       onColumnVisibilityChange={setColumnVisibility}
+      onReady={setTable}
       onRowClick={(row) => onOpen(row.original)}
       onRowSelectionChange={onSelection}
       pageSizeOptions={[50, 100, 200]}
@@ -413,11 +431,13 @@ const liveDialog = (dialog: DialogState | undefined, items: readonly Opportunity
 };
 
 const RecordsPageContent = ({
+  context,
   initialOpportunityId,
   initialPartyId,
   invalidFilter,
   legalEntityId,
 }: {
+  readonly context?: ModulePageContext | undefined;
   readonly initialOpportunityId: string | undefined;
   readonly initialPartyId: PartyId | undefined;
   readonly invalidFilter: boolean;
@@ -442,7 +462,7 @@ const RecordsPageContent = ({
   const [dialog, setDialog] = useState<DialogState>();
   const [detailId, setDetailId] = useState<string | undefined>(initialOpportunityId);
   const { loadError, pending, reload, response } = usePipelineRecords(
-    { customer: customerFilter, legalEntityId, owner: ownerFilter, stage: stageFilter },
+    { context, customer: customerFilter, legalEntityId, owner: ownerFilter, stage: stageFilter },
     !invalidFilter,
   );
   const canWrite = response?.canWrite === true;
@@ -626,6 +646,7 @@ const RecordsPageContent = ({
       <PipelineTable
         canWrite={canWrite}
         conflictingFilters={ownerFilter !== '' && unassignedOnly}
+        context={context}
         filtersActive={filtersActive}
         hasResponse={response !== undefined}
         loadError={loadError}
@@ -640,12 +661,14 @@ const RecordsPageContent = ({
         onRetry={reload}
         onSelection={setSelection}
         onStage={(opportunity) => openStage({ mode: 'row', opportunity })}
+        revision={revision}
         rows={rows}
         selection={selection}
       />
 
       <PipelineDetailPanel
         canWrite={canWrite}
+        context={context}
         lookups={lookups}
         onClose={() => setDetailId(undefined)}
         onEdit={(opportunity) => {
@@ -657,6 +680,7 @@ const RecordsPageContent = ({
           openStage({ mode: 'row', opportunity });
         }}
         opportunity={detailId === undefined ? undefined : items.find((item) => item.id === detailId)}
+        revision={revision}
       />
 
       <PipelineDialogHost
@@ -695,9 +719,11 @@ const customerSearchSchema = Schema.Struct({
 
 /** The Shell prepares the opening records read before it reveals the page. */
 export const preloadPage = modulePagePreload((props) =>
-  initialRecordsInput(props).pipe(
-    Option.match({ onNone: () => Effect.void, onSome: (input) => pipelineRecords.preload(input) }),
-  ),
+  pageDataScopeKey(props.context, 'demo.sales-pipeline') === undefined
+    ? Effect.void
+    : initialRecordsInput(props).pipe(
+        Option.match({ onNone: () => Effect.void, onSome: (input) => pipelineRecords.preload(input) }),
+      ),
 );
 
 /** Inside the Shell the page gets the person's context; on its own it reads without a legal entity key. */
@@ -724,6 +750,7 @@ export const RecordsPage = ({ context }: Partial<ModulePageProps>) => {
       supportedLanguages={['en', 'cs']}
     >
       <RecordsPageContent
+        context={context}
         initialOpportunityId={search?.opportunityId}
         initialPartyId={Option.getOrUndefined(requested)?.partyId}
         invalidFilter={Option.isNone(requested)}

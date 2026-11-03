@@ -1,4 +1,5 @@
 import { Effect, Random } from 'effect';
+import { opportunityRelatedData } from './pipeline-related.ts';
 import type { ApplyCommandPayload } from '../../../../../shared/actions/apply-command.ts';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
 import type { PartyIdSchema } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
@@ -27,7 +28,9 @@ const sendPipelineCommand = Effect.fn('SalesPipeline.sendCommand')(function* sen
   // A retry is a new invocation, so every send gets its own idempotency key.
   const nonce = yield* Random.nextInt;
   const idempotencyKey = `sales-pipeline:apply:${nonce}`;
-  return yield* executeApplyCommand({ command, expectedRevision }, idempotencyKey, { idempotencyKey });
+  return yield* executeApplyCommand({ command, expectedRevision }, idempotencyKey, { idempotencyKey }).pipe(
+    Effect.ensuring(Effect.sync(() => opportunityRelatedData.invalidate())),
+  );
 });
 
 /**

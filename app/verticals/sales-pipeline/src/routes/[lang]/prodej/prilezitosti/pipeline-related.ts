@@ -3,8 +3,11 @@ import { documentNavigationModules } from '@app/shared-contracts';
 import { listOrders } from '@app/merchandise/clients/records';
 import { executeRecords as executeAgreementsRecords } from '@app/legal-agreements/clients/records';
 import { listTasks } from '@app/work-tasks/clients/records';
-import { Effect, Random } from 'effect';
-import { useEffect, useState } from 'react';
+import { Data, Effect, Random, Result, Schema } from 'effect';
+import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
+import type { ModulePageContext } from '@app/shared-contracts/page-data';
+import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
+import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
@@ -77,31 +80,34 @@ export const loadOpportunityRelated = (
     Effect.flatMap((published) =>
       Effect.all(
         {
-          contracts: section(
-            published,
-            'legal.agreements',
+          contracts:
             counterpartyId === undefined
-              ? Effect.succeed<readonly RelatedContract[]>([])
-              : correlation('contracts').pipe(
-                  Effect.flatMap((id) => executeAgreementsRecords({}, id)),
-                  Effect.map((records) =>
-                    records.contracts.flatMap((contract): RelatedContract[] => {
-                      if (contract.counterpartyRef.resourceId !== counterpartyId) {
-                        return [];
-                      }
-                      return [
-                        {
-                          id: contract.contractRef.resourceId,
-                          kind: contract.kind,
-                          lifecycleState: contract.lifecycleState,
-                          startDate: contract.startDate,
-                          subject: contract.subject,
-                        },
-                      ];
-                    }),
+              ? Effect.succeed<RelatedSection<RelatedContract>>({
+                  status: published !== undefined && !published.has('legal.agreements') ? 'absent' : 'unavailable',
+                })
+              : section(
+                  published,
+                  'legal.agreements',
+                  correlation('contracts').pipe(
+                    Effect.flatMap((id) => executeAgreementsRecords({}, id)),
+                    Effect.map((records) =>
+                      records.contracts.flatMap((contract): RelatedContract[] => {
+                        if (contract.counterpartyRef.resourceId !== counterpartyId) {
+                          return [];
+                        }
+                        return [
+                          {
+                            id: contract.contractRef.resourceId,
+                            kind: contract.kind,
+                            lifecycleState: contract.lifecycleState,
+                            startDate: contract.startDate,
+                            subject: contract.subject,
+                          },
+                        ];
+                      }),
+                    ),
                   ),
                 ),
-          ),
           orders: section(
             published,
             'demo.merchandise',
@@ -144,10 +150,12 @@ export const loadOpportunityRelated = (
             ),
           ),
         },
-        { concurrency: 3 },
+        { concurrency: 1 },
       ),
     ),
   );
+
+const moduleId = 'demo.sales-pipeline';
 
 const loading: OpportunityRelated = {
   contracts: { status: 'loading' },
@@ -155,34 +163,171 @@ const loading: OpportunityRelated = {
   tasks: { status: 'loading' },
 };
 
-/** Loads the related records whenever the open case (or its customer link) changes. */
+class RelatedSectionsIncomplete extends Data.TaggedError('RelatedSectionsIncomplete')<{
+  readonly value: OpportunityRelated;
+}> {}
+
+export interface OpportunityRelatedInput {
+  readonly counterpartyId: string | undefined;
+  readonly opportunity: Pick<Opportunity, 'id' | 'partyId'>;
+  readonly revision: number;
+  readonly scope: string;
+}
+const RelatedKeySchema = Schema.fromJsonString(Schema.Array(Schema.String));
+const relatedKey = ({ counterpartyId, opportunity, revision, scope }: OpportunityRelatedInput): string =>
+  Result.getOrThrow(
+    Schema.encodeResult(RelatedKeySchema)([
+      scope,
+      opportunity.id,
+      opportunity.partyId,
+      counterpartyId ?? '',
+      String(revision),
+    ]),
+  );
+
+/** A refusal is renderable for this opening, never a cached successful authorization decision. */
+export const opportunityRelatedData = definePageData({
+  cancelWhenUnused: true,
+  key: relatedKey,
+  load: ({ counterpartyId, opportunity }: OpportunityRelatedInput) =>
+    loadOpportunityRelated(opportunity, counterpartyId).pipe(
+      Effect.flatMap((value) =>
+        [value.tasks, value.contracts, value.orders].every((item) => item.status === 'ready')
+          ? Effect.succeed(value)
+          : Effect.fail(new RelatedSectionsIncomplete({ value })),
+      ),
+    ),
+  maxEntries: 256,
+  retainStale: false,
+  runtime: browserRuntime,
+});
+
+export interface VisibleOpportunityRelated {
+  readonly counterpartyId: string | undefined;
+  readonly opportunity: Opportunity;
+}
+
+/** Only the final sorted/paginated row model belongs here, never the unfiltered population. */
+export const preloadOpportunityDetails = (
+  context: ModulePageContext | undefined,
+  rows: readonly VisibleOpportunityRelated[],
+  revision: number,
+): Effect.Effect<void> => {
+  const scope = pageDataScopeKey(context, moduleId);
+  return scope === undefined
+    ? Effect.void
+    : Effect.forEach(
+        rows.slice(0, 200),
+        ({ counterpartyId, opportunity }) =>
+          opportunityRelatedData.read({ counterpartyId, opportunity, revision, scope }).pipe(Effect.ignore),
+        { concurrency: 2, discard: true },
+      );
+};
+
+/** Observe the kit's live final row model, including its sort, page and clamped page index. */
+export const useVisibleOpportunityRows = (table: TanstackTable<Opportunity> | undefined): readonly Opportunity[] => {
+  const model = useSyncExternalStore(
+    (listener) => {
+      const sorting = table?.atoms.sorting.subscribe(listener);
+      const pagination = table?.atoms.pagination.subscribe(listener);
+      const options = table?.optionsStore?.subscribe(listener);
+      return () => {
+        sorting?.unsubscribe();
+        pagination?.unsubscribe();
+        options?.unsubscribe();
+      };
+    },
+    () => table?.getRowModel(),
+    (): undefined => undefined,
+  );
+  return model?.rows.map((row) => row.original) ?? [];
+};
+
+export const usePrefetchOpportunityDetails = (
+  context: ModulePageContext | undefined,
+  rows: readonly VisibleOpportunityRelated[],
+  revision: number,
+): void => {
+  const scope = pageDataScopeKey(context, moduleId);
+  const selection = Result.getOrThrow(
+    Schema.encodeResult(RelatedKeySchema)(
+      rows
+        .slice(0, 200)
+        .map(({ counterpartyId, opportunity }) =>
+          relatedKey({ counterpartyId, opportunity, revision, scope: scope ?? '' }),
+        ),
+    ),
+  );
+  const pending = useSyncExternalStore(
+    opportunityRelatedData.subscribe,
+    () =>
+      scope !== undefined &&
+      rows
+        .slice(0, 200)
+        .some(
+          ({ counterpartyId, opportunity }) =>
+            opportunityRelatedData.snapshot({ counterpartyId, opportunity, revision, scope }).state === 'pending',
+        ),
+    () => false,
+  );
+  const preload = useEffectEvent((_selection: string) => preloadOpportunityDetails(context, rows, revision));
+  useEffect(() => {
+    const fiber = pending && scope !== undefined ? browserRuntime.runFork(preload(selection)) : undefined;
+    return () => fiber?.interruptUnsafe();
+  }, [pending, scope, selection]);
+};
+
+/** A warm opening reads synchronously. A cold/missing-scope opening owns cancellable foreground work. */
 export const useOpportunityRelated = (
   opportunity: Opportunity | undefined,
   counterpartyId: string | undefined,
+  context?: ModulePageContext,
+  revision = 0,
 ): OpportunityRelated => {
-  const opportunityId = opportunity?.id;
-  const partyId = opportunity?.partyId;
-  const key = opportunityId === undefined ? '' : `${opportunityId}:${partyId ?? ''}:${counterpartyId ?? ''}`;
-  const [result, setResult] = useState<{ readonly key: string; readonly related: OpportunityRelated }>();
-  useEffect((): (() => void) | undefined => {
-    if (opportunityId === undefined || partyId === undefined) {
-      return undefined;
-    }
-    let active = true;
-    void browserRuntime.runPromise(
-      loadOpportunityRelated({ id: opportunityId, partyId }, counterpartyId).pipe(
-        Effect.tap((related) =>
-          Effect.sync(() => {
-            if (active) {
-              setResult({ key, related });
-            }
-          }),
-        ),
-      ),
+  const scope = pageDataScopeKey(context, moduleId);
+  const input =
+    opportunity === undefined || scope === undefined ? undefined : { counterpartyId, opportunity, revision, scope };
+  const requestScope =
+    scope ??
+    Result.getOrThrow(
+      Schema.encodeResult(RelatedKeySchema)([
+        context?.tenantId ?? '',
+        context?.principalId ?? '',
+        context?.legalEntityId ?? '',
+      ]),
     );
+  const key =
+    opportunity === undefined ? '' : relatedKey({ counterpartyId, opportunity, revision, scope: requestScope });
+  const cached = useSyncExternalStore(
+    (listener) => opportunityRelatedData.subscribe(listener, input),
+    () => (input === undefined ? pageDataPending : opportunityRelatedData.snapshot(input)),
+    () => pageDataPending,
+  );
+  const [local, setLocal] = useState<{ readonly key: string; readonly value: OpportunityRelated }>();
+  const read = useEffectEvent((selection: string) => {
+    if (opportunity === undefined) {
+      return Effect.void;
+    }
+    if (input !== undefined) {
+      return opportunityRelatedData.read(input).pipe(Effect.ignore);
+    }
+    return loadOpportunityRelated(opportunity, counterpartyId).pipe(
+      Effect.tap((value) => Effect.sync(() => setLocal({ key: selection, value }))),
+    );
+  });
+  const enabled = opportunity !== undefined;
+  useEffect(() => {
+    const fiber = enabled ? browserRuntime.runFork(read(key)) : undefined;
     return () => {
-      active = false;
+      fiber?.interruptUnsafe();
+      setLocal(undefined);
     };
-  }, [counterpartyId, key, opportunityId, partyId]);
-  return result?.key === key ? result.related : loading;
+  }, [key, enabled]);
+  if (input !== undefined) {
+    if (cached.state === 'ready') {
+      return cached.value;
+    }
+    return cached.state === 'failed' ? cached.error.value : loading;
+  }
+  return local?.key === key ? local.value : loading;
 };

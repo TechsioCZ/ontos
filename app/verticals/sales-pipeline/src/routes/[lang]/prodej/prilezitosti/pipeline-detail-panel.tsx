@@ -10,6 +10,7 @@ import {
   SidePanel,
   StatusBadge,
 } from '@app/admin-ui';
+import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -89,24 +90,28 @@ const RelatedList = <Item extends { readonly id: string }>({
 
 interface PipelineDetailPanelProps {
   readonly canWrite: boolean;
+  readonly context?: ModulePageContext | undefined;
   readonly lookups: PipelineLookups;
   readonly onClose: () => void;
   readonly onEdit: (opportunity: Opportunity) => void;
   readonly onStage: (opportunity: Opportunity) => void;
   readonly opportunity: Opportunity | undefined;
+  readonly revision: number;
 }
 
 export const PipelineDetailPanel = ({
   canWrite,
+  context,
   lookups,
   onClose,
   onEdit,
   onStage,
   opportunity,
+  revision,
 }: PipelineDetailPanelProps) => {
   const { language, t } = useModernI18n();
   const customer = opportunity === undefined ? undefined : lookups.customerById.get(opportunity.partyId);
-  const related = useOpportunityRelated(opportunity, customer?.counterpartyId);
+  const related = useOpportunityRelated(opportunity, customer?.counterpartyId, context, revision);
   if (opportunity === undefined) {
     return null;
   }
