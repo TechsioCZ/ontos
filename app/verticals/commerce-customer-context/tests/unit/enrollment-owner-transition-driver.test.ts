@@ -156,21 +156,25 @@ const outcome = Schema.decodeSync(CommerceEnrollmentOwnerEffectOutcomeSchema)({
   status: 'SUCCEEDED',
 });
 
+const read = (_input: Parameters<CommerceEnrollmentAttemptService['read']>[0]) => Effect.succeed(attempt());
+
+const readOwnerOperation = (_input: Parameters<CommerceEnrollmentAttemptService['readOwnerOperation']>[0]) =>
+  Effect.succeed(operation());
+
+const reconcileOutcome = (_input: ReconcileEnrollmentRequest, _resolution: ReconcileEnrollmentResolution) =>
+  Effect.succeed(recordResult);
+
+const recordOutcome = (input: RecordEnrollmentOutcomeInput) =>
+  Effect.sync(() => {
+    void input;
+    return recordResult;
+  });
+
 const makeAttemptStore = (
   claim: AttemptClaimResult = claimResult(),
   overrides: Partial<CommerceEnrollmentOwnerAttemptStore> = {},
 ): CommerceEnrollmentOwnerAttemptStore => {
   const claimTransition = (_input: ClaimEnrollmentTransitionInput) => Effect.succeed(claim);
-  const read = (_input: Parameters<CommerceEnrollmentAttemptService['read']>[0]) => Effect.succeed(attempt());
-  const readOwnerOperation = (_input: Parameters<CommerceEnrollmentAttemptService['readOwnerOperation']>[0]) =>
-    Effect.succeed(operation());
-  const reconcileOutcome = (_input: ReconcileEnrollmentRequest, _resolution: ReconcileEnrollmentResolution) =>
-    Effect.succeed(recordResult);
-  const recordOutcome = (input: RecordEnrollmentOutcomeInput) =>
-    Effect.sync(() => {
-      void input;
-      return recordResult;
-    });
   return {
     claimTransition,
     read,

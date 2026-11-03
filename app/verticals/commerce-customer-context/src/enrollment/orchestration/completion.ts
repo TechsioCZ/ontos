@@ -99,6 +99,9 @@ const existingAccountOwnTransitions = new Set(
   ),
 );
 
+const undeclared = (transition: JourneyTransitionSpec): boolean =>
+  !existingAccountOwnTransitions.has(journeyTransitionIdentity(transition));
+
 /**
  * Existing-account declares the account-ownership proof and the second Tenant's Principal Auth
  * Binding steps itself, and a target journey may declare the very same activation step under the
@@ -109,10 +112,8 @@ const existingAccountOwnTransitions = new Set(
  */
 const existingAccountTarget = (
   target: JourneyDefinition,
-): Effect.Effect<JourneyDefinition, CommerceEnrollmentAttemptError> => {
-  const undeclared = (transition: JourneyTransitionSpec): boolean =>
-    !existingAccountOwnTransitions.has(journeyTransitionIdentity(transition));
-  return Schema.decodeEffect(JourneyDefinitionSchema)({
+): Effect.Effect<JourneyDefinition, CommerceEnrollmentAttemptError> =>
+  Schema.decodeEffect(JourneyDefinitionSchema)({
     kind: target.kind,
     optionalTransitions: target.optionalTransitions.filter(undeclared),
     requiredTransitions: target.requiredTransitions.filter(undeclared),
@@ -125,7 +126,6 @@ const existingAccountTarget = (
       ),
     ),
   );
-};
 
 /** Existing-account's own composed definition is what gates completion for this Attempt. */
 const existingAccountDefinition = (

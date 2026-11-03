@@ -139,6 +139,16 @@ it.effect(
     }),
 );
 
+const evidence = (prepared: { readonly audit: readonly unknown[] }) =>
+  decodeAudit(prepared.audit).pipe(
+    Effect.map(([only]) => ({
+      expectedBasisFingerprint: only?.expectedBasisFingerprint,
+      reason: only?.reason,
+      resultingEndFactId: only?.resultingEndFactId,
+      resultingRevisionId: only?.resultingRevisionId,
+    })),
+  );
+
 it.effect(
   '#950 F46-F47 every governed Tax Rule mutation audits its expected-current evidence and resulting state',
   () =>
@@ -189,15 +199,6 @@ it.effect(
         ended.value,
       );
 
-      const evidence = (prepared: { readonly audit: readonly unknown[] }) =>
-        decodeAudit(prepared.audit).pipe(
-          Effect.map(([only]) => ({
-            expectedBasisFingerprint: only?.expectedBasisFingerprint,
-            reason: only?.reason,
-            resultingEndFactId: only?.resultingEndFactId,
-            resultingRevisionId: only?.resultingRevisionId,
-          })),
-        );
       const { reason } = attribution;
       expect(yield* evidence(created)).toEqual({ reason, resultingRevisionId: 'initial-revision' });
       expect(yield* evidence(revised)).toEqual({

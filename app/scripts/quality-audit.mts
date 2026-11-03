@@ -827,6 +827,8 @@ const executeStep = Effect.fn('qualityAudit.executeStep')(function* executeStepE
   };
 });
 
+const AUDIT_STEP_CONCURRENCY = 2;
+
 export const auditSteps = (root: string, runDirectory: string, tool: AuditTool): readonly AuditStep[] => {
   const config = `${runDirectory}/configs`;
   const common = [
@@ -952,18 +954,20 @@ const writeSummary = Effect.fn('qualityAudit.writeSummary')(function* writeSumma
       'Findings are audit evidence, not accepted debt or a delivery threshold.',
       'These counts overlap and have different units; do not add them into an error total.',
       'Knip counts below exclude only proven modeled consumers. Raw category counts and every corrected issue are retained in report.ndjson and modeled-usages.json.',
-      ...results
-        .filter((result) => result.name === 'knip')
-        .flatMap((result) => [
-          '',
-          '| Knip category | Remaining records |',
-          '| --- | ---: |',
-          ...Object.entries(result.coverage.findingCounts ?? {}).map(
-            ([category, count]) => `| ${category} | ${count} |`,
-          ),
-          '',
-          `Proven modeled usages retained separately: ${result.coverage.modeledUsages ?? 0}.`,
-        ]),
+      ...results.flatMap((result) =>
+        result.name === 'knip'
+          ? [
+              '',
+              '| Knip category | Remaining records |',
+              '| --- | ---: |',
+              ...Object.entries(result.coverage.findingCounts ?? {}).map(
+                ([category, count]) => `| ${category} | ${count} |`,
+              ),
+              '',
+              `Proven modeled usages retained separately: ${result.coverage.modeledUsages ?? 0}.`,
+            ]
+          : [],
+      ),
       'Unused exports describe an unused public binding; they do not establish that the implementation body is unused.',
       'JSCPD implementation counts exclude only complete static import-binding spans proven by parsing both files; raw clones and per-pair evidence remain in jscpd/report.json and jscpd/import-clone-evidence.json.',
       'Fallow strict clones preserve literal differences. Semantic similarity normalizes them and remains advisory; inspect both together with JSCPD before choosing a shared implementation.',
@@ -984,6 +988,89 @@ const writeSummary = Effect.fn('qualityAudit.writeSummary')(function* writeSumma
     ].join('\n'),
   );
 });
+
+const RUN_PREFIX = 'run-';
+const RUN_RECORD_SUFFIX = '.complete.json';
+const RunRecordSchema = Schema.Struct({
+  completedAt: CountSchema,
+  status: Schema.Literals(['reported', 'error', 'interrupted']),
+});
+type RunStatus = (typeof RunRecordSchema.Type)['status'];
+
+/** Mark a run as no longer being written; the record sits beside the run so the run directory stays raw evidence. */
+const recordRun = Effect.fn('qualityAudit.recordRun')(function* recordRunEffect(
+  runDirectory: string,
+  status: RunStatus,
+) {
+  yield* writeJson(`${runDirectory}${RUN_RECORD_SUFFIX}`, {
+    completedAt: yield* Clock.currentTimeMillis,
+    status,
+  });
+});
+
+const readRunRecord = (output: string, entry: string) =>
+  Effect.gen(function* readRunRecordEffect() {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const record = yield* decodeReport(
+      RunRecordSchema,
+      yield* fs.readFileString(path.join(output, entry)),
+      'run record',
+    );
+    return { ...record, run: entry.slice(0, -RUN_RECORD_SUFFIX.length) };
+  }).pipe(Effect.option);
+
+/**
+ * Delete superseded runs once the current run has finished and written its summary. A completion record older than
+ * the current run's start proves that no audit is still writing that run. Directories without a record may be a
+ * concurrent audit's live run or caller-owned data, so they are never deleted. A failed current run keeps the newest
+ * successful run beside it for comparison.
+ */
+const pruneRuns = Effect.fn('qualityAudit.pruneRuns')(function* pruneRunsEffect(
+  output: string,
+  runDirectory: string,
+  startedAt: number,
+  status: RunStatus,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const current = path.basename(runDirectory);
+  const entries = (yield* fs.readDirectory(output)).filter((entry) => entry.startsWith(RUN_PREFIX));
+  const records = EffectArray.getSomes(
+    yield* Effect.forEach(
+      entries.filter((entry) => entry.endsWith(RUN_RECORD_SUFFIX)),
+      (entry) => readRunRecord(output, entry),
+      { concurrency: 1 },
+    ),
+  );
+  const lastGood =
+    status === 'reported'
+      ? undefined
+      : EffectArray.sort(
+          records.filter((record) => record.status === 'reported'),
+          Order.mapInput(Order.Number, (record: (typeof records)[number]) => -record.completedAt),
+        )[0]?.run;
+  const superseded = records.filter(
+    (record) => record.run !== current && record.run !== lastGood && record.completedAt < startedAt,
+  );
+  yield* Effect.forEach(
+    superseded,
+    (record) =>
+      Effect.gen(function* removeSupersededRun() {
+        const directory = path.join(output, record.run);
+        yield* fs.remove(directory, { force: true, recursive: true });
+        yield* fs.remove(`${directory}${RUN_RECORD_SUFFIX}`, { force: true });
+      }),
+    { concurrency: 1 },
+  );
+});
+
+/** Retention is housekeeping: report its failure without changing the audit result or hiding diagnostics. */
+const bestEffortRetention = <A, E, R>(retention: Effect.Effect<A, E, R>) =>
+  retention.pipe(
+    Effect.tapError((issue) => Console.error(`Quality audit retention skipped: ${String(issue)}`)),
+    Effect.ignore,
+  );
 
 const createConsumerPath = Effect.fn('qualityAudit.createConsumerPath')(function* createConsumerPathEffect(
   root: string,
@@ -1007,10 +1094,11 @@ export const runQualityAudit = Effect.fn('qualityAudit.runQualityAudit')(functio
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const provenance = yield* readSourceProvenance(root);
+  const startedAt = yield* Clock.currentTimeMillis;
   yield* fs.makeDirectory(output, { recursive: true });
   const runDirectory = yield* fs.makeTempDirectory({
     directory: output,
-    prefix: 'run-',
+    prefix: RUN_PREFIX,
   });
   yield* writeSummary(output, runDirectory, [errorResult('setup', runDirectory, 'Audit has not completed')]);
   const results = yield* Effect.gen(function* collectAudit() {
@@ -1049,10 +1137,12 @@ export const runQualityAudit = Effect.fn('qualityAudit.runQualityAudit')(functio
         path: files.map((file) => path.resolve(root, file)),
       });
     }
+    // Analyzers read the source tree and write only into their own step directory, so they can run side by side.
+    // Two at a time keeps peak memory modest under `pnpm check`; results keep step order either way.
     const stepResults = yield* Effect.forEach(
       auditSteps(root, runDirectory, tool),
       (step) => executeStep(root, path.join(runDirectory, step.name), step),
-      { concurrency: 1 },
+      { concurrency: AUDIT_STEP_CONCURRENCY },
     );
     return yield* reconcileCoverage(root, runDirectory, files, stepResults).pipe(
       Effect.match({
@@ -1066,10 +1156,14 @@ export const runQualityAudit = Effect.fn('qualityAudit.runQualityAudit')(functio
       onFailure: (issue) => [errorResult('setup', runDirectory, String(issue))],
       onSuccess: (collected) => collected,
     }),
+    Effect.onInterrupt(() => Effect.ignore(recordRun(runDirectory, 'interrupted'))),
   );
   yield* writeSummary(output, runDirectory, results);
-  yield* Console.log(`Quality audit: ${path.join(output, 'summary.md')}`);
   const errors = results.filter((result) => result.status === 'error');
+  const status = errors.length > 0 ? 'error' : 'reported';
+  yield* bestEffortRetention(recordRun(runDirectory, status));
+  yield* bestEffortRetention(pruneRuns(output, runDirectory, startedAt, status));
+  yield* Console.log(`Quality audit: ${path.join(output, 'summary.md')}`);
   if (errors.length > 0) {
     yield* Effect.forEach(errors, (result) => Console.error(`${result.name}: ${result.diagnostic}`), {
       concurrency: 1,

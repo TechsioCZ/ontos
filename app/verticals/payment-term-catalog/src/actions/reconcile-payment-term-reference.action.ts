@@ -60,6 +60,20 @@ const reconciliationConflict = (reason: string) =>
     reason,
   });
 
+const canonicalIsAlias = () =>
+  Effect.fail(
+    reconciliationConflict('The proposed canonical Payment Term is already an alias; use its canonical identity'),
+  );
+
+const incompatibleSemantics = () =>
+  Effect.fail(reconciliationConflict('Only genuinely equivalent Payment Term semantics may be reconciled as aliases'));
+
+const reconciliationConflictOutcome = ({ canonicalPaymentTermId }: { readonly canonicalPaymentTermId: string }) =>
+  Effect.fail(reconciliationConflict(`The alias is already reconciled to ${canonicalPaymentTermId}`));
+
+const sameIdentity = () =>
+  Effect.fail(reconciliationConflict('A Payment Term cannot be reconciled as an alias of itself'));
+
 export const handleReconcilePaymentTermReference = Effect.fn('ReconcilePaymentTermReferenceAction.handle')(
   function* reconcilePaymentTermReference(
     payload: ReconcilePaymentTermReferencePayload,
@@ -85,18 +99,8 @@ export const handleReconcilePaymentTermReference = Effect.fn('ReconcilePaymentTe
     // oxlint-disable-next-line unicorn/consistent-function-scoping -- This named handler stays beside the protocol-keyed Match table it documents.
     const alreadyReconciled = ({ canonicalPaymentTermId }: { readonly canonicalPaymentTermId: string }) =>
       Effect.succeed({ canonicalPaymentTermId, changed: false });
-    const canonicalIsAlias = () =>
-      Effect.fail(
-        reconciliationConflict('The proposed canonical Payment Term is already an alias; use its canonical identity'),
-      );
-    const incompatibleSemantics = () =>
-      Effect.fail(
-        reconciliationConflict('Only genuinely equivalent Payment Term semantics may be reconciled as aliases'),
-      );
     const notFoundOutcome = ({ missing }: { readonly missing: 'alias' | 'canonical' }) =>
       Effect.fail(notFound(missing === 'alias' ? payload.aliasPaymentTermRef : payload.canonicalPaymentTermRef));
-    const reconciliationConflictOutcome = ({ canonicalPaymentTermId }: { readonly canonicalPaymentTermId: string }) =>
-      Effect.fail(reconciliationConflict(`The alias is already reconciled to ${canonicalPaymentTermId}`));
     const revisionConflict = ({
       actualMetadataRevision,
       target,
@@ -113,8 +117,6 @@ export const handleReconcilePaymentTermReference = Effect.fn('ReconcilePaymentTe
           reason: `The ${target} Payment Term changed concurrently with reconciliation`,
         }),
       );
-    const sameIdentity = () =>
-      Effect.fail(reconciliationConflict('A Payment Term cannot be reconciled as an alias of itself'));
     const resolution = yield* Match.value(outcome).pipe(
       Match.tags({
         already_reconciled: alreadyReconciled,

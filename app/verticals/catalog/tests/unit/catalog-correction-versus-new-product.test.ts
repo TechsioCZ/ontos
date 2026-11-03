@@ -184,6 +184,13 @@ const createContext = (overrides: Partial<CatalogPersistence> = {}) =>
     return { audit, events, reads, value, writes };
   });
 
+const ref = (type: string, id: string) => ({
+  moduleId: 'commerce.catalog' as const,
+  resourceId: id,
+  resourceType: `commerce.catalog.${type}`,
+  tenantId,
+});
+
 describe('Catalog Correction versus new Product realization (#415)', () => {
   it.effect('corrects a typo in place and keeps Product identity without Current revalidation', () =>
     Effect.gen(function* typo() {
@@ -491,12 +498,6 @@ describe('Catalog Correction versus new Product realization (#415)', () => {
   });
 
   it('uses a new immutable Set composition revision instead of a Product correction for successor content', () => {
-    const ref = (type: string, id: string) => ({
-      moduleId: 'commerce.catalog' as const,
-      resourceId: id,
-      resourceType: `commerce.catalog.${type}`,
-      tenantId,
-    });
     const unitRef = ref('product-unit', '44444444-4444-4444-8444-444444444444');
     const compositionRef = ref('set-composition', '55555555-5555-4555-8555-555555555555');
     const bracketA = Schema.decodeUnknownSync(CatalogSelectionSchema)({

@@ -2466,6 +2466,18 @@ it.live('replaces exact-start Current intervals without a zero-length prefix and
   ),
 );
 
+const outcomeFromLookup = (
+  result: Extract<PriceActionResultLookupOutcome, { readonly outcome: 'PRICE_ACTION_RESULT_FOUND' }>['result'],
+): ProductPriceBulkOwnerOutcome => {
+  if (result.outcome === 'CONFLICT') {
+    return { outcome: 'CONFLICT', reasonCode: result.reason };
+  }
+  if (result.outcome === 'CREATED' || result.outcome === 'REUSED' || result.outcome === 'EFFECTIVE_TIME_INVALID') {
+    return productPriceBulkOutcomeFromPersistence(result);
+  }
+  return { outcome: 'CONFLICT', reasonCode: 'UNEXPECTED_PRICE_ACTION_KIND' };
+};
+
 it.live('reconciles mixed persisted Product targets and retries only the owner-proven absent target', () =>
   Effect.scoped(
     Effect.gen(function* productPriceBulkPersistenceRecovery() {
@@ -2584,21 +2596,6 @@ it.live('reconciles mixed persisted Product targets and retries only the owner-p
         ),
       );
 
-      const outcomeFromLookup = (
-        result: Extract<PriceActionResultLookupOutcome, { readonly outcome: 'PRICE_ACTION_RESULT_FOUND' }>['result'],
-      ): ProductPriceBulkOwnerOutcome => {
-        if (result.outcome === 'CONFLICT') {
-          return { outcome: 'CONFLICT', reasonCode: result.reason };
-        }
-        if (
-          result.outcome === 'CREATED' ||
-          result.outcome === 'REUSED' ||
-          result.outcome === 'EFFECTIVE_TIME_INVALID'
-        ) {
-          return productPriceBulkOutcomeFromPersistence(result);
-        }
-        return { outcome: 'CONFLICT', reasonCode: 'UNEXPECTED_PRICE_ACTION_KIND' };
-      };
       let thirdLookupUnavailable = true;
       const executed: string[] = [];
       const executeBulk = (persistence: TestPricePersistence) => {

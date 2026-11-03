@@ -1,0 +1,290 @@
+{
+  "no-ad-hoc-argv-in-scripts": {
+    "count": 4,
+    "file": "scripts/cli-packages.ts"
+  },
+  "no-ambient-date": {
+    "count": 2,
+    "file": "packages/probe/src/component.tsx"
+  },
+  "no-ambient-process-env": {
+    "count": 6,
+    "file": "apps/shell-super-app/api/auth/config.ts"
+  },
+  "no-async-script-program": {
+    "count": 5,
+    "file": "scripts/async-migration-helpers.ts"
+  },
+  "no-bare-effect-run": {
+    "count": 2,
+    "file": "apps/other-app/api/handlers.ts"
+  },
+  "no-console-in-scripts": {
+    "count": 2,
+    "file": "scripts/captured-diagnostic.mts"
+  },
+  "no-dependency-parameters": {
+    "count": 2,
+    "file": "apps/shell-super-app/api/evasion-barrel-layer-alias.ts"
+  },
+  "no-direct-node-io-in-scripts": {
+    "count": 2,
+    "file": "scripts/aliased-create-require.mts"
+  },
+  "no-dotenv-loading": {
+    "count": 2,
+    "file": "apps/shell-super-app/playwright.config.ts"
+  },
+  "no-driver-failure-inspection": {
+    "count": 8,
+    "file": "apps/shell-super-app/api/auth/service.ts"
+  },
+  "no-duplicate-literal-vocabulary": {
+    "count": 3,
+    "file": "apps/shell-super-app/shared/api.ts"
+  },
+  "no-effect-provide-in-library": {
+    "count": 4,
+    "file": "aliases-and-namespaces.ts"
+  },
+  "no-effect-run-in-scripts": {
+    "count": 1,
+    "file": "scripts/extra-run-at-edge.ts"
+  },
+  "no-effect-run-in-tests": {
+    "count": 4,
+    "file": "aliases.test.ts"
+  },
+  "no-environment-record-type": {
+    "count": 5,
+    "file": "apps/shell-super-app/api/auth/config.ts"
+  },
+  "no-failure-discarding-error-callback": {
+    "count": 6,
+    "file": "apps/demo-app/api/auth/gateway-issuer.ts"
+  },
+  "no-hand-built-http-server-in-tests": {
+    "count": 3,
+    "file": "aliased-and-reassigned.test.tsx"
+  },
+  "no-hand-built-problem-details": {
+    "count": 2,
+    "file": "apps/demo-app/api/boundary-fake-schema.ts"
+  },
+  "no-hand-parsed-environment-value": {
+    "count": 5,
+    "file": "apps/shell-super-app/api/build-config.ts"
+  },
+  "no-hand-rolled-tagged-union": {
+    "count": 3,
+    "file": "apps/demo-app/src/routes/state.tsx"
+  },
+  "no-imperative-loop-in-effect-gen": {
+    "count": 2,
+    "file": "apps/shell-super-app/api/modules/shell-resources.ts"
+  },
+  "no-instanceof": {
+    "count": 6,
+    "file": "scripts/every-constructor.mts"
+  },
+  "no-interface-first-codec": {
+    "count": 3,
+    "file": "apps/shell-super-app/api/evasion-bff-barrel.ts"
+  },
+  "no-json-schema-as-document-contract": {
+    "count": 4,
+    "file": "apps/shell-super-app/api/verticals/installed-verticals.ts"
+  },
+  "no-layer-fresh": {
+    "count": 1,
+    "file": "apps/demo-app/tests/unit/harness.test.ts"
+  },
+  "no-layer-or-die-outside-root": {
+    "count": 1,
+    "file": "apps/alias-chain/api/index.ts"
+  },
+  "no-layer-provide-in-library": {
+    "count": 1,
+    "file": "packages/core-runtime/src/production-default.ts"
+  },
+  "no-literal-union-type-alias": {
+    "count": 4,
+    "file": "apps/demo-app/src/evasion-message-payload.ts"
+  },
+  "no-local-defect-seam": {
+    "count": 7,
+    "file": "apps/shell-super-app/api/index.ts"
+  },
+  "no-manual-config-in-scaffold-templates": {
+    "count": 2,
+    "file": "emitter.template.ts"
+  },
+  "no-manual-cookie-serialization": {
+    "count": 2,
+    "file": "apps/demo-app/api/auth/evasion-fake-cookies-binding.ts"
+  },
+  "no-manual-error-handling-in-scaffold-templates": {
+    "count": 1,
+    "file": "scripts/scaffolding/evasions/evasion-cast-switch.mts"
+  },
+  "no-manual-identity-annotations": {
+    "count": 7,
+    "file": "apps/shell-super-app/api/index.ts"
+  },
+  "no-manual-route-param-parsing": {
+    "count": 2,
+    "file": "apps/demo-app/src/routes/login/page.tsx"
+  },
+  "no-manual-tag-comparison": {
+    "count": 16,
+    "file": "apps/property-assertions.ts"
+  },
+  "no-native-error-construction": {
+    "count": 5,
+    "file": "apps/shell-super-app/api/auth/config.ts"
+  },
+  "no-native-json-parse": {
+    "count": 3,
+    "file": "apps/shell-super-app/api/auth/api-key-service.ts"
+  },
+  "no-native-json-stringify": {
+    "count": 4,
+    "file": "apps/shell-super-app/api/auth/api-key-service.ts"
+  },
+  "no-native-timers": {
+    "count": 1,
+    "file": "packages/core-runtime/src/production-default.ts"
+  },
+  "no-nested-effect-run": {
+    "count": 3,
+    "file": "aliases.tsx"
+  },
+  "no-nullable-schema-field": {
+    "count": 4,
+    "file": "apps/shell-app/shared/api.ts"
+  },
+  "no-nullable-service-outcome": {
+    "count": 5,
+    "file": "apps/shell-super-app/api/modules/evasion-effect-bindings.tsx"
+  },
+  "no-per-operation-http-api-client": {
+    "count": 2,
+    "file": "apps/demo-app/src/api/accessor-derivation.ts"
+  },
+  "no-per-request-key-material": {
+    "count": 1,
+    "file": "apps/shell-super-app/api/auth/gateway-issuer.ts"
+  },
+  "no-process-exit-outside-script-entry": {
+    "count": 4,
+    "file": "scripts/evasion-class-and-jsx.tsx"
+  },
+  "no-promise-first-scaffold-templates": {
+    "count": 1,
+    "file": "packages/tooling/codegen/render-federated-page.ts"
+  },
+  "no-promise-shaped-port": {
+    "count": 3,
+    "file": "apps/shell-super-app/api/auth/framework-hook-boundaries.ts"
+  },
+  "no-raw-effect-adt-tag-check": {
+    "count": 9,
+    "file": "apps/shell-super-app/api/auth/evasion-wrappers.ts"
+  },
+  "no-refinement-outside-schema": {
+    "count": 5,
+    "file": "apps/shell-super-app/api/auth/service.ts"
+  },
+  "no-route-local-error-classifier": {
+    "count": 3,
+    "file": "apps/demo-app/src/routes/[lang]/page.data.ts"
+  },
+  "no-runtime-construction-outside-root": {
+    "count": 1,
+    "file": "apps/demo-app/api/index.ts"
+  },
+  "no-scattered-browser-effect-run": {
+    "count": 1,
+    "file": "apps/shell-super-app/src/routes/production-default.ts"
+  },
+  "no-sequential-independent-yields": {
+    "count": 1,
+    "file": "apps/shell-super-app/api/auth/impersonation-service.ts"
+  },
+  "no-string-timestamp-schema": {
+    "count": 5,
+    "file": "apps/probe/shared/evasion-nested-contexts.tsx"
+  },
+  "no-structural-document-walking": {
+    "count": 2,
+    "file": "apps/shell-super-app/api/evasion-aliased-effect-imports.ts"
+  },
+  "no-symbol-slotted-operation-record": {
+    "count": 4,
+    "file": "packages/core-runtime/src/actions/definition.ts"
+  },
+  "no-sync-schema-codec": {
+    "count": 1,
+    "file": "apps/demo-app/module-deployment-allowlist.config.ts"
+  },
+  "no-threaded-correlation-parameter": {
+    "count": 7,
+    "file": "apps/shell-super-app/api/auth/identity-lifecycle.ts"
+  },
+  "no-throw-in-configuration-parser": {
+    "count": 3,
+    "file": "apps/shell-super-app/api/auth/evasion-cast-host.ts"
+  },
+  "no-throw-in-effect-callback": {
+    "count": 7,
+    "file": "apps/shell-super-app/api/handlers.ts"
+  },
+  "no-throw-in-scripts": {
+    "count": 5,
+    "file": "scripts/deep/evasion-effect-import-shapes.mts"
+  },
+  "no-unbranded-identifier-schema": {
+    "count": 2,
+    "file": "apps/probe/shared/evasion-bff-barrel-namespace.ts"
+  },
+  "no-unjustified-file-wide-lint-suppression": {
+    "count": 2,
+    "file": "apps/demo-app/api/aliased-seam-rules.ts"
+  },
+  "no-unmanaged-mutable-state": {
+    "count": 2,
+    "file": "apps/shell-super-app/api/evasion-globalthis-singleton.ts"
+  },
+  "no-unredacted-secret-field": {
+    "count": 3,
+    "file": "apps/shell-super-app/api/auth/evasion-decorators.ts"
+  },
+  "no-wide-factory-signature": {
+    "count": 12,
+    "file": "apps/shell-super-app/api/evasion-declaration-shapes.ts"
+  },
+  "prefer-effect-fn-for-operations": {
+    "count": 2,
+    "file": "apps/shell-super-app/api/bff.ts"
+  },
+  "prefer-match-over-tag-switch": {
+    "count": 2,
+    "file": "apps/shell-super-app/api/evasion-exhaustive-guard.ts"
+  },
+  "require-concurrency-option": {
+    "count": 6,
+    "file": "apps/adversarial-app/api/evasion-wrapped-callee.ts"
+  },
+  "require-context-service-for-service-interface": {
+    "count": 1,
+    "file": "apps/shell-super-app/api/auth/identity-lifecycle.ts"
+  },
+  "require-observability-layers-at-runtime-root": {
+    "count": 3,
+    "file": "apps/demo-app/api/index.ts"
+  },
+  "require-timeout-on-external-effect": {
+    "count": 1,
+    "file": "apps/demo/src/browser-import.ts"
+  }
+}

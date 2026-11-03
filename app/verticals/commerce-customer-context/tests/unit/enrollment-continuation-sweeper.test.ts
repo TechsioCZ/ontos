@@ -158,12 +158,13 @@ it.effect('seeds a tick from the durable journal when its registry has never see
   }),
 );
 
+const attemptFor = (): ReadEnrollmentAttemptInput => ({
+  portalEnrollmentAttemptId: attemptId(randomUUID()),
+  tenantId: tenantId(randomUUID()),
+});
+
 it.effect('reads past a whole page of Attempts an earlier budget gave up on', () =>
   Effect.gen(function* pagesPastExhaustedAttempts() {
-    const attemptFor = (): ReadEnrollmentAttemptInput => ({
-      portalEnrollmentAttemptId: attemptId(randomUUID()),
-      tenantId: tenantId(randomUUID()),
-    });
     const [older, oldest, fresh] = [attemptFor(), attemptFor(), attemptFor()];
     const journal = yield* journalOf(due(oldest), due(older));
     const scripted = yield* scriptedContinuation(journal, 'HALTED');

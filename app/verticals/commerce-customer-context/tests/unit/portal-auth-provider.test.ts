@@ -574,34 +574,35 @@ it.effect('maps a definitive Better Auth validation failure to rejected', () => 
   );
 });
 
-it.effect('fails closed when the Better Auth error code is absent or unbounded', () => {
-  const failureFor = (body: { readonly code?: string; readonly message?: string }) => {
-    const auth: CommercePortalAuthAccountCreationProvider = {
-      api: {
-        sendVerificationEmail: () => Effect.void,
-        signUpEmail: () => Effect.fail(new APIError('BAD_REQUEST', body)),
-      },
-    };
-    return Effect.flip(
-      runGatewayCreate(
-        auth,
-        {
-          existsByEmail: () => Effect.succeed(false),
-          existsByProviderSubject: () => Effect.succeed(false),
-          subjectForOwnerInvocation: () => Effect.succeedNone,
-        },
-        {
-          email: 'buyer@example.test',
-          enrollmentAttemptId,
-          name: 'Buyer',
-          ownerInvocationId,
-          password: testPassword,
-          tenantId,
-        },
-      ),
-    );
+const failureFor = (body: { readonly code?: string; readonly message?: string }) => {
+  const auth: CommercePortalAuthAccountCreationProvider = {
+    api: {
+      sendVerificationEmail: () => Effect.void,
+      signUpEmail: () => Effect.fail(new APIError('BAD_REQUEST', body)),
+    },
   };
-  return Effect.all([failureFor({ message: 'No code' }), failureFor({ code: 'X'.repeat(65) })]).pipe(
+  return Effect.flip(
+    runGatewayCreate(
+      auth,
+      {
+        existsByEmail: () => Effect.succeed(false),
+        existsByProviderSubject: () => Effect.succeed(false),
+        subjectForOwnerInvocation: () => Effect.succeedNone,
+      },
+      {
+        email: 'buyer@example.test',
+        enrollmentAttemptId,
+        name: 'Buyer',
+        ownerInvocationId,
+        password: testPassword,
+        tenantId,
+      },
+    ),
+  );
+};
+
+it.effect('fails closed when the Better Auth error code is absent or unbounded', () =>
+  Effect.all([failureFor({ message: 'No code' }), failureFor({ code: 'X'.repeat(65) })]).pipe(
     Effect.tap((failures) =>
       Effect.sync(() => {
         for (const failure of failures) {
@@ -609,8 +610,8 @@ it.effect('fails closed when the Better Auth error code is absent or unbounded',
         }
       }),
     ),
-  );
-});
+  ),
+);
 
 it.effect('rejects an existing email before invoking Better Auth', () => {
   let providerCalls = 0;

@@ -8,13 +8,14 @@ import { runQualityCli } from './quality-cli-lifecycle.mts';
 // `pnpm check` runs these package scripts. A lane runs its scripts in order and stops at the first
 // failure; lanes run side by side under one concurrency limit, and every lane runs to completion.
 //
-// Two scripts write into the source tree, so the schedule keeps them apart from the scripts that read it:
-// - check:module-contracts creates and deletes bundles under verticals/, so it runs before every lane.
-// - test:lint-rules writes fixture workspaces under tools/oxlint/effect-native/tests/, so it starts only
-//   after every tree-reading lane has finished. lint and typecheck read explicit paths, so they run beside it.
+// check:module-contracts creates and deletes bundles under verticals/, so it runs alone before every
+// other lane. No later script writes into the scanned source tree: test:lint-rules lints virtual
+// filenames in process and stages on-disk cases only below the ignored .codex/reports/ or the
+// operating-system temporary directory. Every remaining lane therefore starts together.
 const firstLane = ['check:module-contracts'];
-const explicitPathLanes = [['lint'], ['typecheck']];
-const treeReadingLanes = [
+const parallelLanes = [
+  ['lint'],
+  ['typecheck'],
   ['quality:audit', 'quality:audit:gate', 'lint:suppressions'],
   ['api:check'],
   ['api:check:ontos'],
@@ -27,8 +28,9 @@ const treeReadingLanes = [
   ['action:test:unit'],
   ['skills:check'],
   ['performance:readiness'],
+  ['typecheck:lint-rules', 'test:lint-rules'],
+  ['lint:repository-policy'],
 ];
-const afterTreeReadersLane = ['typecheck:lint-rules', 'test:lint-rules'];
 
 class CheckFailedError extends Schema.TaggedError<CheckFailedError>()('CheckFailedError', {
   message: Schema.String,
@@ -79,14 +81,8 @@ const cli = Command.make(
         }
       });
 
-      const runLanes = (lanes: readonly (readonly string[])[]) =>
-        Effect.forEach(lanes, runLane, { concurrency: 'unbounded', discard: true });
-
       yield* runLane(firstLane);
-      yield* Effect.all(
-        [runLanes(explicitPathLanes), runLanes(treeReadingLanes).pipe(Effect.andThen(runLane(afterTreeReadersLane)))],
-        { concurrency: 'unbounded', discard: true },
-      );
+      yield* Effect.forEach(parallelLanes, runLane, { concurrency: 'unbounded', discard: true });
 
       const seconds = ((yield* Clock.currentTimeMillis) - startedAt) / 1000;
       if (failures.length > 0) {

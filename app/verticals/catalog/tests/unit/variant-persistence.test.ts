@@ -68,6 +68,46 @@ const confirmedManufacturerRelations = () => ({
   }),
 });
 
+const reactivationTransaction = (
+  overrides: {
+    readonly onSet?: (values: Partial<typeof productVariants.$inferInsert>) => void;
+    readonly rejectCombination?: boolean;
+  } = {},
+) => {
+  const revisions: unknown[] = [];
+  const transaction = {
+    insert: (table: typeof productVariantRevisions) => {
+      expect(table).toBe(productVariantRevisions);
+      return {
+        values: (value: typeof productVariantRevisions.$inferInsert) => {
+          revisions.push(value);
+          return Effect.succeed([]);
+        },
+      };
+    },
+    select: () => ({
+      from: (table: typeof products | typeof productVariants) =>
+        lockedRow(
+          table === productVariants
+            ? { ...row, currentRevision: 2, lifecycleState: 'RETIRED' }
+            : { ...row, lifecycleState: 'ACTIVE' },
+        ),
+    }),
+    update: (table: typeof productVariants) => {
+      expect(table).toBe(productVariants);
+      return {
+        set: (values: Partial<typeof productVariants.$inferInsert>) => {
+          overrides.onSet?.(values);
+          return overrides.rejectCombination === true
+            ? rejectedCombinationRow()
+            : returnedRow({ ...row, ...values, lifecycleState: 'ACTIVE' });
+        },
+      };
+    },
+  };
+  return { revisions, transaction };
+};
+
 describe('Variant persistence', () => {
   it.effect('keeps the first exact Variant identity when a second form is recorded', () =>
     Effect.gen(function* preserveSimpleVariantIdentity() {
@@ -352,45 +392,6 @@ describe('Variant persistence', () => {
   );
 
   const combinationKey = 'a'.repeat(64);
-  const reactivationTransaction = (
-    overrides: {
-      readonly onSet?: (values: Partial<typeof productVariants.$inferInsert>) => void;
-      readonly rejectCombination?: boolean;
-    } = {},
-  ) => {
-    const revisions: unknown[] = [];
-    const transaction = {
-      insert: (table: typeof productVariantRevisions) => {
-        expect(table).toBe(productVariantRevisions);
-        return {
-          values: (value: typeof productVariantRevisions.$inferInsert) => {
-            revisions.push(value);
-            return Effect.succeed([]);
-          },
-        };
-      },
-      select: () => ({
-        from: (table: typeof products | typeof productVariants) =>
-          lockedRow(
-            table === productVariants
-              ? { ...row, currentRevision: 2, lifecycleState: 'RETIRED' }
-              : { ...row, lifecycleState: 'ACTIVE' },
-          ),
-      }),
-      update: (table: typeof productVariants) => {
-        expect(table).toBe(productVariants);
-        return {
-          set: (values: Partial<typeof productVariants.$inferInsert>) => {
-            overrides.onSet?.(values);
-            return overrides.rejectCombination === true
-              ? rejectedCombinationRow()
-              : returnedRow({ ...row, ...values, lifecycleState: 'ACTIVE' });
-          },
-        };
-      },
-    };
-    return { revisions, transaction };
-  };
   const provenAssessment = {
     assessReactivation: () =>
       Effect.succeed({

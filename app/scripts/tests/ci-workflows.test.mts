@@ -1867,6 +1867,7 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
     'pnpm typecheck',
     'pnpm typecheck:lint-rules',
     'pnpm test:lint-rules',
+    'pnpm lint:repository-policy',
     'pnpm api:check:ontos',
     'pnpm test:scripts',
     'pnpm test:deployment-impact',

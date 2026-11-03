@@ -171,20 +171,21 @@ const attachFailureCause = <Failure extends object, FailureCause>(failure: Failu
 // oxlint-disable-next-line effect-native/no-json-schema-as-document-contract
 const DeniedAuditEvidenceJsonObjectSchema = Schema.Record(Schema.String, Schema.Json);
 
+const invalidEvidence = (reason: string, cause?: unknown) =>
+  attachFailureCause(
+    new ActionPayloadValidationError({
+      code: 'action_payload_invalid',
+      reason,
+    }),
+    cause,
+  );
+
 const resolveDeniedAuditEvidence = <Payload>(
   declaration: ActionDeniedAuditEvidenceDeclaration<Payload>,
   payload: Payload,
   scope: OperationalScope,
-): Effect.Effect<Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>, ActionPayloadValidationError> => {
-  const invalidEvidence = (reason: string, cause?: unknown) =>
-    attachFailureCause(
-      new ActionPayloadValidationError({
-        code: 'action_payload_invalid',
-        reason,
-      }),
-      cause,
-    );
-  return Effect.try({
+): Effect.Effect<Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>, ActionPayloadValidationError> =>
+  Effect.try({
     catch: (cause) => invalidEvidence('The Action denial evidence could not be resolved safely', cause),
     try: () => declaration.resolve(payload, scope),
   }).pipe(
@@ -207,7 +208,6 @@ const resolveDeniedAuditEvidence = <Payload>(
       ),
     ),
   );
-};
 
 export const ACTION_RUNTIME_STAGES = [
   'payload_decoded',

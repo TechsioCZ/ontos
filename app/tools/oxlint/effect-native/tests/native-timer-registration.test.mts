@@ -1,76 +1,111 @@
-import { writeFileSync } from 'node:fs';
-import nodePath from 'node:path';
+import { testEffectNativeRule, fixtureOptions, virtualFile, withOptions } from './rule-tester.mts';
 
-import { expect, it } from 'effect-rstest';
-
-import { appRoot, fixtureConfigPath, runOxlint } from './oxlint.mts';
-import { withTemporaryWorkspace } from './temporary-workspace.mts';
-
-const ruleCode = 'effect-native(no-native-timers)';
+const timerRule = 'no-native-timers';
 const clockSource = "import { Clock, DateTime } from 'effect';";
+const options = withOptions(fixtureOptions(timerRule));
+const factory = virtualFile('factory.ts');
+const support = virtualFile('support.ts');
+const imports = [clockSource, "import { it } from 'effect-rstest';"].join('\n');
 
-it('keeps ambient caller clocks in shared factories while enforcing actual test registrations', () => {
-  withTemporaryWorkspace((directory) => {
-    const file = nodePath.join(directory, 'factory.ts');
-    const config = fixtureConfigPath('no-native-timers');
-    const diagnostics = (source: string) => {
-      writeFileSync(file, source);
-      return runOxlint(config, [file], appRoot).diagnostics.filter(({ code }) => code === ruleCode);
-    };
+testEffectNativeRule(
+  timerRule,
+  {
+    invalid: [
+      {
+        code: [
+          clockSource,
+          "import { it as register } from 'effect-rstest';",
+          "register.effect('clock', () => Clock.currentTimeMillis);",
+        ].join('\n'),
+        errors: [{ message: /Clock\.currentTimeMillis/u }],
+        filename: factory,
+        name: 'aliased test registration reading the clock',
+        ...options,
+      },
+      {
+        code: [
+          clockSource,
+          "import * as runner from 'effect-rstest';",
+          "runner.it.effect('clock', () => DateTime.now);",
+        ].join('\n'),
+        errors: 1,
+        filename: factory,
+        name: 'namespace test registration reading the clock',
+        ...options,
+      },
+      {
+        code: 'export const unmanaged = () => setTimeout(() => {}, 5);',
+        errors: [{ message: /Native timer/u }],
+        filename: factory,
+        name: 'native timer in a shared factory',
+        ...options,
+      },
+    ],
+    valid: [
+      {
+        code: `${clockSource}\nexport const makeSnapshot = () => DateTime.now;`,
+        filename: factory,
+        name: 'caller clock snapshot in a shared factory',
+        ...options,
+      },
+      {
+        code: `${clockSource}\nexport const readMillis = Clock.currentTimeMillis;`,
+        filename: factory,
+        name: 'caller clock read in a shared factory',
+        ...options,
+      },
+    ],
+  },
+  'keeps ambient caller clocks in shared factories while enforcing actual test registrations',
+);
 
-    expect(diagnostics(`${clockSource}\nexport const makeSnapshot = () => DateTime.now;`)).toEqual([]);
-    expect(diagnostics(`${clockSource}\nexport const readMillis = Clock.currentTimeMillis;`)).toEqual([]);
-
-    const registered = diagnostics(
-      [
-        clockSource,
-        "import { it as register } from 'effect-rstest';",
-        "register.effect('clock', () => Clock.currentTimeMillis);",
-      ].join('\n'),
-    );
-    expect(registered).toHaveLength(1);
-    expect(registered[0]?.message).toContain('Clock.currentTimeMillis');
-
-    const namespace = diagnostics(
-      [clockSource, "import * as runner from 'effect-rstest';", "runner.it.effect('clock', () => DateTime.now);"].join(
-        '\n',
-      ),
-    );
-    expect(namespace).toHaveLength(1);
-
-    const nativeHelper = diagnostics('export const unmanaged = () => setTimeout(() => {}, 5);');
-    expect(nativeHelper).toHaveLength(1);
-    expect(nativeHelper[0]?.message).toContain('Native timer');
-  });
-});
-
-it('distinguishes prepared and shadowed test APIs from invoked parameterized registrations', () => {
-  withTemporaryWorkspace((directory) => {
-    const file = nodePath.join(directory, 'support.ts');
-    const config = fixtureConfigPath('no-native-timers');
-    const diagnostics = (source: string) => {
-      writeFileSync(file, source);
-      return runOxlint(config, [file], appRoot).diagnostics.filter(({ code }) => code === ruleCode);
-    };
-    const imports = [clockSource, "import { it } from 'effect-rstest';"].join('\n');
-    expect(
-      diagnostics(`${imports}\nexport const prepared = it.each([1]);\nexport const stamp = DateTime.now;`),
-    ).toEqual([]);
-    expect(
-      diagnostics(
-        `${imports}\nexport function factory(it: (name: string, body: object) => void) { it('data', DateTime.now); }`,
-      ),
-    ).toEqual([]);
-    expect(diagnostics(`${imports}\nit.each([1])('clock', () => DateTime.now);`)).toHaveLength(1);
-    expect(diagnostics(`${imports}\nit.runIf(true).effect('clock', () => DateTime.now);`)).toHaveLength(1);
-    expect(
-      diagnostics(`${imports}\nit.layer({})((scoped) => scoped.effect('clock', () => DateTime.now));`),
-    ).toHaveLength(1);
-
-    const declaredTest = nodePath.join(directory, 'clock.test.ts');
-    writeFileSync(declaredTest, `${clockSource}\nexport const stamp = DateTime.now;`);
-    expect(runOxlint(config, [declaredTest], appRoot).diagnostics.filter(({ code }) => code === ruleCode)).toHaveLength(
-      1,
-    );
-  });
-});
+testEffectNativeRule(
+  timerRule,
+  {
+    invalid: [
+      {
+        code: `${imports}\nit.each([1])('clock', () => DateTime.now);`,
+        errors: 1,
+        filename: support,
+        name: 'invoked parameterized registration',
+        ...options,
+      },
+      {
+        code: `${imports}\nit.runIf(true).effect('clock', () => DateTime.now);`,
+        errors: 1,
+        filename: support,
+        name: 'conditional registration',
+        ...options,
+      },
+      {
+        code: `${imports}\nit.layer({})((scoped) => scoped.effect('clock', () => DateTime.now));`,
+        errors: 1,
+        filename: support,
+        name: 'layer-scoped registration',
+        ...options,
+      },
+      {
+        code: `${clockSource}\nexport const stamp = DateTime.now;`,
+        errors: 1,
+        filename: virtualFile('clock.test.ts'),
+        name: 'clock read in a declared test file',
+        ...options,
+      },
+    ],
+    valid: [
+      {
+        code: `${imports}\nexport const prepared = it.each([1]);\nexport const stamp = DateTime.now;`,
+        filename: support,
+        name: 'prepared parameterized API',
+        ...options,
+      },
+      {
+        code: `${imports}\nexport function factory(it: (name: string, body: object) => void) { it('data', DateTime.now); }`,
+        filename: support,
+        name: 'shadowed test API parameter',
+        ...options,
+      },
+    ],
+  },
+  'distinguishes prepared and shadowed test APIs from invoked parameterized registrations',
+);

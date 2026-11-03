@@ -819,6 +819,13 @@ const readIndirectDependencies = Effect.fn('CatalogSelectionCurrentBasis.readInd
   },
 );
 
+const isExactSourceRef = (
+  source: CatalogSelectionCurrentFacts['basis'][number]['source'],
+  ref: CatalogSelectionCurrentFacts['basis'][number]['source']['resourceRef'],
+) =>
+  validDependentRef(source.resourceRef, ref.tenantId, ref.resourceType) &&
+  source.resourceRef.resourceId === ref.resourceId;
+
 /** A retained Configuration successor bounds only this completely inspected root-only subset. */
 const hasClosedUntypedScheduledConfigurationBasis = (
   selection: CatalogSelection,
@@ -829,24 +836,19 @@ const hasClosedUntypedScheduledConfigurationBasis = (
     return false;
   }
   const counts = new Map<string, number>();
-  const exact = (
-    source: CatalogSelectionCurrentFacts['basis'][number]['source'],
-    ref: CatalogSelectionCurrentFacts['basis'][number]['source']['resourceRef'],
-  ) =>
-    validDependentRef(source.resourceRef, ref.tenantId, ref.resourceType) &&
-    source.resourceRef.resourceId === ref.resourceId;
   const supported = basis.every((fact) => {
     if (fact.subject !== undefined || fact.axisAllowances !== undefined) {
       return false;
     }
     counts.set(fact.role, (counts.get(fact.role) ?? 0) + 1);
     return Match.value(fact.role).pipe(
-      Match.when('PRODUCT', () => exact(fact.source, selection.productRef)),
-      Match.whenOr('VARIANT', 'UNIT_TARGET_DIVISIBILITY', () => exact(fact.source, selection.variantRef)),
+      Match.when('PRODUCT', () => isExactSourceRef(fact.source, selection.productRef)),
+      Match.whenOr('VARIANT', 'UNIT_TARGET_DIVISIBILITY', () => isExactSourceRef(fact.source, selection.variantRef)),
       Match.when(
         'PRODUCT_TYPE_UNTYPED_DECISION',
         () =>
-          fact.provenance === 'CATALOG_OWNER_CONFIRMED_UNTYPED_DECISION' && exact(fact.source, selection.productRef),
+          fact.provenance === 'CATALOG_OWNER_CONFIRMED_UNTYPED_DECISION' &&
+          isExactSourceRef(fact.source, selection.productRef),
       ),
       Match.when('CONFIGURATION_DEFINITION', () => sameCatalogRevisionReference(fact.source, configuration.definition)),
       Match.when('UNIT_RULE', () =>

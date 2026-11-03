@@ -82,10 +82,11 @@ it.effect('accepts only provider-confirmed absence of the exact retired inventor
   }),
 );
 
+const livePointer = (_method: string, url: URL) =>
+  Effect.succeed(url.pathname === namespacePath ? nativeNamespace() : new Response('current release'));
+
 it.effect('re-observes only retired executables once the active pointer is the published release', () =>
   Effect.gen(function* verifiesRetiredInventoryBesideLivePointer() {
-    const livePointer = (_method: string, url: URL) =>
-      Effect.succeed(url.pathname === namespacePath ? nativeNamespace() : new Response('current release'));
     const native = provider(
       (_method, url) => Effect.succeed(url.pathname === zeropsPath ? absentService() : absentWorker()),
       livePointer,

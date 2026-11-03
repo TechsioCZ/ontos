@@ -278,6 +278,14 @@ const reactivationConflictOutcome = (
   return conflict === 'OPEN_SELECTION_REVALIDATION_REQUIRED' ? 'selection_revalidation_required' : 'lifecycle_conflict';
 };
 
+const mapAxisBasisError = (
+  error: CatalogPersistenceUnavailable | VariantAxisBasisUnavailable,
+): CatalogPersistenceUnavailable | VariantCurrentBasisUnavailable =>
+  Schema.is(VariantAxisBasisUnavailable)(error) ? basisUnavailable() : error;
+
+const axisBasis = <A, R>(effect: Effect.Effect<A, CatalogPersistenceUnavailable | VariantAxisBasisUnavailable, R>) =>
+  effect.pipe(Effect.mapError(mapAxisBasisError));
+
 /**
  * The owner service uses only Core's already-scoped transaction; no caller can supply an axis
  * signature. Reactivation additionally consumes the #441 assessment, which itself resolves the
@@ -610,13 +618,6 @@ export const variantPersistenceForScope = (
     }
 
     const axisReader = variantAxisPersistenceForScope(transaction, scope);
-    const mapAxisBasisError = (
-      error: CatalogPersistenceUnavailable | VariantAxisBasisUnavailable,
-    ): CatalogPersistenceUnavailable | VariantCurrentBasisUnavailable =>
-      Schema.is(VariantAxisBasisUnavailable)(error) ? basisUnavailable() : error;
-    const axisBasis = <A, R>(
-      effect: Effect.Effect<A, CatalogPersistenceUnavailable | VariantAxisBasisUnavailable, R>,
-    ) => effect.pipe(Effect.mapError(mapAxisBasisError));
     const current = yield* axisBasis(axisReader.readCurrent(input.productRef));
     if (!Number.isSafeInteger(current.axisRevision) || current.axisRevision < 1) {
       return yield* basisUnavailable();

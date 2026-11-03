@@ -458,18 +458,23 @@ const describeErrors = (errors: Option.Option<readonly { readonly code: number; 
     .map(({ code, message }) => `${String(code)} ${message}`)
     .join('; ');
 
+const zoneUrl = (zoneId: string, path: string) => new URL(`${CLOUDFLARE_API_URL}/zones/${zoneId}${path}`);
+
+const requestTimeout = (label: string) =>
+  Effect.timeoutOrElse({
+    duration: REQUEST_TIMEOUT,
+    orElse: () => Effect.fail(new CloudflareApiError({ message: `Cloudflare ${label} timed out` })),
+  });
+
+const rulesetRuleUrl = (zoneId: string, rulesetId: string, ruleId?: string) =>
+  zoneUrl(zoneId, ['', 'rulesets', rulesetId, 'rules', ...(ruleId === undefined ? [] : [ruleId])].join('/'));
+
 const makeCloudflareApi = Effect.gen(function* makeCloudflareApi() {
   const client = yield* HttpClient.HttpClient;
   const { accountId, apiToken } = yield* CloudflareCredentials;
   const accountUrl = (path: string) => new URL(`${CLOUDFLARE_API_URL}/accounts/${accountId}${path}`);
-  const zoneUrl = (zoneId: string, path: string) => new URL(`${CLOUDFLARE_API_URL}/zones/${zoneId}${path}`);
   const authorize = (request: HttpClientRequest.HttpClientRequest) =>
     HttpClientRequest.acceptJson(HttpClientRequest.bearerToken(request, Redacted.value(apiToken)));
-  const timeout = (label: string) =>
-    Effect.timeoutOrElse({
-      duration: REQUEST_TIMEOUT,
-      orElse: () => Effect.fail(new CloudflareApiError({ message: `Cloudflare ${label} timed out` })),
-    });
 
   const call = <A, I>(request: HttpClientRequest.HttpClientRequest, schema: Schema.Codec<A, I>, label: string) =>
     client.execute(authorize(request)).pipe(
@@ -491,7 +496,7 @@ const makeCloudflareApi = Effect.gen(function* makeCloudflareApi() {
               }),
             ),
       ),
-      timeout(label),
+      requestTimeout(label),
     );
 
   /** Sends `body` as JSON; bodies are built from typed specs only. */
@@ -533,7 +538,7 @@ const makeCloudflareApi = Effect.gen(function* makeCloudflareApi() {
             ),
           );
         }),
-        timeout('Workers usage query'),
+        requestTimeout('Workers usage query'),
       );
 
   /** Reads every page of a list endpoint; a short page ends the listing. */
@@ -559,15 +564,17 @@ const makeCloudflareApi = Effect.gen(function* makeCloudflareApi() {
     return url;
   };
 
-  const rule = (zoneId: string, rulesetId: string, ruleId?: string) =>
-    zoneUrl(zoneId, ['', 'rulesets', rulesetId, 'rules', ...(ruleId === undefined ? [] : [ruleId])].join('/'));
-
   return {
     accessApps: list('/access/apps', AccessAppSchema, 'Access application list'),
     accessPolicies: list('/access/policies', AccessPolicySchema, 'Access policy list'),
     accessServiceTokens: list('/access/service_tokens', ServiceTokenSchema, 'Access service token list'),
     addRulesetRule: (zoneId, rulesetId, spec) =>
-      send(HttpClientRequest.post(rule(zoneId, rulesetId)), spec, RulesetSchema, `ruleset rule ${spec.ref} create`),
+      send(
+        HttpClientRequest.post(rulesetRuleUrl(zoneId, rulesetId)),
+        spec,
+        RulesetSchema,
+        `ruleset rule ${spec.ref} create`,
+      ),
     alertPolicies: call(
       HttpClientRequest.get(accountUrl('/alerting/v3/policies')),
       Schema.Array(AlertPolicySchema),
@@ -681,7 +688,7 @@ const makeCloudflareApi = Effect.gen(function* makeCloudflareApi() {
       ),
     updateRulesetRule: (zoneId, rulesetId, ruleId, spec) =>
       send(
-        HttpClientRequest.patch(rule(zoneId, rulesetId, ruleId)),
+        HttpClientRequest.patch(rulesetRuleUrl(zoneId, rulesetId, ruleId)),
         spec,
         RulesetSchema,
         `ruleset rule ${spec.ref} update`,

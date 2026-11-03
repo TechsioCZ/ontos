@@ -169,6 +169,95 @@ const rowMatchesDocument = (
     Result.mapError((cause) => invalid('Core Search persisted payload is invalid', cause)),
   );
 
+const persistedDeleteMutation = (
+  row: SearchIndexEntry,
+  projectionVersion: string,
+): Extract<CoreSearchProjectionMutation, { readonly kind: 'delete' }> => {
+  const mutation = decodeCoreSearchProjectionMutation({
+    kind: 'delete',
+    projectionVersion,
+    ref: {
+      moduleId: row.sourceModuleKey,
+      resourceId: row.sourceResourceId,
+      resourceType: row.sourceResourceType,
+      tenantId: row.tenantId,
+    },
+  });
+  if (mutation.kind !== 'delete') {
+    throw invalid('Core Search persisted resource reference is invalid');
+  }
+  return mutation;
+};
+
+const decodeRow = (row: SearchIndexEntry): CoreSearchProjectionDocument => {
+  const decoded = Result.getOrThrow(
+    decodePersistedPayload(row.facetsJson).pipe(
+      Result.mapError((cause) => invalid('Core Search persisted payload is invalid', cause)),
+    ),
+  );
+  const document: PersistedDocumentInput = {
+    archived: decoded.archived,
+    facets: decoded.facets,
+    metadata: decoded.metadata,
+    projectionVersion: row.projectionVersion.toString(),
+    ref: {
+      moduleId: row.sourceModuleKey,
+      resourceId: row.sourceResourceId,
+      resourceType: row.sourceResourceType,
+      tenantId: row.tenantId,
+    },
+    searchableText: [row.bodyText],
+    title: row.title,
+  };
+  if (decoded.aliases !== undefined) {
+    document.aliases = decoded.aliases;
+  }
+  if (decoded.matchedRef !== undefined) {
+    document.matchedRef = decoded.matchedRef;
+  }
+  if (decoded.matchedSubjectRef !== undefined) {
+    document.matchedSubjectRef = decoded.matchedSubjectRef;
+  }
+  if (row.legalEntityId !== null) {
+    document.selectedLegalEntityId = row.legalEntityId;
+  }
+  if (decoded.subjectRef !== undefined) {
+    document.subjectRef = decoded.subjectRef;
+  }
+  if (decoded.temporalFacets !== undefined) {
+    document.temporalFacets = decoded.temporalFacets;
+  }
+  if (decoded.temporalSearchableText !== undefined) {
+    document.temporalSearchableText = decoded.temporalSearchableText;
+  }
+  const mutation = decodeCoreSearchProjectionMutation({
+    document,
+    kind: 'upsert',
+  });
+  if (mutation.kind !== 'upsert') {
+    throw invalid('Core Search persisted document is invalid');
+  }
+  return mutation.document;
+};
+
+const decodeMutation = (input: CoreSearchProjectionInput) =>
+  Effect.try({
+    catch: (error) =>
+      Schema.is(CoreSearchProjectionInvalid)(error)
+        ? error
+        : invalid('Core Search mutation does not match its declared contract', error),
+    try: () => decodeCoreSearchProjectionMutation(input),
+  });
+
+const decodeReplacement = (input: CoreSearchProjectionInput) =>
+  Effect.try({
+    catch: (error) =>
+      Schema.is(CoreSearchProjectionInvalid)(error)
+        ? error
+        : invalid('Core Search replacement does not match its declared contract', error),
+    try: () => decodeCoreSearchProjectionReplacement(input),
+  });
+
 const makeTransactionOperations = () => {
   const installTenantScope = Effect.fn('CoreSearchPersistence.installTenantScope')(function* installTenantScopeEffect(
     transaction: CoreTransaction,
@@ -345,26 +434,6 @@ const makeTransactionOperations = () => {
     return yield* Effect.void;
   });
 
-  const persistedDeleteMutation = (
-    row: SearchIndexEntry,
-    projectionVersion: string,
-  ): Extract<CoreSearchProjectionMutation, { readonly kind: 'delete' }> => {
-    const mutation = decodeCoreSearchProjectionMutation({
-      kind: 'delete',
-      projectionVersion,
-      ref: {
-        moduleId: row.sourceModuleKey,
-        resourceId: row.sourceResourceId,
-        resourceType: row.sourceResourceType,
-        tenantId: row.tenantId,
-      },
-    });
-    if (mutation.kind !== 'delete') {
-      throw invalid('Core Search persisted resource reference is invalid');
-    }
-    return mutation;
-  };
-
   const persistRebuildFloor = Effect.fn('CoreSearchPersistence.persistRebuildFloor')(
     function* persistRebuildFloorEffect(
       transaction: CoreTransaction,
@@ -448,75 +517,6 @@ const makeTransactionOperations = () => {
     );
     yield* persistRebuildFloor(transaction, replacement, fingerprint, updatedAt);
   });
-
-  const decodeRow = (row: SearchIndexEntry): CoreSearchProjectionDocument => {
-    const decoded = Result.getOrThrow(
-      decodePersistedPayload(row.facetsJson).pipe(
-        Result.mapError((cause) => invalid('Core Search persisted payload is invalid', cause)),
-      ),
-    );
-    const document: PersistedDocumentInput = {
-      archived: decoded.archived,
-      facets: decoded.facets,
-      metadata: decoded.metadata,
-      projectionVersion: row.projectionVersion.toString(),
-      ref: {
-        moduleId: row.sourceModuleKey,
-        resourceId: row.sourceResourceId,
-        resourceType: row.sourceResourceType,
-        tenantId: row.tenantId,
-      },
-      searchableText: [row.bodyText],
-      title: row.title,
-    };
-    if (decoded.aliases !== undefined) {
-      document.aliases = decoded.aliases;
-    }
-    if (decoded.matchedRef !== undefined) {
-      document.matchedRef = decoded.matchedRef;
-    }
-    if (decoded.matchedSubjectRef !== undefined) {
-      document.matchedSubjectRef = decoded.matchedSubjectRef;
-    }
-    if (row.legalEntityId !== null) {
-      document.selectedLegalEntityId = row.legalEntityId;
-    }
-    if (decoded.subjectRef !== undefined) {
-      document.subjectRef = decoded.subjectRef;
-    }
-    if (decoded.temporalFacets !== undefined) {
-      document.temporalFacets = decoded.temporalFacets;
-    }
-    if (decoded.temporalSearchableText !== undefined) {
-      document.temporalSearchableText = decoded.temporalSearchableText;
-    }
-    const mutation = decodeCoreSearchProjectionMutation({
-      document,
-      kind: 'upsert',
-    });
-    if (mutation.kind !== 'upsert') {
-      throw invalid('Core Search persisted document is invalid');
-    }
-    return mutation.document;
-  };
-
-  const decodeMutation = (input: CoreSearchProjectionInput) =>
-    Effect.try({
-      catch: (error) =>
-        Schema.is(CoreSearchProjectionInvalid)(error)
-          ? error
-          : invalid('Core Search mutation does not match its declared contract', error),
-      try: () => decodeCoreSearchProjectionMutation(input),
-    });
-
-  const decodeReplacement = (input: CoreSearchProjectionInput) =>
-    Effect.try({
-      catch: (error) =>
-        Schema.is(CoreSearchProjectionInvalid)(error)
-          ? error
-          : invalid('Core Search replacement does not match its declared contract', error),
-      try: () => decodeCoreSearchProjectionReplacement(input),
-    });
 
   const applyMutationTransaction = Effect.fn('CoreSearchPersistence.applyMutationTransaction')(
     function* applyMutationTransactionEffect(

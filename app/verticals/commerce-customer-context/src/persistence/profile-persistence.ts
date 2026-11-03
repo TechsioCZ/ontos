@@ -3215,6 +3215,9 @@ const bindingFinalizationMatchesRequest = (
   payload.authorizationState === terminalAuthorizationState &&
   payload.revision === binding.revision;
 
+const workerConflict = (reason: string) =>
+  Effect.fail(retailBindingWorkerRejected('RECONCILIATION_UNAVAILABLE', reason));
+
 /**
  * Worker-only owner adapter for the Retail Portal authorization request topics.
  *
@@ -3293,8 +3296,6 @@ export const retailBindingAuthorizationMutationReconciliationForWorker = (
           },
         };
       };
-      const workerConflict = (reason: string) =>
-        Effect.fail(retailBindingWorkerRejected('RECONCILIATION_UNAVAILABLE', reason));
       const requestScopeIsExact =
         request.legalEntityId === scope.legalEntityId &&
         request.bindingRef.tenantId === scope.tenantId &&

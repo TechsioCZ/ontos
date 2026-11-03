@@ -188,16 +188,17 @@ it.effect(
 );
 
 for (const [index, cause] of [undefined, null, 'thrown string', { message: 'not an Error' }].entries()) {
+  const operation = () => {
+    const iterator = (function* thrownValue() {
+      yield cause;
+    })();
+    iterator.next();
+    return iterator.throw(cause);
+  };
+
   it.effect(
     `scaffold error tools use owner fallback for non-error ${index}`,
     Effect.fn(function* nonErrorScaffoldFailure() {
-      const operation = () => {
-        const iterator = (function* thrownValue() {
-          yield cause;
-        })();
-        iterator.next();
-        return iterator.throw(cause);
-      };
       const first = yield* firstScaffoldErrors.trySync(operation).pipe(Effect.flip);
       const second = yield* secondScaffoldErrors.trySync(operation).pipe(Effect.flip);
       expect(first.message).toBe('first update failed');
@@ -629,6 +630,11 @@ const inventoryHandlerRootFile = 'verticals/inventory-stock/api/index.ts';
 
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const require = createRequire(import.meta.url);
+
+const observedPackageVersion = (packageName: string): string =>
+  Schema.decodeUnknownSync(Schema.Struct({ version: Schema.String }))(
+    require(require.resolve(`${packageName}/package.json`, { paths: [path.join(appRoot, 'apps/shell-super-app')] })),
+  ).version;
 const createEntry = require.resolve('@modern-js/ultramodern-create');
 const esbuildPath = require.resolve('esbuild/bin/esbuild', {
   paths: [path.dirname(createEntry)],
@@ -2944,12 +2950,6 @@ export const makeHarness = (applicationComposition) => makeActionTestHarness({
         const inventoryContractDocument = yield* Schema.encodeEffect(
           Schema.fromJsonString(OntosModuleDeploymentContractSchema),
         )(inventoryContract);
-        const observedPackageVersion = (packageName: string): string =>
-          Schema.decodeUnknownSync(Schema.Struct({ version: Schema.String }))(
-            require(
-              require.resolve(`${packageName}/package.json`, { paths: [path.join(appRoot, 'apps/shell-super-app')] }),
-            ),
-          ).version;
         const sharedRuntimeConfig = createSharedRuntimeConfig({
           '@modern-js/plugin-i18n/runtime': observedPackageVersion('@modern-js/plugin-i18n'),
           '@modern-js/runtime': observedPackageVersion('@modern-js/runtime'),

@@ -171,15 +171,16 @@ it.live('creates one sandbox from main, copies .env opaquely, and prepares in or
   }),
 );
 
+const assertRejected = (commandArguments: readonly string[]) =>
+  Effect.gen(function* testEffect6() {
+    const fixture = yield* makeFixture();
+    const result = runWorkflow(fixture, commandArguments);
+    expect(result.code).toBe(2);
+    expect(yield* Effect.flip(Effect.tryPromise(() => readFile(fixture.logPath, 'utf-8')))).toBeDefined();
+  });
+
 it.live('rejects unsafe slugs and alternate options before creating a sandbox', () =>
   Effect.gen(function* testEffect5() {
-    const assertRejected = (commandArguments: readonly string[]) =>
-      Effect.gen(function* testEffect6() {
-        const fixture = yield* makeFixture();
-        const result = runWorkflow(fixture, commandArguments);
-        expect(result.code).toBe(2);
-        expect(yield* Effect.flip(Effect.tryPromise(() => readFile(fixture.logPath, 'utf-8')))).toBeDefined();
-      });
     yield* assertRejected(['Bad Slug']);
     yield* assertRejected(['feature', '--from', 'main']);
   }),

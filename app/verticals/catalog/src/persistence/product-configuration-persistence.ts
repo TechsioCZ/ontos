@@ -692,258 +692,9 @@ export const productConfigurationPersistenceForScope = (
   ),
 ): ProductConfigurationPersistence => {
   const { tenantId } = scope;
-  let readCurrent: ProductConfigurationPersistence['readCurrent'] = (_input) => Effect.fail(unavailable());
-  const publish: ProductConfigurationPersistence['publish'] = Effect.fn('ProductConfigurationPersistence.publish')(
-    function* publish(input) {
-      const invalid = inspectPublishInput(input, scope.principalId);
-      if (invalid !== null) {
-        return { _tag: 'invalid', reason: invalid };
-      }
-      const [prior] = yield* transaction
-        .select()
-        .from(productConfigurationDefinitionRevisions)
-        .where(
-          and(
-            eq(productConfigurationDefinitionRevisions.tenantId, tenantId),
-            eq(productConfigurationDefinitionRevisions.actionInvocationId, input.actionInvocationId),
-          ),
-        )
-        .limit(1)
-        .pipe(Effect.mapError(unavailable));
-      if (prior !== undefined) {
-        if (!sameRecordedInvocation(prior, input)) {
-          return { _tag: 'invalid', reason: 'Action invocation already records different Configuration evidence' };
-        }
-        const previous = yield* readCurrent({
-          at: prior.effectiveFrom,
-          definitionId: prior.definitionId,
-          productId: prior.productId,
-        });
-        if (Option.isNone(previous)) {
-          return yield* unavailable();
-        }
-        if (!sameRecordedSnapshot(input, previous.value)) {
-          return {
-            _tag: 'invalid',
-            reason: 'Action invocation already records a different Configuration rule snapshot',
-          };
-        }
-        return { _tag: 'published', revision: prior.revision };
-      }
-      // Lock the Product before probing a possibly absent Definition, serializing first publications.
-      const [product] = yield* transaction
-        .select()
-        .from(products)
-        .where(and(eq(products.tenantId, tenantId), eq(products.productId, input.productId)))
-        .for('update')
-        .limit(1)
-        .pipe(Effect.mapError(unavailable));
-      if (!activeProduct(product)) {
-        return { _tag: 'invalid', reason: 'Product is not Current and active' };
-      }
-      const [definition] = yield* transaction
-        .select()
-        .from(productConfigurationDefinitions)
-        .where(
-          and(
-            eq(productConfigurationDefinitions.tenantId, tenantId),
-            eq(productConfigurationDefinitions.definitionId, input.definitionId),
-          ),
-        )
-        .for('update')
-        .limit(1)
-        .pipe(Effect.mapError(unavailable));
-      const versionIssue = inspectDefinitionVersion(definition, input);
-      if (versionIssue !== null) {
-        return versionIssue;
-      }
-      const [last] =
-        definition === undefined
-          ? [undefined]
-          : yield* transaction
-              .select()
-              .from(productConfigurationRevisionActivations)
-              .where(
-                and(
-                  eq(productConfigurationRevisionActivations.tenantId, tenantId),
-                  eq(productConfigurationRevisionActivations.definitionId, input.definitionId),
-                  eq(productConfigurationRevisionActivations.revision, definition.currentRevision),
-                ),
-              )
-              .for('update')
-              .limit(1)
-              .pipe(Effect.mapError(unavailable));
-      if (definition !== undefined && last === undefined) {
-        return yield* unavailable();
-      }
-      if (last !== undefined) {
-        // A new publication must not extend a timeline whose prior evidence is incomplete.
-        yield* readCurrent({ at: last.effectiveAt, definitionId: input.definitionId, productId: input.productId });
-      }
-      if (last !== undefined && !effectiveTimeFollows(input.effectiveFrom, last.effectiveAt)) {
-        return { _tag: 'invalid', reason: 'Effective time must follow the preceding activation' };
-      }
-      const revision = input.expectedRevision + 1;
-      const unitRevisions = yield* publishUnitRevisions(input.choices, input.effectiveFrom, unitSource);
-      if (selectionImpact === undefined) {
-        return yield* unavailable();
-      }
-      const compatible = yield* selectionImpact.verify({
-        definitionId: input.definitionId,
-        effectiveFrom: input.effectiveFrom,
-        previousRevision: input.expectedRevision,
-        productId: input.productId,
-        proposed: {
-          choices: input.choices,
-          compatibilityRules: input.compatibilityRules,
-          measuredRules: input.measuredRules,
-          optionAllowances: input.optionAllowances,
-        },
-        proposedRevision: revision,
-        tenantId,
-      });
-      if (!compatible) {
-        return { _tag: 'incompatible', reason: 'Open-selection impact or first-publication absence is not proven' };
-      }
-      if (definition === undefined) {
-        yield* transaction
-          .insert(productConfigurationDefinitions)
-          .values({ currentRevision: revision, definitionId: input.definitionId, productId: input.productId, tenantId })
-          .pipe(Effect.mapError(unavailable));
-      } else {
-        const [updated] = yield* transaction
-          .update(productConfigurationDefinitions)
-          .set({ currentRevision: revision })
-          .where(
-            and(
-              eq(productConfigurationDefinitions.tenantId, tenantId),
-              eq(productConfigurationDefinitions.definitionId, input.definitionId),
-              eq(productConfigurationDefinitions.currentRevision, input.expectedRevision),
-            ),
-          )
-          .returning()
-          .pipe(Effect.mapError(unavailable));
-        if (updated === undefined) {
-          return { _tag: 'stale', actualRevision: definition.currentRevision };
-        }
-      }
-      yield* transaction
-        .insert(productConfigurationDefinitionRevisions)
-        .values({
-          actingPrincipalId: scope.principalId,
-          actionInvocationId: input.actionInvocationId,
-          definitionId: input.definitionId,
-          effectiveFrom: input.effectiveFrom,
-          effectiveTo: null,
-          evidenceRefs: [...input.evidenceRefs],
-          productId: input.productId,
-          reason: input.reason,
-          revision,
-          state: 'ACTIVE',
-          tenantId,
-        })
-        .pipe(Effect.mapError(unavailable));
-      yield* transaction
-        .insert(productConfigurationRevisionActivations)
-        .values({
-          actingPrincipalId: scope.principalId,
-          actionInvocationId: input.actionInvocationId,
-          definitionId: input.definitionId,
-          effectiveAt: input.effectiveFrom,
-          evidenceRefs: [...input.evidenceRefs],
-          reason: input.reason,
-          revision,
-          supersededRevision: last?.revision ?? null,
-          tenantId,
-        })
-        .pipe(Effect.mapError(unavailable));
-      yield* Effect.forEach(
-        input.choices,
-        (choice) =>
-          persistChoice(
-            transaction,
-            tenantId,
-            input.definitionId,
-            revision,
-            choice,
-            unitRevisions.get(choice.choiceKey),
-          ),
-        { concurrency: 1 },
-      );
-      yield* Effect.forEach(
-        input.optionAllowances,
-        (rule) =>
-          transaction
-            .insert(productConfigurationOptionAllowances)
-            .values({
-              allowed: rule.allowed,
-              choiceKey: rule.choiceKey,
-              definitionId: input.definitionId,
-              evidenceRefs: [...rule.evidenceRefs],
-              optionKey: rule.optionKey,
-              packageDefinitionId: rule.packageDefinitionId ?? null,
-              productId: input.productId,
-              revision,
-              tenantId,
-              variantId: rule.variantId ?? null,
-            })
-            .pipe(Effect.mapError(unavailable)),
-        { concurrency: 1 },
-      );
-      yield* Effect.forEach(
-        input.measuredRules,
-        (rule) =>
-          transaction
-            .insert(productConfigurationMeasuredRules)
-            .values({
-              choiceKey: rule.choiceKey,
-              definitionId: input.definitionId,
-              evidenceRefs: [...rule.evidenceRefs],
-              maximum: rule.maximum ?? null,
-              maximumInclusive: rule.maximumInclusive ?? null,
-              minimum: rule.minimum ?? null,
-              minimumInclusive: rule.minimumInclusive ?? null,
-              packageDefinitionId: rule.packageDefinitionId ?? null,
-              productId: input.productId,
-              revision,
-              step: rule.step ?? null,
-              stepBase: rule.stepBase ?? null,
-              tenantId,
-              variantId: rule.variantId ?? null,
-            })
-            .pipe(Effect.mapError(unavailable)),
-        { concurrency: 1 },
-      );
-      yield* Effect.forEach(
-        input.compatibilityRules,
-        (rule) =>
-          transaction
-            .insert(productConfigurationCompatibilityRules)
-            .values({
-              choiceKey: rule.choiceKey,
-              definitionId: input.definitionId,
-              evidenceRefs: [...rule.evidenceRefs],
-              kind: rule.kind,
-              maximum: rule.maximum ?? null,
-              maximumInclusive: rule.maximumInclusive ?? null,
-              optionKey: rule.optionKey,
-              otherChoiceKey: rule.otherChoiceKey,
-              otherOptionKey: rule.otherOptionKey ?? null,
-              packageDefinitionId: rule.packageDefinitionId ?? null,
-              productId: input.productId,
-              revision,
-              ruleId: rule.ruleId,
-              tenantId,
-              variantId: rule.variantId ?? null,
-            })
-            .pipe(Effect.mapError(unavailable)),
-        { concurrency: 1 },
-      );
-      return { _tag: 'published', revision };
-    },
-  );
-
-  readCurrent = Effect.fn('ProductConfigurationPersistence.readCurrent')(function* readCurrentStep(input) {
+  const readCurrent: ProductConfigurationPersistence['readCurrent'] = Effect.fn(
+    'ProductConfigurationPersistence.readCurrent',
+  )(function* readCurrentStep(input) {
     if (Option.isNone(DateTime.make(input.at))) {
       return yield* unavailable();
     }
@@ -1213,5 +964,255 @@ export const productConfigurationPersistenceForScope = (
     }
     return Option.some(current);
   });
+  const publish: ProductConfigurationPersistence['publish'] = Effect.fn('ProductConfigurationPersistence.publish')(
+    function* publish(input) {
+      const invalid = inspectPublishInput(input, scope.principalId);
+      if (invalid !== null) {
+        return { _tag: 'invalid', reason: invalid };
+      }
+      const [prior] = yield* transaction
+        .select()
+        .from(productConfigurationDefinitionRevisions)
+        .where(
+          and(
+            eq(productConfigurationDefinitionRevisions.tenantId, tenantId),
+            eq(productConfigurationDefinitionRevisions.actionInvocationId, input.actionInvocationId),
+          ),
+        )
+        .limit(1)
+        .pipe(Effect.mapError(unavailable));
+      if (prior !== undefined) {
+        if (!sameRecordedInvocation(prior, input)) {
+          return { _tag: 'invalid', reason: 'Action invocation already records different Configuration evidence' };
+        }
+        const previous = yield* readCurrent({
+          at: prior.effectiveFrom,
+          definitionId: prior.definitionId,
+          productId: prior.productId,
+        });
+        if (Option.isNone(previous)) {
+          return yield* unavailable();
+        }
+        if (!sameRecordedSnapshot(input, previous.value)) {
+          return {
+            _tag: 'invalid',
+            reason: 'Action invocation already records a different Configuration rule snapshot',
+          };
+        }
+        return { _tag: 'published', revision: prior.revision };
+      }
+      // Lock the Product before probing a possibly absent Definition, serializing first publications.
+      const [product] = yield* transaction
+        .select()
+        .from(products)
+        .where(and(eq(products.tenantId, tenantId), eq(products.productId, input.productId)))
+        .for('update')
+        .limit(1)
+        .pipe(Effect.mapError(unavailable));
+      if (!activeProduct(product)) {
+        return { _tag: 'invalid', reason: 'Product is not Current and active' };
+      }
+      const [definition] = yield* transaction
+        .select()
+        .from(productConfigurationDefinitions)
+        .where(
+          and(
+            eq(productConfigurationDefinitions.tenantId, tenantId),
+            eq(productConfigurationDefinitions.definitionId, input.definitionId),
+          ),
+        )
+        .for('update')
+        .limit(1)
+        .pipe(Effect.mapError(unavailable));
+      const versionIssue = inspectDefinitionVersion(definition, input);
+      if (versionIssue !== null) {
+        return versionIssue;
+      }
+      const [last] =
+        definition === undefined
+          ? [undefined]
+          : yield* transaction
+              .select()
+              .from(productConfigurationRevisionActivations)
+              .where(
+                and(
+                  eq(productConfigurationRevisionActivations.tenantId, tenantId),
+                  eq(productConfigurationRevisionActivations.definitionId, input.definitionId),
+                  eq(productConfigurationRevisionActivations.revision, definition.currentRevision),
+                ),
+              )
+              .for('update')
+              .limit(1)
+              .pipe(Effect.mapError(unavailable));
+      if (definition !== undefined && last === undefined) {
+        return yield* unavailable();
+      }
+      if (last !== undefined) {
+        // A new publication must not extend a timeline whose prior evidence is incomplete.
+        yield* readCurrent({ at: last.effectiveAt, definitionId: input.definitionId, productId: input.productId });
+      }
+      if (last !== undefined && !effectiveTimeFollows(input.effectiveFrom, last.effectiveAt)) {
+        return { _tag: 'invalid', reason: 'Effective time must follow the preceding activation' };
+      }
+      const revision = input.expectedRevision + 1;
+      const unitRevisions = yield* publishUnitRevisions(input.choices, input.effectiveFrom, unitSource);
+      if (selectionImpact === undefined) {
+        return yield* unavailable();
+      }
+      const compatible = yield* selectionImpact.verify({
+        definitionId: input.definitionId,
+        effectiveFrom: input.effectiveFrom,
+        previousRevision: input.expectedRevision,
+        productId: input.productId,
+        proposed: {
+          choices: input.choices,
+          compatibilityRules: input.compatibilityRules,
+          measuredRules: input.measuredRules,
+          optionAllowances: input.optionAllowances,
+        },
+        proposedRevision: revision,
+        tenantId,
+      });
+      if (!compatible) {
+        return { _tag: 'incompatible', reason: 'Open-selection impact or first-publication absence is not proven' };
+      }
+      if (definition === undefined) {
+        yield* transaction
+          .insert(productConfigurationDefinitions)
+          .values({ currentRevision: revision, definitionId: input.definitionId, productId: input.productId, tenantId })
+          .pipe(Effect.mapError(unavailable));
+      } else {
+        const [updated] = yield* transaction
+          .update(productConfigurationDefinitions)
+          .set({ currentRevision: revision })
+          .where(
+            and(
+              eq(productConfigurationDefinitions.tenantId, tenantId),
+              eq(productConfigurationDefinitions.definitionId, input.definitionId),
+              eq(productConfigurationDefinitions.currentRevision, input.expectedRevision),
+            ),
+          )
+          .returning()
+          .pipe(Effect.mapError(unavailable));
+        if (updated === undefined) {
+          return { _tag: 'stale', actualRevision: definition.currentRevision };
+        }
+      }
+      yield* transaction
+        .insert(productConfigurationDefinitionRevisions)
+        .values({
+          actingPrincipalId: scope.principalId,
+          actionInvocationId: input.actionInvocationId,
+          definitionId: input.definitionId,
+          effectiveFrom: input.effectiveFrom,
+          effectiveTo: null,
+          evidenceRefs: [...input.evidenceRefs],
+          productId: input.productId,
+          reason: input.reason,
+          revision,
+          state: 'ACTIVE',
+          tenantId,
+        })
+        .pipe(Effect.mapError(unavailable));
+      yield* transaction
+        .insert(productConfigurationRevisionActivations)
+        .values({
+          actingPrincipalId: scope.principalId,
+          actionInvocationId: input.actionInvocationId,
+          definitionId: input.definitionId,
+          effectiveAt: input.effectiveFrom,
+          evidenceRefs: [...input.evidenceRefs],
+          reason: input.reason,
+          revision,
+          supersededRevision: last?.revision ?? null,
+          tenantId,
+        })
+        .pipe(Effect.mapError(unavailable));
+      yield* Effect.forEach(
+        input.choices,
+        (choice) =>
+          persistChoice(
+            transaction,
+            tenantId,
+            input.definitionId,
+            revision,
+            choice,
+            unitRevisions.get(choice.choiceKey),
+          ),
+        { concurrency: 1 },
+      );
+      yield* Effect.forEach(
+        input.optionAllowances,
+        (rule) =>
+          transaction
+            .insert(productConfigurationOptionAllowances)
+            .values({
+              allowed: rule.allowed,
+              choiceKey: rule.choiceKey,
+              definitionId: input.definitionId,
+              evidenceRefs: [...rule.evidenceRefs],
+              optionKey: rule.optionKey,
+              packageDefinitionId: rule.packageDefinitionId ?? null,
+              productId: input.productId,
+              revision,
+              tenantId,
+              variantId: rule.variantId ?? null,
+            })
+            .pipe(Effect.mapError(unavailable)),
+        { concurrency: 1 },
+      );
+      yield* Effect.forEach(
+        input.measuredRules,
+        (rule) =>
+          transaction
+            .insert(productConfigurationMeasuredRules)
+            .values({
+              choiceKey: rule.choiceKey,
+              definitionId: input.definitionId,
+              evidenceRefs: [...rule.evidenceRefs],
+              maximum: rule.maximum ?? null,
+              maximumInclusive: rule.maximumInclusive ?? null,
+              minimum: rule.minimum ?? null,
+              minimumInclusive: rule.minimumInclusive ?? null,
+              packageDefinitionId: rule.packageDefinitionId ?? null,
+              productId: input.productId,
+              revision,
+              step: rule.step ?? null,
+              stepBase: rule.stepBase ?? null,
+              tenantId,
+              variantId: rule.variantId ?? null,
+            })
+            .pipe(Effect.mapError(unavailable)),
+        { concurrency: 1 },
+      );
+      yield* Effect.forEach(
+        input.compatibilityRules,
+        (rule) =>
+          transaction
+            .insert(productConfigurationCompatibilityRules)
+            .values({
+              choiceKey: rule.choiceKey,
+              definitionId: input.definitionId,
+              evidenceRefs: [...rule.evidenceRefs],
+              kind: rule.kind,
+              maximum: rule.maximum ?? null,
+              maximumInclusive: rule.maximumInclusive ?? null,
+              optionKey: rule.optionKey,
+              otherChoiceKey: rule.otherChoiceKey,
+              otherOptionKey: rule.otherOptionKey ?? null,
+              packageDefinitionId: rule.packageDefinitionId ?? null,
+              productId: input.productId,
+              revision,
+              ruleId: rule.ruleId,
+              tenantId,
+              variantId: rule.variantId ?? null,
+            })
+            .pipe(Effect.mapError(unavailable)),
+        { concurrency: 1 },
+      );
+      return { _tag: 'published', revision };
+    },
+  );
+
   return { publish, readCurrent };
 };

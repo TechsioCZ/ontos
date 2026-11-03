@@ -4,7 +4,7 @@ import { defineRelations } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { Cause, Clock, DateTime, Effect, Exit, Fiber, Layer, Result, Schema } from 'effect';
-import { assert, expect, it, rs } from 'effect-rstest';
+import { afterAll, assert, expect, it, rs } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import { Reactivity } from 'effect/reactivity';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
@@ -238,3 +238,11 @@ it.effect('fails with sanitized unavailability after five seconds', () =>
     expect(Schema.is(GatewayAssertionRedemptionUnavailableError)(failure)).toBe(true);
   }),
 );
+
+// With `isolate: false` one module registry is shared by every file a worker runs, so these
+// replacements outlive this file and would leak into whatever runs next. Remove them and drop the
+// modules they replaced, so the next file evaluates the real implementations.
+afterAll(() => {
+  rs.doUnmock('../../src/database/schema.ts');
+  rs.resetModules();
+});

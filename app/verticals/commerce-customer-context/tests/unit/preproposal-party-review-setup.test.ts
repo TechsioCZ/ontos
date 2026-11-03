@@ -17,7 +17,7 @@ import {
   resolveDuplicateCandidateCreateWithAuthorization,
 } from '@app/party-registry/api/client';
 import { Effect, Exit, Redacted, Schema } from 'effect';
-import { beforeEach, expect, it, rs } from 'effect-rstest';
+import { afterAll, beforeEach, expect, it, rs } from 'effect-rstest';
 
 import {
   createRegisteredPreproposalParty,
@@ -479,3 +479,11 @@ it.effect('grants only the actual onboarded Counterparty to the CCC reader befor
     expect(source.slice(onboardStart, profileCredential).match(/core\.grantResourceAccess\(/gu)).toHaveLength(2);
   }),
 );
+
+// With `isolate: false` one module registry is shared by every file a worker runs, so these
+// replacements outlive this file and would leak into whatever runs next. Remove them and drop the
+// modules they replaced, so the next file evaluates the real implementations.
+afterAll(() => {
+  rs.doUnmock('@app/party-registry/api/client');
+  rs.resetModules();
+});

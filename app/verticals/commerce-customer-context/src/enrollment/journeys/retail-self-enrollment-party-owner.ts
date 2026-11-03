@@ -260,6 +260,30 @@ const submissionOf = (verdict: PartyVerdict): PartySubmission => ({
 
 const isCommitResolutionNotFound = Schema.is(PartyCommandNotFoundProblemSchema);
 
+const resolutionFor = (
+  reconciliation: CommerceEnrollmentOwnerReconciliationInput,
+  submission: PartySubmission,
+): Effect.Effect<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> => {
+  const reconciliationRef = evidenceFor(reconciliation.ownerInvocationId, submission.decisionResourceId);
+  return submission.verdict.kind === 'RESOLVED'
+    ? decodeResolution({
+        actorPrincipalId: reconciliation.actorPrincipalId,
+        outcomeCode: submission.verdict.outcomeCode,
+        reconciliationRef,
+        resultReference: submission.verdict.partyResourceId,
+        status: 'SUCCEEDED',
+      })
+    : decodeResolution({
+        actorPrincipalId: reconciliation.actorPrincipalId,
+        failureCode: OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE,
+        failureReason: submission.verdict.reason.slice(0, 500),
+        nextState: 'RECONCILIATION_REQUIRED',
+        outcomeCode: PARTY_CANDIDATE_AMBIGUOUS_OUTCOME_CODE,
+        reconciliationRef,
+        status: 'FAILED',
+      });
+};
+
 /**
  * Build the Party Registry owner effect for one Attempt.  `input` carries the business candidate;
  * `executors` defaults to the published client and is replaced by doubles in unit tests.
@@ -306,30 +330,6 @@ export const retailPartyCandidateOwnerEffect = (
     const submission = yield* submit(transition.ownerInvocationId);
     return yield* outcomeOf(submission.verdict);
   });
-
-  const resolutionFor = (
-    reconciliation: CommerceEnrollmentOwnerReconciliationInput,
-    submission: PartySubmission,
-  ): Effect.Effect<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> => {
-    const reconciliationRef = evidenceFor(reconciliation.ownerInvocationId, submission.decisionResourceId);
-    return submission.verdict.kind === 'RESOLVED'
-      ? decodeResolution({
-          actorPrincipalId: reconciliation.actorPrincipalId,
-          outcomeCode: submission.verdict.outcomeCode,
-          reconciliationRef,
-          resultReference: submission.verdict.partyResourceId,
-          status: 'SUCCEEDED',
-        })
-      : decodeResolution({
-          actorPrincipalId: reconciliation.actorPrincipalId,
-          failureCode: OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE,
-          failureReason: submission.verdict.reason.slice(0, 500),
-          nextState: 'RECONCILIATION_REQUIRED',
-          outcomeCode: PARTY_CANDIDATE_AMBIGUOUS_OUTCOME_CODE,
-          reconciliationRef,
-          status: 'FAILED',
-        });
-  };
 
   const reconcile = Effect.fn('RetailPartyCandidateOwnerEffect.reconcile')(function* reconcileCandidate(
     reconciliation: CommerceEnrollmentOwnerReconciliationInput,

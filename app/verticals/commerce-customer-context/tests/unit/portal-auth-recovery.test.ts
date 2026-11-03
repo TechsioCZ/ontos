@@ -623,11 +623,10 @@ it.effect('never dispatches a reset twice: a claim somebody else holds answers r
           : Effect.succeed({ status: true });
       }),
   };
-  return runWithRecovery(provider, ledger.store, (service) =>
-    Effect.gen(function* concurrentResetClaim() {
-      const reset = () =>
-        service.resetPassword({ newPassword: Redacted.make('P'.repeat(24)), token: Redacted.make('reset-token') });
-
+  return runWithRecovery(provider, ledger.store, (service) => {
+    const reset = () =>
+      service.resetPassword({ newPassword: Redacted.make('P'.repeat(24)), token: Redacted.make('reset-token') });
+    return Effect.gen(function* concurrentResetClaim() {
       const holder = yield* Effect.result(reset());
       expect(Result.isFailure(holder)).toBe(true);
       expect(ledger.state()).toBe('dispatched');
@@ -661,8 +660,8 @@ it.effect('never dispatches a reset twice: a claim somebody else holds answers r
       losesAnswer = false;
       expect(yield* reset()).toStrictEqual({ outcome: 'ACCOUNT_RECOVERY_COMPLETED_SAME_SUBJECT' });
       expect(resetCalls).toBe(2);
-    }),
-  );
+    });
+  });
 });
 
 /**
