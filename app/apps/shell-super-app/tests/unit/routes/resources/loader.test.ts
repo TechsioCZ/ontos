@@ -38,6 +38,16 @@ const rejected = (params: typeof counterparty, prefix = 'generic') =>
 
 it.effect.each([
   [counterparty, `/cs/prodej/zakaznici/${evaId}`],
+  [{ ...counterparty, resourceType: 'party.registry.party' }, `/cs/prodej/strany/${evaId}`],
+  [{ moduleId: 'demo.crm', resourceId: evaId, resourceType: 'demo.crm.contact' }, `/cs/crm/klienti?osoba=${evaId}`],
+  [
+    { moduleId: 'finance.billing', resourceId: evaId, resourceType: 'finance.billing.document' },
+    `/cs/finance?documentId=${evaId}`,
+  ],
+  [
+    { moduleId: 'core.identity', resourceId: `${company}.${evaId}`, resourceType: 'core.identity.person' },
+    `/cs/sprava/lide-a-role?person=${company}.${evaId}`,
+  ],
   [
     { moduleId: 'demo.merchandise', resourceId: `${company}.${evaId}`, resourceType: 'demo.merchandise.product' },
     `/cs/provoz/produkty/${evaId}`,
@@ -111,7 +121,7 @@ it.live.each([
 );
 
 it.live.each([
-  { ...counterparty, resourceType: 'party.registry.party' },
+  { moduleId: 'legal.agreements', resourceId: evaId, resourceType: 'legal.agreements.document' },
   { ...counterparty, moduleId: 'demo.crm' },
   { ...counterparty, resourceId: 'malformed' },
   { moduleId: 'future.owner', resourceId: evaId, resourceType: 'future.owner.record' },

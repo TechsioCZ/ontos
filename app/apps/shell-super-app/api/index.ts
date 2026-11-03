@@ -153,6 +153,7 @@ import type {
   ShellDocumentContextRequest,
   ResolveModuleTargetsPayload,
   ShellInvalidRequestProblem,
+  ShellSearchPayload,
   ShellPolicyConflictProblem,
   ShellPolicyUnprocessableProblem,
   ShellPreconditionRequiredProblem,
@@ -993,6 +994,7 @@ const logShellReadFailure = (
 
 type ShellProblem =
   | ShellReloadRequiredProblem
+  | ShellInvalidRequestProblem
   | ShellAuthenticationRequiredProblem
   | ShellCapabilityUnavailableProblem
   | ShellInternalProblem
@@ -1639,30 +1641,41 @@ const unavailableResourceGateways: ShellResourceGateways = {
   },
 };
 
+/** Search selectors are caller input; an unknown or unadmitted selector is the same safe 400. */
+const shellSearchReadProblem = (error: ReadCoreError) =>
+  Predicate.isTagged(error, 'ReadInputValidationError')
+    ? problemDetails(
+        'ShellInvalidRequestProblem',
+        'The search request is invalid.',
+        400,
+        'Invalid search request',
+        'https://ontos.dev/problems/search-invalid-request',
+      )
+    : shellListReadProblem(error);
+
+export const shellSearchHandler = (request: RequestWithHeaders, payload: ShellSearchPayload) =>
+  Effect.gen(function* searchHandler() {
+    const session = yield* requireShellSession(request.headers);
+    const catalog = yield* captureShellRelease(payload.compositionRevision);
+    const governedReads = yield* ShellGovernedReads;
+    const response = yield* governedReads
+      .search({
+        correlationId: correlationFromRequest(request),
+        principal: session.principal,
+        ...payload,
+      })
+      .pipe(
+        Effect.provideService(CapturedShellCompositionCatalog, catalog),
+        Effect.catch((error) => pipe(error, shellSearchReadProblem, failShellProblem)),
+      );
+    return yield* decodeResponse(ShellSearchResponseSchema, response, shellInternalProblem);
+  }).pipe(
+    recoverUnexpectedDefect(request, 'Unexpected Shell search defect', () => failShellProblem(shellInternalProblem())),
+  );
+
 const resourcesGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'resources', (handlers) =>
   handlers
-    .handle('search', ({ payload, request }) =>
-      Effect.gen(function* searchHandler() {
-        const session = yield* requireShellSession(request.headers);
-        const catalog = yield* captureShellRelease(payload.compositionRevision);
-        const governedReads = yield* ShellGovernedReads;
-        const response = yield* governedReads
-          .search({
-            correlationId: correlationFromRequest(request),
-            principal: session.principal,
-            ...payload,
-          })
-          .pipe(
-            Effect.provideService(CapturedShellCompositionCatalog, catalog),
-            Effect.catch((error) => pipe(error, shellListReadProblem, failShellProblem)),
-          );
-        return yield* decodeResponse(ShellSearchResponseSchema, response, shellInternalProblem);
-      }).pipe(
-        recoverUnexpectedDefect(request, 'Unexpected Shell search defect', () =>
-          failShellProblem(shellInternalProblem()),
-        ),
-      ),
-    )
+    .handle('search', ({ payload, request }) => shellSearchHandler(request, payload))
     .handle('resourceDetail', ({ payload, request }) =>
       Effect.gen(function* resourceDetailHandler() {
         const session = yield* requireAuthenticatedShellContext(request.headers);

@@ -103,7 +103,15 @@ const facility = (to: string, param: string, group: ShellSearchGroupKey): Resour
 const resourceTypes = new Map<string, ResourceTypePresentation>([
   // A person of the company is a Core identity record; the Shell's own people administration lists them, and the
   // Shell offers it only to people who may open it.
-  ['core.identity.person', { agendas: ['/sprava/lide-a-role'], group: 'person', moduleId: 'core.identity' }],
+  [
+    'core.identity.person',
+    {
+      agendas: ['/sprava/lide-a-role'],
+      group: 'person',
+      moduleId: 'core.identity',
+      record: query('/sprava/lide-a-role', 'person'),
+    },
+  ],
   [
     'party.registry.counterparty',
     {
@@ -113,9 +121,17 @@ const resourceTypes = new Map<string, ResourceTypePresentation>([
       record: { kind: 'path', to: '/prodej/zakaznici/$id' },
     },
   ],
-  ['party.registry.party', { group: 'party', moduleId: 'party.registry' }],
+  [
+    'party.registry.party',
+    {
+      group: 'party',
+      idFormat: 'uuid',
+      moduleId: 'party.registry',
+      record: { kind: 'path', to: '/prodej/strany/$id' },
+    },
+  ],
   ['demo.crm.client', { group: 'crmClient', moduleId: 'demo.crm', record: query('/crm/klienti', 'klient') }],
-  ['demo.crm.contact', { agendas: ['/crm/klienti'], group: 'crmContact', moduleId: 'demo.crm' }],
+  ['demo.crm.contact', { group: 'crmContact', moduleId: 'demo.crm', record: query('/crm/klienti', 'osoba') }],
   [
     'demo.sales-pipeline.opportunity',
     { group: 'opportunity', moduleId: 'demo.sales-pipeline', record: query('/prodej/prilezitosti', 'opportunityId') },
@@ -140,7 +156,16 @@ const resourceTypes = new Map<string, ResourceTypePresentation>([
   ],
   ['work.tasks.task', { group: 'task', moduleId: 'work.tasks', record: query('/ukoly') }],
   ['finance.billing.invoice', { group: 'invoice', moduleId: 'finance.billing', record: query('/finance') }],
-  ['finance.billing.document', { agendas: ['/finance'], group: 'financeDocument', moduleId: 'finance.billing' }],
+  [
+    'finance.billing.document',
+    {
+      agendas: ['/finance'],
+      group: 'financeDocument',
+      idFormat: 'uuid',
+      moduleId: 'finance.billing',
+      record: query('/finance', 'documentId'),
+    },
+  ],
   ['legal.agreements.contract', { group: 'contract', moduleId: 'legal.agreements', record: query('/smlouvy') }],
   ['legal.agreements.document', { group: 'legalDocument', moduleId: 'legal.agreements' }],
   ['property.portfolio.property', { ...portfolio, group: 'property' }],

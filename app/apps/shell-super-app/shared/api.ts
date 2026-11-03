@@ -1126,6 +1126,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
       .add(
         HttpApiEndpoint.post('search', '/shell/search', {
           error: [
+            ShellInvalidRequestProblemSchema,
             ShellReloadRequiredProblemSchema,
             ShellAuthenticationRequiredProblemSchema,
             ShellTargetForbiddenProblemSchema,

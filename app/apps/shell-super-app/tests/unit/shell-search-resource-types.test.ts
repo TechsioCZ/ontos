@@ -57,7 +57,10 @@ test('Eva Bílá opens her exact counterparty page, never a page selected by the
     params: { id: evaCounterpartyId },
     to: '/prodej/zakaznici/$id',
   });
-  expect(ownerRecordTarget(partyRef, selectedLegalEntityId)).toBeUndefined();
+  expect(ownerRecordTarget(partyRef, selectedLegalEntityId)).toEqual({
+    params: { id: partyRef.resourceId },
+    to: '/prodej/strany/$id',
+  });
   expect(
     shellSearchResultTarget({
       archived: false,
@@ -66,7 +69,7 @@ test('Eva Bílá opens her exact counterparty page, never a page selected by the
       ref: partyRef,
       title: 'Eva Bílá',
     }),
-  ).toMatchObject({ to: '/resources/$moduleId/$resourceType/$resourceId' });
+  ).toEqual({ params: { id: partyRef.resourceId }, to: '/prodej/strany/$id' });
   // Alias and archive state never replace a current owner ID with its Party ID or an old identity.
   expect(shellSearchResultTarget({ ...hit, party: { ...hit.party, archived: true } })).toEqual(
     shellSearchResultTarget(hit),
@@ -230,20 +233,21 @@ test.each([
 });
 
 test.each([
-  ['core.identity', 'core.identity.person', 'Jana Nováková', '/sprava/lide-a-role'],
-  ['demo.crm', 'demo.crm.contact', 'Petr Svoboda', '/crm/klienti'],
-  ['finance.billing', 'finance.billing.document', 'Dobropis 7', '/finance'],
+  ['demo.crm', 'demo.crm.contact', '/crm/klienti', 'osoba'],
+  ['finance.billing', 'finance.billing.document', '/finance', 'documentId'],
 ] as const)(
-  '%s %s without a record page opens the Shell record page and names only its agenda',
-  (moduleId, resourceType, title, agenda) => {
-    const hit = resourceHit(moduleId, resourceType, title);
-    expect(ownerRecordTarget(hit.ref, selectedLegalEntityId)).toBeUndefined();
-    expect(shellSearchResultTarget(hit)).toMatchObject({
-      to: '/resources/$moduleId/$resourceType/$resourceId',
-    });
-    expect(recordAgendaPaths(hit.ref)).toEqual([agenda]);
+  '%s %s opens its exact owner record without substituting another record type',
+  (moduleId, type, to, key) => {
+    const hit = resourceHit(moduleId, type, 'Detail záznamu');
+    expect(shellSearchResultTarget(hit)).toEqual({ search: { [key]: hit.ref.resourceId }, to });
   },
 );
+
+test('a person link retains its full company-qualified identity for the governed directory to validate', () => {
+  const id = `${selectedLegalEntityId}.00000000-0000-4000-8000-000000000901`;
+  const hit = resourceHit('core.identity', 'core.identity.person', 'Jana Nováková', id);
+  expect(shellSearchResultTarget(hit)).toEqual({ search: { person: id }, to: '/sprava/lide-a-role' });
+});
 
 test('a type without named agendas, or a forged owner, falls back to the owning module agendas', () => {
   expect(recordAgendaPaths(resourceHit('work.tasks', 'work.tasks.task', 'Úkol').ref)).toBeUndefined();
