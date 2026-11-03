@@ -14,7 +14,10 @@ import {
   MarketRevisionNativeReadySchema,
   MarketRevisionNativeResponseSchema,
 } from '../support/market-revision-native-protocol.ts';
-import type { MarketRevisionNativeIssueSchema } from '../support/market-revision-native-protocol.ts';
+import type {
+  MarketRevisionNativeCustomerContextState,
+  MarketRevisionNativeIssueSchema,
+} from '../support/market-revision-native-protocol.ts';
 import type { CreateMarketResultSchema } from '../../shared/action-contracts.ts';
 
 class MarketRevisionNativeLauncherError extends Schema.TaggedError<MarketRevisionNativeLauncherError>()(
@@ -142,11 +145,15 @@ export const bundleMarketRevisionNativeChild = Effect.fn('MarketRevisionNativeLa
     for (const [index, specifier] of [
       '@app/shell-super-app/testing/api-key-gateway-native',
       '@app/storefront-registry/testing/current-storefront-native',
+      '@app/commerce-customer-context/testing/market-retirement-native',
     ].entries()) {
       const originalUrl = pathToFileURL(
         createRequire(new URL('../../package.json', import.meta.url)).resolve(specifier),
       ).href;
-      const output = `${temporary}/public-owner-${index}.mjs`;
+      const ownerCache = fileURLToPath(new URL('../../node_modules/.cache/ontos-1094-exports/', originalUrl));
+      yield* fs.makeDirectory(ownerCache, { recursive: true });
+      const ownerTemporary = yield* fs.makeTempDirectoryScoped({ directory: ownerCache, prefix: 'native-' });
+      const output = `${ownerTemporary}/public-owner-${index}.mjs`;
       const originalUrlJson = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(originalUrl);
       yield* runBundle([
         fileURLToPath(originalUrl),
@@ -157,7 +164,7 @@ export const bundleMarketRevisionNativeChild = Effect.fn('MarketRevisionNativeLa
         `--define:import.meta.url=${originalUrlJson}`,
         `--outfile=${output}`,
       ]);
-      aliases.push(`--alias:${specifier}=${output}`);
+      aliases.push(`--alias:${specifier}=${output}`, `--external:${output}`);
     }
     const artifact = `${temporary}/owner.mjs`;
     yield* runBundle([
@@ -237,6 +244,13 @@ export const makeMarketRevisionNativeFixture = Effect.fn('MarketRevisionNativeLa
     let original: typeof CreateMarketResultSchema.Type | undefined;
     return Object.freeze({
       ...ready,
+      closeStorefront: Effect.fn('MarketRevisionNativeLauncher.closeStorefront')(function* closeStorefront() {
+        const response = yield* exchange({ type: 'CLOSE_STOREFRONT' });
+        if (response.type !== 'STOREFRONT_CLOSED') {
+          return yield* unavailable();
+        }
+        return yield* Effect.void;
+      }),
       createR1: Effect.fn('MarketRevisionNativeLauncher.createR1')(function* createR1() {
         const response = yield* exchange({ type: 'CREATE_R1' });
         if (response.type !== 'CREATED') {
@@ -244,6 +258,13 @@ export const makeMarketRevisionNativeFixture = Effect.fn('MarketRevisionNativeLa
         }
         original = response.result;
         return response.result;
+      }),
+      evidence: Effect.fn('MarketRevisionNativeLauncher.evidence')(function* evidence() {
+        const response = yield* exchange({ type: 'EVIDENCE' });
+        if (response.type !== 'EVIDENCE') {
+          return yield* unavailable();
+        }
+        return response;
       }),
       issue: Effect.fn('MarketRevisionNativeLauncher.issue')(function* issue(
         input: typeof MarketRevisionNativeIssueSchema.Type,
@@ -274,6 +295,15 @@ export const makeMarketRevisionNativeFixture = Effect.fn('MarketRevisionNativeLa
         }
         return response.result;
       }),
+      setCustomerContextState: Effect.fn('MarketRevisionNativeLauncher.setCustomerContextState')(
+        function* setCustomerContextState(state: MarketRevisionNativeCustomerContextState) {
+          const response = yield* exchange({ state, type: 'SET_CCC_STATE' });
+          if (response.type !== 'CCC_STATE_SET' || response.state !== state) {
+            return yield* unavailable();
+          }
+          return yield* Effect.void;
+        },
+      ),
     });
   },
 );

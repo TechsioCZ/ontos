@@ -314,6 +314,7 @@ const addedExplicitActionKeys = [
   'commerce.customer-context.consume-order-purchase-approval',
   'commerce.customer-context.prepare-purchase-proposal-basis',
   'commerce.customer-context.revalidate-order-purchase-approval',
+  'commerce.market-catalog.manage-market-retirement-admission',
   'commerce.order.cancel-order-commitment',
   'commerce.order.commit-order',
   'commerce.order.complete-order-approval-consumption',

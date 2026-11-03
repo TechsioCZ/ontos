@@ -9,10 +9,12 @@ import { associateStorefrontAction } from './src/actions/associate-storefront.ac
 import { createMarketAction } from './src/actions/create-market.action.ts';
 import { CurrentMarketCatalogApi } from './shared/apis/current-market-catalog.ts';
 import { EligibleMarketTuplesApi } from './shared/apis/eligible-market-tuples.ts';
+import { manageMarketRetirementAdmissionAction } from './src/actions/manage-market-retirement-admission.action.ts';
 import { marketCatalogRootResourceDescriptor } from './shared/resources/market-catalog-root.ts';
 import { marketDefinitionRevisionResourceDescriptor } from './shared/resources/market-definition-revision.ts';
 import { MarketHistoryApi } from './shared/apis/market-history.ts';
 import { marketResourceDescriptor } from './shared/resources/market.ts';
+import { MarketRetirementEffectRecoveryApi } from './shared/apis/market-retirement-effect-recovery.ts';
 import { PricingCurrentMarketEvidenceApi } from './shared/apis/pricing-current-market-evidence.ts';
 import { removeStorefrontAssociationAction } from './src/actions/remove-storefront-association.action.ts';
 import { ResolveCommerceMarketApi } from './shared/apis/resolve-commerce-market.ts';
@@ -44,6 +46,7 @@ export const commerceMarketCatalogManifest: OntosModuleManifestInput = defineOnt
       activateMarketAction,
       associateStorefrontAction,
       createMarketAction,
+      manageMarketRetirementAdmissionAction,
       removeStorefrontAssociationAction,
       retireMarketAction,
       reviseMarketDefinitionAction,
@@ -56,6 +59,7 @@ export const commerceMarketCatalogManifest: OntosModuleManifestInput = defineOnt
       'current-market-catalog': CurrentMarketCatalogApi,
       'eligible-market-tuples': EligibleMarketTuplesApi,
       'market-history': MarketHistoryApi,
+      'market-retirement-effect-recovery': MarketRetirementEffectRecoveryApi,
       'pricing-current-market-evidence': PricingCurrentMarketEvidenceApi,
       'resolve-commerce-market': ResolveCommerceMarketApi,
       'verify-market-eligibility-v1': VerifyMarketEligibilityV1Api,

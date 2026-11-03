@@ -39,6 +39,11 @@ import {
 } from '../published-outbox-contracts.mts';
 
 const INVENTORY_OWNER_PATH = 'verticals/inventory-stock';
+const BOUNDARY_FIXTURE_TOPOLOGY = 'topology/reference-topology.json';
+const BOUNDARY_FIXTURE_SHELL_ID = 'shell-super-app';
+const BOUNDARY_FIXTURE_SHELL_PATH = 'apps/shell-super-app';
+const BOUNDARY_FIXTURE_INVENTORY = '.codex/reports/authorization/protected-entrypoints.json';
+const IMPORTED_MODULE_KEY_PROPERTY = 'moduleKey: MODULE_KEY,';
 const STOCK_LIST_SERVER_CONTRACT_IMPORT = '../shared/apis/stock-list.ts';
 const INVENTORY_DEPLOYMENT_ID = 'inventory-stock';
 const STOCK_LIST_CLIENT_CONTRACT_IMPORT = '../../shared/apis/stock-list.ts';
@@ -598,9 +603,9 @@ const makeFixture = Effect.fn(function* mergedScenario1(
   yield* initialize(root);
   yield* write(
     root,
-    'topology/reference-topology.json',
+    BOUNDARY_FIXTURE_TOPOLOGY,
     JSON.stringify({
-      shell: { id: 'shell-super-app', path: 'apps/shell-super-app' },
+      shell: { id: BOUNDARY_FIXTURE_SHELL_ID, path: BOUNDARY_FIXTURE_SHELL_PATH },
       verticals: [
         { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
         ...(includeParty === true ? [{ id: PARTY_DEPLOYMENT_ID, path: 'verticals/party-registry' }] : []),
@@ -825,15 +830,107 @@ const EngagementInventorySchema = Schema.fromJsonString(
 );
 
 it.live(
+  'resolves the actual Manage admission Action owner constant only through its exact owner-local static import',
+  () =>
+    Effect.gen(function* importedMarketActionOwner() {
+      const root = yield* makeFixture();
+      const owner = 'verticals/commerce-market-catalog';
+      const action = `${owner}/src/actions/manage-market-retirement-admission.action.ts`;
+      const support = `${owner}/src/actions/market-action-support.ts`;
+      const workspace = path.resolve(import.meta.dirname, '../..');
+      const [actionSource, supportSource] = yield* Effect.all([
+        Effect.promise(() => readFile(path.join(workspace, action), 'utf-8')),
+        Effect.promise(() => readFile(path.join(workspace, support), 'utf-8')),
+      ]);
+      yield* write(
+        root,
+        BOUNDARY_FIXTURE_TOPOLOGY,
+        JSON.stringify({
+          shell: { id: BOUNDARY_FIXTURE_SHELL_ID, path: BOUNDARY_FIXTURE_SHELL_PATH },
+          verticals: [
+            { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
+            { id: 'commerce-market-catalog', path: owner },
+          ],
+        }),
+      );
+      yield* write(root, `${owner}/package.json`, JSON.stringify({ name: '@app/commerce-market-catalog' }));
+      yield* write(root, action, actionSource);
+      yield* write(root, support, supportSource);
+      expect(actionSource).toContain(
+        "import { MODULE_KEY, marketDataAccessEvidence } from './market-action-support.ts';",
+      );
+      expect(actionSource).toContain(IMPORTED_MODULE_KEY_PROPERTY);
+      yield* checkModuleEntrypointBoundaries(root);
+      const inventory = Schema.decodeUnknownSync(EngagementInventorySchema)(
+        yield* Effect.promise(() => readFile(path.join(root, BOUNDARY_FIXTURE_INVENTORY), 'utf-8')),
+      );
+      expect(
+        inventory.entries.filter(
+          (entry) => entry.entrypointKey === 'commerce.market-catalog.manage-market-retirement-admission',
+        ),
+      ).toEqual([
+        {
+          authorization: { kind: 'action_execution', provisioning: 'explicit' },
+          deployment: 'commerce-market-catalog',
+          entrypointKey: 'commerce.market-catalog.manage-market-retirement-admission',
+          owner: 'commerce.market-catalog',
+          surface: 'action',
+        },
+      ]);
+
+      const exported = "export const MODULE_KEY = 'commerce.market-catalog' as const;";
+      expect(supportSource).toContain(exported);
+      for (const invalid of [
+        supportSource.replace(exported, "export const MODULE_KEY = 'other.owner' as const;"),
+        supportSource.replace(exported, 'export const MODULE_KEY = selectOwner();'),
+        supportSource.replace(exported, "export let MODULE_KEY = 'commerce.market-catalog';"),
+        supportSource.replace(exported, "const MODULE_KEY = 'commerce.market-catalog' as const;"),
+        supportSource.replace(exported, `const decoy = \`${exported}\`;`),
+        supportSource.replace(exported, `/* ${exported} */`),
+        supportSource.replace(exported, `function decoy() { ${exported} }`),
+        supportSource.replace(exported, `${exported}\n${exported}`),
+        supportSource.replace(exported, "export { MODULE_KEY } from './other-owner.ts';"),
+      ]) {
+        expect(invalid).not.toBe(supportSource);
+        yield* write(root, support, invalid);
+        expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toMatch(ENGAGEMENT_REJECTION);
+      }
+      yield* write(root, support, supportSource);
+      const foreign = 'verticals/other-owner/src/actions/market-action-support.ts';
+      yield* write(root, foreign, supportSource);
+      for (const invalid of [
+        actionSource.replace("from './market-action-support.ts'", "from './missing.ts'"),
+        actionSource.replace(
+          "from './market-action-support.ts'",
+          "from '../../../other-owner/src/actions/market-action-support.ts'",
+        ),
+        actionSource.replace(
+          'import { MODULE_KEY, marketDataAccessEvidence }',
+          'import type { MODULE_KEY, marketDataAccessEvidence }',
+        ),
+        `${actionSource}\nimport { MODULE_KEY } from './market-action-support.ts';`,
+        actionSource.replace(IMPORTED_MODULE_KEY_PROPERTY, "moduleKey: MODULE_KEY + '.wrong',"),
+        actionSource.replace(IMPORTED_MODULE_KEY_PROPERTY, 'moduleKey: UNRESOLVED_OWNER,'),
+        actionSource.replace('= defineAction(', '= (MODULE_KEY: string) => defineAction('),
+        actionSource.replace('= defineAction(', '= ({ MODULE_KEY }: { readonly MODULE_KEY: string }) => defineAction('),
+        actionSource.replace("role: 'action',", "role: 'worker',"),
+        actionSource.replace('defineTenantModuleEntrypoint({', 'defineSystemModuleEntrypoint({'),
+      ]) {
+        expect(invalid).not.toBe(actionSource);
+        yield* write(root, action, invalid);
+        expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toMatch(ENGAGEMENT_REJECTION);
+      }
+    }),
+);
+
+it.live(
   'validates all four live shared Action registrations and inventories each concrete identity',
   Effect.fn(function* mergedScenario1() {
     const root = yield* makeFixture(true);
     yield* writeEngagementLifecycleFixture(root);
     yield* checkModuleEntrypointBoundaries(root);
     const inventory = Schema.decodeUnknownSync(EngagementInventorySchema)(
-      yield* Effect.promise(() =>
-        readFile(path.join(root, '.codex/reports/authorization/protected-entrypoints.json'), 'utf-8'),
-      ),
+      yield* Effect.promise(() => readFile(path.join(root, BOUNDARY_FIXTURE_INVENTORY), 'utf-8')),
     );
     expect(inventory.entries.filter((entry) => entry.owner === PARTY_MODULE_ID)).toEqual(
       ENGAGEMENT_ACTIONS.map((action) => ({
@@ -2255,9 +2352,9 @@ export const stockLevelsRead = defineRead({ accessKind: 'report', entrypoint: st
     );
     yield* write(
       root,
-      'topology/reference-topology.json',
+      BOUNDARY_FIXTURE_TOPOLOGY,
       JSON.stringify({
-        shell: { id: 'shell-super-app', path: 'apps/shell-super-app' },
+        shell: { id: BOUNDARY_FIXTURE_SHELL_ID, path: BOUNDARY_FIXTURE_SHELL_PATH },
         verticals: [{ id: INVENTORY_RUNTIME_ID, path: INVENTORY_VERTICAL_PATH }],
       }),
     );
@@ -3250,9 +3347,7 @@ it.live(
     for (const permission of [MODULE_ACCESS_PERMISSION, 'module.other']) {
       yield* write(root, STOCK_LIST_READ_FILE, source.replace("'module.access' as const", `'${permission}' as const`));
       yield* checkModuleEntrypointBoundaries(root);
-      const report = yield* Effect.promise(() =>
-        readFile(path.join(root, '.codex/reports/authorization/protected-entrypoints.json'), 'utf-8'),
-      );
+      const report = yield* Effect.promise(() => readFile(path.join(root, BOUNDARY_FIXTURE_INVENTORY), 'utf-8'));
       const inventory = yield* Schema.decodeUnknownEffect(inventorySchema)(report);
       expect(
         inventory.entries.find((entry) => entry.entrypointKey === 'inventory.stock.api.stock-list')?.authorization,
@@ -3820,6 +3915,78 @@ const readPricingSourceTree = (root: string, folder: string) => {
   };
   return readSources(path.join(root, folder));
 };
+
+it.live('accepts actual CCC named recovery reexports and rejects provenance or executable escapes', () =>
+  Effect.gen(function* actualNamedCustomerContextRecovery() {
+    const root = path.resolve(import.meta.dirname, '../..');
+    const owner = 'verticals/commerce-customer-context';
+    const [trees, metadata] = yield* Effect.all([
+      Effect.all(
+        [
+          `${owner}/api`,
+          `${owner}/shared`,
+          `${owner}/src`,
+          'packages/customer-market-retirement-contracts',
+          'packages/customer-payment-term-contracts',
+        ].map((folder) => Effect.promise(() => readPricingSourceTree(root, folder))),
+      ),
+      Effect.all(
+        [`${owner}/package.json`, `${owner}/vertical.manifest.ts`, `${owner}/vertical.registration.ts`].map((file) =>
+          Effect.promise(() => readFile(path.join(root, file), 'utf-8')).pipe(
+            Effect.map((source) => [file, source] as const),
+          ),
+        ),
+      ),
+    ]);
+    const sources = new Map([...trees.flat(), ...metadata]);
+    const shared = `${owner}/shared/api.ts`;
+    const contractFile = `${owner}/shared/apis/market-retirement-reservation-recovery.ts`;
+    const clientFile = `${owner}/src/api/market-retirement-reservation-recovery-client.ts`;
+    const contractSpecifier = '@app/customer-market-retirement-contracts/market-retirement-reservation-recovery';
+    const contract = sources.get(contractFile) ?? '';
+    const client = sources.get(clientFile) ?? '';
+    for (const shim of [contract, client]) {
+      expect(shim).toContain('export {');
+      expect(shim).toContain('export type {');
+    }
+    expect(hasPublishedGeneratedContractShim(sources, contractFile, contract)).toBe(true);
+    const inlineType = `${MODULE_API_HEADER}// @ontos-public-contract ${contractSpecifier}\nexport { MarketRetirementReservationRecoveryApi, type MarketRetirementReservationRecoveryRequest } from '${contractSpecifier}';\n`;
+    expect(hasPublishedGeneratedContractShim(sources, contractFile, inlineType)).toBe(true);
+    const diagnostics: string[] = [];
+    expect(
+      hasCompleteGeneratedModuleApiSeam(sources, shared, 'commerce-customer-context', diagnostics),
+      diagnostics.join('\n'),
+    ).toBe(true);
+
+    const marker = `${MODULE_API_HEADER}// @ontos-public-contract ${contractSpecifier}\n`;
+    for (const invalid of [
+      contract.replaceAll(`from '${contractSpecifier}'`, "from '@app/wrong-contracts/recovery'"),
+      contract.replaceAll(`from '${contractSpecifier}'`, "from '../../src/private.ts'"),
+      `${contract}\nexport type { Other } from '@app/wrong-contracts/recovery';`,
+      `${contract}\nexport const injected = true;`,
+      `${contract}\nexport { injected };`,
+      `${contract}\nexecutePrivateOperation();`,
+      `import { injected } from './private.ts';\n${contract}`,
+      `${marker}export * as namespace from '${contractSpecifier}';`,
+      `${marker}export {} from '${contractSpecifier}';`,
+      `${marker}export { Injected as Original } from '${contractSpecifier}';`,
+      `${marker}export { Injected } from \`${contractSpecifier}\`;`,
+      contract.replace(`// @ontos-public-contract ${contractSpecifier}\n`, ''),
+    ]) {
+      expect(invalid).not.toBe(contract);
+      expect(hasPublishedGeneratedContractShim(sources, contractFile, invalid)).toBe(false);
+    }
+    // Full owner integration for both source paths; the shared classifier above covers each grammar escape.
+    for (const [file, invalid] of [
+      [contractFile, `${contract}\nexecutePrivateOperation();`],
+      [clientFile, client.replaceAll(`from '${contractSpecifier}/client'`, "from '@app/wrong-contracts/recovery'")],
+    ]) {
+      expect(invalid).not.toBe(sources.get(file));
+      const changed = new Map([...sources, [file, invalid]]);
+      expect(hasCompleteGeneratedModuleApiSeam(changed, shared, 'commerce-customer-context')).toBe(false);
+    }
+  }),
+);
 
 it.live('counts the actual published Pricing read shim in exact owner inventory and rejects nearby escapes', () =>
   Effect.gen(function* actualPublishedPricingInventory() {

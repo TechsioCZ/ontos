@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import nodePath from 'node:path';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
 import {
@@ -149,7 +150,9 @@ interface ParsedEntrypoint {
 }
 
 interface SourceToken {
+  readonly end: number;
   readonly kind: SyntaxKind;
+  readonly start: number;
   readonly value: string;
 }
 
@@ -192,6 +195,7 @@ const readIdentifierPropertyAt = (
   cursor: number,
   depth: number,
   property: string,
+  exactValue: boolean,
 ): string | undefined => {
   const current = tokens[cursor];
   if (depth !== 1 || current?.kind !== SyntaxKind.Identifier || current.value !== property) {
@@ -199,7 +203,11 @@ const readIdentifierPropertyAt = (
   }
   const separator = tokenKindAt(tokens, cursor + 1);
   if (separator === SyntaxKind.ColonToken) {
-    return tokenKindAt(tokens, cursor + 2) === SyntaxKind.Identifier ? tokens[cursor + 2]?.value : undefined;
+    const end = tokenKindAt(tokens, cursor + 3);
+    return tokenKindAt(tokens, cursor + 2) === SyntaxKind.Identifier &&
+      (!exactValue || end === SyntaxKind.CommaToken || end === SyntaxKind.CloseBraceToken)
+      ? tokens[cursor + 2]?.value
+      : undefined;
   }
   return separator === SyntaxKind.CommaToken || separator === SyntaxKind.CloseBraceToken ? property : undefined;
 };
@@ -208,6 +216,7 @@ const readObjectIdentifierProperty = (
   tokens: readonly SourceToken[],
   openBraceIndex: number,
   property: string,
+  exactValue = false,
 ): string | undefined => {
   let depth = 0;
   for (let cursor = openBraceIndex; cursor < tokens.length; cursor += 1) {
@@ -223,7 +232,7 @@ const readObjectIdentifierProperty = (
         return undefined;
       }
     } else {
-      const value = readIdentifierPropertyAt(tokens, cursor, depth, property);
+      const value = readIdentifierPropertyAt(tokens, cursor, depth, property, exactValue);
       if (value !== undefined) {
         return value;
       }
@@ -323,7 +332,7 @@ const tokenize = (source: string): readonly SourceToken[] => {
       scannedKind = scanner.reScanHashToken();
     }
     const kind = updateTemplateToken(scanner, scannedKind, templateExpressionBraceDepths);
-    tokens.push({ kind, value: scanner.getTokenValue() });
+    tokens.push({ end: scanner.getTokenEnd(), kind, start: scanner.getTokenStart(), value: scanner.getTokenValue() });
     scannedKind = scanner.scan();
   }
   return tokens;
@@ -354,8 +363,13 @@ const readEntrypointAuthorization = (
   return authorization;
 };
 
-const readEntrypoints = (source: string): readonly ParsedEntrypoint[] => {
+const readEntrypoints = (
+  source: string,
+  resolveActionString?: (identifier: string) => string | undefined,
+): readonly ParsedEntrypoint[] => {
   const tokens = tokenize(source);
+  const resolveString =
+    resolveActionString ?? ((identifier: string) => resolveTopLevelStringConstant(source, identifier));
   const entrypoints: ParsedEntrypoint[] = [];
   for (const [index, token] of tokens.entries()) {
     const scope = entrypointScope(token);
@@ -365,19 +379,27 @@ const readEntrypoints = (source: string): readonly ParsedEntrypoint[] => {
       tokenKindAt(tokens, index + 2) === SyntaxKind.OpenBraceToken
     ) {
       const properties = readObjectStringProperties(tokens, index + 2);
-      const moduleKeyIdentifier = readObjectIdentifierProperty(tokens, index + 2, 'moduleKey');
-      const entrypointKeyIdentifier = readObjectIdentifierProperty(tokens, index + 2, 'entrypointKey');
+      const moduleKeyIdentifier = readObjectIdentifierProperty(
+        tokens,
+        index + 2,
+        'moduleKey',
+        resolveActionString !== undefined,
+      );
+      const entrypointKeyIdentifier = readObjectIdentifierProperty(
+        tokens,
+        index + 2,
+        'entrypointKey',
+        resolveActionString !== undefined,
+      );
       entrypoints.push({
         access: properties.values.get('access'),
         authorization: readEntrypointAuthorization(tokens, index + 3, properties.closeBraceIndex),
         entrypointKey:
           properties.values.get('entrypointKey') ??
-          (entrypointKeyIdentifier === undefined
-            ? undefined
-            : resolveTopLevelStringConstant(source, entrypointKeyIdentifier)),
+          (entrypointKeyIdentifier === undefined ? undefined : resolveString(entrypointKeyIdentifier)),
         moduleKey:
           properties.values.get('moduleKey') ??
-          (moduleKeyIdentifier === undefined ? undefined : resolveTopLevelStringConstant(source, moduleKeyIdentifier)),
+          (moduleKeyIdentifier === undefined ? undefined : resolveString(moduleKeyIdentifier)),
         role: properties.values.get('role'),
         scope,
       });
@@ -462,12 +484,228 @@ const authorizationEquals = (left: InventoryAuthorization | undefined, right: In
 
 const sourceOrEmpty = (sourceMap: ReadonlyMap<string, string>, file: string): string => sourceMap.get(file) ?? '';
 
+const isTopLevelActionToken = (structure: string, token: SourceToken): boolean =>
+  structure.charAt(token.start).trim() !== '' &&
+  topLevelSeparators(`${structure.slice(0, token.start)};`, ';').includes(token.start);
+
+const actionClosingToken = (
+  tokens: readonly SourceToken[],
+  start: number,
+  opening: SyntaxKind,
+  closing: SyntaxKind,
+): number | undefined => {
+  let depth = 0;
+  for (let index = start; index < tokens.length; index += 1) {
+    if (tokens[index]?.kind === opening) {
+      depth += 1;
+    } else if (tokens[index]?.kind === closing) {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+  return undefined;
+};
+
+const hasActionParameterBinding = (tokens: readonly SourceToken[], identifier: string): boolean => {
+  const control = new Set([
+    SyntaxKind.IfKeyword,
+    SyntaxKind.ForKeyword,
+    SyntaxKind.WhileKeyword,
+    SyntaxKind.SwitchKeyword,
+    SyntaxKind.WithKeyword,
+  ]);
+  return tokens.some((token, index) => {
+    if (token.kind !== SyntaxKind.OpenParenToken || control.has(tokens[index - 1]?.kind ?? SyntaxKind.Unknown)) {
+      return false;
+    }
+    const close = actionClosingToken(tokens, index, SyntaxKind.OpenParenToken, SyntaxKind.CloseParenToken);
+    const next = close === undefined ? undefined : tokens[close + 1]?.kind;
+    return (
+      close !== undefined &&
+      (next === SyntaxKind.EqualsGreaterThanToken ||
+        next === SyntaxKind.OpenBraceToken ||
+        next === SyntaxKind.ColonToken) &&
+      tokens
+        .slice(index + 1, close)
+        .some((parameter) => parameter.kind === SyntaxKind.Identifier && parameter.value === identifier)
+    );
+  });
+};
+
+const hasActionDestructuredBinding = (tokens: readonly SourceToken[], identifier: string): boolean =>
+  tokens.some((token, index) => {
+    if (
+      token.kind !== SyntaxKind.ConstKeyword &&
+      token.kind !== SyntaxKind.LetKeyword &&
+      token.kind !== SyntaxKind.VarKeyword
+    ) {
+      return false;
+    }
+    const opening = tokens[index + 1]?.kind;
+    if (opening !== SyntaxKind.OpenBraceToken && opening !== SyntaxKind.OpenBracketToken) {
+      return false;
+    }
+    const close = actionClosingToken(
+      tokens,
+      index + 1,
+      opening,
+      opening === SyntaxKind.OpenBraceToken ? SyntaxKind.CloseBraceToken : SyntaxKind.CloseBracketToken,
+    );
+    return (
+      close !== undefined &&
+      tokens
+        .slice(index + 2, close)
+        .some((binding) => binding.kind === SyntaxKind.Identifier && binding.value === identifier)
+    );
+  });
+
+const hasActionConstantShadow = (source: string, identifier: string, allowedStart?: number): boolean => {
+  const structure = maskNonCode(source);
+  const tokens = tokenize(source).filter((token) => structure.charAt(token.start).trim() !== '');
+  const declarations = new Set([
+    SyntaxKind.ClassKeyword,
+    SyntaxKind.ConstKeyword,
+    SyntaxKind.EnumKeyword,
+    SyntaxKind.FunctionKeyword,
+    SyntaxKind.InterfaceKeyword,
+    SyntaxKind.LetKeyword,
+    SyntaxKind.NamespaceKeyword,
+    SyntaxKind.TypeKeyword,
+    SyntaxKind.VarKeyword,
+  ]);
+  return (
+    tokens.some(
+      (token, index) =>
+        token.kind === SyntaxKind.Identifier &&
+        token.value === identifier &&
+        token.start !== allowedStart &&
+        (declarations.has(tokens[index - 1]?.kind ?? SyntaxKind.Unknown) ||
+          tokens[index + 1]?.kind === SyntaxKind.EqualsToken ||
+          tokens[index + 1]?.kind === SyntaxKind.EqualsGreaterThanToken),
+    ) ||
+    hasActionParameterBinding(tokens, identifier) ||
+    hasActionDestructuredBinding(tokens, identifier)
+  );
+};
+
+interface StaticActionImport {
+  readonly imported: string;
+  readonly modulePath: string;
+  readonly typeOnly: boolean;
+}
+
+const readActionConstantImports = (source: string, identifier: string): readonly (StaticActionImport | undefined)[] => {
+  const tokens = tokenize(source);
+  const structure = maskNonCode(source);
+  const commented = maskNonCode(source, true);
+  return tokens.flatMap((token, index): readonly (StaticActionImport | undefined)[] => {
+    if (token.kind !== SyntaxKind.ImportKeyword || !isTopLevelActionToken(structure, token)) {
+      return [];
+    }
+    const end = tokens.findIndex(
+      (candidate, position) => position > index && candidate.kind === SyntaxKind.SemicolonToken,
+    );
+    const declaration = end === -1 ? [] : tokens.slice(index, end + 1);
+    const from = declaration.findIndex((candidate) => candidate.kind === SyntaxKind.FromKeyword);
+    if (
+      !declaration
+        .slice(0, from === -1 ? declaration.length : from)
+        .some((candidate) => candidate.kind === SyntaxKind.Identifier && candidate.value === identifier)
+    ) {
+      return [];
+    }
+    const statement =
+      /^import\s+(?:(?<typeOnly>type)\s+)?\{(?<members>[^}]*)\}\s+from\s*(?<quote>['"])(?<modulePath>[^'"]+)\k<quote>;$/u.exec(
+        commented.slice(token.start, tokens[end]?.end).trim(),
+      );
+    const candidates = (statement?.groups?.members ?? '').split(',').flatMap((member) => {
+      const binding =
+        /^(?:(?<typeOnly>type)\s+)?(?<imported>[A-Za-z_$][A-Za-z0-9_$]*)(?:\s+as\s+(?<local>[A-Za-z_$][A-Za-z0-9_$]*))?$/u.exec(
+          member.trim(),
+        );
+      const imported = binding?.groups?.imported;
+      return imported !== undefined &&
+        (binding?.groups?.local ?? imported) === identifier &&
+        statement?.groups?.modulePath !== undefined
+        ? [
+            {
+              imported,
+              modulePath: statement.groups.modulePath,
+              typeOnly: statement.groups.typeOnly !== undefined || binding?.groups?.typeOnly !== undefined,
+            },
+          ]
+        : [];
+    });
+    return candidates.length === 1 ? candidates : [undefined];
+  });
+};
+
+const isExportedActionLiteral = (tokens: readonly SourceToken[], index: number, identifier: string): boolean =>
+  tokens[index]?.kind === SyntaxKind.ExportKeyword &&
+  tokens[index + 1]?.kind === SyntaxKind.ConstKeyword &&
+  tokens[index + 2]?.kind === SyntaxKind.Identifier &&
+  tokens[index + 2]?.value === identifier &&
+  tokens[index + 3]?.kind === SyntaxKind.EqualsToken &&
+  tokens[index + 4]?.kind === SyntaxKind.StringLiteral;
+
+const exportedActionStringConstant = (source: string, identifier: string): string | undefined => {
+  const tokens = tokenize(source);
+  const structure = maskNonCode(source);
+  const candidates = tokens.flatMap((token, index) => {
+    if (!isExportedActionLiteral(tokens, index, identifier) || !isTopLevelActionToken(structure, token)) {
+      return [];
+    }
+    const end =
+      tokens[index + 5]?.kind === SyntaxKind.AsKeyword && tokens[index + 6]?.kind === SyntaxKind.ConstKeyword
+        ? index + 7
+        : index + 5;
+    const name = tokens[index + 2];
+    return tokens[end]?.kind === SyntaxKind.SemicolonToken &&
+      name !== undefined &&
+      !hasActionConstantShadow(source, identifier, name.start)
+      ? [tokens[index + 4]?.value]
+      : [];
+  });
+  return candidates.length === 1 ? candidates[0] : undefined;
+};
+
+const resolveActionEntrypointString = (
+  sourceMap: ReadonlyMap<string, string>,
+  file: string,
+  source: string,
+  identifier: string,
+): string | undefined => {
+  const imports = readActionConstantImports(source, identifier);
+  if (imports.length === 0) {
+    return resolveTopLevelStringConstant(source, identifier);
+  }
+  const imported = imports.length === 1 ? imports[0] : undefined;
+  const owner = /^(?:apps|verticals|packages)\/[^/]+\//u.exec(file)?.[0];
+  if (
+    imported === undefined ||
+    imported.typeOnly ||
+    owner === undefined ||
+    hasActionConstantShadow(source, identifier) ||
+    !/^\.\.?\//u.test(imported.modulePath) ||
+    !imported.modulePath.endsWith('.ts')
+  ) {
+    return undefined;
+  }
+  const target = nodePath.posix.normalize(nodePath.posix.join(nodePath.posix.dirname(file), imported.modulePath));
+  const targetSource = target.startsWith(owner) ? sourceMap.get(target) : undefined;
+  return targetSource === undefined ? undefined : exportedActionStringConstant(targetSource, imported.imported);
+};
+
 const readActionEntrypoints = (
   sourceMap: ReadonlyMap<string, string>,
   file: string,
   source: string,
 ): readonly ParsedEntrypoint[] => {
-  const inline = readEntrypoints(source);
+  const inline = readEntrypoints(source, (identifier) =>
+    resolveActionEntrypointString(sourceMap, file, source, identifier),
+  );
   const action =
     /^verticals\/party-registry\/src\/actions\/(?<action>(?:archive|unarchive)-(?:organization|person)-engagement)\.action\.ts$/u.exec(
       file,

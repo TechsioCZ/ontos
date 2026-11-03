@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+import { MarketRetirementAbortedSettlementSchema } from './domain/market-retirement-impact.ts';
 
 import {
   AssociationProvenanceSchema,
@@ -218,4 +219,5 @@ export class MarketCommandRejected extends Schema.TaggedError<MarketCommandRejec
     'seller_identity_immutable',
   ]),
   reason,
+  retirementSettlement: Schema.optionalKey(MarketRetirementAbortedSettlementSchema),
 }) {}

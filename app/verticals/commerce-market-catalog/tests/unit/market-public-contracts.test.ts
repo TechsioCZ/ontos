@@ -59,7 +59,7 @@ import { reviseStorefrontAssociationAction } from '../../src/actions/revise-stor
 import { suspendMarketAction } from '../../src/actions/suspend-market.action.ts';
 import { eligibleMarketTuplesRead } from '../../src/api/eligible-market-tuples.read.ts';
 import { resolveCommerceMarketRead } from '../../src/api/resolve-commerce-market.read.ts';
-import { commerceMarketCatalogApiContract } from '../../shared/api.ts';
+import { commerceMarketCatalogApi, commerceMarketCatalogApiContract } from '../../shared/api.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -349,6 +349,7 @@ describe('Commerce Market public contracts', () => {
       'current-market-catalog',
       'eligible-market-tuples',
       'market-history',
+      'market-retirement-effect-recovery',
       'pricing-current-market-evidence',
       'resolve-commerce-market',
       'verify-market-eligibility-v1',
@@ -366,12 +367,75 @@ describe('Commerce Market public contracts', () => {
       { actionKey: 'commerce.market-catalog.activate-market', provisioning: 'explicit' },
       { actionKey: 'commerce.market-catalog.associate-storefront', provisioning: 'explicit' },
       { actionKey: 'commerce.market-catalog.create-market', provisioning: 'explicit' },
+      { actionKey: 'commerce.market-catalog.manage-market-retirement-admission', provisioning: 'explicit' },
       { actionKey: 'commerce.market-catalog.remove-storefront-association', provisioning: 'explicit' },
       { actionKey: 'commerce.market-catalog.retire-market', provisioning: 'explicit' },
       { actionKey: 'commerce.market-catalog.revise-market-definition', provisioning: 'explicit' },
       { actionKey: 'commerce.market-catalog.revise-storefront-association', provisioning: 'explicit' },
       { actionKey: 'commerce.market-catalog.suspend-market', provisioning: 'explicit' },
     ]);
+    const nativeEndpoints = Object.values(commerceMarketCatalogApi.groups).flatMap((group) =>
+      Object.values(group.endpoints).map((endpoint) => ({
+        group: group.identifier,
+        method: endpoint.method,
+        operation: endpoint.identifier,
+        path: endpoint.path,
+      })),
+    );
+    expect(nativeEndpoints.filter(({ group }) => group.endsWith('Action'))).toEqual([
+      {
+        group: 'activateMarketAction',
+        method: 'POST',
+        operation: 'execute',
+        path: '/commerce-market-catalog/actions/activate-market',
+      },
+      {
+        group: 'associateStorefrontAction',
+        method: 'POST',
+        operation: 'execute',
+        path: '/commerce-market-catalog/actions/associate-storefront',
+      },
+      {
+        group: 'createMarketAction',
+        method: 'POST',
+        operation: 'execute',
+        path: '/commerce-market-catalog/actions/create-market',
+      },
+      {
+        group: 'removeStorefrontAssociationAction',
+        method: 'POST',
+        operation: 'execute',
+        path: '/commerce-market-catalog/actions/remove-storefront-association',
+      },
+      {
+        group: 'retireMarketAction',
+        method: 'POST',
+        operation: 'execute',
+        path: '/commerce-market-catalog/actions/retire-market',
+      },
+      {
+        group: 'reviseMarketDefinitionAction',
+        method: 'POST',
+        operation: 'execute',
+        path: '/commerce-market-catalog/actions/revise-market-definition',
+      },
+      {
+        group: 'reviseStorefrontAssociationAction',
+        method: 'POST',
+        operation: 'execute',
+        path: '/commerce-market-catalog/actions/revise-storefront-association',
+      },
+      {
+        group: 'suspendMarketAction',
+        method: 'POST',
+        operation: 'execute',
+        path: '/commerce-market-catalog/actions/suspend-market',
+      },
+    ]);
+    expect(Object.keys(commerceMarketCatalogApi.groups)).not.toContain('manageMarketRetirementAdmissionAction');
+    expect(nativeEndpoints.map(({ path }) => path)).not.toContain(
+      '/commerce-market-catalog/actions/manage-market-retirement-admission',
+    );
 
     const created = {
       channels: ['B2C'],

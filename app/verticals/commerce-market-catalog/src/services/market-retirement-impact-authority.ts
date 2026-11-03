@@ -1,4 +1,7 @@
 import type { Effect } from 'effect';
+import type { OperationalScope } from '@app/core-runtime';
+import type { MarketRetirementStoredBasis } from '../../shared/market-retirement-admission.ts';
+import type { RetireMarketPayload } from '../../shared/action-contracts.ts';
 import { Context } from 'effect';
 
 import type {
@@ -49,9 +52,30 @@ export interface MarketRetirementImpactAuthority<Requirements = never> {
   }) => Effect.Effect<ReservedMarketRetirementImpactAssessment, MarketRetirementImpactFailure, Requirements>;
 }
 
-export class MarketRetirementImpactAuthorityService extends Context.Service<
-  MarketRetirementImpactAuthorityService,
-  MarketRetirementImpactAuthority
+export interface MarketRetirementImpactAttempt {
+  readonly basis: MarketRetirementStoredBasis;
+  readonly compositionRevision: string;
+  readonly originalCompositionRevision: string;
+  readonly releaseGuardHash: string;
+  readonly retirement: RetireMarketPayload;
+  readonly scope: OperationalScope;
+  readonly sourceActionInvocationId: string;
+}
+export interface MarketRetirementImpactFactory {
+  readonly forAdmission: (attempt: MarketRetirementImpactAttempt) => MarketRetirementImpactAuthority & {
+    readonly cleanupOriginal: (releaseProof: string) => Effect.Effect<void, MarketRetirementImpactFailure>;
+  };
+
+  readonly prepareBasis: (
+    attempt: Pick<
+      MarketRetirementImpactAttempt,
+      'scope' | 'compositionRevision' | 'retirement' | 'sourceActionInvocationId'
+    >,
+  ) => Effect.Effect<MarketRetirementStoredBasis, MarketRetirementImpactFailure>;
+}
+export class MarketRetirementImpactAuthorityFactory extends Context.Service<
+  MarketRetirementImpactAuthorityFactory,
+  MarketRetirementImpactFactory
 >()(
-  '@app/commerce-market-catalog/services/market-retirement-impact-authority/MarketRetirementImpactAuthorityService',
+  '@app/commerce-market-catalog/services/market-retirement-impact-authority/MarketRetirementImpactAuthorityFactory',
 ) {}

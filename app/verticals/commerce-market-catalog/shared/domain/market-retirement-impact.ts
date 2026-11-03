@@ -43,6 +43,30 @@ export const MarketRetirementImpactAssessmentSchema = Schema.Struct({
   reservation: Schema.optionalKey(MarketRetirementReservationSchema),
 });
 export type MarketRetirementImpactAssessment = typeof MarketRetirementImpactAssessmentSchema.Type;
-export type ReservedMarketRetirementImpactAssessment = MarketRetirementImpactAssessment & {
-  readonly reservation: typeof MarketRetirementReservationSchema.Type;
-};
+export const ReservedMarketRetirementImpactAssessmentSchema = Schema.Struct({
+  ...MarketRetirementImpactAssessmentSchema.fields,
+  reservation: MarketRetirementReservationSchema,
+});
+export type ReservedMarketRetirementImpactAssessment = typeof ReservedMarketRetirementImpactAssessmentSchema.Type;
+
+const retirementInvocationUuid = Schema.String.check(Schema.isUUID());
+export const MarketRetirementSourceInvocationIdSchema = retirementInvocationUuid.pipe(
+  Schema.brand('MarketRetirementSourceInvocationId'),
+  Schema.decodeTo(retirementInvocationUuid),
+);
+export const MarketRetirementAbortedSettlementSchema = Schema.Struct({
+  pendingCleanup: Schema.Boolean,
+  resolution: Schema.Literal('RECOVER_ORIGINAL_EFFECT'),
+  retryCommand: Schema.Literal(false),
+  sourceActionInvocationId: MarketRetirementSourceInvocationIdSchema,
+  state: Schema.Literal('ABORTED'),
+});
+
+export class MarketRetirementImpactAssessmentStale extends Schema.TaggedError<MarketRetirementImpactAssessmentStale>()(
+  'MarketRetirementImpactAssessmentStale',
+  {
+    code: Schema.Literal('market_retirement_impact_assessment_stale'),
+    reason: Schema.String,
+    retirementSettlement: Schema.optionalKey(MarketRetirementAbortedSettlementSchema),
+  },
+) {}

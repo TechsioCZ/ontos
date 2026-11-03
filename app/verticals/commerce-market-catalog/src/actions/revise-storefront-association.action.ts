@@ -4,7 +4,7 @@
 import type { ActionHandlerContext, ActionServiceFactory } from '@app/core-runtime';
 import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { StorefrontApplicationIdSchema } from '@app/storefront-registry-contracts';
-import { DateTime, Effect, Match, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Match, Schema } from 'effect';
 import {
   MarketCommandRejected,
   ReviseStorefrontAssociationPayloadSchema,
@@ -49,15 +49,19 @@ const domainEvents = {
 
 export type ReviseStorefrontAssociationServices = MarketAdministrationService & CurrentStorefrontApplicationAuthority;
 
-const makeReviseStorefrontAssociationServices: ActionServiceFactory<ReviseStorefrontAssociationServices> = Effect.fn(
-  'ReviseStorefrontAssociationAction.makeServices',
-)(function* makeServices(transaction, scope, compositionRevision) {
-  const catalog = yield* marketAdministrationService(transaction, scope, compositionRevision);
-  return {
-    ...catalog,
-    ...makeServerCurrentStorefrontApplicationAuthority({ compositionRevision, legalEntityId: scope.legalEntityId }),
-  } satisfies ReviseStorefrontAssociationServices;
-});
+const makeReviseStorefrontAssociationServices: ActionServiceFactory<
+  ReviseStorefrontAssociationServices,
+  Crypto.Crypto
+> = Effect.fn('ReviseStorefrontAssociationAction.makeServices')(
+  function* makeServices(transaction, scope, compositionRevision) {
+    const crypto = yield* Crypto.Crypto;
+    const catalog = yield* marketAdministrationService(transaction, scope, compositionRevision);
+    return {
+      ...catalog,
+      ...makeServerCurrentStorefrontApplicationAuthority({ compositionRevision, crypto, scope }),
+    } satisfies ReviseStorefrontAssociationServices;
+  },
+);
 
 const handleReviseStorefrontAssociation = Effect.fn('ReviseStorefrontAssociationAction.handle')(
   function* reviseStorefrontAssociation(
