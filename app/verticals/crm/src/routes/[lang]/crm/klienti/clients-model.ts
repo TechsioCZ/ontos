@@ -62,6 +62,29 @@ export const activeContactsOf = (records: RecordsResponse, clientId: string): re
 export const primaryContactOf = (records: RecordsResponse, clientId: string): ContactPerson | undefined =>
   activeContactsOf(records, clientId)[0];
 
+export interface ContactSelection {
+  readonly client: Client;
+  readonly contact: ContactPerson;
+}
+
+/**
+ * Exact contact deep link. The parent comes from the contact row itself, inside the same
+ * server-authorized projection the list renders; a contact ID is never read as a client ID.
+ * Resolution mirrors the contact search contract: an archived contact or client has no detail link.
+ */
+export const contactSelectionOf = (records: RecordsResponse, contactId: string): ContactSelection | undefined => {
+  const contact = records.state.clients.contacts.find(
+    (entry) => entry.id === contactId && entry.status === 'active' && entry.archivedAt === undefined,
+  );
+  if (contact === undefined) {
+    return undefined;
+  }
+  const client = records.state.clients.items.find(
+    (entry) => entry.id === contact.clientId && entry.status === 'active' && entry.archivedAt === undefined,
+  );
+  return client === undefined ? undefined : { client, contact };
+};
+
 export const lastVisitOf = (records: RecordsResponse, clientId: string) => {
   let latest: DateTime.Utc | undefined;
   for (const visit of records.state.visits.items) {

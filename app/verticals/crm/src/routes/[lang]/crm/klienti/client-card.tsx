@@ -42,6 +42,7 @@ interface CardProps {
   readonly clientId: string;
   readonly onClose: () => void;
   readonly records: RecordsResponse;
+  readonly selectedContactId?: string;
   readonly submit: CrmCommandSubmit;
 }
 
@@ -90,6 +91,34 @@ const NotVisible = ({ onClose }: { readonly onClose: () => void }) => {
       <EmptyState
         description="Klient neexistuje nebo k němu nemáte přístup. Obchodník vidí jen klienty, které má přidělené."
         title={t('crm.ciClientsVisits.clients.cardUnavailable')}
+      />
+    </SidePanel>
+  );
+};
+
+export const ContactUnavailable = ({ onClose }: { readonly onClose: () => void }) => {
+  const { t } = useModernI18n();
+  return (
+    <SidePanel
+      actions={
+        <Button onClick={onClose} theme="outlined" variant="secondary">
+          {t('crm.common.close')}
+        </Button>
+      }
+      closeLabel={dialogCloseLabel}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
+      open
+      resizeLabel="Změnit šířku panelu"
+      size="md"
+      title={t('crm.ciClientsVisits.contacts.unavailableTitle')}
+    >
+      <EmptyState
+        description={t('crm.ciClientsVisits.contacts.unavailableDescription')}
+        title={t('crm.ciClientsVisits.contacts.unavailableTitle')}
       />
     </SidePanel>
   );
@@ -198,6 +227,7 @@ const CardBody = ({
   client,
   onClose,
   records,
+  selectedContactId,
   submit,
 }: Omit<CardProps, 'clientId'> & { readonly client: Client }) => {
   const toaster = useToast();
@@ -367,7 +397,7 @@ const CardBody = ({
             <Tabs.Indicator />
           </Tabs.List>
           <Tabs.Content className="py-200" value="contacts">
-            <ContactsTab {...tabProps} writable={writable && !archived} />
+            <ContactsTab {...tabProps} selectedContactId={selectedContactId} writable={writable && !archived} />
           </Tabs.Content>
           <Tabs.Content className="py-200" value="visits">
             <ClientVisitsTab {...tabProps} />

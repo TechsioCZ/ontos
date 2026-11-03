@@ -18,10 +18,10 @@ import { useCrmRecords } from '../../../../crm/records.ts';
 import { CrmStateGate, useCrmRouteSelection, crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
 import { CrmSalesKpiStrip } from '../prehled-prodeju/sales-kpi-strip.tsx';
 import { downloadCsv } from '../prehled-prodeju/report-format.ts';
-import { ClientCard } from './client-card.tsx';
+import { ClientCard, ContactUnavailable } from './client-card.tsx';
 import { ClientFormDialog } from './client-form-dialog.tsx';
 import { TeamPanel } from './team-panel.tsx';
-import { clientSegments, contactsCsv, segmentLabels } from './clients-model.ts';
+import { clientSegments, contactSelectionOf, contactsCsv, segmentLabels } from './clients-model.ts';
 import ClientFilterPanel from './client-filter-panel.tsx';
 import { clientColumns, contactColumns } from './client-table-columns.tsx';
 import {
@@ -62,20 +62,21 @@ const metricLabelKey = {
 } satisfies Record<ClientMetric, string>;
 const entityLabelKey = { client: 'crm.clientFilters.entity.client', contact: 'crm.clientFilters.entity.contact' };
 
-/** `?klient=<id>` of the current URL. */
-const useClientParam = () => {
-  const [openId, setOpenId] = useCrmRouteSelection('klient');
-  const setClient = (id: string | undefined) => {
-    setOpenId(id);
+/** `?klient=<client id>` or `?osoba=<contact id>` of the current URL; one detail selection applies. */
+const useCrmDetailParam = (key: 'klient' | 'osoba') => {
+  const [selected, setSelected] = useCrmRouteSelection(key);
+  const setDetail = (id: string | undefined) => {
+    setSelected(id);
     const url = new URL(globalThis.location.href);
     if (id === undefined) {
-      url.searchParams.delete('klient');
+      url.searchParams.delete(key);
     } else {
-      url.searchParams.set('klient', id);
+      url.searchParams.set(key, id);
+      url.searchParams.delete(key === 'klient' ? 'osoba' : 'klient');
     }
     globalThis.history.replaceState(globalThis.history.state, '', `${url.pathname}${url.search}${url.hash}`);
   };
-  return [openId, setClient] as const;
+  return [selected, setDetail] as const;
 };
 
 const HistoryIndexSchema = Schema.Struct({ __TSR_index: Schema.Int });
@@ -228,11 +229,13 @@ const FiltersBar = ({ entity, filters, manager, onChange, onReset, records }: Fi
 const ClientsList = ({
   busy,
   onOpen,
+  onOpenContact,
   records,
   submit,
 }: {
   readonly busy: boolean;
   readonly onOpen: (id: string | undefined) => void;
+  readonly onOpenContact: (contactId: string) => void;
   readonly records: RecordsResponse;
   readonly submit: ReturnType<typeof useCrmRecords>['submit'];
 }) => {
@@ -392,7 +395,7 @@ const ClientsList = ({
               getRowId={(row) => row.contact.id}
               getRowLabel={(row) => row.original.contact.name}
               key="contacts"
-              onRowClick={(row) => onOpen(row.original.client.id)}
+              onRowClick={(row) => onOpenContact(row.original.contact.id)}
               pageSizeOptions={[25, 50, 100]}
               paginationProps={crmPaginationProps}
               size="sm"
@@ -448,23 +451,57 @@ const ClientsList = ({
 const ClientsContent = () => {
   const { t } = useModernI18n();
   const { busy, load, state, submit } = useCrmRecords();
-  const [openId, setOpenId] = useClientParam();
+  const [openClientId, setOpenClientId] = useCrmDetailParam('klient');
+  const [openContactId, setOpenContactId] = useCrmDetailParam('osoba');
+  const openClient = (id: string | undefined) => {
+    if (id !== undefined) {
+      setOpenContactId(undefined);
+    }
+    setOpenClientId(id);
+  };
+  const openContact = (contactId: string) => {
+    setOpenClientId(undefined);
+    setOpenContactId(contactId);
+  };
+  const closeDetail = () => {
+    setOpenClientId(undefined);
+    setOpenContactId(undefined);
+  };
   return (
     <CrmStateGate loadingTitle={t('crm.pages.clients.title')} onRetry={load} state={state}>
-      {(records) => (
-        <>
-          <ClientsList busy={busy} onOpen={setOpenId} records={records} submit={submit} />
-          {openId !== undefined && (
-            <ClientCard
+      {(records) => {
+        const contactSelection =
+          openClientId === undefined && openContactId !== undefined
+            ? contactSelectionOf(records, openContactId)
+            : undefined;
+        return (
+          <>
+            <ClientsList
               busy={busy}
-              clientId={openId}
-              onClose={() => setOpenId(undefined)}
+              onOpen={openClient}
+              onOpenContact={openContact}
               records={records}
               submit={submit}
             />
-          )}
-        </>
-      )}
+            {openClientId !== undefined && (
+              <ClientCard busy={busy} clientId={openClientId} onClose={closeDetail} records={records} submit={submit} />
+            )}
+            {openClientId === undefined && contactSelection !== undefined && (
+              <ClientCard
+                busy={busy}
+                clientId={contactSelection.client.id}
+                onClose={closeDetail}
+                records={records}
+                selectedContactId={contactSelection.contact.id}
+                submit={submit}
+              />
+            )}
+            {openClientId === undefined && openContactId !== undefined && contactSelection === undefined && (
+              <ContactUnavailable onClose={closeDetail} />
+            )}
+          </>
+        );
+      }}
     </CrmStateGate>
   );
 };

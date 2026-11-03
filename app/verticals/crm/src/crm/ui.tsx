@@ -27,7 +27,7 @@ export const useCrmRouteSearch = (): CrmRouteSearch => {
 };
 
 /** A local selection applies only to the router location where the user made it. */
-export const useCrmRouteSelection = (key: keyof Pick<CrmRouteSearch, 'klient' | 'objednavka'>) => {
+export const useCrmRouteSelection = (key: keyof Pick<CrmRouteSearch, 'klient' | 'objednavka' | 'osoba'>) => {
   const location = useRouterState({
     select: (state) => ({
       href: state.location.href,

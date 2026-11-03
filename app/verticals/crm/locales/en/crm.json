@@ -23,6 +23,7 @@
       "cancel": "Cancel",
       "saved": "Saved",
       "saveFailed": "Saving failed",
+      "close": "Close",
       "scopeAll": "You see every client of the company.",
       "scopeAssigned": "You see only clients assigned to you.",
       "scopeNone": "No clients are assigned to you."
@@ -158,7 +159,10 @@
         "removeFromForm": "Remove this person from the form",
         "roleExample": "e.g. Buyer",
         "rolesExample": "e.g. Buyer, Operations manager",
-        "title": "Contact persons"
+        "selected": "Selected contact",
+        "title": "Contact persons",
+        "unavailableDescription": "The contact does not exist, was removed, or you do not have access to it. A salesperson only sees contacts of clients assigned to them.",
+        "unavailableTitle": "Contact unavailable"
       },
       "fields": {
         "address": "Address",

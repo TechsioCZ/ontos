@@ -16,7 +16,7 @@ import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ComponentProps } from 'react';
 import type { ContactPerson } from '../../../../../shared/domain/clients.ts';
 import type { ClientCardTabProps } from './card-tab-props.ts';
@@ -157,16 +157,29 @@ const ContactCard = ({
   contact,
   onEdit,
   onRemove,
+  selected,
   writable,
 }: {
   readonly contact: ContactPerson;
   readonly onEdit?: () => void;
   readonly onRemove?: () => void;
+  readonly selected?: boolean;
   readonly writable: boolean;
 }) => {
+  const { t } = useModernI18n();
+  const card = useRef<HTMLLIElement>(null);
   const archived = contact.status === 'archived';
+  useEffect(() => {
+    if (selected === true) {
+      card.current?.scrollIntoView({ behavior: 'instant', block: 'nearest' });
+    }
+  }, [selected]);
   return (
-    <li className={`${surfaceTileClassName} flex flex-col gap-100 p-200 ${archived ? 'opacity-60' : ''}`}>
+    <li
+      aria-current={selected === true ? 'true' : undefined}
+      className={`${surfaceTileClassName} flex flex-col gap-100 p-200 ${archived ? 'opacity-60' : ''} ${selected === true ? 'ring-2 ring-primary' : ''}`}
+      ref={card}
+    >
       <div className="flex items-start justify-between gap-100">
         <div className="flex min-w-0 items-center gap-150">
           <span
@@ -186,6 +199,11 @@ const ContactCard = ({
               {archived && (
                 <Badge size="sm" variant="outline">
                   {`Odebrán ${pipe(contact.archivedAt, orderDateText, formatDate)}`}
+                </Badge>
+              )}
+              {selected === true && (
+                <Badge size="sm" variant="info">
+                  {t('crm.ciClientsVisits.contacts.selected')}
                 </Badge>
               )}
             </span>
@@ -270,9 +288,13 @@ export const ContactsTab = ({
   busy,
   client,
   records,
+  selectedContactId,
   submit,
   writable,
-}: ClientCardTabProps & { readonly writable: boolean }) => {
+}: ClientCardTabProps & {
+  readonly selectedContactId?: string | undefined;
+  readonly writable: boolean;
+}) => {
   const { t } = useModernI18n();
   const toaster = useToast();
   const [editing, setEditing] = useState<string | undefined>();
@@ -372,6 +394,7 @@ export const ContactsTab = ({
                 key={contact.id}
                 onEdit={() => setEditing(contact.id)}
                 onRemove={() => setRemoving(contact)}
+                selected={contact.id === selectedContactId}
                 writable={writable}
               />
             ),

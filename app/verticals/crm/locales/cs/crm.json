@@ -23,6 +23,7 @@
       "cancel": "Zrušit",
       "saved": "Uloženo",
       "saveFailed": "Uložení se nezdařilo",
+      "close": "Zavřít",
       "scopeAll": "Vidíte všechny klienty firmy.",
       "scopeAssigned": "Vidíte pouze klienty přidělené vám.",
       "scopeNone": "Nemáte přidělené žádné klienty."
@@ -158,7 +159,10 @@
         "removeFromForm": "Odebrat osobu z formuláře",
         "roleExample": "např. Nákupčí",
         "rolesExample": "např. Nákupčí, Provozní",
-        "title": "Kontaktní osoby"
+        "selected": "Vybraný kontakt",
+        "title": "Kontaktní osoby",
+        "unavailableDescription": "Kontakt neexistuje, byl odebrán nebo k němu nemáte přístup. Obchodník vidí jen kontakty klientů, které má přidělené.",
+        "unavailableTitle": "Kontakt není dostupný"
       },
       "fields": {
         "address": "Adresa",
