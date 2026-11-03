@@ -1,6 +1,6 @@
 {
   "patterns": [
-    "{akros-storefront,apps,database,verticals,packages,scripts,tools,quality-audit}/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+    "{akros-storefront,n1-storefront,apps,database,verticals,packages,scripts,tools,quality-audit}/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
     "*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
   ],
   "exclude": [

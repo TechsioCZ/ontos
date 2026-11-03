@@ -116,8 +116,8 @@ export const PersonActionsMenu = ({
   readonly person: Person;
   readonly scope: PeopleAdminScope;
 }) => (
-  // The menu lives inside a clickable row; its clicks must never also open the detail.
-  // oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- Only stops propagation; the Menu trigger is the keyboard target.
+  // The menu lives inside a clickable row; its clicks must never also open the detail. The wrapper only stops
+  // propagation (see the oxlint.config.ts exemption); the Menu's Button trigger is the keyboard target.
   <span className="inline-flex" onClick={(event) => event.stopPropagation()}>
     <Menu
       aria-label={`Akce: ${person.displayName}`}

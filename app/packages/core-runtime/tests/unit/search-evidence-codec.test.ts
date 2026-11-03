@@ -103,8 +103,7 @@ const row = (entry: CoreSearchProjectionDocument): Row => ({
   title: entry.title,
   updatedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00Z')),
 });
-/** Scripted driver uses positional rows, in the exact real Drizzle table projection order. */
-/* oxlint-disable perfectionist/sort-objects -- Scripted PostgreSQL rows must follow Drizzle physical column order; expires: 2027-03-31. */
+/** Scripted driver uses positional rows, in the exact real Drizzle table projection order (see the oxlint.config.ts exemption). */
 const driverRow = (entry: Row) => ({
   searchIndexEntryId: entry.searchIndexEntryId,
   tenantId: entry.tenantId,
@@ -132,7 +131,6 @@ const rebuildRow = (entry: RebuildRow) => ({
   fingerprint: entry.fingerprint,
   updatedAt: entry.updatedAt,
 });
-/* oxlint-enable perfectionist/sort-objects */
 const replacement = (documents: readonly CoreSearchProjectionDocument[], rebuildVersion = '2') =>
   Schema.decodeSync(CoreSearchProjectionReplacementSchema)({
     documents,
