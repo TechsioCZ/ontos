@@ -43,9 +43,10 @@ defaults:
 # Every job picks its machine from one place, so moving off GitHub's default runners is a variable
 # change, not a workflow rewrite. Unset variables keep today's `ubuntu-latest`; CI_RUNNER moves every
 # job, and CI_RUNNER_HEAVY the CPU-bound gate and build shards, onto faster partner runners such as
-# `blacksmith-4vcpu-ubuntu-2204` or `blacksmith-8vcpu-ubuntu-2204`. A partner runner starts in seconds
-# and, being self-hosted, is not counted against the free plan's 20 concurrent GitHub-hosted jobs —
-# the cap that makes a run of this many jobs wait for a slot.
+# `blacksmith-4vcpu-ubuntu-2404` or `blacksmith-8vcpu-ubuntu-2404`. Note the image: this repository
+# runs `ubuntu-24.04`, so `2404` matches it, and Blacksmith's `2204` tags are deprecated. A partner
+# runner starts in seconds and, being self-hosted, is not counted against the free plan's 20
+# concurrent GitHub-hosted jobs - the cap that makes a run of this many jobs wait for a slot.
 concurrency:
   group: ultramodern-workspace-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
