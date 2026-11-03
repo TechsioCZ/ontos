@@ -350,6 +350,8 @@
       "placeholder": "Search clients, tasks, invoices, contracts…"
     },
     "resource": {
+      "detail_not_supported": "This app has no record view for this type yet. Open the agenda it belongs to.",
+      "detail_not_supported_title": "Record details are not available here",
       "found_in_agenda": "This record’s details are in the agenda it belongs to.",
       "open_in_agenda": "Open in its agenda",
       "forbidden": "You do not have permission to view this resource.",

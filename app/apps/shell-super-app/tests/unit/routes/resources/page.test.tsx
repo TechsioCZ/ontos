@@ -57,8 +57,12 @@ const translations = new Map(
     'shell.auth.logout.failed': 'Logout failed',
     'shell.dashboard.unavailable': 'The dashboard is unavailable',
     'shell.moduleTarget.reload_required': 'Reload this page to continue',
+    'shell.recovery.home': 'Back to home',
+    'shell.recovery.retry': 'Try again',
+    'shell.resource.detail_not_supported':
+      'This app has no record view for this type yet. Open the agenda it belongs to.',
+    'shell.resource.detail_not_supported_title': 'Record details are not available here',
     'shell.resource.forbidden': 'You cannot open this resource',
-    'shell.resource.found_in_agenda': 'Its details are in the agenda it belongs to.',
     'shell.resource.media.absent': 'This resource has no media',
     'shell.resource.media.attach': 'Attach media',
     'shell.resource.media.failed': 'Attaching the media failed',
@@ -70,7 +74,6 @@ const translations = new Map(
     'shell.resource.media.unavailable': 'Media attachment is unavailable',
     'shell.resource.not_found': 'This resource does not exist',
     'shell.resource.open_in_agenda': 'Open in its agenda',
-    'shell.resource.open_record': 'Open the record',
     'shell.resource.selection_required': 'Select a legal entity first',
     'shell.resource.timeline.empty': 'No timeline entries yet',
     'shell.resource.timeline.lagging': 'The timeline is catching up',
@@ -258,7 +261,8 @@ it.each([
     renderResourcePage({ shell: { state: shellState }, state: 'unavailable' });
 
     expect(screen.getByText(blockedText)).toBeTruthy();
-    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Attach media' })).toBeNull();
     expect(screen.queryByText('Media')).toBeNull();
     expect(dashboardRenders).toHaveLength(0);
     expect(shellControlsMock).toHaveBeenCalledWith(undefined);
@@ -283,7 +287,8 @@ it('refuses media attachment when document hydration requires a reload', () => {
   renderResourcePage(readyModel());
 
   expect(screen.getByText('Reload this page to continue')).toBeTruthy();
-  expect(screen.queryByRole('button')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Attach media' })).toBeNull();
   expect(dashboardRenders).toHaveLength(0);
   expect(attachResourceMediaMock).not.toHaveBeenCalled();
 });
@@ -363,8 +368,19 @@ it('offers the owning module agendas when the Shell cannot show the record itsel
   ]);
 });
 
-it('names a record opened from search and points to its agenda instead of calling it missing', () => {
-  routerHistoryState.searchHitTitle = 'Petr Dvořák';
+const financeInvoice = {
+  moduleId: 'finance.billing',
+  resourceId: '00000000-0000-4000-8000-000000000401',
+  resourceType: 'finance.billing.invoice',
+};
+
+it.each([
+  { closedText: 'This resource does not exist', state: 'not_found' as const, titleKey: 'shell.recovery.recordMissing' },
+  { closedText: 'This resource is unavailable', state: 'unavailable' as const, titleKey: 'shell.recovery.unavailable' },
+  { closedText: 'You cannot open this resource', state: 'forbidden' as const, titleKey: 'shell.recovery.forbidden' },
+])('never renders a $state record from a search history title', ({ closedText, state, titleKey }) => {
+  routerHistoryState.searchHitTitle = 'Faktura 2026/14';
+  Object.assign(routeParams, financeInvoice);
   try {
     renderResourcePage({
       shell: {
@@ -372,39 +388,26 @@ it('names a record opened from search and points to its agenda instead of callin
         navigation: {
           deniedAppIds: [],
           items: Schema.decodeUnknownSync(Schema.Array(ShellNavigationItemSchema))([
-            navigationItem('billing.invoices', 'Invoices', '/en/finance/invoices'),
+            navigationItem('finance.billing', 'Faktury', '/finance'),
           ]),
           moduleIds: [],
           state: 'available',
           unavailableDeployments: [],
         },
       },
-      state: 'not_found',
+      state,
     });
 
-    expect(screen.getByRole('heading', { level: 1, name: 'Petr Dvořák' })).toBeTruthy();
-    expect(screen.getByText('Its details are in the agenda it belongs to.')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Invoices' }).getAttribute('href')).toBe('/en/finance/invoices');
-    expect(screen.queryByText('This resource does not exist')).toBeNull();
-  } finally {
-    routerHistoryState.searchHitTitle = '';
-  }
-});
-
-it('opens a record found by search on its owner page when the owner has one', () => {
-  routerHistoryState.searchHitTitle = 'Faktura 2026/14';
-  Object.assign(routeParams, {
-    moduleId: 'finance.billing',
-    resourceId: '00000000-0000-4000-8000-000000000401',
-    resourceType: 'finance.billing.invoice',
-  });
-  try {
-    renderResourcePage({ shell: authenticatedShellFixture(), state: 'unavailable' });
-
-    expect(screen.getByRole('heading', { level: 1, name: 'Faktura 2026/14' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Open the record' }).getAttribute('href')).toBe(
-      '/finance?resourceId=00000000-0000-4000-8000-000000000401',
-    );
+    expect(lastDashboardProps().title).toBe(titleKey);
+    expect(screen.getByText(closedText)).toBeTruthy();
+    expect(screen.queryByText('Faktura 2026/14')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Open the record' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Attach media' })).toBeNull();
+    expect(screen.queryByText('Media')).toBeNull();
+    expect(screen.queryByText('Timeline')).toBeNull();
+    expect(screen.queryByText('Status')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Try again' }) === null).toBe(state !== 'unavailable');
+    expect(screen.queryByRole('navigation', { name: 'Open in its agenda' }) === null).toBe(state === 'forbidden');
   } finally {
     routerHistoryState.searchHitTitle = '';
     Object.assign(routeParams, { moduleId: 'billing.invoices', resourceId: '', resourceType: '' });
@@ -422,53 +425,33 @@ const shellWithNavigation = (items: readonly ReturnType<typeof navigationItem>[]
   },
 });
 
-it('opens a facility record of the current company by its local ID, never one of another company', () => {
-  const company = authenticatedShellFixture().selectedLegalEntityId ?? '';
+it('links a facility record only to its agenda, never to a record page or the searched title', () => {
   routerHistoryState.searchHitTitle = 'Plynová kotelna';
   try {
-    for (const [resourceId, href] of [
-      [`${company}.TEC-001`, '/provoz/majetek?asset=TEC-001'],
-      ['00000000-0000-4000-8000-000000000299.TEC-001', undefined],
-    ] as const) {
-      Object.assign(routeParams, {
-        moduleId: 'facility.operations',
-        resourceId,
-        resourceType: 'facility.operations.asset',
-      });
-      const { unmount } = renderResourcePage({
-        shell: shellWithNavigation([navigationItem('facility.operations', 'Majetek', '/provoz/majetek')]),
-        state: 'not_found',
-      });
-      expect(screen.queryByRole('link', { name: 'Open the record' })?.getAttribute('href')).toBe(href);
-      expect(screen.getByRole('link', { name: 'Majetek' }).getAttribute('href')).toBe('/provoz/majetek');
-      expect(document.body.textContent).not.toContain('TEC-001');
-      unmount();
-    }
-  } finally {
-    routerHistoryState.searchHitTitle = '';
-    Object.assign(routeParams, { moduleId: 'billing.invoices', resourceId: '', resourceType: '' });
-  }
-});
+    const company = authenticatedShellFixture().selectedLegalEntityId ?? '';
+    Object.assign(routeParams, {
+      moduleId: 'facility.operations',
+      resourceId: `${company}.TEC-001`,
+      resourceType: 'facility.operations.asset',
+    });
+    renderResourcePage({
+      shell: shellWithNavigation([navigationItem('facility.operations', 'Majetek', '/provoz/majetek')]),
+      state: 'not_found',
+    });
 
-it('offers no record link for a search hit whose owner has no record page', () => {
-  routerHistoryState.searchHitTitle = 'Předávací protokol';
-  Object.assign(routeParams, {
-    moduleId: 'legal.agreements',
-    resourceId: '00000000-0000-4000-8000-000000000402',
-    resourceType: 'legal.agreements.document',
-  });
-  try {
-    renderResourcePage({ shell: authenticatedShellFixture(), state: 'not_found' });
-
-    expect(screen.getByText('Its details are in the agenda it belongs to.')).toBeTruthy();
+    expect(lastDashboardProps().title).toBe('shell.recovery.recordMissing');
+    expect(screen.getByText('This resource does not exist')).toBeTruthy();
+    expect(screen.queryByText('Plynová kotelna')).toBeNull();
     expect(screen.queryByRole('link', { name: 'Open the record' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Majetek' }).getAttribute('href')).toBe('/provoz/majetek');
+    expect(document.body.textContent).not.toContain('TEC-001');
   } finally {
     routerHistoryState.searchHitTitle = '';
     Object.assign(routeParams, { moduleId: 'billing.invoices', resourceId: '', resourceType: '' });
   }
 });
 
-it('points a person found by search to people administration only when the person may open it', () => {
+it('links a person only to people administration, without treating the search title as the record', () => {
   routerHistoryState.searchHitTitle = 'Jana Nováková';
   Object.assign(routeParams, {
     moduleId: 'core.identity',
@@ -483,7 +466,8 @@ it('points a person found by search to people administration only when the perso
       ]),
       state: 'not_found',
     });
-    expect(screen.getByRole('heading', { level: 1, name: 'Jana Nováková' })).toBeTruthy();
+    expect(lastDashboardProps().title).toBe('shell.recovery.recordMissing');
+    expect(screen.queryByText('Jana Nováková')).toBeNull();
     expect(screen.queryByRole('link', { name: 'Open the record' })).toBeNull();
     const agendas = screen.getByRole('navigation', { name: 'Open in its agenda' });
     expect([...agendas.querySelectorAll('a')].map((link) => link.getAttribute('href'))).toEqual([
@@ -495,22 +479,62 @@ it('points a person found by search to people administration only when the perso
       shell: shellWithNavigation([navigationItem('billing.invoices', 'Invoices', '/finance')]),
       state: 'not_found',
     });
-    expect(screen.getByText('Its details are in the agenda it belongs to.')).toBeTruthy();
     expect(screen.queryByRole('navigation', { name: 'Open in its agenda' })).toBeNull();
+    expect(screen.getByText('This resource does not exist')).toBeTruthy();
   } finally {
     routerHistoryState.searchHitTitle = '';
     Object.assign(routeParams, { moduleId: 'billing.invoices', resourceId: '', resourceType: '' });
   }
 });
 
-it('titles the dashboard from the resource and scopes it to the owning module', () => {
-  renderResourcePage(readyModel());
+it('explains a record type without a Shell detail view instead of inventing a missing record', () => {
+  routerHistoryState.searchHitTitle = 'Petr Dvořák';
+  Object.assign(routeParams, {
+    moduleId: 'party.registry',
+    resourceId: 'ea2200ab-4308-491e-8e33-ca3871a8fa55',
+    resourceType: 'party.registry.party',
+  });
+  try {
+    renderResourcePage({
+      detailSupport: 'not_supported',
+      shell: shellWithNavigation([navigationItem('party.registry', 'Zákazníci', '/prodej/zakaznici')]),
+      state: 'unavailable',
+    });
 
-  expect(lastDashboardProps().title).toBe('Invoice 42');
-  expect(lastDashboardProps().currentModuleId).toBe('billing.invoices');
-  expect(screen.getByRole('heading', { level: 2, name: 'Invoice 42' })).toBeTruthy();
-  expect(screen.getByText('Status')).toBeTruthy();
-  expect(screen.getByText('1 250,00 CZK')).toBeTruthy();
+    expect(lastDashboardProps().title).toBe('Record details are not available here');
+    expect(
+      screen.getByText('This app has no record view for this type yet. Open the agenda it belongs to.'),
+    ).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Back to home' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Zákazníci' }).getAttribute('href')).toBe('/prodej/zakaznici');
+    expect(screen.queryByText('Petr Dvořák')).toBeNull();
+    expect(screen.queryByText('This resource is unavailable')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Attach media' })).toBeNull();
+    expect(screen.queryByText('Status')).toBeNull();
+    expect(screen.queryByText('Timeline')).toBeNull();
+  } finally {
+    routerHistoryState.searchHitTitle = '';
+    Object.assign(routeParams, { moduleId: 'billing.invoices', resourceId: '', resourceType: '' });
+  }
+});
+
+it('titles the dashboard from the authorized detail and ignores a history title', () => {
+  routerHistoryState.searchHitTitle = 'Faktura 2026/14';
+  try {
+    renderResourcePage(readyModel());
+
+    expect(lastDashboardProps().title).toBe('Invoice 42');
+    expect(lastDashboardProps().currentModuleId).toBe('billing.invoices');
+    expect(screen.getByRole('heading', { level: 2, name: 'Invoice 42' })).toBeTruthy();
+    expect(screen.getByText('Status')).toBeTruthy();
+    expect(screen.getByText('1 250,00 CZK')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Attach media' })).toBeTruthy();
+    expect(screen.getByText('2026-01-02T03:04:05.000Z')).toBeTruthy();
+    expect(screen.queryByText('Faktura 2026/14')).toBeNull();
+  } finally {
+    routerHistoryState.searchHitTitle = '';
+  }
 });
 
 it('renders one timeline entry per projection row with its ISO instant', () => {
@@ -652,7 +676,8 @@ it.live('removes the media seam when attachment admission requires a fresh docum
     yield* Effect.promise(() => user.click(attachButton()));
     yield* Effect.promise(() => waitFor(() => expect(screen.getByText('Reload this page to continue')).toBeTruthy()));
 
-    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Attach media' })).toBeNull();
     expect(screen.queryByText('Media attached')).toBeNull();
     expect(attachResourceMediaMock).toHaveBeenCalledTimes(1);
   }),

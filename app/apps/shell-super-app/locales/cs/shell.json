@@ -350,6 +350,8 @@
       "placeholder": "Hledat klienty, úkoly, faktury, smlouvy…"
     },
     "resource": {
+      "detail_not_supported": "Tato aplikace zatím neumí zobrazit tento typ záznamu. Otevřete agendu, ke které patří.",
+      "detail_not_supported_title": "Podrobnosti záznamu zde nejsou dostupné",
       "found_in_agenda": "Podrobnosti tohoto záznamu najdete v agendě, ke které patří.",
       "open_in_agenda": "Otevřít v agendě",
       "forbidden": "K zobrazení tohoto zdroje nemáte oprávnění.",
