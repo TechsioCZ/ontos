@@ -70,6 +70,15 @@ export const getCatalog = cache(
     await storefrontRuntime.runPromise(
       Schema.decodeUnknownEffect(Schema.fromJsonString(CatalogQuerySchema))(queryKey).pipe(
         Effect.flatMap((query) => loadCatalog(locale, query)),
+        Effect.tapError((error) =>
+          Effect.logWarning("N1 catalog read unavailable").pipe(
+            Effect.annotateLogs(
+              error._tag === "StorefrontReadUnavailable"
+                ? { failure: error._tag, reason: error.reason, status: error.status ?? 0 }
+                : { failure: error._tag },
+            ),
+          ),
+        ),
         Effect.match({
           onFailure: (error) => ({ reason: error._tag, state: "unavailable" as const }),
           onSuccess: (catalog) => ({ catalog, state: "ready" as const }),
