@@ -1,8 +1,21 @@
 import { eq, sql } from 'drizzle-orm';
 import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
-import { ConfigProvider, Crypto, DateTime, Effect, Exit, Layer, Option, Predicate, Redacted, Schema } from 'effect';
+import {
+  ConfigProvider,
+  Context,
+  Crypto,
+  DateTime,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Predicate,
+  Redacted,
+  Schema,
+} from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { AuthenticationNamespaceRegistry } from '../../src/auth/external-identity/verifier.ts';
 import { validateActiveApplicationCompositionSnapshot } from '../../src/modules/active-application-composition.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { makeLiveOperationFixture } from '../../src/testing/actions.ts';
@@ -871,6 +884,10 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
               runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
             });
             yield* Effect.addFinalizer(() => live.close().pipe(Effect.orDie));
+            const authenticationNamespaceRegistry = Context.get(
+              yield* Layer.build(live.layer),
+              AuthenticationNamespaceRegistry,
+            );
             const access = yield* makeContextAccessLive();
             const resource = yield* Schema.decodeUnknownEffect(LegalEntityRefSchema)({
               moduleId: 'core.identity',
@@ -879,18 +896,20 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
               tenantId: live.tenantId,
             });
             // This is the actual permission service in a real Core scope, not the fixture's scripted Action/Read runtime.
-            const permission = live.prepareOwner((_transaction, scope) => {
-              const { legalEntityId } = scope;
-              if (legalEntityId === undefined) {
-                return Effect.die('Native permission proof requires its real Legal Entity scope');
-              }
-              return access.resources({
-                legalEntityId,
-                principalId: scope.principalId,
-                resources: [resource],
-                tenantId: scope.tenantId,
-              });
-            }, 'required');
+            const permission = live
+              .prepareOwner((_transaction, scope) => {
+                const { legalEntityId } = scope;
+                if (legalEntityId === undefined) {
+                  return Effect.die('Native permission proof requires its real Legal Entity scope');
+                }
+                return access.resources({
+                  legalEntityId,
+                  principalId: scope.principalId,
+                  resources: [resource],
+                  tenantId: scope.tenantId,
+                });
+              }, 'required')
+              .pipe(Effect.provideService(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry));
             expect((yield* permission).map(({ decision }) => decision)).toEqual(['denied']);
             yield* Effect.acquireRelease(live.grantResourceAccess(resource, live.manager.principalId), () =>
               live.revokeResourceAccess(resource, live.manager.principalId).pipe(Effect.orDie),

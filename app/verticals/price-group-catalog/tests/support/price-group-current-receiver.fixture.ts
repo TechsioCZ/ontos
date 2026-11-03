@@ -1,3 +1,4 @@
+import { priceGroupCurrentInputGuard } from './price-group-current-input.ts';
 import { Socket } from 'effect/socket';
 import { NodeSocket, NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
@@ -417,12 +418,9 @@ const serveOwner = Effect.fn('PriceGroupCurrentFixture.serveOwner')(function* se
 const program = Effect.gen(function* priceGroupCurrentChild() {
   const { pull, send } = yield* connectParent;
   const commands = yield* Queue.bounded<typeof CommandSchema.Type | PriceGroupCurrentFixtureFailure>(8);
-  let bytes = 0;
+  const acceptsInput = priceGroupCurrentInputGuard();
   yield* Stream.fromPull(Effect.succeed(pull)).pipe(
-    Stream.mapEffect((chunk) => {
-      bytes += chunk.byteLength;
-      return demand(bytes <= 131_072, 'private-input-limit').pipe(Effect.as(chunk));
-    }),
+    Stream.mapEffect((chunk) => demand(acceptsInput(chunk), 'private-input-limit').pipe(Effect.as(chunk))),
     Stream.decodeText(),
     Stream.splitLines,
     Stream.mapEffect((line) =>
