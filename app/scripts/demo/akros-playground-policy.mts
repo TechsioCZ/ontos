@@ -34,8 +34,8 @@ const account = (name: string, displayName: string, roleKey: string, role: DemoR
 export const akrosPlaygroundAccounts = [
   account('admin', 'Správce AKROS', 'administration', {
     ...eshopDemoRoles.akrosAdmin,
-    label: 'Správce tenantu',
-    tenantRole: 'superadmin',
+    // Tenant read_all admits every company, including future ones. This account administers only AKROS.
+    label: 'Správce firmy AKROS',
   }),
   account('eshop', 'Správce e-shopu AKROS', 'eshop-administration', eshopDemoRoles.akrosAdmin),
   account('expedice', 'Expedice AKROS', 'fulfilment', eshopDemoRoles.fulfilment),
