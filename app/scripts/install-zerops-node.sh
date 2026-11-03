@@ -6,11 +6,11 @@ set -eu
 
 node_version="${1:?Node version from .mise.toml is required}"
 pnpm_version="${2:?pnpm version from package.json#packageManager is required}"
-# linux-x64-musl SHA-256: https://unofficial-builds.nodejs.org/download/release/v26.12.0/SHASUMS256.txt
+# linux-x64-musl SHA-256: https://nodejs.org/dist/v26.13.0/SHASUMS256.txt
 case "${node_version}" in
-  26.12.0) node_checksum='48ba1cdf21e684f13f38b6295f43bfea951f1ffd008b4cf93361c966b33f6938' ;;
+  26.13.0) node_checksum='9ba151a0510789460837798f8a0632623ede121a695754a76a181baf95237bd2' ;;
   *)
-    printf 'No pinned checksum for Node %s: add the linux-x64-musl SHA-256 from unofficial-builds SHASUMS256.txt to install-zerops-node.sh\n' "${node_version}" >&2
+    printf 'No pinned checksum for Node %s: add the linux-x64-musl SHA-256 from the official SHASUMS256.txt to install-zerops-node.sh\n' "${node_version}" >&2
     exit 1
     ;;
 esac
@@ -20,7 +20,7 @@ temporary_directory="$(mktemp -d)"
 archive_path="${temporary_directory}/${node_archive}"
 trap 'rm -rf "${temporary_directory}"' EXIT
 
-curl -fsSL "https://unofficial-builds.nodejs.org/download/release/v${node_version}/${node_archive}" -o "${archive_path}"
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "https://nodejs.org/dist/v${node_version}/${node_archive}" -o "${archive_path}"
 printf '%s  %s\n' "${node_checksum}" "${archive_path}" | sha256sum -c -
 mkdir -p "${node_directory}"
 tar -xzf "${archive_path}" -C "${node_directory}" --strip-components=1

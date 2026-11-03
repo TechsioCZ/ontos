@@ -41,14 +41,14 @@ zerops:
         STOREFRONT_IMAGE_HOSTS: ''
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.0 12.16.1
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile --filter 'akros-storefront...'
-        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter akros-storefront run build
+        - cd app && PATH="$HOME/.local/node-26.13.0/bin:$PATH" pnpm install --frozen-lockfile --filter 'akros-storefront...'
+        - cd app && PATH="$HOME/.local/node-26.13.0/bin:$PATH" pnpm --filter akros-storefront run build
         - mkdir -p 'app/.zerops/runtime' && mv 'app/akros-storefront/.next/standalone' 'app/.zerops/runtime/akros-storefront'
         - cp -a 'app/akros-storefront/.next/static' 'app/.zerops/runtime/akros-storefront/akros-storefront/.next/static'
         - cp -a 'app/akros-storefront/public' 'app/.zerops/runtime/akros-storefront/akros-storefront/public'
-        - mkdir -p 'app/.zerops/runtime/akros-storefront/node/bin' && cp "$HOME/.local/node-26.12.0/bin/node" 'app/.zerops/runtime/akros-storefront/node/bin/'
+        - mkdir -p 'app/.zerops/runtime/akros-storefront/node/bin' && cp "$HOME/.local/node-26.13.0/bin/node" 'app/.zerops/runtime/akros-storefront/node/bin/'
       deployFiles:
         - app/.zerops/runtime/akros-storefront
     deploy:
@@ -92,7 +92,7 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl git libstdc++ unzip zstd
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.0 12.16.1
         - sh /build/source/app/scripts/install-zerops-bun.sh 1.4.4
       buildCommands:
         # Zerops restores the build cache (and unpacks a pushed package) as root; the build user must own the tree, and Git
@@ -100,10 +100,10 @@ zerops:
         - sudo chown -R "$(id -u):$(id -g)" . && git config --global --add safe.directory /build/source
         # Units the CI prebuilt arrive as one archive (zerops-stage.yml); build-app.sh keeps each unit whose digest matches.
         - if [ -f app/.zerops-prebuilt.tar.zst ]; then zstd -dc app/.zerops-prebuilt.tar.zst | tar -x -C app && rm app/.zerops-prebuilt.tar.zst; fi
-        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" sh scripts/zerops/build-app.sh
-        - mkdir -p 'app/.zerops/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/node/'
+        - cd app && PATH="$HOME/.local/node-26.13.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.13.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && PATH="$HOME/.local/node-26.13.0/bin:$PATH" sh scripts/zerops/build-app.sh
+        - mkdir -p 'app/.zerops/node' && cp -a "$HOME/.local/node-26.13.0/bin" "$HOME/.local/node-26.13.0/lib" 'app/.zerops/node/'
         - mkdir -p 'app/.zerops/bun' && cp -a "$HOME/.local/bun-1.4.4/bin" 'app/.zerops/bun/'
       deployFiles:
         - app/
