@@ -231,7 +231,15 @@ const AuthForm = ({
         validateStatus={errors.termsAccepted === undefined ? "default" : "error"}
         value="true"
       />
-      <Button block disabled={pending} size="sm" theme="solid" type="submit" variant="primary">
+      <Button
+        block
+        density="compact"
+        disabled={pending}
+        size="sm"
+        theme="solid"
+        type="submit"
+        variant="primary"
+      >
         {
           {
             login: pending ? d.auth.signingIn : d.auth.signIn,
