@@ -1,4 +1,6 @@
 catalog:
+  '@app/shared-contracts': workspace:*
+  '@app/work-tasks': workspace:*
   '@techsio/ui-kit': 0.57.0
 catalogMode: strict
 
@@ -29,6 +31,7 @@ packages:
   - verticals/*
   - packages/*
   - akros-storefront
+  - n1-storefront
 enableGlobalVirtualStore: false
 packageImportMethod: clone-or-copy
 minimumReleaseAge: 1440

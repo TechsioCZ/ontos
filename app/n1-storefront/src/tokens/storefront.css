@@ -1,0 +1,23 @@
+/* App-wide shell composition: Header/Footer have no tone prop in kit 0.57.0.
+ * Bind their existing slots to canonical N1 roles; do not redefine the palette,
+ * component sizing or per-instance appearance here.
+ * Source: N1 storefront Header 33:635 / Footer 33:1100.
+ */
+[data-theme="n1"] {
+  --color-header-bg: var(--color-base-dark);
+  --color-header-nav-fg: var(--color-fg-reverse);
+  --color-header-nav-fg-hover: var(--color-primary);
+  --color-header-nav-fg-active: var(--color-primary);
+  --color-header-actions-fg: var(--color-fg-reverse);
+  --color-header-actions-fg-hover: var(--color-primary);
+  --color-footer-bg: var(--color-highlight);
+  --color-footer-container-bg: var(--color-highlight);
+  --color-footer-section-bg: var(--color-highlight);
+  --color-footer-list-bg: var(--color-highlight);
+  --color-footer-bottom-bg: var(--color-base-dark);
+  --color-footer-link-fg: var(--color-fg-reverse);
+  --color-footer-title-fg: var(--color-fg-reverse);
+  --color-footer-text-fg: var(--color-fg-reverse);
+  /* Full-bleed Footer.Bottom; section spacing is owned by the layout wrapper. */
+  --padding-footer-md: var(--dimension-0);
+}
