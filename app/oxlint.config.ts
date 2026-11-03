@@ -1408,6 +1408,24 @@ export default defineConfig({
         'typescript/strict-void-return': 'off',
       },
     },
+    {
+      // The people row is clickable; this wrapper only stops the actions menu's clicks from also opening the
+      // detail, and the Menu's Button trigger is the keyboard target. A static element that only stops
+      // propagation is not an interaction, which neither rule can tell apart; every other element keeps them.
+      files: ['apps/shell-super-app/src/routes/people/people-table.tsx'],
+      rules: {
+        'jsx-a11y/click-events-have-key-events': 'off',
+        'jsx-a11y/no-static-element-interactions': 'off',
+      },
+    },
+    {
+      // The scripted driver rows are positional, in the exact real Drizzle table projection order;
+      // alphabetizing them would stop the fixture from proving the physical column contract.
+      files: ['packages/core-runtime/tests/unit/search-evidence-codec.test.ts'],
+      rules: {
+        'perfectionist/sort-objects': 'off',
+      },
+    },
   ],
   rules: {
     '@nkzw/require-use-effect-arguments': 'error',
