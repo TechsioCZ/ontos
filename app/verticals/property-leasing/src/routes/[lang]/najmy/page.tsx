@@ -18,18 +18,9 @@ import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { failureFeedback } from '../../../../shared/actions/apply-command.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
-import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
-import {
-  createCustomer,
-  executeCounterpartyRead,
-  executePartyDetail,
-  listCustomers,
-  loadPartiesClient,
-} from '@app/party-registry/api/client';
+import { createCustomer, listCustomers, loadPartiesClient } from '@app/party-registry/api/client';
 import { PartyDocuments, PropertyEquipment } from '@app/facility-operations/ui/record-discussion';
-import { executeRecords as executePropertyRecords } from '@app/property-portfolio/clients/records';
-import { executeRecords as executeAgreementsRecords } from '@app/legal-agreements/clients/records';
 import { executeRecords as executeFinanceRecords } from '@app/finance-billing/clients/records';
 import { executeRecords as executeWorkRecords } from '@app/work-tasks/clients/records';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -40,12 +31,11 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { DateTime, Effect, Match, Option, Predicate } from 'effect';
-import { useEffect, useEffectEvent, useReducer, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useEffectEvent, useId, useReducer, useRef, useState } from 'react';
 
 import type { OccupancyCommand, Feedback } from '../../../../shared/actions/apply-command.ts';
-import type { Occupancy, RecordsResponse, RentTerms } from '../../../../shared/apis/records.ts';
+import type { Occupancy, RentTerms } from '../../../../shared/apis/records.ts';
 import { decodeRecordsSearch } from '../../../../shared/domain/records-search.ts';
-import type { RecordsSearch } from '../../../../shared/domain/records-search.ts';
 import {
   ContractCard,
   InvoicesCard,
@@ -59,9 +49,8 @@ import {
   monthlyTotal,
   parseCrowns,
 } from './lease-story.tsx';
-import type { LeaseRelated, TenantDirectoryEntry } from './lease-story.tsx';
+import type { LeaseRelated } from './lease-story.tsx';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
-import { executeRecords } from '../../../api/records-client.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import csResource from '../../../../locales/cs/property-leasing.json';
 import enResource from '../../../../locales/en/property-leasing.json';
@@ -85,6 +74,17 @@ import {
 } from './leasing-autosave.ts';
 import type { RentDraft } from './leasing-autosave.ts';
 import type { OccupancyEditorMode } from './editor-state.ts';
+import {
+  leaseInputOf,
+  leaseRecords,
+  leaseOccupant,
+  useLeaseData,
+  usePrefetchLeaseOccupants,
+  renderedLeaseOccupantRows,
+} from './lease-occupant.ts';
+import type { loadLeaseRecords } from './lease-occupant.ts';
+
+export { preloadPage } from './lease-occupant.ts';
 
 const LABEL_CHOOSE = 'property-leasing.demo.choose';
 const LABEL_UNIT = 'property-leasing.demo.unit';
@@ -105,130 +105,12 @@ const propertyLeasingI18nResources = {
   cs: { 'property-leasing': csResource },
   en: { 'property-leasing': enResource },
 } as const;
-const loadOccupantName = Effect.fn('Occupancy.loadOccupantName')(function* resolveOccupantName(
-  record: Occupancy | undefined,
-) {
-  if (record === undefined) {
-    return Option.none<string>();
-  }
-  if (record.customerCounterpartyRef !== null) {
-    const customer = yield* executeCounterpartyRead(
-      { counterpartyRef: record.customerCounterpartyRef },
-      'property-leasing.customer-detail',
-    );
-    return Option.fromNullishOr(customer.party.displayName);
-  }
-  if (record.guestPartyRef !== null) {
-    const guest = yield* executePartyDetail({ partyRef: record.guestPartyRef }, 'property-leasing.guest-detail');
-    return guest.party.displayName;
-  }
-  return Option.none<string>();
-});
-interface LeaseInput {
-  readonly legalEntityId: string;
-}
-interface LeaseDetailInput extends LeaseInput {
-  readonly resourceId: string;
-}
-const leaseInputOf = (context: ModulePageProps['context']): LeaseInput => ({
-  legalEntityId: context?.legalEntityId ?? '',
-});
-/** Guest names of short stays for the list column; a guest the role cannot read stays unnamed. */
-const loadGuestNames = (records: RecordsResponse) =>
-  Effect.forEach(
-    [
-      ...new Map(
-        records.occupancies.flatMap((record) =>
-          record.guestPartyRef === null ? [] : [[record.guestPartyRef.resourceId, record.guestPartyRef] as const],
-        ),
-      ).values(),
-    ],
-    (partyRef) =>
-      executePartyDetail({ partyRef }, 'property-leasing.guest-names').pipe(
-        Effect.map((detail) => [partyRef.resourceId, Option.getOrUndefined(detail.party.displayName)] as const),
-        Effect.orElseSucceed(() => [partyRef.resourceId, undefined] as const),
-      ),
-    { concurrency: 4 },
-  ).pipe(
-    Effect.map((entries): Readonly<Record<string, string>> =>
-      Object.fromEntries(entries.flatMap(([id, name]) => (name === undefined ? [] : [[id, name]]))),
-    ),
-  );
-const loadLeaseRecords = Effect.fn('PropertyLeasing.loadLeaseRecords')(function* loadLeaseRecordsData() {
-  const { agreements, directory, properties, records } = yield* Effect.all(
-    {
-      agreements: executeAgreementsRecords({}, 'property-leasing.contracts'),
-      // The tenant column and card are optional: a role without the customer list still sees its leases.
-      directory: listCustomers({ includeArchived: true, limit: 500 }).pipe(Effect.option),
-      properties: executePropertyRecords({}, 'property-leasing.units'),
-      records: executeRecords({}, 'property-leasing.records'),
-    },
-    { concurrency: 4 },
-  );
-  const guestNames = yield* loadGuestNames(records);
-  const tenantDirectory: readonly TenantDirectoryEntry[] = Option.getOrElse(directory, () => []);
-  return { agreements, guestNames, properties, records, tenantDirectory };
-});
-/** Primary data of the page: leases and stays, units, contracts, the tenant directory and guest names. */
-const leaseRecords = definePageData({
-  key: (input: LeaseInput) => input.legalEntityId,
-  load: () => loadLeaseRecords(),
-  runtime: browserRuntime,
-});
-/** Name of the tenant or guest of the lease or stay opened by URL. */
-const leaseOccupant = definePageData({
-  key: (input: LeaseDetailInput) => `${input.legalEntityId}:${input.resourceId}`,
-  load: (input: LeaseDetailInput) =>
-    leaseRecords.read(input).pipe(
-      Effect.flatMap((current) =>
-        loadOccupantName(
-          current.records.occupancies.find((record) => record.occupancyRef.resourceId === input.resourceId),
-        ),
-      ),
-      Effect.map(Option.getOrUndefined),
-    ),
-  runtime: browserRuntime,
-});
-export const preloadPage = modulePagePreload(
-  (props) => leaseRecords.preload(leaseInputOf(props.context)),
-  (props) => {
-    const resourceId = Option.getOrUndefined(decodeRecordsSearch(props.search))?.resourceId;
-    return resourceId === undefined
-      ? Effect.void
-      : leaseOccupant.preload({ ...leaseInputOf(props.context), resourceId });
-  },
-);
 type FailureLike = Parameters<typeof failureFeedback>[0];
 const loadFeedbackOf = <A, E extends FailureLike>(snapshot: PageDataSnapshot<A, E>): Feedback => {
   if (snapshot.state === 'pending') {
     return 'loading';
   }
   return snapshot.state === 'failed' ? failureFeedback(snapshot.error) : 'ready';
-};
-/** Reads the page's data and the opened record's occupant from their stores; a cold mount starts their loads. */
-const useLeaseData = (context: ModulePageProps['context'], search: Option.Option<RecordsSearch>) => {
-  const legalEntityId = context?.legalEntityId ?? '';
-  const resourceId = Option.getOrUndefined(search)?.resourceId;
-  const leaseInput: LeaseInput = { legalEntityId };
-  const detailInput: LeaseDetailInput | undefined =
-    resourceId === undefined ? undefined : { legalEntityId, resourceId };
-  const records = useSyncExternalStore(
-    leaseRecords.subscribe,
-    () => leaseRecords.snapshot(leaseInput),
-    () => pageDataPending,
-  );
-  const occupant = useSyncExternalStore(
-    leaseOccupant.subscribe,
-    () => (detailInput === undefined ? pageDataPending : leaseOccupant.snapshot(detailInput)),
-    () => pageDataPending,
-  );
-  useEffect(() => {
-    leaseRecords.ensure({ legalEntityId });
-    if (resourceId !== undefined) {
-      leaseOccupant.ensure({ legalEntityId, resourceId });
-    }
-  }, [legalEntityId, resourceId]);
-  return { detailInput, leaseInput, occupant, records };
 };
 /** What the page shows from its data; a read that refused this role hides the loaded records. */
 const leaseViewOf = <E1 extends FailureLike, E2 extends FailureLike>(
@@ -243,7 +125,6 @@ const leaseViewOf = <E1 extends FailureLike, E2 extends FailureLike>(
     customerNameFeedback: occupant.state === 'failed' ? failureFeedback(occupant.error) : undefined,
     customerNamePending: occupant.state === 'pending',
     directoryLoaded: loaded !== undefined,
-    guestNames: loaded?.guestNames ?? {},
     properties: loaded?.properties,
     snapshot: loaded?.records,
     tenantDirectory: loaded?.tenantDirectory ?? [],
@@ -254,7 +135,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
   const searchStr = useRouterState({ select: (state) => state.location.searchStr });
   const search = decodeRecordsSearch(searchStr);
   const linkedResourceId = Option.getOrUndefined(search)?.resourceId;
-  const { detailInput, leaseInput, occupant, records } = useLeaseData(context, search);
+  const { detailInput, leaseInput, occupant, records } = useLeaseData(leaseInputOf(context, useId()), search);
   const linkedCounterpartyId = Option.getOrUndefined(search)?.counterpartyId;
   const cancellation = useRef<AbortController | null>(null);
   const run = <A, E>(effect: Effect.Effect<A, E>) => {
@@ -270,7 +151,6 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     customerNameFeedback,
     customerNamePending,
     directoryLoaded,
-    guestNames,
     properties,
     snapshot,
     tenantDirectory,
@@ -432,7 +312,8 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
         tenantDirectory.find((item) => item.counterpartyRef.resourceId === other.customerCounterpartyRef?.resourceId)
           ?.displayName ?? undefined;
     } else if (other.guestPartyRef !== null) {
-      party = guestNames[other.guestPartyRef.resourceId];
+      const cachedOccupant = leaseOccupant.snapshot({ ...leaseInput, record: other, revision: snapshot.revision });
+      party = cachedOccupant.state === 'ready' ? cachedOccupant.value : undefined;
     }
     const unit = properties?.units.find((item) => item.unitRef.resourceId === other.unitRef.resourceId)?.name;
     const partySuffix = party === undefined ? '' : ` – ${party}`;
@@ -815,15 +696,20 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       (record) =>
         (kindFilter === 'ALL' || record.kind === kindFilter) && (showCancelled || record.state !== 'CANCELLED'),
     ) ?? [];
+  const occupantNameOf = usePrefetchLeaseOccupants(
+    leaseInput,
+    renderedLeaseOccupantRows(linkedResourceId, linkedCounterpartyId, visible),
+    snapshot?.revision ?? 0,
+  );
   const tenantOf = (record: Occupancy | undefined) =>
     record?.customerCounterpartyRef === null || record === undefined
       ? undefined
       : tenantDirectory.find((item) => item.counterpartyRef.resourceId === record.customerCounterpartyRef?.resourceId);
   /** Tenant of a lease or guest of a stay, for list rows. */
   const partyNameOf = (record: Occupancy) =>
-    record.guestPartyRef === null ? tenantOf(record)?.displayName : guestNames[record.guestPartyRef.resourceId];
+    occupantNameOf(record) ?? (record.guestPartyRef === null ? tenantOf(record)?.displayName : undefined);
   // Owner decides; older owner builds without the flag keep the previous behaviour.
-  const canWrite = snapshot?.canWrite !== false;
+  const canWrite = snapshot !== undefined && snapshot.canWrite !== false;
   const unitOf = (record: Occupancy) =>
     properties?.units.find((item) => item.unitRef.resourceId === record.unitRef.resourceId);
   const propertyOf = (record: Occupancy) => {
@@ -2038,7 +1924,7 @@ export const RecordsPage = ({ context }: Partial<ModulePageProps>) => {
       resources={propertyLeasingI18nResources}
       supportedLanguages={['en', 'cs']}
     >
-      <RecordsPageContent context={context} key={search} />
+      <RecordsPageContent context={context} key={`${leaseInputOf(context).scope}:${search}`} />
     </FederatedI18nBoundary>
   );
 };

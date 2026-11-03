@@ -5,19 +5,14 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { useNavigate, useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { executeRecords as readAgreements } from '@app/legal-agreements/clients/records';
-import { executeRecords as readOccupancy } from '@app/property-leasing/clients/records';
-import { executeRecords as readFinance } from '@app/finance-billing/clients/records';
-import { executeRecords as readWork } from '@app/work-tasks/clients/records';
-import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
+import { pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
-import { DateTime, Effect, Match, Option, Random, Result, Schema } from 'effect';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
+import { useEffect, useEffectEvent, useId, useRef, useState, useSyncExternalStore } from 'react';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
-import { listEmployees } from '@app/workforce/clients/records';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import {
   autosavePropertyEdit,
@@ -39,7 +34,6 @@ import type { RevisionedSaveResult } from '@app/admin-ui';
 import type { PropertyCommand } from '../../../../shared/actions/apply-command.ts';
 import { UnitStory, pragueToday } from './unit-story.tsx';
 import type { LeaseBlock } from './unit-story.tsx';
-import { executeRecords } from '../../../api/records-client';
 import type { RecordsResponse } from '../../../../shared/apis/records';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
@@ -60,6 +54,16 @@ import { PropertyWorkspace } from './property-workspace.tsx';
 import csWorkspace from '../../../../locales/cs/property-workspace.json';
 import enWorkspace from '../../../../locales/en/property-workspace.json';
 import '../../index.css';
+import {
+  propertyRecords,
+  recordsInput,
+  usePropertySummary,
+  usePrefetchPropertySummaries,
+  renderedPropertySummaryRows,
+} from './property-summary.ts';
+import type { RecordsInput } from './property-summary.ts';
+
+export { preloadPage } from './property-summary.ts';
 
 const currencyFormatters = {
   cs: new Intl.NumberFormat('cs-CZ', { currency: 'CZK', style: 'currency' }),
@@ -71,122 +75,24 @@ const propertyPortfolioI18nResources = {
 } as const;
 
 export { projectPropertyRelatedRecords } from './property-relations.ts';
-interface RecordsInput {
-  readonly legalEntityId: string;
-  readonly principalId: string;
-  readonly tenantId: string;
-}
-/** The register of buildings, units and assets (archived included); the selection only filters it. */
-const propertyRecords = definePageData({
-  key: (input: RecordsInput) => `${input.tenantId}:${input.legalEntityId}:${input.principalId}`,
-  load: () =>
-    Effect.all(
-      {
-        employees: listEmployees().pipe(Effect.result),
-        records: Random.nextInt.pipe(
-          Effect.flatMap((id) => executeRecords({ includeArchived: true }, `property-records:${id}`)),
-        ),
-      },
-      { concurrency: 2 },
-    ),
-  runtime: browserRuntime,
-});
-interface SummaryInput extends RecordsInput {
-  readonly propertyId: string;
-  readonly revision: number;
-}
-const propertySummary = definePageData({
-  key: (input: SummaryInput) =>
-    `${input.tenantId}:${input.legalEntityId}:${input.principalId}:${input.propertyId}:${input.revision}`,
-  load: (input: SummaryInput) => {
-    const requestId = Random.nextInt.pipe(Effect.map((id) => `property-portfolio.summary:${id}`));
-    return Effect.all(
-      {
-        agreements: requestId.pipe(
-          Effect.flatMap((id) => readAgreements({}, id)),
-          Effect.result,
-        ),
-        finance: requestId.pipe(
-          Effect.flatMap((id) => readFinance({ propertyId: input.propertyId }, id)),
-          Effect.result,
-        ),
-        occupancy: requestId.pipe(
-          Effect.flatMap((id) => readOccupancy({}, id)),
-          Effect.result,
-        ),
-        work: requestId.pipe(
-          Effect.flatMap((id) => readWork({}, id)),
-          Effect.result,
-        ),
-      },
-      { concurrency: 4 },
-    );
-  },
-  runtime: browserRuntime,
-});
-const recordsInput = (context: ModulePageProps['context']): RecordsInput => ({
-  legalEntityId: context?.legalEntityId ?? '',
-  principalId: context?.principalId ?? '',
-  tenantId: context?.tenantId ?? '',
-});
-export const preloadPage = modulePagePreload((props) => propertyRecords.preload(recordsInput(props.context)));
-const usePropertySummary = (input: SummaryInput) => {
-  const { legalEntityId, principalId, propertyId, revision, tenantId } = input;
-  const snapshot = useSyncExternalStore(
-    propertySummary.subscribe,
-    () => (propertyId === '' ? pageDataPending : propertySummary.snapshot(input)),
-    () => pageDataPending,
-  );
-  useEffect(() => {
-    if (propertyId !== '') {
-      propertySummary.ensure({ legalEntityId, principalId, propertyId, revision, tenantId });
-    }
-  }, [legalEntityId, tenantId, principalId, propertyId, revision]);
-  const summary = snapshot.state === 'ready' ? snapshot.value : undefined;
-  const summaryFailures: string[] = [];
-  if (summary !== undefined) {
-    if (Result.isFailure(summary.agreements)) {
-      summaryFailures.push('agreementsUnavailable');
-    }
-    if (Result.isFailure(summary.finance)) {
-      summaryFailures.push('financeUnavailable');
-    }
-    if (Result.isFailure(summary.occupancy)) {
-      summaryFailures.push('occupancyUnavailable');
-    }
-    if (Result.isFailure(summary.work)) {
-      summaryFailures.push('tasksUnavailable');
-    }
-  }
-  return {
-    agreements: summary === undefined ? undefined : Result.getOrUndefined(summary.agreements),
-    finance: summary === undefined ? undefined : Result.getOrUndefined(summary.finance),
-    loadSummary: () => {
-      if (propertyId !== '') {
-        browserRuntime.runFork(propertySummary.refresh(input));
-      }
-    },
-    occupancy: summary === undefined ? undefined : Result.getOrUndefined(summary.occupancy),
-    summaryFailures,
-    summaryPending: propertyId !== '' && (snapshot.state === 'pending' || snapshot.refreshing),
-    work: summary === undefined ? undefined : Result.getOrUndefined(summary.work),
-  };
-};
 const usePropertyRecords = (input: RecordsInput) => {
-  const { legalEntityId, principalId, tenantId } = input;
   const { language, t } = useModernI18n();
   const rawSearch: unknown = useRouterState().location.search;
   const search = readPropertySearch(Schema.is(PropertySearchInputSchema)(rawSearch) ? rawSearch : null);
   const { resourceId } = search;
   const key = 'property-portfolio.pages.records';
   const snapshot = useSyncExternalStore(
-    propertyRecords.subscribe,
+    (listener) => propertyRecords.subscribe(listener, input),
     () => propertyRecords.snapshot(input),
     () => pageDataPending,
   );
+  const { scope } = input;
+  const ensureRecords = useEffectEvent((currentScope: string) =>
+    propertyRecords.ensure({ ...input, scope: currentScope }),
+  );
   useEffect(() => {
-    propertyRecords.ensure({ legalEntityId, principalId, tenantId });
-  }, [legalEntityId, tenantId, principalId]);
+    ensureRecords(scope);
+  }, [scope]);
   const records = snapshot.state === 'ready' ? snapshot.value.records : undefined;
   const employees = snapshot.state === 'ready' ? Result.getOrUndefined(snapshot.value.employees) : undefined;
   const employeesMessage =
@@ -1264,6 +1170,11 @@ const RecordsPageContent = (input: RecordsInput) => {
         search,
       ),
     ) ?? [];
+  usePrefetchPropertySummaries(
+    input,
+    renderedPropertySummaryRows(property, visibleProperties),
+    model.records?.revision ?? 0,
+  );
   const visibleUnits = model.units.filter((item) =>
     propertyRecordVisible(
       {
@@ -1345,7 +1256,7 @@ const RecordsPageContent = (input: RecordsInput) => {
 };
 
 export const RecordsPage = ({ context }: Pick<ModulePageProps, 'context'>) => {
-  const input = recordsInput(context);
+  const input = recordsInput(context, useId());
   return (
     <FederatedI18nBoundary
       defaultNamespace="property-portfolio"
@@ -1353,7 +1264,7 @@ export const RecordsPage = ({ context }: Pick<ModulePageProps, 'context'>) => {
       resources={propertyPortfolioI18nResources}
       supportedLanguages={['en', 'cs']}
     >
-      <RecordsPageContent key={`${input.tenantId}:${input.legalEntityId}:${input.principalId}`} {...input} />
+      <RecordsPageContent key={input.scope} {...input} />
     </FederatedI18nBoundary>
   );
 };
