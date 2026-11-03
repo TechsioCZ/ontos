@@ -3,7 +3,7 @@ import { EmailDeliveryService } from '../server.ts';
 import { emailEnvironment, emailTransport } from '../transport.ts';
 import type { EmailEnvironment, EmailTransportRuntime } from '../transport-runtime.ts';
 import type { DeliveryOutcome, EmailDeliverySource, PlannedEmail } from './contract.ts';
-import { claim, finish, readEnabledSince, recoverInterrupted } from './ledger.ts';
+import { claim, finish, readEnabledSince, recoverInterrupted, skipIneligibleRentReminder } from './ledger.ts';
 import {
   deliveryOutcomeOf,
   planAgendaEmails,
@@ -145,16 +145,26 @@ const planScope = Effect.fn('EmailDispatch.planScope')(function* planScopeEmails
     { concurrency: 1 },
   );
   const reminders = yield* readRentReminders(scope, work.subjects['rent-reminder']);
+  let skipped = 0;
   const reminderEmails = yield* Effect.forEach(
     reminders,
-    (reminder) => {
+    Effect.fn('EmailDispatch.planReminder')(function* planReminder(reminder) {
+      if (!work.keys.has(`rent-reminder:${reminder.reminder.id}`)) {
+        return [];
+      }
+      if (reminder.invoiceDirection !== 'OUTGOING') {
+        if (yield* skipIneligibleRentReminder(reminder)) {
+          skipped += 1;
+        }
+        return [];
+      }
       const email = planRentReminderEmail(reminder, enabledSince);
-      return email === null
-        ? Effect.succeed([])
-        : senderFor(email, reminder.legalName, environment, transport.kind).pipe(
-            Effect.map((from) => [{ ...email, from }]),
-          );
-    },
+      if (email === null) {
+        return [];
+      }
+      const from = yield* senderFor(email, reminder.legalName, environment, transport.kind);
+      return [{ ...email, from }];
+    }),
     { concurrency: 1 },
   );
   const people = yield* readAgendaRecipients(scope, work.subjects['facility-agenda']);
@@ -191,13 +201,14 @@ const planScope = Effect.fn('EmailDispatch.planScope')(function* planScopeEmails
       ),
     { concurrency: 1 },
   );
-  return [
+  const emails = [
     ...orderEmails.flat(),
     ...reminderEmails.flat(),
     ...agendaEmails.flat(),
     ...inquiryEmails.flat(),
     ...invitationEmails,
   ].filter((email) => work.keys.has(email.dedupeKey));
+  return { emails, skipped };
 });
 
 export interface DispatchResult {
@@ -251,11 +262,11 @@ const dispatchScope = Effect.fn('EmailDispatch.dispatchScope')(function* process
     recoverInterrupted.pipe(Effect.andThen(planScope(work, enabledSince, transport, environment))),
   );
   const counts = yield* Effect.forEach(
-    planned,
+    planned.emails,
     (email) => dispatchClaimedEmail(work.scope, email, transport, environment),
     { concurrency: 1 },
   );
-  return sumCounts(counts);
+  return sumCounts([{ processed: planned.skipped, skipped: planned.skipped }, ...counts]);
 });
 
 export const dispatchEmailBatchWith = Effect.fn('EmailDispatch.dispatchEmailBatchWith')(function* dispatchBatch(

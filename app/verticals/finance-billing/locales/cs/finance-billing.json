@@ -341,6 +341,9 @@
       },
       "reminders": {
         "title": "Upomínky",
+        "empty": "K faktuře zatím nebyla odeslána žádná upomínka.",
+        "incoming": "K přijaté faktuře se upomínky neposílají.",
+        "ineligible": "Upomínka se připravuje jen k neuhrazené potvrzené faktuře.",
         "recipient": "E-mail příjemce",
         "emailExample": "fakturace@odberatel.cz",
         "message": "Text upomínky"

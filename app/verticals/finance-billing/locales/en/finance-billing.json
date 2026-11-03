@@ -341,6 +341,9 @@
       },
       "reminders": {
         "title": "Payment reminders",
+        "empty": "No payment reminder has been sent for this invoice yet.",
+        "incoming": "Payment reminders are not sent for incoming invoices.",
+        "ineligible": "Payment reminders are only prepared for unpaid confirmed invoices.",
         "recipient": "Recipient email",
         "emailExample": "billing@customer.cz",
         "message": "Reminder text"

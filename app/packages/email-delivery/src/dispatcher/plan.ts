@@ -124,6 +124,7 @@ export const planAkrosOrderEmails = (
 export const planRentReminderEmail = (input: RentReminderInput, enabledSince: string): PlannedEmail | null => {
   const recipient = input.reminder.recipient.trim();
   if (
+    input.invoiceDirection !== 'OUTGOING' ||
     input.reminder.deliveryMode !== 'EMAIL' ||
     recipient === '' ||
     epochMillis(input.reminder.createdAt) < epochMillis(enabledSince)

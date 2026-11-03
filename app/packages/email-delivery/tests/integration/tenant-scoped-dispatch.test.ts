@@ -31,7 +31,14 @@ const migration = Effect.fn('EmailDeliveryTest.migration')(function* readMigrati
 
 const SeedFinanceStateJsonSchema = Schema.fromJsonString(
   Schema.Struct({
-    invoices: Schema.Array(Schema.Never),
+    invoices: Schema.Array(
+      Schema.Struct({
+        direction: Schema.Literals(['INCOMING', 'OUTGOING']),
+        ref: Schema.Struct({
+          resourceId: Schema.toEncoded(RentReminderInputSchema.fields.reminder.fields.invoiceResourceId),
+        }),
+      }),
+    ),
     reminders: Schema.Array(Schema.toEncoded(RentReminderInputSchema.fields.reminder)),
   }),
 );
@@ -119,7 +126,12 @@ const DeliveryTestLive = Layer.effectContext(
           tenantA,
           entityA1,
           'Firma A1 s.r.o.',
-          [reminder('a1', 'jana@firma-a.cz', 'A1-only text'), reminder('a1-seeded', 'ucetni@demo.ontos', 'A1 seeded')],
+          [
+            reminder('a1', 'jana@firma-a.cz', 'A1-only text'),
+            reminder('a1-incoming', 'supplier@firma-a.cz', 'Never send a supplier payment demand'),
+            reminder('a1-missing', 'missing@firma-a.cz', 'Never send without current invoice evidence'),
+            reminder('a1-seeded', 'ucetni@demo.ontos', 'A1 seeded'),
+          ],
         ],
         [tenantA, entityA2, 'Firma A2 s.r.o.', [reminder('a2', 'eva@firma-a2.cz', 'A2-only text')]],
         [tenantB, entityB, 'Firma B a.s.', [reminder('b', 'petr@firma-b.cz', 'B-only text')]],
@@ -130,7 +142,15 @@ const DeliveryTestLive = Layer.effectContext(
           yield* admin.unsafe('insert into finance_billing.finance_states values ($1, $2, $3::jsonb)', [
             tenant,
             entity,
-            yield* Schema.encodeEffect(SeedFinanceStateJsonSchema)({ invoices: [], reminders }),
+            yield* Schema.encodeEffect(SeedFinanceStateJsonSchema)({
+              invoices: reminders
+                .filter((entry) => entry.id !== 'a1-missing')
+                .map((entry) => ({
+                  direction: entry.id === 'a1-incoming' ? 'INCOMING' : 'OUTGOING',
+                  ref: { resourceId: entry.invoiceResourceId },
+                })),
+              reminders,
+            }),
           ]);
         }),
       { discard: true },
@@ -171,10 +191,12 @@ it.layer(DeliveryTestLive, { excludeTestServices: true })('per-tenant dispatch u
         readonly tenant_id: string;
       }>`select * from demo_email.pending_deliveries(10, ${workerTenantId}::uuid, ${workerEntityId}::uuid)`;
       expect(rows.map((row) => Object.keys(row).toSorted((left, right) => left.localeCompare(right)))).toEqual(
-        Array.from({ length: 4 }, () => ['delivery_id', 'legal_entity_id', 'tenant_id']),
+        Array.from({ length: 6 }, () => ['delivery_id', 'legal_entity_id', 'tenant_id']),
       );
       expect(rows.map((row) => row.delivery_id).toSorted((left, right) => left.localeCompare(right))).toEqual([
         'rent-reminder:a1',
+        'rent-reminder:a1-incoming',
+        'rent-reminder:a1-missing',
         'rent-reminder:a1-seeded',
         'rent-reminder:a2',
         'rent-reminder:b',
@@ -194,11 +216,23 @@ it.layer(DeliveryTestLive, { excludeTestServices: true })('per-tenant dispatch u
     }),
   );
 
+  test.effect('the scoped source reads the current invoice direction, including missing invoice evidence', () =>
+    Effect.gen(function* currentInvoiceDirection() {
+      const { scopeA1 } = yield* DeliveryTestFixture;
+      const rows = yield* inDeliveryScope(scopeA1, readRentReminders(scopeA1, ['a1', 'a1-incoming', 'a1-missing']));
+      expect(rows.map((row) => [row.reminder.id, row.invoiceDirection])).toEqual([
+        ['a1', 'OUTGOING'],
+        ['a1-incoming', 'INCOMING'],
+        ['a1-missing', null],
+      ]);
+    }),
+  );
+
   test.effect('each scope sends its own content, seeded addresses are SKIPPED, and nothing is sent twice', () =>
     Effect.gen(function* verifyTenantDispatch() {
       const { admin, scopeA1, scopeA2, scopeB } = yield* DeliveryTestFixture;
       const result = yield* dispatchEmailBatchWith(transport, {});
-      expect(result).toEqual({ configured: true, processed: 4, skipped: 1 });
+      expect(result).toEqual({ configured: true, processed: 6, skipped: 3 });
       expect(sent.map((email) => email.recipient).toSorted((left, right) => left.localeCompare(right))).toEqual([
         'eva@firma-a2.cz',
         'jana@firma-a.cz',
@@ -231,6 +265,18 @@ it.layer(DeliveryTestLive, { excludeTestServices: true })('per-tenant dispatch u
           tenant_id: scopeA1.tenantId,
         },
         {
+          dedupe_key: 'rent-reminder:a1-incoming',
+          legal_entity_id: scopeA1.legalEntityId,
+          status: 'SKIPPED',
+          tenant_id: scopeA1.tenantId,
+        },
+        {
+          dedupe_key: 'rent-reminder:a1-missing',
+          legal_entity_id: scopeA1.legalEntityId,
+          status: 'SKIPPED',
+          tenant_id: scopeA1.tenantId,
+        },
+        {
           dedupe_key: 'rent-reminder:a1-seeded',
           legal_entity_id: scopeA1.legalEntityId,
           status: 'SKIPPED',
@@ -248,6 +294,13 @@ it.layer(DeliveryTestLive, { excludeTestServices: true })('per-tenant dispatch u
           status: 'SENT',
           tenant_id: scopeB.tenantId,
         },
+      ]);
+      const skipped = yield* admin.unsafe<{ readonly dedupe_key: string; readonly error_tag: string }>(
+        "select dedupe_key, error_tag from demo_email.deliveries where error_tag like 'reminder_invoice_%' order by dedupe_key",
+      );
+      expect(skipped).toEqual([
+        { dedupe_key: 'rent-reminder:a1-incoming', error_tag: 'reminder_invoice_not_outgoing' },
+        { dedupe_key: 'rent-reminder:a1-missing', error_tag: 'reminder_invoice_missing' },
       ]);
       expect(yield* dispatchEmailBatchWith(transport, {})).toEqual({
         configured: true,

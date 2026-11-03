@@ -3,7 +3,13 @@
 import { PgClient } from '@effect/sql-pg';
 import { DateTime, Effect, Schema } from 'effect';
 import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID } from './contract.ts';
-import type { DeliveryOutcome, EmailDeliverySource, EmailDeliveryView, PlannedEmail } from './contract.ts';
+import type {
+  DeliveryOutcome,
+  EmailDeliverySource,
+  EmailDeliveryView,
+  PlannedEmail,
+  RentReminderInput,
+} from './contract.ts';
 import { inDeliveryScope } from './scope.ts';
 
 class EmailLedgerSettingsMissing extends Schema.TaggedError<EmailLedgerSettingsMissing>()(
@@ -43,7 +49,9 @@ export const RETRY_WINDOW_HOURS = 24;
  * RETRY backs off 10 s, 20 s, 40 s, then every 60 s, so an SMTP outage of any length heals by itself once the
  * server is back; after RETRY_WINDOW_HOURS the row becomes FAILED instead.
  */
-export const claim = Effect.fn('EmailLedger.claim')(function* claimDelivery(planned: PlannedEmail) {
+export const claim = Effect.fn('EmailLedger.claim')(function* claimDelivery(
+  planned: Omit<PlannedEmail, 'html' | 'text'>,
+) {
   const sql = yield* PgClient.PgClient;
   const inserted = yield* sql<{ readonly dedupe_key: string }>`
       insert into demo_email.deliveries (dedupe_key, source, event, event_label, tenant_id, legal_entity_id, subject_id, subject_number, recipient, email_subject, status, attempts, event_at)
@@ -76,6 +84,37 @@ export const finish = Effect.fn('EmailLedger.finish')(function* finishDelivery(
       update demo_email.deliveries set status = ${outcome.status}, message_id = ${messageId}, error_tag = ${errorTag},
         sent_at = case when ${outcome.status}::text = 'SENT' then now() else sent_at end, updated_at = now()
       where dedupe_key = ${dedupeKey} and status = 'SENDING'`;
+});
+
+/** Settle an observed invalid reminder without rendering or sending, so old rows cannot block the due page. */
+export const skipIneligibleRentReminder = Effect.fn('EmailLedger.skipIneligibleRentReminder')(function* skipReminder(
+  input: RentReminderInput,
+) {
+  if (input.invoiceDirection === 'OUTGOING') {
+    return false;
+  }
+  const dedupeKey = `rent-reminder:${input.reminder.id}`;
+  const claimed = yield* claim({
+    dedupeKey,
+    event: 'PAYMENT_REMINDER',
+    eventAt: input.reminder.createdAt,
+    eventLabel: 'Upomínka k úhradě',
+    legalEntityId: input.legalEntityId,
+    recipient: input.reminder.recipient.trim(),
+    source: 'rent-reminder',
+    subject: 'Upomínka nebyla odeslána',
+    subjectId: input.reminder.id,
+    subjectNumber: input.invoiceNumber ?? '',
+    tenantId: input.tenantId,
+  });
+  if (!claimed) {
+    return false;
+  }
+  yield* finish(dedupeKey, {
+    errorTag: input.invoiceDirection === null ? 'reminder_invoice_missing' : 'reminder_invoice_not_outgoing',
+    status: 'SKIPPED',
+  });
+  return true;
 });
 
 /**

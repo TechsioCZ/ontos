@@ -23,6 +23,7 @@ const StoredReminderSchema = Schema.Union([
   Schema.toEncoded(RentReminderInputSchema.fields.reminder),
   Schema.fromJsonString(Schema.toEncoded(RentReminderInputSchema.fields.reminder)),
 ]);
+const StoredInvoiceDirectionSchema = Schema.toEncoded(RentReminderInputSchema.fields.invoiceDirection);
 const StoredNotificationsSchema = Schema.Union([
   Schema.Array(Schema.toEncoded(AgendaNotificationInputSchema)),
   Schema.fromJsonString(Schema.Array(Schema.toEncoded(AgendaNotificationInputSchema))),
@@ -109,6 +110,7 @@ export const readRentReminders = Effect.fn('EmailSources.readRentReminders')(fun
   }
   const sql = yield* PgClient.PgClient;
   const rows = yield* sql<{
+    readonly invoiceDirection: unknown;
     readonly invoiceNumber: string | null;
     readonly legalEntityId: string;
     readonly legalName: string | null;
@@ -118,6 +120,8 @@ export const readRentReminders = Effect.fn('EmailSources.readRentReminders')(fun
       select s.tenant_id::text as "tenantId", s.legal_entity_id::text as "legalEntityId", r as "reminder",
         (select le.legal_name from core.legal_entities le
           where le.legal_entity_id = s.legal_entity_id and le.tenant_id = s.tenant_id) as "legalName",
+        (select i->>'direction' from jsonb_array_elements(coalesce(s.state->'invoices', '[]'::jsonb)) i
+          where i->'ref'->>'resourceId' = r->>'invoiceResourceId' limit 1) as "invoiceDirection",
         (select i->>'number' from jsonb_array_elements(coalesce(s.state->'invoices', '[]'::jsonb)) i
           where i->'ref'->>'resourceId' = r->>'invoiceResourceId' limit 1) as "invoiceNumber"
       from finance_billing.finance_states s, jsonb_array_elements(coalesce(s.state->'reminders', '[]'::jsonb)) r
@@ -126,16 +130,19 @@ export const readRentReminders = Effect.fn('EmailSources.readRentReminders')(fun
       order by r->>'createdAt', r->>'id'`;
   return yield* Effect.forEach(
     rows,
-    (row) =>
-      Schema.decodeUnknownEffect(StoredReminderSchema)(row.reminder).pipe(
-        Effect.map((reminder): RentReminderInput => ({
-          invoiceNumber: row.invoiceNumber,
-          legalEntityId: row.legalEntityId,
-          legalName: row.legalName,
-          reminder,
-          tenantId: row.tenantId,
-        })),
-      ),
+    Effect.fn('EmailSources.readRentReminder')(function* readReminder(row) {
+      const reminder = yield* Schema.decodeUnknownEffect(StoredReminderSchema)(row.reminder);
+      const invoiceDirection = yield* Schema.decodeUnknownEffect(StoredInvoiceDirectionSchema)(row.invoiceDirection);
+      const input: RentReminderInput = {
+        invoiceDirection,
+        invoiceNumber: row.invoiceNumber,
+        legalEntityId: row.legalEntityId,
+        legalName: row.legalName,
+        reminder,
+        tenantId: row.tenantId,
+      };
+      return input;
+    }),
     { concurrency: 1 },
   );
 });

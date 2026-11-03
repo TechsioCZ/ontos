@@ -785,7 +785,11 @@ const handleRecordReminder = Effect.fn('Finance.handleRecordReminder')(function*
   context: FinanceTransitionContext,
 ): Effect.fn.Return<FinanceTransition, FinanceError> {
   const invoice = yield* findInvoice(context.state, command.invoiceRef, context.scope);
-  if (invoice.businessState !== 'CONFIRMED' || invoice.paidMinor >= invoice.totalMinor) {
+  if (
+    invoice.direction !== 'OUTGOING' ||
+    invoice.businessState !== 'CONFIRMED' ||
+    invoice.paidMinor >= invoice.totalMinor
+  ) {
     return yield* conflict('reminder_requires_open_invoice');
   }
   return stateOnly(

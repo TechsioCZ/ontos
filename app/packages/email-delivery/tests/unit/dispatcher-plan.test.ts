@@ -55,6 +55,7 @@ const baseOrder: AkrosOrderInput = {
 };
 
 const reminder: RentReminderInput = {
+  invoiceDirection: 'OUTGOING',
   invoiceNumber: 'FV-2026-0007',
   legalEntityId: '71000000-0000-4000-8000-000000000021',
   legalName: 'Nájempark',
@@ -196,6 +197,12 @@ describe('ŠroubShop order e-mail planning', () => {
 });
 
 describe('Nájempark reminder e-mail planning', () => {
+  test('never plans a supplier invoice or a reminder whose invoice no longer exists', () => {
+    for (const invoiceDirection of ['INCOMING', null] as const) {
+      expect(planRentReminderEmail({ ...reminder, invoiceDirection }, enabledSince)).toBeNull();
+    }
+  });
+
   test('plans an EMAIL-mode reminder with the invoice number in the subject', () => {
     const planned = planRentReminderEmail(reminder, enabledSince);
     expect(planned?.subject).toBe('Nájempark – upomínka k faktuře FV-2026-0007');

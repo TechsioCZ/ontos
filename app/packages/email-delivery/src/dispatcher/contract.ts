@@ -201,8 +201,10 @@ export const AkrosOrderInputSchema = Schema.Struct({
 });
 export type AkrosOrderInput = typeof AkrosOrderInputSchema.Encoded;
 
-/** Encoded reminder plus its issuer and invoice number, read from persisted finance state. */
+/** Encoded reminder plus its issuer and current invoice evidence, read from persisted finance state. */
 export const RentReminderInputSchema = Schema.Struct({
+  /** No matching invoice is explicit absence, never assumed to be an outgoing receivable. */
+  invoiceDirection: Schema.OptionFromNullOr(Schema.Literals(['INCOMING', 'OUTGOING'])),
   invoiceNumber: Schema.OptionFromNullOr(Schema.String),
   legalEntityId: LegalEntityIdSchema,
   legalName: Schema.OptionFromNullOr(Schema.String),

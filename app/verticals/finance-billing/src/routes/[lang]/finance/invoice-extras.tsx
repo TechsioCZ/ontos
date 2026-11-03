@@ -666,6 +666,13 @@ const invoiceRemindersSendProgram = Effect.fn('Finance.send')(function* invoiceR
   }
 });
 
+/**
+ * Reminders exist only for outgoing receivables: an incoming supplier invoice is money the company owes, so it
+ * never offers prepare/send. Draft, voided and settled documents stay out as well.
+ */
+export const invoiceReminderEligible = (invoice: Invoice): boolean =>
+  invoice.direction === 'OUTGOING' && invoice.businessState === 'CONFIRMED' && remainingOf(invoice) > 0;
+
 const useInvoiceReminders = ({
   counterpartyName,
   invoice,
@@ -687,7 +694,7 @@ const useInvoiceReminders = ({
   const receipts = useReminderEmailReceipts(
     reminders.flatMap((reminder) => (reminder.deliveryMode === 'EMAIL' ? [reminder.id] : [])),
   );
-  const open = invoice.businessState === 'CONFIRMED' && remainingOf(invoice) > 0;
+  const open = invoiceReminderEligible(invoice);
   const [editing, setEditing] = useState(false);
   const [recipient, setRecipient] = useState('');
   const [text, setText] = useState('');
@@ -698,6 +705,9 @@ const useInvoiceReminders = ({
   // The contract trims the text; an untrimmed value (e.g. a trailing space or newline) fails to encode in the browser.
   const textLength = text.trim().length;
   const textTooLong = textLength > REMINDER_TEXT_MAX;
+  // The prepare/send form renders only while an eligible document is being edited, so a retained editing flag
+  // can never keep a stale form visible once the shown invoice is ineligible (incoming, draft, voided or paid).
+  const editingVisible = editing && open;
 
   const start = () => {
     setText(
@@ -746,6 +756,7 @@ const useInvoiceReminders = ({
     counterpartyName,
     download,
     editing,
+    editingVisible,
     invoice,
     issuerName,
     message,
@@ -770,16 +781,31 @@ const useInvoiceReminders = ({
   };
 };
 
-export const InvoiceReminders = (props: {
+interface InvoiceRemindersProps {
   readonly counterpartyName: string;
   readonly invoice: Invoice;
   readonly vm: FinanceViewModel;
-}) => {
+}
+
+/** Direction and eligibility select the reminder section's translated empty state. */
+const reminderEmptyKey = (invoice: Invoice, open: boolean): string => {
+  if (open) {
+    return 'finance-billing.financeUi.reminders.empty';
+  }
+  if (invoice.direction === 'INCOMING') {
+    return 'finance-billing.financeUi.reminders.incoming';
+  }
+  return 'finance-billing.financeUi.reminders.ineligible';
+};
+
+const InvoiceRemindersCard = (props: InvoiceRemindersProps) => {
   const { t } = useModernI18n();
   const {
     canSendEmail,
     download,
     editing,
+    editingVisible,
+    invoice,
     issuerName,
     message,
     open,
@@ -813,7 +839,7 @@ export const InvoiceReminders = (props: {
       title={t('finance-billing.financeUi.reminders.title')}
     >
       <div className="flex flex-col gap-150 print:hidden">
-        {editing && (
+        {editingVisible && (
           <div className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
             <EmailProviderStatus issuerName={issuerName} provider={provider} />
             {message !== undefined && (
@@ -888,12 +914,8 @@ export const InvoiceReminders = (props: {
             </div>
           </div>
         )}
-        {reminders.length === 0 && !editing && (
-          <p className="text-fg-secondary text-sm">
-            {open
-              ? 'K faktuře zatím nebyla odeslána žádná upomínka.'
-              : 'Upomínka se připravuje jen k neuhrazené potvrzené faktuře.'}
-          </p>
+        {reminders.length === 0 && !editingVisible && (
+          <p className="text-fg-secondary text-sm">{t(reminderEmptyKey(invoice, open))}</p>
         )}
         {reminders.length > 0 && (
           <ul className="flex flex-col divide-y divide-border-primary text-sm">
@@ -930,6 +952,18 @@ export const InvoiceReminders = (props: {
     </SectionCard>
   );
 };
+
+/**
+ * Identity of the reminder card's editable state. The invoice detail keeps the section mounted while the
+ * selected document changes, so keying the card by document remounts it and drops any editing draft instead
+ * of leaking an outgoing invoice's prepare/send form onto an incoming one.
+ */
+export const invoiceReminderDraftKey = (invoice: Invoice): string =>
+  `${invoice.ref.tenantId}:${invoice.ref.resourceId}:${invoice.direction}`;
+
+export const InvoiceReminders = (props: InvoiceRemindersProps) => (
+  <InvoiceRemindersCard key={invoiceReminderDraftKey(props.invoice)} {...props} />
+);
 
 /** S08 status of the invoice: only a handover, never "booked" without the accountant's confirmation. */
 export const InvoiceHandover = ({ invoice, vm }: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
