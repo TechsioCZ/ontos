@@ -13,6 +13,7 @@ import {
   applicationCompositionRevision,
   assertNoConflictingPublication,
   deriveActiveApplicationCompositionSnapshot,
+  deriveApplicationComposition,
   encodeActiveApplicationCompositionSnapshot,
 } from '../active-application-composition.mts';
 import type {
@@ -184,6 +185,27 @@ const observation = (modules: readonly ObservedModuleDeployment[]): ActiveApplic
   },
   validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
 });
+
+it.effect('derives expected content from pinned local bytes without creating observation or freshness evidence', () =>
+  Effect.gen(function* derivesPlanningContent() {
+    const observed = observation([partyRegistry, customerContext]);
+    const expected = yield* deriveApplicationComposition({
+      environment: observed.environment,
+      modules: observed.modules,
+      shell: observed.shell,
+    });
+    const snapshot = yield* deriveActiveApplicationCompositionSnapshot(observed);
+    expect(expected).toEqual(snapshot.composition);
+    expect(expected.revision).toBe(applicationCompositionRevision(expected));
+    expect(expected).not.toHaveProperty('observedAt');
+    expect(expected).not.toHaveProperty('validUntil');
+    const later = yield* deriveActiveApplicationCompositionSnapshot({
+      ...observed,
+      observedAt: DateTime.add(observed.observedAt, { hours: 1 }),
+    });
+    expect(later.composition).toEqual(expected);
+  }),
+);
 
 it.effect('derives a schema-valid snapshot of the complete browser and server-only inventory', () =>
   Effect.gen(function* derivesCompleteInventory() {

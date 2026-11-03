@@ -12,6 +12,7 @@ import { makeTestDatabase } from '../../packages/core-runtime/tests/support/data
 import {
   ApplicationCompositionAuthorityAdminDatabaseLive,
   runApplicationCompositionMigration,
+  withApplicationCompositionPublicationLock,
 } from '../application-composition-authority-publication.mts';
 
 const runtimeUrl = 'postgresql://ontos_runtime:runtime-test-secret@127.0.0.1:5432/publication';
@@ -43,6 +44,106 @@ it.effect('requires explicit distinct valid runtime and admin identities without
       expect(failure.cause).toBeUndefined();
     }
   }),
+);
+
+it.effect(
+  'guards verify-only callbacks under the existing lock without changing authority or initializing owners',
+  () =>
+    Effect.gen(function* guardedVerificationCallback() {
+      const baselineRevision = 'a'.repeat(64);
+      const unrelatedRevision = 'b'.repeat(64);
+      const targetRevision = 'c'.repeat(64);
+      const scenarios = [
+        { allowed: true, current: null, target: targetRevision },
+        { allowed: true, baseline: null, current: null, target: targetRevision },
+        {
+          allowed: false,
+          baseline: null,
+          current: { phase: 'active', revision: baselineRevision },
+          target: targetRevision,
+        },
+        { allowed: false, baseline: baselineRevision, current: null, target: targetRevision },
+        {
+          allowed: false,
+          baseline: unrelatedRevision,
+          current: { phase: 'active', revision: baselineRevision },
+          target: targetRevision,
+        },
+        {
+          allowed: true,
+          baseline: unrelatedRevision,
+          current: { phase: 'active', revision: targetRevision },
+          target: targetRevision,
+        },
+        {
+          allowed: false,
+          baseline: unrelatedRevision,
+          current: { phase: 'draining', revision: targetRevision },
+          target: targetRevision,
+        },
+        ...['active', 'draining', 'sealed', 'migrated'].map((phase) => ({
+          allowed: true,
+          baseline: baselineRevision,
+          current: { phase, revision: baselineRevision },
+          target: baselineRevision,
+        })),
+      ];
+      for (const scenario of scenarios) {
+        const events: string[] = [];
+        const statements: string[] = [];
+        let calls = 0;
+        const executor = yield* makeTestDatabase((statement) =>
+          Effect.sync(() => {
+            statements.push(statement);
+            const query = statement.toLowerCase();
+            if (query.includes('pg_advisory_unlock(')) {
+              events.push('unlock');
+              return [{ unlocked: true }];
+            }
+            if (query.includes('pg_advisory_lock(')) {
+              events.push('lock');
+            } else if (query.includes('from "core"."application_composition_authority"')) {
+              expect(events).toEqual(['lock']);
+              events.push('read');
+              return scenario.current === null ? [] : [scenario.current];
+            }
+            return [];
+          }),
+        );
+        const precondition =
+          scenario.baseline === undefined
+            ? undefined
+            : { baselineRevision: scenario.baseline, targetRevision: scenario.target };
+        const verification = withApplicationCompositionPublicationLock(
+          Effect.sync(() => {
+            calls += 1;
+            events.push('callback');
+            return 'verified';
+          }),
+          precondition,
+        ).pipe(Effect.provideService(CoreDatabase, { executor }));
+        if (scenario.allowed) {
+          expect(yield* verification).toBe('verified');
+          expect(calls).toBe(1);
+        } else {
+          const failure = yield* verification.pipe(Effect.flip);
+          expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
+          expect(failure).toMatchObject({
+            reason: 'The native publication authority no longer matches the captured baseline or active target',
+          });
+          expect(calls).toBe(0);
+        }
+        expect(events).toEqual([
+          'lock',
+          ...(precondition === undefined ? [] : ['read']),
+          ...(scenario.allowed ? ['callback'] : []),
+          'unlock',
+        ]);
+        expect(statements.some((statement) => /^(?:begin|insert|update|delete|alter|create)\b/iu.test(statement))).toBe(
+          false,
+        );
+      }
+    }),
 );
 
 it.live(

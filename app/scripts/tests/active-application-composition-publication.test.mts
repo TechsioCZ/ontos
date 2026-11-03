@@ -43,7 +43,9 @@ import {
   publicationUrl,
   publishSnapshot,
   readPublishedSnapshot,
+  validateExpectedApplicationComposition,
 } from '../publish-active-application-composition.mts';
+import { selectApplicationReleaseUnits } from '../application-release-intent.mts';
 import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
 import { legacyCompletionPublicationFixture } from './support/legacy-completion-publication.mts';
 
@@ -383,6 +385,25 @@ const candidateObservation = Effect.gen(function* nativeCandidateObservationFixt
       runtimeContract: snapshot.composition.shell.runtimeContract,
     },
   };
+  const intent = { modules: [{ appId: module.appId }] };
+  const selection = yield* selectApplicationReleaseUnits(
+    intent,
+    [
+      {
+        id: module.appId,
+        packageName: '@app/catalog',
+        path: 'verticals/catalog',
+        workerName: module.backend.workerName,
+      },
+      {
+        id: candidate.shell.deployment.appId,
+        packageName: '@app/shell-super-app',
+        path: 'shell/super-app',
+        workerName: 'shell-super-app',
+      },
+    ],
+    [],
+  );
   const workersApi = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers`;
   const scriptApi = `${workersApi}/scripts/${module.backend.workerName}`;
   const backendDocuments = new Map<string, unknown>([
@@ -400,6 +421,7 @@ const candidateObservation = Effect.gen(function* nativeCandidateObservationFixt
   return {
     backendUrls: [...backendDocuments.keys()],
     candidate,
+    intent,
     makeProvider: (
       unmatched?: (request: RecordedRequest) => Response,
       artifactOverrides: readonly ObservedArtifact[] = [],
@@ -420,10 +442,180 @@ const candidateObservation = Effect.gen(function* nativeCandidateObservationFixt
           : new Response(observedArtifact.bytes);
       }),
     module,
+    selection,
     shell,
     snapshot,
   };
 });
+
+it.effect('binds expected composition to exact reviewed membership partition and immutable candidate pins', () =>
+  Effect.gen(function* bindsExpectedComposition() {
+    const fixture = yield* candidateObservation;
+    const candidate = yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema)(
+      fixture.candidate,
+    );
+    const { composition } = fixture.snapshot;
+    const { intent, selection } = fixture;
+    const input = { candidate, composition, intent, selection };
+    expect(yield* validateExpectedApplicationComposition(input)).toEqual(composition);
+    const [module] = candidate.modules;
+    if (module === undefined) {
+      return yield* Effect.die('Expected the pinned planning module');
+    }
+    const differentBackend = yield* Schema.decodeUnknownEffect(ApplicationCompositionCloudflareWorkerBackendSchema)({
+      ...fixture.module.backend,
+      versionId: '44444444-4444-4444-8444-444444444444',
+    });
+    expect(
+      yield* validateExpectedApplicationComposition({
+        ...input,
+        candidate: {
+          ...candidate,
+          baseline: { retainedModuleAppIds: [module.appId], revision: composition.revision, shellMode: 'fresh' },
+        },
+        selection: { ...selection, fresh: [], retained: selection.complete },
+      }),
+    ).toEqual(composition);
+    const invalid = [
+      { ...input, intent: { modules: [] } },
+      { ...input, intent: { modules: [...intent.modules, ...intent.modules] } },
+      { ...input, selection: { ...selection, complete: [...selection.complete, ...selection.complete] } },
+      { ...input, selection: { ...selection, fresh: [] } },
+      { ...input, selection: { ...selection, retained: selection.complete } },
+      { ...input, candidate: { ...candidate, modules: [] } },
+      {
+        ...input,
+        candidate: {
+          ...candidate,
+          baseline: { ...candidate.baseline, retainedModuleAppIds: [module.appId], revision: composition.revision },
+        },
+      },
+      { ...input, selection: { ...selection, shell: { ...selection.shell, mode: 'retained' } } },
+      {
+        ...input,
+        candidate: {
+          ...candidate,
+          modules: [{ ...module, contract: { ...module.contract, sha256: 'd'.repeat(64) } }],
+        },
+      },
+      {
+        ...input,
+        candidate: {
+          ...candidate,
+          modules: [{ ...module, deployment: { ...module.deployment, buildMarker: 'different-planned-build' } }],
+        },
+      },
+      {
+        ...input,
+        candidate: {
+          ...candidate,
+          modules: [{ ...module, backend: differentBackend }],
+        },
+      },
+      {
+        ...input,
+        candidate: {
+          ...candidate,
+          shell: {
+            ...candidate.shell,
+            runtimeContract: { ...candidate.shell.runtimeContract, sha256: 'e'.repeat(64) },
+          },
+        },
+      },
+      { ...input, composition: { ...composition, revision: '0'.repeat(64) } },
+    ] satisfies readonly Parameters<typeof validateExpectedApplicationComposition>[0][];
+    for (const changed of invalid) {
+      const failure = yield* validateExpectedApplicationComposition(changed).pipe(Effect.flip);
+      expect(Schema.is(ActiveApplicationCompositionPublicationError)(failure)).toBe(true);
+    }
+    return yield* Effect.void;
+  }),
+);
+
+it.effect('rejects canonically pinned expected contract content with an unavailable intrinsic provider', () =>
+  Effect.gen(function* rejectsExpectedSemanticIncompatibility() {
+    const fixture = yield* candidateObservation;
+    const [module] = fixture.snapshot.composition.modules;
+    if (module === undefined) {
+      return yield* Effect.die('Expected the semantic planning module');
+    }
+    const codec = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
+    const document = yield* Schema.decodeUnknownEffect(codec)(module.contractDocument);
+    const contractDocument = yield* Schema.encodeEffect(codec)({
+      ...document,
+      manifest: {
+        ...document.manifest,
+        requirements: {
+          coreCapabilities: [],
+          intrinsic: [
+            {
+              moduleId: INVENTORY_MODULE_ID,
+              requiredOperations: [{ entrypointKey: `${INVENTORY_MODULE_ID}.api.execute`, schemaVersion: '2' }],
+            },
+          ],
+          operations: [],
+          schemaVersion: '1',
+        },
+      },
+    });
+    const contract = { ...module.contract, sha256: createHash('sha256').update(contractDocument).digest('hex') };
+    const changed = {
+      ...fixture.snapshot.composition,
+      modules: [
+        {
+          ...module,
+          contract,
+          contractDocument,
+          dependencies: [INVENTORY_MODULE_ID],
+          publicContract: { ...module.publicContract, sha256: contract.sha256 },
+        },
+      ],
+    };
+    const composition = { ...changed, revision: applicationCompositionRevision(changed) };
+    const candidate = yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema)({
+      ...fixture.candidate,
+      modules: [{ ...fixture.candidate.modules[0], contract }],
+    });
+    const failure = yield* validateExpectedApplicationComposition({
+      candidate,
+      composition,
+      intent: fixture.intent,
+      selection: fixture.selection,
+    }).pipe(Effect.flip);
+    expect(Schema.is(ActiveApplicationCompositionPublicationError)(failure)).toBe(true);
+    return yield* Effect.void;
+  }),
+);
+
+it.effect('requires the actually observed composition to equal the planned revision before promotion', () =>
+  Effect.gen(function* rejectsDifferentObservedRevision() {
+    const fixture = yield* candidateObservation;
+    const candidate = yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema)(
+      fixture.candidate,
+    );
+    const other = yield* snapshotAt(PUBLICATION_TIME);
+    expect(other.composition.revision).not.toBe(fixture.snapshot.composition.revision);
+    for (const expected of [fixture.snapshot.composition, other.composition]) {
+      const { layer, proofRequests, requests, statements } = fixture.makeProvider();
+      const observation = observeCandidate('stage', candidate, expected).pipe(Effect.provide(layer));
+      if (expected.revision === fixture.snapshot.composition.revision) {
+        expect(yield* observation).toEqual(fixture.snapshot);
+      } else {
+        const failure = yield* observation.pipe(
+          Effect.flatMap((observed) =>
+            publishSnapshot(observed, Option.none(), initialCutoverProof).pipe(Effect.provide(layer)),
+          ),
+          Effect.flip,
+        );
+        expect(Schema.is(ActiveApplicationCompositionPublicationError)(failure)).toBe(true);
+        expect(failure).toMatchObject({ reason: 'conflicting_revision' });
+      }
+      expect(requests.every(({ method }) => method === 'GET')).toBe(true);
+      expect(proofRequests).toEqual([]);
+      expect(statements).toEqual([]);
+    }
+  }),
+);
 
 it.effect('observes the declared retained Shell pins with complete module artifacts and its native backend', () =>
   Effect.gen(function* observesPinnedCandidate() {

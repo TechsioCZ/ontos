@@ -22,7 +22,13 @@ import { ChildProcess } from 'effect/process';
 import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
 import { parse as parseYaml } from 'yaml';
 import { Reactivity } from 'effect/reactivity';
-import { readReviewedApplicationReleaseIntent } from './application-release-intent.mts';
+import {
+  ApplicationReleaseIntentSchema,
+  ApplicationReleaseSelectionSchema,
+  readReviewedApplicationReleaseIntent,
+} from './application-release-intent.mts';
+import type { ApplicationReleaseIntent, ApplicationReleaseSelection } from './application-release-intent.mts';
+import { ApplicationMigrationRequirementsSchema } from './application-migration-plan.mts';
 import { OpsShellLive } from './ops/ops-shell.mts';
 import {
   prepareApplicationMigrationPlan,
@@ -43,6 +49,7 @@ import {
   ApplicationCompositionSchema,
   ApplicationCompositionModuleSchema,
   canonicalizeApplicationComposition,
+  buildApplicationCompositionCatalog,
   ApplicationCompositionArtifactReferenceSchema,
   ONTOS_MODULE_CONTRACT_PATH,
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
@@ -62,11 +69,15 @@ import {
   deriveActiveApplicationCompositionSnapshot,
   encodeActiveApplicationCompositionSnapshot,
 } from './active-application-composition.mts';
-import type { ActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/index.ts';
+import type {
+  ApplicationComposition,
+  ActiveApplicationCompositionSnapshot,
+} from '../packages/core-runtime/src/index.ts';
 import {
   ApplicationCompositionBackendSchema,
   ONTOS_APPLICATION_COMPOSITION_MAX_MODULES,
 } from '../packages/core-runtime/src/modules/application-composition.ts';
+import { ONTOS_APPLICATION_COMPOSITION_MAX_BYTES } from '../packages/core-runtime/src/modules/application-composition-limits.ts';
 import {
   quiesceInitialCompositionCutover,
   verifyInitialCompositionCutover,
@@ -657,8 +668,139 @@ export const ApplicationCompositionPublicationCandidateSchema = Schema.Struct({
 );
 type PublicationCandidate = typeof ApplicationCompositionPublicationCandidateSchema.Type;
 
-const readPublicationCandidate = (file: string) =>
-  Effect.gen(function* readCandidateFile() {
+const samePublicationIds = (expected: readonly string[], actual: readonly string[]) =>
+  expected.length === actual.length && expected.every((id, index) => id === actual[index]);
+
+const requireExpectedReleasePartition = Effect.fn('ActiveApplicationComposition.expectedPartition')(
+  function* requireExpectedPartition(input: {
+    readonly candidate: PublicationCandidate;
+    readonly intent: ApplicationReleaseIntent;
+    readonly selection: ApplicationReleaseSelection;
+  }) {
+    const { candidate, intent, selection } = input;
+    const desired = intent.modules.map(({ appId }) => appId);
+    const complete = selection.complete.map(({ id }) => id);
+    const partition = [...selection.fresh, ...selection.retained].map(({ id }) => id);
+    const removed = selection.removed.map(({ appId }) => appId);
+    const slots = new Set(desired);
+    if (
+      slots.size !== desired.length ||
+      slots.has(SHELL_APP_ID) ||
+      !samePublicationIds(desired, complete) ||
+      !samePublicationIds(
+        desired,
+        candidate.modules.map(({ appId }) => appId),
+      ) ||
+      partition.length !== desired.length ||
+      new Set(partition).size !== desired.length ||
+      partition.some((id) => !slots.has(id)) ||
+      new Set(removed).size !== removed.length ||
+      removed.some((id) => slots.has(id)) ||
+      selection.shell.unit.id !== SHELL_APP_ID ||
+      !samePublicationIds(
+        selection.retained.map(({ id }) => id),
+        candidate.baseline.retainedModuleAppIds,
+      ) ||
+      selection.shell.mode !== candidate.baseline.shellMode
+    ) {
+      return yield* new ActiveApplicationCompositionPublicationError({
+        message: 'expected composition must bind the exact reviewed membership and release partition',
+        reason: 'invalid_observation',
+      });
+    }
+    return desired;
+  },
+);
+
+/** Planning identity only: full semantic validation and exact reviewed artifact/selection binding. */
+export const validateExpectedApplicationComposition = Effect.fn('ActiveApplicationComposition.validateExpected')(
+  function* validateExpected(input: {
+    readonly candidate: PublicationCandidate;
+    readonly composition: ApplicationComposition;
+    readonly intent: ApplicationReleaseIntent;
+    readonly selection: ApplicationReleaseSelection;
+  }) {
+    const candidate = yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema, {
+      onExcessProperty: 'error',
+    })(input.candidate);
+    const composition = yield* Schema.decodeUnknownEffect(ApplicationCompositionSchema, { onExcessProperty: 'error' })(
+      input.composition,
+    );
+    const intent = yield* Schema.decodeUnknownEffect(ApplicationReleaseIntentSchema, { onExcessProperty: 'error' })(
+      input.intent,
+    );
+    const selection = yield* Schema.decodeUnknownEffect(ApplicationReleaseSelectionSchema, {
+      onExcessProperty: 'error',
+    })(input.selection);
+    yield* buildApplicationCompositionCatalog(composition);
+    const desired = yield* requireExpectedReleasePartition({ candidate, intent, selection });
+    if (
+      (intent.migrationRequirements === undefined) !== (selection.migrationRequirements === undefined) ||
+      (intent.migrationRequirements !== undefined &&
+        selection.migrationRequirements !== undefined &&
+        !Schema.toEquivalence(ApplicationMigrationRequirementsSchema)(
+          intent.migrationRequirements,
+          selection.migrationRequirements,
+        ))
+    ) {
+      return yield* new ActiveApplicationCompositionPublicationError({
+        message: 'release selection changes the independently reviewed migration requirements',
+        reason: 'invalid_observation',
+      });
+    }
+    const byApp = new Map(composition.modules.map((module) => [module.deployment.appId, module]));
+    if (byApp.size !== desired.length || desired.some((id) => !byApp.has(id))) {
+      return yield* new ActiveApplicationCompositionPublicationError({
+        message: 'expected composition differs from complete reviewed membership',
+        reason: 'invalid_observation',
+      });
+    }
+    const sameArtifact = Schema.toEquivalence(ApplicationCompositionArtifactReferenceSchema);
+    const sameDeployment = Schema.toEquivalence(OntosDeploymentIdentitySchema);
+    const sameBackend = Schema.toEquivalence(ApplicationCompositionBackendSchema);
+    for (const expected of candidate.modules) {
+      const module = byApp.get(expected.appId);
+      if (
+        module === undefined ||
+        !sameDeployment(expected.deployment, module.deployment) ||
+        !sameArtifact(expected.contract, module.contract) ||
+        !sameBackend(expected.backend, module.backend) ||
+        (module.federation.execution === 'browser'
+          ? expected.federationManifest === undefined ||
+            !sameArtifact(expected.federationManifest, module.federation.manifest)
+          : expected.federationManifest !== undefined)
+      ) {
+        return yield* new ActiveApplicationCompositionPublicationError({
+          message: 'expected composition differs from exact candidate module pins or backend',
+          reason: 'invalid_observation',
+        });
+      }
+    }
+    if (
+      !sameDeployment(candidate.shell.deployment, composition.shell.deployment) ||
+      !sameArtifact(candidate.shell.runtimeContract, composition.shell.runtimeContract) ||
+      !sameArtifact(candidate.shell.federationManifest, composition.shell.federationManifest)
+    ) {
+      return yield* new ActiveApplicationCompositionPublicationError({
+        message: 'expected composition differs from exact candidate Shell pins',
+        reason: 'invalid_observation',
+      });
+    }
+    return composition;
+  },
+  Effect.mapError((cause) =>
+    Schema.is(ActiveApplicationCompositionPublicationError)(cause)
+      ? cause
+      : new ActiveApplicationCompositionPublicationError({
+          cause,
+          message: 'expected composition failed complete semantic validation',
+          reason: 'invalid_observation',
+        }),
+  ),
+);
+
+const readPublicationDocument = (file: string, maximumBytes: number) =>
+  Effect.gen(function* readPublicationDocumentFile() {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const canonical = yield* fileSystem.realPath(path.resolve(file));
@@ -669,7 +811,7 @@ const readPublicationCandidate = (file: string) =>
       });
     }
     const bytes = yield* fileSystem.readFile(canonical);
-    if (bytes.byteLength > 1024 * 1024) {
+    if (bytes.byteLength > maximumBytes) {
       return yield* new ActiveApplicationCompositionPublicationError({
         message: 'the candidate exceeds its byte budget',
         reason: 'invalid_observation',
@@ -683,10 +825,48 @@ const readPublicationCandidate = (file: string) =>
         }),
       try: () => new TextDecoder('utf-8', { fatal: true }).decode(bytes),
     });
-    return yield* Schema.decodeEffect(Schema.fromJsonString(ApplicationCompositionPublicationCandidateSchema), {
-      onExcessProperty: 'error',
-    })(text);
+    return text;
   });
+
+const readPublicationCandidate = (file: string) =>
+  readPublicationDocument(file, 1024 * 1024).pipe(
+    Effect.flatMap(
+      Schema.decodeEffect(Schema.fromJsonString(ApplicationCompositionPublicationCandidateSchema), {
+        onExcessProperty: 'error',
+      }),
+    ),
+  );
+
+const readExpectedPublication = Effect.fn('ActiveApplicationComposition.readExpected')(function* readExpected(input: {
+  readonly candidateFile: string;
+  readonly expectedCompositionFile: string;
+  readonly intent: ApplicationReleaseIntent;
+  readonly selectionFile: string;
+}) {
+  const candidate = yield* readPublicationCandidate(input.candidateFile);
+  const composition = yield* readPublicationDocument(
+    input.expectedCompositionFile,
+    ONTOS_APPLICATION_COMPOSITION_MAX_BYTES,
+  ).pipe(
+    Effect.flatMap(
+      Schema.decodeEffect(Schema.fromJsonString(ApplicationCompositionSchema), { onExcessProperty: 'error' }),
+    ),
+  );
+  const selection = yield* readPublicationDocument(input.selectionFile, 1024 * 1024).pipe(
+    Effect.flatMap(
+      Schema.decodeEffect(Schema.fromJsonString(ApplicationReleaseSelectionSchema), { onExcessProperty: 'error' }),
+    ),
+  );
+  return {
+    candidate,
+    composition: yield* validateExpectedApplicationComposition({
+      candidate,
+      composition,
+      intent: input.intent,
+      selection,
+    }),
+  };
+});
 
 const fetchPinnedCandidateArtifact = Effect.fn('ActiveApplicationComposition.fetchPinnedArtifact')(
   function* fetchPinnedArtifact(appId: string, expected: typeof ApplicationCompositionArtifactReferenceSchema.Type) {
@@ -705,6 +885,7 @@ const fetchPinnedCandidateArtifact = Effect.fn('ActiveApplicationComposition.fet
 export const observeCandidate = Effect.fn('ActiveApplicationComposition.observeCandidate')(function* observeCandidate(
   environment: string,
   input: PublicationCandidate,
+  expectedComposition?: ApplicationComposition,
 ) {
   const candidate = yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema, {
     onExcessProperty: 'error',
@@ -780,6 +961,12 @@ export const observeCandidate = Effect.fn('ActiveApplicationComposition.observeC
     shell: { federationManifest, runtimeContract },
     validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
   });
+  if (expectedComposition !== undefined && snapshot.composition.revision !== expectedComposition.revision) {
+    return yield* new ActiveApplicationCompositionPublicationError({
+      message: 'actual observed composition differs from the expected migration target',
+      reason: 'conflicting_revision',
+    });
+  }
   const observedShell = snapshot.composition.shell;
   if (
     observedShell.deployment.appId !== candidate.shell.deployment.appId ||
@@ -876,27 +1063,57 @@ const deployMigrationProvider = Effect.fn('ApplicationCompositionPublication.dep
 const migrateCommand = Command.make(
   'migrate',
   {
+    candidateFile: Flag.String('candidate-file').pipe(Flag.optional),
     environment: Flag.String('environment'),
+    expectedCompositionFile: Flag.String('expected-composition-file').pipe(Flag.optional),
     intentFile: Flag.String('intent-file').pipe(Flag.withDefault('topology/application-release-intent.json')),
     projectId: Flag.String('project-id'),
+    selectionFile: Flag.String('selection-file').pipe(Flag.optional),
     serviceId: Flag.String('service-id'),
     versionName: Flag.String('version-name'),
     zeropsYamlPath: Flag.String('zerops-yaml-path'),
   },
-  ({ environment, intentFile, projectId, serviceId, versionName, zeropsYamlPath }) =>
+  ({
+    candidateFile,
+    environment,
+    expectedCompositionFile,
+    intentFile,
+    projectId,
+    selectionFile,
+    serviceId,
+    versionName,
+    zeropsYamlPath,
+  }) =>
     Effect.scoped(
       Effect.gen(function* migrateUnderNativePublicationLock() {
         const path = yield* Path.Path;
         const fileSystem = yield* FileSystem.FileSystem;
         const appDirectory = path.resolve(import.meta.dirname, '..');
         const reviewedIntentFile = path.relative(appDirectory, path.resolve(appDirectory, intentFile));
-        yield* readReviewedApplicationReleaseIntent(reviewedIntentFile);
+        const intent = yield* readReviewedApplicationReleaseIntent(reviewedIntentFile);
         const requirements = yield* readApplicationMigrationRequirements(path.join(appDirectory, reviewedIntentFile));
         const prepared = yield* prepareApplicationMigrationPlan(requirements);
         const mode = applicationMigrationPublicationMode(prepared.plan);
         if (mode === 'none') {
           return yield* Effect.logInfo('Reviewed release requires no migration or owner verification');
         }
+        if (Option.isNone(candidateFile) || Option.isNone(expectedCompositionFile) || Option.isNone(selectionFile)) {
+          return yield* new ActiveApplicationCompositionPublicationError({
+            message:
+              'nonempty migration or verification requires candidate-file, selection-file and expected-composition-file',
+            reason: 'invalid_observation',
+          });
+        }
+        const expected = yield* readExpectedPublication({
+          candidateFile: candidateFile.value,
+          expectedCompositionFile: expectedCompositionFile.value,
+          intent,
+          selectionFile: selectionFile.value,
+        });
+        const precondition = {
+          baselineRevision: expected.candidate.baseline.revision,
+          targetRevision: expected.composition.revision,
+        };
         const providerSource = yield* fileSystem.readFileString(path.resolve(zeropsYamlPath));
         const providerCopy = yield* materializeApplicationMigrationProvider(providerSource, {
           intentFile: reviewedIntentFile,
@@ -925,14 +1142,14 @@ const migrateCommand = Command.make(
         });
         if (mode === 'verify-only') {
           return yield* Layer.build(
-            Layer.effectDiscard(withApplicationCompositionPublicationLock(deployment)).pipe(
+            Layer.effectDiscard(withApplicationCompositionPublicationLock(deployment, precondition)).pipe(
               Layer.provide(Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ZeropsPublicApiLive)),
             ),
           ).pipe(Effect.asVoid);
         }
         return yield* Layer.build(
           Layer.effectDiscard(
-            runApplicationCompositionMigration(deployment, configuredInitialCutover(environment)),
+            runApplicationCompositionMigration(deployment, configuredInitialCutover(environment), precondition),
           ).pipe(
             Layer.provide(
               Layer.mergeAll(
@@ -980,18 +1197,28 @@ const publishCommand = Command.make(
   {
     candidateFile: Flag.String('candidate-file'),
     environment: Flag.String('environment'),
+    expectedCompositionFile: Flag.String('expected-composition-file'),
+    intentFile: Flag.String('intent-file').pipe(Flag.withDefault('topology/application-release-intent.json')),
+    selectionFile: Flag.String('selection-file'),
     snapshotFile: Flag.String('snapshot-file').pipe(Flag.optional),
   },
-  ({ candidateFile, environment, snapshotFile }) =>
-    readPublicationCandidate(candidateFile).pipe(
-      Effect.flatMap((candidate) =>
-        observeCandidate(environment, candidate).pipe(
-          Effect.flatMap((snapshot) =>
-            publishSnapshot(snapshot, snapshotFile, configuredInitialCutover(environment), candidate.baseline),
-          ),
-        ),
-      ),
-    ),
+  ({ candidateFile, environment, expectedCompositionFile, intentFile, selectionFile, snapshotFile }) =>
+    Effect.gen(function* publishExpectedCandidate() {
+      const intent = yield* readReviewedApplicationReleaseIntent(intentFile);
+      const expected = yield* readExpectedPublication({
+        candidateFile,
+        expectedCompositionFile,
+        intent,
+        selectionFile,
+      });
+      const snapshot = yield* observeCandidate(environment, expected.candidate, expected.composition);
+      return yield* publishSnapshot(
+        snapshot,
+        snapshotFile,
+        configuredInitialCutover(environment),
+        expected.candidate.baseline,
+      );
+    }),
 ).pipe(
   Command.provide(() =>
     Layer.mergeAll(
@@ -1040,7 +1267,7 @@ const refreshCommand = Command.make(
           runtimeContract: approved.composition.shell.runtimeContract,
         },
       };
-      const snapshot = yield* observeCandidate(environment, candidate);
+      const snapshot = yield* observeCandidate(environment, candidate, approved.composition);
       if (snapshot.composition.revision !== approved.composition.revision) {
         return yield* new ActiveApplicationCompositionPublicationError({
           message: 'refresh observed different release artifacts; an explicit promotion is required',

@@ -61,6 +61,21 @@ export interface ObservedArtifact {
   readonly url: string;
 }
 
+/** Exact pinned content and declared placement; this input makes no deployment or freshness claim. */
+export interface ApplicationCompositionPinnedArtifacts {
+  readonly environment: string;
+  readonly modules: readonly {
+    readonly appId: string;
+    readonly backend: ApplicationCompositionBackend;
+    readonly contract: { readonly bytes: Uint8Array; readonly url: string };
+    readonly federationManifest?: { readonly bytes: Uint8Array; readonly url: string };
+  }[];
+  readonly shell: {
+    readonly federationManifest: { readonly bytes: Uint8Array; readonly url: string };
+    readonly runtimeContract: { readonly bytes: Uint8Array; readonly url: string };
+  };
+}
+
 export interface ObservedModuleDeployment {
   readonly appId: string;
   /** Provider receipt placement, independently observed before derivation. */
@@ -192,7 +207,7 @@ interface DerivedModule {
 }
 
 const contractEvidence = (
-  observed: ObservedModuleDeployment,
+  observed: ApplicationCompositionPinnedArtifacts['modules'][number],
   contract: ModuleDeploymentContract,
   contractSha256: string,
 ): ObservedApplicationCompositionContract => {
@@ -224,7 +239,7 @@ const contractEvidence = (
 };
 
 const deriveModule = Effect.fn('ActiveApplicationComposition.deriveModule')(function* deriveModule(
-  observed: ObservedModuleDeployment,
+  observed: ApplicationCompositionPinnedArtifacts['modules'][number],
 ) {
   const contract = yield* decodeContract(observed.contract);
   if (contract.deployment.appId !== observed.appId) {
@@ -293,9 +308,9 @@ const REVISION_PLACEHOLDER = '0'.repeat(64);
 export const applicationCompositionRevision = (composition: ApplicationComposition): string =>
   sha256Hex(canonicalizeApplicationComposition({ ...composition, revision: REVISION_PLACEHOLDER }));
 
-/** Derives, validates, and bounds one active Application Composition snapshot from observed deployments. */
-export const deriveActiveApplicationCompositionSnapshot = Effect.fn('ActiveApplicationComposition.deriveSnapshot')(
-  function* deriveSnapshot(observation: ActiveApplicationCompositionObservation) {
+/** Validates exact pinned content and declared backends without observing deployments or inventing a lease. */
+export const deriveApplicationComposition = Effect.fn('ActiveApplicationComposition.deriveComposition')(
+  function* deriveComposition(observation: ApplicationCompositionPinnedArtifacts) {
     const [shellRuntime, shellManifest, derived] = yield* Effect.all(
       [
         decodeShellRuntime(observation.shell.runtimeContract),
@@ -338,11 +353,19 @@ export const deriveActiveApplicationCompositionSnapshot = Effect.fn('ActiveAppli
       runtime: shell,
     };
     const validated = yield* validateApplicationCompositionCandidate(candidate, evidence).pipe(
-      Effect.mapError(invalidObservation('observed deployments do not form a valid Application Composition')),
+      Effect.mapError(invalidObservation('pinned artifacts do not form a valid Application Composition')),
     );
     const composition = yield* Schema.decodeEffect(CompositionJsonSchema)(
       canonicalizeApplicationComposition(validated),
     ).pipe(Effect.mapError(invalidObservation('canonical Application Composition does not round-trip')));
+    return composition;
+  },
+);
+
+/** Adds freshness only after the caller has independently observed the deployments. */
+export const deriveActiveApplicationCompositionSnapshot = Effect.fn('ActiveApplicationComposition.deriveSnapshot')(
+  function* deriveSnapshot(observation: ActiveApplicationCompositionObservation) {
+    const composition = yield* deriveApplicationComposition(observation);
     const snapshot: ActiveApplicationCompositionSnapshot = {
       composition,
       observedAt: observation.observedAt,

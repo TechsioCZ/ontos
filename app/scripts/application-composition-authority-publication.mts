@@ -110,6 +110,7 @@ export const withApplicationCompositionPublicationLock = Effect.fn(
   'ApplicationCompositionAuthority.withPublicationLock',
 )(function* withApplicationCompositionPublicationLock<Value, Failure, Requirements>(
   publication: Effect.Effect<Value, Failure, Requirements>,
+  precondition?: ApplicationCompositionBaselinePrecondition,
 ) {
   const database = yield* CoreDatabase;
   const client = database.executor.$client;
@@ -147,6 +148,16 @@ export const withApplicationCompositionPublicationLock = Effect.fn(
               ),
             ),
       );
+      if (precondition !== undefined) {
+        const [current] = yield* database.executor
+          .select({
+            phase: applicationCompositionAuthority.phase,
+            revision: applicationCompositionAuthority.revision,
+          })
+          .from(applicationCompositionAuthority)
+          .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+        yield* requireCapturedBaseline(current, precondition);
+      }
       return yield* publication;
     }),
   ).pipe(
