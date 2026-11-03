@@ -26,7 +26,6 @@ export {
   createOwnerPermissionAccessTarget,
   isOwnerPermissionAccessTargetMetadataValid,
   isOwnerPermissionAccessTargetValid,
-  isOwnerPermissionContract,
 } from './owner-permission-contract.ts';
 export type {
   OwnerPermissionAccessTarget,
