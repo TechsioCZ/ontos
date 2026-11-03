@@ -1,4 +1,4 @@
-import { isOwnerPermissionContract } from '../permissions/context-access.ts';
+import { isOwnerPermissionContract } from '../permissions/owner-permission-contract.ts';
 import { Array as EffectArray, Effect, Schema, Predicate } from 'effect';
 import type { ActionHandlerContext, CommittedActionDomainRejection } from './context.ts';
 import { ActionPayloadValidationError, ActionResultValidationError } from './errors.ts';
@@ -12,11 +12,8 @@ import type { OperationalScope } from '../operations/context.ts';
 import { LEGAL_ENTITY_SCOPES } from '../operations/legal-entity-scope.ts';
 import type { LegalEntityScope } from '../operations/legal-entity-scope.ts';
 import type { OperationContextUnavailable } from '../operations/errors.ts';
-import type {
-  OwnerPermissionAccessTarget,
-  OwnerPermissionContract,
-  ResourceAccessTarget,
-} from '../permissions/context-access.ts';
+import type { ResourceAccessTarget } from '../permissions/context-access.ts';
+import type { OwnerPermissionAccessTarget, OwnerPermissionContract } from '../permissions/owner-permission-contract.ts';
 import type { TenantPermissionKey } from '../permissions/context-permissions.ts';
 
 const actionRegistration: unique symbol = Symbol('@app/core-runtime/actions/registration');

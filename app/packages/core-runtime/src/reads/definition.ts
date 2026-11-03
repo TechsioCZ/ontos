@@ -1,7 +1,7 @@
 import {
   isOwnerPermissionAccessTargetMetadataValid,
   isOwnerPermissionContract,
-} from '../permissions/context-access.ts';
+} from '../permissions/owner-permission-contract.ts';
 import { ReadPermissionUnavailable } from './errors.ts';
 /* oxlint-disable anti-slop/no-chained-type-assertions, anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-unknown-parameters, typescript/no-unsafe-type-assertion -- Opaque declarations validate and freeze finite keys before their one private representation cast; expires: 2027-03-31. */
 import { Predicate, Schema } from 'effect';
@@ -15,11 +15,8 @@ import type { OperationalScope } from '../operations/context.ts';
 import { LEGAL_ENTITY_SCOPES } from '../operations/legal-entity-scope.ts';
 import type { LegalEntityScope } from '../operations/legal-entity-scope.ts';
 import type { OperationContextUnavailable } from '../operations/errors.ts';
-import type {
-  OwnerPermissionAccessTarget,
-  OwnerPermissionContract,
-  ResourceAccessTarget,
-} from '../permissions/context-access.ts';
+import type { ResourceAccessTarget } from '../permissions/context-access.ts';
+import type { OwnerPermissionAccessTarget, OwnerPermissionContract } from '../permissions/owner-permission-contract.ts';
 import type { LegalEntityPermissionKey, TenantPermissionKey } from '../permissions/context-permissions.ts';
 import type { ReadHandlerContext, ReadHandlerResult } from './context.ts';
 
