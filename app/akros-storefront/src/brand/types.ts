@@ -11,7 +11,7 @@ export type BrandLocale = "cs" | "sk" | "en";
 export type PerLocale<T> = Readonly<Record<BrandLocale, T>>;
 
 /** A paragraph with emphasized parts (`{ strong }`), as the home page renders it. */
-export interface RichParagraph {
+interface RichParagraph {
   id: string;
   content: readonly (string | { strong: string })[];
 }
@@ -36,7 +36,7 @@ export interface CarouselSlide {
 }
 
 /** A home banner as the brand defines it; `alt` is per language, `CarouselSlide` is the resolved one. */
-export interface BrandCarouselSlide extends Omit<CarouselSlide, "alt"> {
+interface BrandCarouselSlide extends Omit<CarouselSlide, "alt"> {
   alt: PerLocale<string>;
 }
 
@@ -49,7 +49,7 @@ export interface GalleryImage {
 /** Brand data (names, addresses) stays as written; demo disclaimers may be given per language. */
 export type BranchText = string | PerLocale<string>;
 
-export interface Branch {
+interface Branch {
   id: string;
   city: string;
   title: BranchText;

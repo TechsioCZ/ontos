@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect";
 
-export class StorefrontConfigurationUnavailable extends Schema.TaggedError<StorefrontConfigurationUnavailable>()(
+class StorefrontConfigurationUnavailable extends Schema.TaggedError<StorefrontConfigurationUnavailable>()(
   "StorefrontConfigurationUnavailable",
   { field: Schema.String },
 ) {}

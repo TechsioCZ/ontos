@@ -23,7 +23,6 @@ export const ContractsProviderResponseSchema = Schema.Array(
     title: Schema.String,
   }),
 );
-export type ContractsProviderResponse = typeof ContractsProviderResponseSchema.Type;
 
 export const ContractsProviderUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
   'ContractsProviderUnavailableProblem',

@@ -24,4 +24,3 @@ export const BootstrapPlaygroundCatalogResultSchema = Schema.Struct({
   status: Schema.Literals(['IMPORTING', 'VERIFIED']),
 });
 export type BootstrapPlaygroundCatalogPayload = typeof BootstrapPlaygroundCatalogPayloadSchema.Type;
-export type BootstrapPlaygroundCatalogResult = typeof BootstrapPlaygroundCatalogResultSchema.Type;

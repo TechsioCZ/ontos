@@ -33,7 +33,7 @@ export const PortalRegistrationSchema = Schema.Struct({
 }).check(Schema.makeFilter((input) => input.password === input.passwordConfirmation));
 export type PortalLogin = typeof PortalLoginSchema.Type;
 export type PortalRegistration = typeof PortalRegistrationSchema.Type;
-export const PortalEnrollmentPhaseSchema = Schema.Literals([
+const PortalEnrollmentPhaseSchema = Schema.Literals([
   "IN_PROGRESS",
   "VERIFICATION_REQUIRED",
   "COMPLETE",
@@ -89,7 +89,7 @@ export const PortalUnavailableProblem = makeProblemDetailsSchema("PortalUnavaila
 export const PortalUnconfirmedProblem = makeProblemDetailsSchema("PortalUnconfirmedProblem", 503, {
   state: Schema.Literal("unconfirmed"),
 });
-export const portalProblems = [
+const portalProblems = [
   PortalInvalidProblem,
   PortalCredentialsProblem,
   PortalRefusedProblem,

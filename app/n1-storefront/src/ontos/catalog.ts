@@ -24,7 +24,7 @@ const CatalogQuerySchema = Schema.Struct({
 });
 
 /** Read-only public channel. No writes, seed catalog or alternate data source lives in this app. */
-export const loadCatalog = (locale: string, query: CatalogQuery) =>
+const loadCatalog = (locale: string, query: CatalogQuery) =>
   Effect.gen(function* loadCatalogProgram() {
     const config = yield* readConfiguration(process.env);
     const now = yield* Clock.currentTimeMillis;

@@ -16,7 +16,7 @@ import { useDictionary, useStoreHref } from "@/ontos/market-context";
  * The contact page's OntOS product question (`productId`, as the inquiry carries it) with Kai's optional
  * variant selection (`variantIds`).
  */
-export function buildProductQuestionHref(productId: string, variantIds: readonly string[]) {
+function buildProductQuestionHref(productId: string, variantIds: readonly string[]) {
   const params = new URLSearchParams({ productId });
   if (variantIds.length) params.set("variantIds", [...new Set(variantIds)].join(","));
   return `/kontakty?${params}#primy-kontakt`;

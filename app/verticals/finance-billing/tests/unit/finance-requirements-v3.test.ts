@@ -15,6 +15,7 @@ import { buildPohodaDataPack } from '../../shared/domain/pohoda-xml.ts';
 import { commandReferenceAudiences } from '../../shared/domain/reference-audiences.ts';
 import { MANUAL_COUNTERPARTY_ID, transitionFinance } from '../../src/services/persistence.service.ts';
 import type { FinanceAnchors, FinanceValidators } from '../../src/services/persistence.service.ts';
+import { invoiceLifecycle, latestHandover } from '../../src/routes/[lang]/finance/invoice-view.ts';
 
 const tenantId = 'a0000000-0000-4000-8000-000000000001';
 const scope = { legalEntityId: 'a0000000-0000-4000-8000-000000000002', tenantId };
@@ -290,6 +291,110 @@ describe('S07.R5 lifecycle and S07.R3 bulk preparation', () => {
       });
       const confirmed = yield* run(handed.state, { _tag: 'ConfirmAccountingExport', evidence: 'e-mail', exportId });
       expect(confirmed.state.accountingExports?.[0]?.status).toBe('CONFIRMED_BY_ACCOUNTANT');
+    }),
+  );
+
+  it.effect('refuses voiding after handover or accountant confirmation, but not for prepared or failed packages', () =>
+    Effect.gen(function* voidAfterHandover() {
+      const record = invoice('handover-void');
+      const prepared = yield* run(
+        { ...empty, invoices: [record] },
+        {
+          _tag: 'CreateAccountingExport',
+          format: 'CSV',
+          invoiceResourceIds: [record.ref.resourceId],
+        },
+      );
+      const exportId = prepared.state.accountingExports?.[0]?.id ?? '';
+      const handed = yield* run(prepared.state, { _tag: 'HandOverAccountingExport', exportId });
+      const confirmed = yield* run(handed.state, {
+        _tag: 'ConfirmAccountingExport',
+        evidence: 'Účetní potvrdila převzetí',
+        exportId,
+      });
+      for (const current of [handed.state, confirmed.state]) {
+        const refused = yield* Effect.exit(run(current, { _tag: 'VoidInvoice', invoiceRef: record.ref }));
+        expect(failsWith(refused, 'void_requires_unpaid_unsynchronized_invoice')).toBe(true);
+        expect(current.invoices[0]?.businessState).toBe('CONFIRMED');
+      }
+      const failed = yield* run(handed.state, {
+        _tag: 'MarkAccountingExportFailed',
+        exportId,
+        reason: 'Účetní soubor nepřijala',
+      });
+      for (const current of [prepared.state, failed.state]) {
+        const voided = yield* run(current, { _tag: 'VoidInvoice', invoiceRef: record.ref });
+        expect(voided.invoice?.businessState).toBe('VOIDED');
+      }
+    }),
+  );
+
+  it.effect('revalidates included invoices before handing over a prepared immutable export', () =>
+    Effect.gen(function* revalidatePreparedExport() {
+      const record = invoice('stale-export');
+      const prepared = yield* run(
+        { ...empty, invoices: [record] },
+        {
+          _tag: 'CreateAccountingExport',
+          format: 'CSV',
+          invoiceResourceIds: [record.ref.resourceId],
+        },
+      );
+      const target = prepared.state.accountingExports?.[0];
+      assert.isDefined(target);
+      const voided = yield* run(prepared.state, { _tag: 'VoidInvoice', invoiceRef: record.ref });
+      for (const current of [voided.state, { ...prepared.state, invoices: [] }]) {
+        const refused = yield* Effect.exit(run(current, { _tag: 'HandOverAccountingExport', exportId: target.id }));
+        expect(failsWith(refused, 'export_requires_confirmed_invoices')).toBe(true);
+        expect(current.accountingExports?.[0]).toStrictEqual(target);
+        expect(current.accountingExports?.[0]?.status).toBe('PREPARED');
+      }
+    }),
+  );
+
+  it.effect('keeps completed handover status and its evidence when a later export is only prepared or failed', () =>
+    Effect.gen(function* preserveCompletedHandover() {
+      const record = invoice('retained-handover');
+      const prepared = yield* run(
+        { ...empty, invoices: [record] },
+        {
+          _tag: 'CreateAccountingExport',
+          format: 'CSV',
+          invoiceResourceIds: [record.ref.resourceId],
+        },
+      );
+      const exportId = prepared.state.accountingExports?.[0]?.id ?? '';
+      const handed = yield* run(prepared.state, { _tag: 'HandOverAccountingExport', exportId });
+      const confirmed = yield* run(handed.state, {
+        _tag: 'ConfirmAccountingExport',
+        evidence: 'Potvrzený import',
+        exportId,
+      });
+      for (const [current, expected] of [
+        [handed.state, 'HANDED_OVER'],
+        [confirmed.state, 'ACCOUNTANT_CONFIRMED'],
+      ] as const) {
+        const later = yield* run(current, {
+          _tag: 'CreateAccountingExport',
+          format: 'CSV',
+          invoiceResourceIds: [record.ref.resourceId],
+        });
+        expect(invoiceLifecycle(record, later.state.accountingExports)).toBe(expected);
+        expect(latestHandover(record, later.state.accountingExports ?? [])?.id).toBe(exportId);
+        const laterId = later.state.accountingExports?.at(-1)?.id ?? '';
+        const failed = yield* run(later.state, {
+          _tag: 'MarkAccountingExportFailed',
+          exportId: laterId,
+          reason: 'Nová dávka nebyla přijata',
+        });
+        expect(invoiceLifecycle(record, failed.state.accountingExports)).toBe(expected);
+        expect(latestHandover(record, failed.state.accountingExports ?? [])?.id).toBe(exportId);
+        if (expected === 'ACCOUNTANT_CONFIRMED') {
+          const handedAgain = yield* run(later.state, { _tag: 'HandOverAccountingExport', exportId: laterId });
+          expect(invoiceLifecycle(record, handedAgain.state.accountingExports)).toBe('ACCOUNTANT_CONFIRMED');
+          expect(latestHandover(record, handedAgain.state.accountingExports ?? [])?.id).toBe(exportId);
+        }
+      }
     }),
   );
 });

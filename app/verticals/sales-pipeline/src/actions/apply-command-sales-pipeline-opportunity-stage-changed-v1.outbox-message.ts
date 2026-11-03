@@ -8,13 +8,6 @@ import {
 } from '@app/sales-pipeline/outbox/sales-pipeline-opportunity-stage-changed-v1';
 import type { OutboxPayload } from '@app/sales-pipeline/outbox/sales-pipeline-opportunity-stage-changed-v1';
 
-export {
-  OutboxPayloadSchema as ApplyCommandSalesPipelineOpportunityStageChangedV1OutboxPayloadSchema,
-  outboxProducerModuleKey as ApplyCommandSalesPipelineOpportunityStageChangedV1OutboxProducerModuleKey,
-  outboxTopic as ApplyCommandSalesPipelineOpportunityStageChangedV1OutboxTopic,
-} from '@app/sales-pipeline/outbox/sales-pipeline-opportunity-stage-changed-v1';
-export type { OutboxPayload as ApplyCommandSalesPipelineOpportunityStageChangedV1OutboxPayload } from '@app/sales-pipeline/outbox/sales-pipeline-opportunity-stage-changed-v1';
-
 export const createApplyCommandSalesPipelineOpportunityStageChangedV1OutboxMessage = (
   payload: OutboxPayload,
 ): OutboxMessage => ({

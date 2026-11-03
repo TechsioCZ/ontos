@@ -6,8 +6,6 @@ import { PeopleSearchProjector } from './people-search-projection.ts';
 
 import { rebuildPeopleSearchSubscription } from './people-search-subscriptions.ts';
 
-export { rebuildPeopleSearchSubscription } from './people-search-subscriptions.ts';
-
 export const worker = defineOutboxWorker(
   {
     ...rebuildPeopleSearchSubscription,
