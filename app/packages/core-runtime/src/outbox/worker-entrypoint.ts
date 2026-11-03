@@ -58,6 +58,7 @@ export {
   CoreSearchProjectionDocumentSchema,
   CoreSearchProjectionInvalid,
   CoreSearchProjectionMutationSchema,
+  CoreSearchProjectionReplacementSchema,
   CoreSearchProjectionStore,
   CoreSearchResourceRefSchema,
 } from '../search/projection.ts';

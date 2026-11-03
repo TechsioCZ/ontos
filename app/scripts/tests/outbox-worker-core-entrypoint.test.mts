@@ -6,6 +6,8 @@ import { parseSync } from 'oxc-parser';
 
 import { coreRuntimeValueReExports, focusedEntrypointValueExports } from '../materialize-outbox-worker.mjs';
 
+const workerEntrypointPath = '../../packages/core-runtime/src/outbox/worker-entrypoint.ts';
+
 it('reads live value re-exports from Core, ignoring comments, strings, and type-only ones', () => {
   const source = [
     "export { ContextAccessLive as outboxWorkerContextAccessLive } from '@app/core-runtime';",
@@ -39,7 +41,7 @@ it('reads only live value exports of the focused entrypoint', () => {
 
 it('routes hosted worker enrollment through its owning subpath, not the focused Core entrypoint', () => {
   const entrypoint = focusedEntrypointValueExports(
-    readFileSync(new URL('../../packages/core-runtime/src/outbox/worker-entrypoint.ts', import.meta.url), 'utf-8'),
+    readFileSync(new URL(workerEntrypointPath, import.meta.url), 'utf-8'),
   );
   const workerRoots = [
     'apps/shell-super-app/src/entry.core-system-worker.ts',
@@ -81,7 +83,7 @@ it('routes hosted worker enrollment through its owning subpath, not the focused 
 
 it('exports every Core value the deployed worker hosts re-export', () => {
   const entrypoint = focusedEntrypointValueExports(
-    readFileSync(new URL('../../packages/core-runtime/src/outbox/worker-entrypoint.ts', import.meta.url), 'utf-8'),
+    readFileSync(new URL(workerEntrypointPath, import.meta.url), 'utf-8'),
   );
   const layerPath = '../../verticals/commerce-customer-context/src/worker-host/layer.ts';
   const reExports = coreRuntimeValueReExports('layer.ts', readFileSync(new URL(layerPath, import.meta.url), 'utf-8'));
@@ -90,4 +92,23 @@ it('exports every Core value the deployed worker hosts re-export', () => {
     expect(entrypoint.has(name), name).toBe(true);
   }
   expect(entrypoint.has('AnyOutboxWorkerRegistration')).toBe(false);
+});
+
+it('exports the Core values used by the hosted search snapshot projectors', () => {
+  const entrypoint = focusedEntrypointValueExports(
+    readFileSync(new URL(workerEntrypointPath, import.meta.url), 'utf-8'),
+  );
+  for (const owner of ['sales-pipeline', 'work-tasks']) {
+    const filename = `verticals/${owner}/src/services/search-projection.ts`;
+    const source = readFileSync(new URL(`../../${filename}`, import.meta.url), 'utf-8');
+    const imports = parseSync(filename, source).module.staticImports.flatMap((statement) =>
+      statement.moduleRequest.value === '@app/core-runtime'
+        ? statement.entries.filter((entry) => !entry.isType).map((entry) => entry.importName.name ?? '')
+        : [],
+    );
+    expect(imports, filename).toContain('CoreSearchProjectionReplacementSchema');
+    for (const name of imports) {
+      expect(entrypoint.has(name), `${filename} imports ${name} from the focused worker entrypoint`).toBe(true);
+    }
+  }
 });
