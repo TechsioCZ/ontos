@@ -156,6 +156,59 @@ describe('CRM order CSV parser', () => {
 });
 
 describe('CRM order import (C03)', () => {
+  it.effect('persists a multi-source import whose combined source names exceed the batch limit', () =>
+    Effect.gen(function* boundedBatchSource() {
+      const sources = ['a'.repeat(120), 'b'.repeat(120)];
+      const state = yield* runOk(base, {
+        _tag: 'ImportOrdersCsv',
+        csv: `zdroj;id_objednavky;stav\n${sources[0]};1;nova\n${sources[1]};2;nova\n`,
+        fileName: 'vice-zdroju.csv',
+      });
+      const encoded = yield* Schema.encodeEffect(CrmStateSchema)(state);
+      const persisted = yield* Schema.decodeEffect(CrmStateSchema)(encoded);
+      expect(persisted.imports.batches[0]).toMatchObject({
+        accepted: 2,
+        created: 2,
+        rejected: 0,
+        source: `${sources[0]}, …`,
+        status: 'completed',
+      });
+      expect(persisted.imports.orders.map((entry) => entry.source)).toEqual(sources);
+      expect(persisted.imports.orders.map((entry) => entry.statusHistory[0]?.source)).toEqual(sources);
+    }),
+  );
+  it.effect('keeps complete source summaries through the exact persisted length limit', () =>
+    Effect.gen(function* batchSourceBoundary() {
+      for (const sources of [['a'.repeat(200)], ['a'.repeat(100), 'b'.repeat(98)]]) {
+        const rows = sources.map((source, index) => `${source};${index};nova`).join('\n');
+        const state = yield* runOk(base, {
+          _tag: 'ImportOrdersCsv',
+          csv: `zdroj;id_objednavky;stav\n${rows}\n`,
+          fileName: 'zdroje-na-limitu.csv',
+        });
+        const encoded = yield* Schema.encodeEffect(CrmStateSchema)(state);
+        expect(encoded.imports.batches[0]?.source).toBe(sources.join(', '));
+      }
+    }),
+  );
+  it.effect('bounds an over-limit summary without shortening Unicode source identities', () =>
+    Effect.gen(function* unicodeBatchSource() {
+      const firstSource = '🛒'.repeat(50);
+      for (const { sources, summary } of [
+        { sources: [firstSource, 'Ž'.repeat(99)], summary: `${firstSource}, …` },
+        { sources: ['🛒'.repeat(100), 'Ž'], summary: '…' },
+      ]) {
+        const state = yield* runOk(base, {
+          _tag: 'ImportOrdersCsv',
+          csv: `zdroj;id_objednavky;stav\n${sources[0]};1;nova\n${sources[1]};2;nova\n`,
+          fileName: 'zdroje-unicode.csv',
+        });
+        const encoded = yield* Schema.encodeEffect(CrmStateSchema)(state);
+        expect(encoded.imports.batches[0]?.source).toBe(summary);
+        expect(encoded.imports.orders.map((entry) => entry.source)).toEqual(sources);
+      }
+    }),
+  );
   it.effect('C03-01 seeded import keeps source, number and raw state; pairs only approved links (C04-01)', () =>
     Effect.gen(function* effectGenerator2() {
       const seeded = yield* seededEffect;

@@ -1,4 +1,5 @@
-import { DateTime } from 'effect';
+import { DateTime, Schema } from 'effect';
+import { ShortTextSchema } from '../domain/common.ts';
 import type { EntityId, PrincipalId } from '../domain/common.ts';
 // AREA: imports (C03, C04) — owned by the crm-imports lane.
 // Pure import engine: applies parsed CSV rows to the imports slice. Used by the ImportOrdersCsv reducer (server,
@@ -102,6 +103,22 @@ const sameEvent = (left: OrderStatusEvent, right: OrderStatusEvent) =>
         : right.eventAt !== undefined && DateTime.Equivalence(left.eventAt, right.eventAt));
 
 const orderKey = (source: string, externalId: string) => `${source}\u0000${externalId}`;
+
+/** Batch display text is bounded; exact source identities remain on every order and status event. */
+const summarizeSources = (sources: readonly string[]): string => {
+  const summary = sources.length === 0 ? 'neuvedeno' : sources.join(', ');
+  if (Schema.is(ShortTextSchema)(summary)) {
+    return summary;
+  }
+  const included: string[] = [];
+  for (const source of sources) {
+    if (!Schema.is(ShortTextSchema)([...included, source, '…'].join(', '))) {
+      break;
+    }
+    included.push(source);
+  }
+  return [...included, '…'].join(', ');
+};
 
 const definedEntries = <T extends object>(value: T) => {
   const defined: { [K in keyof T]?: Exclude<T[K], undefined> } = {};
@@ -350,7 +367,7 @@ export const importOrders = (
     results,
     review: count('review'),
     rowCount: parsed.rows.length,
-    source: sources.length === 0 ? 'neuvedeno' : sources.join(', '),
+    source: summarizeSources(sources),
     status: batchStatus,
     unpaired,
     updated: count('updated'),
