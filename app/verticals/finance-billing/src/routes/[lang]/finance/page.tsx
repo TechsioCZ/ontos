@@ -22,6 +22,7 @@ import enResource from '../../../../locales/en/finance-billing.json';
 import '../../index.css';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import { CreateInvoiceDialog } from './create-invoice-dialog.tsx';
+import { FinanceDocumentDetail } from './document-detail.tsx';
 import { FinanceInvoiceDetail } from './invoice-detail.tsx';
 import { FinanceInvoiceTable } from './invoices-table.tsx';
 import { AccountingPanel } from './accounting-panel.tsx';
@@ -121,9 +122,30 @@ const overdueKpiLabel = (t: ReturnType<typeof useFinanceRecords>['t'], reference
   return referenceDate === '' ? label : `${label} k ${formatDate(referenceDate)}`;
 };
 
+const hasRecordDetail = (vm: ReturnType<typeof useFinanceRecords>) =>
+  vm.detailConflict || vm.documentId !== undefined || vm.selected !== undefined;
+
+const RecordDetail = ({ vm }: { readonly vm: ReturnType<typeof useFinanceRecords> }) => {
+  const { detailConflict, documentId, selected, t } = vm;
+  if (detailConflict) {
+    return (
+      <StatusText showIcon status="error">
+        {t(`${ns}.detailConflict`)}
+      </StatusText>
+    );
+  }
+  if (selected !== undefined) {
+    return <FinanceInvoiceDetail invoice={selected} vm={vm} />;
+  }
+  if (documentId !== undefined) {
+    return <FinanceDocumentDetail documentId={documentId} key={documentId} vm={vm} />;
+  }
+  return null;
+};
+
 const RecordsPageContent = () => {
   const vm = useFinanceRecords();
-  const { canWrite, feedback, indicators, references, selected, t } = vm;
+  const { canWrite, feedback, indicators, references, t } = vm;
   const [createOpen, setCreateOpen] = useState(false);
   const [incomingOpen, setIncomingOpen] = useState(false);
   const openingTab = useRouterState({
@@ -149,7 +171,9 @@ const RecordsPageContent = () => {
       <UltramodernRouteHead />
       <Toaster />
       <section className="flex min-w-0 flex-col gap-250 text-fg-primary">
-        {selected === undefined ? (
+        {hasRecordDetail(vm) ? (
+          <RecordDetail vm={vm} />
+        ) : (
           <>
             <PageHeader
               actions={
@@ -241,8 +265,6 @@ const RecordsPageContent = () => {
               </Tabs.Content>
             </Tabs>
           </>
-        ) : (
-          <FinanceInvoiceDetail invoice={selected} vm={vm} />
         )}
       </section>
       {references.productsReadable !== undefined && (

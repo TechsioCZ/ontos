@@ -130,6 +130,7 @@ md:grid-cols-[2fr_1fr]
 min-w-0
 ml-100
 mt-100
+mt-150
 mt-[5px]
 object-contain
 opacity-15

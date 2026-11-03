@@ -11,7 +11,11 @@ import { Effect, Match, Option, Schema } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/http';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { FinanceCommandSchema } from '../../../../shared/actions/apply-command.ts';
-import { FinancePartyIdSchema, RecordsRequestSchema } from '../../../../shared/apis/records.ts';
+import {
+  FinanceDocumentIdSchema,
+  FinancePartyIdSchema,
+  RecordsRequestSchema,
+} from '../../../../shared/apis/records.ts';
 import type {
   CalendarDateSchema,
   Invoice,
@@ -25,6 +29,7 @@ import { executeApplyCommand } from '../../../api/apply-command-action-client.ts
 import { browserCrypto } from '../../../api/browser-crypto.ts';
 import { executeRecords } from '../../../api/records-client.ts';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
+import { financeRecordDetailConflict } from './finance-document-detail.ts';
 import { reasonText } from './finance-ui.tsx';
 import type { FinanceCommandDraft } from './finance-ui.tsx';
 import { useFinanceReferences } from './use-finance-references.ts';
@@ -53,6 +58,7 @@ export type DraftInvoiceOutcome =
 
 const searchSchema = Schema.Struct({
   counterpartyId: Schema.optional(CounterpartyRefSchema.fields.resourceId),
+  documentId: Schema.optional(FinanceDocumentIdSchema),
   partyId: Schema.optional(FinancePartyIdSchema),
   resourceId: Schema.optional(InvoiceRefSchema.fields.resourceId.check(Schema.isUUID())),
   tenantId: Schema.optional(CounterpartyRefSchema.fields.tenantId),
@@ -185,6 +191,12 @@ const detailUrl = (id?: string) => {
   return url;
 };
 
+const documentDetailUrl = () => {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('documentId');
+  return url;
+};
+
 /**
  * Opens an invoice as a new history entry (`?resourceId=`), so browser Back returns to the list. The entry gets the
  * next TanStack index and its own key, so the router reads Back as one step back instead of a jump.
@@ -283,6 +295,8 @@ export const useFinanceRecords = () => {
   const fields = Option.getOrElse(search, (): typeof searchSchema.Type => ({}));
   const { counterpartyId, partyId, tenantId } = fields;
   const requestedId = fields.resourceId;
+  const requestedDocumentId = fields.documentId;
+  const detailConflict = financeRecordDetailConflict({ documentId: requestedDocumentId, resourceId: requestedId });
   const request = searchInvalid ? Option.none() : customerInvoiceRequest(partyId, counterpartyId, tenantId);
   const recordsSnapshot = useSyncExternalStore(
     financeRecords.subscribe,
@@ -452,9 +466,15 @@ export const useFinanceRecords = () => {
       }
       window.history.replaceState(window.history.state, '', detailUrl());
     },
+    closeDocumentDetail: () => {
+      window.history.replaceState(window.history.state, '', documentDetailUrl());
+    },
 
     execute,
     fetchDocument,
+    /** The URL must name an invoice or a document, never both. */
+    detailConflict,
+    documentId: requestedDocumentId,
 
     /** Asks before confirming; `confirmPending` runs the command once the user agrees. */
     confirmInvoice: (invoice: Invoice) => setConfirmTarget(invoice),
