@@ -9,7 +9,12 @@ export {
   readVerifiedGatewayCompositionRevision,
   readVerifiedGatewayScopeAssertion,
 } from '../auth/system-principal-context-provenance.ts';
-export { defineRead, defineReadConditionalPermission, defineReadResourcePermission } from '../reads/definition.ts';
+export {
+  defineRead,
+  defineReadConditionalPermission,
+  defineReadOwnerPermission,
+  defineReadResourcePermission,
+} from '../reads/definition.ts';
 export { OperationContextUnavailable } from '../operations/operation-context-unavailable.ts';
 export { defineVerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
 export { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '../modules/module-dependency-contracts.ts';
@@ -59,6 +64,7 @@ export {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   ReadPermissionDenied,
+  ReadPermissionUnavailable,
   ReadPolicyDenied,
 } from '../reads/errors.ts';
 export {
