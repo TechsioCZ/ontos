@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 import { CustomerListItemSchema } from '../../shared/apis/customer-list.ts';
 import {
   CounterpartyReadForbiddenProblemSchema,
+  CounterpartyReadInternalProblemSchema,
   CounterpartyReadNotFoundProblemSchema,
   CounterpartyReadResponseSchema,
 } from '../../shared/apis/counterparty-read.ts';
@@ -150,6 +151,24 @@ const record: CustomerDetailPageRecord = {
   now: DateTime.makeUnsafe(instant),
 };
 
+const endedIdentifier = {
+  identifierType: 'ICO' as const,
+  namespace: 'CZ:ICO',
+  normalizedValue: '01000004',
+  officialIdentifierRef: {
+    moduleId: 'party.registry' as const,
+    resourceId: '60000000-0000-4000-8000-000000000001',
+    resourceType: 'party.registry.party-official-identifier' as const,
+    tenantId,
+  },
+  partyRef,
+  recordedAt: instant,
+  state: 'ENDED' as const,
+  validFrom: instant,
+  validTo: instant,
+  verification: 'UNVERIFIED' as const,
+};
+
 const noop = (): void => {
   // Rendering tests assert the body; the callbacks deliberately do nothing.
 };
@@ -157,7 +176,6 @@ const noop = (): void => {
 const sectionKeys = [
   'party-registry.pages.customers.detail.identifiers',
   'party-registry.pages.customers.detail.contacts',
-  'party-registry.pages.customers.detail.history',
   'party-registry.pages.customers.detail.related',
 ];
 
@@ -166,6 +184,8 @@ const expectDetailBody = () => {
   for (const key of sectionKeys) {
     expect(screen.getByText(key)).toBeTruthy();
   }
+  // A customer without ended facts has no dated list, so neither surface shows a history title over the links.
+  expect(screen.queryByText('party-registry.pages.customers.detail.history')).toBeNull();
   expect(screen.getByText('party-registry.pages.customers.detail.createdAt')).toBeTruthy();
   expect(screen.getByText('party-registry.pages.customers.status.ACTIVE')).toBeTruthy();
   expect(document.body.textContent).not.toContain(partyId);
@@ -194,6 +214,38 @@ it('renders the same complete detail body in the side panel and on the page', ()
 
   render(<CustomerDetailPageRecordView onChanged={noop} onRetry={noop} record={record} stale={false} />);
   expectDetailBody();
+});
+
+it('lists an ended identifier in the same dated history section on the page and in the panel', () => {
+  const endedRecord: CustomerDetailPageRecord = {
+    ...record,
+    identifiers: { status: 'ready', value: { items: [endedIdentifier] } },
+  };
+  render(
+    <CustomerDetailDialog
+      customer={customer}
+      onOpenChange={noop}
+      onRenamed={noop}
+      onRetry={noop}
+      snapshot={endedRecord}
+    />,
+  );
+  expect(screen.getByText('party-registry.pages.customers.detail.history')).toBeTruthy();
+  expect(screen.getByText(/01000004/u)).toBeTruthy();
+  expect(screen.getByText(/party-registry\.pages\.customers\.detail\.states\.ENDED/u)).toBeTruthy();
+  cleanup();
+
+  render(<CustomerDetailPageRecordView onChanged={noop} onRetry={noop} record={endedRecord} stale={false} />);
+  expect(screen.getByText('party-registry.pages.customers.detail.history')).toBeTruthy();
+  expect(screen.getByText(/01000004/u)).toBeTruthy();
+  expect(screen.getByText(/party-registry\.pages\.customers\.detail\.states\.ENDED/u)).toBeTruthy();
+});
+
+it('asks for the authenticated scope instead of offering a read that cannot start', () => {
+  render(<CustomerDetailPage routeParams={routeParams} />);
+  expect(screen.getByText('party-registry.pages.customers.detail.unavailable')).toBeTruthy();
+  expect(screen.queryByText('party-registry.pages.customers.detail.reload')).toBeNull();
+  expect(executeCounterpartyRead).not.toHaveBeenCalled();
 });
 
 it.live('loads a customer outside the first 500 rows by the exact Counterparty id', () =>
@@ -282,6 +334,29 @@ it.live('a scope switch never shows the previous scope record before effects run
     );
     expect(screen.queryByRole('heading', { name: 'Eva Bílá' })).toBeNull();
     expect(screen.getByText('party-registry.pages.customers.detail.loading')).toBeTruthy();
+  }),
+);
+
+it.live('keeps the same-scope record read-only and offers a reload after a transient failure', () =>
+  Effect.gen(function* staleSameScope() {
+    yield* customerDetailPageData.preload(pageInput);
+    render(<CustomerDetailPage context={context} routeParams={routeParams} />);
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByRole('heading', { name: 'Eva Bílá' })).toBeTruthy()));
+    const internal = yield* Schema.decodeEffect(CounterpartyReadInternalProblemSchema)({
+      _tag: 'CounterpartyReadInternalProblem',
+      detail: 'Read failed',
+      status: 500,
+      title: 'Internal',
+      type: 'urn:test:internal',
+    });
+    rstest.mocked(executeCounterpartyRead).mockReturnValue(Effect.fail(internal));
+    yield* customerDetailPageData.refresh(pageInput);
+    yield* Effect.promise(() =>
+      waitFor(() => expect(screen.getByText('party-registry.pages.customers.detail.reload')).toBeTruthy()),
+    );
+    expect(screen.getByRole('heading', { name: 'Eva Bílá' })).toBeTruthy();
+    expect(screen.getByText('party-registry.pages.customers.detail.createdAt')).toBeTruthy();
+    expect(screen.queryByText('party-registry.pages.customers.detail.unavailable')).toBeNull();
   }),
 );
 

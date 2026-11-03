@@ -274,7 +274,8 @@ const CustomerDetailPageContent = ({ context, routeParams }: CustomerDetailPageP
     return (
       <CustomerDetailPageNotice
         onBack={back}
-        onRetry={status === 'unavailable' ? reload : undefined}
+        // A missing Shell scope reads nothing and a retry cannot fix it, so only a real failed read offers one.
+        onRetry={status === 'unavailable' && scopedInput !== undefined ? reload : undefined}
         status={status === 'ready' ? 'loading' : status}
       />
     );

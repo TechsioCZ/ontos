@@ -487,12 +487,17 @@ export const CustomerDetailContent = ({
               </>
             )}
             <CustomerFacts basisFilled={basisFilled} detail={detail} saveFact={saveFact} snapshot={snapshot} />
-            <h3 className="font-semibold">{t(`${CUSTOMER_DETAIL_KEY}.history`)}</h3>
-            {history.map((item) => (
-              <p key={item.id}>
-                {item.label} · {t(`${CUSTOMER_DETAIL_KEY}.states.${item.state}`)} · {formatDate(item.recordedAt)}
-              </p>
-            ))}
+            {/* A dated list only: with no ended fact the panel and the page render no empty section title. */}
+            {history.length > 0 && (
+              <>
+                <h3 className="font-semibold">{t(`${CUSTOMER_DETAIL_KEY}.history`)}</h3>
+                {history.map((item) => (
+                  <p key={item.id}>
+                    {item.label} · {t(`${CUSTOMER_DETAIL_KEY}.states.${item.state}`)} · {formatDate(item.recordedAt)}
+                  </p>
+                ))}
+              </>
+            )}
             <h3 className="font-semibold">{t(`${CUSTOMER_DETAIL_KEY}.related`)}</h3>
             <p className="text-fg-secondary text-sm">{t(`${CUSTOMER_DETAIL_KEY}.relatedContext`)}</p>
             <div className="flex flex-wrap gap-150">
