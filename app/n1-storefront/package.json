@@ -24,7 +24,8 @@
     "effect": "4.0.7",
     "next": "16.3.8",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "server-only": "0.0.1"
   },
   "devDependencies": {
     "@effect/platform-node": "4.0.7",
@@ -36,7 +37,6 @@
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
     "oxfmt": "0.66.0",
     "oxlint": "1.81.0",
-    "playwright-core": "1.58.2",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3"
   }

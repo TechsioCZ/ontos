@@ -37,7 +37,6 @@ export const MarketRetirementStageSchema = Schema.Literals([
   'COMPLETED',
   'FAILED',
 ]);
-export type MarketRetirementStage = typeof MarketRetirementStageSchema.Type;
 
 /** Typed terminal reasons a requested retirement did not happen. */
 export const MarketRetirementFailureReasonSchema = Schema.Literals([

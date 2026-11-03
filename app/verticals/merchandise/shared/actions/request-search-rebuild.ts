@@ -8,4 +8,3 @@ export const RequestSearchRebuildResultSchema = Schema.Struct({
 });
 
 export type RequestSearchRebuildPayload = typeof RequestSearchRebuildPayloadSchema.Type;
-export type RequestSearchRebuildResult = typeof RequestSearchRebuildResultSchema.Type;

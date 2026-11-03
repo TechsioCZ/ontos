@@ -23,6 +23,7 @@
   ],
   "workspaces": {
     ".": {
+      "ignoreBinaries": ["uv"],
       "entry": [
         "oxlint.config.ts",
         "oxfmt.config.ts",
@@ -49,7 +50,10 @@
         "scripts/**/*.{test,spec}.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
         "quality-audit/knip-reporter.mts",
         "scripts/demo/prove-sales-demo.mts",
-        "scripts/demo/provision-actions.mts"
+        "scripts/demo/provision-actions.mts",
+        "scripts/fonts/subset-fonts.mjs",
+        "scripts/demo/publish-people-search-schema.mts",
+        "scripts/demo/search-stage-dead-delivery.mts"
       ],
       "project": [
         "scripts/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
@@ -293,8 +297,181 @@
       ],
       "entry": [
         "cloudflare-worker.mjs",
-        "*.config.{ts,mts,js,mjs}"
+        "*.config.{ts,mts,js,mjs}",
+        "tests/browser/address-autocomplete-live.mjs"
       ],
+      "lefthook": false
+    },
+    "verticals/facility-operations": {
+      "project": [
+        "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/dist-cloudflare/**",
+        "!**/cloudflare-dist/**",
+        "!**/.output/**",
+        "!**/.modern/**",
+        "!**/.modernjs/**",
+        "!**/modern-tanstack/**",
+        "!**/routeTree.gen.*",
+        "!**/.env",
+        "!**/.env.*"
+      ],
+      "entry": [
+        "src/index.{ts,tsx,js}",
+        "src/entry.tsx",
+        "api/index.ts",
+        "vertical.registration.ts",
+        "src/federation-entry.tsx",
+        "src/routes/**/{page,layout,error,loading,not-found}.{ts,tsx}",
+        "src/routes/**/*.data.{ts,tsx}",
+        "src/routes/**/route.{meta,sitemap}.{ts,mjs}",
+        "*.config.{ts,mts,js,mjs}",
+        "src/modern.runtime.ts",
+        "src/worker-host/entry.ts",
+        "api/backend-federation.ts",
+        "api/effect-api.ts",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/dist-cloudflare/**",
+        "!**/cloudflare-dist/**",
+        "!**/.output/**",
+        "!**/.modern/**",
+        "!**/.modernjs/**",
+        "!**/modern-tanstack/**",
+        "!**/routeTree.gen.*",
+        "!**/.env",
+        "!**/.env.*",
+        "tests/support/preproposal-basis-receiver.fixture.ts",
+        "tests/support/preproposal-basis-producer.fixture.ts",
+        "tests/support/order-finalization-receiver.fixture.ts",
+        "tests/support/order-finalization-config-bootstrap.fixture.ts",
+        "tests/fixtures/market-revision-native-backend.ts",
+        "tests/support/market-revision-native-child.ts",
+        "tests/support/privacy-completion-worker.ts",
+        "tests/support/official-identifier-correction-reuse.rstest.config.ts",
+        "tests/support/dsr-legacy-owner.fixture.ts",
+        "src/routes/\\[lang\\]/provoz/dokumenty/documents-route-state.test.ts"
+      ],
+      "drizzle": {
+        "config": []
+      },
+      "playwright": {
+        "config": [],
+        "entry": [
+          "tests/**/*.spec.{ts,tsx}",
+          "tests/**/*.test.{ts,tsx}"
+        ]
+      },
+      "rstest": {
+        "config": [],
+        "entry": [
+          "tests/**/*.{test,spec}.{ts,tsx,mts}"
+        ]
+      },
+      "lefthook": false
+    },
+    "verticals/commerce-customer-context": {
+      "project": [
+        "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/dist-cloudflare/**",
+        "!**/cloudflare-dist/**",
+        "!**/.output/**",
+        "!**/.modern/**",
+        "!**/.modernjs/**",
+        "!**/modern-tanstack/**",
+        "!**/routeTree.gen.*",
+        "!**/.env",
+        "!**/.env.*"
+      ],
+      "entry": [
+        "src/index.{ts,tsx,js}",
+        "src/entry.tsx",
+        "api/index.ts",
+        "vertical.registration.ts",
+        "src/federation-entry.tsx",
+        "src/routes/**/{page,layout,error,loading,not-found}.{ts,tsx}",
+        "src/routes/**/*.data.{ts,tsx}",
+        "src/routes/**/route.{meta,sitemap}.{ts,mjs}",
+        "*.config.{ts,mts,js,mjs}",
+        "src/modern.runtime.ts",
+        "src/worker-host/entry.ts",
+        "api/backend-federation.ts",
+        "api/effect-api.ts",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/dist-cloudflare/**",
+        "!**/cloudflare-dist/**",
+        "!**/.output/**",
+        "!**/.modern/**",
+        "!**/.modernjs/**",
+        "!**/modern-tanstack/**",
+        "!**/routeTree.gen.*",
+        "!**/.env",
+        "!**/.env.*",
+        "tests/support/preproposal-basis-receiver.fixture.ts",
+        "tests/support/preproposal-basis-producer.fixture.ts",
+        "tests/support/order-finalization-receiver.fixture.ts",
+        "tests/support/order-finalization-config-bootstrap.fixture.ts",
+        "tests/fixtures/market-revision-native-backend.ts",
+        "tests/support/market-revision-native-child.ts",
+        "tests/support/privacy-completion-worker.ts",
+        "tests/support/official-identifier-correction-reuse.rstest.config.ts",
+        "tests/support/dsr-legacy-owner.fixture.ts",
+        "scripts/read-original-retail-enrollment.mts"
+      ],
+      "drizzle": {
+        "config": []
+      },
+      "playwright": {
+        "config": [],
+        "entry": [
+          "tests/**/*.spec.{ts,tsx}",
+          "tests/**/*.test.{ts,tsx}"
+        ]
+      },
+      "rstest": {
+        "config": [],
+        "entry": [
+          "tests/**/*.{test,spec}.{ts,tsx,mts}"
+        ]
+      },
+      "lefthook": false
+    },
+    "n1-storefront": {
+      "project": [
+        "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/dist-cloudflare/**",
+        "!**/.output/**",
+        "!**/.modern/**",
+        "!**/.modernjs/**",
+        "!**/modern-tanstack/**",
+        "!**/routeTree.gen.*",
+        "!**/.env",
+        "!**/.env.*",
+        "!**/cloudflare-dist/**",
+        "!**/.next/**",
+        "!**/.open-next/**",
+        "!**/.wrangler/**",
+        "!**/.vercel/**",
+        "!**/coverage/**",
+        "!**/playwright-report/**",
+        "!**/test-results/**"
+      ],
+      "entry": [
+        "*.config.{ts,mts,js,mjs}",
+        "src/proxy.ts"
+      ],
+      "rstest": {
+        "config": [],
+        "entry": [
+          "tests/**/*.{test,spec}.{ts,tsx,mts}"
+        ]
+      },
       "lefthook": false
     }
   }

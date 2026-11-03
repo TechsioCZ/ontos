@@ -3,7 +3,7 @@ import { Effect, Schema, flow } from "effect";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 
 /** Customer fields only: identity, destination, title and subject belong to the server. */
-export const InquirySchema = Schema.Struct({
+const InquirySchema = Schema.Struct({
   email: Schema.Trim.check(
     Schema.isMaxLength(254),
     Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/u),
@@ -15,7 +15,7 @@ export const InquirySchema = Schema.Struct({
   requestId: Schema.String.check(Schema.isUUID()),
 });
 export type Inquiry = typeof InquirySchema.Type;
-export const InquiryReceiptSchema = Schema.Struct({
+const InquiryReceiptSchema = Schema.Struct({
   taskId: Schema.String.check(Schema.isMinLength(1)),
 });
 export const InquiryInvalid = makeProblemDetailsSchema("InquiryInvalid", 400);

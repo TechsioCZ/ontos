@@ -8,13 +8,6 @@ import {
 } from '@app/sales-pipeline/outbox/demo-sales-pipeline-search-refresh-requested-v1';
 import type { OutboxPayload } from '@app/sales-pipeline/outbox/demo-sales-pipeline-search-refresh-requested-v1';
 
-export {
-  OutboxPayloadSchema as ApplyCommandDemoSalesPipelineSearchRefreshRequestedV1OutboxPayloadSchema,
-  outboxProducerModuleKey as ApplyCommandDemoSalesPipelineSearchRefreshRequestedV1OutboxProducerModuleKey,
-  outboxTopic as ApplyCommandDemoSalesPipelineSearchRefreshRequestedV1OutboxTopic,
-} from '@app/sales-pipeline/outbox/demo-sales-pipeline-search-refresh-requested-v1';
-export type { OutboxPayload as ApplyCommandDemoSalesPipelineSearchRefreshRequestedV1OutboxPayload } from '@app/sales-pipeline/outbox/demo-sales-pipeline-search-refresh-requested-v1';
-
 export const createApplyCommandDemoSalesPipelineSearchRefreshRequestedV1OutboxMessage = (
   payload: OutboxPayload,
 ): OutboxMessage => ({

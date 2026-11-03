@@ -25,7 +25,7 @@ export const ListingCards = ({
     {catalog.products.map((product) => {
       const href = `/${locale}/produkt/${encodeURIComponent(product.slug)}`;
       return (
-        <ProductCard key={product.id} layout="column">
+        <ProductCard key={product.id} layout="column" shadow={false}>
           <Link aria-hidden="true" as={NextLink} href={href} tabIndex={-1}>
             {product.image === null ? (
               <p className="py-12 text-center text-fg-secondary">{d.imageUnavailable}</p>
@@ -35,6 +35,7 @@ export const ListingCards = ({
                 as={NextImage}
                 height={252}
                 loading="lazy"
+                objectFit="contain"
                 src={product.image}
                 width={336}
               />

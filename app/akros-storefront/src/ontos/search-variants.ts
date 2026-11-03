@@ -10,7 +10,7 @@ const FULL_PAGE_LIMIT = 2;
  * At most this many variant groups of one search page are read in full (stage runs on one CPU); later hits keep
  * the query filter link, which opens the same variant table pre-filtered.
  */
-export const SEARCH_PAGE_VARIANT_GROUPS = 8;
+const SEARCH_PAGE_VARIANT_GROUPS = 8;
 export const SUGGESTION_VARIANT_GROUPS = 2;
 
 /**

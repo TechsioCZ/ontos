@@ -1,10 +1,7 @@
 #!/usr/bin/env node
 import path from 'node:path';
 
-import {
-  executeCounterpartyReadWithAuthorization,
-  executeCustomerListWithAuthorization,
-} from '@app/party-registry/api/client';
+import { executeCustomerListWithAuthorization } from '@app/party-registry/api/client';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Config, Console, Effect, FileSystem, Option, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
@@ -134,36 +131,8 @@ export const proveAkrosCustomerLink = (evidence: AkrosCustomerLinkEvidence) =>
     };
   });
 
-/** The account must come from the customer's admitted public session. Staff reads use fresh governed assertions. */
-export const readAkrosCustomerLink = (
-  client: Pick<SeedClient, 'authorize'>,
-  account: AkrosCustomerLinkEvidence['account'],
-) =>
-  Effect.gen(function* readCustomerLink() {
-    const listAuthorization = yield* client.authorize(partyRegistryAudience);
-    const customers = yield* executeCustomerListWithAuthorization(
-      { limit: 500 },
-      Redacted.value(listAuthorization.credential),
-      'akros-demo-customer-list-20261103',
-      listAuthorization.options,
-    );
-    const matches = customers.items.filter(({ partyId }) => partyId === account.partyId);
-    const [customer] = matches;
-    if (matches.length !== 1 || customer === undefined) {
-      return yield* failed('akros_customer_native_directory_unproved');
-    }
-    const detailAuthorization = yield* client.authorize(partyRegistryAudience);
-    const counterparty = yield* executeCounterpartyReadWithAuthorization(
-      { counterpartyRef: customer.counterpartyRef },
-      Redacted.value(detailAuthorization.credential),
-      'akros-demo-customer-detail-20261103',
-      detailAuthorization.options,
-    );
-    return yield* proveAkrosCustomerLink({ account, counterparty, customer });
-  });
-
 /** Existing reviewed real-AKROS operator only. Its independent HTTP session never touches Edge cookies. */
-export const withAkrosCustomerOperator = <A, E, R>(use: (client: SeedClient) => Effect.Effect<A, E, R>) =>
+const withAkrosCustomerOperator = <A, E, R>(use: (client: SeedClient) => Effect.Effect<A, E, R>) =>
   Effect.gen(function* useRealAkrosOperator() {
     const password = yield* Config.Redacted('ONTOS_AKROS_PLAYGROUND_PASSWORD').pipe(
       Config.withDefault(Redacted.make('password1234')),
@@ -179,7 +148,7 @@ export const withAkrosCustomerOperator = <A, E, R>(use: (client: SeedClient) => 
     );
   });
 
-export const inspectAkrosCustomerDirectory = withAkrosCustomerOperator((client) =>
+const inspectAkrosCustomerDirectory = withAkrosCustomerOperator((client) =>
   Effect.gen(function* inspectDirectory() {
     const authorization = yield* client.authorize(partyRegistryAudience);
     const customers = yield* executeCustomerListWithAuthorization(
@@ -197,7 +166,7 @@ export const inspectAkrosCustomerDirectory = withAkrosCustomerOperator((client) 
 );
 
 /** The password is an owner-created 0600 file inside a 0700 directory, never an argument or JSON input. */
-export const readAkrosCustomerPassword = (passwordPath: string) =>
+const readAkrosCustomerPassword = (passwordPath: string) =>
   Effect.gen(function* readPrivatePassword() {
     const fs = yield* FileSystem.FileSystem;
     const [file, directory] = yield* Effect.all([fs.stat(passwordPath), fs.stat(path.dirname(passwordPath))]);

@@ -82,7 +82,7 @@ const isSameLine = (line: CartLine, productId: string, variantId?: string) =>
   line.productId === productId && line.variantId === variantId;
 
 /** Why a batch addition (reorder) added less than requested; the caller words it from the dictionary. */
-export interface CartBatchNotice {
+interface CartBatchNotice {
   sku: string;
   kind: "unorderable" | "limited";
   added: number;

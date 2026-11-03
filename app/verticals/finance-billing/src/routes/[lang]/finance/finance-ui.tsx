@@ -145,8 +145,6 @@ const MONTHS = [
 
 /** "říjen 2026" for `2026-10`. */
 export const monthLabel = (month: string) => `${MONTHS[Number(month.slice(5, 7)) - 1] ?? month} ${month.slice(0, 4)}`;
-export const shortMonthLabel = (month: string) =>
-  `${(MONTHS[Number(month.slice(5, 7)) - 1] ?? month).slice(0, 3)} ${month.slice(2, 4)}`;
 
 /** Known domain refusals in Czech; anything else falls back to the generic feedback text. */
 export const reasonText = {

@@ -22,7 +22,7 @@ import type {
 } from "@/ontos/catalog-types";
 
 /** The market a storefront catalog read was answered for. */
-export interface CatalogMarket {
+interface CatalogMarket {
   marketId: string;
   marketCode: string;
   currency: StoreCurrency;

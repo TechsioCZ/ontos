@@ -1,7 +1,7 @@
 // Product gallery references and the pure rules of a gallery change. A gallery is an ordered list of image references;
 // the first one is the main image the storefront shows. Uploaded images are Core Media Assets (`media:<asset>`);
 // imported catalog images stay the source system's own https addresses. Neither form is ever shown to a person.
-import { Option, Schema } from 'effect';
+import { Option } from 'effect';
 
 const MEDIA_REFERENCE_PREFIX = 'media:';
 const UUID = /^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/u;
@@ -24,10 +24,6 @@ export const mediaAssetIdOf = (reference: string): Option.Option<string> => {
 };
 
 export const isMediaImageReference = (reference: string): boolean => Option.isSome(mediaAssetIdOf(reference));
-
-/** Why a gallery change cannot apply to the current gallery. */
-export const GalleryChangeProblemSchema = Schema.Literals(['changed', 'full', 'missing']);
-export type GalleryChangeProblem = typeof GalleryChangeProblemSchema.Type;
 
 /** Appends an uploaded image; the gallery holds at most `PRODUCT_GALLERY_LIMIT` images. */
 export const appendImage = (gallery: readonly string[], reference: string): Option.Option<readonly string[]> => {

@@ -121,9 +121,4 @@ export const applyCommandAction = defineAction(
 );
 
 // <generated-outbox-message-exports>
-export { ApplyCommandWorkTasksSearchRefreshRequestedV1OutboxPayloadSchema } from './apply-command-work-tasks-search-refresh-requested-v1.outbox-message.ts';
-export { ApplyCommandWorkTasksSearchRefreshRequestedV1OutboxProducerModuleKey } from './apply-command-work-tasks-search-refresh-requested-v1.outbox-message.ts';
-export { ApplyCommandWorkTasksSearchRefreshRequestedV1OutboxTopic } from './apply-command-work-tasks-search-refresh-requested-v1.outbox-message.ts';
-export { createApplyCommandWorkTasksSearchRefreshRequestedV1OutboxMessage } from './apply-command-work-tasks-search-refresh-requested-v1.outbox-message.ts';
-export type { ApplyCommandWorkTasksSearchRefreshRequestedV1OutboxPayload } from './apply-command-work-tasks-search-refresh-requested-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

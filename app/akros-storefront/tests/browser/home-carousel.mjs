@@ -1,5 +1,50 @@
 import assert from "node:assert/strict";
-import { homeCarouselSlides } from "../../src/content/home-carousel.ts";
+import { readFile } from "node:fs/promises";
+import ts from "typescript";
+import { DEFAULT_MARKET_LOCALE, localizeHref } from "../../src/ontos/market-locale.ts";
+
+// The live banners belong to a server-only TSX brand profile. Read its literals without
+// executing its page components; the home page resolves each banner's alt text by market locale.
+const brandSource = ts.createSourceFile(
+  "akros.tsx",
+  await readFile(new URL("../../src/brand/akros.tsx", import.meta.url), "utf8"),
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TSX,
+);
+const brand = brandSource.statements
+  .filter(ts.isVariableStatement)
+  .flatMap((statement) => [...statement.declarationList.declarations])
+  .find(
+    (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === "akros",
+  )?.initializer;
+assert.ok(brand && ts.isObjectLiteralExpression(brand), "AKROS must define its brand profile");
+const carouselData = brand.properties.find(
+  (property) =>
+    ts.isPropertyAssignment(property) &&
+    ts.isIdentifier(property.name) &&
+    property.name.text === "carousel",
+);
+assert.ok(carouselData, "AKROS must define its production carousel");
+const readLiteral = (node) => {
+  if (ts.isStringLiteral(node)) return node.text;
+  if (ts.isArrayLiteralExpression(node)) return node.elements.map(readLiteral);
+  assert.ok(ts.isObjectLiteralExpression(node), "Carousel data must contain only literal data");
+  return Object.fromEntries(
+    node.properties.map((property) => {
+      assert.ok(ts.isPropertyAssignment(property), "Carousel data must use explicit properties");
+      assert.ok(
+        ts.isIdentifier(property.name) || ts.isStringLiteral(property.name),
+        "Carousel data must use literal property names",
+      );
+      return [property.name.text, readLiteral(property.initializer)];
+    }),
+  );
+};
+const homeCarouselSlides = readLiteral(carouselData.initializer).map(({ alt, ...slide }) => ({
+  ...slide,
+  alt: alt[DEFAULT_MARKET_LOCALE],
+}));
 
 // Snap points, scrolling and pointer drags require a layout engine, not jsdom geometry shims.
 // Shared browser client module (exports `openTab`); machine-specific, so it is configured, never hard-coded.
@@ -35,7 +80,9 @@ try {
     await carousel
       .locator("a")
       .evaluateAll((links) => links.map((link) => link.getAttribute("href"))),
-    homeCarouselSlides.flatMap((slide) => (slide.href ? [slide.href] : [])),
+    homeCarouselSlides.flatMap((slide) =>
+      slide.href ? [localizeHref(slide.href, DEFAULT_MARKET_LOCALE)] : [],
+    ),
   );
   const active = (index) =>
     carousel.locator(`[data-part=indicator][data-index="${index}"][data-current]`).waitFor();

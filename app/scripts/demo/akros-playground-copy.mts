@@ -17,7 +17,6 @@ import {
   CurrentMarketCatalogRequestSchema,
   CurrentMarketCatalogResponseSchema,
 } from '../../verticals/commerce-market-catalog/shared/apis/current-market-catalog.ts';
-import { MerchandiseCommandSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
 import { MediaRequestSchema, MediaResponseSchema } from '../../verticals/merchandise/shared/apis/media.ts';
 import {
   MarketExceptionItemSchema,
@@ -44,8 +43,8 @@ import type { SeedClient } from './seed-client.mts';
 import { DemoSeedError, SeedLegalEntityId, SeedTenantId } from './seed-client.mts';
 
 type CopyReader = Pick<SeedClient, 'call'>;
-export const akrosPlaygroundTenantId = demoId('tenant', 'akros-playground');
-export const akrosPlaygroundLegalEntityId = demoId('legal-entity', 'akros-playground');
+const akrosPlaygroundTenantId = demoId('tenant', 'akros-playground');
+const akrosPlaygroundLegalEntityId = demoId('legal-entity', 'akros-playground');
 export const akrosPlaygroundAccounts = {
   admin: 'admin@akros.playground',
   eshop: 'eshop@akros.playground',
@@ -69,7 +68,6 @@ export const MarketCatalogRequest = Schema.toEncoded(CurrentMarketCatalogRequest
 export const MarketCatalogResponse = Schema.toEncoded(CurrentMarketCatalogResponseSchema);
 export const ApplicationsRequest = Schema.toEncoded(StorefrontApplicationsRequestSchema);
 export const ApplicationsResponse = Schema.toEncoded(StorefrontApplicationsResponseSchema);
-export const CopyCommand = Schema.toEncoded(MerchandiseCommandSchema);
 const MediaRequest = Schema.toEncoded(MediaRequestSchema);
 const MediaResponse = Schema.toEncoded(MediaResponseSchema);
 const ProductRecord = Schema.toEncoded(ProductRecordSchema);
@@ -486,7 +484,6 @@ export const BootstrapCopyCatalogSchema = Schema.Struct({
     }),
   ),
 });
-export type BootstrapCopyCatalog = typeof BootstrapCopyCatalogSchema.Type;
 const metadataSchema = Schema.toEncoded(ProductMetadataSchema);
 const productDocument = Schema.toEncoded(ProductSchema);
 export const productCopyFields = (product: typeof productDocument.Type) =>

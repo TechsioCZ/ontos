@@ -54,8 +54,6 @@ const PinsSchema = Schema.Struct({
   releaseSha,
   tenantId,
 });
-export type Pins = typeof PinsSchema.Type;
-
 export const CorpusSchema = Schema.Struct({
   cases: Schema.Array(
     Schema.Struct({

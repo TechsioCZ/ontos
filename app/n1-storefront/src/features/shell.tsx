@@ -165,7 +165,7 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
             <StorefrontSearch dictionary={d} locale={locale} />
           </div>
         </div>
-        <div className="hidden overflow-x-auto border-t border-highlight px-n1-nav-padding py-n1-nav-padding md:block md:h-n1-nav-height">
+        <div className="hidden overflow-x-auto overflow-y-hidden border-t border-highlight px-n1-nav-padding md:flex md:h-n1-nav-height md:items-center">
           <Header.Nav aria-label={d.menu}>
             <Header.NavItem>
               <Link as={NextLink} href={`/${locale}/novinky`}>
