@@ -15,9 +15,8 @@ import type {
   OutboxWorkerHandlerContext,
 } from '@app/core-runtime';
 import { Array as Arr, Context, Effect, Layer, Schema } from 'effect';
-import { crmContactSearchTerms } from '../../shared/domain/search-contact-classification.ts';
 import { searchUnavailable } from '../search/search-unavailable.ts';
-import { SearchSource } from './search-source.service.ts';
+import { crmClientSearchTerms, crmContactRecordSearchTerms, SearchSource } from './search-source.service.ts';
 import type { SearchSnapshot } from './search-source.service.ts';
 
 export type { SearchSnapshot } from './search-source.service.ts';
@@ -53,11 +52,7 @@ const documentInputs = (snapshot: SearchSnapshot) =>
       ...common,
       archived: client.status === 'archived' || client.archivedAt !== undefined,
       ref: { moduleId, resourceId: client.id, resourceType: 'demo.crm.client', tenantId: snapshot.tenantId },
-      searchableText: [
-        client.name,
-        ...(client.kind === 'organization' && client.regNo !== undefined ? [client.regNo] : []),
-        ...crmContactSearchTerms('client', client),
-      ],
+      searchableText: crmClientSearchTerms(client),
       title: client.name,
     }));
     const contacts = state.clients.contacts.map((contact) => {
@@ -71,7 +66,7 @@ const documentInputs = (snapshot: SearchSnapshot) =>
           client.status === 'archived' ||
           client.archivedAt !== undefined,
         ref: { moduleId, resourceId: contact.id, resourceType: 'demo.crm.contact', tenantId: snapshot.tenantId },
-        searchableText: [contact.name, ...crmContactSearchTerms('contact', contact)],
+        searchableText: crmContactRecordSearchTerms(contact, client),
         title: contact.name,
       };
     });

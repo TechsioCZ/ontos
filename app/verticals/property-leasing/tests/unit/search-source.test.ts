@@ -32,7 +32,13 @@ const context: OutboxWorkerHandlerContext = {
   workerKey: 'property.leasing.refresh-search',
 };
 
-const scenario = (rowTenant = tenantId, rowCompany?: string) =>
+interface SourceOptions {
+  readonly companies?: readonly string[];
+  readonly payload?: unknown;
+  readonly rowCount?: number;
+  readonly snapshotTenant?: string;
+}
+const scenario = (rowTenant = tenantId, rowCompany?: string, options: SourceOptions = {}) =>
   Effect.scoped(
     Effect.gen(function* sourceScenario() {
       const queries: { readonly params: readonly unknown[]; readonly sql: string }[] = [];
@@ -42,13 +48,13 @@ const scenario = (rowTenant = tenantId, rowCompany?: string) =>
           Effect.succeed(
             testSqlConnection((sql, params) => {
               queries.push({ params, sql });
-              return Effect.succeed([
-                {
+              return Effect.succeed(
+                Array.from({ length: options.rowCount ?? 1 }, () => ({
                   legalEntityId: rowCompany ?? params[1],
-                  payload: { occupancies: [] },
+                  payload: options.payload ?? { occupancies: [] },
                   tenantId: rowTenant,
-                },
-              ]);
+                })),
+              );
             }),
           ),
         ).pipe(Layer.provide(Reactivity.layer)),
@@ -64,10 +70,10 @@ const scenario = (rowTenant = tenantId, rowCompany?: string) =>
               scopes.push(company);
               return read({ select: executor.select.bind(executor) });
             },
-            legalEntityIds: [legalEntityId, otherCompany],
+            legalEntityIds: options.companies ?? [legalEntityId, otherCompany],
             projectionVersion: '37',
             tenant: () => Effect.fail(invalidSearchSource()),
-            tenantId,
+            tenantId: options.snapshotTenant ?? tenantId,
           }),
       };
       const exit = yield* Effect.exit(
@@ -98,5 +104,30 @@ it.effect('fails closed when a driver returns rows outside the trusted tenant or
   Effect.gen(function* scenarioTest() {
     expect(Exit.isFailure((yield* scenario(otherCompany)).exit)).toBe(true);
     expect(Exit.isFailure((yield* scenario(tenantId, otherCompany)).exit)).toBe(true);
+  }),
+);
+
+it.effect('rejects duplicate company authorities and mismatched snapshot tenants before owner SQL', () =>
+  Effect.gen(function* snapshotScopeScenario() {
+    for (const options of [{ companies: [legalEntityId, legalEntityId] }, { snapshotTenant: otherCompany }]) {
+      const result = yield* scenario(tenantId, undefined, options);
+      expect(Exit.isFailure(result.exit)).toBe(true);
+      expect(result.queries).toEqual([]);
+    }
+  }),
+);
+
+it.effect('fails closed on duplicate aggregate rows or invalid owner payloads', () =>
+  Effect.gen(function* invalidRowsScenario() {
+    for (const options of [{ rowCount: 2 }, { payload: { occupancies: [{ note: 'PRIVATE MALFORMED RECORD' }] } }]) {
+      const result = yield* scenario(tenantId, undefined, options);
+      expect(Exit.isFailure(result.exit)).toBe(true);
+      expect(result.queries.length).toBe(1);
+    }
+    const missing = yield* scenario(tenantId, undefined, { rowCount: 0 });
+    expect(Exit.isSuccess(missing.exit)).toBe(true);
+    if (Exit.isSuccess(missing.exit)) {
+      expect(missing.exit.value.companies).toEqual([]);
+    }
   }),
 );

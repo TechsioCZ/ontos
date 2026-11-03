@@ -1,5 +1,4 @@
 import {
-  CoreSearchIngestion,
   CoreSearchProjectionStore,
   ResourceContainmentRelationshipMutation,
   ownerResourceModuleContainment,
@@ -14,9 +13,8 @@ import { loadSearchSnapshot } from './search-source.ts';
 export const projectSearchSnapshot = Effect.fn('OwnerSearch.projectSnapshot')(function* projectSnapshot(
   snapshot: SearchSourceSnapshot,
   context: OutboxWorkerHandlerContext,
-  rebuild: boolean,
+  _rebuild: boolean,
 ) {
-  const ingestion = yield* CoreSearchIngestion;
   const store = yield* CoreSearchProjectionStore;
   const containment = yield* ResourceContainmentRelationshipMutation;
   if (snapshot.tenantId !== context.tenantId || !/^[1-9][0-9]*$/u.test(snapshot.projectionVersion)) {
@@ -37,28 +35,11 @@ export const projectSearchSnapshot = Effect.fn('OwnerSearch.projectSnapshot')(fu
     concurrency: 1,
     discard: true,
   });
-  if (!rebuild) {
-    yield* Effect.forEach(
-      documents,
-      (document) =>
-        ingestion.ingest(
-          {
-            consumerModuleKey: 'property.portfolio',
-            mutation: { document, kind: 'upsert' },
-            producerModuleKey: context.producerModuleKey,
-            projectionVersion: snapshot.projectionVersion,
-            tenantId: snapshot.tenantId,
-            topic: context.topic,
-            workerKey: context.workerKey,
-          },
-          context,
-        ),
-      { concurrency: 1, discard: true },
-    );
-  }
-  // The complete tenant snapshot also removes disappeared, archived and retired rows on ordinary refreshes.
+  // Publish each complete type once, after containment. Do not upsert individual documents first:
+  // that exposes a partial generation and duplicates the subsequent atomic replacement.
+  // Complete tenant snapshots also remove disappeared, archived and retired rows on ordinary refreshes.
   yield* Effect.forEach(
-    ['property.portfolio.property', 'property.portfolio.unit'],
+    ['property.portfolio.property', 'property.portfolio.unit', 'property.portfolio.asset'],
     (resourceType) =>
       store.replace(
         {

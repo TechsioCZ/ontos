@@ -33,6 +33,7 @@ import {
 
 // <generated-governed-http-handler-imports>
 import { applyCommandActionApiLive } from './apply-command-action-server.ts';
+import { assetsReadApiLive } from './assets-search-server.ts';
 import { propertiesReadApiLive } from './properties-search-server.ts';
 import { recordsReadApiLive } from './records-read-server.ts';
 import { requestSearchRebuildActionApiLive } from './request-search-rebuild-action-server.ts';
@@ -93,6 +94,7 @@ const governedApplicationCompositionSourceLive = GovernedApplicationCompositionS
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
   applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  assetsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   propertiesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   requestSearchRebuildActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

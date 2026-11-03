@@ -3,7 +3,12 @@
 import type { ReadPrepareContext, ReadLoadContext } from '@app/core-runtime';
 import type { LeasesProviderRequest, LeasesProviderResponse } from '../../shared/apis/leases-search.ts';
 import { Effect, Schema } from 'effect';
-import { ReadHandlerUnavailable, defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import {
+  ReadHandlerUnavailable,
+  defineRead,
+  defineReadSearchCollectionAuthorization,
+  defineTenantModuleEntrypoint,
+} from '@app/core-runtime';
 import { loadOwnerSearch } from './search-read.ts';
 import { LeasesProviderRequestSchema, LeasesProviderResponseSchema } from '../../shared/apis/leases-search.ts';
 
@@ -30,6 +35,12 @@ export const leasesRead = defineRead(
     permissionTarget: 'module',
     policies: [],
     readKey: 'property.leasing.search.leases',
+    resultAuthorization: defineReadSearchCollectionAuthorization({
+      items: (result: LeasesProviderResponse) => result,
+      resource: (item) => item.ref,
+      resultSchema: LeasesProviderResponseSchema,
+      withItems: (_result, items) => items,
+    }),
     resultSchema: LeasesProviderResponseSchema,
     schemaVersion: '1',
   },
@@ -57,5 +68,4 @@ export const leasesRead = defineRead(
   },
   () => Effect.succeed({}),
   () => ({ kind: 'module', moduleId: owningModuleKey }),
-  (result) => result.map(({ ref }) => ref),
 );

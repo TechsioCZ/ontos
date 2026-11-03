@@ -12,6 +12,7 @@ import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
 import { AssetsSearchApi } from './apis/assets-search.ts';
 import { DevicesSearchApi } from './apis/devices-search.ts';
 import { DocumentsSearchApi } from './apis/documents-search.ts';
+import { MetersSearchApi } from './apis/meters-search.ts';
 import { OverviewApi } from './apis/overview.ts';
 import { RecordsApi } from './apis/records.ts';
 import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
@@ -43,6 +44,7 @@ export const facilityOperationsApi = HttpApi.make('FacilityOperationsApi')
   .addHttpApi(AssetsSearchApi)
   .addHttpApi(DevicesSearchApi)
   .addHttpApi(DocumentsSearchApi)
+  .addHttpApi(MetersSearchApi)
   .addHttpApi(OverviewApi)
   .addHttpApi(RecordsApi)
   .addHttpApi(RequestSearchRebuildActionApi)

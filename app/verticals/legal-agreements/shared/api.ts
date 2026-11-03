@@ -14,6 +14,7 @@ import type {
 // <generated-governed-http-api-imports>
 import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
 import { ContractsSearchApi } from './apis/contracts-search.ts';
+import { DocumentsSearchApi } from './apis/documents-search.ts';
 import { RecordsApi } from './apis/records.ts';
 import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
 // </generated-governed-http-api-imports>
@@ -41,6 +42,7 @@ export const legalAgreementsApi = HttpApi.make('LegalAgreementsApi')
   // <generated-governed-http-api-additions>
   .addHttpApi(ApplyCommandActionApi)
   .addHttpApi(ContractsSearchApi)
+  .addHttpApi(DocumentsSearchApi)
   .addHttpApi(RecordsApi)
   .addHttpApi(RequestSearchRebuildActionApi)
   // </generated-governed-http-api-additions>

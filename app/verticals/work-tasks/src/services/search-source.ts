@@ -7,22 +7,22 @@ import type {
 import { and, eq, sql } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
 import { TaskRefSchema } from '../../shared/resources/task.ts';
+import { TaskPrioritySchema, TaskSchema, TaskStateSchema } from '../../shared/apis/records.ts';
 import { workStates } from '../database/schema.ts';
 import { searchUnavailable } from './search-read.ts';
 
-const RecordsSchema = Schema.Array(
-  Schema.Struct({
-    archived: Schema.Boolean,
-    ref: TaskRefSchema,
-    title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  }),
-);
-export interface SearchSourceRecord {
-  readonly archived: boolean;
-  readonly legalEntityId: string;
-  readonly ref: typeof TaskRefSchema.Type;
-  readonly title: string;
-}
+const RecordSchema = Schema.Struct({
+  archived: Schema.Boolean,
+  dueDate: TaskSchema.fields.dueDate,
+  ownerPrincipalRef: TaskSchema.fields.ownerPrincipalRef,
+  priority: Schema.optionalKey(TaskPrioritySchema),
+  projectId: TaskSchema.fields.projectId,
+  ref: TaskRefSchema,
+  state: Schema.optionalKey(TaskStateSchema),
+  title: TaskSchema.fields.title,
+});
+const RecordsSchema = Schema.Array(RecordSchema);
+export type SearchSourceRecord = typeof RecordSchema.Type & { readonly legalEntityId: string };
 export interface SearchSnapshot {
   readonly projectionVersion: string;
   readonly records: readonly SearchSourceRecord[];
@@ -37,10 +37,13 @@ const decodeRecords = Effect.fn('WorkTasks.decodeSearchRecords')(function* decod
     records,
     Effect.fn('WorkTasks.decodeSearchRecord')(function* decodeRecord(item) {
       const ref = yield* Schema.decodeEffect(TaskRefSchema)(item.ref).pipe(Effect.mapError(searchUnavailable));
-      if (ref.tenantId !== tenantId) {
+      if (
+        ref.tenantId !== tenantId ||
+        (item.ownerPrincipalRef !== undefined && item.ownerPrincipalRef.tenantId !== tenantId)
+      ) {
         return yield* searchUnavailable();
       }
-      return { archived: item.archived, legalEntityId, ref, title: item.title };
+      return { ...item, legalEntityId, ref };
     }),
     { concurrency: 1 },
   );
@@ -51,11 +54,12 @@ const readCompany = Effect.fn('WorkTasks.readSearchCompany')(function* readCompa
   tenantId: string,
   legalEntityId: string,
 ) {
-  // SQL emits only search fields, never raw owner JSON or private contact/comment/note/history fields.
+  // JSON-array projection cannot use column selection: whitelist only approved task fields here.
+  // No description, comments, history, inquiry contacts or foreign-owner joins. projectId is work.tasks-local.
   const rows = yield* db
     .select({
       legalEntityId: workStates.legalEntityId,
-      records: sql<unknown>`case when jsonb_typeof(${workStates.state}->'tasks') = 'array' then coalesce((select jsonb_agg(jsonb_build_object('ref', item->'ref', 'title', item->>'title', 'archived', item ? 'archivedAt')) from jsonb_array_elements(${workStates.state}->'tasks') as item), '[]'::jsonb) else null end`,
+      records: sql<unknown>`case when jsonb_typeof(${workStates.state}->'tasks') = 'array' then coalesce((select jsonb_agg(jsonb_strip_nulls(jsonb_build_object('ref', item->'ref', 'title', item->>'title', 'archived', item ? 'archivedAt', 'dueDate', item->'dueDate', 'ownerPrincipalRef', item->'ownerPrincipalRef', 'projectId', item->'projectId', 'state', item->'state', 'priority', item->'priority'))) from jsonb_array_elements(${workStates.state}->'tasks') as item), '[]'::jsonb) else null end`,
       tenantId: workStates.tenantId,
     })
     .from(workStates)

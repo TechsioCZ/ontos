@@ -1,6 +1,6 @@
 import { CoreSearchProjectionDocumentSchema, CoreSearchProjectionInvalid } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
-import type { OccupancyState } from '../../shared/apis/records.ts';
+import type { Occupancy, OccupancyState } from '../../shared/apis/records.ts';
 
 export interface SearchSourceCompany {
   readonly legalEntityId: string;
@@ -21,6 +21,20 @@ const dateLabel = (value: string) => {
   const [year, month, day] = value.split('-');
   return `${Number(day)}. ${Number(month)}. ${year}`;
 };
+const uuidSchema = Schema.String.check(Schema.isUUID());
+const projectionVersionPattern = /^[1-9][0-9]*$/u;
+const snapshotMatchesScope = (snapshot: SearchSourceSnapshot) =>
+  Schema.is(uuidSchema)(snapshot.tenantId) &&
+  projectionVersionPattern.test(snapshot.projectionVersion) &&
+  snapshot.companies.every(({ legalEntityId }) => Schema.is(uuidSchema)(legalEntityId)) &&
+  new Set(snapshot.companies.map(({ legalEntityId }) => legalEntityId)).size === snapshot.companies.length;
+const stateLabels = {
+  ACTIVE: 'Aktivní',
+  CANCELLED: 'Zrušený',
+  COMPLETED: 'Ukončený',
+  CONFIRMED: 'Potvrzený',
+  DRAFT: 'Návrh',
+} as const satisfies Record<Occupancy['state'], string>;
 const companyMatchesScope = ({ state }: SearchSourceCompany, tenantId: string) =>
   state.occupancies.every(
     (occupancy) =>
@@ -36,7 +50,8 @@ const companyDocuments = ({ legalEntityId, state }: SearchSourceCompany, snapsho
       return [];
     }
     const endLabel = occupancy.endDate === null ? ' na dobu neurčitou' : ` do ${dateLabel(occupancy.endDate)}`;
-    const title = `Nájem od ${dateLabel(occupancy.startDate)}${endLabel}`;
+    // Owner-held status and ID distinguish equal-date leases without guessing a foreign owner label.
+    const title = `Nájem od ${dateLabel(occupancy.startDate)}${endLabel} · ${stateLabels[occupancy.state]} · ${occupancy.occupancyRef.resourceId}`;
     return [
       {
         archived: false,
@@ -44,16 +59,32 @@ const companyDocuments = ({ legalEntityId, state }: SearchSourceCompany, snapsho
         metadata: [],
         projectionVersion: snapshot.projectionVersion,
         ref: occupancy.occupancyRef,
-        searchableText: [title, occupancy.startDate, ...(occupancy.endDate === null ? [] : [occupancy.endDate])],
+        searchableText: [
+          title,
+          occupancy.occupancyRef.resourceId,
+          occupancy.state,
+          stateLabels[occupancy.state],
+          occupancy.startDate,
+          ...(occupancy.endDate === null ? [] : [occupancy.endDate]),
+        ],
         selectedLegalEntityId: legalEntityId,
         title,
       },
     ];
   });
 
-/** Lease dates are owner-held labels. Dossiers, rent, notes and foreign-owner IDs are not search text. */
-export const buildSearchDocuments = Effect.fn('LeaseSearch.buildDocuments')((snapshot: SearchSourceSnapshot) =>
-  Effect.forEach(
+/**
+ * Only owner-held identity, lifecycle and dates. Relation labels (tenant/customer name, unit/property
+ * name, code and address) stay absent until Party and Portfolio publish approved search-label contracts;
+ * this projection never joins their private tables or fabricates an address. No dossiers, rent or notes.
+ */
+export const buildSearchDocuments = Effect.fn('LeaseSearch.buildDocuments')(function* buildDocuments(
+  snapshot: SearchSourceSnapshot,
+) {
+  if (!snapshotMatchesScope(snapshot)) {
+    return yield* invalidSearchSource();
+  }
+  const groups = yield* Effect.forEach(
     snapshot.companies,
     (company) =>
       companyMatchesScope(company, snapshot.tenantId)
@@ -62,11 +93,11 @@ export const buildSearchDocuments = Effect.fn('LeaseSearch.buildDocuments')((sna
           ).pipe(Effect.mapError(invalidSearchSource))
         : Effect.fail(invalidSearchSource()),
     { concurrency: 1 },
-  ).pipe(
-    Effect.flatMap((groups) => {
-      const documents = groups.flat();
-      const identities = new Set(documents.map(({ ref }) => `${ref.resourceType}:${ref.resourceId}`));
-      return identities.size === documents.length ? Effect.succeed(documents) : Effect.fail(invalidSearchSource());
-    }),
-  ),
-);
+  );
+  const documents = groups.flat();
+  const identities = new Set(documents.map(({ ref }) => `${ref.resourceType}:${ref.resourceId}`));
+  if (identities.size !== documents.length) {
+    return yield* invalidSearchSource();
+  }
+  return documents;
+});

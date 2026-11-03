@@ -20,6 +20,7 @@ import { facilityOperationsReadAllPermission } from './shared/permissions/facili
 import { facilityOperationsReadOperationalPermission } from './shared/permissions/facility-operations-read-operational.ts';
 import { facilityOperationsWriteAllPermission } from './shared/permissions/facility-operations-write-all.ts';
 import { facilityOperationsWriteOperationalPermission } from './shared/permissions/facility-operations-write-operational.ts';
+import { meterResourceDescriptor } from './shared/resources/meter.ts';
 import { MetersPage } from './src/routes/[lang]/provoz/meridla/page.tsx';
 import { OverviewApi } from './shared/apis/overview.ts';
 import { OverviewPage } from './src/routes/[lang]/provoz/prehled/page.tsx';
@@ -105,6 +106,7 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
       assetResourceDescriptor,
       deviceResourceDescriptor,
       documentResourceDescriptor,
+      meterResourceDescriptor,
       // </generated-module-manifest-resources>
     ],
     search: [
@@ -126,6 +128,12 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
         key: 'facility.operations.documents',
         owningModuleId: moduleKey,
         resourceType: 'facility.operations.document',
+      },
+      {
+        accessFiltering: 'resource_permission',
+        key: 'facility.operations.meters',
+        owningModuleId: moduleKey,
+        resourceType: 'facility.operations.meter',
       },
       // </generated-module-manifest-search>
     ],
@@ -399,6 +407,18 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
             scope: 'tenant',
           },
           searchKey: 'facility.operations.documents',
+        }),
+        searchContribution({
+          contributionKey: 'facility.operations.search.meters',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: 'facility.operations.read_all' },
+            entrypointKey: 'facility.operations.search.meters',
+            moduleKey,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'facility.operations.meters',
         }),
         // </generated-module-shell-search>
       ],

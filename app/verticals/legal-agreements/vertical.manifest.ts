@@ -89,6 +89,12 @@ export const legalAgreementsManifest = defineOntosModuleManifest({
         requestFilters: ['includeArchived'],
         resourceType: 'legal.agreements.contract',
       },
+      {
+        accessFiltering: 'resource_permission',
+        key: 'legal.agreements.documents',
+        owningModuleId: OWNER_MODULE_KEY,
+        resourceType: 'legal.agreements.document',
+      },
       // </generated-module-manifest-search>
     ],
     shellContributions: {
@@ -153,6 +159,18 @@ export const legalAgreementsManifest = defineOntosModuleManifest({
             scope: 'tenant',
           },
           searchKey: 'legal.agreements.contracts',
+        }),
+        searchContribution({
+          contributionKey: 'legal.agreements.search.documents',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
+            entrypointKey: 'legal.agreements.search.documents',
+            moduleKey: OWNER_MODULE_KEY,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'legal.agreements.documents',
         }),
         // </generated-module-shell-search>
       ],

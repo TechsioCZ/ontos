@@ -12,9 +12,17 @@ export const LeasesProviderRequestSchema = Schema.Struct({
 });
 export type LeasesProviderRequest = typeof LeasesProviderRequestSchema.Type;
 
+/** Mirrors the verified Core optional relevance v1; higher is better and the score is 0..1000. */
+export const LeasesProviderRelevanceSchema = Schema.Struct({
+  score: Schema.Int.check(Schema.isBetween({ maximum: 1000, minimum: 0 })),
+  version: Schema.Literal('1'),
+});
+export type LeasesProviderRelevance = typeof LeasesProviderRelevanceSchema.Type;
+
 export const LeasesProviderResponseSchema = Schema.Array(
   Schema.Struct({
     ref: OccupancyRefSchema,
+    relevance: Schema.optionalKey(LeasesProviderRelevanceSchema),
     selectedLegalEntityId: SelectedLegalEntityIdSchema,
     title: Schema.String,
   }),

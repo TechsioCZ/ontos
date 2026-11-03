@@ -2,6 +2,7 @@ import {
   ContextAccess,
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
+  ReadInputValidationError,
   ReadPermissionDenied,
   ReadRuntime,
   TenantModuleStateService,
@@ -9,9 +10,12 @@ import {
   defineSystemModuleEntrypoint,
   withRequestPermissionDecisions,
 } from '@app/core-runtime';
+import { corePeopleSystemSearchProvider } from '@app/core-runtime/people/search';
 import type {
   ReadCoreError,
+  ReadFinishContext,
   ReadHandlerResult,
+  TenantModuleStateRecord,
   TrustedPrincipalContext,
   TenantModuleStateServiceContract,
   makeTenantModuleStateService,
@@ -31,6 +35,7 @@ import type {
   ResolvedModuleTarget,
   ShellComposition,
   ShellResourceResponse,
+  ShellSearchPayload,
   ShellSearchResponse,
 } from '../../shared/api.ts';
 import { capturedShellCatalog } from './captured-shell-catalog.ts';
@@ -40,7 +45,12 @@ import {
   GovernedResolvedModuleTargetSchema,
   GovernedResolveModuleTargetPayloadSchema,
 } from './shell-governed-read-schemas.ts';
-import { searchProviderModuleIds, ShellResourceServicesFactory } from './shell-resources.ts';
+import {
+  searchProviderModuleIds,
+  shellSearchAdmittedResourceTypes,
+  ShellResourceServicesFactory,
+  sortShellSearchResults,
+} from './shell-resources.ts';
 import { ShellSystemSearch, mergeShellSystemSearch } from './shell-system-search.ts';
 import type { ShellProviderAssertionIssuer, ShellResourceGateways } from './shell-resources.ts';
 
@@ -84,6 +94,7 @@ export interface ShellGovernedReadsService {
       readonly compositionRevision: string;
       readonly includeArchived?: boolean;
       readonly query: string;
+      readonly resourceTypes?: readonly string[];
       readonly role?: 'CUSTOMER' | 'SUPPLIER';
     },
   ) => Effect.Effect<ShellSearchResponse, ReadCoreError>;
@@ -137,6 +148,23 @@ const committedModuleStates = (
     return Effect.succeed(records.filter((record) => requested.has(record.moduleKey)));
   },
 });
+
+/**
+ * A search request may name only an eligible admitted type. An unknown or unadmitted name is an invalid request
+ * (`read_input_invalid`, HTTP 400), never a permission grant: the selection still narrows authorized owners only.
+ */
+export const validateShellSearchResourceTypes = (
+  requested: readonly string[] | undefined,
+  admitted: ReadonlySet<string>,
+): Effect.Effect<void, ReadInputValidationError> =>
+  requested === undefined || requested.every((resourceType) => admitted.has(resourceType))
+    ? Effect.void
+    : Effect.fail(
+        new ReadInputValidationError({
+          code: 'read_input_invalid',
+          reason: 'The requested search resource types are not admitted',
+        }),
+      );
 
 const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(function* makeShellRegistrations(
   ...[gateways, assertionIssuer, scopedModuleStateFactory]: readonly [
@@ -248,16 +276,47 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
           Effect.orElseSucceed((): readonly string[] => []),
           Effect.flatMap((moduleIds) => loadModuleStates(context.services, context.scope.tenantId, moduleIds)),
         ),
-      finish: (request, context) => {
+      finish: Effect.fn('ShellSearch.finish')(function* finishShellSearch(
+        request: ShellSearchPayload,
+        context: ReadFinishContext<undefined, readonly TenantModuleStateRecord[]>,
+      ) {
+        const { legalEntityId } = context.scope;
+        const requested = request.resourceTypes;
+        if (requested !== undefined && requested.length > 0) {
+          const catalog = yield* capturedShellCatalog.pipe(
+            Effect.mapError(unavailableBecause('Shell search is temporarily unavailable')),
+          );
+          const admitted = new Set(shellSearchAdmittedResourceTypes(catalog, context.loaded));
+          // Core people search is one exact system contract outside business-module admission; its own guard
+          // still authorizes every person after the owner answers.
+          if (Option.isSome(systemSearch)) {
+            admitted.add(corePeopleSystemSearchProvider.resource.key);
+          }
+          yield* validateShellSearchResourceTypes(requested, admitted);
+        }
+        // An explicit empty list asks for no type at all: no owner or Core call is needed.
+        if (requested !== undefined && requested.length === 0) {
+          return { evidence: { resultCount: 0 }, result: { partial: false as const, results: [] } };
+        }
         const business = resourceServicesFactory
           .createSearch({ ...dependencies, moduleStates: committedModuleStates(context.loaded) }, gateways.search)
           .search(context.scope, request);
+        const system = Option.isSome(systemSearch) ? systemSearch.value : undefined;
+        const includeSystem =
+          system !== undefined &&
+          legalEntityId !== undefined &&
+          request.query.trim().length > 0 &&
+          (requested === undefined || requested.includes(corePeopleSystemSearchProvider.resource.key));
         const combined =
-          Option.isSome(systemSearch) && context.scope.legalEntityId !== undefined && request.query.trim().length > 0
-            ? mergeShellSystemSearch(business, systemSearch.value.search(context.scope, request.query))
+          includeSystem && system !== undefined
+            ? mergeShellSystemSearch(business, system.search(context.scope, request.query))
             : business;
-        return combined.pipe(
-          Effect.map((result) => ({ evidence: { resultCount: result.results.length }, result })),
+        return yield* combined.pipe(
+          Effect.map((result) => ({
+            evidence: { resultCount: result.results.length },
+            // One Shell-wide order after every authorization, dedupe and collision-sanitization step above.
+            result: { ...result, results: sortShellSearchResults(result.results) },
+          })),
           Effect.catchTag('ShellProviderUnavailableError', (cause) =>
             Effect.fail(
               Object.defineProperty(
@@ -271,7 +330,7 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
             ),
           ),
         );
-      },
+      }),
       // oxlint-enable perfectionist/sort-objects
     },
     serviceFactory,
@@ -571,14 +630,20 @@ export const createShellGovernedReadsLayer = (
             },
           }),
         search: (request) => {
-          const { compositionRevision, includeArchived, query, role } = request;
+          const { compositionRevision, includeArchived, query, resourceTypes, role } = request;
           return runtime.runRead({
             input: withOptionalProperty(
               withOptionalProperty(
-                { compositionRevision, query },
-                includeArchived !== undefined,
-                'includeArchived',
-                includeArchived,
+                withOptionalProperty(
+                  { compositionRevision, query },
+                  includeArchived !== undefined,
+                  'includeArchived',
+                  includeArchived,
+                  {},
+                ),
+                resourceTypes !== undefined,
+                'resourceTypes',
+                resourceTypes,
                 {},
               ),
               role !== undefined,

@@ -89,6 +89,12 @@ export const propertyPortfolioManifest = defineOntosModuleManifest({
       // <generated-module-manifest-search>
       {
         accessFiltering: 'resource_permission',
+        key: 'property.portfolio.assets',
+        owningModuleId: moduleKey,
+        resourceType: 'property.portfolio.asset',
+      },
+      {
+        accessFiltering: 'resource_permission',
         key: 'property.portfolio.properties',
         owningModuleId: moduleKey,
         requestFilters: ['includeArchived'],
@@ -185,6 +191,18 @@ export const propertyPortfolioManifest = defineOntosModuleManifest({
       resourceDetails: [],
       search: [
         // <generated-module-shell-search>
+        searchContribution({
+          contributionKey: 'property.portfolio.search.assets',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
+            entrypointKey: 'property.portfolio.search.assets',
+            moduleKey,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'property.portfolio.assets',
+        }),
         searchContribution({
           contributionKey: 'property.portfolio.search.properties',
           entrypoint: {

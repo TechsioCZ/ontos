@@ -27,14 +27,30 @@ const checkSource = Effect.fn('Search.testSource')(function* checkSource(scenari
       expect(params).toEqual([tenantId, company]);
       expect(statement).toContain("'opportunities'");
       expect(statement).toContain('jsonb_build_object');
+      expect(statement).toContain('jsonb_strip_nulls');
+      expect(statement).toContain("'expectedCloseDate'");
+      expect(statement).toContain("'stage'");
       expect(statement).not.toContain("'note'");
       expect(statement).not.toContain("'description'");
       expect(statement).not.toContain("'comments'");
       expect(statement).not.toContain("'storefrontInquiry'");
+      expect(statement).not.toContain("'partyId'");
+      expect(statement).not.toContain("'ownerEmployeeId'");
+      expect(statement).not.toContain("'amountMinor'");
       return [
         {
           legalEntityId: scenario.rowCompany,
-          records: [{ archived: false, id: ref.resourceId, title: 'Veřejný název' }],
+          records: [
+            {
+              archived: false,
+              expectedCloseDate: '2027-02-28',
+              id: ref.resourceId,
+              stage: 'PROPOSAL',
+              title: 'Veřejný název',
+            },
+            // Older owner rows may omit optional fields; the projection must stay available for them.
+            { archived: true, id: '40000000-0000-4000-8000-000000000002', title: 'Bez termínu' },
+          ],
           tenantId: scenario.rowTenant,
         },
       ];
@@ -67,7 +83,19 @@ const checkSource = Effect.fn('Search.testSource')(function* checkSource(scenari
   expect(Exit.isSuccess(result)).toBe(scenario.succeeds);
   if (Exit.isSuccess(result)) {
     expect(result.value.projectionVersion).toBe('7');
-    expect(result.value.records).toMatchObject([{ legalEntityId: company, ref, title: 'Veřejný název' }]);
+    expect(result.value.records).toMatchObject([
+      {
+        archived: false,
+        expectedCloseDate: '2027-02-28',
+        legalEntityId: company,
+        ref,
+        stage: 'PROPOSAL',
+        title: 'Veřejný název',
+      },
+      { archived: true, legalEntityId: company, title: 'Bez termínu' },
+    ]);
+    expect(result.value.records[1]?.expectedCloseDate).toBeUndefined();
+    expect(result.value.records[1]?.stage).toBeUndefined();
   }
   expect(queries).toBe(scenario.snapshotTenant === tenantId ? 1 : 0);
 });

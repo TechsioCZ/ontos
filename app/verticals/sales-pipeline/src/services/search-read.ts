@@ -2,6 +2,22 @@ import { CoreSearchQueryRuntime, ReadHandlerUnavailable } from '@app/core-runtim
 import type { OperationalScope } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { OpportunityRefSchema } from '../../shared/resources/opportunity.ts';
+import {
+  OpportunitiesProviderRelevanceSchema,
+  OpportunitiesProviderRequestSchema,
+} from '../../shared/apis/opportunities-search.ts';
+import type {
+  OpportunitiesProviderRelevance,
+  OpportunitiesProviderResponse,
+} from '../../shared/apis/opportunities-search.ts';
+
+interface RelevanceCarrier {
+  readonly relevance?: unknown;
+}
+
+/** Core emits relevance only when asked; validate the actual wire shape before publishing it. */
+const readRelevance = (hit: RelevanceCarrier): OpportunitiesProviderRelevance | undefined =>
+  Schema.is(OpportunitiesProviderRelevanceSchema)(hit.relevance) ? hit.relevance : undefined;
 
 export const searchUnavailable = (cause?: unknown) =>
   Object.defineProperty(
@@ -18,17 +34,21 @@ export const loadSearch = Effect.fn('Opportunities.loadSearch')(function* loadSe
   scope: OperationalScope,
   query: string,
 ) {
-  const runtime = yield* CoreSearchQueryRuntime;
   const { legalEntityId } = scope;
   if (legalEntityId === undefined) {
     return yield* searchUnavailable();
   }
+  const validatedQuery = yield* Schema.decodeEffect(OpportunitiesProviderRequestSchema.fields.query)(query).pipe(
+    Effect.mapError(searchUnavailable),
+  );
+  const runtime = yield* CoreSearchQueryRuntime;
   const hits = yield* runtime
     .search(
       {
         includeArchived: false,
+        includeRelevance: true,
         moduleId: 'demo.sales-pipeline',
-        query,
+        query: validatedQuery,
         resourceType: 'demo.sales-pipeline.opportunity',
         selectedLegalEntityId: legalEntityId,
         tenantId: scope.tenantId,
@@ -54,7 +74,13 @@ export const loadSearch = Effect.fn('Opportunities.loadSearch')(function* loadSe
       const ref = yield* Schema.decodeUnknownEffect(OpportunityRefSchema)(hit.ref).pipe(
         Effect.mapError(searchUnavailable),
       );
-      return { ref, selectedLegalEntityId: legalEntityId, title: hit.title };
+      const relevance = readRelevance(hit);
+      const result: OpportunitiesProviderResponse[number] = {
+        ref,
+        selectedLegalEntityId: legalEntityId,
+        title: hit.title,
+      };
+      return relevance === undefined ? result : { ...result, relevance };
     }),
     { concurrency: 1 },
   );

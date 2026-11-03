@@ -41,6 +41,8 @@ import {
 } from './projection.ts';
 
 import { coreSearchQueryMatchesScope } from './projection-store.ts';
+import { deriveCoreSearchRepresentation } from './evidence-codec.ts';
+import { CORE_SEARCH_CANDIDATE_BUDGET, selectCoreSearchCandidates } from './indexed-query.ts';
 
 /** Private storage format. Version 1 rows must be retired by migration before deploying this codec. */
 export const CoreSearchPersistedPayloadSchema = Schema.Struct({
@@ -364,11 +366,26 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
         if (!matches) {
           return yield* invalid('Core Search mutation reuses a version for different content');
         }
+        // Same accepted content may repair a missing/stale derived representation without
+        // advancing its lifecycle version, rebuild floor, or publication generation.
+        const derived = deriveCoreSearchRepresentation(document);
+        if (
+          existing.searchFormatVersion !== derived.searchFormatVersion ||
+          existing.searchSourceVersion !== derived.searchSourceVersion ||
+          existing.searchTextV1 !== derived.searchTextV1
+        ) {
+          const repair = transaction
+            .update(searchIndexEntries)
+            .set(derived)
+            .where(eq(searchIndexEntries.searchIndexEntryId, existing.searchIndexEntryId));
+          yield* repair.execute.bind(repair)().pipe(Effect.mapError(unavailable));
+        }
         return yield* Effect.void;
       }
       const query = transaction
         .update(searchIndexEntries)
         .set({
+          ...deriveCoreSearchRepresentation(document),
           bodyText: normalizedBody,
           deleted: false,
           facetsJson: coreSearchDocumentPayload(document),
@@ -382,6 +399,7 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
       return yield* Effect.void;
     }
     const query = transaction.insert(searchIndexEntries).values({
+      ...deriveCoreSearchRepresentation(document),
       bodyText: normalizedBody,
       deleted: false,
       facetsJson: coreSearchDocumentPayload(document),
@@ -419,6 +437,9 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
         deleted: true,
         facetsJson: { schemaVersion: '2' },
         projectionVersion: version,
+        searchFormatVersion: null,
+        searchSourceVersion: null,
+        searchTextV1: null,
         sourceModuleKey: mutation.ref.moduleId,
         sourceResourceId: mutation.ref.resourceId,
         sourceResourceType: mutation.ref.resourceType,
@@ -436,6 +457,9 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
         facetsJson: { schemaVersion: '2' },
         legalEntityId: null,
         projectionVersion: version,
+        searchFormatVersion: null,
+        searchSourceVersion: null,
+        searchTextV1: null,
         title: '',
         updatedAt,
       })
@@ -604,20 +628,9 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
       yield* installOperationalScope(transaction, scope, databaseIdentities).pipe(
         Effect.catchTag('OperationContextUnavailable', (failure) => Effect.fail(unavailable(failure))),
       );
-      const query = transaction.query.searchIndexEntries.findMany({
-        // Match the bounded rebuild unit; never silently truncate before evidence filtering.
-        limit: 10_001,
-        orderBy: (table, { asc }) => [asc(table.title), asc(table.sourceResourceId)],
-        where: {
-          deleted: false,
-          legalEntityId: input.selectedLegalEntityId ?? { isNull: true },
-          sourceModuleKey: input.moduleId,
-          sourceResourceType: input.resourceType,
-          tenantId: input.tenantId,
-        },
-      });
+      const query = selectCoreSearchCandidates(transaction, input);
       const rows = yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
-      if (rows.length > 10_000) {
+      if (rows.length > CORE_SEARCH_CANDIDATE_BUDGET) {
         return yield* unavailable();
       }
       return yield* Effect.fromResult(Result.all(rows.map(decodeCoreSearchDocumentRow))).pipe(

@@ -42,6 +42,7 @@ import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } fr
 // <generated-governed-http-handler-imports>
 import { applyCommandActionApiLive } from './apply-command-action-server.ts';
 import { contractsReadApiLive } from './contracts-search-server.ts';
+import { documentsReadApiLive } from './documents-search-server.ts';
 import { recordsReadApiLive } from './records-read-server.ts';
 import { requestSearchRebuildActionApiLive } from './request-search-rebuild-action-server.ts';
 // </generated-governed-http-handler-imports>
@@ -91,6 +92,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
   applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   contractsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  documentsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   requestSearchRebuildActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   // </generated-governed-http-handler-layers>

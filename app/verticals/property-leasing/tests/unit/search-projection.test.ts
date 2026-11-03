@@ -1,11 +1,9 @@
 import {
   CoreSearchProjectionHitSchema,
   CoreSearchProjectionStore,
-  CoreSearchIngestion,
   CoreSearchQueryRuntime,
   ResourceContainmentRelationshipMutation,
   createCoreSearchQueryRuntime,
-  makeCoreSearchIngestion,
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
 import type {
@@ -19,11 +17,10 @@ import { expect, it } from 'effect-rstest';
 
 import { OccupancyStateSchema } from '../../shared/apis/records.ts';
 import { LeasesProviderResponseSchema } from '../../shared/apis/leases-search.ts';
-import { buildSearchDocuments } from '../../src/search/projection.ts';
+import { buildSearchDocuments, invalidSearchSource } from '../../src/search/projection.ts';
 import type { SearchSourceSnapshot } from '../../src/search/projection.ts';
 import { loadOwnerSearch } from '../../src/search/search-read.ts';
 import { projectSearchSnapshot } from '../../src/services/search-projector.ts';
-import { searchIngestionRegistrations } from '../../src/worker-host/search-ingestion-registrations.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -36,6 +33,10 @@ const scope = {
   principalId: '30000000-0000-4000-8000-000000000001',
   tenantId,
 } as const;
+const searchWithRuntime = (runtime: CoreSearchQueryRuntimeService) => (query: string) =>
+  loadOwnerSearch(scope, query, 'property.leasing.occupancy').pipe(
+    Effect.provideService(CoreSearchQueryRuntime, runtime),
+  );
 const context = attestOutboxWorkerHandlerContext({
   attemptNumber: 1,
   claimId: 'claim',
@@ -86,14 +87,23 @@ const fixture = Schema.decodeUnknownEffect(OccupancyStateSchema)({
   })),
 );
 
-it.effect('indexes lease business dates, not private notes, rent, booking references or technical IDs', () =>
+it.effect('indexes only owner-held lease identity, lifecycle and dates, not private or foreign metadata', () =>
   Effect.gen(function* scenario() {
     const snapshot = yield* fixture;
     const documents = yield* buildSearchDocuments(snapshot);
     expect(documents.length).toBe(1);
     expect(documents[0]?.selectedLegalEntityId).toBe(legalEntityId);
-    expect(documents[0]?.title).toBe('Nájem od 1. 11. 2026 na dobu neurčitou');
-    expect(documents[0]?.searchableText).toEqual(['Nájem od 1. 11. 2026 na dobu neurčitou', '2026-11-01']);
+    expect(documents[0]?.title).toBe(
+      'Nájem od 1. 11. 2026 na dobu neurčitou · Aktivní · 40000000-0000-4000-8000-000000000001',
+    );
+    expect(documents[0]?.searchableText).toEqual([
+      'Nájem od 1. 11. 2026 na dobu neurčitou · Aktivní · 40000000-0000-4000-8000-000000000001',
+      '40000000-0000-4000-8000-000000000001',
+      'ACTIVE',
+      'Aktivní',
+      '2026-11-01',
+    ]);
+    expect(documents[0]?.searchableText.join(' ')).not.toContain('40000000-0000-4000-8000-000000000002');
     expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(documents)).not.toContain('PRIVATE');
     expect(documents[0]?.metadata).toEqual([]);
     expect(Exit.isFailure(yield* Effect.exit(buildSearchDocuments({ ...snapshot, tenantId: otherCompany })))).toBe(
@@ -123,7 +133,7 @@ it.effect('excludes cancelled leases and short stays, but retains completed leas
     };
     expect(
       (yield* buildSearchDocuments({ ...snapshot, companies: [{ legalEntityId, state: completed }] }))[0]?.title,
-    ).toBe('Nájem od 1. 11. 2026 do 31. 10. 2027');
+    ).toBe('Nájem od 1. 11. 2026 do 31. 10. 2027 · Ukončený · 40000000-0000-4000-8000-000000000001');
   }),
 );
 
@@ -133,10 +143,17 @@ it.effect('refreshes updates, tombstones withdrawals/deletion, rebuilds idempote
     const store = makeInMemoryCoreSearchProjectionStore();
     const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
     const touches: ResourceContainmentRelationshipMutationInput[] = [];
+    const publications: unknown[] = [];
     const project = (claim: OutboxWorkerHandlerContext, rebuild: boolean) =>
       projectSearchSnapshot(snapshot, claim, rebuild).pipe(
-        Effect.provideService(CoreSearchIngestion, makeCoreSearchIngestion(store, searchIngestionRegistrations)),
-        Effect.provideService(CoreSearchProjectionStore, store),
+        Effect.provideService(CoreSearchProjectionStore, {
+          ...store,
+          apply: () => Effect.fail(invalidSearchSource()),
+          replace: (input, claimContext) => {
+            publications.push(input);
+            return store.replace(input, claimContext);
+          },
+        }),
         Effect.provideService(ResourceContainmentRelationshipMutation, {
           touch: (input) =>
             Effect.sync(() => {
@@ -149,7 +166,15 @@ it.effect('refreshes updates, tombstones withdrawals/deletion, rebuilds idempote
         Effect.provideService(CoreSearchQueryRuntime, runtime),
       );
     yield* project(context, false);
+    expect(publications.length).toBe(1);
     expect((yield* search()).length).toBe(1);
+    for (const query of ['40000000-0000-4000-8000-000000000001', '2026-11-01', 'aktivni']) {
+      expect(
+        (yield* loadOwnerSearch(scope, query, 'property.leasing.occupancy').pipe(
+          Effect.provideService(CoreSearchQueryRuntime, runtime),
+        )).length,
+      ).toBe(1);
+    }
     expect(touches[0]?.relationships.length).toBe(1);
     expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(touches)).toContain('module_access');
     expect(
@@ -193,6 +218,25 @@ it.effect('refreshes updates, tombstones withdrawals/deletion, rebuilds idempote
   }),
 );
 
+it.effect('returns verified Core relevance v1 scores and never invents one', () =>
+  Effect.gen(function* relevanceScenario() {
+    const snapshot = yield* fixture;
+    const store = makeInMemoryCoreSearchProjectionStore();
+    yield* projectSearchSnapshot(snapshot, context, false).pipe(
+      Effect.provideService(CoreSearchProjectionStore, store),
+      Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.void }),
+    );
+    const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
+    const search = searchWithRuntime(runtime);
+    const exact = yield* search('40000000-0000-4000-8000-000000000001');
+    expect(exact[0]?.relevance).toEqual({ score: 1000, version: '1' });
+    const prefix = yield* search('najem');
+    expect(prefix[0]?.relevance?.version).toBe('1');
+    expect(prefix[0]?.relevance?.score).toBeGreaterThan(0);
+    expect(prefix[0]?.relevance?.score).toBeLessThan(1000);
+  }),
+);
+
 it.effect('requires selected company and tenant in wire results and drops stale foreign-company hits', () =>
   Effect.gen(function* scenario() {
     const documents = yield* buildSearchDocuments(yield* fixture);
@@ -214,7 +258,8 @@ it.effect('requires selected company and tenant in wire results and drops stale 
     );
     expect(result.length).toBe(1);
     expect(result[0]?.selectedLegalEntityId).toBe(legalEntityId);
-    expect(queries[0]).toMatchObject({ selectedLegalEntityId: legalEntityId, tenantId });
+    expect(result[0]).not.toHaveProperty('relevance');
+    expect(queries[0]).toMatchObject({ includeRelevance: true, selectedLegalEntityId: legalEntityId, tenantId });
     expect(Schema.is(LeasesProviderResponseSchema)(result)).toBe(true);
     expect(Schema.is(LeasesProviderResponseSchema)([{ ref: document.ref, title: document.title }])).toBe(false);
     const { legalEntityId: _company, ...withoutCompany } = scope;
@@ -228,6 +273,114 @@ it.effect('requires selected company and tenant in wire results and drops stale 
       ),
     ).toBe(true);
     expect(queries.length).toBe(1);
+  }),
+);
+
+it.effect('distinguishes same-date leases and finds each exact owner ID without inventing relation labels', () =>
+  Effect.gen(function* identityScenario() {
+    const snapshot = yield* fixture;
+    const company = yield* Effect.fromNullishOr(snapshot.companies[0]);
+    const occupancy = yield* Effect.fromNullishOr(company.state.occupancies[0]);
+    const secondId = '40000000-0000-4000-8000-000000000003';
+    const state = yield* Schema.decodeUnknownEffect(OccupancyStateSchema)({
+      occupancies: [occupancy, { ...occupancy, occupancyRef: { ...occupancy.occupancyRef, resourceId: secondId } }],
+    });
+    const next = { ...snapshot, companies: [{ legalEntityId, state }] };
+    const documents = yield* buildSearchDocuments(next);
+    expect(new Set(documents.map(({ title }) => title)).size).toBe(2);
+    const store = makeInMemoryCoreSearchProjectionStore();
+    yield* projectSearchSnapshot(next, context, false).pipe(
+      Effect.provideService(CoreSearchProjectionStore, store),
+      Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.void }),
+    );
+    const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
+    const search = searchWithRuntime(runtime);
+    expect((yield* search(secondId)).map(({ ref }) => ref.resourceId)).toEqual([secondId]);
+    for (const query of ['PRIVATE', '123456', occupancy.unitRef.resourceId, 'Praha']) {
+      expect(yield* search(query)).toEqual([]);
+    }
+    yield* projectSearchSnapshot(
+      {
+        ...next,
+        companies: [
+          {
+            legalEntityId,
+            state: { occupancies: state.occupancies.map((lease) => ({ ...lease, state: 'CANCELLED' as const })) },
+          },
+        ],
+        projectionVersion: '2',
+      },
+      context,
+      false,
+    ).pipe(
+      Effect.provideService(CoreSearchProjectionStore, store),
+      Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.void }),
+    );
+    expect(yield* search(secondId)).toEqual([]);
+  }),
+);
+
+it.effect('preserves Core relevance order after excluding wrong-company, wrong-type and archived hits', () =>
+  Effect.gen(function* orderingScenario() {
+    const documents = yield* buildSearchDocuments(yield* fixture);
+    const document = yield* Effect.fromNullishOr(documents[0]);
+    const hits = yield* Schema.decodeUnknownEffect(Schema.Array(CoreSearchProjectionHitSchema))([
+      { ...document, title: 'Zvolený nájem' },
+      { ...document, selectedLegalEntityId: otherCompany, title: 'Cizí společnost' },
+      { ...document, archived: true, title: 'Archivovaný nájem' },
+      { ...document, ref: { ...document.ref, resourceType: 'property.leasing.other' }, title: 'Nesprávný typ' },
+      { ...document, ref: { ...document.ref, moduleId: 'other.owner' }, title: 'Nesprávný modul' },
+      { ...document, title: 'Abecedně první' },
+    ]);
+    const result = yield* loadOwnerSearch(scope, 'najem', 'property.leasing.occupancy').pipe(
+      Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed(hits) }),
+    );
+    expect(result.map(({ title }) => title)).toEqual(['Zvolený nájem', 'Abecedně první']);
+    expect(result[0]).not.toHaveProperty('relevance');
+  }),
+);
+
+it.effect('rejects malformed or duplicate company snapshots even when no live lease would be published', () =>
+  Effect.gen(function* emptySnapshotScenario() {
+    const snapshot = yield* fixture;
+    for (const invalid of [
+      { ...snapshot, companies: [], projectionVersion: '0' },
+      { ...snapshot, companies: [], tenantId: 'not-a-tenant' },
+      { ...snapshot, companies: [{ legalEntityId: 'not-a-company', state: { occupancies: [] } }] },
+      {
+        ...snapshot,
+        companies: [
+          { legalEntityId, state: { occupancies: [] } },
+          { legalEntityId, state: { occupancies: [] } },
+        ],
+      },
+    ]) {
+      expect(Exit.isFailure(yield* Effect.exit(buildSearchDocuments(invalid)))).toBe(true);
+    }
+  }),
+);
+
+it.effect('does not publish any replacement when resource containment is unavailable', () =>
+  Effect.gen(function* containmentScenario() {
+    const snapshot = yield* fixture;
+    const store = makeInMemoryCoreSearchProjectionStore();
+    let replacements = 0;
+    const exit = yield* Effect.exit(
+      projectSearchSnapshot(snapshot, context, false).pipe(
+        Effect.provideService(CoreSearchProjectionStore, {
+          ...store,
+          replace: () => {
+            replacements += 1;
+            return Effect.void;
+          },
+        }),
+        Effect.provideService(ResourceContainmentRelationshipMutation, {
+          touch: () => Effect.die('unavailable containment'),
+        }),
+      ),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(replacements).toBe(0);
   }),
 );
 

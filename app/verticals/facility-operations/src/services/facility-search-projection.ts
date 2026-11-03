@@ -7,7 +7,7 @@ import {
 } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { Array as Arr, Effect, Schema } from 'effect';
-import { loadFacilitySearchSnapshot } from './facility-search-source.ts';
+import { cleanFacilitySearchTerm, loadFacilitySearchSnapshot } from './facility-search-source.ts';
 import type { FacilitySearchSnapshot } from './facility-search-source.ts';
 import type { ApplyCommandResult } from '../../shared/actions/apply-command.ts';
 
@@ -45,9 +45,12 @@ export const buildFacilitySearchDocuments = Effect.fn('FacilitySearch.documents'
           resourceType: `facility.operations.${row.type}`,
           tenantId: row.tenantId,
         },
-        searchableText: row.text,
+        // Optional owner fields must never turn one valid record into a failed tenant publication.
+        searchableText: row.text.flatMap(cleanFacilitySearchTerm),
         selectedLegalEntityId: row.legalEntityId,
-        title: row.title.trim() || { asset: 'Majetek', device: 'Zařízení', document: 'Dokument' }[row.type],
+        title:
+          row.title.trim() ||
+          { asset: 'Majetek', device: 'Zařízení', document: 'Dokument', meter: 'Měřidlo' }[row.type],
       }).pipe(Effect.mapError(unavailable));
     },
     { concurrency: 1 },
@@ -82,7 +85,7 @@ export const publishFacilitySearch = Effect.fn('FacilitySearch.publish')(functio
     discard: true,
   });
   yield* Effect.forEach(
-    ['asset', 'device', 'document'],
+    ['asset', 'device', 'document', 'meter'],
     (type) =>
       store.replace(
         {
@@ -108,4 +111,7 @@ export const projectFacilitySearch = Effect.fn('FacilitySearch.project')(functio
 
 /** Every successful mutation of a searched agenda refreshes its authoritative owner snapshot, including removals. */
 export const facilitySearchChanged = (result: ApplyCommandResult): boolean =>
-  result.agenda === 'assets' || result.agenda === 'security' || result.agenda === 'documents';
+  result.agenda === 'assets' ||
+  result.agenda === 'security' ||
+  result.agenda === 'documents' ||
+  result.agenda === 'meters';

@@ -1,11 +1,12 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Effect } from 'effect';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { ShellSearchResult } from '../../shared/api.ts';
 import { searchResources } from '../api/auth-client.ts';
 import type { ShellSearchClientError } from '../api/auth-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { shellSearchResultKey } from './shell-search-match.ts';
 import { shellSearchGroupOf, shellSearchGroupOrder, shellSearchResultTarget } from './shell-search-resource-types.ts';
 import type { ShellSearchGroupKey, ShellSearchLinkTarget } from './shell-search-resource-types.ts';
 
@@ -14,6 +15,8 @@ type PartyRole = Extract<ShellSearchResult, { readonly kind: 'counterparty' }>['
 export interface ShellSearchSuggestion {
   readonly archived: boolean;
   readonly key: string;
+  /** The hit as the provider returned it, so one shared result row renders the real record and its badges. */
+  readonly result: ShellSearchResult;
   readonly roles: readonly PartyRole[];
   /** Where the hit opens: its owner's record page, else the Shell record page. */
   readonly target: ShellSearchLinkTarget;
@@ -47,24 +50,25 @@ export type ShellSearchSuggestionsState =
 export const SUGGESTION_MINIMUM_QUERY_LENGTH = 2;
 const SUGGESTIONS_PER_GROUP = 5;
 
-const resultKey = ({ moduleId, resourceId, resourceType }: ShellSearchResult['ref']) =>
-  `${moduleId}:${resourceType}:${resourceId}`;
-
 const toSuggestion = (result: ShellSearchResult): ShellSearchSuggestion => {
+  const key = shellSearchResultKey(result);
+  const target = shellSearchResultTarget(result);
   if (result.kind === 'counterparty') {
     return {
       archived: result.party.archived,
-      key: resultKey(result.ref),
+      key,
+      result,
       roles: result.currentRoles,
-      target: shellSearchResultTarget(result),
+      target,
       title: result.title,
     };
   }
   return {
     archived: result.kind === 'party' && result.archived,
-    key: resultKey(result.ref),
+    key,
+    result,
     roles: [],
-    target: shellSearchResultTarget(result),
+    target,
     title: result.title,
   };
 };
@@ -78,10 +82,10 @@ export const groupShellSearchResults = (
   results: readonly ShellSearchResult[],
 ): readonly ShellSearchResultGroup<ShellSearchResult>[] => {
   const partiesWithRelationship = new Set(
-    results.flatMap((result) => (result.kind === 'counterparty' ? [resultKey(result.party.ref)] : [])),
+    results.flatMap((result) => (result.kind === 'counterparty' ? [shellSearchResultKey(result.party)] : [])),
   );
   const visible = results.filter(
-    (result) => result.kind !== 'party' || !partiesWithRelationship.has(resultKey(result.ref)),
+    (result) => result.kind !== 'party' || !partiesWithRelationship.has(shellSearchResultKey(result)),
   );
   return shellSearchGroupOrder.flatMap((key) => {
     const items = visible.filter((result) => shellSearchGroupOf(result) === key);
@@ -100,30 +104,58 @@ export const groupShellSearchSuggestions = (
     total: items.length,
   }));
 
+const idleSuggestionsState: ShellSearchSuggestionsState = { status: 'idle' };
+
+interface PendingSuggestionRequest {
+  readonly controller: AbortController;
+  readonly scope: string;
+}
+
+interface ScopedSuggestionState {
+  readonly scope: string;
+  readonly state: ShellSearchSuggestionsState;
+}
+
+/** Composition revision and language jointly name the search scope an answer belongs to. */
+const suggestionScopeKey = (compositionRevision: string | undefined, language: string | undefined): string =>
+  `${compositionRevision ?? ''}\u0000${language ?? ''}`;
+
 /**
  * Typeahead for the top-bar search. Each change cancels the previous request; the request leaves only after a short
- * pause in typing, so a burst of keystrokes costs one search.
+ * pause in typing, so a burst of keystrokes costs one search. A new composition revision or language is a different
+ * scope: its answer is dropped before paint, and the request that belonged to the old scope is aborted.
  */
 export const useShellSearchSuggestions = (compositionRevision: string | undefined) => {
   const { language } = useModernI18n();
-  const [state, setState] = useState<ShellSearchSuggestionsState>({ status: 'idle' });
-  const pending = useRef<AbortController | null>(null);
+  const scope = suggestionScopeKey(compositionRevision, language);
+  const [scoped, setScoped] = useState<ScopedSuggestionState>(() => ({ scope, state: idleSuggestionsState }));
+  const pending = useRef<PendingSuggestionRequest | null>(null);
+  // Adjust state while rendering, before an answer from the previous scope can ever paint.
+  if (scoped.scope !== scope) {
+    setScoped({ scope, state: idleSuggestionsState });
+  }
+  const state = scoped.scope === scope ? scoped.state : idleSuggestionsState;
 
   const cancel = () => {
-    pending.current?.abort();
+    pending.current?.controller.abort();
     pending.current = null;
+  };
+
+  const apply = (next: ShellSearchSuggestionsState) => {
+    setScoped({ scope, state: next });
   };
 
   const handleQueryChange = (value: string) => {
     cancel();
     const query = value.trim();
     if (compositionRevision === undefined || query.length < SUGGESTION_MINIMUM_QUERY_LENGTH) {
-      setState({ status: 'idle' });
+      apply(idleSuggestionsState);
       return;
     }
     const controller = new AbortController();
-    pending.current = controller;
-    setState({ query, status: 'loading' });
+    const requestScope = scope;
+    pending.current = { controller, scope: requestScope };
+    apply({ query, status: 'loading' });
     void browserRuntime.runPromiseExit(
       Effect.sleep('200 millis').pipe(
         Effect.andThen(searchResources({ compositionRevision, query }, { locale: language ?? '' })),
@@ -138,8 +170,8 @@ export const useShellSearchSuggestions = (compositionRevision: string | undefine
         }),
         Effect.flatMap((next) =>
           Effect.sync(() => {
-            if (pending.current === controller) {
-              setState(next);
+            if (pending.current?.controller === controller) {
+              setScoped({ scope: requestScope, state: next });
             }
           }),
         ),
@@ -150,8 +182,26 @@ export const useShellSearchSuggestions = (compositionRevision: string | undefine
 
   const handleDismiss = () => {
     cancel();
-    setState({ status: 'idle' });
+    apply(idleSuggestionsState);
   };
+
+  // The derived state already hides the previous answer; this releases the request that produced it.
+  useEffect(() => {
+    const request = pending.current;
+    if (request !== null && request.scope !== scope) {
+      request.controller.abort();
+      pending.current = null;
+    }
+  }, [scope]);
+
+  // Leaving the header (sign-out, navigation) must not leave a request running or apply its answer afterwards.
+  useEffect(
+    () => () => {
+      pending.current?.controller.abort();
+      pending.current = null;
+    },
+    [],
+  );
 
   return { handleDismiss, handleQueryChange, state };
 };

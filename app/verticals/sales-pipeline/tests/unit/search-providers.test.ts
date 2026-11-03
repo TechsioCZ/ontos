@@ -21,6 +21,24 @@ it.effect('wire contract requires owner resource, tenant and selected company', 
     yield* Effect.void;
   }),
 );
+it('accepts only the verified optional Core relevance v1 score range', () => {
+  const result = { ref, selectedLegalEntityId: company, title: hit.title };
+  expect(Schema.is(OpportunitiesProviderResponseSchema)([result])).toBe(true);
+  for (const relevance of [
+    { score: 0, version: '1' },
+    { score: 1000, version: '1' },
+  ]) {
+    expect(Schema.is(OpportunitiesProviderResponseSchema)([{ ...result, relevance }])).toBe(true);
+  }
+  for (const relevance of [
+    { score: -1, version: '1' },
+    { score: 1001, version: '1' },
+    { score: 500.5, version: '1' },
+    { score: 500, version: '2' },
+  ]) {
+    expect(Schema.is(OpportunitiesProviderResponseSchema)([{ ...result, relevance }])).toBe(false);
+  }
+});
 it.effect('passes trusted context into Core and returns only the raw wire fields', () =>
   Effect.gen(function* test() {
     const parsed = yield* Schema.decodeEffect(CoreSearchProjectionHitSchema)(hit);
@@ -29,6 +47,7 @@ it.effect('passes trusted context into Core and returns only the raw wire fields
         search: (input, operationScope) => {
           expect(input).toMatchObject({
             includeArchived: false,
+            includeRelevance: true,
             moduleId: ref.moduleId,
             resourceType: ref.resourceType,
             selectedLegalEntityId: company,
@@ -40,6 +59,26 @@ it.effect('passes trusted context into Core and returns only the raw wire fields
       }),
     );
     expect(result).toEqual([{ ref, selectedLegalEntityId: company, title: hit.title }]);
+    expect(result[0]).not.toHaveProperty('relevance');
+  }),
+);
+it.effect('publishes a verified Core relevance without inventing one', () =>
+  Effect.gen(function* test() {
+    const parsed = yield* Schema.decodeEffect(CoreSearchProjectionHitSchema)({
+      ...hit,
+      relevance: { score: 1000, version: '1' },
+    });
+    const result = yield* loadSearch(scope, 'lidsky').pipe(
+      Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed([parsed]) }),
+    );
+    expect(result).toEqual([
+      {
+        ref,
+        relevance: { score: 1000, version: '1' },
+        selectedLegalEntityId: company,
+        title: hit.title,
+      },
+    ]);
   }),
 );
 it.effect('fails closed for forged tenant/company/module/type, archived and expanded alias hits', () =>

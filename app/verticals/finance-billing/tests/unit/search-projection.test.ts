@@ -10,7 +10,8 @@ import {
 } from '@app/core-runtime';
 import { FinanceStateSchema, FinanceInvoiceResourceIdSchema } from '../../shared/apis/records.ts';
 import { buildSearchDocuments, loadSearchHits, createSearchProjector } from '../../src/services/search-projection.ts';
-import { InvoicesProviderResponseSchema } from '../../shared/apis/invoices-search.ts';
+import { InvoicesProviderRequestSchema, InvoicesProviderResponseSchema } from '../../shared/apis/invoices-search.ts';
+import { DocumentsProviderRequestSchema, DocumentsProviderResponseSchema } from '../../shared/apis/documents-search.ts';
 import { invoicesRead } from '../../src/search/invoices.provider.ts';
 import { documentsRead } from '../../src/search/documents.provider.ts';
 import type { OperationalScope, OutboxWorkerHandlerContext } from '@app/core-runtime';
@@ -138,6 +139,43 @@ it.effect('queries only trusted company and rejects wrong company/tenant hits', 
     expect(Schema.is(SearchProjectionUnavailable)(wrongTenant)).toBe(true);
   }),
 );
+it('both request contracts share normalized nonempty input and retain boolean archive compatibility', () => {
+  for (const request of [InvoicesProviderRequestSchema, DocumentsProviderRequestSchema]) {
+    for (const query of ['', ' ', '\u0301\u030C', 'x'.repeat(201)]) {
+      expect(Schema.is(request)({ query })).toBe(false);
+    }
+    for (const includeArchived of [false, true]) {
+      expect(Schema.is(request)({ includeArchived, query: 'Žluťoučký' })).toBe(true);
+    }
+    expect(Schema.is(request)({ query: 'x'.repeat(200) })).toBe(true);
+    expect(Schema.is(request)({ query: 'x' })).toBe(true);
+    expect(Schema.is(request)({ query: 'Faktura' })).toBe(true);
+  }
+});
+it('both Finance response contracts accept legacy hits and only relevance v1 integer scores in 0..1000', () => {
+  for (const [schema, resourceType] of [
+    [InvoicesProviderResponseSchema, 'finance.billing.invoice'],
+    [DocumentsProviderResponseSchema, 'finance.billing.document'],
+  ] as const) {
+    const hit = {
+      ref: { moduleId: 'finance.billing', resourceId: 'record-1', resourceType, tenantId },
+      selectedLegalEntityId: legalEntityId,
+      title: 'Current public title',
+    };
+    expect(Schema.is(schema)([hit])).toBe(true);
+    for (const score of [0, 100, 1000]) {
+      expect(Schema.is(schema)([{ ...hit, relevance: { score, version: '1' } }])).toBe(true);
+    }
+    for (const relevance of [
+      { score: -1, version: '1' },
+      { score: 1001, version: '1' },
+      { score: 1.5, version: '1' },
+      { score: 100, version: '2' },
+    ]) {
+      expect(Schema.is(schema)([{ ...hit, relevance }])).toBe(false);
+    }
+  }
+});
 it('raw results require tenant and company; each provider retains the native module and company gates', () => {
   expect(
     Schema.is(InvoicesProviderResponseSchema)([
@@ -271,7 +309,7 @@ it.effect('invoice labels are public, voided invoices disappear and tenant misma
       tenantId,
     });
     expect(documents[0]?.title).toBe('FV-2026-101');
-    expect(documents[0]?.searchableText).toEqual(['FV-2026-101']);
+    expect(documents[0]?.searchableText).toEqual(['FV-2026-101', '2026-11-01', '2026-11-10']);
     const voided = yield* Schema.decodeUnknownEffect(FinanceStateSchema)({
       ...empty,
       invoices: [{ ...invoice, businessState: 'VOIDED' }],

@@ -33,6 +33,8 @@
     "./outbox/worker": "./src/outbox/worker-entrypoint.ts",
     "./permissions/principal-ref": "./src/permissions/principal-ref.ts",
     "./resources/legal-entity": "./src/resources/legal-entity.ts",
+    "./search-contract": "./src/search/search-contract.ts",
+    "./search-ranking": "./src/search/search-ranking.ts",
     "./testing/actions": "./src/testing/actions.ts",
     "./testing/gateway-scope-grant": "./src/testing/gateway-scope-grant.ts",
     "./testing/application-composition-source": "./src/modules/active-application-composition-source-service.ts",

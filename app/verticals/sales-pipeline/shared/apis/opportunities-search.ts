@@ -7,13 +7,21 @@ import { SearchLegalEntityIdSchema } from '../search-identity.ts';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export const OpportunitiesProviderRequestSchema = Schema.Struct({
-  query: Schema.String,
+  query: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
 });
 export type OpportunitiesProviderRequest = typeof OpportunitiesProviderRequestSchema.Type;
+
+/** Mirrors the verified Core optional relevance v1; higher is better and the score is 0..1000. */
+export const OpportunitiesProviderRelevanceSchema = Schema.Struct({
+  score: Schema.Int.check(Schema.isBetween({ maximum: 1000, minimum: 0 })),
+  version: Schema.Literal('1'),
+});
+export type OpportunitiesProviderRelevance = typeof OpportunitiesProviderRelevanceSchema.Type;
 
 export const OpportunitiesProviderResponseSchema = Schema.Array(
   Schema.Struct({
     ref: OpportunityRefSchema,
+    relevance: Schema.optionalKey(OpportunitiesProviderRelevanceSchema),
     selectedLegalEntityId: Schema.toEncoded(SearchLegalEntityIdSchema),
     title: Schema.String,
   }),

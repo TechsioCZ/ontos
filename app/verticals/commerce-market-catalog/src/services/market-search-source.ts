@@ -5,6 +5,7 @@ import { Context, Effect, Layer, Option, Schema } from 'effect';
 
 import type { MarketSearchUnavailable } from '../../shared/domain/market-search-unavailable.ts';
 import { marketSearchUnavailable } from '../../shared/domain/market-search-unavailable.ts';
+import { MarketDefinitionSchema } from '../../shared/market-contracts.ts';
 
 export const MARKET_SEARCH_MODULE = 'commerce.market-catalog';
 export const MARKET_SEARCH_RESOURCE = 'commerce.market-catalog.market';
@@ -58,7 +59,7 @@ const periodFields = {
 };
 const MarketSearchRecordSchema = Schema.Struct({
   businessCode: Schema.String,
-  definitions: Schema.Array(Schema.Struct({ ...periodFields, purpose: Schema.String })),
+  definitions: Schema.Array(Schema.Struct({ ...periodFields, purpose: MarketDefinitionSchema.fields.purpose })),
   lifecycles: Schema.Array(
     Schema.Struct({ ...periodFields, lifecycle: Schema.Literals(['ACTIVE', 'SUSPENDED', 'RETIRED']) }),
   ),
@@ -130,6 +131,8 @@ const readSnapshot = Effect.fn('MarketSearchSource.readSnapshot')(function* read
   if (snapshot.tenantId !== tenantId) {
     return yield* marketSearchUnavailable();
   }
+  // A marketId alone does not establish its seller. Keep the trusted company scan:
+  // the owner snapshot routine requires a selected seller, including for targeted reads.
   const companies = yield* Effect.forEach(
     snapshot.legalEntityIds,
     (legalEntityId) => readCompany(snapshot, legalEntityId, target),

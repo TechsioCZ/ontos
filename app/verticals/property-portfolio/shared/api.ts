@@ -9,6 +9,7 @@ import { identity } from 'effect';
 
 // <generated-governed-http-api-imports>
 import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
+import { AssetsSearchApi } from './apis/assets-search.ts';
 import { PropertiesSearchApi } from './apis/properties-search.ts';
 import { RecordsApi } from './apis/records.ts';
 import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
@@ -35,6 +36,7 @@ export const propertyPortfolioApi = HttpApi.make('PropertyPortfolioApi')
   .addHttpApi(propertyPortfolioFoundationApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(ApplyCommandActionApi)
+  .addHttpApi(AssetsSearchApi)
   .addHttpApi(PropertiesSearchApi)
   .addHttpApi(RecordsApi)
   .addHttpApi(RequestSearchRebuildActionApi)

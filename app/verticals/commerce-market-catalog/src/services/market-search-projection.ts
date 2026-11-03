@@ -8,6 +8,8 @@ import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { ownerResourceModuleContainment } from '@app/core-runtime/outbox/worker';
 import { Context, DateTime, Effect, Layer, Schema } from 'effect';
 
+import { MARKET_SEARCH_MAX_QUERY_LENGTH } from '../../shared/apis/markets-search.ts';
+import { MarketDefinitionSchema } from '../../shared/market-contracts.ts';
 import {
   MARKET_SEARCH_MODULE,
   MARKET_SEARCH_RESOURCE,
@@ -31,11 +33,38 @@ const period = (row: { readonly effectiveFrom: Date; readonly effectiveTo: Date 
         validTo: DateTime.formatIso(DateTime.fromDateUnsafe(row.effectiveTo)),
       };
 
+// Core terms remain bounded at 300; the owner purpose contract permits 500 characters.
+const marketSearchTermLength = 300;
+const maxBasicMultilingualPlaneCodePoint = 65_535;
+const isPurpose = Schema.is(MarketDefinitionSchema.fields.purpose);
+
+const purposeTerms = (purpose: string): readonly string[] => {
+  const terms: string[] = [];
+  let start = 0;
+  while (start < purpose.length) {
+    let end = Math.min(start + marketSearchTermLength, purpose.length);
+    // Do not split a supplementary character at either edge of a term.
+    if (end < purpose.length && (purpose.codePointAt(end - 1) ?? 0) > maxBasicMultilingualPlaneCodePoint) {
+      end -= 1;
+    }
+    terms.push(purpose.slice(start, end));
+    if (end === purpose.length) {
+      break;
+    }
+    // Overlap by one less than a supported query so every query stays inside a bounded term.
+    start = end - (MARKET_SEARCH_MAX_QUERY_LENGTH - 1);
+    if ((purpose.codePointAt(start - 1) ?? 0) > maxBasicMultilingualPlaneCodePoint) {
+      start -= 1;
+    }
+  }
+  return terms;
+};
+
 export const buildMarketSearchDocuments = (snapshot: MarketSearchSnapshot) =>
   Effect.forEach(
     snapshot.records,
     (row) => {
-      if (row.tenantId !== snapshot.tenantId) {
+      if (row.tenantId !== snapshot.tenantId || row.definitions.some(({ purpose }) => !isPurpose(purpose))) {
         return Effect.fail(marketSearchUnavailable());
       }
       return Schema.decodeUnknownEffect(CoreSearchProjectionDocumentSchema)({
@@ -51,10 +80,11 @@ export const buildMarketSearchDocuments = (snapshot: MarketSearchSnapshot) =>
             ? [{ key: 'visible-market', value: 'yes', ...period(lifecycle) }]
             : [],
         ),
-        temporalSearchableText: row.definitions.map((definition) => ({
-          value: definition.purpose,
-          ...period(definition),
-        })),
+        // Keep every term in its definition's own half-open effective period. The full
+        // array is decoded below: exceeding Core's temporal budget fails, never truncates.
+        temporalSearchableText: row.definitions.flatMap((definition) =>
+          purposeTerms(definition.purpose).map((value) => ({ value, ...period(definition) })),
+        ),
         // The business code is the stable human-facing Market label, not its opaque technical resource ID.
         title: row.businessCode,
       }).pipe(Effect.mapError(marketSearchUnavailable));

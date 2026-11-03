@@ -678,6 +678,8 @@ export {
   isReadCoreError,
 } from './reads/errors.ts';
 export type { ReadCoreError } from './reads/errors.ts';
+export { defineReadSearchCollectionAuthorization } from './reads/search-result-authorization.ts';
+export type { ReadSearchCollectionResultAuthorization } from './reads/search-result-authorization.ts';
 export {
   CoreSearchFacetSchema,
   CoreSearchMetadataFieldSchema,
@@ -710,6 +712,21 @@ export type {
   CoreSearchProjectionMutation,
   CoreSearchProjectionReplacement,
 } from './search/projection.ts';
+export {
+  CORE_SEARCH_MAX_RESOURCE_TYPES,
+  CORE_SEARCH_RELEVANCE_MAX_SCORE,
+  CORE_SEARCH_RELEVANCE_VERSION,
+  CoreSearchQueryTextSchema,
+  CoreSearchRelevanceSchema,
+  coreSearchResourceTypes,
+  coreSearchTokens,
+  escapeCoreSearchLike,
+  matchesCoreSearchValues,
+  normalizeCoreSearchText,
+  parseCoreSearchQuery,
+} from './search/search-contract.ts';
+export type { CoreSearchRelevance } from './search/search-contract.ts';
+export { coreSearchRelevance } from './search/search-ranking.ts';
 export {
   CoreSearchProjectionStoreLive,
   CoreSearchQueryRuntimeLive,

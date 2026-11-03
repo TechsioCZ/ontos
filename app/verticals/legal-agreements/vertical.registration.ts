@@ -39,6 +39,7 @@ export const legalAgreementsRegistration = defineVerticalRuntimeRegistration({
     search: {
       // <generated-module-registration-search>
       contracts: () => import('./src/api/contracts-search-client.ts'),
+      documents: () => import('./src/api/documents-search-client.ts'),
       // </generated-module-registration-search>
     },
   },

@@ -6,6 +6,7 @@ import {
   OperationContextUnavailable,
   ReadHandlerUnavailable,
   defineRead,
+  defineReadSearchCollectionAuthorization,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type { OperationalScope, ReadLoadContext } from '@app/core-runtime';
@@ -48,6 +49,7 @@ export const makeMarketSearchLoader = Effect.gen(function* makeMarketSearchLoade
         {
           facets: [{ key: 'visible-market', values: ['yes'] }],
           includeArchived: false,
+          includeRelevance: true,
           moduleId: moduleKey,
           query: input.query,
           resourceType: 'commerce.market-catalog.market',
@@ -72,7 +74,10 @@ export const makeMarketSearchLoader = Effect.gen(function* makeMarketSearchLoade
             return Effect.fail(unavailable());
           }
           return Schema.decodeUnknownEffect(MarketsProviderResponseSchema)(
-            hits.map(({ ref, selectedLegalEntityId, title }) => ({ ref, selectedLegalEntityId, title })),
+            hits.map(({ ref, relevance, selectedLegalEntityId, title }) => {
+              const result = { ref, selectedLegalEntityId, title };
+              return relevance === undefined ? result : { ...result, relevance };
+            }),
           ).pipe(Effect.mapError(unavailable));
         }),
       );
@@ -101,6 +106,12 @@ export const marketsRead = defineRead(
     permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.market-catalog.search.markets',
+    resultAuthorization: defineReadSearchCollectionAuthorization({
+      items: (result: MarketsProviderResponse) => result,
+      resource: (item) => item.ref,
+      resultSchema: MarketsProviderResponseSchema,
+      withItems: (_result, items) => items,
+    }),
     resultSchema: MarketsProviderResponseSchema,
     schemaVersion: '1',
   },
@@ -127,5 +138,4 @@ export const marketsRead = defineRead(
     };
   }),
   () => ({ kind: 'module', moduleId: moduleKey }),
-  (result) => result.map(({ ref }) => ref),
 );

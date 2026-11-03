@@ -7,6 +7,8 @@ import {
   defineCoreSearchIngestionRegistrations,
   ownerResourceModuleContainment,
 } from '@app/core-runtime';
+import { matchesCoreSearchValues, parseCoreSearchQuery } from '@app/core-runtime/search-contract';
+import { coreSearchRelevance } from '@app/core-runtime/search-ranking';
 import type { OperationalScope, OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { Array as Arr, Context, Effect, Layer, Schema } from 'effect';
 import type { FinanceState } from '../../shared/apis/records.ts';
@@ -35,7 +37,11 @@ export interface SearchSnapshot {
   readonly tenantId: string;
 }
 
-/** Only display labels and public document metadata. Never bytes, hashes, actors, notes or payment details. */
+/**
+ * Only Finance-owned invoice evidence and public file metadata. counterpartyName is the stored invoice snapshot,
+ * not a current Party label. Neither counterparty IČO nor current Party labels exist in this owner state.
+ * Never index bytes, hashes, actors, notes or payment details (including the accounting issuer's IČO as a partner).
+ */
 export const buildSearchDocuments = Effect.fn('Finance.buildSearchDocuments')(function* build(
   snapshot: SearchSnapshot,
 ) {
@@ -57,9 +63,14 @@ export const buildSearchDocuments = Effect.fn('Finance.buildSearchDocuments')(fu
             {
               ...common,
               ref: invoice.ref,
-              searchableText: [invoice.number, invoice.documentNumber, invoice.counterpartyName].filter(
-                (value) => value !== undefined,
-              ),
+              searchableText: [
+                invoice.number,
+                invoice.documentNumber,
+                invoice.counterpartyName,
+                invoice.issueDate,
+                invoice.dueDate,
+                invoice.sourceOrder?.number,
+              ].filter((value) => value !== undefined),
               title: invoice.number ?? invoice.documentNumber ?? invoice.counterpartyName ?? 'Faktura',
             },
           ],
@@ -184,17 +195,24 @@ export const loadSearchHits = Effect.fn('Finance.loadSearchHits')(function* load
   );
 });
 
-/** Search may return only resources still present in the same owner projection used by the records Read. */
+/**
+ * Recheck current Finance evidence, not just identity, against the same owner state used by the records Read.
+ * Core shortlists candidates, but index text may still describe an older number, filename or snapshot name;
+ * the current owner projection must match the same Core-normalized tokens before a hit may leave the owner.
+ * includeArchived is a compatibility flag: Finance has no archive state and neither value restores voided
+ * invoices, orphaned attachments or withdrawn files. Current Party names require an approved publication.
+ */
 export const loadCurrentSearchHits = Effect.fn('Finance.loadCurrentSearchHits')(function* load(
   scope: OperationalScope,
   resourceType: 'finance.billing.invoice' | 'finance.billing.document',
-  input: { readonly includeArchived?: boolean; readonly query: string },
+  input: { readonly includeArchived?: boolean; readonly includeRelevance?: boolean; readonly query: string },
   visible: FinanceState,
 ) {
   const { legalEntityId } = scope;
   if (legalEntityId === undefined) {
     return yield* unavailable();
   }
+  const parsedQuery = yield* Effect.fromResult(parseCoreSearchQuery(input.query)).pipe(Effect.mapError(unavailable));
   const documents = yield* buildSearchDocuments({
     companies: [{ legalEntityId, state: visible }],
     projectionVersion: '1',
@@ -206,26 +224,40 @@ export const loadCurrentSearchHits = Effect.fn('Finance.loadCurrentSearchHits')(
     ),
   );
   const runtime = yield* CoreSearchQueryRuntime;
+  const request = {
+    includeArchived: false,
+    moduleId,
+    query: input.query,
+    resourceType,
+    selectedLegalEntityId: legalEntityId,
+    tenantId: scope.tenantId,
+  };
   const hits = yield* runtime.search(
-    {
-      includeArchived: false,
-      moduleId,
-      query: input.query,
-      resourceType,
-      selectedLegalEntityId: legalEntityId,
-      tenantId: scope.tenantId,
-    },
+    input.includeRelevance === true ? { ...request, includeRelevance: true } : request,
     scope,
   );
   return hits.flatMap((hit) => {
     const document = current.get(hit.ref.resourceId);
-    return document === undefined ||
+    if (
+      document === undefined ||
       hit.archived ||
       hit.ref.moduleId !== moduleId ||
       hit.ref.resourceType !== resourceType ||
       hit.ref.tenantId !== scope.tenantId ||
-      hit.selectedLegalEntityId !== legalEntityId
-      ? []
-      : [{ ref: document.ref, selectedLegalEntityId: legalEntityId, title: document.title }];
+      hit.selectedLegalEntityId !== legalEntityId ||
+      !matchesCoreSearchValues([document.title, ...document.searchableText], parsedQuery.tokens)
+    ) {
+      return [];
+    }
+    const result = { ref: document.ref, selectedLegalEntityId: legalEntityId, title: document.title };
+    // Never carry the shortlist's stale-title score across the current owner evidence boundary.
+    return [
+      input.includeRelevance === true
+        ? {
+            ...result,
+            relevance: coreSearchRelevance({ ...hit, ref: document.ref, title: document.title }, parsedQuery),
+          }
+        : result,
+    ];
   });
 });

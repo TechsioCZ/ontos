@@ -83,6 +83,7 @@ export type ResourceRef = typeof ResourceRefSchema.Type;
 export type ShellResourceRequest = typeof ShellResourceRequestSchema.Type;
 export type ShellSearchResult = typeof ShellSearchResultSchema.Type;
 export type ShellSearchPayload = typeof ShellSearchPayloadSchema.Type;
+export type ShellSearchRelevance = typeof ShellSearchRelevanceSchema.Type;
 export type ShellSearchResponse = typeof ShellSearchResponseSchema.Type;
 export type ShellResourceResponse = typeof ShellResourceResponseSchema.Type;
 export type ShellResourceDetailResponse = typeof ShellResourceDetailResponseSchema.Type;
@@ -644,11 +645,28 @@ export const ShellResourceRequestSchema = Schema.Struct({
 });
 
 const searchTitle = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+
+/**
+ * A provider names at most this many resource types in one search request. The Shell validates the names against the
+ * admitted search surface; the list narrows work, it never grants access to a module or a record.
+ */
+export const SHELL_SEARCH_MAX_RESOURCE_TYPES = 64;
+
+/**
+ * Optional wire relevance from a trusted current owner's verified exact evidence. A higher score is better; it is
+ * never a raw rank tier, and an owner that cannot verify an exact match omits it instead of inventing a score.
+ */
+export const ShellSearchRelevanceSchema = Schema.Struct({
+  score: Schema.Int.check(Schema.isBetween({ maximum: 1000, minimum: 0 })),
+  version: Schema.Literal('1'),
+});
+
 const PartyRoleSchema = Schema.Literals(['CUSTOMER', 'SUPPLIER']);
 const ShellSearchResultSchema = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal('resource'),
     ref: ResourceRefSchema,
+    relevance: Schema.optionalKey(ShellSearchRelevanceSchema),
     selectedLegalEntityId: LegalEntityIdSchema,
     title: searchTitle,
   }),
@@ -657,6 +675,7 @@ const ShellSearchResultSchema = Schema.Union([
     kind: Schema.Literal('party'),
     matchedViaAlias: Schema.Boolean,
     ref: ResourceRefSchema,
+    relevance: Schema.optionalKey(ShellSearchRelevanceSchema),
     title: searchTitle,
   }),
   Schema.Struct({
@@ -679,6 +698,7 @@ const ShellSearchResultSchema = Schema.Union([
       title: searchTitle,
     }),
     ref: ResourceRefSchema,
+    relevance: Schema.optionalKey(ShellSearchRelevanceSchema),
     title: searchTitle,
   }),
 ]);
@@ -687,6 +707,12 @@ export const ShellSearchPayloadSchema = Schema.Struct({
   compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
   includeArchived: Schema.optionalKey(Schema.Boolean),
   query: Schema.String.check(Schema.isMaxLength(300)),
+  /** Absent asks every eligible admitted type; an empty list asks none; unknown or unadmitted names are rejected. */
+  resourceTypes: Schema.optionalKey(
+    Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))).check(
+      Schema.isMaxLength(SHELL_SEARCH_MAX_RESOURCE_TYPES),
+    ),
+  ),
   role: Schema.optionalKey(PartyRoleSchema),
 });
 
@@ -1126,9 +1152,9 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
       .add(
         HttpApiEndpoint.post('search', '/shell/search', {
           error: [
-            ShellInvalidRequestProblemSchema,
             ShellReloadRequiredProblemSchema,
             ShellAuthenticationRequiredProblemSchema,
+            ShellInvalidRequestProblemSchema,
             ShellTargetForbiddenProblemSchema,
             ShellPolicyConflictProblemSchema,
             ShellPolicyUnprocessableProblemSchema,

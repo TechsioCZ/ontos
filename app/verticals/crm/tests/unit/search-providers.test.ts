@@ -6,6 +6,8 @@ import {
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
+import { CoreSearchRelevanceSchema } from '@app/core-runtime/search-contract';
+import type { CoreSearchRelevance } from '@app/core-runtime/search-contract';
 import { NodeCrypto } from '@effect/platform-node';
 import { Context, DateTime, Effect, Exit, Layer, Schema } from 'effect';
 import type { ContextAccessService } from '@app/core-runtime';
@@ -15,9 +17,9 @@ import { crmSearchQuery } from '../../shared/domain/search-contact-classificatio
 import { clientsRead, loadCrmSearch } from '../../src/search/clients.provider.ts';
 import { contactsRead } from '../../src/search/contacts.provider.ts';
 import { expect, it } from 'effect-rstest';
-import { ClientsProviderResponseSchema } from '../../shared/apis/clients-search.ts';
+import { ClientsProviderRequestSchema, ClientsProviderResponseSchema } from '../../shared/apis/clients-search.ts';
 import type { ClientsProviderResponse } from '../../shared/apis/clients-search.ts';
-import { ContactsProviderResponseSchema } from '../../shared/apis/contacts-search.ts';
+import { ContactsProviderRequestSchema, ContactsProviderResponseSchema } from '../../shared/apis/contacts-search.ts';
 import type { ContactsProviderResponse } from '../../shared/apis/contacts-search.ts';
 import { buildSearchDocuments } from '../../src/services/search-projection.service.ts';
 import { companyId, context, otherCompanyId, scope, snapshot, state } from './search-fixtures.ts';
@@ -90,9 +92,14 @@ it.effect('requires tenant/company on raw hits and drops forged, archived, wrong
 interface ReaderScenario {
   readonly assigned: boolean;
   readonly broad: boolean;
+  readonly currentState?: typeof state;
   readonly entrypointAllowed?: boolean;
   readonly expectedCount: number | null;
+  readonly expectedIndexScore?: number;
+  readonly expectedScore?: number;
+  readonly expectedTitle?: string;
   readonly indexCount?: number;
+  readonly indexState?: typeof state;
   readonly ownerSnapshot?:
     | 'missing'
     | 'deleted'
@@ -108,12 +115,29 @@ interface ReaderScenario {
     | 'different-principal';
   readonly query?: string;
   readonly readable?: boolean;
+  readonly refreshBroadGrant?: boolean;
   readonly resourceType: 'demo.crm.client' | 'demo.crm.contact';
   readonly selectedCompanyId?: string;
 }
-const checkResult = (result: ClientsProviderResponse | ContactsProviderResponse) => {
+interface SearchResultEvidence {
+  readonly ref: {
+    readonly moduleId: string;
+    readonly resourceId: string;
+    readonly resourceType: string;
+    readonly tenantId: string;
+  };
+  readonly relevance?: CoreSearchRelevance;
+  readonly selectedLegalEntityId: string;
+  readonly title: string;
+}
+const checkResult = (result: readonly SearchResultEvidence[], withRelevance = false) => {
   for (const hit of result) {
-    expect(new Set(Object.keys(hit))).toEqual(new Set(['ref', 'selectedLegalEntityId', 'title']));
+    expect(new Set(Object.keys(hit))).toEqual(
+      new Set(['ref', ...(withRelevance ? ['relevance'] : []), 'selectedLegalEntityId', 'title']),
+    );
+    if (withRelevance) {
+      expect(Schema.is(CoreSearchRelevanceSchema)(hit.relevance)).toBe(true);
+    }
   }
   expect(JSON.stringify(result)).not.toMatch(/@|777111|606333|private/u);
   return result.length;
@@ -169,9 +193,12 @@ const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGov
   scenario: ReaderScenario,
 ) {
   const selectedCompanyId = scenario.selectedCompanyId ?? companyId;
-  const encoded = yield* Schema.encodeEffect(CrmStateSchema)(state);
+  const encoded = yield* Schema.encodeEffect(CrmStateSchema)(scenario.currentState ?? state);
   const stored = ownerStateFor(encoded, scenario, scope.principalId);
-  const docs = yield* buildSearchDocuments(snapshot);
+  const docs = yield* buildSearchDocuments({
+    ...snapshot,
+    companies: [{ legalEntityId: companyId, state: scenario.indexState ?? state }],
+  });
   const store = makeInMemoryCoreSearchProjectionStore();
   for (const document of docs) {
     yield* store.apply({ document, kind: 'upsert' }, context);
@@ -191,6 +218,7 @@ const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGov
   const indexed = yield* search.search(
     {
       includeArchived: false,
+      includeRelevance: true,
       moduleId: 'demo.crm',
       query: crmSearchQuery(query),
       resourceType: scenario.resourceType,
@@ -200,6 +228,9 @@ const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGov
     principal,
   );
   expect(indexed.length).toBe(scenario.indexCount ?? (selectedCompanyId === companyId ? 1 : 0));
+  if (scenario.expectedIndexScore !== undefined) {
+    expect(indexed.map((hit) => hit.relevance?.score)).toEqual([scenario.expectedIndexScore]);
+  }
   expect(JSON.stringify(indexed)).not.toMatch(/@|777111|606333|private/u);
   let ownerLoads = 0;
   const harness = yield* makeReadTestHarness({
@@ -220,13 +251,13 @@ const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGov
   const services = yield* Layer.build(harness.layer);
   const access = Context.get(services, ContextAccess);
   // Mutate only this harness's boundary fake; its real ReadRuntime retains the exact same object.
+  let { broad } = scenario;
   const decisions: Pick<ContextAccessService, 'contextPermissions' | 'resources'> = {
     contextPermissions: ({ targets }) =>
       Effect.succeed(
         targets.map(({ moduleId, permission }) => ({
           decision:
-            scenario.readable !== false &&
-            permission === (scenario.broad ? 'demo.crm.read_all' : 'demo.crm.read_assigned')
+            scenario.readable !== false && permission === (broad ? 'demo.crm.read_all' : 'demo.crm.read_assigned')
               ? ('allowed' as const)
               : ('denied' as const),
           key: `${moduleId}:${permission}`,
@@ -236,12 +267,21 @@ const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGov
   };
   Object.assign(access, decisions);
   const input = { input: { query }, principal, transport: { correlationId: scope.correlationId } };
+  const checkCurrentResult = (result: ClientsProviderResponse | ContactsProviderResponse) => {
+    if (scenario.expectedTitle !== undefined) {
+      expect(result.map((hit) => hit.title)).toEqual([scenario.expectedTitle]);
+    }
+    if (scenario.expectedScore !== undefined) {
+      expect(result.map((hit) => hit.relevance?.score)).toEqual([scenario.expectedScore]);
+    }
+    return checkResult(result, true);
+  };
   const run =
     scenario.resourceType === 'demo.crm.client'
-      ? harness.runtime.runRead({ ...input, registration: clientsRead }).pipe(Effect.map(checkResult))
-      : harness.runtime.runRead({ ...input, registration: contactsRead }).pipe(Effect.map(checkResult));
+      ? harness.runtime.runRead({ ...input, registration: clientsRead }).pipe(Effect.map(checkCurrentResult))
+      : harness.runtime.runRead({ ...input, registration: contactsRead }).pipe(Effect.map(checkCurrentResult));
   let indexReads = 0;
-  const outcome = yield* run.pipe(
+  const invoke = run.pipe(
     Effect.provide(harness.layer),
     Effect.provideService(CoreSearchQueryRuntime, {
       search: (searchInput, trustedScope) => {
@@ -250,8 +290,8 @@ const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGov
         return search.search(searchInput, trustedScope);
       },
     }),
-    Effect.exit,
   );
+  const outcome = yield* Effect.exit(invoke);
   expect(ownerLoads).toBe(scenario.entrypointAllowed === false ? 0 : 1);
   expect(indexReads).toBe(scenario.entrypointAllowed === false ? 0 : 1);
   expect(Exit.isSuccess(outcome)).toBe(scenario.expectedCount !== null);
@@ -263,6 +303,16 @@ const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGov
         ? clientsRead.descriptor.evidencePolicy.captureMode
         : contactsRead.descriptor.evidencePolicy.captureMode,
     ).toBe('metadata_only');
+  }
+  if (scenario.refreshBroadGrant === true) {
+    // The same runtime, principal, state and positive index must observe both a new grant and its revocation.
+    broad = true;
+    expect(yield* invoke).toBe(1);
+    broad = false;
+    expect(yield* invoke).toBe(0);
+    expect(ownerLoads).toBe(3);
+    expect(indexReads).toBe(3);
+    expect(harness.snapshot().evidenceWrites).toBe(3);
   }
 });
 
@@ -384,6 +434,388 @@ it.effect('governed email/phone lookup keeps company isolation and returns no ma
     { concurrency: 1, discard: true },
   ).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
 );
+
+const metadataState: typeof state = {
+  ...state,
+  clients: {
+    ...state.clients,
+    contacts: state.clients.contacts.map((contact) => ({ ...contact, role: 'Vedoucí nákupu' })),
+    items: state.clients.items.map((client) => ({
+      ...client,
+      address: 'Dlouhá 42, Brno',
+      vatNo: 'CZ12345678',
+      website: 'https://hanak.example.test',
+    })),
+  },
+};
+
+const StaleFieldSchema = Schema.Literals(['email', 'name', 'phone']);
+type StaleField = typeof StaleFieldSchema.Type;
+const StaleReplacementSchema = Schema.Literals(['malformed', 'removed', 'replaced']);
+type StaleReplacement = typeof StaleReplacementSchema.Type;
+const staleIndexName = 'Původní Jedinec';
+
+const staleFieldValue = (
+  row: { readonly email?: string; readonly phone?: string },
+  field: 'email' | 'phone',
+  replacement: Exclude<StaleReplacement, 'removed'>,
+): string => {
+  if (replacement === 'malformed') {
+    return field === 'email' ? `note ${row.email}` : `call ${row.phone}`;
+  }
+  return field === 'email' ? 'replacement@example.test' : '+420 222 444 555';
+};
+
+const replaceStaleField = <A extends { readonly email?: string; readonly name: string; readonly phone?: string }>(
+  row: A,
+  field: StaleField,
+  replacement: StaleReplacement,
+): A => {
+  if (replacement === 'removed') {
+    const next = { ...row };
+    Reflect.deleteProperty(next, field);
+    return next;
+  }
+  if (field === 'name') {
+    return { ...row, name: 'Nový název' };
+  }
+  return { ...row, [field]: staleFieldValue(row, field, replacement) };
+};
+
+const staleQuery = (client: boolean, field: StaleField): string => {
+  if (field === 'name') {
+    return client ? 'hanak' : 'jedinec';
+  }
+  if (field === 'email') {
+    return client ? 'info@pekarna.example.test' : 'jiri.novotny@example.test';
+  }
+  return client ? '+420 (777) 111-222' : '606-333';
+};
+
+const staleNameIndex = (): typeof state => ({
+  ...state,
+  clients: {
+    ...state.clients,
+    contacts: state.clients.contacts.map((row) => ({ ...row, name: staleIndexName })),
+  },
+});
+
+const metadataQueries = {
+  address: 'Dlouhá 42',
+  vatNo: 'CZ12345678',
+  website: 'hanak.example.test',
+} as const;
+
+for (const resourceType of ['demo.crm.client', 'demo.crm.contact'] as const) {
+  const client = resourceType === 'demo.crm.client';
+  for (const field of ['email', 'phone', 'name'] as const) {
+    for (const replacement of ['removed', 'replaced', 'malformed'] as const) {
+      if (field === 'name' && replacement !== 'replaced') {
+        continue;
+      }
+      it.effect(`${resourceType}: same active ID cannot match stale ${field} (${replacement})`, () => {
+        // The fixture contact name shares its tokens with the retained email, so the stale-name case must
+        // publish a distinct index name; otherwise the current email would legitimately answer the query.
+        const indexState = field === 'name' && !client ? staleNameIndex() : undefined;
+        return runGovernedProvider({
+          assigned: true,
+          broad: false,
+          currentState: {
+            ...state,
+            clients: {
+              ...state.clients,
+              contacts: client
+                ? state.clients.contacts
+                : state.clients.contacts.map((row) => replaceStaleField(row, field, replacement)),
+              items: client
+                ? state.clients.items.map((row) => replaceStaleField(row, field, replacement))
+                : state.clients.items,
+            },
+          },
+          expectedCount: 0,
+          indexState,
+          query: staleQuery(client, field),
+          resourceType,
+        }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer));
+      });
+    }
+  }
+  it.effect(`${resourceType}: retained email evidence returns the current title, not the stale index title`, () =>
+    runGovernedProvider({
+      assigned: true,
+      broad: false,
+      currentState: {
+        ...state,
+        clients: {
+          ...state.clients,
+          contacts: client
+            ? state.clients.contacts
+            : state.clients.contacts.map((row) => ({ ...row, name: 'Nový kontakt' })),
+          items: client ? state.clients.items.map((row) => ({ ...row, name: 'Nový klient' })) : state.clients.items,
+        },
+      },
+      expectedCount: 1,
+      expectedTitle: client ? 'Nový klient' : 'Nový kontakt',
+      resourceType,
+    }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
+  );
+}
+
+it.effect(
+  'same-owner organization metadata and permitted contact role/parent name obey canonical assignment visibility',
+  () =>
+    Effect.forEach(
+      [
+        { queries: ['CZ12345678', 'Dlouhá 42', 'dlouha', 'hanak.example.test'], resourceType: 'demo.crm.client' },
+        { queries: ['Vedoucí nákupu', 'nakupu', 'Železárny Hanák'], resourceType: 'demo.crm.contact' },
+      ] as const,
+      ({ queries, resourceType }) =>
+        Effect.forEach(
+          queries,
+          (query) =>
+            Effect.forEach(
+              [true, false],
+              (assigned) =>
+                runGovernedProvider({
+                  assigned,
+                  broad: false,
+                  currentState: metadataState,
+                  expectedCount: assigned ? 1 : 0,
+                  indexState: metadataState,
+                  query,
+                  resourceType,
+                }),
+              { concurrency: 1, discard: true },
+            ),
+          { concurrency: 1, discard: true },
+        ),
+      { concurrency: 1, discard: true },
+    ).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
+);
+
+it.effect('contact cannot be located by a withdrawn parent name or changed job role before reindexing', () =>
+  Effect.forEach(
+    [
+      {
+        query: 'hanak',
+        state: {
+          ...metadataState,
+          clients: {
+            ...metadataState.clients,
+            items: metadataState.clients.items.map((row) => ({ ...row, name: 'Nový klient' })),
+          },
+        },
+      },
+      {
+        query: 'nakupu',
+        state: {
+          ...metadataState,
+          clients: {
+            ...metadataState.clients,
+            contacts: metadataState.clients.contacts.map((row) => ({ ...row, role: 'Jednatel' })),
+          },
+        },
+      },
+    ],
+    (scenario) =>
+      runGovernedProvider({
+        assigned: true,
+        broad: false,
+        currentState: scenario.state,
+        expectedCount: 0,
+        indexState: metadataState,
+        query: scenario.query,
+        resourceType: 'demo.crm.contact',
+      }),
+    { concurrency: 1, discard: true },
+  ).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
+);
+
+it.effect('client metadata removal is rechecked on the same active current ID', () =>
+  Effect.forEach(
+    ['vatNo', 'address', 'website'] as const,
+    (field) =>
+      runGovernedProvider({
+        assigned: true,
+        broad: true,
+        currentState: {
+          ...metadataState,
+          clients: {
+            ...metadataState.clients,
+            items: metadataState.clients.items.map((row) => {
+              const next = { ...row };
+              Reflect.deleteProperty(next, field);
+              return next;
+            }),
+          },
+        },
+        expectedCount: 0,
+        indexState: metadataState,
+        query: metadataQueries[field],
+        resourceType: 'demo.crm.client',
+      }),
+    { concurrency: 1, discard: true },
+  ).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
+);
+
+it.effect('current rematch requires every normalized token within approved current record evidence', () =>
+  Effect.gen(function* checkCurrentTokens() {
+    const documents = yield* buildSearchDocuments({
+      ...snapshot,
+      companies: [{ legalEntityId: companyId, state: metadataState }],
+    });
+    const gateway: CoreSearchQueryRuntime['Service'] = {
+      search: () => Effect.succeed(documents.map((document) => ({ ...document, title: 'Stale index title' }))),
+    };
+    for (const [query, expected] of [
+      ['NÁKUPU hanak jiri', 1],
+      ['nakupu missing jiri', 0],
+    ] as const) {
+      const hits = yield* loadCrmSearch(scope, {
+        query,
+        resourceType: 'demo.crm.contact',
+        visible: metadataState,
+      }).pipe(Effect.provideService(CoreSearchQueryRuntime, gateway));
+      expect(hits.length).toBe(expected);
+      if (expected === 1) {
+        expect(hits.map((hit) => hit.title)).toEqual(['Jiří Novotný']);
+        checkResult(hits);
+      }
+    }
+    const withdrawnRole = {
+      ...metadataState,
+      clients: {
+        ...metadataState.clients,
+        contacts: metadataState.clients.contacts.map((contact) => ({ ...contact, role: 'Jednatel' })),
+      },
+    };
+    expect(
+      yield* loadCrmSearch(scope, {
+        query: 'nakupu hanak jiri',
+        resourceType: 'demo.crm.contact',
+        visible: withdrawnRole,
+      }).pipe(Effect.provideService(CoreSearchQueryRuntime, gateway)),
+    ).toEqual([]);
+    expect(
+      Exit.isFailure(
+        yield* loadCrmSearch(scope, {
+          query: '\u0301',
+          resourceType: 'demo.crm.contact',
+          visible: metadataState,
+        }).pipe(
+          Effect.provideService(CoreSearchQueryRuntime, {
+            search: () => Effect.die('Normalized-empty input must fail before index access'),
+          }),
+          Effect.exit,
+        ),
+      ),
+    ).toBe(true);
+  }),
+);
+
+it('public request schemas reject normalized-empty and overlength queries without changing valid phone input', () => {
+  for (const schema of [ClientsProviderRequestSchema, ContactsProviderRequestSchema]) {
+    for (const query of [' ', '\u0301', '\u0301 \u030C', 'x'.repeat(201)]) {
+      expect(Schema.is(schema)({ query })).toBe(false);
+    }
+    for (const query of ['x', 'x'.repeat(200), 'Železárny', '+420 (777) 111-222']) {
+      expect(Schema.is(schema)({ query })).toBe(true);
+    }
+  }
+});
+
+for (const resourceType of ['demo.crm.client', 'demo.crm.contact'] as const) {
+  const client = resourceType === 'demo.crm.client';
+  it.effect(`${resourceType}: recomputes a high stale-title score from the authorized current title`, () => {
+    const indexState: typeof state = {
+      ...state,
+      clients: {
+        ...state.clients,
+        contacts: state.clients.contacts.map((contact) => ({ ...contact, name: 'Nákupčí', role: 'Nákupčí' })),
+        items: state.clients.items.map((row) => ({ ...row, name: '12345678' })),
+      },
+    };
+    const currentState: typeof state = {
+      ...indexState,
+      clients: {
+        ...indexState.clients,
+        contacts: indexState.clients.contacts.map((contact) => ({ ...contact, name: 'Nový kontakt' })),
+        items: indexState.clients.items.map((row) => ({ ...row, name: 'Nový klient' })),
+      },
+    };
+    return runGovernedProvider({
+      assigned: true,
+      broad: false,
+      currentState,
+      expectedCount: 1,
+      expectedIndexScore: 900,
+      expectedScore: 100,
+      expectedTitle: client ? 'Nový klient' : 'Nový kontakt',
+      indexState,
+      query: client ? '12345678' : 'Nákupčí',
+      resourceType,
+    }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer));
+  });
+  it.effect(`${resourceType}: fresh owner grants and revocations take effect without changing the positive index`, () =>
+    runGovernedProvider({
+      assigned: false,
+      broad: false,
+      expectedCount: 0,
+      refreshBroadGrant: true,
+      resourceType,
+    }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
+  );
+}
+
+it.effect('legacy CRM helper callers omit relevance unless explicitly requested; stale Core scores never leak', () =>
+  Effect.gen(function* legacyRelevance() {
+    const documents = yield* buildSearchDocuments(snapshot);
+    for (const resourceType of ['demo.crm.client', 'demo.crm.contact'] as const) {
+      const query = resourceType === 'demo.crm.client' ? 'hanak' : 'jiri';
+      const gateway: CoreSearchQueryRuntime['Service'] = {
+        search: (input) => {
+          expect(input).not.toHaveProperty('includeRelevance');
+          return Effect.succeed(
+            documents.map((document) => ({ ...document, relevance: { score: 1000, version: '1' as const } })),
+          );
+        },
+      };
+      for (const includeRelevance of [undefined, false]) {
+        const request = { query, resourceType, visible: state };
+        const hits = yield* loadCrmSearch(
+          scope,
+          includeRelevance === undefined ? request : { ...request, includeRelevance },
+        ).pipe(Effect.provideService(CoreSearchQueryRuntime, gateway));
+        expect(checkResult(hits)).toBe(1);
+      }
+    }
+  }),
+);
+
+it('CRM response contracts accept old hits and only the optional public relevance v1 shape', () => {
+  for (const [schema, resourceType] of [
+    [ClientsProviderResponseSchema, 'demo.crm.client'],
+    [ContactsProviderResponseSchema, 'demo.crm.contact'],
+  ] as const) {
+    const hit = {
+      ref: { moduleId: 'demo.crm', resourceId: 'record-1', resourceType, tenantId: scope.tenantId },
+      selectedLegalEntityId: companyId,
+      title: 'Current public title',
+    };
+    expect(Schema.is(schema)([hit])).toBe(true);
+    for (const score of [0, 100, 1000]) {
+      expect(Schema.is(schema)([{ ...hit, relevance: { score, version: '1' } }])).toBe(true);
+    }
+    for (const relevance of [
+      { score: -1, version: '1' },
+      { score: 1001, version: '1' },
+      { score: 1.5, version: '1' },
+      { score: 100, version: '2' },
+    ]) {
+      expect(Schema.is(schema)([{ ...hit, relevance }])).toBe(false);
+    }
+  }
+});
 
 it.effect('governed lookup never searches notes or strips arbitrary free text into a phone query', () =>
   Effect.forEach(

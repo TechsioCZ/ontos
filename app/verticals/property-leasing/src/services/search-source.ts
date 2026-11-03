@@ -31,7 +31,9 @@ const readCompany = (snapshot: CoreSearchWorkerSnapshotView, legalEntityId: stri
       .where(and(eq(occupancyState.tenantId, snapshot.tenantId), eq(occupancyState.legalEntityId, legalEntityId)))
       .pipe(
         Effect.flatMap((rows) =>
-          Effect.forEach(rows, (row) => decodeRow(snapshot, legalEntityId, row), { concurrency: 1 }),
+          rows.length > 1
+            ? Effect.fail(invalidSearchSource())
+            : Effect.forEach(rows, (row) => decodeRow(snapshot, legalEntityId, row), { concurrency: 1 }),
         ),
       ),
   );
@@ -43,7 +45,7 @@ export const loadSearchSnapshot = Effect.fn('LeaseSearch.loadSnapshot')(function
   const reader = yield* CoreSearchWorkerSnapshot;
   return yield* reader
     .read(context, (snapshot) =>
-      snapshot.tenantId === context.tenantId
+      snapshot.tenantId === context.tenantId && new Set(snapshot.legalEntityIds).size === snapshot.legalEntityIds.length
         ? Effect.forEach(snapshot.legalEntityIds, (company) => readCompany(snapshot, company), { concurrency: 1 }).pipe(
             Effect.map((companies) => ({
               companies: companies.flat(),

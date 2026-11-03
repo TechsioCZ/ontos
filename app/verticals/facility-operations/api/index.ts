@@ -41,6 +41,7 @@ import { applyCommandActionApiLive } from './apply-command-action-server.ts';
 import { assetsReadApiLive } from './assets-search-server.ts';
 import { devicesReadApiLive } from './devices-search-server.ts';
 import { documentsReadApiLive } from './documents-search-server.ts';
+import { metersReadApiLive } from './meters-search-server.ts';
 import { overviewReadApiLive } from './overview-read-server.ts';
 import { recordsReadApiLive } from './records-read-server.ts';
 import { requestSearchRebuildActionApiLive } from './request-search-rebuild-action-server.ts';
@@ -103,6 +104,12 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
     ),
   ),
   documentsReadApiLive.pipe(
+    GovernedReadLayer.provide(governedReadRuntimeLive),
+    GovernedReadLayer.provide(
+      CoreSearchQueryRuntimeLive.pipe(GovernedReadLayer.provide(CoreSearchProjectionStoreLive)),
+    ),
+  ),
+  metersReadApiLive.pipe(
     GovernedReadLayer.provide(governedReadRuntimeLive),
     GovernedReadLayer.provide(
       CoreSearchQueryRuntimeLive.pipe(GovernedReadLayer.provide(CoreSearchProjectionStoreLive)),

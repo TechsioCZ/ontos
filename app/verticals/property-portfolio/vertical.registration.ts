@@ -39,6 +39,7 @@ export const propertyPortfolioRegistration = defineVerticalRuntimeRegistration({
     },
     search: {
       // <generated-module-registration-search>
+      assets: () => import('./src/api/assets-search-client.ts'),
       properties: () => import('./src/api/properties-search-client.ts'),
       units: () => import('./src/api/units-search-client.ts'),
       // </generated-module-registration-search>

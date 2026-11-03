@@ -60,9 +60,12 @@ export const documentsRead = defineRead(
     ) {
       const { revision, state } = yield* decodeFinanceState(context.loaded);
       const visible = projectFinanceRecords(state, revision, {}).state;
-      const result = yield* loadCurrentSearchHits(context.scope, 'finance.billing.document', input, visible).pipe(
-        Effect.flatMap(Schema.decodeUnknownEffect(DocumentsProviderResponseSchema)),
-      );
+      const result = yield* loadCurrentSearchHits(
+        context.scope,
+        'finance.billing.document',
+        { ...input, includeRelevance: true },
+        visible,
+      ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(DocumentsProviderResponseSchema)));
       return { evidence: { resultCount: result.length }, result };
     }, Effect.mapError(unavailable)),
   },

@@ -11,9 +11,17 @@ export const AssetsProviderRequestSchema = Schema.Struct({
 });
 export type AssetsProviderRequest = typeof AssetsProviderRequestSchema.Type;
 
+/** Mirrors the verified Core optional relevance v1; higher is better and the score is 0..1000. */
+export const AssetsProviderRelevanceSchema = Schema.Struct({
+  score: Schema.Int.check(Schema.isBetween({ maximum: 1000, minimum: 0 })),
+  version: Schema.Literal('1'),
+});
+export type AssetsProviderRelevance = typeof AssetsProviderRelevanceSchema.Type;
+
 export const AssetsProviderResponseSchema = Schema.Array(
   Schema.Struct({
     ref: AssetRefSchema,
+    relevance: Schema.optionalKey(AssetsProviderRelevanceSchema),
     selectedLegalEntityId: SelectedLegalEntityIdSchema,
     title: Schema.String,
   }),

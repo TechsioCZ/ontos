@@ -1103,6 +1103,9 @@ export const searchIndexEntries = enableCoreGovernedRls(
       sourceResourceId: text('source_resource_id').notNull(),
       title: text('title').notNull(),
       bodyText: text('body_text').notNull(),
+      searchTextV1: text('search_text_v1'),
+      searchFormatVersion: integer('search_format_version'),
+      searchSourceVersion: bigint('search_source_version', { mode: 'bigint' }),
       deleted: boolean('deleted').default(false).notNull(),
       facetsJson: jsonb('facets_json')
         .notNull()
@@ -1127,6 +1130,9 @@ export const searchIndexEntries = enableCoreGovernedRls(
         table.legalEntityId,
         table.deleted,
       ),
+      index('core_search_index_entries_text_v1_idx')
+        .using('gin', table.searchTextV1.op('gin_trgm_ops'))
+        .where(sql`${table.deleted} = false and ${table.searchFormatVersion} = 1`),
       foreignKey({
         columns: [table.tenantId, table.legalEntityId],
         foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],

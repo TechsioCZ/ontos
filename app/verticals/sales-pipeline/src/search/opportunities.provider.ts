@@ -3,7 +3,7 @@
 import { Effect } from 'effect';
 import type { CoreSearchQueryRuntime, ReadHandlerUnavailable, ReadLoadContext } from '@app/core-runtime';
 import { loadSearch } from '../services/search-read.ts';
-import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineRead, defineReadSearchCollectionAuthorization, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import {
   OpportunitiesProviderRequestSchema,
   OpportunitiesProviderResponseSchema,
@@ -43,6 +43,12 @@ export const opportunitiesRead = defineRead(
     permissionTarget: 'module',
     policies: [],
     readKey: searchKey,
+    resultAuthorization: defineReadSearchCollectionAuthorization({
+      items: (result: OpportunitiesProviderResponse) => result,
+      resource: (item) => item.ref,
+      resultSchema: OpportunitiesProviderResponseSchema,
+      withItems: (_result, items) => items,
+    }),
     resultSchema: OpportunitiesProviderResponseSchema,
     schemaVersion: '1',
   },
@@ -58,5 +64,4 @@ export const opportunitiesRead = defineRead(
   (_transaction, scope) =>
     Effect.succeed({ load: (input: OpportunitiesProviderRequest) => loadSearch(scope, input.query) }),
   () => ({ kind: 'module', moduleId }),
-  (result) => result.map(({ ref }) => ref),
 );

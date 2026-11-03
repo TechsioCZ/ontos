@@ -1,8 +1,9 @@
 import {
-  CoreSearchIngestion,
   CoreSearchProjectionDocumentSchema,
+  CoreSearchProjectionReplacementSchema,
   CoreSearchProjectionStore,
   ResourceContainmentRelationshipMutation,
+  isVerifiedOutboxWorkerHandlerContext,
   ownerResourceModuleContainment,
 } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
@@ -10,6 +11,7 @@ import { Array as Arr, Effect, Schema } from 'effect';
 import type { SearchSnapshot } from './search-source.ts';
 import { loadSearchSnapshot } from './search-source.ts';
 import { searchUnavailable } from './search-read.ts';
+import { searchIngestionRegistrations } from '../worker-host/search-ingestion-registrations.ts';
 
 const moduleId = 'work.tasks';
 const resourceType = 'work.tasks.task';
@@ -26,6 +28,7 @@ export const buildSearchDocuments = Effect.fn('WorkTasks.searchDocuments')(funct
         record.ref.tenantId !== snapshot.tenantId ||
         record.ref.moduleId !== moduleId ||
         record.ref.resourceType !== resourceType ||
+        (record.ownerPrincipalRef !== undefined && record.ownerPrincipalRef.tenantId !== snapshot.tenantId) ||
         identities.has(record.ref.resourceId)
       ) {
         return Effect.fail(searchUnavailable());
@@ -38,7 +41,20 @@ export const buildSearchDocuments = Effect.fn('WorkTasks.searchDocuments')(funct
         metadata: [],
         projectionVersion: snapshot.projectionVersion,
         ref: record.ref,
-        searchableText: [record.title],
+        // Technical IDs are evidence, not fabricated customer/assignee labels. No private free text.
+        searchableText: [
+          ...new Set(
+            [
+              record.title,
+              record.ref.resourceId,
+              record.dueDate,
+              record.ownerPrincipalRef?.principalId,
+              record.projectId,
+              record.state,
+              record.priority,
+            ].filter((value) => value !== undefined),
+          ),
+        ],
         selectedLegalEntityId: record.legalEntityId,
         title: record.title,
       }).pipe(Effect.mapError(searchUnavailable));
@@ -52,10 +68,28 @@ export const publishSearchSnapshot = Effect.fn('WorkTasks.publishSearch')(functi
   context: OutboxWorkerHandlerContext,
   snapshot: SearchSnapshot,
 ) {
-  if (context.tenantId !== snapshot.tenantId) {
+  if (
+    !isVerifiedOutboxWorkerHandlerContext(context) ||
+    !/^[a-f0-9]{64}$/u.test(context.compositionRevision) ||
+    context.tenantId !== snapshot.tenantId ||
+    !searchIngestionRegistrations.some(
+      (registration) =>
+        registration.consumerModuleKey === context.consumerModuleKey &&
+        registration.producerModuleKey === context.producerModuleKey &&
+        registration.topic === context.topic &&
+        registration.workerKey === context.workerKey,
+    )
+  ) {
     return yield* searchUnavailable();
   }
   const documents = yield* buildSearchDocuments(snapshot);
+  const replacement = yield* Schema.decodeEffect(CoreSearchProjectionReplacementSchema)({
+    documents,
+    moduleId,
+    rebuildVersion: snapshot.projectionVersion,
+    resourceType,
+    tenantId: snapshot.tenantId,
+  }).pipe(Effect.mapError(searchUnavailable));
   const containment = yield* ResourceContainmentRelationshipMutation;
   const relationships = yield* Effect.forEach(
     documents,
@@ -73,37 +107,10 @@ export const publishSearchSnapshot = Effect.fn('WorkTasks.publishSearch')(functi
     concurrency: 1,
     discard: true,
   }).pipe(Effect.mapError(searchUnavailable));
-  const ingestion = yield* CoreSearchIngestion;
-  yield* Effect.forEach(
-    documents,
-    (document) =>
-      ingestion.ingest(
-        {
-          consumerModuleKey: moduleId,
-          mutation: { document, kind: 'upsert' },
-          producerModuleKey: context.producerModuleKey,
-          projectionVersion: snapshot.projectionVersion,
-          tenantId: snapshot.tenantId,
-          topic: context.topic,
-          workerKey: context.workerKey,
-        },
-        context,
-      ),
-    { concurrency: 1, discard: true },
-  ).pipe(Effect.mapError(searchUnavailable));
+  // Publish exactly once. Per-document ingests would expose a partial generation if replace fails.
+  // Core replacement owns idempotence, tombstones, rebuild floors and the atomic failure boundary.
   const store = yield* CoreSearchProjectionStore;
-  yield* store
-    .replace(
-      {
-        documents,
-        moduleId,
-        rebuildVersion: snapshot.projectionVersion,
-        resourceType,
-        tenantId: snapshot.tenantId,
-      },
-      context,
-    )
-    .pipe(Effect.mapError(searchUnavailable));
+  yield* store.replace(replacement, context).pipe(Effect.mapError(searchUnavailable));
   return yield* Effect.void;
 });
 export const projectSearch = Effect.fn('WorkTasks.projectSearch')(function* projectSearch(

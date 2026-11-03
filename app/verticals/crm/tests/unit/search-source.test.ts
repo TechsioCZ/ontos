@@ -15,10 +15,12 @@ interface SourceScenario {
   readonly rowCompany: string;
   readonly rowTenant: string;
   readonly snapshotTenant: string;
+  readonly sourceState?: typeof state;
   readonly succeeds: boolean;
 }
 const checkSource = Effect.fn('Crm.testSearchSource')(function* checkSource(scenario: SourceScenario) {
-  const encoded = yield* Schema.encodeEffect(CrmStateSchema)(state);
+  const expectedState = scenario.sourceState ?? state;
+  const encoded = yield* Schema.encodeEffect(CrmStateSchema)(expectedState);
   let queries = 0;
   const connection = testSqlConnection((sql, params) =>
     Effect.sync(() => {
@@ -58,12 +60,34 @@ const checkSource = Effect.fn('Crm.testSearchSource')(function* checkSource(scen
     const loaded = yield* source.load(context);
     expect(loaded.projectionVersion).toBe('7');
     expect(loaded.companies.map((company) => company.legalEntityId)).toEqual([companyId]);
-    expect(loaded.companies[0]?.state.clients.items[0]?.name).toBe('Železárny Hanák');
+    expect(loaded.companies[0]?.state).toEqual(expectedState);
   } else {
     expect(Schema.is(ReadHandlerUnavailable)(yield* source.load(context).pipe(Effect.flip))).toBe(true);
   }
   expect(queries).toBe(scenario.snapshotTenant === scope.tenantId ? 1 : 0);
 });
+
+it.effect('owner snapshot preserves actual approved metadata and contact-parent linkage for publication', () =>
+  checkSource({
+    rowCompany: companyId,
+    rowTenant: scope.tenantId,
+    snapshotTenant: scope.tenantId,
+    sourceState: {
+      ...state,
+      clients: {
+        ...state.clients,
+        contacts: state.clients.contacts.map((contact) => ({ ...contact, role: 'Nákupčí' })),
+        items: state.clients.items.map((client) => ({
+          ...client,
+          address: 'Dlouhá 42, Brno',
+          vatNo: 'CZ12345678',
+          website: 'https://hanak.example.test',
+        })),
+      },
+    },
+    succeeds: true,
+  }).pipe(Effect.scoped),
+);
 
 it.effect('Core snapshot generation and exact tenant/company predicates fence every canonical owner read', () =>
   Effect.forEach(

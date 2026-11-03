@@ -3,7 +3,7 @@
 import { Effect } from 'effect';
 import type { CoreSearchQueryRuntime, ReadHandlerUnavailable, ReadLoadContext } from '@app/core-runtime';
 import { loadSearch } from '../services/search-read.ts';
-import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineRead, defineReadSearchCollectionAuthorization, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { TasksProviderRequestSchema, TasksProviderResponseSchema } from '../../shared/apis/tasks-search.ts';
 import type { TasksProviderRequest, TasksProviderResponse } from '../../shared/apis/tasks-search.ts';
 
@@ -37,6 +37,12 @@ export const tasksRead = defineRead(
     permissionTarget: 'module',
     policies: [],
     readKey: searchKey,
+    resultAuthorization: defineReadSearchCollectionAuthorization({
+      items: (result: TasksProviderResponse) => result,
+      resource: (item) => item.ref,
+      resultSchema: TasksProviderResponseSchema,
+      withItems: (_result, items) => items,
+    }),
     resultSchema: TasksProviderResponseSchema,
     schemaVersion: '1',
   },
@@ -51,5 +57,4 @@ export const tasksRead = defineRead(
   },
   (_transaction, scope) => Effect.succeed({ load: (input: TasksProviderRequest) => loadSearch(scope, input.query) }),
   () => ({ kind: 'module', moduleId }),
-  (result) => result.map(({ ref }) => ref),
 );

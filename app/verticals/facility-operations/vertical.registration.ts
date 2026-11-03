@@ -48,6 +48,7 @@ export const facilityOperationsRegistration = defineVerticalRuntimeRegistration(
       assets: () => import('./src/api/assets-search-client.ts'),
       devices: () => import('./src/api/devices-search-client.ts'),
       documents: () => import('./src/api/documents-search-client.ts'),
+      meters: () => import('./src/api/meters-search-client.ts'),
       // </generated-module-registration-search>
     },
   },

@@ -11,9 +11,17 @@ export const DocumentsProviderRequestSchema = Schema.Struct({
 });
 export type DocumentsProviderRequest = typeof DocumentsProviderRequestSchema.Type;
 
+/** Mirrors the verified Core optional relevance v1; higher is better and the score is 0..1000. */
+export const DocumentsProviderRelevanceSchema = Schema.Struct({
+  score: Schema.Int.check(Schema.isBetween({ maximum: 1000, minimum: 0 })),
+  version: Schema.Literal('1'),
+});
+export type DocumentsProviderRelevance = typeof DocumentsProviderRelevanceSchema.Type;
+
 export const DocumentsProviderResponseSchema = Schema.Array(
   Schema.Struct({
     ref: DocumentRefSchema,
+    relevance: Schema.optionalKey(DocumentsProviderRelevanceSchema),
     selectedLegalEntityId: SelectedLegalEntityIdSchema,
     title: Schema.String,
   }),

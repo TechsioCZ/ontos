@@ -1,6 +1,5 @@
 import type { Link as LocalizedLink } from '@modern-js/plugin-i18n/runtime';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -13,8 +12,9 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
 
+import { ShellSearchResultRow } from './shell-search-result-row.tsx';
 import { shellSearchGroupIcon } from './shell-search-resource-types.ts';
-import type { ShellSearchSuggestion, ShellSearchSuggestionsState } from './shell-search-suggestions.ts';
+import type { ShellSearchSuggestionsState } from './shell-search-suggestions.ts';
 
 type SuggestionLinkProps = ComponentProps<typeof LocalizedLink>;
 
@@ -46,49 +46,6 @@ const isFocusShortcut = (event: KeyboardEvent): boolean => {
 /** A press keeps focus in the field (Safari never focuses a clicked link), so the list stays until the click lands. */
 const keepFieldFocus = (event: { readonly preventDefault: () => void }) => {
   event.preventDefault();
-};
-
-const SuggestionRow = ({
-  onBlur,
-  onKeyDown,
-  onOpen,
-  suggestion,
-  SuggestionLink,
-}: {
-  readonly onBlur: (event: ReactFocusEvent<HTMLElement>) => void;
-  readonly onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
-  readonly onOpen: () => void;
-  readonly suggestion: ShellSearchSuggestion;
-  readonly SuggestionLink: ComponentType<SuggestionLinkProps>;
-}) => {
-  const { t } = useModernI18n();
-  return (
-    <li>
-      <SuggestionLink
-        className="flex items-center justify-between gap-200 rounded-md px-200 py-150 text-fg-primary no-underline outline-none hover:bg-overlay focus-visible:bg-overlay"
-        data-search-suggestion=""
-        onBlur={onBlur}
-        onClick={onOpen}
-        onKeyDown={onKeyDown}
-        onMouseDown={keepFieldFocus}
-        {...suggestion.target}
-      >
-        <span className="min-w-0 truncate">{suggestion.title}</span>
-        <span className="flex shrink-0 gap-100">
-          {suggestion.roles.map((role) => (
-            <Badge key={role} size="sm" variant="info">
-              {t(`shell.search.roles.${role}`)}
-            </Badge>
-          ))}
-          {suggestion.archived ? (
-            <Badge size="sm" variant="warning">
-              {t('shell.search.archived')}
-            </Badge>
-          ) : null}
-        </span>
-      </SuggestionLink>
-    </li>
-  );
 };
 
 const suggestionStatus = (suggestions: ShellSearchSuggestionsState): 'empty' | 'loading' | 'none' | 'unavailable' => {
@@ -243,13 +200,19 @@ export const ShellSearchBar = ({
                 </h2>
                 <ul aria-labelledby={`${panelId}-${group.key}`} className="grid gap-50">
                   {group.suggestions.map((suggestion) => (
-                    <SuggestionRow
+                    <ShellSearchResultRow
+                      density="compact"
                       key={suggestion.key}
-                      onBlur={handleBlur}
-                      onKeyDown={handleSuggestionKeyDown}
-                      onOpen={onDismissSuggestions}
-                      suggestion={suggestion}
-                      SuggestionLink={SuggestionLink}
+                      linkProps={{
+                        'data-search-suggestion': '',
+                        onBlur: handleBlur,
+                        onClick: onDismissSuggestions,
+                        onKeyDown: handleSuggestionKeyDown,
+                        onMouseDown: keepFieldFocus,
+                      }}
+                      query={suggestions.query}
+                      result={suggestion.result}
+                      ResultLink={SuggestionLink}
                     />
                   ))}
                 </ul>

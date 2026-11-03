@@ -1,4 +1,5 @@
 import { CoreSearchWorkerSnapshot } from '@app/core-runtime';
+import { CalendarDateWireSchema } from '@app/shared-contracts';
 import type {
   CoreSearchSnapshotReadExecutor,
   CoreSearchWorkerSnapshotView,
@@ -7,23 +8,31 @@ import type {
 import { and, eq, sql } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
 import { OpportunityRefSchema } from '../../shared/resources/opportunity.ts';
-import { OpportunityIdSchema } from '../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
+import {
+  OpportunityIdSchema,
+  OpportunityStageSchema,
+} from '../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import { salesPipelineStates } from '../database/schema.ts';
 import { searchUnavailable } from './search-read.ts';
 
 const RecordsSchema = Schema.Array(
   Schema.Struct({
     archived: Schema.Boolean,
+    expectedCloseDate: Schema.optionalKey(CalendarDateWireSchema),
     id: Schema.toEncoded(OpportunityIdSchema),
+    stage: Schema.optionalKey(OpportunityStageSchema),
     title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   }),
 );
 export interface SearchSourceRecord {
   readonly archived: boolean;
+  readonly expectedCloseDate?: typeof CalendarDateWireSchema.Type;
   readonly legalEntityId: string;
   readonly ref: typeof OpportunityRefSchema.Type;
+  readonly stage?: typeof OpportunityStageSchema.Type;
   readonly title: string;
 }
+type MutableSearchSourceRecord = { -readonly [Key in keyof SearchSourceRecord]: SearchSourceRecord[Key] };
 export interface SearchSnapshot {
   readonly projectionVersion: string;
   readonly records: readonly SearchSourceRecord[];
@@ -46,7 +55,19 @@ const decodeRecords = Effect.fn('DemoSalesPipeline.decodeSearchRecords')(functio
       if (ref.tenantId !== tenantId) {
         return yield* searchUnavailable();
       }
-      return { archived: item.archived, legalEntityId, ref, title: item.title };
+      const record: MutableSearchSourceRecord = {
+        archived: item.archived,
+        legalEntityId,
+        ref,
+        title: item.title,
+      };
+      if (item.expectedCloseDate !== undefined) {
+        record.expectedCloseDate = item.expectedCloseDate;
+      }
+      if (item.stage !== undefined) {
+        record.stage = item.stage;
+      }
+      return record;
     }),
     { concurrency: 1 },
   );
@@ -58,10 +79,11 @@ const readCompany = Effect.fn('DemoSalesPipeline.readSearchCompany')(function* r
   legalEntityId: string,
 ) {
   // SQL emits only search fields, never raw owner JSON or private contact/comment/note/history fields.
+  // Optional owner fields are omitted rather than emitted as null, so absence stays absence when decoded.
   const rows = yield* db
     .select({
       legalEntityId: salesPipelineStates.legalEntityId,
-      records: sql<unknown>`case when jsonb_typeof(${salesPipelineStates.state}->'opportunities') = 'array' then coalesce((select jsonb_agg(jsonb_build_object('id', item->>'id', 'title', item->>'title', 'archived', item ? 'archivedAt')) from jsonb_array_elements(${salesPipelineStates.state}->'opportunities') as item), '[]'::jsonb) else null end`,
+      records: sql<unknown>`case when jsonb_typeof(${salesPipelineStates.state}->'opportunities') = 'array' then coalesce((select jsonb_agg(jsonb_strip_nulls(jsonb_build_object('id', item->>'id', 'title', item->>'title', 'expectedCloseDate', item->>'expectedCloseDate', 'stage', item->>'stage', 'archived', item ? 'archivedAt'))) from jsonb_array_elements(${salesPipelineStates.state}->'opportunities') as item), '[]'::jsonb) else null end`,
       tenantId: salesPipelineStates.tenantId,
     })
     .from(salesPipelineStates)

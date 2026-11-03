@@ -1,6 +1,7 @@
 import { CoreSearchQueryRuntime, ReadHandlerUnavailable } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
+import { TasksProviderResponseSchema } from '../../shared/apis/tasks-search.ts';
 import { TaskRefSchema } from '../../shared/resources/task.ts';
 
 export const searchUnavailable = (cause?: unknown) =>
@@ -24,6 +25,7 @@ export const loadSearch = Effect.fn('Tasks.loadSearch')(function* loadSearch(sco
     .search(
       {
         includeArchived: false,
+        includeRelevance: true,
         moduleId: 'work.tasks',
         query,
         resourceType: 'work.tasks.task',
@@ -49,8 +51,9 @@ export const loadSearch = Effect.fn('Tasks.loadSearch')(function* loadSearch(sco
         return yield* searchUnavailable();
       }
       const ref = yield* Schema.decodeUnknownEffect(TaskRefSchema)(hit.ref).pipe(Effect.mapError(searchUnavailable));
-      return { ref, selectedLegalEntityId: legalEntityId, title: hit.title };
+      const result = { ref, selectedLegalEntityId: legalEntityId, title: hit.title };
+      return hit.relevance === undefined ? result : { ...result, relevance: hit.relevance };
     }),
     { concurrency: 1 },
-  );
+  ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(TasksProviderResponseSchema)), Effect.mapError(searchUnavailable));
 });

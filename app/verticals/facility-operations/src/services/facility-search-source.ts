@@ -5,7 +5,7 @@ import type {
   OutboxWorkerHandlerContext,
 } from '@app/core-runtime';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { agendaStates } from '../database/schema.ts';
 
 const unavailable = (cause?: unknown) =>
@@ -21,20 +21,36 @@ const unavailable = (cause?: unknown) =>
 const SearchRowSchema = Schema.Struct({
   archived: Schema.Boolean,
   id: Schema.String.check(Schema.isMinLength(1)),
-  text: Schema.Array(Schema.String),
+  text: Schema.Array(Schema.OptionFromNullOr(Schema.String)),
   title: Schema.String,
-  type: Schema.Literals(['asset', 'device', 'document']),
+  type: Schema.Literals(['asset', 'device', 'document', 'meter']),
 });
+
+/** Optional owner evidence is omitted, never published as an empty Core search term. */
+export const cleanFacilitySearchTerm = (term: string): readonly string[] => {
+  const value = term.trim();
+  return value.length > 0 ? [value] : [];
+};
+
+const cleanDecodedFacilitySearchTerm = (term: Option.Option<string>): readonly string[] =>
+  Option.isNone(term) ? [] : cleanFacilitySearchTerm(term.value);
+
 export interface FacilitySearchSnapshot {
   readonly projectionVersion: string;
-  readonly rows: readonly (typeof SearchRowSchema.Type & {
+  readonly rows: readonly (Omit<typeof SearchRowSchema.Type, 'text'> & {
     readonly legalEntityId: string;
     readonly tenantId: string;
+    readonly text: readonly string[];
   })[];
   readonly tenantId: string;
 }
 
-/** SQL projects only business labels. Notes, people, files, contracts and security details never leave owner SQL. */
+/**
+ * Owner-local allowlist only: asset identity/location and service title/due date, device name/serial,
+ * document title/category/current filename; meter serial/supply-point/medium/unit.
+ * No readings, costs, photos, private people, notes, file bytes or security configuration.
+ * Location labels are stored owner snapshots; search never joins private Property state.
+ */
 const readCompany = Effect.fn('FacilitySearch.readCompany')(function* readCompany(
   db: CoreSearchSnapshotReadExecutor,
   tenantId: string,
@@ -47,17 +63,33 @@ const readCompany = Effect.fn('FacilitySearch.readCompany')(function* readCompan
       when 'assets' then (select coalesce(jsonb_agg(jsonb_build_object(
         'id', item->>'id', 'type', 'asset', 'title', item->>'name',
         'archived', item ? 'archive',
-        'text', jsonb_build_array(item->>'name', item->>'inventoryNumber', item->>'category')
+        'text', jsonb_build_array(
+          item->>'name', item->>'inventoryNumber', item->>'category',
+          item->>'serialNumber', item->'location'->>'label'
+        ) || (select coalesce(jsonb_agg(term), '[]'::jsonb)
+          from jsonb_array_elements(coalesce(item->'services', '[]'::jsonb)) service
+          cross join lateral jsonb_array_elements(
+            jsonb_build_array(service->>'title', service->>'nextDueOn')
+          ) term)
       )), '[]'::jsonb) from jsonb_array_elements(${agendaStates.state}->'assets') item)
       when 'security' then (select coalesce(jsonb_agg(jsonb_build_object(
         'id', item->>'id', 'type', 'device', 'title', item->>'name',
         'archived', coalesce(item->>'state' = 'decommissioned', false),
-        'text', jsonb_build_array(item->>'name', coalesce(item->>'serialNumber', ''))
+        'text', jsonb_build_array(item->>'name', item->>'serialNumber')
       )), '[]'::jsonb) from jsonb_array_elements(${agendaStates.state}->'devices') item)
       when 'documents' then (select coalesce(jsonb_agg(jsonb_build_object(
         'id', item->>'id', 'type', 'document', 'title', item->>'title', 'archived', false,
-        'text', jsonb_build_array(item->>'title', item->>'category')
+        'text', jsonb_build_array(
+          item->>'title', item->>'category', item->'versions'->-1->'file'->>'name'
+        )
       )), '[]'::jsonb) from jsonb_array_elements(${agendaStates.state}->'documents') item)
+      when 'meters' then (select coalesce(jsonb_agg(jsonb_build_object(
+        'id', item->>'id', 'type', 'meter', 'title', item->>'serialNumber',
+        'archived', coalesce(item->>'status' = 'RETIRED', false),
+        'text', jsonb_build_array(
+          item->>'serialNumber', item->>'supplyPoint', item->>'medium', item->>'unit'
+        )
+      )), '[]'::jsonb) from jsonb_array_elements(${agendaStates.state}->'meters') item)
     end`,
       tenantId: agendaStates.tenantId,
     })
@@ -66,7 +98,7 @@ const readCompany = Effect.fn('FacilitySearch.readCompany')(function* readCompan
       and(
         eq(agendaStates.tenantId, tenantId),
         eq(agendaStates.legalEntityId, legalEntityId),
-        inArray(agendaStates.agenda, ['assets', 'security', 'documents']),
+        inArray(agendaStates.agenda, ['assets', 'security', 'documents', 'meters']),
       ),
     );
   const records = yield* Effect.forEach(
@@ -77,7 +109,14 @@ const readCompany = Effect.fn('FacilitySearch.readCompany')(function* readCompan
       }
       return Schema.decodeUnknownEffect(Schema.Array(SearchRowSchema))(row.records).pipe(
         Effect.mapError(unavailable),
-        Effect.map((values) => values.map((record) => ({ ...record, legalEntityId, tenantId }))),
+        Effect.map((values) =>
+          values.map((record) => ({
+            ...record,
+            legalEntityId,
+            tenantId,
+            text: record.text.flatMap(cleanDecodedFacilitySearchTerm),
+          })),
+        ),
       );
     },
     { concurrency: 1 },

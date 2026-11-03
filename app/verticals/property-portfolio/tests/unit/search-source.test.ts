@@ -8,6 +8,7 @@ import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 
 import { propertyRelations } from '../../src/database/schema.ts';
+import type { PropertyState } from '../../shared/apis/records.ts';
 import { invalidSearchSource } from '../../src/search/projection.ts';
 import { loadSearchSnapshot } from '../../src/services/search-source.ts';
 
@@ -28,7 +29,15 @@ const context: OutboxWorkerHandlerContext = {
   workerKey: 'property.portfolio.refresh-search',
 };
 
-const scenario = (rowTenant = tenantId, rowCompany?: string) =>
+const emptyState: PropertyState = { assets: [], properties: [], units: [] };
+
+const scenario = (
+  rowTenant = tenantId,
+  rowCompany?: string,
+  snapshotTenant = tenantId,
+  payload: PropertyState = emptyState,
+  malformed = false,
+) =>
   Effect.scoped(
     Effect.gen(function* sourceScenario() {
       const queries: { readonly params: readonly unknown[]; readonly sql: string }[] = [];
@@ -41,7 +50,7 @@ const scenario = (rowTenant = tenantId, rowCompany?: string) =>
               return Effect.succeed([
                 {
                   legalEntityId: rowCompany ?? params[1],
-                  payload: { assets: [], properties: [], units: [] },
+                  payload: malformed ? { assets: [], properties: [], units: 'invalid' } : payload,
                   tenantId: rowTenant,
                 },
               ]);
@@ -63,7 +72,7 @@ const scenario = (rowTenant = tenantId, rowCompany?: string) =>
             legalEntityIds: [legalEntityId, otherCompany],
             projectionVersion: '37',
             tenant: () => Effect.fail(invalidSearchSource()),
-            tenantId,
+            tenantId: snapshotTenant,
           }),
       };
       const exit = yield* Effect.exit(
@@ -87,6 +96,67 @@ it.effect('reads every company through Core-scoped snapshots with explicit tenan
       [tenantId, otherCompany],
     ]);
     expect(queries.every((query) => query.sql.includes('"property_portfolio"."state"'))).toBe(true);
+  }),
+);
+
+const assetPayload = {
+  assets: [
+    {
+      acquiredAt: null,
+      assetRef: {
+        moduleId: 'property.portfolio',
+        resourceId: '40000000-0000-4000-8000-000000000010',
+        resourceType: 'property.portfolio.asset',
+        tenantId,
+      },
+      category: 'Stroj',
+      code: 'LOAD-9',
+      lastServiceAt: null,
+      lifecycleState: 'IN_SERVICE',
+      name: 'Kolový nakladač',
+      nextServiceAt: null,
+      propertyRef: {
+        moduleId: 'property.portfolio',
+        resourceId: '40000000-0000-4000-8000-000000000011',
+        resourceType: 'property.portfolio.property',
+        tenantId,
+      },
+      serialNumber: 'SN-SOURCE-9',
+      unitRef: null,
+    },
+  ],
+  properties: [],
+  units: [],
+} satisfies PropertyState;
+
+it.effect('loads the actual asset collection from the owner payload without dropping approved fields', () =>
+  Effect.gen(function* assetSnapshotScenario() {
+    const { exit } = yield* scenario(tenantId, undefined, tenantId, assetPayload);
+    expect(Exit.isSuccess(exit)).toBe(true);
+    if (Exit.isSuccess(exit)) {
+      expect(exit.value.companies[0]?.state.assets).toEqual([
+        expect.objectContaining({
+          category: 'Stroj',
+          code: 'LOAD-9',
+          lifecycleState: 'IN_SERVICE',
+          name: 'Kolový nakladač',
+          serialNumber: 'SN-SOURCE-9',
+        }),
+      ]);
+    }
+  }),
+);
+
+it.effect('rejects a foreign snapshot before opening company reads and rejects malformed owner payloads', () =>
+  Effect.gen(function* invalidSnapshotScenario() {
+    const foreign = yield* scenario(tenantId, undefined, otherCompany);
+    expect(Exit.isFailure(foreign.exit)).toBe(true);
+    expect(foreign.scopes).toEqual([]);
+    expect(foreign.queries).toEqual([]);
+    const malformed = yield* scenario(tenantId, undefined, tenantId, emptyState, true);
+    expect(Exit.isFailure(malformed.exit)).toBe(true);
+    expect(malformed.scopes).toEqual([legalEntityId]);
+    expect(malformed.queries.length).toBe(1);
   }),
 );
 

@@ -83,6 +83,7 @@ import {
   ReadPolicyEvaluationError,
   ReadResultValidationError,
 } from './errors.ts';
+import { authorizeReadSearchCollection } from './search-result-authorization.ts';
 import { persistReadEvidence, persistScopedReadEvidence } from './repository.ts';
 import type { PersistReadEvidenceInput } from './repository.ts';
 import { observeReadPhase } from './diagnostics.ts';
@@ -1034,7 +1035,8 @@ const resolveReadPermissionTarget = Effect.fn('Runtime.resolveReadPermissionTarg
           (scope.legalEntityId === undefined ||
             permissionTarget.kind !== 'module' ||
             permissionTarget.moduleId !== registration.descriptor.owningModuleKey)) ||
-        (getReadResultPermissionTargetResolver(registration) !== undefined &&
+        ((getReadResultPermissionTargetResolver(registration) !== undefined ||
+          registration.descriptor.resultAuthorization?.kind === 'search-collection') &&
           permissionTarget.kind === 'any_of' &&
           !allowsSelectedPeopleResultChecks(registration.descriptor, permissionTarget, scope))
       ) {
@@ -1684,29 +1686,60 @@ const readRuntimeFromDependencies = <
       );
       // The connection is back in the pool: owner `finish`, result validation, result authorization, and evidence.
       const handlerResult = yield* finishOwner.pipe(sanitizeOwnerFailure);
-      const result = yield* Schema.decodeUnknownEffect(Schema.toType(input.registration.descriptor.resultSchema), {
-        onExcessProperty: 'error',
-      })(handlerResult.result).pipe(
-        Effect.mapError((parseIssue) =>
-          preserveFailureCause(
-            new ReadResultValidationError({
-              code: 'read_result_invalid',
-              reason: 'The read result does not match its declared schema',
-            }),
-            parseIssue,
+      const decodeResult = (candidate: unknown) =>
+        Schema.decodeUnknownEffect(Schema.toType(input.registration.descriptor.resultSchema), {
+          onExcessProperty: 'error',
+        })(candidate).pipe(
+          Effect.mapError((parseIssue) =>
+            preserveFailureCause(
+              new ReadResultValidationError({
+                code: 'read_result_invalid',
+                reason: 'The read result does not match its declared schema',
+              }),
+              parseIssue,
+            ),
           ),
-        ),
-        observe('read-validation'),
-      );
+          observe('read-validation'),
+        );
+      let result = yield* decodeResult(handlerResult.result);
       stage('result_decoded');
       const resultPermissionResolver = getReadResultPermissionTargetResolver(input.registration);
-      if (resultPermissionResolver !== undefined) {
+      const { resultAuthorization } = input.registration.descriptor;
+      let authorizedSearchCount: number | undefined;
+      if (resultAuthorization?.kind === 'search-collection') {
+        const filtered = yield* authorizeReadSearchCollection(resultAuthorization, result, scope, (resources) => {
+          const request = {
+            permission: 'read' as const,
+            principalId: scope.principalId,
+            resources,
+            tenantId: scope.tenantId,
+          };
+          if (permissionTarget.kind === 'tenant') {
+            if (contextAccess.tenantResources !== undefined) {
+              return contextAccess.tenantResources(request);
+            }
+          } else if (scope.legalEntityId !== undefined) {
+            return contextAccess.resources({ ...request, legalEntityId: scope.legalEntityId });
+          }
+          return Effect.fail(
+            new ReadPermissionUnavailable({
+              code: 'read_permission_unavailable',
+              reason: 'Search result authorization is temporarily unavailable',
+            }),
+          );
+        });
+        result = yield* decodeResult(filtered.result);
+        authorizedSearchCount = filtered.resultCount;
+      } else if (resultPermissionResolver !== undefined) {
         yield* checkResultPermissions(contextAccess, result, scope, permissionTarget, resultPermissionResolver);
       }
-      const evidence = yield* validateReadEvidenceMetadata(
+      const ownerEvidence = yield* validateReadEvidenceMetadata(
         input.registration.descriptor.evidencePolicy.captureMode,
         handlerResult.evidence,
       );
+      // Never persist candidate counts, fingerprints or a denied single-record target for a collection.
+      const evidence: typeof ownerEvidence =
+        authorizedSearchCount === undefined ? ownerEvidence : { resultCount: authorizedSearchCount };
       const ownerResource = evidence.targetResource;
       if (
         ownerResource !== undefined &&

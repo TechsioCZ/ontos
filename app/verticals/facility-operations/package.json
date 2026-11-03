@@ -21,6 +21,7 @@
     "./resources/asset": "./shared/resources/asset.ts",
     "./resources/device": "./shared/resources/device.ts",
     "./resources/document": "./shared/resources/document.ts",
+    "./resources/meter": "./shared/resources/meter.ts",
     "./Route": "./src/federation-entry.tsx",
     "./ui/record-discussion": "./src/ui/record-discussion.tsx"
   },

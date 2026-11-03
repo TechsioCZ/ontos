@@ -24,6 +24,9 @@ import type {
   ReadPrepareContext,
 } from './context.ts';
 
+import type { ReadSearchCollectionResultAuthorization } from './search-result-authorization.ts';
+import { isReadSearchCollectionAuthorization } from './search-result-authorization.ts';
+
 const registrationMarker: unique symbol = Symbol('@app/core-runtime/reads/registration');
 const resourcePermissionDeclarationMarker: unique symbol = Symbol('@app/core-runtime/reads/resource-permission');
 const conditionalPermissionDeclarationMarker: unique symbol = Symbol('@app/core-runtime/reads/conditional-permission');
@@ -366,8 +369,8 @@ export interface ReadDescriptor<
   readonly readKey: string;
   /** Declares an additional exact Resource read permission checked before handler execution. */
   readonly resourcePermission?: ReadResourcePermissionDeclaration<InputSchema['Type']>;
-  /** Explicit owner-ledger search parity; never inferred from a missing result resolver. */
-  readonly resultAuthorization?: ReadOwnerLegalEntityScopeResultAuthorization;
+  /** Explicit search collection filtering or owner-ledger parity; never inferred from result shape. */
+  readonly resultAuthorization?: ReadOwnerLegalEntityScopeResultAuthorization | ReadSearchCollectionResultAuthorization;
   readonly resultSchema: ResultSchema;
   readonly schemaVersion: string;
 }
@@ -736,12 +739,23 @@ const hasValidSearchResultAuthorization = (
     readonly legalEntityScope: LegalEntityScope;
     readonly permissionTarget: ReadPermissionTarget;
     readonly resourcePermission?: unknown;
-    readonly resultAuthorization?: ReadOwnerLegalEntityScopeResultAuthorization;
+    readonly resultAuthorization?:
+      | ReadOwnerLegalEntityScopeResultAuthorization
+      | ReadSearchCollectionResultAuthorization;
   },
   resultPermissionTargetResolver: unknown,
 ): boolean => {
   if (descriptor.resultAuthorization === undefined) {
     return descriptor.accessKind !== 'search' || Predicate.isFunction(resultPermissionTargetResolver);
+  }
+  if (descriptor.resultAuthorization.kind === 'search-collection') {
+    return (
+      isReadSearchCollectionAuthorization(descriptor.resultAuthorization) &&
+      descriptor.accessKind === 'search' &&
+      descriptor.entrypoint.role === 'search' &&
+      ['legal_entity', 'module', 'resource', 'tenant'].includes(descriptor.permissionTarget) &&
+      resultPermissionTargetResolver === undefined
+    );
   }
   return (
     Schema.is(ownerLegalEntityScopeResultAuthorizationSchema)(descriptor.resultAuthorization) &&
@@ -1223,7 +1237,7 @@ export function defineRead<
     evidencePolicy: Object.freeze({ ...descriptor.evidencePolicy }),
     policies: Object.freeze(descriptor.policies.map((reference) => Object.freeze({ ...reference }))),
   };
-  if (descriptorSnapshot.resultAuthorization !== undefined) {
+  if (descriptorSnapshot.resultAuthorization?.kind === 'owner-legal-entity-scope') {
     descriptorSnapshot.resultAuthorization = Object.freeze({ ...descriptorSnapshot.resultAuthorization });
   }
   const frozenDescriptor = Object.freeze(descriptorSnapshot);

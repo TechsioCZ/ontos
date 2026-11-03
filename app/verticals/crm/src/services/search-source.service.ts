@@ -8,10 +8,45 @@ import type {
 } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { Context, Effect, Layer, Schema } from 'effect';
+import type { Client, ContactPerson } from '../../shared/domain/clients.ts';
+import { crmContactSearchTerms } from '../../shared/domain/search-contact-classification.ts';
 import { CrmStateSchema, withDefaultSlices } from '../../shared/domain/state.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
 import { crmStates } from '../database/schema.ts';
 import { searchUnavailable } from '../search/search-unavailable.ts';
+
+/**
+ * Explicit owner-local lookup policy. Broader client metadata is limited to organization business fields;
+ * person addresses/tax identifiers, notes, segments, Party snapshots and assignment history are not evidence.
+ * Parent names come only from this same CRM snapshot, never a foreign owner's private state.
+ * Every value is search-only: providers return only the current record name, ref and company.
+ */
+export const crmSearchFieldPolicy = {
+  client: { organizationFields: ['regNo', 'vatNo', 'address', 'website'] },
+  contact: { fields: ['role'], parentFields: ['name'] },
+  disclosure: 'search_only',
+} as const;
+
+const nonemptyTerms = (values: readonly (string | undefined)[]): readonly string[] =>
+  values.flatMap((value) => {
+    const term = value?.trim();
+    return term === undefined || term.length === 0 ? [] : [term];
+  });
+
+/** Identical evidence construction is used for publication and current authorized-owner rematching. */
+export const crmClientSearchTerms = (client: Client): readonly string[] => [
+  client.name,
+  ...nonemptyTerms(
+    client.kind === 'organization' ? crmSearchFieldPolicy.client.organizationFields.map((field) => client[field]) : [],
+  ),
+  ...crmContactSearchTerms('client', client),
+];
+export const crmContactRecordSearchTerms = (contact: ContactPerson, client: Client | undefined): readonly string[] => [
+  contact.name,
+  ...crmContactSearchTerms('contact', contact),
+  ...nonemptyTerms(crmSearchFieldPolicy.contact.fields.map((field) => contact[field])),
+  ...nonemptyTerms(crmSearchFieldPolicy.contact.parentFields.map((field) => client?.[field])),
+];
 
 export interface SearchSnapshot {
   readonly companies: readonly { readonly legalEntityId: string; readonly state: CrmState }[];

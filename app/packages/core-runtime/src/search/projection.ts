@@ -11,6 +11,15 @@ import { ResourceIdentitySchema } from '../resources/scoped-resource-id.ts';
 import { CoreSearchProjectionStore, coreSearchQueryMatchesScope } from './projection-store.ts';
 import type { CoreSearchProjectionStoreService } from './projection-store.ts';
 import type { CoreSearchQueryRuntimeService } from './query-runtime.ts';
+import {
+  CoreSearchQueryTextSchema,
+  CoreSearchRelevanceSchema,
+  CORE_SEARCH_MAX_RESOURCE_TYPES,
+  coreSearchResourceTypes,
+  matchesCoreSearchValues,
+  parseCoreSearchQuery,
+} from './search-contract.ts';
+import { compareCoreSearchHits, coreSearchRelevance } from './search-ranking.ts';
 
 export { CoreSearchProjectionStore } from './projection-store.ts';
 export { CoreSearchQueryRuntime } from './query-runtime.ts';
@@ -116,6 +125,8 @@ export const CoreSearchProjectionHitSchema = Schema.Struct({
   matchedSubjectRef: Schema.optionalKey(CoreSearchResourceRefSchema),
   metadata: Schema.Array(CoreSearchMetadataFieldSchema).check(Schema.isMaxLength(50)),
   ref: CoreSearchResourceRefSchema,
+  // Additive and only emitted when the caller asks for it; old arrays remain valid.
+  relevance: Schema.optionalKey(CoreSearchRelevanceSchema),
   selectedLegalEntityId: Schema.optionalKey(selectedLegalEntityId),
   subjectRef: Schema.optionalKey(CoreSearchResourceRefSchema),
   temporalFacets: Schema.optionalKey(Schema.Array(CoreSearchTemporalFacetSchema).check(Schema.isMaxLength(100))),
@@ -123,16 +134,27 @@ export const CoreSearchProjectionHitSchema = Schema.Struct({
 });
 export type CoreSearchProjectionHit = typeof CoreSearchProjectionHitSchema.Type;
 
+const resourceTypeList = Schema.Array(resourceType).check(Schema.isMaxLength(CORE_SEARCH_MAX_RESOURCE_TYPES));
+
 export const CoreSearchQuerySchema = Schema.Struct({
   effectiveAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   facets: Schema.optionalKey(Schema.Array(CoreSearchFacetSchema).check(Schema.isMaxLength(20))),
   includeArchived: Schema.Boolean,
+  // Opt-in so unchanged callers keep their exact old hit arrays.
+  includeRelevance: Schema.optionalKey(Schema.Boolean),
   moduleId,
-  query: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  resourceType,
+  query: CoreSearchQueryTextSchema,
+  // Legacy single-type callers stay valid; new callers may select up to 64 types.
+  resourceType: Schema.optionalKey(resourceType),
+  resourceTypes: Schema.optionalKey(resourceTypeList),
   selectedLegalEntityId: Schema.optionalKey(selectedLegalEntityId),
   tenantId,
-});
+}).check(
+  Schema.makeFilter((query) => {
+    const types = coreSearchResourceTypes(query);
+    return types.length > 0 && types.length <= CORE_SEARCH_MAX_RESOURCE_TYPES;
+  }),
+);
 export type CoreSearchQuery = typeof CoreSearchQuerySchema.Type;
 
 export const CoreSearchProjectionReplacementSchema = Schema.Struct({
@@ -185,13 +207,6 @@ const encodeProjectionUnitKey = Schema.encodeUnknownResult(projectionUnitKeyCode
 const projectionUnitKey = (tenant: string, module: string, type: string): string =>
   Result.getOrThrow(encodeProjectionUnitKey([tenant, module, type]));
 const documentKey = ({ ref }: CoreSearchProjectionDocument): string => ref.resourceId;
-/** Case- and diacritics-insensitive matching form: "Dvořáková" and "dvorakova" meet. */
-const normalize = (value: string): string =>
-  value
-    .normalize('NFKD')
-    .replaceAll(/\p{M}+/gu, '')
-    .normalize('NFKC')
-    .toLocaleLowerCase('und');
 
 const invalid = (reason: string, cause?: unknown): CoreSearchProjectionInvalid => {
   if (cause === undefined) {
@@ -478,13 +493,19 @@ export const makeInMemoryCoreSearchProjectionStore = (): CoreSearchProjectionSto
   // Match the PostgreSQL scope guard, including tenant-global queries and tenant-wide authority.
   const queryCandidates: CoreSearchProjectionStoreService['queryCandidates'] = (input, scope) =>
     coreSearchQueryMatchesScope(input, scope)
-      ? Effect.sync(() =>
-          [
-            ...(units.get(projectionUnitKey(input.tenantId, input.moduleId, input.resourceType))?.values() ?? []),
-          ].flatMap(({ document }) =>
-            document === undefined || document.selectedLegalEntityId !== input.selectedLegalEntityId ? [] : [document],
-          ),
-        )
+      ? Effect.sync(() => {
+          const candidates: CoreSearchProjectionDocument[] = [];
+          for (const candidateType of coreSearchResourceTypes(input)) {
+            for (const { document } of units
+              .get(projectionUnitKey(input.tenantId, input.moduleId, candidateType))
+              ?.values() ?? []) {
+              if (document !== undefined && document.selectedLegalEntityId === input.selectedLegalEntityId) {
+                candidates.push(document);
+              }
+            }
+          }
+          return candidates;
+        })
       : Effect.fail(
           new CoreSearchProjectionUnavailable({
             code: 'core_search_projection_unavailable',
@@ -569,11 +590,11 @@ const toHit = (document: CoreSearchProjectionDocument): CoreSearchProjectionHit 
 
 const matchDocument = (
   document: CoreSearchProjectionDocument,
-  needle: string,
+  tokens: readonly string[],
   effectiveAt: number,
 ): CoreSearchProjectionHit | undefined => {
   const hit = toHit(document);
-  const matches = (values: readonly string[]) => values.some((value) => normalize(value).includes(needle));
+  const matches = (values: readonly string[]) => matchesCoreSearchValues(values, tokens);
   const activeValues = (
     values: readonly (typeof CoreSearchTemporalSearchableTextSchema.Type)[] = [],
   ): readonly string[] => {
@@ -588,11 +609,14 @@ const matchDocument = (
     return active;
   };
   // Static evidence already proves a match; only evaluate periods when it does not.
-  if (matches([document.title, ...document.searchableText]) || matches(activeValues(document.temporalSearchableText))) {
+  const canonical = [document.title, ...document.searchableText];
+  if (matches(canonical) || matches([...canonical, ...activeValues(document.temporalSearchableText)])) {
     return hit;
   }
   const alias = document.aliases?.find(
-    (candidate) => matches(candidate.searchableText) || matches(activeValues(candidate.temporalSearchableText)),
+    (candidate) =>
+      matches(candidate.searchableText) ||
+      matches([...candidate.searchableText, ...activeValues(candidate.temporalSearchableText)]),
   );
   if (alias === undefined) {
     return undefined;
@@ -611,28 +635,32 @@ export const createCoreSearchQueryRuntime: Effect.Effect<
       const query = yield* Schema.decodeUnknownEffect(CoreSearchQuerySchema)(input).pipe(
         Effect.mapError((cause) => invalid('Core Search query does not match its declared contract', cause)),
       );
+      const parsed = yield* Effect.fromResult(parseCoreSearchQuery(query.query)).pipe(
+        Effect.mapError((cause) => invalid('Core Search query has no supported normalized tokens', cause)),
+      );
       const documents = yield* store.queryCandidates(query, scope);
-      const needle = normalize(query.query);
       const requestedFacets = query.facets ?? [];
+      const resourceTypes = coreSearchResourceTypes(query);
       const effectiveAt =
         query.effectiveAt === undefined ? yield* Clock.currentTimeMillis : DateTime.toEpochMillis(query.effectiveAt);
       const hits: CoreSearchProjectionHit[] = [];
       for (const document of documents) {
         if (
+          document.ref.tenantId === query.tenantId &&
+          document.ref.moduleId === query.moduleId &&
+          resourceTypes.includes(document.ref.resourceType) &&
           (query.includeArchived || !document.archived) &&
           document.selectedLegalEntityId === query.selectedLegalEntityId &&
           matchesFacets(document, requestedFacets, effectiveAt)
         ) {
-          const hit = matchDocument(document, needle, effectiveAt);
+          // Exact decoded evidence has already proven the match; a flat SQL shortlist never ranks.
+          const hit = matchDocument(document, parsed.tokens, effectiveAt);
           if (hit !== undefined) {
-            hits.push(hit);
+            hits.push(query.includeRelevance === true ? { ...hit, relevance: coreSearchRelevance(hit, parsed) } : hit);
           }
         }
       }
-      return hits.toSorted(
-        (left, right) =>
-          left.title.localeCompare(right.title) || left.ref.resourceId.localeCompare(right.ref.resourceId),
-      );
+      return hits.toSorted((left, right) => compareCoreSearchHits(left, right, parsed));
     },
   );
   return Object.freeze({ search });

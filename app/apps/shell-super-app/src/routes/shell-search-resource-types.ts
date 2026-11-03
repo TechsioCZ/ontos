@@ -173,6 +173,7 @@ const resourceTypes = new Map<string, ResourceTypePresentation>([
   ['property.portfolio.asset', { ...portfolio, group: 'asset' }],
   ['facility.operations.asset', facility('/provoz/majetek', 'asset', 'asset')],
   ['facility.operations.device', facility('/provoz/bezpecnost', 'device', 'device')],
+  ['facility.operations.meter', facility('/provoz/meridla', 'meter', 'device')],
   ['facility.operations.document', facility('/provoz/dokumenty', 'doc', 'facilityDocument')],
   ['property.leasing.occupancy', { group: 'lease', moduleId: 'property.leasing', record: query('/najmy') }],
   [
@@ -195,6 +196,26 @@ interface SearchRef {
 const presentationOf = (ref: SearchRef): ResourceTypePresentation | undefined => {
   const presentation = resourceTypes.get(ref.resourceType);
   return presentation?.moduleId === ref.moduleId ? presentation : undefined;
+};
+
+const shellSearchGroups = new Set<string>(ShellSearchGroupKeySchema.literals);
+
+/**
+ * The exact `resourceTypes` request filter for the Shell groups the caller offers, in registry order. `undefined`
+ * means the groups cannot be described by a complete type list: the catch-all `resource` group also covers owner
+ * types the Shell does not name, and an unknown group has no list at all. An empty list means the selected groups
+ * hold no registered type; the caller omits the request field separately when the whole family is empty.
+ */
+export const shellSearchResourceTypesForGroups = (
+  groups: readonly ShellSearchGroupKey[],
+): readonly string[] | undefined => {
+  if (groups.some((group) => !shellSearchGroups.has(group)) || groups.includes('resource')) {
+    return undefined;
+  }
+  const selected = new Set(groups);
+  return [...resourceTypes].flatMap(([resourceType, presentation]) =>
+    selected.has(presentation.group) ? [resourceType] : [],
+  );
 };
 
 export const shellSearchGroupOf = (result: Pick<ShellSearchResult, 'kind' | 'ref'>): ShellSearchGroupKey => {

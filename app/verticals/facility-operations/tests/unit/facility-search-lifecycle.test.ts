@@ -19,7 +19,7 @@ it.effect('refreshes every searched agenda mutation, but not unrelated agendas o
       const input = agenda === undefined ? { entityIds: [], revision: 1 } : { agenda, entityIds: [], revision: 1 };
       const result = yield* Schema.decodeUnknownEffect(ApplyCommandResultSchema)(input);
       expect(facilitySearchChanged(result)).toBe(
-        agenda === 'assets' || agenda === 'security' || agenda === 'documents',
+        agenda === 'assets' || agenda === 'security' || agenda === 'documents' || agenda === 'meters',
       );
     }
   }),

@@ -4,14 +4,16 @@ import type {
   ContextAccessService,
   InstalledModuleCatalog,
   TenantModuleState,
+  TenantModuleStateRecord,
   TenantModuleStateServiceContract,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
-import { decideModuleStateAccess } from '@app/core-runtime';
+import { decideModuleStateAccess, normalizeCoreSearchText } from '@app/core-runtime';
 import { Context, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
 
 import {
   ResourceRefSchema as SharedResourceRefSchema,
+  ShellSearchRelevanceSchema,
   ShellTimelineEntrySchema as SharedShellTimelineEntrySchema,
 } from '../../shared/api.ts';
 import type { ShellSearchResult as SharedShellSearchResult } from '../../shared/api.ts';
@@ -33,6 +35,7 @@ const ScopedShellSearchResultSchema = Schema.Struct({
       Schema.makeFilter((ref) => (ref.tenantId === undefined ? 'Search result requires Tenant identity' : undefined)),
     ),
   ),
+  relevance: Schema.optionalKey(ShellSearchRelevanceSchema),
   selectedLegalEntityId: LegalEntityIdSchema,
   title: stableKey,
 });
@@ -46,6 +49,7 @@ const PartyShellSearchResultSchema = Schema.Struct({
       ),
     ),
   ),
+  relevance: Schema.optionalKey(ShellSearchRelevanceSchema),
   title: stableKey,
 });
 const CounterpartyShellSearchResultSchema = Schema.Struct({
@@ -73,6 +77,7 @@ const CounterpartyShellSearchResultSchema = Schema.Struct({
       ),
     ),
   ),
+  relevance: Schema.optionalKey(ShellSearchRelevanceSchema),
 });
 const RawShellSearchResultSchema = Schema.Union([
   CounterpartyShellSearchResultSchema,
@@ -87,6 +92,12 @@ export const ShellSearchProviderResultsSchema = Schema.Array(Schema.toEncoded(Ra
 export interface ShellSearchRequest {
   readonly includeArchived?: boolean;
   readonly query: string;
+  /**
+   * The searchable types to ask. Absent asks every eligible admitted type; an empty list asks none. The governed read
+   * rejects unknown or unadmitted names, and this selection only narrows the fan-out: it never grants module or
+   * record permission.
+   */
+  readonly resourceTypes?: readonly string[];
   readonly role?: PartyRole;
 }
 
@@ -334,6 +345,55 @@ const searchProviders = (catalog: InstalledModuleCatalog) =>
     }),
   );
 
+type SearchProvider = ReturnType<typeof searchProviders>[number];
+
+/**
+ * The searchable types the captured catalog and the tenant module states admit. A type is admitted while its
+ * contributing module state allows the search entrypoint; hidden, inactive or unknown modules are not. The Core
+ * people provider stays outside business-module admission and is added by its own system branch.
+ */
+export const shellSearchAdmittedResourceTypes = (
+  catalog: InstalledModuleCatalog,
+  states: readonly TenantModuleStateRecord[],
+): readonly string[] => {
+  const stateByModule = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
+  return [
+    ...new Set(
+      searchProviders(catalog).flatMap(({ contribution, descriptor, moduleId }: SearchProvider) => {
+        const state = stateByModule.get(moduleId);
+        return state !== undefined && decideModuleStateAccess(state, contribution.entrypoint.access) === 'allow'
+          ? [descriptor.resourceType]
+          : [];
+      }),
+    ),
+  ].toSorted();
+};
+
+const compareSearchText = (left: string, right: string): number => {
+  if (left === right) {
+    return 0;
+  }
+  return left < right ? -1 : 1;
+};
+const normalizedSearchTitle = (title: string): string => normalizeCoreSearchText(title).trim().split(/\s+/u).join(' ');
+const searchScore = (result: ShellSearchResult): number => result.relevance?.score ?? 0;
+
+/**
+ * The one Shell-wide result order, applied only after authorization, deduplication and collision sanitization:
+ * verified relevance descending, then the normalized title, then the complete typed reference. Results from owners
+ * that omit relevance keep the existing title-first default and never receive a fabricated score.
+ */
+export const compareShellSearchResults = (left: ShellSearchResult, right: ShellSearchResult): number =>
+  searchScore(right) - searchScore(left) ||
+  compareSearchText(normalizedSearchTitle(left.title), normalizedSearchTitle(right.title)) ||
+  compareSearchText(left.ref.tenantId ?? '', right.ref.tenantId ?? '') ||
+  compareSearchText(left.ref.moduleId, right.ref.moduleId) ||
+  compareSearchText(left.ref.resourceType, right.ref.resourceType) ||
+  compareSearchText(left.ref.resourceId, right.ref.resourceId);
+
+export const sortShellSearchResults = (results: readonly ShellSearchResult[]): readonly ShellSearchResult[] =>
+  results.toSorted(compareShellSearchResults);
+
 interface SearchCandidate {
   readonly provider: ReturnType<typeof searchProviders>[number];
   readonly value: ShellSearchResult;
@@ -400,7 +460,13 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
     }
     const catalog = yield* dependencies.catalog.pipe(Effect.mapError(unavailable));
     const providers = searchProviders(catalog);
-    const moduleIds = [...new Set(providers.map(({ moduleId }) => moduleId))].toSorted();
+    // The requested types only narrow which admitted owners are asked; they never replace a permission decision.
+    const requested = searchRequest.resourceTypes === undefined ? undefined : new Set(searchRequest.resourceTypes);
+    const selectedProviders =
+      requested === undefined
+        ? providers
+        : providers.filter(({ descriptor }) => requested.has(descriptor.resourceType));
+    const moduleIds = [...new Set(selectedProviders.map(({ moduleId }) => moduleId))].toSorted();
     if (moduleIds.length === 0) {
       return { partial: false, results: [] } as const;
     }
@@ -413,7 +479,7 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
       return yield* unavailable();
     }
     const stateByModule = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
-    const stateEligible = providers.filter(({ contribution, descriptor, moduleId }) => {
+    const stateEligible = selectedProviders.filter(({ contribution, descriptor, moduleId }) => {
       const state = stateByModule.get(moduleId);
       // With a company selected, results stay inside it: tenant-wide providers answer only in tenant context.
       return (
@@ -585,8 +651,8 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
       } as const;
     }
     const allowedKeys = yield* authorizeSearchCandidates(dependencies, context, uniqueCandidates);
-    const results = uniqueCandidates
-      .flatMap<ShellSearchResult>(({ provider, value }) => {
+    const results = sortShellSearchResults(
+      uniqueCandidates.flatMap<ShellSearchResult>(({ provider, value }) => {
         if (provider.descriptor.accessFiltering === 'resource_permission' && !allowedKeys.has(resourceKey(value.ref))) {
           return [];
         }
@@ -603,11 +669,8 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
                 collision: { ...collision, counterpartyRefs },
               },
         ];
-      })
-      .toSorted((left, right) => {
-        const titleOrder = left.title.localeCompare(right.title);
-        return titleOrder === 0 ? left.ref.resourceId.localeCompare(right.ref.resourceId) : titleOrder;
-      });
+      }),
+    );
     return {
       partial: false,
       results,

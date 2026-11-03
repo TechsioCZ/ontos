@@ -11,9 +11,17 @@ export const DevicesProviderRequestSchema = Schema.Struct({
 });
 export type DevicesProviderRequest = typeof DevicesProviderRequestSchema.Type;
 
+/** Mirrors the verified Core optional relevance v1; higher is better and the score is 0..1000. */
+export const DevicesProviderRelevanceSchema = Schema.Struct({
+  score: Schema.Int.check(Schema.isBetween({ maximum: 1000, minimum: 0 })),
+  version: Schema.Literal('1'),
+});
+export type DevicesProviderRelevance = typeof DevicesProviderRelevanceSchema.Type;
+
 export const DevicesProviderResponseSchema = Schema.Array(
   Schema.Struct({
     ref: DeviceRefSchema,
+    relevance: Schema.optionalKey(DevicesProviderRelevanceSchema),
     selectedLegalEntityId: SelectedLegalEntityIdSchema,
     title: Schema.String,
   }),

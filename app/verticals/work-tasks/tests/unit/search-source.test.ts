@@ -1,4 +1,10 @@
-import { CoreSearchWorkerSnapshot } from '@app/core-runtime';
+import {
+  CoreSearchProjectionStore,
+  CoreSearchQueryRuntime,
+  CoreSearchWorkerSnapshot,
+  createCoreSearchQueryRuntime,
+  makeInMemoryCoreSearchProjectionStore,
+} from '@app/core-runtime';
 import type { CoreSearchWorkerSnapshotService } from '@app/core-runtime';
 import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
 import { PgClient } from '@effect/sql-pg';
@@ -8,9 +14,12 @@ import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { workRelations } from '../../src/database/schema.ts';
 import { loadSearchSnapshot } from '../../src/services/search-source.ts';
-import { company, context, otherCompany, otherTenant, ref, tenantId } from './search-fixtures.ts';
+import { buildSearchDocuments } from '../../src/services/search-projection.ts';
+import { loadSearch } from '../../src/services/search-read.ts';
+import { company, context, otherCompany, otherTenant, ref, scope, tenantId } from './search-fixtures.ts';
 
 interface SourceScenario {
+  readonly records?: readonly unknown[];
   readonly rowCompany: string;
   readonly rowTenant: string;
   readonly snapshotTenant: string;
@@ -27,6 +36,7 @@ const checkSource = Effect.fn('Search.testSource')(function* checkSource(scenari
       expect(params).toEqual([tenantId, company]);
       expect(statement).toContain("'tasks'");
       expect(statement).toContain('jsonb_build_object');
+      expect(statement).not.toMatch(/\bjoin\b/iu);
       expect(statement).not.toContain("'note'");
       expect(statement).not.toContain("'description'");
       expect(statement).not.toContain("'comments'");
@@ -34,7 +44,7 @@ const checkSource = Effect.fn('Search.testSource')(function* checkSource(scenari
       return [
         {
           legalEntityId: scenario.rowCompany,
-          records: [{ archived: false, ref, title: 'Veřejný název' }],
+          records: scenario.records ?? [{ archived: false, ref, title: 'Veřejný název' }],
           tenantId: scenario.rowTenant,
         },
       ];
@@ -67,9 +77,12 @@ const checkSource = Effect.fn('Search.testSource')(function* checkSource(scenari
   expect(Exit.isSuccess(result)).toBe(scenario.succeeds);
   if (Exit.isSuccess(result)) {
     expect(result.value.projectionVersion).toBe('7');
-    expect(result.value.records).toMatchObject([{ legalEntityId: company, ref, title: 'Veřejný název' }]);
+    if (scenario.records === undefined) {
+      expect(result.value.records).toMatchObject([{ legalEntityId: company, ref, title: 'Veřejný název' }]);
+    }
   }
   expect(queries).toBe(scenario.snapshotTenant === tenantId ? 1 : 0);
+  return result;
 });
 it.effect('compiled SQL selects only search fields under both trusted scope predicates; foreign rows fail closed', () =>
   Effect.forEach(
@@ -82,4 +95,100 @@ it.effect('compiled SQL selects only search fields under both trusted scope pred
     checkSource,
     { concurrency: 1, discard: true },
   ).pipe(Effect.scoped),
+);
+
+const validScenario = { rowCompany: company, rowTenant: tenantId, snapshotTenant: tenantId, succeeds: true };
+const approvedRecord = {
+  archived: false,
+  dueDate: '2026-11-04',
+  ownerPrincipalRef: { principalId: scope.principalId, tenantId },
+  priority: 'HIGH',
+  projectId: 'work-project-42',
+  ref,
+  state: 'WAITING',
+  title: 'Příprava kanceláře',
+};
+it.effect('source decoding carries actual safe fields into searchable evidence but never private payloads', () =>
+  Effect.gen(function* test() {
+    const result = yield* checkSource({
+      ...validScenario,
+      records: [
+        {
+          ...approvedRecord,
+          comments: [{ text: 'private-comment-term' }],
+          description: 'private-description-term',
+          history: [{ actorDisplayName: 'private-history-term' }],
+          storefrontInquiry: { email: 'private-inquiry@example.test', message: 'private-inquiry-term' },
+        },
+      ],
+    });
+    if (Exit.isSuccess(result)) {
+      expect(result.value.records).toEqual([{ ...approvedRecord, legalEntityId: company }]);
+      const documents = yield* buildSearchDocuments(result.value);
+      const store = makeInMemoryCoreSearchProjectionStore();
+      yield* store.replace(
+        {
+          documents,
+          moduleId: ref.moduleId,
+          rebuildVersion: result.value.projectionVersion,
+          resourceType: ref.resourceType,
+          tenantId,
+        },
+        context,
+      );
+      const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
+      for (const [query, score] of [
+        ['priprava', 800],
+        [ref.resourceId, 1000],
+        [scope.principalId, 100],
+        ['2026-11-04', 100],
+        ['work-project-42', 100],
+        ['WAITING', 100],
+        ['HIGH', 100],
+      ] as const) {
+        expect(yield* loadSearch(scope, query).pipe(Effect.provideService(CoreSearchQueryRuntime, runtime))).toEqual([
+          { ref, relevance: { score, version: '1' }, selectedLegalEntityId: company, title: approvedRecord.title },
+        ]);
+      }
+      for (const query of [
+        'private-comment-term',
+        'private-description-term',
+        'private-history-term',
+        'private-inquiry',
+        'example.test',
+      ]) {
+        expect(yield* loadSearch(scope, query).pipe(Effect.provideService(CoreSearchQueryRuntime, runtime))).toEqual(
+          [],
+        );
+      }
+    }
+  }).pipe(Effect.scoped),
+);
+it.effect(
+  'malformed approved evidence and cross-tenant owner identities fail closed rather than silently indexing',
+  () =>
+    Effect.forEach(
+      [
+        { ...approvedRecord, dueDate: '2026-02-30' },
+        { ...approvedRecord, ownerPrincipalRef: { principalId: scope.principalId, tenantId: otherTenant } },
+        { ...approvedRecord, ownerPrincipalRef: { principalId: 'invalid', tenantId } },
+        { ...approvedRecord, ownerPrincipalRef: { principalId: scope.principalId } },
+        { ...approvedRecord, projectId: '' },
+        { ...approvedRecord, priority: 'UNKNOWN' },
+        { ...approvedRecord, state: 'UNKNOWN' },
+      ],
+      (record) => checkSource({ ...validScenario, records: [record], succeeds: false }),
+      {
+        concurrency: 1,
+        discard: true,
+      },
+    ).pipe(Effect.scoped),
+);
+it.effect('empty task snapshots retain the reserved generation for deletion publication', () =>
+  Effect.gen(function* test() {
+    const result = yield* checkSource({ ...validScenario, records: [] });
+    if (Exit.isSuccess(result)) {
+      expect(result.value).toEqual({ projectionVersion: '7', records: [], tenantId });
+    }
+  }).pipe(Effect.scoped),
 );

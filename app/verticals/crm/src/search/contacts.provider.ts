@@ -27,6 +27,7 @@ const finish = Effect.fn('Crm.contacts.finish')(function* finishSearch(
     Effect.mapError(searchUnavailable),
   );
   const hits = yield* loadCrmSearch(context.scope, {
+    includeRelevance: true,
     query: input.query,
     resourceType: 'demo.crm.contact',
     visible: visible.state,

@@ -43,6 +43,7 @@ it.effect('indexes classified business/personal contact fields for lookup only a
       'jiri.novotny@example.test',
       '420606333444',
       '606333444',
+      'Železárny Hanák',
     ]);
     expect(JSON.stringify(documents)).not.toContain('private');
     for (const { searchableText: _searchOnly, ...document } of documents) {
@@ -53,6 +54,113 @@ it.effect('indexes classified business/personal contact fields for lookup only a
     }
     expect(crmSearchContactClassification.client.classification).toBe('business_contact');
     expect(crmSearchContactClassification.contact.classification).toBe('contact_personal_data');
+  }),
+);
+
+it.effect('publishes only explicitly allowed same-owner metadata, with contact evidence absent from presentation', () =>
+  Effect.gen(function* checkApprovedEvidence() {
+    const documents = yield* buildSearchDocuments({
+      ...snapshot,
+      companies: [
+        {
+          legalEntityId: companyId,
+          state: {
+            ...state,
+            clients: {
+              ...state.clients,
+              contacts: state.clients.contacts.map((contact) => ({ ...contact, role: 'Nákupčí' })),
+              items: state.clients.items.map((client) => ({
+                ...client,
+                address: 'Dlouhá 42, Brno',
+                segment: 'excluded-segment',
+                vatNo: 'CZ12345678',
+                website: 'https://hanak.example.test',
+              })),
+            },
+          },
+        },
+      ],
+    });
+    const client = documents.find((document) => document.ref.resourceType === 'demo.crm.client');
+    const contact = documents.find((document) => document.ref.resourceType === 'demo.crm.contact');
+    expect(client?.searchableText).toEqual([
+      'Železárny Hanák',
+      '12345678',
+      'CZ12345678',
+      'Dlouhá 42, Brno',
+      'https://hanak.example.test',
+      'info@pekarna.example.test',
+      '420777111222',
+      '777111222',
+    ]);
+    expect(contact?.searchableText).toEqual([
+      'Jiří Novotný',
+      'jiri.novotny@example.test',
+      '420606333444',
+      '606333444',
+      'Nákupčí',
+      'Železárny Hanák',
+    ]);
+    expect(JSON.stringify(documents)).not.toMatch(/excluded-segment|private/u);
+    for (const { searchableText: _evidence, ...presentation } of documents) {
+      expect(JSON.stringify(presentation)).not.toMatch(/@|777111|606333|Nákupčí|CZ12345678|Dlouhá|https:/u);
+      expect(presentation.aliases).toEqual([]);
+      expect(presentation.metadata).toEqual([]);
+      expect(presentation.facets).toEqual([]);
+    }
+  }),
+);
+
+it.effect('optional empty metadata never creates an empty term and person metadata is not implicitly approved', () =>
+  Effect.gen(function* checkFieldPolicy() {
+    const documents = yield* buildSearchDocuments({
+      ...snapshot,
+      companies: [
+        {
+          legalEntityId: companyId,
+          state: {
+            ...state,
+            clients: {
+              ...state.clients,
+              contacts: state.clients.contacts.map((contact) => ({ ...contact, role: '   ' })),
+              items: state.clients.items.map((client) => ({
+                ...client,
+                address: 'person-private-address',
+                kind: 'person' as const,
+                vatNo: 'person-private-tax',
+                website: 'person-private-site',
+              })),
+            },
+          },
+        },
+      ],
+    });
+    expect(JSON.stringify(documents)).not.toContain('person-private');
+    expect(documents.flatMap((document) => document.searchableText).every((term) => term.trim().length > 0)).toBe(true);
+    const blankBusiness = yield* buildSearchDocuments({
+      ...snapshot,
+      companies: [
+        {
+          legalEntityId: companyId,
+          state: {
+            ...state,
+            clients: {
+              ...state.clients,
+              items: state.clients.items.map((client) => ({
+                ...client,
+                address: ' ',
+                regNo: '',
+                vatNo: '',
+                website: '  ',
+              })),
+            },
+          },
+        },
+      ],
+    });
+    expect(blankBusiness.flatMap((document) => document.searchableText).every((term) => term.trim().length > 0)).toBe(
+      true,
+    );
   }),
 );
 
