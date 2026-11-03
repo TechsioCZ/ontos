@@ -365,7 +365,11 @@ it.live(
           }),
         ),
       );
-      yield* publishSnapshot(first, Option.none(), initialProof).pipe(Effect.provide(nativeKvLayer));
+      yield* publishSnapshot(first, Option.none(), initialProof, {
+        retainedModuleAppIds: [],
+        revision: null,
+        shellMode: 'fresh',
+      }).pipe(Effect.provide(nativeKvLayer));
       expect(kvRequests).toEqual(['GET', 'PUT', 'GET']);
       expect(yield* Ref.get(initialReadbackObserved)).toBe(true);
       expect(successfulProvider.requests).toEqual(
@@ -425,9 +429,16 @@ it.live(
       expect(afterFailure).toMatchObject({ phase: 'draining', revision: first.composition.revision });
 
       const renewal = { ...first, validUntil: DateTime.add(first.validUntil, { milliseconds: 5000 }) };
-      yield* publishApplicationCompositionAuthoritySnapshot(renewal, Effect.void, rejectUnexpectedProof);
+      yield* publishApplicationCompositionAuthoritySnapshot(renewal, Effect.void, rejectUnexpectedProof, {
+        baselineRevision: first.composition.revision,
+        targetRevision: first.composition.revision,
+      });
       const [afterRenewal] = yield* observer.executor.select().from(applicationCompositionAuthority);
-      expect(afterRenewal).toMatchObject({ phase: 'draining', revision: first.composition.revision });
+      expect(afterRenewal).toMatchObject({
+        durableWorkAdmission: 'closed',
+        phase: 'draining',
+        revision: first.composition.revision,
+      });
       expect(transitionProvider.requests).toHaveLength(12);
 
       const tenantId = randomUUID();
@@ -572,6 +583,62 @@ it.live(
       expect(yield* Ref.get(thirdCalls)).toBe(1);
 
       const fourth = yield* snapshot('fourth', 60_000);
+      const guardColumn = `publication_guard_${randomUUID().replaceAll('-', '')}`;
+      yield* Effect.addFinalizer(() =>
+        observer.executor
+          .execute(
+            sql`alter table ${applicationCompositionAuthority} drop column if exists ${sql.identifier(guardColumn)}`,
+            'objects',
+          )
+          .pipe(Effect.asVoid, Effect.orDie),
+      );
+      const baselineMismatchReason =
+        'The native publication authority no longer matches the captured baseline or active target';
+      const rejectedGuardEffects = yield* Ref.make(0);
+      const guardedDdl = observer.executor
+        .execute(
+          sql`alter table ${applicationCompositionAuthority} add column ${sql.identifier(guardColumn)} boolean`,
+          'objects',
+        )
+        .pipe(Effect.tap(() => Ref.update(rejectedGuardEffects, (calls) => calls + 1)));
+      const beforeRejectedGuards = yield* observer.executor.select().from(applicationCompositionAuthority);
+      const beforeRejectedGuardRequests = kvRequests.length;
+      for (const baselineRevision of [first.composition.revision, null]) {
+        const precondition = { baselineRevision, targetRevision: fourth.composition.revision };
+        const rejectedPublication = yield* publishApplicationCompositionAuthoritySnapshot(
+          fourth,
+          Ref.update(rejectedGuardEffects, (calls) => calls + 1),
+          rejectUnexpectedProof,
+          precondition,
+        ).pipe(Effect.flip);
+        expect(Schema.is(ApplicationCompositionAuthorityError)(rejectedPublication)).toBe(true);
+        expect(rejectedPublication).toMatchObject({ reason: baselineMismatchReason });
+        const rejectedMigration = yield* runApplicationCompositionMigration(
+          guardedDdl,
+          rejectUnexpectedProof,
+          precondition,
+        ).pipe(Effect.flip);
+        expect(Schema.is(ApplicationCompositionAuthorityError)(rejectedMigration)).toBe(true);
+        expect(rejectedMigration).toMatchObject({ reason: baselineMismatchReason });
+        expect(yield* observer.executor.select().from(applicationCompositionAuthority)).toEqual(beforeRejectedGuards);
+      }
+      const sameRevisionMigration = yield* runApplicationCompositionMigration(guardedDdl, rejectUnexpectedProof, {
+        baselineRevision: third.composition.revision,
+        targetRevision: third.composition.revision,
+      }).pipe(Effect.flip);
+      expect(Schema.is(ApplicationCompositionAuthorityError)(sameRevisionMigration)).toBe(true);
+      expect(sameRevisionMigration).toMatchObject({
+        reason: 'Migration requires a distinct unpublished target; reconcile publication without rerunning DDL',
+      });
+      expect(yield* observer.executor.select().from(applicationCompositionAuthority)).toEqual(beforeRejectedGuards);
+      expect(yield* Ref.get(rejectedGuardEffects)).toBe(0);
+      expect(kvRequests.length).toBe(beforeRejectedGuardRequests);
+      expect(
+        yield* observer.executor.execute<{ readonly present: boolean }>(
+          sql`select exists(select 1 from information_schema.columns where table_schema = 'core' and table_name = 'application_composition_authority' and column_name = ${guardColumn}) as present`,
+          'objects',
+        ),
+      ).toEqual([{ present: false }]);
       const interruptionEntered = yield* Deferred.make<boolean>();
       const interruptedPublisher = yield* publishApplicationCompositionAuthoritySnapshot(
         fourth,
@@ -658,7 +725,10 @@ it.live(
       }
       yield* Fiber.interrupt(waitingForDurableWork);
       const closedRenewal = { ...fourth, validUntil: DateTime.add(fourth.validUntil, { milliseconds: 1000 }) };
-      yield* publishApplicationCompositionAuthoritySnapshot(closedRenewal, Effect.void, rejectUnexpectedProof);
+      yield* publishApplicationCompositionAuthoritySnapshot(closedRenewal, Effect.void, rejectUnexpectedProof, {
+        baselineRevision: fourth.composition.revision,
+        targetRevision: fourth.composition.revision,
+      });
       const [afterClosedRenewal] = yield* observer.executor.select().from(applicationCompositionAuthority);
       expect(afterClosedRenewal).toMatchObject({ durableWorkAdmission: 'closed', phase: 'active' });
       yield* resumeApplicationCompositionDurableWork(fourth.composition.revision).pipe(Effect.timeout('2 seconds'));
@@ -813,7 +883,10 @@ it.live(
       expect(afterMigrationFailure).toMatchObject({ phase: 'sealed', revision: fourth.composition.revision });
 
       const sealedRenewal = { ...fourth, validUntil: DateTime.add(fourth.validUntil, { milliseconds: 5000 }) };
-      yield* publishApplicationCompositionAuthoritySnapshot(sealedRenewal, Effect.void, rejectUnexpectedProof);
+      yield* publishApplicationCompositionAuthoritySnapshot(sealedRenewal, Effect.void, rejectUnexpectedProof, {
+        baselineRevision: fourth.composition.revision,
+        targetRevision: fourth.composition.revision,
+      });
       const [afterSealedRenewal] = yield* observer.executor.select().from(applicationCompositionAuthority);
       expect(afterSealedRenewal).toMatchObject({
         durableWorkAdmission: 'closed',
@@ -833,13 +906,27 @@ it.live(
       const [afterMigrationSuccess] = yield* observer.executor.select().from(applicationCompositionAuthority);
       expect(afterMigrationSuccess).toMatchObject({ phase: 'migrated', revision: fourth.composition.revision });
       const migratedRenewal = { ...fourth, validUntil: DateTime.add(fourth.validUntil, { milliseconds: 10_000 }) };
-      yield* publishApplicationCompositionAuthoritySnapshot(migratedRenewal, Effect.void, rejectUnexpectedProof);
+      yield* publishApplicationCompositionAuthoritySnapshot(migratedRenewal, Effect.void, rejectUnexpectedProof, {
+        baselineRevision: fourth.composition.revision,
+        targetRevision: fourth.composition.revision,
+      });
       const [afterMigratedRenewal] = yield* observer.executor.select().from(applicationCompositionAuthority);
       expect(afterMigratedRenewal).toMatchObject({
         durableWorkAdmission: 'closed',
         phase: 'migrated',
         revision: fourth.composition.revision,
       });
+      const beforeRetiredTargetRetry = yield* observer.executor.select().from(applicationCompositionAuthority);
+      const retiredTargetRetry = yield* publishApplicationCompositionAuthoritySnapshot(
+        fourth,
+        Ref.update(rejectedGuardEffects, (calls) => calls + 1),
+        rejectUnexpectedProof,
+        { baselineRevision: third.composition.revision, targetRevision: fourth.composition.revision },
+      ).pipe(Effect.flip);
+      expect(Schema.is(ApplicationCompositionAuthorityError)(retiredTargetRetry)).toBe(true);
+      expect(retiredTargetRetry).toMatchObject({ reason: baselineMismatchReason });
+      expect(yield* Ref.get(rejectedGuardEffects)).toBe(0);
+      expect(yield* observer.executor.select().from(applicationCompositionAuthority)).toEqual(beforeRetiredTargetRetry);
       for (const operation of ['read', 'write', 'match', 'worker'] as const) {
         const retiredAdmission = yield* runtime.executor
           .transaction((transaction) =>
