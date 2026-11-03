@@ -1,13 +1,17 @@
 import { createHash } from 'node:crypto';
 
+import { NodeServices } from '@effect/platform-node';
 import { expect, test as base } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { Effect, Predicate, Schema } from 'effect';
+import { Config, Effect, Predicate, Schema } from 'effect';
 
+import { decodeActiveApplicationCompositionSnapshot } from '../../../../scripts/active-application-composition.mts';
 import {
   ResolveModuleTargetPayloadSchema,
   ResolvedModuleTargetSchema,
   ShellAuthenticationApi,
+  ShellCapabilityUnavailableProblemSchema,
+  ShellReloadRequiredProblemSchema,
   ShellTargetForbiddenProblemSchema,
   shellAuthenticationApiContract,
 } from '../../shared/api.ts';
@@ -469,6 +473,177 @@ test('contains a Contacts render-phase failure and rechecks revoked access acros
       });
     }).pipe(Effect.scoped),
   );
+});
+
+const CompositionFixtureMetadataSchema = Schema.Struct({ activeApplicationCompositionUrl: Schema.URLFromString });
+const RetainedPartyPromotionSchema = Schema.Struct({
+  compositionRevision: ResolvedModuleTargetSchema.fields.compositionRevision,
+  previousRevision: ResolvedModuleTargetSchema.fields.compositionRevision,
+});
+
+test('reloads failed Contacts into a genuinely published R2 with exact retained artifacts', async ({
+  authentication,
+  page,
+}, testInfo) => {
+  const promotionEnabled = await Effect.runPromise(
+    Effect.gen(function* readExclusiveR2BrowserFlag() {
+      return yield* Config.Boolean('ONTOS_E2E_RETAINED_PARTY_R2').pipe(Config.withDefault(false));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+  test.skip(!promotionEnabled, 'Requires the exclusive isolated R2 browser driver');
+  expect(testInfo.config.workers).toBe(1);
+  test.setTimeout(90_000);
+  await login(page, 'en', authentication.credentials);
+  const { activeApplicationCompositionUrl } = Schema.decodeUnknownSync(CompositionFixtureMetadataSchema)(
+    testInfo.config.metadata,
+  );
+  const observePublishedSnapshot = async () => {
+    const response = await page.request.get(activeApplicationCompositionUrl.href);
+    expect(response.status()).toBe(200);
+    return await Effect.runPromise(decodeActiveApplicationCompositionSnapshot(await response.text()));
+  };
+  const originalSnapshot = await observePublishedSnapshot();
+  const originalRevision = originalSnapshot.composition.revision;
+  await expect(page.locator(compositionRevisionSelector)).toHaveAttribute('content', originalRevision);
+  expect(originalSnapshot.composition.modules.map(({ deployment }) => deployment.appId).toSorted()).toEqual([
+    'inventory',
+    'party-registry',
+  ]);
+  const { origin } = new URL(page.url());
+  const originalPayload = Schema.decodeUnknownSync(ResolveModuleTargetPayloadSchema)({
+    canonicalPath: '/contacts',
+    compositionRevision: originalRevision,
+  });
+  const originalResponse = await page.request.post(moduleTargetPath, { data: originalPayload, headers: { origin } });
+  expect(originalResponse.status()).toBe(200);
+  const originalTarget = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)(await originalResponse.json());
+  expect(originalTarget.componentKey).toBe('party.registry.page-contacts');
+  expect(originalTarget.federation.expose).toBe('./PageContacts');
+  const originalPartyPins = originalSnapshot.composition.modules.filter(
+    ({ deployment }) => deployment.appId === 'party-registry',
+  );
+  expect(originalPartyPins).toHaveLength(1);
+  const navigation = page.getByRole('navigation', { name: 'Dashboard navigation' });
+  const restoreFault = await installContactsRenderInitializationFault(page);
+  try {
+    await navigation.getByRole('link', { exact: true, name: 'Party Registry' }).click();
+    await expect(page.getByRole('alert')).toHaveText(
+      'This module could not be displayed. Reload the page to try again.',
+    );
+    await expect(page.getByRole('alert')).not.toContainText(contactsRenderInitializationFault);
+    await expect(page.locator('html')).toHaveAttribute('data-e2e-contacts-render-initialization-fault', 'fired');
+    await expect(page.locator(contactsSectionSelector)).toHaveCount(0);
+    await expect(page.locator('header[aria-label="Dashboard header"]')).toBeVisible();
+    await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeVisible();
+    await waitForInteractiveAccountMenu(page);
+  } finally {
+    await restoreFault.evaluate((restore) => restore());
+    await restoreFault.dispose();
+  }
+  // This fixed test control uses real Core publication authority and current executable
+  // artifacts. It is not staging-wrapper evidence or permission to replace a live document.
+  const promotionResponse = await page.request.post(
+    new URL('/promote-retained-party', activeApplicationCompositionUrl).href,
+    {
+      headers: { origin },
+    },
+  );
+  expect(promotionResponse.status()).toBe(200);
+  const promotion = Schema.decodeUnknownSync(RetainedPartyPromotionSchema)(await promotionResponse.json());
+  expect(promotion.previousRevision).toBe(originalRevision);
+  expect(promotion.compositionRevision).not.toBe(originalRevision);
+  const promotedSnapshot = await observePublishedSnapshot();
+  expect(promotedSnapshot.composition.revision).toBe(promotion.compositionRevision);
+  expect(promotedSnapshot.composition.modules.map(({ deployment }) => deployment.appId)).toEqual(['party-registry']);
+  expect(promotedSnapshot.composition.modules).toEqual(originalPartyPins);
+  expect(promotedSnapshot.composition.shell).toEqual(originalSnapshot.composition.shell);
+  const promotedPayload = Schema.decodeUnknownSync(ResolveModuleTargetPayloadSchema)({
+    canonicalPath: '/contacts',
+    compositionRevision: promotion.compositionRevision,
+  });
+  const admissionStatuses: number[] = [];
+  // The native source may hold a successful R1 read for 30s; allow its bounded
+  // fetch/validation latency as well, without a fixed sleep or cache bypass.
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.post(moduleTargetPath, { data: promotedPayload, headers: { origin } });
+        admissionStatuses.push(response.status());
+        if (response.status() !== 200) {
+          Schema.decodeUnknownSync(
+            Schema.Union([ShellReloadRequiredProblemSchema, ShellCapabilityUnavailableProblemSchema]),
+          )(await response.json());
+          return null;
+        }
+        const target = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)(await response.json());
+        expect(target.federation).toEqual(originalTarget.federation);
+        expect(target.componentKey).toBe(originalTarget.componentKey);
+        expect(target.entrypointKey).toBe(originalTarget.entrypointKey);
+        return target.compositionRevision;
+      },
+      { intervals: [250, 1000, 2500], timeout: 45_000 },
+    )
+    .toBe(promotion.compositionRevision);
+  expect(admissionStatuses.every((status) => status === 200 || status === 409 || status === 503)).toBe(true);
+  // Admission was observed through HTTP only. The failed original document remains R1;
+  // no R2 component is inserted into it and no SDK identity is forced or relabeled.
+  await expect(page.locator(compositionRevisionSelector)).toHaveAttribute('content', originalRevision);
+  await expect(page.getByRole('alert')).toHaveText('This module could not be displayed. Reload the page to try again.');
+  await expect(page.locator(contactsSectionSelector)).toHaveCount(0);
+  const obsoleteTargetResponse = await page.request.post(moduleTargetPath, {
+    data: originalPayload,
+    headers: { origin },
+  });
+  expect(obsoleteTargetResponse.status()).toBe(409);
+  Schema.decodeUnknownSync(ShellReloadRequiredProblemSchema)(await obsoleteTargetResponse.json());
+  await page.evaluate(() => {
+    document.documentElement.dataset['e2eRetainedPartyR2Document'] = 'failed-r1';
+  });
+  const originalDocumentTimeOrigin = await page.evaluate(() => performance.timeOrigin);
+  await Promise.all([
+    page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
+    page.getByRole('button', { exact: true, name: 'Reload page' }).click(),
+  ]);
+  await expect(page.locator('html')).not.toHaveAttribute('data-e2e-retained-party-r2-document');
+  expect(await page.evaluate(() => performance.timeOrigin)).not.toBe(originalDocumentTimeOrigin);
+  await expect(page.locator(compositionRevisionSelector)).toHaveAttribute('content', promotion.compositionRevision);
+  await expect(page.locator(contactsSectionSelector)).toBeVisible();
+  await expect(page.getByRole('heading', { exact: true, name: 'Contacts' })).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.locator('header[aria-label="Dashboard header"]')).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeVisible();
+  const freshTargetResponse = await page.request.post(moduleTargetPath, {
+    data: promotedPayload,
+    headers: { origin },
+  });
+  expect(freshTargetResponse.status()).toBe(200);
+  const freshTarget = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)(await freshTargetResponse.json());
+  expect(freshTarget.compositionRevision).toBe(promotion.compositionRevision);
+  expect(freshTarget.federation).toEqual(originalTarget.federation);
+  expect(freshTarget.componentKey).toBe(originalTarget.componentKey);
+  const manifestResponse = await page.request.get(freshTarget.federation.manifest.url);
+  expect(manifestResponse.status()).toBe(200);
+  expect(
+    createHash('sha256')
+      .update(await manifestResponse.body())
+      .digest('hex'),
+  ).toBe(originalTarget.federation.manifest.sha256);
+  await testInfo.attach('retained-party-r2-browser.json', {
+    body: JSON.stringify(
+      {
+        actualNewDocument: true,
+        admissionStatuses,
+        compositionRevision: promotion.compositionRevision,
+        evidence: 'Local real Core publication and current executable browser artifacts; no staging-wrapper claim',
+        previousRevision: originalRevision,
+        retainedPartyPins: originalPartyPins,
+        shellPins: promotedSnapshot.composition.shell,
+      },
+      undefined,
+      2,
+    ),
+    contentType: 'application/json',
+  });
 });
 
 test('persists an English session, logs out, clears the cookie, and stays anonymous', async ({
