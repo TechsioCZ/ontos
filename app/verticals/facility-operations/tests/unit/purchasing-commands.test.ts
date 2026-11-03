@@ -285,6 +285,67 @@ it.effect('Material plan counts open orders and planned issues and suggests repl
   }),
 );
 
+it.effect('receipts update the CZK stock price only from CZK orders, without converting EUR prices', () =>
+  Effect.gen(function* receiptCurrency() {
+    const cases: readonly {
+      readonly currency: 'CZK' | 'EUR';
+      readonly expectedPrice?: number;
+      readonly initialPrice?: number;
+    }[] = [
+      { currency: 'CZK', expectedPrice: 10_000, initialPrice: 250_000 },
+      { currency: 'EUR', expectedPrice: 250_000, initialPrice: 250_000 },
+      { currency: 'CZK', expectedPrice: 10_000 },
+      { currency: 'EUR' },
+    ];
+    for (const { currency, expectedPrice, initialPrice } of cases) {
+      const initial = yield* base();
+      const start =
+        initialPrice === undefined
+          ? initial
+          : (yield* apply(initial, { _tag: 'StockItemUpdate', itemId: 'item', lastPriceMinor: initialPrice }, 'price'))
+              .state;
+      const created = yield* apply(
+        start,
+        {
+          _tag: 'PurchaseOrderCreate',
+          currency,
+          lines: [{ description: 'Detektor', itemId: 'item', quantity: 1, unitPriceMinor: 10_000 }],
+          supplierId: 'sup',
+          warehouseId: 'wh',
+        },
+        'po',
+      );
+      const approved = yield* apply(
+        created.state,
+        { _tag: 'PurchaseOrderTransition', orderId: 'po', to: 'approved' },
+        'approved',
+      );
+      const ordered = yield* apply(
+        approved.state,
+        { _tag: 'PurchaseOrderTransition', orderId: 'po', to: 'ordered' },
+        'ordered',
+      );
+      const received = yield* apply(
+        ordered.state,
+        {
+          _tag: 'PurchaseOrderReceive',
+          date: '2026-10-21',
+          lines: [{ lineId: 'po:line-1', quantity: 1 }],
+          orderId: 'po',
+        },
+        'delivery',
+      );
+      const persisted = yield* Schema.encodeEffect(PurchasingStateSchema)(received.state);
+      expect(persisted.items[0]?.lastPriceMinor).toBe(expectedPrice);
+      expect(persisted.orders[0]?.currency).toBe(currency);
+      expect(persisted.orders[0]?.lines[0]?.unitPriceMinor).toBe(10_000);
+      expect(persisted.orders[0]?.status).toBe('completed');
+      expect(onHandOf(received.state, itemId('item'))).toBe(1);
+      expect(persisted.movements.at(-1)?.purchaseOrderId).toBe('po');
+    }
+  }),
+);
+
 it.effect('The demo seed replays through the reducer (21 items, 4 orders, BZ-001 at 7 below minimum 8)', () =>
   Effect.gen(function* purchasingSeedReplay() {
     const seed = yield* buildPurchasingSeed();

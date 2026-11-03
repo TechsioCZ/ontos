@@ -89,7 +89,7 @@ export const purchasingCommandSchemas = [
     tracking: StockTrackingSchema,
     unit: TextSchema(16),
     warehouseId: StockWarehouseIdSchema,
-    /** Usual purchase unit price (CZK minor units); a received order line overwrites it. */
+    /** Usual purchase unit price (CZK minor units); a received CZK order line overwrites it. */
     lastPriceMinor: Schema.optionalKey(MinorAmountSchema),
     location: Schema.optionalKey(PropertyRefSchema),
     note: Schema.optionalKey(NoteSchema),
@@ -795,7 +795,9 @@ const receiveOrder = Effect.fn('FacilityOperations.Purchasing.orderReceive')(fun
         ...optional('serialNumbers', delivered.serialNumbers),
       });
       movementIds.push(movementId);
-      prices.set(item.id, line.unitPriceMinor);
+      if (order.currency === 'CZK') {
+        prices.set(item.id, line.unitPriceMinor);
+      }
       working = { ...working, movements: [...working.movements, movement] };
       return yield* Effect.void;
     }),
