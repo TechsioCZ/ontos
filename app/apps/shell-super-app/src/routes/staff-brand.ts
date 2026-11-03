@@ -15,23 +15,52 @@ export type StaffTheme = typeof StaffThemeSchema.Type;
 export const neutralStaffTheme: StaffTheme = 'business';
 
 interface StaffBrandEntry {
-  /** Restricts the brand to one company of the tenant; absent for the whole tenant. */
+  /** Company the brand belongs to; absent for the tenant's own workspace before a company is selected. */
   readonly legalEntityId?: string;
-  readonly tenantId: string;
+  /** Trusted tenant the entry is limited to; a company entry always carries it, so the brand never follows a company. */
+  readonly tenantId?: string;
   readonly theme: StaffTheme;
 }
 
 const staffBrands: readonly StaffBrandEntry[] = [
-  // AKROS's own playground tenant, demoId('tenant', 'akros-playground'); see scripts/demo/akros-playground-policy.mts.
+  // The real AKROS company inside AKROS's own tenant, demoId('legal-entity', 'akros-playground'); see
+  // scripts/demo/akros-playground-policy.mts. The trusted tenant+company pair is explicit, so a missing or different
+  // tenant cannot paint AKROS and a pseudonymous demo company inside the tenant stays neutral.
+  {
+    legalEntityId: 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7',
+    tenantId: 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9',
+    theme: 'akros',
+  },
+  // AKROS's own tenant workspace, demoId('tenant', 'akros-playground'): worn only until a company is selected.
   { tenantId: 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9', theme: 'akros' },
 ];
 
-/** Theme of the selected workspace; a company entry wins over its tenant's entry. */
+const appliesToCompany = (entry: StaffBrandEntry, tenantId: string | undefined, legalEntityId: string): boolean =>
+  entry.legalEntityId === legalEntityId && (entry.tenantId === undefined || entry.tenantId === tenantId);
+
+/**
+ * Theme of the selected workspace. A selected company must match its trusted tenant and its own identity, and it falls
+ * back to the neutral theme rather than to a tenant brand, so a missing or different tenant and any other company stay
+ * neutral. Without a company (the tenant's own workspace) the tenant entry decides.
+ */
 export const staffThemeFor = (tenantId: string | undefined, legalEntityId?: string): StaffTheme => {
-  const tenantEntries = staffBrands.filter((entry) => entry.tenantId === tenantId);
-  const company = tenantEntries.find(
-    (entry) => entry.legalEntityId !== undefined && entry.legalEntityId === legalEntityId,
-  );
-  const tenant = tenantEntries.find((entry) => entry.legalEntityId === undefined);
-  return (company ?? tenant)?.theme ?? neutralStaffTheme;
+  if (legalEntityId !== undefined) {
+    const company = staffBrands.find(
+      (entry) => entry.legalEntityId !== undefined && appliesToCompany(entry, tenantId, legalEntityId),
+    );
+    return company?.theme ?? neutralStaffTheme;
+  }
+  const tenant = staffBrands.find((entry) => entry.legalEntityId === undefined && entry.tenantId === tenantId);
+  return tenant?.theme ?? neutralStaffTheme;
 };
+
+/**
+ * Whole `<html>` contract the signed-in frame wears: the workspace theme plus the class both themes render in.
+ *
+ * The layout writes the same shape as its neutral default, so whichever head write lands last still carries the
+ * `light` class the ui-kit themes and the shell's calm admin tokens are keyed on.
+ */
+export const staffDocumentTheme = (tenantId: string | undefined, legalEntityId?: string) => ({
+  className: 'light',
+  'data-theme': staffThemeFor(tenantId, legalEntityId),
+});

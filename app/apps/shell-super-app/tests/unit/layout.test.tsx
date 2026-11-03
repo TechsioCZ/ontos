@@ -221,25 +221,32 @@ test('selects the neutral light ui-kit theme on the server-rendered html element
 });
 
 const akrosPlaygroundTenantId = 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9';
+const akrosCompanyId = 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7';
 const demoTenantId = '70000000-0000-4000-8000-000000000020';
 const demoShopCompanyId = '71000000-0000-4000-8000-000000000024';
 
-test('wears the AKROS theme only in the AKROS tenant and the neutral theme in every other workspace', () => {
+test('wears the AKROS theme only for the real AKROS company or its own tenant workspace', () => {
   expect(staffThemeFor(akrosPlaygroundTenantId)).toBe('akros');
-  expect(staffThemeFor(akrosPlaygroundTenantId, 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7')).toBe('akros');
+  expect(staffThemeFor(akrosPlaygroundTenantId, akrosCompanyId)).toBe('akros');
+  // Only the trusted tenant+company pair is branded: a missing or different tenant must not paint AKROS.
+  expect(staffThemeFor(undefined, akrosCompanyId)).toBe('business');
+  expect(staffThemeFor(demoTenantId, akrosCompanyId)).toBe('business');
+  // Another company inside the AKROS tenant never inherits the tenant brand.
+  expect(staffThemeFor(akrosPlaygroundTenantId, demoShopCompanyId)).toBe('business');
   expect(staffThemeFor(demoTenantId, demoShopCompanyId)).toBe('business');
   expect(staffThemeFor(demoTenantId)).toBe('business');
+  expect(staffThemeFor(akrosPlaygroundTenantId, 'company-without-brand')).toBe('business');
   expect(staffThemeFor('tenant-without-brand')).toBe('business');
 });
 
 test.each([
-  { tenantId: akrosPlaygroundTenantId, theme: 'akros' },
-  { tenantId: demoTenantId, theme: 'business' },
-])('sets the $theme theme on the html element of the $tenantId dashboard', ({ tenantId, theme }) => {
+  { legalEntityId: akrosCompanyId, tenantId: akrosPlaygroundTenantId, theme: 'akros' },
+  { legalEntityId: demoShopCompanyId, tenantId: demoTenantId, theme: 'business' },
+])('sets the $theme theme on the html element of the $tenantId dashboard', ({ legalEntityId, tenantId, theme }) => {
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      currentLegalEntityId={demoShopCompanyId}
+      currentLegalEntityId={legalEntityId}
       currentTenantId={tenantId}
       identity={identity}
       logoutPending={false}
@@ -250,7 +257,8 @@ test.each([
     </AuthenticatedDashboardLayout>,
   );
 
-  expect(helmetHtmlAttributes).toContainEqual({ 'data-theme': theme });
+  // The frame repeats the `light` class the shell's calm admin tokens are keyed on.
+  expect(helmetHtmlAttributes).toContainEqual({ className: 'light', 'data-theme': theme });
 });
 
 test('leaves route content free of global user-perceivable UI', () => {

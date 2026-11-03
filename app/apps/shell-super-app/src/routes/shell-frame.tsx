@@ -22,7 +22,7 @@ import { Effect } from 'effect';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { withoutRecordedPageReads } from './browser-request-cache.ts';
 import { staffRoutePreloads } from './route-preload-scheduler.ts';
-import { staffThemeFor } from './staff-brand.ts';
+import { staffDocumentTheme } from './staff-brand.ts';
 import type { RoutePreloadPriority } from './route-preload-scheduler.ts';
 
 import type { ShellLabel, ShellUnavailableDeployment } from '../../shared/api.ts';
@@ -909,8 +909,10 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
 
   return (
     <StaffRoutePreloadContext value={preload}>
-      {/* The selected workspace's theme wins over the neutral one of the document layout. */}
-      <Helmet htmlAttributes={{ 'data-theme': staffThemeFor(props.currentTenantId, props.currentLegalEntityId) }}>
+      {/* The selected workspace's theme wins over the neutral one of the document layout. The `light` class is repeated
+          here because the shell's own calm admin tokens are keyed on `:root.light[data-theme]`; the frame must keep the
+          tokens working even when it is the only head source left after a route or layout transition. */}
+      <Helmet htmlAttributes={staffDocumentTheme(props.currentTenantId, props.currentLegalEntityId)}>
         <title>{`${props.title ?? model.current?.link.label ?? t('shell.dashboard.home.title')} | OntOS`}</title>
       </Helmet>
       {props.compositionRevision === undefined ? null : (
