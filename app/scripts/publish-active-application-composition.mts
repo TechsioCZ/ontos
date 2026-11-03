@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from 'node:crypto';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
 import {
@@ -44,6 +45,8 @@ import {
   ONTOS_MODULE_CONTRACT_PATH,
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   OntosDeploymentAppIdSchema,
+  OntosDeploymentIdentitySchema,
+  OntosModuleDeploymentContractSchema,
   OntosShellRuntimeContractSchema,
   validateActiveApplicationCompositionSnapshot,
 } from '../packages/core-runtime/src/index.ts';
@@ -554,10 +557,22 @@ export const ApplicationCompositionPublicationCandidateSchema = Schema.Struct({
     Schema.Struct({
       appId: OntosDeploymentAppIdSchema,
       backend: ApplicationCompositionBackendSchema,
-      contractUrl: ApplicationCompositionArtifactReferenceSchema.fields.url,
-      federationManifestUrl: Schema.optionalKey(ApplicationCompositionArtifactReferenceSchema.fields.url),
-    }),
-  ).check(Schema.isMaxLength(ONTOS_APPLICATION_COMPOSITION_MAX_MODULES)),
+      contract: ApplicationCompositionArtifactReferenceSchema,
+      deployment: OntosDeploymentIdentitySchema,
+      federationManifest: Schema.optionalKey(ApplicationCompositionArtifactReferenceSchema),
+    }).check(
+      Schema.makeFilter((module) =>
+        module.appId === module.deployment.appId ? undefined : 'candidate appId must match its exact deployment',
+      ),
+    ),
+  ).check(
+    Schema.isMaxLength(ONTOS_APPLICATION_COMPOSITION_MAX_MODULES),
+    Schema.makeFilter((modules) =>
+      new Set(modules.map(({ appId }) => appId)).size === modules.length
+        ? undefined
+        : 'candidate deployment slots must be unique',
+    ),
+  ),
   retainedShellRevision: Schema.optionalKey(ApplicationCompositionSchema.fields.revision),
   shell: Schema.Struct({
     deployment: OntosShellRuntimeContractSchema.fields.deployment,
@@ -598,27 +613,82 @@ const readPublicationCandidate = (file: string) =>
     })(text);
   });
 
+const fetchPinnedCandidateArtifact = Effect.fn('ActiveApplicationComposition.fetchPinnedArtifact')(
+  function* fetchPinnedArtifact(appId: string, expected: typeof ApplicationCompositionArtifactReferenceSchema.Type) {
+    const artifact = yield* fetchArtifact(appId, expected.url);
+    if (createHash('sha256').update(artifact.bytes).digest('hex') !== expected.sha256) {
+      return yield* new ActiveApplicationCompositionPublicationError({
+        message: 'observed module artifact digest differs from the exact approved candidate pin',
+        reason: 'invalid_observation',
+      });
+    }
+    return artifact;
+  },
+);
+
 /** Full installation observation. Runtime availability never filters this approved inventory. */
 export const observeCandidate = Effect.fn('ActiveApplicationComposition.observeCandidate')(function* observeCandidate(
   environment: string,
-  candidate: PublicationCandidate,
+  input: PublicationCandidate,
 ) {
+  const candidate = yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema, {
+    onExcessProperty: 'error',
+  })(input).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ActiveApplicationCompositionPublicationError({
+          cause,
+          message: 'the exact publication candidate failed validation',
+          reason: 'invalid_observation',
+        }),
+    ),
+  );
   const [modules, runtimeContract, federationManifest, observedAt] = yield* Effect.all(
     [
       Effect.forEach(
         candidate.modules,
         (module) =>
           Effect.gen(function* observeCandidateModule() {
-            const contract = yield* fetchArtifact(module.appId, module.contractUrl);
+            const contract = yield* fetchPinnedCandidateArtifact(module.appId, module.contract);
+            const document = yield* Effect.try({
+              catch: (cause) =>
+                new ActiveApplicationCompositionPublicationError({
+                  cause,
+                  message: 'the pinned module contract is not valid UTF-8',
+                  reason: 'invalid_observation',
+                }),
+              try: () => new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(contract.bytes),
+            }).pipe(
+              Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))),
+              Effect.mapError(
+                (cause) =>
+                  new ActiveApplicationCompositionPublicationError({
+                    cause,
+                    message: 'the pinned module contract failed validation',
+                    reason: 'invalid_observation',
+                  }),
+              ),
+            );
+            if (
+              document.deployment.appId !== module.deployment.appId ||
+              document.deployment.buildMarker !== module.deployment.buildMarker
+            ) {
+              return yield* new ActiveApplicationCompositionPublicationError({
+                message: 'observed module deployment differs from the exact approved candidate deployment',
+                reason: 'invalid_observation',
+              });
+            }
+            const observedManifest =
+              module.federationManifest === undefined
+                ? undefined
+                : yield* fetchPinnedCandidateArtifact(module.appId, module.federationManifest);
             const backend = yield* observeApplicationCompositionBackend({
               appId: module.appId,
               backend: module.backend,
               contract,
             });
             const common: ObservedModuleDeployment = { appId: module.appId, backend, contract };
-            return module.federationManifestUrl === undefined
-              ? common
-              : { ...common, federationManifest: yield* fetchArtifact(module.appId, module.federationManifestUrl) };
+            return observedManifest === undefined ? common : { ...common, federationManifest: observedManifest };
           }),
         { concurrency: 4 },
       ),
@@ -879,9 +949,14 @@ const refreshCommand = Command.make(
       const approved = yield* decodeActiveApplicationCompositionSnapshot(current.value);
       const candidate: PublicationCandidate = {
         modules: approved.composition.modules.map((module) => {
-          const common = { appId: module.deployment.appId, backend: module.backend, contractUrl: module.contract.url };
+          const common = {
+            appId: module.deployment.appId,
+            backend: module.backend,
+            contract: module.contract,
+            deployment: module.deployment,
+          };
           return module.federation.execution === 'browser'
-            ? { ...common, federationManifestUrl: module.federation.manifest.url }
+            ? { ...common, federationManifest: module.federation.manifest }
             : common;
         }),
         shell: {

@@ -33,7 +33,9 @@ import {
   moduleReleaseWorkerName,
 } from '../packages/core-runtime/src/http/module-release-identity.ts';
 import { OntosDeploymentAppIdSchema } from '../packages/core-runtime/src/modules/manifest.ts';
+import type { OntosDeploymentIdentitySchema } from '../packages/core-runtime/src/modules/manifest.ts';
 import { ApplicationCompositionCloudflareWorkerBackendSchema } from '../packages/core-runtime/src/modules/application-composition.ts';
+import type { ApplicationCompositionArtifactReferenceSchema } from '../packages/core-runtime/src/modules/application-composition.ts';
 import { validateActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/modules/active-application-composition.ts';
 import type { ActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/modules/active-application-composition.ts';
 import { decodeActiveApplicationCompositionSnapshot } from './active-application-composition.mts';
@@ -476,7 +478,9 @@ export const validateImmutableApplicationReleaseArtifacts = Effect.fn('Immutable
 interface ImmutableApplicationReleaseCandidateModule {
   readonly appId: string;
   readonly backend: typeof ApplicationCompositionCloudflareWorkerBackendSchema.Type;
-  readonly contractUrl: string;
+  readonly contract: typeof ApplicationCompositionArtifactReferenceSchema.Type;
+  readonly deployment: typeof OntosDeploymentIdentitySchema.Type;
+  readonly federationManifest?: typeof ApplicationCompositionArtifactReferenceSchema.Type;
 }
 
 const shellReceiptArtifacts = Effect.fn('ImmutableApplicationRelease.shellReceipt')(
@@ -656,11 +660,12 @@ export const makeImmutableApplicationReleasePublicationCandidate = Effect.fn('Im
       const module: ImmutableApplicationReleaseCandidateModule = {
         appId: receipt.plan.appId,
         backend: receipt.backend,
-        contractUrl: receipt.artifacts.contract.url,
+        contract: receipt.artifacts.contract,
+        deployment: { appId: receipt.plan.appId, buildMarker: receipt.plan.buildMarker },
       };
       return receipt.artifacts.federationManifest === undefined
         ? module
-        : { ...module, federationManifestUrl: receipt.artifacts.federationManifest.url };
+        : { ...module, federationManifest: receipt.artifacts.federationManifest };
     });
     if (input.selection.shell.mode === 'fresh') {
       if (input.shellReceipt === undefined) {

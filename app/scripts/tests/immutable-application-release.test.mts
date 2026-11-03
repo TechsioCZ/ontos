@@ -761,7 +761,8 @@ it.effect('supports a complete API-only release without inventing a federation m
       {
         appId: plan.appId,
         backend: backendFor(plan),
-        contractUrl: artifacts.contract.url,
+        contract: artifacts.contract,
+        deployment: { appId: plan.appId, buildMarker: plan.buildMarker },
       },
     ]);
   }),
@@ -851,13 +852,16 @@ it.effect('builds the publisher candidate only from the exact retained deploymen
       receipts: [receipt],
       selection: freshSelection({ modules: [{ appId: receipt.plan.appId }] }),
     });
+    expect(candidate.modules[0]?.contract).toBe(receipt.artifacts.contract);
+    expect(candidate.modules[0]?.federationManifest).toBe(receipt.artifacts.federationManifest);
     expect(candidate).toEqual({
       modules: [
         {
           appId: receipt.plan.appId,
           backend: receipt.backend,
-          contractUrl: receipt.artifacts.contract.url,
-          federationManifestUrl: receipt.artifacts.federationManifest?.url,
+          contract: receipt.artifacts.contract,
+          deployment: { appId: receipt.plan.appId, buildMarker: receipt.plan.buildMarker },
+          federationManifest: receipt.artifacts.federationManifest,
         },
       ],
       retainedShellRevision: approved.composition.revision,

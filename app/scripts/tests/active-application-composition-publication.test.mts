@@ -14,6 +14,8 @@ import {
 } from '../../packages/core-runtime/src/http/module-release-identity.ts';
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
+  OntosModuleDeploymentContractSchema,
+  defineTenantModuleEntrypoint,
   validateActiveApplicationCompositionSnapshot,
 } from '../../packages/core-runtime/src/index.ts';
 import type { ActiveApplicationCompositionSnapshot } from '../../packages/core-runtime/src/index.ts';
@@ -27,6 +29,7 @@ import {
   deriveActiveApplicationCompositionSnapshot,
   encodeActiveApplicationCompositionSnapshot,
 } from '../active-application-composition.mts';
+import type { ObservedArtifact } from '../active-application-composition.mts';
 import { createShellRuntimeContract } from '../generate-ontos-shell-runtime-contract.mts';
 import {
   InitialCutoverProviderError,
@@ -359,8 +362,19 @@ const candidateObservation = Effect.gen(function* nativeCandidateObservationFixt
     shell,
     validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
   });
+  const [approvedModule] = snapshot.composition.modules;
+  if (approvedModule === undefined) {
+    return yield* Effect.die('Expected the derived candidate module');
+  }
   const candidate = {
-    modules: [{ appId: module.appId, backend: module.backend, contractUrl: module.contract.url }],
+    modules: [
+      {
+        appId: module.appId,
+        backend: module.backend,
+        contract: approvedModule.contract,
+        deployment: approvedModule.deployment,
+      },
+    ],
     shell: {
       deployment: snapshot.composition.shell.deployment,
       federationManifest: snapshot.composition.shell.federationManifest,
@@ -384,8 +398,15 @@ const candidateObservation = Effect.gen(function* nativeCandidateObservationFixt
   return {
     backendUrls: [...backendDocuments.keys()],
     candidate,
-    makeProvider: (unmatched?: (request: RecordedRequest) => Response) =>
+    makeProvider: (
+      unmatched?: (request: RecordedRequest) => Response,
+      artifactOverrides: readonly ObservedArtifact[] = [],
+    ) =>
       provider((request) => {
+        const replacement = artifactOverrides.find(({ url }) => url === request.url);
+        if (replacement !== undefined) {
+          return new Response(new Uint8Array(replacement.bytes));
+        }
         if (backendDocuments.has(request.url)) {
           return Response.json(backendDocuments.get(request.url));
         }
@@ -396,6 +417,8 @@ const candidateObservation = Effect.gen(function* nativeCandidateObservationFixt
           ? (unmatched?.(request) ?? new Response(null, { status: 404 }))
           : new Response(observedArtifact.bytes);
       }),
+    module,
+    shell,
     snapshot,
   };
 });
@@ -416,7 +439,7 @@ it.effect('observes the declared retained Shell pins with complete module artifa
     expect(new Set(requests.map(({ url }) => url))).toEqual(
       new Set([
         ...fixture.backendUrls,
-        candidate.modules[0]?.contractUrl,
+        candidate.modules[0]?.contract.url,
         candidate.shell.federationManifest.url,
         candidate.shell.runtimeContract.url,
       ]),
@@ -465,7 +488,7 @@ it.effect(
       expect(write).toBeGreaterThan(0);
       for (const url of [
         ...fixture.backendUrls,
-        candidate.modules[0]?.contractUrl,
+        candidate.modules[0]?.contract.url,
         candidate.shell.federationManifest.url,
         candidate.shell.runtimeContract.url,
       ]) {
@@ -524,6 +547,259 @@ it.effect(
         yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema, {
           onExcessProperty: 'error',
         })({ ...candidate, shell: invalidShell }).pipe(Effect.flip);
+      }
+    }),
+);
+
+it.effect(
+  'rejects missing business deployment or digest pins, app-ID disagreement and duplicate slots before pointer work',
+  () =>
+    Effect.gen(function* rejectsUnpinnedBusinessCandidate() {
+      const fixture = yield* candidateObservation;
+      const [module] = fixture.candidate.modules;
+      if (module === undefined) {
+        return yield* Effect.die('Expected the pinned business module');
+      }
+      const invalidModules = [
+        [{ appId: module.appId, backend: module.backend, contractUrl: module.contract.url }],
+        [{ appId: module.appId, backend: module.backend, contract: module.contract }],
+        [{ ...module, contract: { url: module.contract.url } }],
+        [{ ...module, deployment: { ...module.deployment, appId: 'inventory' } }],
+        [{ ...module, contractUrl: module.contract.url }],
+        [module, module],
+      ];
+      for (const modules of invalidModules) {
+        const { layer, proofRequests, requests, statements } = fixture.makeProvider();
+        yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema, {
+          onExcessProperty: 'error',
+        })({ ...fixture.candidate, modules }).pipe(
+          Effect.flatMap((candidate) => observeCandidate('stage', candidate)),
+          Effect.flatMap((observed) => publishSnapshot(observed, Option.none(), initialCutoverProof)),
+          Effect.provide(layer),
+          Effect.flip,
+        );
+        expect(requests).toEqual([]);
+        expect(proofRequests).toEqual([]);
+        expect(statements).toEqual([]);
+      }
+      return yield* Effect.void;
+    }),
+);
+
+it.effect('rejects business digest or deployment drift before backend proof and pointer mutation', () =>
+  Effect.gen(function* rejectsChangedBusinessPins() {
+    const fixture = yield* candidateObservation;
+    const [module] = fixture.candidate.modules;
+    if (module === undefined) {
+      return yield* Effect.die('Expected the pinned business module');
+    }
+    const variants = [
+      {
+        changed: { ...module, contract: { ...module.contract, sha256: '0'.repeat(64) } },
+        message: 'observed module artifact digest differs from the exact approved candidate pin',
+      },
+      {
+        changed: { ...module, deployment: { ...module.deployment, buildMarker: 'different-module-build' } },
+        message: 'observed module deployment differs from the exact approved candidate deployment',
+      },
+      {
+        changed: { ...module, appId: 'inventory', deployment: { ...module.deployment, appId: 'inventory' } },
+        message: 'observed module deployment differs from the exact approved candidate deployment',
+      },
+    ];
+    for (const { changed, message } of variants) {
+      const candidate = yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema)({
+        ...fixture.candidate,
+        modules: [changed],
+      });
+      const { layer, proofRequests, requests, statements } = fixture.makeProvider();
+      const failure = yield* observeCandidate('stage', candidate).pipe(
+        Effect.flatMap((observed) => publishSnapshot(observed, Option.none(), initialCutoverProof)),
+        Effect.provide(layer),
+        Effect.flip,
+      );
+      expect(failure).toMatchObject({ message, reason: 'invalid_observation' });
+      expect(requests.some(({ method }) => method !== 'GET')).toBe(false);
+      expect(requests.some(({ url }) => fixture.backendUrls.includes(url))).toBe(false);
+      expect(proofRequests).toEqual([]);
+      expect(statements).toEqual([]);
+    }
+    return yield* Effect.void;
+  }),
+);
+
+it.effect(
+  'observes the exact browser manifest pin and rejects changed or missing manifest digests before pointer mutation',
+  () =>
+    Effect.gen(function* observesPinnedBusinessManifest() {
+      const fixture = yield* candidateObservation;
+      const manifest = artifact(new URL('mf-manifest.json', fixture.module.contract.url).href, {
+        exposes: [],
+        name: 'catalogFixture',
+        shared: governedSharedSingletonPackages.map((name) => ({ name, requiredVersion: '1.0.0', singleton: true })),
+      });
+      const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
+        environment: 'stage',
+        modules: [{ ...fixture.module, federationManifest: manifest }],
+        observedAt: yield* DateTime.now,
+        shell: fixture.shell,
+        validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
+      });
+      const [module] = snapshot.composition.modules;
+      if (module === undefined || module.federation.execution !== 'browser') {
+        return yield* Effect.die('Expected the derived browser module');
+      }
+      const browser = { ...fixture.candidate.modules[0], federationManifest: module.federation.manifest };
+      const candidate = yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema)({
+        ...fixture.candidate,
+        modules: [browser],
+      });
+      const servedManifest = (request: RecordedRequest) =>
+        request.url === manifest.url ? new Response(manifest.bytes) : new Response(null, { status: 404 });
+      const { layer } = fixture.makeProvider(servedManifest);
+      expect(yield* observeCandidate('stage', candidate).pipe(Effect.provide(layer))).toEqual(snapshot);
+      for (const federationManifest of [
+        { ...module.federation.manifest, sha256: '0'.repeat(64) },
+        { url: manifest.url },
+      ]) {
+        const { layer: deniedLayer, proofRequests, requests, statements } = fixture.makeProvider(servedManifest);
+        yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema, {
+          onExcessProperty: 'error',
+        })({ ...fixture.candidate, modules: [{ ...browser, federationManifest }] }).pipe(
+          Effect.flatMap((changed) => observeCandidate('stage', changed)),
+          Effect.flatMap((observed) => publishSnapshot(observed, Option.none(), initialCutoverProof)),
+          Effect.provide(deniedLayer),
+          Effect.flip,
+        );
+        expect(requests.every(({ method }) => method === 'GET')).toBe(true);
+        expect(requests.some(({ url }) => fixture.backendUrls.includes(url))).toBe(false);
+        expect(proofRequests).toEqual([]);
+        expect(statements).toEqual([]);
+      }
+      return yield* Effect.void;
+    }),
+);
+
+it.effect(
+  'observes complete business membership and refuses unsupported public-operation versions despite matching deployment-document formats',
+  () =>
+    Effect.gen(function* observesExactOperationCompatibility() {
+      const fixture = yield* candidateObservation;
+      const inventory = yield* deployedModule('inventory', INVENTORY_MODULE_ID);
+      const catalogDocument = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(OntosModuleDeploymentContractSchema),
+      )(new TextDecoder().decode(fixture.module.contract.bytes));
+      const inventoryDocument = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(OntosModuleDeploymentContractSchema),
+      )(new TextDecoder().decode(inventory.contract.bytes));
+      const entrypoint = defineTenantModuleEntrypoint({
+        access: 'read',
+        authorization: { kind: 'context_permission', permission: 'module.access' },
+        entrypointKey: `${INVENTORY_MODULE_ID}.api.execute`,
+        moduleKey: INVENTORY_MODULE_ID,
+        role: 'api',
+      });
+      const providerDocument = {
+        ...inventoryDocument,
+        manifest: {
+          ...inventoryDocument.manifest,
+          publicSurface: {
+            ...inventoryDocument.manifest.publicSurface,
+            api: [{ key: `${INVENTORY_MODULE_ID}.api`, operationKeys: ['execute'] }],
+            operationContracts: [
+              { apiKey: `${INVENTORY_MODULE_ID}.api`, entrypoint, operationKey: 'execute', schemaVersion: '1' },
+            ],
+          },
+        },
+      };
+      yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(providerDocument);
+      const providerArtifact = artifact(inventory.contract.url, providerDocument);
+      const workersApi = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers`;
+      const scriptApi = `${workersApi}/scripts/${inventory.backend.workerName}`;
+      const providerDocuments = new Map<string, Schema.Json>([
+        [`${scriptApi}/subdomain`, { result: { enabled: true }, success: true }],
+        [
+          `${scriptApi}/deployments`,
+          {
+            result: { deployments: [{ versions: [{ percentage: 100, version_id: inventory.backend.versionId }] }] },
+            success: true,
+          },
+        ],
+        [
+          `${scriptApi}/versions/${inventory.backend.versionId}`,
+          { result: { id: inventory.backend.versionId }, success: true },
+        ],
+      ]);
+      for (const schemaVersion of ['1', '2']) {
+        const consumerDocument = {
+          ...catalogDocument,
+          manifest: {
+            ...catalogDocument.manifest,
+            requirements: {
+              coreCapabilities: [],
+              intrinsic: [
+                {
+                  moduleId: INVENTORY_MODULE_ID,
+                  requiredOperations: [{ entrypointKey: entrypoint.entrypointKey, schemaVersion }],
+                },
+              ],
+              operations: [],
+              schemaVersion: '1',
+            },
+          },
+        };
+        yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(consumerDocument);
+        const consumerArtifact = artifact(fixture.module.contract.url, consumerDocument);
+        // Pins originate from these arranged fixture bytes, before any HTTP observation; they are never rewritten from fetched bytes.
+        const candidate = yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema)({
+          ...fixture.candidate,
+          modules: [
+            {
+              appId: fixture.module.appId,
+              backend: fixture.module.backend,
+              contract: {
+                sha256: createHash('sha256').update(consumerArtifact.bytes).digest('hex'),
+                url: consumerArtifact.url,
+              },
+              deployment: catalogDocument.deployment,
+            },
+            {
+              appId: inventory.appId,
+              backend: inventory.backend,
+              contract: {
+                sha256: createHash('sha256').update(providerArtifact.bytes).digest('hex'),
+                url: providerArtifact.url,
+              },
+              deployment: inventoryDocument.deployment,
+            },
+          ],
+        });
+        const { layer, proofRequests, requests, statements } = fixture.makeProvider(
+          (request) =>
+            providerDocuments.has(request.url)
+              ? Response.json(providerDocuments.get(request.url))
+              : new Response(null, { status: 404 }),
+          [consumerArtifact, providerArtifact],
+        );
+        const observation = observeCandidate('stage', candidate).pipe(Effect.provide(layer));
+        if (schemaVersion === '1') {
+          const observed = yield* observation;
+          expect(observed.composition.modules.map(({ deployment }) => deployment.appId)).toEqual([
+            'catalog',
+            'inventory',
+          ]);
+        } else {
+          const failure = yield* observation.pipe(
+            Effect.flatMap((observed) =>
+              publishSnapshot(observed, Option.none(), initialCutoverProof).pipe(Effect.provide(layer)),
+            ),
+            Effect.flip,
+          );
+          expect(failure).toMatchObject({ reason: 'invalid_observation' });
+          expect(requests.every(({ method }) => method === 'GET')).toBe(true);
+          expect(proofRequests).toEqual([]);
+          expect(statements).toEqual([]);
+        }
       }
     }),
 );
