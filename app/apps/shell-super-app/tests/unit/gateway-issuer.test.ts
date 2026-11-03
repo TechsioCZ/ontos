@@ -861,3 +861,59 @@ it.effect('passes every issued audience to the scope grant registrar', () =>
     expect(inputs.map(({ assertion }) => Redacted.value(assertion))).toEqual(results.map(({ token }) => token));
   }),
 );
+
+it.effect('retains the original proof interval while issuing a fresh destination assertion', () =>
+  Effect.gen(function* retainedRelayInterval() {
+    const { configuration } = yield* makeConfiguration();
+    const result = yield* issueGatewayContextAssertion({
+      audience: 'property-registry',
+      compositionRevision,
+      principal: namespacedPrincipal,
+      sourceValidity: { expiresAt: 1_700_000_150, issuedAt: 1_699_999_850 },
+    }).pipe(
+      Effect.provide(
+        makeGatewayIssuerLayer(
+          dependencies(configuration, {
+            generateJti: Effect.succeed('60000000-0000-4000-8000-000000000002'),
+          }),
+        ).pipe(Layer.provide(scopeGrantRegistrarLayer())),
+      ),
+    );
+    const claims = decodeJwt(result.token);
+    expect(claims.iat).toBe(1_699_999_850);
+    expect(claims.exp).toBe(1_700_000_150);
+    expect(result.expiresAt).toBe(1_700_000_150);
+    expect(claims.jti).toBe('60000000-0000-4000-8000-000000000002');
+    expect(claims['principal']).toEqual(namespacedPrincipal);
+    expect(Schema.is(GatewayContextV2ClaimsSchema)(claims)).toBe(true);
+  }),
+);
+
+it.effect('rejects expired, future and extended source intervals before allocating a destination identity', () =>
+  Effect.gen(function* invalidRelayIntervals() {
+    const { configuration } = yield* makeConfiguration();
+    let allocations = 0;
+    const layer = makeGatewayIssuerLayer(
+      dependencies(configuration, {
+        generateJti: Effect.sync(() => {
+          allocations += 1;
+          return '60000000-0000-4000-8000-000000000002';
+        }),
+      }),
+    ).pipe(Layer.provide(scopeGrantRegistrarLayer()));
+    for (const sourceValidity of [
+      { expiresAt: 1_700_000_000, issuedAt: 1_699_999_700 },
+      { expiresAt: 1_700_000_301, issuedAt: 1_700_000_001 },
+      { expiresAt: 1_700_000_300, issuedAt: 1_699_999_850 },
+    ]) {
+      const error = yield* issueGatewayContextAssertion({
+        audience: 'property-registry',
+        compositionRevision,
+        principal,
+        sourceValidity,
+      }).pipe(Effect.provide(layer), Effect.flip);
+      expect(error.stage).toBe('clock');
+    }
+    expect(allocations).toBe(0);
+  }),
+);

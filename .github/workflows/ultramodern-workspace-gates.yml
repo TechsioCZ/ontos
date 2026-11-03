@@ -440,7 +440,7 @@ jobs:
   # are even (its heaviest is 3.7 minutes of a 14.6-minute job), so two shards halve it outright.
   service-integration:
     name: ${{ matrix.name }}
-    needs: [queue-proof]
+    needs: [queue-proof, node-artifact-build]
     if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -550,6 +550,27 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+
+      # The root/package shard starts the genuine packaged Shell and owner applications.
+      # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
+      - name: Download the same-run Node artifacts for native owner fixtures
+        if: matrix.root-suite == true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: node-units-*
+          path: ${{ runner.temp }}/native-composition-units
+
+      - name: Unpack the Node artifacts for native owner fixtures
+        if: matrix.root-suite == true
+        working-directory: app
+        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
+
+      - name: Materialize the native Customer Context worker artifact
+        if: matrix.root-suite == true
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+        run: mise exec -- pnpm zerops:materialize --app commerce-customer-context --package @app/commerce-customer-context --package-dir verticals/commerce-customer-context --worker
 
       # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
       # Only warm-caches on main saves it, so parallel jobs never race to save.

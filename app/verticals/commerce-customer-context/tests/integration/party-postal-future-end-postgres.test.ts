@@ -594,18 +594,20 @@ const preparePostalFutureEnd = Effect.fn('PostalFutureEnd.prepare')(function* pr
       ),
     );
   const retailFactory = Layer.succeed(PartyRegistryRetailPartyResolverFactory, {
-    make: (scope) =>
-      makePartyRegistryRetailPartyResolver(scope, (request, correlation) =>
-        authorization().pipe(
-          Effect.provideContext(authorizationContext),
-          Effect.orDie,
-          Effect.flatMap((credential) =>
-            executePartyDetailWithAuthorization(request, credential, correlation, {
-              baseUrl,
-              compositionRevision: snapshot.composition.revision,
-            }),
+    make: ({ scope }) =>
+      makePartyRegistryRetailPartyResolver(
+        { requestCorrelation: scope.correlationId, tenantId: scope.tenantId },
+        (request, correlation) =>
+          authorization().pipe(
+            Effect.provideContext(authorizationContext),
+            Effect.orDie,
+            Effect.flatMap((credential) =>
+              executePartyDetailWithAuthorization(request, credential, correlation, {
+                baseUrl,
+                compositionRevision: snapshot.composition.revision,
+              }),
+            ),
           ),
-        ),
       ),
   });
   const owners = Layer.mergeAll(

@@ -5,7 +5,7 @@ import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import { ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
+import { ConfigProvider, Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
@@ -72,13 +72,18 @@ it.live('makes the governed Core read available to all manufacturer Action HTTP 
     const actionRuntime: ActionRuntimeService = {
       resolveActionCommit: () => Effect.die('not needed in composition proof'),
       runAction: () =>
-        Effect.context().pipe(
-          Effect.flatMap((context) => {
-            expect(Context.getOrUndefined(context, ReadRuntime)).toBe(readRuntime);
-            actionCalls += 1;
-            return Effect.die('stopped after runtime composition proof');
-          }),
-        ),
+        Effect.gen(function* executeDeferredManufacturerAction() {
+          const context = yield* Effect.context();
+          expect(Context.getOrUndefined(context, ReadRuntime)).toBe(readRuntime);
+          const crypto = yield* Effect.serviceOption(Crypto.Crypto);
+          if (Option.isNone(crypto)) {
+            return yield* Effect.die('HTTP execution context has no native Crypto');
+          }
+          const generatedId = yield* crypto.value.randomUUIDv4().pipe(Effect.orDie);
+          expect(Schema.is(Schema.String.check(Schema.isUUID(4)))(generatedId)).toBe(true);
+          actionCalls += 1;
+          return yield* Effect.die('stopped after runtime composition proof');
+        }),
     };
     const assembled = makeCatalogApiRuntime(
       Layer.succeed(ReadRuntime, readRuntime),

@@ -9,6 +9,7 @@ export const AUTH_TABLE_INVENTORY = [
   'verification',
   'apikey',
   'support_impersonation_recovery',
+  'gateway_relay_exchanges',
 ] as const;
 
 export const authSchema = pgSchema(AUTH_SCHEMA_NAME);
@@ -153,9 +154,25 @@ export const apikey = authSchema.table(
   ],
 );
 
+export const gatewayRelayExchanges = authSchema.table(
+  'gateway_relay_exchanges',
+  {
+    sourceJti: uuid('source_jti').notNull(),
+    exchangeId: uuid('exchange_id').notNull(),
+    requestFingerprint: text('request_fingerprint').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('auth_gateway_relay_source_exchange_uk').on(table.sourceJti, table.exchangeId),
+    index('auth_gateway_relay_expires_at_idx').on(table.expiresAt),
+  ],
+);
+
 export const authDatabaseSchema = {
   account,
   apikey,
+  gatewayRelayExchanges,
   session,
   supportImpersonationRecovery,
   user,
@@ -195,4 +212,12 @@ export const authRelations = defineRelations(authDatabaseSchema, (r) => ({
   },
 }));
 
-export const AUTH_TABLES = [user, session, account, verification, apikey, supportImpersonationRecovery] as const;
+export const AUTH_TABLES = [
+  user,
+  session,
+  account,
+  verification,
+  apikey,
+  supportImpersonationRecovery,
+  gatewayRelayExchanges,
+] as const;

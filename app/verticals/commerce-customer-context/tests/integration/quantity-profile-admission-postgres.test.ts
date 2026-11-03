@@ -122,18 +122,20 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
   // this fixture makes no claim about Party producer correctness or transport availability.
   const owners = Layer.mergeAll(
     Layer.succeed(PartyRegistryRetailPartyResolverFactory, {
-      make: (scope) => (request) =>
-        Effect.succeed(
-          scope.tenantId === fixture.tenantId &&
-            request.tenantId === fixture.tenantId &&
-            partyIds.has(request.partyResourceId)
-            ? {
-                outcome: 'CURRENT_PARTY_RESOLVED' as const,
-                partyResourceId: request.partyResourceId,
-                partyResourceRevision: '1',
-              }
-            : { outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const },
-        ),
+      make:
+        ({ scope }) =>
+        (request) =>
+          Effect.succeed(
+            scope.tenantId === fixture.tenantId &&
+              request.tenantId === fixture.tenantId &&
+              partyIds.has(request.partyResourceId)
+              ? {
+                  outcome: 'CURRENT_PARTY_RESOLVED' as const,
+                  partyResourceId: request.partyResourceId,
+                  partyResourceRevision: '1',
+                }
+              : { outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const },
+          ),
     }),
     Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
       make: (scope) => (request) =>

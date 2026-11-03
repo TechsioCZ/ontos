@@ -50,3 +50,5 @@ export const publishTestApplicationCompositionAuthority = Effect.fn('OwnerEviden
 );
 
 export { CoreDatabase, CoreDatabaseLive } from '../db/client.ts';
+
+export { makeLiveOperationFixture } from './live-operations.ts';

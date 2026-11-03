@@ -132,6 +132,16 @@ export const GatewayContextRequestSchema = Schema.Struct({
 });
 export type GatewayContextRequest = typeof GatewayContextRequestSchema.Encoded;
 
+/** A fresh receiving attempt under an already admitted owner operation. */
+export const GatewayRelayRequestSchema = Schema.Struct({
+  audience: GatewayAudienceSchema,
+  compositionRevision,
+  exchangeId: uuid.pipe(Schema.brand('GatewayRelayExchangeId')),
+  operationKey: nonEmptyString.pipe(Schema.brand('GatewayRelayOperationKey')),
+  sourceAssertion: Schema.RedactedFromValue(nonEmptyString),
+});
+export type GatewayRelayRequest = typeof GatewayRelayRequestSchema.Encoded;
+
 export const GatewayContextResponseSchema = Schema.Struct({
   apiBaseUrl: Schema.String.check(
     Schema.isMinLength(1),
@@ -233,6 +243,22 @@ export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
       payload: GatewayContextRequestSchema,
       success: GatewayContextResponseSchema,
     }),
+  )
+  .add(
+    HttpApiEndpoint.post('issueRelayedGatewayContext', '/auth/relay/gateway-context', {
+      error: [
+        GatewayAuthenticationRequiredProblemSchema,
+        GatewayAudienceInvalidProblemSchema,
+        GatewayReloadRequiredProblemSchema,
+        GatewayForbiddenProblemSchema,
+        GatewayRateLimitedProblemSchema,
+        GatewayUnavailableProblemSchema,
+        GatewayInternalProblemSchema,
+      ],
+      headers: ApiKeyGatewayHeadersSchema,
+      payload: GatewayRelayRequestSchema,
+      success: GatewayContextResponseSchema,
+    }),
   );
 
 export const GatewayContextApi = HttpApi.make('shellGatewayContextApi').add(GatewayContextApiGroup);
@@ -241,10 +267,19 @@ export const shellGatewayContextContract = {
   apiPrefix: '/shell-super-app-api',
   issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context',
   issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
+  issueRelayedGatewayContextPath: '/shell-super-app-api/auth/relay/gateway-context',
   ownerId: 'shell-super-app',
 } as const;
 
 export const gatewayContextAuthorizationEntrypoints = [
+  {
+    authorization: { credential: 'api_key', kind: 'capability_issuance' },
+    deployment: shellGatewayContextContract.ownerId,
+    entrypointKey: 'shell.gateway-context.issue.relay',
+    owner: shellGatewayContextContract.ownerId,
+    path: shellGatewayContextContract.issueRelayedGatewayContextPath,
+    surface: 'capability_issuance',
+  },
   {
     authorization: { credential: 'session', kind: 'capability_issuance' },
     deployment: shellGatewayContextContract.ownerId,

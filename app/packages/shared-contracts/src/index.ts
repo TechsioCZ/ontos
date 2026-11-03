@@ -71,6 +71,7 @@ export {
   SupportedGatewayContextClaimsSchema,
   GatewayContextProtectedHeaderSchema,
   GatewayContextRequestSchema,
+  GatewayRelayRequestSchema,
   GatewayContextResponseSchema,
   GatewayInternalProblemSchema,
   GatewayReloadRequiredProblemSchema,
@@ -414,3 +415,5 @@ export const onUltramodernPerformanceSignal = (
     event: CustomEvent<UltramodernPerformanceSignalPayload>,
   ) => void,
 ) => onUltramodernWorkspaceEvent(target, ultramodernWorkspaceEventNames.performanceSignal, handler);
+
+export type { GatewayRelayRequest } from './gateway-context.ts';
