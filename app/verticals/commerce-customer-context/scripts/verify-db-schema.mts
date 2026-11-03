@@ -113,6 +113,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'read_market_retirement_reservation',
   'read_order_commitment_approval_evidence',
   'read_order_service_approval_proof',
+  'read_original_portal_enrollment',
   'read_portal_enrollment_attempt',
   'read_portal_enrollment_owner_operation',
   'read_price_group_assignment_compatibility_evidence',

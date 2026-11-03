@@ -260,6 +260,17 @@ export type ResolveActionCommitInput = { readonly principal: unknown } & (
   | { readonly actionKey: unknown; readonly idempotencyKey: unknown; readonly invocationId?: never }
 );
 
+export type ResolveActionExecutionInput = ResolveActionCommitInput & {
+  readonly expectedRequestHash?: unknown;
+};
+
+const ExpectedActionRequestHashSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
+const actionRequestMismatch = () =>
+  new ActionPayloadValidationError({
+    code: 'action_payload_invalid',
+    reason: 'The original Action request could not be matched',
+  });
+
 const ActionInvocationIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('ActionInvocationId'));
 
 const ActionCommitOpenSchema = Schema.TaggedStruct('ActionCommitOpen', {
@@ -329,7 +340,7 @@ export interface ActionRuntimeService {
   >;
 
   readonly resolveActionExecution: (
-    input: ResolveActionCommitInput,
+    input: ResolveActionExecutionInput,
   ) => Effect.Effect<
     ActionExecutionResolution,
     ActionInvocationPersistenceError | ActionPayloadValidationError | ActionTrustedContextValidationError
@@ -2268,9 +2279,13 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
   /** Exact caller-owned execution state. Received rows may be retried only through native same-key execution. */
   const resolveActionExecution: ActionRuntimeService['resolveActionExecution'] = Effect.fn(
     'ActionRuntime.resolveActionExecution',
-  )(function* resolveActionExecutionEffect(input: ResolveActionCommitInput) {
+  )(function* resolveActionExecutionEffect(input: ResolveActionExecutionInput) {
+    const { expectedRequestHash, ...lookupInput } = input;
+    if (expectedRequestHash !== undefined && !Schema.is(ExpectedActionRequestHashSchema)(expectedRequestHash)) {
+      return yield* actionRequestMismatch();
+    }
     const principal = yield* validatePrincipal(input.principal);
-    const identity = yield* Schema.decodeUnknownEffect(ActionCommitIdentitySchema)(input).pipe(
+    const identity = yield* Schema.decodeUnknownEffect(ActionCommitIdentitySchema)(lookupInput).pipe(
       Effect.mapError((cause) =>
         attachFailureCause(
           new ActionPayloadValidationError({
@@ -2290,6 +2305,12 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         Effect.asSome,
         Effect.catchTag('ActionInvocationNotFound', () => Effect.succeedNone),
       );
+    if (
+      expectedRequestHash !== undefined &&
+      (Option.isNone(invocation) || invocation.value.requestHash !== expectedRequestHash)
+    ) {
+      return yield* actionRequestMismatch();
+    }
     if (Option.isNone(invocation)) {
       return { retryCommand: true, state: 'NOT_STARTED' } as const;
     }
