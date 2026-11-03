@@ -36,6 +36,9 @@ concurrency:
   group: zerops-stage
   cancel-in-progress: false
 
+# Every job picks its machine from one place, so a partner runner is a variable change. Unset keeps
+# GitHub-hosted `ubuntu-latest`; CI_RUNNER moves every job, CI_RUNNER_HEAVY the CPU-bound build and
+# browser-verification shards.
 env:
   STAGE_SHELL_URL: https://ontos-stage.web-revolution.cz
   STAGE_STOREFRONT_URL: https://ontos-stage-akros.web-revolution.cz
@@ -45,7 +48,7 @@ jobs:
   plan:
     name: Plan selective delivery
     if: github.ref == 'refs/heads/demo/sales-crm'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     outputs:
       app: ${{ steps.plan.outputs.app }}
       storefront: ${{ steps.plan.outputs.storefront }}
@@ -114,7 +117,7 @@ jobs:
     name: Build units (shard ${{ matrix.shard }})
     needs: [plan]
     if: needs.plan.outputs.app == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_HEAVY || vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 40
     strategy:
       fail-fast: true
@@ -189,7 +192,7 @@ jobs:
     if: >-
       always() && needs.plan.result == 'success' && needs.plan.outputs.any == 'true' &&
       (needs.plan.outputs.app == 'false' || needs.build.result == 'success')
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 75
     # Reading the cache index before the deploy needs `actions: read`; the deploy itself still needs only
     # `contents: read`.
@@ -333,7 +336,7 @@ jobs:
     name: Verify stage
     needs: [deploy]
     if: always() && needs.deploy.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER_HEAVY || vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -463,7 +466,7 @@ jobs:
       always() && needs.plan.result == 'success' &&
       (needs.plan.outputs.any == 'false' ||
       (needs.deploy.result == 'success' && needs.verify.result == 'success'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       # validatedHead is the input-comparison base, NOT every service's deployed revision. A reused
       # service retains its real older source pin. The app still publishes its own composition at readiness.
