@@ -65,7 +65,7 @@
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
     "db:test": "rstest --project unit --project integration",
     "db:verify": "node scripts/verify-db-schema.mts",
-    "test:unit": "rstest --project unit --isolate=false",
+    "test:unit": "rstest --project unit",
     "test:integration": "rstest --project integration",
     "action:test:unit": "rstest --project unit tests/unit/action-",
     "action:test:integration": "rstest --project integration tests/integration/action-",

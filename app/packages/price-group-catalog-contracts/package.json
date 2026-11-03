@@ -16,7 +16,7 @@
     "./validate-price-group-compatibility/client": "./src/api/validate-price-group-compatibility-client.ts"
   },
   "scripts": {
-    "test:unit": "rstest --project unit --isolate=false",
+    "test:unit": "rstest --project unit",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {

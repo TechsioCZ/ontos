@@ -29,7 +29,7 @@
     "db:verify": "node scripts/verify-db-schema.mts",
     "serve": "modern serve",
     "test:integration": "rstest --project integration",
-    "test:unit": "rstest --project unit --isolate=false",
+    "test:unit": "rstest --project unit",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {

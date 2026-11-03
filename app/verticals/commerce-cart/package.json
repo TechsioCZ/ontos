@@ -25,7 +25,7 @@
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
     "db:verify": "node scripts/verify-db-schema.mts",
-    "test:unit": "rstest --project unit --isolate=false"
+    "test:unit": "rstest --project unit"
   },
   "dependencies": {
     "@app/commerce-cart-contracts": "workspace:*",
