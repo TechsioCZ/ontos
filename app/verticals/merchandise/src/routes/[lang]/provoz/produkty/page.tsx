@@ -1,5 +1,6 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState, useNavigate } from '@modern-js/plugin-tanstack/runtime';
+import type { RegisteredRouter } from '@tanstack/react-router';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -10,7 +11,8 @@ import { PageHeader, StatCard, StatRow, formatNumber, Toaster } from '@app/admin
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
 import { Effect, Result, Schema } from 'effect';
 import { modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
-import type { ModulePageProps } from '@app/shared-contracts/page-data';
+import type { ModulePageContext, ModulePageProps } from '@app/shared-contracts/page-data';
+import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { legalEntityOf, useSettledPageData } from '../../../../runtime/page-data-hooks.ts';
 import type { SettledPageData } from '../../../../runtime/page-data-hooks.ts';
@@ -31,6 +33,10 @@ import {
   productListData,
   runCommand,
   productNavigationFailureKey,
+  productScope,
+  productDetailSearch,
+  productCategoryKey,
+  useProductDetailsPrefetch,
 } from './products-api.ts';
 import type {
   CategoryChoices,
@@ -85,10 +91,11 @@ const encodeQueryIds = Schema.encodeResult(QueryIdsJson);
 const decodeQueryIds = Schema.decodeResult(QueryIdsJson);
 
 /** The products page for `query`. A refresh keeps the rows on screen; only the first load shows the loading state. */
-const useProductPage = (legalEntityId: string, query: ProductListQuery) => {
-  const input: ProductListInput = { legalEntityId, query };
+const useProductPage = (legalEntityId: string, query: ProductListQuery, context?: ModulePageContext) => {
+  const scope = productScope(context);
+  const input: ProductListInput = { legalEntityId, query, scope };
   const snapshot = useSyncExternalStore(
-    productListData.subscribe,
+    (listener) => productListData.subscribe(listener, input),
     () => productListData.snapshot(input),
     () => pageDataPending,
   );
@@ -108,21 +115,27 @@ const useProductPage = (legalEntityId: string, query: ProductListQuery) => {
         sort,
         taggedIds: taggedIdsJson === null ? null : Result.getOrThrow(decodeQueryIds(taggedIdsJson)),
       },
+      scope,
     });
-  }, [category, categoryId, legalEntityId, limit, lowStockOnly, offset, search, sort, taggedIdsJson]);
+  }, [category, categoryId, legalEntityId, limit, lowStockOnly, offset, scope, search, sort, taggedIdsJson]);
   const settled = useSettledPageData(snapshot, input);
   return {
     reload: () => {
       browserRuntime.runFork(productListData.refresh(input));
     },
-    state: productLoadState(settled),
+    state: productLoadState(
+      settled !== undefined && settled.input.scope === scope && settled.input.legalEntityId === legalEntityId
+        ? settled
+        : undefined,
+    ),
+    viewKey: productListData.key(input),
   };
 };
 
 /** The category filter's choices; reread after the category panel or a product's category changes. */
 const useCategoryChoices = (legalEntityId: string) => {
   const snapshot = useSyncExternalStore(
-    categoryChoicesData.subscribe,
+    (listener) => categoryChoicesData.subscribe(listener, legalEntityId),
     () => categoryChoicesData.snapshot(legalEntityId),
     () => pageDataPending,
   );
@@ -199,10 +212,11 @@ const bulkFailureKey = (reason: FailureReason): string => {
 };
 
 interface RecordsPageContentProps {
+  readonly context?: ModulePageContext | undefined;
   readonly legalEntityId: string;
 }
 
-const useProductListPage = ({ legalEntityId }: RecordsPageContentProps) => {
+const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps) => {
   const { language, t } = useModernI18n();
   const navigate = useNavigate();
   const toaster = useToast();
@@ -215,12 +229,13 @@ const useProductListPage = ({ legalEntityId }: RecordsPageContentProps) => {
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [sort, setSort] = useState<ProductSort | null>(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: PAGE_SIZE });
+  const [table, setTable] = useState<TanstackTable<ProductRecord>>();
   const [selection, setSelection] = useState<Record<string, true>>({});
   const [dialog, setDialog] = useState<typeof DialogKind.Type | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const settledSearch = useDebounced(search);
   const tagFilter = useSubjectTagFilter('product');
-  const { choices, reload: reloadCategories } = useCategoryChoices(legalEntityId);
+  const { choices, reload: reloadCategories } = useCategoryChoices(productCategoryKey(legalEntityId, context));
   const byTree = choices.hasTree;
   const treeCategoryId = byTree ? (treeCategory?.id ?? null) : null;
   const category = byTree ? null : labelCategory;
@@ -235,7 +250,7 @@ const useProductListPage = ({ legalEntityId }: RecordsPageContentProps) => {
     sort,
     taggedIds,
   };
-  const { reload, state } = useProductPage(legalEntityId, query);
+  const { reload, state, viewKey } = useProductPage(legalEntityId, query, context);
 
   /** A filter change starts again at the first page. */
   const firstPage = () =>
@@ -253,6 +268,7 @@ const useProductListPage = ({ legalEntityId }: RecordsPageContentProps) => {
     search.trim() !== '' || treeCategory !== null || labelCategory !== null || lowStockOnly || tagFilter.tagId !== null;
   const stale = state.status === 'ready' && state.query !== query;
   const tableStatus = stale ? 'loading' : tableStatusFor(state.status, tagFilter.status);
+  useProductDetailsPrefetch(context, revision, viewKey, table, products, tableStatus === 'ready');
 
   const onCommitted = (message: string) => {
     toaster.create({ duration: SUCCESS_TOAST_MS, title: message, type: 'success' });
@@ -301,9 +317,13 @@ const useProductListPage = ({ legalEntityId }: RecordsPageContentProps) => {
   };
   const openDetail = (id: ProductRecord['id']) => {
     toaster.dismiss();
+    const navigateToProduct = navigate<RegisteredRouter, string>;
     void browserRuntime.runPromise(
       Effect.tryPromise(
-        navigate.bind(undefined, { to: `/${language ?? 'cs'}/provoz/produkty/${encodeURIComponent(id)}` }),
+        navigateToProduct.bind(undefined, {
+          search: productDetailSearch(context, revision),
+          to: `/${language ?? 'cs'}/provoz/produkty/${encodeURIComponent(id)}`,
+        }),
       ).pipe(
         Effect.timeout('10 seconds'),
         Effect.matchEffect({
@@ -361,6 +381,7 @@ const useProductListPage = ({ legalEntityId }: RecordsPageContentProps) => {
     setSearch,
     setSelection,
     setSort,
+    setTable,
     setTreeCategory,
     sort,
     state,
@@ -406,6 +427,7 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
     setSearch,
     setSelection,
     setSort,
+    setTable,
     setTreeCategory,
     sort,
     state,
@@ -577,6 +599,7 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
           onCreate={() => openDialog('create')}
           onOpen={openDetail}
           onPaginationChange={setPagination}
+          onReady={setTable}
           onRetry={() => {
             if (state.status === 'error' && state.reason === 'reload-required') {
               window.location.reload();
@@ -651,8 +674,13 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
 
 /** The Shell prepares the first page with the header indicators and the category filter before it reveals the page. */
 export const preloadPage = modulePagePreload(
-  (props) => productListData.preload({ legalEntityId: legalEntityOf(props), query: firstProductPage(PAGE_SIZE) }),
-  (props) => categoryChoicesData.preload(legalEntityOf(props)),
+  (props) =>
+    productListData.preload({
+      legalEntityId: legalEntityOf(props),
+      query: firstProductPage(PAGE_SIZE),
+      scope: productScope(props.context),
+    }),
+  (props) => categoryChoicesData.preload(productCategoryKey(legalEntityOf(props), props.context)),
 );
 
 export const RecordsPage = (props: Partial<ModulePageProps>) => {
@@ -664,7 +692,11 @@ export const RecordsPage = (props: Partial<ModulePageProps>) => {
       resources={merchandiseI18nResources}
       supportedLanguages={['en', 'cs']}
     >
-      <RecordsPageContent key={location} legalEntityId={legalEntityOf(props)} />
+      <RecordsPageContent
+        context={props.context}
+        key={`${productScope(props.context) ?? ''}|${location}`}
+        legalEntityId={legalEntityOf(props)}
+      />
     </FederatedI18nBoundary>
   );
 };

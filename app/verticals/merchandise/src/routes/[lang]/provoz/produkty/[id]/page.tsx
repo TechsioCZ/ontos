@@ -1,17 +1,25 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
+import { modulePagePreload } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { Effect, Match, Option, Result, Schema } from 'effect';
-import { useEffect, useSyncExternalStore } from 'react';
-import { useNavigate, useParams } from '@modern-js/plugin-tanstack/runtime';
+import { useState } from 'react';
+import { useNavigate, useParams, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Toaster } from '@app/admin-ui';
 import { browserRuntime } from '../../../../../runtime/browser-effect-runtime.ts';
 import { legalEntityOf } from '../../../../../runtime/page-data-hooks.ts';
-import { detailInput, detailState, productDetailData, productNavigationFailureKey } from '../products-api.ts';
-import type { ProductDetailState } from '../products-api.ts';
+import {
+  detailInput,
+  prepareProductDetail,
+  productDetailData,
+  productListData,
+  productNavigationFailureKey,
+  productRevisionOf,
+  productScope,
+  useProductDetail,
+} from '../products-api.ts';
 import { ProductDetailView } from '../product-detail-dialog.tsx';
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
 import csResource from '../../../../../../locales/cs/merchandise.json';
@@ -31,31 +39,17 @@ export const ProductDetailPageRouteParamsStandardSchema = Schema.toStandardSchem
 
 const emptyRouteParams = Result.getOrThrow(Schema.decodeResult(ProductDetailPageRouteParams)({ id: '' }));
 
-/** The product's detail entry; an invalid route id reads and loads nothing. */
-const useProductDetail = (legalEntityId: string, routeId: string): ProductDetailState => {
-  const input = detailInput(legalEntityId, routeId);
-  const snapshot = useSyncExternalStore(
-    productDetailData.subscribe,
-    () => (Option.isSome(input) ? productDetailData.snapshot(input.value) : pageDataPending),
-    () => pageDataPending,
-  );
-  useEffect(() => {
-    const cold = detailInput(legalEntityId, routeId);
-    if (Option.isSome(cold)) {
-      productDetailData.ensure(cold.value);
-    }
-  }, [legalEntityId, routeId]);
-  return detailState(Option.isSome(input), snapshot);
-};
-
 interface ProductDetailPageProps {
   readonly context?: ModulePageContext | undefined;
   readonly routeParams: ProductDetailPageRouteParameters;
+  readonly search?: string | undefined;
 }
 
 interface ProductDetailPageContentProps {
+  readonly context?: ModulePageContext | undefined;
   readonly legalEntityId: string;
   readonly routeParams: ProductDetailPageRouteParameters;
+  readonly search: string;
 }
 
 const productFailureKey = (reason: string) => {
@@ -65,13 +59,15 @@ const productFailureKey = (reason: string) => {
   return reason === 'forbidden' ? 'states.forbidden' : 'states.errorDescription';
 };
 
-const ProductDetailPageContent = ({ legalEntityId, routeParams }: ProductDetailPageContentProps) => {
+const ProductDetailPageContent = ({ context, legalEntityId, routeParams, search }: ProductDetailPageContentProps) => {
   const { language, t } = useModernI18n();
   const k = (path: string) => t(`merchandise.pages.products.${path}`);
   const navigate = useNavigate();
   const toaster = useToast();
-  const input = detailInput(legalEntityId, routeParams.id);
-  const state = useProductDetail(legalEntityId, routeParams.id);
+  const revisionHint = productRevisionOf(search);
+  const input = detailInput(legalEntityId, routeParams.id, context, revisionHint);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const state = useProductDetail(legalEntityId, routeParams.id, context, revisionHint, refreshVersion);
   const back = () => {
     void browserRuntime.runPromise(
       Effect.tryPromise(navigate.bind(undefined, { to: `/${language ?? 'cs'}/provoz/produkty` })).pipe(
@@ -87,11 +83,13 @@ const ProductDetailPageContent = ({ legalEntityId, routeParams }: ProductDetailP
       ),
     );
   };
-  /** Reads the product again; the current record stays on screen until the fresh one lands. */
+  /** An explicit retry revalidates the owner; a denied refresh cannot keep old fields or actions. */
   const handleReload = () => {
-    if (Option.isSome(input)) {
+    productListData.invalidate();
+    if (Option.isSome(input) && input.value.scope !== undefined) {
       browserRuntime.runFork(productDetailData.refresh(input.value));
     }
+    setRefreshVersion((current) => current + 1);
   };
   const reloadRequired = state.status === 'error' && state.reason === 'reload-required';
   const handleRetry = () => {
@@ -155,7 +153,7 @@ const ProductDetailPageContent = ({ legalEntityId, routeParams }: ProductDetailP
   );
 };
 
-export const ProductDetailPage = ({ context, routeParams }: ProductDetailPageProps) => (
+export const ProductDetailPage = ({ context, routeParams, search = '' }: ProductDetailPageProps) => (
   <FederatedI18nBoundary
     defaultNamespace="merchandise"
     fallbackLanguage="en"
@@ -163,28 +161,31 @@ export const ProductDetailPage = ({ context, routeParams }: ProductDetailPagePro
     supportedLanguages={['en', 'cs']}
   >
     <ProductDetailPageContent
-      key={routeParams.id}
+      context={context}
+      key={`${productScope(context) ?? ''}|${routeParams.id}`}
       legalEntityId={legalEntityOf({ context })}
       routeParams={routeParams}
+      search={search}
     />
   </FederatedI18nBoundary>
 );
 
 /** The Shell prepares the product's record before it reveals the page; an invalid id reads nothing. */
-export const preloadPage = modulePagePreload((props) =>
-  Option.match(detailInput(legalEntityOf(props), props.routeParams['id'] ?? ''), {
-    onNone: () => Effect.void,
-    onSome: (input) => productDetailData.preload(input),
-  }),
-);
+export const preloadPage = modulePagePreload(prepareProductDetail);
 
-const ProductDetailRoute = ({ context, routeParams: suppliedParams }: Partial<ProductDetailPageProps>) => {
+const ProductDetailRoute = ({
+  context,
+  routeParams: suppliedParams,
+  search: suppliedSearch,
+}: Partial<ProductDetailPageProps>) => {
   const params: unknown = useParams({ from: '/$lang/provoz/produkty/$id', shouldThrow: false });
   const routeParams = Schema.decodeUnknownOption(ProductDetailPageRouteParams)(params);
+  const search = useRouterState({ select: (state) => state.location.searchStr });
   return (
     <ProductDetailPage
       context={context}
       routeParams={suppliedParams ?? Option.getOrElse(routeParams, () => emptyRouteParams)}
+      search={suppliedSearch ?? search}
     />
   );
 };

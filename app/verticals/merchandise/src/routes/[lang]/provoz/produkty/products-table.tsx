@@ -1,6 +1,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
+import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
 import { EmptyState } from '@app/admin-ui';
 import { Schema } from 'effect';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
@@ -24,6 +25,7 @@ export interface ProductsTableProps {
   readonly onCreate: () => void;
   readonly onOpen: (id: ProductRecord['id']) => void;
   readonly onPaginationChange: (next: ProductsPage) => void;
+  readonly onReady?: ((table: TanstackTable<ProductRecord>) => void) | undefined;
   readonly onRetry: () => void;
   readonly onSelectionChange: (next: Record<string, true>) => void;
   /** The page the server returned; `rowCount` is the number of all matching products. */
@@ -46,6 +48,7 @@ export const ProductsTable = ({
   onCreate,
   onOpen,
   onPaginationChange,
+  onReady,
   onRetry,
   onSelectionChange,
   pagination,
@@ -58,6 +61,7 @@ export const ProductsTable = ({
   const { t } = useModernI18n();
   const tableText = useTableTranslations();
   const label = (path: string) => t(`merchandise.pages.products.${path}`);
+  const ready = (table: TanstackTable<ProductRecord>) => onReady?.(table);
 
   return (
     <DataTable
@@ -74,6 +78,7 @@ export const ProductsTable = ({
       manualPagination
       maxHeight="calc(100dvh - 15rem)"
       onPaginationChange={onPaginationChange}
+      onReady={ready}
       onRowClick={(row) => onOpen(row.original.id)}
       onRowSelectionChange={onSelectionChange}
       pageSizeOptions={[50, 100, 200]}

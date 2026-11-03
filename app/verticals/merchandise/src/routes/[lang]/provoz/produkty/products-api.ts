@@ -1,7 +1,9 @@
-import { definePageData } from '@app/shared-contracts/page-data';
-import type { PageDataSnapshot } from '@app/shared-contracts/page-data';
-import { Effect, Match, Option, Random, Schema } from 'effect';
+import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
+import type { ModulePageContext, ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
+import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
+import { Effect, Match, Option, Random, Result, Schema } from 'effect';
 import type { Cause } from 'effect';
+import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeRecords } from '../../../../api/records-consumer.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -17,6 +19,9 @@ import type {
 } from '../../../../../shared/apis/records.ts';
 
 const RELOAD_REQUIRED = 'reload-required';
+const PRODUCT_MODULE = 'demo.merchandise';
+const ProductCacheKey = Schema.fromJsonString(Schema.Array(Schema.String));
+const cacheKey = (parts: readonly string[]): string => Result.getOrThrow(Schema.encodeResult(ProductCacheKey)(parts));
 
 /**
  * `conflict` is a stale revision (someone else changed the data); `rejected` is a business rule the
@@ -26,6 +31,7 @@ const FailureReasonSchema = Schema.Literals([
   'conflict',
   'forbidden',
   'invalid',
+  'not-found',
   'rejected',
   RELOAD_REQUIRED,
   'unavailable',
@@ -160,26 +166,36 @@ const loadView = (view: ViewPayload, onOutcome: (outcome: LoadOutcome) => void):
 export interface ProductListInput {
   readonly legalEntityId: string;
   readonly query: ProductListQuery;
+  readonly scope?: string | undefined;
 }
 
 /** Everything `productListView` sends, in a fixed order: equal requests share one entry. */
-const productListKey = ({ legalEntityId, query }: ProductListInput): string =>
-  [
+const productListKey = ({ legalEntityId, query, scope }: ProductListInput): string =>
+  cacheKey([
     legalEntityId,
-    query.limit,
-    query.offset,
+    scope ?? '',
+    String(query.limit),
+    String(query.offset),
     query.search.trim(),
     query.categoryId ?? '',
     query.category ?? '',
-    query.lowStockOnly,
+    String(query.lowStockOnly),
     query.sort ?? '',
     query.taggedIds === null ? '*' : query.taggedIds.join(','),
-  ].join('|');
+  ]);
+
+export const productScope = (context: ModulePageContext | undefined): string | undefined =>
+  pageDataScopeKey(context, PRODUCT_MODULE);
+
+export const productCategoryKey = (legalEntityId: string, context?: ModulePageContext): string =>
+  productScope(context) ?? legalEntityId;
 
 /** One page of the products list with the company indicators and the write capability. */
 export const productListData = definePageData({
   key: productListKey,
   load: ({ query }: ProductListInput) => readView(productListView(query)),
+  maxEntries: 16,
+  retainStale: false,
   runtime: browserRuntime,
 });
 
@@ -219,6 +235,8 @@ export const categoryChoicesData = definePageData({
         labels: response.productCategories ?? [],
       })),
     ),
+  maxEntries: 16,
+  retainStale: false,
   runtime: browserRuntime,
 });
 
@@ -231,6 +249,9 @@ const isProductId = Schema.is(ProductIdSchema);
 export interface ProductDetailInput {
   readonly legalEntityId: string;
   readonly productId: ProductId;
+  /** The owner revision of the authorized list page, never a substitute for the detail's returned revision. */
+  readonly revision?: number | undefined;
+  readonly scope?: string | undefined;
 }
 
 export interface ProductDetail {
@@ -239,16 +260,25 @@ export interface ProductDetail {
   readonly response: RecordsResponse;
 }
 
-/** Detail read: one product with its variants, its own movements and the path label of its tree category. */
+/** The one existing governed read carries the product, variants/histories, ledger, category trail and admitted markets. */
+const readProductDetail = ({ productId }: ProductDetailInput) =>
+  readView({ categoryTrails: true, ordersLimit: 0, productId }).pipe(
+    Effect.flatMap((response) => {
+      const product = response.products.find((entry) => entry.id === productId);
+      // Missing records are retryable on the next opening, not a successful reusable negative result.
+      return product === undefined
+        ? Effect.fail<FailureReason>('not-found')
+        : Effect.succeed<ProductDetail>({ product: Option.some(product), response });
+    }),
+  );
+
 export const productDetailData = definePageData({
-  key: ({ legalEntityId, productId }: ProductDetailInput) => `${legalEntityId}|${productId}`,
-  load: ({ productId }: ProductDetailInput) =>
-    readView({ categoryTrails: true, ordersLimit: 0, productId }).pipe(
-      Effect.map((response): ProductDetail => ({
-        product: Option.fromUndefinedOr(response.products.find((entry) => entry.id === productId)),
-        response,
-      })),
-    ),
+  cancelWhenUnused: true,
+  key: ({ legalEntityId, productId, revision, scope }: ProductDetailInput) =>
+    cacheKey([scope ?? legalEntityId, productId, String(revision)]),
+  load: readProductDetail,
+  maxEntries: 256,
+  retainStale: false,
   runtime: browserRuntime,
 });
 
@@ -262,7 +292,17 @@ export const runCommand = (
     newId.pipe(
       Effect.flatMap((idempotencyKey) =>
         Schema.encodeEffect(ApplyCommandPayloadSchema)({ command, expectedRevision }).pipe(
-          Effect.flatMap((payload) => executeApplyCommand(payload, idempotencyKey, { idempotencyKey })),
+          Effect.flatMap((payload) =>
+            executeApplyCommand(payload, idempotencyKey, { idempotencyKey }).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  productListData.invalidate();
+                  productDetailData.invalidate();
+                  categoryChoicesData.invalidate();
+                }),
+              ),
+            ),
+          ),
         ),
       ),
       Effect.match({
@@ -278,8 +318,152 @@ export const runCommand = (
 };
 
 /** The detail input for a route id; none for an id no product can have. */
-export const detailInput = (legalEntityId: string, routeId: string): Option.Option<ProductDetailInput> =>
-  isProductId(routeId) ? Option.some({ legalEntityId, productId: routeId }) : Option.none();
+export const detailInput = (
+  legalEntityId: string,
+  routeId: string,
+  context?: ModulePageContext,
+  revision?: number,
+): Option.Option<ProductDetailInput> => {
+  if (!isProductId(routeId)) {
+    return Option.none();
+  }
+  const scope = productScope(context);
+  const input: { -readonly [Key in keyof ProductDetailInput]: ProductDetailInput[Key] } = {
+    legalEntityId,
+    productId: routeId,
+  };
+  if (scope !== undefined) {
+    input.scope = scope;
+  }
+  if (revision !== undefined) {
+    input.revision = revision;
+  }
+  return Option.some(input);
+};
+
+const ProductRouteSearch = Schema.toCodecJson(
+  Schema.fromURLSearchParams(
+    Schema.Struct({
+      productRevision: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^(?:0|[1-9][0-9]*)$/u))),
+    }),
+  ),
+);
+
+/** A navigation cache hint, not authorization or the revision submitted by a mutation. Invalid hints read cold. */
+const ProductRevision = Schema.NumberFromString.check(
+  Schema.isInt(),
+  Schema.isGreaterThanOrEqualTo(0),
+  Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+);
+export const productRevisionOf = (search: string): number | undefined => {
+  const revision = Option.getOrUndefined(Schema.decodeOption(ProductRouteSearch)(search))?.productRevision;
+  return revision === undefined ? undefined : Option.getOrUndefined(Schema.decodeOption(ProductRevision)(revision));
+};
+
+export const productDetailSearch = (context: ModulePageContext | undefined, revision: number) => {
+  if (productScope(context) === undefined) {
+    return () => ({});
+  }
+  return () => ({ productRevision: revision });
+};
+
+/** Shell preparation and the mounted page resolve the exact same scoped, revision-qualified entry. */
+export const prepareProductDetail = (props: ModulePageProps): Effect.Effect<void> =>
+  Option.match(
+    detailInput(
+      props.context?.legalEntityId ?? '',
+      props.routeParams['id'] ?? '',
+      props.context,
+      productRevisionOf(props.search),
+    ),
+    {
+      onNone: () => Effect.void,
+      onSome: (input) => (input.scope === undefined ? Effect.void : productDetailData.read(input).pipe(Effect.ignore)),
+    },
+  );
+
+export interface ProductRowModel {
+  readonly getRowModel: () => { readonly rows: readonly { readonly original: ProductRecord }[] };
+}
+
+/** The installed kit's final row model, fenced against an obsolete server page or scope. */
+export const currentProductRows = (
+  table: ProductRowModel | undefined,
+  authorizedRows: readonly ProductRecord[],
+): readonly ProductRecord[] => {
+  const rows = table?.getRowModel().rows.map((row) => row.original) ?? [];
+  const authorized = new Set(authorizedRows);
+  return rows.length <= 200 && rows.every((row) => authorized.has(row)) ? rows : [];
+};
+
+export const preloadProductDetails = (
+  context: ModulePageContext | undefined,
+  revision: number,
+  rows: readonly ProductRecord[],
+): Effect.Effect<void> =>
+  productScope(context) === undefined
+    ? Effect.void
+    : Effect.forEach(
+        rows.slice(0, 200),
+        (row) =>
+          Option.match(detailInput(context?.legalEntityId ?? '', row.id, context, revision), {
+            onNone: () => Effect.void,
+            onSome: (input) => productDetailData.read(input).pipe(Effect.ignore),
+          }),
+        { concurrency: 2, discard: true },
+      );
+
+/** Batches only the final current-page rows. Changing page/filter/scope cancels the previous batch and queue. */
+export const useProductDetailsPrefetch = (
+  context: ModulePageContext | undefined,
+  revision: number,
+  viewKey: string,
+  table: TanstackTable<ProductRecord> | undefined,
+  authorizedRows: readonly ProductRecord[],
+  enabled: boolean,
+): void => {
+  const scope = productScope(context);
+  const request = cacheKey([scope ?? '', String(revision), viewKey, String(enabled)]);
+  // Observe the kit's external store. React checks this scalar snapshot after controlled child data commits.
+  // Row identity fencing rejects the previous server page until the kit has consumed the new source rows.
+  const modelKey = useSyncExternalStore(
+    (listener) => {
+      const pagination = table?.atoms.pagination.subscribe(listener);
+      const sorting = table?.atoms.sorting.subscribe(listener);
+      return () => {
+        pagination?.unsubscribe();
+        sorting?.unsubscribe();
+      };
+    },
+    () => cacheKey(currentProductRows(table, authorizedRows).map((row) => row.id)),
+    () => '[]',
+  );
+  const currentRows = currentProductRows(table, authorizedRows);
+  const rows = enabled && cacheKey(currentRows.map((row) => row.id)) === modelKey ? currentRows : [];
+  const selection = cacheKey(rows.map((row) => row.id));
+  const needsPreload = useSyncExternalStore(
+    productDetailData.subscribe,
+    () =>
+      scope !== undefined &&
+      rows.some((row) =>
+        Option.match(detailInput(context?.legalEntityId ?? '', row.id, context, revision), {
+          onNone: () => false,
+          onSome: (input) => productDetailData.snapshot(input).state !== 'ready',
+        }),
+      ),
+    () => false,
+  );
+  const preload = useEffectEvent((key: string) =>
+    key === request ? preloadProductDetails(context, revision, rows) : Effect.void,
+  );
+  useEffect(() => {
+    const fiber =
+      needsPreload && scope !== undefined && selection !== '[]' ? browserRuntime.runFork(preload(request)) : undefined;
+    return () => {
+      fiber?.interruptUnsafe();
+    };
+  }, [needsPreload, request, scope, selection]);
+};
 
 export type ProductDetailState =
   | { readonly status: 'loading' }
@@ -299,6 +483,9 @@ export const detailState = (
     return { status: 'loading' };
   }
   if (snapshot.state === 'failed') {
+    if (snapshot.error === 'not-found') {
+      return { status: 'not-found' };
+    }
     return { reason: snapshot.error, status: 'error' };
   }
   const { product, response } = snapshot.value;
@@ -306,6 +493,55 @@ export const detailState = (
     onNone: (): ProductDetailState => ({ status: 'not-found' }),
     onSome: (found): ProductDetailState => ({ product: found, response, status: 'ready' }),
   });
+};
+
+/** A warmed complete scoped entry is consumed in render. Missing Shell identity never reuses the detail store. */
+export const useProductDetail = (
+  legalEntityId: string,
+  routeId: string,
+  context?: ModulePageContext,
+  revision?: number,
+  refreshVersion = 0,
+): ProductDetailState => {
+  const scope = productScope(context);
+  const input = detailInput(legalEntityId, routeId, context, revision);
+  const snapshot = useSyncExternalStore(
+    (listener) =>
+      productDetailData.subscribe(listener, scope !== undefined && Option.isSome(input) ? input.value : undefined),
+    () => (scope !== undefined && Option.isSome(input) ? productDetailData.snapshot(input.value) : pageDataPending),
+    () => pageDataPending,
+  );
+  const request = cacheKey([legalEntityId, routeId, scope ?? '', String(revision), String(refreshVersion)]);
+  const [unscoped, setUnscoped] = useState<{
+    readonly key: string;
+    readonly snapshot: PageDataSnapshot<ProductDetail, FailureReason>;
+  }>();
+  const load = useEffectEvent((key: string) =>
+    key === request
+      ? Option.match(input, {
+          onNone: () => Effect.void,
+          onSome: (current) =>
+            scope === undefined
+              ? readProductDetail(current).pipe(
+                  Effect.match({
+                    onFailure: (error) =>
+                      setUnscoped({ key: request, snapshot: { error, refreshing: false, state: 'failed' } }),
+                    onSuccess: (value) =>
+                      setUnscoped({ key: request, snapshot: { refreshing: false, state: 'ready', value } }),
+                  }),
+                )
+              : productDetailData.read(current).pipe(Effect.ignore),
+        })
+      : Effect.void,
+  );
+  useEffect(() => {
+    const fiber = browserRuntime.runFork(load(request));
+    return () => fiber.interruptUnsafe();
+  }, [request]);
+  if (scope === undefined) {
+    return detailState(Option.isSome(input), unscoped?.key === request ? unscoped.snapshot : pageDataPending);
+  }
+  return detailState(Option.isSome(input), snapshot);
 };
 
 export const productNavigationFailureKey = Match.type<Cause.TimeoutError | Cause.UnknownError>().pipe(
