@@ -167,11 +167,24 @@ const marketNativeDescription = Effect.scoped(
       stdin: 'ignore',
       stdout: 'pipe',
     });
-    const [code, stdout] = yield* Effect.all(
-      [child.exitCode, child.stdout.pipe(Stream.decodeText, Stream.mkString), Stream.runDrain(child.stderr)],
+    const [code, stdout, stderr] = yield* Effect.all(
+      [
+        child.exitCode,
+        child.stdout.pipe(Stream.decodeText, Stream.mkString),
+        child.stderr.pipe(Stream.decodeText, Stream.mkString),
+      ],
       { concurrency: 3 },
     );
-    return { code, stdout };
+    const errorClasses = stderr.match(/\b(?:SyntaxError|ReferenceError|TypeError|Error \[ERR_[A-Z_]+\])/gu) ?? [];
+    const missingExport =
+      /does not provide an export named '(?<exportName>[A-Za-z_$][\w$]*)'/u.exec(stderr)?.groups?.exportName ?? null;
+    const missingModule =
+      /Cannot find (?:package|module) '(?<moduleName>[@A-Za-z0-9/._-]+)'/u
+        .exec(stderr)
+        ?.groups?.moduleName?.split('/')
+        .slice(-4)
+        .join('/') ?? null;
+    return { code, errorClasses, missingExport, missingModule, stdout };
   }),
 );
 
@@ -191,8 +204,13 @@ it.layer(marketNativeDescriptionLayer, { timeout: '30 seconds' })(
   (suite) => {
     suite.effect('resolves public owner exports and describes the bundled child without opening its backend', () =>
       Effect.gen(function* describeBundledChild() {
-        const { code, stdout } = yield* MarketNativeDescription;
-        expect(code).toBe(0);
+        const { code, errorClasses, missingExport, missingModule, stdout } = yield* MarketNativeDescription;
+        expect({ code, errorClasses, missingExport, missingModule }).toEqual({
+          code: 0,
+          errorClasses: [],
+          missingExport: null,
+          missingModule: null,
+        });
         const response = yield* Schema.decodeUnknownEffect(
           Schema.fromJsonString(
             Schema.Struct({

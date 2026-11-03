@@ -1,10 +1,17 @@
-import { SellingLegalEntityRefSchema } from '../../shared/market-contracts.ts';
+import { SellingLegalEntityRefSchema, StorefrontRefSchema } from '../../shared/market-contracts.ts';
 import { Effect, FileSystem, Path, Schema, Stream } from 'effect';
 import type { Socket } from 'effect/socket';
 import { ActiveApplicationCompositionSnapshotSchema, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { CreateMarketResultSchema, ReviseMarketDefinitionResultSchema } from '../../shared/action-contracts.ts';
 import { MarketRefSchema } from '../../shared/resources/market.ts';
+import { StorefrontAssociationRefSchema } from '../../shared/resources/storefront-association.ts';
 
+const InvocationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('ActionInvocationId'),
+  Schema.decodeTo(Schema.String),
+);
+const ActionKeySchema = Schema.String.pipe(Schema.brand('ActionKey'), Schema.decodeTo(Schema.String));
+const ServingModuleKeySchema = Schema.String.pipe(Schema.brand('ServingModuleKey'), Schema.decodeTo(Schema.String));
 const text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000));
 export const MarketRevisionNativeIssueSchema = Schema.Struct({
   audience: Schema.Literal('commerce-market-catalog'),
@@ -12,12 +19,17 @@ export const MarketRevisionNativeIssueSchema = Schema.Struct({
   legalEntityId: SellingLegalEntityRefSchema.fields.resourceId,
   requestCorrelation: text,
 });
+const customerContextStateSchema = Schema.Literals(['active', 'suspended']);
+export type MarketRevisionNativeCustomerContextState = typeof customerContextStateSchema.Type;
 export const MarketRevisionNativeCommandSchema = Schema.Union([
-  Schema.Struct({ type: Schema.Literals(['CREATE_R1', 'REVISE_R2', 'STOP']) }),
+  Schema.Struct({ type: Schema.Literals(['CLOSE_STOREFRONT', 'CREATE_R1', 'REVISE_R2', 'STOP']) }),
+  Schema.Struct({ type: Schema.Literal('EVIDENCE') }),
   Schema.Struct({ input: MarketRevisionNativeIssueSchema, type: Schema.Literal('ISSUE') }),
+  Schema.Struct({ state: customerContextStateSchema, type: Schema.Literal('SET_CCC_STATE') }),
 ]);
 export const MarketRevisionNativeReadySchema = Schema.Struct({
   after: Schema.DateTimeUtcFromString,
+  associationRef: StorefrontAssociationRefSchema,
   baseUrl: Schema.URLFromString,
   before: Schema.DateTimeUtcFromString,
   compositionRevision: text,
@@ -25,9 +37,11 @@ export const MarketRevisionNativeReadySchema = Schema.Struct({
   marketRef: MarketRefSchema,
   now: Schema.DateTimeUtcFromString,
   principal: TrustedPrincipalContextSchema,
+  relaySourcePrincipalId: TrustedPrincipalContextSchema.fields.principalId,
   revisedAt: Schema.DateTimeUtcFromString,
   sellerRef: SellingLegalEntityRefSchema,
   snapshot: ActiveApplicationCompositionSnapshotSchema,
+  storefrontRef: StorefrontRefSchema,
   tenantId: MarketRefSchema.fields.tenantId,
   type: Schema.Literal('READY'),
 });
@@ -36,6 +50,44 @@ export const MarketRevisionNativeIssueFailureStageSchema = Schema.Literals([
   'SHELL_GATEWAY_UNAVAILABLE',
   'ADMISSION_MISMATCH',
 ]);
+export const MarketRevisionNativeRetirementReservationSchema = Schema.Struct({
+  lifecycle: Schema.Literals(['RESERVED', 'COMMITTED', 'RELEASED']),
+  reservationVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+});
+export const MarketRevisionNativeEvidenceSchema = Schema.Struct({
+  accesses: Schema.Array(
+    Schema.Struct({
+      outcome: text,
+      outcomeCode: text,
+      outcomeStage: text,
+      principalId: TrustedPrincipalContextSchema.fields.principalId,
+      servingModuleKey: ServingModuleKeySchema,
+    }),
+  ).check(Schema.isMaxLength(512)),
+  admissions: Schema.Array(Schema.Struct({ status: Schema.Literals(['PENDING', 'COMMITTED', 'ABORTED']) })).check(
+    Schema.isMaxLength(16),
+  ),
+  audits: Schema.Array(
+    Schema.Struct({
+      actionInvocationId: Schema.OptionFromNullOr(InvocationIdSchema),
+      outcome: text,
+      outcomeCode: text,
+      outcomeStage: text,
+      principalId: Schema.OptionFromNullOr(TrustedPrincipalContextSchema.fields.principalId),
+      retirementReservation: Schema.OptionFromNullOr(MarketRevisionNativeRetirementReservationSchema),
+    }),
+  ).check(Schema.isMaxLength(512)),
+  invocations: Schema.Array(
+    Schema.Struct({
+      actionInvocationId: InvocationIdSchema,
+      actionKey: ActionKeySchema,
+      principalId: Schema.OptionFromNullOr(TrustedPrincipalContextSchema.fields.principalId),
+      status: text,
+    }),
+  ).check(Schema.isMaxLength(512)),
+  outboxCount: Schema.Int,
+  type: Schema.Literal('EVIDENCE'),
+});
 export const MarketRevisionNativeResponseSchema = Schema.Union([
   MarketRevisionNativeReadySchema,
   Schema.Struct({ result: CreateMarketResultSchema, type: Schema.Literal('CREATED') }),
@@ -46,7 +98,9 @@ export const MarketRevisionNativeResponseSchema = Schema.Union([
     type: Schema.Literal('ISSUED'),
   }),
   Schema.Struct({ stage: MarketRevisionNativeIssueFailureStageSchema, type: Schema.Literal('FAILED') }),
-  Schema.Struct({ type: Schema.Literals(['STOPPED', 'UNAVAILABLE']) }),
+  Schema.Struct({ type: Schema.Literals(['STOREFRONT_CLOSED', 'STOPPED', 'UNAVAILABLE']) }),
+  MarketRevisionNativeEvidenceSchema,
+  Schema.Struct({ state: customerContextStateSchema, type: Schema.Literal('CCC_STATE_SET') }),
 ]);
 
 // Closed TEST transport for the owning Market process. No business facts are produced here.

@@ -5,6 +5,7 @@ import { Effect } from 'effect';
 import { expect, it, rstest } from 'effect-rstest';
 
 import { DATABASE_IDENTITIES } from '../../packages/core-runtime/src/db/database-identities.ts';
+import type { DatabaseRoleGrantManifestEntry } from '../postgres/database-role-manifest.mts';
 
 const normalizeSql = (sql: string): string => sql.replaceAll('"', '').replaceAll(/\s+/gu, ' ').trim().toLowerCase();
 const ownerMigration = readFileSync(
@@ -34,12 +35,30 @@ const expectOwnerGrants = (statements: readonly string[]): void => {
   }
 };
 
+const marketFenceGrants = [
+  'revoke all on table commerce_market_catalog.market_retirement_admissions from public, ontos_runtime',
+  'grant select on table commerce_market_catalog.market_retirement_admissions to ontos_runtime',
+  'grant insert on table commerce_market_catalog.market_retirement_admissions to ontos_runtime',
+  'grant update on table commerce_market_catalog.market_retirement_admissions to ontos_runtime',
+];
+
+const expectMarketFenceGrants = (statements: readonly string[]): void => {
+  expect(
+    statements.filter((statement) =>
+      /^(?:grant|revoke) .* on table commerce_market_catalog\.market_retirement_admissions /u.test(statement),
+    ),
+  ).toEqual(marketFenceGrants);
+  expect(statements).not.toContain('grant usage on schema commerce_market_catalog to ontos_runtime');
+};
+
 it.live(
-  'normal and repeated bootstrap restore Catalog owner grants and detect a broadened UPDATE grant',
+  'normal and repeated bootstrap restore Catalog redemption and Market fence least grants without reviving withheld schemas',
   Effect.fn(function* catalogBootstrapRegression() {
     const statements: string[] = [];
     let roleExists = false;
     let tableExists = true;
+    let marketSchemaExists = true;
+    let marketTableExists = true;
     const client = {
       unsafe: (sql: string, values?: readonly string[]) =>
         Effect.sync(() => {
@@ -48,10 +67,24 @@ it.live(
             return [{ exists: roleExists }];
           }
           if (sql.startsWith('select exists(select 1 from pg_catalog.pg_namespace')) {
-            return [{ exists: values?.[0] === 'catalog' }];
+            return [
+              {
+                exists:
+                  new Map<string | undefined, boolean>([
+                    ['catalog', true],
+                    ['commerce_market_catalog', marketSchemaExists],
+                  ]).get(values?.[0]) === true,
+              },
+            ];
           }
           if (sql.startsWith('select pg_catalog.to_regclass')) {
-            return [{ exists: tableExists && values?.[0] === 'catalog.gateway_assertion_redemptions' }];
+            return [
+              {
+                exists:
+                  (tableExists && values?.[0] === 'catalog.gateway_assertion_redemptions') ||
+                  (marketTableExists && values?.[0] === 'commerce_market_catalog.market_retirement_admissions'),
+              },
+            ];
           }
           if (sql.startsWith('select rolsuper')) {
             return [
@@ -116,6 +149,7 @@ it.live(
           ).toBe(true);
         }
         expectOwnerGrants(statements);
+        expectMarketFenceGrants(statements);
         const broadened = statements.map((statement) =>
           statement === ownerGrants[1]
             ? statement.replace('select, insert, delete', 'select, insert, update, delete')
@@ -123,6 +157,10 @@ it.live(
         );
         expect(broadened).not.toEqual(statements);
         expect(() => expectOwnerGrants(broadened)).toThrow();
+        const deletedFence = statements.map((statement) =>
+          statement === marketFenceGrants[3] ? statement.replace('grant update ', 'grant update, delete ') : statement,
+        );
+        expect(() => expectMarketFenceGrants(deletedFence)).toThrow();
       }
       statements.length = 0;
       tableExists = false;
@@ -132,10 +170,48 @@ it.live(
       expect(statements.some((statement) => statement.includes('on table catalog.gateway_assertion_redemptions'))).toBe(
         false,
       );
+      expectMarketFenceGrants(statements);
+
+      // Neither an absent owner schema nor an absent pre-migration table creates new authority.
+      for (const ownerState of ['missing-schema', 'missing-table']) {
+        statements.length = 0;
+        tableExists = true;
+        marketSchemaExists = ownerState !== 'missing-schema';
+        marketTableExists = ownerState !== 'missing-table';
+        rstest.resetModules();
+        yield* Effect.promise(() => import('../postgres/bootstrap-runtime-role.mts'));
+        expect(process.exitCode).toBe(0);
+        expectOwnerGrants(statements);
+        expect(statements.some((statement) => statement.includes('on table commerce_market_catalog.'))).toBe(false);
+      }
+
+      // An explicit schema revocation takes precedence over its configured table exception.
+      marketSchemaExists = true;
+      marketTableExists = true;
+      rstest.doMock(import('../postgres/database-role-manifest.mts'), () => {
+        const actual = rstest.requireActual<{
+          readonly DATABASE_ROLE_GRANT_MANIFEST: readonly DatabaseRoleGrantManifestEntry[];
+        }>('../postgres/database-role-manifest.mts');
+        return {
+          ...actual,
+          DATABASE_ROLE_GRANT_MANIFEST: actual.DATABASE_ROLE_GRANT_MANIFEST.map((entry) =>
+            entry.kind === 'legacy_shared'
+              ? { ...entry, revokedSchemas: [...entry.revokedSchemas, 'commerce_market_catalog'] }
+              : entry,
+          ),
+        };
+      });
+      statements.length = 0;
+      rstest.resetModules();
+      yield* Effect.promise(() => import('../postgres/bootstrap-runtime-role.mts'));
+      expect(process.exitCode).toBe(0);
+      expect(statements).toContain('revoke all on schema commerce_market_catalog from ontos_runtime');
+      expect(statements.some((statement) => statement.includes('on table commerce_market_catalog.'))).toBe(false);
     } finally {
       process.exitCode = previousExitCode;
       rstest.doUnmock('@effect/sql-pg');
       rstest.doUnmock('../../packages/core-runtime/src/db/config.ts');
+      rstest.doUnmock('../postgres/database-role-manifest.mts');
       rstest.resetModules();
     }
   }),

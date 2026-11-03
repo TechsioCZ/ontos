@@ -143,6 +143,9 @@ export type ActionScaffoldConfig = CoreActionScaffoldConfig | VerticalActionScaf
 
 export interface ActionHttpScaffoldConfig {
   readonly action: string;
+  readonly domainProblems?: readonly string[];
+  readonly resultSchema?: string;
+  readonly schemaModule?: string;
   readonly vertical: string;
 }
 

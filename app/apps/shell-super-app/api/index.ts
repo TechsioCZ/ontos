@@ -1764,6 +1764,7 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
         const sourceNamespaceRegistry = yield* staffAuthenticationNamespaceRegistration([
           'catalog',
           'commerce-customer-context',
+          'commerce-market-catalog',
         ]).pipe(
           Effect.flatMap((registration) => makeAuthenticationNamespaceRegistryEffect([registration])),
           Effect.mapError(relayUnavailable),

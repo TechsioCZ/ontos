@@ -97,6 +97,7 @@ import { MarketAffectedUseAssessmentApi } from './shared/apis/market-affected-us
 import { MarketBootstrapPolicyCurrentApi } from './shared/apis/market-bootstrap-policy-current.ts';
 import { marketBootstrapPolicyResourceDescriptor } from './shared/resources/market-bootstrap-policy.ts';
 import { MarketBootstrapResolutionApi } from './shared/apis/market-bootstrap-resolution.ts';
+import { MarketRetirementReservationRecoveryApi } from './shared/apis/market-retirement-reservation-recovery.ts';
 import { MarketSubjectRestrictionsCurrentApi } from './shared/apis/market-subject-restrictions-current.ts';
 import { migrateCounterpartyPriceGroupAction } from './src/actions/migrate-counterparty-price-group.action.ts';
 import { migrateCustomerPriceGroupAction } from './src/actions/migrate-customer-price-group.action.ts';
@@ -298,6 +299,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'market-affected-use-assessment': MarketAffectedUseAssessmentApi,
       'market-bootstrap-policy-current': MarketBootstrapPolicyCurrentApi,
       'market-bootstrap-resolution': MarketBootstrapResolutionApi,
+      'market-retirement-reservation-recovery': MarketRetirementReservationRecoveryApi,
       'market-subject-restrictions-current': MarketSubjectRestrictionsCurrentApi,
       'order-commitment-approval-evidence': OrderCommitmentApprovalEvidenceApi,
       'order-service-approval-evidence': OrderServiceApprovalEvidenceApi,

@@ -1,5 +1,12 @@
-import { Schema, Predicate } from 'effect';
+import { Schema, Predicate, Option } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { ActionCoreErrorSchema } from '../../src/actions/core-error-schema.ts';
+import {
+  OperationAuthenticationRequired,
+  OperationContextDenied,
+  OperationContextInvalid,
+  OperationContextUnavailable,
+} from '../../src/operations/errors.ts';
 
 import {
   ACTION_CORE_ERROR_TAGS,
@@ -114,6 +121,8 @@ it('publishes the exhaustive stable Core Action error tags', () => {
     expect(Predicate.isTagged(errors[index], tag)).toBe(true);
   }
   for (const error of errors) {
+    expect(Schema.is(ActionCoreErrorSchema)(error)).toBe(true);
+    expect(Option.isSome(Schema.decodeUnknownOption(ActionCoreErrorSchema)(error))).toBe(true);
     expect(error.reason.includes('postgresql://')).toBe(false);
     expect(error.reason.includes('ontos-local-development-key')).toBe(false);
     expect('status' in error).toBe(false);
@@ -123,4 +132,31 @@ it('publishes the exhaustive stable Core Action error tags', () => {
   expect(denial?.policyReasonCode).toBe('tenant_suspended');
   expect('payload' in (denial ?? {})).toBe(false);
   expect('cause' in (denial ?? {})).toBe(false);
+});
+
+it('retains operational authentication and scope failures in the Core error channel', () => {
+  const errors = [
+    new OperationAuthenticationRequired({
+      code: 'operation_authentication_required',
+      reason: 'Authentication required',
+    }),
+    new OperationContextDenied({ code: 'operation_context_denied', reason: 'Context denied' }),
+    new OperationContextInvalid({ code: 'operation_context_invalid', reason: 'Context invalid' }),
+    new OperationContextUnavailable({ code: 'operation_context_unavailable', reason: 'Context unavailable' }),
+  ];
+  for (const error of errors) {
+    expect(Option.isSome(Schema.decodeUnknownOption(ActionCoreErrorSchema)(error))).toBe(true);
+  }
+});
+
+it('does not classify undeclared domain failures or malformed Core-shaped values as Core errors', () => {
+  expect(Schema.is(ActionCoreErrorSchema)({ _tag: 'BusinessDenied', code: 'business_denied', reason: 'Denied' })).toBe(
+    false,
+  );
+  expect(
+    Schema.is(ActionCoreErrorSchema)({ _tag: 'ActionPermissionDenied', code: 'wrong_code', reason: 'Denied' }),
+  ).toBe(false);
+  expect(Schema.is(ActionCoreErrorSchema)({ _tag: 'ActionPermissionDenied', code: 'action_permission_denied' })).toBe(
+    false,
+  );
 });

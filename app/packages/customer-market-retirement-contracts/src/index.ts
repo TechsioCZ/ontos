@@ -5,3 +5,5 @@ export * from './apis/market-subject-restrictions-current.ts';
 export * from './api/market-subject-restrictions-current-client.ts';
 export * from './apis/reserve-market-retirement.ts';
 export * from './api/reserve-market-retirement-client.ts';
+export * from './apis/market-retirement-reservation-recovery.ts';
+export * from './api/market-retirement-reservation-recovery-client.ts';

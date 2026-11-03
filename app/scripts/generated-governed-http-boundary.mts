@@ -3344,9 +3344,68 @@ const publicContractSpecifier = (source: string): string | undefined => {
   );
 };
 
-const isClosedPublicContractExport = (source: string, specifier: string): boolean =>
-  publicContractSpecifier(source) === specifier &&
-  hasExactSourceTokens(tokenizeGovernedClient(source), `export * from '${specifier}';`);
+const namedPublicContractMembersEnd = (
+  tokens: ReturnType<typeof tokenizeGovernedClient>,
+  start: number,
+  typeOnly: boolean,
+): number | undefined => {
+  let cursor = start;
+  let names = 0;
+  while (tokens[cursor]?.kind !== SyntaxKind.CloseBraceToken) {
+    if (!typeOnly && tokens[cursor]?.kind === SyntaxKind.TypeKeyword) {
+      cursor += 1;
+    }
+    if (tokens[cursor]?.kind !== SyntaxKind.Identifier) {
+      return undefined;
+    }
+    cursor += 1;
+    names += 1;
+    if (tokens[cursor]?.kind === SyntaxKind.CommaToken) {
+      cursor += 1;
+    } else if (tokens[cursor]?.kind !== SyntaxKind.CloseBraceToken) {
+      return undefined;
+    }
+  }
+  return names === 0 ? undefined : cursor;
+};
+
+/** Every token must belong to a static named reexport from the one approved public target. */
+const hasClosedNamedPublicContractExports = (
+  tokens: ReturnType<typeof tokenizeGovernedClient>,
+  specifier: string,
+): boolean => {
+  let cursor = 0;
+  while (cursor < tokens.length) {
+    if (tokens[cursor]?.kind !== SyntaxKind.ExportKeyword) {
+      return false;
+    }
+    cursor += 1;
+    const typeOnly = tokens[cursor]?.kind === SyntaxKind.TypeKeyword;
+    if (typeOnly) {
+      cursor += 1;
+    }
+    if (tokens[cursor]?.kind !== SyntaxKind.OpenBraceToken) {
+      return false;
+    }
+    const close = namedPublicContractMembersEnd(tokens, cursor + 1, typeOnly);
+    if (close === undefined || !hasExactSourceTokens(tokens.slice(close + 1, close + 4), `from '${specifier}';`)) {
+      return false;
+    }
+    cursor = close + 4;
+  }
+  return tokens.length > 0;
+};
+
+const isClosedPublicContractExport = (source: string, specifier: string): boolean => {
+  if (publicContractSpecifier(source) !== specifier) {
+    return false;
+  }
+  const tokens = tokenizeGovernedClient(source);
+  return (
+    hasExactSourceTokens(tokens, `export * from '${specifier}';`) ||
+    hasClosedNamedPublicContractExports(tokens, specifier)
+  );
+};
 
 const isExactPublicContractShim = (source: string, header: string, specifier: string): boolean =>
   hasGeneratedSourceHeader(source, header) && isClosedPublicContractExport(source, specifier);

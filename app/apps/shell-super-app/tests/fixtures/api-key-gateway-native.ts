@@ -51,11 +51,18 @@ const unavailable = (cause?: unknown) =>
 const appRoot = new URL('../../../../', import.meta.url).pathname;
 export interface ApiKeyGatewayNativeFixtureOptions {
   readonly ownedDatabase: ShellNativeOwnedDatabase;
+  readonly relaySource?: { readonly sourceAppId: 'commerce-market-catalog' };
   readonly snapshotJson: string;
 }
+export const ShellNativeRelaySourceSchema = Schema.Struct({
+  compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
+  sourceAppId: Schema.Literal('commerce-market-catalog'),
+  sourceBuildMarker: Schema.String.check(Schema.isMinLength(1)),
+});
 export const ShellNativeChildReadySchema = Schema.Struct({
   baseUrl: Schema.String,
   providerUserId: ProviderSubjectIdSchema,
+  relaySourceProviderUserId: Schema.optionalKey(ProviderSubjectIdSchema),
 });
 export const ShellNativeIssueCommandSchema = Schema.TaggedStruct('issue', {
   principalId: PrincipalIdSchema,
@@ -68,10 +75,17 @@ export const ShellNativeSessionGatewayResponseSchema = Schema.TaggedStruct('sess
   gateway: GatewayContextResponseSchema,
 });
 export const ShellNativeBoundCommandSchema = Schema.TaggedStruct('bound', {});
+export const ShellNativeRelaySourceIssueCommandSchema = Schema.TaggedStruct('relay-source-issue', {
+  principalId: PrincipalIdSchema,
+  tenantId: TenantIdSchema,
+});
+export const ShellNativeRelaySourceBoundCommandSchema = Schema.TaggedStruct('relay-source-bound', {});
 export const ShellNativeChildCommandSchema = Schema.Union([
   ShellNativeIssueCommandSchema,
   ShellNativeSessionGatewayCommandSchema,
   ShellNativeBoundCommandSchema,
+  ShellNativeRelaySourceIssueCommandSchema,
+  ShellNativeRelaySourceBoundCommandSchema,
   Schema.TaggedStruct('enabled', { enabled: Schema.Boolean }),
 ]);
 export const ShellNativeIssuedResponseSchema = Schema.TaggedStruct('issued', {
@@ -277,6 +291,22 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
     ) {
       return yield* unavailable();
     }
+    const sourceDeployment =
+      options.relaySource === undefined
+        ? undefined
+        : snapshot.composition.modules.find(({ deployment }) => deployment.appId === options.relaySource?.sourceAppId)
+            ?.deployment;
+    if (options.relaySource !== undefined && sourceDeployment === undefined) {
+      return yield* unavailable();
+    }
+    const relaySource: typeof ShellNativeRelaySourceSchema.Type | undefined =
+      sourceDeployment === undefined
+        ? undefined
+        : {
+            compositionRevision: snapshot.composition.revision,
+            sourceAppId: 'commerce-market-catalog',
+            sourceBuildMarker: sourceDeployment.buildMarker,
+          };
     const authRuntime = Context.get(
       yield* Layer.build(OwnedAuthRuntimeContractLive(options.ownedDatabase, snapshot.composition.revision)).pipe(
         Effect.mapError(unavailable),
@@ -338,6 +368,9 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
         ONTOS_GATEWAY_ISSUER: issuer,
         ONTOS_GATEWAY_PRIVATE_JWK: privateJwk,
         ONTOS_GATEWAY_PUBLIC_JWKS: publicJwks,
+        ONTOS_SHELL_NATIVE_RELAY_SOURCE: yield* Schema.encodeEffect(
+          Schema.fromJsonString(Schema.OptionFromNullOr(ShellNativeRelaySourceSchema)),
+        )(relaySource === undefined ? Option.none() : Option.some(relaySource)),
         ONTOS_SHELL_NATIVE_SOCKET: privateChannel.socketPath,
       },
       // Inherit the configured native runner's TLS permission environment; every DB/auth destination above is owned.
@@ -358,6 +391,8 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
     ).pipe(Effect.mapError(unavailable));
     const closed = yield* Ref.make(false);
     const issuedOnce = yield* Ref.make(false);
+    const sourceIssuedOnce = yield* Ref.make(false);
+    const boundPrincipal = yield* Ref.make(Option.none<TrustedPrincipalContext>());
     yield* Effect.addFinalizer(() => Ref.set(closed, true).pipe(Effect.asVoid));
     const ensureOpen = Ref.get(closed).pipe(
       Effect.flatMap((value) => (value ? Effect.fail(unavailable()) : Effect.void)),
@@ -405,6 +440,7 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
           },
         });
         yield* exchange({ _tag: 'bound' });
+        yield* Ref.set(boundPrincipal, Option.some(principal));
         return Object.freeze({
           authBindingId: binding.authBindingId,
           secret: credential,
@@ -412,8 +448,52 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
         });
       }),
       issuer,
+      issueRelaySourceAndBind: Effect.fn('ApiKeyGatewayNativeFixture.issueRelaySourceAndBind')(
+        function* issueRelaySourceAndBind(principal: TrustedPrincipalContext) {
+          yield* ensureOpen;
+          const actor = yield* Ref.get(boundPrincipal);
+          if (
+            relaySource === undefined ||
+            ready.relaySourceProviderUserId === undefined ||
+            Option.isNone(actor) ||
+            actor.value.principalId === principal.principalId ||
+            actor.value.tenantId !== principal.tenantId ||
+            (yield* Ref.getAndSet(sourceIssuedOnce, true))
+          ) {
+            return yield* unavailable();
+          }
+          const issued = yield* exchange({
+            _tag: 'relay-source-issue',
+            principalId: principal.principalId,
+            tenantId: principal.tenantId,
+          });
+          if (!Schema.is(ShellNativeIssuedResponseSchema)(issued)) {
+            return yield* unavailable();
+          }
+          const sourceCredential = Redacted.make(issued.secret);
+          const runtime = yield* ActionRuntime;
+          const binding = yield* runtime.runAction({
+            payload: { providerSubjectId: issued.providerKeyId },
+            principal,
+            registration: bindSelfApiKeyAction,
+            transport: {
+              correlationId: 'native-relay-source-bind',
+              idempotencyKey: `native-relay-source-bind:${issued.providerKeyId}`,
+            },
+          });
+          yield* exchange({ _tag: 'relay-source-bound' });
+          return Object.freeze({
+            ...relaySource,
+            authBindingId: binding.authBindingId,
+            principalId: principal.principalId,
+            providerKeyId: issued.providerKeyId,
+            secret: sourceCredential,
+          });
+        },
+      ),
       providerUserId: ready.providerUserId,
       publicJwks,
+      relaySourceProviderUserId: ready.relaySourceProviderUserId,
     });
   },
 );
