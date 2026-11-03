@@ -420,9 +420,10 @@ jobs:
   # database. The integration tests are split into package shards that each fit the job timeout. Every
   # shard repeats the full service preparation; the root suite and every package that no other shard names
   # run in the first shard, so a new package can never fall out of the gate. A shard that carried several
-  # packages' suites always finished last, so the heaviest packages get a job each and the largest package
-  # (Commerce Customer Context) is split further by Rstest shard: a PR waits for the slowest job, not for
-  # the sum of the packages a single job used to run one after another.
+  # packages' suites always finished last, so the heaviest packages get a job each: a PR waits for the
+  # slowest job, not for the sum of the packages a single job used to run one after another. Commerce
+  # Customer Context keeps two Rstest shards rather than more: one test file alone runs for ten minutes and
+  # Rstest splits shards by file, so extra shards would add jobs without shortening that file.
   service-integration:
     name: ${{ matrix.name }}
     needs: [queue-proof]
@@ -450,21 +451,13 @@ jobs:
             name: Pricing and Inventory Integration
             package-filters: --filter ./verticals/pricing --filter ./verticals/inventory
           - suite: integration
-            name: Commerce Customer Context Integration (1/4)
+            name: Commerce Customer Context Integration (1/2)
             package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 1/4
+            rstest-shard: 1/2
           - suite: integration
-            name: Commerce Customer Context Integration (2/4)
+            name: Commerce Customer Context Integration (2/2)
             package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 2/4
-          - suite: integration
-            name: Commerce Customer Context Integration (3/4)
-            package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 3/4
-          - suite: integration
-            name: Commerce Customer Context Integration (4/4)
-            package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 4/4
+            rstest-shard: 2/2
           - suite: integration
             name: Market, Order, Payment Term, Price Group, and Storefront Integration
             native-preproposal: true
