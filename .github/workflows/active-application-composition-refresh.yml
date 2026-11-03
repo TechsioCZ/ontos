@@ -24,7 +24,7 @@ jobs:
   # sits outside the lock so it never queues there itself.
   deploy-guard:
     name: Yield the refresh to a main deploy in flight
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 3
     permissions:
       actions: read
@@ -67,7 +67,7 @@ jobs:
     name: Re-observe and re-publish the stage Application Composition
     needs: [deploy-guard]
     if: needs.deploy-guard.outputs.stage-deploy-active == 'false'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     # A refresh takes about two minutes and holds the stage deploy lock, so a stuck one must not hold it long.
     timeout-minutes: 10
     # Refreshing is not a deployment: without deployment: false the job would record a successful stage
@@ -215,7 +215,7 @@ jobs:
     name: Re-observe and re-publish the production Application Composition
     needs: [deploy-guard]
     if: needs.deploy-guard.outputs.production-deploy-active == 'false'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     # It holds the production deploy lock, so it is bounded like the stage refresh.
     timeout-minutes: 10
     environment:
