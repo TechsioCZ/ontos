@@ -1598,6 +1598,20 @@ const patchOperationReadImport = (source: string, start: string, end: string, na
   );
 };
 
+const route = (
+  source: string,
+  other: string,
+  start: string,
+  end: string,
+  line: string,
+  ownerSlots: readonly (readonly [string, string])[],
+) => {
+  if (source.includes(start) === other.includes(start)) {
+    return raiseScaffoldFailure(`shared owner slot must have exactly one authoritative source: ${start}`);
+  }
+  return source.includes(start) ? patchSlots(source, [[start, end, line]], ownerSlots) : source;
+};
+
 const patchSharedDeclarationOwners = Effect.fn('GovernedContributionScaffold.sharedOwners')(
   function* patchSharedDeclarationOwners(
     vertical: OntosVerticalMetadata,
@@ -1638,19 +1652,6 @@ const patchSharedDeclarationOwners = Effect.fn('GovernedContributionScaffold.sha
     } else {
       manifest = yield* patchGovernedManifestImport(manifest, kind, name);
     }
-    const route = (
-      source: string,
-      other: string,
-      start: string,
-      end: string,
-      line: string,
-      ownerSlots: readonly (readonly [string, string])[],
-    ) => {
-      if (source.includes(start) === other.includes(start)) {
-        return raiseScaffoldFailure(`shared owner slot must have exactly one authoritative source: ${start}`);
-      }
-      return source.includes(start) ? patchSlots(source, [[start, end, line]], ownerSlots) : source;
-    };
     for (const [start, end, line] of slots.manifest) {
       const originalManifest = manifest;
       const originalDeclaration = declaration;

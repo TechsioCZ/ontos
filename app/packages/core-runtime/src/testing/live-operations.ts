@@ -792,6 +792,9 @@ const grantFixtureResourceAccess = Effect.fn('LiveOperations.grantResourceAccess
   },
 );
 
+const invalidFixtureContextPermissionGrant = (cause?: unknown) =>
+  fixtureFailure('Invalid live fixture context permission grant', cause);
+
 const grantFixtureContextPermissionAccess = Effect.fn('LiveOperations.grantContextPermissionAccess')(
   function* grantFixtureContextPermissionAccessEffect(
     spice: FixtureSpiceClient,
@@ -804,17 +807,18 @@ const grantFixtureContextPermissionAccess = Effect.fn('LiveOperations.grantConte
     target: ContextPermissionAccessTarget,
     principalId: string,
   ) {
-    const invalid = (cause?: unknown) => fixtureFailure('Invalid live fixture context permission grant', cause);
     const decoded = yield* Schema.decodeUnknownEffect(FixtureContextPermissionAccessTargetSchema, {
       onExcessProperty: 'error',
-    })(target).pipe(Effect.mapError(invalid));
-    const principal = yield* Schema.decodeUnknownEffect(PrincipalIdSchema)(principalId).pipe(Effect.mapError(invalid));
+    })(target).pipe(Effect.mapError(invalidFixtureContextPermissionGrant));
+    const principal = yield* Schema.decodeUnknownEffect(PrincipalIdSchema)(principalId).pipe(
+      Effect.mapError(invalidFixtureContextPermissionGrant),
+    );
     if (!fixture.moduleKeys.has(decoded.moduleId) || !fixture.principalIds.has(principal)) {
-      return yield* invalid();
+      return yield* invalidFixtureContextPermissionGrant();
     }
     const objectId = toContextPermissionAccessObjectId(fixture.tenantId, fixture.legalEntityId, decoded);
     if (objectId === undefined) {
-      return yield* invalid();
+      return yield* invalidFixtureContextPermissionGrant();
     }
     const request = v1.WriteRelationshipsRequest.create({
       updates: [
@@ -843,6 +847,9 @@ type FixtureConfiguredModuleStateSetter = (
   ...request: [moduleKey: string, state: 'active' | 'suspended']
 ) => Effect.Effect<FixtureConfiguredModuleState, LiveOperationFixtureError>;
 
+const invalidConfiguredFixtureModuleState = (cause?: unknown) =>
+  fixtureFailure('Invalid configured fixture module state mutation', cause);
+
 const makeFixtureConfiguredModuleStateSetter = (
   adminConfiguration: Effect.Success<ReturnType<typeof parseFixtureDatabaseConfig>>,
   { moduleKeys, tenantId }: { readonly moduleKeys: ReadonlySet<string>; readonly tenantId: string },
@@ -850,13 +857,12 @@ const makeFixtureConfiguredModuleStateSetter = (
   Effect.fn('LiveOperations.setConfiguredModuleState')(function* setConfiguredModuleState(
     ...request: Parameters<FixtureConfiguredModuleStateSetter>
   ) {
-    const invalid = (cause?: unknown) => fixtureFailure('Invalid configured fixture module state mutation', cause);
     const [moduleKey, state] = yield* Schema.decodeUnknownEffect(
       Schema.Tuple([ServiceFixtureModuleKeySchema, TenantModuleStateSchema]),
       { onExcessProperty: 'error' },
-    )(request).pipe(Effect.mapError(invalid));
+    )(request).pipe(Effect.mapError(invalidConfiguredFixtureModuleState));
     if (!moduleKeys.has(moduleKey) || (state !== 'active' && state !== 'suspended')) {
-      return yield* invalid();
+      return yield* invalidConfiguredFixtureModuleState();
     }
     return yield* Effect.scoped(
       Effect.gen(function* mutateFixtureModuleState() {

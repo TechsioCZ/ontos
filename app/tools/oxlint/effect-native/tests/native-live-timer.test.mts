@@ -2164,7 +2164,7 @@ it.layer(Layer.empty, { excludeTestServices: true })((suite) => {
   ]);
 });
 
-it('allows consumed imported Clock.currentTimeMillis only through genuine native live execution', () => {
+describe('allows consumed imported Clock.currentTimeMillis only through genuine native live execution', () => {
   expectTimerFixtures([
     {
       expected: 0,
@@ -2207,7 +2207,7 @@ it.live('second native timestamp', () => readTimestamp());`,
   ]);
 });
 
-it('retains timestamp ownership, consumption, import provenance and exact API boundaries', () => {
+describe('retains timestamp ownership, consumption, import provenance and exact API boundaries', () => {
   expectTimerFixtures([
     {
       expected: 1,
@@ -2308,7 +2308,7 @@ it.live('cannot prove exclusive live use', () => readTimestamp());`,
   ]);
 });
 
-it('allows imported DateTime.now and unary Effect.exit through consumed genuine live execution', () => {
+describe('allows imported DateTime.now and unary Effect.exit through consumed genuine live execution', () => {
   expectTimerFixtures([
     {
       expected: 0,
@@ -2362,7 +2362,7 @@ it.live('consumes an immutable genuine exit alias', () => Effect.gen(function* o
   ]);
 });
 
-it('retains DateTime and exit runner, ownership, provenance, consumption and arity checks', () => {
+describe('retains DateTime and exit runner, ownership, provenance, consumption and arity checks', () => {
   expectTimerFixtures([
     {
       expected: 1,
@@ -2536,7 +2536,7 @@ it.live('native resources', () => Effect.gen(function* resources() {
   })));
 }));`;
 
-it('allows genuine consumed Effect.fn, scoped finalizers and deferred native HTTP observations', () => {
+describe('allows genuine consumed Effect.fn, scoped finalizers and deferred native HTTP observations', () => {
   expectTimerFixtures([
     { expected: 0, name: 'named-curried-effect-generator', source: nativeCurriedHelper },
     { expected: 0, name: 'consumed-native-finalizer', source: nativeFinalizer },
@@ -2556,7 +2556,7 @@ it('allows genuine consumed Effect.fn, scoped finalizers and deferred native HTT
   ]);
 });
 
-it('rejects foreign, mutable, escaped and unconsumed versions of native resource observations', () => {
+describe('rejects foreign, mutable, escaped and unconsumed versions of native resource observations', () => {
   expectTimerFixtures([
     {
       expected: 1,

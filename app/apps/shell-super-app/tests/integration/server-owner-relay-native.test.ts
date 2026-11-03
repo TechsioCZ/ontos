@@ -2731,6 +2731,16 @@ const issueNativeOriginalHumanKey = Effect.fn('ServerOwnerRelayNative.issueOrigi
   },
 );
 
+const observePostalAddFailure = (error: Effect.Error<ReturnType<typeof executeAddSavedAddressWithAuthorization>>) =>
+  Schema.is(OutsideRelayProblemSchema)(error)
+    ? Effect.logInfo('Native saved-address Add public failure', {
+        code: error.code,
+        status: error.status,
+        title: error.title,
+        type: error.type,
+      })
+    : Effect.logInfo('Native saved-address Add failure', { declaredProblem: false });
+
 it.live('starts the real packaged Shell, exposes its compiled contract and API prefix, and terminates its child', () =>
   Effect.gen(function* packagedShellStartup() {
     let startedChild: ChildProcessHandle | undefined;
@@ -6566,17 +6576,6 @@ it.live(
                   partyRef,
                   sourceRevision: contact.revision,
                 };
-                const observePostalAddFailure = (
-                  error: Effect.Error<ReturnType<typeof executeAddSavedAddressWithAuthorization>>,
-                ) =>
-                  Schema.is(OutsideRelayProblemSchema)(error)
-                    ? Effect.logInfo('Native saved-address Add public failure', {
-                        code: error.code,
-                        status: error.status,
-                        title: error.title,
-                        type: error.type,
-                      })
-                    : Effect.logInfo('Native saved-address Add failure', { declaredProblem: false });
                 const addAddress = Effect.fn('ServerOwnerRelayNative.addAddressWithFreshProof')(
                   function* addAddressWithFreshProof(
                     addressPayload: Parameters<typeof executeAddSavedAddressWithAuthorization>[0],

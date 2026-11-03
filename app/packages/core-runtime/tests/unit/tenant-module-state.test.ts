@@ -41,6 +41,22 @@ const contract = (
     supportedStates,
   });
 
+const intrinsicContract = (moduleId: string, dependencies: readonly string[]): OntosModuleDeploymentContract => {
+  const base = contract(moduleId, ['inactive', 'active']);
+  return {
+    ...base,
+    manifest: {
+      ...base.manifest,
+      requirements: {
+        coreCapabilities: [],
+        intrinsic: dependencies.map((dependency) => ({ moduleId: dependency, requiredOperations: [] })),
+        operations: [],
+        schemaVersion: '1',
+      },
+    },
+  };
+};
+
 it.effect('uses one canonical tenant module state schema', () =>
   Effect.gen(function* testScenario1() {
     const decodedStates = yield* Effect.forEach((state: (typeof TENANT_MODULE_STATES)[number]) =>
@@ -190,24 +206,9 @@ it.effect('declares the generated Core Action contract and bounded business payl
 
 it.effect('resolves the complete intrinsic activation closure and rejects missing providers or cycles', () =>
   Effect.gen(function* intrinsicActivationClosure() {
-    const intrinsic = (moduleId: string, dependencies: readonly string[]): OntosModuleDeploymentContract => {
-      const base = contract(moduleId, ['inactive', 'active']);
-      return {
-        ...base,
-        manifest: {
-          ...base.manifest,
-          requirements: {
-            coreCapabilities: [],
-            intrinsic: dependencies.map((dependency) => ({ moduleId: dependency, requiredOperations: [] })),
-            operations: [],
-            schemaVersion: '1',
-          },
-        },
-      };
-    };
-    const a = intrinsic('consumer.alpha', ['provider.beta']);
-    const b = intrinsic('provider.beta', ['provider.gamma']);
-    const c = intrinsic('provider.gamma', []);
+    const a = intrinsicContract('consumer.alpha', ['provider.beta']);
+    const b = intrinsicContract('provider.beta', ['provider.gamma']);
+    const c = intrinsicContract('provider.gamma', []);
     expect(yield* tenantModuleIntrinsicDependencyClosure(catalog(a, b, c), 'consumer.alpha')).toEqual([
       'provider.beta',
       'provider.gamma',
@@ -217,7 +218,7 @@ it.effect('resolves the complete intrinsic activation closure and rejects missin
         yield* Effect.flip(tenantModuleIntrinsicDependencyClosure(catalog(a, b), 'consumer.alpha')),
       ),
     ).toBe(true);
-    const cyclic = intrinsic('provider.beta', ['consumer.alpha']);
+    const cyclic = intrinsicContract('provider.beta', ['consumer.alpha']);
     expect(
       Schema.is(TenantModuleStateUnsatisfiedDependencyError)(
         yield* Effect.flip(tenantModuleIntrinsicDependencyClosure(catalog(a, cyclic), 'consumer.alpha')),
