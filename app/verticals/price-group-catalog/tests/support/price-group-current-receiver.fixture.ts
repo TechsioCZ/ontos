@@ -1,3 +1,4 @@
+import { priceGroupCatalogRegistration } from '../../vertical.registration.ts';
 import { priceGroupCurrentInputGuard } from './price-group-current-input.ts';
 import { Socket } from 'effect/socket';
 import { NodeSocket, NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
@@ -5,7 +6,7 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfig,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
   TrustedPrincipalContextSchema,
   makeActionRuntimeLive,
@@ -351,11 +352,14 @@ const serveOwner = Effect.fn('PriceGroupCurrentFixture.serveOwner')(function* se
     composition,
     priceGroupCatalogOwnerAuthorizationOverlayLive,
   );
-  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, priceGroupCatalogRegistration).pipe(
     Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
     Layer.provide(NodeCrypto.layer),
   );
-  const reads = ReadRuntimeLive.pipe(Layer.provide(common), Layer.provide(NodeCrypto.layer));
+  const reads = makeReadRuntimeLive(ultramodernDeliveryUnit, priceGroupCatalogRegistration).pipe(
+    Layer.provide(common),
+    Layer.provide(NodeCrypto.layer),
+  );
   const encodedComposition = yield* Schema.encodeEffect(
     Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
   )(bootstrap.composition);

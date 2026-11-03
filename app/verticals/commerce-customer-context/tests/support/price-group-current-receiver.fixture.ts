@@ -1,3 +1,4 @@
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import type { Issue } from 'effect/SchemaIssue';
 import { makeGatewayScopeGrantRegistrar } from '@app/core-runtime/testing/actions';
 import { Socket } from 'effect/socket';
@@ -8,7 +9,7 @@ import {
   findPostgresFailure,
   CorePersistenceLive,
   DatabaseConfig,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   ReadRuntime,
   ReadResultValidationError,
   ReadEvidenceValidationError,
@@ -932,7 +933,7 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
     composition,
     ownerServices,
   );
-  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration).pipe(
     Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
     Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(ownerServices),
@@ -956,7 +957,14 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
       };
       return observed;
     }),
-  ).pipe(Layer.provide(ReadRuntimeLive.pipe(Layer.provide(common), Layer.provide(NodeCrypto.layer))));
+  ).pipe(
+    Layer.provide(
+      makeReadRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration).pipe(
+        Layer.provide(common),
+        Layer.provide(NodeCrypto.layer),
+      ),
+    ),
+  );
   const encodedComposition = yield* Schema.encodeEffect(
     Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
   )(bootstrap.composition);
