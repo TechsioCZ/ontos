@@ -2130,13 +2130,13 @@ it.effect('rejects missing or unsafe automatic Node origins and redacts provider
       expect(gateway.requests.every(({ method }) => method === 'GET')).toBe(true);
     }
     const mismatched = backendOriginGateway({ envFile: `catalog_zeropsSubdomain=${originNativeHost}` });
-    expect(yield* stageBackendUrl('catalog').pipe(Effect.provide(mismatched.layer), Effect.exit)).toMatchObject({
-      _tag: 'Failure',
-    });
+    expect(Exit.isFailure(yield* stageBackendUrl('catalog').pipe(Effect.provide(mismatched.layer), Effect.exit))).toBe(
+      true,
+    );
     const missing = backendOriginGateway({ stageVariables: {} });
-    expect(yield* stageBackendUrl('catalog').pipe(Effect.provide(missing.layer), Effect.exit)).toMatchObject({
-      _tag: 'Failure',
-    });
+    expect(Exit.isFailure(yield* stageBackendUrl('catalog').pipe(Effect.provide(missing.layer), Effect.exit))).toBe(
+      true,
+    );
     expect(missing.requests).toEqual([]);
     for (const gateway of [
       backendOriginGateway({ serviceName: '' }),
