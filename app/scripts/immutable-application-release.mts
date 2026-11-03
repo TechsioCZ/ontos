@@ -44,10 +44,11 @@ import {
 import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';
 import {
   ApplicationReleaseIntentSchema,
+  ApplicationReleaseSelectionSchema,
   applicationReleaseSelectCommand,
   readReviewedApplicationReleaseIntent,
 } from './application-release-intent.mts';
-import type { ApplicationReleaseIntent } from './application-release-intent.mts';
+import type { ApplicationReleaseIntent, ApplicationReleaseSelection } from './application-release-intent.mts';
 import { verifyImmutableBackendModuleContent } from './immutable-backend-package.mts';
 import { OpsShellLive, runCommand } from './ops/ops-shell.mts';
 import {
@@ -499,64 +500,182 @@ const shellReceiptArtifacts = Effect.fn('ImmutableApplicationRelease.shellReceip
   },
 );
 
-export const makeImmutableApplicationReleasePublicationCandidate = Effect.fn('ImmutableApplicationRelease.candidate')(
-  function* publicationCandidateEffect(
-    receipts: readonly ImmutableApplicationReleaseReceipt[],
-    intent: ApplicationReleaseIntent,
-    shellReceipt?: ImmutableShellArtifactReceipt,
-    retainedSnapshot?: ActiveApplicationCompositionSnapshot,
+export interface ImmutableApplicationReleaseReceiptResolutionInput {
+  readonly approvedBaseline?: ActiveApplicationCompositionSnapshot;
+  readonly currentSourceRevision: string;
+  readonly intent: ApplicationReleaseIntent;
+  readonly receipts: readonly ImmutableApplicationReleaseReceipt[];
+  readonly selection: ApplicationReleaseSelection;
+}
+
+interface ImmutableApplicationReleaseCandidateInput extends ImmutableApplicationReleaseReceiptResolutionInput {
+  readonly shellReceipt?: ImmutableShellArtifactReceipt;
+}
+
+const sameReleaseIds = (left: readonly string[], right: readonly string[]): boolean =>
+  left.length === right.length && left.every((id, index) => id === right[index]);
+
+const validateReceiptPartition = Effect.fn('ImmutableApplicationRelease.receiptPartition')(function* receiptPartition(
+  input: ImmutableApplicationReleaseReceiptResolutionInput,
+) {
+  yield* Schema.decodeUnknownEffect(ApplicationReleaseIntentSchema, { onExcessProperty: 'error' })(input.intent).pipe(
+    Effect.mapError((cause) => fail('the reviewed complete release intent failed validation', cause)),
+  );
+  yield* Schema.decodeUnknownEffect(ApplicationReleaseSelectionSchema, { onExcessProperty: 'error' })(
+    input.selection,
+  ).pipe(Effect.mapError((cause) => fail('release selection failed validation', cause)));
+  const desired = input.intent.modules.map(({ appId: selectedAppId }) => selectedAppId);
+  const complete = input.selection.complete.map(({ id }) => id);
+  const partition = [...input.selection.fresh, ...input.selection.retained].map(({ id }) => id);
+  const slots = new Set(desired);
+  if (
+    slots.size !== desired.length ||
+    slots.has(SHELL_APP_ID) ||
+    !sameReleaseIds(desired, complete) ||
+    partition.length !== desired.length ||
+    new Set(partition).size !== desired.length ||
+    partition.some((id) => !slots.has(id)) ||
+    input.selection.shell.unit.id !== SHELL_APP_ID
   ) {
-    yield* Schema.decodeUnknownEffect(ApplicationReleaseIntentSchema, { onExcessProperty: 'error' })(intent).pipe(
-      Effect.mapError((cause) => fail('the reviewed complete release intent failed validation', cause)),
+    return yield* fail(
+      'release selection must partition the exact reviewed module membership once with a separate Shell',
     );
-    const selection = new Set(intent.modules.map((module) => module.appId));
-    if (selection.size !== intent.modules.length || selection.has(SHELL_APP_ID) || receipts.length !== selection.size) {
+  }
+  if (input.selection.shell.mode === 'retained' && input.approvedBaseline === undefined) {
+    return yield* fail('retained Shell publication requires the captured approved baseline');
+  }
+  const removed =
+    input.approvedBaseline?.composition.modules
+      .filter(({ deployment }) => !slots.has(deployment.appId))
+      .map(({ deployment }) => deployment.appId) ?? [];
+  if (
+    !sameReleaseIds(
+      removed,
+      input.selection.removed.map(({ appId: removedAppId }) => removedAppId),
+    )
+  ) {
+    return yield* fail('removed release slots must match the captured baseline and reviewed membership');
+  }
+  return { fresh: new Set(input.selection.fresh.map(({ id }) => id)), slots };
+});
+
+const validateDeploymentReceipt = Effect.fn('ImmutableApplicationRelease.deploymentReceipt')(
+  function* deploymentReceipt(raw: ImmutableApplicationReleaseReceipt) {
+    yield* validateReleasePlan(raw.plan);
+    if (
+      raw.backend.workerName !== raw.plan.backendScriptName ||
+      raw.backend.baseUrl !==
+        raw.plan.assetsOrigin.replace(`${raw.plan.assetsScriptName}.`, `${raw.plan.backendScriptName}.`) ||
+      raw.artifacts.contract.url !== `${raw.plan.assetsOrigin}.well-known/ontos-module-manifest.json` ||
+      (raw.artifacts.federationManifest !== undefined &&
+        raw.artifacts.federationManifest.url !== `${raw.plan.assetsOrigin}mf-manifest.json`)
+    ) {
+      return yield* fail('candidate requires unique, retained, exact release deployment receipts');
+    }
+    return yield* Effect.void;
+  },
+);
+
+const validateRetainedReceipt = Effect.fn('ImmutableApplicationRelease.retainedReceipt')(function* retainedReceipt(
+  receipt: ImmutableApplicationReleaseReceipt,
+  baseline: ActiveApplicationCompositionSnapshot,
+) {
+  const previous = baseline.composition.modules.find(({ deployment }) => deployment.appId === receipt.plan.appId);
+  if (previous === undefined) {
+    return yield* fail('retained release receipt has no captured approved module slot');
+  }
+  if (previous.backend.transport !== 'cloudflare-worker') {
+    return yield* fail('Cloudflare release receipts cannot prove retained Node backend artifacts');
+  }
+  const previousManifest = previous.federation.execution === 'browser' ? previous.federation.manifest : undefined;
+  if (
+    previous.deployment.buildMarker !== receipt.plan.buildMarker ||
+    previous.contract.url !== receipt.artifacts.contract.url ||
+    previous.contract.sha256 !== receipt.artifacts.contract.sha256 ||
+    previous.backend.baseUrl !== receipt.backend.baseUrl ||
+    previous.backend.workerName !== receipt.backend.workerName ||
+    previous.backend.versionId !== receipt.backend.versionId ||
+    previousManifest?.url !== receipt.artifacts.federationManifest?.url ||
+    previousManifest?.sha256 !== receipt.artifacts.federationManifest?.sha256
+  ) {
+    return yield* fail(
+      'retained release receipt differs from the captured approved deployment, contract, federation or backend',
+    );
+  }
+  return yield* Effect.void;
+});
+
+/** Resolves original receipts only. Runtime authority and native artifact existence remain independent gates. */
+export const resolveImmutableApplicationReleaseReceipts = Effect.fn('ImmutableApplicationRelease.resolveReceipts')(
+  function* resolveReceipts(input: ImmutableApplicationReleaseReceiptResolutionInput) {
+    const currentRevision = yield* Schema.decodeUnknownEffect(sourceRevision)(input.currentSourceRevision).pipe(
+      Effect.mapError((cause) => fail('the current release source revision is invalid', cause)),
+    );
+    const approved =
+      input.approvedBaseline === undefined
+        ? undefined
+        : yield* validateActiveApplicationCompositionSnapshot(input.approvedBaseline).pipe(
+            Effect.mapError((cause) => fail('the retained approved snapshot is invalid or expired', cause)),
+          );
+    const partitionInput = approved === undefined ? input : { ...input, approvedBaseline: approved };
+    const { fresh, slots } = yield* validateReceiptPartition(partitionInput);
+    yield* Schema.decodeUnknownEffect(Schema.Array(ImmutableApplicationReleaseReceiptSchema), {
+      onExcessProperty: 'error',
+    })(input.receipts).pipe(Effect.mapError((cause) => fail('release receipt failed validation', cause)));
+    const byApp = new Map(input.receipts.map((receipt) => [receipt.plan.appId, receipt]));
+    if (byApp.size !== input.receipts.length || input.receipts.length !== slots.size) {
       return yield* fail('every selected module requires exactly one retained deployment receipt');
     }
-    const identities = new Set<string>();
-    const modules = [];
-    for (const raw of receipts) {
-      const receipt = yield* Schema.decodeUnknownEffect(ImmutableApplicationReleaseReceiptSchema, {
-        onExcessProperty: 'error',
-      })(raw).pipe(Effect.mapError((cause) => fail('release receipt failed validation', cause)));
-      yield* validateReleasePlan(receipt.plan);
-      if (
-        identities.has(receipt.plan.appId) ||
-        !selection.has(receipt.plan.appId) ||
-        receipt.backend.workerName !== receipt.plan.backendScriptName ||
-        receipt.backend.baseUrl !==
-          receipt.plan.assetsOrigin.replace(
-            `${receipt.plan.assetsScriptName}.`,
-            `${receipt.plan.backendScriptName}.`,
-          ) ||
-        receipt.artifacts.contract.url !== `${receipt.plan.assetsOrigin}.well-known/ontos-module-manifest.json` ||
-        (receipt.artifacts.federationManifest !== undefined &&
-          receipt.artifacts.federationManifest.url !== `${receipt.plan.assetsOrigin}mf-manifest.json`)
-      ) {
+    const ordered: ImmutableApplicationReleaseReceipt[] = [];
+    for (const { id } of input.selection.complete) {
+      const receipt = byApp.get(id);
+      if (receipt === undefined) {
         return yield* fail('candidate requires unique, retained, exact release deployment receipts');
       }
-      identities.add(receipt.plan.appId);
+      yield* validateDeploymentReceipt(receipt);
+      if (fresh.has(id)) {
+        if (receipt.plan.sourceRevision !== currentRevision) {
+          return yield* fail('fresh release receipts must identify the actual current source revision');
+        }
+      } else {
+        if (approved === undefined) {
+          return yield* fail('retained release receipts require the captured approved baseline');
+        }
+        yield* validateRetainedReceipt(receipt, approved);
+      }
+      ordered.push(receipt);
+    }
+    return ordered;
+  },
+);
+
+export const makeImmutableApplicationReleasePublicationCandidate = Effect.fn('ImmutableApplicationRelease.candidate')(
+  function* publicationCandidateEffect(input: ImmutableApplicationReleaseCandidateInput) {
+    const receipts = yield* resolveImmutableApplicationReleaseReceipts(input);
+    const modules = receipts.map((receipt) => {
       const module: ImmutableApplicationReleaseCandidateModule = {
         appId: receipt.plan.appId,
         backend: receipt.backend,
         contractUrl: receipt.artifacts.contract.url,
       };
-      modules.push(
-        receipt.artifacts.federationManifest === undefined
-          ? module
-          : { ...module, federationManifestUrl: receipt.artifacts.federationManifest.url },
-      );
-    }
-    if (shellReceipt !== undefined) {
-      if (retainedSnapshot !== undefined) {
-        return yield* fail('publication requires exactly one genuine Shell artifact source');
+      return receipt.artifacts.federationManifest === undefined
+        ? module
+        : { ...module, federationManifestUrl: receipt.artifacts.federationManifest.url };
+    });
+    if (input.selection.shell.mode === 'fresh') {
+      if (input.shellReceipt === undefined) {
+        return yield* fail('fresh Shell publication requires its genuine current-source Shell receipt');
       }
-      return { modules, shell: yield* shellReceiptArtifacts(shellReceipt) };
+      const shell = yield* shellReceiptArtifacts(input.shellReceipt);
+      if (input.shellReceipt.plan.sourceRevision !== input.currentSourceRevision) {
+        return yield* fail('fresh Shell publication requires its genuine current-source Shell receipt');
+      }
+      return { modules, shell };
     }
-    if (retainedSnapshot === undefined) {
-      return yield* fail('publication requires a genuine Shell receipt or captured approved snapshot');
+    if (input.shellReceipt !== undefined || input.approvedBaseline === undefined) {
+      return yield* fail('retained Shell publication requires only the captured approved baseline artifact source');
     }
-    const approved = yield* validateActiveApplicationCompositionSnapshot(retainedSnapshot).pipe(
+    const approved = yield* validateActiveApplicationCompositionSnapshot(input.approvedBaseline).pipe(
       Effect.mapError((cause) => fail('the retained approved snapshot is invalid or expired', cause)),
     );
     yield* assertRetainedReleaseArtifactPaths(approved).pipe(
@@ -1311,17 +1430,15 @@ const deployCommand = Command.make(
 const candidateCommand = Command.make(
   'candidate',
   {
+    approvedBaselineFile: Flag.String('approved-baseline-file').pipe(Flag.optional),
     candidateFile: Flag.String('candidate-file'),
     intentFile: Flag.String('intent-file'),
     receiptFiles: Flag.String('receipt-file').pipe(Flag.atLeast(0)),
-    retainedShellSnapshotFile: Flag.String('retained-shell-snapshot-file').pipe(Flag.optional),
+    selectionFile: Flag.String('selection-file'),
     shellReceiptFile: Flag.String('shell-receipt-file').pipe(Flag.optional),
   },
-  ({ candidateFile, intentFile, receiptFiles, retainedShellSnapshotFile, shellReceiptFile }) =>
+  ({ approvedBaselineFile, candidateFile, intentFile, receiptFiles, selectionFile, shellReceiptFile }) =>
     Effect.gen(function* candidateCommandEffect() {
-      if (Option.isSome(shellReceiptFile) === Option.isSome(retainedShellSnapshotFile)) {
-        yield* fail('select exactly one genuine Shell receipt or captured approved snapshot file');
-      }
       const fileSystem = yield* FileSystem.FileSystem;
       const receipts = yield* Effect.forEach(
         receiptFiles,
@@ -1346,19 +1463,33 @@ const candidateCommand = Command.make(
               Effect.map(Option.some),
             ),
       });
-      const retainedSnapshot = yield* Option.match(retainedShellSnapshotFile, {
+      const approvedBaseline = yield* Option.match(approvedBaselineFile, {
         onNone: () => Effect.succeed(Option.none<ActiveApplicationCompositionSnapshot>()),
         onSome: (file) =>
           fileSystem
             .readFileString(file)
             .pipe(Effect.flatMap(decodeActiveApplicationCompositionSnapshot), Effect.map(Option.some)),
       });
-      const candidate = yield* makeImmutableApplicationReleasePublicationCandidate(
-        receipts,
+      const selection = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ApplicationReleaseSelectionSchema), {
+        onExcessProperty: 'error',
+      })(yield* fileSystem.readFileString(selectionFile));
+      const input: ImmutableApplicationReleaseCandidateInput = {
+        currentSourceRevision: yield* resolveCleanImmutableApplicationSourceRevision(
+          path.resolve(import.meta.dirname, '..'),
+        ),
         intent,
-        Option.getOrUndefined(shellReceipt),
-        Option.getOrUndefined(retainedSnapshot),
-      );
+        receipts,
+        selection,
+      };
+      const withShell = Option.match(shellReceipt, {
+        onNone: () => input,
+        onSome: (receipt) => ({ ...input, shellReceipt: receipt }),
+      });
+      const candidateInput = Option.match(approvedBaseline, {
+        onNone: () => withShell,
+        onSome: (baseline) => ({ ...withShell, approvedBaseline: baseline }),
+      });
+      const candidate = yield* makeImmutableApplicationReleasePublicationCandidate(candidateInput);
       yield* fileSystem.writeFileString(
         candidateFile,
         yield* Schema.encodeEffect(Schema.fromJsonString(ApplicationCompositionPublicationCandidateSchema))(candidate),
