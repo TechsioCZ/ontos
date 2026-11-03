@@ -17,7 +17,6 @@ import { executeRecords } from '../../../../api/records-consumer.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { useSettledPageData } from '../../../../runtime/page-data-hooks.ts';
 import type { SettledPageData } from '../../../../runtime/page-data-hooks.ts';
-import { readProductRecord } from '../../provoz/produkty/product-reads.ts';
 import { customerDirectoryData } from './customers-directory.ts';
 
 const ORDERS_MODULE = 'demo.merchandise';
@@ -132,25 +131,34 @@ export interface OrdersPageInput {
   readonly scope?: string | undefined;
 }
 
+// Scalar effect dependencies retain array order and distinguish no tag filter from an empty match.
+const QueryIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
+const encodeQueryIds = Schema.encodeResult(QueryIdsJson);
+const decodeQueryIds = Schema.decodeResult(QueryIdsJson);
+
 /** Everything `ordersView` sends, in a fixed order: equal requests share one entry. */
 const ordersPageKey = ({ legalEntityId, query, scope }: OrdersPageInput): string => {
   const search = query.search.trim();
-  return [
-    legalEntityId,
-    scope ?? '',
-    query.limit,
-    query.offset,
-    query.status ?? '',
-    search,
-    search === '' ? '' : query.customerPartyIds.join(','),
-    query.taggedIds === null ? '*' : query.taggedIds.join(','),
-  ].join('|');
+  return Result.getOrThrow(
+    encodeQueryIds([
+      legalEntityId,
+      scope ?? '',
+      String(query.limit),
+      String(query.offset),
+      query.status ?? '',
+      search,
+      search === '' ? '' : Result.getOrThrow(encodeQueryIds(query.customerPartyIds)),
+      query.taggedIds === null ? '*' : Result.getOrThrow(encodeQueryIds(query.taggedIds)),
+    ]),
+  );
 };
 
 /** One page of orders per company and request. */
 export const ordersPageData = definePageData({
   key: ordersPageKey,
   load: ({ query }: OrdersPageInput) => loadOrders(query),
+  maxEntries: 16,
+  retainStale: false,
   runtime: browserRuntime,
 });
 
@@ -158,6 +166,8 @@ export const ordersPageData = definePageData({
 export const orderCountsData = definePageData({
   key: (legalEntityId: string) => legalEntityId,
   load: () => loadCounts,
+  maxEntries: 16,
+  retainStale: false,
   runtime: browserRuntime,
 });
 
@@ -223,11 +233,6 @@ const ordersState = (
       };
 };
 
-// Scalar effect dependencies retain array order and distinguish no tag filter from an empty match.
-const QueryIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
-const encodeQueryIds = Schema.encodeResult(QueryIdsJson);
-const decodeQueryIds = Schema.decodeResult(QueryIdsJson);
-
 export interface OrderDetailRecords {
   /** The order wrote ORDER stock movements (checked on the ledger of its first line's product). */
   readonly movesStock: boolean;
@@ -238,6 +243,8 @@ export interface OrderDetailRecords {
   readonly products: readonly ProductRecord[];
   readonly revision: number;
 }
+
+const OrderDetailIncomplete = Data.TaggedError('OrderDetailIncomplete');
 
 /** The products of the order's lines, and whether the order took goods from stock. */
 const loadOrderDetail = Effect.fn('OrdersRecords.loadDetail')(function* loadOrderDetail(order: Order) {
@@ -252,7 +259,14 @@ const loadOrderDetail = Effect.fn('OrdersRecords.loadDetail')(function* loadOrde
           executeRecords({ view: { limit: productIds.length, ordersLimit: 0, productIds, summary: true } }, id),
         ),
       ),
-      Effect.forEach(variantProductIds, readProductRecord, { concurrency: 1 }),
+      Effect.forEach(
+        variantProductIds,
+        (productId) =>
+          correlation('detail-variant').pipe(
+            Effect.flatMap((id) => executeRecords({ view: { limit: 1, ordersLimit: 0, productIds: [productId] } }, id)),
+          ),
+        { concurrency: 1 },
+      ),
       // Movements come only with a single `productId`: the first line's product ledger tells whether stock moved.
       Effect.forEach(
         productIds.slice(0, 1),
@@ -268,13 +282,32 @@ const loadOrderDetail = Effect.fn('OrdersRecords.loadDetail')(function* loadOrde
     // Two background rows leave the third request slot to a foreground detail.
     { concurrency: 1 },
   );
-  const fullById = new Map(full.flatMap((product) => (product === undefined ? [] : [[product.id, product] as const])));
+  const rowsById = new Map(rows.products.map((product) => [product.id, product]));
+  const fullById = new Map(
+    full.flatMap((response) => response.products.map((product) => [product.id, product] as const)),
+  );
+  // A successful transport is not proof that every independently required product/variant was returned.
+  // Never retain a summary as a ready replacement for an absent full variant record.
+  if (
+    productIds.some((productId) => !rowsById.has(productId)) ||
+    order.lines.some(
+      (line) =>
+        line.variantId !== undefined &&
+        fullById.get(line.productId)?.variantRecords?.some((variant) => variant.id === line.variantId) !== true,
+    )
+  ) {
+    return yield* new OrderDetailIncomplete<{ readonly section: 'products' }>({ section: 'products' });
+  }
   return {
     movesStock: ledgers.some((ledger) =>
       ledger.movements.some((movement) => movement.reason === 'ORDER' && movement.reference === order.number),
     ),
     products: rows.products.map((product) => fullById.get(product.id) ?? product),
-    revision: Math.max(rows.revision, ...ledgers.map((ledger) => ledger.revision)),
+    revision: Math.max(
+      rows.revision,
+      ...full.map((response) => response.revision),
+      ...ledgers.map((ledger) => ledger.revision),
+    ),
   } satisfies OrderDetailRecords;
 });
 
@@ -435,12 +468,12 @@ export const useOrders = (legalEntityId: string, query: OrdersQuery, context?: M
   const countsKey = scope ?? legalEntityId;
   const input: OrdersPageInput = { legalEntityId, query, scope };
   const page = useSyncExternalStore(
-    ordersPageData.subscribe,
+    (listener) => ordersPageData.subscribe(listener, input),
     () => ordersPageData.snapshot(input),
     () => pageDataPending,
   );
   const counts = useSyncExternalStore(
-    orderCountsData.subscribe,
+    (listener) => orderCountsData.subscribe(listener, countsKey),
     () => orderCountsData.snapshot(countsKey),
     () => pageDataPending,
   );
@@ -488,7 +521,10 @@ export const useOrders = (legalEntityId: string, query: OrdersQuery, context?: M
       );
     },
     state: ordersState(
-      settled !== undefined && settled.input.scope === scope && settled.input.legalEntityId === legalEntityId
+      settled !== undefined &&
+        settled.input.scope === scope &&
+        settled.input.legalEntityId === legalEntityId &&
+        ordersPageData.snapshot(settled.input) === settled.snapshot
         ? settled
         : undefined,
       counts,

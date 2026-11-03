@@ -205,7 +205,9 @@ it.effect('concurrent prefetches and foreground selection join the same enrichme
   Effect.gen(function* deduplication() {
     yield* ordersPageData.read(source);
     const gate = yield* Deferred.make<true>();
-    rstest.mocked(executeRecords).mockImplementation(() => Deferred.await(gate).pipe(Effect.as(base)));
+    rstest
+      .mocked(executeRecords)
+      .mockImplementation(() => Deferred.await(gate).pipe(Effect.as({ ...base, products: [full] })));
     const prefetch = yield* Effect.forkChild(preloadOrderDetails(source, base));
     yield* Effect.yieldNow;
     const foreground = yield* Effect.forkChild(orderDetailData.read(detail));
@@ -275,7 +277,7 @@ it.effect('authorization change never serves stale order data, and a subsequent 
     const rejected = yield* Effect.exit(orderDetailData.read(detail));
     expect(rejected._tag).toBe('Failure');
     expect(orderDetailData.snapshot(detail).state).toBe('failed');
-    rstest.mocked(executeRecords).mockReturnValue(Effect.succeed(base));
+    rstest.mocked(executeRecords).mockReturnValue(Effect.succeed({ ...base, products: [full] }));
     yield* orderDetailData.read(detail);
     expect(orderDetailData.snapshot(detail).state).toBe('ready');
   }),

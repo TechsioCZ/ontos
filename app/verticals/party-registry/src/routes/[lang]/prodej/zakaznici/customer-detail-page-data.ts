@@ -13,6 +13,7 @@ import type { PartyDetailResponse } from '../../../../../shared/apis/party-detai
 import type { PartyOfficialIdentifierHistoryResponse } from '../../../../../shared/apis/party-official-identifier-history.ts';
 import type { CounterpartyRef } from '../../../../../shared/resources/counterparty.ts';
 import type { CustomerSection } from './customers-data.ts';
+import { cachedCustomerDetailByRef } from './customers-data.ts';
 
 /** The complete owner read a direct link can prove without consulting the bounded customer list. */
 export interface CustomerDetailPageRecord {
@@ -137,7 +138,7 @@ export const loadCustomerDetailPageRecord = Effect.fn('CustomerDetailPage.load')
   input: CustomerDetailPageInput,
 ) {
   const { context, counterpartyId } = input;
-  if (context === undefined) {
+  if (context === undefined || pageDataScopeKey(context, 'party.registry') === undefined) {
     return yield* new CustomerDetailPageFailure({ reason: 'unavailable' });
   }
   const requestedRef: CounterpartyRef = {
@@ -146,10 +147,12 @@ export const loadCustomerDetailPageRecord = Effect.fn('CustomerDetailPage.load')
     resourceType: 'party.registry.counterparty',
     tenantId: context.tenantId,
   };
+  const warmed = cachedCustomerDetailByRef(context, requestedRef);
   const id = yield* correlation('customer-detail-page');
-  const counterparty = yield* executeCounterpartyRead({ counterpartyRef: requestedRef }, id).pipe(
-    Effect.mapError(counterpartyFailure),
-  );
+  const counterparty =
+    warmed === undefined
+      ? yield* executeCounterpartyRead({ counterpartyRef: requestedRef }, id).pipe(Effect.mapError(counterpartyFailure))
+      : warmed.counterparty;
   const currentCompany =
     counterparty.legalEntityRef.resourceId === context.legalEntityId &&
     counterparty.legalEntityRef.tenantId === context.tenantId;
@@ -159,6 +162,9 @@ export const loadCustomerDetailPageRecord = Effect.fn('CustomerDetailPage.load')
     !hasCurrentCustomerRole(counterparty)
   ) {
     return yield* new CustomerDetailPageFailure({ reason: 'not-found' });
+  }
+  if (warmed !== undefined) {
+    return warmed;
   }
   // Current identity only: fact history needs `review_party_identity`, which read-only roles do not hold.
   const identity = yield* section(executePartyDetail({ partyRef: counterparty.party.canonicalPartyRef }, id));

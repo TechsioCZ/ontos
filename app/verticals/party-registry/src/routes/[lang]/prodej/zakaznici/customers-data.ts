@@ -242,6 +242,33 @@ export const customerDetailData = definePageData({
   runtime: browserRuntime,
 });
 
+/** A list row locates the real revision-qualified key; only its complete, still-fresh detail proves reuse. */
+export const cachedCustomerDetailByRef = (
+  context: ModulePageContext | undefined,
+  counterpartyRef: CounterpartyRef,
+): CustomerDetailSnapshot | undefined => {
+  const scope = pageDataScopeKey(context, 'party.registry');
+  if (scope === undefined || counterpartyRef.tenantId !== context?.tenantId) {
+    return undefined;
+  }
+  const list = customersData.snapshot(customersQuery(context));
+  if (list.state !== 'ready' || list.refreshing) {
+    return undefined;
+  }
+  const customer = list.value.items.find(
+    (item) =>
+      item.counterpartyRef.moduleId === counterpartyRef.moduleId &&
+      item.counterpartyRef.resourceType === counterpartyRef.resourceType &&
+      item.counterpartyRef.tenantId === counterpartyRef.tenantId &&
+      item.counterpartyRef.resourceId === counterpartyRef.resourceId,
+  );
+  if (customer === undefined) {
+    return undefined;
+  }
+  const detail = customerDetailData.snapshot({ customer, scope });
+  return detail.state === 'ready' && !detail.refreshing ? detail.value : undefined;
+};
+
 /** Visible current-page rows only. The UI owner supplies its actual paginated row model. */
 export const preloadCustomerDetails = (
   context: ModulePageContext | undefined,
@@ -498,13 +525,27 @@ export const useCustomerDetail = (
   navigate: (href: string) => void = navigateCustomerDocument,
 ) => {
   const KEY = 'party-registry.pages.customers.detail';
-  const [snapshot, setSnapshot] = useState(initialSnapshot);
+  // A local reload/save may override only the owner snapshot that started it. New page/cache props win
+  // synchronously, including a pending or refused revalidation, without discarding unrelated drafts.
+  const [localSnapshot, setLocalSnapshot] = useState<{
+    readonly source: CustomerDetailSnapshot | undefined;
+    readonly value: CustomerDetailSnapshot | undefined;
+  }>();
+  const snapshot =
+    localSnapshot !== undefined && localSnapshot.source === initialSnapshot ? localSnapshot.value : initialSnapshot;
+  const setSnapshot = (value: CustomerDetailSnapshot | undefined) =>
+    setLocalSnapshot({ source: initialSnapshot, value });
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [reason, setReason] = useState('');
   const [evidence, setEvidence] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [stale, setStale] = useState(false);
+  const [localStale, setLocalStale] = useState<{
+    readonly source: CustomerDetailSnapshot | undefined;
+    readonly value: boolean;
+  }>();
+  const stale = localStale !== undefined && localStale.source === initialSnapshot && localStale.value;
+  const setStale = (value: boolean) => setLocalStale({ source: initialSnapshot, value });
   const [leaveIntent, setLeaveIntent] = useState<CustomerLeaveIntent>();
   const allowDocumentLeave = useRef(false);
   const discardOpen = leaveIntent !== undefined;
@@ -571,12 +612,19 @@ export const useCustomerDetail = (
     }
   };
 
+  // A local revalidation can revoke access to any section. Discard dependent cached decisions too,
+  // including full-page records, even when the owner returns a partial snapshot or refuses the read.
+  const reloadSnapshot = loadCustomerDetail(customer).pipe(
+    Effect.ensuring(Effect.sync(() => globalThis.dispatchEvent(new Event(moduleChangeEvent)))),
+  );
+
   const refresh = () => {
     setBusy(true);
     void browserRuntime.runPromise(
-      loadCustomerDetail(customer).pipe(
+      reloadSnapshot.pipe(
         Effect.match({
           onFailure: (error) => {
+            setSnapshot(undefined);
             setStale(true);
             setNotice(t(`${KEY}.${customerDetailFailureKey(error)}`));
           },
@@ -621,9 +669,10 @@ export const useCustomerDetail = (
               onRenamed();
               onSaved();
             }).pipe(
-              Effect.andThen(loadCustomerDetail(customer)),
+              Effect.andThen(reloadSnapshot),
               Effect.match({
                 onFailure: (error) => {
+                  setSnapshot(undefined);
                   setStale(true);
                   setNotice(t(`${KEY}.savedReloadFailed`, { reason: t(`${KEY}.${customerDetailFailureKey(error)}`) }));
                 },
