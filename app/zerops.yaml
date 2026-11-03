@@ -40,7 +40,9 @@ zerops:
         NEXT_TELEMETRY_DISABLED: '1'
         STOREFRONT_IMAGE_HOSTS: ''
       prepareCommands:
-        - sudo apk add --no-cache curl libstdc++
+        # The official nodejs.org/dist musl Node is dynamically linked against libatomic, which alpine does not
+        # ship by default; without it the pinned Node cannot start (exit status 127).
+        - sudo apk add --no-cache curl libstdc++ libatomic
         - sh /build/source/app/scripts/install-zerops-node.sh 26.13.0 12.16.1
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.13.0/bin:$PATH" pnpm install --frozen-lockfile --filter 'akros-storefront...'
@@ -61,6 +63,8 @@ zerops:
         retryPeriod: 10s
     run:
       base: nodejs@24
+      prepareCommands:
+        - sudo apk add --no-cache libatomic
       ports:
         - port: 3070
           protocol: tcp
@@ -91,7 +95,9 @@ zerops:
         ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
-        - sudo apk add --no-cache curl git libstdc++ unzip zstd
+        # The official nodejs.org/dist musl Node is dynamically linked against libatomic, which alpine does not
+        # ship by default; without it the pinned Node cannot start (exit status 127).
+        - sudo apk add --no-cache curl git libstdc++ unzip zstd libatomic
         - sh /build/source/app/scripts/install-zerops-node.sh 26.13.0 12.16.1
         - sh /build/source/app/scripts/install-zerops-bun.sh 1.4.4
       buildCommands:
@@ -123,6 +129,8 @@ zerops:
         retryPeriod: 10s
     run:
       base: nodejs@24
+      prepareCommands:
+        - sudo apk add --no-cache libatomic
       ports:
         - port: 3000
           protocol: tcp
