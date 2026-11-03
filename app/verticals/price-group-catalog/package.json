@@ -33,7 +33,7 @@
     "db:verify": "node scripts/verify-db-schema.mts",
     "serve": "modern serve",
     "test:integration": "rstest --project integration",
-    "test:unit": "rstest --project unit",
+    "test:unit": "rstest --project unit --isolate=false",
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },

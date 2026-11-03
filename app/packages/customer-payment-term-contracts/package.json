@@ -12,7 +12,7 @@
     "./reserve-payment-term-retirement/client": "./src/api/reserve-payment-term-retirement-client.ts"
   },
   "scripts": {
-    "test:unit": "rstest --project unit",
+    "test:unit": "rstest --project unit --isolate=false",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {

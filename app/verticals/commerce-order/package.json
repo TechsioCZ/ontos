@@ -30,7 +30,7 @@
     "dev": "node ../../scripts/prepare-dev-module-contract.mts commerce-order && ultramodern dev",
     "serve": "ultramodern serve",
     "test:integration": "rstest run tests/integration",
-    "test:unit": "rstest run tests/unit",
+    "test:unit": "rstest run tests/unit --isolate=false",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },

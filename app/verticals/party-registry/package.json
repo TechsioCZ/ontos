@@ -50,7 +50,7 @@
     "serve": "modern serve",
     "test:component": "rstest --project component",
     "test:integration": "pnpm run test:integration:shared && pnpm run test:integration:worker-cycle",
-    "test:unit": "rstest --project unit",
+    "test:unit": "rstest --project unit --isolate=false",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts",
     "test:integration:reconciliation": "rstest run --config tests/support/party-reconciliation.rstest.config.ts --project integration",

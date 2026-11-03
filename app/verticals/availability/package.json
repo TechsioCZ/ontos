@@ -18,7 +18,7 @@
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app availability",
     "serve": "modern serve",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
-    "test:unit": "rstest --project unit"
+    "test:unit": "rstest --project unit --isolate=false"
   },
   "dependencies": {
     "@app/catalog": "workspace:*",
