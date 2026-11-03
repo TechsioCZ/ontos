@@ -19,6 +19,7 @@ gap-100
 gap-150
 gap-200
 gap-250
+gap-50
 grid
 grid-cols-1
 hidden
@@ -29,6 +30,7 @@ icon-[mdi--square-edit-outline]
 icon-[mdi--tag-multiple-outline]
 items-center
 items-end
+items-start
 md:grid-cols-2
 min-w-0
 outline
@@ -45,3 +47,4 @@ underline
 visible
 w-48
 w-64
+z

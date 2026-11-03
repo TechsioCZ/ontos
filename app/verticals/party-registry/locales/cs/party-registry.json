@@ -277,6 +277,10 @@
           "filtering": "Filtruji zákazníky podle štítku…"
         },
         "title": "Zákazníci"
+      },
+      "partyIdentity": {
+        "description": "Aktuální identita strany, oficiální identifikátory a kontaktní údaje, které vám tento modul zpřístupňuje.",
+        "title": "Identita strany"
       }
     },
     "selectPlaceholder": "Vyberte…",

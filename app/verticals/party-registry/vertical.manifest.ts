@@ -68,6 +68,7 @@ import { executePrivacyMeasureAction } from './src/actions/execute-privacy-measu
 import { GuestPartyResolutionApi } from './shared/apis/guest-party-resolution.ts';
 import { markDuplicateCandidateNeedsEvidenceAction } from './src/actions/mark-duplicate-candidate-needs-evidence.action.ts';
 import { matchPartyAction } from './src/actions/match-party.action.ts';
+import { PartyIdentityPage } from './src/routes/[lang]/prodej/strany/[partyId]/page.tsx';
 import { PrivacyMeasureExecutionApi } from './shared/apis/privacy-measure-execution.ts';
 import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 import { resolveDuplicateCandidateCreateAction } from './src/actions/resolve-duplicate-candidate-create.action.ts';
@@ -178,6 +179,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       'page-contacts': ContactsPage,
       'page-customer-detail': CustomerDetailPage,
       'page-customers': CustomersPage,
+      'page-party-identity': PartyIdentityPage,
       // </generated-module-manifest-components>
     },
     events: [],
@@ -290,6 +292,20 @@ export const partyRegistryManifest = defineOntosModuleManifest({
           },
           expose: './PageCustomers',
           routePath: '/prodej/zakaznici',
+        }),
+        pageContribution({
+          componentKey: 'party.registry.page-party-identity',
+          contributionKey: 'party.registry.page.party-identity',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
+            entrypointKey: 'party.registry.page.party-identity',
+            moduleKey: 'party.registry',
+            role: 'page',
+            scope: 'tenant',
+          },
+          expose: './PagePartyIdentity',
+          routePath: '/prodej/strany/:partyId',
         }),
         // </generated-module-shell-pages>
       ],

@@ -275,6 +275,10 @@
           "filtering": "Filtering customers by tag…"
         },
         "title": "Customers"
+      },
+      "partyIdentity": {
+        "description": "The current Party identity, official identifiers and contact details this module makes available to you.",
+        "title": "Party identity"
       }
     },
     "selectPlaceholder": "Select…",
