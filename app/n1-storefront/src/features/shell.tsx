@@ -3,13 +3,19 @@
 import type { ReactNode } from "react";
 import NextImage from "next/image";
 import NextLink from "next/link";
-import { useState } from "react";
+import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { Image } from "@techsio/ui-kit/atoms/image";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Header } from "@techsio/ui-kit/organisms/header";
 import { StorefrontFooter } from "./footer";
 import { StorefrontSearch } from "./search";
+import { MiniCart } from "./mini-cart";
+import { MiniLogin } from "./mini-login";
+import { MobileNavigation } from "./mobile-navigation";
+import { changeHeaderPanel } from "./header-panel-state";
+import type { HeaderPanel } from "./header-panel-state";
 import type { Dictionary } from "@/i18n";
 
 interface ShellProps {
@@ -21,7 +27,21 @@ interface ShellProps {
 
 /** N1 composition of existing kit components; no backend or primitive implementation lives here. */
 export const StorefrontShell = ({ categories, children, dictionary: d, locale }: ShellProps) => {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const pathname = usePathname();
+  const compactContent = ["prihlaseni", "registrace"].includes(pathname.split("/")[2] ?? "");
+  const [headerPanel, setHeaderPanel] = useState<HeaderPanel>(null);
+  const mobileMenuOpen = headerPanel === "navigation";
+  useEffect(() => {
+    const desktop = window.matchMedia("(min-width: 48rem)");
+    const closeOnDesktop = () => {
+      if (mobileMenuOpen && desktop.matches) {
+        setHeaderPanel((current) => changeHeaderPanel(current, "navigation", false));
+      }
+    };
+    closeOnDesktop();
+    desktop.addEventListener("change", closeOnDesktop);
+    return () => desktop.removeEventListener("change", closeOnDesktop);
+  }, [mobileMenuOpen]);
   const roots = categories.filter((category) => category.parentId === null);
   const links = [
     ["obchodni-podminky", d.terms],
@@ -97,43 +117,49 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
                   aria-label={d.menu}
                   icon="token-icon-menu"
                   iconSize="xl"
-                  onClick={() => setMobileMenuOpen((open) => !open)}
+                  onClick={() =>
+                    setHeaderPanel((current) =>
+                      changeHeaderPanel(current, "navigation", current !== "navigation"),
+                    )
+                  }
                   size="current"
                   theme="unstyled"
                   variant="tertiary"
                 />
               </Header.ActionItem>
             </div>
-            {(
-              [
-                ["heart", d.favorites, 24],
-                ["account-outline", d.account, 28],
-                ["cart", d.cart, 28],
-              ] as const
-            ).map(([icon, label, dimension]) => {
-              const image = (
-                <Image
-                  alt=""
-                  as={NextImage}
-                  height={dimension}
-                  size="custom"
-                  src={`/brand/${icon}.svg`}
-                  width={dimension}
-                />
-              );
-              return (
-                <Button
-                  aria-label={`${label}: ${d.featureUnavailable}`}
-                  disabled
-                  key={icon}
-                  size="current"
-                  theme="unstyled"
-                  variant="tertiary"
-                >
-                  {image}
-                </Button>
-              );
-            })}
+            <Button
+              aria-label={`${d.favorites}: ${d.featureUnavailable}`}
+              disabled
+              size="current"
+              theme="unstyled"
+              variant="tertiary"
+            >
+              <Image
+                alt=""
+                as={NextImage}
+                height={24}
+                size="custom"
+                src="/brand/heart.svg"
+                width={24}
+              />
+            </Button>
+            <MiniLogin
+              dictionary={d}
+              locale={locale}
+              onOpenChange={(open) =>
+                setHeaderPanel((previous) => changeHeaderPanel(previous, "login", open))
+              }
+              open={headerPanel === "login"}
+            />
+            <MiniCart
+              dictionary={d}
+              locale={locale}
+              onOpenChange={(open) =>
+                setHeaderPanel((previous) => changeHeaderPanel(previous, "cart", open))
+              }
+              open={headerPanel === "cart"}
+            />
           </Header.Actions>
           <div className="hidden w-full min-w-0 max-w-n1-search md:block">
             <StorefrontSearch dictionary={d} locale={locale} />
@@ -159,41 +185,16 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
           </Header.Nav>
         </div>
       </Header>
-      {mobileMenuOpen && (
-        <nav
-          aria-label={d.menu}
-          className="bg-base-dark p-4 text-white md:hidden"
-          id="n1-mobile-navigation"
-        >
-          <div className="mb-4">
-            <Link
-              as={NextLink}
-              href={`/${locale}/novinky`}
-              onClick={() => setMobileMenuOpen(false)}
-            >
-              {d.news}
-            </Link>
-          </div>
-          {roots.length === 0 ? (
-            <output>{d.unavailableDescription}</output>
-          ) : (
-            <ul className="grid gap-4">
-              {roots.map((category) => (
-                <li key={category.id}>
-                  <Link
-                    as={NextLink}
-                    href={`/${locale}/kategorie/${encodeURIComponent(category.slug)}`}
-                    onClick={() => setMobileMenuOpen(false)}
-                  >
-                    {category.name}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </nav>
-      )}
-      <main className="min-h-[50dvh]" id="main">
+      <MobileNavigation
+        categories={categories}
+        dictionary={d}
+        locale={locale}
+        onOpenChange={(open) =>
+          setHeaderPanel((current) => changeHeaderPanel(current, "navigation", open))
+        }
+        open={mobileMenuOpen}
+      />
+      <main className={compactContent ? undefined : "min-h-[50dvh]"} id="main">
         {children}
       </main>
       <StorefrontFooter dictionary={d} locale={locale} />

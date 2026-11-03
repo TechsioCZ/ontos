@@ -145,7 +145,7 @@ const priceOf = (product: OwnerProduct, currency: string): number | null => {
     price === null ||
     !Number.isSafeInteger(price) ||
     price <= 0 ||
-    product.currency !== currency
+    (product.currency !== undefined && product.currency !== currency)
   ) {
     return null;
   }

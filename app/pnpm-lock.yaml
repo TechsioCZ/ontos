@@ -164,6 +164,9 @@ settings:
 
 catalogs:
   default:
+    '@app/commerce-customer-context':
+      specifier: workspace:*
+      version: workspace:*
     '@app/shared-contracts':
       specifier: workspace:*
       version: workspace:*
@@ -748,12 +751,21 @@ importers:
 
   n1-storefront:
     dependencies:
+      '@app/commerce-customer-context':
+        specifier: 'catalog:'
+        version: link:../verticals/commerce-customer-context
+      '@app/merchandise':
+        specifier: workspace:*
+        version: link:../verticals/merchandise
       '@app/shared-contracts':
         specifier: 'catalog:'
         version: link:../packages/shared-contracts
       '@app/work-tasks':
         specifier: 'catalog:'
         version: link:../verticals/work-tasks
+      '@modern-js/bff-effect':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-bff-effect@3.9.3-ultramodern.17(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.0(react@19.3.0))(react-helmet-async@3.0.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)(zod@4.6.7)'
       '@techsio/ui-kit':
         specifier: 0.57.0
         version: 0.57.0(patch_hash=08506e41deb4c227ffd8838910e536712e20006d7aa0b9db20730d81081e9d84)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
@@ -775,7 +787,7 @@ importers:
         version: 4.0.7(effect@4.0.7)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@rstest/core':
         specifier: 0.11.12
-        version: 0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+        version: 0.11.12(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@tailwindcss/postcss':
         specifier: 4.3.3
         version: 4.3.3
@@ -790,7 +802,7 @@ importers:
         version: 19.3.0(@types/react@19.3.0)
       effect-rstest:
         specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597
-        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597(patch_hash=866572681e625f85d787a23b50686c2f306ad327bf75f9369e194e63b87bfcca)(@rstest/core@0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
+        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597(patch_hash=866572681e625f85d787a23b50686c2f306ad327bf75f9369e194e63b87bfcca)(@rstest/core@0.11.12(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7)
       oxfmt:
         specifier: 0.66.0
         version: 0.66.0
@@ -16180,6 +16192,19 @@ snapshots:
 
   '@bleedingdev/modern-js-backend-federation-contracts@3.9.3-ultramodern.17': {}
 
+  '@bleedingdev/modern-js-bff-core@3.9.3-ultramodern.17(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@4.6.7)':
+    dependencies:
+      '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.3-ultramodern.17(react-dom@19.3.0(react@19.3.0))(react@19.3.0)'
+      '@swc/helpers': 0.5.23
+      koa-compose: 4.1.0
+      reflect-metadata: 0.2.2
+      type-fest: 5.10.0
+    optionalDependencies:
+      zod: 4.6.7
+    transitivePeerDependencies:
+      - react
+      - react-dom
+
   '@bleedingdev/modern-js-bff-core@3.9.3-ultramodern.17(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(zod@4.6.7)':
     dependencies:
       '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.3-ultramodern.17(react-dom@19.3.1(react@19.3.1))(react@19.3.1)'
@@ -16199,6 +16224,34 @@ snapshots:
       '@modern-js/create-request': '@bleedingdev/modern-js-create-request@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)'
       '@modern-js/runtime-extensions': '@bleedingdev/modern-js-runtime-extensions@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)'
       '@modern-js/server-runtime-extensions': '@bleedingdev/modern-js-server-runtime-extensions@3.9.3-ultramodern.17(patch_hash=c21a06b77bb3ec97720fbef01e07df6dc110af287f29f381b576143a5ed51148)(@bleedingdev/mf-runtime-tools@2.9.3)(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
+      '@opentelemetry/api': 1.9.1
+      '@opentelemetry/api-logs': 0.223.0
+      '@opentelemetry/resources': 2.12.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/sdk-logs': 0.223.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/sdk-metrics': 2.12.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/sdk-trace-base': 2.12.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/sdk-trace-node': 2.12.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/sdk-trace-web': 2.12.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/semantic-conventions': 1.43.0
+    optionalDependencies:
+      '@effect/opentelemetry': 4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7)
+      effect: 4.0.7
+    transitivePeerDependencies:
+      - '@module-federation/runtime-tools'
+      - '@types/react'
+      - core-js
+      - react
+      - react-dom
+      - react-helmet-async
+      - react-router
+      - zod
+
+  '@bleedingdev/modern-js-bff-effect@3.9.3-ultramodern.17(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.0(react@19.3.0))(react-helmet-async@3.0.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)(zod@4.6.7)':
+    dependencies:
+      '@modern-js/bff-core': '@bleedingdev/modern-js-bff-core@3.9.3-ultramodern.17(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@4.6.7)'
+      '@modern-js/create-request': '@bleedingdev/modern-js-create-request@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)'
+      '@modern-js/runtime-extensions': '@bleedingdev/modern-js-runtime-extensions@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-helmet-async@3.0.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)'
+      '@modern-js/server-runtime-extensions': '@bleedingdev/modern-js-server-runtime-extensions@3.9.3-ultramodern.17(patch_hash=c21a06b77bb3ec97720fbef01e07df6dc110af287f29f381b576143a5ed51148)(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.0(react@19.3.0))(react-helmet-async@3.0.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)(zod@4.6.7)'
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/api-logs': 0.223.0
       '@opentelemetry/resources': 2.12.0(@opentelemetry/api@1.9.1)
@@ -16607,6 +16660,20 @@ snapshots:
       - oxlint-tsgolint
       - vite-plus
 
+  '@bleedingdev/modern-js-create-request@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)':
+    dependencies:
+      '@modern-js/runtime-utils': '@bleedingdev/modern-js-runtime-utils@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)'
+      '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.3-ultramodern.17(react-dom@19.3.0(react@19.3.0))(react@19.3.0)'
+      '@swc/helpers': 0.5.23
+      encoding: 0.1.13
+      path-to-regexp: 8.4.2
+      qs: 6.16.1
+    transitivePeerDependencies:
+      - '@types/react'
+      - react
+      - react-dom
+      - react-router
+
   '@bleedingdev/modern-js-create-request@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)':
     dependencies:
       '@modern-js/runtime-utils': '@bleedingdev/modern-js-runtime-utils@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)'
@@ -16955,6 +17022,19 @@ snapshots:
       - react-router
       - zod
 
+  '@bleedingdev/modern-js-plugin-data-loader@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)':
+    dependencies:
+      '@modern-js/runtime-utils': '@bleedingdev/modern-js-runtime-utils@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)'
+      '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.3-ultramodern.17(react-dom@19.3.0(react@19.3.0))(react@19.3.0)'
+      '@swc/helpers': 0.5.23
+      path-to-regexp: 8.4.2
+    optionalDependencies:
+      react: 19.3.0
+    transitivePeerDependencies:
+      - '@types/react'
+      - react-dom
+      - react-router
+
   '@bleedingdev/modern-js-plugin-data-loader@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)':
     dependencies:
       '@modern-js/runtime-utils': '@bleedingdev/modern-js-runtime-utils@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)'
@@ -17112,6 +17192,22 @@ snapshots:
       - react-dom
       - react-router
 
+  '@bleedingdev/modern-js-plugin@3.9.3-ultramodern.17(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)':
+    dependencies:
+      '@modern-js/runtime-utils': '@bleedingdev/modern-js-runtime-utils@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)'
+      '@modern-js/types': '@bleedingdev/modern-js-types@3.9.3-ultramodern.17(@types/react@19.3.0)'
+      '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.3-ultramodern.17(react-dom@19.3.0(react@19.3.0))(react@19.3.0)'
+      '@rsbuild/core': 2.2.11(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)
+      '@swc/helpers': 0.5.23
+      jiti: 2.7.0
+    transitivePeerDependencies:
+      - '@module-federation/runtime-tools'
+      - '@types/react'
+      - core-js
+      - react
+      - react-dom
+      - react-router
+
   '@bleedingdev/modern-js-prod-server@3.9.3-ultramodern.17(@bleedingdev/mf-runtime-tools@2.9.3)(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)':
     dependencies:
       '@modern-js/runtime-utils': '@bleedingdev/modern-js-runtime-utils@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)'
@@ -17172,6 +17268,18 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  '@bleedingdev/modern-js-runtime-extensions@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-helmet-async@3.0.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)':
+    dependencies:
+      '@modern-js/create-request': '@bleedingdev/modern-js-create-request@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)'
+      '@modern-js/runtime-utils': '@bleedingdev/modern-js-runtime-utils@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)'
+    optionalDependencies:
+      react: 19.3.0
+      react-helmet-async: 3.0.0(react@19.3.0)
+    transitivePeerDependencies:
+      - '@types/react'
+      - react-dom
+      - react-router
+
   '@bleedingdev/modern-js-runtime-extensions@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)':
     dependencies:
       '@modern-js/create-request': '@bleedingdev/modern-js-create-request@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)'
@@ -17196,6 +17304,19 @@ snapshots:
       - react-dom
       - react-helmet-async
       - react-router
+
+  '@bleedingdev/modern-js-runtime-utils@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)':
+    dependencies:
+      '@modern-js/types': '@bleedingdev/modern-js-types@3.9.3-ultramodern.17(@types/react@19.3.0)'
+      '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.3-ultramodern.17(react-dom@19.3.0(react@19.3.0))(react@19.3.0)'
+      '@swc/helpers': 0.5.23
+      lru-cache: 11.5.3
+    optionalDependencies:
+      react: 19.3.0
+      react-dom: 19.3.0(react@19.3.0)
+      react-router: 7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+    transitivePeerDependencies:
+      - '@types/react'
 
   '@bleedingdev/modern-js-runtime-utils@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)':
     dependencies:
@@ -17273,6 +17394,27 @@ snapshots:
       - react-dom
       - react-router
 
+  '@bleedingdev/modern-js-server-core@3.9.3-ultramodern.17(patch_hash=16cf3beba8051ff331fe8016537d8a03ff3f641e44322b9a7d5cfbd9ddf3b190)(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)':
+    dependencies:
+      '@modern-js/plugin': '@bleedingdev/modern-js-plugin@3.9.3-ultramodern.17(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)'
+      '@modern-js/runtime-utils': '@bleedingdev/modern-js-runtime-utils@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)'
+      '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.3-ultramodern.17(react-dom@19.3.0(react@19.3.0))(react@19.3.0)'
+      '@swc/helpers': 0.5.23
+      '@web-std/fetch': 4.2.1
+      '@web-std/file': 3.0.3
+      '@web-std/stream': 1.0.3
+      cloneable-readable: 3.0.0
+      flatted: 3.4.4
+      hono: 4.13.13
+      ts-deepmerge: 8.0.0
+    transitivePeerDependencies:
+      - '@module-federation/runtime-tools'
+      - '@types/react'
+      - core-js
+      - react
+      - react-dom
+      - react-router
+
   '@bleedingdev/modern-js-server-runtime-extensions@3.9.3-ultramodern.17(patch_hash=c21a06b77bb3ec97720fbef01e07df6dc110af287f29f381b576143a5ed51148)(@bleedingdev/mf-runtime-tools@2.9.3)(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)':
     dependencies:
       '@modern-js/create-request': '@bleedingdev/modern-js-create-request@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)'
@@ -17282,6 +17424,28 @@ snapshots:
       '@modern-js/runtime-utils': '@bleedingdev/modern-js-runtime-utils@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)'
       '@modern-js/server-core': '@bleedingdev/modern-js-server-core@3.9.3-ultramodern.17(patch_hash=16cf3beba8051ff331fe8016537d8a03ff3f641e44322b9a7d5cfbd9ddf3b190)(@bleedingdev/mf-runtime-tools@2.9.3)(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)'
       '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.3-ultramodern.17(react-dom@19.3.1(react@19.3.1))(react@19.3.1)'
+      '@swc/helpers': 0.5.23
+      reflect-metadata: 0.2.2
+    optionalDependencies:
+      zod: 4.6.7
+    transitivePeerDependencies:
+      - '@module-federation/runtime-tools'
+      - '@types/react'
+      - core-js
+      - react
+      - react-dom
+      - react-helmet-async
+      - react-router
+
+  '@bleedingdev/modern-js-server-runtime-extensions@3.9.3-ultramodern.17(patch_hash=c21a06b77bb3ec97720fbef01e07df6dc110af287f29f381b576143a5ed51148)(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.0(react@19.3.0))(react-helmet-async@3.0.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)(zod@4.6.7)':
+    dependencies:
+      '@modern-js/create-request': '@bleedingdev/modern-js-create-request@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)'
+      '@modern-js/plugin': '@bleedingdev/modern-js-plugin@3.9.3-ultramodern.17(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)'
+      '@modern-js/plugin-data-loader': '@bleedingdev/modern-js-plugin-data-loader@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)'
+      '@modern-js/runtime-extensions': '@bleedingdev/modern-js-runtime-extensions@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-helmet-async@3.0.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)'
+      '@modern-js/runtime-utils': '@bleedingdev/modern-js-runtime-utils@3.9.3-ultramodern.17(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)'
+      '@modern-js/server-core': '@bleedingdev/modern-js-server-core@3.9.3-ultramodern.17(patch_hash=16cf3beba8051ff331fe8016537d8a03ff3f641e44322b9a7d5cfbd9ddf3b190)(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)'
+      '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.3-ultramodern.17(react-dom@19.3.0(react@19.3.0))(react@19.3.0)'
       '@swc/helpers': 0.5.23
       reflect-metadata: 0.2.2
     optionalDependencies:
@@ -17906,6 +18070,20 @@ snapshots:
       - webpack
       - webpack-cli
       - zod
+
+  '@bleedingdev/modern-js-utils@3.9.3-ultramodern.17(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+    dependencies:
+      '@swc/helpers': 0.5.23
+      caniuse-lite: 1.0.30001820
+      dotenv: 18.0.8
+      fast-glob: 3.3.3
+      import-meta-resolve: 4.2.0
+      lodash: 4.18.1
+      lodash-es: 4.18.1
+      rslog: 2.3.0
+    optionalDependencies:
+      react: 19.3.0
+      react-dom: 19.3.0(react@19.3.0)
 
   '@bleedingdev/modern-js-utils@3.9.3-ultramodern.17(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
@@ -20213,6 +20391,17 @@ snapshots:
       '@types/chai': 5.2.3
     optionalDependencies:
       happy-dom: 21.0.4
+      jsdom: 30.1.1(@noble/hashes@2.2.0)
+    transitivePeerDependencies:
+      - '@module-federation/runtime-tools'
+      - core-js
+
+  '@rstest/core@0.11.12(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))':
+    dependencies:
+      '@rsbuild/core': 2.2.11(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)
+      '@types/chai': 5.2.3
+    optionalDependencies:
+      happy-dom: 20.8.3
       jsdom: 30.1.1(@noble/hashes@2.2.0)
     transitivePeerDependencies:
       - '@module-federation/runtime-tools'
@@ -22830,6 +23019,11 @@ snapshots:
   effect-rstest@https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597(patch_hash=866572681e625f85d787a23b50686c2f306ad327bf75f9369e194e63b87bfcca)(@rstest/core@0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7):
     dependencies:
       '@rstest/core': 0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))
+      effect: 4.0.7
+
+  effect-rstest@https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597(patch_hash=866572681e625f85d787a23b50686c2f306ad327bf75f9369e194e63b87bfcca)(@rstest/core@0.11.12(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.7):
+    dependencies:
+      '@rstest/core': 0.11.12(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
       effect: 4.0.7
 
   effect@4.0.7: {}
@@ -25895,6 +26089,14 @@ snapshots:
 
   react-fast-compare@3.2.2: {}
 
+  react-helmet-async@3.0.0(react@19.3.0):
+    dependencies:
+      invariant: 2.2.4
+      react: 19.3.0
+      react-fast-compare: 3.2.2
+      shallowequal: 1.1.0
+    optional: true
+
   react-helmet-async@3.0.0(react@19.3.1):
     dependencies:
       invariant: 2.2.4
@@ -25917,6 +26119,15 @@ snapshots:
   react-is@19.3.1: {}
 
   react-refresh@0.19.0: {}
+
+  react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
+    dependencies:
+      cookie: 1.1.1
+      react: 19.3.0
+      set-cookie-parser: 2.7.2
+    optionalDependencies:
+      react-dom: 19.3.0(react@19.3.0)
+    optional: true
 
   react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
     dependencies:

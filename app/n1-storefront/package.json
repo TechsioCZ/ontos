@@ -15,8 +15,11 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
+    "@app/commerce-customer-context": "catalog:",
+    "@app/merchandise": "workspace:*",
     "@app/shared-contracts": "catalog:",
     "@app/work-tasks": "catalog:",
+    "@modern-js/bff-effect": "catalog:ultramodern",
     "@techsio/ui-kit": "catalog:",
     "effect": "4.0.7",
     "next": "16.3.8",

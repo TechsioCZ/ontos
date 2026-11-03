@@ -1,14 +1,35 @@
 import { notFound } from "next/navigation";
 import { getDictionary } from "@/i18n";
 import { ContactView } from "@/features/contact-view";
+import { AuthView } from "@/features/auth-view";
+import { Schema } from "effect";
+import { PortalVerificationNoticeSchema } from "@/ontos/portal";
 
 const ContentPage = async ({
   params,
+  searchParams,
 }: {
   params: Promise<{ content: string; locale: string }>;
+  searchParams: Promise<{ verification?: string | string[] }>;
 }) => {
   const { content, locale } = await params;
   const d = getDictionary(locale);
+  if (content === "prihlaseni" || content === "registrace") {
+    const { verification } = await searchParams;
+    return (
+      <AuthView
+        dictionary={d}
+        key={content}
+        locale={locale}
+        mode={content === "registrace" ? "register" : "login"}
+        verification={
+          content === "prihlaseni" && Schema.is(PortalVerificationNoticeSchema)(verification)
+            ? verification
+            : undefined
+        }
+      />
+    );
+  }
   const titles = {
     doprava: d.shipping,
     kontakty: d.contacts,

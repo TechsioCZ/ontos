@@ -82,14 +82,14 @@ export const CatalogView = ({
       >
         {catalog.products.map((product) => (
           <ProductCard key={product.id} layout="column">
-            <div className="min-h-n1-card-name">
+            <div className="h-n1-card-name text-center">
               <ProductCard.Name>
                 <Link as={NextLink} href={`/${locale}/produkt/${encodeURIComponent(product.slug)}`}>
                   {product.name}
                 </Link>
               </ProductCard.Name>
             </div>
-            <div className="mx-auto w-full max-w-n1-product-image">
+            <div className="mx-auto aspect-square w-full max-w-n1-product-image">
               <Link
                 aria-hidden="true"
                 as={NextLink}
@@ -112,7 +112,7 @@ export const CatalogView = ({
                 )}
               </Link>
             </div>
-            {presentation === "listing" && <div aria-hidden="true" className="h-7" />}
+            <div aria-hidden="true" className="h-7" />
             <div className="flex justify-center">
               {product.stock === "unknown" ? (
                 <AvailabilityStatus
@@ -126,7 +126,7 @@ export const CatalogView = ({
                 </ProductCard.Stock>
               )}
             </div>
-            <div className="flex flex-col items-center justify-center md:flex-row md:gap-4">
+            <div className="flex items-center justify-center gap-4">
               <PriceBlock {...priceProps(product, d, locale)} />
               {(product.variantCount ?? 0) > 0 ? (
                 <LinkButton

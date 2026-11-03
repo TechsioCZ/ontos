@@ -1,7 +1,6 @@
 "use client";
 
 import NextImage from "next/image";
-import { useState } from "react";
 import NextLink from "next/link";
 import { Gallery } from "@techsio/ui-kit/organisms/gallery";
 import { DataTable } from "@techsio/ui-kit/organisms/data-table";
@@ -9,13 +8,12 @@ import type { ColumnDef } from "@techsio/ui-kit/organisms/data-table";
 import { Breadcrumb } from "@techsio/ui-kit/molecules/breadcrumb";
 import { Tabs } from "@techsio/ui-kit/molecules/tabs";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
-import { Button } from "@techsio/ui-kit/atoms/button";
 import { AvailabilityStatus } from "@techsio/ui-kit/molecules/availability-status";
 import { PriceBlock } from "@techsio/ui-kit/molecules/price-block";
-import { QuantityField } from "@techsio/ui-kit/molecules/quantity-field";
 import type { Dictionary } from "@/i18n";
 import type { ProductDetailModel } from "@/ontos/catalog-model";
 import { priceProps } from "./price-props";
+import { ProductPurchase } from "./product-purchase";
 import { selectProductDetail } from "./product-selection";
 
 type Parameter = ProductDetailModel["parameters"][number];
@@ -28,7 +26,7 @@ const parameterColumns = (d: Dictionary): ColumnDef<Parameter>[] => [
   },
 ];
 
-/** Full owner detail with real variant selection; purchasing remains explicitly unavailable. */
+/** Actual owner selection adds an unverified draft; only an owner quote confirms prices. */
 export const ProductView = ({
   dictionary: d,
   locale,
@@ -40,11 +38,8 @@ export const ProductView = ({
   product: ProductDetailModel;
   variantId?: string;
 }) => {
-  const { current, images, parameters, selectionRequired, variant } = selectProductDetail(
-    product,
-    variantId,
-  );
-  const [quantity, setQuantity] = useState(String(current.minimumQuantity));
+  const selection = selectProductDetail(product, variantId);
+  const { current, images, parameters, selectionRequired, variant } = selection;
   const pathname = `/${locale}/produkt/${encodeURIComponent(product.slug)}`;
   return (
     <article className="mx-auto max-w-n1-product-content p-4 md:py-6">
@@ -113,9 +108,9 @@ export const ProductView = ({
                     href={`${pathname}?${new URLSearchParams({ variantId: item.id })}`}
                     key={item.id}
                     prefetch={false}
-                    size="md"
-                    theme={item.id === variant?.id ? "solid" : "outlined"}
-                    variant={item.id === variant?.id ? "primary" : "secondary"}
+                    size="sm"
+                    theme="outlined"
+                    variant="secondary"
                   >
                     {item.name}
                   </LinkButton>
@@ -134,45 +129,7 @@ export const ProductView = ({
             </p>
           )}
           <PriceBlock {...priceProps(current, d, locale)} />
-          <div>
-            <div className="mb-4">
-              <QuantityField
-                disabled
-                label={d.quantity}
-                min={current.minimumQuantity}
-                onValueChange={({ value }) => setQuantity(value)}
-                size="md"
-                unitLabel={current.unit}
-                value={quantity}
-              />
-            </div>
-            <div className="md:hidden">
-              <Button
-                aria-describedby="purchase-unavailable"
-                block
-                disabled
-                size="md"
-                theme="solid"
-                variant="primary"
-              >
-                {d.addToCart}
-              </Button>
-            </div>
-            <div className="hidden md:block">
-              <Button
-                aria-describedby="purchase-unavailable"
-                disabled
-                size="md"
-                theme="solid"
-                variant="secondary"
-              >
-                {d.addToCart}
-              </Button>
-            </div>
-            <p className="mt-2 text-sm text-fg-secondary" id="purchase-unavailable">
-              {d.commerceUnavailable}
-            </p>
-          </div>
+          <ProductPurchase dictionary={d} locale={locale} product={product} selection={selection} />
         </div>
       </div>
       <div className="mt-8 md:mt-1">

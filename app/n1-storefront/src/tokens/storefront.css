@@ -4,6 +4,18 @@
  * Source: N1 storefront Header 33:635 / Footer 33:1100.
  */
 [data-theme="n1"] {
+  /* Homepage31:636/31:637, card33:1018: installed0.57 component
+   * defaults are not the N1 screen roles. Keep canonical primitive aliases. */
+  --spacing-product-card-padding: var(--dimension-4);
+  --spacing-product-card-col-layout: var(--dimension-8);
+  --border-width-product-card: var(--dimension-0);
+  --radius-product-card: var(--radius-none);
+  --radius-product-card-image: var(--radius-none);
+  --color-product-card-bg: var(--color-base);
+  --font-weight-product-card-name: var(--font-weight-bold);
+  --font-weight-product-card-stock: var(--font-weight-bold);
+  --text-product-card-name-size: var(--dimension-18);
+  --text-product-card-stock-size: var(--dimension-18);
   --color-header-bg: var(--color-base-dark);
   --color-header-nav-fg: var(--color-fg-reverse);
   --color-header-nav-fg-hover: var(--color-primary);
@@ -20,4 +32,18 @@
   --color-footer-text-fg: var(--color-fg-reverse);
   /* Full-bleed Footer.Bottom; section spacing is owned by the layout wrapper. */
   --padding-footer-md: var(--dimension-0);
+  /* Shared compact header popup role: current frames 311:2331 / 311:2164 /
+   * 311:2451 / 333:7435. The kit has no density prop for padding10; bind
+   * existing roles to canonical dimensions, never a per-instance palette.
+   */
+  --padding-popover-sm: var(--dimension-10);
+  --padding-popover-trigger: var(--dimension-0);
+  --spacing-popover-title: var(--dimension-0);
+  --font-weight-popover-title: var(--font-weight-medium);
+  /* Current Dialog role is the mobile navigation drawer (418:2484).
+   * Existing kit roles express its unpadded surface; canonical palette intact.
+   */
+  --padding-dialog-content: var(--dimension-0);
+  --spacing-dialog-content: var(--dimension-0);
+  --color-dialog-content-bg: var(--color-fill-hover);
 }

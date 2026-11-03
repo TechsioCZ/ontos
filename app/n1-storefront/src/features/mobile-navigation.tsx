@@ -1,0 +1,163 @@
+"use client";
+
+import NextLink from "next/link";
+import { Link } from "@techsio/ui-kit/atoms/link";
+import { Accordion } from "@techsio/ui-kit/molecules/accordion";
+import { Dialog } from "@techsio/ui-kit/molecules/dialog";
+import { VerticalNavigation } from "@techsio/ui-kit/molecules/vertical-navigation";
+import type { Dictionary } from "@/i18n";
+import { categoryTree } from "@/ontos/catalog-navigation";
+import type { CategoryNode } from "@/ontos/catalog-navigation";
+import type { CatalogModel } from "@/ontos/catalog-model";
+
+interface CategoryLinksProps {
+  destinations: ReadonlyMap<string, string>;
+  locale: string;
+  nodes: readonly CategoryNode[];
+  onNavigate: () => void;
+}
+
+/** Deeper owner branches use the kit navigation disclosure, never nested accordions. */
+const CategoryDescendants = ({ destinations, locale, nodes, onNavigate }: CategoryLinksProps) => (
+  <VerticalNavigation.List>
+    {nodes.map((node) => {
+      const slug = destinations.get(node.id);
+      if (slug === undefined) {
+        return null;
+      }
+      const link = (
+        <Link
+          as={NextLink}
+          href={`/${locale}/kategorie/${encodeURIComponent(slug)}`}
+          onClick={onNavigate}
+        >
+          {node.name}
+        </Link>
+      );
+      return node.children.length === 0 ? (
+        <VerticalNavigation.Item key={node.id}>{link}</VerticalNavigation.Item>
+      ) : (
+        <VerticalNavigation.Branch key={node.id}>
+          <VerticalNavigation.Row>
+            {link}
+            <VerticalNavigation.BranchTrigger aria-label={node.name}>
+              <VerticalNavigation.BranchIndicator />
+            </VerticalNavigation.BranchTrigger>
+          </VerticalNavigation.Row>
+          <VerticalNavigation.BranchContent>
+            <CategoryDescendants
+              destinations={destinations}
+              locale={locale}
+              nodes={node.children}
+              onNavigate={onNavigate}
+            />
+          </VerticalNavigation.BranchContent>
+        </VerticalNavigation.Branch>
+      );
+    })}
+  </VerticalNavigation.List>
+);
+
+/** Owner hierarchy only: no Figma category names or synthetic destinations. */
+export const MobileCategoryLinks = ({
+  destinations,
+  locale,
+  nodes,
+  onNavigate,
+}: CategoryLinksProps) => (
+  <Accordion collapsible shadow="none" size="md" variant="borderless">
+    {nodes.map((node) => {
+      const slug = destinations.get(node.id);
+      if (slug === undefined) {
+        return null;
+      }
+      return node.children.length === 0 ? (
+        <div className="px-4 py-2" key={node.id}>
+          <Link
+            as={NextLink}
+            href={`/${locale}/kategorie/${encodeURIComponent(slug)}`}
+            onClick={onNavigate}
+          >
+            {node.name}
+          </Link>
+        </div>
+      ) : (
+        <Accordion.Item key={node.id} value={node.id}>
+          <Accordion.Header>
+            <Accordion.Title>{node.name}</Accordion.Title>
+            <Accordion.Indicator />
+          </Accordion.Header>
+          <Accordion.Content>
+            <div className="flex flex-col gap-2">
+              <Link
+                as={NextLink}
+                href={`/${locale}/kategorie/${encodeURIComponent(slug)}`}
+                onClick={onNavigate}
+              >
+                {node.name}
+              </Link>
+              <VerticalNavigation aria-label={node.name} size="md">
+                <CategoryDescendants
+                  destinations={destinations}
+                  locale={locale}
+                  nodes={node.children}
+                  onNavigate={onNavigate}
+                />
+              </VerticalNavigation>
+            </div>
+          </Accordion.Content>
+        </Accordion.Item>
+      );
+    })}
+  </Accordion>
+);
+
+export const MobileNavigation = ({
+  categories,
+  dictionary: d,
+  locale,
+  onOpenChange,
+  open,
+}: {
+  categories: readonly CatalogModel["categories"][number][];
+  dictionary: Dictionary;
+  locale: string;
+  onOpenChange: (open: boolean) => void;
+  open: boolean;
+}) => (
+  <div
+    className="pointer-events-none fixed inset-x-0 bottom-0 top-n1-mobile-navigation z-(--z-dialog-positioner) md:hidden"
+    id="n1-mobile-navigation"
+  >
+    <Dialog
+      closeLabel={d.closeMenu}
+      customTrigger
+      id="n1-mobile-navigation"
+      onOpenChange={({ open: next }) => onOpenChange(next)}
+      open={open}
+      placement="left"
+      portal={false}
+      position="absolute"
+      size="xs"
+      title={<span className="sr-only">{d.menu}</span>}
+    >
+      <nav aria-label={d.menu}>
+        <div className="px-4 py-2">
+          <Link as={NextLink} href={`/${locale}/novinky`} onClick={() => onOpenChange(false)}>
+            {d.news}
+          </Link>
+        </div>
+        {categories.length === 0 ? (
+          <output>{d.unavailableDescription}</output>
+        ) : (
+          <MobileCategoryLinks
+            destinations={new Map(categories.map((category) => [category.id, category.slug]))}
+            locale={locale}
+            nodes={categoryTree(categories)}
+            onNavigate={() => onOpenChange(false)}
+          />
+        )}
+      </nav>
+    </Dialog>
+  </div>
+);

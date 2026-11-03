@@ -1,5 +1,13 @@
 # N1 storefront
 
+> Rozpracovaný integrační stav. Katalog, varianty, návrh košíku a backendové
+> ověření cen byly ověřené se skutečným lokálním N1 kontextem. Nejde o hotový
+> převod Figmy: zbývá zejména přesná skladba NumericInput na detailu, ořez
+> fotografií a stín ProductCard v kitu 0.57.0 a další vizuální dorovnání.
+> Checkout, vytvoření objednávky a úplný zákaznický účet nejsou dokončené.
+> Portal registrace/přihlášení mají implementaci a testy; celý pozitivní živý
+> průchod ještě není doložený. Lokální data ani přístupové údaje nejsou součástí aplikace.
+
 Samostatná Next.js aplikace v demo workspace. Vychází z Figma souboru
 [N1 Storefront](https://www.figma.com/design/gIHtMwCCl2OXhMAW9s9LIn/N1-Storefront)
 a z [AKROS handoffu](../akros-storefront/FOR-KAI-UWE.md).
@@ -12,21 +20,54 @@ N1 logo, knihovní Carousel s jediným doloženým bannerem, statické promo dla
 vyhledávání a plných detailových dat přes veřejnou OntOS Shell gateway. Používá publikovaný
 `@techsio/ui-kit` z workspace katalogu. Neimportuje privátní zdroje jiné aplikace.
 
-Je to rozpracovaný storefront, nikoliv hotový převod všech obrazovek Figmy. Účet,
-registrace, variantní nákup, košík, cenové ověření a checkout ještě nejsou implementované.
-Jejich ovládání nehlásí úspěch a neposílá náhradní požadavky. Právní texty a obsahové
-stránky kromě kontaktů čekají na skutečný obsah.
+Je to rozpracovaný storefront, nikoliv hotový převod všech obrazovek Figmy. Login,
+registrace a ověření e-mailu mají existující Portal integraci; košík a owner dry-run
+ověření jsou popsané níže. Účet/profil, adresy, objednávky a celý checkout nejsou
+dokončené. Právní texty a obsahové stránky kromě kontaktů čekají na skutečný obsah.
 
 Úplný seznam všech aktuálních rámců a stavů je v `FIGMA-INVENTORY.md`. Kategorie nyní
 obsahuje skutečný strom, breadcrumb, podkategorie, počet a serverové stránkování;
 mobilní karty mají vlastní návrhovou skladbu místo přestylování homepage karet.
 Detail zachovává galerie, parametry a aktivní varianty ownera. Výběr varianty v URL
 mění skutečnou cenu, dostupnost, jednotku a minimum; resetuje galerii. QuantityField
-a nákup jsou zatím neaktivní. Galerie a tabulky velikostí nemají náhradní data.
-Naplněné stavy nemají vizuální PASS, dokud není dostupný skutečný N1 kontext.
+a přidání do košíku vyžadují skutečný N1 kontext, konkrétní naceněnou dostupnou
+položku a platné množství. Galerie a tabulky velikostí nemají náhradní data.
+Naplněné stavy byly prohlédnuté se skutečným lokálním N1 kontextem;
+kvůli zaznamenaným rozdílům stále nemají úplný vizuální PASS.
 
 Bez nakonfigurované N1 identity se ukáže nedostupný katalog. Neexistuje přepnutí na
 AKROS, statický produktový feed ani mock backend. Testovací data jsou jen v testech.
+
+## Košík a ověření zboží
+
+`/{locale}/kosik` ukládá pouze zákazníkův návrh výběru, odděleně pro tenant,
+prodávající Legal Entity, market a měnu. Návrh není rezervace ani objednávka.
+Poškozená nebo cizí uložená data se netváří jako prázdný košík. Chyba zápisu
+do browser storage nepotvrdí přidání; vymazání se týká pouze aktuálního trhu.
+
+`POST /api/cart-quote` znovu ověří vlastní N1 konfiguraci, aktivní asociaci trhu,
+skutečnou měnu/nabídku a revision ownera. Existující generovaný merchandise klient
+volá `PlaceStorefrontOrder` s `dryRun:true`, čerstvým assertion a idempotency key.
+Není to nový backendový Action ani raw owner POST. Browser neposílá autoritativní
+scope a server nikdy nepoužije Akros identitu nebo market fallback.
+
+Souhrn zobrazuje jen skutečné owner částky za zboží; doprava/platba nejsou vybrané
+ani doplněné nulou. Změna položek nebo neplatný quantity draft zneplatní quote.
+Vrácení se ke stejnému návrhu neobnoví staré ověření. Změněná cena vyžaduje
+výslovné přijetí a nové ověření. Ovládání checkoutu zůstává neaktivní, dokud není
+implementovaný celý navazující tok. Endpoint žádnou objednávku nevytváří.
+
+Čerstvé Figma podklady: empty desktop `56:636`, mobile `56:800` a guest summary
+`319:1778`. Fixture produktu/cen z Figmy ani veřejného referenčního N1 webu se do
+runtime nepřebírá. Naplněný N1 nákup zatím nemá potvrzené live end-to-end ověření.
+Hlavička nyní otevírá mini košík podle rámců `59:1042`/`59:1074` a mini login
+podle `59:1709`. Otevřený zůstává jen jeden header panel. Mini košík sdílí
+skutečný návrh/quote se stránkou košíku; chybějící scope neprezentuje jako empty.
+Stránka a hlavička sdílejí jednu paměťovou Portal session v aktuálním scoped
+storefrontu, obnovovanou owner GET při mountu. Credentials se nepersistují.
+Mobilní menu skládá Dialog a návrhové kořenové Accordiony (`59:1595`); hlubší
+owner větve používají VerticalNavigation. Názvy ani cíle se nekopírují z fixture.
+Celý checkout ani živý N1 nákup tím nejsou dokončené.
 
 ## Figma → code
 
@@ -45,8 +86,9 @@ z Figmy — samotné spuštění rendereru Figma soubor nekontaktuje. CSS nepat�
 Theme je aktivní na `html[data-theme="n1"]`. Kit již registruje všech 447 názvů;
 generovaný unlayered brand selector pouze aktivuje kanonické hodnoty a aliasy po kitu.
 `globals.css` obsahuje importy a app layout/typography metadata. `tokens/storefront.css`
-obsahuje řídkou společnou mapu Header/Footer slotů na kanonické tmavé role, protože
-tyto organismy nemají tone prop. Žádné kontextové `n1-*-tokens` třídy nezůstávají.
+obsahuje společnou mapu Header/Footer slotů na kanonické tmavé role a doložené
+komponentové role ProductCard a header popupů. Tyto organismy nemají tone prop.
+Žádné kontextové `n1-*-tokens` třídy nezůstávají.
 App CSS neobsahuje
 vlastní masky ikon, body font override ani vzhledové CSS komponent. Zdrojové props
 a rozměry jsou zachycené v `src/tokens/figma/components.json` jako historický snapshot;
@@ -125,6 +167,28 @@ výslovně povolené veřejné HTTPS URL. Rovněž nepřebírá AKROS váhový i
 ani lokální oblíbené. Benefit pás přebírá statický marketingový obsah návrhu;
 nedokládá skutečnou dostupnost online platby ani výpočet dopravy v checkoutu.
 Cookie settings zůstávají neaktivní do zapojení skutečné správy souhlasu.
+
+## Portal účet
+
+`/{locale}/prihlaseni` a `/{locale}/registrace` používají veřejné session,
+enrollment a recovery skupiny vlastníka commerce-customer-context přes čerstvý
+gateway assertion. N1 nemá vlastní auth databázi ani fallback na AKROS identitu.
+Provider session a dokončený enrollment nejsou samy o sobě customer admission.
+Cookies jsou omezené na commerce realm a zůstávají host-only. Nejasný výsledek
+zápisu se neopakuje automaticky; UI nabídne bezpečné čtení stavu.
+
+Mailový callback je přesně
+`/commerce-customer-context-api/api/portal-auth/verify-email`. Přijímá jediný token
+a nejvýše jeden provider callbackURL, který vždy zahodí. Token ověří jednou přes
+veřejný owner klient bez browser cookies/Origin a přesměruje na pevnou CS login
+stránku s notice, bez tokenu. Notice nepřiznává session. Cílový origin mailu určuje
+BE konfigurace `COMMERCE_PORTAL_AUTH_URL`; FE ji nemění ani nenahrazuje.
+Úspěšné ověření e-mailu nezaručuje dokončený enrollment: čekající stav má explicitní
+pokračování, po dokončení se znovu ověřuje customer admission.
+
+MFA completion, forgotten-password a úplný account/order přehled zatím chybí.
+Skutečný N1 tenant, produkty a end-to-end auth nejsou potvrzené. Lokální Shell
+a owners musí běžet a N1 musí mít vlastní klíč a přiřazený tenant/seller.
 
 ## Lokální spuštění a kontroly
 

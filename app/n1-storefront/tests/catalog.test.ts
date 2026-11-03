@@ -50,6 +50,28 @@ describe("owner catalogue presentation", () => {
       stock: "available",
     });
   });
+  it("uses the owner market currency when a product does not repeat it", () => {
+    const [firstProduct] = response.products;
+    const { currency, ...product } = firstProduct;
+    void currency;
+    expect(projectCatalog({ ...response, products: [product] }, []).products[0].priceMinor).toBe(
+      119_900,
+    );
+    expect(
+      projectCatalog(
+        {
+          ...response,
+          products: [
+            {
+              ...product,
+              variantSummary: { count: 2, minGrossPriceMinor: 95_900, stockOnHand: 42 },
+            },
+          ],
+        },
+        [],
+      ).products[0].priceMinor,
+    ).toBe(95_900);
+  });
   it.each([0, -1, 1.5, Number.NaN])(
     "never fabricates a price for invalid value %s",
     (grossPriceMinor) => {

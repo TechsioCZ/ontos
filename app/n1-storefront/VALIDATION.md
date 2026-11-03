@@ -1,5 +1,91 @@
 # Kontrola převodu N1 storefrontu
 
+Nejnovější stav je popsán v závěrečné sekci „Integration checkpoint before the work-in-progress commit“;
+starší části níže zachovávají výsledky svých předchozích běhů.
+
+## Aktuální pokračování: portal login a enrollment
+
+Navazuje na push baseline `77d89dc53`. User potvrdil napojení podle Akrosu na
+existující OntOS API. Přidané session/enrollment/recovery adaptéry neimplementují
+nový backend ani runtime mock. Scope je N1 a nutné workspace závislosti.
+
+Fresh čtecí Figma session `52f1ec68-61cc-4343-83f7-ed710c5270c3`; skutečně otevřené
+design contexty a screenshoty login333:4671/5192 a registrace333:5341/5536.
+Osm dev kontrol (CS1440/390/320 + EN390, oba módy) bez overflow, console/pageerror,
+hydration chyby či business POST. Layout a kit props jsou popsané v COMPONENT-MAPPING.
+Kanonické primary tlačítko, label/link metriky a radius se liší od Figma instancí;
+nejde o tvrzení úplné pixelové shody. Footer registrace je opraven na „Přihlaste se“.
+
+Nezávislé integrační review našlo a následně ověřilo opravu dvou mezer:
+verification callback a explicitní enrollment resume. Provider vždy přidává
+callbackURL, standardně `/`; N1 ho přijme nejvýše jednou do2048 znaků, zahodí ho
+a předává pouze jediný validní token. Ověření používá skutečný generovaný veřejný
+owner klient s čerstvým assertion a bez cookies/Origin. Není automatický retry.
+Pevný303 redirect neobsahuje token; response má no-store/no-referrer a nepřenáší
+owner cookies. Callback notice nikdy nepřiznává session. Resumed COMPLETE vyžaduje
+nové customer admission; nejistý výsledek ani reconciliation neopakuje zápis.
+
+Nové testy nejprve selhaly na404/400 a skutečném provider query tvaru. Finální suite
+má127 testů. Transportní testy poskytují Effect Fetch referenci pouze v testech:
+skutečný handler a veřejný generovaný klient, přesný gateway + owner call,
+success/reconciliation/503, pevný redirect a izolace cookies. Nejde o runtime mock.
+Password12..128 pochází z owner kontraktu, ne z8znakové Figma fixture.
+
+Produkční browser: login1440, registrace390, invalid notice390/320, verified notice390
+a reconciliation notice390; šest screenshotů skutečně otevřených, HTTP200,
+žádný overflow, console/pageerror/hydration nález ani business POST. Skutečný GET
+callback bez tokenu vrací303 na token-free invalid landing. Query notice rendering
+není důkaz skutečného ověření e-mailu nebo účtu. Verified nabízí login, reconciliation
+jen bezpečné čtení; screenshoty nepředstírají owner úspěch.
+
+Plná gate367/371, stejné čtyři neúspěšné testy mimo N1 jako po pullu:
+native-data-factory-proof, dva no-service-constructor-imports a repository-policy.
+N1 není v diagnostikách. Řetězec se zastavil na lint-rule testech; pozdější globální
+kroky nejsou tímto během ověřené. Samostatné i18n:boundaries má12 nálezů mimo N1.
+Scope lint, formát,447token theme a produkční build se ověřují samostatně.
+
+Úspěšné N1 login/signup a produkty zůstávají runtime neověřené. MFA completion,
+forgotten-password a account/order obrazovky zatím nejsou součástí této implementace.
+
+### Lokální backend po povolení načtení konfigurace (2026-11-03)
+
+Uživatel výslovně povolil interní načtení `.env` aplikací a prozkoumání backendu.
+Byly ověřené pouze přítomnost a lokálnost konfigurace; její obsah ani klíče se
+nevypisovaly. Runtime a issuer DB míří na lokální Docker5433, SpiceDB na50051.
+Shell3020 a merchandise4123 byly spuštěné bez resetu, migrací, seedů nebo přepisů
+oprávnění. Market4109 a customer-context4101 neběží. Merchandise používá existující
+serve artefakt se starším shared-source fingerprintem: odezva nedokazuje shodu
+s aktuálními zdroji. N1 produkční server3071 zůstává spuštěný.
+
+Přes veřejné API proběhlo přihlášení dokumentovaným lokálním demo účtem200.
+Veřejné čtení tenantů200 vrací1 viditelný tenant, čtení firem200 vrací5 viditelných
+firem; názvům N1/N Distribution nic neodpovídá. Je to rozsah viditelný tomuto účtu,
+nikoli důkaz, že N1 neexistuje v jiném tenantu, pod jiným názvem nebo na serveru.
+Samotné porty Docker DB/SpiceDB/Mailpit ani owner route nejsou důkaz katalogových dat.
+
+Veřejné composition čtení vrací503 `ShellCapabilityUnavailableProblem`; Shell
+hlásí `InstalledModuleCatalogUnavailableError`. Katalog proto nejde ověřit přes
+governed gateway. Owner route bez assertion odpovídá400 `RecordsInvalidProblem`,
+což dokazuje pouze dostupnou routu. Nevznikla náhradní revision ani obejití gateway.
+Kanonický composition publisher není pouze read-only server: může inicializovat
+authority schema, drainovat práci a měnit authority; nebyl proto spuštěný jako
+pouhý diagnostický GET. `up.sh` rovněž zahrnuje migrace/seedy a přepis grantů.
+
+V lokální konfiguraci chybí `ONTOS_N1_STOREFRONT_API_KEY`,
+`ONTOS_STOREFRONT_TENANT_ID` a `ONTOS_STOREFRONT_LEGAL_ENTITY_ID`. Commerce Portal
+realm není nastavený. N1 search zůstává unavailable a account503; klíč/identita
+Akrosu nebyly převzaté. Další runtime předpoklady jsou fungující composition,
+skutečné N1 přiřazení klient/tenant/seller a aktivní N1 B2C market asociace.
+Teprve následné autorizované owner čtení může potvrdit import produktů.
+
+Backendové zdroje zůstaly beze změny, index prázdný, žádný nový commit/push.
+Uživatel omezil další commity pouze na `app/n1-storefront/`; existující lokální
+workspace změny a veškerá `.local` evidence se do Gitu nepřidávají. Runtime
+konfigurační výjimka nenahrazuje toto omezení.
+
+Evidence `.local/n1-review/2026-11-03-auth-continuation/`. Následující baseline
+a starší výsledky jsou historie, nikoli potvrzení těchto zbývajících bodů.
+
 ## Baseline pro první commit po aktualizaci demo větve
 
 Základ aktualizován fast-forwardem na `44c987a3c` (45 commitů), bez konfliktů.
@@ -459,3 +545,104 @@ je ještě nutné ověřit po jejich dokončení proti skutečným N1 datům a o
 Chybí předaný N1 produktový import a ověřený N1 Storefront Client / seller / tenant /
 market kontext. Proto se nyní zobrazuje pravdivý nedostupný katalog. Ostatní části
 implementace i další obrazovky jsou rozepsané v README; nebyly nahrazeny mocky.
+
+# Košík a owner quote — ověření pokračování
+
+N1 má lokální draft košíku oddělený tenantem/prodávajícím/marketem/měnou,
+přidání přes skutečnou naceněnou dostupnou product/variant selection,
+změnu množství a odebrání. `POST /api/cart-quote` používá existující veřejný
+generated merchandise apply client s `PlaceStorefrontOrder dryRun:true`.
+Čerstvý server scope/offer/revision a oddělený nový assertion se ověřují před
+Action. Žádná objednávka, seed, grants, backend změny ani runtime mock.
+
+**172 N1 testů PASS**, scoped lint PASS (zůstávají informativní catalog resolver
+warnings), formát a 447-token theme check PASS. Produkční Next build včetně
+TypeScriptu PASS; finální standalone běží3071. Pro standalone se kopírují public
+a .next/static do jeho vlastního build adresáře, ne do zdrojů.
+
+Nové testy prokazují scope/storage izolaci, poškozené payloady, variant identity,
+aggregate quantity limit, A→B→A a A→null→A quote freshness, external quantity
+update vs invalid draft, remove/readd, globální owner issues a scope recovery.
+28 owner/HTTP testů používá test-only transport fixtures, skutečný generated client
+a handler: fresh assertions, revision7/market, odmítnutí/nullable totals, neplatné
+requesty, content size/type, no-store a žádný automatic retry. Nejde o live
+owner úspěch. Produkční negativní smoke: foreign Origin403 a empty DTO400,
+oba no-store a před owner voláním.
+
+Nezávislé review a dvě kola oprav dokončené: žádné další P1/P2 v prověřeném
+rozsahu. Reviewer původních UI nálezů pak implementoval refaktor, proto finální
+nezávislé UI recheck provedla jiná lane. Všechny tři následné P2 uzavřené.
+
+Aktuální vizuální evidence `/tmp/n1-cart-final-*`: scope-unavailable CS1440/390/320,
+EN390 a homepage1440. Všech pět screenshotů otevřeno; overflowfalse,
+console/hydration/errors prázdné, business writes prázdné. Retry provedl nový RSC
+GET; skutečná ikona košíku navigovala na /cs/kosik, ENhref/en/kosik. Assets se
+načítají, cart28×28. Figma empty/guest summary i Netlify home/popover reference
+prohlédnuté. Empty/filled owner stavy a celý checkout/reference parity nejsou PASS.
+
+Full gate po prvním souběhu s buildem:358/371, včetně tool timeoutů. Samostatný
+opakovaný běh367/371; zachytil i pět nových N1 testových assertions s ručním
+porovnáním Effect tagu. Ty byly opravené přes typed instance assertions; žádné
+pravidlo ani timeout nebyly snížené. Konečný samostatný full gate znovu367/371:
+native-data-factory-proof, dva no-service-constructor-imports a repository-policy
+mimo N1. Konečný log nemá N1 diagnostiky ani tool timeouty. Globální řetězec
+skončil v lint-rule testech; další kroky této gate nebyly ověřené.
+Scoped výsledky nejsou globální PASS. Starší důkazy patří svým předchozím běhům.
+
+Nic nebylo commitnuto/pushnuto/deploynuto externě. Index zůstal prázdný. Kromě
+N1 jsou lokálně potřebné workspace metadata z předchozího auth a veřejný
+merchandise workspace link v lockfile; tyto změny zůstávají mimo povolený commit scope.
+
+## Header mini panely, mobilní navigace a sdílená session — 2026-11-03
+
+Po restartu:177 testů a build prošly ještě před tímto přírůstkem. Po doplnění
+mobilní navigace a sdílené session:179/179 testů. Scoped lint po opravě
+konkrétních nálezů prošel; výstup má stávající catalog-resolution warnings.
+Produkční build včetně TypeScriptu a jediného page workeru prošel pod3GB cap;
+pozorovaný peak2.44GiB. Browser nekolidoval s buildem/testy.
+
+Nezávislý reviewer /root/n1_reviewer skutečně otevřel screenshoty aktuální
+Figmy (333:7435/311:2331/311:2164 a418:2484), veřejné Netlify reference a
+lokálního runtime. Desktop login/cart mají384px; mobil login372px ve viewportu390.
+Mini panely se přepínají výhradně, Escape zavírá. Cart bezscope ukazuje unavailable.
+Naplněný/prázdný skutečný N1 cart nebyl ověřen.
+
+Mobilní drawer:320px, y139, spodek844; Escape vrací focus na Kategorie, close
+tlačítko funguje, resize1024 zavře a obnoví body scroll. Po zavření lze kliknout
+footer link; fixed wrapper neblokuje stránku. Pageerror prázdné, console má jen
+očekávané503 pro nedostupný owner kontext. Reviewer našel chybějící DOM cíl
+aria-controls; opraveno stabilním ID aplikačního controlled regionu.
+
+Výhradně test-only browser HTTP fixture ověřila přesně1 mount session GET,
+stejnou admitted identitu současně v auth stránce a headeru a1 logout
+odstraňující oba výskyty. Fixture se nedostala do aplikace a není důkazem
+živého N1 loginu či vytvořeného zákazníka. Žádný skutečný business POST.
+
+Běží FE3071, Shell3020, merchandise4123 a read-only composition3041, jednotlivě
+omezené. Existující DB/SpiceDB byly spuštěné bez resetu/importu/grantů.
+Composition stále503: původní autorita je expirovaná. N1 scope a produkty
+nejsou ověřené. Backend recovery/import a úplný checkout zůstávají další etapa.
+Globální gate nebyla v tomto přírůstku opakovaná; předchozí čtyři problémy
+mimo N1 nejsou vyřešené ani přeznačené za PASS. Bez commitů/pushe.
+
+Finální cache build po aria-controls opravě znovu prošel. Reviewer na něm ověřil
+`targetExists=true` a `containsRealDialog=true`; nález je uzavřený. Browser zavřen.
+
+## Integration checkpoint before the work-in-progress commit
+
+The branch was fast-forwarded to `df54c2eb0` before this checkpoint. The commit
+scope is this storefront plus the necessary workspace catalog and lockfile
+entries; backend bootstrap/seed changes and private local runtime/data are excluded.
+
+- Frozen offline lockfile validation and dependency installation passed.
+- The focused N1 suite passed: 180 tests in 21 files, no skips or failures.
+- Production Next build including TypeScript passed after the branch update and
+  minimal-lockfile installation, under a hard 2 GiB memory cap.
+- This remains a work-in-progress integration, not a completed Figma conversion
+  or a production-readiness claim. Earlier full-gate results above are historical.
+- Actual local owner quotes and populated catalog/cart were verified previously.
+  Complete customer enrollment/login and checkout are not live end-to-end proofs.
+- Recent desktop/mobile checks corrected card typography/layout and detail variant
+  props/purchase-row composition. Outstanding: ProductCard hardcoded shadow and
+  image cropping, exact detail NumericInput anatomy, heading/panel details, search
+  brands and other missing data-backed sections. No whole-storefront visual PASS.

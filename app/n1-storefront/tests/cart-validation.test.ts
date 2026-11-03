@@ -1,0 +1,80 @@
+import { describe, expect, it } from "@rstest/core";
+import {
+  cartIssueText,
+  globalCartIssues,
+  hasInvalidCartDraft,
+  issuesForCartEntry,
+  quantityDraftForEntry,
+  reconcileQuantityDrafts,
+  removeQuantityDraft,
+} from "../src/features/cart-validation";
+import type { QuantityDrafts } from "../src/features/cart-validation";
+import { cartLineKey } from "../src/features/cart-state";
+
+const entry = {
+  expectedUnitPriceMinor: 12_100,
+  image: null,
+  name: "Product",
+  productId: "product",
+  quantity: 2,
+  sku: "SKU",
+  slug: "product",
+  unit: "ks",
+  variantId: "large",
+  variantName: "Large",
+};
+const blankDraft = (): QuantityDrafts => ({
+  [cartLineKey(entry)]: { quantity: 2, saveError: false, value: "" },
+});
+
+describe("cart quantity draft lifecycle", () => {
+  it("discards an invalid input and its gate together after an external quantity change", () => {
+    const drafts = blankDraft();
+    expect(hasInvalidCartDraft(drafts, [entry])).toBe(true);
+    const external = { ...entry, quantity: 3 };
+    expect(quantityDraftForEntry(drafts, external)).toBeUndefined();
+    expect(hasInvalidCartDraft(drafts, [external])).toBe(false);
+    const reconciled = reconcileQuantityDrafts(drafts, [external]);
+    expect(reconciled).toEqual({});
+    expect(quantityDraftForEntry(reconciled, entry)).toBeUndefined();
+  });
+  it("keeps invalid input and gate when only the external price changes", () => {
+    const drafts = blankDraft();
+    const external = { ...entry, expectedUnitPriceMinor: 14_000 };
+    expect(quantityDraftForEntry(drafts, external)?.value).toBe("");
+    expect(reconcileQuantityDrafts(drafts, [external])).toBe(drafts);
+    expect(hasInvalidCartDraft(drafts, [external])).toBe(true);
+  });
+  it("clears removed selections before local or observed external re-addition", () => {
+    const local = removeQuantityDraft(blankDraft(), entry);
+    const external = reconcileQuantityDrafts(blankDraft(), []);
+    for (const drafts of [local, external]) {
+      expect(quantityDraftForEntry(drafts, entry)).toBeUndefined();
+      expect(hasInvalidCartDraft(drafts, [entry])).toBe(false);
+    }
+  });
+  it("retains failed saves and isolates other variant drafts", () => {
+    const drafts = { [cartLineKey(entry)]: { quantity: 2, saveError: true, value: "3" } };
+    expect(hasInvalidCartDraft(drafts, [entry])).toBe(true);
+    expect(hasInvalidCartDraft(drafts, [{ ...entry, variantId: "small" }])).toBe(false);
+  });
+});
+describe("cart owner issue visibility", () => {
+  it("retains fieldless MARKET_UNAVAILABLE and unknown codes for localized global output", () => {
+    const issues = [{ code: "MARKET_UNAVAILABLE" }, { code: "FUTURE_OWNER_CODE" }];
+    expect(globalCartIssues(issues)).toEqual(issues);
+    expect(
+      cartIssueText("MARKET_UNAVAILABLE", { MARKET_UNAVAILABLE: "Trh není dostupný" }, "Odmítnuto"),
+    ).toBe("Trh není dostupný");
+    expect(cartIssueText("FUTURE_OWNER_CODE", {}, "Odmítnuto")).toBe("Odmítnuto");
+  });
+  it("shows product-wide issues on its variants and keeps variant-specific issues isolated", () => {
+    const productIssue = { code: "NOT_AVAILABLE", productId: entry.productId };
+    const variantIssue = { code: "PRICE_CHANGED", productId: entry.productId, variantId: "large" };
+    const foreign = { code: "OUT_OF_STOCK", productId: "other" };
+    const issues = [productIssue, variantIssue, foreign];
+    expect(issuesForCartEntry(issues, entry)).toEqual([productIssue, variantIssue]);
+    expect(issuesForCartEntry(issues, { ...entry, variantId: "small" })).toEqual([productIssue]);
+    expect(globalCartIssues(issues)).toEqual([]);
+  });
+});

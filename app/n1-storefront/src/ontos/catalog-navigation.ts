@@ -3,7 +3,7 @@ import type { TreeNode } from "@techsio/ui-kit/molecules/tree-view";
 import { Schema } from "effect";
 
 type Category = CatalogModel["categories"][number];
-interface CategoryNode extends TreeNode {
+export interface CategoryNode extends TreeNode {
   children: CategoryNode[];
   id: string;
   name: string;

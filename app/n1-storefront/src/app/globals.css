@@ -8,6 +8,13 @@
 @theme static {
   --breakpoint-n1-compact: 24rem;
   --container-n1-content: 75rem;
+  --container-n1-auth: 28rem;
+  --spacing-n1-auth-login: 26.5rem;
+  --spacing-n1-auth-register: 26.875rem;
+  --spacing-n1-cart-empty: 26.5rem;
+  --spacing-n1-cart-empty-mobile: 12.25rem;
+  --spacing-n1-header-panel-content: 22.625rem;
+  --container-n1-header-panel-viewport: calc(100vw - var(--dimension-40));
   --container-n1-product-content: 80rem;
   --spacing-n1-category-sidebar: 16rem;
   --spacing-n1-loading-image: 13.75rem;
@@ -24,6 +31,7 @@
   --spacing-n1-nav-height: 3.75rem;
   --spacing-n1-nav-padding: 1.125rem;
   --spacing-n1-header: 5.5rem;
+  --spacing-n1-mobile-navigation: calc(var(--spacing-n1-utility-height) + var(--spacing-n1-header));
   --spacing-n1-section: 7rem;
   --spacing-n1-contact-address: 2.625rem;
   --spacing-n1-card-name: 3.375rem;
