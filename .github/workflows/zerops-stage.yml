@@ -191,6 +191,11 @@ jobs:
       (needs.plan.outputs.app == 'false' || needs.build.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    # Reading the cache index before the deploy needs `actions: read`; the deploy itself still needs only
+    # `contents: read`.
+    permissions:
+      actions: read
+      contents: read
     environment:
       name: stage-edge
       deployment: false
@@ -245,7 +250,38 @@ jobs:
           path: ${{ runner.temp }}/zerops-delivery/last-attempt
           key: zerops-stage-attempt-v1-${{ github.run_id }}-${{ github.run_attempt }}
 
-      # Cache save errors may warn rather than fail. Prove this exact marker can be restored or DO NOT deploy.
+      # Cache save errors may warn rather than fail, so the marker is trusted only once it can be read
+      # back. The cache service's read path also lags its write path: a restore issued in the same second
+      # as a save can miss an entry that is already durable. Observed on 2026-11-03, run 41633497832: the
+      # entry was durable from 12:16:07.17, the save reported success at 12:16:07.21, and the restore at
+      # 12:16:07.22 still missed it. Wait, bounded, for the marker's own key to appear in the cache index,
+      # then let the restore below prove its content is readable. A marker that never appears stops the
+      # deploy here.
+      - name: Wait for the durable attempt marker to appear
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CACHE_KEY: zerops-stage-attempt-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          CACHE_REF: ${{ github.ref }}
+        run: |
+          deadline=$((SECONDS + 120))
+          while :; do
+            if ! visible="$(gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=$CACHE_KEY&ref=$CACHE_REF" --jq '.total_count')"; then
+              echo "::error title=Cache index unreadable::Could not read the cache index for $CACHE_KEY; nothing was deployed."
+              exit 1
+            fi
+            if [ "$visible" -gt 0 ]; then
+              echo "The marker $CACHE_KEY is visible in the cache index for $CACHE_REF."
+              exit 0
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error title=Durable attempt marker missing::The marker $CACHE_KEY never appeared in the cache index for $CACHE_REF; nothing was deployed."
+              exit 1
+            fi
+            sleep 3
+          done
+
+      # Prove this exact marker can be restored or DO NOT deploy.
       - name: Require the durable attempt marker
         id: durable-attempt
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
