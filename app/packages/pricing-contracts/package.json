@@ -63,7 +63,7 @@
     "./commitment-confirmation-verification/client": "./src/api/commitment-confirmation-verification-client.ts"
   },
   "scripts": {
-    "test:unit": "rstest --project unit",
+    "test:unit": "rstest --project unit --isolate=false",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {

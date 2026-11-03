@@ -60,7 +60,7 @@
     "db:test": "rstest run tests/unit/database-schema-contract.test.ts --config rstest.config.ts && pnpm test:integration",
     "db:verify": "node scripts/verify-db-schema.mts",
     "serve": "modern serve",
-    "test:unit": "rstest --project unit",
+    "test:unit": "rstest --project unit --isolate=false",
     "test:integration": "rstest --project integration",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },

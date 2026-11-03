@@ -38,7 +38,7 @@
     "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app commerce-market-catalog",
     "serve": "modern serve",
-    "test:unit": "rstest --project unit",
+    "test:unit": "rstest --project unit --isolate=false",
     "test:integration": "rstest --project integration",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },

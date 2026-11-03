@@ -65,7 +65,7 @@
     "dev": "node ../../scripts/prepare-dev-module-contract.mts inventory && modern dev",
     "serve": "modern serve",
     "test:integration": "rstest --project integration --pool.maxWorkers 1",
-    "test:unit": "rstest --project unit",
+    "test:unit": "rstest --project unit --isolate=false",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },

@@ -175,7 +175,7 @@
     "serve": "modern serve",
     "test:integration": "rstest --project integration",
     "test:integration:native-preproposal": "ONTOS_PREPROPOSAL_STANDALONE=true ONTOS_PREPROPOSAL_NATIVE=true ONTOS_APPROVAL_NATIVE=true rstest --project integration --pool.maxWorkers 1 tests/integration/preproposal-basis-postgres.test.ts --testTimeout 1200000",
-    "test:unit": "rstest --project unit",
+    "test:unit": "rstest --project unit --isolate=false",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts",
     "db:portal-auth:check": "drizzle-kit check --config drizzle.portal-auth.config.ts",
