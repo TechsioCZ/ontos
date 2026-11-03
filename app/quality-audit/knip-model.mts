@@ -12,6 +12,7 @@ import { buildKnipRuntimeEvidence, workspaceDirectories } from './knip-runtime-m
 
 const EFFECT_CLI_MODULE = 'effect/cli';
 const CATALOG_WORKSPACE = 'verticals/catalog';
+const CORE_RUNTIME_MODULE = '@app/core-runtime';
 const Strings = Schema.Array(Schema.String);
 const PluginSchema = Schema.Struct({
   config: Schema.optional(Strings),
@@ -20,6 +21,7 @@ const PluginSchema = Schema.Struct({
 const WorkspaceSchema = Schema.Struct({
   drizzle: Schema.optional(PluginSchema),
   entry: Schema.optional(Strings),
+  ignoreBinaries: Schema.optional(Strings),
   ignoreDependencies: Schema.optional(Strings),
   ignoreIssues: Schema.optional(Schema.Record(Schema.String, Strings)),
   lefthook: Schema.optional(Schema.Boolean),
@@ -563,7 +565,7 @@ const generatedActionContractEvidence = (
   const owner = /^\/\/ @ontos-action-owner (?<owner>[a-z][a-z0-9.-]+)$/mu.exec(facts.source)?.groups?.owner;
   const slug = /^\/\/ @ontos-action-slug (?<slug>[a-z][a-z0-9-]+)$/mu.exec(facts.source)?.groups?.slug;
   const core =
-    workspace === 'packages/core-runtime' && manifest.name === '@app/core-runtime' && owner === 'core.modules';
+    workspace === 'packages/core-runtime' && manifest.name === CORE_RUNTIME_MODULE && owner === 'core.modules';
   const directory = core ? 'src/modules/actions' : 'src/actions';
   if (owner === undefined || slug === undefined || facts.file !== `${prefix}${directory}/${slug}.action.ts`) {
     return [];
@@ -681,7 +683,7 @@ const generatedOutboxMessageEvidence = (
       return [];
     }
     const topicSlug = topic.replaceAll('.', '-');
-    const core = workspace === 'packages/core-runtime' && manifest.name === '@app/core-runtime';
+    const core = workspace === 'packages/core-runtime' && manifest.name === CORE_RUNTIME_MODULE;
     const directory = core ? 'src/modules/actions' : 'src/actions';
     const relativeMessage = `${directory}/${action}-${topicSlug}.outbox-message.ts`;
     const contract = core ? `./src/outbox/${topicSlug}.ts` : `./shared/outbox/${topicSlug}.ts`;
@@ -2000,6 +2002,117 @@ const subprocessScope = (facts: SourceFacts, offset: number): ReadonlyMap<string
   }
   return variables;
 };
+
+const adjacentDeclarationValueReference = (node: Node, parent: Node, parents: ReadonlyMap<Node, Node>): boolean => {
+  if (parent.type === 'ExportSpecifier') {
+    const declaration = parents.get(parent);
+    return (
+      parent.local === node &&
+      parent.exportKind !== 'type' &&
+      declaration?.type === 'ExportNamedDeclaration' &&
+      declaration.source === null &&
+      declaration.exportKind !== 'type'
+    );
+  }
+  if (
+    parent.type === 'LabeledStatement' ||
+    parent.type === 'BreakStatement' ||
+    parent.type === 'ContinueStatement' ||
+    (parent.type.startsWith('TS') &&
+      !['TSAsExpression', 'TSSatisfiesExpression', 'TSNonNullExpression', 'TSInstantiationExpression'].includes(
+        parent.type,
+      )) ||
+    ((parent.type === 'MethodDefinition' ||
+      parent.type === 'PropertyDefinition' ||
+      parent.type === 'AccessorProperty') &&
+      !parent.computed &&
+      parent.key === node)
+  ) {
+    return false;
+  }
+  return (
+    parent.type !== 'ImportSpecifier' &&
+    !nativeSubprocessBindingOrName(node, parent) &&
+    nativeSubprocessRuntimeReference(node, parents)
+  );
+};
+
+const adjacentDeclarationImportedBindings = (
+  facts: SourceFacts,
+  statement: Extract<Node, { type: 'ImportDeclaration' }>,
+  declaration: SourceFacts,
+): string[] => {
+  if (subprocessLexicalIndex(facts.program).unavailable) {
+    return [];
+  }
+  const names = new Set([
+    ...exportedBindings(declaration)
+      .filter((binding) => binding.kind === 'export')
+      .map((binding) => binding.name),
+    ...declaration.program.body.flatMap((exported) =>
+      exported.type === 'ExportNamedDeclaration' &&
+      exported.declaration?.type === 'TSDeclareFunction' &&
+      exported.declaration.id !== null
+        ? [exported.declaration.id.name]
+        : [],
+    ),
+  ]);
+  const parents = nativeSubprocessParents(facts.program);
+  return statement.specifiers.flatMap((specifier) => {
+    if (
+      specifier.type !== 'ImportSpecifier' ||
+      specifier.importKind === 'type' ||
+      !names.has(propertyName(specifier.imported) ?? '')
+    ) {
+      return [];
+    }
+    return [...parents].some(
+      ([node, parent]) =>
+        node.type === 'Identifier' &&
+        node.name === specifier.local.name &&
+        adjacentDeclarationValueReference(node, parent, parents) &&
+        subprocessScope(facts, node.start).get(node.name) === specifier.local,
+    )
+      ? [propertyName(specifier.imported) ?? '']
+      : [];
+  });
+};
+
+/** TypeScript resolves an imported .mjs value's signature from its adjacent .d.mts. */
+const adjacentDeclarationEvidence = (
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  workspace: string,
+  path: Path.Path,
+): KnipModelEvidence[] =>
+  [...factsByPath.values()].flatMap((facts) => {
+    if (!/\.[cm]?tsx?$/u.test(facts.file) || /\.d\.[cm]?ts$/u.test(facts.file) || !facts.source.includes('.mjs')) {
+      return [];
+    }
+    return facts.program.body.flatMap((statement) => {
+      if (
+        statement.type !== 'ImportDeclaration' ||
+        statement.importKind === 'type' ||
+        !statement.source.value.startsWith('.') ||
+        !statement.source.value.endsWith('.mjs')
+      ) {
+        return [];
+      }
+      const runtime = path.normalize(path.join(path.dirname(facts.file), statement.source.value)).replaceAll('\\', '/');
+      const declaration = factsByPath.get(runtime.replace(/\.mjs$/u, '.d.mts'));
+      return factsByPath.has(runtime) && declaration !== undefined
+        ? adjacentDeclarationImportedBindings(facts, statement, declaration).map((name) =>
+            evidenceAt(
+              facts,
+              workspace,
+              'export',
+              `${declaration.file}#${name}`,
+              statement.start,
+              `TypeScript consumes the adjacent declaration for the imported ${runtime} value`,
+            ),
+          )
+        : [];
+    });
+  });
 
 const subprocessProcessRead = (member: string | undefined, consumer: Node | undefined): boolean =>
   (member === 'execPath' || member === 'pid') &&
@@ -5172,6 +5285,30 @@ const apiAliasEndpointReferences = (
         ];
   });
 };
+const apiAliasActionReferences = (facts: SourceFacts, node: Node): { node: Node; reason: string }[] => {
+  if (
+    node.type !== 'CallExpression' ||
+    node.optional ||
+    subprocessLexicalIndex(facts.program).unavailable ||
+    !apiAliasImportedObject(facts, node.callee, CORE_RUNTIME_MODULE, 'defineAction') ||
+    !immutableModelBinding(facts, identifierName(node.callee) ?? '')
+  ) {
+    return [];
+  }
+  const schema = staticObjectFields(node.arguments[0])?.get('resultSchema');
+  if (
+    schema?.type !== 'Identifier' ||
+    (!facts.variables.has(schema.name) && consumerImport(facts, schema.name, schema.start) === undefined)
+  ) {
+    return [];
+  }
+  return [
+    {
+      node: schema,
+      reason: `${facts.file}:${facts.source.slice(0, node.start).split('\n').length} defineAction resultSchema consumer`,
+    },
+  ];
+};
 const apiAliasImportedTypes = (facts: SourceFacts, typeNames: ReadonlySet<string>): ReadonlySet<string> =>
   new Set(
     facts.program.body.flatMap((statement) =>
@@ -5250,13 +5387,19 @@ const apiAliasConsumers = (
         statement.type === 'ImportDeclaration' &&
         [apiAliasHttpModule, apiAliasFrameworkFacade].includes(statement.source.value),
     );
-    if (importedTypes.size === 0 && !hasEndpoint && !facts.source.includes('Schema')) {
+    const hasAction = facts.program.body.some(
+      (statement) => statement.type === 'ImportDeclaration' && statement.source.value === CORE_RUNTIME_MODULE,
+    );
+    if (importedTypes.size === 0 && !hasEndpoint && !hasAction && !facts.source.includes('Schema')) {
       continue;
     }
     const parents = nativeSubprocessParents(facts.program);
     for (const [node, parent] of parents) {
       const codec = apiAliasCodecReference(facts, node);
-      const references = [...apiAliasEndpointReferences(facts, node, parents)];
+      const references = [
+        ...apiAliasEndpointReferences(facts, node, parents),
+        ...apiAliasActionReferences(facts, node),
+      ];
       if (codec !== undefined) {
         references.push({
           node: codec,
@@ -5266,19 +5409,21 @@ const apiAliasConsumers = (
       for (const reference of references) {
         const binding = apiAliasReference(facts, reference.node, factsByPath, appRoot, path);
         if (binding !== undefined) {
-          consumed.set(`${binding.facts.file}#${binding.name}`, reference.reason);
+          const key = `${binding.facts.file}#${binding.name}`;
+          const existing = consumed.get(key);
+          consumed.set(key, existing?.includes(' endpoint ') === true ? existing : reference.reason);
         }
       }
       if (apiAliasTypeReference(node, parent, importedTypes)) {
         const binding = apiAliasReference(facts, node, factsByPath, appRoot, path);
         const schema = apiAliasSchemaType(binding);
         if (binding !== undefined && schema !== undefined) {
-          consumed.set(
-            `${binding.facts.file}#${schema}`,
-            `${facts.file}:${
-              facts.source.slice(0, node.start).split('\n').length
-            } consumes exported schema-derived type ${binding.name}`,
-          );
+          const key = `${binding.facts.file}#${schema}`;
+          const existing = consumed.get(key);
+          const reason = `${facts.file}:${
+            facts.source.slice(0, node.start).split('\n').length
+          } consumes exported schema-derived type ${binding.name}`;
+          consumed.set(key, existing?.includes(' endpoint ') === true ? existing : reason);
         }
       }
     }
@@ -5322,7 +5467,7 @@ const apiSchemaAliasGroup = (
       'api-schema-alias',
       `${facts.file}#${names.join('=')}`,
       exported.find((binding) => binding.name === canonical)?.offset ?? 0,
-      `Each exact alias has a genuine endpoint, codec, or imported contract type consumer: ${reasons.join('; ')}`,
+      `Each exact alias has a genuine endpoint, Action resultSchema, codec, or imported contract type consumer: ${reasons.join('; ')}`,
     ),
     aliasMembers: members,
   };
@@ -6033,6 +6178,9 @@ const workspaceModel = Effect.fn('QualityAudit.knipWorkspaceModel')(function* bu
   }
   evidence.push(...vitestActualEvidence(factsByPath, manifest, prefix, workspace, appRoot, path));
   for (const fact of nativeRstestIncludes(factsByPath, manifest, prefix, workspace, path)) {
+    add(fact);
+  }
+  for (const fact of adjacentDeclarationEvidence(factsByPath, workspace, path)) {
     add(fact);
   }
   const pageAliases = manifestPageAliasEvidence(factsByPath, manifest, prefix, workspace, path);

@@ -220,7 +220,7 @@ const MiniCartTotals = ({
   );
 };
 
-export const MiniCartStatus = ({
+const MiniCartStatus = ({
   dictionary: d,
   onClear,
   onContinue,

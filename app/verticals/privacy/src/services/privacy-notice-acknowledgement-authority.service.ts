@@ -361,16 +361,6 @@ export const makePrivacyNoticeInformationStep = Effect.gen(function* makeInforma
     },
   });
 });
-export const noticePresentationServicesForScope = Effect.fn('PrivacyNotice.noticePresentationServicesForScope')(
-  function* presentationServices(transaction: Transaction, scope: OperationalScope) {
-    const [informationStep, repository] = yield* Effect.all(
-      [PrivacyNoticeInformationStep, privacyOperationRepositoryForScope(transaction, scope)],
-      { concurrency: 2 },
-    );
-    const { present } = informationStep.forScope({ repository, scope });
-    return { present };
-  },
-);
 const acknowledgementServicesWithPreparation = Effect.fn('PrivacyNotice.acknowledgementServicesWithPreparation')(
   function* acknowledgementServices(
     transaction: Transaction,

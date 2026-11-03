@@ -94,7 +94,7 @@ export const ProductCardModelSchema = Schema.Struct({
 
 export type ProductCardModel = typeof ProductCardModelSchema.Type;
 
-export interface ProductVariantModel {
+interface ProductVariantModel {
   readonly attributes: string;
   readonly id: string;
   readonly image: string | null;

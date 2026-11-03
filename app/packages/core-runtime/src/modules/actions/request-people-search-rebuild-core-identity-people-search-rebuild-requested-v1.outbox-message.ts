@@ -10,7 +10,6 @@ export {
   outboxProducerModuleKey as RequestPeopleSearchRebuildCoreIdentityPeopleSearchRebuildRequestedV1OutboxProducerModuleKey,
   outboxTopic as RequestPeopleSearchRebuildCoreIdentityPeopleSearchRebuildRequestedV1OutboxTopic,
 } from '../../outbox/core-identity-people-search-rebuild-requested-v1.ts';
-export type { OutboxPayload as RequestPeopleSearchRebuildCoreIdentityPeopleSearchRebuildRequestedV1OutboxPayload } from '../../outbox/core-identity-people-search-rebuild-requested-v1.ts';
 
 export const createRequestPeopleSearchRebuildCoreIdentityPeopleSearchRebuildRequestedV1OutboxMessage = (
   payload: OutboxPayload,

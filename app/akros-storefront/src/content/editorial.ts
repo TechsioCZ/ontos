@@ -1,6 +1,6 @@
 import type { BlogArticle, PerLocale } from "@/brand/types";
 
-export interface FaqItem {
+interface FaqItem {
   question: string;
   answer: string;
   details: readonly string[];
@@ -8,14 +8,14 @@ export interface FaqItem {
 
 export type FaqGroupId = "objednavky" | "doprava" | "reklamace" | "produkty";
 
-export interface FaqGroup {
+interface FaqGroup {
   id: FaqGroupId;
   title: string;
   items: readonly FaqItem[];
 }
 
 /** Chrome of the FAQ page and its explorer (labels around the questions). */
-export interface FaqChrome {
+interface FaqChrome {
   pageTitle: string;
   badge: string;
   heading: string;

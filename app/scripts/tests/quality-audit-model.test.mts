@@ -3139,3 +3139,182 @@ it.live(
     }
   }),
 );
+
+it.live(
+  'a used TypeScript import consumes only its adjacent mjs declaration, not unused or shadowed imports',
+  Effect.fn(function* adjacentDeclarationControls() {
+    const root = yield* fixture();
+    const owner = 'verticals/typed-script';
+    const consumer = `${owner}/tests/consumer.ts`;
+    const declaration = 'export function buildWeights(products: readonly { sku: string }[]): Record<string, number>;';
+    const runtime = 'export const buildWeights = (products) => ({}); export const unusedNeighbor = 1;';
+    write(root, `${owner}/package.json`, '{"name":"@fixture/typed-script","type":"module"}');
+    const unusedDeclarations = [
+      'orphan',
+      'unused',
+      'shadowed',
+      'property-only',
+      'javascript-only',
+      'export-name-only',
+      'label-only',
+      'method-only',
+      'field-only',
+      'accessor-only',
+      'function-type-parameter',
+      'class-type-parameter',
+    ];
+    for (const name of [
+      'weights',
+      'local-reexport',
+      ...unusedDeclarations.filter((declarationName) => declarationName !== 'orphan'),
+    ]) {
+      write(root, `${owner}/scripts/${name}.mjs`, runtime);
+      write(root, `${owner}/scripts/${name}.d.mts`, declaration);
+    }
+    write(root, `${owner}/scripts/weights.d.mts`, `${declaration}\nexport function unusedDeclaration(): void;`);
+    write(root, `${owner}/scripts/orphan.d.mts`, declaration);
+    write(
+      root,
+      consumer,
+      [
+        "import { buildWeights as weights } from '../scripts/weights.mjs';",
+        "import { buildWeights as unused } from '../scripts/unused.mjs';",
+        "import { buildWeights as shadowed } from '../scripts/shadowed.mjs';",
+        "import { buildWeights as property } from '../scripts/property-only.mjs';",
+        "import { buildWeights as exportName } from '../scripts/export-name-only.mjs';",
+        "import { buildWeights as label } from '../scripts/label-only.mjs';",
+        "import { buildWeights as method } from '../scripts/method-only.mjs';",
+        "import { buildWeights as field } from '../scripts/field-only.mjs';",
+        "import { buildWeights as accessorName } from '../scripts/accessor-only.mjs';",
+        "import { buildWeights as typeParameter } from '../scripts/function-type-parameter.mjs';",
+        "import { buildWeights as classParameter } from '../scripts/class-type-parameter.mjs';",
+        "import { buildWeights as localReexport } from '../scripts/local-reexport.mjs';",
+        'export const result = weights([{ sku: "valid" }]);',
+        'export const fake = (shadowed: (values: unknown[]) => unknown) => shadowed([]);',
+        'export const object = { property: 1 };',
+        'const value = 1; export { value as exportName };',
+        'label: { break label; }',
+        'export class Example { method() {} field = 1; }',
+        'export class Accessors { accessor accessorName = 1; }',
+        'export function generic<typeParameter>() {}',
+        'export class Generic<classParameter> {}',
+        'export { localReexport as publicWeights };',
+      ].join('\n'),
+    );
+    write(
+      root,
+      `${owner}/tests/consumer.mjs`,
+      "import { buildWeights } from '../scripts/javascript-only.mjs'; export const result = buildWeights([]);",
+    );
+    const base = {
+      workspaces: {
+        '.': { entry: [], project: [] },
+        'verticals/*': {
+          entry: ['tests/consumer.ts', 'tests/consumer.mjs'],
+          node: false,
+          project: ['**/*.{ts,mjs,mts}'],
+        },
+      },
+    };
+    const consumerPath = path.join(root, auditConsumersFile);
+    const model = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    const evidence = model.evidence.filter((fact) => fact.reason.startsWith('TypeScript consumes the adjacent'));
+    expect(evidence).toHaveLength(2);
+    expect(evidence[0]).toMatchObject({
+      kind: 'export',
+      line: 1,
+      source: consumer,
+      target: `${owner}/scripts/weights.d.mts#buildWeights`,
+      workspace: owner,
+    });
+    expect(evidence[1]).toMatchObject({
+      kind: 'export',
+      source: consumer,
+      target: `${owner}/scripts/local-reexport.d.mts#buildWeights`,
+      workspace: owner,
+    });
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    expect(run.error).toBeUndefined();
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+    const unusedFiles = report.issues.filter((issue) => issue.files.length > 0).map((issue) => issue.file);
+    expect(unusedFiles).not.toContain(`${owner}/scripts/weights.d.mts`);
+    expect(unusedFiles).not.toContain(`${owner}/scripts/local-reexport.d.mts`);
+    for (const name of unusedDeclarations) {
+      expect(unusedFiles).toContain(`${owner}/scripts/${name}.d.mts`);
+    }
+    expect(
+      report.issues.find((issue) => issue.file === `${owner}/scripts/weights.mjs`)?.exports.map((item) => item.name),
+    ).toEqual([unusedNeighborName]);
+    expect(
+      report.issues.find((issue) => issue.file === `${owner}/scripts/weights.d.mts`)?.exports.map((item) => item.name),
+    ).toEqual(['unusedDeclaration']);
+    const disconnected = yield* runPinnedKnip(root, consumerPath, { ...model, consumerSource: '' }).pipe(
+      Effect.provide(NodeServices.layer),
+    );
+    const native = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(disconnected.stdout);
+    expect(native.issues.filter((issue) => issue.files.length > 0).map((issue) => issue.file)).toContain(
+      `${owner}/scripts/weights.d.mts`,
+    );
+  }),
+);
+
+it.live(
+  'the actual variant weights test consumes its retained adjacent declaration',
+  Effect.fn(function* actualVariantWeightsDeclaration() {
+    const root = yield* fixture();
+    const owner = 'verticals/storefront-declaration';
+    const files = [
+      'scripts/variant-weights.mjs',
+      'scripts/variant-weights.d.mts',
+      'tests/unit/variant-weights.test.ts',
+    ];
+    write(root, `${owner}/package.json`, '{"name":"@fixture/storefront-declaration","type":"module"}');
+    for (const file of files) {
+      write(root, `${owner}/${file}`, readFileSync(path.join(appRoot, 'akros-storefront', file), 'utf-8'));
+    }
+    const model = yield* buildKnipModel(root, {
+      workspaces: { '.': { entry: [], project: [] }, 'verticals/*': { entry: [], project: ['**/*.{ts,mjs,mts}'] } },
+    }).pipe(Effect.provide(NodeServices.layer));
+    expect(model.evidence.filter((fact) => fact.reason.startsWith('TypeScript consumes the adjacent'))).toMatchObject([
+      {
+        kind: 'export',
+        source: `${owner}/tests/unit/variant-weights.test.ts`,
+        target: `${owner}/scripts/variant-weights.d.mts#buildVariantWeights`,
+        workspace: owner,
+      },
+    ]);
+  }),
+);
+
+it.live(
+  'an exact external binary declaration retains unrelated missing-tool findings',
+  Effect.fn(function* externalBinaryDeclaration() {
+    const root = yield* fixture();
+    const file = 'scripts/fonts.mjs';
+    write(
+      root,
+      file,
+      [
+        "import { spawnSync } from 'node:child_process';",
+        "spawnSync('uv', ['--version']);",
+        "spawnSync('unknown-font-helper', []);",
+      ].join('\n'),
+    );
+    const base = yield* Schema.decodeUnknownEffect(KnipConfigSchema)({
+      workspaces: {
+        '.': { entry: [file], ignoreBinaries: ['uv'], project: ['scripts/*.mjs'] },
+      },
+    });
+    const consumerPath = path.join(root, auditConsumersFile);
+    const model = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    expect(model.config.workspaces['.']?.ignoreBinaries).toEqual(['uv']);
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    expect(run.error).toBeUndefined();
+    const report = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({ issues: Schema.Array(Schema.Struct({ binaries: Names, file: Schema.String })) }),
+      ),
+    )(run.stdout);
+    expect(report.issues.flatMap((issue) => issue.binaries.map((item) => item.name))).toEqual(['unknown-font-helper']);
+  }),
+);

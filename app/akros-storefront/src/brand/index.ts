@@ -47,4 +47,4 @@ export function toClientBrand(brand: Brand, locale: string | undefined): ClientB
   };
 }
 
-export type { Brand, BrandId, ClientBrand } from "./types";
+export type { Brand, ClientBrand } from "./types";

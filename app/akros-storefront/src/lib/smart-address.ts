@@ -1,12 +1,12 @@
 /** Public v1 contract observed in the deployed Smart Suggest SDK, not the older /suggest SDK. */
 // Same-origin transport supports protected previews without exposing cookies to the provider.
-export const smartAddressEndpoint = "/api/address-suggestions";
+const smartAddressEndpoint = "/api/address-suggestions";
 
 /**
  * Address countries the provider has data for, with the language of its labels. Checked against the live API:
  * CZ (RÚIAN) returns suggestions; SK and PL return none, so they stay manual entry until the provider covers them.
  */
-export const smartAddressCountries: Readonly<Record<string, string>> = { CZ: "cs" };
+const smartAddressCountries: Readonly<Record<string, string>> = { CZ: "cs" };
 export const isSmartAddressCountry = (country: string) =>
   Object.hasOwn(smartAddressCountries, country);
 

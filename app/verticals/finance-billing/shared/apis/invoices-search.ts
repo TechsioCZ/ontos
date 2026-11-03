@@ -24,7 +24,6 @@ export const InvoicesProviderResponseSchema = Schema.Array(
     title: Schema.String,
   }),
 );
-export type InvoicesProviderResponse = typeof InvoicesProviderResponseSchema.Type;
 
 export const InvoicesProviderUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
   'InvoicesProviderUnavailableProblem',

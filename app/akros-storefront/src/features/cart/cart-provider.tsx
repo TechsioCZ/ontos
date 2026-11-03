@@ -46,7 +46,7 @@ class CartAddError extends Error {
 
 const storageKey = "akros-demo-cart-v3";
 /** Browser storage key of one market's carts (`akros-demo-carts-v1:AKROS-SK`); unscoped outside a market. */
-export const marketStorageKey = (key: string, scope: string | undefined) =>
+const marketStorageKey = (key: string, scope: string | undefined) =>
   scope ? `${key}:${scope}` : key;
 
 interface CartContextValue {

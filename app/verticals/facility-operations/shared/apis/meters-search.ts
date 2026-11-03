@@ -14,7 +14,6 @@ export const MetersProviderRequestSchema = Schema.Struct({
 export type MetersProviderRequest = typeof MetersProviderRequestSchema.Type;
 
 export const MetersProviderRelevanceSchema = CoreSearchRelevanceSchema;
-export type MetersProviderRelevance = typeof MetersProviderRelevanceSchema.Type;
 
 export const MetersProviderResponseSchema = Schema.Array(
   Schema.Struct({

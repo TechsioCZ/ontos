@@ -24,7 +24,6 @@ export const DocumentsProviderResponseSchema = Schema.Array(
     title: Schema.String,
   }),
 );
-export type DocumentsProviderResponse = typeof DocumentsProviderResponseSchema.Type;
 
 export const DocumentsProviderUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
   'DocumentsProviderUnavailableProblem',

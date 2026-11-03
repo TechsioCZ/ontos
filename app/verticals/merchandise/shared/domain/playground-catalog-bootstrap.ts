@@ -37,7 +37,6 @@ export const BootstrapManifestSchema = Schema.Struct({
   sourceFingerprint: Schema.Literal(PLAYGROUND_SOURCE_FINGERPRINT),
   variants: Count,
 });
-export type BootstrapManifest = typeof BootstrapManifestSchema.Type;
 export const BootstrapCheckpointSchema = Schema.Struct({
   manifest: BootstrapManifestSchema,
   nextBatch: Count,

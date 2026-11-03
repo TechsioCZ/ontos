@@ -107,7 +107,7 @@ const browserTargetCache = browserStaleWhileRevalidateCache(
 );
 
 /** Resolved targets name the destinations of the person who resolved them; a session boundary drops them all. */
-export const resetBrowserTargetCache = browserTargetCache.invalidateAll;
+const resetBrowserTargetCache = browserTargetCache.invalidateAll;
 registerSessionScopedReset(resetBrowserTargetCache);
 
 /** The browser cache key of one target read. */

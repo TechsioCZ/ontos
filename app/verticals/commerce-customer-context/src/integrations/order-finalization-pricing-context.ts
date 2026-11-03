@@ -2,16 +2,13 @@ import { executeCurrentStorefrontApplicationWithAuthorization } from '@app/store
 import { CurrentStorefrontApplicationRequestSchema } from '@app/storefront-registry-contracts/current-storefront-application';
 import { executeEligibleMarketTuplesWithAuthorization } from '@app/commerce-market-catalog/api/client';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import { PurchaseLimitEvaluationCurrentFactsSchema } from '../../shared/domain/purchase-limit-evaluation-currentness-port.ts';
-import { PurchaseLimitDependencyUnavailableSchema } from '../../shared/domain/purchase-limit-policy.ts';
-import type { PurchaseValue } from '../../shared/domain/purchase-limit.ts';
 import {
   PrincipalIdSchema,
   TenantIdSchema,
   AuthenticationNamespaceIdSchema,
 } from '@app/core-runtime/auth/external-identity-contracts';
 import { ContextAccess, isVerifiedGatewayPrincipalContext } from '@app/core-runtime';
-import type { OperationalScope, ScopedRoutineInvoker, ScopedTransactionExecutor } from '@app/core-runtime';
+import type { OperationalScope, ScopedRoutineInvoker } from '@app/core-runtime';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Config, DateTime, Effect, Match, Option, Schema, Predicate } from 'effect';
@@ -504,27 +501,6 @@ export const resolvePurchasePricingContextObservation = Effect.fn('OrderFinaliza
   },
 );
 
-const resolveOrderFinalizationPricingContextObservation = resolvePurchasePricingContextObservation;
-
-export const resolveOrderFinalizationPricingContext = Effect.fn('OrderFinalizationPricingContext.resolve')(
-  function* resolve(
-    transaction: ScopedTransactionExecutor,
-    scope: OperationalScope,
-    approvedRequest: PurchaseApprovalRequest,
-    compositionRevision: string,
-    operationTime: string,
-  ) {
-    const observation = yield* resolveOrderFinalizationPricingContextObservation(
-      transaction,
-      scope,
-      approvedRequest,
-      compositionRevision,
-      operationTime,
-    );
-    return observation.context;
-  },
-);
-
 const pricingServiceGrants = Config.schema(
   Schema.fromJsonString(
     Schema.Array(
@@ -678,75 +654,5 @@ export const finishOrderPricingAuthoritySnapshot = Effect.fn('OrderFinalizationP
       subject: context.subject,
       tenantId: scope.tenantId,
     });
-  },
-);
-
-/** Real owner observations for the service-only revalidation port. No expected vector is read. */
-export const resolveOrderCurrentnessFacts = Effect.fn('OrderFinalizationPricingContext.currentnessFacts')(
-  function* currentnessFacts(
-    transaction: ScopedTransactionExecutor,
-    actualScope: OperationalScope,
-    approvedRequest: PurchaseApprovalRequest,
-    bundlePurchaseValue: PurchaseValue,
-    observedAt: DateTime.Utc,
-    compositionRevision: string,
-  ) {
-    const facts = yield* Effect.gen(function* loadFacts() {
-      const [row] = yield* transaction.invoke(readCurrentPurchaseApprovalRevalidationRoutine, [
-        { requestRef: approvedRequest.requestRef },
-      ]);
-      if (row === undefined) {
-        return yield* invalid();
-      }
-      const { request: current } = yield* Schema.decodeUnknownEffect(
-        Schema.Struct({ request: PurchaseApprovalRequestSchema }),
-      )(row.result);
-      if (
-        current.requestRef.resourceId !== approvedRequest.requestRef.resourceId ||
-        current.proposal.canonicalHash !== approvedRequest.proposal.canonicalHash ||
-        computePurchaseProposalCanonicalHash(current.proposal) !== current.proposal.canonicalHash
-      ) {
-        return yield* invalid();
-      }
-      const operationTime = DateTime.formatIso(observedAt);
-      const { context, profileRevision, storefront } = yield* resolveOrderFinalizationPricingContextObservation(
-        transaction,
-        actualScope,
-        current,
-        compositionRevision,
-        operationTime,
-      );
-      return yield* Schema.decodeUnknownEffect(PurchaseLimitEvaluationCurrentFactsSchema)({
-        channelId: context.commercialScope.channelId,
-        contextRevision: context.purchasingContext.contextRevision,
-        currentSourceRevisions: [
-          {
-            revision: stableRevision({
-              currency: context.purchasingContext.currencyResolution.resolutionRevision,
-              settings: context.purchasingContext.commercialSettingsDecision.decisionRevision,
-            }),
-            source: 'customer-commerce-policy',
-          },
-          { revision: current.proposal.purchaseValue.sourceRevision, source: 'purchase-proposal' },
-          { revision: String(profileRevision), source: 'purchasing-profile' },
-          { revision: stableRevision(storefront), source: 'storefront-context' },
-        ],
-        marketId: context.commercialScope.marketId,
-        purchaseValue: bundlePurchaseValue,
-      });
-    }).pipe(
-      Effect.mapError((cause) =>
-        Object.defineProperty(
-          PurchaseLimitDependencyUnavailableSchema.make({
-            code: 'purchase_limit_dependency_unavailable',
-            dependency: 'ORDER_FINALIZATION_CURRENTNESS',
-            reason: 'Current Order source facts cannot be proven',
-          }),
-          'cause',
-          { value: cause },
-        ),
-      ),
-    );
-    return facts;
   },
 );

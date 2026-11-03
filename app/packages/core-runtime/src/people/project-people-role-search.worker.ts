@@ -6,8 +6,6 @@ import { PeopleSearchProjector } from './people-search-projection.ts';
 
 import { projectPeopleRoleSearchSubscription } from './people-search-subscriptions.ts';
 
-export { projectPeopleRoleSearchSubscription } from './people-search-subscriptions.ts';
-
 export const worker = defineOutboxWorker(
   {
     ...projectPeopleRoleSearchSubscription,
