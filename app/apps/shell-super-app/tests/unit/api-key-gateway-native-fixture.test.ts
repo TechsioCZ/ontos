@@ -38,6 +38,7 @@ const credentials = (database: string) => ({
       observe: () => Effect.die('Invalid fixture input cannot inspect the owned database'),
       observeRetainedOriginal: () => Effect.die('Invalid fixture input cannot inspect the owned database'),
       publishReplacement: () => Effect.die('Fixture cannot change composition'),
+      renewObservation: () => Effect.die('Fixture cannot change composition'),
       seal: () => Effect.die('Fixture cannot change composition'),
     },
     connections: { admin: connection(database, 'administrator'), runtime: connection(database, 'runtime') },
