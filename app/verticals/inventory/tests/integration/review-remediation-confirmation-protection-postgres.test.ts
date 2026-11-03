@@ -82,6 +82,7 @@ import {
   OutboxPayloadSchema as ConfirmationIssuancePayloadSchema,
   outboxTopic as confirmationIssuanceTopic,
 } from '../../shared/outbox/commerce-inventory-reservation-confirmation-issuance-requested-v1.ts';
+import { inventoryRegistration } from '../../vertical.registration.ts';
 import { createInventoryReservationAction } from '../../src/actions/create-inventory-reservation.action.ts';
 import { establishCommitmentProtectionAction } from '../../src/actions/establish-commitment-protection.action.ts';
 import { reservationConfirmationVerificationRead } from '../../src/api/reservation-confirmation-verification.read.ts';
@@ -616,6 +617,7 @@ const makeActionScenario = Effect.fn('ReviewRemediationPostgres.makeActionScenar
       ...openActionRuntimeOptions,
       contextAccess: access,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+      ownerRegistration: inventoryRegistration,
     },
   );
   const readRuntime = makeReadRuntime(
@@ -623,7 +625,7 @@ const makeActionScenario = Effect.fn('ReviewRemediationPostgres.makeActionScenar
     openModuleEntrypointGateway,
     testOperationalScopeResolver,
     contextAccess,
-    { ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay },
+    { ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay, ownerRegistration: inventoryRegistration },
   );
   const outbox = makeOutboxRuntime(makeOutboxRepository(runtimeDatabase, crypto));
   const baseFanout = makeOutboxWorkerLegalEntityScopeFanout(
