@@ -4,6 +4,7 @@ import type {
   ContextAccessService,
   TenantModuleState,
 } from '@app/core-runtime';
+import { TenantModuleStateReadUnavailableError } from '@app/core-runtime';
 import { DateTime, Duration, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -820,7 +821,7 @@ it.effect('resource detail reports an unknown module as not found before tenant,
   }),
 );
 
-it.effect('resource detail preserves not found for admitted modules with missing resource types or bindings', () =>
+it.effect('resource detail distinguishes a missing public type from an unsupported detail binding', () =>
   Effect.gen(function* resourceDetailPreservesNotFoundForAdmittedModules() {
     const baseline = dependencies();
     let assertionCalls = 0;
@@ -870,9 +871,67 @@ it.effect('resource detail preserves not found for admitted modules with missing
         },
         provider,
       ).resolve(context, ref),
-    ).toEqual({ outcome: 'not_found' });
+    ).toEqual({ outcome: 'detail_not_supported' });
     expect(assertionCalls).toBe(0);
     expect(providerCalls).toBe(0);
+  }),
+);
+
+it.effect('an unsupported detail binding still requires module, tenant-state and record admission', () =>
+  Effect.gen(function* unsupportedDetailDoesNotBypassGates() {
+    const unboundContract = {
+      ...propertyContract,
+      manifest: {
+        ...propertyContract.manifest,
+        publicSurface: {
+          ...propertyContract.manifest.publicSurface,
+          shellContributions: { ...propertyContract.manifest.publicSurface.shellContributions, resourceDetails: [] },
+        },
+      },
+    };
+    const cases = [
+      { module: 'denied', outcome: 'forbidden', resource: 'allowed', state: 'active' },
+      { module: 'unavailable', outcome: 'unavailable', resource: 'allowed', state: 'active' },
+      { module: 'allowed', outcome: 'not_found', resource: 'allowed', state: 'inactive' },
+      { module: 'allowed', outcome: 'forbidden', resource: 'denied', state: 'active' },
+      { module: 'allowed', outcome: 'unavailable', resource: 'unavailable', state: 'active' },
+      { module: 'allowed', outcome: 'detail_not_supported', resource: 'allowed', state: 'read_only' },
+    ] as const;
+    for (const check of cases) {
+      const result = yield* makeShellResourceDetail(
+        {
+          ...dependencies(check.state, check.module, check.resource),
+          catalog: makeInstalledModuleCatalogLoader(makeCompositionSnapshot([unboundContract])),
+          issueAssertion: () => Effect.die('No provider assertion for public support metadata'),
+        },
+        {
+          detail: () => Effect.die('No detail implementation is registered'),
+          timeline: () => Effect.die('No detail or timeline may be read'),
+        },
+      ).resolve(context, ref);
+      expect(result).toEqual({ outcome: check.outcome });
+    }
+    expect(
+      yield* makeShellResourceDetail(
+        {
+          ...dependencies(),
+          catalog: makeInstalledModuleCatalogLoader(makeCompositionSnapshot([unboundContract])),
+          moduleStates: {
+            getTenantModuleStates: () =>
+              Effect.fail(
+                new TenantModuleStateReadUnavailableError({
+                  code: 'tenant_module_state_read_unavailable',
+                  reason: 'Test state storage is unavailable',
+                }),
+              ),
+          },
+        },
+        {
+          detail: () => Effect.die('No provider for an unavailable state read'),
+          timeline: () => Effect.die('No provider for an unavailable state read'),
+        },
+      ).resolve(context, ref),
+    ).toEqual({ outcome: 'unavailable' });
   }),
 );
 

@@ -433,6 +433,12 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
                     }),
                   );
                 }
+                if (resolution.outcome === 'detail_not_supported') {
+                  return Effect.succeed({
+                    evidence: { resultCount: 0 },
+                    result: { outcome: 'detail_not_supported' as const, ref },
+                  });
+                }
                 if (resolution.outcome !== 'resolved') {
                   return Effect.fail(
                     new ReadHandlerUnavailable({

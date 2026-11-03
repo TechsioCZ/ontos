@@ -85,6 +85,7 @@ export type ShellSearchResult = typeof ShellSearchResultSchema.Type;
 export type ShellSearchPayload = typeof ShellSearchPayloadSchema.Type;
 export type ShellSearchResponse = typeof ShellSearchResponseSchema.Type;
 export type ShellResourceResponse = typeof ShellResourceResponseSchema.Type;
+export type ShellResourceDetailResponse = typeof ShellResourceDetailResponseSchema.Type;
 export type MediaAttachmentResponse = typeof MediaAttachmentResponseSchema.Type;
 
 const SafePrincipalIdSchema = Schema.String.pipe(Schema.brand('PrincipalId'));
@@ -705,7 +706,7 @@ export const ShellTimelineEntrySchema = Schema.Struct({
   timelineEntryId: TimelineEntryIdSchema,
 });
 
-export const ShellResourceResponseSchema = Schema.Struct({
+export const ShellResourceDetailResponseSchema = Schema.Struct({
   detail: Schema.Struct({
     fields: Schema.Array(ShellResourceDetailFieldSchema),
     title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
@@ -718,6 +719,15 @@ export const ShellResourceResponseSchema = Schema.Struct({
   ref: ResourceRefSchema,
   timeline: Schema.Array(ShellTimelineEntrySchema),
 });
+
+/** Catalog support only, never a statement about whether the requested record exists. */
+export const ShellResourceResponseSchema = Schema.Union([
+  ShellResourceDetailResponseSchema,
+  Schema.Struct({
+    outcome: Schema.Literal('detail_not_supported'),
+    ref: ResourceRefSchema,
+  }),
+]);
 
 export const MediaAttachmentResponseSchema = Schema.Struct({
   attached: Schema.Literal(true),

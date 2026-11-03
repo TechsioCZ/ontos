@@ -6,11 +6,14 @@ import type { ReactNode } from 'react';
 
 import {
   ShellReloadRequiredProblemSchema,
-  ShellResourceResponseSchema,
+  ShellResourceDetailResponseSchema as ShellResourceResponseSchema,
   ShellNavigationItemSchema,
   ShellTargetForbiddenProblemSchema,
 } from '../../../../shared/api.ts';
-import type { MediaAttachmentResponse, ShellResourceResponse } from '../../../../shared/api.ts';
+import type {
+  MediaAttachmentResponse,
+  ShellResourceDetailResponse as ShellResourceResponse,
+} from '../../../../shared/api.ts';
 import type { ResourcePageModel } from '../../../../src/routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/resource-page-model.ts';
 import ResourcePage from '../../../../src/routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/page.tsx';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {

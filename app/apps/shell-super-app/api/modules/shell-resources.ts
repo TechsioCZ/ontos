@@ -683,22 +683,24 @@ export const makeShellResourceDetail = (...[dependencies, gateway]: ShellResourc
     }
     const contributions = contract.manifest.publicSurface.shellContributions;
     const detailBinding = contributions.resourceDetails.find(({ resourceType: key }) => key === ref.resourceType);
-    if (detailBinding === undefined) {
-      return { outcome: 'not_found' } as const;
-    }
     const stateResult = yield* capture(loadState(dependencies, context, ref.moduleId));
     if (!stateResult.ok) {
       return { outcome: 'unavailable' } as const;
     }
     if (
       Option.isNone(stateResult.value) ||
-      decideModuleStateAccess(stateResult.value.value, detailBinding.entrypoint.access) === 'deny'
+      decideModuleStateAccess(stateResult.value.value, detailBinding?.entrypoint.access ?? 'read') === 'deny'
     ) {
       return { outcome: 'not_found' } as const;
     }
     const access = yield* resourceAccessOutcome(dependencies, context, ref);
     if (access.outcome !== 'allowed') {
       return access;
+    }
+    // An absent catalog binding says nothing about record existence. Return only public support metadata,
+    // after the same state and resource gates, so the Shell can open an exact owner page without inventing details.
+    if (detailBinding === undefined) {
+      return { outcome: 'detail_not_supported' } as const;
     }
     const mediaBinding = contributions.mediaAttachments.find(({ resourceType: key }) => key === ref.resourceType);
     const timelineBinding = contributions.timelines.find(({ resourceType: key }) => key === ref.resourceType);
@@ -731,6 +733,9 @@ export const makeShellResourceDetail = (...[dependencies, gateway]: ShellResourc
       }
       if (gate.outcome === 'unavailable') {
         return { outcome: 'unavailable' } as const;
+      }
+      if (gate.outcome === 'detail_not_supported') {
+        return { outcome: 'detail_not_supported' } as const;
       }
       const decodedDetail = yield* capture(
         dependencies.issueAssertion({ appId: gate.appId, compositionRevision: gate.compositionRevision, context }).pipe(

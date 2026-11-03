@@ -1,12 +1,16 @@
+import { throwTanstackRedirect } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Match, Predicate, Schema } from 'effect';
+import { UrlParams } from 'effect/http';
 
 import { ShellResourceRequestSchema } from '../../../../../../../shared/api.ts';
-import type { ShellResourceResponse } from '../../../../../../../shared/api.ts';
+import type { ShellResourceDetailResponse } from '../../../../../../../shared/api.ts';
 import { resourceDetail } from '../../../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../../../../../shell-authentication-client-options.ts';
 import { loadHomePageModel, sessionEndedModel } from '../../../../home-page-model.ts';
+import { routeMeta } from '../../../../route.meta.ts';
 import { requireSignedIn } from '../../../../../sign-in-return.ts';
+import { ownerRecordTarget } from '../../../../../shell-search-resource-types.ts';
 import type { HomePageModel } from '../../../../home-page-model.ts';
 
 interface ResourceLoaderArguments {
@@ -21,11 +25,12 @@ interface ResourceLoaderArguments {
 
 export type ResourcePageModel =
   | {
+      readonly detailSupport?: 'not_supported';
       readonly shell: HomePageModel;
       readonly state: 'forbidden' | 'not_found' | 'reload_required' | 'selection_required' | 'unavailable';
     }
   | {
-      readonly resource: ShellResourceResponse;
+      readonly resource: ShellResourceDetailResponse;
       readonly shell: HomePageModel;
       readonly state: 'ready';
     };
@@ -52,11 +57,30 @@ export const loader = ({ params, request }: ResourceLoaderArguments): Promise<Re
               compositionRevision,
             }).pipe(Effect.flatMap((resourceRef) => resourceDetail(resourceRef, options))),
           ),
-          Effect.map((resource): ResourcePageModel => ({
-            resource,
-            shell,
-            state: 'ready',
-          })),
+          Effect.map((resource): ResourcePageModel => {
+            if ('outcome' in resource) {
+              // The response admits only catalog support, not existence. Never redirect on a denied, missing or
+              // failed read. The owner page independently reads the current record under its own permission policy.
+              const sameRef =
+                resource.ref.moduleId === params.moduleId &&
+                resource.ref.resourceType === params.resourceType &&
+                resource.ref.resourceId === params.resourceId;
+              const target = sameRef ? ownerRecordTarget(resource.ref, shell.selectedLegalEntityId) : undefined;
+              if (target !== undefined) {
+                const prefix = new URL(request.url).pathname.split('/')[1] ?? '';
+                const language = Object.hasOwn(routeMeta.localisedPaths, prefix) ? prefix : 'cs';
+                const path =
+                  'params' in target
+                    ? target.to.replace('$id', encodeURIComponent(target.params.id))
+                    : `${target.to}?${UrlParams.toString(target.search)}`;
+                return throwTanstackRedirect(`/${encodeURIComponent(language)}${path}`);
+              }
+              return sameRef
+                ? { detailSupport: 'not_supported', shell, state: 'unavailable' }
+                : { shell, state: 'unavailable' };
+            }
+            return { resource, shell, state: 'ready' };
+          }),
           Effect.matchEffect({
             onFailure: (error) =>
               Effect.succeed<ResourcePageModel>({

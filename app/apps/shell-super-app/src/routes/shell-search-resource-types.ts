@@ -76,6 +76,7 @@ interface ResourceTypePresentation {
    */
   readonly agendas?: readonly string[];
   readonly group: ShellSearchGroupKey;
+  readonly idFormat?: 'uuid';
   /**
    * `company`: the owner qualifies its record ID with the company (`<legalEntityId>.<local ID>`) while its page
    * selects by the local ID. Absent: the page selects by the resource ID as is.
@@ -103,7 +104,15 @@ const resourceTypes = new Map<string, ResourceTypePresentation>([
   // A person of the company is a Core identity record; the Shell's own people administration lists them, and the
   // Shell offers it only to people who may open it.
   ['core.identity.person', { agendas: ['/sprava/lide-a-role'], group: 'person', moduleId: 'core.identity' }],
-  ['party.registry.counterparty', { group: 'counterparty', moduleId: 'party.registry' }],
+  [
+    'party.registry.counterparty',
+    {
+      group: 'counterparty',
+      idFormat: 'uuid',
+      moduleId: 'party.registry',
+      record: { kind: 'path', to: '/prodej/zakaznici/$id' },
+    },
+  ],
   ['party.registry.party', { group: 'party', moduleId: 'party.registry' }],
   ['demo.crm.client', { group: 'crmClient', moduleId: 'demo.crm', record: query('/crm/klienti', 'klient') }],
   ['demo.crm.contact', { agendas: ['/crm/klienti'], group: 'crmContact', moduleId: 'demo.crm' }],
@@ -170,8 +179,7 @@ export const shellSearchGroupOf = (result: Pick<ShellSearchResult, 'kind' | 'ref
   return presentationOf(result.ref)?.group ?? 'resource';
 };
 
-/** Props for the Shell route link that opens a hit: the owner's record page, else the Shell record page. */
-export type ShellSearchLinkTarget =
+export type ShellOwnerRecordTarget =
   | {
       readonly params: { readonly id: string };
       readonly to: string;
@@ -179,7 +187,11 @@ export type ShellSearchLinkTarget =
   | {
       readonly search: Readonly<Record<string, string>>;
       readonly to: string;
-    }
+    };
+
+/** Props for the Shell route link that opens a hit: the owner's record page, else the Shell record page. */
+export type ShellSearchLinkTarget =
+  | ShellOwnerRecordTarget
   | {
       readonly params: { readonly moduleId: string; readonly resourceId: string; readonly resourceType: string };
       readonly state: ReturnType<typeof searchHitState>;
@@ -188,6 +200,11 @@ export type ShellSearchLinkTarget =
 
 /** Agendas listing this record when the type names them; otherwise the owning module's agendas apply. */
 export const recordAgendaPaths = (ref: SearchRef): readonly string[] | undefined => presentationOf(ref)?.agendas;
+
+const nativeRecordId = Schema.is(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)));
+const uuidRecordId = Schema.is(Schema.String.check(Schema.isUUID()));
+const validRecordId = (presentation: ResourceTypePresentation, id: string): string | undefined =>
+  nativeRecordId(id) && (presentation.idFormat !== 'uuid' || uuidRecordId(id)) ? id : undefined;
 
 /**
  * The ID the owner page selects the record by. A company-qualified ID yields its local part only when it is qualified
@@ -200,14 +217,14 @@ const recordIdOf = (
   selectedLegalEntityId: string | undefined,
 ): string | undefined => {
   if (presentation.idScope === undefined) {
-    return ref.resourceId;
+    return validRecordId(presentation, ref.resourceId);
   }
   if (selectedLegalEntityId === undefined || selectedLegalEntityId.length === 0) {
     return undefined;
   }
   const prefix = `${selectedLegalEntityId}.`;
   const localId = ref.resourceId.startsWith(prefix) ? ref.resourceId.slice(prefix.length) : '';
-  return localId.length === 0 ? undefined : localId;
+  return validRecordId(presentation, localId);
 };
 
 /**
@@ -217,7 +234,7 @@ const recordIdOf = (
 export const ownerRecordTarget = (
   ref: SearchRef,
   selectedLegalEntityId: string | undefined,
-): ShellSearchLinkTarget | undefined => {
+): ShellOwnerRecordTarget | undefined => {
   const presentation = presentationOf(ref);
   const record = presentation?.record;
   if (presentation === undefined || record === undefined) {

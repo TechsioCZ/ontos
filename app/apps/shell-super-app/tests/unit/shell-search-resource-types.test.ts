@@ -42,6 +42,58 @@ const partyRef = {
   tenantId,
 };
 
+const evaCounterpartyId = Schema.decodeUnknownSync(ResourceIdSchema)('ea2200ab-4308-491e-8e33-ca3871a8fa55');
+
+test('Eva Bílá opens her exact counterparty page, never a page selected by the distinct Party identity', () => {
+  const hit = {
+    currentRoles: ['CUSTOMER'],
+    kind: 'counterparty',
+    legalEntity: { legalEntityId: selectedLegalEntityId, tenantId },
+    party: { archived: false, matchedViaAlias: true, ref: partyRef, title: 'Eva Bílá' },
+    ref: { ...partyRef, resourceId: evaCounterpartyId, resourceType: 'party.registry.counterparty' },
+    title: 'Eva Bílá',
+  } satisfies ShellSearchResult;
+  expect(shellSearchResultTarget(hit)).toEqual({
+    params: { id: evaCounterpartyId },
+    to: '/prodej/zakaznici/$id',
+  });
+  expect(ownerRecordTarget(partyRef, selectedLegalEntityId)).toBeUndefined();
+  expect(
+    shellSearchResultTarget({
+      archived: false,
+      kind: 'party',
+      matchedViaAlias: false,
+      ref: partyRef,
+      title: 'Eva Bílá',
+    }),
+  ).toMatchObject({ to: '/resources/$moduleId/$resourceType/$resourceId' });
+  // Alias and archive state never replace a current owner ID with its Party ID or an old identity.
+  expect(shellSearchResultTarget({ ...hit, party: { ...hit.party, archived: true } })).toEqual(
+    shellSearchResultTarget(hit),
+  );
+});
+
+test.each(['', 'not-a-uuid', `${selectedLegalEntityId}.${evaCounterpartyId}`, `${evaCounterpartyId}/other`])(
+  'a malformed counterparty ID %s never becomes a customer page',
+  (resourceId) => {
+    expect(
+      ownerRecordTarget(
+        { moduleId: 'party.registry', resourceId, resourceType: 'party.registry.counterparty' },
+        selectedLegalEntityId,
+      ),
+    ).toBeUndefined();
+  },
+);
+
+test('another module cannot claim the counterparty owner route', () => {
+  expect(
+    ownerRecordTarget(
+      { moduleId: 'demo.crm', resourceId: evaCounterpartyId, resourceType: 'party.registry.counterparty' },
+      selectedLegalEntityId,
+    ),
+  ).toBeUndefined();
+});
+
 const covered = [
   ['facility.operations', 'facility.operations.asset', 'asset'],
   ['facility.operations', 'facility.operations.device', 'device'],
@@ -96,6 +148,18 @@ test('records with an owner page open there, by path segment or query parameter'
   });
 });
 
+test.each([
+  ['work.tasks', 'work.tasks.task', '/ukoly', 'resourceId'],
+  ['legal.agreements', 'legal.agreements.contract', '/smlouvy', 'resourceId'],
+  ['property.portfolio', 'property.portfolio.property', '/nemovitosti', 'resourceId'],
+  ['property.portfolio', 'property.portfolio.unit', '/nemovitosti', 'resourceId'],
+  ['property.portfolio', 'property.portfolio.asset', '/nemovitosti', 'resourceId'],
+  ['property.leasing', 'property.leasing.occupancy', '/najmy', 'resourceId'],
+] as const)('%s %s keeps the exact ID consumed by %s', (moduleId, resourceType, to, param) => {
+  const hit = resourceHit(moduleId, resourceType, 'Vlastní záznam');
+  expect(shellSearchResultTarget(hit)).toEqual({ search: { [param]: hit.ref.resourceId }, to });
+});
+
 const otherCompany = '00000000-0000-4000-8000-000000000299';
 
 test.each([
@@ -115,7 +179,8 @@ test.each([
   ['a company prefix without the separator', `${selectedLegalEntityId}TEC-001`, selectedLegalEntityId],
   ['an empty local ID', `${selectedLegalEntityId}.`, selectedLegalEntityId],
 ] as const)('a facility record qualified with %s never opens an owner page', (_case, resourceId, company) => {
-  const hit = resourceHit('facility.operations', 'facility.operations.asset', 'Plynová kotelna', resourceId);
+  const valid = resourceHit('facility.operations', 'facility.operations.asset', 'Plynová kotelna');
+  const hit = { ...valid, ref: { ...valid.ref, resourceId } };
   expect(ownerRecordTarget(hit.ref, company)).toBeUndefined();
   const target = shellSearchLinkTarget(hit.ref, hit.title, company);
   expect(target).toMatchObject({ to: '/resources/$moduleId/$resourceType/$resourceId' });
@@ -156,7 +221,8 @@ test.each([
   ['demo.merchandise.order', 'no company on the result', `${selectedLegalEntityId}.OBJ-1`, undefined],
   ['demo.merchandise.order', 'an empty native ID', `${selectedLegalEntityId}.`, selectedLegalEntityId],
 ] as const)('%s qualified with %s falls back to the Shell record page', (resourceType, _case, resourceId, company) => {
-  const hit = resourceHit('demo.merchandise', resourceType, 'Kotel K-200', resourceId);
+  const valid = resourceHit('demo.merchandise', resourceType, 'Kotel K-200');
+  const hit = { ...valid, ref: { ...valid.ref, resourceId } };
   expect(ownerRecordTarget(hit.ref, company)).toBeUndefined();
   const target = shellSearchLinkTarget(hit.ref, hit.title, company);
   expect(target).toMatchObject({ to: '/resources/$moduleId/$resourceType/$resourceId' });
