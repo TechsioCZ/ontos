@@ -1,7 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeCrypto } from '@effect/platform-node';
 import { ConfigProvider, Effect, Layer, Predicate, Redacted, Result, Schema } from 'effect';
-import { assert, expect, it, rs } from 'effect-rstest';
+import { assert, afterAll, expect, it, rs } from 'effect-rstest';
 
 import {
   buildActionAuthorizationRelationships,
@@ -104,6 +104,16 @@ rs.mock('../../src/permissions/spicedb-grpc-rpc.ts', () => ({
     promises: { checkPermission: transport.checkPermission, writeRelationships: transport.writeRelationships },
   }),
 }));
+
+// With `isolate: false` one module registry is shared by every file a worker runs, so these
+// replacements outlive this file and would leak into whatever runs next. Remove them and drop the
+// modules they replaced, so the next file evaluates the real implementations.
+afterAll(() => {
+  rs.doUnmock('../../src/db/client.ts');
+  rs.doUnmock('../../src/permissions/config.ts');
+  rs.doUnmock('../../src/permissions/spicedb-grpc-rpc.ts');
+  rs.resetModules();
+});
 
 const configuration = {
   actionKeys: ['commerce.catalog.activate-local-override', 'commerce.catalog.change-local-override'],

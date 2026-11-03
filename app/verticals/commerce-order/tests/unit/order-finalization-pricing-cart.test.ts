@@ -9,7 +9,7 @@ import { canonicalizeApplicationComposition } from '@app/core-runtime';
 import { ConfigProvider, Effect, Layer, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import { TestClock } from 'effect/testing';
-import { describe, expect, it, rs } from 'effect-rstest';
+import { afterAll, describe, expect, it, rs } from 'effect-rstest';
 import { executeQuotationVerificationWithAuthorization } from '@app/pricing-contracts/quotation-verification/client';
 
 import { OrderFinalizationContextSchema } from '../../shared/domain/order-finalization-evidence.ts';
@@ -318,4 +318,13 @@ describe('Order finalization expired Quotation', () => {
       }
     }),
   );
+});
+
+// With `isolate: false` one module registry is shared by every file a worker runs, so these
+// replacements outlive this file and would leak into whatever runs next. Remove them and drop the
+// modules they replaced, so the next file evaluates the real implementations.
+afterAll(() => {
+  rs.doUnmock('@app/shared-contracts/server/gateway-context-api-key');
+  rs.doUnmock('@app/pricing-contracts/quotation-verification/client');
+  rs.resetModules();
 });

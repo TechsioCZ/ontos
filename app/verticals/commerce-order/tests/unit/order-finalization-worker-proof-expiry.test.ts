@@ -1,6 +1,6 @@
 import { Effect, Option } from 'effect';
 import { TestClock } from 'effect/testing';
-import { describe, expect, it, rs } from 'effect-rstest';
+import { afterAll, describe, expect, it, rs } from 'effect-rstest';
 
 import { attestOutboxWorkerHandlerContext } from '../../../../packages/core-runtime/src/outbox/definition.ts';
 import { executeRecordOrderProofSetWithAuthorization } from '../../src/api/record-order-proof-set-action-client.ts';
@@ -138,4 +138,14 @@ describe('Order proof worker with an expired Quotation and no Confirmation', () 
       expect(owners.complete).not.toHaveBeenCalled();
     }),
   );
+});
+
+// With `isolate: false` one module registry is shared by every file a worker runs, so these
+// replacements outlive this file and would leak into whatever runs next. Remove them and drop the
+// modules they replaced, so the next file evaluates the real implementations.
+afterAll(() => {
+  rs.doUnmock('@app/shared-contracts/server/gateway-context-api-key');
+  rs.doUnmock('../../src/api/order-finalization-work-client.ts');
+  rs.doUnmock('../../src/api/record-order-proof-set-action-client.ts');
+  rs.resetModules();
 });
