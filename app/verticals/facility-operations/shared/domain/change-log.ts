@@ -53,6 +53,7 @@ const isObject = Schema.is(Schema.JsonObject);
 const isString: (value: Schema.Json | undefined) => value is string = Schema.is(Schema.String);
 const ScalarSchema = Schema.Union([Schema.Null, Schema.Boolean, Schema.Number, Schema.String]);
 const isScalar = Schema.is(ScalarSchema);
+const sameJsonValue = Schema.toEquivalence(Schema.Json);
 
 /**
  * Finds the record with `id === id` in an encoded state tree: breadth-first, so a top-level record wins over a
@@ -101,20 +102,20 @@ const display = (value: Schema.Json | undefined): string | undefined => {
   return String(value).slice(0, MAX_VALUE);
 };
 
-/** Flattens nested plain objects (not references with a `label`) into dotted scalar fields, two levels deep. */
-const flatten = (record: Schema.JsonObject, prefix = '', depth = 0): Map<string, string | undefined> => {
-  const fields = new Map<string, string | undefined>();
+/** Flattens nested plain objects (not references with a `label`) into dotted leaf fields, two levels deep. */
+const flatten = (record: Schema.JsonObject, prefix = '', depth = 0): Map<string, Schema.Json | undefined> => {
+  const fields = new Map<string, Schema.Json | undefined>();
   for (const [key, value] of Object.entries(record)) {
     if (depth === 0 && (ignoredFields.has(key) || key === 'id')) {
       continue;
     }
     const path = prefix === '' ? key : `${prefix}.${key}`;
     if (isObject(value) && value['label'] === undefined && value['id'] === undefined && depth < 2) {
-      for (const [nested, text] of flatten(value, path, depth + 1)) {
-        fields.set(nested, text);
+      for (const [nested, leaf] of flatten(value, path, depth + 1)) {
+        fields.set(nested, leaf);
       }
     } else {
-      fields.set(path, display(value));
+      fields.set(path, value);
     }
   }
   return fields;
@@ -125,13 +126,20 @@ export const diffRecords = (
   before: Schema.JsonObject | undefined,
   after: Schema.JsonObject | undefined,
 ): readonly FieldChange[] => {
-  const left = before === undefined ? new Map<string, string | undefined>() : flatten(before);
-  const right = after === undefined ? new Map<string, string | undefined>() : flatten(after);
+  const left = before === undefined ? new Map<string, Schema.Json | undefined>() : flatten(before);
+  const right = after === undefined ? new Map<string, Schema.Json | undefined>() : flatten(after);
   const changes: FieldChange[] = [];
   for (const field of new Set([...left.keys(), ...right.keys()])) {
-    const previous = left.get(field);
-    const next = right.get(field);
-    if (previous !== next) {
+    const previousValue = left.get(field);
+    const nextValue = right.get(field);
+    const previous = display(previousValue);
+    const next = display(nextValue);
+    const arraysDiffer =
+      previousValue !== undefined &&
+      nextValue !== undefined &&
+      (Arr.isArray<Schema.Json>(previousValue) || Arr.isArray<Schema.Json>(nextValue)) &&
+      !sameJsonValue(previousValue, nextValue);
+    if (previous !== next || arraysDiffer) {
       const change: { -readonly [K in keyof FieldChange]: FieldChange[K] } = { field };
       if (previous !== undefined) {
         change.before = previous;

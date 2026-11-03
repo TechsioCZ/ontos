@@ -1,4 +1,4 @@
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { buildPurchasingSeed } from '../../scripts/seed/purchasing.mts';
@@ -282,6 +282,120 @@ it.effect('Material plan counts open orders and planned issues and suggests repl
     const result = materialPlanOf(planned.state, item, '2026-10-20');
     expect(result.projected).toBe(1);
     expect(result.suggestedQuantity).toBe(19);
+  }),
+);
+
+it.effect('StockIssue refuses another item plan without changing stock or material demand', () =>
+  Effect.gen(function* unrelatedPlan() {
+    const start = yield* base();
+    const other = yield* apply(
+      start,
+      {
+        _tag: 'StockItemCreate',
+        category: 'spare_part',
+        leadTimeDays: 10,
+        maximum: 20,
+        minimum: 8,
+        name: 'Kabel',
+        sku: 'ND-2',
+        tracking: 'none',
+        unit: 'ks',
+        warehouseId: 'wh',
+      },
+      'other-item',
+    );
+    const stocked = yield* receipt(other.state, 10, 'r1');
+    const planned = yield* apply(
+      stocked.state,
+      {
+        _tag: 'StockPlannedIssueCreate',
+        date: '2026-11-01',
+        itemId: 'other-item',
+        quantity: 4,
+        reason: 'Revize',
+        refs: [{ id: 't1', kind: 'task', label: 'Plánovaný úkol' }],
+      },
+      'p1',
+    );
+    const before = yield* Schema.encodeEffect(PurchasingStateSchema)(planned.state);
+    const outcome = yield* apply(
+      planned.state,
+      {
+        _tag: 'StockIssue',
+        date: '2026-10-20',
+        itemId: 'item',
+        plannedIssueId: 'p1',
+        quantity: 3,
+        reason: 'Oprava',
+      },
+      'wrong-item-issue',
+    ).pipe(Effect.result);
+    expect(Result.isFailure(outcome)).toBe(true);
+    if (Result.isFailure(outcome)) {
+      expect(isConflict(outcome.failure)).toBe(true);
+    }
+    expect(yield* Schema.encodeEffect(PurchasingStateSchema)(planned.state)).toEqual(before);
+    expect(onHandOf(planned.state, itemId('item'))).toBe(10);
+    expect(planned.state.plannedIssues[0]?.status).toBe('planned');
+    const otherItem = planned.state.items.find((item) => item.id === 'other-item');
+    expect(
+      otherItem === undefined ? undefined : materialPlanOf(planned.state, otherItem, '2026-10-20').plannedIssues,
+    ).toBe(4);
+  }),
+);
+
+it.effect('StockIssue fulfills the matching open plan and retains its references and stock movement', () =>
+  Effect.gen(function* matchingPlan() {
+    const stocked = yield* receipt(yield* base(), 10, 'r1');
+    const planned = yield* apply(
+      stocked.state,
+      {
+        _tag: 'StockPlannedIssueCreate',
+        date: '2026-11-01',
+        itemId: 'item',
+        quantity: 4,
+        reason: 'Revize',
+        refs: [{ id: 't1', kind: 'task', label: 'Plánovaný úkol' }],
+      },
+      'p1',
+    );
+    const issued = yield* apply(
+      planned.state,
+      {
+        _tag: 'StockIssue',
+        date: '2026-10-20',
+        itemId: 'item',
+        plannedIssueId: 'p1',
+        quantity: 4,
+        reason: 'Výdej pro revizi',
+      },
+      'matching-issue',
+    );
+    expect(onHandOf(issued.state, itemId('item'))).toBe(6);
+    expect(issued.state.plannedIssues[0]?.status).toBe('issued');
+    expect(issued.state.movements.at(-1)).toMatchObject({
+      createdBy: actor,
+      itemId: 'item',
+      plannedIssueId: 'p1',
+      quantity: -4,
+      refs: [{ id: 't1', kind: 'task', label: 'Plánovaný úkol' }],
+    });
+    const repeated = yield* apply(
+      issued.state,
+      {
+        _tag: 'StockIssue',
+        date: '2026-10-20',
+        itemId: 'item',
+        plannedIssueId: 'p1',
+        quantity: 1,
+        reason: 'Opakovaný výdej',
+      },
+      'repeat-issue',
+    ).pipe(Effect.result);
+    expect(Result.isFailure(repeated)).toBe(true);
+    if (Result.isFailure(repeated)) {
+      expect(isConflict(repeated.failure)).toBe(true);
+    }
   }),
 );
 
