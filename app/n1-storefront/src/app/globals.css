@@ -1,0 +1,59 @@
+@import "@techsio/ui-kit/tokens-with-tailwind";
+@import "../tokens/figma/n1.css";
+@import "../tokens/storefront.css";
+/* Kit 0.57.0 needs consumer source registration; newer reference skills assume it is bundled. */
+@source '../../node_modules/@techsio/ui-kit/dist';
+
+/* App composition only. Component appearance comes from canonical N1 and kit aliases. */
+@theme static {
+  --breakpoint-n1-compact: 24rem;
+  --container-n1-content: 75rem;
+  --container-n1-product-content: 80rem;
+  --spacing-n1-category-sidebar: 16rem;
+  --spacing-n1-loading-image: 13.75rem;
+  --spacing-n1-breadcrumb-icon: var(--dimension-14);
+  --container-n1-promo-content: 72rem;
+  --container-n1-promo-image: 16rem;
+  --container-n1-product-image: 16rem;
+  --container-n1-footer-logo: 20.125rem;
+  --aspect-n1-footer-logo: 322 / 78;
+  --container-n1-search: 40vw;
+  --text-n1-utility: 0.8125rem;
+  --spacing-n1-utility-height: 2.03125rem;
+  --spacing-n1-header-gutter: 1.25rem;
+  --spacing-n1-nav-height: 3.75rem;
+  --spacing-n1-nav-padding: 1.125rem;
+  --spacing-n1-header: 5.5rem;
+  --spacing-n1-section: 7rem;
+  --spacing-n1-contact-address: 2.625rem;
+  --spacing-n1-card-name: 3.375rem;
+  --spacing-n1-suggestion-image: var(--dimension-48);
+  --spacing-n1-logo: 16rem;
+  --spacing-n1-mobile-logo: 12.125rem;
+  --spacing-n1-utility-gap: var(--dimension-8);
+  --spacing-n1-benefit-delivery: var(--dimension-50);
+  --spacing-n1-benefit-payment: var(--dimension-50);
+  --spacing-n1-benefit-pickup: var(--dimension-50);
+  --spacing-n1-benefit-selection: var(--dimension-50);
+  --leading-n1-copy: 1.4;
+  --footer-cols: repeat(4, minmax(0, 1fr));
+  --container-footer-max: none;
+}
+
+@media (width < 80rem) {
+  :root {
+    --footer-cols: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (width < 48rem) {
+  :root {
+    --footer-cols: minmax(0, 1fr);
+    --spacing-n1-utility-height: 3.1875rem;
+    --spacing-n1-utility-gap: 0.1875rem;
+    --spacing-n1-benefit-delivery: 2.220703125rem;
+    --spacing-n1-benefit-payment: 2.3798828125rem;
+    --spacing-n1-benefit-pickup: 2.05078125rem;
+    --spacing-n1-benefit-selection: 1.5537109375rem;
+  }
+}

@@ -4,6 +4,7 @@
   "private": true,
   "workspaces": [
     "akros-storefront",
+    "n1-storefront",
     "apps/*",
     "verticals/*",
     "packages/*"

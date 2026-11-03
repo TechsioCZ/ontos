@@ -1,0 +1,577 @@
+{
+  "file": "gIHtMwCCl2OXhMAW9s9LIn",
+  "themeMode": "N1",
+  "frames": [
+    {
+      "id": "33:635",
+      "nodes": [
+        {
+          "id": "33:635",
+          "name": "Header · N1 storefront",
+          "type": "FRAME",
+          "width": 1440,
+          "height": 180.5,
+          "layout": "VERTICAL",
+          "padding": [0, 0, 0, 0],
+          "gap": 0
+        },
+        {
+          "id": "170:2018",
+          "name": "Horní navigace · odkazy a jazyky",
+          "type": "FRAME",
+          "width": 1440,
+          "height": 32.5,
+          "layout": "HORIZONTAL",
+          "padding": [6, 16, 6, 16],
+          "gap": 8
+        },
+        {
+          "id": "170:2023",
+          "name": "Link · default",
+          "type": "INSTANCE",
+          "width": 125,
+          "height": 20,
+          "layout": "HORIZONTAL",
+          "props": {
+            "state": "default"
+          }
+        },
+        {
+          "id": "170:2025",
+          "name": "Link · default",
+          "type": "INSTANCE",
+          "width": 50,
+          "height": 20,
+          "layout": "HORIZONTAL",
+          "props": {
+            "state": "default"
+          }
+        },
+        {
+          "id": "170:2027",
+          "name": "Link · default",
+          "type": "INSTANCE",
+          "width": 55,
+          "height": 20,
+          "layout": "HORIZONTAL",
+          "props": {
+            "state": "default"
+          }
+        },
+        {
+          "id": "170:2031",
+          "name": "Čeština",
+          "type": "INSTANCE",
+          "width": 24,
+          "height": 16,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "full"
+          }
+        },
+        {
+          "id": "170:2033",
+          "name": "English",
+          "type": "INSTANCE",
+          "width": 32,
+          "height": 16,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "full"
+          }
+        },
+        {
+          "id": "170:2035",
+          "name": "Logo, hledání a ikonové akce",
+          "type": "FRAME",
+          "width": 1440,
+          "height": 88,
+          "layout": "HORIZONTAL",
+          "padding": [0, 20, 0, 20],
+          "gap": 36
+        },
+        {
+          "id": "33:685",
+          "name": "Logo N1",
+          "type": "INSTANCE",
+          "width": 256,
+          "height": 61,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "full"
+          }
+        },
+        {
+          "id": "33:705",
+          "name": "SearchForm · md/default/false",
+          "type": "INSTANCE",
+          "width": 542,
+          "height": 32,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "sm",
+            "state": "default",
+            "gapped": "false"
+          }
+        },
+        {
+          "id": "192:1926",
+          "name": "Search submit · icon only",
+          "type": "INSTANCE",
+          "width": 32,
+          "height": 32,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "md",
+            "tone": "neutral",
+            "state": "default"
+          }
+        },
+        {
+          "id": "170:2045",
+          "name": "Button",
+          "type": "INSTANCE",
+          "width": 24,
+          "height": 24,
+          "layout": "HORIZONTAL",
+          "props": {
+            "showLeftIcon#36:122": false,
+            "showRightIcon#724:0": false,
+            "variant": "tertiary",
+            "theme": "borderless",
+            "size": "sm",
+            "state": "default"
+          }
+        },
+        {
+          "id": "170:2057",
+          "name": "Button",
+          "type": "INSTANCE",
+          "width": 28,
+          "height": 28,
+          "layout": "HORIZONTAL",
+          "props": {
+            "showLeftIcon#36:122": false,
+            "showRightIcon#724:0": false,
+            "variant": "tertiary",
+            "theme": "borderless",
+            "size": "sm",
+            "state": "default"
+          }
+        },
+        {
+          "id": "170:2067",
+          "name": "Button",
+          "type": "INSTANCE",
+          "width": 28,
+          "height": 28,
+          "layout": "HORIZONTAL",
+          "props": {
+            "showLeftIcon#36:122": false,
+            "showRightIcon#724:0": false,
+            "variant": "tertiary",
+            "theme": "borderless",
+            "size": "sm",
+            "state": "default"
+          }
+        },
+        {
+          "id": "170:2076",
+          "name": "Kategorie · hlavní navigace",
+          "type": "FRAME",
+          "width": 1440,
+          "height": 60,
+          "layout": "HORIZONTAL",
+          "padding": [18, 18, 18, 18],
+          "gap": 0
+        },
+        {
+          "id": "170:2077",
+          "name": "Link · default",
+          "type": "INSTANCE",
+          "width": 96,
+          "height": 24,
+          "layout": "HORIZONTAL",
+          "props": {
+            "state": "default"
+          }
+        },
+        {
+          "id": "170:2079",
+          "name": "Link · default",
+          "type": "INSTANCE",
+          "width": 86.09375,
+          "height": 24,
+          "layout": "HORIZONTAL",
+          "props": {
+            "state": "default"
+          }
+        },
+        {
+          "id": "170:2081",
+          "name": "Link · default",
+          "type": "INSTANCE",
+          "width": 93.515625,
+          "height": 24,
+          "layout": "HORIZONTAL",
+          "props": {
+            "state": "default"
+          }
+        },
+        {
+          "id": "170:2083",
+          "name": "Link · default",
+          "type": "INSTANCE",
+          "width": 85.28125,
+          "height": 24,
+          "layout": "HORIZONTAL",
+          "props": {
+            "state": "default"
+          }
+        },
+        {
+          "id": "170:2085",
+          "name": "Link · default",
+          "type": "INSTANCE",
+          "width": 99.953125,
+          "height": 24,
+          "layout": "HORIZONTAL",
+          "props": {
+            "state": "default"
+          }
+        },
+        {
+          "id": "170:2087",
+          "name": "Link · default",
+          "type": "INSTANCE",
+          "width": 76.203125,
+          "height": 24,
+          "layout": "HORIZONTAL",
+          "props": {
+            "state": "default"
+          }
+        },
+        {
+          "id": "170:2089",
+          "name": "Link · default",
+          "type": "INSTANCE",
+          "width": 75.59375,
+          "height": 24,
+          "layout": "HORIZONTAL",
+          "props": {
+            "state": "default"
+          }
+        },
+        {
+          "id": "170:2091",
+          "name": "Link · default",
+          "type": "INSTANCE",
+          "width": 109.765625,
+          "height": 24,
+          "layout": "HORIZONTAL",
+          "props": {
+            "state": "default"
+          }
+        },
+        {
+          "id": "170:2093",
+          "name": "Link · default",
+          "type": "INSTANCE",
+          "width": 57.296875,
+          "height": 24,
+          "layout": "HORIZONTAL",
+          "props": {
+            "state": "default"
+          }
+        },
+        {
+          "id": "170:2095",
+          "name": "Link · default",
+          "type": "INSTANCE",
+          "width": 101.703125,
+          "height": 24,
+          "layout": "HORIZONTAL",
+          "props": {
+            "state": "default"
+          }
+        }
+      ]
+    },
+    {
+      "id": "33:1100",
+      "nodes": [
+        {
+          "id": "33:1100",
+          "name": "Footer · N1 storefront",
+          "type": "FRAME",
+          "width": 1440,
+          "height": 295.816650390625,
+          "layout": "VERTICAL",
+          "padding": [0, 0, 0, 0],
+          "gap": 0
+        },
+        {
+          "id": "33:1101",
+          "name": "Informace a odkazy",
+          "type": "FRAME",
+          "width": 1440,
+          "height": 254.81666564941406,
+          "layout": "HORIZONTAL",
+          "padding": [16, 16, 16, 16],
+          "gap": 40
+        },
+        {
+          "id": "35:1131",
+          "name": "Logo N1 · footer",
+          "type": "INSTANCE",
+          "width": 322,
+          "height": 77.81666564941406,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "full"
+          }
+        },
+        {
+          "id": "33:1103",
+          "name": "FooterTitle · md",
+          "type": "INSTANCE",
+          "width": 294,
+          "height": 20,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "md"
+          }
+        },
+        {
+          "id": "33:1105",
+          "name": "FooterText · md",
+          "type": "INSTANCE",
+          "width": 294,
+          "height": 17,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "md"
+          }
+        },
+        {
+          "id": "33:1107",
+          "name": "FooterText · md",
+          "type": "INSTANCE",
+          "width": 298,
+          "height": 20,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "md"
+          }
+        },
+        {
+          "id": "33:1109",
+          "name": "FooterText · md",
+          "type": "INSTANCE",
+          "width": 298,
+          "height": 20,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "md"
+          }
+        },
+        {
+          "id": "33:1111",
+          "name": "FooterText · md",
+          "type": "INSTANCE",
+          "width": 298,
+          "height": 20,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "md"
+          }
+        },
+        {
+          "id": "33:1114",
+          "name": "FooterTitle · md",
+          "type": "INSTANCE",
+          "width": 322,
+          "height": 25,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "md"
+          }
+        },
+        {
+          "id": "33:1116",
+          "name": "FooterLink · md",
+          "type": "INSTANCE",
+          "width": 322,
+          "height": 20,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "md"
+          }
+        },
+        {
+          "id": "33:1118",
+          "name": "FooterLink · md",
+          "type": "INSTANCE",
+          "width": 322,
+          "height": 20,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "md"
+          }
+        },
+        {
+          "id": "33:1120",
+          "name": "FooterLink · md",
+          "type": "INSTANCE",
+          "width": 322,
+          "height": 20,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "md"
+          }
+        },
+        {
+          "id": "33:1122",
+          "name": "FooterLink · md",
+          "type": "INSTANCE",
+          "width": 322,
+          "height": 20,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "md"
+          }
+        },
+        {
+          "id": "33:1125",
+          "name": "FooterTitle · md",
+          "type": "INSTANCE",
+          "width": 322,
+          "height": 25,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "md"
+          }
+        },
+        {
+          "id": "191:1901",
+          "name": "FooterTitle · md",
+          "type": "INSTANCE",
+          "width": 72,
+          "height": 25,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "md"
+          }
+        },
+        {
+          "id": "171:2175",
+          "name": "Copyright · oddělený pás",
+          "type": "FRAME",
+          "width": 1440,
+          "height": 41,
+          "layout": "HORIZONTAL",
+          "padding": [12, 12, 12, 12],
+          "gap": 4
+        },
+        {
+          "id": "171:2178",
+          "name": "Web Revolution",
+          "type": "INSTANCE",
+          "width": 32,
+          "height": 17,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "full"
+          }
+        }
+      ]
+    },
+    {
+      "id": "219:2820",
+      "nodes": [
+        {
+          "id": "219:2820",
+          "name": "Quantity and purchase · minus 1 plus",
+          "type": "FRAME",
+          "width": 768,
+          "height": 36,
+          "layout": "HORIZONTAL",
+          "padding": [0, 0, 0, 0],
+          "gap": 8
+        },
+        {
+          "id": "219:2821",
+          "name": "NumericInput · horizontal compound · value 1 / min 1",
+          "type": "FRAME",
+          "width": 104,
+          "height": 36,
+          "layout": "HORIZONTAL",
+          "padding": [0, 0, 0, 0],
+          "gap": 0
+        },
+        {
+          "id": "219:2822",
+          "name": "NumericInput.DecrementTrigger · disabled at min=1",
+          "type": "INSTANCE",
+          "width": 28,
+          "height": 36,
+          "layout": "HORIZONTAL",
+          "props": {
+            "showLeftIcon#36:122": false,
+            "showRightIcon#724:0": false,
+            "variant": "primary",
+            "theme": "borderless",
+            "size": "md",
+            "state": "disabled"
+          }
+        },
+        {
+          "id": "219:2829",
+          "name": "NumericInput.Input · borderless value 1",
+          "type": "INSTANCE",
+          "width": 44,
+          "height": 32,
+          "layout": "HORIZONTAL",
+          "props": {
+            "size": "md",
+            "state": "default"
+          }
+        },
+        {
+          "id": "219:2831",
+          "name": "NumericInput.IncrementTrigger · enabled",
+          "type": "INSTANCE",
+          "width": 28,
+          "height": 36,
+          "layout": "HORIZONTAL",
+          "props": {
+            "showRightIcon#724:0": false,
+            "showLeftIcon#36:122": false,
+            "variant": "primary",
+            "theme": "borderless",
+            "size": "md",
+            "state": "default"
+          }
+        },
+        {
+          "id": "39:2074",
+          "name": "Button · secondary/solid/md · N1 app metrics · Přidat do košíku",
+          "type": "INSTANCE",
+          "width": 143,
+          "height": 36,
+          "layout": "HORIZONTAL",
+          "padding": [4, 10, 4, 10],
+          "gap": 16,
+          "props": {
+            "showRightIcon#724:0": false,
+            "showLeftIcon#36:122": false,
+            "variant": "secondary",
+            "theme": "solid",
+            "size": "md",
+            "state": "default"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,461 @@
+# Kontrola převodu N1 storefrontu
+
+## Baseline pro první commit po aktualizaci demo větve
+
+Základ aktualizován fast-forwardem na `44c987a3c` (45 commitů), bez konfliktů.
+Commit obsahuje samostatný N1 CS/EN shell, homepage, katalog, detail, skutečné
+hledání a kontakty nad existujícími veřejnými API, kanonických447 tokenů a assety.
+Auth/registrace/účet/checkout do tohoto commitu nepatří. Žádný nový backend,
+provisioning, runtime mock ani import soukromé implementace jiné aplikace.
+
+Přesný vybraný rozsah prošel84 testy, lintem, frozen instalací a čistým produkčním
+buildem včetně TypeScriptu po pullu. Normalizace veřejného originu je sdílená
+infrastruktura Next kanálu; její nezávislé testy jsou `tests/request-origin.test.ts`.
+Staré vygenerované Next typy od odložených auth rout odstranila čerstvá kompilace;
+žádné pravidlo/exclude nebylo upraveno kvůli jejich potlačení.
+
+Produkční baseline smoke po pullu: home1440 a kontakty390 bez overflow, console
+či pageerror, screenshoty skutečně otevřené. Žádné auth odkazy a přímé přihlášení404.
+Žádný business POST. Naplněné N1 owner stavy nadále nejsou vizuálně potvrzené.
+
+Plná gate po pullu367/371, čtyři neúspěšné testy mimo N1: native-data-factory-proof,
+dva případy no-service-constructor-imports a repository-policy. Nové N1 diagnostiky
+nejsou v reportu. Testy Core míří i na změněné/migrované upstream zdroje; další policy
+nálezy jsou ve zbytku checkoutu. Nejsou opravované rozšířením N1 scope ani skryté.
+Řetězec se zastavil na lint-rule testech, následné globální kroky nebyly ověřené.
+Historické počty a důkazy níže nejsou výsledkem tohoto běhu.
+
+Evidence `.local/n1-review/2026-11-03-baseline-commit/`; lokální evidence není součást
+commitu. Commit používá běžné hooky bez bypassu.
+
+## Aktuální pokračování: kontakty a opravy kompozice
+
+Čtecí Figma session `fc726167-f2e2-44b1-9781-a83a73bcafd0`; kontakty main
+`369:2578/369:2758`, hero `33:771/34:954`. Mapování v COMPONENT-MAPPING.md.
+Krátký seznam kontaktů nahradila celá kompozice: reklamační a provozní adresa,
+tel/mail odkazy, dvousloupcový FormInput/FormTextarea a Button. Odstranění optional
+Carousel.Control řeší bílé plochy/padding bez appearance CSS. Novinky v navigaci
+nezávisí na dostupnosti katalogu. Zbývající rozdíly canonical vs instance jsou přiznané.
+
+Kontakty používají veřejný work-tasks generated client; nejde o nový backend ani
+potvrzení bez ownera. Nezávislý review ověřuje N1 server identity, fresh write
+assertion s Bearer po redeemed read, opakování jen explicitního revision conflict
+a matching tenant/requestId/taskRef pro success. Neznámý výsledek se neopakuje.
+Review nalezl synchronní completion race po validaci: opravena uložením fiberu před
+registrací observeru. Regresní test ověřuje warmed runtime → whitespace invalid →
+valid retry; 11 inquiry testů prošlo.
+
+Dvě nové deklarace jsou existující workspace work-tasks a shared-contracts, bez
+nových externích verzí. `exactOptionalPropertyTypes:true` sjednocuje N1 s workspace
+base; odstranilo Core chyby vyvolané jinou optional sémantikou. Dvě N1 optional
+předání jsou opravena bez změny měnové sémantiky (Struct.pick zachová absenci měny).
+
+Dev browser: CS kontakty1440/390/320, EN390, screenshoty skutečně otevřené.
+HTTP200, žádný overflow/console/pageerror/business POST; gutter40, kolony552/147,
+gap16, asociované labely a správné tel/mail. První hero průchod během HMR zachytil
+hydration warning hledání; následující izolovaný čerstvý GET jej nereprodukoval.
+Rozhodující je produkční smoke po finálním buildu.
+
+Finální produkční browser: kontakty CS1440/390/320 a EN390, home1440/390.
+Bez overflow, console/pageerror a hydratačních warningů. Labely/required a nativní
+prázdný submit ověřené bez business POST; klik Novinky vede na skutečnou routu.
+Negativní lokální API testy: cizí origin403 a neplatné DTO400, oba před owner voláním.
+N1 úspěšný zápis/grants zůstávají runtime neověřené. 74 testů, lint, typecheck,
+format, theme:check a produkční build prošly. Po poslední serverové Match opravě
+byly znovu spuštěné testy i build; UI se proti produkčnímu browser důkazu neměnilo.
+
+Plná gate při opakování369/371, bez timeoutu. Vedle dvou existujících selhávajících
+testů obsahovala policy diagnostika i5 nových N1 tag zápisů. Ty byly opravené přes
+Match.tag bez změny pravidel. Následný přesný celorepozitářový repository-policy
+recheck už neobsahuje žádný N1 nález; zbývají ostatní dříve existující diagnostiky.
+Celá371-testová gate se po této poslední opravě znovu neopakovala. Řetězec dál za
+selháním lint-rule testů nebyl ověřen; nejde o PASS celého repozitáře.
+Samostatné i18n:boundaries má11 Shell chyb mimo N1.
+
+Evidence `.local/n1-review/2026-11-02-figma-transfer/`, zejména production screenshoty,
+repository-final a policy-final logy. Bez commitů, push/deploy, změn backendu/Figmy/kitu
+nebo runtime mocků. GitHub byl pouze fetch: lokální HEAD a94937205, origin2f08a5fcf,
+21 commitů napřed, bez překryvu souborů při kontrole; pull nebyl proveden.
+
+## Předchozí přírůstek: kanonické Theme/N1 a správná tokenová kaskáda
+
+Uživatel upřesnil jako autoritu [New Design System / Theme / N1](https://www.figma.com/design/gi5GUSWwAeXknaKEeLqK5w/New-Design-System?node-id=2667-2).
+Čtecí session `0397b40e-b436-4ebb-bf27-114466df5aa0`, kolekce Theme, mode4082:0.
+`n1.json` nyní obsahuje všech 447 kanonických proměnných. Starý 418-tokenový mix
+222 Theme položek, 186 sdílených komponentových snapshotů a 10 lokálních App overrides
+byl odstraněn. Předchozí soubory jsou jen důkaz v `.local/n1-review/theme-correction-before/`.
+
+- Všechny kanonické názvy již registruje instalovaný kit. Generované `n1.css` pouze
+  aktivuje přesné hodnoty/aliasy jako jeden unlayered `[data-theme="n1"]` za knihovnou.
+- `globals.css`: importy, nutná content registration a metadata aplikačního layoutu.
+  Žádná `n1-*-tokens` třída ani kopie per-instance komponentových defaultů.
+- `tokens/storefront.css`: řídké společné aliasy Header/Footer tmavých slotů a
+  full-bleed footer layout. Kit pro tyto organismy nemá tone prop. Žádná nová paleta,
+  lokální shadow reset, rozměry Button/Input ani vlastní produktová typografie.
+- Header používá Actions/ActionItem a current/unstyled Button pro dědění barvy menu;
+  kontaktní a adresní tokenové wrappery patky jsou odstraněné.
+- Typovaný Effect renderer ověřuje kanonickou identitu, úplné Schema, kolize
+  normalizovaných názvů a neexistující/cyklické aliasy. Opacity/font-weight jsou
+  skaláry, duration sekundy, brightness procenta, délky px, STRING CSS se zachovává.
+  CLI používá FileSystem, effect/cli a NodeServices, žádný throw/fetch/argv parser
+  nebo úprava pravidel. Dev dependency pouze deklaruje již workspace používaný
+  `@effect/platform-node` ve stejné verzi; žádná UI závislost se nemění.
+
+Použité skutečné reference v `new-engine/libs/ui/skills/`: workflow orchestrator,
+component usage, app-token-initialization, app-token-overrides, tailwind-token-authoring,
+app-ui-kit-audit; API a runtime vždy porovnané s instalovaným 0.57.0. Starší názvy
+adopt-ui-kit-in-app a app-component-inventory nejsou v této kopii dostupné.
+Referenční skilly se nepovažují za důkaz, že jejich novější balíčkové chování již
+existuje v 0.57.0. Konkrétní rozdíl: odstranění explicitního @source při prvním
+průchodu přestalo generovat kit utility; nezávislý browser nález byl opraven
+obnovením content registration. Nejde o povolení obnovit vzhledové scopes.
+
+Nezávislý kontraktový reviewer potvrdil source, jednotky, kaskádu a veřejné slots
+bez blokujícího nálezu. Browser po opravě registrace ověřil všech 447 výsledných
+hodnot: primary base/hover/active #ffe710/#ffdd00/#ffc700, oba on-primary #141414,
+duration-slow3s, brightness100%, opacity přibližně0.6. Context class count0.
+Header#141414, footer#333, skutečný retry390358×44 a radius2, menu bílé a ovladatelné
+Enterem, žádné přetékání při1440/1920/390/320. Čerstvé načtení bez hydratačních chyb.
+
+Přiznané rozdíly proti instančně upravené storefront Figmě: patka má knihovní
+typografické metriky (přibližně346desktop/664mobile místo předchozích291/550),
+carousel knihovní controls/indikátor, search footer44/radius2 místo36/square a status
+text v kanonické foreground místo lokální modré. Nejsou schované dalšími tokenovými
+třídami a nejsou vydávané za 1:1 vizuální PASS. Naplněné owner stavy nadále chybí.
+
+63 testů a theme:check prošly, lint zahrnující scripts a typecheck prošly.
+Produkční build prošel. Finální produkční browser smoke ověřil 447/447 tokenů
+(po sémantické normalizaci minifikovaných CSS barev), nulové context classes,
+menu/retry/search bez přetékání, console warning/error a hydratačních chyb.
+PNG logo patky používá podporovaný NextImage fill v layout wrapperu s poměrem322/78;
+původní warning při frakčním zaokrouhlení obou rozměrů se už neobjevuje.
+Evidence `.local/n1-review/2026-11-02-theme/n1-theme-production-*`.
+
+Plná gate doběhla:369/371 lint-rule testů, dva existující neúspěchy mimo N1
+(`no-service-constructor-imports.test.mts` a `repository-policy.test.mts`).
+Žádný diagnostický nález v N1; řetězec se zastavil v lint-rule testech, navazující
+celorepozitářové kroky proto nejsou označené za ověřené. Log
+`.local/n1-review/2026-11-02-theme/n1-theme-repository-check.log`.
+Žádné commity, push, deploy, úpravy knihovny ani runtime mocky.
+Vývojový server byl po produkční kontrole obnoven na http://127.0.0.1:3071 (HTTP200).
+
+## Předchozí přírůstek: inventář, kategorie a plný detail
+
+Figma session `a9159725-64c3-4266-80d6-c4c922c33291`; nezávislá vizuální session
+`91737d15-649e-4679-8126-6071bc134ef2`. Úplné top-level rámce a všech 16 hlavních
+typů obrazovek jsou v `FIGMA-INVENTORY.md`; žádný fixture produkt nebo objednávka
+z návrhu není runtime data.
+
+- Kategorie: owner strom a breadcrumb, skutečné podkategorie a celkový počet,
+  URL page předaná ownerovi, knihovní Pagination. Hledání při stránkování zachovává q.
+- Mobilní karty mají vlastní kompozici `38:2185`: obrázek před názvem, PriceBlock,
+  AvailabilityStatus, outlined detail. Homepage si zachovává vlastní skladbu.
+- Full decoder zachovává owner gallery, descriptionParagraphs, parameters a aktivní
+  variantRecords. Varianty mají vlastní cenu, stock, minimum i unit. Opaque variantId
+  se sdílí URL; neznámé ID nevybere cizí variantu. React key resetuje galerii/množství.
+- Gallery používá pouze povolené skutečné HTTPS obrázky. Předaná prázdná gallery
+  nesmí vrátit starou imageSrc. Core Media není nahrazeno odvozenými URL.
+- Mobilní QuantityField a nákup zůstávají disabled do skutečné cart/quote integrace;
+  nejsou vložené návrhové limity 1–3 ks, ceny, značky ani termíny doručení.
+- Produktové Tabs jsou knihovní. Parametry respektují Code Connect `219:2884`:
+  DataTable hideHeader, bez sortingu, line na mobilu a striped na desktopu.
+- Route loading používá knihovní Skeleton; nedostupnost má skutečné router.refresh
+  retry. Není vydávaná za empty/not-found ani za konkrétní vyprodaný produkt.
+
+Nezávislý code reviewer nalezl a root opravil neplatný browse trigger při
+unconfigured marketu, zachování starého indexu galerie po výběru varianty,
+nerespektovanou owner gallery a rodičovské minimum/unit vybrané varianty.
+Mobilní kategorie při otevření stromu nyní zachovává viditelný h1.
+
+Skutečný browser: kategorie a produkt při 1440/1920/390/320, angličtina při 390.
+HTTP 200 unavailable, právě jeden h1, bez horizontálního přetékání, správné html.lang
+a copy, bez console warning/error a pageerror. Retry provedlo další RSC GET 200 a
+zachovalo category?page=2. Cílený recheck po opravě: category heading 32/48,
+product heading 24/36, oba retry 358×44 při 390. Screenshoty byly skutečně otevřené.
+Evidence `/tmp/n1-catalog-wave-*`; finální kopie se ukládají do `.local/n1-review/`.
+
+Limity: na localhost:3020 není Shell listener. Přesná runtime příčina konfigurace
+není veřejným unavailable DTO rozlišená; žádná `.env` nebyla čtená. Naplněné karty,
+galerie, parametry, varianty, loading při skutečném pomalém owner čtení, browse a
+paginace mají zatím unit/type/build důkazy, nikoliv naplněný vizuální PASS.
+Chybí skutečný media přístup pro N1: owner guard rozpoznává jen konkrétní demo
+prodávající entity a pro ostatní vyžaduje staff readAll. Tato práce jej neobchází.
+Desktopové size chips, related products, výrobce, daňový rozpad a doručení nejsou
+vymyšlené; čekají na doložené owner podklady/integraci. Tabs na úzkém mobilu dovolují
+horizontální posun místo CSS zásahu do knihovního zalamování triggeru.
+
+Kontroly: 58 testů prošlo, včetně skutečného server renderu celé naplněné produktové
+kompozice nad označeným unit fixture (Gallery, Tabs, headerless DataTable, vybraná
+owner varianta, disabled nákup). Test runner má automatic JSX runtime pro TSX;
+není přidaný React globál ani náhradní BE v aplikaci. Typecheck a produkční build
+prošly. Produkční browser smoke kategorie/produktu při 390/1440 potvrdil stejné
+geometrie, skutečný retry, jediný h1 a nulové browser chyby.
+
+Plná gate doběhla bez timeoutů: 369/371 lint-rule testů prošlo, dva stejné existující
+neúspěchy mimo N1 (`no-service-constructor-imports.test.mts` v Shell a
+`repository-policy.test.mts`). Log `/tmp/n1-catalog-repository-check.log`; žádný N1
+diagnostický nález. Řetězec se zastaví v testech lint pravidel, následné kroky tím
+nejsou ověřené. Limity ani pravidla se neměnily. Předchozí samostatné i18n má
+11 Shell chyb mimo N1; v této vlně se jeho celorepozitářová kontrola neopakovala.
+Lokální dev server je po produkčním smoke obnovený na portu 3071.
+
+Finální vizuální a produkční důkazy: `.local/n1-review/2026-11-02-catalog/`.
+TraceDecay při kontextovém průzkumu této vlny zúžil výstup o přibližně 30 tisíc tokenů.
+
+## Předchozí přírůstek: SearchSuggestions zapojené přes existující API
+
+Základní integrace je hotová bez změny UI kitu. Figma výsledků a API fallbacku se
+znovu načetla v session `e4748632-a96c-48ba-9994-83421a018efb`, rooty 63:1548/63:1591
+a detail 440:1961. Dřívější odkládání celé komponenty kvůli query-submit detailu
+bylo opravené; nejde o podmínku jejího běžného použití.
+
+### Implementace a nezávislé review
+
+- Jeden existující SearchSuggestions input nahradil SearchForm. Přístupný kit Label
+  je propojený pomocí explicitního id; sr-only slouží pouze přístupnosti.
+- Podporované groups/resultSlot obsahují pouze skutečné produkty owner čtení;
+  maximálně 8 návrhů. Image a PriceBlock jsou z kitu; uvnitř navigačního anchoru nejsou
+  další interaktivní odkazy. Nejsou přidané historické Fox produkty ani značky.
+- Řízené open/onOpenChange otevře loading i tehdy, když zatím neexistují žádné položky.
+  Empty a unavailable mají různá datová pole i pravdivé zprávy; výpadek nepředstírá
+  úspěšné nulové hledání. Fallback používá stejnou empty kompozici jako návrh.
+- Native form používá řízený dotaz a běžné chování kitu: první Enter bez zvýraznění
+  zavře popup, další odešle dotaz. Footer a výběr položky zavírají seznam; žádný
+  wrapper key handler ani interní DOM patch.
+- Readonly GET `/api/search-suggestions` validuje locale/query, používá stávající
+  getCatalog → veřejnou OntOS gateway a vrací omezený veřejný DTO. Cache-Control:no-store.
+  API klíč ani tenant/seller konfigurace se do browseru nevrací.
+- Effect HTTP klient v browseru má no-store a shared ManagedRuntime. Debounce 250 ms,
+  decode sdíleného Schema a cleanup fiberu chrání před výsledkem jiného dotazu/locale
+  a ruší nepotřebný browser fetch. Core read na serveru není browser abortem prokazatelně
+  přerušený; zůstává omezený existujícími owner timeouty.
+- Dočasná Next Server Action byla před předáním nahrazená GET adapterem: review
+  lokálního Next kódu prokázalo serializaci RPC a nepřerušitelnost jejich fronty.
+  Současná implementace tuto frontu nepoužívá a neregistruje tento read jako Action.
+- API/datové a závěrečné GET review jsou bez nového blokujícího nálezu. Drobné
+  A→B→A může do obnovení A zobrazit dřívější snapshot stejného A; nejde o prohození
+  různých dotazů nebo locale.
+
+### Skutečný browser a produkční build
+
+Prohlédnuté snímky a metriky jsou uchované v `.local/n1-review/2026-11-02-search/`:
+produkce 1440/1920, skutečný loading při síťové latenci a accepted dev kontrola.
+Checker i root otevřeli produkční 1440 a loading snímek; checker navíc 1920 a další stavy.
+
+- Jeden pojmenovaný input „Hledat produkty“ / „Search products“.
+- Desktop control/popup 576/768 px při 1440/1920; input 32 px, footer 36 px/radius 0.
+- Popup překrývá obsah správně, focus po ustálení přesně #d0d0d0; mobil 390 hledání skrývá.
+- Skutečný GET vrací 200 se state:unavailable a no-store, bez mockovaných odpovědí.
+- Skutečné zpomalení sítě ukázalo loading; smazání dotazu přerušilo request
+  net::ERR_ABORTED, odstranilo text a zavřelo popup. Stará odpověď ho znovu neotevřela.
+- Kliknutí na footer naviguje na skutečnou `/cs/vyhledavani?q=Fox` a popup zavře.
+  První/druhý Enter odpovídají výše popsanému chování. English copy je lokalizovaná.
+- Produkční smoke po finálním buildu při 1440/1920 bez console warning/error a pageerror,
+  bez horizontálního přetékání.
+
+Není potvrzená naplněná app nabídka ani brand group: stále chybí funkční N1 datový
+kontext. Zůstávají tři doložené P2 odchylky standardního widgetu vůči Figmě: gutter
+přibližně 8,5 px místo 4 px, menší status řádek než 42 px a otočení search trigger glyphu
+při otevření. Nejsou skryté vlastním CSS nebo neexistujícími props; žádný plošný
+pixelový PASS. Nedostupný text se záměrně nevydává za úspěšné „nic jsme nenašli“.
+
+### Kontroly tohoto zapojení
+
+Cílený lint/typecheck, všech 43 testů a theme:check 418 tokenů prošly. Nové testy ověřují
+blank/invalidquery bez owner I/O, odlišení unavailable/empty, omezení preview,
+GET no-store a odmítnutí neplatného/velkého transport DTO. Finální standalone build
+obsahuje skutečnou route `/api/search-suggestions`; produkční smoke prošel.
+
+Plná gate při souběhu s buildem měla 15 timeoutů nástroje a 1 existující Shell testový
+neúspěch (355/371). Samostatné opakování bez souběžného buildu již nemá timeouty:
+369/371 prošlo. Zbývají dva dříve doložené neúspěchy mimo N1:
+`no-service-constructor-imports.test.mts` (Shell API composition factory) a
+`repository-policy.test.mts` (17 diagnostik mimo N1). Gate se zastaví v testech
+lint pravidel; následné kroky celého řetězce tím nejsou ověřené. Limity ani závažnosti
+se neměnily. Logy `/tmp/n1-search-repository-check.log` a
+`/tmp/n1-search-repository-check-serial.log`. Samostatné i18n má 11 existujících Shell
+chyb; log `/tmp/n1-search-i18n-check.log`.
+
+## Pokračování: hero, promo a dostupná kompozice karet
+
+Aktuální Figma se znovu načítala v session `232083fa-dc15-43a0-91e5-82f5a4ddc31e`.
+Kořeny `33:771/34:954` pro hero, `33:831/34:1003` pro promo a `33:880/34:1031`
+pro produktové karty. Změny byly znovu nezávisle kontrolované component reviewerem
+a vizuálním checkerem; pouze root upravoval app zdroje.
+
+- Hero používá skutečný Carousel a jediný doložený banner. Jeden indikátor je
+  skutečný stav dat, ne náhrada třemi kopiemi. Obě šipky jsou nativně disabled.
+- Čtyři promo assety jsou z aktuálních Figma Image instancí, ne z screenshotu sekce.
+  Desktop row1152/tile279/image256 a mobil3+1/image114 při390 sedí na předlohu.
+  Při320 byl opraven kolidující dlouhý popisek v nativním titulkovém layoutu.
+- Promo cíle ve Figmě nemají skutečný hyperlink ani potvrzený owner záznam; runtime
+  nevymýšlí href. aria-disabled/title přiznávají neaktivní stav, Enter nenaviguje.
+- Karty používají podporované tokeny paddingu/gapu/border/radius a typografie,
+  originální PriceBlock a skutečně disabled nákupní Button. Body neznámé dostupnosti
+  zůstávají neutrální. Obrázek a Name řádek mají layoutové wrappery dle návrhu.
+- Ověřen skutečně generovaný CSS výstup: Name/Stock a PriceBlock line-height metadata
+  se konzumují; registrace patří do @theme, ne jen scope. Small-shadow je řešený
+  čistým N1 app semantic tokenem, nikoliv změnou knihovny nebo --tw-shadow hackem.
+- Čtyři nové cenové regrese ověřily CZK bez nadbytečných nul, zachování haléřů,
+  on-request bez vymyšlené nuly a skutečnou EUR/from hodnotu. Před opravou selhaly
+  dvě cenové kontroly, po opravě všech34testů prochází.
+
+### Evidence tohoto pokračování
+
+Checker otevřel screenshoty hero/promo1440/1920/390/320 a cílený recheck popisku320.
+Root navíc otevřel promo1440, opravené promo320 a hero390. Uchovaná lokální evidence:
+`.local/n1-review/2026-11-02-wave2/` v kořeni repozitáře. Metriky jsou v
+`n1-wave2-metrics.jsonl` a `n1-wave2-accepted-metrics.jsonl`. Obě úzké šířky bez
+horizontálního přetékání; prohlédnuté interakce bez pageerror.
+
+Lint, typecheck, všech 34 testů, theme kontrola 418 tokenů, format:check a produkční build prošly.
+Celková gate znovu doběhla na stejných dvou existujících neúspěších mimo N1:
+369/371 lint-rule testů. Navazující fáze se kvůli tomuto selhání nespustily.
+Samostatné i18n zůstává na 11 existujících chybách Shellu. Logy:
+`/tmp/n1-wave2-repository-check.log`, `/tmp/n1-wave2-i18n-check.log`.
+
+Poslední čistý desktop promo a mobilní hero jsou uložené jako
+`n1-wave2-accepted-promo-1440.png` a `n1-wave2-accepted-hero-390.png` ve složce evidence.
+Checker oba skutečně otevřel; čerstvý průchod bez Next issue badge a console warning/error.
+Příčina historického přechodného badge nebyla zpětně určovaná.
+
+### Zbývající konkrétní hranice
+
+Produktové karty bez skutečného N1 katalogu nejsou vizuálně odzkoušené s reálnými daty.
+Víceřádkové centrování ProductCard.Name zůstává mezerou jeho API/tokenů. Statické promo
+cíle ani dvě chybějící kampaně nejsou vymyšlené. Nákupní integrace není simulovaná.
+
+SearchSuggestions v instalovaném npm balíčku existuje a může nahradit celý SearchForm.
+Samotné nespojitelné inputy nebyly dostatečný důvod žádat změnu knihovny. Nezávisle
+reprodukovaná skutečná mezera je Enter volného dotazu bez zvýrazněného výsledku při
+otevřeném popupu a chování submit ikony; selection Enter přes navigate funguje.
+Doklad v `n1-search-suggestions-contract-probe.json/.cjs` je izolovaný test skutečného
+Zag connectoru, nikoliv React/browser test nebo backendová simulace. Žádná knihovní
+změna, node_modules patch ani změna new-engine neproběhla.
+
+## Aktuální opravy podle guardrails — 2. 11. 2026
+
+Implementace proběhla s nezávislým read-only component/token reviewerem a vizuálním
+checkerem. Root byl jediný zapisující vlastník. Orchestrace je v lokálním
+`.local/N1-REVIEW-GRAPH.md`. Komponentové mapování a skutečné API mezery jsou v
+`COMPONENT-MAPPING.md`. Starší sekce níže jsou historická evidence, nikoliv aktuální
+tvrzení o použitých props nebo fontu.
+
+Odstraněny vlastní maska hledání, barevný wrapper kolem ActionIcon, per-instance CSS
+výšky ikonových Buttonů a globální body font override. Vzhled řídí podporované props
+a doložené tokeny; Tailwind na wrapperech řídí layout. Knihovní font zůstává system-ui.
+Doplněn mobilní utility bar a ovladatelné menu, patka má čtyři sloupce, copyright
+správné seskupení a padding. Statické benefity jsou přítomné i při nedostupném
+katalogu. Známé stock stavy používají ProductCard.Stock, unknown neutrální stav.
+
+### Skutečně prohlédnutá browser evidence
+
+Nezávislý checker zachytil baseline, druhý průchod a cílené opravy. Poslední snímky
+otevřel checker i root: `/tmp/n1-audit-accepted-1440.png`,
+`/tmp/n1-audit-accepted-390.png`; checker navíc otevřel
+`/tmp/n1-audit-accepted-320.png`. Metriky jsou v
+`/tmp/n1-audit-accepted-geometry.jsonl`, opakovatelný čtecí browser skript v
+`/tmp/n1-visual-accepted.cjs`. Kopie screenshotů, metrik a skriptu jsou uchované v `.local/n1-review/2026-11-02/`.
+
+- Hledání má při 1440/1920 kontejner 576/768 px. Enter naviguje na skutečnou
+  `/cs/vyhledavani?q=helma`; ustálený focus po 500 ms je přesně #d0d0d0.
+- Mobil 390: hlavička 139 px podle aktuálního rootu 34:915, hledání skryté. Menu funguje
+  kliknutím i Enterem, aria-expanded odpovídá viditelnosti a focus zůstává na tlačítku.
+- Šířky 320/390 bez horizontálního přetékání; porovnány clientWidth/innerWidth/scrollWidth.
+- Copyright 1440 je 41 px; 390/320 je 57,594 px oproti návrhu 58 px.
+- Celá patka 1440 je 291,078 px oproti návrhu 295,817 px; 390 je 550,594 px oproti 556,517 px.
+  Zbylé metrické rozdíly nejsou označené jako pixelová shoda a nejsou maskované posuny.
+- Mobilní benefit Image rámečky 35,531/38,078/32,813/24,859 px odpovídají aktuální Figmě.
+  Řady mají 72,781 px oproti 74 px; fontové metriky system-ui se od Inter liší.
+- Kontrolované interakce bez pageerror. Produktová data ani API nebyly mockované.
+
+### Automatické ověření této vlny
+
+Cílený lint, typecheck, všech 30 testů a theme:check 418 tokenů prošly. Finální produkční
+build po poslední opravě footer tokenů i format:check prošly.
+Lint nadále vypisuje známé varování o rozlišení catalog závislosti.
+
+Úplné `pnpm check` bylo znovu spuštěné nad výsledkem. Typecheck lint pravidel prošel;
+jejich testy skončily 369/371, se stejnými dvěma neúspěchy jako před opravami:
+Shell composition factory v no-service-constructor-imports a repository-policy
+se 17 diagnostikami mimo n1-storefront. Navazující fáze společné gate se po tomto
+selhání nespustily. Log `/tmp/n1-guardrails-repository-check.log`.
+
+Aktuální `i18n:boundaries` selhalo na 11 existujících chybách v Shellu, žádný nález
+v n1-storefront; log `/tmp/n1-guardrails-i18n-check.log`. Závažnost ani pravidla se neměnila.
+
+### Výslovně nedokončené / neověřené
+
+SearchSuggestions popup není implementovaný; přesná kompozice se stávajícím SearchForm
+je mezerou instalovaného API, nikoliv dokončeným stavem. Chybí carousel ovládání a
+promo kategorie. Naplněné karty/detail čekají na skutečná N1 data, média a identitu.
+Cookie consent ovládání je neaktivní, account/cart/checkout integrace zůstávají mimo
+tuto vlnu oprav. Žádný plošný vizuální PASS celé homepage nebo storefrontu.
+
+## Historická oprava Figma postupu a theme
+
+Po zpětné vazbě byl znovu načten skutečný `Theme / N1` včetně aliasů, společných
+komponentových kolekcí a aktuálních lokálních overrides pro návrhy hledání. Zapojen
+reprodukovatelný export 418 tokenů, aktivní `data-theme="n1"`. Ruční barevné náhrady
+z prvního přírůstku byly odstraněny.
+
+Nová kontrola v prohlížeči ověřila hlavičku vysokou 180,5 px, hledání široké 576 px,
+ActionIcon 32 × 32 px, jeho originální ikonu 16 × 16 px a ikonové Buttony 24/28/28 px.
+Props byly načteny přímo z aktuálních Figma instancí. Čerstvě exportované SVG ikony
+hlavičky jsou obsahově shodné s lokálními assety. Opraveny explicitní prázdné fills
+u tří Figma Button instancí, které samotné globální theme nereprezentuje.
+
+Kontrola CSS hodnot prošla u 417/418 přímých zápisů; zbývající `text-input-sm`
+UI kit vyjadřuje jako `max(16px, 14px)`, což má v prohlížeči očekávaných 16 px.
+`theme:check`, cílený lint a build prošly. Jde o kontrolu theme a vybrané hlavičky,
+nikoliv o dokončenou vizuální shodu ostatních obrazovek. Inter z textových vrstev Figmy
+je nyní self-hostovaný přes Next localFont se stejným fontovým assetem jako v AKROS.
+Finální rozložení ostatních obrazovek musí projít další kontrolou.
+
+Aktuální snímek této kontroly: `/tmp/n1-header-theme-updated.png`. Návrh se mění,
+proto je nutné při dalším převodu znovu načíst relevantní frame.
+
+## Původní kontrola kostry
+
+Základ: `demo/sales-crm`, commit `a94937205`. Změny zůstávají lokální.
+
+## Automatické kontroly
+
+- `mise run deps`: prošlo, sdílený lockfile obsahuje nový workspace.
+- `pnpm --filter n1-storefront test`: 30/30, tři soubory; používá projektový Effect Rstest harness.
+- `pnpm --filter n1-storefront typecheck`: prošlo.
+- `pnpm --filter n1-storefront lint`: prošlo; nástroj navíc vypisuje varování o rozlišení
+  workspace `catalog:` závislosti UI kitu, které neblokuje kontrolu ani instalaci/build.
+- `pnpm --filter n1-storefront build`: prošlo, dynamické trasy pro locale, katalog,
+  vyhledávání, kategorii, produkt a obsah.
+
+Celé `pnpm check` prošlo typovou kontrolou lint pravidel a skončilo na jejich testech:
+369/371 prošlo, dva neúspěšné testy se týkají původního kódu:
+
+- `no-service-constructor-imports.test.mts`: aktuální Shell authentication composition factory.
+- `repository-policy.test.mts`: 17 diagnostik v původních skriptech, AKROS a testech storefront-registry,
+  včetně uživatelského necommitovaného Figma skriptu. Žádný nález v `n1-storefront`.
+
+Samostatné `pnpm i18n:boundaries` rovněž neprošlo: nálezy jsou v existujícím Shellu
+(API boundary a lokalizace lidí/rolí). Kontroly ani jejich závažnost se neměnily.
+
+## Prohlížeč
+
+Lokální skutečný Next server na `127.0.0.1:3071`, bez náhradního API a produktových fixture dat.
+Porovnány desktopová reference Figmy `31:636` a mobilní skladba stránky.
+Zkontrolovány šířky 1440, 390 a 320 px, žádné horizontální přetékání při 390/320 px.
+Ověřeno načtení log, banneru, vlajek a ikon. Opraven layout patičky, bílé pozadí
+vyhledávání a zachování poměru stran loga. Anglická stránka má `lang="en"` a lokalizované
+přístupné popisky. Odeslání hledání klávesou Enter ověřeno na skutečný přechod
+`/cs/vyhledavani?q=helma`; konzole bez chyb a varování.
+
+Snímky první kontroly jsou v `/tmp/n1-desktop-final.png` a `/tmp/n1-mobile-final.png`.
+Jde o kontrolu dostupné skladby a nedostupného katalogu, nikoliv důkaz úplné vizuální
+shody nebo dokončeného e-shopu. Produktové karty, detail s daty, účet, košík a checkout
+je ještě nutné ověřit po jejich dokončení proti skutečným N1 datům a oprávněním.
+
+## Před plným ověřením
+
+Chybí předaný N1 produktový import a ověřený N1 Storefront Client / seller / tenant /
+market kontext. Proto se nyní zobrazuje pravdivý nedostupný katalog. Ostatní části
+implementace i další obrazovky jsou rozepsané v README; nebyly nahrazeny mocky.
