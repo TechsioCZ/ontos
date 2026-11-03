@@ -251,37 +251,52 @@ jobs:
           key: zerops-stage-attempt-v1-${{ github.run_id }}-${{ github.run_attempt }}
 
       # Cache save errors may warn rather than fail, so the marker is trusted only once it can be read
-      # back. The cache service's read path also lags its write path: a restore issued in the same second
-      # as a save can miss an entry that is already durable. Observed on 2026-11-03, run 41633497832: the
-      # entry was durable from 12:16:07.17, the save reported success at 12:16:07.21, and the restore at
-      # 12:16:07.22 still missed it. Wait, bounded, for the marker's own key to appear in the cache index,
-      # then let the restore below prove its content is readable. A marker that never appears stops the
-      # deploy here.
-      - name: Wait for the durable attempt marker to appear
-        timeout-minutes: 3
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CACHE_KEY: zerops-stage-attempt-v1-${{ github.run_id }}-${{ github.run_attempt }}
-          CACHE_REF: ${{ github.ref }}
-        run: |
-          deadline=$((SECONDS + 120))
-          while :; do
-            if ! visible="$(gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=$CACHE_KEY&ref=$CACHE_REF" --jq '.total_count')"; then
-              echo "::error title=Cache index unreadable::Could not read the cache index for $CACHE_KEY; nothing was deployed."
-              exit 1
-            fi
-            if [ "$visible" -gt 0 ]; then
-              echo "The marker $CACHE_KEY is visible in the cache index for $CACHE_REF."
-              exit 0
-            fi
-            if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "::error title=Durable attempt marker missing::The marker $CACHE_KEY never appeared in the cache index for $CACHE_REF; nothing was deployed."
-              exit 1
-            fi
-            sleep 3
-          done
+      # back — and the read itself is the only proof, because the cache service's index and its restore
+      # lookup are different read surfaces with different lag. The index entry exists from the save's
+      # reservation; the restore lookup sees it later, by a variable amount. Observed on 2026-11-03, run
+      # 41649586684: the save reported success at 14:26:54.789, the index listed the marker (cache id
+      # 9943104190, 355 B, refs/heads/demo/sales-crm) at 14:26:55.227, and a restore at 14:26:55.513 still
+      # missed it — the lookup found nothing and failed in 0.23 s without attempting a download. So
+      # waiting for index visibility proves nothing. The same day, run 41633497832 missed its marker
+      # 0.049 s after the save while run 41636502860 restored its own 0.044 s after the save: the lag is
+      # a race, not a fixed delay. Every marker shares one cache version, so key, ref and version always
+      # match and only availability differs.
+      #
+      # The read is therefore retried, bounded, and fails closed: a marker that cannot be read within the
+      # bound stops the deploy before any remote mutation, exactly as before. The waits run only after a
+      # miss, so the common path pays nothing for them.
+      - name: Require the durable attempt marker
+        id: durable-attempt-1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/zerops-delivery/last-attempt
+          key: zerops-stage-attempt-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          fail-on-cache-miss: false
 
-      # Prove this exact marker can be restored or DO NOT deploy.
+      - name: Wait before retrying the durable attempt marker
+        if: steps.durable-attempt-1.outputs.cache-hit != 'true'
+        run: |
+          echo "The marker is not readable yet; waiting before the next read."
+          sleep 10
+
+      - name: Retry the durable attempt marker
+        id: durable-attempt-2
+        if: steps.durable-attempt-1.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/zerops-delivery/last-attempt
+          key: zerops-stage-attempt-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          fail-on-cache-miss: false
+
+      - name: Wait before the final durable attempt marker read
+        if: steps.durable-attempt-1.outputs.cache-hit != 'true' && steps.durable-attempt-2.outputs.cache-hit != 'true'
+        run: |
+          echo "The marker is still not readable; waiting before the read that decides the deploy."
+          sleep 20
+
+      # The authoritative read. It always runs, and a miss stops the deploy here.
       - name: Require the durable attempt marker
         id: durable-attempt
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
