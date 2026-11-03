@@ -1,13 +1,19 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Effect, Predicate } from 'effect';
+import { Duration, Effect, Predicate, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import type { ComponentType } from 'react';
 
 import type { ResolvedModuleTarget } from '../../../../../shared/api.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { pinBrowserModuleTarget, settleModuleEntrypointLoads } from '../../../module-entrypoint-loader.ts';
+import {
+  moduleEntrypointLoadIdentity,
+  ModuleEntrypointNamespaceSchema,
+  pinBrowserModuleTarget,
+  settleModuleEntrypointLoads,
+} from '../../../module-entrypoint-loader.ts';
+import type { ModuleEntrypointNamespace } from '../../../module-entrypoint-loader.ts';
 import { ShellContentLayout } from '../../../shell-content-layout.tsx';
 import { useShellControls } from '../../../use-shell-controls.ts';
 import type { ModuleTargetPageModel } from './module-page-model.ts';
@@ -17,9 +23,10 @@ type ApprovedModulePageComponent = ComponentType<{
   readonly target: ResolvedModuleTarget;
 }>;
 
-interface RemotePageModule {
-  readonly default: ApprovedModulePageComponent;
-}
+const ApprovedModulePageComponentSchema = Schema.declare<ApprovedModulePageComponent>(
+  (value): value is ApprovedModulePageComponent => Predicate.isFunction(value),
+);
+const RemotePageModuleSchema = Schema.Struct({ default: ApprovedModulePageComponentSchema });
 
 type RemoteState =
   | { readonly state: 'loading' }
@@ -69,17 +76,20 @@ const ResolvedTarget = ({ model }: { readonly model: Extract<ModuleTargetPageMod
           }
           return settleModuleEntrypointLoads([
             {
+              contract: RemotePageModuleSchema,
               identity: model.target,
-              isCompatible: (loaded) =>
-                Predicate.isObjectKeyword(loaded) &&
-                loaded !== null &&
-                'default' in loaded &&
-                Predicate.isFunction(loaded.default),
-              load: () => {
-                controller.signal.throwIfAborted();
-                host.registerRemotes([{ entry: federation.manifest.url, name: federation.remoteName }]);
-                return host.loadRemote<RemotePageModule>(`${federation.remoteName}/${federation.expose.slice(2)}`);
-              },
+              load: () =>
+                Effect.tryPromise(() => {
+                  host.registerRemotes([{ entry: federation.manifest.url, name: federation.remoteName }]);
+                  return host.loadRemote<ModuleEntrypointNamespace>(
+                    `${federation.remoteName}/${federation.expose.slice(2)}`,
+                  );
+                }).pipe(
+                  // Caller deadlines belong to the scheduler; uncancellable SDK work keeps its physical slot.
+                  Effect.timeoutOrElse({ duration: Duration.infinity, orElse: () => Effect.never }),
+                  Effect.flatMap(Schema.decodeUnknownEffect(ModuleEntrypointNamespaceSchema)),
+                ),
+              loadIdentity: moduleEntrypointLoadIdentity(model.target),
             },
           ]).pipe(
             Effect.map(([result]): RemoteState => {
@@ -88,9 +98,6 @@ const ResolvedTarget = ({ model }: { readonly model: Extract<ModuleTargetPageMod
               }
               if (result.state === 'unavailable') {
                 return result;
-              }
-              if (result.value === null) {
-                return { reason: 'incompatible', state: 'unavailable' };
               }
               return { Component: result.value.default, state: 'ready' };
             }),

@@ -98,6 +98,15 @@ import { makeShellAuthenticationApiRuntime as makeProductionShellAuthenticationA
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ShellProviderUnavailableError } from '../../api/modules/shell-resources.ts';
 import {
+  ResolvedModuleTargetSchema,
+  ShellTargetForbiddenProblemSchema,
+  ShellTargetNotFoundProblemSchema,
+} from '../../shared/api.ts';
+import {
+  makeModuleEntrypointLoadScheduler,
+  moduleEntrypointLoadIdentity,
+} from '../../src/routes/module-entrypoint-loader.ts';
+import {
   contentDigest,
   makeCompositionSnapshot as makeFixtureCompositionSnapshot,
 } from '../fixtures/application-composition.ts';
@@ -174,6 +183,7 @@ const password = 'correct-horse-battery-staple';
 const tenantId = '30000000-0000-4000-8000-000000000001';
 const foreignTenantId = '30000000-0000-4000-8000-000000000002';
 const principalId = '40000000-0000-4000-8000-000000000001';
+const changedPrincipalId = '40000000-0000-4000-8000-000000000002';
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..', '..');
 const fixtureLegalEntityId = '35000000-0000-4000-8000-000000000001';
 const fixtureAuthBindingId = '45000000-0000-4000-8000-000000000001';
@@ -204,6 +214,7 @@ const RetryableProblemSchema = Schema.Struct({
   retryable: Schema.optional(Schema.Boolean),
 });
 const TokenResponseSchema = Schema.Struct({ token: Schema.String });
+const ExposedPageFixtureNamespaceSchema = Schema.Struct({ expose: Schema.NonEmptyString });
 const DefectProblemSchema = Schema.Struct({
   detail: Schema.optional(Schema.String),
 });
@@ -500,7 +511,7 @@ it.live(
         coreDatabase.delete(principalAuthBindings).where(eq(principalAuthBindings.principalId, principalId)),
         coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
         coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, foreignTenantId)),
-        coreDatabase.delete(principals).where(eq(principals.principalId, principalId)),
+        coreDatabase.delete(principals).where(inArray(principals.principalId, [principalId, changedPrincipalId])),
         coreDatabase.delete(legalEntities).where(eq(legalEntities.legalEntityId, fixtureLegalEntityId)),
         coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
         coreDatabase.delete(tenants).where(eq(tenants.tenantId, foreignTenantId)),
@@ -540,6 +551,13 @@ it.live(
       displayName: 'Runtime fixture',
       kind: 'human',
       principalId,
+      status: 'active',
+      tenantId,
+    });
+    yield* coreDatabase.insert(principals).values({
+      displayName: 'Changed current principal without module permission',
+      kind: 'human',
+      principalId: changedPrincipalId,
       status: 'active',
       tenantId,
     });
@@ -672,10 +690,13 @@ it.live(
       cookie: cookieHeader(signedInCookies),
       origin: configuration.baseUrl,
     });
-    const exactPageRequest = (entrypointKey = 'testing.pages.page.customers') =>
+    const exactPageRequest = (
+      entrypointKey = 'testing.pages.page.customers',
+      compositionRevision = approvedPageCatalog.composition.revision,
+    ) =>
       new Request(`${configuration.baseUrl}/shell/module-target`, {
         body: JSON.stringify({
-          compositionRevision: approvedPageCatalog.composition.revision,
+          compositionRevision,
           entrypointKey,
           moduleId: 'testing.pages',
         }),
@@ -694,6 +715,7 @@ it.live(
     let moduleResourcePermissionCalls = 0;
     let providerCalls = 0;
     let authenticationContextCalls = 0;
+    const observedModuleContexts: { readonly principalId: string; readonly tenantId: string }[] = [];
     const observedAuthenticationLayer = Layer.succeed(AuthenticationService, {
       ...authentication,
       resolveShellContext: (headers) => {
@@ -707,7 +729,12 @@ it.live(
         ...legalEntitySelectionOptions.contextAccess,
         modules: (input) => {
           moduleResourcePermissionCalls += 1;
-          return legalEntitySelectionOptions.contextAccess.modules(input);
+          observedModuleContexts.push({ principalId: input.principalId, tenantId: input.tenantId });
+          // Scripted permission decision only: session/binding resolution and Module State use
+          // the real owned native DB. This is not a native SpiceDB permission-revocation claim.
+          return input.principalId === principalId
+            ? legalEntitySelectionOptions.contextAccess.modules(input)
+            : Effect.succeed(input.moduleIds.map((key) => ({ decision: 'denied' as const, key })));
         },
         resources: () => {
           moduleResourcePermissionCalls += 1;
@@ -756,6 +783,83 @@ it.live(
       routeParameters: {},
       writable: true,
     });
+    const resolveApprovedTarget = Effect.fn('AuthRuntimeTest.resolveApprovedTarget')(function* resolveApprovedTarget(
+      entrypointKey: string,
+    ) {
+      const response = yield* Effect.tryPromise(() => pageRuntime.handler(exactPageRequest(entrypointKey)));
+      expect(response.status).toBe(200);
+      return yield* Schema.decodeUnknownEffect(ResolvedModuleTargetSchema)(
+        yield* Effect.tryPromise(() => response.json()),
+      );
+    });
+    const approvedTargets = yield* Effect.all([
+      resolveApprovedTarget('testing.pages.page.home'),
+      resolveApprovedTarget('testing.pages.page.customers'),
+    ]);
+    // The production handler supplies the actual approved target identities; controlled import
+    // thunks exercise the real browser scheduler without pretending to execute native remote UI.
+    const scheduler = makeModuleEntrypointLoadScheduler();
+    let physicalLoads = 0;
+    const results = yield* scheduler.settle(
+      approvedTargets.map((target) => ({
+        contract: Schema.Struct({ expose: Schema.Literal(target.federation.expose) }),
+        identity: target,
+        load: () =>
+          Effect.sync(() => {
+            physicalLoads += 1;
+            return { expose: target.federation.expose };
+          }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(ExposedPageFixtureNamespaceSchema))),
+        loadIdentity: moduleEntrypointLoadIdentity(target),
+      })),
+    );
+    expect(physicalLoads).toBe(2);
+    expect(results.map((result) => (result.state === 'ready' ? result.value.expose : result.reason))).toEqual([
+      './PageHome',
+      './PageCustomers',
+    ]);
+    expect(moduleEntrypointLoadIdentity(approvedTargets[0]).result).not.toBe(
+      moduleEntrypointLoadIdentity(approvedTargets[1]).result,
+    );
+    const contextCallsAfterCodeLoad = authenticationContextCalls;
+    // Native DB activation changes must win even after this exact code target was loaded.
+    yield* coreDatabase
+      .update(tenantModuleStates)
+      .set({ state: 'suspended' })
+      .where(and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.moduleKey, 'testing.pages')));
+    const inactiveTarget = yield* Effect.tryPromise(() => pageRuntime.handler(exactPageRequest()));
+    // A suspended page is safely undiscoverable: the target resolver deliberately maps
+    // denied Module State to not_found, distinct from an explicit permission denial below.
+    expect(inactiveTarget.status).toBe(404);
+    const inactiveBody = yield* Effect.tryPromise(() => inactiveTarget.json());
+    const inactiveProblem = yield* Schema.decodeUnknownEffect(ShellTargetNotFoundProblemSchema)(inactiveBody);
+    expect(inactiveProblem.detail).toBe('The requested module target was not found.');
+    expect(inactiveBody).not.toHaveProperty('federation');
+    expect(physicalLoads).toBe(2);
+    yield* coreDatabase
+      .update(tenantModuleStates)
+      .set({ state: 'active' })
+      .where(and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.moduleKey, 'testing.pages')));
+    // Change the real binding behind the same session; its new Principal gets its own scripted
+    // module permission decision rather than inheriting the earlier Principal's successful load.
+    yield* coreDatabase
+      .update(principalAuthBindings)
+      .set({ principalId: changedPrincipalId })
+      .where(eq(principalAuthBindings.principalAuthBindingId, fixtureAuthBindingId));
+    const changedPrincipalTarget = yield* Effect.tryPromise(() => pageRuntime.handler(exactPageRequest()));
+    expect(changedPrincipalTarget.status).toBe(403);
+    const changedPrincipalBody = yield* Effect.tryPromise(() => changedPrincipalTarget.json());
+    yield* Schema.decodeUnknownEffect(ShellTargetForbiddenProblemSchema)(changedPrincipalBody);
+    expect(changedPrincipalBody).not.toHaveProperty('federation');
+    expect(physicalLoads).toBe(2);
+    expect(observedModuleContexts.at(-1)).toEqual({ principalId: changedPrincipalId, tenantId });
+    yield* coreDatabase
+      .update(principalAuthBindings)
+      .set({ principalId })
+      .where(eq(principalAuthBindings.principalAuthBindingId, fixtureAuthBindingId));
+    const reopenedTarget = yield* resolveApprovedTarget('testing.pages.page.customers');
+    expect(moduleEntrypointLoadIdentity(reopenedTarget)).toEqual(moduleEntrypointLoadIdentity(approvedTargets[1]));
+    expect(authenticationContextCalls).toBeGreaterThan(contextCallsAfterCodeLoad);
+    expect(physicalLoads).toBe(2);
     const permissionCallsBeforeStaleRequests = moduleResourcePermissionCalls;
     const staleRevision = 'f'.repeat(64);
     const staleRef = {
@@ -904,6 +1008,39 @@ it.live(
     yield* isolated.composition.closeAdmission();
     yield* isolated.composition.drain();
     yield* isolated.composition.publishReplacement(replacementSnapshot);
+    // Reuse the fixture's one real R1 -> R2 replacement. This R2 deliberately removes
+    // testing.pages, so it must deny the old code target; this is not retained-target
+    // success, a browser reload, or proof of an actual R2 browser remote execution.
+    const replacementCatalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(replacementSnapshot));
+    const replacementRuntime = makeOwnedShellAuthenticationApiRuntime(
+      observedAuthenticationLayer,
+      makeGatewayIssuerLayer({
+        currentTimeSeconds: Effect.succeed(1_700_000_000),
+        generateJti: Effect.succeed('60000000-0000-4000-8000-000000000012'),
+        loadAdmission: installedAdmission(['testing.one']),
+        loadConfig: parseGatewayIssuerConfig({}),
+      }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
+      moduleStateLayer,
+      Effect.succeed(replacementCatalog),
+      false,
+      observedContextAccessLayer,
+    ).createHandler();
+    handlers.push(replacementRuntime);
+    const oldRevisionTarget = yield* Effect.tryPromise(() => replacementRuntime.handler(exactPageRequest()));
+    expect(oldRevisionTarget.status).toBe(409);
+    const removedTarget = yield* Effect.tryPromise(() =>
+      replacementRuntime.handler(
+        exactPageRequest('testing.pages.page.customers', replacementSnapshot.composition.revision),
+      ),
+    );
+    // An explicit module selector absent from the approved catalog is a permission denial;
+    // the resolver reserves not_found for a missing page or a state-hidden installed target.
+    expect(removedTarget.status).toBe(403);
+    const removedBody = yield* Effect.tryPromise(() => removedTarget.json());
+    const removedProblem = yield* Schema.decodeUnknownEffect(ShellTargetForbiddenProblemSchema)(removedBody);
+    expect(removedProblem.detail).toBe('The requested module is forbidden in the selected context.');
+    expect(removedBody).not.toHaveProperty('federation');
+    expect(physicalLoads).toBe(2);
     const supersededPageResponse = yield* Effect.tryPromise(() => pageRuntime.handler(exactPageRequest()));
     expect(supersededPageResponse.status).toBe(503);
     expect(providerCalls).toBe(0);

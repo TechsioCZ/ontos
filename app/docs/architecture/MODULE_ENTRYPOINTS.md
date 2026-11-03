@@ -67,6 +67,32 @@ Generated exact page routes may use safe canonical named-parameter templates suc
 
 Search filters safe providers through the same context/state/module checks, then bulk-filters ResourceRefs by resource permission. Core repeats result-level resource authorization before a generated provider response can leave the receiving BFF. Zero providers/results is successful, mixed provider success is partial `200`, and total provider failure is retryable. Resource detail and timeline providers run only after catalog/type/state/module/resource gates and a fresh audience-scoped assertion for each attempt. Media attachment remains unavailable even when declared in a manifest until Codesmith generates and registers its Action; no provider mutation callback is part of the read gateway.
 
+## Browser load sharing and capacity
+
+The Shell derives load identity only from an approved resolved target. The artifact identity includes
+Composition Revision, app, module, remote name, immutable manifest URL and digest. The result identity
+also includes the exact expose, component key and entrypoint key. App and module identify the owner.
+Canonical tuple encoding keeps these fields unambiguous. Route parameters, Tenant, Principal,
+business data and permission decisions are never part of a shared load record.
+
+Equivalent in-flight result requests share raw Module Federation exports. Different exposes remain
+separate results; the existing Module Federation SDK owns its underlying container sharing. Each
+caller independently validates its requested export contract and owns its deadline and cancellation.
+A caller timeout or abort cannot replace another caller's result. If every waiter abandons queued
+work, it is removed before dispatch. Once an uncancellable SDK operation starts, its record and
+physical permit remain until the actual promise settles, including asynchronous factory completion.
+A later equivalent caller can join that operation. Settled Shell records are removed; this creates no
+permanent export or authorization cache.
+
+The browser runtime allows at most eight physical operations, at most two for one owner, and selects
+queued owners in round-robin order. Equivalent waiters consume no additional physical permit. This
+limits one stalled owner's capacity impact; it cannot promise progress after all eight slots are
+occupied by distinct uncancellable operations. A caller-visible timeout never frees one of those
+slots. Recovery then requires actual settlement or a full document reload. A new document must obtain
+fresh authentication, context, permissions and an approved Composition before loading its own pinned
+target. Existing document pinning, fail-closed outcomes and the prohibition on forced hot replacement
+remain in force.
+
 ## Dependency requirements at actual execution
 
 An owner's intrinsic requirements and conditional operation requirements have different runtime meanings. Derive intrinsic transitive closure from the admitted Composition and include its distinct tenant module keys in the existing boundary snapshot and Action transaction recheck. Worker eligibility adds the same requirements to the existing claim predicate. This does not add a state query for each provider, automatically activate providers, or change unrelated persisted module states. Conditional providers do not enter this intrinsic closure or a global eager state snapshot.
