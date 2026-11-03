@@ -18,12 +18,9 @@ export {
   settleModuleEntrypointLoads,
 } from './module-entrypoint-load-scheduler.ts';
 export type {
-  IdentifiedSettledModuleEntrypointLoad,
   ModuleEntrypointLoadFailure,
   ModuleEntrypointLoadIdentity,
-  ModuleEntrypointLoadRequest,
   ModuleEntrypointNamespace,
-  SettledModuleEntrypointLoad,
 } from './module-entrypoint-load-scheduler.ts';
 
 const OwnerLoadIdentitySchema = Schema.Tuple([Schema.String, Schema.String]);

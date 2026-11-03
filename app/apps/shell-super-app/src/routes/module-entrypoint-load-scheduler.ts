@@ -1,14 +1,14 @@
 import type { InstalledDeploymentFailureReason } from '@app/core-runtime';
 import { Cause, Clock, Deferred, Duration, Effect, Schema } from 'effect';
 
-export type SettledModuleEntrypointLoad<Value> =
+type SettledModuleEntrypointLoad<Value> =
   | {
       readonly reason: InstalledDeploymentFailureReason;
       readonly state: 'unavailable';
     }
   | { readonly state: 'ready'; readonly value: Value };
 
-export type IdentifiedSettledModuleEntrypointLoad<Identity, Value> = SettledModuleEntrypointLoad<Value> & {
+type IdentifiedSettledModuleEntrypointLoad<Identity, Value> = SettledModuleEntrypointLoad<Value> & {
   readonly identity: Identity;
 };
 
@@ -26,7 +26,7 @@ export const ModuleEntrypointNamespaceSchema = Schema.Union([Schema.ObjectKeywor
 export type ModuleEntrypointNamespace = typeof ModuleEntrypointNamespaceSchema.Type;
 export type ModuleEntrypointLoadFailure = Cause.UnknownError | Schema.SchemaError;
 
-export interface ModuleEntrypointLoadRequest<Identity, Value> {
+interface ModuleEntrypointLoadRequest<Identity, Value> {
   readonly contract: Schema.Decoder<Value>;
   readonly identity: Identity;
   readonly load: () => Effect.Effect<ModuleEntrypointNamespace, ModuleEntrypointLoadFailure>;
