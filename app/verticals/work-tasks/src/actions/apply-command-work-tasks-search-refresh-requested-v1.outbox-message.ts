@@ -5,13 +5,6 @@ import type { OutboxMessage } from '@app/core-runtime';
 import { outboxProducerModuleKey, outboxTopic } from '@app/work-tasks/outbox/work-tasks-search-refresh-requested-v1';
 import type { OutboxPayload } from '@app/work-tasks/outbox/work-tasks-search-refresh-requested-v1';
 
-export {
-  OutboxPayloadSchema as ApplyCommandWorkTasksSearchRefreshRequestedV1OutboxPayloadSchema,
-  outboxProducerModuleKey as ApplyCommandWorkTasksSearchRefreshRequestedV1OutboxProducerModuleKey,
-  outboxTopic as ApplyCommandWorkTasksSearchRefreshRequestedV1OutboxTopic,
-} from '@app/work-tasks/outbox/work-tasks-search-refresh-requested-v1';
-export type { OutboxPayload as ApplyCommandWorkTasksSearchRefreshRequestedV1OutboxPayload } from '@app/work-tasks/outbox/work-tasks-search-refresh-requested-v1';
-
 export const createApplyCommandWorkTasksSearchRefreshRequestedV1OutboxMessage = (
   payload: OutboxPayload,
 ): OutboxMessage => ({

@@ -28,7 +28,7 @@ export const MarketCatalogSchema = Schema.Struct({
   ),
 });
 
-export class StorefrontMarketUnavailable extends Schema.TaggedError<StorefrontMarketUnavailable>()(
+class StorefrontMarketUnavailable extends Schema.TaggedError<StorefrontMarketUnavailable>()(
   "StorefrontMarketUnavailable",
   { reason: Schema.Literals(["missing", "inactive", "ambiguous"]) },
 ) {}

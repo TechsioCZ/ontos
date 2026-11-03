@@ -5,7 +5,7 @@ type FilterVariant = Pick<CatalogProductVariant, "id" | "label" | "parameters">;
 
 export type NumericRange = [number, number];
 /** Dimension families the storefront labels in the market language (`variants.dimensions`). */
-export type VariantDimension =
+type VariantDimension =
   | "diameter"
   | "outerDiameter"
   | "length"

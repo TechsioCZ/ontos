@@ -15,11 +15,6 @@ export const membershipLabels = {
   disabled: 'Přístup pozastaven',
   invited: 'Pozván / pozvána',
 } as const;
-export const principalStatusLabels = {
-  active: 'Aktivní přihlášení',
-  archived: 'Archivované přihlášení',
-  disabled: 'Přihlášení zakázáno',
-} as const;
 
 export const personKindLabel = (person: Person): string => {
   if (person.kind === 'agent') {

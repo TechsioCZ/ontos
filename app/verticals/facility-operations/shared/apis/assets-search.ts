@@ -16,7 +16,6 @@ export const AssetsProviderRelevanceSchema = Schema.Struct({
   score: Schema.Int.check(Schema.isBetween({ maximum: 1000, minimum: 0 })),
   version: Schema.Literal('1'),
 });
-export type AssetsProviderRelevance = typeof AssetsProviderRelevanceSchema.Type;
 
 export const AssetsProviderResponseSchema = Schema.Array(
   Schema.Struct({

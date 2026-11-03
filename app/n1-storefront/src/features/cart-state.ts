@@ -3,7 +3,7 @@ import { CartQuoteLineSchema, CartScopeSchema } from "@/ontos/cart-quote";
 import type { CartScope } from "@/ontos/cart-quote";
 
 /** Display values are an unverified draft, never monetary or inventory authority. */
-export const CartEntrySchema = Schema.Struct({
+const CartEntrySchema = Schema.Struct({
   ...CartQuoteLineSchema.fields,
   image: Schema.NullOr(Schema.String.check(Schema.isMaxLength(500))),
   name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
@@ -31,7 +31,7 @@ export class CartDraftInvalid extends Schema.TaggedError<CartDraftInvalid>()(
 ) {}
 export const cartStorageKey = (scope: CartScope) =>
   `n1-cart-v1:${JSON.stringify([scope.tenantId, scope.legalEntityId, scope.marketId, scope.currency])}`;
-export const sameCartScope = (left: CartScope, right: CartScope) =>
+const sameCartScope = (left: CartScope, right: CartScope) =>
   cartStorageKey(left) === cartStorageKey(right);
 export const decodeStoredCart = (raw: string, scope: CartScope) =>
   Schema.decodeUnknownEffect(Schema.fromJsonString(CartDraftSchema))(raw).pipe(

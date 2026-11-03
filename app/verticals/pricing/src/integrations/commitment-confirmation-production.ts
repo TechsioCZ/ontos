@@ -157,7 +157,7 @@ export const commitmentConfirmationVerificationForRetained = Effect.fn(
 });
 
 /** Real owner-backed ports for the selected Quotation finalization path. No Current result is synthesized. */
-export type CommitmentConfirmationProductionServices = ManageCommitmentConfirmationActionServices & {
+type CommitmentConfirmationProductionServices = ManageCommitmentConfirmationActionServices & {
   readonly recoverIssuance: CommitmentConfirmationPersistence['recoverIssuance'];
 };
 
@@ -356,9 +356,7 @@ export const commitmentConfirmationProductionForScope = Effect.fn('PricingCommit
       renew: renewal.renew,
       store: persistence.store,
       verify: verification.verify,
-    } satisfies ManageCommitmentConfirmationActionServices & {
-      readonly recoverIssuance: typeof persistence.recoverIssuance;
-    };
+    } satisfies CommitmentConfirmationProductionServices;
   },
 );
 

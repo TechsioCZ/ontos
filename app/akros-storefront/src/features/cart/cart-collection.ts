@@ -9,7 +9,7 @@ export interface DefaultCartNames {
 }
 
 /** Czech names: every surface outside a market, and any stored collection that is already named. */
-export const CZECH_DEFAULT_CART_NAMES: DefaultCartNames = {
+const CZECH_DEFAULT_CART_NAMES: DefaultCartNames = {
   default: "Výchozí košík",
   commission: "Komisní košík",
 };

@@ -62,7 +62,7 @@ export const enrollmentBody = (input: PortalRegistration, sellingLegalEntityId: 
   sellingLegalEntityId,
 });
 const nonempty = Schema.String.check(Schema.isMinLength(1));
-export const PortalAccountObservationSchema = Schema.Union([
+const PortalAccountObservationSchema = Schema.Union([
   Schema.Struct({ state: Schema.Literal("anonymous") }),
   Schema.Struct({
     account: Schema.Struct({

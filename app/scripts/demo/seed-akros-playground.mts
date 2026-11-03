@@ -60,12 +60,6 @@ import { seedWriteCheckpoint } from './seed-checkpoint.mts';
 import { bootstrapFrozenCatalog } from './akros-playground-bootstrap.mts';
 
 type CopyClient = Pick<SeedClient, 'call'>;
-export {
-  akrosPlaygroundAccounts,
-  akrosPlaygroundLegalEntityId,
-  akrosPlaygroundStorefrontAppId,
-  akrosPlaygroundTenantId,
-} from './akros-playground-copy.mts';
 
 const reason = 'Copy approved frozen AKROS catalog into its isolated playground';
 const Payload = Schema.toEncoded(ApplyCommandPayloadSchema);
@@ -503,7 +497,7 @@ const associationContent = (association: CopySnapshot['catalog']['associations']
     : association.storefrontRef,
 });
 
-export const verifyCopy = (client: CopyClient, plan: CopyPlan, checkpointRoot?: string) =>
+const verifyCopy = (client: CopyClient, plan: CopyPlan, checkpointRoot?: string) =>
   Effect.gen(function* verifyFrozenCopy() {
     const destination = yield* captureCopySnapshot(client, plan.snapshot.origin, akrosCopyDestination, checkpointRoot);
     const differences = yield* catalogDifferences(plan.snapshot, destination.products);
@@ -575,7 +569,7 @@ export const verifyCopy = (client: CopyClient, plan: CopyPlan, checkpointRoot?: 
     return snapshotStats(destination);
   });
 
-export const applyCopyAfterBootstrap = (client: CopyClient, plan: CopyPlan, checkpointRoot?: string) =>
+const applyCopyAfterBootstrap = (client: CopyClient, plan: CopyPlan, checkpointRoot?: string) =>
   Effect.gen(function* applyApprovedFrozenCopy() {
     if (plan.copyScope.marketIds.length !== 5 || sourceCopyOffers(plan.snapshot).length !== 5) {
       return yield* new AkrosPlaygroundCopyError({

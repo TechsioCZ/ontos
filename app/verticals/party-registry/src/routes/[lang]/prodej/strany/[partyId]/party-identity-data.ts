@@ -47,7 +47,6 @@ const PartyIdentityFactViewSchema = Schema.Struct({
   validFrom: Schema.DateTimeUtc,
   value: Schema.String,
 });
-export type PartyIdentityFactView = typeof PartyIdentityFactViewSchema.Type;
 
 const PartyIdentityViewSchema = Schema.Struct({
   aliasResolved: Schema.Boolean,
