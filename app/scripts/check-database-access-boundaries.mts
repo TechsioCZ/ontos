@@ -28,6 +28,7 @@ import type {
 export interface DatabaseAccessViolation {
   readonly file: string;
   readonly line: number;
+  readonly origin?: string;
   readonly reason: string;
 }
 
@@ -565,10 +566,111 @@ interface SourceCheckContext {
   readonly root: string;
   readonly source: string;
   readonly sourceFiles: ReadonlySet<string>;
+  readonly sources: ReadonlyMap<string, string>;
   readonly testSourceFiles: ReadonlySet<string>;
 }
 
 const sourceLine = (source: string, index: number): number => source.slice(0, index).split('\n').length;
+
+const isDeclaredCoreDatabaseBoundary = (
+  context: SourceCheckContext,
+  specifier: string,
+  dependency: string,
+  relative: string,
+): boolean =>
+  (specifier === '@app/core-runtime' || specifier.startsWith('@app/core-runtime/')) &&
+  context.packageExports.get(specifier) === dependency &&
+  relative.startsWith(coreRuntimeSourcePrefix);
+
+const privateDatabaseOrigin = (
+  context: SourceCheckContext,
+  importer: string,
+  specifier: string,
+  visited: Set<string>,
+): string | undefined => {
+  const dependency = resolveLocalSource(
+    context.sourceFiles,
+    context.path,
+    context.root,
+    importer,
+    specifier,
+    context.packageExports,
+  );
+  if (dependency === undefined || visited.has(dependency)) {
+    return undefined;
+  }
+  const relative = context.path.relative(context.root, dependency).split(context.path.sep).join('/');
+  // Only a genuine declared Core export is the public boundary. A lookalike
+  // package or relative route into the private routine implementation is not.
+  if (isDeclaredCoreDatabaseBoundary(context, specifier, dependency, relative)) {
+    return undefined;
+  }
+  if (relative === `${coreRuntimeSourcePrefix}db/scoped-routine.ts`) {
+    return relative;
+  }
+  const owner = /(?:^|\/)verticals\/(?<owner>[^/]+)\//u.exec(relative)?.groups?.owner;
+  const consumerOwner = /(?:^|\/)verticals\/(?<owner>[^/]+)\//u.exec(context.relative)?.groups?.owner;
+  if (owner !== undefined && owner === consumerOwner) {
+    return undefined;
+  }
+  if (owner !== undefined && /(?:^|\/)src\/(?:db|database|repositories?)\//u.test(relative)) {
+    return relative;
+  }
+  visited.add(dependency);
+  for (const match of (context.sources.get(dependency) ?? '').matchAll(importedSpecifier)) {
+    const next = match.groups?.specifier;
+    if (next !== undefined) {
+      const origin = privateDatabaseOrigin(context, dependency, next, visited);
+      if (origin !== undefined) {
+        return origin;
+      }
+    }
+  }
+  return undefined;
+};
+
+const recordResolvedPrivateDatabaseImports = (context: SourceCheckContext): void => {
+  if (!isVerticalOwnerSource(context.relative) && !context.governedAdapter) {
+    return;
+  }
+  if (context.testSourceFiles.has(context.file) || context.relative.startsWith(coreRuntimeSourcePrefix)) {
+    return;
+  }
+  for (const match of context.source.matchAll(importedSpecifier)) {
+    const specifier = match.groups?.specifier;
+    if (
+      specifier === undefined ||
+      crossOwnerPrivateImport(context.path, context.root, context.file, context.relative, match[0])
+    ) {
+      continue;
+    }
+    const dependency = resolveLocalSource(
+      context.sourceFiles,
+      context.path,
+      context.root,
+      context.file,
+      specifier,
+      context.packageExports,
+    );
+    // Keep the existing, stronger capability diagnostic when that mechanism
+    // already rejects this exact operation edge; do not duplicate its finding.
+    const capabilityAlreadyRejected =
+      isOwnerOperationSource(context.relative, context.source) &&
+      dependency !== undefined &&
+      context.globalDatabaseCapabilityFiles.has(dependency);
+    if (!capabilityAlreadyRejected) {
+      const origin = privateDatabaseOrigin(context, context.file, specifier, new Set());
+      if (origin !== undefined) {
+        context.record({
+          file: context.relative,
+          line: sourceLine(context.source, match.index),
+          origin,
+          reason: `foreign/private database implementation ${origin}; use the owner's public contract or approved Core boundary`,
+        });
+      }
+    }
+  }
+};
 
 const recordProductionTestingImports = (context: SourceCheckContext): void => {
   if (context.testSourceFiles.has(context.file)) {
@@ -666,11 +768,19 @@ const recordLineDatabaseViolations = (context: SourceCheckContext): void => {
       (isVerticalOwnerSource(context.relative) && importsCoreDatabaseSchema.test(line)) ||
       crossOwnerPrivateImport(context.path, context.root, context.file, context.relative, line);
     if (directImport) {
-      context.record({
+      const specifier = importSpecifier.exec(line)?.groups?.specifier;
+      const origin =
+        specifier === undefined ? undefined : privateDatabaseOrigin(context, context.file, specifier, new Set());
+      const violation: DatabaseAccessViolation = {
         file: context.relative,
         line: index + 1,
         reason: 'direct database/private repository import in governed handler or transport adapter',
-      });
+      };
+      if (origin === undefined) {
+        context.record(violation);
+      } else {
+        context.record({ ...violation, origin });
+      }
     } else if (exposesHiddenCapability(context, line)) {
       context.record({
         file: context.relative,
@@ -861,9 +971,11 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
         root,
         source,
         sourceFiles,
+        sources,
         testSourceFiles,
       };
       recordProductionTestingImports(context);
+      recordResolvedPrivateDatabaseImports(context);
       recordTransitiveDatabaseCapabilities(context);
       recordMultilineDatabaseImports(context);
       recordLineDatabaseViolations(context);
