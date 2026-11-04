@@ -45,6 +45,7 @@ import {
 } from '../permissions/owner-authorization-overlay.ts';
 import type { OwnerAuthorizationTarget } from '../permissions/owner-authorization-overlay.ts';
 import { insideDatabaseTransaction } from '../db/transaction-io-guard.ts';
+import { logUnavailableMapping, sanitizeErrorMessage } from '../observability/unavailable-mapping.ts';
 import type {
   AssortmentPermissionAccessTarget,
   AssortmentPermissionCommercialScope,
@@ -1240,7 +1241,7 @@ const readRuntimeFromDependencies = <
   const stage = (value: ReadRuntimeStage): void => options.onStage?.(value);
   const ownerAuthorizationOverlay = options.ownerAuthorizationOverlay ?? failClosedOwnerAuthorizationOverlay;
 
-  const runRead = Effect.fn('ReadRuntime.runRead')(function* runReadEffect<
+  const runReadBody = Effect.fn('ReadRuntime.runRead')(function* runReadEffect<
     InputSchema extends Schema.ConstraintDecoder<unknown>,
     ResultSchema extends Schema.ConstraintDecoder<unknown>,
     Owner extends string,
@@ -1370,6 +1371,13 @@ const readRuntimeFromDependencies = <
           Effect.tapError((failure) =>
             Schema.is(SqlError)(failure)
               ? Effect.logError('Unexpected governed read transaction failure', failure)
+              : Effect.void,
+          ),
+          Effect.tapError((transactionFailure) =>
+            Schema.is(SqlError)(transactionFailure) && Schema.is(ConnectionError)(transactionFailure.reason)
+              ? logUnavailableMapping('read-transaction-connection', 'read-transaction', 'SqlError/ConnectionError', {
+                  errorMessage: sanitizeErrorMessage(transactionFailure.message),
+                })
               : Effect.void,
           ),
           Effect.mapError((transactionFailure) =>
@@ -1827,6 +1835,15 @@ const readRuntimeFromDependencies = <
     );
     return yield* Effect.failCause(Exit.isFailure(evidenceExit) ? Cause.combine(evidenceExit.cause, cause) : cause);
   });
+
+  // Every log line emitted while a read runs names that read, including the 503 mapping warnings.
+  const runRead: typeof runReadBody = (input) =>
+    runReadBody(input).pipe(
+      Effect.annotateLogs({
+        owner: input.registration.descriptor.owningModuleKey,
+        read: input.registration.descriptor.readKey,
+      }),
+    );
 
   return Object.freeze({ runRead });
 };

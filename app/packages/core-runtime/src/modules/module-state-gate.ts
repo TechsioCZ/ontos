@@ -3,6 +3,7 @@ import { Clock, Context, Effect, Layer, Schema } from 'effect';
 
 import { tenantModuleStates, tenants } from '../db/schema.ts';
 import type { CoreTransaction } from '../db/types.ts';
+import { logUnavailableMapping, sanitizeErrorMessage } from '../observability/unavailable-mapping.ts';
 import type {
   ModuleEntrypointAccess,
   ModuleEntrypointDescriptor,
@@ -132,6 +133,16 @@ const recordAcquisitionTelemetry = Effect.fn('ModuleStateGate.recordAcquisitionT
   },
 );
 
+const unavailableAcquisition = (reason: string) =>
+  logUnavailableMapping('module-state-check', 'module-state-acquire', 'ModuleStateCheckUnavailableError', {
+    errorMessage: reason,
+  });
+
+const unavailableEvaluation = (reason: string) =>
+  logUnavailableMapping('module-state-check', 'module-state-evaluate', 'ModuleStateCheckUnavailableError', {
+    errorMessage: reason,
+  });
+
 export const prepareModuleStateSnapshot = Effect.fn('ModuleStateGate.prepareModuleStateSnapshot')(
   function* prepareSnapshotEffect(
     stateService: TenantModuleStateServiceContract,
@@ -147,15 +158,22 @@ export const prepareModuleStateSnapshot = Effect.fn('ModuleStateGate.prepareModu
     if (distinctKeys.length === 0) {
       acquisition = Effect.succeed(makeModuleStateSnapshot(tenantId, entrypoints, []));
     } else if (tenantId.length === 0) {
-      acquisition = Effect.fail(unavailable());
+      acquisition = Effect.fail(unavailable()).pipe(
+        Effect.tapError(() => unavailableAcquisition('The tenant context is empty')),
+      );
     } else {
       acquisition = stateService.getTenantModuleStates(tenantId, distinctKeys).pipe(
+        Effect.tapError((failure) =>
+          logUnavailableMapping('module-state-check', 'module-state-acquire', failure._tag, {
+            errorMessage: sanitizeErrorMessage(failure.reason),
+          }),
+        ),
         Effect.mapError(unavailable),
         Effect.flatMap((records) =>
           Effect.try({
             catch: unavailable,
             try: () => makeModuleStateSnapshot(tenantId, entrypoints, records),
-          }),
+          }).pipe(Effect.tapError(() => unavailableAcquisition('The module state records do not match the snapshot'))),
         ),
       );
     }
@@ -185,6 +203,7 @@ export const checkModuleEntrypoint = (
   const fingerprint = entrypointFingerprint(entrypoint);
   if (data === undefined || !data.declaredEntrypoints.has(fingerprint)) {
     return Effect.fail(unavailable()).pipe(
+      Effect.tapError(() => unavailableEvaluation('The entrypoint is not declared by the module state snapshot')),
       Effect.withSpan('ModuleStateGate.evaluate', {
         attributes: {
           access: entrypoint.access,
@@ -211,6 +230,7 @@ export const checkModuleEntrypoint = (
   }
   if (snapshot.tenantId.length === 0 || !snapshot.moduleKeys.includes(entrypoint.moduleKey)) {
     return Effect.fail(unavailable()).pipe(
+      Effect.tapError(() => unavailableEvaluation('The module state snapshot does not cover the entrypoint module')),
       Effect.withSpan('ModuleStateGate.evaluate', {
         attributes: {
           access: entrypoint.access,

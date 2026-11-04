@@ -1,6 +1,19 @@
 import { ReadInputValidationError } from '../../src/reads/read-input-validation-error.ts';
 import { PgClient } from '@effect/sql-pg';
-import { Cause, Context, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Schema } from 'effect';
+import {
+  Cause,
+  Context,
+  DateTime,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Logger,
+  Option,
+  Predicate,
+  Schema,
+} from 'effect';
 import { FetchHttpClient, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { constVoid } from 'effect/Function';
@@ -3014,6 +3027,39 @@ for (const mode of ['local', 'governed'] as const) {
     );
   }
 }
+it.effect('logs one unavailable-mapping warning naming the Read when its transaction loses the connection', () =>
+  Effect.gen(function* logsReadTransactionConnectionMapping() {
+    const entries: string[] = [];
+    const failure = new SqlError({ reason: new ConnectionError({ cause: new Error('private transaction detail') }) });
+    const harness = yield* makeHarness({ sqlEvents: [], transactionSettlementFailure: failure });
+    const error = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: trustVerifiedGatewayPrincipalContext(scope, approvedCompositionRevision),
+        registration: registration(['unreleased result']),
+        transport: { correlationId: scope.correlationId },
+      }),
+    ).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
+      Effect.provide(
+        Logger.layer([
+          Logger.make((options) => {
+            entries.push(JSON.stringify(Logger.formatStructured.log(options)));
+          }),
+        ]),
+      ),
+    );
+    expect(Predicate.isTagged(error, 'ReadHandlerUnavailable')).toBe(true);
+    const mapped = entries.filter((entry) => entry.includes('governed_read.unavailable_mapped'));
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0]).toContain('"point":"read-transaction-connection"');
+    expect(mapped[0]).toContain('"phase":"read-transaction"');
+    expect(mapped[0]).toContain('"errorClass":"SqlError/ConnectionError"');
+    expect(mapped[0]).toContain(`"read":"${registration().descriptor.readKey}"`);
+    expect(mapped[0]).toContain('"owner":');
+    expect(mapped[0]).not.toContain('private transaction detail');
+  }),
+);
 for (const mode of ['local', 'governed'] as const) {
   it.effect(`keeps ${mode} Read interruption and waits for transaction settlement`, () =>
     Effect.gen(function* migratedTest25() {
