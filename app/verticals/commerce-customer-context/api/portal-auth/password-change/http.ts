@@ -113,16 +113,15 @@ const changePassword = Effect.fn('CustomerPasswordChange.change')(function* chan
   const service = yield* CommercePortalAuthService;
   const attempt = yield* Effect.result(
     Effect.tryPromise({
-      catch: (cause) => cause,
-      try: async () =>
-        await service.api.changePassword({
-          body: {
-            currentPassword: input.currentPassword,
-            newPassword: input.newPassword,
-            revokeOtherSessions: true,
-          },
-          headers: requestHeaders(request.headers),
-        }),
+      catch: classifyPasswordChangeFailure,
+      try: service.api.changePassword.bind(service.api, {
+        body: {
+          currentPassword: input.currentPassword,
+          newPassword: input.newPassword,
+          revokeOtherSessions: true,
+        },
+        headers: requestHeaders(request.headers),
+      }),
     }).pipe(
       Effect.timeoutOrElse({
         duration: providerTimeout,
@@ -131,7 +130,7 @@ const changePassword = Effect.fn('CustomerPasswordChange.change')(function* chan
     ),
   );
   if (Result.isFailure(attempt)) {
-    const failure = classifyPasswordChangeFailure(attempt.failure);
+    const failure = Schema.is(PasswordChangeFailureClass)(attempt.failure) ? attempt.failure : UNAVAILABLE;
     yield* audit
       .record({
         ...event,
