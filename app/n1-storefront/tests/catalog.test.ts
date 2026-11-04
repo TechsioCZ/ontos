@@ -1,6 +1,7 @@
 import { describe, expect, it } from "effect-rstest";
-import { projectCatalog, publicImage } from "../src/ontos/catalog-model";
-import type { CatalogResponseSchema } from "../src/ontos/catalog-model";
+import { Schema } from "effect";
+import { CatalogResponseSchema, projectCatalog, publicImage } from "../src/ontos/catalog-model";
+import { categoryTrail } from "../src/ontos/catalog-navigation";
 
 const response: typeof CatalogResponseSchema.Type = {
   market: { configured: true, currency: "CZK", marketId: "N1-CZ" },
@@ -19,6 +20,35 @@ const response: typeof CatalogResponseSchema.Type = {
 };
 
 describe("owner catalogue presentation", () => {
+  it("retains exact owner category membership and resolves its real ancestors despite duplicate names", () => {
+    const categories = [
+      { id: "other", name: "Clothing", parentId: null, slug: "other-clothing" },
+      { id: "root", name: "Women", parentId: null, slug: "women" },
+      { id: "leaf", name: "Clothing", parentId: "root", slug: "women-clothing" },
+    ];
+    const owner = Schema.decodeUnknownSync(CatalogResponseSchema)({
+      ...response,
+      categories,
+      products: [{ ...response.products[0], categoryId: "leaf" }],
+    });
+    const result = projectCatalog(owner, []);
+    const assigned = result.categories.find((item) => item.id === result.details[0].categoryId);
+    expect(assigned?.slug).toBe("women-clothing");
+    expect(categoryTrail(result.categories, assigned?.slug ?? "").map((item) => item.id)).toEqual([
+      "root",
+      "leaf",
+    ]);
+  });
+  it("does not infer product membership from a category label or an unrelated navigation tree", () => {
+    const result = projectCatalog(
+      {
+        ...response,
+        categories: [{ id: "other", name: "Owner product", parentId: null, slug: "other" }],
+      },
+      [],
+    );
+    expect(result.details[0].categoryId).toBeNull();
+  });
   it("retains the compact owner preview and the total count without needing full variant records", () => {
     const variants = [
       { id: "first", name: "8,5 - ML" },

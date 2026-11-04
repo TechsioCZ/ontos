@@ -67,6 +67,7 @@ describe("owner-backed PDP amounts and stock", () => {
     });
     const html = renderToStaticMarkup(
       createElement(ProductView, {
+        categories: [],
         dictionary: getDictionary("cs"),
         locale: "cs",
         product,
@@ -76,6 +77,45 @@ describe("owner-backed PDP amounts and stock", () => {
     expect(html).toContain("Skladem 2 ks");
     expect(html).not.toContain("Skladem 42 ks");
     expect(html).toContain("90\u00A0Kč bez DPH");
+  });
+  it("renders the exact owner category hierarchy with locale-prefixed links before the product", () => {
+    const catalog = projectCatalog(
+      Schema.decodeUnknownSync(CatalogResponseSchema)({
+        categories: [
+          { id: "unrelated", name: "Clothing", parentId: null, slug: "other-clothing" },
+          { id: "root", name: "Women", parentId: null, slug: "women" },
+          { id: "leaf", name: "Clothing", parentId: "root", slug: "women-clothing" },
+        ],
+        market: { configured: true, currency: "CZK", marketId: "owner-market" },
+        products: [{ ...leaf, categoryId: "leaf" }],
+      }),
+      [],
+    );
+    const html = renderToStaticMarkup(
+      createElement(ProductView, {
+        categories: catalog.categories,
+        dictionary: getDictionary("en"),
+        locale: "en",
+        product: catalog.details[0],
+      }),
+    );
+    expect(html).toContain('href="/en/kategorie/women"');
+    expect(html).toContain('href="/en/kategorie/women-clothing"');
+    expect(html).not.toContain('href="/en/kategorie/other-clothing"');
+    expect(html.indexOf("Women")).toBeLessThan(html.indexOf("Clothing"));
+    expect(html.indexOf("Clothing")).toBeLessThan(html.indexOf("Owner product"));
+  });
+  it("does not render a guessed category breadcrumb for missing owner membership", () => {
+    const html = renderToStaticMarkup(
+      createElement(ProductView, {
+        categories: [{ id: "other", name: "Owner product", parentId: null, slug: "other" }],
+        dictionary: getDictionary("cs"),
+        locale: "cs",
+        product: detail(leaf),
+      }),
+    );
+    expect(html).not.toContain('href="/cs/kategorie/other"');
+    expect(html).toContain('aria-current="page"');
   });
   it("retains the exact standalone stock and matching base net amount through decoding", () => {
     expect(detail(leaf)).toMatchObject({ priceExcludingVatMinor: 10_000, stockQuantity: 3 });

@@ -1,5 +1,34 @@
 # Kontrola převodu N1 storefrontu
 
+## C21: skutečná hierarchie na detailu produktu — 2026-11-04
+
+Veřejné API již předává categoryId; N1 dekodér jej zahazoval. Nyní detail
+používá přesné ID a existující cycle-safe categoryTrail nad skutečným stromem.
+Duplicitní názvy, chybějící členství ani neznámé ID nevedou k odhadům podle názvu.
+Breadcrumb je kompozice UI kitu s NextLink a skutečnými lokalizovanými slugy;
+tokeny ani komponentové styly se nemění.
+
+370/370 N1 testů PASS, lint, formátování a cílený TSRS typecheck PASS.
+Nezávislé source review bez blokátorů. Živě1440/390px: Northwave cesta
+Domů/Dámské/Cyklo/Oblečení/Návleky/produkt, kliknutí Návleky otevřelo správnou
+kategorii, žádný horizontální overflow. Screenshoty n1-c21-breadcrumb-* v .local.
+Referencí jsou Figma219:2739 a mobil39:2431. Mobilní fixture má kratší větev;
+neprokazuje univerzální algoritmus zkracování, proto jej nevymýšlíme.
+Jde o ověření této konkrétní oblasti, nikoli vizuální přijetí celé PDP.
+
+## Živý lokální checkout — 2026-11-04
+
+UI průchod od varianty přes quote a checkout jednou vytvořil OBJ-2026-0004.
+Nativní read-only kontrola potvrdila objednávku NEW/STOREFRONT, Northwave LXL2ks,
+zboží1758Kč, PPL129Kč, celkem1887Kč a DPH327,50Kč. Právě jeden ORDER pohyb−2
+odpovídá řádku objednávky; zásoba25→23. Načtení podrobností i obnova po reloadu
+vrátily stejnou objednávku. Žádná druhá objednávka nebyla odeslána.
+Konzole tohoto průchodu bez error/warn. Soukromý důkaz bez osobních údajů
+je .local/n1-order-verification/local/OBJ-2026-0004.json.
+
+Stage nadále vrací403 při quote, takže jeho checkout není tímto testem potvrzen.
+Test neprovádí platbu, e-mailovou expedici ani skutečnou přepravu.
+
 ## C19: cena bez nepodloženého prefixu — 2026-11-04
 
 Aktuální Figma39:2031 používá PriceBlockknown. Historický N1 renderer prefix
