@@ -17,6 +17,11 @@ import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@ap
  * - Each owner process inherits the container environment minus supervisor-only credentials and database identities
  *   other owners hold, plus its own entries of ONTOS_OWNER_SECRETS_JSON.
  * - Any owner that exits stops the container, so Zerops restarts it from a clean state. Nothing is stored locally.
+ * - The public port opens only once this host's composition is published. Zerops readiness gates its public
+ *   balancer, but project-internal callers (`http://app:3000`) reach every running container. A host that is still
+ *   migrating therefore refuses connections instead of answering 503 on a kept-alive socket, so a caller's connect
+ *   falls through to the container that still serves. Probes and the composition source live on the loopback
+ *   control port from the first moment.
  */
 import { createServer } from 'node:http';
 import path from 'node:path';
@@ -88,6 +93,8 @@ const READY_PATH = '/_host/ready';
 const LIVE_PATH = '/_host/live';
 /** Loopback-only: the composition source every hosted process reads. */
 const COMPOSITION_PATH = '/_host/composition';
+/** Loopback-only listener for Zerops probes and the composition source; open while the public port is not. */
+export const CONTROL_PORT = 3001;
 const STARTUP_BUDGET = Duration.minutes(5);
 const RELAY_HEADERS_TIMEOUT = Duration.seconds(60);
 
@@ -214,7 +221,7 @@ const ownerRuntimeEnvironment = (ports: ReadonlyMap<string, number>) =>
 export const derivedEnvironment = (
   origin: string,
   storefrontOrigin: string,
-  hostPort: number,
+  controlPort: number,
   ports: ReadonlyMap<string, number>,
   shopStorefrontOrigin: string,
 ) => {
@@ -235,7 +242,7 @@ export const derivedEnvironment = (
     MODERN_SERVER_LOG_LEVEL: 'info',
     MODERN_SERVER_PRECOMPRESSED_ASSETS: 'false',
     NODE_ENV: 'production',
-    ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `${loopbackOrigin(hostPort)}${COMPOSITION_PATH}`,
+    ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `${loopbackOrigin(controlPort)}${COMPOSITION_PATH}`,
     ONTOS_EMAIL_DISPATCH_URL: `${origin}/shell-super-app-api/email/dispatch`,
     ONTOS_EMAIL_FROM: `noreply@${new URL(origin).hostname}`,
     ONTOS_GATEWAY_ISSUER: origin,
@@ -373,6 +380,27 @@ const HOP_BY_HOP: ReadonlySet<string> = new Set([
   'upgrade',
 ]);
 
+/**
+ * The owner's end-to-end headers. A caller retries an unavailable (503) answer: make it reconnect, so the retry
+ * can reach another container instead of reusing a kept-alive socket to this one. A superseded release keeps
+ * refusing governed requests until Zerops stops it.
+ */
+export const relayResponseHeaders = (
+  statusCode: number,
+  upstream: Readonly<Record<string, string | readonly string[] | undefined>>,
+) => {
+  const headers: Record<string, string | readonly string[]> = {};
+  for (const [name, value] of Object.entries(upstream)) {
+    if (value !== undefined && !HOP_BY_HOP.has(name)) {
+      headers[name] = value;
+    }
+  }
+  if (statusCode === 503) {
+    headers.connection = 'close';
+  }
+  return headers;
+};
+
 /** Relays one request byte-for-byte to a loopback owner; its compressed body and every header pass unchanged. */
 const relay = Effect.fn('AppHost.relay')(function* relay(
   request: HttpServerRequest.HttpServerRequest,
@@ -403,12 +431,7 @@ const relay = Effect.fn('AppHost.relay')(function* relay(
         signal,
       }),
   });
-  const responseHeaders: Record<string, string | readonly string[]> = {};
-  for (const [name, value] of Object.entries(response.headers)) {
-    if (value !== undefined && !HOP_BY_HOP.has(name)) {
-      responseHeaders[name] = value;
-    }
-  }
+  const responseHeaders = relayResponseHeaders(response.statusCode, response.headers);
   const noBody = request.method === 'HEAD' || [204, 205, 304].includes(response.statusCode);
   if (noBody) {
     response.body.resume();
@@ -444,6 +467,42 @@ const compositionSourceResponse = <Failure, Requirements>(
       : HttpServerResponse.empty({ status: 503 });
   });
 
+/** Liveness, readiness and the loopback composition source; none for every application path. */
+const hostControlResponse = <Failure, Requirements>(
+  request: HttpServerRequest.HttpServerRequest,
+  published: Ref.Ref<boolean>,
+  loadComposition: Effect.Effect<Option.Option<string>, Failure, Requirements>,
+) =>
+  Effect.gen(function* answerHostControl() {
+    if (request.url === COMPOSITION_PATH) {
+      return Option.some(yield* compositionSourceResponse(request, loadComposition));
+    }
+    if (request.url === LIVE_PATH) {
+      return Option.some(HttpServerResponse.text('live\n', { headers: { 'cache-control': 'no-store' } }));
+    }
+    if (request.url === READY_PATH) {
+      const ready = yield* Ref.get(published);
+      return Option.some(
+        HttpServerResponse.text(ready ? 'ready\n' : 'starting\n', {
+          headers: { 'cache-control': 'no-store' },
+          status: ready ? 200 : 503,
+        }),
+      );
+    }
+    return Option.none<HttpServerResponse.HttpServerResponse>();
+  });
+
+/** The loopback control port: Zerops probes and the composition source, never application traffic. */
+export const hostControlApplication = <Failure, Requirements>(
+  published: Ref.Ref<boolean>,
+  loadComposition: Effect.Effect<Option.Option<string>, Failure, Requirements>,
+) =>
+  Effect.gen(function* routeControlRequest() {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const control = yield* hostControlResponse(request, published, loadComposition);
+    return Option.getOrElse(control, () => HttpServerResponse.empty({ status: 404 }));
+  });
+
 export const hostApplication = <Failure, Requirements>(
   ports: ReadonlyMap<string, number>,
   published: Ref.Ref<boolean>,
@@ -461,18 +520,9 @@ export const hostApplication = <Failure, Requirements>(
     if (new URL(request.url, 'https://host.invalid').pathname === STAGE_CIMD_FIXTURE_PATH) {
       return yield* stageCimdFixtureResponse;
     }
-    if (request.url === COMPOSITION_PATH) {
-      return yield* compositionSourceResponse(request, loadComposition);
-    }
-    if (request.url === LIVE_PATH) {
-      return HttpServerResponse.text('live\n', { headers: { 'cache-control': 'no-store' } });
-    }
-    if (request.url === READY_PATH) {
-      const ready = yield* Ref.get(published);
-      return HttpServerResponse.text(ready ? 'ready\n' : 'starting\n', {
-        headers: { 'cache-control': 'no-store' },
-        status: ready ? 200 : 503,
-      });
+    const control = yield* hostControlResponse(request, published, loadComposition);
+    if (Option.isSome(control)) {
+      return control.value;
     }
     const route = routeRequest(request.url, ports);
     if (Option.isNone(route)) {
@@ -602,7 +652,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   );
   const units = yield* readHostedUnits;
   const ports = new Map(units.map(({ id, port }) => [id, port]));
-  const derived = derivedEnvironment(publicOrigin, storefrontOrigin, publicPort, ports, shopStorefrontOrigin);
+  const derived = derivedEnvironment(publicOrigin, storefrontOrigin, CONTROL_PORT, ports, shopStorefrontOrigin);
   const node = process.execPath;
   const runtime = yield* shellRuntime;
   const published = yield* Ref.make(false);
@@ -618,7 +668,13 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     ),
   );
 
-  yield* HttpServer.serveEffect(hostApplication(ports, published, pointer.load));
+  // The provided server is the loopback control port. The public port opens below, once this host can serve.
+  yield* HttpServer.serveEffect(hostControlApplication(published, pointer.load));
+  const openPublicPort = NodeHttpServer.make(createServer, { host: '0.0.0.0', port: publicPort }).pipe(
+    Effect.mapError(() => failure(`public port ${String(publicPort)} could not be opened`)),
+    Effect.flatMap((server) => server.serve(hostApplication(ports, published, pointer.load))),
+    Effect.andThen(Console.log(`[app-host] accepting application traffic on port ${String(publicPort)}`)),
+  );
 
   // Two processes serve every unit: the Shell alone (its SSR owns the Module Federation host runtime), and every
   // owner together, so their shared dependencies load once.
@@ -659,6 +715,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     yield* Console.log(
       `[app-host] observe-only: composition ${snapshot.composition.revision} (${String(snapshot.composition.modules.length)} owners) not published`,
     );
+    yield* openPublicPort;
     yield* Ref.set(published, true);
     return yield* Effect.never;
   });
@@ -687,6 +744,9 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       { concurrency: 'unbounded' },
     );
     yield* publish;
+    // From this commit on the old release refuses every governed request, so this one serves internal callers at
+    // once. The Zerops readiness answer (public balancer) still follows the service grants below.
+    yield* openPublicPort;
     // The canonical SpiceDB schema and the stage service grants follow the published release. A failure is logged
     // loudly but does not stop a release whose data is already served. Like the migrator, the reconciliation is
     // supervisor work: it installs the stage service principals with the database administrator identity.
@@ -727,12 +787,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
 if (import.meta.main) {
   const program = runAppHost.pipe(
     Effect.scoped,
-    Effect.provide(
-      NodeHttpServer.layerConfig(createServer, {
-        host: Config.succeed('0.0.0.0'),
-        port: Config.Int('PORT').pipe(Config.withDefault(3000)),
-      }),
-    ),
+    Effect.provide(NodeHttpServer.layer(createServer, { host: '127.0.0.1', port: CONTROL_PORT })),
     // Every authority transition re-observes legacy owner completion, as the operator publisher does.
     Effect.provide(
       Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ApplicationCompositionLegacyOwnersLive),

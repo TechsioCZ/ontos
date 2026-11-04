@@ -175,9 +175,11 @@ zerops:
         - app/verticals/*/node_modules/.cache
     deploy:
       temporaryShutdown: false
+      # Zerops probes from inside the container. The host answers them on its loopback control port, because the
+      # public port 3000 opens only after publication: project-internal callers reach unready containers too.
       readinessCheck:
         httpGet:
-          port: 3000
+          port: 3001
           path: /_host/ready
         failureTimeout: 15m
         retryPeriod: 10s
@@ -232,6 +234,6 @@ zerops:
         ULTRAMODERN_ZEROPS_SERVICE: app
       healthCheck:
         httpGet:
-          port: 3000
+          port: 3001
           path: /_host/live
       start: sh -c 'cd app && PATH="$PWD/.zerops/node/bin:$PATH" exec node scripts/zerops/app-host.mts'

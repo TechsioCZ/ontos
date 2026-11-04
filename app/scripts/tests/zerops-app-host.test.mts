@@ -3,10 +3,13 @@ import { HttpServerRequest } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
+  CONTROL_PORT,
   derivedEnvironment,
   finiteProcessEnvironment,
   hostApplication,
+  hostControlApplication,
   processEnvironment,
+  relayResponseHeaders,
   routeRequest,
 } from '../zerops/app-host.mts';
 import { hostedUnits } from '../zerops/hosted-units.mts';
@@ -40,6 +43,42 @@ it.effect('rejects credential URLs and native login POSTs at the public host bef
     }
   }),
 );
+
+const requestAt = (path: string) =>
+  Effect.provideService(
+    HttpServerRequest.HttpServerRequest,
+    HttpServerRequest.fromWeb(new Request(`http://127.0.0.1${path}`)),
+  );
+
+it.effect('the control port answers probes from the start and never serves application traffic', () =>
+  Effect.gen(function* controlPort() {
+    const published = yield* Ref.make(false);
+    const control = hostControlApplication(published, Effect.succeed(Option.none()));
+    expect((yield* control.pipe(requestAt('/_host/live'))).status).toBe(200);
+    expect((yield* control.pipe(requestAt('/_host/ready'))).status).toBe(503);
+    for (const path of ['/shell-super-app-api/auth/api-key/gateway-read', '/cs', '/_m/crm/mf-manifest.json']) {
+      expect((yield* control.pipe(requestAt(path))).status).toBe(404);
+    }
+    yield* Ref.set(published, true);
+    expect((yield* control.pipe(requestAt('/_host/ready'))).status).toBe(200);
+  }),
+);
+
+describe('relayResponseHeaders', () => {
+  it('closes the caller connection on an unavailable owner answer so its retry can reach another container', () => {
+    const upstream = { connection: 'keep-alive', 'content-type': 'application/json', 'keep-alive': 'timeout=5' };
+    expect(relayResponseHeaders(503, upstream)).toStrictEqual({
+      connection: 'close',
+      'content-type': 'application/json',
+    });
+  });
+
+  it('keeps the caller connection reusable for every other answer and drops hop-by-hop headers', () => {
+    expect(relayResponseHeaders(200, { connection: 'keep-alive', etag: '"a"' })).toStrictEqual({
+      etag: '"a"',
+    });
+  });
+});
 
 const topology: Topology = {
   shell: { path: 'app/shell' },
@@ -259,10 +298,11 @@ describe('derivedEnvironment', () => {
     expect(derivedValue(derivedValues, 'ONTOS_PRICING_ORDER_NAMESPACE_ID')).toBe('ontos.staff.better-auth.v1');
   });
 
-  it('points the composition source at the host loopback port', () => {
-    expect(derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map(), SHOP).ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL).toBe(
-      'http://127.0.0.1:3000/_host/composition',
-    );
+  it('points the composition source at the loopback control port, which is open before the public port', () => {
+    expect(CONTROL_PORT).toBe(3001);
+    expect(
+      derivedEnvironment(ORIGIN, STOREFRONT, CONTROL_PORT, new Map(), SHOP).ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL,
+    ).toBe('http://127.0.0.1:3001/_host/composition');
   });
 });
 

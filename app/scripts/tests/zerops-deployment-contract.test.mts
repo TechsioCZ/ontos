@@ -117,7 +117,8 @@ it('runs the whole application in the app container through the shipped Node, fr
     ['deploy', 'readinessCheck'],
     ['run', 'healthCheck'],
   ]) {
-    expect(app.getIn([...branch, 'httpGet', 'port'])).toBe(3000);
+    // Probes use the loopback control port; the public port 3000 opens only once the host has published.
+    expect(app.getIn([...branch, 'httpGet', 'port'])).toBe(3001);
   }
   expect(app.getIn(['run', 'healthCheck', 'httpGet', 'path'])).toBe('/_host/live');
   expect(app.getIn(['deploy', 'readinessCheck', 'httpGet', 'path'])).toBe('/_host/ready');
