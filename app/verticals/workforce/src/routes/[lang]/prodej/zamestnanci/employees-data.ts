@@ -28,6 +28,7 @@ export const employeesData = definePageData({
         ),
       ),
     ),
+  retainStale: false,
   runtime: browserRuntime,
 });
 

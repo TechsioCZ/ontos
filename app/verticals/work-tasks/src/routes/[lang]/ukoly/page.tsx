@@ -181,6 +181,7 @@ const taskRecords = definePageData({
       Effect.flatMap((id) => executeRecords(recordsRequest(partyId, includeArchived), id)),
       retryTransient,
     ),
+  retainStale: false,
   runtime: browserRuntime,
 });
 
