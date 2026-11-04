@@ -280,10 +280,10 @@ export const applyImportsCommand: Reducer<ImportsCommand> = (state, command, con
         const statusHistory = order.statusHistory.map((entry, index) =>
           index === value.eventIndex ? { ...entry, resolution } : entry,
         );
-        const next: ImportedOrder =
-          value.decision === 'apply'
-            ? { ...order, rawStatus: event.rawStatus, statusHistory }
-            : { ...order, statusHistory };
+        const { lastEventAt: _previousEventAt, ...withoutEventTime } = order;
+        const selected = { ...withoutEventTime, rawStatus: event.rawStatus, statusHistory };
+        const applied = event.eventAt === undefined ? selected : { ...selected, lastEventAt: event.eventAt };
+        const next: ImportedOrder = value.decision === 'apply' ? applied : { ...order, statusHistory };
         return {
           entityIds: [order.id],
           state: withImports(state, { ...state.imports, orders: replaceOrder(state.imports.orders, next) }),

@@ -389,6 +389,68 @@ describe('CRM order pairing (C04)', () => {
       ).toBe(true);
     }),
   );
+  it.effect('applying a reviewed event establishes the timestamp used by later imports', () =>
+    Effect.gen(function* reviewedEventTimestamp() {
+      const header = 'zdroj;id_objednavky;stav;cas_udalosti\n';
+      const imported = yield* runOk(base, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;review-time;nova;\n`,
+        fileName: 'bez-casu.csv',
+      });
+      const pending = yield* runOk(imported, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;review-time;prijata;2026-10-19T10:00:00Z\n`,
+        fileName: 'ke-kontrole.csv',
+      });
+      const target = order(pending, 'review-time');
+      expect(target.lastEventAt).toBeUndefined();
+      const applied = yield* runOk(pending, {
+        _tag: 'ResolveOrderStatusEvent',
+        decision: 'apply',
+        eventIndex: 1,
+        orderId: target.id,
+        reason: 'Potvrzen aktuální stav ze zdroje',
+      });
+      expect(orderDateText(order(applied, 'review-time').lastEventAt)).toBe('2026-10-19T10:00:00.000Z');
+      const newer = yield* runOk(applied, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;review-time;zaplacena;2026-10-19T11:00:00Z\n`,
+        fileName: 'novejsi.csv',
+      });
+      expect(order(newer, 'review-time').rawStatus).toBe('zaplacena');
+      expect(openReviewEvents(order(newer, 'review-time'))).toHaveLength(0);
+    }),
+  );
+  it.effect('applying an untimed event cannot retain another status timestamp', () =>
+    Effect.gen(function* untimedReviewedEvent() {
+      const header = 'zdroj;id_objednavky;stav;cas_udalosti\n';
+      const imported = yield* runOk(base, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;untimed-review;nova;2026-10-19T10:00:00Z\n`,
+        fileName: 's-casem.csv',
+      });
+      const pending = yield* runOk(imported, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;untimed-review;prijata;\n`,
+        fileName: 'bez-casu.csv',
+      });
+      const applied = yield* runOk(pending, {
+        _tag: 'ResolveOrderStatusEvent',
+        decision: 'apply',
+        eventIndex: 1,
+        orderId: order(pending, 'untimed-review').id,
+        reason: 'Potvrzen stav bez známého času',
+      });
+      expect(order(applied, 'untimed-review').lastEventAt).toBeUndefined();
+      const later = yield* runOk(applied, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;untimed-review;zaplacena;2026-10-19T11:00:00Z\n`,
+        fileName: 'dalsi.csv',
+      });
+      expect(order(later, 'untimed-review').rawStatus).toBe('prijata');
+      expect(openReviewEvents(order(later, 'untimed-review'))).toHaveLength(1);
+    }),
+  );
   it.effect('review decisions resolve the flag with author and reason', () =>
     Effect.gen(function* effectGenerator13() {
       const seeded = yield* seededEffect;
@@ -403,6 +465,8 @@ describe('CRM order pairing (C04)', () => {
         reason: 'Opožděná zpráva, platí zaplaceno',
       });
       expect(needsReview(order(resolved, '100285'))).toBe(false);
+      expect(order(resolved, '100285').rawStatus).toBe(late.rawStatus);
+      expect(order(resolved, '100285').lastEventAt).toEqual(late.lastEventAt);
       const twin = order(seeded, 'UO-26-0129', 'Účetní systém');
       const confirmed = yield* runOk(seeded, {
         _tag: 'ResolveOrderDuplicate',
