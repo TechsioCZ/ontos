@@ -12,11 +12,13 @@ import { outboxWorkerEntry as propertyPortfolioOutboxWorkerEntry } from '@app/pr
 import { outboxWorkerEntry as propertyLeasingOutboxWorkerEntry } from '@app/property-leasing/outbox-worker-host';
 import { outboxWorkerEntry as legalAgreementsOutboxWorkerEntry } from '@app/legal-agreements/outbox-worker-host';
 import { outboxWorkerEntry as workTasksOutboxWorkerEntry } from '@app/work-tasks/outbox-worker-host';
+import { outboxWorkerEntry as workforceOutboxWorkerEntry } from '@app/workforce/outbox-worker-host';
 import { outboxWorkerEntry as salesPipelineOutboxWorkerEntry } from '@app/sales-pipeline/outbox-worker-host';
 import { outboxWorkerEntry as merchandiseOutboxWorkerEntry } from '@app/merchandise/outbox-worker-host';
 import { outboxWorkerEntry as facilityOperationsOutboxWorkerEntry } from '@app/facility-operations/outbox-worker-host';
 import { outboxWorkerEntry as financeBillingOutboxWorkerEntry } from '@app/finance-billing/outbox-worker-host';
 import { outboxWorkerEntry as crmOutboxWorkerEntry } from '@app/crm/outbox-worker-host';
+import { outboxWorkerEntry as projectsOutboxWorkerEntry } from '@app/projects/outbox-worker-host';
 import { outboxWorkerEntry as commerceOrderOutboxWorkerEntry } from '@app/commerce-order/outbox-worker-host';
 
 startOutboxWorkerHost({
@@ -32,11 +34,13 @@ startOutboxWorkerHost({
     propertyLeasingOutboxWorkerEntry,
     legalAgreementsOutboxWorkerEntry,
     workTasksOutboxWorkerEntry,
+    workforceOutboxWorkerEntry,
     salesPipelineOutboxWorkerEntry,
     merchandiseOutboxWorkerEntry,
     facilityOperationsOutboxWorkerEntry,
     financeBillingOutboxWorkerEntry,
     crmOutboxWorkerEntry,
+    projectsOutboxWorkerEntry,
     commerceOrderOutboxWorkerEntry,
   ],
   health: true,

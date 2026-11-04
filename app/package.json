@@ -172,6 +172,7 @@
     "@app/party-registry": "workspace:*",
     "@app/price-group-catalog": "workspace:*",
     "@app/privacy": "workspace:*",
+    "@app/projects": "workspace:*",
     "@app/property-leasing": "workspace:*",
     "@app/property-portfolio": "workspace:*",
     "@app/sales-pipeline": "workspace:*",

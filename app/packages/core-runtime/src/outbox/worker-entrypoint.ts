@@ -16,7 +16,8 @@ export { ActiveApplicationCompositionConfigLive } from '../modules/active-applic
 export { OntosModuleIdSchema } from '../modules/manifest.ts';
 export { defineTenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
 export { defineScopedRoutine, scopedRoutineInvokerFromTransaction } from '../db/scoped-routine.ts';
-export { findPostgresFailure } from '../database/postgres-failure.ts';
+export { findPostgresFailure, isPostgresUniqueViolation } from '../database/postgres-failure.ts';
+export { OperationContextUnavailable } from '../operations/errors.ts';
 export { BusinessPermissionCodeSchema, defineBusinessPermissionCatalog } from '../permissions/business-permission.ts';
 export { AuthorizationMutationReconciliationUnavailable } from '../permissions/authorization-reconciler.ts';
 export {
@@ -35,7 +36,8 @@ export {
   toBusinessPermissionAccessObjectId,
 } from '../permissions/context-access.ts';
 export { PrincipalEligibility, PrincipalRefSchema } from '../permissions/principal-ref.ts';
-export { ReadHandlerNotFound, ReadHandlerUnavailable } from '../reads/errors.ts';
+export { defineRead } from '../reads/definition.ts';
+export { ReadHandlerNotFound, ReadHandlerUnavailable, ReadPermissionDenied } from '../reads/errors.ts';
 export {
   gatewayScopedTenantLegalEntityRlsPolicies,
   gatewayScopedTenantRlsPolicies,
@@ -56,6 +58,7 @@ export {
 export { CoreSearchProjectionStoreLive } from '../search/persistence.ts';
 export {
   CoreSearchProjectionDocumentSchema,
+  CoreSearchProjectionHitSchema,
   CoreSearchProjectionInvalid,
   CoreSearchProjectionMutationSchema,
   CoreSearchProjectionReplacementSchema,
@@ -64,6 +67,13 @@ export {
 } from '../search/projection.ts';
 export { CoreSearchWorkerSnapshot, CoreSearchWorkerSnapshotLive } from '../search/worker-snapshot.ts';
 export { CoreSearchQueryRuntime } from '../search/query-runtime.ts';
+export {
+  CORE_SEARCH_RELEVANCE_MAX_SCORE,
+  matchesCoreSearchValues,
+  normalizeCoreSearchText,
+  parseCoreSearchQuery,
+} from '../search/search-contract.ts';
+export { coreSearchRelevance } from '../search/search-ranking.ts';
 export {
   defineOutboxWorker,
   extractOutboxWorkerSubscriptions,

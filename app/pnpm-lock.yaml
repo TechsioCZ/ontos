@@ -317,6 +317,9 @@ importers:
       '@app/privacy':
         specifier: workspace:*
         version: link:verticals/privacy
+      '@app/projects':
+        specifier: workspace:*
+        version: link:verticals/projects
       '@app/property-leasing':
         specifier: workspace:*
         version: link:verticals/property-leasing
