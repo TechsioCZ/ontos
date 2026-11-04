@@ -11,12 +11,12 @@ import {
   runAction,
 } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import {
   addTestGatewayScopeGrantCleanup,
   registerTestGatewayScopeGrant,
 } from '@app/core-runtime/testing/gateway-scope-grant';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
 import { Crypto, Effect, Exit, Layer, Redacted, Predicate, Schema } from 'effect';
@@ -28,7 +28,6 @@ import {
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { testCoreDatabase, deleteTestCoreOutbox } from '@app/core-runtime/testing/owner-evidence';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import type { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
 import { committedCreateResult } from '../../shared/domain/matching-contracts.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
@@ -55,6 +54,7 @@ import {
   partyRelations,
 } from '../../src/db/schema.ts';
 import { partiesRead, PartySearchProjectionGatewayLive } from '../../src/search/parties.provider.ts';
+import { partyCompositionSnapshot } from './application-composition.setup.ts';
 
 type EncodedPartyCandidate = typeof PartyCandidateSchema.Encoded;
 const testAuthenticationNamespaceId = 'test.party.better-auth.v1';
@@ -111,10 +111,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id].connectionString,
             { maxConnections: 1 },
           );
-          const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
-            [ultramodernApiMarker.appId],
-            ultramodernApiMarker.buildMarker,
-          );
+          const compositionSnapshot = yield* partyCompositionSnapshot;
           const actionKeys = [
             createPartyAction,
             counterpartyCreateAction,
@@ -133,6 +130,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
               compositionRevision: compositionSnapshot.composition.revision,
+              ownerRegistration: partyRegistryBackendRegistration,
               runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
             }).pipe(Effect.orDie),
             (resource) => resource.close().pipe(Effect.orDie),
@@ -143,6 +141,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
               compositionRevision: compositionSnapshot.composition.revision,
+              ownerRegistration: partyRegistryBackendRegistration,
               runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
             }).pipe(Effect.orDie),
             (resource) => resource.close().pipe(Effect.orDie),

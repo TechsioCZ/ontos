@@ -1,3 +1,4 @@
+import { catalogRegistration } from '../../vertical.registration.ts';
 import {
   ActionRuntime,
   ActionTransactionError,
@@ -6,7 +7,8 @@ import {
   DatabaseConfig,
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
+  OntosModuleDeploymentContractSchema,
   TenantModuleStateServiceLive,
   TrustedPrincipalContextSchema,
   makeActionRuntimeLive,
@@ -36,6 +38,7 @@ import {
   DateTime,
   Deferred,
   Effect,
+  FileSystem,
   Layer,
   Queue,
   Redacted,
@@ -199,6 +202,7 @@ export const WholeCandidateCatalogDescriptionSchema = Schema.Struct({
   actionKeys: Schema.Array(actionKeySchema),
   appId: Schema.Literal('catalog'),
   buildMarker: Schema.String,
+  contractDocument: Schema.String,
   type: Schema.Literal('description'),
   version: Schema.Literal(protocolVersion),
 }).annotate({ parseOptions: { onExcessProperty: 'error' } });
@@ -237,11 +241,14 @@ const wholeCandidateCatalogRuntime = (bootstrap: Omit<typeof WholeCandidateCatal
   const namespace = staffAuthenticationNamespaceRegistryLayer(['catalog']);
   const composition = makeActiveApplicationCompositionLayer(Effect.succeed(bootstrap.composition));
   const common = Layer.mergeAll(persistence, ContextAccessLive, stateGate, gateway, scopes, namespace, composition);
-  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
     Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
     Layer.provide(NodeCrypto.layer),
   );
-  const reads = ReadRuntimeLive.pipe(Layer.provide(common), Layer.provide(NodeCrypto.layer));
+  const reads = makeReadRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
+    Layer.provide(common),
+    Layer.provide(NodeCrypto.layer),
+  );
   return Layer.mergeAll(actions, reads, namespace);
 };
 
@@ -819,12 +826,28 @@ const services = NodeServices.layer.pipe(
 );
 if (process.argv.includes('--describe-whole-candidate')) {
   NodeRuntime.runMain(
-    Schema.encodeEffect(Schema.fromJsonString(WholeCandidateCatalogDescriptionSchema))({
-      actionKeys: wholeCandidateCatalogActionKeys.map((actionKey) => actionKeySchema.make(actionKey)),
-      appId: 'catalog',
-      buildMarker: ultramodernApiMarker.buildMarker,
-      type: 'description',
-      version: protocolVersion,
+    Effect.gen(function* describeActualCatalogReceiver() {
+      const filesystem = yield* FileSystem.FileSystem;
+      const contractDocument = yield* filesystem.readFileString(
+        new URL('../../dist/public/.well-known/ontos-module-manifest.json', import.meta.url).pathname,
+      );
+      const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+        contractDocument,
+      );
+      if (
+        contract.deployment.appId !== ultramodernApiMarker.appId ||
+        contract.deployment.buildMarker !== ultramodernApiMarker.buildMarker
+      ) {
+        return yield* unavailable('actual-catalog-receiver-contract');
+      }
+      return yield* Schema.encodeEffect(Schema.fromJsonString(WholeCandidateCatalogDescriptionSchema))({
+        actionKeys: wholeCandidateCatalogActionKeys.map((actionKey) => actionKeySchema.make(actionKey)),
+        appId: 'catalog',
+        buildMarker: ultramodernApiMarker.buildMarker,
+        contractDocument,
+        type: 'description',
+        version: protocolVersion,
+      });
     }).pipe(
       Effect.flatMap((line) => Effect.sync(() => process.stdout.write(`${line}\n`))),
       Effect.provide(services),

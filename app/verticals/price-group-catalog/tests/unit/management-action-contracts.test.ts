@@ -1,7 +1,10 @@
+import { pricingPriceGroupReadPermission } from '../../shared/permissions/pricing-price-group-read.ts';
 import { describe, expect, it } from 'effect-rstest';
 import { Result, Schema } from 'effect';
 
-import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
+import type { OwnerPermissionAccessTarget } from '@app/core-runtime';
+
 import { PriceGroupActionCommittedRetryReceiptSchema } from '../../shared/domain/action-committed-retry-receipt.ts';
 import { CreatePriceGroupDefinitionRevisionPayloadSchema } from '../../shared/actions/create-price-group-definition-revision.ts';
 import {
@@ -25,6 +28,11 @@ import { pricingPriceGroupRevisionCreatePermission } from '../../shared/permissi
 import { createPriceGroupDefinitionRevisionAction } from '../../src/actions/create-price-group-definition-revision.action.ts';
 import { createPriceGroupAction } from '../../src/actions/create-price-group.action.ts';
 import { retirePriceGroupAction } from '../../src/actions/retire-price-group.action.ts';
+
+const permissionRequest = (targets: readonly OwnerPermissionAccessTarget[] | undefined) => {
+  const first = targets?.[0];
+  return first === undefined ? undefined : { permission: first.definition.key, target: first.target };
+};
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const principalId = '22222222-2222-4222-8222-222222222222';
@@ -162,12 +170,16 @@ describe('Price Group management Action contracts', () => {
   });
 
   it('resolves the exact catalog or stable Price Group business permission target', () => {
-    expect(getActionBusinessPermissionTargetResolver(createPriceGroupAction)?.(createPayload, scope)).toEqual({
+    expect(
+      permissionRequest(getActionOwnerPermissionTargetResolver(createPriceGroupAction)?.(createPayload, scope)),
+    ).toEqual({
       permission: 'pricing.price_group.create',
       target: { kind: 'pricing_catalog', pricingCatalogId: tenantId, tenantId },
     });
     expect(
-      getActionBusinessPermissionTargetResolver(createPriceGroupDefinitionRevisionAction)?.(revisionPayload, scope),
+      permissionRequest(
+        getActionOwnerPermissionTargetResolver(createPriceGroupDefinitionRevisionAction)?.(revisionPayload, scope),
+      ),
     ).toEqual({
       permission: 'pricing.price_group.revision.create',
       target: {
@@ -177,7 +189,9 @@ describe('Price Group management Action contracts', () => {
         tenantId,
       },
     });
-    expect(getActionBusinessPermissionTargetResolver(retirePriceGroupAction)?.(retirementPayload, scope)).toEqual({
+    expect(
+      permissionRequest(getActionOwnerPermissionTargetResolver(retirePriceGroupAction)?.(retirementPayload, scope)),
+    ).toEqual({
       permission: 'pricing.price_group.retire',
       target: {
         kind: 'price_group',
@@ -193,9 +207,11 @@ describe('Price Group management Action contracts', () => {
       priceGroupRef: { ...priceGroupRef, tenantId: foreignTenantId },
     };
     expect(
-      getActionBusinessPermissionTargetResolver(createPriceGroupDefinitionRevisionAction)?.(
-        { ...revisionPayload, expectedCurrent: foreignExpectedCurrent },
-        scope,
+      permissionRequest(
+        getActionOwnerPermissionTargetResolver(createPriceGroupDefinitionRevisionAction)?.(
+          { ...revisionPayload, expectedCurrent: foreignExpectedCurrent },
+          scope,
+        ),
       ),
     ).toMatchObject({
       target: { pricingCatalogId: foreignTenantId, tenantId: foreignTenantId },
@@ -308,4 +324,65 @@ describe('Price Group management Action contracts', () => {
     expect(Schema.is(PriceGroupRetirementAcceptedOutboxPayloadSchema)(backdatedRetirementAcceptance)).toBe(false);
     expect(Schema.is(PriceGroupCreatedOutboxPayloadSchema)({ data: definition })).toBe(false);
   });
+});
+
+it('freezes every published owner descriptor including canonical capability and dormant entrypoints', () => {
+  expect([
+    pricingPriceGroupCreatePermission,
+    pricingPriceGroupReadPermission,
+    pricingPriceGroupRetirePermission,
+    pricingPriceGroupRevisionCreatePermission,
+  ]).toEqual([
+    {
+      allowedScopeKinds: ['pricing_catalog'],
+      auditSensitivity: 'sensitive',
+      authorityGroups: [],
+      customerDelegable: false,
+      internalGrantable: false,
+      key: 'pricing.price_group.create',
+      meaning: 'Pricing Price Group Create business permission.',
+      owningCapability: 'pricing.price-group-catalog',
+      protectedEntrypoints: ['pricing.price-group-catalog.create-price-group'],
+      schemaVersion: '1',
+    },
+    {
+      allowedScopeKinds: ['pricing_catalog', 'price_group'],
+      auditSensitivity: 'sensitive',
+      authorityGroups: [],
+      customerDelegable: false,
+      internalGrantable: false,
+      key: 'pricing.price_group.read',
+      meaning: 'Read one exact Price Group definition or validate its compatibility in the authorized Tenant.',
+      owningCapability: 'pricing.price-group-catalog',
+      protectedEntrypoints: [
+        'pricing.price-group-catalog.api.price-group-definition',
+        'pricing.price-group-catalog.api.validate-price-group-compatibility',
+      ],
+      schemaVersion: '1',
+    },
+    {
+      allowedScopeKinds: ['pricing_catalog', 'price_group'],
+      auditSensitivity: 'sensitive',
+      authorityGroups: [],
+      customerDelegable: false,
+      internalGrantable: false,
+      key: 'pricing.price_group.retire',
+      meaning: 'Pricing Price Group Retire business permission.',
+      owningCapability: 'pricing.price-group-catalog',
+      protectedEntrypoints: ['pricing.price-group-catalog.retire-price-group'],
+      schemaVersion: '1',
+    },
+    {
+      allowedScopeKinds: ['pricing_catalog', 'price_group'],
+      auditSensitivity: 'sensitive',
+      authorityGroups: [],
+      customerDelegable: false,
+      internalGrantable: false,
+      key: 'pricing.price_group.revision.create',
+      meaning: 'Pricing Price Group Revision Create business permission.',
+      owningCapability: 'pricing.price-group-catalog',
+      protectedEntrypoints: ['pricing.price-group-catalog.create-price-group-definition-revision'],
+      schemaVersion: '1',
+    },
+  ]);
 });

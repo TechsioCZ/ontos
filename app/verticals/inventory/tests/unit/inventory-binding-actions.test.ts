@@ -6,9 +6,9 @@ import { TestClock } from 'effect/testing';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import {
-  getActionBusinessPermissionTargetResolver,
+  getActionOwnerPermissionTargetResolver,
   getActionResourcePermissionTargetResolver,
-} from '../../../../packages/core-runtime/src/actions/definition.ts';
+} from '@app/core-runtime/testing/actions';
 
 import {
   CorrectCatalogToStockBindingPayloadSchema,
@@ -139,8 +139,14 @@ describe('Catalog-to-Stock Binding Actions', () => {
     ]) {
       expect(() => decode({ ...correctPayload, candidate: invalid })).toThrow();
     }
-    expect(getActionBusinessPermissionTargetResolver(correctCatalogToStockBindingAction)?.(replacement, scope)).toEqual(
-      getActionBusinessPermissionTargetResolver(correctCatalogToStockBindingAction)?.(correctPayload, scope),
+    expect(
+      getActionOwnerPermissionTargetResolver(correctCatalogToStockBindingAction)?.(replacement, scope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
+    ).toEqual(
+      getActionOwnerPermissionTargetResolver(correctCatalogToStockBindingAction)?.(correctPayload, scope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
     );
   });
 
@@ -179,9 +185,15 @@ describe('Catalog-to-Stock Binding Actions', () => {
       },
     };
     expect([
-      getActionBusinessPermissionTargetResolver(establishCatalogToStockBindingAction)?.(establishPayload, scope),
-      getActionBusinessPermissionTargetResolver(correctCatalogToStockBindingAction)?.(correctPayload, scope),
-      getActionBusinessPermissionTargetResolver(endCatalogToStockBindingAction)?.(endPayload, scope),
+      getActionOwnerPermissionTargetResolver(establishCatalogToStockBindingAction)?.(establishPayload, scope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
+      getActionOwnerPermissionTargetResolver(correctCatalogToStockBindingAction)?.(correctPayload, scope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
+      getActionOwnerPermissionTargetResolver(endCatalogToStockBindingAction)?.(endPayload, scope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
     ]).toEqual([businessTarget, businessTarget, businessTarget]);
     const resourceTarget = { permission: 'write', resource: establishPayload.bindingRef };
     expect([

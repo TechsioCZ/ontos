@@ -1,8 +1,10 @@
+import { CustomerPermissionTargetSchema } from '../permissions/authorization.ts';
+import type { CustomerPermissionRequest } from '../permissions/authorization.ts';
+import { commerceCustomerContextAuthorizationContract } from '../../shared/permissions/authorization-contract.ts';
 import type {
   OwnerAuthorizationDecision,
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
-  OwnerAuthorizationTarget,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import { OwnerAuthorizationOverlay } from '@app/core-runtime';
@@ -51,9 +53,9 @@ interface DecodedCounterpartyTarget {
   readonly permissionScope: CounterpartyPermissionScope;
   readonly principal: typeof CounterpartyPrincipalRefSchema.Type;
 }
-type BusinessPermissionTarget = Extract<OwnerAuthorizationTarget, { readonly kind: 'business_permission' }>;
+type BusinessPermissionTarget = CustomerPermissionRequest;
 type CounterpartyBusinessTarget = Extract<
-  BusinessPermissionTarget['target'],
+  CustomerPermissionRequest['target'],
   { readonly kind: 'counterparty' | 'counterparty_storefront' }
 >;
 
@@ -99,7 +101,7 @@ const decodeCounterpartyTargetValues = (
 };
 
 const decodeCounterpartyTarget = (
-  target: Extract<OwnerAuthorizationTarget, { readonly kind: 'business_permission' }>,
+  target: BusinessPermissionTarget,
   scope: OwnerAuthorizationInput['scope'],
 ): Effect.Effect<Option.Option<DecodedCounterpartyTarget>> => {
   if (target.target.kind !== 'counterparty' && target.target.kind !== 'counterparty_storefront') {
@@ -113,7 +115,7 @@ const decodeCounterpartyTarget = (
 
 const checkCounterpartyTarget = (
   transaction: ScopedTransactionExecutor,
-  target: Extract<OwnerAuthorizationTarget, { readonly kind: 'business_permission' }>,
+  target: BusinessPermissionTarget,
   scope: OwnerAuthorizationInput['scope'],
 ): Effect.Effect<OwnerAuthorizationDecision> =>
   decodeCounterpartyTarget(target, scope).pipe(
@@ -139,7 +141,7 @@ const checkCounterpartyTarget = (
 
 const checkRetailTarget = (
   transaction: ScopedTransactionExecutor,
-  target: Extract<OwnerAuthorizationTarget, { readonly kind: 'business_permission' }>,
+  target: BusinessPermissionTarget,
   scope: OwnerAuthorizationInput['scope'],
   // oxlint-disable-next-line effect-native/no-dependency-parameters -- The pure helper is also exercised with a deterministic reader factory in unit tests.
   readerFactory: (typeof ProfileRetailPermissionReaderFactory)['Service'],
@@ -215,13 +217,27 @@ export const makeCommerceCustomerContextOwnerAuthorizationOverlay = (
     Effect.forEach(
       input.targets,
       (target) => {
-        if (target.kind !== 'business_permission') {
+        if (target.kind !== 'owner_permission') {
           return Effect.succeed(Option.none<OwnerAuthorizationDecision>());
         }
-        if (target.target.kind === 'retail_profile') {
-          return checkRetailTarget(transaction, target, input.scope, readerFactory).pipe(Effect.asSome);
+        if (target.target.contract !== commerceCustomerContextAuthorizationContract) {
+          return Effect.succeed(Option.some('unavailable' as const));
         }
-        return checkCounterpartyTarget(transaction, target, input.scope).pipe(Effect.asSome);
+        const decoded = Schema.decodeUnknownResult(CustomerPermissionTargetSchema)(target.target.target);
+        if (Result.isFailure(decoded)) {
+          return Effect.succeed(Option.some('unavailable' as const));
+        }
+        let requested: CustomerPermissionRequest = {
+          permission: target.target.definition.key,
+          target: decoded.success,
+        };
+        if (target.target.requiredStorefrontId !== undefined) {
+          requested = { ...requested, trustedStorefrontId: target.target.requiredStorefrontId };
+        }
+        if (requested.target.kind === 'retail_profile') {
+          return checkRetailTarget(transaction, requested, input.scope, readerFactory).pipe(Effect.asSome);
+        }
+        return checkCounterpartyTarget(transaction, requested, input.scope).pipe(Effect.asSome);
       },
       { concurrency: 1 },
     ).pipe(

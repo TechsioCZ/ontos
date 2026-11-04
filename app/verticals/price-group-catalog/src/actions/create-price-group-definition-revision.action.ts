@@ -2,8 +2,9 @@
 // @ontos-action-owner pricing.price-group-catalog
 // @ontos-action-slug create-price-group-definition-revision
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
+import { definePriceGroupActionPermissions } from '../permissions/authorization.ts';
 import {
   CreatePriceGroupDefinitionRevisionPayloadSchema,
   CreatePriceGroupDefinitionRevisionResultSchema,
@@ -109,15 +110,6 @@ export const createPriceGroupDefinitionRevisionAction = defineAction(
     actionKey: 'pricing.price-group-catalog.create-price-group-definition-revision',
     auditEvidenceSchema: CreatePriceGroupDefinitionRevisionAuditEvidenceSchema,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<CreatePriceGroupDefinitionRevisionPayload>((payload) => ({
-      permission: 'pricing.price_group.revision.create',
-      target: {
-        kind: 'price_group',
-        priceGroupId: payload.expectedCurrent.priceGroupRef.resourceId,
-        pricingCatalogId: payload.expectedCurrent.priceGroupRef.tenantId,
-        tenantId: payload.expectedCurrent.priceGroupRef.tenantId,
-      },
-    })),
     domainErrorSchema: PriceGroupOwnerFailureSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
@@ -129,6 +121,15 @@ export const createPriceGroupDefinitionRevisionAction = defineAction(
     }),
     idempotency: 'required',
     legalEntityScope: 'forbidden',
+    ownerPermissions: definePriceGroupActionPermissions<CreatePriceGroupDefinitionRevisionPayload>((payload) => ({
+      permission: 'pricing.price_group.revision.create',
+      target: {
+        kind: 'price_group',
+        priceGroupId: payload.expectedCurrent.priceGroupRef.resourceId,
+        pricingCatalogId: payload.expectedCurrent.priceGroupRef.tenantId,
+        tenantId: payload.expectedCurrent.priceGroupRef.tenantId,
+      },
+    })),
     owningModuleKey: MODULE_KEY,
     payloadSchema: CreatePriceGroupDefinitionRevisionPayloadSchema,
     policies: [],

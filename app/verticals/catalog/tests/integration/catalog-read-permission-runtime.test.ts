@@ -14,7 +14,11 @@ import type {
   ScopedTransactionExecutor,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
-import { NativeReadTestError, makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
+import {
+  NativeReadTestError,
+  NativeReadTestOwnerRegistration,
+  makeNativeReadTestContext,
+} from '@app/core-runtime/testing/native-reads';
 import { Crypto, Effect, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -25,6 +29,7 @@ import { quantityBasisCompatibilityRead } from '../../src/api/quantity-basis-com
 import { pricingPurposeEquivalenceRead } from '../../src/api/pricing-purpose-equivalence.read.ts';
 import { catalogPersistenceForScope } from '../../src/persistence/catalog-persistence.ts';
 import { VariantRefSchema } from '../../shared/resources/variant.ts';
+import { catalogRegistration } from '../../vertical.registration.ts';
 
 const tenantId = randomUUID();
 const foreignTenantId = randomUUID();
@@ -229,7 +234,7 @@ it.live(
           // Catalog forbids deleting Product/Variant identity and append-only history even as
           // admin. Retain its complete random Core context; only exact SpiceDB grants are removed.
           ownerFixtureRetention: 'retain-complete-context',
-        });
+        }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, catalogRegistration));
         yield* Effect.gen(function* nativeFixtureScope() {
           const create = () => fixture.prepareOwner(produceNativeCatalogProduct);
           const created = yield* create();

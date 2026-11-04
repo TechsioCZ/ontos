@@ -13,6 +13,7 @@ import {
   applicationCompositionRevision,
   assertNoConflictingPublication,
   deriveActiveApplicationCompositionSnapshot,
+  deriveApplicationComposition,
   encodeActiveApplicationCompositionSnapshot,
 } from '../active-application-composition.mts';
 import type {
@@ -118,6 +119,7 @@ const governedShared = shared([
 const PARTY_REGISTRY = 'party-registry';
 const PARTY_REMOTE = 'verticalPartyRegistry';
 const CUSTOMER_CONTEXT = 'commerce-customer-context';
+const CUSTOMER_CONTEXT_MODULE = 'commerce.customer-context';
 const OUTBOX_WORKER_HOST_SETUP = 'outbox-worker-host';
 const PRICE_GROUP_CATALOG = 'price-group-catalog';
 const CUSTOMER_CONTEXT_WORKER = 'commerce-customer-context-worker';
@@ -158,7 +160,7 @@ const customerContext: ObservedModuleDeployment = {
     moduleContract({
       appId: CUSTOMER_CONTEXT,
       components: [],
-      moduleId: 'commerce.customer-context',
+      moduleId: CUSTOMER_CONTEXT_MODULE,
       search: [],
     }),
   ),
@@ -184,13 +186,34 @@ const observation = (modules: readonly ObservedModuleDeployment[]): ActiveApplic
   validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
 });
 
+it.effect('derives expected content from pinned local bytes without creating observation or freshness evidence', () =>
+  Effect.gen(function* derivesPlanningContent() {
+    const observed = observation([partyRegistry, customerContext]);
+    const expected = yield* deriveApplicationComposition({
+      environment: observed.environment,
+      modules: observed.modules,
+      shell: observed.shell,
+    });
+    const snapshot = yield* deriveActiveApplicationCompositionSnapshot(observed);
+    expect(expected).toEqual(snapshot.composition);
+    expect(expected.revision).toBe(applicationCompositionRevision(expected));
+    expect(expected).not.toHaveProperty('observedAt');
+    expect(expected).not.toHaveProperty('validUntil');
+    const later = yield* deriveActiveApplicationCompositionSnapshot({
+      ...observed,
+      observedAt: DateTime.add(observed.observedAt, { hours: 1 }),
+    });
+    expect(later.composition).toEqual(expected);
+  }),
+);
+
 it.effect('derives a schema-valid snapshot of the complete browser and server-only inventory', () =>
   Effect.gen(function* derivesCompleteInventory() {
     const snapshot = yield* deriveActiveApplicationCompositionSnapshot(observation([partyRegistry, customerContext]));
     const { composition } = snapshot;
 
     expect(composition.modules.map(({ federation, moduleId }) => [moduleId, federation.execution])).toEqual([
-      ['commerce.customer-context', 'server'],
+      [CUSTOMER_CONTEXT_MODULE, 'server'],
       [PARTY_MODULE, 'browser'],
     ]);
     expect(composition.shell.contributionAbi).toEqual(ONTOS_SHELL_CONTRIBUTION_ABI);
@@ -524,7 +547,7 @@ it('leaves the refresh to the deploy while the Outbox Workers drift from the Out
       condition: "steps.worker-drift.outputs.drift == 'true'",
       name: 'Leave the pending Outbox Worker mode switch to the stage deploy',
     },
-    ...refreshSteps.map((name) => ({ condition: refreshes, name })),
+    ...refreshSteps.slice(3).map((name) => ({ condition: refreshes, name })),
     {
       condition: "steps.worker-drift.outputs.drift == 'true'",
       name: 'Leave the pending Outbox Worker mode switch to the production deploy',
@@ -608,9 +631,13 @@ it('bounds each refresh and yields it to a main deploy in flight', () => {
         expect(step['timeout-minutes']).toBeLessThanOrEqual(5);
       }
     }
-    // The second install must not walk the first one's node_modules: mise-action hashes the whole tree.
     const checkout = job?.steps.find(({ run }) => run?.includes('git checkout --detach') === true);
-    expect(checkout?.run).toMatch(/git checkout --detach "\$DEPLOYED_SHA"\ngit clean -ffdx/u);
+    if (environment === 'production') {
+      // The second install must not walk the first one's node_modules: mise-action hashes the whole tree.
+      expect(checkout?.run).toMatch(/git checkout --detach "\$DEPLOYED_SHA"\ngit clean -ffdx/u);
+    } else {
+      expect(checkout).toBeUndefined();
+    }
   }
   expect(jobs['refresh-stage-edge']).toBeUndefined();
 });
@@ -627,3 +654,58 @@ it('serves the Shell runtime contract without a locale redirect', () => {
   const ignored = /ignoreRedirectRoutes: \[(?<routes>[^\]]*)\]/u.exec(shellConfig)?.groups?.routes ?? '';
   expect(ignored).toContain("'/.well-known'");
 });
+
+it.effect('publishes exact intrinsic dependencies and capabilities from observed owner requirements', () =>
+  Effect.gen(function* publisherDerivesOwnerRequirements() {
+    const base = moduleContract({
+      appId: CUSTOMER_CONTEXT,
+      components: [],
+      moduleId: CUSTOMER_CONTEXT_MODULE,
+      search: [],
+    });
+    const requiredCapability = { id: 'fixture.intrinsic-compatibility', version: '1' };
+    const declared = {
+      ...customerContext,
+      contract: artifact(customerContext.contract.url, {
+        ...base,
+        manifest: {
+          ...base.manifest,
+          requirements: {
+            coreCapabilities: [requiredCapability],
+            intrinsic: [{ moduleId: PARTY_MODULE, requiredOperations: [] }],
+            operations: [],
+            schemaVersion: '1',
+          },
+        },
+      }),
+    };
+    const input = observation([partyRegistry, declared]);
+    const fixtureRuntime = createShellRuntimeContract('shell-immutable-build');
+    const trustedFixture = {
+      ...input,
+      shell: {
+        ...input.shell,
+        runtimeContract: artifact(input.shell.runtimeContract.url, {
+          ...fixtureRuntime,
+          coreCapabilities: [requiredCapability],
+        }),
+      },
+    };
+    const snapshot = yield* deriveActiveApplicationCompositionSnapshot(trustedFixture);
+    const consumer = snapshot.composition.modules.find(({ moduleId }) => moduleId === CUSTOMER_CONTEXT_MODULE);
+    expect(consumer?.dependencies).toEqual([PARTY_MODULE]);
+    expect(consumer?.requiredCoreCapabilities).toEqual([requiredCapability]);
+    const missing = yield* Effect.flip(
+      deriveActiveApplicationCompositionSnapshot({ ...trustedFixture, modules: [declared] }),
+    );
+    expect(missing.reason).toBe('invalid_observation');
+    const missingCause = yield* Schema.decodeUnknownEffect(Schema.Struct({ reason: Schema.String }))(missing.cause);
+    expect(missingCause.reason).toMatch(/dependency party.registry/u);
+    const missingCapability = yield* Effect.flip(deriveActiveApplicationCompositionSnapshot(input));
+    expect(missingCapability.reason).toBe('invalid_observation');
+    const missingCapabilityCause = yield* Schema.decodeUnknownEffect(Schema.Struct({ reason: Schema.String }))(
+      missingCapability.cause,
+    );
+    expect(missingCapabilityCause.reason).toMatch(/Core capability/u);
+  }),
+);

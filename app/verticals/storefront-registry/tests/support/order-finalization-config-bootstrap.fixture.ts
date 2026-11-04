@@ -29,6 +29,7 @@ import {
   GatewayAssertionRedemptionLive,
 } from '../../api/auth/gateway-assertion-redemption.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { storefrontRegistryRegistration } from '../../vertical.registration.ts';
 import { registerStorefrontApplicationAction } from '../../src/actions/register-storefront-application.action.ts';
 import {
   RegisterStorefrontApplicationPayloadSchema,
@@ -76,7 +77,7 @@ const main = Effect.scoped(
     const gate = ModuleStateGateLive.pipe(Layer.provide(states));
     const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(gate));
     const scopes = OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(persistence, ContextAccessLive)));
-    const actions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+    const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, storefrontRegistryRegistration).pipe(
       Layer.provide(
         Layer.mergeAll(ActionRepositoryLive, ActionPermissionLive, gate, gateway, scopes, ContextAccessLive),
       ),

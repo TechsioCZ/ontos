@@ -3,6 +3,7 @@
 // @ontos-module-id commerce.catalog
 import {
   defineOntosModuleManifest,
+  ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
   ShellPublicComponentContributionSchema,
@@ -225,6 +226,12 @@ import { updateProductAction } from './src/actions/update-product.action.ts';
 import { UpdateProductRecoveryApi } from './shared/apis/update-product-recovery.ts';
 import { VariantHistoryApi } from './shared/apis/variant-history.ts';
 import { variantResourceDescriptor } from './shared/resources/variant.ts';
+import { selectionEvidenceRead } from './src/api/selection-evidence.read.ts';
+import { quantityPreparationRead } from './src/api/quantity-preparation.read.ts';
+import { quantityBasisCompatibilityRead } from './src/api/quantity-basis-compatibility.read.ts';
+import { pricingPurposeEquivalenceRead } from './src/api/pricing-purpose-equivalence.read.ts';
+import { productVariantSnapshotRead } from './src/api/product-variant-snapshot.read.ts';
+import { manufacturerRelationCurrentRead } from './src/api/manufacturer-relation-current.read.ts';
 // </generated-module-manifest-imports>
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
@@ -243,6 +250,11 @@ const _reportContribution = (value: ReportContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellReportContributionSchema)(value));
 const _searchContribution = (value: SearchContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
+
+const partyRegistryModuleId = 'party.registry';
+const partyDetailProviderEntrypoint = 'party.registry.api.party-detail';
+const manufacturerPartyCurrentEvidence = 'commerce.catalog.evidence.manufacturer-target.party-current';
+const manufacturerExactRevisionEvidence = 'commerce.catalog.evidence.manufacturer-target.exact-revision';
 
 export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
@@ -478,6 +490,31 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
       // </generated-module-manifest-components>
     },
     events: [],
+    operationContracts: [
+      // <generated-module-manifest-operation-contracts>
+      { apiKey: 'selection-evidence', operationKey: 'selectionEvidence.execute', registration: selectionEvidenceRead },
+      {
+        apiKey: 'quantity-preparation',
+        operationKey: 'quantityPreparation.execute',
+        registration: quantityPreparationRead,
+      },
+      {
+        apiKey: 'quantity-basis-compatibility',
+        operationKey: 'quantityBasisCompatibility.execute',
+        registration: quantityBasisCompatibilityRead,
+      },
+      {
+        apiKey: 'pricing-purpose-equivalence',
+        operationKey: 'pricingPurposeEquivalence.execute',
+        registration: pricingPurposeEquivalenceRead,
+      },
+      {
+        apiKey: 'product-variant-snapshot',
+        operationKey: 'productVariantSnapshot.execute',
+        registration: productVariantSnapshotRead,
+      },
+      // </generated-module-manifest-operation-contracts>
+    ],
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>
@@ -539,5 +576,33 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
       ],
       timelines: [],
     },
+  },
+  requirements: {
+    coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
+    intrinsic: [],
+    operations: [
+      {
+        condition: 'commerce.catalog.condition.manufacturer-target-party',
+        entrypointKey: setProductManufacturerAction.descriptor.entrypoint.entrypointKey,
+        evidence: [manufacturerPartyCurrentEvidence, manufacturerExactRevisionEvidence],
+        key: 'commerce.catalog.requirement.set-product-manufacturer-party',
+        provider: { entrypointKey: partyDetailProviderEntrypoint, moduleId: partyRegistryModuleId, schemaVersion: '1' },
+      },
+      {
+        condition: 'commerce.catalog.condition.manufacturer-target-party',
+        entrypointKey: changeProductManufacturerAction.descriptor.entrypoint.entrypointKey,
+        evidence: [manufacturerPartyCurrentEvidence, manufacturerExactRevisionEvidence],
+        key: 'commerce.catalog.requirement.change-product-manufacturer-party',
+        provider: { entrypointKey: partyDetailProviderEntrypoint, moduleId: partyRegistryModuleId, schemaVersion: '1' },
+      },
+      {
+        condition: 'commerce.catalog.condition.retained-manufacturer-target-party',
+        entrypointKey: manufacturerRelationCurrentRead.descriptor.entrypoint.entrypointKey,
+        evidence: [manufacturerPartyCurrentEvidence, manufacturerExactRevisionEvidence],
+        key: 'commerce.catalog.requirement.manufacturer-current-party',
+        provider: { entrypointKey: partyDetailProviderEntrypoint, moduleId: partyRegistryModuleId, schemaVersion: '1' },
+      },
+    ],
+    schemaVersion: '1',
   },
 });

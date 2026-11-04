@@ -101,3 +101,128 @@ A final fetch observed main `e934cb32861877da450f0de2b14a0af84794daf9`, 18 commi
 The delta upgrades UltraModern/Effect/compiler and security dependencies, separates crypto-only owner imports from Node HTTP initialization, and repairs mapped SQL transaction recovery/tagged Outbox finalizer failures. Preserve those fixes during the next implementation rebaseline. The exact Shell issuer, source-proof provenance, gateway and affected Catalog/CCC adapter files are byte-unchanged, so the missing actor-preserving exchange prerequisite remains. No new deployed owner identity was introduced.
 
 PR #1325 remains open/unmerged; its latest observed head is `4ae2c34f5a6aa91da28108c70b80d1a4144208e3`. Its claims remain unshipped evidence. Before business changes, synchronize branch/runtime to current main and rerun affected gates. Executed checks on this map branch cover the retained census baseline, not the newer dependency cohort.
+
+## Implementation deltas — 31 October 2026
+
+The original census above and its source counts remain pinned historical evidence. The JSON's
+`implementationDeltas` records the following later delivered or in-progress slices without
+relabeling the original anchors, observed membership, grants or availability as current facts.
+
+- #1284 at `b6203518e`, draft [PR #1345](https://github.com/TechsioCZ/ontos/pull/1345): the approved Catalog/CCC server transports now preserve original P through the existing bounded issuer. Source workload authentication remains distinct from independent receiving permissions. The executed proof and remaining postal-Read qualifications are in [server-client-relay.md](server-client-relay.md).
+- #1285 at `6b32c593f`, draft [PR #1348](https://github.com/TechsioCZ/ontos/pull/1348), with main integrated by normal merges from `72149af1c`: all eight native Market business Actions and default retirement assembly are implemented and independently reviewed. Actual public Storefront validation and CCC assessment/reserve/recovery preserve actor, revision, audit and original-effect identity. Installed CCC suspension blocks retirement; never-used absent future owners remain absent. Shell/Storefront/CCC are explicitly qualified native fixture deployments. Pricing is an actual downstream regression. Full local checks/build pass; no production activation or merged-PR claim is made.
+- #1286: the registered Inventory consumer Action, existing qualified proof port, typed unavailable default and original-effect recovery have bounded executed owner-level acceptance. Neither a separately versioned port nor a production producer operation exists. See [inventory-context-port.md](inventory-context-port.md); the #253/29 → #877/34 handoff remains.
+- #1287 at schema checkpoint `1955e25d1` is in progress. Exact Action/Read operation-version claims and owner-authored requirements now have validated declaration/projection support. Actual owner declarations and lifecycle/entrypoint enforcement are not yet accepted. A concrete CCC→PriceGroup configured-key Principal substitution and source/target LE-scope conflict has a separately reviewed proposal pending human approval; no new enrollment or projection is implemented.
+
+The current main was refetched as `72149af1c` before #1287. These deltas do not recompute the old
+22-direction/210-occurrence census, claim a current owner/member count, or turn fixture execution
+into production availability. #1297 still reconciles the final actual map and measured composition.
+
+## Final-source reconciliation — 3 November 2026
+
+This source reconciliation is pinned to `373122971e9a6cc75ccd4b22fcc878623d7effca`, integrating main
+`78573bef21445c3229672b24a3257c860c3309d0` and the reviewed #1296 source `cb99499d53347e0622646243f530864ffea9e389`.
+The earlier census, anchors, counts and implementation deltas remain historical. Their in-progress,
+browser-default and pending-relay-approval qualifications do not describe this source checkpoint.
+The JSON's `finalSourceReconciliation` contains exact source and existing local receipt references.
+This update records source facts; it does not rerun earlier tests or claim that their results apply
+to the newly integrated main without the current #1297 checks.
+
+### Source owners, reviewed intent and workers
+
+The current source has **16 business owners**. The original fourteen package/module/deployment
+identities are unchanged; `@app/commerce-cart` (`commerce.cart`, deployment `commerce-cart`) and
+`@app/commerce-order` (`commerce.order`, deployment `commerce-order`) add source owners. The reviewed
+release intent remains exactly **13 members**, excluding Availability, Cart and Order. Source
+existence, a generated worker entry and a reviewed publication input do not establish observed
+installation, Tenant Module State, activation, a running deployment or operation availability.
+
+There are **35 registered worker source headers across six owners**: Party16, CCC9, PriceGroup1,
+Inventory6, Privacy2 and Order1. The addition is `commerce.order.finalize-order-work`, producer
+`commerce.order`, topic `commerce.order.finalization-work`; it is owner-local. The original three
+cross-owner subscriptions are unchanged. The generated host now contains six owner entries.
+Host/dedicated remains independent from the business deployment target and retains its documented
+shared-process failure domain; these counts establish no new deployed worker or business activation.
+
+### Actual conditional declarations and compatibility
+
+Nine owner declarations provide **36 concrete public operation claims** and **51 conditional
+requirements**, all with empty intrinsic requirement lists. The counts are:
+
+| Declaring owner | Provided claims | Conditional requirements |
+| --------------- | --------------: | -----------------------: |
+| Catalog         |               5 |                        3 |
+| CCC             |              10 |                       17 |
+| Market          |              13 |                        8 |
+| Party           |               3 |                        1 |
+| PriceGroup      |               1 |                        0 |
+| Storefront      |               1 |                        0 |
+| Pricing         |               1 |                       20 |
+| PaymentTerm     |               1 |                        2 |
+| Privacy         |               1 |                        0 |
+
+The initial #1287 step3 receipt counted47 requirements. The additional four are CCC's
+`assign-customer-price-group-catalog`, `assign-counterparty-price-group-catalog`,
+`migrate-customer-price-group-catalog` and `migrate-counterparty-price-group-catalog`, each prefixed
+`commerce.customer-context.requirement.`. Their condition is
+`commerce.customer-context.condition.price-group-catalog-compatibility-required`; the provider is
+`pricing.price-group-catalog.api.validate-price-group-compatibility`, version1. These are conditional
+operation requirements, not new installation edges. Concrete Action/Read operation versions supply
+compatibility evidence; manifest format equality or a new build marker does not.
+
+Catalog PARTY and CCC Party-origin conditions remain distinct from LEGAL_ENTITY and COMMERCE_ONLY.
+Complete zero PriceGroup assignments may yield NONE; incomplete, unavailable or multiple assignments
+may not. Market association, retirement, original-effect recovery and accepted owner-issued evidence
+retain their own Current/completeness conditions. Reciprocal CCC/Market operations do not form an
+intrinsic cycle. Party's declaration now lives in `vertical.runtime-declaration.ts`, composed by its
+`vertical.manifest.ts`; the JSON points to the actual declaration.
+
+The bounded Catalog/CCC, Market and CCC→PriceGroup relay decisions have been approved and
+implemented. CCC's PriceGroup issuer now relays the verified receiving assertion and admitted
+revision through the existing issuer, preserving the original actor and the approved scope
+projection. Independent receiving permissions, target checks and authoritative owner facts remain
+necessary. The earlier “approval pending/no enrollment” statement is retained only as historical
+evidence; it is not a new approval request or a claim that every deployed environment is configured.
+
+### Additional source directions and current assembly
+
+Cart adds public source directions to Catalog, CCC and Pricing. Order adds directions to Cart,
+Pricing, CCC, PaymentTerm and Tax. CCC also references Cart and Order public contracts/clients.
+The JSON records exact source files for these ten directions. Schema imports, public client source
+and default wiring are classified separately from actual installed runtime requirements; no
+Cart/Order adoption, intrinsic requirement or parked-capability activation follows. The original
+22-direction/210-occurrence census is not relabeled as a new comprehensive current import census.
+
+The bounded Catalog/CCC server defaults are qualified by the existing [relay evidence](server-client-relay.md)
+and #1287 receiving receipts. Pricing's current `api/index.ts` composes evaluation, ordinary
+publication and owner final-fence factories for Actions, with four owner credential layers; its
+current Pricing Read route explicitly supplies the evaluation/publication/final-fence layers.
+The old blanket browser/Read assembly descriptions are superseded by these source facts and the
+qualified #1291 default-factory/receiving receipts, not by an assumed usable credential or live grant.
+
+The #1288 metadata cleanup is present: Party and CCC declare their Privacy package dependencies;
+Party retains its Privacy TS reference and CCC has none. The six cited unused design-token references
+are absent. No new reference requirement is inferred from this observation. The bounded Inventory
+port and its unavailable default remain distinct from a separately deployed production producer;
+the #253/29 → #877/34 handoff and other deferred adoptions remain unchanged.
+
+### Existing reviewed local delivery receipts
+
+These deliveries are complete at their recorded sources. Their PRs and local execution receipts
+provide provenance; this table does not assert merge state or a new integrated/staging test result.
+
+| Issue | Delivery                                               | Qualified local scope                                                                                       |
+| ----- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| #1287 | [PR1351](https://github.com/TechsioCZ/ontos/pull/1351) | Declarations, lifecycle/entrypoint closure, approved relay and genuine native receiving.                    |
+| #1288 | [PR1352](https://github.com/TechsioCZ/ontos/pull/1352) | Dependency cleanup, public-document equivalence and retained dormant contracts.                             |
+| #1289 | [PR1356](https://github.com/TechsioCZ/ontos/pull/1356) | Boundary enforcement, valid/invalid controls and isolated native source verification.                       |
+| #1290 | [PR1357](https://github.com/TechsioCZ/ontos/pull/1357) | Assortment target/permission closure and native grant revocation.                                           |
+| #1291 | [PR1358](https://github.com/TechsioCZ/ontos/pull/1358) | Owner permission/default-factory closure and native receiving.                                              |
+| #1292 | [PR1366](https://github.com/TechsioCZ/ontos/pull/1366) | Selective immutable release, complete membership and B/T guards.                                            |
+| #1293 | [PR1365](https://github.com/TechsioCZ/ontos/pull/1365) | Scoped migration selection with retained global lock/admission/drain/seal and legacy completion guarantees. |
+| #1294 | [PR1370](https://github.com/TechsioCZ/ontos/pull/1370) | Accepted MIN refresh, permission/open/finite cases and unchanged observation TTL/trust.                     |
+| #1295 | [PR1374](https://github.com/TechsioCZ/ontos/pull/1374) | Fair loading, cancellation and cache identity; qualified native proof.                                      |
+| #1296 | [PR1376](https://github.com/TechsioCZ/ontos/pull/1376) | Local render boundary, actual Chromium and native clone.                                                    |
+
+Current integrated checks, both actual supported staging targets and joint browser R2 acceptance
+remain #1297 work. Source reconciliation and earlier local PASS receipts establish no staging or
+production rollout, installed membership, live Permission, business activation or universal isolation.

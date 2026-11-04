@@ -4,9 +4,9 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import {
-  getActionBusinessPermissionTargetResolver,
+  getActionOwnerPermissionTargetResolver,
   getActionResourcePermissionTargetResolver,
-} from '../../../../packages/core-runtime/src/actions/definition.ts';
+} from '@app/core-runtime/testing/actions';
 import type {
   ExternalStockCorrelation,
   ExternalStockCorrelationPersistence,
@@ -189,17 +189,23 @@ describe('External Stock Correlation lifecycle Actions', () => {
 
     for (const [businessTarget, resourceTarget, resourceId] of [
       [
-        getActionBusinessPermissionTargetResolver(establishExternalStockCorrelationAction)?.(establishPayload, scope),
+        getActionOwnerPermissionTargetResolver(establishExternalStockCorrelationAction)?.(establishPayload, scope)?.map(
+          ({ definition, target }) => ({ permission: definition.key, target }),
+        )[0],
         getActionResourcePermissionTargetResolver(establishExternalStockCorrelationAction)?.(establishPayload, scope),
         firstCorrelationId,
       ],
       [
-        getActionBusinessPermissionTargetResolver(correctExternalStockCorrelationAction)?.(correctPayload, scope),
+        getActionOwnerPermissionTargetResolver(correctExternalStockCorrelationAction)?.(correctPayload, scope)?.map(
+          ({ definition, target }) => ({ permission: definition.key, target }),
+        )[0],
         getActionResourcePermissionTargetResolver(correctExternalStockCorrelationAction)?.(correctPayload, scope),
         replacementCorrelationId,
       ],
       [
-        getActionBusinessPermissionTargetResolver(endExternalStockCorrelationAction)?.(endPayload, scope),
+        getActionOwnerPermissionTargetResolver(endExternalStockCorrelationAction)?.(endPayload, scope)?.map(
+          ({ definition, target }) => ({ permission: definition.key, target }),
+        )[0],
         getActionResourcePermissionTargetResolver(endExternalStockCorrelationAction)?.(endPayload, scope),
         replacementCorrelationId,
       ],

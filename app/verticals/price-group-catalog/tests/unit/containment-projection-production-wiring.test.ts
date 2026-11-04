@@ -37,7 +37,7 @@ it.layer(NodeFileSystem.layer)(
         );
         expect(host).toContain('health: true');
         expect(layer).toContain('OutboxWorkerTenantScopeLive');
-        expect(layer).toContain('ResourceContainmentRelationshipMutationLive');
+        expect(layer).toContain('makeResourceContainmentRelationshipMutationLive(preparePriceGroupContainment)');
         expect(registration).toContain('reconcilePriceGroupContainmentProjectionWorker');
         expect(worker).toContain("legalEntityScope: 'forbidden'");
       }),

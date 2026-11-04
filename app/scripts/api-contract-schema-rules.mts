@@ -103,7 +103,7 @@ const declaredName = (value: GraphValue): string | undefined => {
 };
 
 /** A `@app/shared-contracts` Problem Details factory, followed into its workspace source. */
-const isProblemDetailsFactory = (value: GraphValue): boolean =>
+export const isProblemDetailsFactory = (value: GraphValue): boolean =>
   value.kind === 'node' &&
   isFunction(value.node) &&
   sharedContractsPath.test(value.module.path) &&

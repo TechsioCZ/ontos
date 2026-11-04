@@ -1,7 +1,9 @@
+import { AssortmentPermissionTargetSchema } from '../permissions/authorization-targets.ts';
+import { assortmentAuthorizationContract } from '../../shared/permissions/authorization-contract.ts';
+import type { AssortmentPermissionAccessTarget } from '../permissions/authorization-targets.ts';
 import { DateTime, Effect, Layer, Match, Schema } from 'effect';
 import { failClosedOwnerAuthorizationOverlay, OwnerAuthorizationOverlay } from '@app/core-runtime';
 import type {
-  AssortmentPermissionAccessTarget,
   OperationalScope,
   OwnerAuthorizationOverlayService,
   OwnerAuthorizationTarget,
@@ -226,12 +228,16 @@ export const assortmentAuthorizationCurrentForTransaction = (
  */
 export const assortmentOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = {
   authorize: (transaction, input) => {
-    if (input.targets.some((target) => target.kind === 'business_permission')) {
+    if (
+      input.targets.some(
+        (target) => target.kind === 'owner_permission' && target.target.contract !== assortmentAuthorizationContract,
+      )
+    ) {
       return failClosedOwnerAuthorizationOverlay.authorize(transaction, input);
     }
     const targets = input.targets.filter(
-      (target): target is Extract<OwnerAuthorizationTarget, { readonly kind: 'assortment_permission' }> =>
-        target.kind === 'assortment_permission',
+      (target): target is Extract<OwnerAuthorizationTarget, { readonly kind: 'owner_permission' }> =>
+        target.kind === 'owner_permission',
     );
     if (targets.length === 0) {
       return failClosedOwnerAuthorizationOverlay.authorize(transaction, input);
@@ -246,7 +252,11 @@ export const assortmentOwnerAuthorizationOverlay: OwnerAuthorizationOverlayServi
     const currentService = assortmentAuthorizationCurrentForTransaction(transaction);
     return Effect.forEach(
       targets,
-      (target) => currentService.assess({ operationAt: input.operationAt, scope: input.scope, target: target.target }),
+      (entry) =>
+        entry.target.contract === assortmentAuthorizationContract &&
+        Schema.is(AssortmentPermissionTargetSchema)(entry.target.target)
+          ? currentService.assess({ operationAt: input.operationAt, scope: input.scope, target: entry.target.target })
+          : Effect.succeed(localCurrentnessUnavailable()),
       { concurrency: 1 },
     ).pipe(
       Effect.map((results) => {

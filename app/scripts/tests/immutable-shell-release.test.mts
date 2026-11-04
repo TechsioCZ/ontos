@@ -52,6 +52,7 @@ import type { OpsCommand } from '../ops/ops-shell.mts';
 import { OpsShell } from '../ops/ops-shell.mts';
 import { OpsCommandError } from '../ops/ops-command-error.mts';
 import { releaseUiFor } from './release-envelope-ui.fixture.mts';
+import type { ApplicationReleaseSelection } from '../application-release-intent.mts';
 
 const BUILD_MARKER = '0123456789abcdef'.repeat(4);
 const SOURCE_REVISION = 'a'.repeat(40);
@@ -100,6 +101,17 @@ const planFor = () =>
     sourceRevision: SOURCE_REVISION,
     workersDevSubdomain: WORKERS_DEV_SUBDOMAIN,
   });
+
+const shellPublicationSelection: ApplicationReleaseSelection = {
+  complete: [],
+  fresh: [],
+  removed: [],
+  retained: [],
+  shell: {
+    mode: 'fresh',
+    unit: { id: APP_ID, packageName: '@app/shell-super-app', path: 'apps/shell-super-app', workerName: 'ontos-shell' },
+  },
+};
 
 const inventoryFor = (plan: ImmutableApplicationReleasePlan) => ({
   assets: [
@@ -1193,13 +1205,24 @@ it.effect('publishes the exact Shell receipt identity and artifact pins and refu
     const artifacts = yield* validateImmutableShellReleaseArtifacts(plan, inventoryFor(plan));
     const intent = { modules: [] };
     const receipt = { artifacts, assetsVersionId: PROVIDER_VERSION, plan };
-    const updated = yield* makeImmutableApplicationReleasePublicationCandidate([], intent, receipt);
+    const updated = yield* makeImmutableApplicationReleasePublicationCandidate({
+      currentSourceRevision: SOURCE_REVISION,
+      intent,
+      receipts: [],
+      selection: shellPublicationSelection,
+      shellReceipt: receipt,
+    });
     expect(updated.shell).toEqual({
       deployment: { appId: APP_ID, buildMarker: plan.buildMarker },
       federationManifest: artifacts.federationManifest,
       runtimeContract: artifacts.runtimeContract,
     });
-    const absent = yield* makeImmutableApplicationReleasePublicationCandidate([], intent).pipe(Effect.flip);
+    const absent = yield* makeImmutableApplicationReleasePublicationCandidate({
+      currentSourceRevision: SOURCE_REVISION,
+      intent,
+      receipts: [],
+      selection: shellPublicationSelection,
+    }).pipe(Effect.flip);
     expect(Schema.is(ImmutableApplicationReleaseError)(absent)).toBe(true);
     const approved = yield* deriveActiveApplicationCompositionSnapshot({
       environment: 'stage',
@@ -1211,9 +1234,14 @@ it.effect('publishes the exact Shell receipt identity and artifact pins and refu
       },
       validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
     });
-    const ambiguous = yield* makeImmutableApplicationReleasePublicationCandidate([], intent, receipt, approved).pipe(
-      Effect.flip,
-    );
+    const ambiguous = yield* makeImmutableApplicationReleasePublicationCandidate({
+      approvedBaseline: approved,
+      currentSourceRevision: SOURCE_REVISION,
+      intent,
+      receipts: [],
+      selection: { ...shellPublicationSelection, shell: { ...shellPublicationSelection.shell, mode: 'retained' } },
+      shellReceipt: receipt,
+    }).pipe(Effect.flip);
     expect(Schema.is(ImmutableApplicationReleaseError)(ambiguous)).toBe(true);
   }),
 );
@@ -1242,9 +1270,13 @@ it.effect('rejects Shell publication receipts that identify a business module or
         },
       },
     ]) {
-      const failure = yield* makeImmutableApplicationReleasePublicationCandidate([], { modules: [] }, forged).pipe(
-        Effect.flip,
-      );
+      const failure = yield* makeImmutableApplicationReleasePublicationCandidate({
+        currentSourceRevision: SOURCE_REVISION,
+        intent: { modules: [] },
+        receipts: [],
+        selection: shellPublicationSelection,
+        shellReceipt: forged,
+      }).pipe(Effect.flip);
       expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
     }
   }),

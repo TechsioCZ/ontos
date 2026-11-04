@@ -1,3 +1,4 @@
+import { commerceOrderRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
@@ -15,7 +16,7 @@ import {
   ContextAccessLive as GovernedContextAccessLive,
   CorePersistenceLive as GovernedCorePersistenceLive,
   DatabaseConfigLive as GovernedDatabaseConfigLive,
-  ReadRuntimeLive as GovernedReadRuntimeLive,
+  makeReadRuntimeLive as GovernedMakeReadRuntimeLive,
   makeActionRuntimeLive as GovernedMakeActionRuntimeLive,
   TenantModuleStateServiceLive as GovernedTenantModuleStateServiceLive,
 } from '@app/core-runtime';
@@ -78,9 +79,7 @@ const governedReadRuntimeDependenciesLive = GovernedReadLayer.mergeAll(
     GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedCorePersistenceLive, GovernedContextAccessLive)),
   ),
 );
-const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(
-  GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
-);
+
 const governedApplicationCompositionSourceLive = GovernedApplicationCompositionSourceLive.pipe(
   GovernedReadLayer.provide(
     GovernedFetchHttpClient.layer.pipe(
@@ -90,6 +89,13 @@ const governedApplicationCompositionSourceLive = GovernedApplicationCompositionS
     ),
   ),
 );
+const activeApplicationCompositionLive = GovernedApplicationCompositionConfigLive.pipe(
+  GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
+);
+const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, commerceOrderRegistration).pipe(
+  GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
+  GovernedReadLayer.provide(activeApplicationCompositionLive),
+);
 
 const configuredGatewayAssertionRedemptionDatabaseLive = GatewayAssertionRedemptionDatabaseLive.pipe(
   GovernedReadLayer.provide(PgClient.layerFrom(gatewayAssertionRedemptionPgClient)),
@@ -97,7 +103,7 @@ const configuredGatewayAssertionRedemptionDatabaseLive = GatewayAssertionRedempt
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
 );
 const configuredApprovalOwnerGatewayLive = ApprovalOwnerGatewayLive.pipe(
-  GovernedReadLayer.provide(GovernedApplicationCompositionConfigLive),
+  GovernedReadLayer.provide(activeApplicationCompositionLive),
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
 );
 
@@ -105,11 +111,14 @@ const configuredOrderFinalSourcesLive = OrderFinalSourceVerificationLive.pipe(
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(OrderFinalizationPricingCartLive, FinalizationTaxPaymentTermsLive),
   ),
-  GovernedReadLayer.provide(GovernedApplicationCompositionConfigLive),
+  GovernedReadLayer.provide(activeApplicationCompositionLive),
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
 );
 
-const governedActionRuntimeLive = GovernedMakeActionRuntimeLive(governedActionDeliveryUnit).pipe(
+const governedActionRuntimeLive = GovernedMakeActionRuntimeLive(
+  governedActionDeliveryUnit,
+  commerceOrderRegistration,
+).pipe(
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
       governedReadRuntimeDependenciesLive,
@@ -117,7 +126,7 @@ const governedActionRuntimeLive = GovernedMakeActionRuntimeLive(governedActionDe
       GovernedActionRepositoryLive,
       GovernedActionPermissionLive,
       ActionAuthorizationPreflightDatabaseLive.pipe(GovernedReadLayer.provideMerge(GovernedCorePersistenceLive)),
-      GovernedApplicationCompositionConfigLive,
+      activeApplicationCompositionLive,
     ),
   ),
 );

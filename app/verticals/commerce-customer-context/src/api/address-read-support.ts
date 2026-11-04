@@ -1,3 +1,4 @@
+import { customerOwnerPermissionTarget } from '../permissions/authorization.ts';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { Crypto, Effect } from 'effect';
 import type { AddressBookProfile } from '../../shared/domain/address-book.ts';
@@ -15,10 +16,13 @@ type InvoiceRecipientReadServices = ReturnType<typeof invoiceRecipientPortsForTr
 type AddressExternalResolutionPortsFactory = (
   scope: OperationalScope,
   crypto: Crypto.Crypto,
+  requirementKey:
+    | 'commerce.customer-context.requirement.delivery-destination-resolution-party'
+    | 'commerce.customer-context.requirement.invoice-recipient-resolution-party',
 ) => Partial<AddressExternalResolutionPorts>;
 
-const partyAddressResolutionPorts: AddressExternalResolutionPortsFactory = (scope, crypto) => ({
-  resolvePartyPostalAddress: partyBackedPostalAddressResolverForScope(scope, crypto),
+const partyAddressResolutionPorts: AddressExternalResolutionPortsFactory = (scope, crypto, requirementKey) => ({
+  resolvePartyPostalAddress: partyBackedPostalAddressResolverForScope(scope, crypto, requirementKey),
 });
 
 const makeDeliveryDestinationReadServiceFactory = (
@@ -30,7 +34,13 @@ const makeDeliveryDestinationReadServiceFactory = (
       return deliveryDestinationPortsForTransaction(
         transaction,
         scope,
-        composeAddressExternalResolutionPorts(externalForScope(scope, crypto)),
+        composeAddressExternalResolutionPorts(
+          externalForScope(
+            scope,
+            crypto,
+            'commerce.customer-context.requirement.delivery-destination-resolution-party',
+          ),
+        ),
       );
     },
   );
@@ -46,7 +56,9 @@ const makeInvoiceRecipientReadServiceFactory = (
       return invoiceRecipientPortsForTransaction(
         transaction,
         scope,
-        composeAddressExternalResolutionPorts(externalForScope(scope, crypto)),
+        composeAddressExternalResolutionPorts(
+          externalForScope(scope, crypto, 'commerce.customer-context.requirement.invoice-recipient-resolution-party'),
+        ),
       );
     },
   );
@@ -55,27 +67,25 @@ export const invoiceRecipientReadServiceFactory = makeInvoiceRecipientReadServic
 
 export const profileTarget = (input: { readonly profile: AddressBookProfile }, scope: OperationalScope) => {
   const legalEntityId = scope.legalEntityId ?? 'missing-required-legal-entity-scope';
-  return {
-    businessPermission:
-      input.profile.kind === 'COUNTERPARTY'
-        ? {
-            permission: 'counterparty.address_book.use' as const,
-            target: {
-              counterpartyId: input.profile.counterpartyRef.resourceId,
-              kind: 'counterparty' as const,
-              legalEntityId,
-              tenantId: scope.tenantId,
-            },
-          }
-        : {
-            permission: 'retail.address_book.use' as const,
-            target: {
-              kind: 'retail_profile' as const,
-              legalEntityId,
-              profileId: input.profile.profileRef.resourceId,
-              tenantId: scope.tenantId,
-            },
+  const request =
+    input.profile.kind === 'COUNTERPARTY'
+      ? {
+          permission: 'counterparty.address_book.use',
+          target: {
+            counterpartyId: input.profile.counterpartyRef.resourceId,
+            kind: 'counterparty' as const,
+            legalEntityId,
+            tenantId: scope.tenantId,
           },
-    kind: 'business_permission' as const,
-  };
+        }
+      : {
+          permission: 'retail.address_book.use',
+          target: {
+            kind: 'retail_profile' as const,
+            legalEntityId,
+            profileId: input.profile.profileRef.resourceId,
+            tenantId: scope.tenantId,
+          },
+        };
+  return { kind: 'owner_permission' as const, ownerPermission: customerOwnerPermissionTarget(request) };
 };

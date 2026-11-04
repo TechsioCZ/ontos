@@ -1,20 +1,17 @@
+import { privacyRegistration } from '../../vertical.registration.ts';
+import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { Reactivity } from 'effect/reactivity';
 import { PgClient } from '@effect/sql-pg';
-import { createHash } from 'node:crypto';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import {
-  canonicalizeApplicationComposition,
   makeContextPermissionRelationshipMutationLive,
-  OntosModuleDeploymentContractSchema,
   ReadRuntime,
   runAction,
   TrustedPrincipalContextSchema,
-  validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
@@ -28,14 +25,13 @@ import { noticeVersionsRead } from '../../src/api/notice-versions.read.ts';
 import { noticeVersions } from '../../src/database/schema.ts';
 import { privacyOperationRepositoryForScope } from '../../src/persistence/privacy-operation-postgres-repository.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-persistence-error.ts';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { makePrivacyDsrCompositionSnapshot } from '../support/dsr-obligation-native.ts';
 
 const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
 );
-const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const baseInput: CreatePrivacyNoticeVersionInput = {
   applicableScope: {
     facts: [{ dimension: 'CONTROLLER_SCOPE', value: 'notice-instant-controller' }],
@@ -49,39 +45,7 @@ const baseInput: CreatePrivacyNoticeVersionInput = {
 };
 
 const makeNoticeIsolation = Effect.fn('NoticeInstants.makeIsolation')(function* makeNoticeIsolation() {
-  const base = yield* makeApplicationCompositionSnapshotFixture(
-    [ultramodernApiMarker.appId],
-    ultramodernApiMarker.buildMarker,
-  );
-  const modules = yield* Effect.forEach(
-    base.composition.modules,
-    Effect.fn('NoticeInstants.moduleContract')(function* moduleContract(module) {
-      const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-        module.contractDocument,
-      );
-      const document = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))({
-        ...contract,
-        manifest: { ...contract.manifest, module: { ...contract.manifest.module, id: 'privacy.core' } },
-      });
-      const sha256 = digest(document);
-      return {
-        ...module,
-        contract: { ...module.contract, sha256 },
-        contractDocument: document,
-        moduleId: 'privacy.core',
-        publicContract: { ...module.publicContract, id: 'privacy.core', sha256 },
-      };
-    }),
-    { concurrency: 1 },
-  );
-  const composition = { ...base.composition, modules };
-  const snapshot = yield* validateActiveApplicationCompositionSnapshot({
-    ...base,
-    composition: {
-      ...composition,
-      revision: digest(canonicalizeApplicationComposition({ ...composition, revision: '0'.repeat(64) })),
-    },
-  });
+  const snapshot = yield* makePrivacyDsrCompositionSnapshot();
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
     mode: 'schema-only',
@@ -100,9 +64,12 @@ const makeNoticeContext = Effect.fn('NoticeInstants.makeContext')(function* make
     makeLiveOperationFixture({
       actionKeys: provisionExecution ? [createNoticeVersionAction.descriptor.actionKey] : [],
       adminConnectionString: Redacted.make(isolation.isolated.connections.admin.connectionString),
+      applicationComposition: { load: Effect.succeed(isolation.snapshot) },
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: isolation.snapshot.composition.revision,
+      expectedDeployment: ultramodernDeliveryUnit,
       moduleKeys: ['privacy.core'],
+      ownerRegistration: privacyRegistration,
       runtimeConnectionString: Redacted.make(isolation.isolated.connections.runtime.connectionString),
     }),
     (value) => value.close().pipe(Effect.orDie),

@@ -168,7 +168,7 @@ jobs:
   # once, and every gate job of the first wave must start at once to finish in time.
   workspace-gate:
     name: ${{ matrix.name }}
-    needs: [queue-proof]
+    needs: [queue-proof, node-artifact-build]
     if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -194,10 +194,12 @@ jobs:
           # shards of packages balanced by measured test time. The last shard runs every package the others
           # do not name, so a new package is always tested; Repository Tooling Tests check the split.
           - name: Unit and Component Tests (Catalog, Commerce Customer Context, and Inventory)
+            node-artifacts: true
             commands: |
               pnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:unit
               pnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:component
           - name: Unit and Component Tests (every other package)
+            node-artifacts: true
             # Pricing's issue #890 traceability test compares immutable historical revisions and the
             # branch's latest main integration merge. Keep that bounded history in this shard only.
             fetch_depth: 512
@@ -220,6 +222,18 @@ jobs:
         uses: ./.github/actions/install-app
         with:
           restore-typescript-build: ${{ matrix.typescript-build == true }}
+
+      - name: Download the same-run Node artifacts for unit contract fixtures
+        if: matrix.node-artifacts == true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: node-units-*
+          path: ${{ runner.temp }}/native-composition-units
+
+      - name: Unpack the Node artifacts for unit contract fixtures
+        if: matrix.node-artifacts == true
+        working-directory: app
+        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
 
       - name: Run ${{ matrix.name }}
         working-directory: app
@@ -450,6 +464,7 @@ jobs:
         include:
           - suite: integration
             name: Database, Migration, RLS, Authorization, and Outbox Integration
+            native-composition: true
             root-suite: true
             package-filters: >-
               --filter !. --filter !./verticals/catalog --filter !./verticals/pricing
@@ -463,6 +478,7 @@ jobs:
             package-filters: --filter ./verticals/catalog
           - suite: integration
             name: Pricing and Inventory Integration
+            native-composition: true
             package-filters: --filter ./verticals/pricing --filter ./verticals/inventory
           - suite: integration
             name: Commerce Customer Context Integration (1/6)
@@ -551,20 +567,28 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      # The root/package shard starts the genuine packaged Shell and owner applications.
+      # Native receiving fixtures and Inventory workers use genuine published owner metadata.
       # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
       - name: Download the same-run Node artifacts for native owner fixtures
-        if: matrix.root-suite == true
+        if: matrix.suite == 'integration'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: node-units-*
           path: ${{ runner.temp }}/native-composition-units
 
       - name: Unpack the Node artifacts for native owner fixtures
-        if: matrix.root-suite == true
+        if: matrix.suite == 'integration'
         working-directory: app
         run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
 
+      - name: Derive the fresh built Composition for native owner fixtures
+        if: matrix.native-composition == true
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+        run: |
+          mise exec -- pnpm active-composition:publish prove-build --snapshot-output "$RUNNER_TEMP/native-composition-snapshot.json"
+          echo "NATIVE_1290_COMPOSITION_SNAPSHOT_PATH=$RUNNER_TEMP/native-composition-snapshot.json" >> "$GITHUB_ENV"
       - name: Materialize the native Customer Context worker artifact
         if: matrix.root-suite == true
         working-directory: app
@@ -1246,19 +1270,117 @@ jobs:
   # checks only stage, the one environment that can target Cloudflare, so it is skipped for production.
   # It records no deployment: deploy-zerops is the environment's deployment, so a plan or migration that
   # succeeds before a failed deploy never moves the environment's diff base.
+  capture-application-baseline:
+    name: Capture the exact approved release before selection
+    if: >-
+      ${{ !cancelled() && needs.deploy-target.outputs.configured == 'true'
+      && (needs.deploy-target.outputs.target == 'zerops' || needs.edge-deploy-readiness.outputs.configured == 'true') }}
+    needs: [deploy-target, edge-deploy-readiness]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: ${{ needs.deploy-target.outputs.target == 'cloudflare' && needs.deploy-target.outputs.environment == 'stage' && 'stage-edge' || needs.deploy-target.outputs.environment }}
+      deployment: false
+    concurrency:
+      group: zerops-${{ needs.deploy-target.outputs.environment }}
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      revision: ${{ steps.baseline.outputs.revision }}
+    env:
+      DEPLOY_ENVIRONMENT: ${{ needs.deploy-target.outputs.environment }}
+      ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
+      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+      STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout the reviewed revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      # A retry must keep B even when the original attempt has already drained it or published T.
+      - name: Recover this run's original captured baseline
+        if: github.run_attempt != '1'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: approved-application-composition-baseline
+          path: ${{ runner.temp }}/application-baseline
+
+      - name: Connect the runner to the private Zerops database network
+        if: github.run_attempt == '1'
+        id: composition-vpn
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: connect
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          database-url: ${{ secrets.DATABASE_URL }}
+          database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
+
+      - name: Capture the approved snapshot or proven first-publication absence
+        if: github.run_attempt == '1'
+        working-directory: app
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/application-baseline"
+          mise exec -- pnpm active-composition:publish capture-approved-snapshot \
+            --environment "$DEPLOY_ENVIRONMENT" --allow-absent --baseline-only \
+            --snapshot-file "$RUNNER_TEMP/application-baseline/baseline.json"
+
+      - name: Record the captured baseline identity
+        id: baseline
+        run: |
+          revision="$(jq -er 'if . == null then "absent" else .composition.revision end' "$RUNNER_TEMP/application-baseline/baseline.json")"
+          printf 'revision=%s\n' "$revision" >> "$GITHUB_OUTPUT"
+
+      - name: Preserve the original baseline for selection and recovery
+        if: github.run_attempt == '1'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: approved-application-composition-baseline
+          path: ${{ runner.temp }}/application-baseline/baseline.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Clear the runner-owned Zerops VPN
+        if: always() && steps.composition-vpn.outputs.state-directory != ''
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: clear
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
+          cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
+
   deploy-plan:
     name: Plan the environment's deployment after merge to main
     if: >-
       !cancelled()
       && needs.deploy-target.outputs.configured == 'true'
+      && needs.capture-application-baseline.result == 'success'
       && (needs.deploy-target.outputs.target == 'zerops' || needs.edge-deploy-readiness.outputs.configured == 'true')
-    needs: [deploy-target, edge-deploy-readiness]
+    needs: [deploy-target, edge-deploy-readiness, capture-application-baseline]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
       name: ${{ needs.deploy-target.outputs.environment }}
       deployment: false
     permissions:
+      actions: read
       contents: read
       deployments: read
     outputs:
@@ -1268,6 +1390,8 @@ jobs:
       shell: ${{ steps.units.outputs.shell }}
       spicedb: ${{ steps.impact.outputs.spicedb }}
       stopped-workers: ${{ steps.impact.outputs.stopped_workers }}
+      fresh-units: ${{ steps.selection.outputs.fresh }}
+      plan: ${{ steps.impact.outputs.plan }}
     env:
       DEPLOY_ENVIRONMENT: ${{ needs.deploy-target.outputs.environment }}
       DEPLOY_TARGET: ${{ needs.deploy-target.outputs.target }}
@@ -1335,6 +1459,46 @@ jobs:
             "${plan_arguments[@]}" \
             --head "$GITHUB_SHA"
 
+      - name: Download this run's original approved baseline
+        if: env.DEPLOY_TARGET == 'zerops'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: approved-application-composition-baseline
+          path: ${{ runner.temp }}/application-baseline
+
+      - name: Partition the complete Node release from its build impact
+        if: env.DEPLOY_TARGET == 'zerops'
+        id: selection
+        working-directory: app
+        env:
+          DEPLOYMENT_PLAN_JSON: ${{ steps.impact.outputs.plan }}
+          COMPOSITION_INTENT_FILE: ${{ vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json' }}
+        run: |
+          printf '%s\n' "$DEPLOYMENT_PLAN_JSON" > "$RUNNER_TEMP/deployment-impact-plan.json"
+          jq '[.phases[] | select(.kind == "provider" or .kind == "shell") | {id}]' \
+            "$RUNNER_TEMP/deployment-impact-plan.json" > "$RUNNER_TEMP/impacted-node-units.json"
+          mise exec -- pnpm exec node scripts/immutable-application-release.mts select \
+            --target zerops --intent-file "$COMPOSITION_INTENT_FILE" \
+            --baseline-file "$RUNNER_TEMP/application-baseline/baseline.json" \
+            --impacted-units-file "$RUNNER_TEMP/impacted-node-units.json" \
+            --selection-file "$RUNNER_TEMP/application-release-selection.json"
+          fresh="$(jq -c '.fresh + (if .shell.mode == "fresh" then [.shell.unit] else [] end)' "$RUNNER_TEMP/application-release-selection.json")"
+          printf 'fresh=%s\n' "$fresh" >> "$GITHUB_OUTPUT"
+          jq -n --arg intentFile "$COMPOSITION_INTENT_FILE" \
+            '{intentFile:$intentFile}' > "$RUNNER_TEMP/reviewed-release-input.json"
+
+      - name: Preserve the reviewed Node selection and independent impact plan
+        if: env.DEPLOY_TARGET == 'zerops'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reviewed-application-release-selection-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/application-release-selection.json
+            ${{ runner.temp }}/deployment-impact-plan.json
+            ${{ runner.temp }}/reviewed-release-input.json
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Record reviewed deployment impact plan
         env:
           DEPLOYMENT_PLAN_JSON: ${{ steps.impact.outputs.plan }}
@@ -1357,16 +1521,19 @@ jobs:
           SHELL: ${{ steps.impact.outputs.shell }}
           SPICEDB: ${{ steps.impact.outputs.spicedb }}
           WORKERS_JSON: ${{ steps.impact.outputs.workers }}
+          FRESH_UNITS_JSON: ${{ steps.selection.outputs.fresh }}
         run: |
-          if [[ "$DEPLOY_TARGET" == cloudflare ]]; then
-            providers="$WORKERS_JSON"
-            shell=false
-          else
-            providers="$PROVIDERS_JSON"
-            shell="$SHELL"
+          providers="$WORKERS_JSON"
+          shell=false
+          if [[ "$DEPLOY_TARGET" == zerops ]]; then
+            shell="$(jq -r 'any(.[]; .id == "shell-super-app")' <<< "$FRESH_UNITS_JSON")"
           fi
           any=false
           if [[ "$MIGRATOR" == true || "$SPICEDB" == true || "$providers" != '[]' || "$shell" == true ]]; then
+            any=true
+          fi
+          # Zero-build releases still validate and explicitly publish the complete desired set.
+          if [[ "$DEPLOY_TARGET" == zerops ]]; then
             any=true
           fi
           {
@@ -1374,6 +1541,205 @@ jobs:
             echo "providers=$providers"
             echo "shell=$shell"
           } >>"$GITHUB_OUTPUT"
+
+  node-release-plan:
+    name: Plan the selected Node releases with registered provider origins
+    if: ${{ !cancelled() && needs.deploy-target.outputs.target == 'zerops' && needs.deploy-plan.result == 'success' }}
+    needs: [deploy-target, deploy-plan, edge-deploy-readiness]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: ${{ needs.deploy-target.outputs.environment }}
+      deployment: false
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      fresh-units: ${{ steps.original-selection.outputs.fresh }}
+    env:
+      DEPLOY_ENVIRONMENT: ${{ needs.deploy-target.outputs.environment }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout the reviewed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Download the complete reviewed selection
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: reviewed-application-release-selection-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/application-selection
+
+      - name: Locate the original Node plans for a retry
+        id: original
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          artifact_id="$(gh api --paginate --slurp "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --jq '[.[].artifacts[] | select(.name == "node-release-plans" and .expired == false)][0].id // empty')"
+          if [[ -n "$artifact_id" ]]; then
+            printf 'exists=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'exists=false\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Recover the original source and origin plans
+        if: steps.original.outputs.exists == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: node-release-plans
+          path: ${{ runner.temp }}/node-release-plans
+
+      - name: Derive fresh plans from the actual clean checkout
+        if: steps.original.outputs.exists != 'true'
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+          OUTBOX_WORKER_MODE: ${{ needs.deploy-target.outputs.outbox-worker-mode }}
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          WORKERS_DEV_SUBDOMAIN: ${{ needs.deploy-target.outputs.environment == 'stage' && needs.edge-deploy-readiness.outputs.workers_dev_subdomain || vars.CLOUDFLARE_WORKERS_DEV_SUBDOMAIN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/node-release-plans"
+          cp "$RUNNER_TEMP/application-selection/application-release-selection.json" "$RUNNER_TEMP/node-release-plans/selection.json"
+          intent_file="$(jq -er '.intentFile' "$RUNNER_TEMP/application-selection/reviewed-release-input.json")"
+          jq -n --arg sourceRevision "$GITHUB_SHA" --arg environment "$DEPLOY_ENVIRONMENT" --arg intentFile "$intent_file" \
+            '{sourceRevision:$sourceRevision,environment:$environment,target:"zerops",intentFile:$intentFile}' > "$RUNNER_TEMP/node-release-plans/metadata.json"
+          # Only the existing planner orders dependencies; membership and migration scope remain independent.
+          GITHUB_OUTPUT="$RUNNER_TEMP/node-order.outputs" mise exec -- pnpm --silent deployment-impact:plan \
+            --head "$GITHUB_SHA" --outbox-worker-mode "$OUTBOX_WORKER_MODE" > "$RUNNER_TEMP/node-release-plans/provider-order.json"
+          jq --slurpfile selection "$RUNNER_TEMP/node-release-plans/selection.json" \
+            '[.phases[] | select(.kind == "provider") | .id] as $order | $selection[0] as $selection |
+             [$order[] as $id | $selection.fresh[] | select(.id == $id)] +
+             (if $selection.shell.mode == "fresh" then [$selection.shell.unit] else [] end)' \
+            "$RUNNER_TEMP/node-release-plans/provider-order.json" > "$RUNNER_TEMP/node-release-plans/deployment-order.json"
+          jq -e --slurpfile selection "$RUNNER_TEMP/node-release-plans/selection.json" \
+            'map(.id) as $actual | ($selection[0] | .fresh + (if .shell.mode == "fresh" then [.shell.unit] else [] end) | map(.id)) as $expected |
+             ($actual | sort) == ($expected | sort) and ($actual | unique | length) == ($actual | length)' \
+            "$RUNNER_TEMP/node-release-plans/deployment-order.json" >/dev/null
+          mapfile -t units < <(jq -r '.fresh + (if .shell.mode == "fresh" then [.shell.unit] else [] end) | .[] | [.id,.path] | @tsv' "$RUNNER_TEMP/node-release-plans/selection.json")
+          for unit in "${units[@]}"; do
+            IFS=$'\t' read -r id unit_path <<< "$unit"
+            setup="$id"
+            if [[ "$id" == shell-super-app ]]; then
+              setup=shellsuperapp
+            fi
+            service_id="$(mise exec -- pnpm --silent active-composition:publish stage-service-id --setup "$setup")"
+            backend_url="$(mise exec -- pnpm --silent active-composition:publish stage-backend-url --setup "$setup")"
+            mise exec -- pnpm exec node scripts/immutable-application-release.mts node-plan \
+              --app-directory "$unit_path" --backend-base-url "$backend_url" \
+              --project-id "$ZEROPS_PROJECT_ID" --service-id "$service_id" --setup "$setup" \
+              --workers-dev-subdomain "$WORKERS_DEV_SUBDOMAIN" \
+              --plan-file "$RUNNER_TEMP/node-release-plans/$id.json"
+          done
+
+      - name: Preserve the original Node build plans
+        if: steps.original.outputs.exists != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-release-plans
+          path: ${{ runner.temp }}/node-release-plans
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Expose the original source selection for every retry
+        id: original-selection
+        run: |
+          jq -e --arg source "$GITHUB_SHA" --arg environment "$DEPLOY_ENVIRONMENT" \
+            '.sourceRevision == $source and .environment == $environment and .target == "zerops" and (.intentFile | type == "string")' \
+            "$RUNNER_TEMP/node-release-plans/metadata.json" >/dev/null
+          fresh="$(jq -c '.fresh + (if .shell.mode == "fresh" then [.shell.unit] else [] end)' "$RUNNER_TEMP/node-release-plans/selection.json")"
+          printf 'fresh=%s\n' "$fresh" >> "$GITHUB_OUTPUT"
+
+  node-release-build:
+    name: Build selected Node release ${{ matrix.unit.id }}
+    if: >-
+      ${{ !cancelled() && needs.node-release-plan.result == 'success'
+      && needs.node-release-plan.outputs.fresh-units != '[]' }}
+    needs: [deploy-plan, node-release-plan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        unit: ${{ fromJSON(needs.node-release-plan.outputs.fresh-units) }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout the exact planned source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Download the original Node plans
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: node-release-plans
+          path: ${{ runner.temp }}/node-release-plans
+
+      # This build receives only public origins, never a provider or database credential.
+      - name: Build the actual Node artifact with its immutable public origin
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+          UNIT_ID: ${{ matrix.unit.id }}
+          UNIT_PACKAGE: ${{ matrix.unit.packageName }}
+        run: |
+          plan="$RUNNER_TEMP/node-release-plans/$UNIT_ID.json"
+          source_revision="$(git rev-parse HEAD)"
+          [[ "$source_revision" == "$GITHUB_SHA" ]] || exit 1
+          [[ "$source_revision" == "$(jq -er '.sourceRevision' "$plan")" ]] || exit 1
+          while IFS=$'\t' read -r key value; do
+            export "$key=$value"
+          done < <(jq -r '.buildEnvironment | to_entries[] | [.key,.value] | @tsv' "$plan")
+          started="$SECONDS"
+          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
+          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
+          mise exec -- pnpm --filter "$UNIT_PACKAGE" run build
+          mkdir -p ".codex/reports/releases/$UNIT_ID"
+          cp "$plan" ".codex/reports/releases/$UNIT_ID/node-plan.json"
+          jq -n --arg appId "$UNIT_ID" --arg sourceRevision "$source_revision" --argjson elapsedSeconds "$((SECONDS-started))" \
+            '{appId:$appId,sourceRevision:$sourceRevision,elapsedSeconds:$elapsedSeconds}' \
+            > ".codex/reports/releases/$UNIT_ID/node-build-timing.json"
+
+      - name: Pack this Node release's actual build output
+        working-directory: app
+        env:
+          UNIT_PATH: ${{ matrix.unit.path }}
+          UNIT_ID: ${{ matrix.unit.id }}
+        run: |
+          files="$RUNNER_TEMP/node-unit-files"
+          git ls-files --others --ignored --exclude-standard --directory -z -- "$UNIT_PATH" \
+            | grep -zv '/node_modules/$' > "$files"
+          printf '%s\0' ".codex/reports/releases/$UNIT_ID" >> "$files"
+          tar --null --files-from="$files" --create --zstd --file "$RUNNER_TEMP/node-release-unit.tar.zst"
+
+      - name: Preserve the actual Node build for provider verification
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-release-unit-${{ matrix.unit.id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/node-release-unit.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
 
   # Incompatible first-cutover migrations require concrete provider quiescence first. Later releases
   # already use the native authority fences; this guard then performs no provider stop or deletion.
@@ -1440,19 +1806,269 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm active-composition:publish verify-initial-cutover --environment "$DEPLOY_ENVIRONMENT"
 
-      - name: Capture the approved Shell pins before migration
-        if: needs.deploy-target.outputs.target == 'cloudflare' && !contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')
-        working-directory: app
-        run: mise exec -- pnpm active-composition:publish capture-approved-snapshot --environment "$DEPLOY_ENVIRONMENT" --snapshot-file "$RUNNER_TEMP/retained-approved-shell-snapshot.json"
+      - name: Clear the runner-owned Zerops VPN
+        if: always() && steps.composition-vpn.outputs.state-directory != ''
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: clear
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
+          cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
 
-      - name: Archive the approved snapshot for the unchanged Shell
-        if: needs.deploy-target.outputs.target == 'cloudflare' && !contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')
+  prepare-node-composition:
+    name: Retain the complete Node candidate before database changes
+    if: >-
+      ${{ !cancelled() && needs.deploy-target.outputs.target == 'zerops'
+      && needs.node-release-plan.result == 'success' && needs.initial-composition-cutover-guard.result == 'success'
+      && (needs.node-release-build.result == 'success'
+      || (needs.node-release-build.result == 'skipped' && needs.node-release-plan.outputs.fresh-units == '[]')) }}
+    needs:
+      [
+        deploy-target,
+        deploy-plan,
+        node-release-plan,
+        node-release-build,
+        initial-composition-cutover-guard,
+        capture-application-baseline,
+      ]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Public artifact uploads use the existing deployment gateway's credentials, never a runtime token.
+    environment:
+      name: ${{ needs.deploy-target.outputs.environment == 'stage' && 'stage-edge' || needs.deploy-target.outputs.environment }}
+      deployment: false
+    concurrency:
+      group: zerops-${{ needs.deploy-target.outputs.environment }}
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+    env:
+      DEPLOY_ENVIRONMENT: ${{ needs.deploy-target.outputs.environment }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout the reviewed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Download the original approved baseline
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: approved-application-composition-baseline
+          path: ${{ runner.temp }}/application-baseline
+
+      - name: Download the original Node plans
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: node-release-plans
+          path: ${{ runner.temp }}/node-release-plans
+
+      - name: Restore the original selection and reviewed intent
+        run: |
+          jq -e --arg source "$GITHUB_SHA" --arg environment "$DEPLOY_ENVIRONMENT" \
+            '.sourceRevision == $source and .environment == $environment and .target == "zerops"' \
+            "$RUNNER_TEMP/node-release-plans/metadata.json" >/dev/null
+          mkdir -p "$RUNNER_TEMP/application-selection"
+          cp "$RUNNER_TEMP/node-release-plans/selection.json" "$RUNNER_TEMP/application-selection/application-release-selection.json"
+          printf 'COMPOSITION_INTENT_FILE=%s\n' "$(jq -er '.intentFile' "$RUNNER_TEMP/node-release-plans/metadata.json")" >> "$GITHUB_ENV"
+
+      - name: Locate the original prepared Node identity
+        id: recovery
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          artifact_id="$(gh api --paginate --slurp "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --jq '[.[].artifacts[] | select(.name == "prepared-application-release" and .expired == false)][0].id // empty')"
+          if [[ -n "$artifact_id" ]]; then
+            printf 'prepared=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'prepared=false\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Recover the original complete candidate
+        if: steps.recovery.outputs.prepared == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: prepared-application-release
+          path: ${{ runner.temp }}/prepared-release
+
+      - name: Download the actual fresh Node build outputs
+        if: steps.recovery.outputs.prepared != 'true' && needs.node-release-plan.outputs.fresh-units != '[]'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: node-release-unit-*-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/node-release-builds
+
+      - name: Restore the actual compiled Node artifacts
+        if: steps.recovery.outputs.prepared != 'true'
+        working-directory: app
+        env:
+          FRESH_UNITS_JSON: ${{ needs.node-release-plan.outputs.fresh-units }}
+        run: |
+          while IFS= read -r id; do
+            tar --extract --zstd --file "$RUNNER_TEMP/node-release-builds/node-release-unit-$id-$GITHUB_RUN_ATTEMPT/node-release-unit.tar.zst"
+          done < <(jq -r '.[].id' <<< "$FRESH_UNITS_JSON")
+
+      - name: Recover original receipts for the exact approved Node baseline
+        if: steps.recovery.outputs.prepared != 'true'
+        env:
+          BASELINE_REVISION: ${{ needs.capture-application-baseline.outputs.revision }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/original-node-receipts"
+          if jq -e '.retained == [] and .shell.mode == "fresh"' "$RUNNER_TEMP/application-selection/application-release-selection.json" >/dev/null; then
+            exit 0
+          fi
+          [[ "$BASELINE_REVISION" =~ ^[a-f0-9]{64}$ ]] || exit 1
+          artifact_id="$(gh api --paginate --slurp --method GET "/repos/$GITHUB_REPOSITORY/actions/artifacts" \
+            -f name="application-release-receipts-$BASELINE_REVISION" -f per_page=100 \
+            --jq "[.[].artifacts[] | select(.expired == false and .workflow_run.repository_id == $REPOSITORY_ID and .workflow_run.head_repository_id == $REPOSITORY_ID and .workflow_run.head_branch == \"main\")][0].id // empty")"
+          if [[ -z "$artifact_id" ]]; then
+            echo 'The exact baseline receipt archive is unavailable. Retained backend evidence cannot be reconstructed; an explicit full build is required.' >&2
+            exit 1
+          fi
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$RUNNER_TEMP/original-node-receipts.zip"
+          python3 - <<'PY'
+          import os, pathlib, re, zipfile
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          with zipfile.ZipFile(root / 'original-node-receipts.zip') as archive:
+              files = archive.infolist()
+              if len(files) > 257 or sum(file.file_size for file in files) > 16 * 1024 * 1024:
+                  raise SystemExit('Receipt archive exceeds the bounded membership budget')
+              seen = set()
+              for file in files:
+                  if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*\.json', file.filename) or file.filename in seen:
+                      raise SystemExit('Receipt archive contains an unexpected or duplicate path')
+                  seen.add(file.filename)
+                  (root / 'original-node-receipts' / file.filename).write_bytes(archive.read(file))
+          PY
+
+      - name: Connect the runner to the existing publication database
+        if: steps.recovery.outputs.prepared != 'true'
+        id: composition-vpn
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: connect
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          database-url: ${{ secrets.DATABASE_URL }}
+          database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
+
+      - name: Retain verified public assets without claiming a deployed Node backend
+        if: steps.recovery.outputs.prepared != 'true'
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+          FRESH_UNITS_JSON: ${{ needs.node-release-plan.outputs.fresh-units }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/prepared-release/asset-receipts" "$RUNNER_TEMP/prepared-release/receipts" "$RUNNER_TEMP/prepared-release/plans"
+          mapfile -t units < <(jq -r '.[] | [.id,.path] | @tsv' <<< "$FRESH_UNITS_JSON")
+          for unit in "${units[@]}"; do
+            IFS=$'\t' read -r id unit_path <<< "$unit"
+            mise exec -- pnpm exec node scripts/immutable-application-release.mts node-assets \
+              --app-directory "$unit_path" --plan-file "$RUNNER_TEMP/node-release-plans/$id.json" \
+              --assets-receipt-file "$RUNNER_TEMP/prepared-release/asset-receipts/$id.json"
+          done
+          while IFS= read -r id; do
+            cp "$RUNNER_TEMP/original-node-receipts/$id.json" "$RUNNER_TEMP/prepared-release/receipts/$id.json"
+          done < <(jq -r '.retained[].id, (if .shell.mode == "retained" then .shell.unit.id else empty end)' "$RUNNER_TEMP/application-selection/application-release-selection.json")
+          cp "$RUNNER_TEMP/node-release-plans/"*.json "$RUNNER_TEMP/prepared-release/plans/"
+
+      - name: Assemble and validate the complete predeployment Node identity
+        if: steps.recovery.outputs.prepared != 'true'
+        working-directory: app
+        run: |
+          selection="$RUNNER_TEMP/application-selection/application-release-selection.json"
+          COMPOSITION_INTENT_FILE="$(jq -er '.intentFile' "$RUNNER_TEMP/application-selection/reviewed-release-input.json")"
+          evidence=()
+          while IFS= read -r id; do
+            evidence+=(--assets-receipt-file "$RUNNER_TEMP/prepared-release/asset-receipts/$id.json")
+          done < <(jq -r '.fresh[].id' "$selection")
+          while IFS= read -r id; do
+            evidence+=(--receipt-file "$RUNNER_TEMP/prepared-release/receipts/$id.json")
+          done < <(jq -r '.retained[].id' "$selection")
+          shell_directory=receipts
+          if jq -e '.shell.mode == "fresh"' "$selection" >/dev/null; then
+            shell_directory=asset-receipts
+          fi
+          evidence+=(--shell-receipt-file "$RUNNER_TEMP/prepared-release/$shell_directory/shell-super-app.json")
+          if jq -e '. != null' "$RUNNER_TEMP/application-baseline/baseline.json" >/dev/null; then
+            evidence+=(--approved-baseline-file "$RUNNER_TEMP/application-baseline/baseline.json")
+          fi
+          mise exec -- pnpm exec node scripts/immutable-application-release.mts node-candidate --phase preflight \
+            --intent-file "$COMPOSITION_INTENT_FILE" --selection-file "$selection" "${evidence[@]}" \
+            --candidate-file "$RUNNER_TEMP/prepared-release/candidate.json"
+          mise exec -- pnpm active-composition:publish prepare --environment "$DEPLOY_ENVIRONMENT" \
+            --intent-file "$COMPOSITION_INTENT_FILE" --candidate-file "$RUNNER_TEMP/prepared-release/candidate.json" \
+            --selection-file "$selection" --expected-composition-file "$RUNNER_TEMP/prepared-release/expected-composition.json"
+          cp "$selection" "$RUNNER_TEMP/prepared-release/selection.json"
+          cp "$RUNNER_TEMP/application-baseline/baseline.json" "$RUNNER_TEMP/prepared-release/baseline.json"
+          source_revision="$(git rev-parse HEAD)"
+          [[ "$source_revision" == "$GITHUB_SHA" ]] || exit 1
+          jq -n --arg sourceRevision "$source_revision" --arg environment "$DEPLOY_ENVIRONMENT" --arg intentFile "$COMPOSITION_INTENT_FILE" \
+            '{sourceRevision:$sourceRevision,environment:$environment,target:"zerops",intentFile:$intentFile}' > "$RUNNER_TEMP/prepared-release/metadata.json"
+
+      - name: Validate the original source and environment after recovery
+        env:
+          APP_ENV_PATH: /dev/null
+        run: |
+          jq -e --arg source "$GITHUB_SHA" --arg environment "$DEPLOY_ENVIRONMENT" \
+            '.sourceRevision == $source and .environment == $environment and .target == "zerops"' \
+            "$RUNNER_TEMP/prepared-release/metadata.json" >/dev/null
+
+      - name: Reobserve original retained Node receipts before retry migrations
+        if: steps.recovery.outputs.prepared == 'true'
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          release="$RUNNER_TEMP/prepared-release"
+          evidence=()
+          while IFS= read -r id; do
+            evidence+=(--assets-receipt-file "$release/asset-receipts/$id.json")
+          done < <(jq -r '.fresh[].id' "$release/selection.json")
+          while IFS= read -r id; do
+            evidence+=(--receipt-file "$release/receipts/$id.json")
+          done < <(jq -r '.retained[].id' "$release/selection.json")
+          shell_directory=receipts
+          if jq -e '.shell.mode == "fresh"' "$release/selection.json" >/dev/null; then
+            shell_directory=asset-receipts
+          fi
+          evidence+=(--shell-receipt-file "$release/$shell_directory/shell-super-app.json")
+          if jq -e '. != null' "$release/baseline.json" >/dev/null; then
+            evidence+=(--approved-baseline-file "$release/baseline.json")
+          fi
+          mise exec -- pnpm exec node scripts/immutable-application-release.mts node-candidate --phase preflight \
+            --intent-file "$(jq -er '.intentFile' "$release/metadata.json")" --selection-file "$release/selection.json" \
+            "${evidence[@]}" --candidate-file "$RUNNER_TEMP/reobserved-node-candidate.json"
+          cmp <(jq -S . "$release/candidate.json") <(jq -S . "$RUNNER_TEMP/reobserved-node-candidate.json")
+
+      - name: Preserve the original complete predeployment identity
+        if: steps.recovery.outputs.prepared != 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: retained-approved-shell-snapshot
-          path: ${{ runner.temp }}/retained-approved-shell-snapshot.json
+          name: prepared-application-release
+          path: ${{ runner.temp }}/prepared-release
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 90
 
       - name: Clear the runner-owned Zerops VPN
         if: always() && steps.composition-vpn.outputs.state-directory != ''
@@ -1468,8 +2084,20 @@ jobs:
   # publisher session lock stays held through verified migration and migrator stop completion.
   deploy-migrations:
     name: Migrate the environment's database and SpiceDB after the gates
-    if: ${{ !cancelled() && needs.workspace-gates.result == 'success' && needs.deploy-plan.result == 'success' && needs.initial-composition-cutover-guard.result == 'success' }}
-    needs: [workspace-gates, deploy-target, deploy-plan, initial-composition-cutover-guard]
+    if: >-
+      ${{ !cancelled() && needs.workspace-gates.result == 'success' && needs.deploy-plan.result == 'success'
+      && needs.initial-composition-cutover-guard.result == 'success'
+      && ((needs.deploy-target.outputs.target == 'cloudflare' && needs.deploy-cloudflare.result == 'success')
+      || (needs.deploy-target.outputs.target == 'zerops' && needs.prepare-node-composition.result == 'success')) }}
+    needs:
+      [
+        workspace-gates,
+        deploy-target,
+        deploy-plan,
+        initial-composition-cutover-guard,
+        deploy-cloudflare,
+        prepare-node-composition,
+      ]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment:
@@ -1484,7 +2112,7 @@ jobs:
       contents: read
     env:
       DEPLOY_ENVIRONMENT: ${{ needs.deploy-target.outputs.environment }}
-      INFRASTRUCTURE: ${{ needs.deploy-plan.outputs.migrator == 'true' || needs.deploy-plan.outputs.spicedb == 'true' }}
+      COMPOSITION_INTENT_FILE: ${{ vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json' }}
       ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_SPICEDB_SERVICE_ID: ${{ vars.ZEROPS_SPICEDB_SERVICE_ID }}
@@ -1497,21 +2125,24 @@ jobs:
       DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
     steps:
       - name: Harden Runner
-        if: env.INFRASTRUCTURE == 'true'
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
       - name: Checkout main revision
-        if: env.INFRASTRUCTURE == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Install the app workspace
-        if: env.INFRASTRUCTURE == 'true'
         uses: ./.github/actions/install-app
+
+      - name: Download the original complete candidate and expected identity
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: prepared-application-release
+          path: ${{ runner.temp }}/prepared-release
 
       - name: Prepare private legacy completion evidence
         run: |
@@ -1520,7 +2151,7 @@ jobs:
           printf 'ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY=%s\n' "$ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY" >> "$GITHUB_ENV"
 
       - name: Download the initial provider retirement receipt for migration
-        if: needs.deploy-plan.outputs.migrator == 'true' && vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''
+        if: vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: initial-composition-cutover-receipt
@@ -1529,7 +2160,6 @@ jobs:
           run-id: ${{ vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID }}
 
       - name: Install Zerops CLI
-        if: env.INFRASTRUCTURE == 'true'
         # mise owns Node, so its shims must learn the globally installed zcli binary.
         run: |
           npm install --global @zerops/zcli@1.1.3
@@ -1539,7 +2169,6 @@ jobs:
       # another environment's builds and runtimes never run stage-only behaviour. Production's copy also
       # points every runtime at its TLS SpiceDB endpoint, the production environment variable SPICEDB_ENDPOINT.
       - name: Materialize the environment's zerops.yaml
-        if: env.INFRASTRUCTURE == 'true'
         working-directory: app
         env:
           PRODUCTION_SPICEDB_ENDPOINT: ${{ vars.SPICEDB_ENDPOINT }}
@@ -1554,7 +2183,6 @@ jobs:
 
       - name: Connect the runner to the private Zerops database network
         id: composition-vpn
-        if: needs.deploy-plan.outputs.migrator == 'true'
         uses: ./.github/actions/zerops-vpn
         with:
           operation: connect
@@ -1563,13 +2191,17 @@ jobs:
           database-url: ${{ secrets.DATABASE_URL }}
           database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
 
-      - name: Run verified database migrations
-        if: needs.deploy-plan.outputs.migrator == 'true'
+      # The owning closure chooses migrate, verify-only or none. It is independent of the build set.
+      - name: Run the exact migration prerequisite closure and verifiers
         id: migrator
         working-directory: app
         run: >-
           mise exec -- pnpm active-composition:publish migrate
           --environment "$DEPLOY_ENVIRONMENT"
+          --intent-file "$(jq -er '.intentFile' "$RUNNER_TEMP/prepared-release/metadata.json")"
+          --candidate-file "$RUNNER_TEMP/prepared-release/candidate.json"
+          --selection-file "$RUNNER_TEMP/prepared-release/selection.json"
+          --expected-composition-file "$RUNNER_TEMP/prepared-release/expected-composition.json"
           --zerops-yaml-path "$ZEROPS_YAML_PATH"
           --project-id "$ZEROPS_PROJECT_ID"
           --service-id "$ZEROPS_MIGRATOR_SERVICE_ID"
@@ -1628,11 +2260,233 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-  # The environment's deployment: the providers, outbox workers and Shell that run on Zerops, beside the edge deploy.
+  deploy-node-backends:
+    name: Deploy the original prepared Node release after migrations
+    if: >-
+      ${{ !cancelled() && needs.deploy-target.outputs.target == 'zerops'
+      && needs.deploy-migrations.result == 'success' && needs.prepare-node-composition.result == 'success' }}
+    needs: [deploy-target, node-release-plan, prepare-node-composition, deploy-migrations]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    environment:
+      name: ${{ needs.deploy-target.outputs.environment == 'stage' && 'stage-edge' || needs.deploy-target.outputs.environment }}
+      deployment: false
+    concurrency:
+      group: zerops-${{ needs.deploy-target.outputs.environment }}
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+    env:
+      DEPLOY_ENVIRONMENT: ${{ needs.deploy-target.outputs.environment }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout the reviewed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Download the original predeployment candidate and evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: prepared-application-release
+          path: ${{ runner.temp }}/prepared-release
+
+      - name: Locate the original complete deployed Node handoff
+        id: recovery
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          exists="$(gh api --paginate --slurp "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --jq 'any(.[].artifacts[]; .name == "deployed-node-release" and .expired == false)')"
+          revision="$(jq -er '.revision' "$RUNNER_TEMP/prepared-release/expected-composition.json")"
+          [[ "$revision" =~ ^[a-f0-9]{64}$ ]] || exit 1
+          receipt_archive="$(gh api --paginate --slurp "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --jq "any(.[].artifacts[]; .name == \"application-release-receipts-$revision\" and .expired == false)")"
+          if [[ "$receipt_archive" == true && "$exists" != true ]]; then
+            echo 'The immutable receipt archive exists but its original complete deployed handoff is unavailable; refusing a new backend push.' >&2
+            exit 1
+          fi
+          printf 'complete=%s\n' "$exists" >> "$GITHUB_OUTPUT"
+
+      - name: Recover the original actually deployed release before any retry push
+        if: steps.recovery.outputs.complete == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: deployed-node-release
+          path: ${{ runner.temp }}/deployed-node-release
+
+      - name: Initialize a separate deployed handoff without changing the prepared identity
+        if: steps.recovery.outputs.complete != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/deployed-node-release/receipts"
+          cp -R "$RUNNER_TEMP/prepared-release/." "$RUNNER_TEMP/deployed-node-release/"
+
+      - name: Validate the original source target environment and reviewed intent
+        run: |
+          jq -e --arg source "$GITHUB_SHA" --arg environment "$DEPLOY_ENVIRONMENT" \
+            '.sourceRevision == $source and .environment == $environment and .target == "zerops" and (.intentFile | type == "string")' \
+            "$RUNNER_TEMP/deployed-node-release/metadata.json" >/dev/null
+          cmp <(jq -S . "$RUNNER_TEMP/prepared-release/metadata.json") <(jq -S . "$RUNNER_TEMP/deployed-node-release/metadata.json")
+          cmp "$RUNNER_TEMP/prepared-release/expected-composition.json" "$RUNNER_TEMP/deployed-node-release/expected-composition.json"
+          cmp <(jq -S . "$RUNNER_TEMP/prepared-release/selection.json") <(jq -S . "$RUNNER_TEMP/deployed-node-release/selection.json")
+
+      - name: Download this attempt's genuine selected Node build outputs
+        if: steps.recovery.outputs.complete != 'true' && needs.node-release-plan.outputs.fresh-units != '[]'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: node-release-unit-*-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/node-release-builds
+
+      - name: Unpack the originally selected business units and Shell
+        if: steps.recovery.outputs.complete != 'true'
+        working-directory: app
+        run: |
+          while IFS= read -r id; do
+            tar --extract --zstd --file "$RUNNER_TEMP/node-release-builds/node-release-unit-$id-$GITHUB_RUN_ATTEMPT/node-release-unit.tar.zst"
+          done < <(jq -r '.fresh + (if .shell.mode == "fresh" then [.shell.unit] else [] end) | .[].id' "$RUNNER_TEMP/deployed-node-release/selection.json")
+
+      - name: Install Zerops CLI for original fresh deployments
+        if: steps.recovery.outputs.complete != 'true' && needs.node-release-plan.outputs.fresh-units != '[]'
+        run: |
+          npm install --global @zerops/zcli@1.1.3
+          mise reshim
+
+      - name: Materialize the original target environment provider configuration
+        if: steps.recovery.outputs.complete != 'true' && needs.node-release-plan.outputs.fresh-units != '[]'
+        working-directory: app
+        env:
+          PRODUCTION_SPICEDB_ENDPOINT: ${{ vars.SPICEDB_ENDPOINT }}
+          ZEROPS_YAML_PATH: ${{ runner.temp }}/zerops.yaml
+        run: |
+          arguments=(--environment "$DEPLOY_ENVIRONMENT" --input zerops.yaml --output "$ZEROPS_YAML_PATH")
+          if [[ "$DEPLOY_ENVIRONMENT" == production ]]; then
+            arguments+=(--spicedb-endpoint "$PRODUCTION_SPICEDB_ENDPOINT")
+          fi
+          mise exec -- pnpm --silent zerops:materialize-environment "${arguments[@]}"
+          printf 'ZEROPS_YAML_PATH=%s\n' "$ZEROPS_YAML_PATH" >> "$GITHUB_ENV"
+
+      - name: Connect the runner to the existing publication database
+        id: composition-vpn
+        if: steps.recovery.outputs.complete != 'true' && needs.node-release-plan.outputs.fresh-units != '[]'
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: connect
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          database-url: ${{ secrets.DATABASE_URL }}
+          database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
+
+      - name: Witness guarded original business deployments followed by Shell
+        if: steps.recovery.outputs.complete != 'true'
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+        run: |
+          release="$RUNNER_TEMP/deployed-node-release"
+          intent_file="$(jq -er '.intentFile' "$release/metadata.json")"
+          while IFS=$'\t' read -r id unit_path; do
+            mise exec -- pnpm exec node scripts/immutable-application-release.mts node-deploy \
+              --app-directory "$unit_path" --assets-receipt-file "$release/asset-receipts/$id.json" \
+              --candidate-file "$RUNNER_TEMP/prepared-release/candidate.json" --selection-file "$release/selection.json" \
+              --expected-composition-file "$release/expected-composition.json" --intent-file "$intent_file" \
+              --zerops-yaml-path "$ZEROPS_YAML_PATH" --receipt-file "$release/receipts/$id.json"
+          done < <(jq -r '.[] | [.id,.path] | @tsv' "$release/plans/deployment-order.json")
+
+      - name: Verify every actual receipt against the original complete target
+        id: candidate
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          release="$RUNNER_TEMP/deployed-node-release"
+          evidence=()
+          while IFS= read -r id; do
+            evidence+=(--receipt-file "$release/receipts/$id.json")
+          done < <(jq -r '.complete[].id' "$release/selection.json")
+          evidence+=(--shell-receipt-file "$release/receipts/shell-super-app.json")
+          if jq -e '. != null' "$release/baseline.json" >/dev/null; then
+            evidence+=(--approved-baseline-file "$release/baseline.json")
+          fi
+          mise exec -- pnpm exec node scripts/immutable-application-release.mts node-candidate --phase deployed \
+            --intent-file "$(jq -er '.intentFile' "$release/metadata.json")" \
+            --selection-file "$release/selection.json" "${evidence[@]}" --candidate-file "$release/verified-candidate.json"
+          cmp <(jq -S . "$RUNNER_TEMP/prepared-release/candidate.json") <(jq -S . "$release/verified-candidate.json")
+          mv "$release/verified-candidate.json" "$release/candidate.json"
+
+      # The complete handoff precedes the archive, so an existing archive always has recoverable original receipts.
+      - name: Preserve the original complete deployed Node handoff
+        if: steps.recovery.outputs.complete != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: deployed-node-release
+          path: ${{ runner.temp }}/deployed-node-release
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Locate the immutable complete receipt archive by exact Composition R
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          revision="$(jq -er '.revision' "$RUNNER_TEMP/deployed-node-release/expected-composition.json")"
+          [[ "$revision" =~ ^[a-f0-9]{64}$ ]] || exit 1
+          printf 'revision=%s\n' "$revision" >> "$GITHUB_OUTPUT"
+          exists="$(gh api --paginate --slurp "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --jq "any(.[].artifacts[]; .name == \"application-release-receipts-$revision\" and .expired == false)")"
+          printf 'archived=%s\n' "$exists" >> "$GITHUB_OUTPUT"
+
+      - name: Preserve all actual original Node receipts under exact Composition R
+        if: steps.identity.outputs.archived != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: application-release-receipts-${{ steps.identity.outputs.revision }}
+          path: ${{ runner.temp }}/deployed-node-release/receipts
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Retain this attempt's raw Node deployment evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-deployment-evidence-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/deployed-node-release
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Clear the runner-owned Zerops VPN
+        if: always() && steps.composition-vpn.outputs.state-directory != ''
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: clear
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
+          cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
+
+  # Outbox Workers retain their original environment and mode; publication follows their successful deployment.
   deploy-zerops:
     name: Deploy the environment's Zerops services after merge to main
-    if: ${{ !cancelled() && needs.deploy-migrations.result == 'success' }}
-    needs: [deploy-target, deploy-plan, deploy-migrations]
+    if: >-
+      ${{ !cancelled() && needs.deploy-migrations.result == 'success'
+      && (needs.deploy-target.outputs.target == 'cloudflare' || needs.deploy-node-backends.result == 'success') }}
+    needs: [deploy-target, deploy-plan, deploy-migrations, deploy-node-backends]
     runs-on: ubuntu-latest
     # Each Zerops push builds its unit remotely for about 12 minutes and units deploy one after another in
     # plan order, so a full topology deploy (12 units plus publication) needs about 3 hours.
@@ -1667,6 +2521,20 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+
+      - name: Download the complete actually deployed Node release
+        if: env.DEPLOY_TARGET == 'zerops'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: deployed-node-release
+          path: ${{ runner.temp }}/deployed-node-release
+
+      - name: Verify the original Node publication source and environment
+        if: env.DEPLOY_TARGET == 'zerops'
+        run: |
+          jq -e --arg source "$GITHUB_SHA" --arg environment "$DEPLOY_ENVIRONMENT" \
+            '.sourceRevision == $source and .environment == $environment and .target == "zerops"' \
+            "$RUNNER_TEMP/deployed-node-release/metadata.json" >/dev/null
 
       - name: Prepare private legacy completion evidence
         run: |
@@ -1704,20 +2572,11 @@ jobs:
           mise exec -- pnpm --silent zerops:materialize-environment "${materialize_arguments[@]}"
           echo "ZEROPS_YAML_PATH=$ZEROPS_YAML_PATH" >>"$GITHUB_ENV"
 
-      - name: Deploy affected providers
+      - name: Deploy the selected Outbox Workers
         if: needs.deploy-plan.outputs.providers != '[]'
         env:
           UNITS_JSON: ${{ needs.deploy-plan.outputs.providers }}
           STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: app/scripts/push-zerops-units.sh
-
-      - name: Deploy Shell after affected providers
-        if: needs.deploy-plan.outputs.shell == 'true'
-        id: shell
-        env:
-          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
-          UNITS_JSON: '["shellsuperapp"]'
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: app/scripts/push-zerops-units.sh
 
@@ -1733,19 +2592,6 @@ jobs:
           database-url: ${{ secrets.DATABASE_URL }}
           database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
 
-      - name: Publish the complete active Application Composition
-        if: needs.deploy-plan.outputs.any == 'true' && env.DEPLOY_TARGET == 'zerops'
-        working-directory: app
-        env:
-          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-          ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
-          COMPOSITION_CANDIDATE_FILE: ${{ vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
-        run: mise exec -- pnpm active-composition:publish publish --environment "$DEPLOY_ENVIRONMENT" --candidate-file "$COMPOSITION_CANDIDATE_FILE"
-
       # Switching OUTBOX_WORKER_MODE leaves the other mode's Outbox Workers running. The plan names them in every
       # run that deploys this mode's workers, so exactly one set of workers delivers the outbox.
       - name: Stop the other Outbox Worker mode's workers
@@ -1760,17 +2606,22 @@ jobs:
             mise exec -- pnpm --silent active-composition:publish stop-service --setup "$setup"
           done < <(jq -r '.[]' <<<"$STOPPED_WORKERS_JSON")
 
-      - name: Show bounded Shell logs after failure
-        if: failure() && steps.shell.outcome == 'failure'
-        continue-on-error: true
+      - name: Publish the complete active Application Composition
+        if: needs.deploy-plan.outputs.any == 'true' && env.DEPLOY_TARGET == 'zerops'
+        working-directory: app
         env:
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
         run: >-
-          zcli service log
-          --project-id "$ZEROPS_PROJECT_ID"
-          --service-id "$ZEROPS_SHELL_SERVICE_ID"
-          --limit 200
-          --minimum-severity DEBUG
+          mise exec -- pnpm active-composition:publish publish --environment "$DEPLOY_ENVIRONMENT"
+          --intent-file "$(jq -er '.intentFile' "$RUNNER_TEMP/deployed-node-release/metadata.json")"
+          --candidate-file "$RUNNER_TEMP/deployed-node-release/candidate.json"
+          --selection-file "$RUNNER_TEMP/deployed-node-release/selection.json"
+          --expected-composition-file "$RUNNER_TEMP/deployed-node-release/expected-composition.json"
 
       - name: Clear the runner-owned Zerops VPN
         if: always() && steps.composition-vpn.outputs.state-directory != ''
@@ -1809,6 +2660,7 @@ jobs:
       contents: read
     outputs:
       configured: ${{ steps.configuration.outputs.configured }}
+      assets-configured: ${{ steps.configuration.outputs.assets_configured }}
       workers_dev_subdomain: ${{ steps.configuration.outputs.workers_dev_subdomain }}
     steps:
       - name: Checkout the edge placement
@@ -1832,6 +2684,13 @@ jobs:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: |
           missing=()
+          # Node backends reuse this existing public-asset gateway without requiring Worker data bindings.
+          printf 'workers_dev_subdomain=%s\n' "$CLOUDFLARE_WORKERS_DEV_SUBDOMAIN" >> "$GITHUB_OUTPUT"
+          assets_configured=false
+          if [[ -n "$CLOUDFLARE_ACCOUNT_ID" && -n "$CLOUDFLARE_API_TOKEN" && -n "$CLOUDFLARE_WORKERS_DEV_SUBDOMAIN" ]]; then
+            assets_configured=true
+          fi
+          printf 'assets_configured=%s\n' "$assets_configured" >> "$GITHUB_OUTPUT"
           [[ -n "$CLOUDFLARE_ACCOUNT_ID" ]] || missing+=('the CLOUDFLARE_ACCOUNT_ID variable')
           [[ -n "$CLOUDFLARE_API_TOKEN" ]] || missing+=('the stage-edge CLOUDFLARE_API_TOKEN secret')
           [[ -n "$CLOUDFLARE_WORKERS_DEV_SUBDOMAIN" ]] || missing+=('the CLOUDFLARE_WORKERS_DEV_SUBDOMAIN variable')
@@ -1846,7 +2705,6 @@ jobs:
           done < <(jq -r '.buildEnvironment as $environment | (["ULTRAMODERN_MF_DEV_ORIGIN", "ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID", "ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID", "ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID", "ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID", "ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID"] + [.units[] | "ULTRAMODERN_PUBLIC_URL_" + (ascii_upcase | gsub("-"; "_"))])[] | select(($environment[.] // "") == "")' app/topology/cloudflare-placement.json)
           if [[ ${#missing[@]} -eq 0 ]]; then
             echo 'configured=true' >>"$GITHUB_OUTPUT"
-            printf 'workers_dev_subdomain=%s\n' "$CLOUDFLARE_WORKERS_DEV_SUBDOMAIN" >>"$GITHUB_OUTPUT"
             exit 0
           fi
           echo 'configured=false' >>"$GITHUB_OUTPUT"
@@ -1865,11 +2723,17 @@ jobs:
   # so a failed promotion cannot hide the Shell build still needed by a later recovery.
   edge-plan:
     name: Plan the edge units to deploy
-    if: ${{ !cancelled() && needs.edge-deploy-readiness.outputs.configured == 'true' }}
-    needs: [deploy-target, edge-deploy-readiness]
+    if: >-
+      ${{ !cancelled() && needs.deploy-target.outputs.target == 'cloudflare'
+      && needs.edge-deploy-readiness.outputs.configured == 'true' && needs.capture-application-baseline.result == 'success' }}
+    needs: [deploy-target, edge-deploy-readiness, capture-application-baseline]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    environment:
+      name: stage-edge
+      deployment: false
     permissions:
+      actions: read
       contents: read
       deployments: read
     outputs:
@@ -1947,7 +2811,13 @@ jobs:
             "${base_arguments[@]}" \
             --head "$GITHUB_SHA"
 
-      - name: Select the complete reviewed release
+      - name: Download this run's original approved baseline
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: approved-application-composition-baseline
+          path: ${{ runner.temp }}/application-baseline
+
+      - name: Partition the complete reviewed release from its build impact
         id: selection
         working-directory: app
         env:
@@ -1958,9 +2828,22 @@ jobs:
           printf '%s\n' "$IMPACTED_UNITS_JSON" >"$RUNNER_TEMP/impacted-edge-units.json"
           mise exec -- pnpm exec node scripts/immutable-application-release.mts select \
             --intent-file "$COMPOSITION_INTENT_FILE" \
+            --baseline-file "$RUNNER_TEMP/application-baseline/baseline.json" \
             --impacted-units-file "$RUNNER_TEMP/impacted-edge-units.json" \
-            --selection-file "$RUNNER_TEMP/reviewed-edge-units.json"
-          printf 'cloudflare=%s\n' "$(jq -c . "$RUNNER_TEMP/reviewed-edge-units.json")" >>"$GITHUB_OUTPUT"
+            --selection-file "$RUNNER_TEMP/application-release-selection.json"
+          printf 'cloudflare=%s\n' "$(jq -c '.fresh + (if .shell.mode == "fresh" then [.shell.unit] else [] end)' "$RUNNER_TEMP/application-release-selection.json")" >>"$GITHUB_OUTPUT"
+          jq -n --arg intentFile "$COMPOSITION_INTENT_FILE" \
+            '{intentFile:$intentFile}' > "$RUNNER_TEMP/reviewed-release-input.json"
+
+      - name: Preserve the complete reviewed edge selection
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reviewed-application-release-selection-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/application-release-selection.json
+            ${{ runner.temp }}/reviewed-release-input.json
+          if-no-files-found: error
+          retention-days: 90
 
   # Each planned unit builds on its own runner: a build is CPU-bound, and a hosted runner of this
   # private repository has two cores, so builds side by side on one runner take as long as in a row.
@@ -2053,7 +2936,7 @@ jobs:
       - name: Upload the edge unit's build output
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: edge-unit-${{ matrix.unit.id }}
+          name: edge-unit-${{ matrix.unit.id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/edge-unit.tar.zst
           compression-level: 0
           if-no-files-found: error
@@ -2065,9 +2948,9 @@ jobs:
     # otherwise skip every job below it through the implicit success().
     # A plan with no units skips edge-build; the artifact job still assembles its complete candidate.
     if: >-
-      ${{ !cancelled() && needs.deploy-migrations.result == 'success' && needs.edge-plan.result == 'success'
+      ${{ !cancelled() && needs.initial-composition-cutover-guard.result == 'success' && needs.edge-plan.result == 'success'
       && (needs.edge-build.result == 'success' || (needs.edge-build.result == 'skipped' && needs.edge-plan.outputs.cloudflare == '[]')) }}
-    needs: [deploy-target, deploy-migrations, edge-plan, edge-build]
+    needs: [deploy-target, initial-composition-cutover-guard, edge-plan, edge-build, capture-application-baseline]
     runs-on: ubuntu-latest
     # Artifact creation, authority changes, refresh and publication share the environment lock.
     concurrency:
@@ -2079,6 +2962,7 @@ jobs:
       name: stage-edge
       deployment: false
     permissions:
+      actions: read
       contents: read
       deployments: read
     steps:
@@ -2096,16 +2980,83 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      - name: Download the planned edge units' build outputs
-        if: needs.edge-plan.outputs.cloudflare != '[]'
+      - name: Download the complete reviewed selection
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: edge-unit-*
+          name: reviewed-application-release-selection-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/application-selection
+
+      - name: Download the original approved baseline
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: approved-application-composition-baseline
+          path: ${{ runner.temp }}/application-baseline
+
+      - name: Locate this run's original prepared release
+        id: recovery
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          artifact_id="$(gh api --paginate --slurp "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --jq '[.[].artifacts[] | select(.name == "prepared-application-release" and .expired == false)][0].id // empty')"
+          if [[ -n "$artifact_id" ]]; then
+            printf 'prepared=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'prepared=false\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Recover the original prepared identity without another deployment
+        if: steps.recovery.outputs.prepared == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: prepared-application-release
+          path: ${{ runner.temp }}/prepared-release
+
+      - name: Recover original receipts for the exact approved baseline
+        if: steps.recovery.outputs.prepared != 'true'
+        env:
+          BASELINE_REVISION: ${{ needs.capture-application-baseline.outputs.revision }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/application-release-receipts"
+          if jq -e '.retained == [] and .shell.mode == "fresh"' "$RUNNER_TEMP/application-selection/application-release-selection.json" >/dev/null; then
+            exit 0
+          fi
+          [[ "$BASELINE_REVISION" =~ ^[a-f0-9]{64}$ ]] || exit 1
+          archive="application-release-receipts-$BASELINE_REVISION"
+          artifact_id="$(gh api --paginate --slurp --method GET "/repos/$GITHUB_REPOSITORY/actions/artifacts" \
+            -f name="$archive" -f per_page=100 \
+            --jq "[.[].artifacts[] | select(.expired == false and .workflow_run.repository_id == $REPOSITORY_ID and .workflow_run.head_repository_id == $REPOSITORY_ID and .workflow_run.head_branch == \"main\")][0].id // empty")"
+          if [[ -z "$artifact_id" ]]; then
+            echo 'The captured baseline has no original complete receipt archive. Use an explicitly reviewed full build; retained evidence cannot be reconstructed.' >&2
+            exit 1
+          fi
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$RUNNER_TEMP/original-receipts.zip"
+          python3 - <<'PY'
+          import os, pathlib, re, zipfile
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          with zipfile.ZipFile(root / 'original-receipts.zip') as archive:
+              files = archive.infolist()
+              if len(files) > 257 or sum(file.file_size for file in files) > 16 * 1024 * 1024:
+                  raise SystemExit('Receipt archive exceeds the bounded membership budget')
+              for file in files:
+                  if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*\.json', file.filename):
+                      raise SystemExit('Receipt archive contains an unexpected path')
+                  (root / 'application-release-receipts' / file.filename).write_bytes(archive.read(file))
+          PY
+
+      - name: Download the planned edge units' build outputs
+        if: steps.recovery.outputs.prepared != 'true' && needs.edge-plan.outputs.cloudflare != '[]'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: edge-unit-*-${{ github.run_attempt }}
           path: ${{ runner.temp }}/edge-units
 
       # Only Wrangler sees the account token. Building, verifying and proving a unit runs dependency
       # code, so the builds ran in edge-build without it.
       - name: Unpack the planned edge units' build outputs
+        if: steps.recovery.outputs.prepared != 'true'
         working-directory: app
         env:
           CLOUDFLARE_UNITS_JSON: ${{ needs.edge-plan.outputs.cloudflare }}
@@ -2113,7 +3064,7 @@ jobs:
           mapfile -t units < <(jq -r '.[] | [.id, .packageName] | @tsv' <<<"$CLOUDFLARE_UNITS_JSON")
           for unit in "${units[@]}"; do
             IFS=$'\t' read -r id package <<<"$unit"
-            tar --extract --zstd --file "$RUNNER_TEMP/edge-units/edge-unit-$id/edge-unit.tar.zst"
+            tar --extract --zstd --file "$RUNNER_TEMP/edge-units/edge-unit-$id-$GITHUB_RUN_ATTEMPT/edge-unit.tar.zst"
             if ! mise exec -- pnpm --filter "$package" exec test -f .output/wrangler.json; then
               echo "Edge unit $id has no built .output/wrangler.json; no Worker was changed." >&2
               exit 1
@@ -2132,6 +3083,7 @@ jobs:
           database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
 
       - name: Deploy the reviewed immutable module releases
+        if: steps.recovery.outputs.prepared != 'true'
         id: deploy
         timeout-minutes: 45
         working-directory: app
@@ -2156,6 +3108,7 @@ jobs:
           done
 
       - name: Retain the changed Shell frontend artifacts
+        if: steps.recovery.outputs.prepared != 'true'
         id: shell-deploy
         timeout-minutes: 20
         working-directory: app
@@ -2177,30 +3130,18 @@ jobs:
               --receipt-file "$RUNNER_TEMP/application-release-receipts/shell-super-app.json"
           fi
 
-      - name: Archive the exact retained Shell release receipt
-        if: contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: shell-artifact-release-receipt
-          path: ${{ runner.temp }}/application-release-receipts/shell-super-app.json
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Download the approved snapshot captured before migration
-        if: ${{ !contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app') }}
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: retained-approved-shell-snapshot
-          path: ${{ runner.temp }}/retained-approved-shell
-
       - name: Assemble the complete candidate from retained deployment receipts
+        if: steps.recovery.outputs.prepared != 'true'
         id: candidate
         timeout-minutes: 5
         working-directory: app
         env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
           COMPOSITION_INTENT_FILE: ${{ vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json' }}
           SHELL_SELECTED: ${{ contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app') }}
         run: |
+          COMPOSITION_INTENT_FILE="$(jq -er '.intentFile' "$RUNNER_TEMP/application-selection/reviewed-release-input.json")"
           git ls-files --error-unmatch "$COMPOSITION_INTENT_FILE" >/dev/null
           receipts=()
           while IFS= read -r id; do
@@ -2208,20 +3149,62 @@ jobs:
           done < <(jq -r '.modules[].appId' "$COMPOSITION_INTENT_FILE")
           if [[ "$SHELL_SELECTED" == 'true' ]]; then
             receipts+=(--shell-receipt-file "$RUNNER_TEMP/application-release-receipts/shell-super-app.json")
-          else
-            receipts+=(--retained-shell-snapshot-file "$RUNNER_TEMP/retained-approved-shell/retained-approved-shell-snapshot.json")
           fi
+          if jq -e '. != null' "$RUNNER_TEMP/application-baseline/baseline.json" >/dev/null; then
+            receipts+=(--approved-baseline-file "$RUNNER_TEMP/application-baseline/baseline.json")
+          fi
+          mkdir -p "$RUNNER_TEMP/prepared-release/receipts"
           mise exec -- pnpm exec node scripts/immutable-application-release.mts candidate \
             --intent-file "$COMPOSITION_INTENT_FILE" "${receipts[@]}" \
-            --candidate-file "$RUNNER_TEMP/active-application-composition-candidate.json"
+            --selection-file "$RUNNER_TEMP/application-selection/application-release-selection.json" \
+            --candidate-file "$RUNNER_TEMP/prepared-release/candidate.json"
+          mise exec -- pnpm active-composition:publish prepare --environment stage --observe-backends \
+            --candidate-file "$RUNNER_TEMP/prepared-release/candidate.json" \
+            --selection-file "$RUNNER_TEMP/application-selection/application-release-selection.json" \
+            --intent-file "$COMPOSITION_INTENT_FILE" \
+            --expected-composition-file "$RUNNER_TEMP/prepared-release/expected-composition.json"
+          cp "$RUNNER_TEMP/application-selection/application-release-selection.json" "$RUNNER_TEMP/prepared-release/selection.json"
+          cp "$RUNNER_TEMP/application-baseline/baseline.json" "$RUNNER_TEMP/prepared-release/baseline.json"
+          while IFS= read -r id; do
+            cp "$RUNNER_TEMP/application-release-receipts/$id.json" "$RUNNER_TEMP/prepared-release/receipts/$id.json"
+          done < <(jq -r '.modules[].appId, "shell-super-app"' "$COMPOSITION_INTENT_FILE")
+          source_revision="$(git rev-parse HEAD)"
+          [[ "$source_revision" == "$GITHUB_SHA" ]] || exit 1
+          jq -n --arg sourceRevision "$source_revision" --arg intentFile "$COMPOSITION_INTENT_FILE" \
+            '{sourceRevision:$sourceRevision,environment:"stage",target:"cloudflare",intentFile:$intentFile}' > "$RUNNER_TEMP/prepared-release/metadata.json"
 
-      - name: Upload the approved complete Application Composition candidate
+      - name: Preserve the original complete release before migration
+        if: steps.recovery.outputs.prepared != 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: approved-application-composition-candidate
-          path: ${{ runner.temp }}/active-application-composition-candidate.json
+          name: prepared-application-release
+          path: ${{ runner.temp }}/prepared-release
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 90
+
+      - name: Validate the recovered source and record the exact receipt archive identity
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          jq -e --arg source "$GITHUB_SHA" \
+            '.sourceRevision == $source and .environment == "stage" and .target == "cloudflare"' \
+            "$RUNNER_TEMP/prepared-release/metadata.json" >/dev/null
+          revision="$(jq -er '.revision' "$RUNNER_TEMP/prepared-release/expected-composition.json")"
+          [[ "$revision" =~ ^[a-f0-9]{64}$ ]] || exit 1
+          printf 'revision=%s\n' "$revision" >> "$GITHUB_OUTPUT"
+          exists="$(gh api --paginate --slurp "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --jq "any(.[].artifacts[]; .name == \"application-release-receipts-$revision\" and .expired == false)")"
+          printf 'archived=%s\n' "$exists" >> "$GITHUB_OUTPUT"
+
+      - name: Preserve all original receipts under the exact Composition identity
+        if: steps.identity.outputs.archived != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: application-release-receipts-${{ steps.identity.outputs.revision }}
+          path: ${{ runner.temp }}/prepared-release/receipts
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Preserve failed release artifacts
         if: failure() || cancelled()
@@ -2262,7 +3245,7 @@ jobs:
       OUTBOX_WORKER_MODE: ${{ needs.deploy-target.outputs.outbox-worker-mode }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
-      COMPOSITION_CANDIDATE_FILE: .composition-candidate/active-application-composition-candidate.json
+      COMPOSITION_INTENT_FILE: ${{ vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json' }}
       ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE: ${{ vars.ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE }}
       ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE: .initial-composition-cutover/initial-composition-cutover-receipt.json
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -2288,11 +3271,11 @@ jobs:
           install -d -m 700 "$ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY"
           printf 'ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY=%s\n' "$ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY" >> "$GITHUB_ENV"
 
-      - name: Download this deployment's complete approved candidate
+      - name: Download this deployment's original complete prepared release
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: approved-application-composition-candidate
-          path: app/.composition-candidate
+          name: prepared-application-release
+          path: ${{ runner.temp }}/prepared-release
 
       - name: Download the initial provider quiescence receipt
         if: vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''
@@ -2318,7 +3301,12 @@ jobs:
         env:
           STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: mise exec -- pnpm active-composition:publish publish --environment stage --candidate-file "$COMPOSITION_CANDIDATE_FILE"
+        run: >-
+          mise exec -- pnpm active-composition:publish publish --environment stage
+          --intent-file "$(jq -er '.intentFile' "$RUNNER_TEMP/prepared-release/metadata.json")"
+          --candidate-file "$RUNNER_TEMP/prepared-release/candidate.json"
+          --selection-file "$RUNNER_TEMP/prepared-release/selection.json"
+          --expected-composition-file "$RUNNER_TEMP/prepared-release/expected-composition.json"
 
       - name: Clear the runner-owned Zerops VPN
         if: always() && steps.composition-vpn.outputs.state-directory != ''
@@ -2376,15 +3364,15 @@ jobs:
         if: contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: edge-unit-shell-super-app
+          name: edge-unit-shell-super-app-${{ github.run_attempt }}
           path: ${{ runner.temp }}/shell-build
 
       - name: Download the exact retained Shell receipt
         if: contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: shell-artifact-release-receipt
-          path: ${{ runner.temp }}/shell-receipt
+          name: prepared-application-release
+          path: ${{ runner.temp }}/prepared-release
 
       - name: Unpack the approved Shell build
         id: shell-unpack
@@ -2423,7 +3411,7 @@ jobs:
           ONTOS_IMMUTABLE_RELEASE_SECRETS="$(jq -cer '.["shell-super-app"] | select(type == "object")' <<<"$ALL_RELEASE_SECRETS")"
           mise exec -- pnpm exec node scripts/immutable-shell-release.mts ingress-deploy \
             --app-directory apps/shell-super-app \
-            --receipt-file "$RUNNER_TEMP/shell-receipt/shell-super-app.json"
+            --receipt-file "$RUNNER_TEMP/prepared-release/receipts/shell-super-app.json"
 
       - name: Clear the runner-owned Zerops VPN
         if: always() && steps.composition-vpn.outputs.state-directory != ''

@@ -111,7 +111,7 @@ describe('recognizes the native definition service argument without admitting ha
   reject(1, `${nativeImports}registerRead(...descriptors, handler, ${callback}, resolver);`);
   reject(1, `${nativeImports}registerRead({}, handler, ${callback});`);
   reject(1, `${nativeImports}registerRead({}, handler, ${callback}, resolver, resultResolver, policies, extra);`);
-  reject(1, `${nativeImports}defineAction({}, handler, ${callback}, decodedSuccess, extra);`);
+  reject(1, `${nativeImports}defineAction({}, handler, ${callback}, decodedSuccess, postAttempt, extra);`);
   reject(1, `${nativeImports}registerRead({}, handler, serviceFactory, ${callback});`);
   reject(1, `${nativeImports}registerRead({}, handler, ${callback}, resolver, ...tail);`);
   reject(
@@ -126,5 +126,28 @@ describe('recognizes the native definition service argument without admitting ha
     1,
     `import type * as Runtime from '@app/core-runtime';\nRuntime.defineRead({}, handler, ${callback}, resolver);`,
   );
+  register();
+});
+
+describe('recognizes the genuine fifth Action callback while keeping only argument three a native service factory', () => {
+  const { accept, register, reject } = factoryCases(`effect-native/${factoryRule}`);
+  const nativeImports = `import { defineAction } from '@app/core-runtime';\n${effectValueImport}`;
+  const postAttempt = 'const onPostAttempt = (attempt) => Effect.void;\n';
+  accept(`${nativeImports}${postAttempt}defineAction({}, handler, ${callback}, undefined, onPostAttempt);`);
+  accept(`${nativeImports}${postAttempt}defineAction({}, handler, ${callback}, decodedSuccess, onPostAttempt);`);
+  accept(
+    `import { defineAction as registerAction } from '@app/core-runtime';\n${effectValueImport}${postAttempt}registerAction({}, handler, ${callback}, undefined, onPostAttempt);`,
+  );
+  for (const counterfeit of [
+    `import { defineAction } from './foreign.ts';\n${effectValueImport}${postAttempt}defineAction({}, handler, ${callback}, undefined, onPostAttempt);`,
+    `${effectValueImport}const defineAction = (config, handler) => handler;\n${postAttempt}defineAction({}, handler, ${callback}, undefined, onPostAttempt);`,
+    `${nativeImports}${postAttempt}defineAction({}, ${callback}, serviceFactory, undefined, onPostAttempt);`,
+    `${nativeImports}${postAttempt}defineAction({}, handler, serviceFactory, undefined, ${callback});`,
+    `${nativeImports}${postAttempt}defineAction({}, handler, ${callback}, undefined, onPostAttempt, extra);`,
+    `${nativeImports}${postAttempt}defineAction({}, handler, ${callback}, undefined, ...callbacks);`,
+    `import type { defineAction } from '@app/core-runtime';\n${effectValueImport}${postAttempt}defineAction({}, handler, ${callback}, undefined, onPostAttempt);`,
+  ]) {
+    reject(1, counterfeit);
+  }
   register();
 });

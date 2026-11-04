@@ -20,6 +20,7 @@ import {
   quoteIdentifier,
   runtimeRoleQueryFailure,
 } from './database-login-roles.mts';
+import { selectDatabaseIdentities } from '../../packages/core-runtime/src/db/config.ts';
 import { DATABASE_ROLE_GRANT_MANIFEST, TRUST_ROUTINES } from './database-role-manifest.mts';
 import type { DatabaseRoleGrantManifestEntry } from './database-role-manifest.mts';
 import { PRICING_RUNTIME_ROUTINE_SIGNATURES, PRICING_RUNTIME_TABLE_GRANTS } from './runtime-role-grants.mts';
@@ -32,8 +33,6 @@ const TRUST_TABLES = [
   'trust.gateway_audience_roles',
   'trust.gateway_scope_grants',
 ] as const;
-const RUNTIME_ROLES = DATABASE_IDENTITIES.map(({ role }) => role);
-const runtimeRoleList = RUNTIME_ROLES.map(quoteIdentifier).join(', ');
 const SHARED_RUNTIME_SCHEMAS = ['core', 'auth', 'catalog', 'inventory', 'tax', 'privacy', 'projects'] as const;
 
 export interface ExplicitManifestEntry {
@@ -385,8 +384,17 @@ export const grantExplicitRole = (
     );
   });
 
-export const grantTrustAuthority = (client: PgClient.PgClient): Effect.Effect<void, RuntimeRoleBootstrapError> =>
+export const grantTrustAuthority = (
+  client: PgClient.PgClient,
+  identityIds: readonly DatabaseIdentity['id'][] = DATABASE_IDENTITIES.map(({ id }) => id),
+): Effect.Effect<void, RuntimeRoleBootstrapError> =>
   Effect.gen(function* grantTrustAuthorityEffect() {
+    const identities = yield* selectDatabaseIdentities(identityIds).pipe(
+      Effect.mapError((failure) => bootstrapFailure(failure.reason)),
+    );
+    const roles = new Set(identities.map(({ role }) => role));
+    const selectedRole = (role: string) => roles.has(role);
+    const runtimeRoleList = [...roles].map(quoteIdentifier).join(', ');
     if (!(yield* exists(client, schemaExistsQuery, 'trust'))) {
       return;
     }
@@ -397,12 +405,13 @@ export const grantTrustAuthority = (client: PgClient.PgClient): Effect.Effect<vo
         Effect.gen(function* grantTrustRoutineEffect() {
           if (yield* exists(client, routineExistsQuery, signature)) {
             yield* query(client, `revoke all on function ${signature} from public, ${runtimeRoleList}`);
-            if (executableBy.length > 0) {
+            const selectedExecutors = executableBy.filter(selectedRole);
+            if (selectedExecutors.length > 0) {
               yield* query(
                 client,
-                `grant execute on function ${signature} to ${executableBy.map(quoteIdentifier).join(', ')}`,
+                `grant execute on function ${signature} to ${selectedExecutors.map(quoteIdentifier).join(', ')}`,
               );
-              for (const role of executableBy) {
+              for (const role of selectedExecutors) {
                 executingRoles.add(role);
               }
             }
@@ -425,9 +434,9 @@ export const grantTrustAuthority = (client: PgClient.PgClient): Effect.Effect<vo
       { concurrency: 1, discard: true },
     );
     if (yield* exists(client, tableExistsQuery, 'trust.gateway_audience_roles')) {
-      const audienceRoles = DATABASE_IDENTITIES.filter(
-        ({ scopeAuthority }) => scopeAuthority === 'gateway_grant',
-      ).flatMap(({ gatewayScopeAudiences, role }) => gatewayScopeAudiences.map((audience) => ({ audience, role })));
+      const audienceRoles = identities
+        .filter(({ scopeAuthority }) => scopeAuthority === 'gateway_grant')
+        .flatMap(({ gatewayScopeAudiences, role }) => gatewayScopeAudiences.map((audience) => ({ audience, role })));
       yield* Effect.forEach(
         audienceRoles,
         ({ audience, role }) =>
@@ -439,9 +448,15 @@ export const grantTrustAuthority = (client: PgClient.PgClient): Effect.Effect<vo
           ),
         { concurrency: 1, discard: true },
       );
-      yield* query(client, 'delete from trust.gateway_audience_roles where audience <> all($1::text[])', [
-        textArrayLiteral(audienceRoles.map(({ audience }) => audience)),
-      ]);
+      yield* identities.length === DATABASE_IDENTITIES.length
+        ? query(client, 'delete from trust.gateway_audience_roles where audience <> all($1::text[])', [
+            textArrayLiteral(audienceRoles.map(({ audience }) => audience)),
+          ])
+        : query(
+            client,
+            'delete from trust.gateway_audience_roles where role_name = any($1::text[]) and audience <> all($2::text[])',
+            [textArrayLiteral([...roles]), textArrayLiteral(audienceRoles.map(({ audience }) => audience))],
+          );
     }
   });
 
@@ -764,12 +779,24 @@ export const assertExplicitRole = (
 
 export const bootstrapRuntimeRoles = (
   client: PgClient.PgClient,
-  database: string,
-  passwords: ReadonlyMap<string, Redacted.Redacted>,
+  options: {
+    readonly database: string;
+    readonly identities?: readonly DatabaseIdentity['id'][];
+    readonly passwords: ReadonlyMap<string, Redacted.Redacted>;
+  },
 ): Effect.Effect<void, RuntimeRoleBootstrapError> =>
   Effect.gen(function* bootstrapRuntimeRolesEffect() {
+    const { database, passwords } = options;
+    const identities = yield* selectDatabaseIdentities(
+      options.identities ?? DATABASE_IDENTITIES.map(({ id }) => id),
+    ).pipe(Effect.mapError((failure) => bootstrapFailure(failure.reason)));
+    const ids = new Set(identities.map(({ id }) => id));
+    const entries = DATABASE_ROLE_GRANT_MANIFEST.filter(({ identity }) => ids.has(identity.id));
+    const selectedLegacy = legacySharedEntries.filter(({ identity }) => ids.has(identity.id));
+    const selectedExplicit = explicitEntries.filter(({ identity }) => ids.has(identity.id));
+    const runtimeRoleList = identities.map(({ role }) => quoteIdentifier(role)).join(', ');
     yield* Effect.forEach(
-      DATABASE_ROLE_GRANT_MANIFEST,
+      entries,
       (entry) => {
         const password = passwords.get(entry.identity.role);
         return password === undefined
@@ -781,21 +808,26 @@ export const bootstrapRuntimeRoles = (
     const quotedDatabase = quoteIdentifier(database);
     yield* query(client, `revoke temporary on database ${quotedDatabase} from public`);
     yield* query(client, `revoke temporary, create on database ${quotedDatabase} from ${runtimeRoleList}`);
-    yield* query(client, `grant temporary on database ${quotedDatabase} to ${SHARED_RUNTIME_IDENTITY.role}`);
-    yield* Effect.forEach(legacySharedEntries, (entry) => grantSharedRuntimeRole(client, entry), {
+    if (ids.has(SHARED_RUNTIME_IDENTITY.id)) {
+      yield* query(client, `grant temporary on database ${quotedDatabase} to ${SHARED_RUNTIME_IDENTITY.role}`);
+    }
+    yield* Effect.forEach(selectedLegacy, (entry) => grantSharedRuntimeRole(client, entry), {
       concurrency: 1,
       discard: true,
     });
-    yield* Effect.forEach(explicitEntries, (entry) => grantExplicitRole(client, entry), {
+    yield* Effect.forEach(selectedExplicit, (entry) => grantExplicitRole(client, entry), {
       concurrency: 1,
       discard: true,
     });
-    yield* grantTrustAuthority(client);
-    yield* Effect.forEach(DATABASE_ROLE_GRANT_MANIFEST, (entry) => assertLoginRole(client, entry), {
+    yield* grantTrustAuthority(
+      client,
+      identities.map(({ id }) => id),
+    );
+    yield* Effect.forEach(entries, (entry) => assertLoginRole(client, entry), {
       concurrency: 1,
       discard: true,
     });
-    yield* Effect.forEach(explicitEntries, (entry) => assertExplicitRole(client, entry), {
+    yield* Effect.forEach(selectedExplicit, (entry) => assertExplicitRole(client, entry), {
       concurrency: 1,
       discard: true,
     });

@@ -2,7 +2,12 @@
 // @ontos-action-owner commerce.market-catalog
 // @ontos-action-slug associate-storefront
 import type { ActionHandlerContext, ActionServiceFactory } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import {
+  defineAction,
+  defineActionResourcePermission,
+  defineTenantModuleEntrypoint,
+  requireModuleOperation,
+} from '@app/core-runtime';
 import { StorefrontApplicationIdSchema } from '@app/storefront-registry-contracts';
 import { Crypto, DateTime, Effect, Match, Schema } from 'effect';
 import {
@@ -56,9 +61,24 @@ const makeAssociateStorefrontServices: ActionServiceFactory<AssociateStorefrontS
 )(function* makeServices(transaction, scope, compositionRevision) {
   const crypto = yield* Crypto.Crypto;
   const catalog = yield* marketAdministrationService(transaction, scope, compositionRevision);
+  const authority = makeServerCurrentStorefrontApplicationAuthority({ compositionRevision, crypto, scope });
   return {
     ...catalog,
-    ...makeServerCurrentStorefrontApplicationAuthority({ compositionRevision, crypto, scope }),
+    ...authority,
+    validateCurrent: (...parameters: Parameters<CurrentStorefrontApplicationAuthority['validateCurrent']>) =>
+      requireModuleOperation('commerce.market-catalog.requirement.associate-storefront-current').pipe(
+        Effect.mapError((cause) =>
+          Object.defineProperty(
+            new StorefrontApplicationValidationUnavailable({
+              code: 'storefront_application_validation_unavailable',
+              reason: 'Current Storefront application contract is unavailable',
+            }),
+            'cause',
+            { configurable: true, value: cause },
+          ),
+        ),
+        Effect.andThen(authority.validateCurrent(...parameters)),
+      ),
   } satisfies AssociateStorefrontServices;
 });
 

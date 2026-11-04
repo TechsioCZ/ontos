@@ -6,7 +6,7 @@ import { Effect, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionHandler } from '@app/core-runtime/testing/actions';
 import type {
   CustomerPriceGroupAssignment,
   PriceGroupCompatibilityEvidence,

@@ -1,3 +1,4 @@
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import {
   ActionPermissionDenied,
   OperationAuthenticationRequired,
@@ -186,7 +187,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, PartyRegistryAuthenticationNamespaceRe
     );
     suite.effect('Commerce registration leaves normal Action and Tenant permission gates in force', () =>
       Effect.gen(function* ordinaryActionPermissions() {
-        const deniedHarness = yield* makeActionTestHarness();
+        const deniedHarness = yield* makeActionTestHarness({ ownerRegistration: partyRegistryBackendRegistration });
         const input = {
           audience: ACTION_GATEWAY_AUDIENCE,
           payload: {},
@@ -199,6 +200,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, PartyRegistryAuthenticationNamespaceRe
         );
         expect(deniedHarness.snapshot().committed.length).toBe(0);
         const tenantDeniedHarness = yield* makeActionTestHarness({
+          ownerRegistration: partyRegistryBackendRegistration,
           actionPermission: 'allowed',
           tenantPermission: 'denied',
         });
@@ -208,6 +210,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, PartyRegistryAuthenticationNamespaceRe
         expect(tenantDeniedHarness.snapshot().committed.length).toBe(0);
         expect(tenantDeniedHarness.snapshot().stages.includes('handler_executed')).toBe(false);
         const allowedHarness = yield* makeActionTestHarness({
+          ownerRegistration: partyRegistryBackendRegistration,
           actionPermission: 'allowed',
           tenantPermission: 'allowed',
         });

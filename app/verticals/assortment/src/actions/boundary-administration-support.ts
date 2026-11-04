@@ -1,4 +1,5 @@
-import type { AssortmentPermissionSelector, OperationalScope } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
+import type { AssortmentPermissionSelector } from '../permissions/authorization-targets.ts';
 import { DateTime, Match, Result, Schema } from 'effect';
 import type {
   CreateClosedAssortmentBoundaryPayload,

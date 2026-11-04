@@ -131,13 +131,28 @@ it.layer(
           const snapshot = yield* makePriceGroupTemporalComposition([bundle]);
           const [module] = snapshot.composition.modules;
           expect(module?.contractDocument).toBeDefined();
+          expect(module?.requiredCoreCapabilities).toEqual(
+            bundle.contract.manifest.requirements?.coreCapabilities ?? [],
+          );
+          for (const required of module?.requiredCoreCapabilities ?? []) {
+            expect(snapshot.composition.shell.coreCapabilities).toContainEqual(required);
+          }
+          const crypto = yield* Crypto.Crypto;
+          for (const artifact of [
+            snapshot.composition.shell.runtimeContract,
+            snapshot.composition.shell.federationManifest,
+          ]) {
+            const response = yield* HttpClient.get(artifact.url).pipe(Effect.provide(FetchHttpClient.layer));
+            expect(response.status).toBe(200);
+            const bytes = new Uint8Array(yield* response.arrayBuffer);
+            expect(Buffer.from(yield* crypto.digest('SHA-256', bytes)).toString('hex')).toBe(artifact.sha256);
+          }
           if (module?.federation.execution === 'browser') {
             const response = yield* HttpClient.get(module.federation.manifest.url).pipe(
               Effect.provide(FetchHttpClient.layer),
             );
             const body = yield* response.text;
             expect(response.status).toBe(200);
-            const crypto = yield* Crypto.Crypto;
             const actualDigest = Buffer.from(yield* crypto.digest('SHA-256', new TextEncoder().encode(body))).toString(
               'hex',
             );

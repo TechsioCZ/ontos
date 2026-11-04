@@ -185,6 +185,106 @@ const permissionResponse = (allowed: boolean) =>
   });
 
 it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
+  suite.effect('refuses partial authoritative runtime bindings before seeding or loading authority', () =>
+    Effect.gen(function* refusePartialRuntimeBindings() {
+      const beforeInsert = transport.insert.mock.calls.length;
+      const beforeRelationships = transport.writeRelationships.mock.calls.length;
+      const applicationComposition = { load: Effect.die('Partial runtime binding must not load authority') };
+      const expectedDeployment = { appId: 'fixture-owner', buildMarker: 'fixture-build' };
+      const failures = yield* Effect.all(
+        [
+          Effect.flip(makeLiveOperationFixture({ ...configuration, applicationComposition })),
+          Effect.flip(makeLiveOperationFixture({ ...configuration, expectedDeployment })),
+          Effect.flip(makeLiveOperationFixture({ ...configuration, applicationComposition, expectedDeployment })),
+        ],
+        { concurrency: 1 },
+      );
+      for (const failure of failures) {
+        expect(Predicate.isTagged(failure, 'LiveOperationFixtureError')).toBe(true);
+        expect(failure.reason).toBe(
+          'Authoritative fixture runtime requires Composition, deployment and owner registration',
+        );
+      }
+      expect(transport.insert.mock.calls.length).toBe(beforeInsert);
+      expect(transport.writeRelationships.mock.calls.length).toBe(beforeRelationships);
+    }),
+  );
+
+  suite.effect('verifies declared withheld executor rights without granting or querying foreign targets', () =>
+    Effect.gen(function* verifyReadOnlyExecutorProbe() {
+      transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());
+      transport.checkPermission.mockResolvedValue(permissionResponse(true));
+      const withheldAction = 'commerce.market-catalog.manage-market-retirement-admission';
+      const fixture = yield* makeLiveOperationFixture({
+        ...configuration,
+        actionExecutor: 'manager-only',
+        executorProbeActionKeys: [withheldAction],
+      });
+      const beforeWrite = transport.writeRelationships.mock.calls.length;
+      const beforeCheck = transport.checkPermission.mock.calls.length;
+      const [grantedAction] = configuration.actionKeys;
+      assert(grantedAction !== undefined);
+      yield* fixture.verifyActionExecutor({
+        actionKey: grantedAction,
+        expected: 'allowed',
+        principalId: fixture.manager.principalId,
+      });
+      transport.checkPermission.mockResolvedValue(permissionResponse(false));
+      yield* fixture.verifyActionExecutor({
+        actionKey: withheldAction,
+        expected: 'denied',
+        principalId: fixture.manager.principalId,
+      });
+      expect(transport.checkPermission.mock.calls.slice(beforeCheck).map(([request]) => request)).toEqual([
+        v1.CheckPermissionRequest.create({
+          consistency: { requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } },
+          permission: 'execute',
+          resource: { objectId: toSpiceDbActionObjectId(grantedAction), objectType: 'action' },
+          subject: { object: { objectId: fixture.manager.principalId, objectType: 'principal' } },
+        }),
+        v1.CheckPermissionRequest.create({
+          consistency: { requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } },
+          permission: 'execute',
+          resource: { objectId: toSpiceDbActionObjectId(withheldAction), objectType: 'action' },
+          subject: { object: { objectId: fixture.manager.principalId, objectType: 'principal' } },
+        }),
+      ]);
+      for (const input of [
+        {
+          actionKey: 'core.identity.undeclared',
+          expected: 'denied' as const,
+          principalId: fixture.manager.principalId,
+        },
+        { actionKey: withheldAction, expected: 'denied' as const, principalId: 'foreign-principal' },
+      ]) {
+        const failure = yield* Effect.flip(fixture.verifyActionExecutor(input));
+        expect(failure.reason).toBe('Executor verification requires a fixture-owned actor and declared action key');
+      }
+      expect(transport.checkPermission).toHaveBeenCalledTimes(beforeCheck + 2);
+      expect(transport.writeRelationships).toHaveBeenCalledTimes(beforeWrite);
+      expect(
+        transport.writeRelationships.mock.calls
+          .flatMap(([request]) => request.updates)
+          .some(
+            ({ relationship }) =>
+              relationship?.resource?.objectType === 'action' &&
+              relationship.resource.objectId === toSpiceDbActionObjectId(withheldAction),
+          ),
+      ).toBe(false);
+      transport.checkPermission.mockResolvedValue(v1.CheckPermissionResponse.create());
+      const indeterminate = yield* Effect.flip(
+        fixture.verifyActionExecutor({
+          actionKey: withheldAction,
+          expected: 'denied',
+          principalId: fixture.manager.principalId,
+        }),
+      );
+      expect(indeterminate.reason).toBe('Live fixture authorization does not match its exact declared grants');
+      expect(transport.writeRelationships).toHaveBeenCalledTimes(beforeWrite);
+      yield* fixture.close();
+    }),
+  );
+
   suite.effect('revokes and restores only its exact seeded primary-LE manager module accessor', () =>
     Effect.gen(function* mutateOnlyOwnedManagerAccessor() {
       transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());

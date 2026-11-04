@@ -1,10 +1,12 @@
+import { priceGroupCatalogRegistration } from '../../vertical.registration.ts';
+import { priceGroupCurrentInputGuard } from './price-group-current-input.ts';
 import { Socket } from 'effect/socket';
 import { NodeSocket, NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfig,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
   TrustedPrincipalContextSchema,
   makeActionRuntimeLive,
@@ -29,7 +31,20 @@ import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/ap
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { sql } from 'drizzle-orm';
-import { Config, Context, DateTime, Effect, FileSystem, Layer, Path, Queue, Redacted, Schema, Stream } from 'effect';
+import {
+  Cause,
+  Config,
+  Context,
+  DateTime,
+  Effect,
+  FileSystem,
+  Layer,
+  Path,
+  Queue,
+  Redacted,
+  Schema,
+  Stream,
+} from 'effect';
 import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { ChildProcess } from 'effect/process';
 
@@ -115,6 +130,11 @@ const ResponseSchema = Schema.Union([
       ]),
     ),
     stage: Schema.Literals([
+      'BOOTSTRAP_OWNED_DATABASE',
+      'BOOTSTRAP_CONFIGURATION',
+      'BOOTSTRAP_MIGRATION',
+      'BOOTSTRAP_RUNTIME',
+      'BOOTSTRAP_OTHER',
       'CREATE_INVALID',
       'CREATE_AUTHENTICATION',
       'CREATE_FORBIDDEN',
@@ -154,6 +174,8 @@ class PriceGroupCurrentFixtureFailure extends Schema.TaggedError<PriceGroupCurre
   'PriceGroupCurrentFixtureFailure',
   { stage: Schema.String },
 ) {}
+const ownedDatabaseIdentityCountStage = 'owned-database-identity-count';
+const ownerPackageStage = 'owner-package';
 const fail = (stage: string) => new PriceGroupCurrentFixtureFailure({ stage });
 const demand = (condition: boolean, stage: string) => (condition ? Effect.void : Effect.fail(fail(stage)));
 const connectParent = Effect.gen(function* connectParent() {
@@ -227,9 +249,9 @@ const guardOwnedDatabase = Effect.fn('PriceGroupCurrentFixture.guardOwnedDatabas
       .pipe(Effect.mapError(() => fail('database-identity-read')));
     const [actual] = identity;
     const expectedRole = role === 'admin' ? certificate.adminRole : certificate.runtimeRole;
-    yield* demand(identity.length === 1 && actual !== undefined, 'owned-database-identity-count');
+    yield* demand(identity.length === 1 && actual !== undefined, ownedDatabaseIdentityCountStage);
     if (actual === undefined) {
-      return yield* fail('owned-database-identity-count');
+      return yield* fail(ownedDatabaseIdentityCountStage);
     }
     yield* demand(
       actual.database_name === certificate.name &&
@@ -259,9 +281,9 @@ const migrateOwner = Effect.fn('PriceGroupCurrentFixture.migrateOwner')(function
   const directory = path.resolve(process.cwd());
   const packageIdentity = yield* fs.readFileString(path.join(directory, 'package.json')).pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Struct({ name: Schema.String })))),
-    Effect.mapError(() => fail('owner-package')),
+    Effect.mapError(() => fail(ownerPackageStage)),
   );
-  yield* demand(packageIdentity.name === '@app/price-group-catalog', 'owner-package');
+  yield* demand(packageIdentity.name === '@app/price-group-catalog', ownerPackageStage);
   const migration = yield* ChildProcess.make(
     process.execPath,
     [path.join(directory, 'node_modules/drizzle-kit/bin.cjs'), 'migrate', '--config', 'drizzle.config.ts'],
@@ -350,11 +372,14 @@ const serveOwner = Effect.fn('PriceGroupCurrentFixture.serveOwner')(function* se
     composition,
     priceGroupCatalogOwnerAuthorizationOverlayLive,
   );
-  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, priceGroupCatalogRegistration).pipe(
     Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
     Layer.provide(NodeCrypto.layer),
   );
-  const reads = ReadRuntimeLive.pipe(Layer.provide(common), Layer.provide(NodeCrypto.layer));
+  const reads = makeReadRuntimeLive(ultramodernDeliveryUnit, priceGroupCatalogRegistration).pipe(
+    Layer.provide(common),
+    Layer.provide(NodeCrypto.layer),
+  );
   const encodedComposition = yield* Schema.encodeEffect(
     Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
   )(bootstrap.composition);
@@ -417,12 +442,9 @@ const serveOwner = Effect.fn('PriceGroupCurrentFixture.serveOwner')(function* se
 const program = Effect.gen(function* priceGroupCurrentChild() {
   const { pull, send } = yield* connectParent;
   const commands = yield* Queue.bounded<typeof CommandSchema.Type | PriceGroupCurrentFixtureFailure>(8);
-  let bytes = 0;
+  const acceptsInput = priceGroupCurrentInputGuard();
   yield* Stream.fromPull(Effect.succeed(pull)).pipe(
-    Stream.mapEffect((chunk) => {
-      bytes += chunk.byteLength;
-      return demand(bytes <= 131_072, 'private-input-limit').pipe(Effect.as(chunk));
-    }),
+    Stream.mapEffect((chunk) => demand(acceptsInput(chunk), 'private-input-limit').pipe(Effect.as(chunk))),
     Stream.decodeText(),
     Stream.splitLines,
     Stream.mapEffect((line) =>
@@ -444,7 +466,72 @@ const program = Effect.gen(function* priceGroupCurrentChild() {
   if (bootstrap.type !== 'bootstrap') {
     return yield* fail('bootstrap-order');
   }
-  const receiver = yield* serveOwner(bootstrap);
+  const receiver = yield* serveOwner(bootstrap).pipe(
+    Effect.tapCause((cause) => {
+      let stage:
+        | 'BOOTSTRAP_OWNED_DATABASE'
+        | 'BOOTSTRAP_CONFIGURATION'
+        | 'BOOTSTRAP_MIGRATION'
+        | 'BOOTSTRAP_RUNTIME'
+        | 'BOOTSTRAP_OTHER' = 'BOOTSTRAP_OTHER';
+      for (const reason of cause.reasons) {
+        if (!Cause.isFailReason(reason)) {
+          stage = 'BOOTSTRAP_RUNTIME';
+          continue;
+        }
+        if (Schema.is(PriceGroupCurrentFixtureFailure)(reason.error)) {
+          const ownStage = reason.error.stage;
+          if (
+            Schema.is(
+              Schema.Literals([
+                'database-configuration',
+                'owned-address-certificate',
+                'database-identity-connect',
+                'database-identity-read',
+                ownedDatabaseIdentityCountStage,
+                'owned-database-certificate',
+                'owned-database-role-endpoint',
+                'runtime-rls-role',
+              ]),
+            )(ownStage)
+          ) {
+            stage = 'BOOTSTRAP_OWNED_DATABASE';
+          } else if (
+            Schema.is(
+              Schema.Literals([
+                'isolated-staff-tenant-context',
+                'spicedb-address',
+                'spicedb-loopback',
+                'captured-runtime-configuration',
+                'captured-spicedb-ca',
+              ]),
+            )(ownStage)
+          ) {
+            stage = 'BOOTSTRAP_CONFIGURATION';
+          } else if (
+            Schema.is(
+              Schema.Literals([
+                ownerPackageStage,
+                'owner-migration-start',
+                'owner-migration',
+                'owner-migration-timeout',
+                'owner-migration-exit',
+              ]),
+            )(ownStage)
+          ) {
+            stage = 'BOOTSTRAP_MIGRATION';
+          } else if (ownStage === 'owner-http') {
+            stage = 'BOOTSTRAP_RUNTIME';
+          }
+        } else if (Schema.isSchemaError(reason.error)) {
+          stage = 'BOOTSTRAP_RUNTIME';
+        } else if (Schema.is(Schema.Struct({ _tag: Schema.Literal('ConfigError') }))(reason.error)) {
+          stage = 'BOOTSTRAP_CONFIGURATION';
+        }
+      }
+      return send({ stage, type: 'FAILED', version }).pipe(Effect.ignore);
+    }),
+  );
   yield* send({ ...receiver, buildMarker: ultramodernApiMarker.buildMarker, type: 'BOOTED', version });
   const options = (command: typeof MutationCommandSchema.Type) => ({
     baseUrl: `http://127.0.0.1:${receiver.port}`,

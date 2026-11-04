@@ -1,7 +1,7 @@
 import { Effect, Option, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
-import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
 
 import type { ImportSourceAssertionResult } from '../../shared/actions/import-source-assertion.ts';
 import {
@@ -392,7 +392,11 @@ describe('Inventory external source conflicts', () => {
       compositionRevision,
     );
 
-    expect(getActionBusinessPermissionTargetResolver(resolveInventorySourceConflictAction)?.(input, scope)).toEqual({
+    expect(
+      getActionOwnerPermissionTargetResolver(resolveInventorySourceConflictAction)?.(input, scope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
+    ).toEqual({
       permission: 'inventory.recovery.execute',
       target: {
         kind: 'inventory_resource',

@@ -31,6 +31,7 @@ import {
 } from '../services/commercial-fee-persistence.service.ts';
 import type { CommercialFeePersistence } from '../services/commercial-fee-persistence.service.ts';
 import { commercialFeeCatalogTargetAssessmentPortFromEnvironment } from '../integrations/commercial-fee-catalog-target-evidence.ts';
+import { requirePricingCatalogOperation } from '../integrations/pricing-operation-requirements.ts';
 import type { CommercialFeeCatalogTargetAssessmentPort } from '../integrations/commercial-fee-catalog-target-evidence.ts';
 import { currencySupportPersistenceForScope } from '../persistence/currency-support-persistence.ts';
 import type { CurrencySupportPersistence } from '../persistence/currency-support-persistence.ts';
@@ -383,7 +384,10 @@ export const reviseCommercialFeeAction = defineAction(
       return {
         loadCurrencySupport: currencySupport.loadForCanonicalAdmission,
         revise: persistence.revise,
-        validateCatalogTarget: catalogTarget.validate,
+        validateCatalogTarget: (input) =>
+          requirePricingCatalogOperation('commerce.pricing.requirement.revise-commercial-fee-catalog').pipe(
+            Effect.andThen(() => catalogTarget.validate(input)),
+          ),
       } satisfies ReviseCommercialFeeActionServices;
     });
   },

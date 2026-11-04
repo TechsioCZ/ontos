@@ -8,6 +8,8 @@ import { dispatchPrivacyMeasureAction } from '../../src/actions/dispatch-privacy
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../../src/persistence/privacy-operation-repository.ts';
 
+import { privacyRegistration } from '../../vertical.registration.ts';
+
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000002';
 const principal = {
@@ -48,6 +50,7 @@ const harnessFor = (admitMeasureDispatch: PrivacyOperationRepositoryService['adm
   makeActionTestHarness({
     actionPermission: 'allowed',
     legalEntityPermission: 'allowed',
+    ownerRegistration: privacyRegistration,
     services: [bindActionTestServices(dispatchPrivacyMeasureAction, { admitMeasureDispatch })],
     tenantPermission: 'allowed',
   });

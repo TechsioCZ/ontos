@@ -1,3 +1,18 @@
+import {
+  loadModuleOperationAdmission,
+  captureShellSystemReadRegistrations,
+  isBoundShellSystemRead,
+  operationCatalogLoader,
+  prepareOperationIntrinsicState,
+  validateBoundOperationOwner,
+  withModuleOperationExecution,
+  withoutModuleOperationExecution,
+} from '../modules/module-operation-execution.ts';
+import { ActiveApplicationCompositionService } from '../modules/active-application-composition.ts';
+import type { ShellSystemReadRegistrations } from '../modules/module-operation-execution.ts';
+import type { ActiveApplicationCompositionServiceContract } from '../modules/active-application-composition.ts';
+import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
+import type { OntosDeploymentIdentitySchema } from '../modules/manifest.ts';
 import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
 /* oxlint-disable sonarjs/no-duplicate-string, eslint/no-use-before-define, anti-slop/no-unknown-parameters, effect-native/no-throw-in-effect-callback, effect-native/no-native-error-construction -- Opaque owner resolver defects are captured immediately by Effect.try and sanitized to a typed Core failure; expires: 2027-03-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
@@ -20,14 +35,7 @@ import type { OperationalScope, OperationalScopeResolverService } from '../opera
 import { OperationalScopeResolver } from '../operations/context.ts';
 import {
   ContextAccess,
-  hasCanonicalInventoryAuthorizationTarget,
-  hasCanonicalPricingAuthorizationTargetIds,
-  isBusinessPermissionTargetCompatible,
-  isAssortmentPermissionTargetValid,
-  toAssortmentPermissionAccessKey,
-  toAssortmentPermissionAccessObjectId,
-  assortmentPermissionTargetRequiresLegalEntity,
-  toBusinessPermissionAccessKey,
+  isOwnerPermissionAccessTargetValid,
   toContextPermissionAccessKey,
 } from '../permissions/context-access.ts';
 import { LEGAL_ENTITY_PERMISSION_KEYS } from '../permissions/context-permissions.ts';
@@ -36,11 +44,6 @@ import {
   failClosedOwnerAuthorizationOverlay,
 } from '../permissions/owner-authorization-overlay.ts';
 import type { OwnerAuthorizationTarget } from '../permissions/owner-authorization-overlay.ts';
-import type {
-  AssortmentPermissionAccessTarget,
-  AssortmentPermissionCommercialScope,
-  AssortmentPermissionSubject,
-} from '../permissions/context-access.ts';
 import { validateReadEvidenceMetadata } from './context.ts';
 import type {
   AtomicResolvedReadPermissionTarget,
@@ -52,6 +55,7 @@ import type {
 } from './definition.ts';
 import {
   getReadConditionalPermissionPlan,
+  isReadRegistration,
   getReadDomainErrorSchema,
   getReadHandler,
   getReadPermissionTargetResolver,
@@ -119,206 +123,18 @@ export const READ_RUNTIME_STAGES = [
 export type ReadRuntimeStage = (typeof READ_RUNTIME_STAGES)[number];
 
 export interface ReadRuntimeOptions {
+  readonly applicationComposition?: ActiveApplicationCompositionServiceContract;
+  readonly expectedDeployment?: typeof OntosDeploymentIdentitySchema.Type;
   readonly onStage?: (stage: ReadRuntimeStage) => void;
   readonly ownerAuthorizationOverlay?: (typeof OwnerAuthorizationOverlay)['Service'];
+  readonly ownerRegistration?: VerticalRuntimeRegistration;
+  readonly shellSystemReads?: ShellSystemReadRegistrations;
 }
 
 const stableTargetKey = (value: string): boolean => value.length > 0 && value.length <= 300;
 const targetLegalEntityIdIsValid = Schema.is(Schema.String.check(Schema.isUUID()));
 const PermissionDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
 type PermissionDecision = typeof PermissionDecisionSchema.Type;
-
-const assortmentResourceIsValid = (resource: {
-  readonly moduleId: string;
-  readonly resourceId: string;
-  readonly resourceType: string;
-}): boolean =>
-  stableTargetKey(resource.moduleId) && stableTargetKey(resource.resourceId) && stableTargetKey(resource.resourceType);
-
-const assortmentSelectorIsValid = (
-  selector: {
-    readonly kind: string;
-    readonly target?: { readonly moduleId: string; readonly resourceId: string; readonly resourceType: string };
-  },
-  purpose?: 'VISIBILITY' | 'PURCHASE',
-): boolean =>
-  (selector.kind === 'ALL'
-    ? selector.target === undefined
-    : selector.target !== undefined && assortmentResourceIsValid(selector.target)) &&
-  (purpose !== 'VISIBILITY' || !['VARIANT', 'PACKAGE_OPTION'].includes(selector.kind));
-
-const assortmentScopeIsValid = (scope: {
-  readonly channel: { readonly moduleId: string; readonly resourceId: string; readonly resourceType: string };
-  readonly market?: { readonly moduleId: string; readonly resourceId: string; readonly resourceType: string };
-  readonly storefront?: { readonly moduleId: string; readonly resourceId: string; readonly resourceType: string };
-}): boolean =>
-  assortmentResourceIsValid(scope.channel) &&
-  (scope.market === undefined || assortmentResourceIsValid(scope.market)) &&
-  (scope.storefront === undefined || assortmentResourceIsValid(scope.storefront));
-
-const AssortmentSubjectKindSchema = Schema.Literals(['RETAIL_CUSTOMER_PROFILE', 'COUNTERPARTY']);
-const assortmentSubjectIsValid = (subject: AssortmentPermissionSubject): boolean =>
-  subject.kind === 'GUEST' ||
-  (Schema.is(AssortmentSubjectKindSchema)(subject.kind) && assortmentResourceIsValid(subject.ref));
-
-const storefrontScopeIsValid = (
-  commercialScope: AssortmentPermissionCommercialScope,
-  scope: OperationalScope,
-): boolean =>
-  commercialScope.storefront === undefined || scope.trustedStorefrontId === commercialScope.storefront.resourceId;
-
-const assortmentConfigurationTargetIsValid = (
-  target: Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_configuration' }>,
-): boolean =>
-  target.permission === 'assortment.configuration.read' &&
-  isAssortmentPermissionTargetValid(target) &&
-  assortmentResourceIsValid(target.resource);
-
-const assortmentDecisionTargetIsValid = (
-  target: Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_decision' }>,
-  scope: OperationalScope,
-): boolean =>
-  target.permission === 'assortment.decision.explain' &&
-  assortmentResourceIsValid(target.catalogSelection) &&
-  assortmentScopeIsValid(target.commercialScope) &&
-  assortmentSubjectIsValid(target.subject) &&
-  storefrontScopeIsValid(target.commercialScope, scope);
-
-const assortmentRuleTargetIsValid = (
-  target: Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_rule' }>,
-): boolean => {
-  if (target.mode === 'retire') {
-    return target.permission === 'assortment.rule.retire' && assortmentResourceIsValid(target.stableRule);
-  }
-  const expectedPermission = target.mode === 'create' ? 'assortment.rule.create' : 'assortment.rule.revision.create';
-  const lineageValid =
-    target.mode === 'create' ? stableTargetKey(target.stableCode) : assortmentResourceIsValid(target.stableRule);
-  return (
-    target.permission === expectedPermission &&
-    assortmentSelectorIsValid(target.selector, target.purpose) &&
-    lineageValid
-  );
-};
-
-const assortmentBindingTargetIsValid = (
-  target: Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_binding' }>,
-  scope: OperationalScope,
-): boolean => {
-  if (target.mode === 'end') {
-    return target.permission === 'assortment.binding.end' && assortmentResourceIsValid(target.binding);
-  }
-  let audienceValid = false;
-  if (target.audience.kind === 'SHARED') {
-    audienceValid = true;
-  } else if (target.audience.kind === 'COMMERCE_CUSTOMER_GROUP') {
-    audienceValid = assortmentResourceIsValid(target.audience.group);
-  } else {
-    audienceValid = assortmentSubjectIsValid(target.audience.subject);
-  }
-  return (
-    target.permission === 'assortment.binding.create' &&
-    assortmentResourceIsValid(target.ruleRevision) &&
-    audienceValid &&
-    assortmentScopeIsValid(target.commercialScope) &&
-    stableTargetKey(target.effectiveFrom) &&
-    storefrontScopeIsValid(target.commercialScope, scope)
-  );
-};
-
-const assortmentBoundaryTargetIsValid = (
-  target: Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_boundary' }>,
-  scope: OperationalScope,
-): boolean => {
-  if (target.mode === 'end') {
-    return target.permission === 'assortment.boundary.end' && assortmentResourceIsValid(target.boundary);
-  }
-  const admissionSetValid =
-    ((target.admissionSet.setKind === 'EMPTY' && target.admissionSet.memberCount === 0) ||
-      (target.admissionSet.setKind === 'ENTRIES' && target.admissionSet.memberCount > 0)) &&
-    target.admissionSet.memberCount === target.admissionSet.entries.length &&
-    target.admissionSet.contentHash.length === 64 &&
-    /^[0-9a-f]{64}$/u.test(target.admissionSet.contentHash) &&
-    target.admissionSet.entries.every((entry) => assortmentSelectorIsValid(entry, target.purpose));
-  return (
-    target.permission === 'assortment.boundary.create' &&
-    assortmentSubjectIsValid(target.subject) &&
-    assortmentScopeIsValid(target.commercialScope) &&
-    stableTargetKey(target.effectiveFrom) &&
-    storefrontScopeIsValid(target.commercialScope, scope) &&
-    admissionSetValid
-  );
-};
-
-const assortmentPermissionTargetIsValid = (
-  target: AssortmentPermissionAccessTarget,
-  scope: OperationalScope,
-): boolean => {
-  if (target.kind === 'assortment_configuration') {
-    return assortmentConfigurationTargetIsValid(target);
-  }
-  if (target.kind === 'assortment_decision') {
-    return assortmentDecisionTargetIsValid(target, scope);
-  }
-  if (target.kind === 'assortment_rule') {
-    return assortmentRuleTargetIsValid(target);
-  }
-  if (target.kind === 'assortment_binding') {
-    return assortmentBindingTargetIsValid(target, scope);
-  }
-  return assortmentBoundaryTargetIsValid(target, scope);
-};
-
-const assortmentPermissionTargetHasTrustedStorefrontMismatch = (
-  target: AssortmentPermissionAccessTarget,
-  scope: OperationalScope,
-): boolean => {
-  const storefront =
-    target.kind === 'assortment_decision' ||
-    (target.kind === 'assortment_binding' && target.mode === 'create') ||
-    (target.kind === 'assortment_boundary' && target.mode === 'create')
-      ? target.commercialScope.storefront
-      : undefined;
-  if (storefront === undefined) {
-    return false;
-  }
-  return (
-    scope.trustedStorefrontId !== storefront.resourceId &&
-    assortmentPermissionTargetIsValid(target, { ...scope, trustedStorefrontId: storefront.resourceId })
-  );
-};
-
-const businessPermissionTargetIsValid = (
-  target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'business_permission' }>,
-  scope?: OperationalScope,
-): boolean => {
-  const business = target.businessPermission.target;
-  if (
-    !stableTargetKey(target.businessPermission.permission) ||
-    !stableTargetKey(business.tenantId) ||
-    !isBusinessPermissionTargetCompatible(target.businessPermission) ||
-    !hasCanonicalPricingAuthorizationTargetIds(business) ||
-    !hasCanonicalInventoryAuthorizationTarget(business)
-  ) {
-    return false;
-  }
-  if (business.kind === 'pricing_catalog' || business.kind === 'price_group') {
-    return (
-      scope?.legalEntityId === undefined &&
-      scope?.trustedStorefrontId === undefined &&
-      target.trustedStorefrontId === undefined
-    );
-  }
-  if (business.kind === 'inventory_resource') {
-    return target.trustedStorefrontId === undefined;
-  }
-  return (
-    stableTargetKey(business.legalEntityId) &&
-    (business.kind !== 'counterparty_storefront' ||
-      (stableTargetKey(business.storefrontId) &&
-        target.trustedStorefrontId === business.storefrontId &&
-        scope?.trustedStorefrontId === business.storefrontId))
-  );
-};
 
 const legalEntityTargetIsValid = (
   target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'legal_entity' }>,
@@ -328,12 +144,10 @@ const legalEntityTargetIsValid = (
     LEGAL_ENTITY_PERMISSION_KEYS.some((permission) => permission === target.permission));
 
 const atomicTargetIsValid = (target: AtomicResolvedReadPermissionTarget, scope?: OperationalScope): boolean => {
-  if (target.kind === 'assortment_permission') {
-    return scope === undefined ? false : assortmentPermissionTargetIsValid(target.assortmentPermission, scope);
+  if (target.kind === 'owner_permission') {
+    return scope === undefined ? false : isOwnerPermissionAccessTargetValid(target.ownerPermission, scope);
   }
-  if (target.kind === 'business_permission') {
-    return businessPermissionTargetIsValid(target, scope);
-  }
+
   if (target.kind === 'tenant') {
     return true;
   }
@@ -357,7 +171,7 @@ const canonicalPermissionTarget = (target: ResolvedReadPermissionTarget): Atomic
   target.kind === 'any_of' ? target.targets[0] : target;
 
 const targetIsValid = (
-  declared: 'assortment_permission' | 'business_permission' | 'legal_entity' | 'module' | 'resource' | 'tenant',
+  declared: 'owner_permission' | 'legal_entity' | 'module' | 'resource' | 'tenant',
   target: ResolvedReadPermissionTarget,
   scope: OperationalScope,
 ): boolean => {
@@ -393,22 +207,6 @@ const toOwnerAuthorizationTarget = (
 ): OwnerAuthorizationTarget =>
   Match.value(target).pipe(
     Match.discriminatorsExhaustive('kind')({
-      assortment_permission: (assortmentTarget) => ({
-        kind: 'assortment_permission' as const,
-        target: assortmentTarget.assortmentPermission,
-      }),
-      business_permission: (businessTarget) =>
-        withOptionalProperty(
-          {
-            kind: 'business_permission' as const,
-            permission: businessTarget.businessPermission.permission,
-            target: businessTarget.businessPermission.target,
-          },
-          businessTarget.trustedStorefrontId !== undefined,
-          'trustedStorefrontId',
-          businessTarget.trustedStorefrontId,
-          {},
-        ),
       legal_entity: (legalEntityTarget) =>
         withOptionalProperty(
           {
@@ -431,6 +229,10 @@ const toOwnerAuthorizationTarget = (
           scope.legalEntityId,
           {},
         ),
+      owner_permission: (ownerTarget) => ({
+        kind: 'owner_permission' as const,
+        target: ownerTarget.ownerPermission,
+      }),
       resource: (resourceTarget) => ({
         kind: 'resource' as const,
         permission: 'read' as const,
@@ -480,6 +282,12 @@ const resolveConditionalPermissionPlan = <Input>(
               !atomicTargetIsValid({ kind: 'resource', resource: requirement.resource }, scope)
             );
           }
+          if (
+            requirement.kind === 'owner_permission' &&
+            (plan.ownerContract === undefined || requirement.ownerPermission.contract !== plan.ownerContract)
+          ) {
+            return true;
+          }
           return !atomicTargetIsValid(requirement, scope);
         })
       ) {
@@ -496,62 +304,20 @@ const resolveConditionalPermissionPlan = <Input>(
     },
   });
 
-const readBusinessTargetResourceId = (
-  target: Extract<AtomicResolvedReadPermissionTarget, { kind: 'business_permission' }>['businessPermission']['target'],
-): string => {
-  if (target.kind === 'retail_profile') {
-    return target.profileId;
-  }
-  if (target.kind === 'counterparty') {
-    return target.counterpartyId;
-  }
-  if (target.kind === 'counterparty_storefront') {
-    return `${target.counterpartyId}:${target.storefrontId}`;
-  }
-  if (target.kind === 'pricing_catalog') {
-    return target.pricingCatalogId;
-  }
-  if (target.kind === 'price_group') {
-    return `${target.pricingCatalogId}:${target.priceGroupId}`;
-  }
-  if (target.kind === 'tax_selling_legal_entity') {
-    return target.legalEntityId;
-  }
-  return target.resource.resourceId;
-};
-
-const targetMetadata = (target: ResolvedReadPermissionTarget, scope: OperationalScope) => {
+const targetMetadata = (target: ResolvedReadPermissionTarget, _scope: OperationalScope) => {
   const canonical = canonicalPermissionTarget(target);
-  if (canonical.kind === 'business_permission') {
-    const business = canonical.businessPermission.target;
-    if (business.kind === 'inventory_resource') {
-      return {
-        targetModuleKey: business.resource.moduleId,
-        targetResourceId: business.resource.resourceId,
-        targetResourceType: business.resource.resourceType,
-      };
-    }
-    return {
-      targetModuleKey: canonical.businessPermission.permission,
-      targetResourceId: readBusinessTargetResourceId(business),
-      targetResourceType: business.kind,
-    };
-  }
+
   if (canonical.kind === 'legal_entity') {
     return canonical.legalEntityId === undefined
       ? {}
       : { targetResourceId: canonical.legalEntityId, targetResourceType: 'core.identity.legal-entity' };
   }
-  if (canonical.kind === 'assortment_permission') {
+  if (canonical.kind === 'owner_permission') {
     return {
-      targetModuleKey: canonical.assortmentPermission.kind,
-      targetResourceId:
-        toAssortmentPermissionAccessObjectId(
-          scope.tenantId,
-          scope.legalEntityId ?? '',
-          canonical.assortmentPermission,
-        ) ?? 'assortment-unavailable',
-      targetResourceType: 'assortment_permission',
+      targetModuleKey: canonical.ownerPermission.transportModuleKey,
+      targetResourceId: canonical.ownerPermission.transportObjectId,
+      targetResourceType:
+        canonical.ownerPermission.transportResourceType ?? canonical.ownerPermission.contract.targetResourceType,
     };
   }
   if (canonical.kind === 'tenant') {
@@ -578,84 +344,28 @@ const decisionFor = (
   return unexpected.length === 0 && decision?.key === expectedKey ? decision.decision : 'unavailable';
 };
 
-const checkBusinessPermissionTarget = <AccessValue extends (typeof ContextAccess)['Service']>(
+const checkOwnerPermissionTarget = <AccessValue extends (typeof ContextAccess)['Service']>(
   contextAccess: AccessValue,
   scope: OperationalScope,
-  target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'business_permission' }>,
-): Effect.Effect<PermissionDecision> => {
-  const business = target.businessPermission.target;
-  const tenantOnlyPricingTarget = business.kind === 'pricing_catalog' || business.kind === 'price_group';
-  if (business.tenantId !== scope.tenantId) {
-    return Effect.succeed('unavailable');
-  }
-  let scopeMismatch: boolean;
-  if (business.kind === 'inventory_resource') {
-    scopeMismatch = target.trustedStorefrontId !== undefined;
-  } else if (tenantOnlyPricingTarget) {
-    scopeMismatch =
-      scope.legalEntityId !== undefined ||
-      scope.trustedStorefrontId !== undefined ||
-      target.trustedStorefrontId !== undefined;
-  } else {
-    scopeMismatch =
-      business.legalEntityId !== scope.legalEntityId ||
-      (business.kind === 'counterparty_storefront'
-        ? scope.trustedStorefrontId !== business.storefrontId ||
-          target.trustedStorefrontId !== scope.trustedStorefrontId
-        : target.trustedStorefrontId !== undefined);
-  }
-  if (scopeMismatch) {
-    return Effect.succeed('unavailable');
-  }
-  if (contextAccess.businessPermissions === undefined) {
-    return Effect.succeed('unavailable');
-  }
-  const checkInput = withOptionalProperty(
-    {
-      principal: { principalId: scope.principalId, tenantId: scope.tenantId },
-      targets: [target.businessPermission],
-    },
-    scope.trustedStorefrontId !== undefined,
-    'trustedStorefrontId',
-    scope.trustedStorefrontId,
-    {},
-  );
-  return contextAccess
-    .businessPermissions(checkInput)
-    .pipe(Effect.map((decisions) => decisionFor(decisions, toBusinessPermissionAccessKey(target.businessPermission))));
-};
-
-const checkAssortmentPermissionTarget = <AccessValue extends (typeof ContextAccess)['Service']>(
-  contextAccess: AccessValue,
-  scope: OperationalScope,
-  target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'assortment_permission' }>,
+  target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'owner_permission' }>,
 ): Effect.Effect<PermissionDecision> => {
   if (
-    contextAccess.assortmentPermissions === undefined ||
-    (scope.legalEntityId === undefined && assortmentPermissionTargetRequiresLegalEntity(target.assortmentPermission))
+    contextAccess.ownerPermissions === undefined ||
+    !isOwnerPermissionAccessTargetValid(target.ownerPermission, scope)
   ) {
     return Effect.succeed('unavailable');
   }
-  const { legalEntityId } = scope;
-  const targetEntry = {
-    target: target.assortmentPermission,
-  };
   const principal = { principalId: scope.principalId, tenantId: scope.tenantId };
-  const requestWithoutLegalEntity =
-    scope.trustedStorefrontId === undefined
-      ? { principal, targets: [targetEntry] }
-      : { principal, targets: [targetEntry], trustedStorefrontId: scope.trustedStorefrontId };
+  const requestBase = { principal, targets: [{ target: target.ownerPermission }] };
+  const requestWithEntity =
+    scope.legalEntityId === undefined ? requestBase : { ...requestBase, legalEntityId: scope.legalEntityId };
   const request =
-    legalEntityId === undefined ? requestWithoutLegalEntity : { ...requestWithoutLegalEntity, legalEntityId };
-  return contextAccess.assortmentPermissions(request).pipe(
-    Effect.map((decisions) => {
-      const expectedKey = toAssortmentPermissionAccessKey(scope.tenantId, legalEntityId, targetEntry.target);
-      if (expectedKey === undefined) {
-        return 'unavailable';
-      }
-      return decisionFor(decisions, expectedKey);
-    }),
-  );
+    scope.trustedStorefrontId === undefined
+      ? requestWithEntity
+      : { ...requestWithEntity, trustedStorefrontId: scope.trustedStorefrontId };
+  return contextAccess
+    .ownerPermissions(request)
+    .pipe(Effect.map((decisions) => decisionFor(decisions, target.ownerPermission.key)));
 };
 
 const checkAtomicPermissionTarget = <AccessValue extends (typeof ContextAccess)['Service']>(
@@ -664,12 +374,10 @@ const checkAtomicPermissionTarget = <AccessValue extends (typeof ContextAccess)[
   target: AtomicResolvedReadPermissionTarget,
   allowMissingLegalEntity: boolean,
 ): Effect.Effect<PermissionDecision> => {
-  if (target.kind === 'assortment_permission') {
-    return checkAssortmentPermissionTarget(contextAccess, scope, target);
+  if (target.kind === 'owner_permission') {
+    return checkOwnerPermissionTarget(contextAccess, scope, target);
   }
-  if (target.kind === 'business_permission') {
-    return checkBusinessPermissionTarget(contextAccess, scope, target);
-  }
+
   if (target.kind === 'tenant') {
     return contextAccess
       .tenants({
@@ -770,10 +478,8 @@ const checkEntrypointContextPermission = <AccessValue extends (typeof ContextAcc
     (authorization.permission === 'module.access' &&
       permissionTarget.kind === 'module' &&
       permissionTarget.moduleId === entrypoint.moduleKey) ||
-    (permissionTarget.kind === 'business_permission' &&
-      permissionTarget.businessPermission.permission === authorization.permission) ||
-    (permissionTarget.kind === 'assortment_permission' &&
-      permissionTarget.assortmentPermission.permission === authorization.permission)
+    (permissionTarget.kind === 'owner_permission' &&
+      permissionTarget.ownerPermission.definition.key === authorization.permission)
   ) {
     return Effect.succeed(primaryDecision);
   }
@@ -986,26 +692,25 @@ const resolveReadPermissionTarget = Effect.fn('Runtime.resolveReadPermissionTarg
       }
       permissionTarget = yield* Effect.try({
         catch: (resolverDefect) =>
-          preserveFailureCause(
-            new ReadHandlerExecutionError({
-              code: 'read_handler_execution_failed',
-              reason: 'The declared read permission target could not be resolved',
-            }),
-            resolverDefect,
-          ),
+          Schema.is(ReadPermissionUnavailable)(resolverDefect)
+            ? resolverDefect
+            : preserveFailureCause(
+                new ReadHandlerExecutionError({
+                  code: 'read_handler_execution_failed',
+                  reason: 'The declared read permission target could not be resolved',
+                }),
+                resolverDefect,
+              ),
         try: () => permissionResolver(decodedInput, scope),
       });
       if (
         !targetIsValid(registration.descriptor.permissionTarget, permissionTarget, scope) ||
         (getReadResultPermissionTargetResolver(registration) !== undefined && permissionTarget.kind === 'any_of')
       ) {
-        if (
-          permissionTarget.kind === 'assortment_permission' &&
-          assortmentPermissionTargetHasTrustedStorefrontMismatch(permissionTarget.assortmentPermission, scope)
-        ) {
+        if (permissionTarget.kind === 'owner_permission') {
           return yield* new ReadPermissionUnavailable({
             code: 'read_permission_unavailable',
-            reason: 'The trusted storefront scope does not match the requested Assortment target',
+            reason: 'The owner permission target cannot be verified in the trusted scope',
           });
         }
         return yield* new ReadHandlerExecutionError({
@@ -1135,7 +840,7 @@ const checkResultPermissions = Effect.fn('ReadRuntime.checkResultPermissions')(f
   if (permissionTarget.kind === 'tenant') {
     return yield* checkTenantResultPermission(contextAccess, scope, permissionTarget);
   }
-  if (permissionTarget.kind === 'business_permission' || permissionTarget.kind === 'assortment_permission') {
+  if (permissionTarget.kind === 'owner_permission') {
     return yield* new ReadHandlerExecutionError({
       code: 'read_handler_execution_failed',
       reason: 'Policy-permission reads must not use generic result resource filtering',
@@ -1174,6 +879,27 @@ const checkResultPermissions = Effect.fn('ReadRuntime.checkResultPermissions')(f
   return yield* Effect.void;
 });
 
+const unavailableReadComposition = (cause?: unknown) =>
+  preserveFailureCause(
+    new ReadHandlerUnavailable({
+      code: 'read_handler_unavailable',
+      reason: 'The receiving owner release is not approved by the active Application Composition',
+    }),
+    cause,
+  );
+
+const fenceReadRevision = Effect.fn('ReadRuntime.fenceNativeRevision')(function* fenceNativeRevision(
+  transaction: CoreTransaction,
+  inboundRevision: string | undefined,
+  admittedRevision: string | undefined,
+) {
+  if (inboundRevision === undefined && admittedRevision !== undefined) {
+    yield* lockApplicationCompositionAuthority(transaction, admittedRevision, 'read').pipe(
+      Effect.mapError(unavailableReadComposition),
+    );
+  }
+});
+
 const readRuntimeFromDependencies = <
   DatabaseValue extends (typeof CoreDatabase)['Service'],
   GatewayValue extends ModuleEntrypointGatewayService,
@@ -1187,10 +913,16 @@ const readRuntimeFromDependencies = <
   // oxlint-disable-next-line effect-native/no-dependency-parameters -- Runtime construction keeps the optional owner seam injectable for Core unit and integration harnesses.
   options: ReadRuntimeOptions = {},
 ) => {
+  const shellSystemReads = captureShellSystemReadRegistrations(options.shellSystemReads);
+  const withReadExecution: typeof withModuleOperationExecution = (input, effect) =>
+    isBoundShellSystemRead(input.registration, shellSystemReads)
+      ? withoutModuleOperationExecution(effect)
+      : withModuleOperationExecution(input, effect);
+  const operationAuthority = options.expectedDeployment === undefined ? undefined : options.applicationComposition;
   const stage = (value: ReadRuntimeStage): void => options.onStage?.(value);
   const ownerAuthorizationOverlay = options.ownerAuthorizationOverlay ?? failClosedOwnerAuthorizationOverlay;
 
-  const runRead = Effect.fn('ReadRuntime.runRead')(function* runReadEffect<
+  const runReadBoundary = Effect.fn('ReadRuntime.runRead')(function* runReadEffect<
     InputSchema extends Schema.ConstraintDecoder<unknown>,
     ResultSchema extends Schema.ConstraintDecoder<unknown>,
     Owner extends string,
@@ -1216,6 +948,12 @@ const readRuntimeFromDependencies = <
     >;
     readonly transport: unknown;
   }): Effect.fn.Return<ResultSchema['Type'], ReadCoreError | DomainErrorSchema['Type'], Requirements> {
+    if (!isReadRegistration(input.registration)) {
+      return yield* new ReadHandlerUnavailable({
+        code: 'read_handler_unavailable',
+        reason: 'The Read registration is unavailable',
+      });
+    }
     const decodedInput = yield* Schema.decodeUnknownEffect(input.registration.descriptor.inputSchema, {
       onExcessProperty: 'error',
     })(input.input).pipe(
@@ -1316,7 +1054,16 @@ const readRuntimeFromDependencies = <
             ]),
       ]);
       const permissionTargetMetadata = targetMetadata(permissionTarget, scope);
-      const snapshot = yield* gateway.prepareSnapshot(scope, [input.registration.descriptor.entrypoint]);
+      const { earlyCompositionRevision, intrinsicDependencies } = yield* prepareOperationIntrinsicState(
+        input.registration,
+        principal,
+        { ...options, shellSystemReads },
+      ).pipe(Effect.mapError(unavailableReadComposition));
+      const snapshot = yield* gateway.prepareSnapshot(
+        scope,
+        [input.registration.descriptor.entrypoint],
+        intrinsicDependencies,
+      );
       yield* gateway.check(snapshot, input.registration.descriptor.entrypoint);
       stage('module_state_checked');
 
@@ -1392,78 +1139,109 @@ const readRuntimeFromDependencies = <
         });
       }
 
+      const admission =
+        options.applicationComposition !== undefined && options.expectedDeployment !== undefined
+          ? yield* loadModuleOperationAdmission(
+              options.applicationComposition,
+              options.expectedDeployment,
+              input.registration,
+              principal,
+              options.ownerRegistration,
+              shellSystemReads,
+            ).pipe(Effect.mapError(unavailableReadComposition))
+          : undefined;
+      const admittedCompositionRevision = admission?.revision ?? compositionRevision;
+      if (earlyCompositionRevision !== undefined && earlyCompositionRevision !== admittedCompositionRevision) {
+        return yield* unavailableReadComposition();
+      }
+      if (admission?.catalog !== undefined) {
+        yield* validateBoundOperationOwner(input.registration, admission.catalog, options.ownerRegistration).pipe(
+          Effect.mapError(unavailableReadComposition),
+        );
+      }
+      const executionRevision = admittedCompositionRevision ?? '';
       const policies = getReadPolicyImplementations(input.registration);
-      yield* Effect.forEach(
-        input.registration.descriptor.policies.entries(),
-        ([index, policyDescriptor]): Effect.Effect<void, ReadCoreError> => {
-          const policy = policies[index];
-          if (policy === undefined) {
-            return Effect.fail(
-              new ReadPolicyEvaluationError({
-                code: 'read_policy_evaluation_failed',
-                reason: 'A required read Policy is unavailable',
-              }),
-            );
-          }
-          const { descriptor } = input.registration;
-          return policy
-            .evaluate({
-              action: {
-                actionKey: descriptor.readKey,
-                owningModuleKey: descriptor.owningModuleKey,
-                schemaVersion: descriptor.schemaVersion,
-              },
-              payload: decodedInput,
-              principal: scope,
-              target: permissionTargetMetadata,
-              transport: withOptionalProperty(
-                { correlationId: transport.correlationId },
-                transport.traceId !== undefined,
-                'traceId',
-                transport.traceId,
-                {},
-              ),
-            })
-            .pipe(
-              Effect.catchTag('PolicyDenied', (failure) =>
-                persistScopedReadEvidence(
-                  executor,
-                  withOptionalProperty(
-                    {
-                      accessKind: descriptor.accessKind,
-                      captureMode: descriptor.evidencePolicy.captureMode,
-                      outcome: 'denied',
-                      outcomeCode: failure.reasonCode,
-                      outcomeStage: 'policy',
-                      policyKey: descriptor.evidencePolicy.policyKey,
-                    },
-                    queryHash !== undefined,
-                    'queryHash',
-                    queryHash,
-                    {
-                      readKey: descriptor.readKey,
-                      resultCount: 0,
-                      scope,
-                      servingModuleKey: descriptor.owningModuleKey,
-                      ...permissionTargetMetadata,
-                    },
-                  ),
-                ).pipe(
-                  Effect.andThen(
-                    Effect.fail(
-                      new ReadPolicyDenied({
-                        code: 'read_policy_denied',
-                        httpStatus: policyDescriptor.denialStatus,
-                        policyReasonCode: failure.reasonCode,
-                        reason: failure.reason,
-                      }),
+      yield* withReadExecution(
+        {
+          loadCatalog: operationCatalogLoader(operationAuthority, executionRevision),
+          ownerRegistration: options.ownerRegistration,
+          phase: 'execution',
+          registration: input.registration,
+          revision: executionRevision,
+          scope,
+        },
+        Effect.forEach(
+          input.registration.descriptor.policies.entries(),
+          ([index, policyDescriptor]): Effect.Effect<void, ReadCoreError> => {
+            const policy = policies[index];
+            if (policy === undefined) {
+              return Effect.fail(
+                new ReadPolicyEvaluationError({
+                  code: 'read_policy_evaluation_failed',
+                  reason: 'A required read Policy is unavailable',
+                }),
+              );
+            }
+            const { descriptor } = input.registration;
+            return policy
+              .evaluate({
+                action: {
+                  actionKey: descriptor.readKey,
+                  owningModuleKey: descriptor.owningModuleKey,
+                  schemaVersion: descriptor.schemaVersion,
+                },
+                payload: decodedInput,
+                principal: scope,
+                target: permissionTargetMetadata,
+                transport: withOptionalProperty(
+                  { correlationId: transport.correlationId },
+                  transport.traceId !== undefined,
+                  'traceId',
+                  transport.traceId,
+                  {},
+                ),
+              })
+              .pipe(
+                Effect.catchTag('PolicyDenied', (failure) =>
+                  persistScopedReadEvidence(
+                    executor,
+                    withOptionalProperty(
+                      {
+                        accessKind: descriptor.accessKind,
+                        captureMode: descriptor.evidencePolicy.captureMode,
+                        outcome: 'denied',
+                        outcomeCode: failure.reasonCode,
+                        outcomeStage: 'policy',
+                        policyKey: descriptor.evidencePolicy.policyKey,
+                      },
+                      queryHash !== undefined,
+                      'queryHash',
+                      queryHash,
+                      {
+                        readKey: descriptor.readKey,
+                        resultCount: 0,
+                        scope,
+                        servingModuleKey: descriptor.owningModuleKey,
+                        ...permissionTargetMetadata,
+                      },
+                    ),
+                  ).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new ReadPolicyDenied({
+                          code: 'read_policy_denied',
+                          httpStatus: policyDescriptor.denialStatus,
+                          policyReasonCode: failure.reasonCode,
+                          reason: failure.reason,
+                        }),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            );
-        },
-        { concurrency: 1, discard: true },
+              );
+          },
+          { concurrency: 1, discard: true },
+        ),
       );
       stage('policies_checked');
 
@@ -1471,6 +1249,7 @@ const readRuntimeFromDependencies = <
       const transactionResult = executor
         .transaction(
           Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBody(transaction: CoreTransaction) {
+            yield* fenceReadRevision(transaction, compositionRevision, admittedCompositionRevision);
             const scoped = yield* installOperationalScope(transaction, scope);
             stage('scope_installed');
             const operationAt = yield* trustedTransactionTime(transaction);
@@ -1497,7 +1276,11 @@ const readRuntimeFromDependencies = <
                 reason: 'Owner-local Read authorization is temporarily unavailable',
               });
             }
-            const services = yield* getReadServiceFactory(input.registration)(scoped, scope, compositionRevision);
+            const services = yield* getReadServiceFactory(input.registration)(
+              scoped,
+              scope,
+              admittedCompositionRevision,
+            );
             const handlerResult = yield* Effect.suspend(() =>
               getReadHandler(input.registration)(
                 decodedInput,
@@ -1591,7 +1374,19 @@ const readRuntimeFromDependencies = <
               : transactionFailure,
           ),
         );
-      const transactionExit = yield* Effect.exit(transactionResult);
+      const transactionExit = yield* Effect.exit(
+        withReadExecution(
+          {
+            loadCatalog: operationCatalogLoader(operationAuthority, executionRevision),
+            ownerRegistration: options.ownerRegistration,
+            phase: 'execution',
+            registration: input.registration,
+            revision: executionRevision,
+            scope,
+          },
+          transactionResult,
+        ),
+      );
       if (Exit.isSuccess(transactionExit)) {
         return transactionExit.value;
       }
@@ -1682,6 +1477,7 @@ const readRuntimeFromDependencies = <
     return yield* Effect.failCause(governedExit.cause);
   });
 
+  const runRead: typeof runReadBoundary = (input) => withoutModuleOperationExecution(runReadBoundary(input));
   return Object.freeze({ runRead });
 };
 
@@ -1693,18 +1489,57 @@ export class ReadRuntime extends Context.Service<ReadRuntime, ReadRuntimeService
   '@app/core-runtime/reads/runtime/ReadRuntime',
 ) {}
 
+const readRuntimeDependencies = Effect.gen(function* readRuntimeDependencies() {
+  const ownerAuthorizationOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
+  const database = yield* CoreDatabase;
+  const gateway = yield* ModuleEntrypointGateway;
+  const scopeResolver = yield* OperationalScopeResolver;
+  const contextAccess = yield* ContextAccess;
+  return {
+    contextAccess,
+    database,
+    gateway,
+    ownerAuthorizationOverlay: Option.isSome(ownerAuthorizationOverlay)
+      ? ownerAuthorizationOverlay.value
+      : failClosedOwnerAuthorizationOverlay,
+    scopeResolver,
+  };
+});
+
+/** The legacy Core boundary retains its existing dependency graph and startup behavior. */
 export const ReadRuntimeLive = Layer.effect(
   ReadRuntime,
-  Effect.gen(function* makeReadRuntimeService() {
-    const ownerAuthorizationOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
-    const database = yield* CoreDatabase;
-    const gateway = yield* ModuleEntrypointGateway;
-    const scopeResolver = yield* OperationalScopeResolver;
-    const contextAccess = yield* ContextAccess;
-    return readRuntimeFromDependencies(database, gateway, scopeResolver, contextAccess, {
-      ownerAuthorizationOverlay: Option.isSome(ownerAuthorizationOverlay)
-        ? ownerAuthorizationOverlay.value
-        : failClosedOwnerAuthorizationOverlay,
-    });
-  }),
+  readRuntimeDependencies.pipe(
+    Effect.map(({ contextAccess, database, gateway, ownerAuthorizationOverlay, scopeResolver }) =>
+      readRuntimeFromDependencies(database, gateway, scopeResolver, contextAccess, { ownerAuthorizationOverlay }),
+    ),
+  ),
 );
+
+/** Bind the actual receiving artifact and existing authority without reading the source at startup. */
+export const makeReadRuntimeLive = (
+  expectedDeployment: typeof OntosDeploymentIdentitySchema.Type,
+  hosting?: VerticalRuntimeRegistration | { readonly shellSystemReads: ShellSystemReadRegistrations },
+) =>
+  Layer.effect(
+    ReadRuntime,
+    Effect.gen(function* makeOwnedReadRuntimeService() {
+      const applicationComposition = yield* ActiveApplicationCompositionService;
+      const { contextAccess, database, gateway, ownerAuthorizationOverlay, scopeResolver } =
+        yield* readRuntimeDependencies;
+      const ownerRegistration = hosting !== undefined && 'shellSystemReads' in hosting ? undefined : hosting;
+      const shellSystemReads =
+        hosting !== undefined && 'shellSystemReads' in hosting ? hosting.shellSystemReads : undefined;
+      const options: ReadRuntimeOptions =
+        ownerRegistration === undefined
+          ? { applicationComposition, expectedDeployment, ownerAuthorizationOverlay }
+          : { applicationComposition, expectedDeployment, ownerAuthorizationOverlay, ownerRegistration };
+      return readRuntimeFromDependencies(
+        database,
+        gateway,
+        scopeResolver,
+        contextAccess,
+        shellSystemReads === undefined ? options : { ...options, shellSystemReads },
+      );
+    }),
+  );

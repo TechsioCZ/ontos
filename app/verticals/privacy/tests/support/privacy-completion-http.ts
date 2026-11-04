@@ -1,3 +1,4 @@
+import { HttpApi } from 'effect/http-api';
 import { createHash } from 'node:crypto';
 import nodePath from 'node:path';
 import { build } from 'esbuild';
@@ -5,6 +6,13 @@ import { build } from 'esbuild';
 import {
   ActionAuthorizationPreflightDatabaseLive,
   ContextAccessLive,
+  extractVerticalRuntimeSafeDescriptors,
+  canonicalOntosPublicApiKey,
+  OntosActionContractSchema,
+  OntosApiContractSchema,
+  OntosOperationContractSchema,
+  OntosOutboxSubscriptionContractSchema,
+  OntosModuleRequirementsSchema,
   CorePersistenceLive,
   DatabaseConfigLive,
   GatewayAssertionRedemptionService,
@@ -34,7 +42,20 @@ import {
   NodeServices,
 } from '@effect/platform-node';
 import { runMain } from '@effect/platform-node/NodeRuntime';
-import { Clock, Config, Crypto, Effect, FileSystem, Layer, Option, Redacted, Schema, Stream } from 'effect';
+import {
+  Clock,
+  Config,
+  Crypto,
+  Deferred,
+  Effect,
+  FileSystem,
+  FiberHandle,
+  Layer,
+  Option,
+  Redacted,
+  Schema,
+  Stream,
+} from 'effect';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
@@ -42,6 +63,9 @@ import { Hex } from 'effect/encoding';
 import { ChildProcess } from 'effect/process';
 
 import { makePrivacyApiRuntime } from '../../api/index.ts';
+import { privacyRegistration } from '../../vertical.registration.ts';
+import { privacyManifest } from '../../vertical.manifest.ts';
+import { outboxWorkerEntry } from '../../src/worker-host/entry.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { OwnerExecutionAuthority } from '../../src/actions/privacy-owner-execution-authority.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-repository.ts';
@@ -52,6 +76,32 @@ class PrivacyCompletionHttpFailure extends Schema.TaggedError<PrivacyCompletionH
   'PrivacyCompletionHttpFailure',
   { reason: Schema.String },
 ) {}
+const completeActualPrivacyWatchdog = Effect.scoped(
+  Effect.gen(function* completeActualPrivacyWatchdogCycle() {
+    type Failure = Effect.Error<ReturnType<typeof outboxWorkerEntry.runLoop>> | PrivacyCompletionHttpFailure;
+    const completed = yield* Deferred.make<true, Failure>();
+    const handle = yield* FiberHandle.make<Effect.Success<ReturnType<typeof outboxWorkerEntry.runLoop>>, Failure>();
+    const loop = outboxWorkerEntry.runLoop({
+      config: {
+        claimOwner: `privacy.core-outbox-worker:privacy-completion-${process.pid}`,
+        maxDeliveries: 1,
+        pollIntervalMs: 10,
+      },
+      health: {
+        cycleFailed: Deferred.fail(
+          completed,
+          new PrivacyCompletionHttpFailure({ reason: 'The actual Privacy watchdog cycle failed' }),
+        ).pipe(Effect.asVoid),
+        cycleSucceeded: Deferred.succeed(completed, true).pipe(Effect.asVoid),
+      },
+    });
+    yield* FiberHandle.run(
+      handle,
+      loop.pipe(Effect.tapCause((cause) => Deferred.failCause(completed, cause).pipe(Effect.asVoid))),
+    );
+    yield* Deferred.await(completed);
+  }),
+);
 // Closed TEST transport fault. It cannot supply an outcome or bypass the real Action.
 export const makeReportResponseLossControl = () => {
   let armed = false;
@@ -414,6 +464,12 @@ const serve = Effect.scoped(
     yield* server.serve(
       Effect.gen(function* privacyRequest() {
         const request = yield* HttpServerRequest.HttpServerRequest;
+        if (request.method === 'POST' && request.url === '/__1258/dispatch-watchdog/complete') {
+          return yield* completeActualPrivacyWatchdog.pipe(
+            Effect.map(() => HttpServerResponse.empty({ status: 204 })),
+            Effect.catch((error) => HttpServerResponse.json({ errorTag: error._tag }, { status: 503 })),
+          );
+        }
         if (request.method === 'POST' && request.url === '/__1258/report-response/discard-next') {
           return HttpServerResponse.empty({ status: responseLoss.arm() ? 204 : 409 });
         }
@@ -490,9 +546,36 @@ const serve = Effect.scoped(
   }),
 );
 
-const describe = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(ultramodernApiMarker).pipe(
-  Effect.flatMap((line) => Effect.sync(() => process.stdout.write(`${line}\n`))),
-);
+const ownerRuntime = extractVerticalRuntimeSafeDescriptors(privacyRegistration);
+const descriptionSchema = Schema.Struct({
+  marker: Schema.Unknown,
+  runtime: Schema.Struct({
+    actions: Schema.Array(OntosActionContractSchema),
+    api: Schema.Array(OntosApiContractSchema),
+    operationContracts: Schema.Array(OntosOperationContractSchema),
+    outboxSubscriptions: Schema.Array(OntosOutboxSubscriptionContractSchema),
+    requirements: Schema.optionalKey(OntosModuleRequirementsSchema),
+  }),
+});
+const describe = Schema.encodeEffect(Schema.fromJsonString(descriptionSchema))({
+  marker: ultramodernApiMarker,
+  runtime: {
+    ...ownerRuntime,
+    api: Object.entries(privacyManifest.publicSurface.api).map(([key, api]) => {
+      if (!HttpApi.isHttpApi(api)) {
+        throw new Error('The actual owner public API declaration is not a genuine HttpApi');
+      }
+      return {
+        key: canonicalOntosPublicApiKey(ownerRuntime.moduleId, key),
+        operationKeys: Object.values(api.groups).flatMap((group) =>
+          Object.values(group.endpoints).map((endpoint) =>
+            group.topLevel ? endpoint.identifier : `${group.identifier}.${endpoint.identifier}`,
+          ),
+        ),
+      };
+    }),
+  },
+}).pipe(Effect.flatMap((line) => Effect.sync(() => process.stdout.write(`${line}\n`))));
 runMain(
   Effect.scoped(
     Effect.gen(function* completionProcessEntry() {

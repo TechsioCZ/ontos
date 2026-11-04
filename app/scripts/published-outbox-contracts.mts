@@ -172,7 +172,7 @@ const toPascalCase = (value: string): string =>
     .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
     .join('');
 
-const isAllowedEffectClientAggregateImport = (specifier: string): boolean =>
+export const isAllowedEffectClientAggregateImport = (specifier: string): boolean =>
   specifier === '../../shared/api.ts' ||
   specifier === '@app/shared-contracts' ||
   specifier === '@modern-js/bff-effect/effect-client' ||
@@ -180,7 +180,7 @@ const isAllowedEffectClientAggregateImport = (specifier: string): boolean =>
   specifier.startsWith('effect/') ||
   /^\.\/(?:action-gateway|[a-z][a-z0-9]*(?:-[a-z0-9]+)*-client)\.ts$/u.test(specifier);
 
-const isGeneratedEffectClientLeaf = (input: {
+export const isGeneratedEffectClientLeaf = (input: {
   readonly appId: string;
   readonly localClient: string;
   readonly moduleId: string;
@@ -202,7 +202,7 @@ const isGeneratedEffectClientLeaf = (input: {
   );
 };
 
-const hasValidActionGateway = (
+export const hasValidActionGateway = (
   imports: readonly string[],
   input: {
     readonly appId: string;

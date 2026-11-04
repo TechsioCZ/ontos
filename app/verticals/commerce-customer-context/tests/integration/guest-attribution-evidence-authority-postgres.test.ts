@@ -1,5 +1,3 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -11,14 +9,11 @@ import {
   ActiveApplicationCompositionSnapshotSchema,
   ContextAccessLive,
   OntosModuleDeploymentContractSchema,
-  canonicalizeApplicationComposition,
-  validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeGatewayScopeGrantRegistrar, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import {
   createPartyWithAuthorization,
   addContactPointWithAuthorization,
@@ -77,7 +72,13 @@ import {
 import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import { profileCounterpartyRoleEligibilityResolverFactoryLive } from '../../src/profile-counterparty-role-eligibility.ts';
 import { partyRegistryRetailPartyResolverFactoryLive } from '../../src/integrations/party-registry-retail-party-resolver.ts';
+import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import {
+  describePriceGroupTemporalOwner,
+  makePriceGroupTemporalComposition,
+} from '../support/price-group-temporal-protocol.ts';
 
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 const services = NodeChildProcessSpawner.layer.pipe(
@@ -87,85 +88,20 @@ const services = NodeChildProcessSpawner.layer.pipe(
 const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const MarkerSchema = Schema.Struct({ appId: Schema.Literal('party-registry'), buildMarker: Schema.String });
 const ReadySchema = Schema.Struct({ marker: MarkerSchema, port: Schema.Number, type: Schema.Literal('ready') });
-const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
 const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorityFixture')(
   function* makeGuestAuthorityFixture() {
-    // An executable owner fixture is process infrastructure, never a private cross-owner import.
-    const artifact = `${appRoot}verticals/party-registry/node_modules/.cache/ontos-1241/${randomUUID()}.mjs`;
-    yield* Effect.addFinalizer(() => Effect.promise(() => rm(artifact, { force: true })));
-    const bundle = yield* ChildProcess.make(
-      'mise',
-      [
-        'exec',
-        '--',
-        'pnpm',
-        'exec',
-        'esbuild',
-        'verticals/party-registry/tests/support/tenant-party-http.ts',
-        '--bundle',
-        '--platform=node',
-        '--format=esm',
-        '--packages=external',
-        `--outfile=${artifact}`,
-      ],
-      { cwd: appRoot, extendEnv: true, stderr: 'pipe', stdout: 'pipe' },
+    // Existing public metadata extraction and TEST entry share the same canonical compiled owner identity.
+    const { artifact, contract, marker } = yield* describePriceGroupTemporalOwner('party-registry');
+    const base = yield* makeEnrollmentApplicationCompositionSnapshot(ultramodernDeliveryUnit.buildMarker, []);
+    const ownContract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+      base.composition.modules.find(({ deployment }) => deployment.appId === ultramodernDeliveryUnit.appId)
+        ?.contractDocument,
     );
-    const [bundleExit] = yield* Effect.all(
-      [bundle.exitCode, Stream.runDrain(bundle.stdout), Stream.runDrain(bundle.stderr)],
-      { concurrency: 3 },
-    );
-    expect(bundleExit).toBe(0);
-    const description = yield* ChildProcess.make(process.execPath, [artifact, '--describe'], {
-      cwd: appRoot,
-      extendEnv: true,
-      stderr: 'pipe',
-      stdout: 'pipe',
-    });
-    const [lines, descriptionExit] = yield* Effect.all(
-      [
-        description.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runCollect),
-        description.exitCode,
-        Stream.runDrain(description.stderr),
-      ],
-      { concurrency: 3 },
-    );
-    expect(descriptionExit).toBe(0);
-    const marker = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(MarkerSchema))(lines[0]);
-    const base = yield* makeEnrollmentApplicationCompositionSnapshot(marker.buildMarker, ['party-registry']);
-    const contract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(
-      makeModuleContractFixture({
-        appId: 'party-registry',
-        buildMarker: marker.buildMarker,
-        moduleId: 'party.registry',
-      }),
-    );
-    const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-      contract,
-    );
-    const composition = {
-      ...base.composition,
-      modules: base.composition.modules.map((module) =>
-        module.deployment.appId === 'party-registry'
-          ? {
-              ...module,
-              contract: { ...module.contract, sha256: hash(contractDocument) },
-              contractDocument,
-              moduleId: 'party.registry',
-              publicContract: {
-                id: 'party.registry',
-                sha256: hash(contractDocument),
-                version: contract.schemaVersion,
-              },
-            }
-          : module,
-      ),
-      revision: '0'.repeat(64),
-    };
-    const snapshot = yield* validateActiveApplicationCompositionSnapshot({
-      ...base,
-      composition: { ...composition, revision: hash(canonicalizeApplicationComposition(composition)) },
-    });
+    const snapshot = yield* makePriceGroupTemporalComposition([
+      { contract: ownContract, marker: ultramodernDeliveryUnit },
+      { contract, marker },
+    ]);
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: snapshot,
       mode: 'schema-only',
@@ -379,9 +315,12 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
         additionalLegalEntity: 'same-tenant',
         adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
         allowedAudiences: ['party-registry', 'commerce-customer-context'],
+        applicationComposition: { load: Effect.succeed(snapshot) },
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         compositionRevision: snapshot.composition.revision,
+        expectedDeployment: ultramodernDeliveryUnit,
         moduleKeys: ['party.registry', 'commerce.customer-context'],
+        ownerRegistration: commerceCustomerContextRegistration,
         runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
       }),
       (resource) => resource.close().pipe(Effect.orDie),

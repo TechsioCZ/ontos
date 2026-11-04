@@ -3,7 +3,6 @@ import {
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   OntosModuleDeploymentContractSchema,
   OntosShellRuntimeContractSchema,
-  CoreSearchResourceRefSchema,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { GatewayContextV2ClaimsSchema, GatewayTrustedPrincipalContextSchema } from '@app/shared-contracts';
@@ -19,6 +18,7 @@ import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
 const SHELL_APP_ID = 'shell-super-app';
 const CUSTOMER_CONTEXT_APP_ID = 'commerce-customer-context';
 const MARKET_APP_ID = 'commerce-market-catalog';
+const PRICE_GROUP_APP_ID = 'price-group-catalog';
 
 export class PackagedOwnerStartupError extends Schema.TaggedError<PackagedOwnerStartupError>()(
   'PackagedOwnerStartupError',
@@ -28,7 +28,14 @@ export class PackagedOwnerStartupError extends Schema.TaggedError<PackagedOwnerS
 ) {}
 
 const IdentitySchema = Schema.Struct({
-  appId: Schema.Literals([SHELL_APP_ID, 'party-registry', 'catalog', CUSTOMER_CONTEXT_APP_ID, MARKET_APP_ID]),
+  appId: Schema.Literals([
+    SHELL_APP_ID,
+    'party-registry',
+    'catalog',
+    CUSTOMER_CONTEXT_APP_ID,
+    MARKET_APP_ID,
+    PRICE_GROUP_APP_ID,
+  ]),
   build: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
   buildMarker: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
   sourceRevision: Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u)),
@@ -38,6 +45,7 @@ const IdentitySchema = Schema.Struct({
     'app/catalog',
     'app/commerce-customer-context',
     'app/commerce-market-catalog',
+    'app/price-group-catalog',
   ]),
   version: Schema.String.check(Schema.isMinLength(1)),
 });
@@ -62,7 +70,8 @@ interface PackagedApplicationInput {
     | 'party-registry'
     | 'catalog'
     | typeof CUSTOMER_CONTEXT_APP_ID
-    | typeof MARKET_APP_ID;
+    | typeof MARKET_APP_ID
+    | typeof PRICE_GROUP_APP_ID;
   readonly authentication?: {
     readonly baseUrl: string;
     readonly connectionString: Redacted.Redacted;
@@ -145,6 +154,11 @@ const makePackagedEnvironment = Effect.fn('ServerOwnerRelayNative.makePackagedEn
         ONTOS_SHELL_GATEWAY_BASE_URL: input.relaySource.shellBaseUrl,
       });
     }
+    if (input.appId === CUSTOMER_CONTEXT_APP_ID && input.relaySource !== undefined) {
+      Object.assign(environment, {
+        ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: Redacted.value(input.relaySource.apiKey),
+      });
+    }
     if (input.sourceBindings !== undefined) {
       Object.assign(environment, { ONTOS_GATEWAY_RELAY_SOURCE_BINDINGS: Redacted.value(input.sourceBindings) });
     }
@@ -164,7 +178,7 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
       return yield* new PackagedOwnerStartupError({ reason: 'Packaged application identity mismatch' });
     }
     const publishedBuild =
-      input.appId === CUSTOMER_CONTEXT_APP_ID
+      input.appId === CUSTOMER_CONTEXT_APP_ID || input.appId === PRICE_GROUP_APP_ID
         ? undefined
         : yield* filesystem
             .readFileString(path.join(directory, '.output', 'public', 'ultramodern-build.json'))
@@ -526,23 +540,18 @@ export const startPackagedRetailWorker = Effect.fn('ServerOwnerRelayNative.start
 const PostalFactoryResultSchema = Schema.Struct({
   compositionRevision: Schema.String,
   factory: Schema.Literals(['delivery', 'invoice']),
-  postal: Schema.Struct({
-    currentContactPointRef: CoreSearchResourceRefSchema,
-    currentPartyRef: CoreSearchResourceRefSchema,
-    currentSourceRevision: Schema.Number,
-    kind: Schema.Literal('PARTY_BACKED'),
-    postalAddress: Schema.Record(Schema.String, Schema.String),
-  }),
+  outcome: Schema.Literal('FACTORY_ONLY_EXECUTION_REJECTED'),
+  requirementCode: Schema.Literal('module_operation_requirement_unavailable'),
 });
 
-/** Test-only owner process: actual verifier/native scope/default factory, no HTTP or Current substitute. */
+/** Real verifier/scope/default factory; success means specific missing-execution rejection, never postal facts. */
 const PostalFactoryPhaseSchema = Schema.Literals([
   'redemption_started',
   'redemption_completed',
   'scope_admission_started',
   'scope_admitted',
   'factory_ready',
-  'postal_resolved',
+  'requirement_rejected',
   'scope_completed',
 ]);
 

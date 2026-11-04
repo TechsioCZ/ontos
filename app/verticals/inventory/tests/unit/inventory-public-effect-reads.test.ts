@@ -116,8 +116,8 @@ const persistenceFor = (record?: typeof InventoryEffectLedgerRecordSchema.Type):
 });
 
 it('binds both reads to the exact requested Inventory Resource', () => {
-  expect(commitmentProtectionVerificationRead.descriptor.permissionTarget).toBe('business_permission');
-  expect(inventoryEffectOutcomeRead.descriptor.permissionTarget).toBe('business_permission');
+  expect(commitmentProtectionVerificationRead.descriptor.permissionTarget).toBe('owner_permission');
+  expect(inventoryEffectOutcomeRead.descriptor.permissionTarget).toBe('owner_permission');
   expect(Predicate.isFunction(getReadPermissionTargetResolver(commitmentProtectionVerificationRead))).toBe(true);
   expect(Predicate.isFunction(getReadPermissionTargetResolver(inventoryEffectOutcomeRead))).toBe(true);
 
@@ -138,10 +138,10 @@ it('binds both reads to the exact requested Inventory Resource', () => {
   });
 
   expect(commitmentProtectionVerificationPermissionTarget(protectionRequest, scope)).toMatchObject({
-    businessPermission: { target: { resource: protectionRequest.protectionRef, tenantId } },
+    target: { resource: protectionRequest.protectionRef, tenantId },
   });
   expect(inventoryEffectOutcomePermissionTarget(effectRequest, scope)).toMatchObject({
-    businessPermission: { target: { resource: physicalRequest.positionRef, tenantId } },
+    target: { resource: physicalRequest.positionRef, tenantId },
   });
 });
 

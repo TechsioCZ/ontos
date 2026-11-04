@@ -17,6 +17,9 @@ import { manageZeroFloorAuthorizationAction } from './src/actions/manage-zero-fl
 import { reviseCommercialFeeAction } from './src/actions/revise-commercial-fee.action.ts';
 import { revisePriceAction } from './src/actions/revise-price.action.ts';
 import { setSupportedCurrenciesAction } from './src/actions/set-supported-currencies.action.ts';
+import { currentSupportedCurrenciesRead } from './src/api/current-supported-currencies.read.ts';
+import { currentPricingDecisionRead } from './src/api/current-pricing-decision.read.ts';
+import { quotationVerificationRead } from './src/api/quotation-verification.read.ts';
 // </generated-module-registration-imports>
 export const pricingRegistration = defineVerticalRuntimeRegistration({
   actions: [
@@ -79,6 +82,13 @@ export const pricingRegistration = defineVerticalRuntimeRegistration({
   outboxWorkers: [
     // <generated-module-registration-workers>
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    currentSupportedCurrenciesRead,
+    currentPricingDecisionRead,
+    quotationVerificationRead,
+    // </generated-module-registration-reads>
   ],
 });
 

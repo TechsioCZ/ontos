@@ -37,6 +37,7 @@ import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { findPostgresFailure } from '../../src/database/postgres-failure.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient, makeTestPgSession } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
+import { makeTestOperationOwner } from '../support/action-runtime-options.ts';
 
 type DatabaseQueryFailureSelf = typeof DatabaseQueryFailureContract.Type;
 const DatabaseQueryFailureContract = Schema.TaggedStruct('DatabaseQueryFailure', {
@@ -351,6 +352,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('tenant isolation', (s
               contextAccess,
             ),
             contextAccess,
+            {
+              ownerRegistration: makeTestOperationOwner({ moduleId: 'core.shell', reads: [registration] })
+                .ownerRegistration,
+            },
           );
           return yield* runtime
             .runRead({

@@ -1,27 +1,36 @@
 import {
+  ActiveApplicationCompositionService,
   BusinessPermissionRelationshipMutationLive,
   ContextAccessLive,
   extractOutboxWorkerSubscriptions,
+  getVerticalRuntimeOutboxWorkers,
   loadDatabaseConnectionPair,
   matchOutboxMessages,
   OutboxRepositoryLive,
-  runOutboxCycle,
+  OutboxRuntime,
+  publishApplicationCompositionAuthority,
   scopedRoutineInvokerFromTransaction,
 } from '@app/core-runtime';
+import type { OutboxCycleError, OutboxCycleResult } from '@app/core-runtime';
 import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import {
+  defineOutboxWorkerEntry,
   OutboxWorkerInfrastructureLive,
   OutboxWorkerLegalEntityScopeFanoutLive,
 } from '@app/core-runtime/outbox/worker';
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { eq, sql } from 'drizzle-orm';
-import { Context, DateTime, Effect, Layer, Schema } from 'effect';
+import { Context, DateTime, Deferred, Effect, Layer, Schema } from 'effect';
+import type { Exit } from 'effect';
 
 import { layerTestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { acquireFixturePgClient } from './fixture-pg-client.ts';
 import { installEnrollmentTestAuthority } from './enrollment-composition-authority.ts';
+import { enrollmentApplicationCompositionSnapshot } from './enrollment-application-composition.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { AccessAuthorizationMutationReconciliationLive } from '../../src/workers/access-authorization-mutation-reconciliation-live.ts';
 import { reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker } from '../../src/workers/reconcile-counterparty-access-invitation-claim-authorization-mutation.worker.ts';
 import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
@@ -148,6 +157,7 @@ const acceptanceWorkerRun =
 const progressEnrollmentAcceptanceInvitationClaim = Effect.fn('EnrollmentAcceptance.progressInvitationClaim')(
   function* progressEnrollmentAcceptanceInvitationClaim(
     admin: EnrollmentAcceptanceDatabase,
+    adminClient: PgClient.PgClient,
     runtimeClient: PgClient.PgClient,
     compositionRevision: string,
     tenantId: string,
@@ -172,59 +182,14 @@ const progressEnrollmentAcceptanceInvitationClaim = Effect.fn('EnrollmentAccepta
       Effect.gen(function* runOwnedClaimWorker() {
         const registrations = [reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker] as const;
         const subscriptions = extractOutboxWorkerSubscriptions(registrations);
-        const document = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(subscriptions);
-        // The existing TEST authority owns its advisory scope. Install only the canonical claim
-        // subscription for this bounded pass, then restore it; this is not a production release proof.
-        yield* Effect.acquireRelease(
-          admin.transaction((transaction) =>
-            Effect.gen(function* installClaimSubscription() {
-              yield* transaction.execute(
-                sql`select pg_advisory_xact_lock(hashtextextended('ontos.application-composition-authority', 0))`,
-                'objects',
-              );
-              const [current] = yield* transaction.execute<{ readonly subscriptions_json: unknown }>(
-                sql`select subscriptions_json from core.application_composition_authority
-                  where authority_key = 'active' and revision = ${compositionRevision}
-                    and phase = 'active' and durable_work_admission = 'open' for update`,
-                'objects',
-              );
-              if (current === undefined) {
-                return yield* Effect.die('The claim worker requires this fixture active TEST authority');
-              }
-              const previous = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
-                current.subscriptions_json,
-              );
-              yield* transaction.execute(
-                sql`update core.application_composition_authority set subscriptions_json = ${document}::jsonb
-                  where authority_key = 'active' and revision = ${compositionRevision}`,
-                'objects',
-              );
-              return previous;
-            }),
-          ),
-          (previous) =>
-            admin
-              .transaction(
-                Effect.fn('EnrollmentAcceptance.restoreClaimSubscription')(
-                  function* restoreClaimSubscription(transaction) {
-                    yield* transaction.execute(
-                      sql`select pg_advisory_xact_lock(hashtextextended('ontos.application-composition-authority', 0))`,
-                      'objects',
-                    );
-                    const restored = yield* transaction.execute<{ readonly revision: string }>(
-                      sql`update core.application_composition_authority set subscriptions_json = ${previous}::jsonb
-                    where authority_key = 'active' and revision = ${compositionRevision}
-                      and subscriptions_json = ${document}::jsonb returning revision`,
-                      'objects',
-                    );
-                    if (restored.length !== 1) {
-                      return yield* Effect.die('The claim worker TEST authority changed before restoration');
-                    }
-                    return yield* Effect.void;
-                  },
-                ),
-              )
-              .pipe(Effect.orDie),
+        const snapshot = yield* enrollmentApplicationCompositionSnapshot;
+        if (snapshot.composition.revision !== compositionRevision) {
+          return yield* Effect.die('The claim worker requires this fixture original Composition Revision');
+        }
+        const adminExecutor = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, adminClient));
+        // Publish the complete genuine catalog at the same revision without resetting lifecycle or admission.
+        yield* adminExecutor.transaction((transaction) =>
+          publishApplicationCompositionAuthority(transaction, snapshot),
         );
         const executor = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtimeClient));
         const persistence = Layer.succeed(CoreDatabase, { executor });
@@ -252,14 +217,45 @@ const progressEnrollmentAcceptanceInvitationClaim = Effect.fn('EnrollmentAccepta
             'objects',
           );
           const clock = yield* Schema.decodeUnknownEffect(Schema.Struct({ at: Schema.DateTimeUtcFromString }))(row);
-          const cycle = yield* runOutboxCycle({
+          const input = {
             claimOwner: `enrollment-acceptance-claim-${tenantId}`,
             compositionRevision,
             maxDeliveries: 100,
             now: DateTime.toDateUtc(clock.at),
             registrations,
             subscriptions,
+          };
+          const outbox = yield* OutboxRuntime;
+          const completed = yield* Deferred.make<OutboxCycleResult, OutboxCycleError>();
+          const preserveCycleExit = (exit: Exit.Exit<OutboxCycleResult, OutboxCycleError>) =>
+            Deferred.done(completed, exit);
+          const entry = defineOutboxWorkerEntry({
+            claimOwnerPrefix: 'enrollment-acceptance-claim',
+            expectedDeployment: ultramodernApiMarker,
+            layer: Layer.mergeAll(
+              Layer.succeedContext(context),
+              Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+              Layer.succeed(OutboxRuntime, {
+                ...outbox,
+                // Preserve the original bounded native cycle inside the public receiving lifetime.
+                runCycle: () =>
+                  outbox.runCycle(input).pipe(Effect.provideContext(context), Effect.onExit(preserveCycleExit)),
+              }),
+            ),
+            ownerRegistration: commerceCustomerContextRegistration,
+            registrations,
+            subscriptions: extractOutboxWorkerSubscriptions(
+              getVerticalRuntimeOutboxWorkers(commerceCustomerContextRegistration),
+            ),
           });
+          const cycle = yield* Effect.raceFirst(
+            Deferred.await(completed),
+            entry
+              .runLoop({
+                config: { claimOwner: input.claimOwner, maxDeliveries: input.maxDeliveries, pollIntervalMs: 1000 },
+              })
+              .pipe(Effect.andThen(Effect.never)),
+          );
           return { cycle, matched };
         }).pipe(Effect.provideContext(context));
       }),
@@ -312,7 +308,13 @@ export const makeEnrollmentAcceptanceFixture = Effect.fnUntraced(function* makeE
     compositionRevision,
     ownerStore: commerceEnrollmentOwnerAttemptStoreForRun(scope, run),
     progressInvitationClaim: () =>
-      progressEnrollmentAcceptanceInvitationClaim(admin, runtimeClient, compositionRevision, scope.tenantId),
+      progressEnrollmentAcceptanceInvitationClaim(
+        admin,
+        adminClient,
+        runtimeClient,
+        compositionRevision,
+        scope.tenantId,
+      ),
     run,
     runRequestScoped: acceptanceWorkerRun(runtime, scope),
     runWorker: acceptanceWorkerRun(runtime),

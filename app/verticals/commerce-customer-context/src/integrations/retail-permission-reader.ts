@@ -1,10 +1,7 @@
-import {
-  BusinessPermissionCodeSchema,
-  ContextAccess,
-  PrincipalRefSchema,
-  toBusinessPermissionAccessKey,
-} from '@app/core-runtime';
-import type { BusinessPermissionAccessTarget, BusinessPermissionCode, ContextAccessService } from '@app/core-runtime';
+import { customerOwnerPermissionTarget, customerPermissionKey } from '../permissions/authorization.ts';
+import type { CustomerPermissionRequest } from '../permissions/authorization.ts';
+import { BusinessPermissionCodeSchema, ContextAccess, PrincipalRefSchema } from '@app/core-runtime';
+import type { BusinessPermissionCode, ContextAccessService } from '@app/core-runtime';
 import { Context, DateTime, Effect, Layer, Result, Schema } from 'effect';
 
 import { RETAIL_PORTAL_SELF_SERVICE_BASELINE } from '../../shared/domain/profile-contracts.ts';
@@ -29,7 +26,7 @@ const retailPermissionTarget = (
   permission: BusinessPermissionCode,
   scope: ProfileRetailPermissionReaderScope,
   profileId: string,
-): BusinessPermissionAccessTarget => ({
+): CustomerPermissionRequest => ({
   permission,
   target: {
     kind: 'retail_profile',
@@ -88,14 +85,15 @@ const makeReader =
     if (Result.isFailure(principalResult)) {
       return Effect.fail(dependencyFailure('The trusted principal identity is invalid', principalResult.failure));
     }
-    if (contextAccess.businessPermissions === undefined) {
+    if (contextAccess.ownerPermissions === undefined) {
       return Effect.fail(dependencyFailure('Core business Permission checks are unavailable'));
     }
-    const expectedKeys = targets.map(toBusinessPermissionAccessKey);
+    const expectedKeys = targets.map(customerPermissionKey);
     return contextAccess
-      .businessPermissions({
+      .ownerPermissions({
+        legalEntityId: scope.legalEntityId,
         principal: principalResult.success,
-        targets,
+        targets: targets.map((target) => ({ target: customerOwnerPermissionTarget(target) })),
       })
       .pipe(
         Effect.flatMap((results) => {

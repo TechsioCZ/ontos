@@ -1,4 +1,6 @@
-import type { DatabaseConnectionPair } from '@app/core-runtime';
+import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
+import { describeControllerContracts, makePrivacyPartyCompositionSnapshot } from '../support/dsr-obligation-native.ts';
+import type { DatabaseConnectionPair, OntosModuleDeploymentContractSchema } from '@app/core-runtime';
 import {
   loadDatabaseConfig,
   loadDatabaseConnectionPair,
@@ -6,7 +8,10 @@ import {
   PARTY_REGISTRY_REQUEST_IDENTITY,
   ActiveApplicationCompositionSnapshotSchema,
   canonicalizeApplicationComposition,
-  OntosModuleDeploymentContractSchema,
+  OntosActionContractSchema,
+  OntosApiContractSchema,
+  OntosModuleRequirementsSchema,
+  OntosOperationContractSchema,
   OntosOutboxSubscriptionContractSchema,
   OntosShellRuntimeContractSchema,
   TrustedPrincipalContextSchema,
@@ -23,10 +28,7 @@ import type {
   LiveOperationFixtureBootstrapRequest,
 } from '@app/core-runtime/testing/actions';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
-import {
-  makeApplicationCompositionSnapshotFixture,
-  makeModuleContractFixture,
-} from '@app/core-runtime/testing/module-contract';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { LegacyCompletionPublication } from '@app/core-runtime/legacy-completion-publication';
@@ -114,6 +116,7 @@ class PrivacyCompletionTestFailure extends Schema.TaggedError<PrivacyCompletionT
 ) {}
 const failure = (reason: string) => new PrivacyCompletionTestFailure({ reason });
 const appRoot = new URL('../../../../', import.meta.url).pathname;
+const deliveryUnitIdSchema = Schema.String.pipe(Schema.brand('DeliveryUnitId'), Schema.decodeTo(Schema.String));
 const markerSchema = Schema.Struct({
   appId: Schema.Literals(['privacy', 'party-registry']),
   buildMarker: Schema.String,
@@ -134,8 +137,69 @@ const invocationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('ActionInvocationId'),
   Schema.decodeTo(Schema.String),
 );
+const ownerRuntimeDescriptionSchema = Schema.Struct({
+  actions: Schema.Array(OntosActionContractSchema),
+  api: Schema.Array(OntosApiContractSchema),
+  operationContracts: Schema.Array(OntosOperationContractSchema),
+  outboxSubscriptions: Schema.Array(OntosOutboxSubscriptionContractSchema),
+  requirements: Schema.optionalKey(OntosModuleRequirementsSchema),
+});
+const privacyDescriptionSchema = Schema.Struct({ marker: markerSchema, runtime: ownerRuntimeDescriptionSchema });
+const observedShellDescriptionSchema = Schema.Struct({
+  ...shellDescriptionSchema.fields,
+  runtimeContract: OntosShellRuntimeContractSchema,
+});
+const runtimeMetadataOrder = Order.make<string>((left, right) => {
+  const compared = left.localeCompare(right);
+  if (compared < 0) {
+    return -1;
+  }
+  if (compared > 0) {
+    return 1;
+  }
+  return 0;
+});
+const normalizeObservedRuntime = (runtime: typeof ownerRuntimeDescriptionSchema.Type) => ({
+  ...runtime,
+  api: EffectArray.sort(
+    runtime.api.map((api) => ({
+      ...api,
+      operationKeys: EffectArray.sort(api.operationKeys, runtimeMetadataOrder),
+    })),
+    Order.make<typeof OntosApiContractSchema.Type>((left, right) => runtimeMetadataOrder(left.key, right.key)),
+  ),
+});
+const verifyObservedOwnerRuntime = Effect.fn('PrivacyCompletionTest.verifyObservedOwner')(
+  function* verifyObservedOwnerRuntime(
+    observed: typeof privacyDescriptionSchema.Type,
+    contract: typeof OntosModuleDeploymentContractSchema.Type,
+  ) {
+    expect(observed.marker).toEqual(contract.deployment);
+    const expected = {
+      actions: contract.manifest.publicSurface.actions,
+      api: contract.manifest.publicSurface.api,
+      operationContracts: contract.manifest.publicSurface.operationContracts ?? [],
+      outboxSubscriptions: contract.runtime.outboxSubscriptions,
+      requirements: contract.manifest.requirements,
+    };
+    if (expected.requirements === undefined || observed.runtime.requirements === undefined) {
+      return yield* failure('An actual owner requirement projection was missing');
+    }
+    const encode = Schema.encodeEffect(Schema.fromJsonString(ownerRuntimeDescriptionSchema));
+    expect(yield* encode(normalizeObservedRuntime(observed.runtime))).toBe(
+      yield* encode(
+        normalizeObservedRuntime({
+          ...expected,
+          requirements: expected.requirements,
+        }),
+      ),
+    );
+    return yield* Effect.void;
+  },
+);
 const partyDescriptionSchema = Schema.Struct({
   marker: markerSchema,
+  runtime: ownerRuntimeDescriptionSchema,
   subscriptions: Schema.Array(OntosOutboxSubscriptionContractSchema),
 });
 const readySchema = Schema.Struct({ marker: markerSchema, port: Schema.Number, type: Schema.Literal('ready') });
@@ -317,6 +381,11 @@ const describe = Effect.fn('PrivacyCompletionTest.describe')(function* describe(
     { concurrency: 3 },
   );
   if (code !== 0 || lines.length !== 1) {
+    yield* Effect.logInfo('Privacy owner description result', {
+      artifact: path.split('/').at(-1),
+      exitStatus: Number(code),
+      stdoutLineCount: lines.length,
+    });
     return yield* failure('An owner fixture description was unavailable');
   }
   return lines[0];
@@ -526,6 +595,7 @@ const receivePrivateShellResponse = (
         const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(LiveOperationFixtureBootstrapResponseSchema))(
           reply,
         );
+        yield* Effect.logInfo('Privacy creator bootstrap byte count', new TextEncoder().encode(`${encoded}\n`).length);
         const writer = yield* socket.writer;
         yield* writer.write(`${encoded}\n`);
         return true;
@@ -642,6 +712,28 @@ const fixtureAdditionalLegalEntity = Context.Reference<typeof fixtureAdditionalL
 // This Layer is built by the native group's beforeAll and released after its child scopes close.
 const prepareArtifacts = Effect.gen(function* prepareNativeArtifacts() {
   yield* Effect.logInfo('Privacy fixture artifacts: initialize');
+  const contractsDescription = yield* describeControllerContracts();
+  const topologyFileSystem = yield* FileSystem.FileSystem;
+  const topology = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        shell: Schema.Struct({
+          deliveryUnit: Schema.Struct({ buildMarker: Schema.String, unitId: deliveryUnitIdSchema }),
+        }),
+      }),
+    ),
+  )(yield* topologyFileSystem.readFileString(`${appRoot}topology/reference-topology.json`));
+  const shellIdentity = yield* Effect.try({
+    catch: () => failure('The actual Shell SDK identity was unavailable'),
+    try: () =>
+      resolveUltramodernReleaseIdentity({
+        generationBuildMarker: topology.shell.deliveryUnit.buildMarker,
+        unitId: topology.shell.deliveryUnit.unitId,
+        workspaceRoot: appRoot,
+      }),
+  });
+  const encodeBuildIdentity = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+
   const crypto = yield* Crypto.Crypto;
   const suffix = yield* crypto.randomUUIDv4();
   const fs = yield* FileSystem.FileSystem;
@@ -662,15 +754,31 @@ const prepareArtifacts = Effect.gen(function* prepareNativeArtifacts() {
     worker: `${roots.party}/worker.mjs`,
   };
   const entries = [
-    { output: paths.shell, source: 'apps/shell-super-app/tests/support/privacy-completion-shell.ts' },
-    { output: paths.privacy, source: 'verticals/privacy/tests/support/privacy-completion-http.ts' },
-    { output: paths.party, source: 'verticals/party-registry/tests/support/tenant-party-http.ts' },
-    { output: paths.worker, source: 'verticals/party-registry/tests/support/privacy-completion-worker.ts' },
+    {
+      identity: shellIdentity,
+      output: paths.shell,
+      source: 'apps/shell-super-app/tests/support/privacy-completion-shell.ts',
+    },
+    {
+      identity: contractsDescription.buildIdentities.privacy,
+      output: paths.privacy,
+      source: 'verticals/privacy/tests/support/privacy-completion-http.ts',
+    },
+    {
+      identity: contractsDescription.buildIdentities['party-registry'],
+      output: paths.party,
+      source: 'verticals/party-registry/tests/support/tenant-party-http.ts',
+    },
+    {
+      identity: contractsDescription.buildIdentities['party-registry'],
+      output: paths.worker,
+      source: 'verticals/party-registry/tests/support/privacy-completion-worker.ts',
+    },
   ];
   yield* Effect.forEach(
     entries,
-    (entry) =>
-      command([
+    Effect.fn('PrivacyCompletionTest.bundleOwnedEntry')(function* bundleOwnedEntry(entry: (typeof entries)[number]) {
+      return yield* command([
         'exec',
         'esbuild',
         entry.source,
@@ -678,23 +786,26 @@ const prepareArtifacts = Effect.gen(function* prepareNativeArtifacts() {
         '--platform=node',
         '--format=esm',
         '--packages=external',
+        `--define:ULTRAMODERN_BUILD_MARKER=${yield* encodeBuildIdentity(entry.identity.buildMarker)}`,
+        `--define:ULTRAMODERN_SOURCE_REVISION=${yield* encodeBuildIdentity(entry.identity.sourceRevision)}`,
         `--outfile=${entry.output}`,
-      ]),
+      ]);
+    }),
     { concurrency: 4 },
   );
   yield* Effect.logInfo('Privacy fixture artifacts: builds done');
-  const [shellDescription, privacyMarker, party] = yield* Effect.all(
+  const [shellDescription, privacyDescription, party] = yield* Effect.all(
     [
       describe(paths.shell).pipe(
         Effect.flatMap((line) =>
-          Schema.decodeUnknownEffect(Schema.fromJsonString(shellDescriptionSchema))(line).pipe(
+          Schema.decodeUnknownEffect(Schema.fromJsonString(observedShellDescriptionSchema))(line).pipe(
             Effect.mapError(() => failure('Invalid Shell marker')),
           ),
         ),
       ),
       describe(paths.privacy).pipe(
         Effect.flatMap((line) =>
-          Schema.decodeUnknownEffect(Schema.fromJsonString(markerSchema))(line).pipe(
+          Schema.decodeUnknownEffect(Schema.fromJsonString(privacyDescriptionSchema))(line).pipe(
             Effect.mapError(() => failure('Invalid Privacy marker')),
           ),
         ),
@@ -710,7 +821,18 @@ const prepareArtifacts = Effect.gen(function* prepareNativeArtifacts() {
     { concurrency: 3 },
   );
   yield* Effect.logInfo('Privacy fixture artifacts: descriptions done');
-  return Object.freeze({ party, paths: Object.freeze(paths), privacyMarker, shellDescription });
+  expect(shellDescription.marker).toEqual({ appId: 'shell-super-app', buildMarker: shellIdentity.buildMarker });
+  expect(shellDescription.runtimeContract.deployment).toEqual(shellDescription.marker);
+  yield* verifyObservedOwnerRuntime(privacyDescription, contractsDescription.privacyContract);
+  yield* verifyObservedOwnerRuntime(party, contractsDescription.partyContract);
+  expect(party.subscriptions).toEqual(contractsDescription.partyContract.runtime.outboxSubscriptions);
+  return Object.freeze({
+    contractsDescription,
+    party,
+    paths: Object.freeze(paths),
+    privacyMarker: privacyDescription.marker,
+    shellDescription,
+  });
 });
 const PreparedArtifacts = Context.Service<Effect.Success<typeof prepareArtifacts>>(
   'PrivacyCompletionTest/PreparedArtifacts',
@@ -788,49 +910,22 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
   }
   const crypto = yield* Crypto.Crypto;
   const suffix = yield* crypto.randomUUIDv4();
-  const { party, paths, privacyMarker, shellDescription } = yield* PreparedArtifacts;
+  const { contractsDescription, party, paths, privacyMarker, shellDescription } = yield* PreparedArtifacts;
   yield* Effect.logInfo('Privacy fixture setup: immutable artifacts available');
-  const base = yield* makeApplicationCompositionSnapshotFixture([privacyMarker.appId, party.marker.appId], suffix);
-  const modules = yield* Effect.forEach(
-    base.composition.modules,
-    Effect.fn('PrivacyCompletionTest.module')(function* module(value) {
-      const isParty = value.deployment.appId === party.marker.appId;
-      const marker = isParty ? party.marker : privacyMarker;
-      const moduleId = isParty ? 'party.registry' : 'privacy.core';
-      const contract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(
-        makeModuleContractFixture({
-          appId: marker.appId,
-          buildMarker: marker.buildMarker,
-          moduleId,
-          outboxSubscriptions: isParty ? party.subscriptions : [],
-        }),
-      );
-      const document = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(contract);
-      const hash = digest(document);
-      return {
-        ...value,
-        backend: { baseUrl: `https://${marker.appId}.fixture.example.test/`, transport: 'node-http' as const },
-        contract: { ...value.contract, sha256: hash },
-        contractDocument: document,
-        deployment: marker,
-        moduleId,
-        publicContract: { ...value.publicContract, id: moduleId, sha256: hash },
-      };
-    }),
-    { concurrency: 2 },
+  const base = yield* makePrivacyPartyCompositionSnapshot(contractsDescription);
+  expect(base.composition.shell.deployment).toEqual(shellDescription.runtimeContract.deployment);
+  expect(base.composition.shell.contributionAbi).toEqual(shellDescription.runtimeContract.contributionAbi);
+  expect(base.composition.shell.coreCapabilities).toEqual(shellDescription.runtimeContract.coreCapabilities);
+  const shellDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+    shellDescription.runtimeContract,
   );
-  const shellDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))({
-    contributionAbi: base.composition.shell.contributionAbi,
-    coreCapabilities: base.composition.shell.coreCapabilities,
-    deployment: shellDescription.marker,
-    schemaVersion: '2',
-  });
   const composition = {
     ...base.composition,
-    modules,
     shell: {
       ...base.composition.shell,
-      deployment: shellDescription.marker,
+      contributionAbi: shellDescription.runtimeContract.contributionAbi,
+      coreCapabilities: shellDescription.runtimeContract.coreCapabilities,
+      deployment: shellDescription.runtimeContract.deployment,
       runtimeContract: { ...base.composition.shell.runtimeContract, sha256: digest(shellDocument) },
     },
   };
@@ -1049,6 +1144,7 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
   const snapshotJson = yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(
     snapshot,
   );
+  yield* Effect.logInfo('Privacy composition environment byte count', new TextEncoder().encode(snapshotJson).length);
   const compositionContext = yield* Layer.build(NodeHttpServer.layerTest);
   const source = Context.get(compositionContext, HttpServer.HttpServer);
   yield* source.serve(Effect.succeed(HttpServerResponse.text(snapshotJson, { contentType: 'application/json' })));
@@ -1246,6 +1342,38 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
       })),
     });
   });
+  const observeSealFailure = Effect.gen(function* observeSealFailure() {
+    const facts = yield* Effect.all({
+      deliveries: coreEvidenceExecutor.query.outboxDeliveries.findMany({
+        columns: { consumerModuleKey: true, status: true, workerKey: true },
+      }),
+      messages: coreEvidenceExecutor.query.outboxMessages.findMany({
+        columns: {
+          completionConsumerModuleKey: true,
+          matchedAt: true,
+          producerModuleKey: true,
+          topic: true,
+        },
+      }),
+    });
+    const outstandingDeliveries = facts.deliveries.filter(
+      (delivery) => delivery.status !== 'done' && delivery.status !== 'released',
+    );
+    const unmatchedMessages = facts.messages
+      .filter((message) => message.matchedAt === null)
+      .map((message) => ({
+        consumer: message.completionConsumerModuleKey,
+        producer: message.producerModuleKey,
+        topic: message.topic,
+      }));
+    yield* Effect.logInfo('Privacy seal failure Outbox metadata', {
+      outstandingDeliveries,
+      outstandingDeliveryCount: outstandingDeliveries.length,
+      unmatchedMessageCount: unmatchedMessages.length,
+      unmatchedMessages,
+    });
+  }).pipe(Effect.catch(() => Effect.logInfo('Privacy seal failure Outbox metadata unavailable')));
+  const seal = isolated.composition.seal().pipe(Effect.tapError(() => observeSealFailure));
   const token = (
     audience: 'party-registry' | 'privacy',
     revision = snapshot.composition.revision,
@@ -1463,6 +1591,7 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
     receipt,
     retrySession,
     revision: snapshot.composition.revision,
+    seal,
     secondaryLegalEntityId,
     snapshot,
     storedHandoffs,
@@ -2357,8 +2486,9 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           expect(
             (yield* f.evidence()).outbox.filter((message) => message.topic === 'privacy.measure.dispatched'),
           ).toEqual(originalMessages);
+          expect(yield* f.control('privacy', 'dispatch-watchdog/complete')).toBe(204);
           yield* f.isolated.composition.drain();
-          yield* f.isolated.composition.seal();
+          yield* f.seal;
           const sealed = yield* f.isolated.composition.observe();
           expect(sealed.phase).toBe('sealed');
           expect(sealed.revision).toBe(f.revision);
@@ -2410,8 +2540,9 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
             expect(yield* f.cycle(31_000)).toMatchObject({ claimed: 1, failed: 0, succeeded: 1 });
             const completed = yield* coreDebtSettled(f);
             expect(Option.getOrUndefined(original)).toEqual(completed);
+            expect(yield* f.control('privacy', 'dispatch-watchdog/complete')).toBe(204);
             yield* f.isolated.composition.drain();
-            yield* f.isolated.composition.seal();
+            yield* f.seal;
           }),
         120_000,
       );
@@ -2691,8 +2822,9 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           expect(yield* f.storedHandoffs()).toEqual([f.handoff]);
           expect(yield* f.outcomes()).toEqual([original.value.outcome]);
           expect(yield* f.control('privacy', 'report-response/discard-next')).toBe(409);
+          expect(yield* f.control('privacy', 'dispatch-watchdog/complete')).toBe(204);
           yield* f.isolated.composition.drain();
-          yield* f.isolated.composition.seal();
+          yield* f.seal;
           return yield* Effect.void;
         }),
       120_000,
@@ -2705,7 +2837,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
         const before = yield* f.evidence();
         yield* f.isolated.composition.closeAdmission();
         yield* f.isolated.composition.drain();
-        yield* f.isolated.composition.seal();
+        yield* f.seal;
         const result = yield* Effect.result(f.dispatch(f.suffix, f.handoff, credential));
         expect(Result.isFailure(result)).toBe(true);
         if (Result.isFailure(result)) {
@@ -2866,8 +2998,9 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           // Recover the real claim through the existing test-clock lease control, then report and ACK in A.
           expect(yield* f.cycle(31_000)).toMatchObject({ claimed: 1, failed: 0, succeeded: 1 });
           expect(yield* coreDebtSettled(f)).toEqual(original.value);
+          expect(yield* f.control('privacy', 'dispatch-watchdog/complete')).toBe(204);
           yield* f.isolated.composition.drain();
-          yield* f.isolated.composition.seal();
+          yield* f.seal;
           return yield* Effect.void;
         }),
     );

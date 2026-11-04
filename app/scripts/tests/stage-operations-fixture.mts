@@ -489,6 +489,7 @@ export const fakeZeropsApi = (
   const layer = Layer.succeed(
     ZeropsPublicApi,
     ZeropsPublicApi.of({
+      activeAppVersion: notFaked('activeAppVersion'),
       createServiceSecret: (serviceId, key, content) =>
         Effect.sync(() => {
           serviceSecrets.push({ content, key, serviceId });

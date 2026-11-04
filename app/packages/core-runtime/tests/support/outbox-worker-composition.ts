@@ -1,3 +1,4 @@
+import { deriveModuleIntrinsicRequirements } from '../../src/modules/module-dependency-contracts.ts';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { DateTime, Effect, Layer, Schema } from 'effect';
@@ -38,22 +39,36 @@ export const makeOutboxWorkerComposition = (
 ): ApplicationComposition => {
   const approvedModules = modules.map(
     ({ appId, buildMarker = `${appId}-build`, dependencies = [], moduleId, subscriptions = [] }) => {
-      const contract = decodeContract(
-        makeModuleContractFixture({
-          appId,
-          buildMarker,
-          moduleId,
-          outboxSubscriptions: subscriptions.map(
-            ({ consumerModuleKey, entrypoint, producerModuleKey, topic, workerKey }) => ({
-              consumerModuleKey,
-              entrypoint,
-              producerModuleKey,
-              topic,
-              workerKey,
-            }),
-          ),
-        }),
-      );
+      const baseContract = makeModuleContractFixture({
+        appId,
+        buildMarker,
+        moduleId,
+        outboxSubscriptions: subscriptions.map(
+          ({ consumerModuleKey, entrypoint, producerModuleKey, topic, workerKey }) => ({
+            consumerModuleKey,
+            entrypoint,
+            producerModuleKey,
+            topic,
+            workerKey,
+          }),
+        ),
+      });
+      const contract = decodeContract({
+        ...baseContract,
+        manifest: {
+          ...baseContract.manifest,
+          requirements: {
+            coreCapabilities: [],
+            intrinsic: dependencies.map((dependencyModuleId) => ({
+              moduleId: dependencyModuleId,
+              requiredOperations: [],
+            })),
+            operations: [],
+            schemaVersion: '1',
+          },
+        },
+      });
+      const derivedRequirements = deriveModuleIntrinsicRequirements(contract.manifest.requirements);
       const contractDocument = encodeContract(contract);
       const contractSha256 = digest(contractDocument);
       return {
@@ -61,12 +76,12 @@ export const makeOutboxWorkerComposition = (
         backend: { baseUrl: `https://${appId}.example/`, transport: 'node-http' },
         contract: { sha256: contractSha256, url: `https://${appId}.example/.well-known/ontos-module-manifest.json` },
         contractDocument,
-        dependencies,
+        dependencies: derivedRequirements.dependencies,
         deployment: contract.deployment,
         federation: { execution: 'server' },
         moduleId,
         publicContract: { id: moduleId, sha256: contractSha256, version: contract.schemaVersion },
-        requiredCoreCapabilities: [],
+        requiredCoreCapabilities: derivedRequirements.requiredCoreCapabilities,
         requiredShellAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
         sharedSingletons: [],
       } satisfies ApplicationCompositionModule;

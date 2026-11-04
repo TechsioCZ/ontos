@@ -4,7 +4,8 @@ import {
   CorePersistenceLive,
   DatabaseConfig,
   InstalledModuleCatalogService,
-  ReadRuntimeLive,
+  ActiveApplicationCompositionService,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
   buildInstalledModuleCatalog,
   changeTenantModuleStateAction,
@@ -13,10 +14,8 @@ import {
   runAction,
   ReadRuntime,
   TrustedPrincipalContextSchema,
-  canonicalizeApplicationComposition,
   makeContextPermissionRelationshipMutationLive,
   OntosModuleDeploymentContractSchema,
-  validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
 import {
   ModuleEntrypointGatewayLive,
@@ -25,9 +24,7 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
-import { createHash } from 'node:crypto';
 import {
   Array as EffectArray,
   ConfigProvider,
@@ -46,7 +43,12 @@ import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { makePrivacyApiRuntime } from '../../api/index.ts';
-import { makeDsrObligationNative } from '../support/dsr-obligation-native.ts';
+import {
+  makeDsrObligationNative,
+  makePrivacyDsrCompositionSnapshot,
+  privacyDsrOwnerRuntimeLive,
+} from '../support/dsr-obligation-native.ts';
+import { privacyRegistration } from '../../vertical.registration.ts';
 import { executeDsrCasesWithAuthorization } from '../../src/api/dsr-cases-client.ts';
 import { executeCreateDsrCaseWithAuthorization } from '../../src/api/create-dsr-case-action-client.ts';
 import { executeRecordDsrDeadlineWithAuthorization } from '../../src/api/record-dsr-deadline-action-client.ts';
@@ -55,53 +57,20 @@ import {
   DsrIntakeReceiptSchema,
   DsrDeadlinePolicySchema,
 } from '../../shared/domain/privacy-dsr.ts';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { createDsrCaseAction, DsrIntakeReceiptAuthority } from '../../src/actions/create-dsr-case.action.ts';
 import { recordDsrDeadlineAction, DsrDeadlineAuthority } from '../../src/actions/record-dsr-deadline.action.ts';
 import { privacyOperationRepositoryForScope } from '../../src/persistence/privacy-operation-postgres-repository.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-repository.ts';
 
 const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
-const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
 );
 
 const makeDsrIsolation = Effect.fn('DsrExactDeadline.makeIsolation')(function* makeDsrIsolation() {
-  const base = yield* makeApplicationCompositionSnapshotFixture(
-    [ultramodernApiMarker.appId],
-    ultramodernApiMarker.buildMarker,
-  );
-  const modules = yield* Effect.forEach(
-    base.composition.modules,
-    Effect.fn('DsrExactDeadline.module')(function* module(entry) {
-      const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-        entry.contractDocument,
-      );
-      const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))({
-        ...contract,
-        manifest: { ...contract.manifest, module: { ...contract.manifest.module, id: 'privacy.core' } },
-      });
-      const sha256 = digest(contractDocument);
-      return {
-        ...entry,
-        contract: { ...entry.contract, sha256 },
-        contractDocument,
-        moduleId: 'privacy.core',
-        publicContract: { ...entry.publicContract, id: 'privacy.core', sha256 },
-      };
-    }),
-    { concurrency: 1 },
-  );
-  const composition = { ...base.composition, modules };
-  const snapshot = yield* validateActiveApplicationCompositionSnapshot({
-    ...base,
-    composition: {
-      ...composition,
-      revision: digest(canonicalizeApplicationComposition({ ...composition, revision: '0'.repeat(64) })),
-    },
-  });
+  const snapshot = yield* makePrivacyDsrCompositionSnapshot();
   const owned = yield* makeDsrObligationNative(snapshot, 'stabilization-1271-exact-obligation-deadline');
   return { ...owned, snapshot };
 });
@@ -243,14 +212,20 @@ const makeDsrNative = Effect.fn('DsrExactDeadline.makeNative')(function* makeDsr
       ),
   });
   // The catalog is the same validated TEST composition contract, not an allow-all lifecycle service.
-  const context = yield* Layer.build(
+  const fixtureContext = yield* Layer.build(
     Layer.mergeAll(
       fixture.layer,
       NodeCrypto.layer,
       authorities,
-      Layer.succeed(InstalledModuleCatalogService, { load: Effect.succeed(catalog) }),
+      Layer.succeed(InstalledModuleCatalogService, {
+        loadForRevision: (_compositionRevision) => Effect.succeed(catalog),
+      }),
     ),
   );
+  const ownerRuntimeContext = yield* Layer.build(
+    privacyDsrOwnerRuntimeLive(snapshot).pipe(Layer.provide(Layer.succeedContext(fixtureContext))),
+  );
+  const context = Context.merge(fixtureContext, ownerRuntimeContext);
   // HTTP runs later under this exported context, independently of setup's ambient services.
   const exportedContextCrypto = Context.get(context, Crypto.Crypto);
   const exportedContextId = yield* exportedContextCrypto.randomUUIDv4();
@@ -275,7 +250,7 @@ const makeDsrNative = Effect.fn('DsrExactDeadline.makeNative')(function* makeDsr
       principal: fixture.manager,
       registration: changeTenantModuleStateAction,
       transport: { correlationId: yield* nextId, idempotencyKey: yield* nextId, targetModuleKey: 'core.modules' },
-    }).pipe(Effect.provideContext(context));
+    }).pipe(Effect.provideContext(fixtureContext));
   });
   return {
     caseRef,
@@ -366,7 +341,8 @@ const makeDsrHttp = Effect.fn('DsrExactDeadline.makeHttp')(function* makeDsrHttp
     const state = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
     const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(ModuleStateGateLive.pipe(Layer.provide(state))));
     const resolver = OperationalScopeResolverLive.pipe(Layer.provide(Layer.merge(persistence, accessLayer)));
-    readRuntime = ReadRuntimeLive.pipe(
+    readRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
+      Layer.provide(Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(native.snapshot) })),
       Layer.provide(Layer.mergeAll(persistence, accessLayer, gateway, resolver)),
       Layer.provide(NodeCrypto.layer),
     );

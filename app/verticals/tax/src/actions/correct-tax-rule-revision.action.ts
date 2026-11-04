@@ -2,8 +2,9 @@
 // @ontos-action-owner commerce.tax
 // @ontos-action-slug correct-tax-rule-revision
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
+import { defineTaxRuleActionPermissions } from '../permissions/authorization.ts';
 
 import {
   CorrectTaxRuleRevisionPayloadSchema,
@@ -69,10 +70,6 @@ export const correctTaxRuleRevisionAction = defineAction(
     actionKey: 'commerce.tax.correct-tax-rule-revision',
     auditEvidenceSchema: TaxGovernanceAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<CorrectTaxRuleRevisionPayload>((_payload, scope) => ({
-      permission: 'tax.rule.manage',
-      target: { kind: 'tax_selling_legal_entity', legalEntityId: scope.legalEntityId ?? '', tenantId: scope.tenantId },
-    })),
     domainErrorSchema: ActionErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
@@ -84,6 +81,7 @@ export const correctTaxRuleRevisionAction = defineAction(
     }),
     idempotency: 'required',
     legalEntityScope: 'required',
+    ownerPermissions: defineTaxRuleActionPermissions<CorrectTaxRuleRevisionPayload>(),
     owningModuleKey: 'commerce.tax',
     payloadSchema: CorrectTaxRuleRevisionPayloadSchema,
     policies: [],

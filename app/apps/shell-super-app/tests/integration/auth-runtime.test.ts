@@ -1,15 +1,20 @@
+import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
+
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
   ActiveApplicationCompositionService,
+  OntosModuleDeploymentContractSchema,
+  OntosShellRuntimeContractSchema,
+  ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
+  ActiveApplicationCompositionUnavailableError,
   PrincipalResolver,
   PrincipalResolverUnavailableError,
   ContextAccess,
-  GatewayScopeGrantRegistrarLive,
   LegalEntityContext,
   TenantModuleStateReadUnavailableError,
   TenantModuleStateService,
@@ -32,8 +37,9 @@ import {
   PrincipalResolverLive,
   runAction,
 } from '@app/core-runtime';
+import type { DatabaseConnectionPair } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makeGatewayScopeGrantRegistrar, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeChildProcessSpawner, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
@@ -88,11 +94,88 @@ import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.t
 import { makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
 import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
-import { makeShellAuthenticationApiRuntime } from '../../api/index.ts';
+import { makeShellAuthenticationApiRuntime as makeProductionShellAuthenticationApiRuntime } from '../../api/index.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ShellProviderUnavailableError } from '../../api/modules/shell-resources.ts';
-import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import {
+  ResolvedModuleTargetSchema,
+  ShellTargetForbiddenProblemSchema,
+  ShellTargetNotFoundProblemSchema,
+} from '../../shared/api.ts';
+import {
+  makeModuleEntrypointLoadScheduler,
+  moduleEntrypointLoadIdentity,
+} from '../../src/routes/module-entrypoint-loader.ts';
+import {
+  contentDigest,
+  makeCompositionSnapshot as makeFixtureCompositionSnapshot,
+} from '../fixtures/application-composition.ts';
 import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
+
+/** Test authority retains the actual validated fixture snapshot, including its original freshness. */
+const fixtureSnapshots = new Map<string, Effect.Success<ReturnType<typeof makeFixtureCompositionSnapshot>>>();
+const makeCompositionSnapshot: typeof makeFixtureCompositionSnapshot = (...args) =>
+  makeFixtureCompositionSnapshot(...args).pipe(
+    Effect.tap((snapshot) =>
+      Effect.sync(() => {
+        fixtureSnapshots.set(snapshot.composition.revision, snapshot);
+      }),
+    ),
+  );
+const makeShellRuntimeForDatabase =
+  (runtimeDatabase?: DatabaseConnectionPair) =>
+  (...args: Parameters<typeof makeProductionShellAuthenticationApiRuntime>) => {
+    const [authentication, issuer, states, loadCatalog, matcher, access, gateways, scopedStates, external] = args;
+    const load =
+      loadCatalog === undefined
+        ? Effect.fail(
+            new ActiveApplicationCompositionUnavailableError({ reason: 'No test release source was configured' }),
+          )
+        : loadCatalog.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ActiveApplicationCompositionUnavailableError({
+                  cause,
+                  reason: 'Test release source is unavailable',
+                }),
+            ),
+            Effect.flatMap((catalog) => {
+              const snapshot = fixtureSnapshots.get(catalog.composition.revision);
+              return snapshot === undefined
+                ? Effect.fail(
+                    new ActiveApplicationCompositionUnavailableError({
+                      reason: 'No actual fixture snapshot matches the captured release',
+                    }),
+                  )
+                : Effect.succeed(snapshot);
+            }),
+          );
+    return makeProductionShellAuthenticationApiRuntime(
+      authentication,
+      issuer,
+      states,
+      loadCatalog,
+      matcher,
+      access,
+      gateways,
+      scopedStates,
+      external,
+      { load },
+      runtimeDatabase,
+    );
+  };
+const makeShellAuthenticationApiRuntime = makeShellRuntimeForDatabase();
+const shellAuthFixtureServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const fixtureSnapshotForRevision = (revision: string) => {
+  const snapshot = fixtureSnapshots.get(revision);
+  return snapshot === undefined
+    ? Effect.fail(
+        new ActiveApplicationCompositionUnavailableError({
+          reason: 'No actual fixture snapshot matches this revision',
+        }),
+      )
+    : Effect.succeed(snapshot);
+};
 
 type AuthenticationRuntimeHandler = ReturnType<ReturnType<typeof makeShellAuthenticationApiRuntime>['createHandler']>;
 const email = 'better-auth-runtime@example.test';
@@ -100,6 +183,7 @@ const password = 'correct-horse-battery-staple';
 const tenantId = '30000000-0000-4000-8000-000000000001';
 const foreignTenantId = '30000000-0000-4000-8000-000000000002';
 const principalId = '40000000-0000-4000-8000-000000000001';
+const changedPrincipalId = '40000000-0000-4000-8000-000000000002';
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..', '..');
 const fixtureLegalEntityId = '35000000-0000-4000-8000-000000000001';
 const fixtureAuthBindingId = '45000000-0000-4000-8000-000000000001';
@@ -130,6 +214,7 @@ const RetryableProblemSchema = Schema.Struct({
   retryable: Schema.optional(Schema.Boolean),
 });
 const TokenResponseSchema = Schema.Struct({ token: Schema.String });
+const ExposedPageFixtureNamespaceSchema = Schema.Struct({ expose: Schema.NonEmptyString });
 const DefectProblemSchema = Schema.Struct({
   detail: Schema.optional(Schema.String),
 });
@@ -368,8 +453,18 @@ const installedPageCatalog = () =>
 it.live(
   'creates, resolves, persists, revokes, and signs out a Better Auth session',
   Effect.fnUntraced(function* runIntegration1() {
-    const configuration = yield* loadAuthConfig({ envPath: '/dev/null' });
-    const coreClient = yield* makeTestPgClient(configuration.connectionString);
+    const approvedPageCatalog = yield* installedPageCatalog();
+    const isolated = yield* makeIsolatedNativeDatabaseFixture({
+      compositionSnapshot: yield* fixtureSnapshotForRevision(approvedPageCatalog.composition.revision),
+      mode: 'schema-only',
+      purpose: 'stabilization-1287-shell-auth',
+    });
+    const makeOwnedShellAuthenticationApiRuntime = makeShellRuntimeForDatabase(isolated.connections);
+    const configuration = {
+      ...(yield* loadAuthConfig({ envPath: '/dev/null' })),
+      connectionString: isolated.connections.runtime.connectionString,
+    };
+    const coreClient = yield* makeTestPgClient(isolated.connections.admin.connectionString);
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
     const authPersistence = yield* makeAuthDatabase(configuration);
     const authDatabase = authPersistence.executor;
@@ -416,7 +511,7 @@ it.live(
         coreDatabase.delete(principalAuthBindings).where(eq(principalAuthBindings.principalId, principalId)),
         coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
         coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, foreignTenantId)),
-        coreDatabase.delete(principals).where(eq(principals.principalId, principalId)),
+        coreDatabase.delete(principals).where(inArray(principals.principalId, [principalId, changedPrincipalId])),
         coreDatabase.delete(legalEntities).where(eq(legalEntities.legalEntityId, fixtureLegalEntityId)),
         coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
         coreDatabase.delete(tenants).where(eq(tenants.tenantId, foreignTenantId)),
@@ -459,6 +554,13 @@ it.live(
       status: 'active',
       tenantId,
     });
+    yield* coreDatabase.insert(principals).values({
+      displayName: 'Changed current principal without module permission',
+      kind: 'human',
+      principalId: changedPrincipalId,
+      status: 'active',
+      tenantId,
+    });
     yield* coreDatabase.insert(legalEntities).values({
       legalEntityId: fixtureLegalEntityId,
       legalName: 'Fixture legal entity',
@@ -490,7 +592,7 @@ it.live(
     });
     const invalid = yield* Effect.flip(authentication.signIn(email, 'wrong-password', requestHeaders));
     expect(Predicate.isTagged(invalid, 'InvalidCredentialsError')).toBe(true);
-    const anonymousRuntime = makeShellAuthenticationApiRuntime(
+    const anonymousRuntime = makeOwnedShellAuthenticationApiRuntime(
       authenticationLayer,
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
@@ -588,11 +690,13 @@ it.live(
       cookie: cookieHeader(signedInCookies),
       origin: configuration.baseUrl,
     });
-    const approvedPageCatalog = yield* installedPageCatalog();
-    const exactPageRequest = (entrypointKey = 'testing.pages.page.customers') =>
+    const exactPageRequest = (
+      entrypointKey = 'testing.pages.page.customers',
+      compositionRevision = approvedPageCatalog.composition.revision,
+    ) =>
       new Request(`${configuration.baseUrl}/shell/module-target`, {
         body: JSON.stringify({
-          compositionRevision: approvedPageCatalog.composition.revision,
+          compositionRevision,
           entrypointKey,
           moduleId: 'testing.pages',
         }),
@@ -611,6 +715,7 @@ it.live(
     let moduleResourcePermissionCalls = 0;
     let providerCalls = 0;
     let authenticationContextCalls = 0;
+    const observedModuleContexts: { readonly principalId: string; readonly tenantId: string }[] = [];
     const observedAuthenticationLayer = Layer.succeed(AuthenticationService, {
       ...authentication,
       resolveShellContext: (headers) => {
@@ -624,7 +729,12 @@ it.live(
         ...legalEntitySelectionOptions.contextAccess,
         modules: (input) => {
           moduleResourcePermissionCalls += 1;
-          return legalEntitySelectionOptions.contextAccess.modules(input);
+          observedModuleContexts.push({ principalId: input.principalId, tenantId: input.tenantId });
+          // Scripted permission decision only: session/binding resolution and Module State use
+          // the real owned native DB. This is not a native SpiceDB permission-revocation claim.
+          return input.principalId === principalId
+            ? legalEntitySelectionOptions.contextAccess.modules(input)
+            : Effect.succeed(input.moduleIds.map((key) => ({ decision: 'denied' as const, key })));
         },
         resources: () => {
           moduleResourcePermissionCalls += 1;
@@ -636,7 +746,7 @@ it.live(
       providerCalls += 1;
       return Effect.fail(new ShellProviderUnavailableError());
     };
-    const pageRuntime = makeShellAuthenticationApiRuntime(
+    const pageRuntime = makeOwnedShellAuthenticationApiRuntime(
       observedAuthenticationLayer,
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
@@ -673,6 +783,83 @@ it.live(
       routeParameters: {},
       writable: true,
     });
+    const resolveApprovedTarget = Effect.fn('AuthRuntimeTest.resolveApprovedTarget')(function* resolveApprovedTarget(
+      entrypointKey: string,
+    ) {
+      const response = yield* Effect.tryPromise(() => pageRuntime.handler(exactPageRequest(entrypointKey)));
+      expect(response.status).toBe(200);
+      return yield* Schema.decodeUnknownEffect(ResolvedModuleTargetSchema)(
+        yield* Effect.tryPromise(() => response.json()),
+      );
+    });
+    const approvedTargets = yield* Effect.all([
+      resolveApprovedTarget('testing.pages.page.home'),
+      resolveApprovedTarget('testing.pages.page.customers'),
+    ]);
+    // The production handler supplies the actual approved target identities; controlled import
+    // thunks exercise the real browser scheduler without pretending to execute native remote UI.
+    const scheduler = makeModuleEntrypointLoadScheduler();
+    let physicalLoads = 0;
+    const results = yield* scheduler.settle(
+      approvedTargets.map((target) => ({
+        contract: Schema.Struct({ expose: Schema.Literal(target.federation.expose) }),
+        identity: target,
+        load: () =>
+          Effect.sync(() => {
+            physicalLoads += 1;
+            return { expose: target.federation.expose };
+          }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(ExposedPageFixtureNamespaceSchema))),
+        loadIdentity: moduleEntrypointLoadIdentity(target),
+      })),
+    );
+    expect(physicalLoads).toBe(2);
+    expect(results.map((result) => (result.state === 'ready' ? result.value.expose : result.reason))).toEqual([
+      './PageHome',
+      './PageCustomers',
+    ]);
+    expect(moduleEntrypointLoadIdentity(approvedTargets[0]).result).not.toBe(
+      moduleEntrypointLoadIdentity(approvedTargets[1]).result,
+    );
+    const contextCallsAfterCodeLoad = authenticationContextCalls;
+    // Native DB activation changes must win even after this exact code target was loaded.
+    yield* coreDatabase
+      .update(tenantModuleStates)
+      .set({ state: 'suspended' })
+      .where(and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.moduleKey, 'testing.pages')));
+    const inactiveTarget = yield* Effect.tryPromise(() => pageRuntime.handler(exactPageRequest()));
+    // A suspended page is safely undiscoverable: the target resolver deliberately maps
+    // denied Module State to not_found, distinct from an explicit permission denial below.
+    expect(inactiveTarget.status).toBe(404);
+    const inactiveBody = yield* Effect.tryPromise(() => inactiveTarget.json());
+    const inactiveProblem = yield* Schema.decodeUnknownEffect(ShellTargetNotFoundProblemSchema)(inactiveBody);
+    expect(inactiveProblem.detail).toBe('The requested module target was not found.');
+    expect(inactiveBody).not.toHaveProperty('federation');
+    expect(physicalLoads).toBe(2);
+    yield* coreDatabase
+      .update(tenantModuleStates)
+      .set({ state: 'active' })
+      .where(and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.moduleKey, 'testing.pages')));
+    // Change the real binding behind the same session; its new Principal gets its own scripted
+    // module permission decision rather than inheriting the earlier Principal's successful load.
+    yield* coreDatabase
+      .update(principalAuthBindings)
+      .set({ principalId: changedPrincipalId })
+      .where(eq(principalAuthBindings.principalAuthBindingId, fixtureAuthBindingId));
+    const changedPrincipalTarget = yield* Effect.tryPromise(() => pageRuntime.handler(exactPageRequest()));
+    expect(changedPrincipalTarget.status).toBe(403);
+    const changedPrincipalBody = yield* Effect.tryPromise(() => changedPrincipalTarget.json());
+    yield* Schema.decodeUnknownEffect(ShellTargetForbiddenProblemSchema)(changedPrincipalBody);
+    expect(changedPrincipalBody).not.toHaveProperty('federation');
+    expect(physicalLoads).toBe(2);
+    expect(observedModuleContexts.at(-1)).toEqual({ principalId: changedPrincipalId, tenantId });
+    yield* coreDatabase
+      .update(principalAuthBindings)
+      .set({ principalId })
+      .where(eq(principalAuthBindings.principalAuthBindingId, fixtureAuthBindingId));
+    const reopenedTarget = yield* resolveApprovedTarget('testing.pages.page.customers');
+    expect(moduleEntrypointLoadIdentity(reopenedTarget)).toEqual(moduleEntrypointLoadIdentity(approvedTargets[1]));
+    expect(authenticationContextCalls).toBeGreaterThan(contextCallsAfterCodeLoad);
+    expect(physicalLoads).toBe(2);
     const permissionCallsBeforeStaleRequests = moduleResourcePermissionCalls;
     const staleRevision = 'f'.repeat(64);
     const staleRef = {
@@ -751,7 +938,7 @@ it.live(
     if (authenticatedContext.state !== 'authenticated') {
       throw new Error('The exact-page boundary fixture must resolve an authenticated context');
     }
-    const selectionRequiredRuntime = makeShellAuthenticationApiRuntime(
+    const selectionRequiredRuntime = makeOwnedShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, {
         ...authentication,
         resolveShellContext: () =>
@@ -789,7 +976,7 @@ it.live(
         yield* Effect.tryPromise(() => selectionRequiredPageResponse.json()),
       ).status,
     ).toBe(409);
-    const deniedPageRuntime = makeShellAuthenticationApiRuntime(
+    const deniedPageRuntime = makeOwnedShellAuthenticationApiRuntime(
       authenticationLayer,
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
@@ -815,6 +1002,48 @@ it.live(
     expect(
       Schema.decodeUnknownSync(ProblemStatusSchema)(yield* Effect.tryPromise(() => deniedPageResponse.json())).status,
     ).toBe(403);
+    // A real explicit promotion changes only this case's owned database after the page stale/denial controls.
+    const replacementSnapshot = yield* installedSnapshot(['testing.one']);
+    expect(replacementSnapshot.composition.revision).toBe(testRevision);
+    yield* isolated.composition.closeAdmission();
+    yield* isolated.composition.drain();
+    yield* isolated.composition.publishReplacement(replacementSnapshot);
+    // Reuse the fixture's one real R1 -> R2 replacement. This R2 deliberately removes
+    // testing.pages, so it must deny the old code target; this is not retained-target
+    // success, a browser reload, or proof of an actual R2 browser remote execution.
+    const replacementCatalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(replacementSnapshot));
+    const replacementRuntime = makeOwnedShellAuthenticationApiRuntime(
+      observedAuthenticationLayer,
+      makeGatewayIssuerLayer({
+        currentTimeSeconds: Effect.succeed(1_700_000_000),
+        generateJti: Effect.succeed('60000000-0000-4000-8000-000000000012'),
+        loadAdmission: installedAdmission(['testing.one']),
+        loadConfig: parseGatewayIssuerConfig({}),
+      }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
+      moduleStateLayer,
+      Effect.succeed(replacementCatalog),
+      false,
+      observedContextAccessLayer,
+    ).createHandler();
+    handlers.push(replacementRuntime);
+    const oldRevisionTarget = yield* Effect.tryPromise(() => replacementRuntime.handler(exactPageRequest()));
+    expect(oldRevisionTarget.status).toBe(409);
+    const removedTarget = yield* Effect.tryPromise(() =>
+      replacementRuntime.handler(
+        exactPageRequest('testing.pages.page.customers', replacementSnapshot.composition.revision),
+      ),
+    );
+    // An explicit module selector absent from the approved catalog is a permission denial;
+    // the resolver reserves not_found for a missing page or a state-hidden installed target.
+    expect(removedTarget.status).toBe(403);
+    const removedBody = yield* Effect.tryPromise(() => removedTarget.json());
+    const removedProblem = yield* Schema.decodeUnknownEffect(ShellTargetForbiddenProblemSchema)(removedBody);
+    expect(removedProblem.detail).toBe('The requested module is forbidden in the selected context.');
+    expect(removedBody).not.toHaveProperty('federation');
+    expect(physicalLoads).toBe(2);
+    const supersededPageResponse = yield* Effect.tryPromise(() => pageRuntime.handler(exactPageRequest()));
+    expect(supersededPageResponse.status).toBe(503);
+    expect(providerCalls).toBe(0);
     const currentSessionResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/auth/session`, {
@@ -841,7 +1070,7 @@ it.live(
       ),
     );
     expect(missingIdempotencyResponse.status).toBe(428);
-    const deniedIdentityAdministrationRuntime = makeShellAuthenticationApiRuntime(
+    const deniedIdentityAdministrationRuntime = makeOwnedShellAuthenticationApiRuntime(
       authenticationLayer,
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
@@ -930,6 +1159,7 @@ it.live(
         }),
       ),
     );
+    // This is the production Shell wiring and its real dynamically created Core Read, not a ReadRuntime double.
     expect(activeModulesResponse.status).toBe(200);
     expect(yield* Effect.tryPromise(() => activeModulesResponse.json())).toEqual({
       compositionRevision: testRevision,
@@ -945,6 +1175,7 @@ it.live(
         outcomeCode: dataAccessEvents.outcomeCode,
         queryHash: dataAccessEvents.queryHash,
         resultCount: dataAccessEvents.resultCount,
+        servingModuleKey: dataAccessEvents.servingModuleKey,
       })
       .from(dataAccessEvents)
       .where(
@@ -960,8 +1191,9 @@ it.live(
       outcomeCode: 'read_allowed',
       queryHash: null,
       resultCount: 0,
+      servingModuleKey: 'core.shell',
     });
-    const refreshingRuntime = makeShellAuthenticationApiRuntime(
+    const refreshingRuntime = makeOwnedShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, {
         ...authentication,
         currentSession: () =>
@@ -1042,7 +1274,7 @@ it.live(
           }),
         ),
     };
-    const unavailableModulesHandler = makeShellAuthenticationApiRuntime(
+    const unavailableModulesHandler = makeOwnedShellAuthenticationApiRuntime(
       authenticationLayer,
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
@@ -1116,7 +1348,7 @@ it.live(
         },
       }),
     };
-    const issuingHandler = makeShellAuthenticationApiRuntime(
+    const issuingHandler = makeOwnedShellAuthenticationApiRuntime(
       authenticationLayer,
       makeGatewayIssuerLayer(issuerDependencies).pipe(Layer.provide(scopeGrantRegistrarLayer())),
       moduleStateLayer,
@@ -1239,8 +1471,27 @@ it.live(
     expect(generatedPrincipal.legalEntityId).toBe(fixtureLegalEntityId);
     expect(generatedPrincipal.principalId).toBe(principalId);
     expect(generatedPrincipal.tenantId).toBe(tenantId);
-    const databaseConnections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+    const databaseConnections = isolated.connections;
     const scopeGrantAdminClient = yield* makeTestPgClient(databaseConnections.admin.connectionString);
+    const sourceIdentities = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
+    const sourceIssuer = sourceIdentities.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id];
+    const issuerAddress = new URL(sourceIssuer.connectionString);
+    expect(sourceIssuer.host).toBe(isolated.connections.runtime.host);
+    expect(sourceIssuer.port).toBe(isolated.connections.runtime.port);
+    expect(sourceIssuer.database).toBe(sourceIdentities.runtime[SHARED_RUNTIME_IDENTITY.id].database);
+    expect(sourceIssuer.user).toBe(SHELL_GATEWAY_ISSUER_IDENTITY.role);
+    expect(issuerAddress.search).toBe('');
+    expect(issuerAddress.hash).toBe('');
+    issuerAddress.pathname = `/${isolated.connections.runtime.database}`;
+    const ownedIssuer = yield* loadDatabaseConnectionPair({
+      environment: {
+        DATABASE_ADMIN_URL: isolated.connections.admin.connectionString,
+        SHELL_GATEWAY_ISSUER_DATABASE_URL: issuerAddress.href,
+      },
+      envPath: '/dev/null',
+      identity: SHELL_GATEWAY_ISSUER_IDENTITY,
+    });
+    const scopeGrantIssuerClient = yield* makeTestPgClient(ownedIssuer.runtime.connectionString);
     // The grant function checks expiry against the database clock, so the issuer reads the same clock.
     const databaseNowSeconds = scopeGrantAdminClient<{
       readonly now: number;
@@ -1248,7 +1499,7 @@ it.live(
       Effect.map(([row]) => row?.now ?? 0),
       Effect.orDie,
     );
-    const partyRegistryIssuingHandler = makeShellAuthenticationApiRuntime(
+    const partyRegistryIssuingHandler = makeOwnedShellAuthenticationApiRuntime(
       authenticationLayer,
       makeGatewayIssuerLayer({
         ...issuerDependencies,
@@ -1258,7 +1509,7 @@ it.live(
           audiences: new Map([['party-registry', 'integration-build']]),
           revision: testRevision,
         }),
-      }).pipe(Layer.provide(GatewayScopeGrantRegistrarLive)),
+      }).pipe(Layer.provide(scopeGrantRegistrarLayer(makeGatewayScopeGrantRegistrar(scopeGrantIssuerClient)))),
       moduleStateLayer,
       installedCatalog(['testing.one']),
       false,
@@ -1331,7 +1582,7 @@ it.live(
       ),
     );
     expect(invalidAudienceResponse.status).toBe(400);
-    const defectHandler = makeShellAuthenticationApiRuntime(
+    const defectHandler = makeOwnedShellAuthenticationApiRuntime(
       authenticationLayer,
       makeGatewayIssuerLayer({
         ...issuerDependencies,
@@ -1422,7 +1673,7 @@ it.live(
     );
     expect(expiredModulesResponse.status).toBe(401);
     expect(yield* Effect.tryPromise(() => expiredModulesResponse.text())).not.toMatch(/30000000|40000000/u);
-  }),
+  }, Effect.provide(shellAuthFixtureServices)),
 );
 it.live(
   'selects, lists, switches, revalidates, and upgrades a multi-tenant session',
@@ -1470,10 +1721,21 @@ it.live(
       multiContextAccessLayer,
       Layer.succeed(LegalEntityContext, multiLegalEntitySelectionOptions.legalEntityContext),
     );
-    const configuration = yield* loadAuthConfig({ envPath: '/dev/null' });
-    const databaseConnections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+    const initialSnapshot = yield* installedSnapshot(['testing.first', 'testing.second']);
+    const testRevision = initialSnapshot.composition.revision;
+    const isolated = yield* makeIsolatedNativeDatabaseFixture({
+      compositionSnapshot: initialSnapshot,
+      mode: 'schema-only',
+      purpose: 'stabilization-1287-shell-auth',
+    });
+    const makeOwnedShellAuthenticationApiRuntime = makeShellRuntimeForDatabase(isolated.connections);
+    const configuration = {
+      ...(yield* loadAuthConfig({ envPath: '/dev/null' })),
+      connectionString: isolated.connections.runtime.connectionString,
+    };
+    const databaseConnections = isolated.connections;
     const adminClient = yield* makeTestPgClient(databaseConnections.admin.connectionString);
-    const coreClient = yield* makeTestPgClient(configuration.connectionString);
+    const coreClient = yield* makeTestPgClient(isolated.connections.admin.connectionString);
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
     const authPersistence = yield* makeAuthDatabase(configuration);
     const authDatabase = authPersistence.executor;
@@ -1644,8 +1906,7 @@ it.live(
     assertOptionalField(initialSessions[0], 'activeTenantId', firstTenantId);
     const pair = yield* Effect.tryPromise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
     const privateJwk = yield* Effect.tryPromise(() => exportJWK(pair.privateKey));
-    const testRevision = (yield* installedSnapshot(['testing.first', 'testing.second'])).composition.revision;
-    const runtime = makeShellAuthenticationApiRuntime(
+    const runtime = makeOwnedShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, authentication),
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
@@ -1743,7 +2004,7 @@ it.live(
             : resolver.resolveBetterAuthUserForTenant(userId, selectedTenantId),
       }),
     );
-    const resolverUnavailableRuntime = makeShellAuthenticationApiRuntime(
+    const resolverUnavailableRuntime = makeOwnedShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, resolverUnavailableAuthentication),
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
@@ -2050,7 +2311,7 @@ it.live(
     yield* assertSessionForbidden(
       authentication.currentSession(authenticatedHeaders).pipe(Effect.provide(multiAuthenticationContextLayer)),
     );
-  }),
+  }, Effect.provide(shellAuthFixtureServices)),
 );
 
 class TenantPartyGatewayTestError extends Schema.TaggedError<TenantPartyGatewayTestError>()(
@@ -2096,6 +2357,30 @@ const tenantPartyServices = NodeChildProcessSpawner.layer.pipe(
 );
 const tenantPartyArtifactServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
+const readFixtureReleaseIdentity = Effect.fn('TenantPartyGatewayTest.releaseIdentity')(
+  function* readFixtureReleaseIdentity(directory: string) {
+    const generated = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          deliveryUnit: Schema.Struct({
+            buildMarker: Schema.String,
+            unitId: Schema.String.pipe(Schema.brand('UltramodernDeliveryUnitId')),
+          }),
+        }),
+      ),
+    )(
+      yield* Effect.tryPromise(() => readFile(path.join(appRoot, directory, 'shared/ultramodern-build.json'), 'utf-8')),
+    );
+    return yield* Effect.try(() =>
+      resolveUltramodernReleaseIdentity({
+        generationBuildMarker: generated.deliveryUnit.buildMarker,
+        unitId: generated.deliveryUnit.unitId,
+        workspaceRoot: appRoot,
+      }),
+    );
+  },
+);
+
 const prepareTenantPartyArtifacts = Effect.fn('TenantPartyGatewayTest.artifacts')(
   function* prepareTenantPartyArtifacts() {
     const toolchainPaths: Record<string, string> = {};
@@ -2106,6 +2391,35 @@ const prepareTenantPartyArtifacts = Effect.fn('TenantPartyGatewayTest.artifacts'
       }
     }
     const toolchainEnvironment = { ...toolchainPaths, APP_ENV_PATH: '/dev/null' };
+    const partyIdentity = yield* readFixtureReleaseIdentity('verticals/party-registry');
+    const shellIdentity = yield* readFixtureReleaseIdentity('apps/shell-super-app');
+    // Source-compiled default HTTP proof: retain the complete actual public documents and their physical hashes.
+    // Separate native relay tests prove the actual packaged receivers.
+    const partyDocument = yield* Effect.tryPromise(() =>
+      readFile(
+        path.join(appRoot, 'verticals/party-registry/.output/public/.well-known/ontos-module-manifest.json'),
+        'utf-8',
+      ),
+    );
+    const shellRuntimeDocument = yield* Effect.tryPromise(() =>
+      readFile(
+        path.join(appRoot, 'apps/shell-super-app/.output/public', ONTOS_SHELL_RUNTIME_CONTRACT_PATH.slice(1)),
+        'utf-8',
+      ),
+    );
+    const partyContract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+      partyDocument,
+    );
+    const shellRuntimeContract = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(OntosShellRuntimeContractSchema),
+    )(shellRuntimeDocument);
+    expect(partyContract.deployment).toMatchObject({ appId: 'party-registry', buildMarker: partyIdentity.buildMarker });
+    expect(shellRuntimeContract.deployment).toMatchObject({
+      appId: 'shell-super-app',
+      buildMarker: shellIdentity.buildMarker,
+    });
+    const partyContractSha256 = contentDigest(partyDocument);
+    const shellRuntimeSha256 = contentDigest(shellRuntimeDocument);
     const crypto = yield* Crypto.Crypto;
     const suffix = yield* crypto.randomUUIDv4();
     const artifact = path.join(appRoot, 'verticals/party-registry/node_modules/.cache/ontos-1267', `${suffix}.mjs`);
@@ -2123,6 +2437,8 @@ const prepareTenantPartyArtifacts = Effect.fn('TenantPartyGatewayTest.artifacts'
         '--platform=node',
         '--format=esm',
         '--packages=external',
+        `--define:ULTRAMODERN_BUILD_MARKER=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(partyIdentity.buildMarker)}`,
+        `--define:ULTRAMODERN_SOURCE_REVISION=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(partyIdentity.sourceRevision)}`,
         `--outfile=${artifact}`,
       ],
       { cwd: appRoot, env: toolchainEnvironment, extendEnv: false, stderr: 'pipe', stdout: 'pipe' },
@@ -2149,6 +2465,7 @@ const prepareTenantPartyArtifacts = Effect.fn('TenantPartyGatewayTest.artifacts'
     );
     expect(descriptionExit).toBe(0);
     const marker = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PartyOwnerMarkerSchema))(markerLines[0]);
+    expect(marker).toEqual(partyContract.deployment);
     const shellArtifact = path.join(appRoot, 'apps/shell-super-app/node_modules/.cache/ontos-1267', `${suffix}.mjs`);
     yield* Effect.addFinalizer(() => Effect.promise(() => rm(shellArtifact, { force: true })));
     const shellBundle = yield* ChildProcess.make(
@@ -2164,6 +2481,8 @@ const prepareTenantPartyArtifacts = Effect.fn('TenantPartyGatewayTest.artifacts'
         '--platform=node',
         '--format=esm',
         '--packages=external',
+        `--define:ULTRAMODERN_BUILD_MARKER=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(shellIdentity.buildMarker)}`,
+        `--define:ULTRAMODERN_SOURCE_REVISION=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(shellIdentity.sourceRevision)}`,
         `--outfile=${shellArtifact}`,
       ],
       { cwd: appRoot, env: toolchainEnvironment, extendEnv: false, stderr: 'pipe', stdout: 'pipe' },
@@ -2173,7 +2492,38 @@ const prepareTenantPartyArtifacts = Effect.fn('TenantPartyGatewayTest.artifacts'
       { concurrency: 3 },
     );
     expect(shellBundleExit).toBe(0);
-    return { artifact, marker, shellArtifact, toolchainEnvironment };
+    const shellDescription = yield* ChildProcess.make(process.execPath, [shellArtifact, '--describe'], {
+      cwd: appRoot,
+      env: toolchainEnvironment,
+      extendEnv: false,
+      stderr: 'pipe',
+      stdout: 'pipe',
+    });
+    const [shellMarkerLines, shellDescriptionExit] = yield* Effect.all(
+      [
+        shellDescription.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runCollect),
+        shellDescription.exitCode,
+        Stream.runDrain(shellDescription.stderr),
+      ],
+      { concurrency: 3 },
+    );
+    expect(shellDescriptionExit).toBe(0);
+    const shellReceiverDeployment = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(ShellOwnerReadySchema.fields.marker),
+    )(shellMarkerLines[0]);
+    expect(shellReceiverDeployment).toEqual(shellRuntimeContract.deployment);
+    expect(shellReceiverDeployment.buildMarker).toBe(shellIdentity.buildMarker);
+    return {
+      artifact,
+      marker,
+      partyContractSha256,
+      partyDocument,
+      shellArtifact,
+      shellReceiverDeployment,
+      shellRuntimeDocument,
+      shellRuntimeSha256,
+      toolchainEnvironment,
+    };
   },
 );
 const TenantPartyArtifacts = Context.Service<Effect.Success<ReturnType<typeof prepareTenantPartyArtifacts>>>(
@@ -2186,13 +2536,26 @@ const tenantPartyArtifactsLayer = Layer.effect(TenantPartyArtifacts, prepareTena
 const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(function* prepareTenantPartyCase(
   quotaOnly: boolean,
 ) {
-  const { artifact, marker, shellArtifact, toolchainEnvironment } = yield* TenantPartyArtifacts;
+  const {
+    artifact,
+    marker,
+    partyContractSha256,
+    partyDocument,
+    shellArtifact,
+    shellReceiverDeployment,
+    shellRuntimeDocument,
+    shellRuntimeSha256,
+    toolchainEnvironment,
+  } = yield* TenantPartyArtifacts;
   const crypto = yield* Crypto.Crypto;
   const suffix = yield* crypto.randomUUIDv4();
-  const snapshot = yield* makeCompositionSnapshot(
-    installedContracts(['party.registry']).map((contract) => ({ ...contract, deployment: marker })),
-    3_600_000,
-  );
+  const snapshot = yield* makeCompositionSnapshot([partyDocument], 3_600_000, {
+    document: shellRuntimeDocument,
+    receiverDeployment: shellReceiverDeployment,
+  });
+  expect(snapshot.composition.modules[0]?.contract.sha256).toBe(partyContractSha256);
+  expect(snapshot.composition.modules[0]?.contractDocument).toBe(partyDocument);
+  expect(snapshot.composition.shell.runtimeContract.sha256).toBe(shellRuntimeSha256);
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
     mode: 'schema-only',
@@ -2773,7 +3136,9 @@ const tenantPartyPublicGateway = Effect.fn('TenantPartyGatewayTest.publicGateway
         },
       }).pipe(
         Effect.provideContext(runtimeContext),
-        Effect.provideService(InstalledModuleCatalogService, { load: Effect.succeed(catalog) }),
+        Effect.provideService(InstalledModuleCatalogService, {
+          loadForRevision: (_compositionRevision) => Effect.succeed(catalog),
+        }),
       );
     });
     yield* changeState('inactive');

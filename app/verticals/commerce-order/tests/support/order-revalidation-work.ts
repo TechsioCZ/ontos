@@ -5,6 +5,7 @@ import { Effect, Schema } from 'effect';
 import { RevalidateOrderCommitmentPayloadSchema } from '../../shared/actions/revalidate-order-commitment.ts';
 import { revalidateOrderCommitmentAction } from '../../src/actions/revalidate-order-commitment.action.ts';
 import type { OrderCommitmentServices } from '../../src/services/order-commitment.service.ts';
+import { commerceOrderRegistration } from '../../vertical.registration.ts';
 
 export const orderTenantId = '40000000-0000-4000-8000-000000000001';
 export const orderLegalEntityId = '30000000-0000-4000-8000-000000000001';
@@ -72,6 +73,7 @@ export const runOrderRevalidation = Effect.fn('OrderRevalidationWork.run')(funct
   const harness = yield* makeActionTestHarness({
     actionPermission: 'allowed',
     legalEntityPermission: 'allowed',
+    ownerRegistration: commerceOrderRegistration,
     services: [bindActionTestServices(revalidateOrderCommitmentAction, services)],
     tenantPermission: 'allowed',
   });

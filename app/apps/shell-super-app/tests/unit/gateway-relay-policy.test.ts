@@ -67,6 +67,7 @@ it.each([
   ['commerce-customer-context', 'commerce.customer-context.api.market-affected-use-assessment'],
   ['commerce-customer-context', 'commerce.customer-context.reserve-market-retirement'],
   ['commerce-customer-context', 'commerce.customer-context.api.market-retirement-reservation-recovery'],
+  ['commerce-customer-context', 'commerce.customer-context.api.market-subject-restrictions-current'],
 ])('permits enrolled Market to reach %s operation %s only with matching source authority', (audience, operationKey) => {
   const destination = { ...target, audience, operationKey };
   expect(permitsGatewayRelay(binding.providerKeyId, marketBinding, marketSource, destination)).toBe(true);
@@ -92,10 +93,36 @@ it.each([
   ['party-registry', 'party.registry.api.party-detail'],
   ['storefront-registry', 'commerce.customer-context.reserve-market-retirement'],
   ['commerce-customer-context', 'commerce.storefront-registry.api.current-storefront-application'],
-  ['commerce-customer-context', 'commerce.customer-context.api.market-subject-restrictions-current'],
+  ['commerce-customer-context', 'commerce.customer-context.api.unapproved-profile-read'],
   ['commerce-customer-context', '*'],
 ])('rejects Market relationship outside approval: %s / %s', (audience, operationKey) => {
   expect(
     permitsGatewayRelay(binding.providerKeyId, marketBinding, marketSource, { ...target, audience, operationKey }),
+  ).toBe(false);
+});
+
+it('enrolls only CCC compatibility at PriceGroup without widening other source or operation tuples', () => {
+  const customerBinding = { ...binding, sourceAppId: 'commerce-customer-context' };
+  const customerSource = { ...source, aud: customerBinding.sourceAppId };
+  const compatibility = {
+    ...target,
+    audience: 'price-group-catalog',
+    operationKey: 'pricing.price-group-catalog.api.validate-price-group-compatibility',
+  };
+  expect(permitsGatewayRelay(binding.providerKeyId, customerBinding, customerSource, compatibility)).toBe(true);
+  expect(permitsGatewayRelay('other-key', customerBinding, customerSource, compatibility)).toBe(false);
+  expect(permitsGatewayRelay(binding.providerKeyId, binding, source, compatibility)).toBe(false);
+  expect(permitsGatewayRelay(binding.providerKeyId, marketBinding, marketSource, compatibility)).toBe(false);
+  expect(
+    permitsGatewayRelay(binding.providerKeyId, customerBinding, customerSource, {
+      ...compatibility,
+      operationKey: 'pricing.price-group-catalog.api.price-group-current',
+    }),
+  ).toBe(false);
+  expect(
+    permitsGatewayRelay(binding.providerKeyId, customerBinding, customerSource, {
+      ...compatibility,
+      audience: 'another-catalog',
+    }),
   ).toBe(false);
 });

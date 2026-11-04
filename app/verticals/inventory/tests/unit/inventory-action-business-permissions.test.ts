@@ -2,7 +2,7 @@ import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
 
 import { CorrectStockPositionPayloadSchema } from '../../shared/actions/correct-stock-position.ts';
 import { CreateInventoryReservationPayloadSchema } from '../../shared/actions/create-inventory-reservation.ts';
@@ -162,32 +162,50 @@ const inventoryResourceTarget = (resource: typeof reservationRef | typeof protec
 describe('Inventory Action business permissions', () => {
   it('binds stable public writes to the exact durable Inventory Resource', () => {
     expect(
-      getActionBusinessPermissionTargetResolver(createInventoryReservationAction)?.(reservationPayload, scope),
+      getActionOwnerPermissionTargetResolver(createInventoryReservationAction)?.(reservationPayload, scope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
     ).toEqual({
       permission: 'inventory.reservation.establish',
       target: inventoryResourceTarget(reservationRef),
     });
     expect(
-      getActionBusinessPermissionTargetResolver(releaseInventoryReservationAction)?.(releasePayload, scope),
+      getActionOwnerPermissionTargetResolver(releaseInventoryReservationAction)?.(releasePayload, scope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
     ).toEqual({
       permission: 'inventory.reservation.release',
       target: inventoryResourceTarget(reservationRef),
     });
     expect(
-      getActionBusinessPermissionTargetResolver(establishCommitmentProtectionAction)?.(protectionPayload, scope),
+      getActionOwnerPermissionTargetResolver(establishCommitmentProtectionAction)?.(protectionPayload, scope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
     ).toEqual({
       permission: 'inventory.commitment_protection.establish',
       target: inventoryResourceTarget(protectionRef),
     });
-    expect(getActionBusinessPermissionTargetResolver(stockReceiptAction)?.(receiptPayload, scope)).toEqual({
+    expect(
+      getActionOwnerPermissionTargetResolver(stockReceiptAction)?.(receiptPayload, scope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
+    ).toEqual({
       permission: 'inventory.stock.receipt',
       target: inventoryResourceTarget(positionRef),
     });
-    expect(getActionBusinessPermissionTargetResolver(stockIssueAction)?.(issuePayload, scope)).toEqual({
+    expect(
+      getActionOwnerPermissionTargetResolver(stockIssueAction)?.(issuePayload, scope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
+    ).toEqual({
       permission: 'inventory.stock.issue',
       target: inventoryResourceTarget(positionRef),
     });
-    expect(getActionBusinessPermissionTargetResolver(correctStockPositionAction)?.(correctionPayload, scope)).toEqual({
+    expect(
+      getActionOwnerPermissionTargetResolver(correctStockPositionAction)?.(correctionPayload, scope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
+    ).toEqual({
       permission: 'inventory.stock.correct',
       target: inventoryResourceTarget(positionRef),
     });
@@ -202,7 +220,7 @@ describe('Inventory Action business permissions', () => {
       stockIssueAction,
       correctStockPositionAction,
     ]) {
-      expect(action.descriptor.businessPermission).toBeDefined();
+      expect(action.descriptor.ownerPermissions).toBeDefined();
       expect(action.descriptor.resourcePermission).toBeDefined();
     }
   });

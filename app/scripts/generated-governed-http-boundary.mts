@@ -28,6 +28,7 @@ import {
   maskNonCode,
   toCamelCase,
   toPascalCase,
+  validRuntimeDeclarationViews,
 } from './scaffolding/shared.mts';
 
 const GOVERNED_API_SLOT_END = '// </generated-governed-http-api-additions>';
@@ -72,7 +73,51 @@ const hasExactlyOne = (source: string | undefined, expression: RegExp): boolean 
 const matchingDelimiterEnd = (source: string, start: number, opening: string, closing: string): number | undefined =>
   matchingDelimiter(maskNonCode(source), start, opening, closing);
 
-const maskComments = (source: string): string => maskNonCode(source, true);
+interface SourceDepthAnalysis {
+  readonly code: string;
+  readonly codePositions: Map<number, boolean>;
+  readonly comments: string;
+  readonly prefixDepths: Int32Array;
+}
+
+// Source strings are immutable cache keys. Bound retained analyses because scripts may validate
+// many disposable owners in one process; repeated contributions reuse the same owner sources.
+const sourceDepthAnalyses = new Map<string, SourceDepthAnalysis>();
+const MAX_SOURCE_DEPTH_ANALYSES = 32;
+const sourceDepthAnalysis = (source: string): SourceDepthAnalysis => {
+  const cached = sourceDepthAnalyses.get(source);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const code = maskNonCode(source);
+  const prefixDepths = new Int32Array(code.length + 1);
+  let depth = 0;
+  for (let index = 0; index < code.length; index += 1) {
+    const character = code.charAt(index);
+    if ('{(['.includes(character)) {
+      depth += 1;
+    } else if ('})]'.includes(character)) {
+      depth -= 1;
+    }
+    prefixDepths[index + 1] = depth;
+  }
+  if (sourceDepthAnalyses.size >= MAX_SOURCE_DEPTH_ANALYSES) {
+    const oldest = sourceDepthAnalyses.keys().next().value;
+    if (oldest !== undefined) {
+      sourceDepthAnalyses.delete(oldest);
+    }
+  }
+  const analysis: SourceDepthAnalysis = {
+    code,
+    codePositions: new Map(),
+    comments: maskNonCode(source, true),
+    prefixDepths,
+  };
+  sourceDepthAnalyses.set(source, analysis);
+  return analysis;
+};
+
+const maskComments = (source: string): string => sourceDepthAnalysis(source).comments;
 
 const callArgument = (source: string | undefined, declaration: RegExp, argumentIndex = 0): string | undefined => {
   if (source === undefined) {
@@ -151,7 +196,11 @@ const isWholeCallExpression = (source: string, declaration: RegExp): boolean => 
   return opening !== -1 && closing === source.length - 1;
 };
 
-const wholeCallArguments = (source: string, declaration: RegExp): readonly string[] | undefined => {
+const wholeCallArguments = (
+  source: string,
+  declaration: RegExp,
+  rejectArgumentHoles = false,
+): readonly string[] | undefined => {
   const match = declaration.exec(source);
   if (match?.index === undefined || !isWholeCallExpression(source, declaration)) {
     return undefined;
@@ -161,56 +210,31 @@ const wholeCallArguments = (source: string, declaration: RegExp): readonly strin
   if (opening === -1 || closing === undefined) {
     return undefined;
   }
-  return separatedSource(
+  const argumentsList = separatedSource(
     source,
     topLevelSeparators(maskNonCode(source), ',', opening + 1, closing),
     opening + 1,
     closing,
-  ).filter((argument) => argument !== '');
-};
-
-interface SourceDepthAnalysis {
-  readonly code: string;
-  readonly prefixDepths: Int32Array;
-}
-
-// Source strings are immutable cache keys. Bound retained analyses because scripts may validate
-// many disposable owners in one process; repeated contributions reuse the same owner sources.
-const sourceDepthAnalyses = new Map<string, SourceDepthAnalysis>();
-const MAX_SOURCE_DEPTH_ANALYSES = 32;
-const sourceDepthAnalysis = (source: string): SourceDepthAnalysis => {
-  const cached = sourceDepthAnalyses.get(source);
-  if (cached !== undefined) {
-    return cached;
+  );
+  const explicitArguments = argumentsList.at(-1) === '' ? argumentsList.slice(0, -1) : argumentsList;
+  if (rejectArgumentHoles && explicitArguments.some((argument) => argument === '')) {
+    return undefined;
   }
-  const code = maskNonCode(source);
-  const prefixDepths = new Int32Array(code.length + 1);
-  let depth = 0;
-  for (let index = 0; index < code.length; index += 1) {
-    const character = code.charAt(index);
-    if ('{(['.includes(character)) {
-      depth += 1;
-    } else if ('})]'.includes(character)) {
-      depth -= 1;
-    }
-    prefixDepths[index + 1] = depth;
-  }
-  if (sourceDepthAnalyses.size >= MAX_SOURCE_DEPTH_ANALYSES) {
-    const oldest = sourceDepthAnalyses.keys().next().value;
-    if (oldest !== undefined) {
-      sourceDepthAnalyses.delete(oldest);
-    }
-  }
-  const analysis = { code, prefixDepths };
-  sourceDepthAnalyses.set(source, analysis);
-  return analysis;
+  return argumentsList.filter((argument) => argument !== '');
 };
 
 const codeDepthBeforePosition = (source: string, target: number): number =>
   sourceDepthAnalysis(source).prefixDepths[target] ?? 0;
 
-const codeDepthAtPosition = (source: string, target: number): number | undefined =>
-  isCodePosition(source, target) ? codeDepthBeforePosition(source, target) : undefined;
+const codeDepthAtPosition = (source: string, target: number): number | undefined => {
+  const analysis = sourceDepthAnalysis(source);
+  let codePosition = analysis.codePositions.get(target);
+  if (codePosition === undefined) {
+    codePosition = isCodePosition(source, target);
+    analysis.codePositions.set(target, codePosition);
+  }
+  return codePosition ? codeDepthBeforePosition(source, target) : undefined;
+};
 
 const isTopLevelCodePosition = (source: string, target: number): boolean => codeDepthAtPosition(source, target) === 0;
 
@@ -1306,7 +1330,151 @@ const hasCryptoMergedReadInjection = (source: string, factory: SourceRange): boo
 const wholeCall = (expression: string | undefined, callee: RegExp): boolean =>
   expression !== undefined && isWholeCallExpression(expression, callee);
 
-const hasGovernedHandlerRoot = (source: string): boolean => {
+/** New owner constructors retain exact public Core and own-registration import provenance. */
+const hasCanonicalGeneratedReadAuthority = (source: string): boolean => {
+  if (source.includes('const governedActiveApplicationCompositionLive =')) {
+    const config = namedSourceImport(source, 'GovernedApplicationCompositionConfigLive');
+    const nativeSource = namedSourceImport(source, 'GovernedApplicationCompositionSourceLive');
+    const authority = assignedExpression(source, /const governedActiveApplicationCompositionLive\s*=\s*/u);
+    if (
+      config?.imported !== 'ActiveApplicationCompositionConfigLive' ||
+      config.modulePath !== '@app/core-runtime/modules/active-application-composition' ||
+      nativeSource?.imported !== 'ActiveApplicationCompositionSourceLive' ||
+      nativeSource.modulePath !== '@app/core-runtime/modules/active-application-composition-source' ||
+      authority === undefined ||
+      !/^GovernedApplicationCompositionConfigLive\.pipe\(\s*GovernedReadLayer\.provide\(governedApplicationCompositionSourceLive\),?\s*\)$/u.test(
+        authority,
+      )
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const hasConstructorOwnerPair = (
+  source: string,
+  argumentsSource: string,
+  factory: string,
+  importedFactory: NamedSourceImport,
+  backendRegistration?: string,
+): boolean => {
+  const pair = /^(?<deployment>[A-Za-z][A-Za-z0-9]*),\s*(?<registration>[A-Za-z][A-Za-z0-9]*),?$/u.exec(
+    argumentsSource,
+  )?.groups;
+  if (pair === undefined) {
+    return false;
+  }
+  const deployment = namedSourceImport(source, pair.deployment ?? '');
+  const registration = namedSourceImport(source, pair.registration ?? '');
+  if (
+    deployment?.modulePath !== '../shared/ultramodern-build.ts' ||
+    deployment.imported !== 'ultramodernDeliveryUnit' ||
+    !(
+      (registration?.modulePath === '../vertical.registration.ts' &&
+        /^[a-z][A-Za-z0-9]*Registration$/u.test(registration.imported)) ||
+      (backendRegistration !== undefined &&
+        registration?.modulePath === '../vertical.runtime-declaration.ts' &&
+        registration.imported === backendRegistration)
+    )
+  ) {
+    return false;
+  }
+  for (const [local, imported] of [
+    [factory, importedFactory],
+    [pair.deployment, deployment],
+    [pair.registration, registration],
+  ] as const) {
+    if (
+      local === undefined ||
+      imported === undefined ||
+      !hasExactValueImport(
+        source,
+        imported.imported === local ? local : `${imported.imported} as ${local}`,
+        imported.modulePath,
+        true,
+      )
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const hasBoundOwnerRuntimeConstructor = (
+  source: string,
+  runtimeCall: RegExpMatchArray,
+  backendRegistration?: string,
+): boolean => {
+  const factory = runtimeCall.groups?.factory;
+  if (factory === undefined || runtimeCall.index === undefined || source[runtimeCall.index - 1] === '.') {
+    return false;
+  }
+  const opening = runtimeCall.index + runtimeCall[0].lastIndexOf('(');
+  const closing = matchingDelimiterEnd(source, opening, '(', ')');
+  if (closing === undefined) {
+    return false;
+  }
+  const argumentsSource = source.slice(opening + 1, closing).trim();
+  const importedFactory = namedSourceImport(source, factory);
+  const isRead = factory === 'makeReadRuntimeLive' || factory === 'GovernedMakeReadRuntimeLive';
+  if (
+    importedFactory?.modulePath !== CORE_RUNTIME_MODULE ||
+    importedFactory.imported !== (isRead ? 'makeReadRuntimeLive' : 'makeActionRuntimeLive')
+  ) {
+    return false;
+  }
+  // Existing Core Action construction remains supported; new owner-bound calls are closed pairs.
+  if (!isRead && /^[A-Za-z][A-Za-z0-9]*$/u.test(argumentsSource)) {
+    return true;
+  }
+  return hasConstructorOwnerPair(source, argumentsSource, factory, importedFactory, backendRegistration);
+};
+
+const hasBoundOwnerRuntimeConstructors = (source: string, backendRegistration?: string): boolean => {
+  if (!hasCanonicalGeneratedReadAuthority(source)) {
+    return false;
+  }
+  const runtimeCalls = [
+    ...maskNonCode(source).matchAll(
+      /\b(?<factory>makeReadRuntimeLive|GovernedMakeReadRuntimeLive|makeActionRuntimeLive|GovernedMakeActionRuntimeLive)\s*\(/gu,
+    ),
+  ];
+  return runtimeCalls.every((runtimeCall) => hasBoundOwnerRuntimeConstructor(source, runtimeCall, backendRegistration));
+};
+
+const GOVERNED_READ_DEPENDENCY_PROVISION = 'GovernedReadLayer.provide(governedReadRuntimeDependenciesLive)';
+
+const hasOwnerBoundReadPipe = (expression: string | undefined, provider: string): boolean => {
+  const pipeline = expression === undefined ? undefined : outputPipeExpression(expression);
+  if (
+    pipeline === undefined ||
+    !/^(?:makeReadRuntimeLive|GovernedMakeReadRuntimeLive)\(\s*[A-Za-z][A-Za-z0-9]*,\s*[A-Za-z][A-Za-z0-9]*,?\s*\)$/u.test(
+      pipeline.base,
+    )
+  ) {
+    return false;
+  }
+  const generatedOwner =
+    /^GovernedMakeReadRuntimeLive\(\s*governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)$/u.test(
+      pipeline.base,
+    );
+  return (
+    pipeline.transforms[0] === provider &&
+    (!generatedOwner ||
+      pipeline.transforms[1] === 'GovernedReadLayer.provide(governedActiveApplicationCompositionLive)')
+  );
+};
+
+const hasLegacyReadRuntimePipe = (expression: string | undefined): boolean =>
+  wholeCall(expression, /^ReadRuntimeLive\.pipe\(/u) &&
+  callArgument(expression, /^ReadRuntimeLive\.pipe\(/u) === 'Layer.provide(readRuntimeDependenciesLive)';
+
+const hasGovernedHandlerRoot = (source: string, backendRegistration?: string): boolean => {
+  if (!hasBoundOwnerRuntimeConstructors(source, backendRegistration)) {
+    return false;
+  }
   const factory = exportedRuntimeFactory(source);
   const factoryCode = factory === undefined ? '' : maskNonCode(factory.value);
   const typedRest = /^\(\s*\.\.\.[A-Za-z][A-Za-z0-9]*:\s*[A-Za-z][A-Za-z0-9]*\s*\)/u.test(factoryCode);
@@ -1326,22 +1494,25 @@ const hasGovernedHandlerRoot = (source: string): boolean => {
   const runtime = assignedExpression(source, /const governedReadRuntimeLive\s*=\s*/u);
   if (
     runtime === undefined ||
-    (!/^readRuntimeLive$/u.test(runtime) && !runtime.startsWith('GovernedReadRuntimeLive.pipe('))
+    (!/^readRuntimeLive$/u.test(runtime) &&
+      !runtime.startsWith('GovernedReadRuntimeLive.pipe(') &&
+      !hasOwnerBoundReadPipe(runtime, GOVERNED_READ_DEPENDENCY_PROVISION))
   ) {
     return false;
   }
   if (runtime === 'readRuntimeLive') {
     const ownerRuntime = assignedExpression(source, /const readRuntimeLive\s*=\s*/u);
     if (
-      !wholeCall(ownerRuntime, /^ReadRuntimeLive\.pipe\(/u) ||
-      callArgument(ownerRuntime, /^ReadRuntimeLive\.pipe\(/u) !== 'Layer.provide(readRuntimeDependenciesLive)'
+      !hasOwnerBoundReadPipe(ownerRuntime, 'Layer.provide(readRuntimeDependenciesLive)') &&
+      !hasLegacyReadRuntimePipe(ownerRuntime)
     ) {
       return false;
     }
+  } else if (hasOwnerBoundReadPipe(runtime, GOVERNED_READ_DEPENDENCY_PROVISION)) {
+    // Constructor and both argument imports were checked above; retain the exact dependency pipe.
   } else if (
     !isWholeCallExpression(runtime, /^GovernedReadRuntimeLive\.pipe\(/u) ||
-    callArgument(runtime, /^GovernedReadRuntimeLive\.pipe\(/u) !==
-      'GovernedReadLayer.provide(governedReadRuntimeDependenciesLive)'
+    callArgument(runtime, /^GovernedReadRuntimeLive\.pipe\(/u) !== GOVERNED_READ_DEPENDENCY_PROVISION
   ) {
     return false;
   }
@@ -1493,7 +1664,7 @@ const hasReadDescriptorPolicy = (read: string, allowedAccessKinds: ReadonlySet<s
     matches(objectProperty(read, 'legalEntityScope'), /^['"](?:required|optional|forbidden)['"]$/u) &&
     matches(
       objectProperty(read, 'permissionTarget'),
-      /^['"](?:assortment_permission|business_permission|conditional|legal_entity|module|resource|tenant)['"]$/u,
+      /^['"](?:assortment_permission|business_permission|conditional|legal_entity|module|owner_permission|resource|tenant)['"]$/u,
     ) &&
     policies !== undefined &&
     policies.startsWith('[') &&
@@ -2079,13 +2250,7 @@ const localReadFactoryMaker = (source: string, candidate: string): LocalReadFact
   if (initializer === undefined || maker === undefined || makerSource === undefined || !makerSource.startsWith('(')) {
     return undefined;
   }
-  const invocation = new RegExp(
-    `^${escapeRegExp(maker)}\\(\\s*(?:[A-Za-z_$][A-Za-z0-9_$]*(?:\\s*,\\s*[A-Za-z_$][A-Za-z0-9_$]*)*\\s*,?)?\\s*\\)$`,
-    'u',
-  );
-  const argumentsList = invocation.test(maskComments(initializer))
-    ? wholeCallArguments(initializer, new RegExp(`^${escapeRegExp(maker)}\\(`, 'u'))
-    : undefined;
+  const argumentsList = wholeCallArguments(initializer, new RegExp(`^${escapeRegExp(maker)}\\(`, 'u'), true);
   const closing = matchingDelimiterEnd(makerSource, 0, '(', ')');
   if (
     argumentsList === undefined ||
@@ -2155,6 +2320,137 @@ const readFactoryDependencyDeclarationCount = (
   return local !== undefined && isExecutableCallback(local) ? 1 : undefined;
 };
 
+const hasImmutableReadFactoryDataExport = (owner: string, binding: string): boolean => {
+  const record = constInitializer(owner, binding);
+  if (record === undefined || !record.endsWith('as const')) {
+    return false;
+  }
+  const document = record.slice(0, -'as const'.length).trim();
+  const members = topLevelObjectEntries(document);
+  const declaration = new RegExp(`\\bexport\\s+const\\s+${escapeRegExp(binding)}\\b`, 'gu');
+  const declarations = [...maskNonCode(owner).matchAll(declaration)].filter(
+    (candidate) => candidate.index !== undefined && isTopLevelCodePosition(owner, candidate.index),
+  );
+  const tokens = tokenizeGovernedClient(owner);
+  const referencesAreClosed = tokens.every(
+    (token, index) =>
+      token.kind !== SyntaxKind.Identifier ||
+      token.value !== binding ||
+      tokens[index - 1]?.kind === SyntaxKind.ConstKeyword ||
+      tokens[index - 1]?.kind === SyntaxKind.TypeOfKeyword,
+  );
+  return (
+    declarations.length === 1 &&
+    referencesAreClosed &&
+    members !== undefined &&
+    new Set(members.map(objectEntryKey)).size === members.length &&
+    members.every((member) => {
+      const field = objectEntryKey(member);
+      const expression = field === undefined ? undefined : objectProperty(document, field);
+      const value = expression === undefined ? [] : tokenizeGovernedClient(expression);
+      return value.length === 1 && value[0]?.kind === SyntaxKind.StringLiteral;
+    }) &&
+    hasStableReadFactoryBindings(owner, new Map([[binding, 1]]), '')
+  );
+};
+
+const hasOwnerLocalReadFactoryDataOption = (
+  sources: ReadonlyMap<string, string>,
+  readFile: string,
+  ownerPath: string,
+  source: string,
+  type: string,
+  value: string,
+): boolean => {
+  const valueImport = namedSourceImport(source, value);
+  const typeImport = namedSourceImport(source, type, true);
+  if (valueImport === undefined || typeImport === undefined) {
+    return false;
+  }
+  const valueFile = path.posix.normalize(path.posix.join(path.posix.dirname(readFile), valueImport.modulePath));
+  const typeFile = path.posix.normalize(path.posix.join(path.posix.dirname(readFile), typeImport.modulePath));
+  const owner = sources.get(valueFile);
+  if (
+    !valueImport.modulePath.startsWith('.') ||
+    valueFile !== typeFile ||
+    !valueFile.startsWith(`${ownerPath}/`) ||
+    owner === undefined
+  ) {
+    return false;
+  }
+  const annotation = assignedExpression(
+    owner,
+    new RegExp(`export type ${escapeRegExp(typeImport.imported)}\\s*=\\s*`, 'u'),
+  );
+  const alternatives = annotation
+    ?.split('|')
+    .map((part) => part.trim())
+    .filter((part) => part !== '');
+  return (
+    alternatives !== undefined &&
+    alternatives.length > 0 &&
+    alternatives.every((alternative) => /^typeof [A-Za-z_$][A-Za-z0-9_$]*$/u.test(alternative)) &&
+    alternatives.includes(`typeof ${valueImport.imported}`) &&
+    hasImmutableReadFactoryDataExport(owner, valueImport.imported)
+  );
+};
+
+/** A typed optional data option retains its own immutable literal-record provenance. */
+const localReadFactoryDataOptions = (
+  sources: ReadonlyMap<string, string>,
+  readFile: string,
+  ownerPath: string,
+  source: string,
+  parameter: string,
+  argument: string | undefined,
+): { readonly bindings: ReadonlyMap<string, number>; readonly name: string } | undefined => {
+  const parsed = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*):\s*(?<optionsType>\{[\s\S]*\})\s*=\s*\{\s*\}$/u.exec(parameter);
+  const name = parsed?.groups?.name;
+  const optionsType = parsed?.groups?.optionsType;
+  if (name === undefined || optionsType === undefined) {
+    return undefined;
+  }
+  const properties = separatedSource(
+    optionsType,
+    topLevelSeparators(maskNonCode(optionsType), ';', 1, optionsType.length - 1),
+    1,
+    optionsType.length - 1,
+  ).filter((entry) => entry !== '');
+  const descriptors = properties.map(
+    (property) =>
+      /^readonly\s+(?<key>[A-Za-z_$][A-Za-z0-9_$]*)\?:\s*(?<type>(?:typeof\s+)?[A-Za-z_$][A-Za-z0-9_$]*)$/u.exec(
+        property,
+      )?.groups,
+  );
+  if (
+    descriptors.some((descriptor) => descriptor === undefined) ||
+    new Set(descriptors.map((descriptor) => descriptor?.key)).size !== descriptors.length
+  ) {
+    return undefined;
+  }
+  const entries = argument === undefined ? [] : topLevelObjectEntries(argument);
+  const bindings = new Map<string, number>();
+  if (entries === undefined || new Set(entries.map(objectEntryKey)).size !== entries.length) {
+    return undefined;
+  }
+  for (const entry of entries) {
+    const key = objectEntryKey(entry);
+    const type = descriptors.find((property) => property?.key === key)?.type;
+    const value = key === undefined ? undefined : objectProperty(argument ?? '', key);
+    if (
+      type === undefined ||
+      value === undefined ||
+      !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(value) ||
+      !hasOwnerLocalReadFactoryDataOption(sources, readFile, ownerPath, source, type, value)
+    ) {
+      return undefined;
+    }
+    bindings.set(value, 0);
+    bindings.set(type, 0);
+  }
+  return { bindings, name };
+};
+
 interface LocalReadFactoryDependencies {
   readonly bindings: ReadonlyMap<string, number>;
   readonly minimumArguments: number;
@@ -2177,6 +2473,21 @@ const localReadFactoryDependencies = (
   const parameterNames: string[] = [];
   let minimumArguments = 0;
   for (const [index, parameter] of factory.parameters.entries()) {
+    const options = localReadFactoryDataOptions(
+      sources,
+      readFile,
+      ownerPath,
+      source,
+      parameter,
+      factory.argumentsList[index],
+    );
+    if (options !== undefined) {
+      parameterNames.push(options.name);
+      for (const [binding, count] of options.bindings) {
+        bindings.set(binding, count);
+      }
+      continue;
+    }
     const parsed =
       /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*):\s*typeof\s+(?<dependency>[A-Za-z_$][A-Za-z0-9_$]*)(?:\s*=\s*(?<default>[A-Za-z_$][A-Za-z0-9_$]*))?$/u.exec(
         parameter,
@@ -2242,6 +2553,81 @@ export const hasOwnerLocalReadServiceFactoryResult = (
   );
 };
 
+const READ_OWNER_PERMISSION_CALL = /^(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)(?:<[\s\S]+>)?\(/u;
+
+const isCoreReadOwnerPermissionDeclaration = (source: string, value: string): boolean => {
+  const binding = READ_OWNER_PERMISSION_CALL.exec(value)?.groups?.binding;
+  const imported = binding === undefined ? undefined : namedSourceImport(source, binding);
+  return (
+    wholeCallArguments(value, READ_OWNER_PERMISSION_CALL, true)?.length === 2 &&
+    imported?.modulePath === CORE_RUNTIME_MODULE &&
+    imported.imported === 'defineReadOwnerPermission'
+  );
+};
+
+const hasOwnerReadPermissionFactoryExport = (source: string, binding: string): boolean => {
+  if (
+    topLevelBindingDeclarations(source, binding).length !== 1 ||
+    !new RegExp(`\\bexport\\s+const\\s+${escapeRegExp(binding)}\\s*=`, 'u').test(maskComments(source))
+  ) {
+    return false;
+  }
+  const initializer = constInitializer(source, binding);
+  if (initializer === undefined) {
+    return false;
+  }
+  const [arrow] = topLevelSeparators(maskNonCode(initializer), '=', 0, initializer.length, true);
+  if (arrow === undefined || initializer.slice(arrow, arrow + 2) !== '=>') {
+    return false;
+  }
+  const returned = initializer.slice(arrow + 2).trim();
+  const coreBinding = READ_OWNER_PERMISSION_CALL.exec(returned)?.groups?.binding;
+  return (
+    coreBinding !== undefined &&
+    !new RegExp(`\\b${escapeRegExp(coreBinding)}\\b`, 'u').test(initializer.slice(0, arrow)) &&
+    isCoreReadOwnerPermissionDeclaration(source, returned)
+  );
+};
+
+/** Recognize the opaque Core declaration itself, or one expression-bodied owner-local factory for it. */
+export const hasReadOwnerPermissionDeclaration = (
+  sources: ReadonlyMap<string, string>,
+  readFile: string,
+  ownerPath: string,
+  candidate: string | undefined,
+): boolean => {
+  const source = sources.get(readFile);
+  if (
+    source === undefined ||
+    candidate === undefined ||
+    path.posix.normalize(ownerPath) !== ownerPath ||
+    path.posix.normalize(readFile) !== readFile ||
+    !readFile.startsWith(`${ownerPath}/`)
+  ) {
+    return false;
+  }
+  const expression = /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate) ? constInitializer(source, candidate) : candidate;
+  if (expression === undefined) {
+    return false;
+  }
+  if (isCoreReadOwnerPermissionDeclaration(source, expression)) {
+    return true;
+  }
+  const binding = READ_OWNER_PERMISSION_CALL.exec(expression)?.groups?.binding;
+  const imported = binding === undefined ? undefined : namedSourceImport(source, binding);
+  if (
+    imported === undefined ||
+    !isWholeCallExpression(expression, READ_OWNER_PERMISSION_CALL) ||
+    !/^\.\.?\//u.test(imported.modulePath) ||
+    !imported.modulePath.endsWith('.ts')
+  ) {
+    return false;
+  }
+  const wrapperFile = path.posix.normalize(path.posix.join(path.posix.dirname(readFile), imported.modulePath));
+  const wrapperSource = wrapperFile.startsWith(`${ownerPath}/`) ? sources.get(wrapperFile) : undefined;
+  return wrapperSource !== undefined && hasOwnerReadPermissionFactoryExport(wrapperSource, imported.imported);
+};
+
 const hasReadCallbacks = (
   source: string,
   readExpression: string,
@@ -2293,6 +2679,15 @@ const hasReadCallbacks = (
     (isReadHandlerCallback(handler, source) || isOwnerLocalImportedFactoryResult(handler)) &&
     callbacks.every((index) => {
       const callback = callArgument(readExpression, /^defineRead\(/u, index);
+      if (
+        index === 3 &&
+        matches(
+          objectProperty(objectArgument(readExpression, /^defineRead\(/u) ?? '', 'permissionTarget'),
+          /^['"]owner_permission['"]$/u,
+        )
+      ) {
+        return hasReadOwnerPermissionDeclaration(sources, readFile, ownerPath, callback);
+      }
       return (
         isExecutableCallback(callback, source) ||
         isOwnerLocalImportedCallback(callback) ||
@@ -2943,6 +3338,7 @@ const hasPublishedContract = (
   contribution: GovernedReadContribution,
   moduleId: string,
   diagnostics?: string[],
+  backendRegistration?: string,
 ): boolean => {
   const expectedApi = governedApiBinding(sharedApi);
   const apiValue = contributionApiValue(contribution.kind, contribution.name);
@@ -2981,7 +3377,7 @@ const hasPublishedContract = (
     apiBinding: expectedApi !== undefined,
     handlerImport: hasExactValueImport(handlerRoot, `${camel}ReadApiLive`, `./${serverStem}-server.ts`),
     handlerLayer: handlerLayers?.filter(isExpectedHandlerLayer).length === 1,
-    handlerRoot: hasGovernedHandlerRoot(handlerRoot),
+    handlerRoot: hasGovernedHandlerRoot(handlerRoot, backendRegistration),
     manifest: hasManifestContract(manifest, contribution, moduleId),
     mountedLayer:
       expectedApi !== undefined &&
@@ -3037,6 +3433,9 @@ const hasMatchingModuleApiSlots = (
   manifest: string,
   registration: string,
   contributions: readonly GeneratedContribution[],
+  sources: ReadonlyMap<string, string>,
+  ownerPath: string,
+  moduleId: string,
 ): boolean => {
   const moduleApiCount = contributions.filter((entry) => entry[2]?.kind === MODULE_API_KIND).length;
   const manifestApis = generatedSlotEntries(manifest, MANIFEST_API_SLOT_START, MANIFEST_API_SLOT_END);
@@ -3045,7 +3444,58 @@ const hasMatchingModuleApiSlots = (
     '// <generated-module-registration-apis>',
     '// </generated-module-registration-apis>',
   );
-  return manifestApis?.length === moduleApiCount && registrationApis?.length === moduleApiCount;
+  if (manifestApis === undefined || registrationApis?.length !== moduleApiCount) {
+    return false;
+  }
+  const readKeys = new Set(
+    contributions.flatMap((entry) => (entry[2]?.kind === MODULE_API_KIND ? [entry[2].contractStem] : [])),
+  );
+  const readApis = manifestApis.filter((entry) => readKeys.has(objectEntryKey(entry) ?? ''));
+  const actionApis = manifestApis.filter((entry) => !readKeys.has(objectEntryKey(entry) ?? ''));
+  const operationEntries = generatedSlotEntries(
+    manifest,
+    '// <generated-module-manifest-operation-contracts>',
+    '// </generated-module-manifest-operation-contracts>',
+  );
+  const keys = manifestApis.map(objectEntryKey);
+  return (
+    readApis.length === moduleApiCount &&
+    new Set(keys).size === keys.length &&
+    (operationEntries === undefined ||
+      operationEntries.every((entry) => {
+        const apiKey = tokenizeGovernedClient(objectProperty(entry, 'apiKey') ?? '');
+        return apiKey.length === 1 && apiKey[0]?.kind === SyntaxKind.StringLiteral && keys.includes(apiKey[0].value);
+      })) &&
+    actionApis.every((entry) => {
+      const key = objectEntryKey(entry);
+      if (key === undefined || !key.endsWith('-action')) {
+        return false;
+      }
+      const slug = key.slice(0, -'-action'.length);
+      const apiValue = `${toPascalCase(key)}Api`;
+      const action = toCamelCase(key);
+      const contract = sources.get(`${ownerPath}/shared/apis/${key}.ts`);
+      const operation = operationEntries?.filter((candidate) => objectProperty(candidate, 'apiKey') === `'${key}'`);
+      const claim = operation?.length === 1 ? operation[0] : undefined;
+      return (
+        contract !== undefined &&
+        hasGeneratedSourceHeader(
+          contract,
+          `${ACTION_HTTP_HEADER}// @ontos-action-http-owner ${moduleId}\n// @ontos-action-http-slug ${slug}\n`,
+        ) &&
+        [HTTP_API_CONTRACT_MODULE, '@modern-js/bff-effect/effect-client'].some((module) =>
+          hasContractImports(contract, { HttpApi: module, HttpApiEndpoint: module, HttpApiGroup: module }),
+        ) &&
+        (entry === `'${key}': ${apiValue}` || entry === `${key}: ${apiValue}`) &&
+        hasExactValueImport(manifest, apiValue, `./shared/apis/${key}.ts`) &&
+        hasExactValueImport(manifest, action, `./src/actions/${slug}.action.ts`) &&
+        claim !== undefined &&
+        topLevelObjectEntries(claim)?.length === 3 &&
+        objectProperty(claim, 'operationKey') === `'${action}.execute'` &&
+        objectProperty(claim, 'registration') === action
+      );
+    })
+  );
 };
 
 const governedOwnerModuleId = (manifest: string | undefined): string | undefined =>
@@ -3192,6 +3642,7 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
   readonly manifest: string;
   readonly moduleId: string;
   readonly registration: string;
+  readonly runtimeDeclaration: string | undefined;
   readonly sharedApi: string;
   readonly sources: ReadonlyMap<string, string>;
   readonly verticalPath: string;
@@ -3284,17 +3735,21 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
         new RegExp(`\\b${escapedActionValue},`, 'gu'),
       ),
       slotHasExactlyOneCodeMatch(
-        input.registration,
-        '// <generated-module-registration-actions>',
-        '// </generated-module-registration-actions>',
+        input.runtimeDeclaration ?? input.registration,
+        input.runtimeDeclaration === undefined
+          ? '// <generated-module-registration-actions>'
+          : '// <generated-module-manifest-actions>',
+        input.runtimeDeclaration === undefined
+          ? '// </generated-module-registration-actions>'
+          : '// </generated-module-manifest-actions>',
         new RegExp(`\\b${escapedActionValue},`, 'gu'),
       ),
     ].every(Boolean);
   });
 };
 
-const PublicContractOwnerAppIdSchema = Schema.String.pipe(Schema.brand('PublicContractOwnerAppId'));
-const PublicContractOwnerModuleIdSchema = Schema.String.pipe(Schema.brand('PublicContractOwnerModuleId'));
+export const PublicContractOwnerAppIdSchema = Schema.String.pipe(Schema.brand('PublicContractOwnerAppId'));
+export const PublicContractOwnerModuleIdSchema = Schema.String.pipe(Schema.brand('PublicContractOwnerModuleId'));
 const PublicContractPackageManifestSchema = Schema.Struct({
   exports: Schema.Record(Schema.String, Schema.String),
   name: Schema.String,
@@ -3646,6 +4101,7 @@ interface GeneratedModuleApiSeamInputs {
   readonly ownerPackage: OwnerPackageManifest | undefined;
   readonly principal: string | undefined;
   readonly registration: string | undefined;
+  readonly runtimeDeclaration: string | undefined;
   readonly sharedApi: string | undefined;
   readonly verticalPath: string;
 }
@@ -3660,6 +4116,7 @@ type CompleteGeneratedModuleApiSeamInputs = GeneratedModuleApiSeamInputs & {
 };
 
 interface GeneratedContributionValidationContext {
+  readonly backendRegistration: string | undefined;
   readonly deploymentAppId: string;
   readonly diagnostics: string[] | undefined;
   readonly handlerRoot: string;
@@ -3670,12 +4127,55 @@ interface GeneratedContributionValidationContext {
   readonly sharedApi: string;
 }
 
+const generatedOwnerMarker = (source: string, key: string): string | undefined =>
+  new RegExp(`^// @ontos-${key} ([^\\s]+)$`, 'mu').exec(source)?.[1];
+
+const provedRuntimeDeclaration = (
+  runtime: string | undefined,
+  manifest: string | undefined,
+  registration: string | undefined,
+  ownerPath: string,
+): string | undefined => {
+  if (runtime === undefined || manifest === undefined || registration === undefined) {
+    return undefined;
+  }
+  try {
+    const markersMatch = ['deployment-app-id', 'module-id'].every(
+      (key) =>
+        generatedOwnerMarker(runtime, key) !== undefined &&
+        generatedOwnerMarker(runtime, key) === generatedOwnerMarker(manifest, key) &&
+        generatedOwnerMarker(runtime, key) === generatedOwnerMarker(registration, key),
+    );
+    return runtime.startsWith('// @generated by OntOS Codesmith Module Contract v1\n') &&
+      markersMatch &&
+      validRuntimeDeclarationViews(
+        runtime,
+        manifest,
+        registration,
+        toCamelCase(path.posix.basename(ownerPath)),
+        governedOwnerModuleId(manifest),
+      )
+      ? runtime
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const generatedModuleApiSeamInputs = (
   sources: ReadonlyMap<string, string>,
   sharedApiFile: string,
 ): GeneratedModuleApiSeamInputs => {
   const verticalPath = sharedApiFile.slice(0, -'/shared/api.ts'.length);
-  const manifest = sources.get(`${verticalPath}/vertical.manifest.ts`);
+  const fullManifest = sources.get(`${verticalPath}/vertical.manifest.ts`);
+  const registration = sources.get(`${verticalPath}/vertical.registration.ts`);
+  const runtime = sources.get(`${verticalPath}/vertical.runtime-declaration.ts`);
+  const runtimeDeclaration = provedRuntimeDeclaration(runtime, fullManifest, registration, verticalPath);
+  const requiresRuntime =
+    runtime !== undefined ||
+    [fullManifest, registration].some((source) => source?.includes('vertical.runtime-declaration') === true);
+  const declaredManifest = runtimeDeclaration === undefined ? undefined : `${fullManifest}\n${runtimeDeclaration}`;
+  const manifest = requiresRuntime ? declaredManifest : fullManifest;
   const ownerPackage = Option.getOrUndefined(
     Schema.decodeUnknownOption(Schema.fromJsonString(OwnerPackageManifestSchema))(
       sources.get(`${verticalPath}/package.json`) ?? '',
@@ -3688,7 +4188,8 @@ const generatedModuleApiSeamInputs = (
     moduleId: governedOwnerModuleId(manifest),
     ownerPackage,
     principal: sources.get(`${verticalPath}/api/auth/action-principal.ts`),
-    registration: sources.get(`${verticalPath}/vertical.registration.ts`),
+    registration,
+    runtimeDeclaration,
     sharedApi: sources.get(sharedApiFile),
     verticalPath,
   };
@@ -4020,6 +4521,7 @@ const hasCompleteGeneratedContribution = (
       contribution,
       context.moduleId,
       context.diagnostics,
+      context.backendRegistration,
     ),
     read: hasCompleteContributionRead(
       readSource,
@@ -4059,11 +4561,24 @@ const hasCompleteGeneratedContributions = (
   if (contributions.length === 0) {
     return false;
   }
-  if (!hasMatchingModuleApiSlots(inputs.manifest, inputs.registration, contributions)) {
+  if (
+    !hasMatchingModuleApiSlots(
+      inputs.manifest,
+      inputs.registration,
+      contributions,
+      sources,
+      inputs.verticalPath,
+      inputs.moduleId,
+    )
+  ) {
     diagnostics?.push('manifest or registration contribution inventory');
     return false;
   }
   const context: GeneratedContributionValidationContext = {
+    backendRegistration:
+      inputs.runtimeDeclaration === undefined
+        ? undefined
+        : `${toCamelCase(path.posix.basename(inputs.verticalPath))}BackendRegistration`,
     deploymentAppId,
     diagnostics,
     handlerRoot: inputs.handlerRoot,
@@ -4098,6 +4613,7 @@ export const hasCompleteGeneratedModuleApiSeam = (
       manifest: inputs.manifest,
       moduleId: inputs.moduleId,
       registration: inputs.registration,
+      runtimeDeclaration: inputs.runtimeDeclaration,
       sharedApi: inputs.sharedApi,
       sources,
       verticalPath: inputs.verticalPath,

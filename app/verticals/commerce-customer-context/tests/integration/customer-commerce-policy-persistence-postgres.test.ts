@@ -1,3 +1,5 @@
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { randomUUID } from 'node:crypto';
 import {
   ActionRuntime,
@@ -11,6 +13,7 @@ import {
   ContextPermissionRelationshipMutation,
   ContextPermissionRelationshipMutationLive,
   PrincipalRefSchema,
+  OntosModuleDeploymentContractSchema,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
@@ -41,6 +44,10 @@ import {
 } from '../../src/integrations/profile-reactivation-eligibility.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import {
+  describePriceGroupTemporalOwner,
+  makePriceGroupTemporalComposition,
+} from '../support/price-group-temporal-protocol.ts';
 
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
@@ -61,7 +68,19 @@ const transport = () => ({
   targetModuleKey: 'commerce.customer-context',
 });
 const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixture')(function* makeFixture() {
-  const snapshot = yield* makeEnrollmentApplicationCompositionSnapshot('quantity-profile-admission-native', []);
+  const base = yield* makeEnrollmentApplicationCompositionSnapshot(ultramodernApiMarker.buildMarker, []);
+  const ownModule = base.composition.modules.find(({ deployment }) => deployment.appId === ultramodernApiMarker.appId);
+  assert.isOk(ownModule !== undefined);
+  const ownContract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+    ownModule.contractDocument,
+  );
+  const party = yield* describePriceGroupTemporalOwner('party-registry');
+  // Actual owner declarations and compiled identities; the helper's served Federation metadata is
+  // SOURCE/TEST-only. The controlled Party facts below do not prove provider transport or deployment.
+  const snapshot = yield* makePriceGroupTemporalComposition([
+    { contract: ownContract, marker: ownContract.deployment },
+    { contract: party.contract, marker: party.marker },
+  ]);
   const { isolated } = yield* makeQuantityProfileOwnedDatabase(snapshot);
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
@@ -77,9 +96,13 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
       ],
       additionalLegalEntity: 'same-tenant',
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
+      applicationComposition: { load: Effect.succeed(snapshot) },
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
-      moduleKeys: ['commerce.customer-context'],
+      expectedDeployment: ultramodernApiMarker,
+      // Party already belongs to the fixture namespace; this seeds its state without adding grants.
+      moduleKeys: ['commerce.customer-context', 'party.registry'],
+      ownerRegistration: commerceCustomerContextRegistration,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (resource) => resource.close().pipe(Effect.orDie),

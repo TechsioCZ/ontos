@@ -18,6 +18,8 @@ import { Command, Flag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { parse as parseYaml } from 'yaml';
 
+import { ApplicationMigrationPlanSchema } from './application-migration-plan.mts';
+import type { ApplicationMigrationPlan } from './application-migration-plan.mts';
 import type { ProtectedEntrypointInventory } from './authorization/protected-entrypoint-inventory.mts';
 import type { AuthorizationRolloutContract } from './authorization/rollout-contract.mts';
 import { validateAuthorizationRolloutContract } from './authorization/rollout-contract.mts';
@@ -179,6 +181,8 @@ export interface DeploymentImpactPlan {
     readonly headRevision?: string;
     readonly mode: 'diff' | 'full';
   };
+  /** Observed owner work is independent of the artifact build selection. */
+  readonly migrationPlan?: ApplicationMigrationPlan;
   readonly phases: readonly DeploymentPhase[];
   readonly schemaVersion: 1;
   readonly units: {
@@ -204,6 +208,8 @@ export interface PlanDeploymentImpactOptions {
   readonly baseRevision?: string;
   readonly changedPaths?: readonly string[];
   readonly headRevision?: string;
+  /** Supplied by native migration planning; source-path impact alone is only a conservative trigger. */
+  readonly migrationPlan?: ApplicationMigrationPlan;
   /** Dedicated per-owner worker services or the one Outbox Worker host. Defaults to `dedicated`. */
   readonly outboxWorkerMode?: OutboxWorkerMode;
   /**
@@ -372,6 +378,7 @@ const DeploymentImpactPlanSchema = Schema.Struct({
     headRevision: Schema.optional(Schema.String),
     mode: Schema.Literals(['diff', 'full']),
   }),
+  migrationPlan: Schema.optionalKey(ApplicationMigrationPlanSchema),
   phases: Schema.Array(DeploymentPhaseSchema),
   schemaVersion: Schema.Literal(1),
   units: Schema.Struct({
@@ -991,6 +998,113 @@ const validateWorkspaceCompleteness = (
   }
 };
 
+const WorkspacePackageSchema = Schema.Struct({
+  dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  devDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  name: Schema.String,
+  ontosContractOwner: Schema.optional(
+    Schema.Struct({ appId: Schema.String.pipe(Schema.brand('PublicContractOwnerAppId')), packageName: Schema.String }),
+  ),
+  optionalDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  peerDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+});
+
+// Core and the generated common ABI also enter builds through shared build configuration.
+const COMMON_SHARED_PACKAGE_IDS: ReadonlySet<string> = new Set(['core-runtime', 'shared-contracts']);
+
+const workspacePackageDependencies = (
+  manifest: typeof WorkspacePackageSchema.Type,
+  packageNames: ReadonlySet<string>,
+): readonly string[] => {
+  const localDependencies: string[] = [];
+  const dependencyEntries = [
+    manifest.dependencies,
+    manifest.devDependencies,
+    manifest.optionalDependencies,
+    manifest.peerDependencies,
+  ].flatMap((group) => Object.entries(group ?? {}));
+  for (const [name, version] of dependencyEntries) {
+    if (/^(?:file:|link:|workspace:(?:[./]|.*[:/]))/u.test(version)) {
+      return fail(`workspace package "${manifest.name}" has uncertain local dependency "${name}"`);
+    }
+    if (packageNames.has(name)) {
+      localDependencies.push(name);
+    } else if (version.startsWith('workspace:') || name.startsWith('@app/')) {
+      return fail(`workspace package "${manifest.name}" references unknown local dependency "${name}"`);
+    }
+  }
+  return localDependencies;
+};
+
+const readSharedPackageConsumers = (
+  rootDirectory: string,
+  workspaceProjects: readonly string[],
+  owners: readonly TopologyOwner[],
+  units: readonly TopologyUnit[],
+) =>
+  Effect.gen(function* readSharedPackageConsumersEffect() {
+    const pathService = yield* Path.Path;
+    const packages = yield* Effect.all(
+      workspaceProjects.map((project) =>
+        readJson(WorkspacePackageSchema, pathService.join(rootDirectory, project, PACKAGE_MANIFEST)),
+      ),
+    );
+    const ownersByPackage = new Map(
+      owners.map((owner) => [requireString(owner.package, `workspace owner ${String(owner.id)}.package`), owner]),
+    );
+    const packagesByName = new Map(packages.map((manifest) => [manifest.name, manifest]));
+    if (packagesByName.size !== packages.length || ownersByPackage.size !== owners.length) {
+      return fail('workspace package identities must be unique');
+    }
+    const dependencies = new Map<string, readonly string[]>();
+    const contractProducers = new Map<string, string>();
+    for (const [index, manifest] of packages.entries()) {
+      const owner = ownersByPackage.get(manifest.name);
+      if (owner?.path !== workspaceProjects[index]) {
+        return fail(`workspace package "${manifest.name}" does not match its topology owner path`);
+      }
+      dependencies.set(manifest.name, workspacePackageDependencies(manifest, new Set(packagesByName.keys())));
+      const producer = manifest.ontosContractOwner;
+      if (producer !== undefined) {
+        const unit = units.find((candidate) => candidate.id === producer.appId);
+        if (unit?.packageName !== producer.packageName) {
+          return fail(`workspace contract package "${manifest.name}" references unknown or inconsistent producer`);
+        }
+        contractProducers.set(manifest.name, producer.packageName);
+      }
+    }
+    for (const owner of owners) {
+      const name = requireString(owner.package, `workspace owner ${String(owner.id)}.package`);
+      if (!packagesByName.has(name)) {
+        return fail(`topology package "${name}" has no enumerated workspace manifest`);
+      }
+    }
+    const consumersByOwner = new Map<string, readonly string[]>();
+    for (const owner of owners) {
+      const affected = new Set([requireString(owner.package, `workspace owner ${String(owner.id)}.package`)]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const [name, required] of dependencies) {
+          const producer = contractProducers.get(name);
+          if (affected.has(name) && producer !== undefined && !affected.has(producer)) {
+            affected.add(producer);
+            changed = true;
+          }
+          if (!affected.has(name) && required.some((dependency) => affected.has(dependency))) {
+            affected.add(name);
+            changed = true;
+          }
+        }
+      }
+      consumersByOwner.set(
+        requireString(owner.id, 'workspace owner.id'),
+        units.filter((unit) => affected.has(unit.packageName)).map((unit) => unit.id),
+      );
+    }
+    return consumersByOwner;
+  });
+
 const orderUnits = (units: readonly TopologyUnit[]): readonly TopologyUnit[] => {
   const unitsById = new Map(units.map((unit) => [unit.id, unit]));
   const ordered: TopologyUnit[] = [];
@@ -1180,6 +1294,7 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   'pnpm-lock.yaml',
   'scripts/generate-ontos-module-contract.mts',
   'scripts/generate-ontos-shell-runtime-contract.mts',
+  'scripts/ontos-shell-runtime-contract.ts',
   'scripts/application-release-intent.mts',
   'scripts/application-composition-authority-publication.mts',
   'scripts/application-composition-schema-expansion.mts',
@@ -1237,6 +1352,7 @@ const makeComparison = (
 interface DeploymentImpactState {
   readonly impacted: Set<string>;
   migrator: boolean;
+  readonly sharedPackageConsumers: ReadonlyMap<string, readonly string[]>;
   spicedb: boolean;
 }
 
@@ -1266,6 +1382,7 @@ const applyOwnedPathImpact = (
   unitsById: ReadonlyMap<string, TopologyUnit>,
   orderedUnits: readonly TopologyUnit[],
   impacted: Set<string>,
+  sharedPackageConsumers: ReadonlyMap<string, readonly string[]>,
 ): void => {
   if (!/^(?:apps|packages|verticals)\//u.test(changedPath)) {
     return;
@@ -1287,7 +1404,20 @@ const applyOwnedPathImpact = (
       addWithConsumers(ownerId, impacted, orderedUnits);
     }
   } else if (changedPath.startsWith('packages/')) {
-    addAllUnits(impacted, orderedUnits);
+    const consumers = sharedPackageConsumers.get(ownerId);
+    if (
+      COMMON_SHARED_PACKAGE_IDS.has(ownerId) ||
+      changedPath === `${String(owner.path)}/${PACKAGE_MANIFEST}` ||
+      consumers?.length === 0
+    ) {
+      addAllUnits(impacted, orderedUnits);
+    } else if (consumers === undefined) {
+      fail(`changed package "${ownerId}" has no proven workspace consumer closure`);
+    } else {
+      for (const consumer of consumers) {
+        addWithConsumers(consumer, impacted, orderedUnits);
+      }
+    }
   } else {
     fail(`changed path "${changedPath}" maps to non-delivery owner "${ownerId}"`);
   }
@@ -1300,7 +1430,14 @@ const applyChangedPathImpact = (
   orderedUnits: readonly TopologyUnit[],
   state: DeploymentImpactState,
 ): void => {
-  applyOwnedPathImpact(changedPath, ownerEntries, unitsById, orderedUnits, state.impacted);
+  applyOwnedPathImpact(
+    changedPath,
+    ownerEntries,
+    unitsById,
+    orderedUnits,
+    state.impacted,
+    state.sharedPackageConsumers,
+  );
   if (isMigrationChange(changedPath)) {
     state.migrator = true;
   }
@@ -1325,10 +1462,12 @@ const deriveDeploymentImpact = (
   fullDeploy: boolean,
   ownerEntries: readonly TopologyOwner[],
   orderedUnits: readonly TopologyUnit[],
+  sharedPackageConsumers: ReadonlyMap<string, readonly string[]>,
 ): DeploymentImpactState => {
   const state: DeploymentImpactState = {
     impacted: new Set<string>(),
     migrator: fullDeploy,
+    sharedPackageConsumers,
     spicedb: fullDeploy,
   };
   if (fullDeploy) {
@@ -1421,6 +1560,12 @@ const planStoppedWorkers = (
 
 export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) =>
   Effect.gen(function* planDeploymentImpactEffect() {
+    const migrationPlan =
+      options.migrationPlan === undefined
+        ? undefined
+        : yield* Schema.decodeUnknownEffect(ApplicationMigrationPlanSchema, { onExcessProperty: 'error' })(
+            options.migrationPlan,
+          );
     const authorization =
       options.authorizationPromotion === undefined
         ? undefined
@@ -1442,16 +1587,11 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
       yield* fileSystem.readFileString(pathService.join(rootDirectory, 'zerops.yaml')),
     );
     const orderedUnits = orderUnits(buildTopologyUnits(topology, ownership, stageSetups));
-    validateWorkspaceCompleteness(
-      yield* listWorkspaceProjects(
-        rootDirectory,
-        yield* parseWorkspaceGlobs(
-          yield* fileSystem.readFileString(pathService.join(rootDirectory, WORKSPACE_MANIFEST)),
-        ),
-      ),
-      orderedUnits,
-      topology.sharedPackages ?? [],
+    const workspaceProjects = yield* listWorkspaceProjects(
+      rootDirectory,
+      yield* parseWorkspaceGlobs(yield* fileSystem.readFileString(pathService.join(rootDirectory, WORKSPACE_MANIFEST))),
     );
+    validateWorkspaceCompleteness(workspaceProjects, orderedUnits, topology.sharedPackages ?? []);
     const workerDeliveries = yield* Effect.all(
       (topology.verticals ?? []).map((vertical) =>
         outboxWorkerDelivery(rootDirectory, {
@@ -1473,12 +1613,25 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
       rootDirectory,
     );
 
-    const { impacted, migrator, spicedb } = deriveDeploymentImpact(
-      changedPaths,
-      fullDeploy,
-      ownership.owners ?? [],
-      orderedUnits,
+    const ownerEntries = ownership.owners ?? [];
+    const scopedPackageChanged = (topology.sharedPackages ?? []).some(
+      (owner) =>
+        !COMMON_SHARED_PACKAGE_IDS.has(requireString(owner.id, 'shared package.id')) &&
+        owner.path !== undefined &&
+        changedPaths.some((changedPath) => isWithin(changedPath, owner.path ?? '')),
     );
+    const sharedPackageConsumers = scopedPackageChanged
+      ? yield* readSharedPackageConsumers(rootDirectory, workspaceProjects, ownerEntries, orderedUnits)
+      : new Map<string, readonly string[]>();
+    const {
+      impacted,
+      migrator: migrationTrigger,
+      spicedb,
+    } = deriveDeploymentImpact(changedPaths, fullDeploy, ownerEntries, orderedUnits, sharedPackageConsumers);
+    const migrator =
+      migrationPlan === undefined
+        ? migrationTrigger
+        : migrationPlan.owners.some((owner) => owner.verify || (owner.migrate && owner.pendingMigrations.length > 0));
 
     const selectedUnits = orderedUnits.filter((unit) => impacted.has(unit.id));
     const outboxWorkerMode = options.outboxWorkerMode ?? 'dedicated';
@@ -1526,7 +1679,8 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
         workers: phases.filter((phase) => phase.kind === 'worker').map((phase) => phase.id),
       },
     };
-    return authorization === undefined ? plan : { ...plan, authorization };
+    const observedPlan = migrationPlan === undefined ? plan : { ...plan, migrationPlan };
+    return authorization === undefined ? observedPlan : { ...observedPlan, authorization };
   });
 
 const loadAuthorizationPromotionGate = (

@@ -50,6 +50,7 @@ import { partyContactPointsReadApiLive } from '../../api/party-contact-points-re
 import { partyDetailReadApiLive } from '../../api/party-detail-read-server.ts';
 import { partyOfficialIdentifierHistoryReadApiLive } from '../../api/party-official-identifier-history-read-server.ts';
 import { partyRegistryApi } from '../../shared/api.ts';
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { deriveAresEvidenceApplication, makeAresAppliedEvidence } from '../../shared/domain/ares-application.ts';
 import { AresSubjectEvidenceSchema, AresSubjectLookupIcoSchema } from '../../shared/domain/ares-evidence.ts';
@@ -145,6 +146,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             // The runtime's action boundary registers the staff namespace Shell-issued assertions name.
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: compositionSnapshot.composition.revision,
+            ownerRegistration: partyRegistryBackendRegistration,
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
           }).pipe(Effect.orDie),
           (resource) => resource.close().pipe(Effect.orDie),

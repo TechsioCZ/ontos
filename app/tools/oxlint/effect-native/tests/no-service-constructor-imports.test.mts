@@ -350,6 +350,76 @@ it('proves closed DTO construction across imports and rejects executable reachab
   });
 });
 
+it('follows actual named type re-exports and rejects broken or executable declarations', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    const definition = nodePath.join(directory, 'definition.ts');
+    const barrel = nodePath.join(directory, 'barrel.ts');
+    const bridge = nodePath.join(directory, 'bridge.ts');
+    writeFileSync(consumer, dataFactoryConsumer);
+    writeFileSync(barrel, "export type { Input as Renamed } from './definition.ts';");
+    writeFileSync(bridge, "import type { Renamed as Local } from './barrel.ts'; export type { Local as Input };");
+    writeFileSync(
+      factory,
+      "import type { Input } from './bridge.ts'; export const makeData = ({ id }: Input) => ({ id });",
+    );
+    writeFileSync(definition, 'export interface Input { readonly id: string; }');
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(true);
+    writeFileSync(
+      factory,
+      "import type { Input } from './bridge.ts'; export const makeData = ({ id }: Pick<Input, 'id'>) => ({ id });",
+    );
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(true);
+    writeFileSync(
+      factory,
+      "import type { Input } from './bridge.ts'; export const makeData = ({ id }: Input) => ({ id });",
+    );
+    const controls = [
+      'export interface Input { readonly id: string; readonly read: () => string; }',
+      'export class Input { read() { return "service"; } }',
+      "export type { Input } from './bridge.ts';",
+      'interface Input { readonly id: string; } export interface Other { readonly id: string; }',
+      'export interface Other { readonly id: string; }',
+    ];
+    for (const declaration of controls) {
+      writeFileSync(definition, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
+    }
+  });
+});
+
+it('keeps nullable DTO input records open until projection or decoding', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const projections = [
+      'export const makeData = (value: { readonly id: string } | null) => ({ id: value === null ? "" : value.id });',
+      'export const makeData = (value: { readonly id: string } | undefined) => ({ id: value === undefined ? "" : value.id });',
+      'import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ id: Schema.String })); export const makeData = (value: { readonly id: string } | undefined) => ({ value: value === undefined ? { id: "" } : decode(value) });',
+    ];
+    for (const declaration of projections) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(true);
+    }
+    const controls = [
+      'export const makeData = (value: { readonly id: string; readonly read: () => string } | null) => ({ id: value === null ? "" : value.id });',
+      'export const makeData = (value: { readonly id: string; readonly read: () => string } | undefined) => ({ id: value === undefined ? "" : value.id });',
+      'export const makeData = (value: { readonly id: string } | null) => value;',
+      'export const makeData = (value: { readonly id: string } | undefined) => ({ ...value });',
+      'export const makeData = (value: { readonly id: string } | null) => ({ value });',
+      'export const makeData = (value: { readonly id: string } | undefined) => ({ extra: value.authority });',
+      'export const makeData = (value: { readonly id: string } | null) => Object.values(value);',
+      'export const makeData = (value: { readonly id: string } | unknown) => ({ id: value.id });',
+    ];
+    for (const declaration of controls) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
+    }
+  });
+});
+
 it('proves native array predicates in DTO codecs without admitting executable callbacks', () => {
   withTemporaryWorkspace((directory) => {
     const factory = nodePath.join(directory, factoryFilename);
@@ -496,6 +566,10 @@ describe('rejects typed effectful schema helpers and shadowed native assignments
 
 it('proves the concrete Outbox fixture imports without an ownership or name exemption', () => {
   const support = nodePath.join(appRoot, 'packages/core-runtime/tests/support/outbox-worker-composition.ts');
+  const nativeComposition = nodePath.join(
+    appRoot,
+    'packages/core-runtime/tests/support/outbox-worker-native-composition.ts',
+  );
   const processFixture = nodePath.join(
     appRoot,
     'packages/core-runtime/tests/fixtures/outbox-worker-process.fixture.ts',
@@ -506,6 +580,49 @@ it('proves the concrete Outbox fixture imports without an ownership or name exem
   expect(
     provesDataFactoryImport(processFixture, '../support/outbox-worker-composition.ts', 'makeOutboxWorkerComposition'),
   ).toBe(true);
+  expect(
+    provesDataFactoryImport(nativeComposition, '../../src/testing/module-contract.ts', 'makeModuleContractFixture'),
+  ).toBe(true);
+});
+
+describe('accepts the concrete Outbox fixture imports through the production constructor rule', () => {
+  ruleTester.run(serviceRuleTitle, serviceRule, {
+    invalid: [],
+    valid: [
+      repositoryCase('packages/core-runtime/tests/support/outbox-worker-composition.ts'),
+      repositoryCase('packages/core-runtime/tests/support/outbox-worker-native-composition.ts'),
+    ],
+  });
+});
+
+it('proves fresh invocation-local array accumulation without admitting caller or service state', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const valid = [
+      'export const makeData = (values: readonly string[]) => { const entries: string[] = []; for (const value of values) { entries.push(value); } return { entries }; };',
+      'export const makeData = () => { const entries: string[] = []; const alias = entries; const size = alias.push("first"); entries.push("second"); return { entries, size }; };',
+    ];
+    for (const declaration of valid) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(true);
+    }
+    const invalid = [
+      'export const makeData = (entries: string[]) => { entries.push("changed"); return { entries }; };',
+      'const entries: string[] = []; export const makeData = () => { entries.push("changed"); return { entries }; };',
+      'export const makeData = () => { const entries: string[] = []; const append = () => entries.push("changed"); append(); return { entries }; };',
+      'const seed = () => ["first"]; export const makeData = () => { const entries = seed(); entries.push("changed"); return { entries }; };',
+      'const append = (entries: string[]) => entries.push("changed"); export const makeData = () => { const entries: string[] = []; append(entries); return { entries }; };',
+      'export const makeData = () => { const entries = []; entries.push({ read: () => fetch("service") }); return { entries }; };',
+      'export const makeData = (value: unknown) => { const entries = []; entries.push(value); return { entries }; };',
+      'export const makeData = () => { const entries = []; entries.push(fetch("service")); return { entries }; };',
+    ];
+    for (const declaration of invalid) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
+    }
+  });
 });
 
 describe('allows service constructor calls only within proven native service factory callbacks', () => {
@@ -2076,4 +2193,109 @@ describe('keeps scoped Effect-valued acquisitions inside the genuine native fact
   expectRules(`${native(acquisition)}\nvoid makeScopedService;`, false, true);
   service.register();
   provide.register();
+});
+
+const injectedBffFactorySource = bffFactorySource
+  .replace(
+    "import { Layer } from '@modern-js/bff-effect/effect-edge';",
+    "import { Layer } from '@modern-js/bff-effect/effect-edge';\nimport { Layer as GovernedReadLayer } from 'effect';\nimport type { ReadRuntime } from '@app/core-runtime';\nimport { HandlerLive } from './handler.ts';",
+  )
+  .replace(
+    'export const makeRuntime = ():',
+    'type RuntimeArgs = readonly [read: Layer.Layer<ReadRuntime>];\nexport const makeRuntime = (...args: RuntimeArgs):',
+  )
+  .replace(
+    'const handlers = Layer.mergeAll(group).pipe(Layer.provide(group), Layer.orDie);',
+    'const [read] = args; const handlers = Layer.mergeAll(HandlerLive.pipe(GovernedReadLayer.provide(read))).pipe(Layer.provide(Layer.mergeAll(group, read)), Layer.orDie);',
+  )
+  .replace('const runtime = makeRuntime();', 'const runtime = makeRuntime(group);');
+
+describe('proves actual parameterized owner BFF composition without admitting constructors or foreign Layers', () => {
+  ruleTester.run(serviceRuleTitle, serviceRule, {
+    invalid: [],
+    valid: [repositoryCase('verticals/privacy/tests/support/dsr-legacy-owner.fixture.ts')],
+  });
+  const cases: readonly BffCase[] = [
+    { expected: 0, name: 'bff-injected-nested-layers', source: injectedBffFactorySource },
+    {
+      consumer: `${processImports} import { makeRuntime } from '../../api/index.ts'; void makeRuntime; const directory = process.cwd(); void directory; ${directRunMain}`,
+      expected: 0,
+      name: 'bff-cwd-observation',
+    },
+    {
+      consumer: `${processImports} import { makeRuntime } from '../../api/index.ts'; void makeRuntime; const cwd = process.cwd; cwd(); ${directRunMain}`,
+      expected: 1,
+      name: 'bff-cwd-alias',
+    },
+    {
+      consumer: `${processImports} import { makeRuntime } from '../../api/index.ts'; void makeRuntime; process.cwd = replacement; process.cwd(); ${directRunMain}`,
+      expected: 1,
+      name: 'bff-cwd-mutation',
+    },
+    {
+      consumer: `${processImports} import { makeRuntime } from '../../api/index.ts'; void makeRuntime; process.cwd('foreign'); ${directRunMain}`,
+      expected: 1,
+      name: 'bff-cwd-argument',
+    },
+    {
+      consumer: `${processImports} import { makeRuntime } from '../../api/index.ts'; void makeRuntime; const process = { cwd: () => 'fake' }; process.cwd(); ${directRunMain}`,
+      expected: 1,
+      name: 'bff-cwd-shadow',
+    },
+    {
+      expected: 1,
+      name: 'bff-injected-fake-core-type',
+      source: injectedBffFactorySource.replace("from '@app/core-runtime'", "from 'foreign-runtime'"),
+    },
+    {
+      expected: 1,
+      name: 'bff-injected-mutated-read',
+      source: injectedBffFactorySource.replace('const [read] = args;', 'const [read] = args; read = replacement;'),
+    },
+    {
+      expected: 1,
+      name: 'bff-injected-fake-layer',
+      source: injectedBffFactorySource.replace("from 'effect'", "from 'foreign-effect'"),
+    },
+    {
+      expected: 1,
+      name: 'bff-injected-service-constructor',
+      source: injectedBffFactorySource.replace(
+        'HandlerLive.pipe(GovernedReadLayer.provide(read))',
+        'makeContextualService(read)',
+      ),
+    },
+  ];
+  describeWorkspace(
+    'parameterized BFF owner workspace',
+    cases.flatMap((scenario) => {
+      const owner = `app/verticals/${scenario.name}`;
+      return [
+        { path: `${owner}/shared/api.ts`, source: 'export const Api = {};' },
+        { path: `${owner}/api/handler.ts`, source: 'export const HandlerLive = {};' },
+        { path: `${owner}/api/index.ts`, source: scenario.source ?? bffFactorySource },
+        {
+          path: `${owner}/${supportDirectory}/${bootstrapFilename}`,
+          source:
+            scenario.consumer ??
+            `${processImports} import { makeRuntime } from '../../api/index.ts'; void makeRuntime; ${directRunMain}`,
+        },
+      ];
+    }),
+    (workspace) => {
+      const toCase = (scenario: BffCase) => ({
+        code:
+          scenario.consumer ??
+          `${processImports} import { makeRuntime } from '../../api/index.ts'; void makeRuntime; ${directRunMain}`,
+        filename: workspace.file(`app/verticals/${scenario.name}/${supportDirectory}/${bootstrapFilename}`),
+        name: scenario.name,
+      });
+      ruleTester.run(serviceRuleTitle, serviceRule, {
+        invalid: cases
+          .filter((scenario) => scenario.expected !== 0)
+          .map((scenario) => ({ ...toCase(scenario), errors: scenario.expected })),
+        valid: cases.filter((scenario) => scenario.expected === 0).map(toCase),
+      });
+    },
+  );
 });

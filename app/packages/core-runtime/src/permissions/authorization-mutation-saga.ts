@@ -2,11 +2,8 @@ import { Effect } from 'effect';
 import type { AuthorizationMutationJournalEntry, AuthorizationMutationState } from './authorization-mutation.ts';
 import { canTransitionAuthorizationMutation } from './authorization-mutation.ts';
 import { AuthorizationMutationSagaError } from './authorization-mutation-saga-error.ts';
-import {
-  hasCanonicalInventoryAuthorizationTarget,
-  hasCanonicalPricingAuthorizationTargetIds,
-  isBusinessPermissionTargetCompatible,
-} from './context-access.ts';
+import { isOwnerPermissionAccessTargetMetadataValid } from './context-access.ts';
+import type { OwnerPermissionAccessTarget } from './context-access.ts';
 import type {
   BusinessPermissionRelationshipMutationInput,
   BusinessPermissionRelationshipMutationService,
@@ -15,7 +12,7 @@ import type {
 export { AuthorizationMutationSagaError } from './authorization-mutation-saga-error.ts';
 export type { AuthorizationMutationSagaErrorCode } from './authorization-mutation-saga-error.ts';
 
-export interface AuthorizationMutationSagaFinalizer {
+export interface AuthorizationMutationSagaFinalizer<Target extends object = object> {
   /**
    * Finalize the exact durable intent in an owner-controlled transaction. Implementations must
    * compare the mutation identity and complete idempotently when the requested terminal state is
@@ -24,11 +21,11 @@ export interface AuthorizationMutationSagaFinalizer {
   readonly finalize: (input: {
     readonly mutationId: string;
     readonly to: 'ACTIVE' | 'REVOKED';
-  }) => Effect.Effect<AuthorizationMutationJournalEntry, AuthorizationMutationSagaError>;
+  }) => Effect.Effect<AuthorizationMutationJournalEntry<Target>, AuthorizationMutationSagaError>;
 }
 
-export interface AuthorizationMutationSagaResult {
-  readonly entry: AuthorizationMutationJournalEntry;
+export interface AuthorizationMutationSagaResult<Target extends object = object> {
+  readonly entry: AuthorizationMutationJournalEntry<Target>;
   readonly outcome: 'ALREADY_FINAL' | 'FINALIZED';
 }
 
@@ -54,95 +51,12 @@ const expectedPendingState = (
   operation: AuthorizationMutationJournalEntry['operation'],
 ): 'PENDING_GRANT' | 'PENDING_REVOKE' => (operation === 'grant' ? 'PENDING_GRANT' : 'PENDING_REVOKE');
 
-type CounterpartyBusinessTarget = Extract<
-  AuthorizationMutationJournalEntry['businessTarget'],
-  { readonly kind: 'counterparty' | 'counterparty_storefront' }
->;
-
-const sameCounterpartyTarget = (
-  left: CounterpartyBusinessTarget,
-  right: AuthorizationMutationJournalEntry['businessTarget'],
-): boolean =>
-  left.kind === 'counterparty'
-    ? right.kind === 'counterparty' &&
-      left.legalEntityId === right.legalEntityId &&
-      left.counterpartyId === right.counterpartyId
-    : right.kind === 'counterparty_storefront' &&
-      left.legalEntityId === right.legalEntityId &&
-      left.counterpartyId === right.counterpartyId &&
-      left.storefrontId === right.storefrontId;
-
-const sameBusinessTarget = (
-  left: AuthorizationMutationJournalEntry['businessTarget'],
-  right: AuthorizationMutationJournalEntry['businessTarget'],
-): boolean => {
-  if (left.kind !== right.kind || left.tenantId !== right.tenantId) {
-    return false;
-  }
-  if (left.kind === 'counterparty' || left.kind === 'counterparty_storefront') {
-    return sameCounterpartyTarget(left, right);
-  }
-  if (left.kind === 'retail_profile') {
-    return (
-      right.kind === 'retail_profile' &&
-      left.legalEntityId === right.legalEntityId &&
-      left.profileId === right.profileId
-    );
-  }
-  if (left.kind === 'pricing_catalog') {
-    return right.kind === 'pricing_catalog' && left.pricingCatalogId === right.pricingCatalogId;
-  }
-  if (left.kind === 'inventory_resource') {
-    return (
-      right.kind === 'inventory_resource' &&
-      left.resource.moduleId === right.resource.moduleId &&
-      left.resource.resourceId === right.resource.resourceId &&
-      left.resource.resourceType === right.resource.resourceType
-    );
-  }
-  if (left.kind === 'tax_selling_legal_entity') {
-    return right.kind === 'tax_selling_legal_entity' && left.legalEntityId === right.legalEntityId;
-  }
-  return (
-    right.kind === 'price_group' &&
-    left.pricingCatalogId === right.pricingCatalogId &&
-    left.priceGroupId === right.priceGroupId
-  );
-};
-
-const validIntentScope = (entry: AuthorizationMutationJournalEntry): boolean => {
-  const target = entry.businessTarget;
-  if (
-    entry.mutationId.length === 0 ||
-    entry.principal.principalId.length === 0 ||
-    entry.principal.tenantId !== target.tenantId ||
-    target.tenantId.length === 0 ||
-    !isBusinessPermissionTargetCompatible({ permission: entry.permission, target }) ||
-    !hasCanonicalPricingAuthorizationTargetIds(target) ||
-    !hasCanonicalInventoryAuthorizationTarget(target)
-  ) {
-    return false;
-  }
-  if (target.kind === 'pricing_catalog') {
-    return true;
-  }
-  if (target.kind === 'price_group') {
-    return true;
-  }
-  if (target.kind === 'inventory_resource') {
-    return true;
-  }
-  if (target.legalEntityId.length === 0) {
-    return false;
-  }
-  if (target.kind === 'tax_selling_legal_entity') {
-    return true;
-  }
-  if (target.kind === 'retail_profile') {
-    return target.profileId.length > 0;
-  }
-  return target.counterpartyId.length > 0 && (target.kind === 'counterparty' || target.storefrontId.length > 0);
-};
+const validIntentScope = (entry: AuthorizationMutationJournalEntry, target: OwnerPermissionAccessTarget): boolean =>
+  isOwnerPermissionAccessTargetMetadataValid(target) &&
+  entry.mutationId.length > 0 &&
+  entry.principal.principalId.length > 0 &&
+  entry.principal.tenantId === target.scope.tenantId &&
+  entry.permission === target.definition.key;
 
 const validReconciliableState = (entry: AuthorizationMutationJournalEntry): boolean => {
   const terminal = desiredState(entry.operation);
@@ -163,19 +77,17 @@ const sameIntent = (
   after.permission === before.permission &&
   after.principal.tenantId === before.principal.tenantId &&
   after.principal.principalId === before.principal.principalId &&
-  sameBusinessTarget(after.businessTarget, before.businessTarget) &&
+  after.correlationId === before.correlationId &&
   after.state === state;
 
-const relationshipInput = (entry: AuthorizationMutationJournalEntry): BusinessPermissionRelationshipMutationInput => {
-  const input: BusinessPermissionRelationshipMutationInput = {
-    operation: entry.operation,
-    permission: entry.permission,
-    principal: entry.principal,
-    target: entry.businessTarget,
-  };
-  return entry.businessTarget.kind === 'counterparty_storefront'
-    ? { ...input, trustedStorefrontId: entry.businessTarget.storefrontId }
-    : input;
+const relationshipInput = (
+  entry: AuthorizationMutationJournalEntry,
+  target: OwnerPermissionAccessTarget,
+): BusinessPermissionRelationshipMutationInput => {
+  const input = { operation: entry.operation, principal: entry.principal, target };
+  return target.requiredStorefrontId === undefined
+    ? input
+    : { ...input, trustedStorefrontId: target.requiredStorefrontId };
 };
 
 /**
@@ -187,13 +99,25 @@ const relationshipInput = (entry: AuthorizationMutationJournalEntry): BusinessPe
  * recovery anchor and a retry safely repeats the exact relationship write.
  */
 export const reconcileCommittedAuthorizationMutation = Effect.fn('AuthorizationMutationSaga.reconcileCommitted')(
-  function* reconcileCommittedAuthorizationMutationEffect(
-    entry: AuthorizationMutationJournalEntry,
+  function* reconcileCommittedAuthorizationMutationEffect<Target extends object>(
+    entry: AuthorizationMutationJournalEntry<Target>,
     relationship: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
-    finalizer: AuthorizationMutationSagaFinalizer,
-  ): Effect.fn.Return<AuthorizationMutationSagaResult, AuthorizationMutationSagaError> {
+    finalizer: AuthorizationMutationSagaFinalizer<Target>,
+    prepareTarget: (entry: AuthorizationMutationJournalEntry<Target>) => OwnerPermissionAccessTarget | undefined,
+  ): Effect.fn.Return<AuthorizationMutationSagaResult<Target>, AuthorizationMutationSagaError> {
     const terminal = desiredState(entry.operation);
-    if (!validIntentScope(entry) || !validReconciliableState(entry)) {
+    const target = yield* Effect.try({
+      catch: (cause) =>
+        failure(
+          'authorization_mutation_intent_invalid',
+          'The owner authorization mutation target cannot be verified',
+          false,
+          cause,
+        ),
+
+      try: () => prepareTarget(entry),
+    });
+    if (target === undefined || !validIntentScope(entry, target) || !validReconciliableState(entry)) {
       return yield* failure(
         'authorization_mutation_intent_invalid',
         'The durable authorization mutation intent is invalid or conflicts with its operation',
@@ -212,7 +136,7 @@ export const reconcileCommittedAuthorizationMutation = Effect.fn('AuthorizationM
     }
 
     yield* relationship
-      .mutate(relationshipInput(entry))
+      .mutate(relationshipInput(entry, target))
       .pipe(
         Effect.mapError((cause) =>
           failure(
@@ -236,7 +160,26 @@ export const reconcileCommittedAuthorizationMutation = Effect.fn('AuthorizationM
           ),
         ),
       );
-    if (!sameIntent(entry, finalized, terminal)) {
+    const finalizedTarget = yield* Effect.try({
+      catch: (cause) =>
+        failure(
+          'authorization_mutation_final_state_invalid',
+          'The owner authorization finalization target cannot be verified',
+          true,
+          cause,
+        ),
+
+      try: () => prepareTarget(finalized),
+    });
+    if (
+      finalizedTarget === undefined ||
+      !validIntentScope(finalized, finalizedTarget) ||
+      finalizedTarget.contract !== target.contract ||
+      finalizedTarget.definition !== target.definition ||
+      finalizedTarget.key !== target.key ||
+      finalizedTarget.objectId !== target.objectId ||
+      !sameIntent(entry, finalized, terminal)
+    ) {
       return yield* failure(
         'authorization_mutation_final_state_invalid',
         'Durable authorization finalization returned a different mutation or state',

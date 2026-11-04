@@ -1,3 +1,4 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { randomUUID } from 'node:crypto';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import {
@@ -56,6 +57,7 @@ import { customerPaymentTermEntitlementReadRead } from '../../src/api/customer-p
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
 import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { enrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
 
 const services = NodeChildProcessSpawner.layer.pipe(
@@ -405,6 +407,7 @@ const scenario = Effect.fn('PreferencePeriod.nativeScenario')(function* nativeSc
       authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
       moduleKeys: ['commerce.customer-context'],
+      ownerRegistration: commerceCustomerContextRegistration,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (resource) => resource.close().pipe(Effect.orDie),
@@ -569,9 +572,19 @@ const scenario = Effect.fn('PreferencePeriod.nativeScenario')(function* nativeSc
           'required',
         )
         .pipe(Effect.provideContext(context));
-      yield* business.mutate({ ...authorizationGrant, operation: 'grant' });
+      yield* business.mutate({
+        ...authorizationGrant,
+        operation: 'grant',
+        target: customerOwnerPermissionTarget(authorizationGrant),
+      });
       yield* Effect.addFinalizer(() =>
-        business.mutate({ ...authorizationGrant, operation: 'revoke' }).pipe(Effect.orDie),
+        business
+          .mutate({
+            ...authorizationGrant,
+            operation: 'revoke',
+            target: customerOwnerPermissionTarget(authorizationGrant),
+          })
+          .pipe(Effect.orDie),
       );
       const [intent] = pending;
       if (intent === undefined) {
@@ -806,6 +819,7 @@ const scenario = Effect.fn('PreferencePeriod.nativeScenario')(function* nativeSc
         authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
         compositionRevision: snapshot.composition.revision,
         moduleKeys: ['commerce.customer-context'],
+        ownerRegistration: commerceCustomerContextRegistration,
         runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
       }),
       (value) => value.close().pipe(Effect.orDie),

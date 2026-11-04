@@ -23,6 +23,8 @@ import {
   PrivacyAuthenticationNamespaceRegistryLive,
 } from '../../api/auth/action-principal.ts';
 
+import { privacyRegistration } from '../../vertical.registration.ts';
+
 const COMMERCE_NAMESPACE = COMMERCE_AUTHENTICATION_NAMESPACE_ID;
 const principal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
   authBindingId: '10000000-0000-4000-8000-000000000003',
@@ -191,6 +193,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, PrivacyAuthenticationNamespaceRegistry
       Effect.gen(function* deniedAction() {
         let called = false;
         const harness = yield* makeActionTestHarness({
+          ownerRegistration: privacyRegistration,
           services: [
             bindActionTestServices(acknowledgePrivacyNoticeAction, {
               acknowledge: () =>

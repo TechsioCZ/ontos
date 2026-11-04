@@ -1,3 +1,4 @@
+import type { OperationalScope } from '@app/core-runtime';
 import { Context, Effect } from 'effect';
 import type { Redacted } from 'effect';
 
@@ -8,6 +9,7 @@ export interface PriceGroupCatalogGatewayCredentialIssuer {
     readonly audience: 'price-group-catalog';
     readonly compositionRevision: string;
     readonly requestCorrelation: string;
+    readonly scope: OperationalScope;
   }) => Effect.Effect<
     { readonly baseUrl: URL; readonly credential: Redacted.Redacted },
     CustomerPriceGroupCatalogUnavailable

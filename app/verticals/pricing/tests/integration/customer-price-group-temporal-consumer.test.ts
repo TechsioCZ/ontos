@@ -1,5 +1,7 @@
+import { priceGroupOwnerPermissionTarget } from '@app/price-group-catalog/testing/server-owner-native';
 import {
   describePriceGroupTemporalOwner as describeOwner,
+  customerOwnerPermissionTarget,
   openPriceGroupTemporalChannel,
   makePriceGroupTemporalComposition,
   preparePriceGroupTemporalRetailAccess,
@@ -302,6 +304,37 @@ const prepareDedicatedIdentities = Effect.fn('PricingTemporal.prepareDedicatedId
     return physical?.ready === true ? ('existing' as const) : ('fresh' as const);
   },
 );
+const TemporalChildDiagnosticStageSchema = Schema.Literals([
+  'C_SOCKET_CONNECTED',
+  'C_BOOTSTRAP_VALID',
+  'C_CCC_MIGRATION_BEGIN',
+  'C_CCC_MIGRATION_DONE',
+  'C_PARTY_MIGRATION_BEGIN',
+  'C_PARTY_MIGRATION_DONE',
+  'C_SCHEMAS_READY_SENT',
+  'C_IDENTITIES_READY_RECEIVED',
+  'C_AUTHORITY_READY',
+  'C_PARTY_ARTIFACT_VERIFIED',
+  'C_PARTY_HTTP_READY',
+  'C_CATALOG_ARTIFACT_VERIFY_BEGIN',
+  'C_CATALOG_ARTIFACT_VERIFIED',
+  'C_CATALOG_CHANNEL_READY',
+  'C_CATALOG_SPAWNED',
+  'C_CATALOG_BOOTSTRAP_SEND_BEGIN',
+  'C_CATALOG_BOOTSTRAP_SEND_DONE',
+  'C_CATALOG_BOOTED_RECEIVED',
+  'C_CATALOG_EXITED_ZERO',
+  'C_CATALOG_EXITED_NONZERO',
+  'C_CATALOG_HTTP_READY',
+  'C_COMMERCE_READY',
+  'C_BOOTED_SENT',
+  'BOOTSTRAP_OWNED_DATABASE',
+  'BOOTSTRAP_CONFIGURATION',
+  'BOOTSTRAP_MIGRATION',
+  'BOOTSTRAP_RUNTIME',
+  'BOOTSTRAP_OTHER',
+]);
+
 const startReceiver = Effect.fn('TemporalNative.startReceiver')(function* startReceiver(
   bundle: Effect.Success<ReturnType<typeof describeOwner>>,
   bootstrap: typeof PriceGroupTemporalBootstrapSchema.Type,
@@ -326,8 +359,20 @@ const startReceiver = Effect.fn('TemporalNative.startReceiver')(function* startR
     stdout: 'pipe',
   });
   yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
-  yield* Stream.runDrain(child.stdout).pipe(Effect.forkScoped);
-  const receiverExited = child.exitCode.pipe(Effect.flatMap((code) => Effect.fail(fail(`receiver-exited:${code}`))));
+  yield* child.stdout.pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.runForEach((line) =>
+      Schema.is(TemporalChildDiagnosticStageSchema)(line)
+        ? Effect.logInfo('PriceGroup temporal child stage', { stage: line })
+        : Effect.void,
+    ),
+    Effect.forkScoped,
+  );
+  const receiverExited = child.exitCode.pipe(
+    Effect.tap((code) => Effect.logInfo('PriceGroup temporal child exit', { exitCode: code })),
+    Effect.flatMap((code) => Effect.fail(fail(`receiver-exited:${code}`))),
+  );
   const receive = Effect.raceFirst(channel.next, receiverExited).pipe(
     Effect.flatMap((response) =>
       response.type === 'FAILED'
@@ -514,10 +559,9 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
   const business = Context.get(context, BusinessPermissionRelationshipMutation);
   const principal = { principalId: native.actor.principalId, tenantId: native.actor.tenantId };
   const grant = Effect.fn('PricingTemporal.grantOwnedPermission')(function* grantOwnedPermission(
-    permission: Parameters<typeof business.mutate>[0]['permission'],
     target: Parameters<typeof business.mutate>[0]['target'],
   ) {
-    const input = { permission, principal, target };
+    const input = { principal, target };
     yield* business.mutate({ ...input, operation: 'grant' });
     yield* Effect.addFinalizer(() => Effect.orDie(business.mutate({ ...input, operation: 'revoke' })));
   });
@@ -533,11 +577,19 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
       );
     }
   });
-  yield* grant('pricing.price_group.create', {
-    kind: 'pricing_catalog',
-    pricingCatalogId: principal.tenantId,
-    tenantId: principal.tenantId,
-  });
+  yield* grant(
+    priceGroupOwnerPermissionTarget(
+      {
+        permission: 'pricing.price_group.create',
+        target: {
+          kind: 'pricing_catalog',
+          pricingCatalogId: principal.tenantId,
+          tenantId: principal.tenantId,
+        },
+      },
+      'action',
+    ),
+  );
   const create = Effect.fn('PricingTemporal.createPublishedCatalogGroup')(function* createPublishedCatalogGroup(
     type: 'CREATE_G1' | 'CREATE_G2',
   ) {
@@ -546,12 +598,20 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
       return yield* fail('catalog-create-order');
     }
     const { result } = response;
-    yield* grant('pricing.price_group.read', {
-      kind: 'price_group',
-      priceGroupId: result.identity.priceGroupRef.resourceId,
-      pricingCatalogId: principal.tenantId,
-      tenantId: principal.tenantId,
-    });
+    yield* grant(
+      priceGroupOwnerPermissionTarget(
+        {
+          permission: 'pricing.price_group.read',
+          target: {
+            kind: 'price_group',
+            priceGroupId: result.identity.priceGroupRef.resourceId,
+            pricingCatalogId: principal.tenantId,
+            tenantId: principal.tenantId,
+          },
+        },
+        'action',
+      ),
+    );
     return result;
   });
   const first = yield* create('CREATE_G1');
@@ -581,12 +641,20 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
     yield* native.options(),
   );
   yield* resource(profile.profileRef);
-  yield* grant('retail.profile.read', {
-    kind: 'retail_profile',
-    legalEntityId: native.fixture.legalEntityId,
-    profileId: profile.profileRef.resourceId,
-    tenantId: principal.tenantId,
-  });
+  yield* grant(
+    customerOwnerPermissionTarget(
+      {
+        permission: 'retail.profile.read',
+        target: {
+          kind: 'retail_profile',
+          legalEntityId: native.fixture.legalEntityId,
+          profileId: profile.profileRef.resourceId,
+          tenantId: principal.tenantId,
+        },
+      },
+      'action',
+    ),
+  );
   yield* preparePriceGroupTemporalRetailAccess({
     certificate: native.owned.certificate,
     effectiveAt: DateTime.formatIso(yield* DateTime.now),

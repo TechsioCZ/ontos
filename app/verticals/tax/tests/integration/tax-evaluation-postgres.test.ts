@@ -40,6 +40,7 @@ import {
 import type { TaxEvaluationResponse } from '../../shared/apis/tax-evaluation.ts';
 import { executeTaxEvaluationWithAuthorization } from '../../src/api/tax-evaluation-client.ts';
 import { readTaxEvaluation, taxEvaluationRead } from '../../src/api/tax-evaluation.read.ts';
+import { taxRegistration } from '../../vertical.registration.ts';
 import type { SellerVatRegimeAtInstantSelection } from '../../shared/domain/seller-vat-regime-contracts.ts';
 import {
   taxRelations,
@@ -193,6 +194,7 @@ const evaluationHttp = Effect.fn('TaxEvaluationTest.evaluationHttp')(function* e
       ),
     operationTime,
     ownerAuthorizationDecision: 'allowed',
+    ownerRegistration: taxRegistration,
     permissionDecision: 'allowed',
     scope,
   });

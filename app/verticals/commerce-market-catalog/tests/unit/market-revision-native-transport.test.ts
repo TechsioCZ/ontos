@@ -1,5 +1,6 @@
+import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { NodeServices, NodeSocket } from '@effect/platform-node';
-import { Context, Effect, Fiber, FileSystem, Layer, Option, Schema, Stream } from 'effect';
+import { Context, Effect, Fiber, FileSystem, Layer, Option, Path, Schema, Stream } from 'effect';
 import { Socket } from 'effect/socket';
 import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
@@ -214,13 +215,36 @@ it.layer(marketNativeDescriptionLayer, { timeout: '30 seconds' })(
         const response = yield* Schema.decodeUnknownEffect(
           Schema.fromJsonString(
             Schema.Struct({
-              marker: Schema.Struct({ appId: Schema.Literal('commerce-market-catalog') }),
+              marker: Schema.Struct({
+                appId: Schema.Literal('commerce-market-catalog'),
+                buildMarker: Schema.String,
+                sourceRevision: Schema.String,
+              }),
               protocolVersion: Schema.Number,
               responseTransport: Schema.String,
             }),
           ),
         )(stdout.trim());
-        expect(response.marker.appId).toBe('commerce-market-catalog');
+        const filesystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const generated = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(
+            Schema.Struct({
+              deliveryUnit: Schema.Struct({
+                buildMarker: Schema.String,
+                unitId: Schema.String.pipe(Schema.brand('UltramodernDeliveryUnitId')),
+              }),
+            }),
+          ),
+        )(yield* filesystem.readFileString(path.join(process.cwd(), 'shared/ultramodern-build.json')));
+        const expected = yield* Effect.try(() =>
+          resolveUltramodernReleaseIdentity({
+            generationBuildMarker: generated.deliveryUnit.buildMarker,
+            unitId: generated.deliveryUnit.unitId,
+            workspaceRoot: path.resolve(process.cwd(), '../..'),
+          }),
+        );
+        expect(response.marker).toEqual({ appId: 'commerce-market-catalog', ...expected });
         expect(response.protocolVersion).toBe(2);
         expect(response.responseTransport).toBe('private-unix-duplex');
       }),

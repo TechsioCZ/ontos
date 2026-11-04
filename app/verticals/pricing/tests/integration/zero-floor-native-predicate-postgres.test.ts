@@ -1,7 +1,10 @@
-import { makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
+import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
+import { makeNativeReadTestContext, NativeReadTestOwnerRegistration } from '@app/core-runtime/testing/native-reads';
 import type { OperationalScope, ScopedTransactionExecutor, ReadHandlerContext } from '@app/core-runtime';
 import {
   defineRead,
+  defineOntosModuleManifest,
+  defineVerticalRuntimeRegistration,
   defineTenantModuleEntrypoint,
   findPostgresFailure,
   ReadHandlerUnavailable,
@@ -944,6 +947,21 @@ const floorRead = defineRead(
   () => ({ kind: 'module', moduleId: 'commerce.pricing' }),
 );
 
+// This owner registers the exact local native test Read; it claims no production Pricing API.
+const floorReadOwnerBase = makeModuleContractFixture({
+  appId: 'pricing-zero-floor-native-test',
+  moduleId: floorRead.descriptor.owningModuleKey,
+}).manifest;
+const floorReadOwner = defineVerticalRuntimeRegistration({
+  actions: [],
+  manifest: defineOntosModuleManifest({
+    ...floorReadOwnerBase,
+    publicSurface: { ...floorReadOwnerBase.publicSurface, actions: [], api: {}, components: {} },
+  }),
+  outboxWorkers: [],
+  reads: [floorRead],
+});
+
 it.live(
   'settles real Core evidence for the local floor reader/evaluator and rolls back SQL-aborted pseudo-success (#1277)',
   () =>
@@ -953,7 +971,7 @@ it.live(
           contextPermissions: ['pricing.zero_floor.native_test.read'],
           moduleId: 'commerce.pricing',
           ownerFixtureRetention: 'retain-complete-context',
-        });
+        }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, floorReadOwner));
         const fixtureContext = yield* Layer.build(fixture.layer);
         const preparedComposition = yield* fixture
           .prepareOwner(
@@ -1029,7 +1047,7 @@ it.live(
           contextPermissions: [],
           moduleId: 'commerce.pricing',
           ownerFixtureRetention: 'retain-complete-context',
-        });
+        }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, floorReadOwner));
         const deniedContext = yield* Layer.build(denied.layer);
         const deniedResult = yield* Effect.flip(
           denied.runtime

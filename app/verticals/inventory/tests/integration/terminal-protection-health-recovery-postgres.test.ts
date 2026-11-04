@@ -1,3 +1,5 @@
+import { inventoryOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
+import { inventoryRegistration } from '../../vertical.registration.ts';
 import {
   ActionTransactionError,
   OwnerAuthorizationOverlay,
@@ -291,6 +293,7 @@ const makeScenario = Effect.fn('TerminalProtectionHealth.makeScenario')(function
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
       moduleKeys: ['commerce.inventory'],
+      ownerRegistration: inventoryRegistration,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (value) => value.close().pipe(Effect.orDie),
@@ -519,9 +522,11 @@ const makeScenario = Effect.fn('TerminalProtectionHealth.makeScenario')(function
     },
   ];
   for (const entry of permissions) {
-    yield* permission.mutate({ ...entry, operation: 'grant', principal });
+    yield* permission.mutate({ operation: 'grant', principal, target: inventoryOwnerPermissionTarget(entry) });
     yield* Effect.addFinalizer(() =>
-      permission.mutate({ ...entry, operation: 'revoke', principal }).pipe(Effect.orDie),
+      permission
+        .mutate({ operation: 'revoke', principal, target: inventoryOwnerPermissionTarget(entry) })
+        .pipe(Effect.orDie),
     );
   }
   const correctionPermission = permissions.find(
@@ -529,7 +534,7 @@ const makeScenario = Effect.fn('TerminalProtectionHealth.makeScenario')(function
   );
   assert(correctionPermission !== undefined);
   const correctionBusiness = (operation: 'grant' | 'revoke') =>
-    permission.mutate({ ...correctionPermission, operation, principal });
+    permission.mutate({ operation, principal, target: inventoryOwnerPermissionTarget(correctionPermission) });
   yield* fixture.grantResourceAccess(protection.ref, fixture.manager.principalId, 'writer');
   yield* fixture.grantResourceAccess(binding.bindingRef, fixture.manager.principalId, 'writer');
   const clock = yield* TestClock.make();

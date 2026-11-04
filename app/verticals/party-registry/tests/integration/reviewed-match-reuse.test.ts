@@ -1,3 +1,4 @@
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 // @rstest-environment happy-dom
 // @rstest-environment-options {"url":"https://party.ontos.test"}
 import { DatabaseConfig, findPostgresFailure } from '@app/core-runtime';
@@ -100,6 +101,7 @@ it.layer(
             ].map((action) => action.descriptor.actionKey),
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: composition.composition.revision,
+            ownerRegistration: partyRegistryBackendRegistration,
             adminConnectionString: Redacted.make(connections.admin.connectionString),
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
           }),
@@ -455,6 +457,7 @@ it.layer(
             ),
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: composition.composition.revision,
+            ownerRegistration: partyRegistryBackendRegistration,
             adminConnectionString: Redacted.make(connections.admin.connectionString),
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
           }),

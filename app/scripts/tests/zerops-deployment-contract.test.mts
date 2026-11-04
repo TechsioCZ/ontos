@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs';
 
+import { NodeServices } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
+import { loadApplicationMigrationInventory } from '../application-migration-inventory.mts';
 import {
   DEPLOYMENT_ENVIRONMENT_VARIABLE,
   materializeZeropsEnvironment,
@@ -381,18 +383,18 @@ it('fails every app build whose Zephyr upload fails', () => {
   }
 });
 
-it('ships every package the migrator runs drizzle-kit in', () => {
-  const migrator = serviceBlock(readFileSync(zeropsYamlPath, 'utf-8'), 'migrator');
-  const runner = readFileSync(new URL('../run-zerops-migrator.mjs', import.meta.url), 'utf-8');
-  const migratedPackages = [...runner.matchAll(/migrate\('(?<directory>[^']+)'/gu)].map(
-    (match) => match.groups?.directory ?? '',
-  );
-
-  expect(migratedPackages).toContain('verticals/catalog');
-  for (const directory of new Set(migratedPackages)) {
-    expect(migrator).toMatch(new RegExp(`^ +- 'app/(?:${directory}|${directory.split('/')[0]})'$`, 'mu'));
-  }
-});
+it.effect('ships every package available to the native migration inventory', () =>
+  Effect.gen(function* nativeMigrationArtifactCoverage() {
+    const migrator = serviceBlock(readFileSync(zeropsYamlPath, 'utf-8'), 'migrator');
+    const streams = yield* loadApplicationMigrationInventory();
+    const migratedPackages = streams.map(({ directory }) => directory);
+    expect(migratedPackages).toContain('verticals/catalog');
+    for (const directory of new Set(migratedPackages)) {
+      expect(migrator).toMatch(new RegExp(`^ +- 'app/(?:${directory}|${directory.split('/')[0]})'$`, 'mu'));
+    }
+    expect(migrator).toContain("- 'app/topology'");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 // Zerops caps hostnames at 25 characters, so stage runs this worker under an abbreviated name.
 // Units that serve no public route: the migrator, the Outbox Worker host and the Cloudflare Tunnel connector.

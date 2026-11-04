@@ -1,4 +1,4 @@
-import { NodeServices } from '@effect/platform-node';
+import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { ConfigProvider, Effect, Exit, FileSystem, Layer, Schema } from 'effect';
 import { afterAll, expect, it, rs } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
@@ -178,6 +178,38 @@ if (program === 'pg_dump') {
       Effect.scoped,
     ),
   5000,
+);
+
+it.effect(
+  'keeps the Assortment authorization purpose forbidden in deployed environments before database or process I/O',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* rejectsDeployedAssortmentFixture() {
+        const context = yield* Layer.build(
+          NodeChildProcessSpawner.layer.pipe(
+            Layer.provideMerge(NodeServices.layer),
+            Layer.provideMerge(NodeCrypto.layer),
+          ),
+        );
+        const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(['privacy'], 'UNIT-GUARD');
+        const failure = yield* Effect.flip(
+          makeIsolatedNativeDatabaseFixture({
+            compositionSnapshot,
+            mode: 'schema-only',
+            purpose: 'implementation-1290-assortment-authorization',
+          }).pipe(
+            Effect.provideContext(context),
+            Effect.provideService(
+              ConfigProvider.ConfigProvider,
+              ConfigProvider.fromUnknown({ ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'production' }),
+            ),
+          ),
+        );
+        expect(failure).toMatchObject({
+          reason: 'Isolated native database fixtures are forbidden in deployed environments',
+        });
+      }),
+    ),
 );
 
 // With `isolate: false` one module registry is shared by every file a worker runs, so these

@@ -3,12 +3,16 @@ import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
-import { toBusinessPermissionAccessObjectId } from '../../src/permissions/context-access.ts';
+import type { OwnerPermissionAccessTarget } from '../../src/permissions/context-access.ts';
+import { historicalOwnerTarget } from '../support/historical-owner-targets.ts';
 import {
   makeResourceContainmentRelationshipMutation,
   ResourceContainmentMutationUnavailable,
 } from '../../src/permissions/resource-containment-mutation.ts';
-import type { ResourceContainmentRelationship } from '../../src/permissions/resource-containment-mutation.ts';
+import type {
+  ResourceContainmentRelationship,
+  ResourceContainmentRelationshipMutationInput,
+} from '../../src/permissions/resource-containment-mutation.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const otherTenantId = '10000000-0000-4000-8000-000000000002';
@@ -16,6 +20,8 @@ const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const pricingCatalogId = '50000000-0000-4000-8000-000000000001';
 const otherPricingCatalogId = '50000000-0000-4000-8000-000000000002';
 const priceGroupId = '60000000-0000-4000-8000-000000000001';
+
+const declaredPricingTargets = new Map<string, OwnerPermissionAccessTarget>();
 
 const permission = (operation: string) =>
   Schema.decodeSync(BusinessPermissionCodeSchema)(`pricing.price_group.${operation}`);
@@ -26,11 +32,9 @@ const permissionObjectId = (
     | Readonly<{ kind: 'pricing_catalog'; pricingCatalogId: string; tenantId: string }>
     | Readonly<{ kind: 'price_group'; priceGroupId: string; pricingCatalogId: string; tenantId: string }>,
 ): string => {
-  const objectId = toBusinessPermissionAccessObjectId(permission(operation), target);
-  if (objectId === undefined) {
-    throw new Error('Expected a valid Pricing permission object ID');
-  }
-  return objectId;
+  const qualified = historicalOwnerTarget(permission(operation), target);
+  declaredPricingTargets.set(qualified.objectId, qualified);
+  return qualified.objectId;
 };
 
 const catalogReference = (operation = 'read', targetTenantId = tenantId, catalogId = pricingCatalogId) => ({
@@ -74,15 +78,53 @@ const containmentRelationship = (
   resource: groupReference(groupOperation, groupTenantId, catalogId),
 });
 
+const FixturePricingCatalogIdSchema = Schema.String.pipe(Schema.brand('FixturePricingCatalogId'));
+const PricingCatalogMeaningSchema = Schema.Struct({
+  kind: Schema.Literal('pricing_catalog'),
+  pricingCatalogId: FixturePricingCatalogIdSchema,
+});
+const PriceGroupMeaningSchema = Schema.Struct({
+  kind: Schema.Literal('price_group'),
+  pricingCatalogId: FixturePricingCatalogIdSchema,
+});
+
+const preparePricingRelationships = (
+  input: ResourceContainmentRelationshipMutationInput,
+): readonly OwnerPermissionAccessTarget[] | undefined => {
+  const prepared = new Map<string, OwnerPermissionAccessTarget>();
+  for (const relationship of input.relationships) {
+    const group = declaredPricingTargets.get(relationship.resource.objectId);
+    if (group === undefined || !Schema.is(PriceGroupMeaningSchema)(group.target)) {
+      return undefined;
+    }
+    prepared.set(group.objectId, group);
+    if (relationship.relation === 'containing_catalog') {
+      const catalog = declaredPricingTargets.get(relationship.container.objectId);
+      if (
+        catalog === undefined ||
+        !Schema.is(PricingCatalogMeaningSchema)(catalog.target) ||
+        catalog.target.pricingCatalogId !== group.target.pricingCatalogId
+      ) {
+        return undefined;
+      }
+      prepared.set(catalog.objectId, catalog);
+    }
+  }
+  return [...prepared.values()];
+};
+
 const makeHarness = () => {
   const requests: v1.WriteRelationshipsRequest[] = [];
-  const service = makeResourceContainmentRelationshipMutation({
-    writeRelationships: (request) =>
-      Effect.sync(() => {
-        requests.push(request);
-        return v1.WriteRelationshipsResponse.create({});
-      }),
-  });
+  const service = makeResourceContainmentRelationshipMutation(
+    {
+      writeRelationships: (request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return v1.WriteRelationshipsResponse.create({});
+        }),
+    },
+    preparePricingRelationships,
+  );
   return { requests, service };
 };
 
@@ -157,15 +199,12 @@ it.effect('rejects tenant injection into a legacy business permission object', (
   Effect.gen(function* rejectLegacyPermissionTenantInjection() {
     const { requests, service } = makeHarness();
     const legacyPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('counterparty.purchase.submit');
-    const legacyObjectId = toBusinessPermissionAccessObjectId(legacyPermission, {
+    const legacyObjectId = historicalOwnerTarget(legacyPermission, {
       counterpartyId: 'counterparty-one',
       kind: 'counterparty',
       legalEntityId,
       tenantId,
-    });
-    if (legacyObjectId === undefined) {
-      throw new Error('Expected a valid legacy permission object ID');
-    }
+    }).objectId;
     const failure = yield* Effect.flip(
       service.touch({
         relationships: [

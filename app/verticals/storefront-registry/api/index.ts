@@ -1,10 +1,12 @@
+import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import { storefrontRegistryRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   ReadRuntime,
   GatewayAssertionRedemptionService,
   TenantModuleStateServiceLive,
@@ -23,7 +25,7 @@ import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from '
 import { FetchHttpClient } from 'effect/http';
 
 import { storefrontRegistryApi, storefrontRegistryOperationContexts } from '../shared/api.ts';
-import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
+import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
@@ -89,11 +91,22 @@ const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
   Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
-const productionReadRuntimeLive = ReadRuntimeLive.pipe(
+const nativeCompositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(
+  Layer.provide(
+    FetchHttpClient.layer.pipe(
+      Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+    ),
+  ),
+);
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(nativeCompositionSourceLive),
+);
+const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, storefrontRegistryRegistration).pipe(
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(activeApplicationCompositionLive),
 );
 
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
@@ -121,19 +134,7 @@ export const makeStorefrontRegistryApiRuntime = (
     // </generated-governed-http-handler-layers>
   ).pipe(Layer.provide(Layer.mergeAll(GovernedActionPrincipalVerifierLive, gatewayAssertionRedemption)));
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        runtimeObservabilityLive,
-        RequestSchemaProblemLive,
-        ActiveApplicationCompositionSourceLive.pipe(
-          Layer.provide(
-            FetchHttpClient.layer.pipe(
-              Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
-            ),
-          ),
-        ),
-      ),
-    ),
+    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nativeCompositionSourceLive)),
     Layer.orDie,
   );
   const transportLive = HttpRouter.cors({

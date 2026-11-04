@@ -1,6 +1,7 @@
+import { customerOwnerPermissionTarget } from '../permissions/authorization.ts';
+import type { CustomerPermissionRequest } from '../permissions/authorization.ts';
 import { ContextAccess } from '@app/core-runtime';
 import type {
-  BusinessPermissionAccessTarget,
   ContextAccessService,
   OperationalScope,
   ScopedRoutineInvoker,
@@ -307,14 +308,14 @@ const buyerPermission = Effect.fn('PurchaseApprovalCurrentnessPersistence.buyerP
     lock: boolean,
   ) =>
     Effect.gen(function* readBuyerPermission() {
-      const check = contextAccess.businessPermissions;
+      const check = contextAccess.ownerPermissions;
       if (check === undefined) {
         return yield* currentnessRejected('Core buyer authorization is unavailable');
       }
       const counterparty = yield* Schema.decodeUnknownEffect(PurchaseLimitCounterpartyRefSchema)(
         snapshot.proposal.identity.counterpartyRef,
       ).pipe(Effect.mapError(mapCurrentnessError(INVALID_COUNTERPARTY_REFERENCE)));
-      const target: BusinessPermissionAccessTarget = {
+      const target: CustomerPermissionRequest = {
         permission: 'counterparty.purchase.submit',
         target: {
           counterpartyId: counterparty.resourceId,
@@ -325,8 +326,9 @@ const buyerPermission = Effect.fn('PurchaseApprovalCurrentnessPersistence.buyerP
         },
       };
       const [core] = yield* check({
+        legalEntityId: scope.legalEntityId,
         principal: snapshot.proposal.identity.buyer,
-        targets: [target],
+        targets: [{ target: customerOwnerPermissionTarget({ ...target, trustedStorefrontId: scope.storefrontId }) }],
         trustedStorefrontId: scope.storefrontId,
       });
       const ownerScope = {

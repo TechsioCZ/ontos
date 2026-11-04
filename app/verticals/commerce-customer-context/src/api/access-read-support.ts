@@ -1,3 +1,4 @@
+import { customerOwnerPermissionTarget } from '../permissions/authorization.ts';
 import type { OperationalScope } from '@app/core-runtime';
 import type { CounterpartyPermissionScope, CounterpartyRef } from '../../shared/domain/access-contract.ts';
 
@@ -10,7 +11,8 @@ export const counterpartyAccessReadPermissionTarget = (
 ) => {
   if (input.scope.kind === 'counterparty') {
     return {
-      businessPermission: {
+      kind: 'owner_permission' as const,
+      ownerPermission: customerOwnerPermissionTarget({
         permission: 'counterparty.access.read',
         target: {
           counterpartyId: input.counterpartyRef.resourceId,
@@ -18,12 +20,12 @@ export const counterpartyAccessReadPermissionTarget = (
           legalEntityId: operationalScope.legalEntityId ?? '',
           tenantId: operationalScope.tenantId,
         },
-      },
-      kind: 'business_permission' as const,
+      }),
     };
   }
   const target = {
-    businessPermission: {
+    kind: 'owner_permission' as const,
+    ownerPermission: customerOwnerPermissionTarget({
       permission: 'counterparty.access.read',
       target: {
         counterpartyId: input.counterpartyRef.resourceId,
@@ -32,8 +34,7 @@ export const counterpartyAccessReadPermissionTarget = (
         storefrontId: input.scope.storefrontKey,
         tenantId: operationalScope.tenantId,
       },
-    },
-    kind: 'business_permission' as const,
+    }),
   };
   if (operationalScope.trustedStorefrontId === undefined) {
     return target;

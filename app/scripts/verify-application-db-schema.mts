@@ -2,240 +2,278 @@
 
 import { fileURLToPath } from 'node:url';
 
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Array as EffectArray, Console, Effect, Exit, Option, Order, Redacted, Schema } from 'effect';
+import { Array as EffectArray, Console, Effect, Layer, Option, Order, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
+import { Command, Flag } from 'effect/cli';
 
-import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
-import { loadOptionalCommercePortalAuthDatabaseConfig } from '../verticals/commerce-customer-context/scripts/portal-auth-database-config.mts';
-import type { CommercePortalAuthDatabaseConnectionPair } from '../verticals/commerce-customer-context/scripts/portal-auth-database-config.mts';
-
-const EXPECTED_APPLICATION_SCHEMAS = [
-  'assortment',
-  'auth',
-  'catalog',
-  'commerce_cart',
-  'commerce_customer_context',
-  'commerce_market_catalog',
-  'commerce_order',
-  'contacts',
-  'core',
-  'inventory',
-  'party',
-  'payment_term_catalog',
-  'price_group_catalog',
-  'pricing',
-  'privacy',
-  'projects',
-  'storefront_registry',
-  'tax',
-  'trust',
-] as const;
-const EXPECTED_MIGRATION_JOURNALS = [
-  '__drizzle_migrations_assortment',
-  '__drizzle_migrations_auth',
-  '__drizzle_migrations_catalog',
-  '__drizzle_migrations_commerce_cart',
-  '__drizzle_migrations_commerce_customer_context',
-  '__drizzle_migrations_commerce_market_catalog',
-  '__drizzle_migrations_commerce_order',
-  '__drizzle_migrations_contacts',
-  '__drizzle_migrations_core',
-  '__drizzle_migrations_inventory',
-  '__drizzle_migrations_party',
-  '__drizzle_migrations_payment_term_catalog',
-  '__drizzle_migrations_price_group_catalog',
-  '__drizzle_migrations_pricing',
-  '__drizzle_migrations_privacy',
-  '__drizzle_migrations_projects',
-  '__drizzle_migrations_storefront_registry',
-  '__drizzle_migrations_tax',
-] as const;
-const COMMERCE_PORTAL_AUTH_SCHEMA_NAME = 'commerce_auth' as const;
-const COMMERCE_PORTAL_AUTH_MIGRATION_JOURNAL = '__drizzle_migrations_commerce_portal_auth' as const;
+import { loadAdministrativeDatabaseConnection } from '../packages/core-runtime/src/db/config.ts';
+import { loadApplicationMigrationInventory } from './application-migration-inventory.mts';
+import type { ApplicationMigrationStream } from './application-migration-inventory.mts';
+import { resolveApplicationMigrationRequirements } from './application-migration-plan.mts';
+import type { ApplicationMigrationRequirements } from './application-migration-plan.mts';
+import { readApplicationMigrationRequirements } from './application-migration-runtime.mts';
 
 class ApplicationDatabaseVerificationError extends Schema.TaggedError<ApplicationDatabaseVerificationError>()(
   'ApplicationDatabaseVerificationError',
-  {
-    cause: Schema.optionalKey(Schema.Unknown),
-    reason: Schema.String,
-  },
+  { cause: Schema.optionalKey(Schema.Unknown), reason: Schema.String },
 ) {}
 
 const verificationFailure = (reason: string, cause?: unknown): ApplicationDatabaseVerificationError =>
   new ApplicationDatabaseVerificationError(cause === undefined ? { reason } : { cause, reason });
 
-const query = <Row extends object>(
-  client: PgClient.PgClient,
-  text: string,
-  reason: string,
-): Effect.Effect<readonly Row[], ApplicationDatabaseVerificationError> =>
-  client.unsafe<Row>(text).pipe(Effect.mapError((cause) => verificationFailure(reason, cause)));
+interface ApplicationVerificationSelection {
+  readonly mode: ApplicationMigrationRequirements['mode'];
+  readonly streams: readonly ApplicationMigrationStream[];
+}
 
-const orderedValuesMatch = (actual: readonly string[], expected: readonly string[]): boolean =>
-  actual.length === expected.length && actual.every((value, index) => value === expected[index]);
+/** Internal owner IDs are resolved against source metadata before any owner configuration is loaded. */
+export const resolveApplicationVerificationSelection = Effect.fn('ApplicationDatabaseVerification.select')(
+  function* resolveApplicationVerificationSelectionEffect(input: {
+    readonly inventory: readonly ApplicationMigrationStream[];
+    readonly ownersOption: Option.Option<string>;
+    readonly requirements?: ApplicationMigrationRequirements;
+    readonly requirementsOption?: Option.Option<string>;
+  }): Effect.fn.Return<ApplicationVerificationSelection, ApplicationDatabaseVerificationError> {
+    if (
+      Option.isSome(input.ownersOption) &&
+      input.requirementsOption !== undefined &&
+      Option.isSome(input.requirementsOption)
+    ) {
+      return yield* verificationFailure('Owners and requirements options are mutually exclusive');
+    }
+    let requirements: ApplicationMigrationRequirements = input.requirements ?? { mode: 'all', owners: [] };
+    if (Option.isSome(input.ownersOption)) {
+      const owners = input.ownersOption.value;
+      requirements =
+        owners === ''
+          ? { mode: 'none', owners: [] }
+          : {
+              mode: 'selected',
+              owners: owners.split(',').map((ownerId) => ({ migrate: false, ownerId, verify: true })),
+            };
+    }
+    const metadata = input.inventory.map(({ journalName, migrations, optional, ownerId, prerequisites, schemas }) => ({
+      journalName,
+      migrations,
+      optional,
+      ownerId,
+      prerequisites,
+      schemas,
+    }));
+    const selected = yield* resolveApplicationMigrationRequirements(requirements, metadata).pipe(
+      Effect.mapError((cause) => verificationFailure('Invalid application database verifier selection', cause)),
+    );
+    const byOwner = new Map(input.inventory.map((stream) => [stream.ownerId, stream]));
+    const streams: ApplicationMigrationStream[] = [];
+    for (const requirement of selected) {
+      if (requirement.verify) {
+        const stream = byOwner.get(requirement.ownerId);
+        if (stream === undefined) {
+          return yield* verificationFailure('The selected verifier is absent from the source inventory');
+        }
+        streams.push(stream);
+      }
+    }
+    return { mode: requirements.mode, streams };
+  },
+);
+
+export interface ApplicationCatalogExpectation {
+  readonly allowedJournals: readonly string[];
+  readonly allowedSchemas: readonly string[];
+  readonly requiredJournals: readonly string[];
+  readonly requiredSchemas: readonly string[];
+}
+
+const orderedUnique = (values: readonly string[]) => EffectArray.sort([...new Set(values)], Order.String);
+
+/** Excluded known catalogs can remain installed; only the selected closure must be present. */
+export const applicationCatalogExpectation = (input: {
+  readonly commerceUsesPrimaryDatabase: boolean;
+  readonly inventory: readonly ApplicationMigrationStream[];
+  readonly mode: ApplicationMigrationRequirements['mode'];
+  readonly selectedStreams: readonly ApplicationMigrationStream[];
+}): ApplicationCatalogExpectation => {
+  const required = input.selectedStreams.filter(
+    (stream) => stream.database === 'primary' || input.commerceUsesPrimaryDatabase,
+  );
+  const allowed = input.mode === 'all' ? required : input.inventory;
+  return {
+    allowedJournals: orderedUnique(allowed.map((stream) => stream.journalName)),
+    allowedSchemas: orderedUnique(allowed.flatMap((stream) => stream.schemas)),
+    requiredJournals: orderedUnique(required.map((stream) => stream.journalName)),
+    requiredSchemas: orderedUnique(required.flatMap((stream) => stream.schemas)),
+  };
+};
+
+export const applicationCatalogMismatch = (
+  actual: { readonly journals: readonly string[]; readonly schemas: readonly string[] },
+  expected: ApplicationCatalogExpectation,
+): string | undefined => {
+  const missingSchemas = expected.requiredSchemas.filter((name) => !actual.schemas.includes(name));
+  const unknownSchemas = actual.schemas.filter((name) => !expected.allowedSchemas.includes(name));
+  if (missingSchemas.length > 0 || unknownSchemas.length > 0) {
+    return `Application schema mismatch; missing=[${missingSchemas.join(', ')}], unknown=[${unknownSchemas.join(', ')}]`;
+  }
+  const missingJournals = expected.requiredJournals.filter((name) => !actual.journals.includes(name));
+  const unknownJournals = actual.journals.filter((name) => !expected.allowedJournals.includes(name));
+  return missingJournals.length > 0 || unknownJournals.length > 0
+    ? `Migration journal mismatch; missing=[${missingJournals.join(', ')}], unknown=[${unknownJournals.join(', ')}]`
+    : undefined;
+};
 
 interface DatabaseTarget {
   readonly database: string;
   readonly host: string;
   readonly port: number;
 }
-
-interface ApplicationCatalogExpectation {
-  readonly journals: readonly string[];
-  readonly schemas: readonly string[];
-}
-
 const sameDatabaseTarget = (left: DatabaseTarget, right: DatabaseTarget): boolean =>
   left.database === right.database && left.host === right.host && left.port === right.port;
 
-const applicationCatalogExpectation = (
-  primaryDatabase: DatabaseTarget,
-  commerceConfiguration: Option.Option<CommercePortalAuthDatabaseConnectionPair>,
-): ApplicationCatalogExpectation => {
-  const commerceUsesPrimaryDatabase =
-    Option.isSome(commerceConfiguration) && sameDatabaseTarget(primaryDatabase, commerceConfiguration.value.admin);
-  if (!commerceUsesPrimaryDatabase) {
-    return { journals: EXPECTED_MIGRATION_JOURNALS, schemas: EXPECTED_APPLICATION_SCHEMAS };
-  }
-  return {
-    journals: EffectArray.sort([...EXPECTED_MIGRATION_JOURNALS, COMMERCE_PORTAL_AUTH_MIGRATION_JOURNAL], Order.String),
-    schemas: EffectArray.sort([...EXPECTED_APPLICATION_SCHEMAS, COMMERCE_PORTAL_AUTH_SCHEMA_NAME], Order.String),
-  };
-};
+const query = <Row extends object>(client: PgClient.PgClient, text: string, reason: string) =>
+  client.unsafe<Row>(text).pipe(Effect.mapError((cause) => verificationFailure(reason, cause)));
 
 const verifyApplicationCatalog = (client: PgClient.PgClient, expected: ApplicationCatalogExpectation) =>
   Effect.gen(function* verifyApplicationCatalogEffect() {
-    // PostgreSQL catalogs have no Drizzle table model. This verification-only query
-    // exact-matches every application schema and independent migration journal.
+    // Native catalogs are the evidence; selection never predicts that an excluded owner is absent.
     const schemas = yield* query<{ schema_name: string }>(
       client,
       `
-        select namespace.nspname as schema_name
-        from pg_catalog.pg_namespace as namespace
-        where namespace.nspname <> 'information_schema'
-          and namespace.nspname not like 'pg\\_%'
-          and namespace.nspname not in ('drizzle', 'public')
-        order by namespace.nspname
-      `,
+      select namespace.nspname as schema_name from pg_catalog.pg_namespace as namespace
+      where namespace.nspname <> 'information_schema' and namespace.nspname not like 'pg\\_%'
+        and namespace.nspname not in ('drizzle', 'public') order by namespace.nspname
+    `,
       'Unable to verify the application schema catalog',
     );
     const journals = yield* query<{ table_name: string }>(
       client,
       `
-        select relation.relname as table_name
-        from pg_catalog.pg_class as relation
-        inner join pg_catalog.pg_namespace as namespace
-          on namespace.oid = relation.relnamespace
-        where namespace.nspname = 'drizzle'
-          and relation.relkind = 'r'
-        order by relation.relname
-      `,
+      select relation.relname as table_name from pg_catalog.pg_class as relation
+      inner join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+      where namespace.nspname = 'drizzle' and relation.relkind = 'r' order by relation.relname
+    `,
       'Unable to verify the application migration journals',
     );
-    const actualSchemas = schemas.map((row) => row.schema_name);
-    const actualJournals = journals.map((row) => row.table_name);
-
-    if (!orderedValuesMatch(actualSchemas, expected.schemas)) {
-      yield* verificationFailure(
-        `Application schema mismatch; expected=[${expected.schemas.join(', ')}], actual=[${actualSchemas.join(', ')}]`,
-      );
-    }
-    if (!orderedValuesMatch(actualJournals, expected.journals)) {
-      yield* verificationFailure(
-        `Migration journal mismatch; expected=[${expected.journals.join(', ')}], actual=[${actualJournals.join(', ')}]`,
-      );
-    }
-  });
-
-const ownerVerifierPaths = [
-  '../packages/core-runtime/scripts/verify-db-schema.mts',
-  '../apps/shell-super-app/scripts/verify-auth-db-schema.mts',
-  '../verticals/assortment/scripts/verify-db-schema.mts',
-  '../verticals/party-registry/scripts/verify-db-schema.mts',
-  '../verticals/party-registry/scripts/verify-engagement-db-schema.mts',
-  '../verticals/payment-term-catalog/scripts/verify-db-schema.mts',
-  '../verticals/price-group-catalog/scripts/verify-db-schema.mts',
-  '../verticals/commerce-cart/scripts/verify-db-schema.mts',
-  '../verticals/commerce-customer-context/scripts/verify-db-schema.mts',
-  '../verticals/commerce-market-catalog/scripts/verify-db-schema.mts',
-  '../verticals/commerce-order/scripts/verify-database.mts',
-  '../verticals/catalog/scripts/verify-db-schema.mts',
-  '../verticals/inventory/scripts/verify-db-schema.mts',
-  '../verticals/pricing/scripts/verify-db-schema.mts',
-  '../verticals/privacy/scripts/verify-db-schema.mts',
-  '../verticals/projects/scripts/verify-db-schema.mts',
-  '../verticals/storefront-registry/scripts/verify-db-schema.mts',
-  '../verticals/tax/scripts/verify-db-schema.mts',
-] as const;
-
-const COMMERCE_PORTAL_AUTH_VERIFIER = '../verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts';
-
-/**
- * The Commerce portal realm is optional, so its owner verifier only runs for a workspace that
- * opted in — the same condition `scripts/run-zerops-migrator.mjs` applies before migrating it.
- * Unlike the verifiers above it reports through its exit code rather than by rejecting, so it is
- * run as its own process and that exit code is what this verification reads.
- */
-const verifyCommercePortalAuthOwnerSchema = Effect.callback<boolean, ApplicationDatabaseVerificationError>((resume) => {
-  const { spawn } = process.getBuiltinModule('node:child_process');
-  const verifier = fileURLToPath(new URL(COMMERCE_PORTAL_AUTH_VERIFIER, import.meta.url));
-  const child = spawn(process.execPath, [verifier], { stdio: 'inherit' });
-  const onError = (cause: Error) => {
-    resume(Effect.fail(verificationFailure(`Owner database verifier ${COMMERCE_PORTAL_AUTH_VERIFIER} failed`, cause)));
-  };
-  const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-    const outcome = signal ?? `code ${String(code)}`;
-    resume(
-      code === 0
-        ? Effect.succeed(true)
-        : Effect.fail(
-            verificationFailure(`Owner database verifier ${COMMERCE_PORTAL_AUTH_VERIFIER} exited with ${outcome}`),
-          ),
-    );
-  };
-
-  child.once('error', onError);
-  child.once('exit', onExit);
-  return Effect.sync(() => {
-    child.off('error', onError);
-    child.off('exit', onExit);
-  });
-}).pipe(Effect.asVoid);
-
-const main = Effect.gen(function* verifyApplicationDatabase() {
-  const configuration = yield* loadDatabaseConnectionPair();
-  const commerceConfiguration = yield* loadOptionalCommercePortalAuthDatabaseConfig().pipe(
-    Effect.mapError((failure) => verificationFailure(failure.reason)),
-  );
-  const expected = applicationCatalogExpectation(configuration.admin, commerceConfiguration);
-  yield* PgClient.makeClient({ url: Redacted.make(configuration.admin.connectionString) }).pipe(
-    Effect.mapError((cause) =>
-      verificationFailure('Unable to connect to the administrative PostgreSQL database', cause),
-    ),
-    Effect.flatMap((client) => verifyApplicationCatalog(client, expected)),
-    Effect.scoped,
-  );
-
-  yield* Console.log('Verified exact application schemas and migration journals');
-  for (const ownerVerifierPath of ownerVerifierPaths) {
-    yield* Effect.tryPromise({
-      catch: (cause) => verificationFailure(`Owner database verifier ${ownerVerifierPath} failed`, cause),
-      try: async () => {
-        await import(ownerVerifierPath);
+    const mismatch = applicationCatalogMismatch(
+      {
+        journals: journals.map((row) => row.table_name),
+        schemas: schemas.map((row) => row.schema_name),
       },
-    });
-  }
-  if (Option.isSome(commerceConfiguration)) {
-    yield* verifyCommercePortalAuthOwnerSchema;
-  }
-}).pipe(
-  Effect.provide(Reactivity.layer),
-  Effect.tapError((failure) => Console.error(failure.reason)),
-);
+      expected,
+    );
+    if (mismatch !== undefined) {
+      return yield* verificationFailure(mismatch);
+    }
+    return yield* Effect.void;
+  });
 
-const exit = await Effect.runPromiseExit(main);
-// Imported owner verifiers report their own failure through `process.exitCode`; never reset it to success.
-if (Exit.isFailure(exit)) {
-  process.exitCode = 1;
+/** Source-owned script gateways run once in isolation and report their real process exit status. */
+const verifyOwnerSchema = (path: string) =>
+  Effect.callback<boolean, ApplicationDatabaseVerificationError>((resume) => {
+    const { spawn } = process.getBuiltinModule('node:child_process');
+    const child = spawn(process.execPath, [fileURLToPath(new URL(`../${path}`, import.meta.url))], {
+      stdio: 'inherit',
+    });
+    const onError = (cause: Error) =>
+      resume(Effect.fail(verificationFailure(`Owner database verifier ${path} failed`, cause)));
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      const outcome = signal ?? `code ${String(code)}`;
+      resume(
+        code === 0
+          ? Effect.succeed(true)
+          : Effect.fail(verificationFailure(`Owner database verifier ${path} exited with ${outcome}`)),
+      );
+    };
+    child.once('error', onError);
+    child.once('exit', onExit);
+    return Effect.sync(() => {
+      child.off('error', onError);
+      child.off('exit', onExit);
+    });
+  }).pipe(Effect.asVoid);
+
+const verifyApplicationDatabase = (ownersOption: Option.Option<string>, requirementsOption: Option.Option<string>) =>
+  Effect.gen(function* verifyApplicationDatabaseEffect() {
+    const inventory = yield* loadApplicationMigrationInventory().pipe(
+      Effect.mapError((cause) => verificationFailure('Unable to load application migration inventory', cause)),
+    );
+    const requirements = Option.isNone(ownersOption)
+      ? yield* readApplicationMigrationRequirements(Option.getOrUndefined(requirementsOption)).pipe(
+          Effect.mapError((cause) =>
+            verificationFailure('Unable to read application verification requirements', cause),
+          ),
+        )
+      : { mode: 'all' as const, owners: [] };
+    const selection = yield* resolveApplicationVerificationSelection({
+      inventory,
+      ownersOption,
+      requirements,
+      requirementsOption,
+    });
+    if (selection.streams.length === 0) {
+      return yield* Console.log('No application database verification required');
+    }
+    if (selection.streams.some((stream) => stream.database === 'primary')) {
+      const configuration = yield* loadAdministrativeDatabaseConnection().pipe(
+        Effect.mapError((cause) => verificationFailure('Unable to load the primary database configuration', cause)),
+      );
+      let commerceUsesPrimaryDatabase = false;
+      if (selection.mode === 'all') {
+        // The optional owner gateway is deliberately absent from selected primary-owner execution.
+        const gateway = yield* Effect.tryPromise({
+          catch: (cause) => verificationFailure('Unable to load optional portal database gateway', cause),
+          try: async () =>
+            await import('../verticals/commerce-customer-context/scripts/portal-auth-database-config.mts'),
+        });
+        const commerce = yield* gateway
+          .loadOptionalCommercePortalAuthDatabaseConfig()
+          .pipe(
+            Effect.mapError((cause) =>
+              verificationFailure('Unable to load optional portal database configuration', cause),
+            ),
+          );
+        commerceUsesPrimaryDatabase =
+          Option.isSome(commerce) && sameDatabaseTarget(configuration, commerce.value.admin);
+      }
+      const expected = applicationCatalogExpectation({
+        commerceUsesPrimaryDatabase,
+        inventory,
+        mode: selection.mode,
+        selectedStreams: selection.streams,
+      });
+      yield* PgClient.makeClient({ url: Redacted.make(configuration.connectionString) }).pipe(
+        Effect.mapError((cause) =>
+          verificationFailure('Unable to connect to the administrative PostgreSQL database', cause),
+        ),
+        Effect.flatMap((client) => verifyApplicationCatalog(client, expected)),
+        Effect.scoped,
+      );
+      yield* Console.log('Verified application schemas and migration journals for the selected owner closure');
+    }
+    for (const stream of selection.streams) {
+      for (const path of stream.verifierPaths) {
+        yield* verifyOwnerSchema(path);
+      }
+    }
+    return yield* Effect.void;
+  }).pipe(Effect.tapError((failure) => Console.error(failure.reason)));
+
+export const verifyApplicationDatabaseCommand = Command.make(
+  'verify-application-db-schema',
+  {
+    owners: Flag.String('owners').pipe(Flag.optional),
+    requirements: Flag.String('requirements').pipe(Flag.optional),
+  },
+  ({ owners, requirements }) => verifyApplicationDatabase(owners, requirements),
+);
+export const main = Command.run(verifyApplicationDatabaseCommand, { version: '1.0.0' });
+
+if (import.meta.main) {
+  NodeRuntime.runMain(
+    Layer.build(Layer.effectDiscard(main).pipe(Layer.provide(Layer.merge(NodeServices.layer, Reactivity.layer)))).pipe(
+      Effect.scoped,
+    ),
+  );
 }

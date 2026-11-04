@@ -1,4 +1,8 @@
-import { NativeReadTestError, makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
+import {
+  NativeReadTestError,
+  NativeReadTestOwnerRegistration,
+  makeNativeReadTestContext,
+} from '@app/core-runtime/testing/native-reads';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
@@ -9,6 +13,8 @@ import { Crypto, Effect, FileSystem, Layer, Option, Path, Redacted, Result, Sche
 import { Reactivity } from 'effect/reactivity';
 import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
+
+import { privacyRegistration } from '../../vertical.registration.ts';
 
 import type { ConsentDecision } from '../../shared/domain/privacy-consent-decision.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-persistence-error.ts';
@@ -229,7 +235,7 @@ it.live('binds native Consent history to one exact Subject across valid competin
         contextPermissions: ['privacy.consent.read'],
         moduleId: 'privacy.core',
         ownerFixtureRetention: 'retain-complete-context',
-      });
+      }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, privacyRegistration));
       yield* Effect.gen(function* consentSubjectAssertions() {
         const {
           consent,
@@ -562,7 +568,7 @@ it.live(
           contextPermissions: ['privacy.consent.read'],
           moduleId: 'privacy.core',
           ownerFixtureRetention: 'retain-complete-context',
-        });
+        }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, privacyRegistration));
         yield* Effect.gen(function* legacyConsentAssertions() {
           const {
             consent,

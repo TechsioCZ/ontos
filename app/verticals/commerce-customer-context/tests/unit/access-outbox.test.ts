@@ -2,7 +2,7 @@ import { expect, it } from 'effect-rstest';
 import { Crypto, Effect, Layer, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import type { ActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionHandler } from '@app/core-runtime/testing/actions';
 import type { DomainEventContractMap } from '../../../../packages/core-runtime/src/actions/events.ts';
 import {
   BusinessPermissionRelationshipMutation,
@@ -88,9 +88,9 @@ const unusedAccessDependencies = Layer.mergeAll(
     mutate: () => Effect.void,
   }),
   Layer.succeed(ContextAccess, {
-    businessPermissions: () => Effect.succeed([]),
     legalEntities: () => Effect.succeed([]),
     modules: () => Effect.succeed([]),
+    ownerPermissions: () => Effect.succeed([]),
     resources: () => Effect.succeed([]),
     tenants: () => Effect.succeed([]),
   }),
