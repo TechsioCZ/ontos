@@ -690,3 +690,31 @@ repository-policy). Všechny reportované N1 manual-tag nálezy byly opravené a
 ověřené samostatnou stejnou policy konfigurací. Zbývající diagnostika zasahuje jiné
 aplikace/tooling a lokální necommitovaný seed mimo N1 scope. Celkové repo nemá
 zelený full gate; pravidla ani hooky se neoslabují.
+
+## C8 — vlastní profil a objednávky (2026-11-04)
+
+Figma profile desktop/mobile54:1417/54:1629, own orders54:2060/54:2241
+a detail55:2509 byly skutečně načtené. Kompozice používá FormInput md,
+Tabs default/sm, Button primary/solid, Badge info/md, semantic Table
+a ProductCard. Nepřibyly vzhledové CSS třídy ani tokenové přepisy.
+
+295/295 testů PASS; Next produkční build, N1 lint/format a samostatná
+Effect repository policy PASS. Source review serveru i klienta bez zbývajících
+P1/P2. Ověřena izolace zákazníků, CAS konflikt, nejistý zápis bez retry,
+uložené měny a bezpečné textové vykreslení.
+
+Živý lokální BE: anonymní profil GET200/anonymous; vlastní objednávky
+GET401/anonymous; query s podvrženým customerAccountId400/invalid;
+cross-origin profile POST403/forbidden. Account na390 bez overflow,
+noindex/nofollow. Chybějící Shell/composition služby byly obnovené přes
+stávající izolované launchery bez resetu dat. Pozitivní přihlášený účet
+není ověřený a naplněné account obrazovky nemají live vizuální PASS.
+
+Native displayName zůstává jedním polem, kontaktní email readonly. API
+nedodává globální statistiky útraty ani historická produktová média;
+partial page se za globální statistiku nevydává. Adresář má explicitní
+unavailable stav. Přihlášený checkout zůstává dalším samostatným celkem.
+
+Full pnpm check byl opět spuštěný a skončil na stejných čtyřech repository
+lint-rule testech mimo N1; nový report neobsahuje žádný N1 nález.
+Pravidla a hooky nejsou vypnuté.

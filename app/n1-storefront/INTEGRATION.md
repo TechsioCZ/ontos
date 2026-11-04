@@ -103,3 +103,23 @@ nativní objednávková adresa tato samostatná pole nepodporuje. Nevzniká kvů
 nim změna BE kontraktu ani ukládání do jiných polí. Souhrn respektuje také
 nativní DPH včetně dopravy: čistá částka je označená jako včetně dopravy a
 doprava jako část již zahrnutá v celku, bez dalšího výpočtu sazby nebo kurzu.
+
+## C8 — native customer self-service
+
+GET/POST `/api/customer-profile` používají veřejné own-profile API skupiny
+commerce-customer-context. Každý request získá čerstvou Portal admission
+v N1 tenantu; předávají se pouze filtrované Portal cookies a čerstvý audience
+assertion. POST přijímá pouze displayName/contactEmail/phone/CAS version.
+409 vyžaduje nové čtení, neurčitý write není automaticky opakován.
+SSR viewerEmail pochází z přihlášení, nikoli z upravitelného kontaktu.
+
+GET `/api/customer-orders?locale=cs&offset=0` a varianta s `orderId` používají
+veřejný native records storefrontCustomerOrders filtr se serverem ověřeným
+customerAccountId. Browserové account/party ID jsou odmítnuté. List vynechává
+kontakty/adresy/nonce; detail se zpřístupní pouze pro požadovanou vlastní
+objednávku. Uloženou měnu určuje veřejná native funkce orderCurrency, včetně
+jejího doloženého legacy CZK kontraktu. Nejde o měnu právě prohlíženého trhu.
+
+Adresář vyžaduje doložení Portal→Retail profilu a oprávnění; samotná provider
+identita ho nenahrazuje. Aktuální guest checkout stále netvrdí přiřazení
+k účtu. Chybějící native statistiky, média a právní obsah nejsou nahrazené FE.

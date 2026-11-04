@@ -208,3 +208,18 @@ potvrzení o odeslání e-mailu se nepředstírají. Souhrn zobrazuje owner celk
 řádek ceny bez DPH proto zahrnuje i dopravu. První tlačítko ověří úplný quote,
 až druhé potvrzuje objednávku. Obnova používá stabilní nonce a veřejný read.
 Guest potvrzení neodkazuje na neimplementované zákaznické objednávky.
+
+## C8 — zákaznický účet
+
+Profil54:1417/54:1629: max1024,p16,gap16; desktop navigace vlevo,
+mobil vodorovná. Tabs default/sm řídí skutečné peer panely. FormInput md,
+Button primary/solid/md, logoutsm; celý displayName je jedno pole, kontaktní
+email readonly. Owner nemá strukturované jméno/příjmení.
+
+Own orders54:2060/54:2241: semantic Table desktop, source-composition
+mobile cards p12/gap12, Badge info/md, LinkButton primary/solid/md.
+Detail55:2509: max1024,p16 mobile/p32 desktop, 3-column ProductCard grid
+a 2-column information cards. Ceny jsou native uložené částky/měny.
+Chybějící obrázek, line total nebo celková útrata se nevymýšlí; jednotková
+cena je výslovně tak označená. Zbývající design/owner mezery nejsou
+považované za hotový vizuální přenos všech stavů.
