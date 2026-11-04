@@ -127,6 +127,10 @@ jobs:
       ZEROPS_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_STOREFRONT_SERVICE_ID }}
       ZEROPS_SHOP_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_SHOP_STOREFRONT_SERVICE_ID }}
       ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+      DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+      # Services to restart even when their variables are unchanged, as a space-separated list (for example after a
+      # failed restart). Unset in normal pushes.
+      FORCE_RESTART: ${{ vars.STAGE_CREDENTIAL_RESTART }}
       DEMO_IMMUTABLE_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
       ROTATED_SPICEDB_PRESHARED_KEY: ${{ secrets.ROTATED_SPICEDB_PRESHARED_KEY }}
       ROTATED_SPICEDB_DATABASE_PASSWORD: ${{ secrets.ROTATED_SPICEDB_DATABASE_PASSWORD }}
