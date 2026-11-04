@@ -85,7 +85,7 @@ export const readWorkspace = (revision: string) =>
         return { identity: row.slice(0, separator), path: row.slice(separator + 1) };
       });
     const manifests = entries.filter((entry) =>
-      /^app\/(?:(?:apps|verticals|packages)\/[^/]+|akros-storefront)\/package\.json$/u.test(entry.path),
+      /^app\/(?:(?:apps|verticals|packages)\/[^/]+|akros-storefront|n1-storefront)\/package\.json$/u.test(entry.path),
     );
     const packages = [];
     for (const entry of manifests) {

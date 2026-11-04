@@ -3,10 +3,16 @@ import { createHash } from 'node:crypto';
 import { Effect, Order, Schema } from 'effect';
 import { sort as sortArray } from 'effect/Array';
 
-export const SERVICES = ['app', 'storefront', 'shop'] as const;
+export const SERVICES = ['app', 'storefront', 'shop', 'n1'] as const;
 export type DeliveryService = (typeof SERVICES)[number];
 const Revision = Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/u));
-const SourcePins = Schema.Struct({ app: Revision, shop: Revision, storefront: Revision });
+// `n1` is optional: receipts written before the N1 service existed carry no pin for it, and must still decode.
+const SourcePins = Schema.Struct({
+  app: Revision,
+  n1: Schema.optionalKey(Revision),
+  shop: Revision,
+  storefront: Revision,
+});
 export const DeliveryAttemptSchema = Schema.Struct({
   runAttempt: Schema.Number,
   runId: Schema.Number,
@@ -41,6 +47,7 @@ const DigestInputsSchema = Schema.Struct({
   version: Schema.Literal(2),
 });
 const STOREFRONT_DIRECTORY = 'app/akros-storefront';
+const N1_DIRECTORY = 'app/n1-storefront';
 
 export interface WorkspacePackage {
   readonly directory: string;
@@ -128,7 +135,7 @@ export const unitInputDigest = (
 ) =>
   Effect.gen(function* digestUnitInputs() {
     const closure = yield* workspaceClosure(directory, packages);
-    const independent = [...units.map((unit) => unit.directory), STOREFRONT_DIRECTORY];
+    const independent = [...units.map((unit) => unit.directory), STOREFRONT_DIRECTORY, N1_DIRECTORY];
     const inputs = entries.filter(
       (entry) =>
         !isDocumentation(entry.path) &&
@@ -200,6 +207,7 @@ export const planDelivery = (input: DeliveryInputs) =>
       closures.set(unit.id, yield* workspaceClosure(unit.directory, input.packages));
     }
     const storefrontClosure = yield* workspaceClosure(STOREFRONT_DIRECTORY, input.packages);
+    const n1Closure = yield* workspaceClosure(N1_DIRECTORY, input.packages);
     for (const filepath of input.changedPaths.filter((entry) => !isDocumentation(entry))) {
       if (inside(filepath, STOREFRONT_DIRECTORY)) {
         selected.add('storefront');
@@ -210,6 +218,8 @@ export const planDelivery = (input: DeliveryInputs) =>
             affected.add(unit.id);
           }
         }
+      } else if (inside(filepath, N1_DIRECTORY)) {
+        selected.add('n1');
       } else {
         const owner = input.units.find((unit) => inside(filepath, unit.directory));
         if (owner === undefined || inside(filepath, `${owner.directory}/shared`)) {
@@ -226,6 +236,9 @@ export const planDelivery = (input: DeliveryInputs) =>
             selected.add('storefront');
             selected.add('shop');
           }
+          if (n1Closure.includes(owner.directory)) {
+            selected.add('n1');
+          }
           if (/\/(?:drizzle\/|drizzle[^/]*\.config\.|src\/database\/|scripts\/verify-.*schema)/u.test(filepath)) {
             migrations.push(filepath);
           }
@@ -241,11 +254,12 @@ export const planDelivery = (input: DeliveryInputs) =>
       }
     }
     const services = SERVICES.filter((service) => selected.has(service));
+    // A service with no revision yet (N1 before its first deploy) carries no pin, rather than an undefined one.
     const pins = Object.fromEntries(
-      SERVICES.map((service) => [
-        service,
-        selected.has(service) ? input.head : input.previousReceipt?.services[service],
-      ]),
+      SERVICES.flatMap((service) => {
+        const revision = selected.has(service) ? input.head : input.previousReceipt?.services[service];
+        return revision === undefined ? [] : [[service, revision]];
+      }),
     );
     const receipt = yield* Schema.decodeUnknownEffect(DeliveryReceiptSchema)({
       lastAttempt: nextAttempt(input, services),

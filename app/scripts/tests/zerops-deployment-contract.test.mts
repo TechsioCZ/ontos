@@ -13,7 +13,7 @@ import {
 import { readZeropsDeploymentYaml } from './zerops-deployment.fixture.mts';
 
 /** The whole stage deployment: the SpiceDB data plane, the storefront, and the one application container. */
-const SETUPS = ['spicedb', 'storefront', 'app'];
+const SETUPS = ['spicedb', 'storefront', 'n1', 'app'];
 const runtimeDatabaseUrl = `DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
 const zeropsImportPath = new URL('../../zerops-import.yaml', import.meta.url);
 const stageWorkflowPath = new URL('../../../.github/workflows/zerops-stage.yml', import.meta.url);
@@ -81,7 +81,7 @@ const serviceBlock = (zeropsYaml: string, setup: string): string => {
   return zeropsYaml.slice(range[0], range[1]);
 };
 
-it('has exactly the spicedb, storefront and app setups, in that order', () => {
+it('has exactly the spicedb, storefront, n1 and app setups, in that order', () => {
   const setups = Schema.decodeUnknownSync(ZeropsYamlSchema)(parse(readZeropsDeploymentYaml())).zerops.map(
     ({ setup }) => setup,
   );
@@ -187,7 +187,7 @@ it('builds every Node service with the pinned toolchain and ships Node instead o
     .split(/(?=^ {2}- setup:)/mu)
     .filter((block) => block.includes('install-zerops-node.sh'));
 
-  expect(nodeServices.length).toBe(2);
+  expect(nodeServices.length).toBe(3);
   for (const block of nodeServices) {
     expect(block).toContain(`install-zerops-node.sh ${node} ${pnpm}\n`);
     expect(block).toContain(`"$HOME/.local/node-${node}/bin`);
@@ -320,7 +320,7 @@ it('references each identity password only from the application container', () =
   }
 });
 
-it('declares the import list of the data plane, the migrator secrets, the app and the two storefronts only', () => {
+it('declares the import list of the data plane, the migrator secrets, the app and the three storefronts only', () => {
   const { services } = Schema.decodeUnknownSync(ZeropsImportSchema)(parse(readFileSync(zeropsImportPath, 'utf-8')));
 
   expect(
@@ -334,6 +334,7 @@ it('declares the import list of the data plane, the migrator secrets, the app an
     'app nodejs@24 true',
     'storefront nodejs@24 true',
     'shop nodejs@24 true',
+    'n1 nodejs@24 true',
   ]);
   for (const { hostname } of services) {
     expect(hostname).toMatch(/^[a-z0-9]{1,25}$/u);
@@ -381,6 +382,29 @@ it('runs the pseudonymous demo e-shop on shared CPU and pushes it from the store
     `shop) id="\${ZEROPS_SHOP_STOREFRONT_SERVICE_ID:?shop service id is required}"; setup=storefront`,
   );
   expect(pushDelivery).toContain('push-service.sh" "$id" "$setup" "$GITHUB_SHA"');
+});
+
+it('runs the N1 e-shop on one minimal service of its own, from the n1 setup, with no AKROS or shop identity', () => {
+  const services = Schema.decodeUnknownSync(Schema.instanceOf(YAMLSeq))(
+    parseDocument(readFileSync(zeropsImportPath, 'utf-8')).get('services', true),
+  );
+  const n1 = Schema.decodeUnknownSync(Schema.instanceOf(YAMLMap))(
+    services.items.find((service) => isMap(service) && service.get('hostname') === 'n1'),
+  );
+  const block = serviceBlock(readZeropsDeploymentYaml(), 'n1');
+  const workflow = readFileSync(stageWorkflowPath, 'utf-8');
+  const pushDelivery = readFileSync(new URL('../zerops/push-delivery.sh', import.meta.url), 'utf-8');
+
+  expect(n1.getIn(['verticalAutoscaling', 'cpuMode'])).toBe('SHARED');
+  expect(n1.getIn(['verticalAutoscaling', 'maxRam'])).toBe(1);
+  expect(n1.get('minContainers')).toBe(1);
+  expect(n1.get('maxContainers')).toBe(1);
+  expect(block).not.toMatch(/akros-storefront|ONTOS_AKROS_STOREFRONT_API_KEY|DATABASE_URL|SMTP_|PAYMENT_|SHIPPING_/u);
+  expect(block).toContain('ONTOS_SHELL_URL: https://ontos-stage.web-revolution.cz');
+  expect(block).toContain('test -n "$ONTOS_N1_STOREFRONT_API_KEY"');
+  expect(pushDelivery).toContain(`n1) id="\${ZEROPS_N1_STOREFRONT_SERVICE_ID:?n1 service id is required}"; setup=n1`);
+  expect(workflow).toContain('ONTOS_N1_STOREFRONT_API_KEY: ${{ secrets.ONTOS_N1_STOREFRONT_API_KEY }}');
+  expect(workflow).toContain('route-stage-domains.sh ontos-stage-n1.web-revolution.cz');
 });
 
 it('declares no project-level variable that could carry a database credential', () => {

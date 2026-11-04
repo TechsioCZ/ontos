@@ -41,3 +41,18 @@ services:
       maxDisk: 2
     minContainers: 1
     maxContainers: 1
+  # The N1 e-shop (ontos-stage-n1): the `n1` setup, one minimal Next container. Its tenant and seller are in zerops.yaml;
+  # its storefront key is a sensitive service variable synced from the stage-edge secret (ONTOS_N1_STOREFRONT_API_KEY).
+  - hostname: n1
+    type: nodejs@24
+    enableSubdomainAccess: true
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 1
+      minRam: 0.5
+      maxRam: 1
+      minDisk: 1
+      maxDisk: 2
+    minContainers: 1
+    maxContainers: 1

@@ -34,6 +34,7 @@ const packages: readonly WorkspacePackage[] = [
   })),
   { directory: 'app/packages/shared-contracts', name: '@app/shared-contracts', workspaceDependencies: [] },
   { directory: 'app/akros-storefront', name: 'akros-storefront', workspaceDependencies: [] },
+  { directory: 'app/n1-storefront', name: 'n1-storefront', workspaceDependencies: [] },
 ];
 const previousReceipt: DeliveryReceipt = {
   lastAttempt: { runAttempt: 1, runId: 11, sourceRevision: OLD },
@@ -79,6 +80,19 @@ it.effect('deploys both storefront services without building or redeploying the 
     expect(plan.receipt.lastAttempt).toEqual({ runAttempt: 1, runId: 12, sourceRevision: HEAD });
   }),
 );
+it.effect('deploys only the N1 service for N1-storefront input and keeps every other pin', () =>
+  Effect.gen(function* n1Only() {
+    const plan = yield* planPaths(['app/n1-storefront/src/app/page.tsx']);
+    expect(plan.full).toBe(false);
+    expect(plan.services).toEqual(['n1']);
+    expect(plan.affectedUnits).toEqual([]);
+    expect(plan.receipt.services).toEqual({ app: OLD, n1: HEAD, shop: EARLIER, storefront: EARLIER });
+    expect(Schema.is(DeliveryReceiptSchema)(plan.receipt)).toBe(true);
+  }),
+);
+it('accepts receipts written before the N1 service had a pin', () => {
+  expect(Schema.is(DeliveryReceiptSchema)(previousReceipt)).toBe(true);
+});
 it.effect('deploys app-only owner changes without either unchanged storefront', () =>
   Effect.gen(function* appOnly() {
     const plan = yield* planPaths(['app/verticals/crm/src/search/clients.provider.ts']);
@@ -128,7 +142,7 @@ for (const filepath of [
     Effect.gen(function* sharedInput() {
       const plan = yield* planPaths([filepath]);
       expect(plan.full).toBe(true);
-      expect(plan.services).toEqual(['app', 'storefront', 'shop']);
+      expect(plan.services).toEqual(['app', 'storefront', 'shop', 'n1']);
       expect(plan.affectedUnits).toEqual(['crm', 'merchandise', SHELL_ID]);
     }),
   );
@@ -167,7 +181,7 @@ for (const override of [
     Effect.gen(function* unsafeBaseline() {
       const plan = yield* planDelivery({ ...inputs, ...override });
       expect(plan.full).toBe(true);
-      expect(plan.services).toEqual(['app', 'storefront', 'shop']);
+      expect(plan.services).toEqual(['app', 'storefront', 'shop', 'n1']);
     }),
   );
 }
@@ -187,7 +201,7 @@ it.effect('forces full recovery after an old rerun failed outside the bounded wo
       changedPaths: [STOREFRONT_PAGE],
       previousAttempt: { runAttempt: 2, runId: 1, sourceRevision: EARLIER },
     });
-    expect(plan.services).toEqual(['app', 'storefront', 'shop']);
+    expect(plan.services).toEqual(['app', 'storefront', 'shop', 'n1']);
     expect(plan.full).toBe(true);
   }),
 );
@@ -249,6 +263,7 @@ it.effect('keeps a unit cache only when its real committed input closure is unch
     expect(yield* digest([first, entry(second.path, HEAD)])).toBe(initial);
     expect(yield* digest([entry(first.path, HEAD), second])).not.toBe(initial);
     expect(yield* digest([...baseline, entry(STOREFRONT_PAGE)])).toBe(initial);
+    expect(yield* digest([...baseline, entry('app/n1-storefront/src/app/page.tsx')])).toBe(initial);
     expect(yield* digest([...baseline, entry('docs/README.md')])).toBe(initial);
     for (const filepath of [
       'app/packages/shared-contracts/src/api.ts',

@@ -235,14 +235,16 @@ It holds the explicit tenant superadministrator role and can switch between Obch
 Nájempark, Velkoobchod Hanák, Kavárna Doma and Šroubárna Vysočina s.r.o. (brand ŠroubShop). This does not grant access to other tenants.
 The company-specific personas below keep their restricted roles.
 
-| Login                       | Role                                                                             |
-| --------------------------- | -------------------------------------------------------------------------------- |
-| `management@najempark.demo` | Management: reads all Nájempark modules                                          |
-| `operations@najempark.demo` | Operations: can write in the Nájempark modules                                   |
-| `provoz@najempark.demo`     | Operations (second login): same rights as `operations@`                          |
-| `finance@najempark.demo`    | Finance: can write in billing/finance                                            |
-| `external@najempark.demo`   | External: reads only CRM contacts entrusted to him (`demo.crm.read_assigned`)    |
-| `demo@test.com`             | Local Tenant from `local:initialize`. Holds every Action in its own Tenant only. |
+| Login                       | Role                                                                                                    |
+| --------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `management@najempark.demo` | Management: reads all Nájempark modules                                                                 |
+| `operations@najempark.demo` | Operations: can write in the Nájempark modules                                                          |
+| `provoz@najempark.demo`     | Operations (second login): same rights as `operations@`                                                 |
+| `finance@najempark.demo`    | Finance: can write in billing/finance                                                                   |
+| `external@najempark.demo`   | External: reads only CRM contacts entrusted to him (`demo.crm.read_assigned`)                           |
+| `demo@test.com`             | Local Tenant from `local:initialize`. Holds every Action in its own Tenant only.                        |
+| `admin@n1.ontos.demo`       | N1 demo (own tenant, `n1-demo-20261103`): company administrator of N1, signs in to the N1 e-shop admin. |
+| `catalog@n1.ontos.demo`     | N1 demo (own tenant): catalogue manager of N1.                                                          |
 
 ### Sales demo permissions
 

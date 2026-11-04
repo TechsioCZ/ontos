@@ -9,7 +9,7 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 services="$(jq -er --arg head "$GITHUB_SHA" '
   if .sourceRevision == $head and (.services | type == "array") and
      (.services | length > 0) and (.services | unique | length) == (.services | length) and
-     (.services | all(. == "app" or . == "storefront" or . == "shop"))
+     (.services | all(. == "app" or . == "storefront" or . == "shop" or . == "n1"))
   then .services | join(" ") else error("invalid delivery plan") end' "$plan")"
 # Validate every selected target before starting the first remote mutation.
 for service in $services; do
@@ -17,6 +17,7 @@ for service in $services; do
     app) : "${ZEROPS_APP_SERVICE_ID:?app service id is required}" ;;
     storefront) : "${ZEROPS_STOREFRONT_SERVICE_ID:?storefront service id is required}" ;;
     shop) : "${ZEROPS_SHOP_STOREFRONT_SERVICE_ID:?shop service id is required}" ;;
+    n1) : "${ZEROPS_N1_STOREFRONT_SERVICE_ID:?n1 service id is required}" ;;
   esac
 done
 pids=()
@@ -26,6 +27,7 @@ for service in $services; do
     app) id="${ZEROPS_APP_SERVICE_ID:?app service id is required}"; setup=app ;;
     storefront) id="${ZEROPS_STOREFRONT_SERVICE_ID:?storefront service id is required}"; setup=storefront ;;
     shop) id="${ZEROPS_SHOP_STOREFRONT_SERVICE_ID:?shop service id is required}"; setup=storefront ;;
+    n1) id="${ZEROPS_N1_STOREFRONT_SERVICE_ID:?n1 service id is required}"; setup=n1 ;;
     *) echo "unknown delivery service: $service" >&2; exit 1 ;;
   esac
   if [ "$service" = app ]; then

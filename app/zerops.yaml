@@ -80,6 +80,60 @@ zerops:
           port: 3070
           path: /robots.txt
       start: sh -c 'test -n "$ONTOS_AKROS_STOREFRONT_API_KEY" || { echo "ONTOS_AKROS_STOREFRONT_API_KEY is required" >&2; exit 1; }; cd app/.zerops/runtime/akros-storefront && HOSTNAME=0.0.0.0 exec node/bin/node akros-storefront/server.js'
+  # The N1 e-shop (ontos-stage-n1): its own Next storefront, with no AKROS or shop identity, database or provider
+  # credential. Its tenant, seller and image host are declared below; only the storefront key is a service variable
+  # (ONTOS_N1_STOREFRONT_API_KEY, synced from a stage-edge secret). ONTOS_SHELL_URL must be the public https origin:
+  # the N1 config reader rejects the internal http://app:3000 address that the AKROS storefront uses.
+  - setup: n1
+    build:
+      base: alpine@3.23
+      envVariables:
+        NEXT_TELEMETRY_DISABLED: '1'
+      prepareCommands:
+        # The official nodejs.org/dist musl Node is dynamically linked against libatomic, which alpine does not
+        # ship by default; without it the pinned Node cannot start (exit status 127).
+        - sudo apk add --no-cache curl libstdc++ libatomic
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.0 12.16.1
+      buildCommands:
+        - cd app && PATH="$HOME/.local/node-26.13.0/bin:$PATH" pnpm install --frozen-lockfile --filter 'n1-storefront...'
+        - cd app && PATH="$HOME/.local/node-26.13.0/bin:$PATH" pnpm --filter n1-storefront run build
+        - mkdir -p 'app/.zerops/runtime' && mv 'app/n1-storefront/.next/standalone' 'app/.zerops/runtime/n1-storefront'
+        - cp -a 'app/n1-storefront/.next/static' 'app/.zerops/runtime/n1-storefront/n1-storefront/.next/static'
+        - cp -a 'app/n1-storefront/public' 'app/.zerops/runtime/n1-storefront/n1-storefront/public'
+        - mkdir -p 'app/.zerops/runtime/n1-storefront/node/bin' && cp "$HOME/.local/node-26.13.0/bin/node" 'app/.zerops/runtime/n1-storefront/node/bin/'
+      deployFiles:
+        - app/.zerops/runtime/n1-storefront
+    deploy:
+      temporaryShutdown: false
+      readinessCheck:
+        httpGet:
+          port: 3071
+          path: /robots.txt
+        failureTimeout: 3m
+        retryPeriod: 10s
+    run:
+      base: nodejs@24
+      prepareCommands:
+        - sudo apk add --no-cache libatomic
+      ports:
+        - port: 3071
+          protocol: tcp
+          httpSupport: true
+      envVariables:
+        NEXT_TELEMETRY_DISABLED: '1'
+        NODE_ENV: production
+        ONTOS_SHELL_URL: https://ontos-stage.web-revolution.cz
+        # The N1 demo tenant and its seller on stage (the ids n1-stage-grants.mts provisions). Product images are served
+        # from this storefront's own public/demo/n1, so its public host is the one allowed image host.
+        ONTOS_STOREFRONT_LEGAL_ENTITY_ID: d7ad363a-ddb0-46c6-bb11-8d9362281297
+        ONTOS_STOREFRONT_TENANT_ID: cfcd7ae8-90b9-4c49-927c-b5d66224a618
+        PORT: '3071'
+        STOREFRONT_IMAGE_HOSTS: ontos-stage-n1.web-revolution.cz
+      healthCheck:
+        httpGet:
+          port: 3071
+          path: /robots.txt
+      start: sh -c 'test -n "$ONTOS_N1_STOREFRONT_API_KEY" || { echo "ONTOS_N1_STOREFRONT_API_KEY is required" >&2; exit 1; }; test -n "$ONTOS_STOREFRONT_TENANT_ID" || { echo "ONTOS_STOREFRONT_TENANT_ID is required" >&2; exit 1; }; test -n "$ONTOS_STOREFRONT_LEGAL_ENTITY_ID" || { echo "ONTOS_STOREFRONT_LEGAL_ENTITY_ID is required" >&2; exit 1; }; cd app/.zerops/runtime/n1-storefront && HOSTNAME=0.0.0.0 exec node/bin/node n1-storefront/server.js'
   # The whole application in one container: scripts/zerops/app-host.mts serves the Shell, every owner and the Outbox
   # Worker host, runs the owner migrations and publishes the Application Composition. The browser assets of owner
   # <appId> are served under /_m/<appId>/ on the one public origin.

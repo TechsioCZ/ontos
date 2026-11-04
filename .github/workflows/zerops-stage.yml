@@ -3,7 +3,8 @@ name: Zerops Stage Deploy
 # Deploys the sales demo branch to stage, which runs only on Zerops: one `app` service (the Shell, every owner and
 # the Outbox Worker host in one container, see app/scripts/zerops/app-host.mts) and two storefront services built from the
 # same `storefront` setup: `storefront` (AKROS, ontos-stage-akros) and `shop` (the pseudonymous demo e-shop,
-# ontos-stage-shop). Each storefront service holds its own key, tenant and brand in its service variables
+# ontos-stage-shop). The N1 e-shop (`n1`, ontos-stage-n1) is its own Next storefront with its own setup and service.
+# Each storefront service holds its own key, tenant and brand in its service variables
 # (ONTOS_AKROS_STOREFRONT_API_KEY, STOREFRONT_BRAND, ONTOS_STOREFRONT_APP_ID, ONTOS_STOREFRONT_LEGAL_ENTITY_ID).
 # Zerops builds them from app/zerops.yaml. The app container runs the owner migrations and publishes the Application
 # Composition itself when it starts, and Zerops switches traffic only after /_host/ready answers.
@@ -40,6 +41,7 @@ env:
   STAGE_SHELL_URL: https://ontos-stage.web-revolution.cz
   STAGE_STOREFRONT_URL: https://ontos-stage-akros.web-revolution.cz
   STAGE_SHOP_URL: https://ontos-stage-shop.web-revolution.cz
+  STAGE_N1_URL: https://ontos-stage-n1.web-revolution.cz
 
 jobs:
   plan:
@@ -50,6 +52,7 @@ jobs:
       app: ${{ steps.plan.outputs.app }}
       storefront: ${{ steps.plan.outputs.storefront }}
       shop: ${{ steps.plan.outputs.shop }}
+      n1: ${{ steps.plan.outputs.n1 }}
       any: ${{ steps.plan.outputs.any }}
       full: ${{ steps.plan.outputs.full }}
       receipt: ${{ steps.plan.outputs.receipt }}
@@ -204,6 +207,7 @@ jobs:
       ZEROPS_APP_SERVICE_ID: ${{ vars.ZEROPS_APP_SERVICE_ID }}
       ZEROPS_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_STOREFRONT_SERVICE_ID }}
       ZEROPS_SHOP_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_SHOP_STOREFRONT_SERVICE_ID }}
+      ZEROPS_N1_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_N1_STOREFRONT_SERVICE_ID }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -331,6 +335,26 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.STAGE_SMTP_PASSWORD }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: bash app/scripts/zerops/sync-service-secret.sh "$ZEROPS_APP_SERVICE_ID" SMTP_PASSWORD SMTP_PASSWORD
+
+      # The N1 storefront key is a stage-edge secret, written once by the operator, and a sensitive service variable of the
+      # n1 service. It is never in Git or a log. A missing secret fails the deploy before any push.
+      - name: Sync the N1 storefront key to the n1 service
+        if: needs.plan.outputs.n1 == 'true'
+        env:
+          ONTOS_N1_STOREFRONT_API_KEY: ${{ secrets.ONTOS_N1_STOREFRONT_API_KEY }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: bash app/scripts/zerops/sync-service-secret.sh "$ZEROPS_N1_STOREFRONT_SERVICE_ID" ONTOS_N1_STOREFRONT_API_KEY ONTOS_N1_STOREFRONT_API_KEY
+
+      # The N1 hostname: an idempotent Zerops public routing (its certificate follows) and DNS-only A and AAAA records.
+      - name: Route the N1 stage hostname
+        if: needs.plan.outputs.n1 == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_STAGE_ZONE_ID }}
+          ZEROPS_SHARED_IPV4: ${{ vars.ZEROPS_SHARED_IPV4 }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: bash app/scripts/zerops/route-stage-domains.sh ontos-stage-n1.web-revolution.cz "$ZEROPS_N1_STOREFRONT_SERVICE_ID" 3071
 
       - name: Download the delivery plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
