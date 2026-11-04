@@ -30,12 +30,14 @@ while (($# >= 3)); do
   # any object that names the hostname in its domains counts, and it is the same target only when it also names the
   # service and the port.
   # shellcheck disable=SC2329
-  routing_for_host() { jq -e --arg host "$host" '[.. | objects | select(has("domains") and ((.domains | tostring) | contains($host)))] | length > 0' >/dev/null; }
+  routing_for_host() {
+    jq -e --arg host "$host" '[.. | objects | select(has("domains") and has("locations") and ((.domains // []) | any((if type == "object" then .domainName else . end) == $host)))] | length > 0' >/dev/null
+  }
   # shellcheck disable=SC2329
   routing_is_current() {
     jq -e --arg host "$host" --arg service "$service" --argjson port "$port" '
-      [.. | objects | select(has("domains") and ((.domains | tostring) | contains($host)))]
-      | length > 0 and all(.[]; (tostring | contains($service)) and (tostring | contains("\"port\":" + ($port | tostring))))' \
+      [.. | objects | select(has("domains") and has("locations") and ((.domains // []) | any((if type == "object" then .domainName else . end) == $host)))]
+      | length > 0 and all(.[]; (.locations // []) | any(.serviceStackId == $service and .port == $port))' \
       >/dev/null
   }
   if routing_is_current <<<"$routings"; then
@@ -44,7 +46,7 @@ while (($# >= 3)); do
     # A different target exists. Updating it needs the Zerops routing update call, which this script does not use:
     # fail loudly with the current entry instead of guessing.
     echo "$host has a Zerops routing to a different target; update it in Zerops, then rerun" >&2
-    jq -c --arg host "$host" '[.. | objects | select(has("domains") and ((.domains | tostring) | contains($host)))]' <<<"$routings" >&2
+    jq -c --arg host "$host" '[.. | objects | select(has("domains") and has("locations") and ((.domains // []) | any((if type == "object" then .domainName else . end) == $host)))]' <<<"$routings" >&2
     exit 1
   else
     status="$(jq -n --arg host "$host" --arg service "$service" --argjson port "$port" \
