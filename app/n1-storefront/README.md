@@ -110,10 +110,17 @@ Inter ve Figmě podle handoffu neopravňuje přepis tohoto kontraktu.
 
 Vizuální API rozšiřuje existující `app/patches/@techsio__ui-kit@0.57.0.patch`:
 Button/LinkButton a NumericInput mají opt-in `density="compact"`, ProductCard
-`shadow={false}` a ProductCard.Image `objectFit="contain"`. Výchozí varianty
+`shadow={false}`, `presentation="featured"` a ProductCard.Image `objectFit="contain"`. Výchozí varianty
 zachovávají původní výšku, padding, stín a ořez. Rozměry compact jsou tokeny kitu;
 app nepřepisuje appearance třídami na knihovních komponentách. Instalace vyžaduje
 odpovídající workspace lockfile. Patch není publikovaná nová verze knihovny.
+
+Homepage a desktopový výpis používají featured tokenové role. Mobilní výpis
+zachovává původní ProductCard role (padding10, medium16 název, border1); nesdílí
+homepage appearance. Obrázek skládá podporovaný NextImage fill v layoutu4:3,
+takže na šířce390 má336×252. Radius a barvy přebírá z kanonického N1 theme.
+Strom kategorie ukazuje skutečnou aktuální kořenovou větev. Desktop má accent
+nadpisu a warning panel počtu; mobil má samostatné rozložení podkategorií.
 
 Desktopové hledání má responzivní kontejner 40vw (576/768 px při 1440/1920).
 Na mobilu je podle návrhu skryté; utility bar a ovladatelné menu jsou součástí shellu.

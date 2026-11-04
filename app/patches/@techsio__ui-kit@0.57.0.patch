@@ -900,6 +900,33 @@ index 0b40a1a4ab97b252772a88d8cfed6b76afbb721e..90d21eb05479d99e44a1d7e7788ce0cd
              variant,
              theme,
              size,
+diff --git a/dist/atoms/image.js b/dist/atoms/image.js
+index 84620f6fbc1235257fc2c608b51306def1610dba..1b51904273980a101420cdc37d167bcb799e7018 100644
+--- a/dist/atoms/image.js
++++ b/dist/atoms/image.js
+@@ -2,6 +2,7 @@ import { jsx } from "react/jsx-runtime";
+ import { tv } from "../utils.js";
+ const imageVariants = tv({
+     variants: {
++        objectFit: { contain: "object-contain", cover: "object-cover", fill: "object-fill", none: "object-none", scaleDown: "object-scale-down" },
+         size: {
+             sm: "size-image-sm",
+             md: "size-image-md",
+@@ -14,12 +15,13 @@ const imageVariants = tv({
+         size: "full"
+     }
+ });
+-function Image({ as, src, alt, size, className, ...props }) {
++function Image({ as, src, alt, size, objectFit, className, ...props }) {
+     const Component = as || "img";
+     return /*#__PURE__*/ jsx(Component, {
+         alt: alt,
+         className: imageVariants({
+             size,
++            objectFit,
+             className
+         }),
+         src: src,
 diff --git a/dist/atoms/link-button.js b/dist/atoms/link-button.js
 index 00ccc9b230020dd89b0b6713985f95ea75b63b57..051e5b7e3210e2a085d5fe1a41179264aa8ba6b3 100644
 --- a/dist/atoms/link-button.js
@@ -1005,34 +1032,69 @@ index b63ec0ca42a27ce1a5949f59d12e355bba2fb3f0..d867fe079801acd55e68cc3abdb0190c
      });
      const inputDisabled = api.getInputProps().disabled;
 diff --git a/dist/molecules/product-card.js b/dist/molecules/product-card.js
-index 94413e83cdcd504c5b0e2f51d9fcfc0d2f5fb781..4d97f562eae2bc0faa54fae9736c72a9af52c6a7 100644
+index 94413e83cdcd504c5b0e2f51d9fcfc0d2f5fb781..0cd9fc877de69b52d528dde353d61030f18e8645 100644
 --- a/dist/molecules/product-card.js
 +++ b/dist/molecules/product-card.js
-@@ -8,9 +8,9 @@ const productCardVariants = tv({
+@@ -7,14 +7,12 @@ import { tv } from "../utils.js";
+ const productCardVariants = tv({
      slots: {
          root: [
-             "rounded-product-card p-product-card-padding",
+-            "rounded-product-card p-product-card-padding",
 -            "border-(length:--border-product-card-width) max-w-product-card-max border-product-card-border bg-product-card-bg shadow-sm"
-+            "border-(length:--border-product-card-width) max-w-product-card-max border-product-card-border bg-product-card-bg"
++            "max-w-product-card-max border-product-card-border"
          ],
 -        imageSlot: "h-full rounded-product-card-image object-cover",
-+        imageSlot: "h-full rounded-product-card-image",
-         nameSlot: "line-clamp-product-card-name font-product-card-name text-product-card-name-fg text-product-card-name-size",
+-        nameSlot: "line-clamp-product-card-name font-product-card-name text-product-card-name-fg text-product-card-name-size",
++        imageSlot: "h-full",
++        nameSlot: "line-clamp-product-card-name text-product-card-name-fg",
          priceSlot: "font-product-card-price text-product-card-price-fg text-product-card-price-size",
          stockStatusSlot: [
-@@ -25,6 +25,8 @@ const productCardVariants = tv({
+-            "font-product-card-stock text-product-card-stock-size",
+             "data-[stock=in-stock]:text-product-card-stock-fg-in-stock",
+             "data-[stock=limited-stock]:text-product-card-stock-fg-limited-stock",
+             "data-[stock=out-of-stock]:text-product-card-stock-fg-out-of-stock"
+@@ -25,6 +23,22 @@ const productCardVariants = tv({
          button: ""
      },
      variants: {
++        presentation: {
++            default: {
++                root: "rounded-product-card p-product-card-padding border-(length:--border-product-card-width) bg-product-card-bg",
++                imageSlot: "rounded-product-card-image",
++                nameSlot: "font-product-card-name text-product-card-name-size",
++                stockStatusSlot: "font-product-card-stock text-product-card-stock-size"
++            },
++            featured: {
++                root: "rounded-product-card-featured p-product-card-featured-padding border-(length:--border-product-card-featured-width) bg-product-card-featured-bg",
++                imageSlot: "rounded-product-card-featured-image",
++                nameSlot: "font-product-card-featured-name text-product-card-featured-name-size",
++                stockStatusSlot: "font-product-card-featured-stock text-product-card-featured-stock-size"
++            }
++        },
 +        shadow: { true: { root: "shadow-sm" }, false: { root: "shadow-none" } },
 +        objectFit: { cover: { imageSlot: "object-cover" }, contain: { imageSlot: "object-contain" }, fill: { imageSlot: "object-fill" } },
          buttonVariant: {
              cart: {
                  button: "w-max bg-product-card-button-cart-bg-base text-product-card-button-cart-fg hover:bg-product-card-button-cart-bg-hover"
-@@ -51,13 +53,16 @@ const productCardVariants = tv({
+@@ -40,7 +54,7 @@ const productCardVariants = tv({
+         layout: {
+             column: {
+                 root: [
+-                    "grid grid-cols-(--product-card-layout-column-grid) gap-product-card-col-layout"
++                    "grid grid-cols-(--product-card-layout-column-grid)"
+                 ],
+                 imageSlot: "aspect-product-card-image"
+             },
+@@ -50,18 +64,28 @@ const productCardVariants = tv({
+             }
          }
      },
++    compoundVariants: [
++        { presentation: "default", layout: "column", className: { root: "gap-product-card-col-layout" } },
++        { presentation: "featured", layout: "column", className: { root: "gap-product-card-featured-col-layout" } }
++    ],
      defaultVariants: {
++        presentation: "default",
 +        shadow: true,
 +        objectFit: "cover",
          layout: "column",
@@ -1041,13 +1103,19 @@ index 94413e83cdcd504c5b0e2f51d9fcfc0d2f5fb781..4d97f562eae2bc0faa54fae9736c72a9
  });
  const ProductCardContext = /*#__PURE__*/ createContext({});
 -function ProductCard({ children, layout = "column", className, ref, ...props }) {
-+function ProductCard({ children, layout = "column", shadow = true, className, ref, ...props }) {
++function ProductCard({ children, layout = "column", presentation = "default", shadow = true, className, ref, ...props }) {
      const { root } = productCardVariants({
 +        shadow,
++        presentation,
          layout
      });
      return /*#__PURE__*/ jsx(ProductCardContext.Provider, {
-@@ -74,9 +79,10 @@ function ProductCard({ children, layout = "column", className, ref, ...props })
+         value: {
++            presentation,
+             layout
+         },
+         children: /*#__PURE__*/ jsx("div", {
+@@ -74,9 +98,11 @@ function ProductCard({ children, layout = "column", className, ref, ...props })
          })
      });
  }
@@ -1056,9 +1124,58 @@ index 94413e83cdcd504c5b0e2f51d9fcfc0d2f5fb781..4d97f562eae2bc0faa54fae9736c72a9
      const context = useContext(ProductCardContext);
      const { imageSlot } = productCardVariants({
 +        objectFit,
++        presentation: context.presentation,
          layout: context.layout
      });
      const ImageComponent = as || Image;
+@@ -91,6 +117,7 @@ ProductCard.Image = function({ as, className, ref, ...props }) {
+ ProductCard.Name = function({ as: Heading = "h3", children, className, ref, ...props }) {
+     const context = useContext(ProductCardContext);
+     const { nameSlot } = productCardVariants({
++        presentation: context.presentation,
+         layout: context.layout
+     });
+     return /*#__PURE__*/ jsx(Heading, {
+@@ -105,6 +132,7 @@ ProductCard.Name = function({ as: Heading = "h3", children, className, ref, ...p
+ ProductCard.Price = function({ children, className, ref, ...props }) {
+     const context = useContext(ProductCardContext);
+     const { priceSlot } = productCardVariants({
++        presentation: context.presentation,
+         layout: context.layout
+     });
+     return /*#__PURE__*/ jsx("p", {
+@@ -119,6 +147,7 @@ ProductCard.Price = function({ children, className, ref, ...props }) {
+ ProductCard.Stock = function({ children, className, ref, status = "in-stock", ...props }) {
+     const context = useContext(ProductCardContext);
+     const { stockStatusSlot } = productCardVariants({
++        presentation: context.presentation,
+         layout: context.layout
+     });
+     return /*#__PURE__*/ jsx("p", {
+@@ -134,6 +163,7 @@ ProductCard.Stock = function({ children, className, ref, status = "in-stock", ..
+ ProductCard.Badges = function({ children, className, ref, ...props }) {
+     const context = useContext(ProductCardContext);
+     const { badgesSlot } = productCardVariants({
++        presentation: context.presentation,
+         layout: context.layout
+     });
+     return /*#__PURE__*/ jsx("div", {
+@@ -148,6 +178,7 @@ ProductCard.Badges = function({ children, className, ref, ...props }) {
+ ProductCard.Rating = function({ children, className, rating, ref, ...props }) {
+     const context = useContext(ProductCardContext);
+     const { ratingSlot } = productCardVariants({
++        presentation: context.presentation,
+         layout: context.layout
+     });
+     return /*#__PURE__*/ jsx("div", {
+@@ -164,6 +195,7 @@ ProductCard.Rating = function({ children, className, rating, ref, ...props }) {
+ ProductCard.Actions = function({ children, className, ref, ...props }) {
+     const context = useContext(ProductCardContext);
+     const { actionsSlot } = productCardVariants({
++        presentation: context.presentation,
+         layout: context.layout
+     });
+     return /*#__PURE__*/ jsx("div", {
 diff --git a/dist/src/atoms/button.d.ts b/dist/src/atoms/button.d.ts
 index f19266c6b8c68f683b2ae05cc5d879eb4767e0b3..f0257b39d7aca650f7acab8ac9a2e13a59d9f292 100644
 --- a/dist/src/atoms/button.d.ts
@@ -1096,6 +1213,28 @@ index f19266c6b8c68f683b2ae05cc5d879eb4767e0b3..f0257b39d7aca650f7acab8ac9a2e13a
      ref?: Ref<HTMLButtonElement>;
  }): import("react").JSX.Element;
  //# sourceMappingURL=button.d.ts.map
+\ No newline at end of file
+diff --git a/dist/src/atoms/image.d.ts b/dist/src/atoms/image.d.ts
+index 97f0060ab6a895a5b6f5e2d39b910dc53e8bda44..e744292b916bf47b3a73e7cbd389f96c16645d4d 100644
+--- a/dist/src/atoms/image.d.ts
++++ b/dist/src/atoms/image.d.ts
+@@ -37,6 +37,8 @@ declare const imageVariants: import("tailwind-variants").TVReturnType<{
+     };
+ }, undefined>>;
+ export type BaseImageProps = {
++    /** Preserve image geometry inside a sized wrapper without consumer CSS. */
++    objectFit?: "contain" | "cover" | "fill" | "none" | "scaleDown";
+     src: string;
+     alt: string;
+     className?: string;
+@@ -49,6 +51,6 @@ type CustomImageProps<T extends ElementType> = BaseImageProps & VariantProps<typ
+ export type ImageProps<T extends ElementType = "img"> = T extends "img" ? NativeImageProps & {
+     as?: "img";
+ } : CustomImageProps<T>;
+-export declare function Image<T extends ElementType = "img">({ as, src, alt, size, className, ...props }: ImageProps<T>): import("react").JSX.Element;
++export declare function Image<T extends ElementType = "img">({ as, src, alt, size, objectFit, className, ...props }: ImageProps<T>): import("react").JSX.Element;
+ export {};
+ //# sourceMappingURL=image.d.ts.map
 \ No newline at end of file
 diff --git a/dist/src/atoms/link-button.d.ts b/dist/src/atoms/link-button.d.ts
 index fd322949db4ff64f2cc521ad0a7120c8adf6730d..903727d5c5173e3e12fe7727385f22e15820ba86 100644
@@ -1172,15 +1311,17 @@ index eafc9cf250b9c991e68006308c3d2782790d6276..f66b58301164c6fb59cee2051d8ba3f5
      export var Control: ({ children, ref, className, ...props }: NumericInputControlProps) => import("react").JSX.Element;
      var _a: ({ ref, className, ...props }: NumericInputInputProps) => import("react").JSX.Element;
 diff --git a/dist/src/molecules/product-card.d.ts b/dist/src/molecules/product-card.d.ts
-index de37d669a07b8470281006a242f6025e827fbad6..4efd7b11594e2dd2b9ee951538cda864313f3b63 100644
+index de37d669a07b8470281006a242f6025e827fbad6..522f6360b0fd3b246bfa9206d59fd83b46721291 100644
 --- a/dist/src/molecules/product-card.d.ts
 +++ b/dist/src/molecules/product-card.d.ts
-@@ -115,10 +115,14 @@ declare const productCardVariants: import("tailwind-variants").TVReturnType<{
+@@ -115,10 +115,16 @@ declare const productCardVariants: import("tailwind-variants").TVReturnType<{
      button: string;
  }>>;
  export interface ProductCardProps extends HTMLAttributes<HTMLDivElement>, Omit<VariantProps<typeof productCardVariants>, "buttonVariant"> {
 +    /** Preserve the default surface shadow, or disable it for flat catalogues. */
 +    shadow?: boolean;
++    /** Opt-in featured composition; default retains the original component token roles. */
++    presentation?: "default" | "featured";
      children: ReactNode;
      ref?: Ref<HTMLDivElement>;
  }
@@ -1190,9 +1331,12 @@ index de37d669a07b8470281006a242f6025e827fbad6..4efd7b11594e2dd2b9ee951538cda864
      as?: T;
      ref?: ComponentPropsWithRef<T>["ref"];
      className?: string;
-@@ -161,7 +165,7 @@ interface ProductCardButtonProps extends HTMLAttributes<HTMLButtonElement> {
+@@ -159,9 +165,9 @@ interface ProductCardButtonProps extends HTMLAttributes<HTMLButtonElement> {
+     iconSize?: IconProps["size"];
+     ref?: Ref<HTMLButtonElement>;
  }
- export declare function ProductCard({ children, layout, className, ref, ...props }: ProductCardProps): import("react").JSX.Element;
+-export declare function ProductCard({ children, layout, className, ref, ...props }: ProductCardProps): import("react").JSX.Element;
++export declare function ProductCard({ children, layout, presentation, shadow, className, ref, ...props }: ProductCardProps): import("react").JSX.Element;
  export declare namespace ProductCard {
 -    var _a: <T extends ElementType = typeof import("../atoms/image.js").Image>({ as, className, ref, ...props }: ProductCardImageProps<T>) => import("react").JSX.Element;
 +    var _a: <T extends ElementType = typeof import("../atoms/image.js").Image>({ as, objectFit, className, ref, ...props }: ProductCardImageProps<T>) => import("react").JSX.Element;
@@ -1233,3 +1377,24 @@ index efb8ce64ce5192e4315e9bb5429e067d7b44ea31..c7e9a2e0aef0c6c6f9a9017872db1308
 +  --height-numeric-input-compact-md: var(--height-button-compact-md);
 +  --height-numeric-input-compact-lg: var(--height-button-compact-lg);
 +}
+diff --git a/src/tokens/components/molecules/_product-card.css b/src/tokens/components/molecules/_product-card.css
+index 9b1d440048387229e6731324da573829e06bb44b..17494997dbf6253681bfcc0a417262c2861481cf 100644
+--- a/src/tokens/components/molecules/_product-card.css
++++ b/src/tokens/components/molecules/_product-card.css
+@@ -19,4 +19,16 @@
+ @theme static {
++  --spacing-product-card-featured-padding: var(--spacing-product-card-padding);
++  --spacing-product-card-featured-col-layout: var(--spacing-product-card-col-layout);
++  --border-width-product-card-featured: var(--border-width-product-card);
++  --border-product-card-featured-width: var(--border-width-product-card-featured);
++  --radius-product-card-featured: var(--radius-product-card);
++  --radius-product-card-featured-image: var(--radius-product-card-image);
++  --color-product-card-featured-bg: var(--color-product-card-bg);
++  --font-weight-product-card-featured-name: var(--font-weight-product-card-name);
++  --font-weight-product-card-featured-stock: var(--font-weight-product-card-stock);
++  --text-product-card-featured-name-size: var(--text-product-card-name-size);
++  --text-product-card-featured-stock-size: var(--text-product-card-stock-size);
++
+   --product-card-layout-row-grid: minmax(
+       var(--width-product-card-image-min),
+       var(--width-product-card-image-max)

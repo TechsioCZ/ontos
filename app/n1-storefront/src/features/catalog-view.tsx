@@ -81,7 +81,7 @@ export const CatalogView = ({
         }
       >
         {catalog.products.map((product) => (
-          <ProductCard key={product.id} layout="column" shadow={false}>
+          <ProductCard key={product.id} layout="column" presentation="featured" shadow={false}>
             <div className="h-n1-card-name text-center">
               <ProductCard.Name>
                 <Link as={NextLink} href={`/${locale}/produkt/${encodeURIComponent(product.slug)}`}>

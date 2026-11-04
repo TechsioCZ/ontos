@@ -37,6 +37,9 @@ export const CategoryView = ({
   const title = current?.name ?? d.catalog;
   const children = catalog.categories.filter((item) => item.parentId === current?.id);
   const nodes = categoryTree(catalog.categories);
+  const treeRoot = nodes.find((node) => node.id === trail[0]?.id);
+  const browseNodes =
+    treeRoot !== undefined && treeRoot.children.length > 0 ? treeRoot.children : nodes;
   const pathname = `/${locale}/kategorie/${encodeURIComponent(slug)}`;
   return (
     <section className="p-4">
@@ -71,15 +74,15 @@ export const CategoryView = ({
           </Breadcrumb.List>
         </Breadcrumb>
       </div>
-      <div className="mt-4 flex flex-col items-start md:flex-row">
+      <div className="mt-6 flex flex-col items-start md:mt-4 md:flex-row">
         {catalog.configured && nodes.length > 0 && (
           <aside
             className={`${browseOpen ? "block" : "hidden"} w-full shrink-0 md:block md:w-n1-category-sidebar`}
             id="category-tree"
           >
-            <div className="bg-fill-hover p-2">
+            <div className="border-t-2 border-border-primary bg-fill-hover p-2">
               <TreeView
-                data={nodes}
+                data={browseNodes}
                 defaultExpandedValue={trail.map((item) => item.id)}
                 expandOnClick={false}
                 onSelectionChange={({ selectedValue }) => {
@@ -93,9 +96,9 @@ export const CategoryView = ({
                 selectionMode="single"
                 size="md"
               >
-                <TreeView.Label>{d.menu}</TreeView.Label>
+                <TreeView.Label>{treeRoot?.name ?? d.menu}</TreeView.Label>
                 <TreeView.Tree>
-                  {nodes.map((node, index) => (
+                  {browseNodes.map((node, index) => (
                     <TreeView.Node
                       indexPath={[index]}
                       key={node.id}
@@ -109,7 +112,10 @@ export const CategoryView = ({
           </aside>
         )}
         <div className="w-full min-w-0 flex-1 md:px-3">
-          <h1 className="mb-6 text-2xl font-bold md:mb-3 md:text-xl">{title}</h1>
+          <div className="mb-6 md:mb-3">
+            <h1 className="text-2xl font-bold md:text-xl">{title}</h1>
+            <div aria-hidden="true" className="hidden h-1 w-24 bg-primary md:block" />
+          </div>
           {catalog.configured && nodes.length > 0 && (
             <div className="mb-6 md:hidden">
               <Button
@@ -126,26 +132,29 @@ export const CategoryView = ({
             </div>
           )}
           {children.length > 0 && (
-            <div className="mb-6 grid grid-cols-2 gap-2 md:mb-3 md:grid-cols-4 md:gap-1">
+            <div className="mb-6 flex flex-wrap gap-x-2 gap-y-6 md:mb-3 md:grid md:grid-cols-4 md:gap-1">
               {children.map((category) => (
-                <LinkButton
-                  as={NextLink}
-                  block
-                  href={`/${locale}/kategorie/${encodeURIComponent(category.slug)}`}
-                  key={category.id}
-                  size="md"
-                  theme="outlined"
-                  variant="secondary"
-                >
-                  {category.name}
-                </LinkButton>
+                <div className="max-w-full md:min-w-0" key={category.id}>
+                  <LinkButton
+                    as={NextLink}
+                    block
+                    href={`/${locale}/kategorie/${encodeURIComponent(category.slug)}`}
+                    size="md"
+                    theme="outlined"
+                    variant="secondary"
+                  >
+                    {category.name}
+                  </LinkButton>
+                </div>
               ))}
             </div>
           )}
           {catalog.configured && (
-            <p className="mb-6 text-sm text-fg-secondary">
+            <p className="mb-6 text-sm text-fg-secondary md:mb-3 md:border md:border-warning-300 md:bg-warning-100 md:p-4 md:text-fg-primary">
               {d.productsFound}{" "}
-              {(locale === "en" ? countFormats.en : countFormats.cs).format(catalog.total)}
+              <span className="md:font-bold">
+                {(locale === "en" ? countFormats.en : countFormats.cs).format(catalog.total)}
+              </span>
             </p>
           )}
           {catalog.configured && catalog.products.length > 0 ? (

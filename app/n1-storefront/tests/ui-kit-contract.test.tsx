@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@rstest/core";
 import { renderToStaticMarkup } from "react-dom/server";
+import { Image } from "@techsio/ui-kit/atoms/image";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
@@ -45,6 +46,26 @@ describe("published UI-kit patch contract", () => {
     expect(html).not.toContain("density=");
   });
 
+  it("contains uncropped thumbnail adapters without changing ordinary images", () => {
+    const ordinary = renderToStaticMarkup(<Image alt="Original" src="/photo.jpg" />);
+    const contained = renderToStaticMarkup(
+      <Image
+        alt="Thumbnail"
+        height={64}
+        objectFit="contain"
+        size="custom"
+        src="/photo.jpg"
+        width={64}
+      />,
+    );
+    expect(ordinary).not.toContain("object-contain");
+    expect(contained).toContain("object-contain");
+    expect(contained).not.toContain("object-cover");
+    expect(contained).not.toContain("objectFit=");
+    expect(contained).toContain('width="64"');
+    expect(contained).toContain('height="64"');
+  });
+
   it("opts into flat cards and uncropped photos without leaking appearance props", () => {
     const ordinary = renderToStaticMarkup(<ProductCard>Product</ProductCard>);
     const flat = renderToStaticMarkup(
@@ -59,5 +80,29 @@ describe("published UI-kit patch contract", () => {
     expect(flat).not.toContain("object-cover");
     expect(flat).not.toContain("objectFit=");
     expect(flat).not.toContain("shadow=");
+  });
+
+  it("isolates featured card tokens from the original listing presentation", () => {
+    const ordinary = renderToStaticMarkup(
+      <ProductCard>
+        <ProductCard.Name>Product</ProductCard.Name>
+        <ProductCard.Stock>Available</ProductCard.Stock>
+      </ProductCard>,
+    );
+    const featured = renderToStaticMarkup(
+      <ProductCard presentation="featured">
+        <ProductCard.Name>Product</ProductCard.Name>
+        <ProductCard.Stock>Available</ProductCard.Stock>
+      </ProductCard>,
+    );
+    expect(ordinary).toContain("p-product-card-padding");
+    expect(ordinary).toContain("font-product-card-name");
+    expect(ordinary).not.toContain("product-card-featured");
+    expect(featured).toContain("p-product-card-featured-padding");
+    expect(featured).toContain("font-product-card-featured-name");
+    expect(featured).toContain("font-product-card-featured-stock");
+    expect(featured).not.toMatch(/\sp-product-card-padding(?:\s|")/u);
+    expect(featured).not.toMatch(/\sfont-product-card-name(?:\s|")/u);
+    expect(featured).not.toContain("presentation=");
   });
 });

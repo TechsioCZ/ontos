@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { Effect, Schema } from "effect";
+import { Effect, Schedule, Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import type { StorefrontConfiguration } from "./config";
 
@@ -82,4 +82,13 @@ export const readOwner = <A, I>(
     return yield* Schema.decodeUnknownEffect(schema)(body).pipe(
       Effect.mapError(() => new StorefrontReadUnavailable({ reason: "contract" })),
     );
-  });
+  }).pipe(
+    // Retry the combined read so every attempt receives a newly issued/redeemed
+    // gateway context, as in AKROS. Denials and malformed contracts stay failures.
+    Effect.retry({
+      schedule: Schedule.spaced("250 millis"),
+      times: 2,
+      while: (error) =>
+        error.reason === "response" && (error.status === 409 || error.status === 503),
+    }),
+  );

@@ -490,7 +490,12 @@ const handleVoidInvoice = Effect.fn('Finance.handleVoidInvoice')(function* handl
   if (
     previous.paidMinor !== (previous.businessState === 'CONFIRMED' ? settledByPrior : 0) ||
     previous.accountingSyncState === 'PENDING' ||
-    previous.accountingSyncState === 'SYNCED'
+    previous.accountingSyncState === 'SYNCED' ||
+    (state.accountingExports ?? []).some(
+      (entry) =>
+        (entry.status === 'HANDED_OVER' || entry.status === 'CONFIRMED_BY_ACCOUNTANT') &&
+        entry.invoiceResourceIds.some((id) => id === previous.ref.resourceId),
+    )
   ) {
     return yield* conflict('void_requires_unpaid_unsynchronized_invoice');
   }
@@ -1309,6 +1314,16 @@ const handleHandOverAccountingExport = Effect.fn('Finance.handleHandOverAccounti
   }
   if (target.status !== 'PREPARED') {
     return yield* conflict('export_not_prepared');
+  }
+  if (
+    target.invoiceResourceIds.some(
+      (id) =>
+        !context.state.invoices.some(
+          (invoice) => invoice.ref.resourceId === id && invoice.businessState === 'CONFIRMED',
+        ),
+    )
+  ) {
+    return yield* rejected('export_requires_confirmed_invoices');
   }
   return stateOnly({
     ...context.state,

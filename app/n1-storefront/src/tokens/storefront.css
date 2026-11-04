@@ -8,16 +8,16 @@
   --font-weight-price-block-amount: var(--font-weight-bold);
   /* Homepage31:636/31:637, card33:1018: installed0.57 component
    * defaults are not the N1 screen roles. Keep canonical primitive aliases. */
-  --spacing-product-card-padding: var(--dimension-4);
-  --spacing-product-card-col-layout: var(--dimension-8);
-  --border-width-product-card: var(--dimension-0);
-  --radius-product-card: var(--radius-none);
-  --radius-product-card-image: var(--radius-none);
-  --color-product-card-bg: var(--color-base);
-  --font-weight-product-card-name: var(--font-weight-bold);
-  --font-weight-product-card-stock: var(--font-weight-bold);
-  --text-product-card-name-size: var(--dimension-18);
-  --text-product-card-stock-size: var(--dimension-18);
+  --spacing-product-card-featured-padding: var(--dimension-4);
+  --spacing-product-card-featured-col-layout: var(--dimension-8);
+  --border-width-product-card-featured: var(--dimension-0);
+  --radius-product-card-featured: var(--radius-none);
+  --radius-product-card-featured-image: var(--radius-none);
+  --color-product-card-featured-bg: var(--color-base);
+  --font-weight-product-card-featured-name: var(--font-weight-bold);
+  --font-weight-product-card-featured-stock: var(--font-weight-bold);
+  --text-product-card-featured-name-size: var(--dimension-18);
+  --text-product-card-featured-stock-size: var(--dimension-18);
   --color-header-bg: var(--color-base-dark);
   --color-header-nav-fg: var(--color-fg-reverse);
   --color-header-nav-fg-hover: var(--color-primary);
