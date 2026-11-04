@@ -58,9 +58,9 @@ const state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
     },
   ],
 });
-const place = (quantity: number, expectedUnitPriceMinor: number) =>
+const place = (quantity: number, expectedUnitPriceMinor: number, inputState = state) =>
   evolveMerchandiseState(
-    state,
+    inputState,
     Schema.decodeUnknownSync(MerchandiseCommandSchema)({
       _tag: 'PlaceStorefrontOrder',
       clientRequestId: 'akros-unit-order',
@@ -128,6 +128,60 @@ it.effect('staff price edits update live tier prices without losing source metad
     expect(variant?.grossPriceMinor).toBe(19);
     expect(variant?.priceTiers?.[1]?.priceMinor).toBe(13);
     expect(variant?.sourceId).toBe('1');
+  }),
+);
+
+it.effect('UpdateProduct applies supplied variant tiers including an empty replacement to actual order pricing', () =>
+  Effect.gen(function* explicitVariantTiers() {
+    for (const priceMinor of [8, 16]) {
+      const replacement = [
+        { minimumQuantity: 1, priceExcludingVatMinor: priceMinor, priceMinor: priceMinor === 8 ? 10 : 19 },
+        { minimumQuantity: 100, priceExcludingVatMinor: priceMinor - 1, priceMinor: priceMinor === 8 ? 8 : 17 },
+      ];
+      for (const priceTiers of [replacement, []]) {
+        const variant = requireFixture(requireFixture(state.products[0].variants)[0]);
+        const changed = yield* evolveMerchandiseState(
+          state,
+          Schema.decodeUnknownSync(MerchandiseCommandSchema)({
+            _tag: 'UpdateProduct',
+            id: 'product-1',
+            patch: { variants: [{ ...variant, priceMinor, priceTiers }] },
+          }),
+          { actor, now: DateTime.makeUnsafe(at), resourceId: 'replace-tiers' },
+        );
+        expect(changed.state.products[0]?.variants?.[0]?.priceTiers).toEqual(priceTiers);
+        const expectedPrice = priceTiers.at(-1)?.priceMinor ?? (priceMinor === 8 ? 10 : 19);
+        const placed = yield* place(100, expectedPrice, changed.state);
+        expect(placed.storefrontOrder?.outcome).toBe('PLACED');
+        expect(placed.state.orders[0]?.lines[0]?.unitPriceMinor).toBe(expectedPrice);
+      }
+    }
+  }),
+);
+
+it.effect('UpdateProduct retains and reprices variant tiers only when no replacement is supplied', () =>
+  Effect.gen(function* retainedVariantTiers() {
+    const { priceTiers: previousTiers, ...variant } = requireFixture(requireFixture(state.products[0].variants)[0]);
+    for (const priceMinor of [8, 16]) {
+      const changed = yield* evolveMerchandiseState(
+        state,
+        Schema.decodeUnknownSync(MerchandiseCommandSchema)({
+          _tag: 'UpdateProduct',
+          id: 'product-1',
+          patch: { variants: [{ ...variant, priceMinor }] },
+        }),
+        { actor, now: DateTime.makeUnsafe(at), resourceId: 'retain-tiers' },
+      );
+      const tiers = changed.state.products[0]?.variants?.[0]?.priceTiers;
+      if (priceMinor === 8) {
+        expect(tiers).toEqual(previousTiers);
+      } else {
+        expect(tiers?.map((tier) => tier.minimumQuantity)).toEqual([1, 100]);
+        expect(tiers?.[1]?.priceMinor).toBe(13);
+      }
+      const placed = yield* place(100, priceMinor === 8 ? 7 : 13, changed.state);
+      expect(placed.storefrontOrder?.outcome).toBe('PLACED');
+    }
   }),
 );
 

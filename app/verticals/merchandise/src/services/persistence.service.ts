@@ -412,7 +412,7 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
       void _ignored;
       void _id;
       const updated: Mutable<ProductVariant> = { ...rest };
-      if (previous?.priceTiers !== undefined) {
+      if (variant.priceTiers === undefined && previous?.priceTiers !== undefined) {
         updated.priceTiers = repriceTiers(
           previous.priceTiers,
           previous.priceMinor,

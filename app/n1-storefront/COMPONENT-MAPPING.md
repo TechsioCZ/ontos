@@ -279,3 +279,19 @@ a 2-column information cards. Ceny jsou native uložené částky/měny.
 Chybějící obrázek, line total nebo celková útrata se nevymýšlí; jednotková
 cena je výslovně tak označená. Zbývající design/owner mezery nejsou
 považované za hotový vizuální přenos všech stavů.
+
+## C15 — doplnění UX tam, kde není Figma stav
+
+Uživatelem určená historická reference `herbatika-shop/apps/n1` doplňuje
+interakční záměr, nikoli současnou architekturu nebo styling. Pro add-to-cart
+byly přečteny `src/hooks/use-toast.tsx` a
+`src/components/product-detail/product-info-panel/add-to-cart-section.tsx`:
+krátké success/error oznámení podle výsledku, produkt a množství v popisu.
+
+Současný přenos: `@techsio/ui-kit/molecules/toast` → jeden `Toaster` v shellu
+(lokalizované label/closeLabel/loadingLabel), `useToast().create` po výsledku
+`cart.add`, délka10000ms pro přečtení názvu a varianty a dostupné ruční zavření.
+Kanonické N1 toast tokeny řídí vzhled;
+žádné vzhledové className, inline Tailwind nebo vlastní notifikační komponenty.
+Inline post-add odkaz Košík odstraněn. Nákupní guardy a varování u polí zůstávají;
+uložení výběru neznamená ověřenou cenu, sklad ani vytvořenou objednávku.

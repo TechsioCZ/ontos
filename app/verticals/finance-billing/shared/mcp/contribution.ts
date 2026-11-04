@@ -76,6 +76,7 @@ export const financeBillingMcpContribution = defineOntosMcpContribution({
   label: { cs: 'Finance a fakturace', en: 'Finance and billing' },
   page: '/finance',
   reads: {
+    // Exact paginated lease-detail preload, not an independently advertised agent operation.
     'lease-invoices': OntosMcpHidden,
     records: { title: { cs: 'Přehled financí a fakturace', en: 'Finance and billing overview' } },
   },

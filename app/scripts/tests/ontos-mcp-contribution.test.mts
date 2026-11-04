@@ -10,12 +10,50 @@ import {
   DuplicateCandidateListRequestSchema,
 } from '../../verticals/party-registry/shared/apis/duplicate-candidate-list.ts';
 import { partyRegistryMcpContribution } from '../../verticals/party-registry/shared/mcp/contribution.ts';
+import { LeaseInvoicesApi } from '../../verticals/finance-billing/shared/apis/lease-invoices.ts';
+import { RecordsApi as FinanceRecordsApi } from '../../verticals/finance-billing/shared/apis/records.ts';
+import { financeBillingMcpContribution } from '../../verticals/finance-billing/shared/mcp/contribution.ts';
 import { CounterpartyRefSchema } from '../../verticals/party-registry/shared/resources/counterparty.ts';
 import { deriveOntosMcpContribution, OntosMcpContributionDerivationError } from '../ontos-mcp-contribution.mts';
 
 const APP_ID = 'party-registry';
 const MODULE_ID = 'party.registry';
 const DUPLICATE_CANDIDATE_LIST = 'duplicate-candidate-list';
+
+it.effect('keeps the lease detail preload read governed without adding an MCP tool', () =>
+  Effect.gen(function* financePreloadContribution() {
+    const derived = deriveOntosMcpContribution({
+      actions: [],
+      api: { 'lease-invoices': LeaseInvoicesApi, records: FinanceRecordsApi },
+      appId: 'finance-billing',
+      authored: { ...financeBillingMcpContribution, actions: {}, commands: {} },
+      moduleId: 'finance.billing',
+    });
+    if (derived === undefined) {
+      expect.unreachable('Expected the Finance MCP contribution');
+    }
+    const catalog = yield* Schema.decodeEffect(OntosMcpToolCatalogJsonSchema)(derived.toolCatalog);
+    expect(catalog.tools.map((tool) => tool.invoke.path)).toEqual(['/reads/records']);
+    expect(catalog.tools[0]?.access).toBe('read');
+  }),
+);
+
+it('rejects an undeclared lease preload read instead of silently excluding it', () => {
+  expect(() =>
+    deriveOntosMcpContribution({
+      actions: [],
+      api: { 'lease-invoices': LeaseInvoicesApi, records: FinanceRecordsApi },
+      appId: 'finance-billing',
+      authored: {
+        ...financeBillingMcpContribution,
+        actions: {},
+        commands: {},
+        reads: { records: financeBillingMcpContribution.reads.records },
+      },
+      moduleId: 'finance.billing',
+    }),
+  ).toThrow('finance.billing: MCP reads not contributed or hidden: lease-invoices');
+});
 
 it('omits the contribution when the owner authors none', () => {
   const derived = deriveOntosMcpContribution({

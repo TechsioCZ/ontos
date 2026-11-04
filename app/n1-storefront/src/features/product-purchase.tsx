@@ -1,11 +1,10 @@
 "use client";
 import { useState } from "react";
-import NextLink from "next/link";
 import { Button } from "@techsio/ui-kit/atoms/button";
-import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
 import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { QuantityField } from "@techsio/ui-kit/molecules/quantity-field";
+import { useToast } from "@techsio/ui-kit/molecules/toast";
 import type { Dictionary } from "@/i18n";
 import type { ProductDetailModel } from "@/ontos/catalog-model";
 import type { selectProductDetail } from "./product-selection";
@@ -34,9 +33,9 @@ export const ProductPurchase = ({
 }) => {
   const { current, images, selectionRequired, variant } = selection;
   const cart = useCart();
+  const toaster = useToast();
   const selectionKey = JSON.stringify([product.id, variant?.id ?? null]);
   const [draft, setDraft] = useState({ key: selectionKey, value: String(current.minimumQuantity) });
-  const [notice, setNotice] = useState<{ added: boolean; key: string } | null>(null);
   const quantity = draft.key === selectionKey ? draft.value : String(current.minimumQuantity);
   const parsedQuantity = Number(quantity);
   const invalidQuantity = !validPurchaseQuantity(parsedQuantity, current.minimumQuantity);
@@ -66,7 +65,13 @@ export const ProductPurchase = ({
     };
     const added =
       variant === undefined ? cart.add(entry) : cart.add({ ...entry, variantId: variant.id });
-    setNotice({ added, key: selectionKey });
+    const variantLabel = variant === undefined ? "" : ` – ${variant.name}`;
+    toaster.create({
+      description: added ? `${parsedQuantity} × ${product.name}${variantLabel}` : undefined,
+      duration: 10_000,
+      title: added ? d.shopping.added : d.shopping.addFailed,
+      type: added ? "success" : "error",
+    });
   };
   return (
     <div>
@@ -158,20 +163,6 @@ export const ProductPurchase = ({
       <p className="mt-2 text-sm text-fg-secondary" id="purchase-unavailable">
         {purchaseGuidance(d, selectionRequired, purchasable)}
       </p>
-      {notice?.key === selectionKey && (
-        <div className="mt-3 flex flex-col items-start gap-2">
-          <output>{notice.added ? d.shopping.added : d.shopping.addFailed}</output>
-          <LinkButton
-            as={NextLink}
-            href={`/${locale}/kosik`}
-            size="md"
-            theme="outlined"
-            variant="secondary"
-          >
-            {d.cart}
-          </LinkButton>
-        </div>
-      )}
     </div>
   );
 };

@@ -9,6 +9,7 @@ import { Image } from "@techsio/ui-kit/atoms/image";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Header } from "@techsio/ui-kit/organisms/header";
+import { Toaster } from "@techsio/ui-kit/molecules/toast";
 import { StorefrontFooter } from "./footer";
 import { StorefrontSearch } from "./search";
 import { MiniCart } from "./mini-cart";
@@ -28,7 +29,9 @@ interface ShellProps {
 /** N1 composition of existing kit components; no backend or primitive implementation lives here. */
 export const StorefrontShell = ({ categories, children, dictionary: d, locale }: ShellProps) => {
   const pathname = usePathname();
-  const compactContent = ["prihlaseni", "registrace"].includes(pathname.split("/")[2] ?? "");
+  const compactContent = ["prihlaseni", "registrace", "kosik", "pokladna"].includes(
+    pathname.split("/")[2] ?? "",
+  );
   const [headerPanel, setHeaderPanel] = useState<HeaderPanel>(null);
   const mobileMenuOpen = headerPanel === "navigation";
   useEffect(() => {
@@ -198,6 +201,11 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
         {children}
       </main>
       <StorefrontFooter dictionary={d} locale={locale} />
+      <Toaster
+        closeLabel={d.notifications.close}
+        label={d.notifications.label}
+        loadingLabel={d.notifications.loading}
+      />
     </div>
   );
 };

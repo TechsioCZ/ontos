@@ -842,3 +842,62 @@ Aktuální plná repository gate se znovu zastavila na367/371 lint-rule testech:
 stejné4 dříve doložené chyby v native-data-factory-proof,
 no-service-constructor-imports a repository-policy mimo N1. Řetězec následných
 repo kontrol proto není celý PASS; žádné pravidlo ani git hook se nevypíná.
+
+## C14 — prázdná pokladna, pending navigace a skutečná objednávka
+
+331/331 N1 testů PASS. Nové regresní testy nejprve reprodukovaly nesprávný
+empty stav a aktivní návrat při pending. Loading, storage, scope a unresolved
+order mají dál přednost před prázdným košíkem. Lint a produkční build PASS.
+
+Figma empty desktop56:636/mobile56:800 sdílí kompozici s prázdným košíkem:
+max1280, p20, gap16, h1 24 a home LinkButton primary/solid/md. Browser ověřil
+desktop min-height424 a skutečných390px bez overflow; mobilní obsah má198px
+při min-height196 kvůli zalomenému textu. Košík/pokladna používají existující
+compactContent layout: shell již nepřidává min-height50dvh. Patička začíná
+na mobilu y337 (Figma335), desktopu y604.5 (Figma604). Checkout má před cenovými řádky
+samostatný1px border-secondary oddělovač. Browser skutečně zachytil disabled
+návrat i submit při quote i place podle pending323:1465.
+
+V izolovaném lokálním backendu byla jednou odeslaná objednávka OBJ-2026-0002:
+Northwave Extreme2 Leg Warmer LXL959Kč + PPL129Kč =1088Kč. Po reloadu
+existující akce ověření výsledku obnovila stejné číslo, adresu a owner ceny;
+objednávka nebyla znovu odeslána. Home akce následně odstranila recovery guard
+a checkout správně zobrazil skutečně prázdný košík. Platba se nepředstírá.
+
+Pozitivní Portal profil/own orders a skutečný password reset nejsou živě
+ověřené. Lokální launcher explicitně nepropouští COMMERCE_CORE_IDENTITY_*
+konfiguraci, takže zákaznická admission vyžaduje samostatné zprovoznění
+podporované identity služby. Mailpit na127.0.0.1:1026/8026 je dostupný, ale
+chybí známý skutečný Portal účet pro reset; staff login ani guest objednávka
+nejsou zákaznický účet. Nebyl odeslán reset na neznámého příjemce.
+
+TotalsSummary0.57 total typography API gap a schválené vynechání adresních
+polí zůstávají otevřené jako v C13. Plná repo gate má poslední doložený výsledek
+367/371 se4 baseline chybami mimo N1; tento celek ji neoznačuje za PASS.
+
+Dodatečný skutečný průchod na uživatelově localhost URL Arm Warmer ověřil:
+bez vybrané velikosti je purchase disabled s „Zvolte variantu“, po výběru
+LXL je aktivní a přidání do košíku uspělo. Veřejné vyhledávání má231stránek;
+homepage je pouze featured výběr. Nový lokální import není doporučený ani
+přiřazený do17 existujících kategorií a jeho sklad zatím není aplikovaný.
+Tyto zbývající datové mezery nejsou vydávané za dokončený katalogový storefront.
+
+## C15 — toast po přidání do košíku
+
+Historická N1 UX reference byla přečtená z herbatika-shop/apps/n1; její role
+a konkrétní soubory jsou uvedené v COMPONENT-MAPPING. Add-to-cart používá
+současný knihovní useToast/Toaster s kanonickým N1 vzhledem. Toast vznikne až
+podle skutečného výsledku uložení; inline post-add output a Košík link zmizely.
+
+333/333 testů PASS včetně reprodukce chybějícího success/error toastu před
+opravou. Testy ověřují skutečný handler s úspěšným/neúspěšným cart.add.
+Lint, format a finální produkční build PASS. Browser ověřil skutečné přidání
+ArmWarmerLXL, title+produkt+množství+variantu v oznámení, lokalizované zavření
+a následně nula otevřených toastů. Desktop1440 i mobile390 mají skutečné
+viditelné screenshoty; mobile toast360×120 leží x6/y700 a nepřetéká viewport.
+Jeden globální renderer zachovává live region a nativní zavírání. Délka10s
+umožňuje přečíst delší název; při hoveru se časovač nativně pozastaví.
+
+Chybová větev má unit důkaz, nikoli úmyslně poškozené živé úložiště.
+Tento review potvrzuje přenos toast UX; nejde o plošný Figma PASS všech
+produktových detailů nebo vyřešení zbývajících skladových/kategoriálních dat.

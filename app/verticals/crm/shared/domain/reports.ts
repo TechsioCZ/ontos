@@ -286,7 +286,9 @@ export interface SalesReport {
   readonly withoutAmount: number;
 }
 
-const dayOf = (date: OrderDate) => orderDateText(date).slice(0, 10);
+const reportDayFormat = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Prague' });
+const dayOf = (date: OrderDate) =>
+  DateTime.isDateTime(date) ? reportDayFormat.format(DateTime.toEpochMillis(date)) : date;
 
 export const orderDate = (order: ImportedOrder) => order.orderedAt ?? order.receivedAt;
 
@@ -479,7 +481,7 @@ export const buildSalesReport = (state: CrmState, filters: ReportFilters = {}): 
           date,
           dateSource: order.orderedAt === undefined ? 'received' : 'ordered',
           meaning: approved ? reportStatusMeaning(order.rawStatus) : 'unmapped',
-          month: orderDateText(date).slice(0, 7),
+          month: dayOf(date).slice(0, 7),
           order,
           salespersonId,
           salespersonName: salespersonId === undefined ? undefined : salespeople.get(salespersonId),
@@ -608,12 +610,10 @@ export const clientSalesFacts = (state: CrmState, clientId: string, period?: Rep
   };
 };
 
-const homeDayFormat = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Prague' });
-
 // Shell home facts reuse the same report and never run a second, broader data request.
 export const buildCrmHomeSummary = (records: RecordsResponse) => {
   const all = canSeeEverything(records.viewer);
-  const today = homeDayFormat.format(DateTime.toEpochMillis(records.now));
+  const today = dayOf(records.now);
   const activeClients = new Set(
     records.state.clients.items.flatMap((client) => (client.status === 'active' ? [client.id] : [])),
   );

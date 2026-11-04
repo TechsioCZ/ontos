@@ -10,6 +10,7 @@ import type { Dictionary } from "@/i18n";
 import type { CheckoutOptions } from "@/ontos/checkout-server";
 import { CheckoutFields } from "./checkout-fields";
 import { CheckoutItems, CheckoutShipping, CheckoutTotals } from "./checkout-panels";
+import { EmptyCartView } from "./empty-cart-view";
 import { useCheckout } from "./use-checkout";
 
 const dateFormatters = {
@@ -217,6 +218,7 @@ const CheckoutActions = ({
       <LinkButton
         as={NextLink}
         block
+        disabled={pending}
         href={`/${locale}/kosik`}
         size="md"
         theme="solid"
@@ -285,7 +287,7 @@ const ReadyCheckout = ({
   } else if (checkout.cart.scope === null) {
     body = <p role="alert">{d.checkout.scopeMismatch}</p>;
   } else if (checkout.cart.entries.length === 0) {
-    body = <p>{d.shopping.emptyDescription}</p>;
+    return <EmptyCartView dictionary={d} locale={locale} />;
   } else {
     body = (
       <form
@@ -335,6 +337,7 @@ const ReadyCheckout = ({
               locale={locale}
               result={checkout.quote}
             />
+            <hr className="border-0 border-t border-border-secondary" />
             <CheckoutTotals
               actions={
                 <CheckoutActions

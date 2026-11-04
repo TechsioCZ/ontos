@@ -119,10 +119,10 @@ it('includes both calendar boundaries in the report and CSV, but neither neighbo
     imports: {
       ...Schema.encodeSync(CrmStateSchema)(initialCrmState).imports,
       orders: [
-        '2026-10-04T23:59:59.000Z',
-        '2026-10-05T00:00:00.000Z',
-        '2026-10-07T23:59:59.000Z',
-        '2026-10-08T00:00:00.000Z',
+        '2026-10-04T23:59:59.000+02:00',
+        '2026-10-05T00:00:00.000+02:00',
+        '2026-10-07T23:59:59.000+02:00',
+        '2026-10-08T00:00:00.000+02:00',
       ].map((date, index) => ({
         amount: '10.00',
         clientId: 'client-a',
