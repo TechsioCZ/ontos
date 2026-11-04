@@ -163,3 +163,25 @@ filled desktop/mobil a empty mobil; plus mění quantity a native owner quote
 4ks=3836CZK (DPH665,75), odebrání vrací empty a focus na nadpis.
 Barevnost/typografie zůstává canonicalN1; jiné datové texty a chybějící
 finální checkout nejsou prohlášené za pixelovou paritu celého návrhu.
+
+## Doprava a platby — informace z backendu
+
+Figma desktop 51:1020/51:1255, body 370:3467/370:3758 a mobil
+51:1174/51:1404, načteno 2026-11-04. Kompozice článku používá app layout
+wrapper s paddingem 40px, maximem 1200px a podtržením nadpisu 96×4px.
+Kit Button a Link používají veřejné props a canonical N1 tokeny.
+
+Informace se čtou přes aktuální locale market a merchandise records
+storefrontCheckout. Vyžaduje se configured market se shodným ID; chybějící
+checkout nebo neplatné sazby vedou do unavailable stavu. Částky a měna
+pocházejí z ownera, bez dalšího přepočtu DPH či kurzu. Dotaz nečte produkty.
+Figma ukázkové sazby a ParcelShop nejsou nabídka backendu. Lokální owner
+vrací PPL 129 Kč a Českou poštu 119 Kč; paymentAvailable=false znamená
+pravdivý stav nedostupných plateb, nikoli GoPay/dobírku z návrhu.
+
+Browser kontrola produkčního buildu na /cs/doprava a /cs/platba:
+1440×1000 a 390×844, prohlédnuté screenshoty obou stránek; bez horizontal
+overflow. Vnitřní šířka nadpisu 1120/310px, mobilní x=40px, výška 32px.
+Automatické ověření zahrnuje skutečný market query, měnu, nulovou cenu,
+prázdnou nabídku i odmítnutí neplatného scope/sazeb. Toto jsou informační
+stránky; dokončení objednávky a zprovoznění plateb zůstávají samostatné.

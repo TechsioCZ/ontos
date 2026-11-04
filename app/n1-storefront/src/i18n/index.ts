@@ -73,8 +73,8 @@ const cs = {
   browseCategories: "Procházet kategorie",
   cart: "Košík",
   catalog: "Katalog",
-
   categories: "TOP kategorie",
+
   closeMenu: "Zavřít nabídku kategorií",
   commerceUnavailable: "Nákup zatím není dostupný.",
   contact: {
@@ -118,6 +118,19 @@ const cs = {
   featured: "Vybíráme pro vás",
   featureUnavailable: "Tato funkce zatím není dostupná.",
   from: "od",
+  fulfillment: {
+    noPayment: "Platební možnosti nyní nejsou dostupné. Kontaktujte nás prosím.",
+    noShipping: "Pro tento trh nyní nejsou dostupné žádné způsoby dopravy.",
+    paymentDetailsUnavailable:
+      "Podrobnosti o konkrétních způsobech platby zatím nejsou dostupné. Kontaktujte nás prosím.",
+    shippingDescriptions: {
+      CESKA_POSTA: "Doručení zásilky na vaši adresu Českou poštou.",
+      OSOBNI_ODBER: "Osobní převzetí objednávky.",
+      PPL: "Kurýr PPL doručí zásilku na vámi zvolenou adresu.",
+      ZASILKOVNA: "Vyzvednutí zásilky na výdejním místě Zásilkovny.",
+    },
+    unavailable: "Informace o dopravě a platbě se nyní nepodařilo načíst.",
+  },
   heroAlt: "N1 shop — sezónní nabídka",
   heroSlide: "Snímek",
   home: "Domů",
@@ -310,8 +323,8 @@ const en: typeof cs = {
   browseCategories: "Browse categories",
   cart: "Cart",
   catalog: "Catalogue",
-
   categories: "Top categories",
+
   closeMenu: "Close category menu",
   commerceUnavailable: "Purchasing is not available yet.",
   contact: {
@@ -352,6 +365,19 @@ const en: typeof cs = {
   featured: "Selected for you",
   featureUnavailable: "This feature is not available yet.",
   from: "from",
+  fulfillment: {
+    noPayment: "Payment options are currently unavailable. Please contact us.",
+    noShipping: "No shipping methods are currently available for this market.",
+    paymentDetailsUnavailable:
+      "Details of specific payment methods are not available yet. Please contact us.",
+    shippingDescriptions: {
+      CESKA_POSTA: "Delivery to your address by Česká pošta.",
+      OSOBNI_ODBER: "Collect your order in person.",
+      PPL: "A PPL courier will deliver your parcel to your chosen address.",
+      ZASILKOVNA: "Collect your parcel at a Zásilkovna pickup point.",
+    },
+    unavailable: "Shipping and payment information could not be loaded right now.",
+  },
   heroAlt: "N1 shop — seasonal collection",
   heroSlide: "Slide",
   home: "Home",

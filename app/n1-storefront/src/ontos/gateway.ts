@@ -9,17 +9,24 @@ type OwnerReadQuery =
   | {
       readonly view: {
         readonly storefront: true;
-        readonly storefrontCatalog: {
-          readonly categorySlug?: string;
-          readonly featured?: boolean;
-          readonly fields: "card" | "full";
-          readonly includeCategories: boolean;
-          readonly marketId: string;
-          readonly page?: number;
-          readonly pageSize: number;
-          readonly q?: string;
-          readonly slug?: string;
-        };
+        readonly storefrontCatalog:
+          | {
+              readonly categorySlug?: string;
+              readonly featured?: boolean;
+              readonly fields: "card" | "full";
+              readonly includeCategories: boolean;
+              readonly marketId: string;
+              readonly page?: number;
+              readonly pageSize: number;
+              readonly q?: string;
+              readonly slug?: string;
+            }
+          | {
+              readonly includeCategories: false;
+              readonly marketId: string;
+              readonly mode: "categories";
+            };
+        readonly storefrontCheckout?: true;
       };
     };
 
