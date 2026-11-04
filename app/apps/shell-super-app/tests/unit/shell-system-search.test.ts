@@ -207,25 +207,27 @@ it.effect('refuses a catalog from another captured revision during merge', () =>
 
 for (const coreFails of [true, false]) {
   it.effect(
-    `one ${coreFails ? 'Core' : 'business'} provider failure never exposes the other hits as an incomplete success`,
+    `one ${coreFails ? 'Core' : 'business'} provider failure keeps the other hits visible as a partial answer`,
     () =>
       Effect.gen(function* partial() {
         const failure = Effect.fail(new ShellProviderUnavailableError({}));
-        const failureResult = yield* mergeShellSystemSearch(
+        const answer = yield* mergeShellSystemSearch(
           coreFails ? Effect.succeed(businessResponse) : failure,
           coreFails ? failure : Effect.succeed(coreResponse),
-        ).pipe(Effect.flip);
-        expect(Schema.is(ShellProviderUnavailableError)(failureResult)).toBe(true);
+        );
+        expect(answer.partial).toBe(true);
+        expect(answer.results).toEqual((coreFails ? businessResponse : coreResponse).results);
       }),
   );
 }
-it.effect('rejects an upstream partial response instead of presenting incomplete hits', () =>
+it.effect('carries an upstream partial business answer through as partial', () =>
   Effect.gen(function* incompleteUpstream() {
-    const failure = yield* mergeShellSystemSearch(
+    const answer = yield* mergeShellSystemSearch(
       Effect.succeed({ ...businessResponse, partial: true }),
       Effect.succeed(coreResponse),
-    ).pipe(Effect.flip);
-    expect(Schema.is(ShellProviderUnavailableError)(failure)).toBe(true);
+    );
+    expect(answer.partial).toBe(true);
+    expect(answer.results).toHaveLength(businessResponse.results.length + coreResponse.results.length);
   }),
 );
 it.effect('all providers unavailable remains a typed failure, while denied Core permission is empty success', () =>

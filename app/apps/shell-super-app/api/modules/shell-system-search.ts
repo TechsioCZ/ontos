@@ -143,11 +143,17 @@ export const mergeShellSystemSearch = Effect.fn('ShellSystemSearch.merge')(
       { concurrency: 2 },
     );
     const successes = outcomes.flatMap((outcome) => (Result.isSuccess(outcome) ? [outcome.success] : []));
-    if (successes.length !== outcomes.length || successes.some(({ partial }) => partial)) {
+    // A failed branch or a partial business answer leaves the other results visible as a partial answer; only an
+    // answer where no branch answered is unavailable.
+    if (successes.length === 0) {
       return yield* unavailable();
     }
-    const [businessResult] = successes;
-    const businessPresentation = businessResult?.presentation;
+    const partial = successes.length !== outcomes.length || successes.some((success) => success.partial);
+    const [businessOutcome] = outcomes;
+    const businessPresentation =
+      businessOutcome !== undefined && Result.isSuccess(businessOutcome)
+        ? businessOutcome.success.presentation
+        : undefined;
     if (
       presentation !== undefined &&
       businessPresentation !== undefined &&
@@ -159,7 +165,7 @@ export const mergeShellSystemSearch = Effect.fn('ShellSystemSearch.merge')(
     const capturedPresentation = presentation ?? businessPresentation;
     const rows = new Map(successes.flatMap(({ results }) => results.map((row) => [resultKey(row), row] as const)));
     const response = {
-      partial: false,
+      partial,
       results: sortShellSearchResults([...rows.values()]),
     };
     return yield* Schema.decodeUnknownEffect(ShellSearchResponseSchema)(
