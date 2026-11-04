@@ -324,6 +324,14 @@ jobs:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: bash app/scripts/zerops/sync-service-secret.sh "$ZEROPS_APP_SERVICE_ID" ONTOS_OWNER_SECRETS_JSON OWNER_SECRETS
 
+      # Stage mail goes through the Cloudflare SMTP bridge, which takes a Cloudflare API token as the password.
+      - name: Sync the SMTP password to the app service
+        if: needs.plan.outputs.app == 'true'
+        env:
+          SMTP_PASSWORD: ${{ secrets.STAGE_SMTP_PASSWORD }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: bash app/scripts/zerops/sync-service-secret.sh "$ZEROPS_APP_SERVICE_ID" SMTP_PASSWORD SMTP_PASSWORD
+
       - name: Download the delivery plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
