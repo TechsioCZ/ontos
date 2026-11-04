@@ -177,7 +177,8 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
             return Effect.succeed([
               [
                 { homepageFeaturedProductIds: ['featured-id'], revision: 7 },
-                // Eleven nullable product columns, then the total, in native SQL row order.
+                // Twelve nullable product columns, then the total, in native SQL row order.
+                null,
                 null,
                 null,
                 null,

@@ -44,6 +44,8 @@ export type { Order, OrderLine, Product, ProductRecord, StockMovement } from '..
  * out-of-stock = OUT_OF_STOCK|UNKNOWN. `minMinor`/`maxMinor` compare the gross `grossPriceMinor`.
  * `fields: 'card'` omits variantRecords, description, descriptionParagraphs and parameters (listing pages); every
  * product carries `variantSummary`. A `full` page holds at most 2 products unless `variantIds` narrows the variants.
+ * Cards also carry `storefrontVariantPreview`: at most three active sellable variant names in owner order,
+ * plus their total count; an empty preview means no active sellable variants. Raw variant records stay omitted.
  * `mode: 'categories'` skips product reads/counts and returns `products: []` without product paging/featured metadata;
  * category selection, publication visibility and ordering are unchanged. Default mode: `products`.
  * `marketId` (commerce market): every mode returns only the products offered in that market (unknown market: none),

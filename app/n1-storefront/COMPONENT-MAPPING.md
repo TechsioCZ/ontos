@@ -1,5 +1,13 @@
 # N1 — aktuální komponentové a tokenové mapování
 
+Karty / Figma214:3250: skutečné první3velikosti → `LinkButton`
+sm/tertiary/outlined/compact; native wrapper flex/center/gap1(4px), následně
+`+N` dle owner total−3. Native preview dodává stabilní veřejné variant IDs,
+názvy a total; při absenci se velikosti ani počet nevymýšlejí. Kliknutí vede na
+reálný detail produktu jako historická card navigace. Žádné appearance classes
+nebo inline styly na komponentách. BE projekce schválená uživatelem, runtime
+ověření zatím neproběhlo; hover/focus expansion z historické reference není hotové.
+
 Autorita vzhledových tokenů: [New Design System / Theme / N1](https://www.figma.com/design/gi5GUSWwAeXknaKEeLqK5w/New-Design-System?node-id=2667-2),
 447 proměnných, mode `4082:0`, čtecí session `0397b40e-b436-4ebb-bf27-114466df5aa0`.
 Autorita API: skutečně instalovaný `@techsio/ui-kit`. Storefrontová Figma určuje

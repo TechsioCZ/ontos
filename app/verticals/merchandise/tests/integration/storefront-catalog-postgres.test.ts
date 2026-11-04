@@ -95,6 +95,79 @@ const idsOf = (fixture: MerchandiseFixture, query: StorefrontCatalogQueryInput) 
 const onCatalog = <A, E>(run: (fixture: MerchandiseFixture) => Effect.Effect<A, E>) =>
   withMerchandise(catalogState, run);
 
+it.live('previews only the first three active sellable variant names without hydrating card variants', () => {
+  const variants = [
+    { active: false, attributes: '', id: 'hidden-size', name: 'Hidden size', priceMinor: 100 },
+    { attributes: '', id: 'first', name: '8,5 - ML', priceMinor: 100 },
+    { attributes: '', id: 'second', name: '6,5 - XS', priceMinor: 100 },
+    { attributes: '', id: 'third', name: '7 - S', priceMinor: 100 },
+    { attributes: '', id: 'fourth', name: '9 - L', priceMinor: 100 },
+    { attributes: '', name: 'Descriptive option without a sellable identity' },
+  ];
+  const state = decodeState({
+    ...catalogInput,
+    movements: [],
+    orders: [],
+    products: [{ ...catalogInput.products[0], variants }],
+  });
+  return withMerchandise(state, (fixture) =>
+    Effect.gen(function* cardVariantPreview() {
+      const page = yield* catalogPage(fixture, { fields: 'card' });
+      expect(page.products[0]?.storefrontVariantPreview).toEqual({
+        total: 4,
+        variants: [
+          { id: 'first', name: '8,5 - ML' },
+          { id: 'second', name: '6,5 - XS' },
+          { id: 'third', name: '7 - S' },
+        ],
+      });
+      expect(page.products[0]?.variantSummary?.count).toBe(4);
+      expect(page.products[0]).not.toHaveProperty('variantRecords');
+      expect(page.products[0]).not.toHaveProperty('variants');
+      expect(page.products[0]).not.toHaveProperty('description');
+      expect(page.products[0]?.availability).toBe('OUT_OF_STOCK');
+      const staff = yield* staffProducts(
+        fixture.db,
+        fixture.scope,
+        Schema.decodeSync(RecordsViewSchema)({ productId: 'p1', summary: true }),
+        false,
+      );
+      expect(staff.products[0]).not.toHaveProperty('storefrontVariantPreview');
+    }),
+  );
+});
+
+it.live('retains card24 pagination and full2 limits while projecting empty variant previews', () => {
+  const state = decodeState({
+    ...catalogInput,
+    movements: [],
+    orders: [],
+    products: Array.from({ length: 25 }, (_, index) => ({
+      ...catalogInput.products[0],
+      id: `preview-${index}`,
+      sku: `preview-${index}`,
+      slug: `preview-${index}`,
+      variants: [],
+    })),
+  });
+  return withMerchandise(state, (fixture) =>
+    Effect.gen(function* cardPreviewPaging() {
+      const first = yield* catalogPage(fixture, { fields: 'card', pageSize: 24 });
+      const second = yield* catalogPage(fixture, { fields: 'card', page: 2, pageSize: 24 });
+      const full = yield* catalogPage(fixture, { fields: 'full', pageSize: 24 });
+      expect(first.total).toBe(25);
+      expect(first.pageSize).toBe(24);
+      expect(first.products).toHaveLength(24);
+      expect(second.products).toHaveLength(1);
+      expect(new Set([...first.products, ...second.products].map((product) => product.id)).size).toBe(25);
+      expect(first.products.every((product) => product.storefrontVariantPreview?.total === 0)).toBe(true);
+      expect(first.products[0]?.storefrontVariantPreview?.variants).toEqual([]);
+      expect(full.pageSize).toBe(2);
+      expect(full.products).toHaveLength(2);
+    }),
+  );
+});
+
 it.live('hides unpublished products and returns the storefront category tree without history', () =>
   onCatalog((fixture) =>
     Effect.gen(function* catalogReadCase1() {

@@ -1,5 +1,32 @@
 # Kontrola převodu N1 storefrontu
 
+## C18: omezený náhled variant na kartách — rozpracováno2026-11-04
+
+Uživatelem schválená změna veřejného Merchandise kontraktu přidává nepovinné
+`storefrontVariantPreview: {total, variants:[{id,name}]}` s nejvýše3položkami.
+Preview vzniká ve stejném SQL snapshotu jako stránka, pouze pro aktivní prodejné
+varianty stejného tenanta, legal entity a produktu. Nepřepíná listing na full,
+nehydratuje celé variantní dokumenty, nemění card24/full2 ani uložená data.
+
+Finální N1 sada360/360 a Merchandise unit sada361/361 PASS; workspace typecheck,
+lint změněných souborů a format PASS. Nezávislé statické review kontraktu PASS.
+Po výslovné výjimce uživatele pro interní načtení izolované testovací konfigurace
+prošlo všech55 PostgreSQL katalogových integračních testů na lokální DB5434.
+Nové regrese ověřují3náhledy/celkovýpočet, prázdné preview, card24/page2 a full2;
+ostatní pokrývají mj. market/scope/publication filtry. Testy používají náhodné
+dočasné tenant/legal scopes s úklidem, nikoli změny živých dat N1.
+
+Povinné `pnpm check --concurrency 1` hlásí zastaralý generovaný manifest Party
+Registry mimo tento diff; po této chybě byl běh přerušen, není celý PASS.
+Obnovu nesouvisejícího manifestu schvalovací kontrola odmítla jako změnu mimo
+schválený rozsah. Zdrojové ani generované soubory Party Registry se neměnily.
+Úzký preview backport nad původní runtime verzí ultramodern.17 má navíc35/35
+katalogových PostgreSQL testů PASS; je pouze lokální přípravou runtime artefaktů.
+
+Runtime BE/FE této změny, desktop/mobile screenshot comparison a historické
+hover/focus rozbalení všech velikostí nejsou touto kontrolou potvrzené.
+Celé karty/PDP zůstávají nedokončené; dílčí test PASS neznamená vizuální přijetí.
+
 ## C17: PDP projekce a kompozice — 2026-11-04
 
 358/358N1testů PASS i po aktualizaci upstream na4e8dc03cd; produkční build,

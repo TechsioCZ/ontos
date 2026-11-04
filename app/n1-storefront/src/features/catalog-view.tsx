@@ -113,7 +113,27 @@ export const CatalogView = ({
                 )}
               </Link>
             </div>
-            <div aria-hidden="true" className="h-7" />
+            <div className="flex min-h-7 flex-wrap items-center justify-center gap-1">
+              {(product.variantPreview ?? []).map((variant) => (
+                <LinkButton
+                  as={NextLink}
+                  density="compact"
+                  href={`/${locale}/produkt/${encodeURIComponent(product.slug)}`}
+                  key={variant.id}
+                  prefetch={false}
+                  size="sm"
+                  theme="outlined"
+                  variant="tertiary"
+                >
+                  {variant.name}
+                </LinkButton>
+              ))}
+              {(product.variantPreview?.length ?? 0) > 0 && (product.variantCount ?? 0) > 3 && (
+                <span className="text-xs text-fg-secondary">
+                  +{(product.variantCount ?? 0) - 3}
+                </span>
+              )}
+            </div>
             <div className="flex justify-center">
               {product.stock === "unknown" ? (
                 <AvailabilityStatus

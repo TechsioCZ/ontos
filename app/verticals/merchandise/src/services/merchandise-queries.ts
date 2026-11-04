@@ -24,6 +24,7 @@ import {
   CategoryNodeSchema,
   CatalogParameterSchema,
   ProductVariantSchema,
+  StorefrontVariantPreviewSchema,
   VariantIdSchema,
   VariantSummarySchema,
 } from '../../shared/domain/merchandise-model.ts';
@@ -167,6 +168,7 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
     readonly offset: number;
     readonly orderBy: readonly SQL[];
     readonly variantCount?: boolean;
+    readonly variantPreview?: boolean;
     readonly variants: boolean;
     readonly variantSummary?: boolean;
   },
@@ -214,6 +216,16 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
               and v.product_id = ${outerProductId} and v.variant_id is not null
               and v.price_minor is not null)`.as('variant_count')
           : sql<number | null>`null::int`.as('variant_count'),
+      variantPreview:
+        input.variantPreview === true
+          ? sql<typeof StorefrontVariantPreviewSchema.Encoded.variants>`(select coalesce(
+              json_agg(json_build_object('id', v.variant_id, 'name', v.name) order by v.position), '[]'::json)
+            from (select v.variant_id, v.name, v.position from ${productVariants} v
+              where v.tenant_id = ${scope.tenantId}::uuid and v.legal_entity_id = ${scope.legalEntityId}::uuid
+                and v.product_id = ${outerProductId} and v.variant_id is not null and v.price_minor is not null
+                and v.active
+              order by v.position limit 3) v)`.as('variant_preview')
+          : sql<typeof StorefrontVariantPreviewSchema.Encoded.variants | null>`null::json`.as('variant_preview'),
       variantRows: input.variants
         ? sql<Parameters<typeof hydrateProducts>[1]>`(select coalesce(json_agg(json_build_object(
             'document', v.document, 'position', v.position, 'productId', v.product_id,
@@ -247,6 +259,7 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
           stockValueMinor: selected.stockValueMinor,
           tierRows: selected.tierRows,
           variantCount: selected.variantCount,
+          variantPreview: selected.variantPreview,
           variantRows: selected.variantRows,
           variantSummary: selected.variantSummary,
         },
@@ -300,6 +313,13 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
       }
       if (variantSummary !== undefined) {
         record = { ...record, variantSummary };
+        if (row.variantPreview !== null) {
+          const storefrontVariantPreview = yield* Schema.decodeEffect(StorefrontVariantPreviewSchema)({
+            total: variantSummary.count,
+            variants: row.variantPreview,
+          }).pipe(Effect.mapError(storedRowsFailure));
+          record = { ...record, storefrontVariantPreview };
+        }
       }
       if (row.variantCount !== null) {
         record = { ...record, variantCount: row.variantCount };
@@ -1035,7 +1055,8 @@ const verifySearchRevision = Effect.fn('MerchandiseQueries.verifySearchRevision'
 
 /**
  * Storefront catalog page: visible products (active, published, not archived), filters AND-ed, relevance or price
- * order, one page. Listing cards (`fields: 'card'`) never load variants; every product carries `variantSummary`.
+ * order, one page. Listing cards (`fields: 'card'`) never hydrate variants; they carry only a three-name preview
+ * and `variantSummary` from the same SQL snapshot.
  * With `market` (the catalog's resolved `marketId`) only that market's offer is listed and every price is in its
  * currency.
  */
@@ -1084,6 +1105,7 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
     limit: pageSize,
     offset: (page - 1) * pageSize,
     orderBy,
+    variantPreview: fields === 'card',
     variants: fields === 'full',
     variantSummary: true,
   });

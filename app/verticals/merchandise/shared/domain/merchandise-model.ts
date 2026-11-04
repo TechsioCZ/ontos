@@ -298,6 +298,12 @@ export const SearchMatchSchema = Schema.Union([
 ]);
 export type SearchMatch = typeof SearchMatchSchema.Type;
 
+/** Bounded storefront-only size labels; the total includes variants beyond the three-name preview. */
+export const StorefrontVariantPreviewSchema = Schema.Struct({
+  total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  variants: Schema.Array(Schema.Struct({ id: VariantIdSchema, name: TextSchema(100) })).check(Schema.isMaxLength(3)),
+});
+
 /** Product plus values derived from the stock ledger and current price at read time. */
 export const ProductRecordSchema = Schema.Struct({
   ...ProductSchema.fields,
@@ -316,6 +322,8 @@ export const ProductRecordSchema = Schema.Struct({
   /** Staff list rows: number of sellable variants (active or not), counted in SQL; detail reads `variantRecords`. */
   variantCount: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   variantSummary: Schema.optionalKey(VariantSummarySchema),
+  /** Storefront cards: first three active sellable names in owner order and the total number of those variants. */
+  storefrontVariantPreview: Schema.optionalKey(StorefrontVariantPreviewSchema),
   /** Storefront-only derived fields: `description` split on blank lines, and `images` (or `[imageSrc]`). */
   descriptionParagraphs: Schema.optionalKey(Schema.Array(Schema.String)),
   gallery: Schema.optionalKey(Schema.Array(Schema.String)),

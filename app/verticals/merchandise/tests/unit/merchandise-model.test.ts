@@ -68,6 +68,30 @@ const product = () =>
     vatRate: 21,
   });
 
+it('preserves an optional compact storefront preview without requiring it on old product records', () => {
+  const old = Schema.encodeSync(ProductRecordSchema)(product());
+  expect(old).not.toHaveProperty('storefrontVariantPreview');
+  const storefrontVariantPreview = {
+    total: 8,
+    variants: [
+      { id: 'first', name: 'M' },
+      { id: 'second', name: 'M' },
+      { id: 'third', name: 'XL' },
+    ],
+  };
+  const record = Schema.decodeSync(ProductRecordSchema)({ ...old, storefrontVariantPreview });
+  expect(Schema.encodeSync(ProductRecordSchema)(record).storefrontVariantPreview).toEqual(storefrontVariantPreview);
+  expect(
+    Schema.is(ProductRecordSchema)({
+      ...record,
+      storefrontVariantPreview: {
+        total: 4,
+        variants: [...storefrontVariantPreview.variants, { id: 'fourth', name: 'S' }],
+      },
+    }),
+  ).toBe(false);
+});
+
 it('detail page reads nothing for an id no product can have', () => {
   expect(Option.isNone(detailInput('entity-1', ''))).toBe(true);
   expect(detailState(false, pageDataPending)).toEqual({ status: 'invalid' });

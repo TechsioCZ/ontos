@@ -3,6 +3,9 @@ import { Schema, Struct } from "effect";
 const optionalNumber = Schema.optionalKey(Schema.Number);
 const optionalString = Schema.optionalKey(Schema.String);
 const StoreCurrencySchema = Schema.Literals(["CZK", "EUR", "PLN"]);
+const VariantPreviewItemsSchema = Schema.Array(
+  Schema.Struct({ id: Schema.String, name: Schema.String }),
+).check(Schema.isMaxLength(3));
 const ParametersSchema = Schema.Array(
   Schema.Struct({ label: Schema.String, unit: Schema.String, value: Schema.String }),
 );
@@ -55,6 +58,12 @@ export const CatalogResponseSchema = Schema.Struct({
       slug: Schema.String,
       stockOnHand: optionalNumber,
       stockTracked: Schema.optionalKey(Schema.Boolean),
+      storefrontVariantPreview: Schema.optionalKey(
+        Schema.Struct({
+          total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+          variants: VariantPreviewItemsSchema,
+        }),
+      ),
       unit: optionalString,
       variantRecords: Schema.optionalKey(
         Schema.Array(
@@ -100,6 +109,7 @@ export const ProductCardModelSchema = Schema.Struct({
   slug: Schema.String,
   stock: Schema.Literals(["available", "limited", "unavailable", "unknown"]),
   variantCount: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  variantPreview: Schema.optionalKey(VariantPreviewItemsSchema),
 });
 
 export type ProductCardModel = typeof ProductCardModelSchema.Type;
@@ -327,7 +337,8 @@ export const projectCatalog = (
       sku: product.sku ?? "",
       slug: product.slug,
       stock: stockStatus(product),
-      variantCount: product.variantSummary?.count ?? 0,
+      variantCount: product.storefrontVariantPreview?.total ?? product.variantSummary?.count ?? 0,
+      variantPreview: product.storefrontVariantPreview?.variants ?? [],
     };
     products.push(card);
     details.push(detailOf(product, card, hosts));

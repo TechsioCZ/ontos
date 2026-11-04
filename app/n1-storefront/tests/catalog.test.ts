@@ -19,6 +19,43 @@ const response: typeof CatalogResponseSchema.Type = {
 };
 
 describe("owner catalogue presentation", () => {
+  it("retains the compact owner preview and the total count without needing full variant records", () => {
+    const variants = [
+      { id: "first", name: "8,5 - ML" },
+      { id: "second", name: "6,5 - XS" },
+      { id: "third", name: "7 - S" },
+    ];
+    const result = projectCatalog(
+      {
+        ...response,
+        products: [
+          {
+            ...response.products[0],
+            storefrontVariantPreview: { total: 5, variants },
+            variantSummary: { count: 5, minGrossPriceMinor: 45_000, stockOnHand: 10 },
+          },
+        ],
+      },
+      [],
+    );
+    expect(result.products[0].variantPreview).toEqual(variants);
+    expect(result.products[0].variantCount).toBe(5);
+  });
+  it("does not invent variant labels from a summary count", () => {
+    const result = projectCatalog(
+      {
+        ...response,
+        products: [
+          {
+            ...response.products[0],
+            variantSummary: { count: 8, minGrossPriceMinor: 45_000, stockOnHand: 10 },
+          },
+        ],
+      },
+      [],
+    );
+    expect(result.products[0].variantPreview ?? []).toEqual([]);
+  });
   it("uses current gallery order and respects explicit removal of every photo", () => {
     const product = { ...response.products[0], imageSrc: "https://media.example/old.png" };
     expect(
