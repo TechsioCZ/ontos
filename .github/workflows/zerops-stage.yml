@@ -345,17 +345,6 @@ jobs:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: bash app/scripts/zerops/sync-service-secret.sh "$ZEROPS_N1_STOREFRONT_SERVICE_ID" ONTOS_N1_STOREFRONT_API_KEY ONTOS_N1_STOREFRONT_API_KEY
 
-      # The N1 hostname: an idempotent Zerops public routing (its certificate follows) and DNS-only A and AAAA records.
-      - name: Route the N1 stage hostname
-        if: needs.plan.outputs.n1 == 'true'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_STAGE_ZONE_ID }}
-          ZEROPS_SHARED_IPV4: ${{ vars.ZEROPS_SHARED_IPV4 }}
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: bash app/scripts/zerops/route-stage-domains.sh ontos-stage-n1.web-revolution.cz "$ZEROPS_N1_STOREFRONT_SERVICE_ID" 3071
-
       - name: Download the delivery plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -366,6 +355,18 @@ jobs:
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: bash app/scripts/zerops/push-delivery.sh "$RUNNER_TEMP/zerops-delivery/plan.json"
+
+      # The N1 hostname routes only after the n1 service has its zerops.yaml ports (the push above); before that Zerops
+      # rejects the routing for port 3071. Idempotent Zerops public routing (its certificate follows) plus DNS-only A and AAAA.
+      - name: Route the N1 stage hostname
+        if: needs.plan.outputs.n1 == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_STAGE_ZONE_ID }}
+          ZEROPS_SHARED_IPV4: ${{ vars.ZEROPS_SHARED_IPV4 }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: bash app/scripts/zerops/route-stage-domains.sh ontos-stage-n1.web-revolution.cz "$ZEROPS_N1_STOREFRONT_SERVICE_ID" 3071
 
       - name: Show the app log after a failed deploy
         if: failure() && needs.plan.outputs.app == 'true'

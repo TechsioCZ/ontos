@@ -30,7 +30,7 @@ while (($# >= 3)); do
   else
     jq -n --arg host "$host" --arg service "$service" --argjson port "$port" \
       '{domains: [$host], sslEnabled: true, locations: [{path: "/", port: $port, serviceStackId: $service}]}' |
-      curl -fsS -X POST "${z_auth[@]}" "$zerops/project/$ZEROPS_PROJECT_ID/public-http-routing" -d @- >/dev/null
+      curl -sS --fail-with-body -X POST "${z_auth[@]}" "$zerops/project/$ZEROPS_PROJECT_ID/public-http-routing" -d @- >/dev/null
     echo "$host routed to Zerops service $service:$port"
   fi
   # Cloudflare: detach a Worker custom domain, then exactly one DNS-only A and AAAA.
