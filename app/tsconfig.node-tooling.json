@@ -10,6 +10,7 @@
     "types": [
       "node"
     ],
-    "allowJs": true
+    "allowJs": true,
+    "jsx": "preserve"
   }
 }
