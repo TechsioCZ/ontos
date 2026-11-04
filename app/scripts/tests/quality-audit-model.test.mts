@@ -44,6 +44,7 @@ const sourceScriptsPattern = 'scripts/**/*.mts';
 const esbuildRootDeclaration = "const rootDirectory = paths.resolve(import.meta.dirname, '..', '..', '..', '..');";
 const esbuildCwdOptions = '{ cwd: rootDirectory }';
 const nativeSubprocessReason = 'Native Node subprocess';
+const nativeEsbuildSubprocessReason = 'Native esbuild subprocess';
 const nativePlaywrightReason = 'Native Playwright webServer.command';
 const playwrightPackageName = '@playwright/test';
 const playwrightConfigFile = 'playwright.config.ts';
@@ -960,6 +961,8 @@ it.live(
     const immutableInput = `${shell}/tests/support/immutable-alias-http.ts`;
     const crossInput = `${receiver}/tests/support/cross-http.ts`;
     const unused = `${shell}/tests/support/never-bundled.ts`;
+    const defineInputs: string[] = [];
+    const invalidDefineInputs: string[] = [];
     const rejected = [
       'fake-driver',
       shadowDriverCase,
@@ -1101,7 +1104,7 @@ it.live(
     };
     const consumerPath = path.join(root, auditConsumersFile);
     const model = yield* buildKnipModel(root, config, consumerPath).pipe(Effect.provide(NodeServices.layer));
-    const bundled = model.evidence.filter((fact) => fact.reason.startsWith('Native esbuild subprocess'));
+    const bundled = model.evidence.filter((fact) => fact.reason.startsWith(nativeEsbuildSubprocessReason));
     for (const [source, target, workspace] of [
       [shellConsumer, shellInput, shell],
       [shellConsumer, crossInput, shell],
@@ -1173,17 +1176,66 @@ it.live(
     for (const file of actualInputs) {
       write(root, file, 'export const unusedActualExport = 1;');
     }
+    for (const [name, option, accepted] of [
+      ['literal-define', "'--define:BUILD_MARKER=1'", true],
+      ['property-define', "'--define:process.env.NODE_ENV=production'", true],
+      ['dynamic-define-value', `\`--define:ULTRAMODERN_BUILD_MARKER=\${identity.buildMarker}\``, true],
+      ['dynamic-source-value', `\`--define:ULTRAMODERN_SOURCE_REVISION=\${identity.sourceRevision}\``, true],
+      ['missing-define-equals', "'--define:BUILD_MARKER'", false],
+      ['empty-define-key', "'--define:=1'", false],
+      ['empty-define-value', "'--define:BUILD_MARKER='", false],
+      ['invalid-define-key', "'--define:BUILD-MARKER=1'", false],
+      ['invalid-define-chain', "'--define:process..env=1'", false],
+      ['dynamic-define-key', `\`--define:\${key}=1\``, false],
+      ['dynamic-define-property', `\`--define:process.\${key}=1\``, false],
+      ['unknown-dynamic-option', `\`--unknown:BUILD_MARKER=\${identity.buildMarker}\``, false],
+    ] as const) {
+      const target = `${shell}/tests/support/${name}.ts`;
+      write(root, target, 'export const unusedDefineExport = 1;');
+      write(
+        root,
+        `${shell}/tests/integration/${name}.test.ts`,
+        [
+          nativeEffectProcessImport,
+          nativePathImport,
+          esbuildRootDeclaration,
+          esbuildInvocation(target).replace("'--outfile=/tmp/generated.mjs'", option),
+        ].join('\n'),
+      );
+      (accepted ? defineInputs : invalidDefineInputs).push(target);
+    }
     const actual = yield* buildKnipModel(root, config, consumerPath).pipe(Effect.provide(NodeServices.layer));
     for (const target of actualInputs) {
       expect(
         actual.evidence.some(
           (fact) =>
             fact.kind === 'file' &&
-            fact.reason.startsWith('Native esbuild subprocess') &&
+            fact.reason.startsWith(nativeEsbuildSubprocessReason) &&
             [actualShell, actualReceiver].includes(fact.source) &&
             path.resolve(root, fact.workspace, fact.target) === path.join(root, target),
         ),
       ).toBe(true);
+    }
+    for (const target of defineInputs) {
+      expect(
+        actual.evidence.some(
+          (fact) =>
+            fact.kind === 'file' &&
+            fact.reason.startsWith(nativeEsbuildSubprocessReason) &&
+            fact.source === `${shell}/tests/integration/${path.basename(target, '.ts')}.test.ts` &&
+            path.resolve(root, fact.workspace, fact.target) === path.join(root, target),
+        ),
+      ).toBe(true);
+    }
+    for (const target of invalidDefineInputs) {
+      expect(
+        actual.evidence.some(
+          (fact) =>
+            fact.kind === 'file' &&
+            fact.reason.startsWith(nativeEsbuildSubprocessReason) &&
+            path.resolve(root, fact.workspace, fact.target) === path.join(root, target),
+        ),
+      ).toBe(false);
     }
   }),
 );
