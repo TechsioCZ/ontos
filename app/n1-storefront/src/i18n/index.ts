@@ -251,6 +251,34 @@ const cs = {
   page: "Stránka",
   parameterName: "Parametr",
   parameterValue: "Hodnota",
+  passwordRecovery: {
+    backToLogin: "Zpět na přihlášení",
+    missingToken: "Pro změnu hesla otevřete odkaz z e-mailu. Pokud již neplatí, vyžádejte si nový.",
+    newPassword: "Nové heslo",
+    request: "Poslat odkaz pro obnovu hesla",
+    requestHeading: "Zapomenuté heslo",
+    requesting: "Odesíláme žádost…",
+    requestUnconfirmed:
+      "Výsledek žádosti se nepodařilo potvrdit. Zkontrolujte e-mail; pokud zpráva nepřijde, vyžádejte si nový odkaz.",
+    reset: "Uložit nové heslo",
+    resetHeading: "Obnova hesla",
+    resetting: "Ukládáme nové heslo…",
+    states: {
+      completed: "Heslo bylo změněné. Nyní se přihlaste novým heslem.",
+      forbidden: "Obnovu hesla nyní nelze provést. Kontaktujte nás prosím.",
+      invalid:
+        "Zkontrolujte zadané údaje. Nové heslo musí mít 12 až 128 znaků a obě hesla se musí shodovat.",
+      "invalid-token": "Odkaz pro obnovu hesla není platný. Vyžádejte si nový odkaz.",
+      "rate-limited": "Příliš mnoho pokusů. Počkejte prosím a zkuste to později.",
+      reconciliation:
+        "Obnova účtu vyžaduje kontrolu. Kontaktujte nás prosím; změnu hesla neopakujte.",
+      requested:
+        "Pokud je pro tuto adresu dostupná obnova účtu, přijde vám e-mail s dalším postupem.",
+      unavailable: "Obnova hesla je dočasně nedostupná. Zkuste to prosím později.",
+      unconfirmed:
+        "Výsledek se nepodařilo potvrdit. Heslo znovu neodesílejte. Zkuste se přihlásit; pokud to nepůjde, vyžádejte si nový odkaz.",
+    },
+  },
   payment: "Způsoby platby",
   previous: "Předchozí",
   priceUnavailable: "Cena není dostupná",
@@ -603,6 +631,35 @@ const en: typeof cs = {
   page: "Page",
   parameterName: "Parameter",
   parameterValue: "Value",
+  passwordRecovery: {
+    backToLogin: "Back to sign in",
+    missingToken:
+      "Open the link in your email to change your password. Request a new link if it has expired.",
+    newPassword: "New password",
+    request: "Send a password recovery link",
+    requestHeading: "Forgotten password",
+    requesting: "Sending request…",
+    requestUnconfirmed:
+      "The request result could not be confirmed. Check your email; if no message arrives, request a new link.",
+    reset: "Save new password",
+    resetHeading: "Password recovery",
+    resetting: "Saving new password…",
+    states: {
+      completed: "Your password has changed. Sign in with your new password.",
+      forbidden: "Password recovery cannot be completed right now. Please contact us.",
+      invalid:
+        "Check your details. Your new password must contain 12 to 128 characters and both passwords must match.",
+      "invalid-token": "This password recovery link is not valid. Request a new link.",
+      "rate-limited": "Too many attempts. Please wait and try again later.",
+      reconciliation:
+        "Account recovery needs to be reviewed. Please contact us; do not submit the password change again.",
+      requested:
+        "If account recovery is available for this address, you will receive an email with further instructions.",
+      unavailable: "Password recovery is temporarily unavailable. Please try again later.",
+      unconfirmed:
+        "The result could not be confirmed. Do not submit the password again. Try signing in; if that does not work, request a new link.",
+    },
+  },
   payment: "Payment methods",
   previous: "Previous",
   priceUnavailable: "Price unavailable",

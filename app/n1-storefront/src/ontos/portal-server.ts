@@ -95,7 +95,7 @@ const makeOwnerClient = (
       defaultApiPrefix: "/commerce-customer-context-api",
       transportHeaders: {
         authorization: `Bearer ${context.token}`,
-        cookie: request?.cookie,
+        cookie: request?.cookie === "" ? undefined : request?.cookie,
         "idempotency-key": idempotencyKey,
         origin: request?.origin,
         "x-correlation-id": randomUUID(),
@@ -113,6 +113,52 @@ const makeOwnerClient = (
 const configuration = readConfiguration(process.env).pipe(
   Effect.mapError(() => new PortalFailure({ reason: "unavailable" })),
 );
+/** Recovery uses only the native public operations; neither staff nor Portal cookies are relayed. */
+export const requestPasswordResetWithOwner = (
+  config: StorefrontConfiguration,
+  email: string,
+  origin: string,
+) =>
+  makeOwnerClient(config, portalRequestContext(origin, "")).pipe(
+    Effect.flatMap((client) =>
+      client.portalAuthRecovery
+        .requestPasswordReset({ payload: { email } })
+        .pipe(Effect.timeout(writeDeadline)),
+    ),
+  );
+export const resetPasswordWithOwner = (
+  config: StorefrontConfiguration,
+  newPassword: Redacted.Redacted,
+  token: Redacted.Redacted,
+  origin: string,
+) =>
+  makeOwnerClient(config, portalRequestContext(origin, "")).pipe(
+    Effect.flatMap((client) =>
+      client.portalAuthRecovery
+        .resetPassword({
+          payload: {
+            newPassword,
+            token,
+          },
+        })
+        .pipe(Effect.timeout(writeDeadline)),
+    ),
+  );
+export const readPasswordResetCallbackWithOwner = (
+  config: StorefrontConfiguration,
+  token: Redacted.Redacted,
+  callbackURL?: string,
+) =>
+  makeOwnerClient(config).pipe(
+    Effect.flatMap((client) =>
+      client.portalAuthRecovery
+        .resetPasswordCallback({
+          params: { token: Redacted.value(token) },
+          query: callbackURL === undefined ? {} : { callbackURL },
+        })
+        .pipe(Effect.timeout(readDeadline)),
+    ),
+  );
 /** Provider mail links target this public path. The token is the only browser authority;
  * do not relay cookies, callback URLs or an Origin, and never retry this consuming GET. */
 export const verifyPortalEmailServer = (token: string) =>

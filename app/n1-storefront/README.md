@@ -8,6 +8,12 @@
 > Portal registrace/přihlášení mají implementaci a testy; celý pozitivní živý
 > průchod ještě není doložený. Lokální data ani přístupové údaje nejsou součástí aplikace.
 
+Obnova hesla používá veřejné Portal Recovery API. Přihlašovací odkaz vede na
+`/{locale}/zapomenute-heslo`; formulář nového hesla je na `/{locale}/obnova-hesla`.
+Token zůstává pouze v krátké HttpOnly cookie a při nejasném výsledku se zápis
+automaticky neopakuje. Skutečné mail→N1 směrování ještě vyžaduje deployment ověření;
+samotná existence formulářů není důkaz doručeného e-mailu nebo změněného hesla.
+
 Samostatná Next.js aplikace v demo workspace. Vychází z Figma souboru
 [N1 Storefront](https://www.figma.com/design/gIHtMwCCl2OXhMAW9s9LIn/N1-Storefront)
 a z [AKROS handoffu](../akros-storefront/FOR-KAI-UWE.md).

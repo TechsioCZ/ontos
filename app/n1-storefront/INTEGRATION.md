@@ -4,6 +4,28 @@ Storefront potřebuje vlastní N1 identitu, asociovaný trh a nakonfigurovanou
 merchandise nabídku. Samotný import produktů ani vydání API klíče tyto kroky
 nenahrazuje. Lokální a sdílené demo jsou dvě samostatná prostředí.
 
+## Obnova hesla
+
+N1 používá pouze veřejnou skupinu `portalAuthRecovery` z customer-context API;
+nevytváří vlastní účet, token, e-mail ani náhradní provider. Request předává pouze
+`email`; reset předává native `newPassword` a cookie token. Browserový JSON nemá
+token field. Úspěšný reset není přihlášení ani customer admission.
+
+`/commerce-customer-context-api/api/portal-auth/reset-password/:token` čte native
+callback a přesměruje303 na pevné `/cs/obnova-hesla` bez tokenu/query. Cookie je
+host-only, HttpOnly, Path=/,600s, Secure naHTTPS a SameSite=Lax. Strict byla v
+browseru prokázaně rozbitá po cross-site303 z e-mailu; Lax průchod byl znovu
+ověřený. Všechny password/mail POSTy nadále vyžadují stejný Origin, JSON a uzavřený
+payload. Duplicitní token cookies se odmítají před owner I/O. Terminální výsledky
+cookie odstraní; nejasný write se automaticky neopakuje.
+
+**Deployment hranice:** native `requestPasswordReset` přijímá pouze email.
+Odkaz generuje owner podle `COMMERCE_PORTAL_AUTH_URL`; N1 nesmí přidávat
+nepodporovaný `redirectTo` ani přepisovat sdílený provider. Native mail callback
+musí být legitimním deployment routingem doručený do N1 callback routy. Toto
+skutečné mail→storefront směrování zatím není doložené. Browser proof se syntetickým
+tokenem ověřil cookie/redirect/UI, nikoli doručení e-mailu nebo změnu hesla.
+
 ## Pořadí provisioningu
 
 1. Ověřit cílový tenant, prodávající Legal Entity a existující N1 produkty

@@ -249,7 +249,7 @@ const AuthForm = ({
       </Button>
       {mode === "login" ? (
         <div className="flex justify-between gap-1">
-          <Link aria-disabled="true" title={d.featureUnavailable}>
+          <Link as={NextLink} href={`/${locale}/zapomenute-heslo`} onClick={() => onNavigate?.()}>
             {d.auth.forgotPassword}
           </Link>
           <Link as={NextLink} href={`/${locale}/registrace`} onClick={() => onNavigate?.()}>

@@ -1,5 +1,30 @@
 # Kontrola převodu N1 storefrontu
 
+## C12: native password recovery — 2026-11-04
+
+318/318 testů, lint a produkční build PASS. Testy skutečného generovaného klienta
+přes Effect Fetch seam pokrývají request/reset body, anti-enumeration, uzavřený
+payload, Origin, duplicitní cookie, native rejection/reconciliation/nejistý write,
+jediné odeslání a terminální odstranění tokenu. UI SSR testy nepřipustí password
+form bez server cookie-presence proof a nikdy nevykreslují token input.
+
+Desktop1440 a mobil390 skutečně prohlédnuty: request CS/EN, reset s testovací
+cookie a missing-token stav. Funkční login odkaz vede do recovery formuláře;
+desktop šířka448, žádný overflow/console error. Kompozice vychází z auth333:4671,
+ne z neexistujícího samostatného reset Figma rámce.
+
+Cross-site navigace z localhost3099 na127.0.0.1:3071 callback reprodukovala Strict
+chybu: po303 chyběla cookie ve SSR a pomohl až reload. S Lax cookie tentýž skutečný
+click po vyčištění test cookie ihned vykreslil2passwordfields bez reloadu. URL byla
+čistá `/cs/obnova-hesla`; syntetický token nebyl v DOM ani flight HTML. Origin+JSON
+guard zůstal zachovaný; platná cookie s cizím Origin vrací403 před native I/O.
+Testovací cookie byla po kontrole odstraněná, neproběhl mail ani password POST.
+
+Skutečný e-mail→N1 callback a pozitivní změna hesla nejsou live ověřené. Owner
+určuje mail origin přes `COMMERCE_PORTAL_AUTH_URL`; integrační hranice a potřebné
+deployment směrování jsou popsané v INTEGRATION.md. Není zavedený runtime mock
+mailu, účtu, token validity nebo přihlášení.
+
 ## C11: přístupné ovládání množství — 2026-11-04
 
 Browser odhalil anglické výchozí názvy QuantityField tlačítek na českém produktu

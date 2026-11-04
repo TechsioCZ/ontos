@@ -23,6 +23,13 @@ Původní 418-tokenový mix komponentových snapshotů a App overrides byl nahra
 
 ## Kompozice
 
+C12 recovery používá aktuálně znovu načtený auth vzor `333:4671`: FormInput md,
+Button primary/solid/sm/compact, Link a StatusText; desktop auth šířka448,
+mobilní vnější gutter16 a gap formuláře4. Samostatný recovery Figma frame není
+předaný, takže jde o rozšíření existující auth kompozice, nikoli tvrzení1:1
+nového návrhu. Žádné nové theme/token/CSS appearance overrides. Token se do
+komponenty nepředává; SSR poskytuje pouze boolean přítomnosti cookie.
+
 Navazující korekce C10:
 
 - Desktop nav `170:2077`: skutečný font16/bold700, veřejné Header.NavItem size=md
