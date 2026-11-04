@@ -215,6 +215,17 @@ jobs:
         with:
           restore-typescript-build: ${{ matrix.typescript-build == true }}
 
+      # The finance-billing POHODA export tests validate their generated documents against the
+      # official STORMWARE dataPack 2.0 schemas, which the repository does not redistribute. Only the
+      # shard that runs finance-billing needs them, so it provisions the pinned set named by
+      # verticals/finance-billing/tests/fixtures/pohoda-xsd/version-2.sha256 before it runs.
+      - name: Provision the POHODA XML schemas for the finance-billing shard
+        if: matrix.name == 'Unit and Component Tests (every other package)'
+        working-directory: app
+        run: |
+          command -v xmllint >/dev/null 2>&1 || sudo apt-get install --yes --no-install-recommends libxml2-utils
+          mise exec -- pnpm provision:pohoda-xsd
+
       - name: Run ${{ matrix.name }}
         working-directory: app
         env:

@@ -1,13 +1,13 @@
 import { FinanceCompanyIdSchema } from '../../shared/apis/records.ts';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
-import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
-import { Config, ConfigProvider, Crypto, DateTime, Effect, FileSystem, Layer, Path, Schema, Stream } from 'effect';
+import { ConfigProvider, Crypto, DateTime, Effect, Layer, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import { ApplyCommandPayloadSchema, FinanceCommandSchema } from '../../shared/actions/apply-command.ts';
 import type { FinanceState, Invoice } from '../../shared/apis/records.ts';
 import { transitionFinance } from '../../src/services/persistence.service.ts';
 import type { ExportPartnerReference, FinanceValidators } from '../../src/services/persistence.service.ts';
+import { validatePohodaXml } from '../support/pohoda-xsd.ts';
 
 const tenantId = 'a0000000-0000-4000-8000-000000000001';
 const scope = { legalEntityId: 'a0000000-0000-4000-8000-000000000002', tenantId };
@@ -78,21 +78,6 @@ const run = (
     ),
   );
 };
-/** Set POHODA_XSD_DIR to the official https://www.stormware.cz/schema/version_2/ schemas, including imports. */
-const validateAgainstXsd = Effect.fn('FinanceTest.validatePohodaXsd')(function* validateAgainstXsd(xml: string) {
-  const directory = yield* Config.NonEmptyString('POHODA_XSD_DIR');
-  const path = yield* Path.Path;
-  const xsd = path.join(directory, 'data.xsd');
-  const fs = yield* FileSystem.FileSystem;
-  expect(yield* fs.exists(xsd), `POHODA_XSD_DIR must contain data.xsd and its imported schemas: ${xsd}`).toBe(true);
-  const validation = yield* ChildProcess.make('xmllint', ['--noout', '--schema', xsd, '-'], {
-    stderr: 'inherit',
-    stdin: Stream.make(new TextEncoder().encode(xml)),
-    stdout: 'ignore',
-  });
-  expect(yield* validation.exitCode).toBe(0);
-});
-
 const issued = invoice('fv-1', {
   counterpartyName: 'Ateliér Horák s.r.o.',
   documentNumber: 'FV-2026-0004',
@@ -161,7 +146,7 @@ it.layer(Layer.merge(NodeServices.layer, NodeCrypto.layer))('S08 POHODA XML hand
       expect(content).not.toContain('SIMULACE');
       // S08-03: a handover never marks invoices as booked.
       expect(result.state.invoices.every((entry) => entry.accountingSyncState === 'NOT_SYNCED')).toBe(true);
-      yield* validateAgainstXsd(content);
+      yield* validatePohodaXml(content);
     }),
   );
 
@@ -182,7 +167,7 @@ it.layer(Layer.merge(NodeServices.layer, NodeCrypto.layer))('S08 POHODA XML hand
       expect(created?.issuerIco).toBeUndefined();
       expect(created?.content).not.toContain(' ico="');
       expect(created?.content).toContain('<typ:company>Obchodní firma</typ:company>');
-      yield* validateAgainstXsd(created?.content ?? '');
+      yield* validatePohodaXml(created?.content ?? '');
     }),
   );
 
@@ -217,7 +202,7 @@ it.layer(Layer.merge(NodeServices.layer, NodeCrypto.layer))('S08 POHODA XML hand
       expect(content).not.toContain('ucetni@demo.ontos');
       expect(content).toContain('https://shell.example.test/cs/finance?resourceId=fv-1');
       expect(content).not.toContain('untrusted.example.test');
-      yield* validateAgainstXsd(content);
+      yield* validatePohodaXml(content);
     }),
   );
 });

@@ -189,6 +189,12 @@ Installation bootstraps agent skills but does not format source. Format delibera
 `mise exec -- pnpm exec oxfmt <edited-files>` or `mise exec -- pnpm format`; CI and the full gate
 use `format:check`. Do not disable lifecycle scripts globally as a substitute for this separation.
 
+The finance-billing POHODA export tests validate their generated documents against the official
+STORMWARE dataPack 2.0 schemas, which the repository does not redistribute. Provision the pinned copy
+once with `mise exec -- pnpm provision:pohoda-xsd`; the tests read
+`app/node_modules/.cache/pohoda-xsd/version_2` (or `POHODA_XSD_DIR`) and fail, never skip, when it is
+absent.
+
 Run focused tests first. Before completion, run the required task commands and the repository gate:
 
 ```sh
