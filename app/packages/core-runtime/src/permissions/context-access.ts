@@ -25,12 +25,7 @@ import type {
 import { isOwnerPermissionAccessTargetValid } from './owner-permission-contract.ts';
 import type { OwnerPermissionAccessTarget } from './owner-permission-contract.ts';
 
-export {
-  createOwnerPermissionAccessTarget,
-  isOwnerPermissionAccessTargetMetadataValid,
-  isOwnerPermissionAccessTargetValid,
-  isOwnerPermissionContract,
-} from './owner-permission-contract.ts';
+export { createOwnerPermissionAccessTarget, isOwnerPermissionAccessTargetValid } from './owner-permission-contract.ts';
 export type {
   OwnerPermissionAccessTarget,
   OwnerPermissionContract,
