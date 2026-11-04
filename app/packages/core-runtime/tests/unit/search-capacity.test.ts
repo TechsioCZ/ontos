@@ -75,17 +75,22 @@ const terms = [
   }).flat(),
 ];
 
-it.effect('all 2002 parent and 1000 active variant terms remain searchable with a scoped337 ref', () =>
-  Effect.gen(function* searchEverySupportedVariantTerm() {
-    const store = makeInMemoryCoreSearchProjectionStore();
-    yield* store.apply({ document: product(terms), kind: 'upsert' }, worker);
-    const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
-    expect(terms).toHaveLength(2002);
-    for (const term of terms) {
-      const hits = yield* runtime.search(query(term), scope(companyId));
-      expect(hits.map(({ ref: hitRef }) => hitRef.resourceId)).toEqual([`${companyId}.${localId}`]);
-    }
-  }),
+it.effect(
+  'all 2002 parent and 1000 active variant terms remain searchable with a scoped337 ref',
+  () =>
+    Effect.gen(function* searchEverySupportedVariantTerm() {
+      expect.assertions(2003);
+      const store = makeInMemoryCoreSearchProjectionStore();
+      yield* store.apply({ document: product(terms), kind: 'upsert' }, worker);
+      const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
+      expect(terms).toHaveLength(2002);
+      for (const term of terms) {
+        const hits = yield* runtime.search(query(term), scope(companyId));
+        expect(hits.map(({ ref: hitRef }) => hitRef.resourceId)).toEqual([`${companyId}.${localId}`]);
+      }
+    }),
+  // Loaded CI completed 224 searches in 5s, so the full loop needs about 45s plus scheduling headroom.
+  120_000,
 );
 
 it.effect('native300 and scoped337 identities do not change company isolation or trusted scope checks', () =>
