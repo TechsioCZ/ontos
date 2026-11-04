@@ -1,5 +1,5 @@
 /** Focused server-only entrypoint used to bundle the combined Outbox Worker host and its MicroVertical entries. */
-export { defineAction, defineActionBusinessPermission, defineActionResourcePermission } from '../actions/definition.ts';
+export { defineAction, defineActionOwnerPermissions, defineActionResourcePermission } from '../actions/definition.ts';
 export { ActionPermissionCheckError } from '../actions/errors.ts';
 export { commitActionThenReject } from '../actions/context.ts';
 export { defineMicroverticalPolicy, denyPolicy } from '../actions/policy.ts';
@@ -50,8 +50,9 @@ export {
 export {
   ContextAccess,
   ContextAccessLive,
-  toBusinessPermissionAccessKey,
-  toBusinessPermissionAccessObjectId,
+  createOwnerPermissionAccessTarget,
+  isOwnerPermissionAccessTargetMetadataValid,
+  isOwnerPermissionAccessTargetValid,
 } from '../permissions/context-access.ts';
 export { PrincipalEligibility, PrincipalRefSchema } from '../permissions/principal-ref.ts';
 export {
@@ -89,7 +90,6 @@ export { defineOutboxWorkerCompletion, OutboxWorkerCompletionPublicationError } 
 export {
   ResourceContainmentMutationUnavailable,
   ResourceContainmentRelationshipMutation,
-  ResourceContainmentRelationshipMutationLive,
   createResourceContainmentRelationshipMutationClient,
   makeResourceContainmentRelationshipMutation,
   makeResourceContainmentRelationshipMutationLive,
@@ -145,3 +145,6 @@ export type {
   CoreSearchWorkerSnapshotService,
   CoreSearchWorkerSnapshotView,
 } from '../search/worker-snapshot.ts';
+
+export type { OwnerPermissionAccessTarget, OwnerPermissionContract } from '../permissions/context-access.ts';
+export type { ResourceContainmentPreparation } from '../permissions/resource-containment-mutation.ts';

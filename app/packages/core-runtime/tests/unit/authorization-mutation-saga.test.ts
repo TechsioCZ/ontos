@@ -1,3 +1,4 @@
+import { historicalOwnerTarget, prepareHistoricalOwnerTarget } from '../support/historical-owner-targets.ts';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -8,6 +9,9 @@ import {
 } from '../../src/permissions/authorization-mutation-saga.ts';
 import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
 import { BusinessPermissionMutationUnavailable } from '../../src/permissions/business-permission-mutation-error.ts';
+
+const prepareJournalTarget = (entry: AuthorizationMutationJournalEntry) =>
+  prepareHistoricalOwnerTarget(entry.permission, entry.businessTarget);
 
 const permission = Schema.decodeSync(BusinessPermissionCodeSchema)('counterparty.access.manage');
 const tenantId = '20000000-0000-4000-8000-000000000001';
@@ -64,6 +68,7 @@ it.effect('does not call an external capability for an invalid or mismatched dur
               return intent('grant', 'ACTIVE');
             }),
         },
+        prepareJournalTarget,
       ),
     );
     expect(failure).toBeInstanceOf(AuthorizationMutationSagaError);
@@ -86,15 +91,15 @@ it.effect('applies only the exact persisted storefront scope and finalizes the s
           }),
       },
       { finalize: () => Effect.succeed(intent('grant', 'ACTIVE')) },
+      prepareJournalTarget,
     );
     expect(result.outcome).toBe('FINALIZED');
     expect(result.entry.state).toBe('ACTIVE');
     expect(writes).toEqual([
       {
         operation: 'grant',
-        permission,
         principal: { principalId, tenantId },
-        target: intent().businessTarget,
+        target: historicalOwnerTarget(permission, intent().businessTarget),
         trustedStorefrontId: 'storefront-one',
       },
     ]);
@@ -122,6 +127,7 @@ it.effect('leaves the durable intent retryable when the relationship acknowledge
               return intent('grant', 'ACTIVE');
             }),
         },
+        prepareJournalTarget,
       ),
     );
     expect(failure.code).toBe('authorization_mutation_relationship_indeterminate');
@@ -143,25 +149,35 @@ it.effect('repeats an idempotent external write after a crash before durable fin
         }),
     };
     const first = yield* Effect.flip(
-      reconcileCommittedAuthorizationMutation(intent(), relationship, {
-        finalize: () =>
-          Effect.fail(
-            new AuthorizationMutationSagaError({
-              code: 'authorization_mutation_finalization_indeterminate',
-              externalMutationMayHaveSucceeded: true,
-              reason: 'simulated crash before DB acknowledgement',
-              retryable: true,
-            }),
-          ),
-      }),
+      reconcileCommittedAuthorizationMutation(
+        intent(),
+        relationship,
+        {
+          finalize: () =>
+            Effect.fail(
+              new AuthorizationMutationSagaError({
+                code: 'authorization_mutation_finalization_indeterminate',
+                externalMutationMayHaveSucceeded: true,
+                reason: 'simulated crash before DB acknowledgement',
+                retryable: true,
+              }),
+            ),
+        },
+        prepareJournalTarget,
+      ),
     );
     expect(first.code).toBe('authorization_mutation_finalization_indeterminate');
     expect(first.externalMutationMayHaveSucceeded).toBe(true);
     expect(relationships.size).toBe(1);
 
-    const retried = yield* reconcileCommittedAuthorizationMutation(intent(), relationship, {
-      finalize: () => Effect.succeed(intent('grant', 'ACTIVE')),
-    });
+    const retried = yield* reconcileCommittedAuthorizationMutation(
+      intent(),
+      relationship,
+      {
+        finalize: () => Effect.succeed(intent('grant', 'ACTIVE')),
+      },
+      prepareJournalTarget,
+    );
     expect(retried.outcome).toBe('FINALIZED');
     expect(writes).toBe(2);
     expect(relationships.size).toBe(1);
@@ -180,6 +196,7 @@ it.effect('does not repeat the external write after an ambiguous finalization ac
           }),
       },
       { finalize: () => Effect.die('must not finalize a terminal intent') },
+      prepareJournalTarget,
     );
     expect(result.outcome).toBe('ALREADY_FINAL');
     expect(result.entry.state).toBe('REVOKED');
@@ -203,6 +220,7 @@ it.effect('rejects a finalizer response for another tuple without claiming succe
               },
             }),
         },
+        prepareJournalTarget,
       ),
     );
     expect(failure.code).toBe('authorization_mutation_final_state_invalid');
@@ -240,14 +258,14 @@ it.effect('applies the exact retail profile target without inventing storefront 
             state: 'ACTIVE',
           }),
       },
+      prepareJournalTarget,
     );
     expect(result.outcome).toBe('FINALIZED');
     expect(writes).toEqual([
       {
         operation: 'grant',
-        permission: retailPermission,
         principal: { principalId, tenantId },
-        target: retailIntent.businessTarget,
+        target: historicalOwnerTarget(retailPermission, retailIntent.businessTarget),
       },
     ]);
   }),
@@ -278,14 +296,14 @@ it.effect('reconciles the exact tenant-only Price Group target and rejects a dif
       {
         finalize: () => Effect.succeed({ ...pricingIntent, state: 'ACTIVE' }),
       },
+      prepareJournalTarget,
     );
     expect(result.outcome).toBe('FINALIZED');
     expect(writes).toEqual([
       {
         operation: 'grant',
-        permission: pricingPermission,
         principal: { principalId, tenantId },
-        target: pricingIntent.businessTarget,
+        target: historicalOwnerTarget(pricingPermission, pricingIntent.businessTarget),
       },
     ]);
 
@@ -301,6 +319,7 @@ it.effect('reconciles the exact tenant-only Price Group target and rejects a dif
               state: 'ACTIVE',
             }),
         },
+        prepareJournalTarget,
       ),
     );
     expect(mismatch.code).toBe('authorization_mutation_final_state_invalid');
@@ -334,14 +353,14 @@ it.effect('reconciles only the exact durable Inventory Resource intent', () =>
           }),
       },
       { finalize: () => Effect.succeed({ ...inventoryIntent, state: 'ACTIVE' }) },
+      prepareJournalTarget,
     );
     expect(result.outcome).toBe('FINALIZED');
     expect(writes).toEqual([
       {
         operation: 'grant',
-        permission: inventoryPermission,
         principal: { principalId, tenantId },
-        target: inventoryIntent.businessTarget,
+        target: historicalOwnerTarget(inventoryPermission, inventoryIntent.businessTarget),
       },
     ]);
 
@@ -360,6 +379,7 @@ it.effect('reconciles only the exact durable Inventory Resource intent', () =>
               state: 'ACTIVE',
             }),
         },
+        prepareJournalTarget,
       ),
     );
     expect(mismatch.code).toBe('authorization_mutation_final_state_invalid');
@@ -385,10 +405,15 @@ it.effect('reconciles only the exact TAX Selling Legal Entity intent', () =>
           }),
       },
       { finalize: () => Effect.succeed({ ...taxIntent, state: 'ACTIVE' }) },
+      prepareJournalTarget,
     );
     expect(result.outcome).toBe('FINALIZED');
     expect(writes).toEqual([
-      { operation: 'grant', permission: taxPermission, principal: { principalId, tenantId }, target: taxTarget },
+      {
+        operation: 'grant',
+        principal: { principalId, tenantId },
+        target: historicalOwnerTarget(taxPermission, taxTarget),
+      },
     ]);
 
     const otherSeller = yield* Effect.flip(
@@ -403,6 +428,7 @@ it.effect('reconciles only the exact TAX Selling Legal Entity intent', () =>
               state: 'ACTIVE',
             }),
         },
+        prepareJournalTarget,
       ),
     );
     expect(otherSeller.code).toBe('authorization_mutation_final_state_invalid');
@@ -449,6 +475,7 @@ it.effect('rejects incompatible or noncanonical Pricing intents before relations
                 return { ...invalidIntent, state: 'ACTIVE' };
               }),
           },
+          prepareJournalTarget,
         ),
       ),
     )(invalidIntents);

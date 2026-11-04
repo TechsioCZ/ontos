@@ -35,11 +35,7 @@ import type { OperationalScope, OperationalScopeResolverService } from '../opera
 import { OperationalScopeResolver } from '../operations/context.ts';
 import {
   ContextAccess,
-  hasCanonicalInventoryAuthorizationTarget,
-  hasCanonicalPricingAuthorizationTargetIds,
-  isBusinessPermissionTargetCompatible,
   isOwnerPermissionAccessTargetValid,
-  toBusinessPermissionAccessKey,
   toContextPermissionAccessKey,
 } from '../permissions/context-access.ts';
 import { LEGAL_ENTITY_PERMISSION_KEYS } from '../permissions/context-permissions.ts';
@@ -140,39 +136,6 @@ const targetLegalEntityIdIsValid = Schema.is(Schema.String.check(Schema.isUUID()
 const PermissionDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
 type PermissionDecision = typeof PermissionDecisionSchema.Type;
 
-const businessPermissionTargetIsValid = (
-  target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'business_permission' }>,
-  scope?: OperationalScope,
-): boolean => {
-  const business = target.businessPermission.target;
-  if (
-    !stableTargetKey(target.businessPermission.permission) ||
-    !stableTargetKey(business.tenantId) ||
-    !isBusinessPermissionTargetCompatible(target.businessPermission) ||
-    !hasCanonicalPricingAuthorizationTargetIds(business) ||
-    !hasCanonicalInventoryAuthorizationTarget(business)
-  ) {
-    return false;
-  }
-  if (business.kind === 'pricing_catalog' || business.kind === 'price_group') {
-    return (
-      scope?.legalEntityId === undefined &&
-      scope?.trustedStorefrontId === undefined &&
-      target.trustedStorefrontId === undefined
-    );
-  }
-  if (business.kind === 'inventory_resource') {
-    return target.trustedStorefrontId === undefined;
-  }
-  return (
-    stableTargetKey(business.legalEntityId) &&
-    (business.kind !== 'counterparty_storefront' ||
-      (stableTargetKey(business.storefrontId) &&
-        target.trustedStorefrontId === business.storefrontId &&
-        scope?.trustedStorefrontId === business.storefrontId))
-  );
-};
-
 const legalEntityTargetIsValid = (
   target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'legal_entity' }>,
 ): boolean =>
@@ -184,9 +147,7 @@ const atomicTargetIsValid = (target: AtomicResolvedReadPermissionTarget, scope?:
   if (target.kind === 'owner_permission') {
     return scope === undefined ? false : isOwnerPermissionAccessTargetValid(target.ownerPermission, scope);
   }
-  if (target.kind === 'business_permission') {
-    return businessPermissionTargetIsValid(target, scope);
-  }
+
   if (target.kind === 'tenant') {
     return true;
   }
@@ -210,7 +171,7 @@ const canonicalPermissionTarget = (target: ResolvedReadPermissionTarget): Atomic
   target.kind === 'any_of' ? target.targets[0] : target;
 
 const targetIsValid = (
-  declared: 'owner_permission' | 'business_permission' | 'legal_entity' | 'module' | 'resource' | 'tenant',
+  declared: 'owner_permission' | 'legal_entity' | 'module' | 'resource' | 'tenant',
   target: ResolvedReadPermissionTarget,
   scope: OperationalScope,
 ): boolean => {
@@ -246,18 +207,6 @@ const toOwnerAuthorizationTarget = (
 ): OwnerAuthorizationTarget =>
   Match.value(target).pipe(
     Match.discriminatorsExhaustive('kind')({
-      business_permission: (businessTarget) =>
-        withOptionalProperty(
-          {
-            kind: 'business_permission' as const,
-            permission: businessTarget.businessPermission.permission,
-            target: businessTarget.businessPermission.target,
-          },
-          businessTarget.trustedStorefrontId !== undefined,
-          'trustedStorefrontId',
-          businessTarget.trustedStorefrontId,
-          {},
-        ),
       legal_entity: (legalEntityTarget) =>
         withOptionalProperty(
           {
@@ -333,6 +282,12 @@ const resolveConditionalPermissionPlan = <Input>(
               !atomicTargetIsValid({ kind: 'resource', resource: requirement.resource }, scope)
             );
           }
+          if (
+            requirement.kind === 'owner_permission' &&
+            (plan.ownerContract === undefined || requirement.ownerPermission.contract !== plan.ownerContract)
+          ) {
+            return true;
+          }
           return !atomicTargetIsValid(requirement, scope);
         })
       ) {
@@ -349,47 +304,9 @@ const resolveConditionalPermissionPlan = <Input>(
     },
   });
 
-const readBusinessTargetResourceId = (
-  target: Extract<AtomicResolvedReadPermissionTarget, { kind: 'business_permission' }>['businessPermission']['target'],
-): string => {
-  if (target.kind === 'retail_profile') {
-    return target.profileId;
-  }
-  if (target.kind === 'counterparty') {
-    return target.counterpartyId;
-  }
-  if (target.kind === 'counterparty_storefront') {
-    return `${target.counterpartyId}:${target.storefrontId}`;
-  }
-  if (target.kind === 'pricing_catalog') {
-    return target.pricingCatalogId;
-  }
-  if (target.kind === 'price_group') {
-    return `${target.pricingCatalogId}:${target.priceGroupId}`;
-  }
-  if (target.kind === 'tax_selling_legal_entity') {
-    return target.legalEntityId;
-  }
-  return target.resource.resourceId;
-};
-
 const targetMetadata = (target: ResolvedReadPermissionTarget, _scope: OperationalScope) => {
   const canonical = canonicalPermissionTarget(target);
-  if (canonical.kind === 'business_permission') {
-    const business = canonical.businessPermission.target;
-    if (business.kind === 'inventory_resource') {
-      return {
-        targetModuleKey: business.resource.moduleId,
-        targetResourceId: business.resource.resourceId,
-        targetResourceType: business.resource.resourceType,
-      };
-    }
-    return {
-      targetModuleKey: canonical.businessPermission.permission,
-      targetResourceId: readBusinessTargetResourceId(business),
-      targetResourceType: business.kind,
-    };
-  }
+
   if (canonical.kind === 'legal_entity') {
     return canonical.legalEntityId === undefined
       ? {}
@@ -398,8 +315,9 @@ const targetMetadata = (target: ResolvedReadPermissionTarget, _scope: Operationa
   if (canonical.kind === 'owner_permission') {
     return {
       targetModuleKey: canonical.ownerPermission.transportModuleKey,
-      targetResourceId: canonical.ownerPermission.objectId,
-      targetResourceType: canonical.ownerPermission.contract.targetResourceType,
+      targetResourceId: canonical.ownerPermission.transportObjectId,
+      targetResourceType:
+        canonical.ownerPermission.transportResourceType ?? canonical.ownerPermission.contract.targetResourceType,
     };
   }
   if (canonical.kind === 'tenant') {
@@ -424,53 +342,6 @@ const decisionFor = (
 ): PermissionDecision => {
   const [decision, ...unexpected] = decisions;
   return unexpected.length === 0 && decision?.key === expectedKey ? decision.decision : 'unavailable';
-};
-
-const checkBusinessPermissionTarget = <AccessValue extends (typeof ContextAccess)['Service']>(
-  contextAccess: AccessValue,
-  scope: OperationalScope,
-  target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'business_permission' }>,
-): Effect.Effect<PermissionDecision> => {
-  const business = target.businessPermission.target;
-  const tenantOnlyPricingTarget = business.kind === 'pricing_catalog' || business.kind === 'price_group';
-  if (business.tenantId !== scope.tenantId) {
-    return Effect.succeed('unavailable');
-  }
-  let scopeMismatch: boolean;
-  if (business.kind === 'inventory_resource') {
-    scopeMismatch = target.trustedStorefrontId !== undefined;
-  } else if (tenantOnlyPricingTarget) {
-    scopeMismatch =
-      scope.legalEntityId !== undefined ||
-      scope.trustedStorefrontId !== undefined ||
-      target.trustedStorefrontId !== undefined;
-  } else {
-    scopeMismatch =
-      business.legalEntityId !== scope.legalEntityId ||
-      (business.kind === 'counterparty_storefront'
-        ? scope.trustedStorefrontId !== business.storefrontId ||
-          target.trustedStorefrontId !== scope.trustedStorefrontId
-        : target.trustedStorefrontId !== undefined);
-  }
-  if (scopeMismatch) {
-    return Effect.succeed('unavailable');
-  }
-  if (contextAccess.businessPermissions === undefined) {
-    return Effect.succeed('unavailable');
-  }
-  const checkInput = withOptionalProperty(
-    {
-      principal: { principalId: scope.principalId, tenantId: scope.tenantId },
-      targets: [target.businessPermission],
-    },
-    scope.trustedStorefrontId !== undefined,
-    'trustedStorefrontId',
-    scope.trustedStorefrontId,
-    {},
-  );
-  return contextAccess
-    .businessPermissions(checkInput)
-    .pipe(Effect.map((decisions) => decisionFor(decisions, toBusinessPermissionAccessKey(target.businessPermission))));
 };
 
 const checkOwnerPermissionTarget = <AccessValue extends (typeof ContextAccess)['Service']>(
@@ -506,9 +377,7 @@ const checkAtomicPermissionTarget = <AccessValue extends (typeof ContextAccess)[
   if (target.kind === 'owner_permission') {
     return checkOwnerPermissionTarget(contextAccess, scope, target);
   }
-  if (target.kind === 'business_permission') {
-    return checkBusinessPermissionTarget(contextAccess, scope, target);
-  }
+
   if (target.kind === 'tenant') {
     return contextAccess
       .tenants({
@@ -609,8 +478,6 @@ const checkEntrypointContextPermission = <AccessValue extends (typeof ContextAcc
     (authorization.permission === 'module.access' &&
       permissionTarget.kind === 'module' &&
       permissionTarget.moduleId === entrypoint.moduleKey) ||
-    (permissionTarget.kind === 'business_permission' &&
-      permissionTarget.businessPermission.permission === authorization.permission) ||
     (permissionTarget.kind === 'owner_permission' &&
       permissionTarget.ownerPermission.definition.key === authorization.permission)
   ) {
@@ -840,14 +707,10 @@ const resolveReadPermissionTarget = Effect.fn('Runtime.resolveReadPermissionTarg
         !targetIsValid(registration.descriptor.permissionTarget, permissionTarget, scope) ||
         (getReadResultPermissionTargetResolver(registration) !== undefined && permissionTarget.kind === 'any_of')
       ) {
-        if (
-          permissionTarget.kind === 'owner_permission' &&
-          permissionTarget.ownerPermission.requiredStorefrontId !== undefined &&
-          permissionTarget.ownerPermission.requiredStorefrontId !== scope.trustedStorefrontId
-        ) {
+        if (permissionTarget.kind === 'owner_permission') {
           return yield* new ReadPermissionUnavailable({
             code: 'read_permission_unavailable',
-            reason: 'The trusted storefront scope does not match the requested owner permission target',
+            reason: 'The owner permission target cannot be verified in the trusted scope',
           });
         }
         return yield* new ReadHandlerExecutionError({
@@ -977,7 +840,7 @@ const checkResultPermissions = Effect.fn('ReadRuntime.checkResultPermissions')(f
   if (permissionTarget.kind === 'tenant') {
     return yield* checkTenantResultPermission(contextAccess, scope, permissionTarget);
   }
-  if (permissionTarget.kind === 'business_permission' || permissionTarget.kind === 'owner_permission') {
+  if (permissionTarget.kind === 'owner_permission') {
     return yield* new ReadHandlerExecutionError({
       code: 'read_handler_execution_failed',
       reason: 'Policy-permission reads must not use generic result resource filtering',

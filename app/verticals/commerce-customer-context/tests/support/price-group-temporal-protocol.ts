@@ -1,3 +1,4 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import type { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { staffAuthenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { RetailPortalBindingResultSchema } from '../../shared/actions/bind-retail-portal-profile.ts';
@@ -48,6 +49,8 @@ import {
   Stream,
 } from 'effect';
 import { Socket } from 'effect/socket';
+
+export { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 
 const commerceAppId = 'commerce-customer-context';
 const commerceModuleId = 'commerce.customer-context';
@@ -979,13 +982,17 @@ export const preparePriceGroupTemporalRetailAccess = Effect.fn('PriceGroupTempor
                   current.payload.state === 'PENDING_GRANT',
                 'retail-binding-intent-identity',
               );
-              yield* business.mutate({ ...grant, operation: 'grant' });
+              yield* business.mutate({ ...grant, operation: 'grant', target: customerOwnerPermissionTarget(grant) });
               yield* transaction.invoke(finalizeBindingIntent, [intent.mutationId, 'grant', 'ACTIVE']);
             }),
           'required',
         )
         .pipe(Effect.provide(namespace));
-      yield* Effect.addFinalizer(() => business.mutate({ ...grant, operation: 'revoke' }).pipe(Effect.orDie));
+      yield* Effect.addFinalizer(() =>
+        business
+          .mutate({ ...grant, operation: 'revoke', target: customerOwnerPermissionTarget(grant) })
+          .pipe(Effect.orDie),
+      );
     }
     const authority = yield* fixture
       .prepareOwner(

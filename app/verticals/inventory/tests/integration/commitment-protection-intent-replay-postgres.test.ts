@@ -1,3 +1,4 @@
+import { inventoryOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import {
   OwnerAuthorizationOverlay,
   makeBusinessPermissionRelationshipMutationLive,
@@ -431,17 +432,21 @@ const makeScenario = Effect.fn('ProtectionIntentReplay.makeScenario')(function* 
   };
   yield* permission.mutate({
     operation: 'grant',
-    permission: 'inventory.commitment_protection.establish',
     principal,
-    target: businessTarget,
+    target: inventoryOwnerPermissionTarget({
+      permission: 'inventory.commitment_protection.establish',
+      target: businessTarget,
+    }),
   });
   yield* Effect.addFinalizer(() =>
     permission
       .mutate({
         operation: 'revoke',
-        permission: 'inventory.commitment_protection.establish',
         principal,
-        target: businessTarget,
+        target: inventoryOwnerPermissionTarget({
+          permission: 'inventory.commitment_protection.establish',
+          target: businessTarget,
+        }),
       })
       .pipe(Effect.orDie),
   );

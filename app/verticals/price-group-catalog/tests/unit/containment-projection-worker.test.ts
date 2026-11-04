@@ -1,8 +1,5 @@
-import {
-  BusinessPermissionCodeSchema,
-  ScopedRoutineInvocationError,
-  toBusinessPermissionAccessObjectId,
-} from '@app/core-runtime';
+import { priceGroupPermissionIdentity } from '../../src/permissions/authorization.ts';
+import { BusinessPermissionCodeSchema, ScopedRoutineInvocationError } from '@app/core-runtime';
 import type { ScopedRoutineInvoker } from '@app/core-runtime';
 import {
   OutboxWorkerTenantScope,
@@ -125,17 +122,23 @@ it.effect('builds the exact six permission-scoped tenant and catalog containment
       'pricing.price_group.retire',
     ].map((permission) => BusinessPermissionCodeSchema.make(permission));
     const expected = permissions.flatMap((permission) => {
-      const group = toBusinessPermissionAccessObjectId(permission, {
-        kind: 'price_group',
-        priceGroupId,
-        pricingCatalogId: tenantId,
-        tenantId,
-      });
-      const catalog = toBusinessPermissionAccessObjectId(permission, {
-        kind: 'pricing_catalog',
-        pricingCatalogId: tenantId,
-        tenantId,
-      });
+      const group = priceGroupPermissionIdentity({
+        permission,
+        target: {
+          kind: 'price_group',
+          priceGroupId,
+          pricingCatalogId: tenantId,
+          tenantId,
+        },
+      }).objectId;
+      const catalog = priceGroupPermissionIdentity({
+        permission,
+        target: {
+          kind: 'pricing_catalog',
+          pricingCatalogId: tenantId,
+          tenantId,
+        },
+      }).objectId;
       return [
         {
           container: { objectId: tenantId, objectType: 'tenant' },

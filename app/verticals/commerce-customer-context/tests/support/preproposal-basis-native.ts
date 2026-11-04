@@ -1,4 +1,5 @@
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import {
   ActionRuntime,
   ActiveApplicationCompositionService,
@@ -2145,9 +2146,19 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
           yield* Layer.build(BusinessPermissionRelationshipMutationLive.pipe(Layer.provide(ownerConfiguration))),
           BusinessPermissionRelationshipMutation,
         );
-        yield* permissionMutation.mutate({ ...permissionRelation, operation: 'grant' });
+        yield* permissionMutation.mutate({
+          ...permissionRelation,
+          operation: 'grant',
+          target: customerOwnerPermissionTarget(permissionRelation),
+        });
         yield* Effect.addFinalizer(() =>
-          permissionMutation.mutate({ ...permissionRelation, operation: 'revoke' }).pipe(Effect.orDie),
+          permissionMutation
+            .mutate({
+              ...permissionRelation,
+              operation: 'revoke',
+              target: customerOwnerPermissionTarget(permissionRelation),
+            })
+            .pipe(Effect.orDie),
         );
         yield* core
           .prepareOwner(

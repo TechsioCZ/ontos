@@ -1,3 +1,9 @@
+import {
+  historicalOwnerTarget,
+  historicalPermissionKey as toBusinessPermissionAccessKey,
+  historicalPermissionObjectId as toBusinessPermissionAccessObjectId,
+} from '../support/historical-owner-targets.ts';
+import { remainingPermissionBaselines } from './owner-permission-baseline.ts';
 import { ownerPermissionTarget } from '../support/owner-permission-target.ts';
 import { v1 } from '@authzed/authzed-node';
 import { Effect, Schema } from 'effect';
@@ -7,8 +13,6 @@ import { spiceDbPermissionClientError } from '../../src/permissions/client.ts';
 import type { SpiceDbPermissionClient } from '../../src/permissions/client.ts';
 import {
   makeContextAccess,
-  toBusinessPermissionAccessKey,
-  toBusinessPermissionAccessObjectId,
   toContextPermissionAccessKey,
   toContextPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
@@ -17,6 +21,10 @@ import {
 } from '../../src/permissions/context-access.ts';
 import { LEGAL_ENTITY_PERMISSION_KEYS, TENANT_PERMISSION_KEYS } from '../../src/permissions/context-permissions.ts';
 import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
+
+interface BaselineCurrentState {
+  decision: 'allowed' | 'denied' | 'unavailable';
+}
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -52,12 +60,23 @@ const makeClient = (handle: SpiceDbPermissionClient['checkBulkPermissions']): Sp
 
 const requireBusinessPermissions = (
   access: ReturnType<typeof makeContextAccess>,
-): NonNullable<ReturnType<typeof makeContextAccess>['businessPermissions']> => {
-  const check = access.businessPermissions;
+  selectedLegalEntityId: string = legalEntityId,
+) => {
+  const check = access.ownerPermissions;
   if (check === undefined) {
-    throw new Error('Expected business permission access');
+    throw new Error('Expected owner permission access');
   }
-  return check;
+  return (input: {
+    readonly legalEntityId?: string;
+    readonly principal: { readonly principalId: string; readonly tenantId: string };
+    readonly targets: readonly { readonly permission: string; readonly target: object }[];
+    readonly trustedStorefrontId?: string;
+  }) =>
+    check({
+      ...input,
+      legalEntityId: input.legalEntityId ?? selectedLegalEntityId,
+      targets: input.targets.map(({ permission, target }) => ({ target: historicalOwnerTarget(permission, target) })),
+    });
 };
 
 const requireContextPermissions = (
@@ -818,5 +837,115 @@ it.effect('keeps Tenant resource assignment grants exact and independent of Lega
       ? Effect.die(new Error('Expected tenant resource adapter'))
       : access.tenantResources({ permission: 'assign', principalId, resources: targets, tenantId });
     expect(decisions.map(({ decision }) => decision)).toEqual(['allowed', 'denied']);
+  }),
+);
+
+it.effect('freezes every remaining family identity and independent Current outcomes without broad scope', () =>
+  Effect.gen(function* remainingFamilyGrantBaselines() {
+    for (const row of remainingPermissionBaselines) {
+      const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(row.permission);
+      expect(toBusinessPermissionAccessObjectId(permission, row.target)).toBe(row.objectId);
+      expect(toBusinessPermissionAccessKey({ permission, target: row.target })).toBe(row.key);
+      const requests: v1.CheckBulkPermissionsRequest[] = [];
+      const current: BaselineCurrentState = { decision: 'allowed' };
+      const access = makeContextAccess(
+        makeClient((request) =>
+          Effect.sync(() => {
+            requests.push(request);
+            return responseFor(
+              request,
+              request.items.map((item) => {
+                if (item.subject?.object?.objectId !== principalId || current.decision === 'denied') {
+                  return v1.CheckPermissionResponse_Permissionship.NO_PERMISSION;
+                }
+                if (current.decision === 'unavailable') {
+                  return v1.CheckPermissionResponse_Permissionship.UNSPECIFIED;
+                }
+                return v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION;
+              }),
+            );
+          }),
+        ),
+      );
+      const check = requireBusinessPermissions(access);
+      const input = {
+        legalEntityId: 'legalEntityId' in row.target ? row.target.legalEntityId : legalEntityId,
+        principal: { principalId, tenantId: row.target.tenantId },
+        targets: [{ permission, target: row.target }],
+        trustedStorefrontId: 'storefront-a',
+      };
+      expect(yield* check(input)).toEqual([{ decision: 'allowed', key: row.key }]);
+      expect(requests[0]?.items[0]?.resource).toEqual({ objectId: row.objectId, objectType: 'business_permission' });
+      expect(requests[0]?.items[0]?.subject?.object).toEqual({ objectId: principalId, objectType: 'principal' });
+      expect(
+        yield* check({
+          ...input,
+          principal: { ...input.principal, principalId: '30000000-0000-4000-8000-000000000002' },
+        }),
+      ).toEqual([{ decision: 'denied', key: row.key }]);
+      expect(requests[1]?.items[0]?.subject?.object?.objectId).toBe('30000000-0000-4000-8000-000000000002');
+      current.decision = 'denied';
+      expect(yield* check(input)).toEqual([{ decision: 'denied', key: row.key }]);
+      current.decision = 'unavailable';
+      expect(yield* check(input)).toEqual([{ decision: 'unavailable', key: row.key }]);
+      const checked = requests.length;
+      expect(
+        yield* check({ ...input, principal: { principalId, tenantId: '00000000-0000-4000-8000-000000000099' } }),
+      ).toEqual([{ decision: 'unavailable', key: row.key }]);
+      const unknown = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('undeclared.permission');
+      expect(yield* check({ ...input, targets: [{ permission: unknown, target: row.target }] })).toEqual([
+        { decision: 'unavailable', key: row.unknownKey },
+      ]);
+      expect(requests).toHaveLength(checked);
+    }
+  }),
+);
+
+it('keeps the existing 1024-byte grant identity limit without truncation', () => {
+  const [row] = remainingPermissionBaselines;
+  const permission = Schema.decodeSync(BusinessPermissionCodeSchema)(row.permission);
+  expect(toBusinessPermissionAccessObjectId(permission, { ...row.target, profileId: 'x'.repeat(644) })?.length).toBe(
+    1024,
+  );
+  expect(toBusinessPermissionAccessObjectId(permission, { ...row.target, profileId: 'x'.repeat(645) })).toBeUndefined();
+});
+
+it.effect('freezes exact-first Counterparty inheritance order and repeated-target deduplication', () =>
+  Effect.gen(function* freezesInheritedGrantOrder() {
+    const { 2: row } = remainingPermissionBaselines;
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(row.permission);
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = makeContextAccess(
+      makeClient((request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return responseFor(
+            request,
+            request.items.map(() => v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
+          );
+        }),
+      ),
+    );
+    expect(
+      yield* requireBusinessPermissions(
+        access,
+        row.target.legalEntityId,
+      )({
+        principal: { principalId, tenantId: row.target.tenantId },
+        targets: [
+          { permission, target: row.target },
+          { permission, target: row.target },
+        ],
+        trustedStorefrontId: row.target.storefrontId,
+      }),
+    ).toEqual([
+      { decision: 'denied', key: row.key },
+      { decision: 'denied', key: row.key },
+    ]);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.items.map((item) => item.resource?.objectId)).toEqual([
+      row.objectId,
+      remainingPermissionBaselines[1].objectId,
+    ]);
   }),
 );

@@ -1,3 +1,4 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -390,13 +391,17 @@ const nativePurchasePermissionPlans = Effect.gen(function* nativePurchasePermiss
               profileId,
               state: 'PENDING_GRANT',
             });
-            yield* business.mutate({ ...grant, operation: 'grant' });
+            yield* business.mutate({ ...grant, operation: 'grant', target: customerOwnerPermissionTarget(grant) });
             yield* transaction.invoke(finalizeBindingIntent, [intent.mutationId, 'grant', 'ACTIVE']);
           }),
         'required',
       )
       .pipe(Effect.provideContext(context));
-    yield* Effect.addFinalizer(() => business.mutate({ ...grant, operation: 'revoke' }).pipe(Effect.orDie));
+    yield* Effect.addFinalizer(() =>
+      business
+        .mutate({ ...grant, operation: 'revoke', target: customerOwnerPermissionTarget(grant) })
+        .pipe(Effect.orDie),
+    );
   }
   yield* fixture
     .prepareOwner(
@@ -436,8 +441,12 @@ const nativePurchasePermissionPlans = Effect.gen(function* nativePurchasePermiss
           tenantId: fixture.tenantId,
         },
       };
-      yield* business.mutate({ ...grant, operation: 'grant' });
-      yield* Effect.addFinalizer(() => business.mutate({ ...grant, operation: 'revoke' }).pipe(Effect.orDie));
+      yield* business.mutate({ ...grant, operation: 'grant', target: customerOwnerPermissionTarget(grant) });
+      yield* Effect.addFinalizer(() =>
+        business
+          .mutate({ ...grant, operation: 'revoke', target: customerOwnerPermissionTarget(grant) })
+          .pipe(Effect.orDie),
+      );
     }
   }
   yield* fixture.grantResourceAccess(profile.profileRef, fixture.manager.principalId);

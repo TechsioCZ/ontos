@@ -223,8 +223,6 @@ export {
   createOwnerPermissionAccessTarget,
   isOwnerPermissionAccessTargetValid,
   makeContextAccessLive,
-  toBusinessPermissionAccessKey,
-  toBusinessPermissionAccessObjectId,
   toContextPermissionAccessKey,
   toContextPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
@@ -237,8 +235,6 @@ export type {
   OwnerPermissionAccessTarget,
   OwnerPermissionContract,
   OwnerPermissionScope,
-  BusinessAccessTarget,
-  BusinessPermissionAccessTarget,
   ContextAccessClientFactory,
   ContextAccessDecision,
   ContextAccessResult,
@@ -349,7 +345,6 @@ export type {
 export {
   ResourceContainmentMutationUnavailable,
   ResourceContainmentRelationshipMutation,
-  ResourceContainmentRelationshipMutationLive,
   createResourceContainmentRelationshipMutationClient,
   makeResourceContainmentRelationshipMutation,
   makeResourceContainmentRelationshipMutationLive,
@@ -358,6 +353,7 @@ export type {
   ResourceContainmentRelationship,
   ResourceContainmentRelationshipMutationClient,
   ResourceContainmentRelationshipMutationInput,
+  ResourceContainmentPreparation,
   ResourceContainmentRelationshipMutationService,
   SpiceDbResourceReference,
 } from './permissions/resource-containment-mutation.ts';
@@ -377,7 +373,6 @@ export type {
 export {
   defineAction,
   defineActionOwnerPermissions,
-  defineActionBusinessPermission,
   defineActionResourcePermission,
   isActionRegistration,
 } from './actions/definition.ts';
@@ -385,9 +380,6 @@ export type {
   ActionOwnerPermissionDeclaration,
   ActionOwnerPermissionTarget,
   ActionOwnerPermissionTargetResolver,
-  ActionBusinessPermissionDeclaration,
-  ActionBusinessPermissionTarget,
-  ActionBusinessPermissionTargetResolver,
   ActionAuditProfile,
   ActionDescriptor,
   ActionDeniedAuditEvidenceDeclaration,

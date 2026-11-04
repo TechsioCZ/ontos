@@ -13,15 +13,8 @@ import { SPICEDB_CHECK_TIMEOUT_MS } from './client.ts';
 import { loadSpiceDbConfig } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
-import {
-  hasCanonicalInventoryAuthorizationTarget,
-  hasCanonicalPricingAuthorizationTargetIds,
-  isBusinessPermissionTargetCompatible,
-  toBusinessPermissionAccessObjectId,
-  toLegalEntityAccessObjectId,
-} from './context-access.ts';
-import type { BusinessAccessTarget } from './context-access.ts';
-import type { BusinessPermissionCode } from './business-permission.ts';
+import { isOwnerPermissionAccessTargetMetadataValid, toLegalEntityAccessObjectId } from './context-access.ts';
+import type { OwnerPermissionAccessTarget } from './context-access.ts';
 import { BusinessPermissionMutationUnavailable } from './business-permission-mutation-error.ts';
 import type { PrincipalRef } from './principal-ref.ts';
 
@@ -35,9 +28,8 @@ const unavailable = (cause?: unknown): BusinessPermissionMutationUnavailable =>
 
 export interface BusinessPermissionRelationshipMutationInput {
   readonly operation: 'grant' | 'revoke';
-  readonly permission: BusinessPermissionCode;
   readonly principal: PrincipalRef;
-  readonly target: BusinessAccessTarget;
+  readonly target: OwnerPermissionAccessTarget;
   /** Storefront identity resolved by the trusted application boundary, never raw transport data. */
   readonly trustedStorefrontId?: string;
 }
@@ -70,49 +62,35 @@ export const createBusinessPermissionRelationshipMutationClient = (
 const prepare = (
   input: BusinessPermissionRelationshipMutationInput,
 ): PermissionRelationshipMutationPreparation | undefined => {
-  const targetRequiresLegalEntity =
-    input.target.kind === 'retail_profile' ||
-    input.target.kind === 'counterparty' ||
-    input.target.kind === 'counterparty_storefront' ||
-    input.target.kind === 'tax_selling_legal_entity';
-  const invalidScope =
-    !isBusinessPermissionTargetCompatible({ permission: input.permission, target: input.target }) ||
-    !hasCanonicalPricingAuthorizationTargetIds(input.target) ||
-    !hasCanonicalInventoryAuthorizationTarget(input.target) ||
-    input.principal.tenantId !== input.target.tenantId ||
+  const { target } = input;
+  if (
+    !isOwnerPermissionAccessTargetMetadataValid(target) ||
+    input.principal.tenantId !== target.scope.tenantId ||
     input.principal.principalId.length === 0 ||
-    (targetRequiresLegalEntity && input.target.legalEntityId.length === 0) ||
-    (input.target.kind === 'counterparty_storefront' &&
-      (input.trustedStorefrontId === undefined || input.trustedStorefrontId !== input.target.storefrontId));
-  if (invalidScope) {
+    (target.requiredStorefrontId !== undefined && target.requiredStorefrontId !== input.trustedStorefrontId)
+  ) {
     return undefined;
   }
-  const resourceId = toBusinessPermissionAccessObjectId(input.permission, input.target);
-  if (resourceId === undefined) {
-    return undefined;
-  }
-  const scopeRelationships: PermissionRelationshipMutationPreparation['scopeRelationships'] = targetRequiresLegalEntity
-    ? [
-        {
-          relation: 'legal_entity',
-          subjectId: toLegalEntityAccessObjectId(input.target.tenantId, input.target.legalEntityId) ?? '',
-          subjectType: 'legal_entity',
-        },
-      ]
-    : [
-        {
-          relation: 'tenant',
-          subjectId: input.target.tenantId,
-          subjectType: 'tenant',
-        },
-      ];
-  if (scopeRelationships.some(({ subjectId }) => subjectId.length === 0)) {
+  const scopeSubjectId =
+    target.scope.kind === 'legal_entity'
+      ? toLegalEntityAccessObjectId(target.scope.tenantId, target.scope.legalEntityId)
+      : target.scope.tenantId;
+  if (scopeSubjectId === undefined || scopeSubjectId.length === 0) {
     return undefined;
   }
   return {
     granteeId: input.principal.principalId,
-    resourceId,
-    scopeRelationships,
+    resourceId: target.objectId,
+    scopeRelationships:
+      target.scope.kind === 'legal_entity'
+        ? [
+            {
+              relation: 'legal_entity',
+              subjectId: scopeSubjectId,
+              subjectType: 'legal_entity',
+            },
+          ]
+        : [{ relation: 'tenant', subjectId: target.scope.tenantId, subjectType: 'tenant' }],
   };
 };
 

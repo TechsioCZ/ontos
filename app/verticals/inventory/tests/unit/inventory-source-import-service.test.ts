@@ -2,7 +2,7 @@ import { Effect, Option, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import type { ActionHandlerContext, DataAccessEventInput } from '@app/core-runtime';
-import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
 
 import {
   InventorySourceImportActionInvocationIdSchema,
@@ -185,7 +185,11 @@ describe('Inventory source import service', () => {
       compositionRevision,
     );
 
-    expect(getActionBusinessPermissionTargetResolver(importSourceAssertionAction)?.(payload, scope)).toEqual({
+    expect(
+      getActionOwnerPermissionTargetResolver(importSourceAssertionAction)?.(payload, scope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
+    ).toEqual({
       permission: 'inventory.migration.manage',
       target: {
         kind: 'inventory_resource',

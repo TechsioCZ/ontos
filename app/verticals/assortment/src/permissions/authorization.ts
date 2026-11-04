@@ -76,7 +76,14 @@ export const defineAssortmentActionPermissions = <Payload>(
     if (transportObjectId === undefined) {
       return invalid();
     }
-    return Object.freeze(targets.map((target) => assortmentOwnerPermissionTarget(scope, target, transportObjectId)));
+    return Object.freeze(
+      targets.map((target) =>
+        Object.freeze({
+          ...assortmentOwnerPermissionTarget(scope, target, transportObjectId),
+          transportModuleKey: 'commerce.assortment',
+        }),
+      ),
+    );
   });
 
 export const defineAssortmentReadPermission = <Input>(

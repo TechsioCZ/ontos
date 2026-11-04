@@ -23,7 +23,6 @@ import { trustVerifiedGatewayPrincipalContext } from '../../../../packages/core-
 import { buildApplicationCompositionCatalog } from '../../../../packages/core-runtime/src/modules/application-composition-catalog.ts';
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/permissions/owner-authorization-overlay.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { toBusinessPermissionAccessKey } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { makeModuleEntrypointGateway } from '../../../../packages/core-runtime/src/modules/module-entrypoint-gateway.ts';
 import type { ModuleEntrypointDescriptor } from '../../../../packages/core-runtime/src/modules/module-entrypoint.ts';
 import {
@@ -361,18 +360,18 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   };
 
   const contextAccess: ContextAccessService = {
-    businessPermissions: (input) => {
+    legalEntities: ({ legalEntityIds }: { readonly legalEntityIds: readonly string[] }) =>
+      Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
+    modules: () => Effect.succeed([]),
+    ownerPermissions: (input) => {
       businessChecks.push(input);
       return Effect.succeed(
         input.targets.map((target) => ({
           decision: options.businessDecision ?? ('allowed' as const),
-          key: toBusinessPermissionAccessKey(target),
+          key: target.target.key,
         })),
       );
     },
-    legalEntities: ({ legalEntityIds }: { readonly legalEntityIds: readonly string[] }) =>
-      Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-    modules: () => Effect.succeed([]),
     resources: () => Effect.succeed([]),
     tenants: () => Effect.succeed([]),
   };

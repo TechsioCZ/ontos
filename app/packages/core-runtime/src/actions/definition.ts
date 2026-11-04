@@ -15,23 +15,20 @@ import type { OperationContextUnavailable } from '../operations/errors.ts';
 import type {
   OwnerPermissionAccessTarget,
   OwnerPermissionContract,
-  BusinessPermissionAccessTarget,
   ResourceAccessTarget,
 } from '../permissions/context-access.ts';
 import type { TenantPermissionKey } from '../permissions/context-permissions.ts';
 
 const actionRegistration: unique symbol = Symbol('@app/core-runtime/actions/registration');
 const actionResourcePermissionDeclaration: unique symbol = Symbol('@app/core-runtime/actions/resource-permission');
-const actionBusinessPermissionDeclaration: unique symbol = Symbol('@app/core-runtime/actions/business-permission');
 const actionOwnerPermissionDeclaration: unique symbol = Symbol('@app/core-runtime/actions/owner-permissions');
 
 class ActionPrivateStorage<Value> {
   declare readonly [actionRegistration]?: true;
   declare readonly [actionResourcePermissionDeclaration]?: true;
-  declare readonly [actionBusinessPermissionDeclaration]?: true;
   declare readonly [actionOwnerPermissionDeclaration]?: true;
   declare readonly descriptor?: unknown;
-  declare readonly kind?: 'owner_permission' | 'business_permission' | 'resource';
+  declare readonly kind?: 'owner_permission' | 'resource';
   readonly #value: Value;
 
   constructor(value: Value) {
@@ -91,21 +88,6 @@ export type ActionResourcePermissionDeclaration<Payload> = ActionPrivateStorage<
   readonly kind: 'resource';
 };
 
-export interface ActionBusinessPermissionTarget extends BusinessPermissionAccessTarget {
-  /** Required only for counterparty_storefront targets and obtained from trusted context. */
-  readonly trustedStorefrontId?: string;
-}
-export type ActionBusinessPermissionTargetResolver<Payload> = (
-  payload: Payload,
-  scope: OperationalScope,
-) => ActionBusinessPermissionTarget;
-export type ActionBusinessPermissionDeclaration<Payload> = ActionPrivateStorage<
-  ActionBusinessPermissionTargetResolver<Payload>
-> & {
-  readonly [actionBusinessPermissionDeclaration]: true;
-  readonly kind: 'business_permission';
-};
-
 export type ActionOwnerPermissionTarget = OwnerPermissionAccessTarget;
 export type ActionOwnerPermissionTargetResolver<Payload> = (
   payload: Payload,
@@ -141,18 +123,6 @@ export const defineActionResourcePermission = <Payload>(
 };
 
 /** Declares one exact business permission resolved before policy or handler code. */
-export const defineActionBusinessPermission = <Payload>(
-  resolver: ActionBusinessPermissionTargetResolver<Payload>,
-): ActionBusinessPermissionDeclaration<Payload> => {
-  if (!Predicate.isFunction(resolver)) {
-    return failActionDefinition('Action business permission resolver must be a function');
-  }
-  return ActionPrivateStorage.create(resolver, {
-    [actionBusinessPermissionDeclaration]: true as const,
-    kind: 'business_permission' as const,
-  });
-};
-
 /** Declares one or more exact owner policy meanings checked conjunctively. */
 export const defineActionOwnerPermissions = <Payload>(
   contract: OwnerPermissionContract,
@@ -175,15 +145,6 @@ const ActionResourcePermissionDeclarationSchema = Schema.instanceOf(ActionPrivat
     Object.isFrozen(declaration)
       ? undefined
       : 'Expected an immutable Action Resource permission declaration',
-  ),
-);
-const ActionBusinessPermissionDeclarationSchema = Schema.instanceOf(ActionPrivateStorage).check(
-  Schema.makeFilter((declaration) =>
-    declaration[actionBusinessPermissionDeclaration] === true &&
-    declaration.kind === 'business_permission' &&
-    Object.isFrozen(declaration)
-      ? undefined
-      : 'Expected an immutable Action business permission declaration',
   ),
 );
 const ActionOwnerPermissionDeclarationSchema = Schema.instanceOf(ActionPrivateStorage).check(
@@ -214,7 +175,6 @@ export interface ActionDescriptor<
   readonly auditEvidenceSchema?: Schema.ConstraintDecoder<unknown>;
   readonly auditProfile: ActionAuditProfile;
   /** Declares one exact business permission resolved from decoded input and trusted scope. */
-  readonly businessPermission?: ActionBusinessPermissionDeclaration<PayloadSchema['Type']>;
   /** Resolves a schema-bounded, secret-safe evidence object before authorization/policy denial. */
   readonly deniedAuditEvidence?: ActionDeniedAuditEvidenceDeclaration<PayloadSchema['Type']>;
   readonly domainErrorSchema: DomainErrorSchema;
@@ -401,7 +361,6 @@ export type ActionRequirements<Registration> =
     : never;
 
 export interface ActionDescriptorValidationInput<Policy> {
-  readonly businessPermission?: ActionBusinessPermissionDeclaration<never>;
   readonly entrypoint: ModuleEntrypointDescriptor;
   readonly legalEntityPermission?: unknown;
   readonly legalEntityScope: string;
@@ -442,9 +401,7 @@ const validateActionPermissions = <Policy>(descriptor: ActionDescriptorValidatio
   if (
     (descriptor.ownerPermissions !== undefined &&
       (!Schema.is(ActionOwnerPermissionDeclarationSchema)(descriptor.ownerPermissions) ||
-        descriptor.ownerPermissions.contract.owningCapability !== descriptor.owningModuleKey)) ||
-    (descriptor.businessPermission !== undefined &&
-      !Schema.is(ActionBusinessPermissionDeclarationSchema)(descriptor.businessPermission)) ||
+        descriptor.ownerPermissions.contract.owningModuleKey !== descriptor.owningModuleKey)) ||
     (descriptor.resourcePermission !== undefined &&
       !Schema.is(ActionResourcePermissionDeclarationSchema)(descriptor.resourcePermission)) ||
     (descriptor.tenantPermission !== undefined && !Predicate.isFunction(descriptor.tenantPermission))
@@ -811,29 +768,6 @@ export const getActionResourcePermissionTargetResolver = <
   registration.descriptor.resourcePermission === undefined
     ? undefined
     : ActionPrivateStorage.getValue(registration.descriptor.resourcePermission);
-
-export const getActionBusinessPermissionTargetResolver = <
-  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
-  ResultSchema extends Schema.ConstraintDecoder<unknown>,
-  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
-  DomainEvents extends DomainEventContractMap,
-  Owner extends string,
-  Services,
-  HandlerRequirements,
->(
-  registration: ActionRegistration<
-    PayloadSchema,
-    ResultSchema,
-    DomainErrorSchema,
-    DomainEvents,
-    Owner,
-    Services,
-    HandlerRequirements
-  >,
-): ActionBusinessPermissionTargetResolver<PayloadSchema['Type']> | undefined =>
-  registration.descriptor.businessPermission === undefined
-    ? undefined
-    : ActionPrivateStorage.getValue(registration.descriptor.businessPermission);
 
 export const getActionOwnerPermissionTargetResolver = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,

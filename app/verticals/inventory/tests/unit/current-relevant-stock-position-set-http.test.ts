@@ -101,12 +101,6 @@ const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegister
         .sign(privateKey),
     );
     const harness = yield* makeReadTestHarness({
-      businessPermissionDecision: (target) =>
-        options.denyPosition === true &&
-        target.target.kind === 'inventory_resource' &&
-        target.target.resource.resourceType === 'commerce.inventory.stock-position'
-          ? 'denied'
-          : 'allowed',
       compositionRevision: composition.composition.revision,
       executeOwnerQuery: (query) => {
         expect(query.sql).toContain('from "inventory"."stock_items"');
@@ -122,6 +116,10 @@ const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegister
       },
       operationTime: observation.observedAt,
       ownerAuthorizationDecision: 'allowed',
+      ownerPermissionDecision: (target) =>
+        options.denyPosition === true && target.transportResourceType === 'commerce.inventory.stock-position'
+          ? 'denied'
+          : 'allowed',
       ownerRegistration: inventoryRegistration,
       permissionDecision: 'allowed',
       scope,

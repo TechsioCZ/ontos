@@ -10,7 +10,7 @@ import { assortmentRuleRetirePermission } from './assortment-rule-retire.ts';
 import { assortmentRuleRevisionCreatePermission } from './assortment-rule-revision-create.ts';
 
 export const assortmentAuthorizationContract = Object.freeze({
-  owningCapability: 'commerce.assortment',
+  owningModuleKey: 'commerce.assortment',
   permissions: Object.freeze([
     assortmentBindingCreatePermission,
     assortmentBindingEndPermission,

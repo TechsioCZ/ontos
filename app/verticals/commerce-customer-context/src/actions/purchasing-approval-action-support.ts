@@ -1,9 +1,5 @@
-import type {
-  ActionBusinessPermissionTarget,
-  ActionHandlerContext,
-  CoreSearchResourceRef,
-  OperationalScope,
-} from '@app/core-runtime';
+import type { CustomerPermissionRequest } from '../permissions/authorization.ts';
+import type { ActionHandlerContext, CoreSearchResourceRef, OperationalScope } from '@app/core-runtime';
 import { ContextAccess, CoreSearchResourceRefSchema, OperationContextUnavailable } from '@app/core-runtime';
 import { DateTime, Effect, Option, Schema, SchemaGetter } from 'effect';
 import { PurchaseApprovalCurrentnessFactory } from '../../shared/domain/purchase-approval-currentness-port.ts';
@@ -103,8 +99,8 @@ export const purchasingApprovalPermissionTarget = (input: {
     | 'counterparty.purchase.submit';
   readonly scope: OperationalScope;
   readonly storefrontId: string | null;
-}): ActionBusinessPermissionTarget => {
-  const resolved: ActionBusinessPermissionTarget = {
+}): CustomerPermissionRequest => {
+  const resolved: CustomerPermissionRequest = {
     permission: input.permission,
     target:
       input.storefrontId === null

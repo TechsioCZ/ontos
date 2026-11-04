@@ -228,7 +228,11 @@ export const assortmentAuthorizationCurrentForTransaction = (
  */
 export const assortmentOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = {
   authorize: (transaction, input) => {
-    if (input.targets.some((target) => target.kind === 'business_permission')) {
+    if (
+      input.targets.some(
+        (target) => target.kind === 'owner_permission' && target.target.contract !== assortmentAuthorizationContract,
+      )
+    ) {
       return failClosedOwnerAuthorizationOverlay.authorize(transaction, input);
     }
     const targets = input.targets.filter(

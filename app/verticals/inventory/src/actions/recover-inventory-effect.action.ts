@@ -2,11 +2,12 @@
 // @ontos-action-owner commerce.inventory
 // @ontos-action-slug recover-inventory-effect
 /* oxlint-disable effect-native/no-dependency-parameters -- The generated Action factory constructs and binds owner-local transaction services once; expires: 2027-03-31. */
+import { defineInventoryActionPermissions } from '../permissions/authorization.ts';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import type { ActionCollectorError, ActionHandlerContext, ActionRegistration } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { Effect as EffectType } from 'effect';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
@@ -238,18 +239,6 @@ export const recoverInventoryEffectAction: ActionRegistration<
     },
     actionKey: ACTION_KEY,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<RecoverInventoryEffectPayload>((payload, scope) => ({
-      permission: 'inventory.recovery.execute',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.targetRef.moduleId,
-          resourceId: payload.targetRef.resourceId,
-          resourceType: payload.targetRef.resourceType,
-        },
-        tenantId: payload.targetRef.tenantId === scope.tenantId ? scope.tenantId : '',
-      },
-    })),
     domainErrorSchema: RecoverInventoryEffectErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
@@ -261,6 +250,18 @@ export const recoverInventoryEffectAction: ActionRegistration<
     }),
     idempotency: 'required',
     legalEntityScope: 'required',
+    ownerPermissions: defineInventoryActionPermissions<RecoverInventoryEffectPayload>((payload, scope) => ({
+      permission: 'inventory.recovery.execute',
+      target: {
+        kind: 'inventory_resource',
+        resource: {
+          moduleId: payload.targetRef.moduleId,
+          resourceId: payload.targetRef.resourceId,
+          resourceType: payload.targetRef.resourceType,
+        },
+        tenantId: payload.targetRef.tenantId === scope.tenantId ? scope.tenantId : '',
+      },
+    })),
     owningModuleKey: MODULE_KEY,
     payloadSchema: RecoverInventoryEffectPayloadSchema,
     policies: [],

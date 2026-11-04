@@ -1,5 +1,5 @@
 import { inventoryRegistration } from '../../vertical.registration.ts';
-import { ReadPermissionDenied, allowOwnerAuthorizationOverlay, toBusinessPermissionAccessKey } from '@app/core-runtime';
+import { ReadPermissionDenied, allowOwnerAuthorizationOverlay } from '@app/core-runtime';
 import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -139,16 +139,17 @@ const evaluationPersistence: StockSharingEligibilityPersistence = {
 };
 
 it('declares an exact Position-scoped governed Read with typed decision output', () => {
-  expect(stockSharingEligibilityResolutionRead.descriptor.permissionTarget).toBe('business_permission');
+  expect(stockSharingEligibilityResolutionRead.descriptor.permissionTarget).toBe('owner_permission');
   expect(stockSharingEligibilityResolutionRead.descriptor.legalEntityScope).toBe('required');
   expect(stockSharingEligibilityResolutionRead.descriptor.evidencePolicy.captureMode).toBe('metadata_only');
 
   const resolver = getReadPermissionTargetResolver(stockSharingEligibilityResolutionRead);
   expect(Predicate.isFunction(resolver)).toBe(true);
   if (Predicate.isFunction(resolver)) {
-    expect(resolver(request, scope)).toEqual({
-      businessPermission: {
-        permission: 'inventory.resource.read',
+    expect(resolver(request, scope)).toMatchObject({
+      kind: 'owner_permission',
+      ownerPermission: {
+        definition: { key: 'inventory.resource.read' },
         target: {
           kind: 'inventory_resource',
           resource: {
@@ -159,7 +160,6 @@ it('declares an exact Position-scoped governed Read with typed decision output',
           tenantId,
         },
       },
-      kind: 'business_permission',
     });
   }
 
@@ -238,15 +238,13 @@ it.effect('denies the exact Stock Position before owner services are resolved', 
       openModuleEntrypointGateway,
       { resolve: () => Effect.succeed(scope) },
       {
-        businessPermissions: ({ targets }) => {
-          businessChecks += 1;
-          return Effect.succeed(
-            targets.map((target) => ({ decision: 'denied' as const, key: toBusinessPermissionAccessKey(target) })),
-          );
-        },
         legalEntities: ({ legalEntityIds }) =>
           Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
         modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+        ownerPermissions: ({ targets }) => {
+          businessChecks += 1;
+          return Effect.succeed(targets.map((target) => ({ decision: 'denied' as const, key: target.target.key })));
+        },
         resources: ({ resources }) =>
           Effect.succeed(
             resources.map((resource) => ({

@@ -20,7 +20,7 @@ export const fixtureOwnerReadPermission = permission('fixture.read');
 export const fixtureOwnerEndPermission = permission('fixture.end');
 export const fixtureOwnerCreatePermission = permission('fixture.create');
 export const fixtureOwnerContract = Object.freeze({
-  owningCapability: fixtureOwnerModule,
+  owningModuleKey: fixtureOwnerModule,
   permissions: Object.freeze([fixtureOwnerReadPermission, fixtureOwnerEndPermission, fixtureOwnerCreatePermission]),
   schemaVersion: '1',
   targetResourceType: 'fixture_permission',

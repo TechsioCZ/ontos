@@ -1,3 +1,4 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { randomUUID } from 'node:crypto';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import {
@@ -569,9 +570,19 @@ const scenario = Effect.fn('PreferencePeriod.nativeScenario')(function* nativeSc
           'required',
         )
         .pipe(Effect.provideContext(context));
-      yield* business.mutate({ ...authorizationGrant, operation: 'grant' });
+      yield* business.mutate({
+        ...authorizationGrant,
+        operation: 'grant',
+        target: customerOwnerPermissionTarget(authorizationGrant),
+      });
       yield* Effect.addFinalizer(() =>
-        business.mutate({ ...authorizationGrant, operation: 'revoke' }).pipe(Effect.orDie),
+        business
+          .mutate({
+            ...authorizationGrant,
+            operation: 'revoke',
+            target: customerOwnerPermissionTarget(authorizationGrant),
+          })
+          .pipe(Effect.orDie),
       );
       const [intent] = pending;
       if (intent === undefined) {

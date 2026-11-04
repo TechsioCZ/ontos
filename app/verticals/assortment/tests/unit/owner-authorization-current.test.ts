@@ -1,6 +1,11 @@
 import type { AssortmentPermissionAccessTarget } from '../../src/permissions/authorization-targets.ts';
 import { assortmentOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
-import { failClosedOwnerAuthorizationOverlay, OwnerAuthorizationOverlay } from '@app/core-runtime';
+import {
+  createOwnerPermissionAccessTarget,
+  defineBusinessPermission,
+  failClosedOwnerAuthorizationOverlay,
+  OwnerAuthorizationOverlay,
+} from '@app/core-runtime';
 import type {
   OperationalScope,
   OwnerAuthorizationInput,
@@ -606,11 +611,37 @@ it.effect('preserves Core fallback continuity for neutral targets and refuses ot
       yield* failClosedOwnerAuthorizationOverlay.authorize(noReads, neutral),
     );
     expect(yield* assortmentOwnerAuthorizationOverlay.authorize(noReads, neutral)).toBe('allowed');
+    const foreignPermission = defineBusinessPermission({
+      allowedScopeKinds: ['foreign_scope'],
+      auditSensitivity: 'sensitive',
+      authorityGroups: [],
+      customerDelegable: false,
+      internalGrantable: false,
+      key: 'foreign.manage',
+      meaning: 'Require another owner authority.',
+      owningCapability: 'commerce.foreign',
+      protectedEntrypoints: [],
+      schemaVersion: '1',
+    });
+    const foreignContract = Object.freeze({
+      owningModuleKey: 'commerce.foreign',
+      permissions: Object.freeze([foreignPermission]),
+      schemaVersion: '1' as const,
+      targetResourceType: 'foreign_permission',
+    });
     const business = {
-      kind: 'business_permission',
-      permission: 'counterparty.read',
-      target: { counterpartyId: 'counterparty-1', kind: 'counterparty', legalEntityId, tenantId },
-    } as const;
+      kind: 'owner_permission' as const,
+      target: createOwnerPermissionAccessTarget(foreignContract, {
+        definition: foreignPermission,
+        key: 'foreign-1',
+        objectId: 'foreign-1',
+        scope: { kind: 'legal_entity', legalEntityId, tenantId },
+        scopeKind: 'foreign_scope',
+        target: Object.freeze({ id: 'foreign-1' }),
+        transportModuleKey: 'commerce.foreign',
+        transportObjectId: 'foreign-1',
+      }),
+    };
     for (const targets of [
       [business],
       [business, { kind: 'owner_permission' as const, target: assortmentOwnerPermissionTarget(scope, revisionTarget) }],

@@ -348,17 +348,18 @@ it('declares two independent resource reads while rejecting duplicate canonical 
       branches: {
         GUEST: { requiredKinds: ['module'], resolve: () => [{ kind: 'module', moduleId: 'core.shell' }] },
         PROFILE: {
-          requiredKinds: ['business_permission', 'resource_read', 'resource_read'],
+          requiredKinds: ['owner_permission', 'resource_read', 'resource_read'],
           resolve: () => [],
         },
       },
+      ownerContract: fixtureOwnerContract,
       permissionKey: 'module.access',
       select: (input) => input,
     });
   expect(declaration).not.toThrow();
   for (const requiredKinds of [
     ['module', 'module'],
-    ['business_permission', 'business_permission'],
+    ['owner_permission', 'owner_permission'],
     ['resource_read'],
     ['module', 'resource_read', 'resource_read', 'resource_read'],
   ] as const) {
@@ -368,6 +369,7 @@ it('declares two independent resource reads while rejecting duplicate canonical 
           GUEST: { requiredKinds: ['module'], resolve: () => [] },
           PROFILE: { requiredKinds, resolve: () => [] },
         },
+        ownerContract: fixtureOwnerContract,
         permissionKey: 'module.access',
         select: (input) => input,
       }),

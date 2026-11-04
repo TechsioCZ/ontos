@@ -1,3 +1,4 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { randomUUID } from 'node:crypto';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import {
@@ -579,8 +580,12 @@ const scenario = Effect.fn('FiniteEntitlement.nativeScenario')(function* nativeS
         'required',
       )
       .pipe(Effect.provideContext(context));
-    yield* business.mutate({ ...grant, operation: 'grant' });
-    yield* Effect.addFinalizer(() => business.mutate({ ...grant, operation: 'revoke' }).pipe(Effect.orDie));
+    yield* business.mutate({ ...grant, operation: 'grant', target: customerOwnerPermissionTarget(grant) });
+    yield* Effect.addFinalizer(() =>
+      business
+        .mutate({ ...grant, operation: 'revoke', target: customerOwnerPermissionTarget(grant) })
+        .pipe(Effect.orDie),
+    );
     const [intent] = pending;
     if (intent === undefined) {
       return yield* Effect.die('No owner access grant intent');

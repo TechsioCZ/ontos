@@ -3,7 +3,7 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
-import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
 
 import {
   CompensateInventoryPreCommitPayloadSchema,
@@ -311,7 +311,11 @@ describe('Inventory pre-commit compensation', () => {
       compositionRevision,
     );
 
-    expect(getActionBusinessPermissionTargetResolver(compensateInventoryPreCommitAction)?.(payload, scope)).toEqual({
+    expect(
+      getActionOwnerPermissionTargetResolver(compensateInventoryPreCommitAction)?.(payload, scope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
+    ).toEqual({
       permission: 'inventory.recovery.execute',
       target: {
         kind: 'inventory_resource',

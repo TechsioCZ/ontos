@@ -1,15 +1,12 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { expect, it } from 'effect-rstest';
 import { Effect, Predicate, Schema } from 'effect';
-import {
-  ReadHandlerUnavailable,
-  allowOwnerAuthorizationOverlay,
-  toBusinessPermissionAccessKey,
-} from '@app/core-runtime';
+import { ReadHandlerUnavailable, allowOwnerAuthorizationOverlay } from '@app/core-runtime';
 import {
   getReadPermissionTargetResolver,
   getReadResourcePermissionTargetResolver,
   getReadResultPermissionTargetResolver,
-} from '../../../../packages/core-runtime/src/reads/definition.ts';
+} from '@app/core-runtime/testing/reads';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
@@ -193,7 +190,8 @@ it('declares exact business and Resource authorization before history handlers',
   }
 
   expect(retailResolver(retailInput, scope)).toEqual({
-    businessPermission: {
+    kind: 'owner_permission',
+    ownerPermission: customerOwnerPermissionTarget({
       permission: 'retail.history.read',
       target: {
         kind: 'retail_profile',
@@ -201,27 +199,26 @@ it('declares exact business and Resource authorization before history handlers',
         profileId: retailProfileRef.resourceId,
         tenantId,
       },
-    },
-    kind: 'business_permission',
+    }),
   });
   expect(getReadResourcePermissionTargetResolver(retailOrderHistoryRead)?.(retailInput, scope)).toEqual({
     permission: 'read',
     resource: retailProfileRef,
   });
   expect(counterpartyOwnResolver(counterpartyInput, scope)).toMatchObject({
-    businessPermission: { permission: 'counterparty.history.read_own' },
-    kind: 'business_permission',
+    kind: 'owner_permission',
+    ownerPermission: { definition: { key: 'counterparty.history.read_own' } },
   });
   expect(counterpartyAllResolver(counterpartyInput, scope)).toMatchObject({
-    businessPermission: { permission: 'counterparty.history.read_all' },
-    kind: 'business_permission',
+    kind: 'owner_permission',
+    ownerPermission: { definition: { key: 'counterparty.history.read_all' } },
   });
   const allArchiveResolver = getReadPermissionTargetResolver(counterpartyAllCustomerArchiveRead);
   expect(Predicate.isFunction(allArchiveResolver)).toBe(true);
   if (Predicate.isFunction(allArchiveResolver)) {
     expect(allArchiveResolver(counterpartyInput, scope)).toMatchObject({
-      businessPermission: { permission: 'counterparty.history.read_all' },
-      kind: 'business_permission',
+      kind: 'owner_permission',
+      ownerPermission: { definition: { key: 'counterparty.history.read_all' } },
     });
   }
 });
@@ -246,17 +243,17 @@ it('gates authoritative detail with the exact scope and Order Resource before ow
   }
 
   expect(retailResolver(retailInput, scope)).toMatchObject({
-    businessPermission: { permission: 'retail.history.read' },
+    ownerPermission: { definition: { key: 'retail.history.read' } },
   });
   expect(getReadResourcePermissionTargetResolver(retailOrderHistoryDetailRead)?.(retailInput, scope)).toEqual({
     permission: 'read',
     resource: orderRef,
   });
   expect(counterpartyOwnResolver(counterpartyInput, scope)).toMatchObject({
-    businessPermission: { permission: 'counterparty.history.read_own' },
+    ownerPermission: { definition: { key: 'counterparty.history.read_own' } },
   });
   expect(counterpartyAllResolver(counterpartyInput, scope)).toMatchObject({
-    businessPermission: { permission: 'counterparty.history.read_all' },
+    ownerPermission: { definition: { key: 'counterparty.history.read_all' } },
   });
   expect(getReadResultPermissionTargetResolver(retailOrderHistoryDetailRead)).toBeUndefined();
 });
@@ -274,8 +271,8 @@ it('makes cross-tenant references invalid before any owner port can be resolved'
   const target = resolver({ profileRef: foreignProfile }, scope);
 
   expect(target).toMatchObject({
-    businessPermission: { target: { tenantId: '' } },
-    kind: 'business_permission',
+    kind: 'owner_permission',
+    ownerPermission: { objectId: '', scope: { tenantId: '' }, target: { tenantId: '' } },
   });
 });
 
@@ -307,18 +304,18 @@ it.effect('executes exact business and Resource gates before resolving unavailab
       openModuleEntrypointGateway,
       { resolve: () => Effect.succeed(scope) },
       {
-        businessPermissions: ({ targets }) => {
+        legalEntities: ({ legalEntityIds }) =>
+          Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
+        modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+        ownerPermissions: ({ targets }) => {
           businessChecks += 1;
           return Effect.succeed(
             targets.map((target) => ({
               decision: 'allowed' as const,
-              key: toBusinessPermissionAccessKey(target),
+              key: target.target.key,
             })),
           );
         },
-        legalEntities: ({ legalEntityIds }) =>
-          Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-        modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
         resources: ({ resources }) => {
           resourceChecks += 1;
           return Effect.succeed(

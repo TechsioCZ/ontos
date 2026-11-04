@@ -1,5 +1,7 @@
+import { priceGroupOwnerPermissionTarget } from '@app/price-group-catalog/testing/server-owner-native';
 import {
   describePriceGroupTemporalOwner as describeOwner,
+  customerOwnerPermissionTarget,
   openPriceGroupTemporalChannel,
   makePriceGroupTemporalComposition,
   preparePriceGroupTemporalRetailAccess,
@@ -514,10 +516,9 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
   const business = Context.get(context, BusinessPermissionRelationshipMutation);
   const principal = { principalId: native.actor.principalId, tenantId: native.actor.tenantId };
   const grant = Effect.fn('PricingTemporal.grantOwnedPermission')(function* grantOwnedPermission(
-    permission: Parameters<typeof business.mutate>[0]['permission'],
     target: Parameters<typeof business.mutate>[0]['target'],
   ) {
-    const input = { permission, principal, target };
+    const input = { principal, target };
     yield* business.mutate({ ...input, operation: 'grant' });
     yield* Effect.addFinalizer(() => Effect.orDie(business.mutate({ ...input, operation: 'revoke' })));
   });
@@ -533,11 +534,19 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
       );
     }
   });
-  yield* grant('pricing.price_group.create', {
-    kind: 'pricing_catalog',
-    pricingCatalogId: principal.tenantId,
-    tenantId: principal.tenantId,
-  });
+  yield* grant(
+    priceGroupOwnerPermissionTarget(
+      {
+        permission: 'pricing.price_group.create',
+        target: {
+          kind: 'pricing_catalog',
+          pricingCatalogId: principal.tenantId,
+          tenantId: principal.tenantId,
+        },
+      },
+      'action',
+    ),
+  );
   const create = Effect.fn('PricingTemporal.createPublishedCatalogGroup')(function* createPublishedCatalogGroup(
     type: 'CREATE_G1' | 'CREATE_G2',
   ) {
@@ -546,12 +555,20 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
       return yield* fail('catalog-create-order');
     }
     const { result } = response;
-    yield* grant('pricing.price_group.read', {
-      kind: 'price_group',
-      priceGroupId: result.identity.priceGroupRef.resourceId,
-      pricingCatalogId: principal.tenantId,
-      tenantId: principal.tenantId,
-    });
+    yield* grant(
+      priceGroupOwnerPermissionTarget(
+        {
+          permission: 'pricing.price_group.read',
+          target: {
+            kind: 'price_group',
+            priceGroupId: result.identity.priceGroupRef.resourceId,
+            pricingCatalogId: principal.tenantId,
+            tenantId: principal.tenantId,
+          },
+        },
+        'action',
+      ),
+    );
     return result;
   });
   const first = yield* create('CREATE_G1');
@@ -581,12 +598,20 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
     yield* native.options(),
   );
   yield* resource(profile.profileRef);
-  yield* grant('retail.profile.read', {
-    kind: 'retail_profile',
-    legalEntityId: native.fixture.legalEntityId,
-    profileId: profile.profileRef.resourceId,
-    tenantId: principal.tenantId,
-  });
+  yield* grant(
+    customerOwnerPermissionTarget(
+      {
+        permission: 'retail.profile.read',
+        target: {
+          kind: 'retail_profile',
+          legalEntityId: native.fixture.legalEntityId,
+          profileId: profile.profileRef.resourceId,
+          tenantId: principal.tenantId,
+        },
+      },
+      'action',
+    ),
+  );
   yield* preparePriceGroupTemporalRetailAccess({
     certificate: native.owned.certificate,
     effectiveAt: DateTime.formatIso(yield* DateTime.now),

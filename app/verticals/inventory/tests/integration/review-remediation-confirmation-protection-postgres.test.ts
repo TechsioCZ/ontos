@@ -54,7 +54,6 @@ import {
 import { makeOutboxRepository } from '../../../../packages/core-runtime/src/outbox/repository.ts';
 import { makeOutboxRuntime } from '../../../../packages/core-runtime/src/outbox/runtime.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { toBusinessPermissionAccessKey } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/permissions/owner-authorization-overlay.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
@@ -209,16 +208,16 @@ const allowedPermission = {
 };
 
 const contextAccess: ContextAccessService = {
-  businessPermissions: ({ targets }) =>
-    Effect.succeed(
-      targets.map((target) => ({
-        decision: 'allowed' as const,
-        key: toBusinessPermissionAccessKey(target),
-      })),
-    ),
   legalEntities: ({ legalEntityIds }) =>
     Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
   modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+  ownerPermissions: ({ targets }) =>
+    Effect.succeed(
+      targets.map((target) => ({
+        decision: 'allowed' as const,
+        key: target.target.key,
+      })),
+    ),
   resources: ({ resources }) =>
     Effect.succeed(
       resources.map(({ moduleId, resourceId, resourceType }) => ({
@@ -1413,13 +1412,13 @@ it.live('authorizes two Principals independently when their Stock Sharing Eligib
         // This permission port is an explicit owner-level Core lifecycle fixture, not a live grant claim.
         const scenario = yield* makeActionScenario({
           ...contextAccess,
-          businessPermissions: (input) =>
+          ownerPermissions: (input) =>
             Effect.sync(() =>
               input.targets.map((target) => {
-                checked.push({ actor: input.principal.principalId, permission: target.permission });
+                checked.push({ actor: input.principal.principalId, permission: target.target.definition.key });
                 return {
                   decision: input.principal.principalId === principalId ? ('allowed' as const) : ('denied' as const),
-                  key: toBusinessPermissionAccessKey(target),
+                  key: target.target.key,
                 };
               }),
             ),

@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionHandler } from '@app/core-runtime/testing/actions';
 import {
   AssignCounterpartyPriceGroupPayloadSchema,
   assignCounterpartyPriceGroupAction,
@@ -201,7 +201,7 @@ describe('customer PriceGroup Actions', () => {
       removeCounterpartyPriceGroupAction,
       migrateCounterpartyPriceGroupAction,
     ]) {
-      expect(action.descriptor.businessPermission?.kind).toBe('business_permission');
+      expect(action.descriptor.ownerPermissions?.kind).toBe('owner_permission');
       expect(action.descriptor.entrypoint.authorization).toEqual({
         kind: 'action_execution',
         provisioning: 'explicit',

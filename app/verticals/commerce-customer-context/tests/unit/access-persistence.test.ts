@@ -1,5 +1,5 @@
 import type { OperationalScope, OutboxWorkerLegalEntityScope } from '@app/core-runtime';
-import { ScopedRoutineInvocationError, toBusinessPermissionAccessKey } from '@app/core-runtime';
+import { ScopedRoutineInvocationError } from '@app/core-runtime';
 import {
   AuthBindingIdSchema,
   PrincipalIdSchema,
@@ -168,8 +168,8 @@ const dependenciesWith = (
 ): CounterpartyAccessPersistenceContext => ({
   claimAuthority: { verifyAndConsume: () => Effect.succeed(attestation) },
   contextAccess: {
-    businessPermissions: ({ targets }) =>
-      Effect.succeed(targets.map(({ permission }) => ({ decision: 'allowed', key: permission }))),
+    ownerPermissions: ({ targets }) =>
+      Effect.succeed(targets.map(({ target }) => ({ decision: 'allowed', key: target.key }))),
   },
   currentOwnerAccess: () => Effect.succeed('ALLOWED' as const),
   eligibility: {
@@ -746,12 +746,12 @@ it.effect('durably compensates claim-created tuples when inviter authority is lo
       return [];
     });
     const contextAccess = {
-      businessPermissions: ({
+      ownerPermissions: ({
         targets,
-      }: Parameters<NonNullable<CounterpartyAccessPersistenceContext['contextAccess']['businessPermissions']>>[0]) => {
+      }: Parameters<NonNullable<CounterpartyAccessPersistenceContext['contextAccess']['ownerPermissions']>>[0]) => {
         authorityChecks += 1;
         const decision = authorityChecks === 1 ? ('allowed' as const) : ('denied' as const);
-        return Effect.succeed(targets.map(({ permission }) => ({ decision, key: permission })));
+        return Effect.succeed(targets.map(({ target }) => ({ decision, key: target.key })));
       },
     };
     const service = accessAuthorizationMutationReconciliationForWorker(
@@ -799,9 +799,11 @@ it.effect('worker claim authority includes owner-local pending revoke state', ()
       return [];
     });
     const contextAccess = {
-      businessPermissions: () => {
+      ownerPermissions: ({
+        targets,
+      }: Parameters<NonNullable<CounterpartyAccessPersistenceContext['contextAccess']['ownerPermissions']>>[0]) => {
         coreChecks += 1;
-        return Effect.succeed([{ decision: 'allowed' as const, key: 'counterparty.access.manage' as const }]);
+        return Effect.succeed(targets.map(({ target }) => ({ decision: 'allowed' as const, key: target.key })));
       },
     };
     const service = accessAuthorizationMutationReconciliationForWorker(
@@ -829,8 +831,8 @@ it.effect('rejects a malformed worker Tenant before invoking owner access routin
     });
     const service = accessAuthorizationMutationReconciliationForWorker(
       {
-        businessPermissions: () =>
-          Effect.succeed([{ decision: 'allowed' as const, key: 'counterparty.access.manage' as const }]),
+        ownerPermissions: ({ targets }) =>
+          Effect.succeed(targets.map(({ target }) => ({ decision: 'allowed' as const, key: target.key }))),
       },
       { mutate: () => Effect.die('must not mutate malformed worker scope') },
       lockingCurrentOwnerAccessForTransaction,
@@ -869,10 +871,10 @@ it.effect('resets a claim when inviter authority is lost before any grant row ex
       return [];
     });
     const contextAccess = {
-      businessPermissions: ({
+      ownerPermissions: ({
         targets,
-      }: Parameters<NonNullable<CounterpartyAccessPersistenceContext['contextAccess']['businessPermissions']>>[0]) =>
-        Effect.succeed(targets.map(({ permission }) => ({ decision: 'denied' as const, key: permission }))),
+      }: Parameters<NonNullable<CounterpartyAccessPersistenceContext['contextAccess']['ownerPermissions']>>[0]) =>
+        Effect.succeed(targets.map(({ target }) => ({ decision: 'denied' as const, key: target.key }))),
     };
     const service = accessAuthorizationMutationReconciliationForWorker(
       contextAccess,
@@ -1169,12 +1171,12 @@ it.effect('binds one consumed attestation to the exact claim and persists only i
               }),
           },
           contextAccess: {
-            businessPermissions: ({ targets }) =>
+            ownerPermissions: ({ targets }) =>
               Effect.sync(() => {
                 inviterChecks += 1;
-                return targets.map(({ permission }) => ({
+                return targets.map(({ target }) => ({
                   decision: 'allowed' as const,
-                  key: permission,
+                  key: target.key,
                 }));
               }),
           },
@@ -1424,10 +1426,12 @@ for (const control of [
           principalId: recipientId,
         },
         {
-          businessPermissions: ({ targets }) => {
+          legalEntities: () => Effect.die('The accepted claim reader must not query unrelated capabilities'),
+          modules: () => Effect.die('The accepted claim reader must not query unrelated capabilities'),
+          ownerPermissions: ({ targets }) => {
             const decisions = targets.map((target) => ({
               decision: control === 'unavailable-core' ? ('unavailable' as const) : ('allowed' as const),
-              key: control === 'foreign-core-key' ? 'another-target' : toBusinessPermissionAccessKey(target),
+              key: control === 'foreign-core-key' ? 'another-target' : target.target.key,
             }));
             if (control === 'missing-core') {
               return Effect.succeed([]);
@@ -1437,8 +1441,6 @@ for (const control of [
             }
             return Effect.succeed(decisions);
           },
-          legalEntities: () => Effect.die('The accepted claim reader must not query unrelated capabilities'),
-          modules: () => Effect.die('The accepted claim reader must not query unrelated capabilities'),
           resources: () => Effect.die('The accepted claim reader must not query unrelated capabilities'),
           tenants: () => Effect.die('The accepted claim reader must not query unrelated capabilities'),
         },

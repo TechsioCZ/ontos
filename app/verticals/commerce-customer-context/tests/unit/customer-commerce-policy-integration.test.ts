@@ -117,10 +117,6 @@ const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAut
     }),
   };
   const contextAccess: ContextAccessService = {
-    businessPermissions: () => {
-      businessPermissionCalls += 1;
-      return Effect.die('Policy Current reads must not call the business-permission adapter');
-    },
     contextPermissions: ({ targets }) =>
       Effect.succeed(
         targets.map((target) => {
@@ -136,6 +132,10 @@ const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAut
     modules: ({ moduleIds: requestedModuleIds }) => {
       moduleIds.push(...requestedModuleIds);
       return Effect.succeed(requestedModuleIds.map((key) => ({ decision: options.modulePermissionDecision, key })));
+    },
+    ownerPermissions: () => {
+      businessPermissionCalls += 1;
+      return Effect.die('Policy Current reads must not call the business-permission adapter');
     },
     resources: ({ resources }) =>
       Effect.succeed(
@@ -1104,7 +1104,7 @@ describe('Customer Commerce Policy integration', () => {
         kind: 'action_execution',
         provisioning: 'explicit',
       });
-      expect(action.descriptor.businessPermission).toBeUndefined();
+      expect(action.descriptor.ownerPermissions).toBeUndefined();
       expect(action.descriptor.idempotency).toBe('required');
       expect(action.descriptor.legalEntityScope).toBe('required');
       expect(Object.keys(action.descriptor.domainEvents)).toHaveLength(1);

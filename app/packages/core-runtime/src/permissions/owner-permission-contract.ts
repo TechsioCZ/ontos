@@ -9,13 +9,15 @@ export type OwnerPermissionScope =
   | Readonly<{ readonly kind: 'legal_entity'; readonly legalEntityId: string; readonly tenantId: string }>;
 
 export interface OwnerPermissionContract {
-  readonly owningCapability: string;
+  readonly ownerStateRequired?: boolean;
+  readonly owningModuleKey: string;
   readonly permissions: readonly BusinessPermissionDescriptor[];
   readonly schemaVersion: '1';
   readonly targetResourceType: string;
 }
 
 export interface OwnerPermissionAccessTarget {
+  readonly alternativeObjectIds?: readonly string[];
   readonly contract: OwnerPermissionContract;
   readonly definition: BusinessPermissionDescriptor;
   readonly key: string;
@@ -27,6 +29,7 @@ export interface OwnerPermissionAccessTarget {
   readonly target: object;
   readonly transportModuleKey: string;
   readonly transportObjectId: string;
+  readonly transportResourceType?: string;
 }
 
 const ownerPermissionIdentifier = Schema.String.check(Schema.isMinLength(1));
@@ -38,12 +41,14 @@ const OwnerPermissionTransportModuleKeySchema = ownerPermissionIdentifier.pipe(
   Schema.brand('OwnerPermissionTransportModuleKey'),
 );
 const OwnerPermissionContractSchema = Schema.Struct({
-  owningCapability: ownerPermissionIdentifier,
+  ownerStateRequired: Schema.optionalKey(Schema.Boolean),
+  owningModuleKey: ownerPermissionIdentifier.pipe(Schema.brand('OwnerPermissionModuleKey')),
   permissions: Schema.Array(BusinessPermissionDescriptorSchema).check(Schema.isMinLength(1)),
   schemaVersion: Schema.Literal('1'),
   targetResourceType: ownerPermissionIdentifier,
 });
 const OwnerPermissionTargetMetadataSchema = Schema.Struct({
+  alternativeObjectIds: Schema.optionalKey(Schema.Array(OwnerPermissionObjectIdSchema)),
   contract: OwnerPermissionContractSchema,
   definition: BusinessPermissionDescriptorSchema,
   key: ownerPermissionIdentifier,
@@ -60,20 +65,25 @@ const OwnerPermissionTargetMetadataSchema = Schema.Struct({
   scopeKind: ownerPermissionIdentifier,
   transportModuleKey: OwnerPermissionTransportModuleKeySchema,
   transportObjectId: OwnerPermissionObjectIdSchema,
+  transportResourceType: Schema.optionalKey(ownerPermissionIdentifier),
 });
 
 export const isOwnerPermissionContract = (contract: OwnerPermissionContract): boolean =>
   Schema.is(OwnerPermissionContractSchema)(contract) &&
   Object.isFrozen(contract) &&
   Object.isFrozen(contract.permissions) &&
-  contract.permissions.every(
-    (definition) => Object.isFrozen(definition) && definition.owningCapability === contract.owningCapability,
-  );
+  contract.permissions.every((definition) => Object.isFrozen(definition));
 
 export const createOwnerPermissionAccessTarget = (
   contract: OwnerPermissionContract,
   input: Omit<OwnerPermissionAccessTarget, 'contract'>,
-): OwnerPermissionAccessTarget => Object.freeze({ ...input, contract, scope: Object.freeze({ ...input.scope }) });
+): OwnerPermissionAccessTarget => {
+  const { alternativeObjectIds, ...target } = input;
+  const scopedTarget = { ...target, contract, scope: Object.freeze({ ...input.scope }) };
+  return alternativeObjectIds === undefined
+    ? Object.freeze(scopedTarget)
+    : Object.freeze({ ...scopedTarget, alternativeObjectIds: Object.freeze([...alternativeObjectIds]) });
+};
 
 export const isOwnerPermissionAccessTargetMetadataValid = (target: OwnerPermissionAccessTarget): boolean =>
   Schema.is(OwnerPermissionTargetMetadataSchema)(target) &&
@@ -81,11 +91,17 @@ export const isOwnerPermissionAccessTargetMetadataValid = (target: OwnerPermissi
   Object.isFrozen(target.scope) &&
   isOwnerPermissionContract(target.contract) &&
   target.contract.schemaVersion === '1' &&
-  target.definition.owningCapability === target.contract.owningCapability &&
   target.contract.permissions.includes(target.definition) &&
   target.definition.allowedScopeKinds.includes(target.scopeKind) &&
   target.key.length > 0 &&
   target.objectId.length > 0 &&
+  target.objectId.length <= 1024 &&
+  (target.alternativeObjectIds === undefined ||
+    (Object.isFrozen(target.alternativeObjectIds) &&
+      target.alternativeObjectIds.every(
+        (objectId) => objectId.length > 0 && objectId.length <= 1024 && objectId !== target.objectId,
+      ) &&
+      new Set(target.alternativeObjectIds).size === target.alternativeObjectIds.length)) &&
   target.transportObjectId.length > 0 &&
   target.contract.targetResourceType.length > 0;
 
@@ -96,10 +112,10 @@ export const isOwnerPermissionAccessTargetValid = (
     readonly tenantId: string;
     readonly trustedStorefrontId?: string;
   }>,
-  owningCapability?: string,
+  owningModuleKey?: string,
 ): boolean =>
   isOwnerPermissionAccessTargetMetadataValid(target) &&
-  (owningCapability === undefined || target.contract.owningCapability === owningCapability) &&
+  (owningModuleKey === undefined || target.contract.owningModuleKey === owningModuleKey) &&
   target.scope.tenantId === scope.tenantId &&
   scope.tenantId.length > 0 &&
   (target.scope.kind === 'tenant' ||

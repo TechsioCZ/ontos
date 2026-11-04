@@ -18,7 +18,6 @@ import type { OperationContextUnavailable } from '../operations/errors.ts';
 import type {
   OwnerPermissionAccessTarget,
   OwnerPermissionContract,
-  BusinessPermissionAccessTarget,
   ResourceAccessTarget,
 } from '../permissions/context-access.ts';
 import type { LegalEntityPermissionKey, TenantPermissionKey } from '../permissions/context-permissions.ts';
@@ -68,7 +67,6 @@ export const READ_EVIDENCE_CAPTURE_MODES = ['hash_only', 'metadata_only'] as con
 export type ReadEvidenceCaptureMode = (typeof READ_EVIDENCE_CAPTURE_MODES)[number];
 export const READ_PERMISSION_TARGETS = [
   'owner_permission',
-  'business_permission',
   'conditional',
   'legal_entity',
   'module',
@@ -88,11 +86,6 @@ export type AtomicResolvedReadPermissionTarget =
       readonly ownerPermission: OwnerPermissionAccessTarget;
     }>
   | Readonly<{
-      businessPermission: BusinessPermissionAccessTarget;
-      kind: 'business_permission';
-      trustedStorefrontId?: string;
-    }>
-  | Readonly<{
       readonly kind: 'legal_entity';
       /** Explicit authorized target; omitted keeps the selected-context behavior. */
       readonly legalEntityId?: string;
@@ -110,7 +103,6 @@ export type AtomicResolvedReadPermissionTarget =
 export type AlternativeResolvedReadPermissionTarget =
   | Exclude<
       AtomicResolvedReadPermissionTarget,
-      | Readonly<{ readonly kind: 'business_permission' }>
       | Readonly<{ readonly kind: 'owner_permission' }>
       | Readonly<{
           readonly kind: 'tenant';
@@ -184,6 +176,24 @@ const isReadOwnerPermissionDeclaration = <Input>(
     | ReadPermissionTargetResolver<Input>,
 ): value is ReadOwnerPermissionDeclaration<Input> => Schema.is(ReadOwnerPermissionDeclarationSchema)(value);
 
+const ReadConditionalPermissionDeclarationSchema = Schema.instanceOf(ReadPrivateStorage).check(
+  Schema.makeFilter((declaration) =>
+    declaration[conditionalPermissionDeclarationMarker] === true &&
+    declaration.kind === 'conditional' &&
+    Array.isArray(declaration.branchTags) &&
+    declaration.branchTags.length >= 2 &&
+    declaration.permissionKey !== undefined &&
+    Object.isFrozen(declaration)
+      ? undefined
+      : 'Expected an immutable conditional Read permission declaration',
+  ),
+);
+
+const isReadConditionalPermissionDeclaration = (
+  value: unknown,
+): value is ReadConditionalPermissionDeclaration<unknown> =>
+  Schema.is(ReadConditionalPermissionDeclarationSchema)(value);
+
 const normalizeOwnerPermissionResolver = <Input>(
   declared: ReadPermissionTarget,
   owningModuleKey: string,
@@ -192,13 +202,19 @@ const normalizeOwnerPermissionResolver = <Input>(
     | ReadConditionalPermissionDeclaration<Input>
     | ReadPermissionTargetResolver<Input>,
 ): ReadConditionalPermissionDeclaration<Input> | ReadPermissionTargetResolver<Input> => {
+  if (declared === 'conditional' && isReadConditionalPermissionDeclaration(resolver)) {
+    const contract = ReadPrivateStorage.getValue(resolver).ownerContract;
+    if (contract !== undefined && contract.owningModuleKey !== owningModuleKey) {
+      return failReadDefinition('Conditional permission contract belongs to another runtime owner');
+    }
+  }
   if (declared !== 'owner_permission') {
     if (isReadOwnerPermissionDeclaration(resolver)) {
       return failReadDefinition('Owner permission declaration requires its exact Read target kind');
     }
     return resolver;
   }
-  if (!isReadOwnerPermissionDeclaration(resolver) || resolver.contract.owningCapability !== owningModuleKey) {
+  if (!isReadOwnerPermissionDeclaration(resolver) || resolver.contract.owningModuleKey !== owningModuleKey) {
     return failReadDefinition('Owner permission Read requires its own opaque contract declaration');
   }
   const declaration = resolver;
@@ -242,7 +258,7 @@ export type ReadResourcePermissionDeclaration<Input> = ReadPrivateStorage<
 };
 
 export const READ_CONDITIONAL_PERMISSION_REQUIREMENTS = [
-  'business_permission',
+  'owner_permission',
   'legal_entity',
   'module',
   'resource',
@@ -286,6 +302,7 @@ interface ReadConditionalPermissionRuntimeBranch<Input> {
 
 interface ReadConditionalPermissionPrivateValue<Input> {
   readonly branches: Readonly<Record<string, ReadConditionalPermissionRuntimeBranch<Input>>>;
+  readonly ownerContract?: OwnerPermissionContract;
   readonly select: (input: Input) => Readonly<{ readonly kind: string }>;
 }
 
@@ -295,6 +312,7 @@ export type ReadConditionalPermissionDeclaration<Input> = ReadPrivateStorage<
   readonly branchTags: readonly [string, string, ...string[]];
   readonly [conditionalPermissionDeclarationMarker]: true;
   readonly kind: 'conditional';
+  readonly ownerContract?: OwnerPermissionContract;
   readonly permissionKey: string;
 };
 
@@ -339,6 +357,7 @@ const validateConditionalBranches = <Input, Selected extends Readonly<{ readonly
 /** Declares a finite tagged-input authorization plan without a default or fallback branch. */
 export const defineReadConditionalPermission = <Input, Selected extends Readonly<{ readonly kind: string }>>(input: {
   readonly branches: ReadConditionalPermissionBranches<Input, Selected>;
+  readonly ownerContract?: OwnerPermissionContract;
   readonly permissionKey: string;
   readonly select: (input: Input) => Selected;
 }): ReadConditionalPermissionDeclaration<Input> => {
@@ -346,6 +365,12 @@ export const defineReadConditionalPermission = <Input, Selected extends Readonly
     return failReadDefinition('Conditional Read permission declaration must be stable and typed');
   }
   const branchTags = validateConditionalBranches(input.branches);
+  const usesOwnerPermission = branchTags.some((tag) =>
+    input.branches[tag as Selected['kind']].requiredKinds.includes('owner_permission'),
+  );
+  if (usesOwnerPermission && (input.ownerContract === undefined || !isOwnerPermissionContract(input.ownerContract))) {
+    return failReadDefinition('Conditional owner permissions require their genuine owner contract');
+  }
   // SAFETY: branch keys were enumerated and validated from the exact mapped branch input above;
   // Object.fromEntries cannot retain that mapped-key relationship in TypeScript's standard types.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Exact validated mapped copy; expires: 2027-03-31.
@@ -363,7 +388,11 @@ export const defineReadConditionalPermission = <Input, Selected extends Readonly
       }),
     ),
   ) as unknown as ReadConditionalPermissionPrivateValue<Input>['branches'];
-  return ReadPrivateStorage.create(Object.freeze({ branches, select: input.select }), {
+  const privatePlan =
+    input.ownerContract === undefined
+      ? { branches, select: input.select }
+      : { branches, ownerContract: input.ownerContract, select: input.select };
+  return ReadPrivateStorage.create(Object.freeze(privatePlan), {
     branchTags: Object.freeze([...branchTags]) as readonly [string, string, ...string[]],
     [conditionalPermissionDeclarationMarker]: true as const,
     kind: 'conditional' as const,
@@ -453,24 +482,6 @@ const ReadResourcePermissionDeclarationSchema = Schema.instanceOf(ReadPrivateSto
       : 'Expected an immutable Read Resource permission declaration',
   ),
 );
-
-const ReadConditionalPermissionDeclarationSchema = Schema.instanceOf(ReadPrivateStorage).check(
-  Schema.makeFilter((declaration) =>
-    declaration[conditionalPermissionDeclarationMarker] === true &&
-    declaration.kind === 'conditional' &&
-    Array.isArray(declaration.branchTags) &&
-    declaration.branchTags.length >= 2 &&
-    declaration.permissionKey !== undefined &&
-    Object.isFrozen(declaration)
-      ? undefined
-      : 'Expected an immutable conditional Read permission declaration',
-  ),
-);
-
-const isReadConditionalPermissionDeclaration = (
-  value: unknown,
-): value is ReadConditionalPermissionDeclaration<unknown> =>
-  Schema.is(ReadConditionalPermissionDeclarationSchema)(value);
 
 /** Declares an exact Resource read permission resolved from decoded input and trusted scope. */
 export const defineReadResourcePermission = <Input>(

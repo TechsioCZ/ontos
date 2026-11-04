@@ -1,6 +1,7 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { expect, it } from 'effect-rstest';
 import { Crypto, Effect, Layer, Predicate } from 'effect';
-import { getReadHandler } from '../../../../packages/core-runtime/src/reads/definition.ts';
+import { getReadHandler } from '@app/core-runtime/testing/reads';
 import {
   BusinessPermissionRelationshipMutation,
   ContextAccess,
@@ -111,9 +112,9 @@ const unusedBusinessPermissionMutationLayer = Layer.succeed(BusinessPermissionRe
   mutate: () => Effect.void,
 });
 const unusedContextAccessLayer = Layer.succeed(ContextAccess, {
-  businessPermissions: () => Effect.succeed([]),
   legalEntities: () => Effect.succeed([]),
   modules: () => Effect.succeed([]),
+  ownerPermissions: () => Effect.succeed([]),
   resources: () => Effect.succeed([]),
   tenants: () => Effect.succeed([]),
 });
@@ -457,7 +458,8 @@ it.effect('fails closed when the invitation handler lacks Legal Entity context',
 
 it('derives safe counterparty targets and only forwards gateway-verified Storefront identity', () => {
   expect(counterpartyAccessReadPermissionTarget({ counterpartyRef, scope }, operationalScope)).toEqual({
-    businessPermission: {
+    kind: 'owner_permission',
+    ownerPermission: customerOwnerPermissionTarget({
       permission: 'counterparty.access.read',
       target: {
         counterpartyId: counterpartyRef.resourceId,
@@ -465,15 +467,14 @@ it('derives safe counterparty targets and only forwards gateway-verified Storefr
         legalEntityId,
         tenantId,
       },
-    },
-    kind: 'business_permission',
+    }),
   });
 
   const storefrontTarget = counterpartyAccessReadPermissionTarget(
     { counterpartyRef, scope: storefrontScope },
     operationalScope,
   );
-  expect(storefrontTarget.businessPermission.target).toEqual({
+  expect(storefrontTarget.ownerPermission.target).toEqual({
     counterpartyId: counterpartyRef.resourceId,
     kind: 'counterparty_storefront',
     legalEntityId,
@@ -493,7 +494,7 @@ it('derives safe counterparty targets and only forwards gateway-verified Storefr
     { ...operationalScope, trustedStorefrontId: 'storefront-2' },
   );
   expect(mismatchedStorefrontTarget).toHaveProperty('trustedStorefrontId', 'storefront-2');
-  expect(mismatchedStorefrontTarget.businessPermission.target).toHaveProperty(
+  expect(mismatchedStorefrontTarget.ownerPermission.target).toHaveProperty(
     'storefrontId',
     storefrontScope.storefrontKey,
   );

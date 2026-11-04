@@ -13,8 +13,6 @@ import {
   OperationalScopeResolver,
   TrustedPrincipalContextSchema,
   makeActionRuntimeLive,
-  toBusinessPermissionAccessKey,
-  toBusinessPermissionAccessObjectId,
 } from '@app/core-runtime';
 import type { ApplicationComposition, ContextAccessService } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -156,29 +154,25 @@ const spiceDbContextAccess = (
   grantedPermission = 'tax.rule.manage',
 ): ContextAccessService => {
   const granted = new Set(
-    grantedSellers.map((legalEntityId) =>
-      toBusinessPermissionAccessObjectId(grantedPermission, {
-        kind: 'tax_selling_legal_entity',
-        legalEntityId,
-        tenantId,
-      }),
+    grantedSellers.map(
+      (legalEntityId) =>
+        `ctx_${Buffer.from(JSON.stringify([grantedPermission, tenantId, legalEntityId, 'tax_selling_legal_entity']), 'utf-8').toString('base64url')}`,
     ),
   );
   return {
-    businessPermissions: ({ principal, targets }) =>
-      Effect.succeed(
-        targets.map((target) => ({
-          decision:
-            principal.principalId === principalId &&
-            granted.has(toBusinessPermissionAccessObjectId(target.permission, target.target))
-              ? ('allowed' as const)
-              : ('denied' as const),
-          key: toBusinessPermissionAccessKey(target),
-        })),
-      ),
     legalEntities: ({ legalEntityIds }) =>
       Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
     modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+    ownerPermissions: ({ principal, targets }) =>
+      Effect.succeed(
+        targets.map(({ target }) => ({
+          decision:
+            principal.principalId === principalId && granted.has(target.objectId)
+              ? ('allowed' as const)
+              : ('denied' as const),
+          key: target.key,
+        })),
+      ),
     resources: ({ resources }) =>
       Effect.succeed(resources.map((resource) => ({ decision: 'denied' as const, key: resource.resourceId }))),
     tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'denied' as const, key }))),

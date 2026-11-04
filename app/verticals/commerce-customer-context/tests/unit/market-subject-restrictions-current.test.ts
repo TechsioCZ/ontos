@@ -154,11 +154,14 @@ describe('Current Market subject restrictions owner read', () => {
       subject: { counterpartyRef, kind: 'COUNTERPARTY', profileRef: counterpartyProfileRef },
     });
     expect(marketSubjectRestrictionsCurrentPermissionTarget(retail, operationalScope)).toMatchObject({
-      businessPermission: { permission: 'retail.profile.read', target: { profileId: retailProfileRef.resourceId } },
+      ownerPermission: {
+        definition: { key: 'retail.profile.read' },
+        target: { profileId: retailProfileRef.resourceId },
+      },
     });
     expect(marketSubjectRestrictionsCurrentPermissionTarget(counterparty, operationalScope)).toMatchObject({
-      businessPermission: {
-        permission: 'counterparty.profile.read',
+      ownerPermission: {
+        definition: { key: 'counterparty.profile.read' },
         target: { counterpartyId: counterpartyRef.resourceId },
       },
     });

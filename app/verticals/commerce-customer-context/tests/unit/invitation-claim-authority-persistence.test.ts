@@ -1,3 +1,4 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { ScopedRoutineInvocationError } from '@app/core-runtime';
 import type { ContextAccessService, ScopedRoutineDefinition, ScopedRoutineParameter } from '@app/core-runtime';
 import { Crypto, Effect, Option, Redacted, Schema } from 'effect';
@@ -96,12 +97,12 @@ const invokerWith = (handler: RoutineHandler): InvitationClaimScopedRoutineInvok
 
 const contextAccess = (
   decision: 'allowed' | 'denied' | 'unavailable' = 'allowed',
-  observe?: Parameters<NonNullable<ContextAccessService['businessPermissions']>>[0][],
-): Pick<ContextAccessService, 'businessPermissions'> => ({
-  businessPermissions: (input) =>
+  observe?: Parameters<NonNullable<ContextAccessService['ownerPermissions']>>[0][],
+): Pick<ContextAccessService, 'ownerPermissions'> => ({
+  ownerPermissions: (input) =>
     Effect.sync(() => {
       observe?.push(input);
-      return input.targets.map(({ permission }) => ({ decision, key: permission }));
+      return input.targets.map(({ target }) => ({ decision, key: target.key }));
     }),
 });
 
@@ -427,7 +428,7 @@ it.effect('binds redemption claimant and owner scope only from authenticated con
 it.effect('rejects a cross-Tenant claimant before authority or persistence can run', () =>
   Effect.gen(function* crossTenantClaim() {
     const routineCalls: string[] = [];
-    const authorityCalls: Parameters<NonNullable<ContextAccessService['businessPermissions']>>[0][] = [];
+    const authorityCalls: Parameters<NonNullable<ContextAccessService['ownerPermissions']>>[0][] = [];
     const { claimAuthority } = counterpartyInvitationClaimServicesForTransaction(
       invokerWith((key) => {
         routineCalls.push(key);
@@ -454,7 +455,7 @@ it.effect('rejects a cross-Tenant claimant before authority or persistence can r
 it.effect('rechecks current inviter authority and stops before consumption when it is denied', () =>
   Effect.gen(function* deniedInviter() {
     const routineCalls: string[] = [];
-    const authorityCalls: Parameters<NonNullable<ContextAccessService['businessPermissions']>>[0][] = [];
+    const authorityCalls: Parameters<NonNullable<ContextAccessService['ownerPermissions']>>[0][] = [];
     const { claimAuthority } = counterpartyInvitationClaimServicesForTransaction(
       invokerWith((key) => {
         routineCalls.push(key);
@@ -471,17 +472,20 @@ it.effect('rechecks current inviter authority and stops before consumption when 
     expectViolation(failure, 'inviter_authority_denied');
     expect(authorityCalls).toEqual([
       {
+        legalEntityId,
         principal: inviter,
         targets: [
           {
-            permission: 'counterparty.access.manage',
-            target: {
-              counterpartyId,
-              kind: 'counterparty_storefront',
-              legalEntityId,
-              storefrontId,
-              tenantId,
-            },
+            target: customerOwnerPermissionTarget({
+              permission: 'counterparty.access.manage',
+              target: {
+                counterpartyId,
+                kind: 'counterparty_storefront',
+                legalEntityId,
+                storefrontId,
+                tenantId,
+              },
+            }),
           },
         ],
         trustedStorefrontId: storefrontId,
@@ -493,7 +497,7 @@ it.effect('rechecks current inviter authority and stops before consumption when 
 
 it.effect('owner pending revoke denies invitation claim before Core authority can race', () =>
   Effect.gen(function* denyOwnerRevokeBeforeCoreCheck() {
-    const authorityCalls: Parameters<NonNullable<ContextAccessService['businessPermissions']>>[0][] = [];
+    const authorityCalls: Parameters<NonNullable<ContextAccessService['ownerPermissions']>>[0][] = [];
     const { claimAuthority } = counterpartyInvitationClaimServicesForTransaction(
       invokerWith(() => []),
       contextAccess('allowed', authorityCalls),
@@ -511,7 +515,7 @@ it.effect('owner pending revoke denies invitation claim before Core authority ca
 
 it.effect('fails closed when invitation authority has no owner reader', () =>
   Effect.gen(function* missingOwnerReader() {
-    const authorityCalls: Parameters<NonNullable<ContextAccessService['businessPermissions']>>[0][] = [];
+    const authorityCalls: Parameters<NonNullable<ContextAccessService['ownerPermissions']>>[0][] = [];
     const { claimAuthority } = counterpartyInvitationClaimServicesForTransaction(
       invokerWith(() => []),
       contextAccess('allowed', authorityCalls),
@@ -529,7 +533,7 @@ it.effect('fails closed when invitation authority has no owner reader', () =>
 it.effect('preflights the exact claimant, invitation, counterparty, and proof without consuming it', () =>
   Effect.gen(function* preflightExactness() {
     const routineCalls: { readonly key: string; readonly values: readonly unknown[] }[] = [];
-    const authorityCalls: Parameters<NonNullable<ContextAccessService['businessPermissions']>>[0][] = [];
+    const authorityCalls: Parameters<NonNullable<ContextAccessService['ownerPermissions']>>[0][] = [];
     const result = yield* verifyCounterpartyInvitationClaimAuthorityForOwnerScope(
       {
         contextAccess: contextAccess('allowed', authorityCalls),
@@ -566,17 +570,20 @@ it.effect('preflights the exact claimant, invitation, counterparty, and proof wi
     ]);
     expect(authorityCalls).toEqual([
       {
+        legalEntityId,
         principal: inviter,
         targets: [
           {
-            permission: 'counterparty.access.manage',
-            target: {
-              counterpartyId,
-              kind: 'counterparty_storefront',
-              legalEntityId,
-              storefrontId,
-              tenantId,
-            },
+            target: customerOwnerPermissionTarget({
+              permission: 'counterparty.access.manage',
+              target: {
+                counterpartyId,
+                kind: 'counterparty_storefront',
+                legalEntityId,
+                storefrontId,
+                tenantId,
+              },
+            }),
           },
         ],
         trustedStorefrontId: storefrontId,

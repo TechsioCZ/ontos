@@ -22,6 +22,8 @@ context, profile membership, account session, or Business Policy result is not a
 
 **Business Permission Definition** — Owner-published meaning of a business Permission and its
 permitted authorization targets and scopes. Publishing a definition grants no Principal a Permission.
+One publishing Module may host definitions for several canonical business capabilities; its runtime
+or deployment identity does not reassign their business ownership or activate a dormant capability.
 
 **Authorization Target** — The exact object or scope against which an operation requires Current
 Permission, including an ordered conjunction when several targets are independently required.

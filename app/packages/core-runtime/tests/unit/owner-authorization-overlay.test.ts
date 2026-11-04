@@ -1,4 +1,5 @@
-import { fixtureOwnerModule, ownerPermissionTarget } from '../support/owner-permission-target.ts';
+import { createOwnerPermissionAccessTarget } from '../../src/permissions/context-access.ts';
+import { fixtureOwnerContract, fixtureOwnerModule, ownerPermissionTarget } from '../support/owner-permission-target.ts';
 import { DateTime } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -31,31 +32,29 @@ it('fails closed for owner targets while keeping owner-neutral targets available
   expect(neutralDecision).toBe('allowed');
 });
 
-it('lets Core decide a TAX Selling Legal Entity target only for the exact trusted Legal Entity', () => {
-  const { scope } = input({ kind: 'module', moduleId: 'commerce.tax' });
-  const taxDecision = (legalEntityId: string | undefined, tenantId = scope.tenantId, permission = 'tax.rule.manage') =>
+it('allows stateless owner declarations only for the exact trusted operation scope', () => {
+  const { scope } = input({ kind: 'module', moduleId: fixtureOwnerModule });
+  const contract = Object.freeze({ ...fixtureOwnerContract, ownerStateRequired: false });
+  const statelessDecision = (legalEntityId: string | undefined, tenantId = scope.tenantId) =>
     failClosedOwnerAuthorizationDecision(
       input({
-        kind: 'business_permission',
-        permission,
-        target: { kind: 'tax_selling_legal_entity', legalEntityId: legalEntityId ?? '', tenantId },
+        kind: 'owner_permission',
+        target: createOwnerPermissionAccessTarget(
+          contract,
+          ownerPermissionTarget(legalEntityId === undefined ? { tenantId } : { legalEntityId, tenantId }),
+        ),
       }),
     );
-  const ownerHeldDecision = failClosedOwnerAuthorizationDecision(
-    input({
-      kind: 'business_permission',
-      permission: 'retail.profile.read',
-      target: {
-        kind: 'retail_profile',
-        legalEntityId: scope.legalEntityId ?? '',
-        profileId: 'profile-1',
-        tenantId: scope.tenantId,
-      },
-    }),
-  );
+  expect(statelessDecision(scope.legalEntityId)).toBe('allowed');
+  expect(statelessDecision('30000000-0000-4000-8000-000000000002')).toBe('unavailable');
+  expect(statelessDecision(scope.legalEntityId, '10000000-0000-4000-8000-000000000002')).toBe('unavailable');
+  expect(
+    failClosedOwnerAuthorizationDecision(input({ kind: 'owner_permission', target: ownerPermissionTarget(scope) })),
+  ).toBe('unavailable');
+});
 
-  expect(taxDecision(scope.legalEntityId)).toBe('allowed');
-  expect(taxDecision('30000000-0000-4000-8000-000000000002')).toBe('unavailable');
-  expect(taxDecision(scope.legalEntityId, '10000000-0000-4000-8000-000000000002')).toBe('unavailable');
-  expect(ownerHeldDecision).toBe('unavailable');
+it('rejects an unknown authorization target kind instead of inheriting neutral fallback', () => {
+  const unknown = { kind: 'module' as const, moduleId: 'commerce.fixture' };
+  Reflect.set(unknown, 'kind', 'unrecognized_target');
+  expect(failClosedOwnerAuthorizationDecision(input(unknown))).toBe('unavailable');
 });

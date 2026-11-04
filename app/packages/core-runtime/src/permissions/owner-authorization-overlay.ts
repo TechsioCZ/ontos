@@ -1,10 +1,10 @@
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer, Match, Schema } from 'effect';
 import type { DateTime } from 'effect';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import type { BusinessAccessTarget, OwnerPermissionAccessTarget, ResourceAccessTarget } from './context-access.ts';
+import { isOwnerPermissionAccessTargetValid } from './context-access.ts';
+import type { OwnerPermissionAccessTarget, ResourceAccessTarget } from './context-access.ts';
 import type { LegalEntityPermissionKey, TenantPermissionKey } from './context-permissions.ts';
-import type { BusinessPermissionCode } from './business-permission.ts';
 
 /**
  * Owner-local authorization is deliberately a small Core seam. Core owns the lifecycle and
@@ -16,12 +16,6 @@ export const OwnerAuthorizationDecisionSchema = Schema.Literals(['allowed', 'den
 export type OwnerAuthorizationDecision = typeof OwnerAuthorizationDecisionSchema.Type;
 
 export type OwnerAuthorizationTarget =
-  | Readonly<{
-      readonly kind: 'business_permission';
-      readonly permission: BusinessPermissionCode;
-      readonly target: BusinessAccessTarget;
-      readonly trustedStorefrontId?: string;
-    }>
   | Readonly<{
       readonly kind: 'owner_permission';
       readonly target: OwnerPermissionAccessTarget;
@@ -89,22 +83,24 @@ export const allowOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = 
  * authorization bypass. Keep this fallback deliberately small and target-based; owner-neutral
  * operations remain available while every owner-governed target fails closed as unavailable.
  *
- * A TAX Selling Legal Entity target names no owner-held record: it is a Core Legal Entity, so Core
- * decides it alone, but only while it is the exact Legal Entity of the trusted scope.
+ * An owner may explicitly declare a target whose authority requires only trusted scope and Current
+ * Permission, with no owner-held record. That declaration still cannot bypass scope validation.
  */
-const isCoreDecidedBusinessTarget = (
-  target: Extract<OwnerAuthorizationTarget, { readonly kind: 'business_permission' }>,
-  scope: OperationalScope,
-): boolean =>
-  target.target.kind === 'tax_selling_legal_entity' &&
-  target.target.tenantId === scope.tenantId &&
-  target.target.legalEntityId === scope.legalEntityId;
-
 export const failClosedOwnerAuthorizationDecision = (input: OwnerAuthorizationInput): OwnerAuthorizationDecision =>
-  input.targets.some(
-    (target) =>
-      target.kind === 'owner_permission' ||
-      (target.kind === 'business_permission' && !isCoreDecidedBusinessTarget(target, input.scope)),
+  input.targets.some((target) =>
+    Match.value(target).pipe(
+      Match.when(
+        { kind: 'owner_permission' },
+        (owner) =>
+          !isOwnerPermissionAccessTargetValid(owner.target, input.scope, input.owningModuleKey) ||
+          owner.target.contract.ownerStateRequired !== false,
+      ),
+      Match.when({ kind: 'tenant' }, () => false),
+      Match.when({ kind: 'module' }, () => false),
+      Match.when({ kind: 'legal_entity' }, () => false),
+      Match.when({ kind: 'resource' }, () => false),
+      Match.orElse(() => true),
+    ),
   )
     ? 'unavailable'
     : 'allowed';

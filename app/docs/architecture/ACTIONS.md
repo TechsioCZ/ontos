@@ -34,11 +34,39 @@ The definition identifies the permission meaning and permitted targets; it grant
 permission. The owner binds target resolution to its private Action or Read registration. Decoded
 business input cannot select another definition or a broader permission variant.
 
+The contract's `owningModuleKey` identifies its publishing runtime module and must match the genuine
+registered operation. Each member definition retains its canonical `owningCapability`; a publisher
+may host definitions for several business capabilities. Exact definition membership is required.
+Publishing a future capability's descriptor neither activates that capability nor creates a grant.
+
 Owner-specific validation and canonical target construction stay with that owner. Core receives exact
 permission requests, verifies their trusted Tenant, Legal Entity and Storefront constraints, and
 performs the normal Current permission checks for the original Principal. Multiple required targets
 remain an ordered conjunction with exact response correlation. Publishing a descriptor, receiving a
 positive business outcome, or succeeding on an earlier invocation never substitutes for these checks.
+
+Finite inherited grant alternatives belong inside one resolved target. Core checks the primary
+object first, followed by its owner-declared alternatives, using the existing positive-grant union.
+These alternatives do not replace the ordered conjunction between independently required targets.
+An incomplete response remains unavailable unless another verified alternative allows the request.
+
+Grant identity and transport/history identity are separate. The context permission families preserve
+their existing `ctx_` encoding, ordered keys and relationship payloads. Owners resolve `transportModuleKey`,
+`transportObjectId` and any per-target `transportResourceType` for each Action or Read. The two
+operation kinds may have different historical projections. Core uses those projections for evidence,
+not to choose a grant or relax trusted scope. They must not be normalized to the grant object ID.
+
+Owner-state verification is independent of the Principal's Current grant. `ownerStateRequired`
+defaults to true. An owner may declare false only where its accepted scope has no additional
+owner-held record to verify; Tax's exact trusted Tenant/Legal Entity scope is such a case. This does
+not make a permission optional or disable executor, trusted context, module or resource gates.
+
+Grant/revoke preparation uses a genuine owner-qualified target and only its primary grant object;
+inherited alternatives are not additional grants. Journal reconciliation keeps the existing durable
+business target and intent, with an owner construction callback validating that target before Core
+compares the exact permission, Principal, Tenant, key and object ID. PriceGroup containment likewise
+uses owner-validated catalog/group endpoints through the existing bounded atomic writer. Neither
+path accepts a caller-supplied preparation callback or arbitrary relationships.
 
 Assortment owns selector, purpose, audience and admission-set meaning. Its canonical permission keys
 and `asp_` object identities remain stable when this implementation moves. Replace requires the old

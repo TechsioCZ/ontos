@@ -207,10 +207,10 @@ const makeRoutineInvoker = (calls: string[]): ScopedRoutineInvoker => ({
 });
 
 const contextAccess: ContextAccessService = {
-  businessPermissions: ({ targets }) =>
-    Effect.succeed(targets.map(({ permission }) => ({ decision: 'allowed' as const, key: permission }))),
   legalEntities: () => Effect.succeed([]),
   modules: () => Effect.succeed([]),
+  ownerPermissions: ({ targets }) =>
+    Effect.succeed(targets.map(({ target }) => ({ decision: 'allowed' as const, key: target.key }))),
   resources: () => Effect.succeed([]),
   tenants: () => Effect.succeed([]),
 };
@@ -650,8 +650,8 @@ const currentProfileFixture = (
   });
   const access: ContextAccessService = {
     ...contextAccess,
-    businessPermissions: ({ targets }) =>
-      Effect.succeed(targets.map(({ permission }) => ({ decision: options.core ?? 'allowed', key: permission }))),
+    ownerPermissions: ({ targets }) =>
+      Effect.succeed(targets.map(({ target }) => ({ decision: options.core ?? 'allowed', key: target.key }))),
   };
   const currentness: PurchaseLimitEvaluationCurrentnessPortService = {
     resolveCurrent: () =>
