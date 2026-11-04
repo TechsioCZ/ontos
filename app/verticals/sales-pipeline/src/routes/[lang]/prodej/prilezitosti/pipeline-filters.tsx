@@ -10,7 +10,7 @@ import { TagFilter } from '@app/tagging/components/tag-controls';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { Option, Schema } from 'effect';
 import { useState } from 'react';
 import type { ReactNode } from 'react';

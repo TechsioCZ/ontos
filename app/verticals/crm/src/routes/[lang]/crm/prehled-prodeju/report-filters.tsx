@@ -3,7 +3,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { Schema } from 'effect';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { orderDateText } from '../../../../../shared/domain/imports.ts';
