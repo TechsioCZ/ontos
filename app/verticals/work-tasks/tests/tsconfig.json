@@ -1,0 +1,7 @@
+{
+  "extends": "../../../tsconfig.node-tooling.json",
+  "include": [
+    "**/*.ts",
+    "**/*.mts"
+  ]
+}

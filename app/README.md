@@ -69,7 +69,7 @@ Then generate its MicroVertical module contract before its business artifacts. G
 | Stage delivery                          | `../.github/workflows/zerops-stage.yml` and `topology/stage-edge.json`                         |
 | Local database defaults                 | `.env.example`, Compose configuration, and database scripts                                    |
 
-Do not cache current versions, vertical inventory, generated fields, or package-source strategy in prose. Where source files describe the same contract, they must agree; a mismatch is a generator or validation defect, not a choice for documentation to resolve. Use the mise-managed toolchain; do not reintroduce Corepack or alternate pnpm aliases. The repository typecheck script owns the TS-Go/TS7 invocation; do not replace it with an ad hoc compiler command.
+Do not cache current versions, vertical inventory, generated fields, or package-source strategy in prose. Where source files describe the same contract, they must agree; a mismatch is a generator or validation defect, not a choice for documentation to resolve. Standalone Node scripts and shared build configuration have their own TypeScript projects (`scripts/tsconfig.json` and `packages/shared-contracts/tooling/tsconfig.json`), so framework application globals cannot contaminate their HTTP or environment types. Node-tooling projects share `tsconfig.node-tooling.json` with standard TypeScript strict checking, separate from application-only model diagnostics. Use the mise-managed toolchain; do not reintroduce Corepack or alternate pnpm aliases. The repository typecheck script owns the TS-Go/TS7 invocation; do not replace it with an ad hoc compiler command.
 
 ## Private-first routes and public output
 

@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import type { AppUserConfig } from '@modern-js/app-tools';
+import type { AppUserConfig } from '@modern-js/app-tools/cli-config';
 import { getBuildConfigEnvironment } from '@modern-js/app-tools-extensions/config';
 import { getOrUndefined as getOptionOrUndefined } from 'effect/Option';
 import { isSuccess as isResultSuccess } from 'effect/Result';
@@ -28,15 +28,10 @@ const readBuildEnvironmentValue: BuildEnvironmentReader = (name) => {
   return isResultSuccess(decoded) ? getOptionOrUndefined(decoded.success) : undefined;
 };
 
-interface DevelopmentMiddlewareSetup {
-  unshift: (
-    middleware: (
-      request: { url?: string | undefined },
-      response: { end: (body: Buffer) => void; setHeader: (name: string, value: string) => void },
-      next: () => void,
-    ) => void,
-  ) => void;
-}
+type DevelopmentMiddlewareSetup = Pick<
+  Parameters<NonNullable<NonNullable<AppUserConfig['dev']>['setupMiddlewares']>[number]>[0],
+  'unshift'
+>;
 
 const DEVELOPMENT_CONTRACT_ARTIFACTS: ReadonlySet<string> = new Set([
   '/.well-known/ontos-module-manifest.json',
@@ -77,7 +72,7 @@ export const createWorkspaceModernConfig = ({
 }) => ({
   dev: {
     setupMiddlewares: appId === 'shell-super-app' ? [] : [createDevelopmentContractMiddleware(moduleUrl)],
-  },
+  } satisfies NonNullable<AppUserConfig['dev']>,
   output: {
     overrideBrowserslist: BROWSER_TARGETS,
     // The native TS-Go checker blocks every first compile on a check of the whole reference graph, which

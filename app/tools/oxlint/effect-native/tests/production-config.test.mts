@@ -123,8 +123,16 @@ it('test runner restrictions compose with the accessible select wrapper policy',
     'packages/demo/tests/example.test.ts',
   ];
   const source = `${nodeTestImport}import { SelectTemplate } from '@techsio/ui-kit/templates/select';\nvoid SelectTemplate;\n`;
-  const run = runProductionOxlint(Object.fromEntries(files.map((file) => [file, source])));
+  const script = 'scripts/ui.test.mts';
+  const wrapper = 'packages/admin-ui/src/select-template.tsx';
+  const run = runProductionOxlint({
+    ...Object.fromEntries(files.map((file) => [file, source])),
+    [script]: source,
+    [wrapper]: "import { SelectTemplate } from '@techsio/ui-kit/templates/select';\nvoid SelectTemplate;\n",
+  });
   for (const file of files) {
     expect(codesFor(run, file).filter((code) => code === restrictedImportDiagnostic)).toHaveLength(2);
   }
+  expect(codesFor(run, script).filter((code) => code === restrictedImportDiagnostic)).toHaveLength(1);
+  expect(codesFor(run, wrapper)).not.toContain(restrictedImportDiagnostic);
 });

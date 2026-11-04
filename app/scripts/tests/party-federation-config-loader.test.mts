@@ -1,3 +1,5 @@
+import { IncomingMessage, ServerResponse } from 'node:http';
+import { Socket } from 'node:net';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
@@ -132,16 +134,11 @@ it.layer(NodeServices.layer)('Party development discovery', (suite) => {
       expect(native.dev?.setupMiddlewares).toEqual(authored.dev.setupMiddlewares);
       expect(native.server?.publicDir).toEqual(expect.arrayContaining(['./locales', './assets', './.dev-public']));
 
-      const localeRedirect = rstest.fn(
-        (
-          _request: { url?: string | undefined },
-          _response: { end: (body: Buffer) => void; setHeader: (name: string, value: string) => void },
-          next: () => void,
-        ) => {
-          next();
-        },
-      );
-      const middlewares: ((...args: Parameters<typeof localeRedirect>) => void)[] = [localeRedirect];
+      type Middleware = Parameters<Parameters<(typeof authored.dev.setupMiddlewares)[number]>[0]['unshift']>[0];
+      const localeRedirect = rstest.fn((...[_request, _response, next]: Parameters<Middleware>) => {
+        next();
+      });
+      const middlewares: Middleware[] = [localeRedirect];
       for (const setup of authored.dev.setupMiddlewares) {
         setup({
           unshift: (middleware) => {
@@ -152,22 +149,18 @@ it.layer(NodeServices.layer)('Party development discovery', (suite) => {
       expect(middlewares.at(-1)).toBe(localeRedirect);
       for (const artifact of artifacts) {
         for (const suffix of ['', '?cache=refresh']) {
-          const headers = new Map<string, string>();
-          let body = '';
-          const response = {
-            end: (value: Buffer) => {
-              body = value.toString('utf-8');
-            },
-            setHeader: (name: string, value: string) => {
-              headers.set(name, value);
-            },
-          };
+          const incoming = new IncomingMessage(new Socket());
+          incoming.url = `${artifact.path}${suffix}`;
+          const response = new ServerResponse(incoming);
+          const end = rstest.spyOn(response, 'end').mockReturnValue(response);
           const next = rstest.fn<() => void>();
-          middlewares[0]?.({ url: `${artifact.path}${suffix}` }, response, next);
-          expect(body).toBe(artifact.body);
-          expect(headers.get('Content-Type')).toBe('application/json');
-          expect(headers.get('Cache-Control')).toBe('no-cache');
-          expect(headers.get('Content-Length')).toBe(String(Buffer.byteLength(artifact.body)));
+          middlewares[0]?.(incoming, response, next);
+          expect(end).toHaveBeenCalledExactlyOnceWith(Buffer.from(artifact.body));
+          expect(response.getHeaders()).toEqual({
+            'cache-control': 'no-cache',
+            'content-length': String(Buffer.byteLength(artifact.body)),
+            'content-type': 'application/json',
+          });
           expect(next).not.toHaveBeenCalled();
           expect(localeRedirect).not.toHaveBeenCalled();
         }
@@ -178,15 +171,15 @@ it.layer(NodeServices.layer)('Party development discovery', (suite) => {
         '/.well-known/other.json',
         '/.well-known/ontos-module-manifest.json/extra',
       ]) {
-        const response = {
-          end: rstest.fn<(body: Buffer) => void>(),
-          setHeader: rstest.fn<(name: string, value: string) => void>(),
-        };
+        const incoming = new IncomingMessage(new Socket());
+        incoming.url = url;
+        const response = new ServerResponse(incoming);
+        const end = rstest.spyOn(response, 'end').mockReturnValue(response);
         const next = rstest.fn<() => void>();
-        middlewares[0]?.({ url }, response, next);
+        middlewares[0]?.(incoming, response, next);
         expect(next).toHaveBeenCalledOnce();
-        expect(response.end).not.toHaveBeenCalled();
-        expect(response.setHeader).not.toHaveBeenCalled();
+        expect(end).not.toHaveBeenCalled();
+        expect(response.getHeaders()).toEqual({});
       }
     }).pipe(Effect.scoped),
   );

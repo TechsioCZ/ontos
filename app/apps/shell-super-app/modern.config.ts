@@ -61,7 +61,7 @@ export default defineConfig(
       },
       builderPlugins: [pluginTailwindcss()],
       deploy: { releaseEnvelopeRole: 'shell' },
-      dev: { ...ontos.dev, lazyCompilation: getBuildConfigEnvironment('CI') ? false : undefined },
+      dev: getBuildConfigEnvironment('CI') ? { ...ontos.dev, lazyCompilation: false } : ontos.dev,
       plugins: [
         bffPlugin(),
         tanstackRouterPlugin(),

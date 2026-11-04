@@ -290,13 +290,7 @@ export default defineConfig({
     },
     {
       excludeFiles: ['**/tests/e2e/**'],
-      files: [
-        'apps/**/tests/**',
-        'verticals/**/tests/**',
-        'packages/**/tests/**',
-        'scripts/**/*.test.mts',
-        'tools/**/tests/*.test.mts',
-      ],
+      files: ['apps/**/tests/**', 'verticals/**/tests/**', 'packages/**/tests/**'],
       rules: {
         'eslint/no-restricted-imports': [
           'error',
@@ -304,6 +298,13 @@ export default defineConfig({
             paths: [...testRestrictedImports, selectRestrictedImport],
           },
         ],
+      },
+    },
+    {
+      excludeFiles: ['**/tests/e2e/**'],
+      files: ['scripts/**/*.test.mts', 'tools/**/tests/*.test.mts'],
+      rules: {
+        'eslint/no-restricted-imports': ['error', { paths: testRestrictedImports }],
       },
     },
 
