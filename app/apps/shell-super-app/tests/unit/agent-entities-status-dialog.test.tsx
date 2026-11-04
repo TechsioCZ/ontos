@@ -4,6 +4,11 @@ import type { ManageAgentEntityRequest } from '@app/shared-contracts/agent-acces
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, rs } from 'effect-rstest';
 
+import {
+  loadAgentEntities,
+  revokeAgentConnection,
+  saveAgentOperators,
+} from '../../src/routes/people/agent-entities-client.ts' with { rstest: 'importActual' };
 import { AgentEntitiesSection } from '../../src/routes/people/agent-entities-section.tsx';
 
 interface StatusDialogFixture {
@@ -58,13 +63,18 @@ rs.mock('../../src/routes/people/people-client.ts', () => ({
     });
   },
 }));
+// The section imports the client through `agent-data.ts`, which reads `loadAgentEntities` at module
+// scope; keep the real exports and replace only the transport command under test.
 rs.mock('../../src/routes/people/agent-entities-client.ts', () => ({
+  loadAgentEntities,
+  revokeAgentConnection,
   runAgentCommand: (request: ManageAgentEntityRequest, key: string) =>
     Effect.sync(() => {
       fixture.requests.push({ key, request });
       // Deliberately fail the transport: this is a producer/confirmation test, not a simulated server commit.
       return { detail: 'Přerušeno', reason: 'error', status: 'failed' };
     }),
+  saveAgentOperators,
 }));
 beforeEach(() => {
   fixture.agent = { ...fixture.agent, status: 'active' };

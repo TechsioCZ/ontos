@@ -15,8 +15,20 @@ import {
   withoutRecordedPageReads,
 } from '../../../src/routes/browser-request-cache.ts';
 import { staffRoutePreloads } from '../../../src/routes/route-preload-scheduler.ts';
+import type { makeRoutePreloadScheduler } from '../../../src/routes/route-preload-scheduler.ts';
 import { seedDocumentGatewayAssertions } from '../../../src/routes/document-gateway-assertions.ts';
 import { prepareModulePage, RemotePagePreparation } from '../../../src/routes/remote-page-loader.ts';
+
+rstest.mock('../../../src/routes/route-preload-scheduler.ts', () => {
+  const actual = rstest.requireActual<{ readonly makeRoutePreloadScheduler: typeof makeRoutePreloadScheduler }>(
+    '../../../src/routes/route-preload-scheduler.ts',
+  );
+  return {
+    ...actual,
+    // Exercise a full shared background pool here; the scheduler tests cover the serial production default.
+    staffRoutePreloads: actual.makeRoutePreloadScheduler(4),
+  };
+});
 
 const { issueDocumentGatewayContexts } = rstest.hoisted(() => ({
   issueDocumentGatewayContexts: rstest.fn<typeof IssueDocumentGatewayContexts>(),
