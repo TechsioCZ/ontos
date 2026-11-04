@@ -904,9 +904,12 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
         { concurrency: 4 },
       );
       const succeeded = attempts.filter(({ result }) => result.ok);
-      if (succeeded.length !== attempts.length) {
+      // One unavailable owner never hides every other owner's results: its hits are omitted and the answer is marked
+      // partial. Only an answer with no available owner at all is unavailable.
+      if (succeeded.length === 0 && attempts.length > 0) {
         return yield* unavailable();
       }
+      const partial = succeeded.length !== attempts.length;
       const candidates = succeeded.flatMap(({ provider, result }) =>
         result.ok
           ? result.value.flatMap((value) =>
@@ -924,7 +927,7 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
       ];
       if (uniqueCandidates.length === 0) {
         return {
-          partial: false,
+          partial,
           presentation,
           results: [],
         } as const;
@@ -954,7 +957,7 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
         }),
       );
       return {
-        partial: false,
+        partial,
         presentation,
         results,
       } as const;

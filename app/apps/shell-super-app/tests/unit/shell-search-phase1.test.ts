@@ -380,20 +380,28 @@ it.effect('discards a foreign provider hit carrying relevance before dedupe and 
   }),
 );
 
-it.effect('a partial owner failure stays unavailable while a narrowed request never calls the failing owner', () =>
-  Effect.gen(function* partialFailure() {
-    const catalog = yield* catalogEffect;
-    const search = (resourceTypes?: readonly string[]) =>
-      makeShellSearch(dependencies(catalog), {
-        search: ({ searchKey }) =>
-          searchKey === `${betaModule}.search`
-            ? Effect.fail(new ShellProviderUnavailableError())
-            : Effect.succeed([resourceHit(alphaModule, alphaType, 'alpha-1', 'Alfa')]),
-      }).search(context, resourceTypes === undefined ? { query: 'record' } : { query: 'record', resourceTypes });
-    expect(Schema.is(ShellProviderUnavailableError)(yield* search().pipe(Effect.flip))).toBe(true);
-    const narrowed = yield* search([alphaType]);
-    expect(titles(narrowed.results)).toEqual(['Alfa']);
-  }),
+const betaFails = (searchKey: string) => searchKey === `${betaModule}.search`;
+
+it.effect(
+  'a failed owner is omitted as partial, a narrowed request never calls it, and all failing is unavailable',
+  () =>
+    Effect.gen(function* partialFailure() {
+      const catalog = yield* catalogEffect;
+      const search = (failing: (searchKey: string) => boolean, resourceTypes?: readonly string[]) =>
+        makeShellSearch(dependencies(catalog), {
+          search: ({ searchKey }) =>
+            failing(searchKey)
+              ? Effect.fail(new ShellProviderUnavailableError())
+              : Effect.succeed([resourceHit(alphaModule, alphaType, 'alpha-1', 'Alfa')]),
+        }).search(context, resourceTypes === undefined ? { query: 'record' } : { query: 'record', resourceTypes });
+      const partial = yield* search(betaFails);
+      expect(partial.partial).toBe(true);
+      expect(titles(partial.results)).toEqual(['Alfa']);
+      const narrowed = yield* search(betaFails, [alphaType]);
+      expect(narrowed.partial).toBe(false);
+      expect(titles(narrowed.results)).toEqual(['Alfa']);
+      expect(Schema.is(ShellProviderUnavailableError)(yield* search(() => true).pipe(Effect.flip))).toBe(true);
+    }),
 );
 
 it.effect('counterparty collision is sanitized by record permission and only then ordered by relevance', () =>

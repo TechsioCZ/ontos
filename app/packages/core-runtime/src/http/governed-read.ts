@@ -13,6 +13,7 @@ import { isReadCoreError } from '../reads/errors.ts';
 import { ReadRuntime } from '../reads/runtime.ts';
 import { observeReadPhase, readServerTiming, recordReadTiming } from '../reads/diagnostics.ts';
 import type { ReadTiming } from '../reads/diagnostics.ts';
+import { sanitizeErrorMessage } from '../observability/unavailable-mapping.ts';
 
 // Opaque diagnostics only: no services, sockets, identities or request data survive a request.
 const isolateReads = Ref.makeUnsafe<{ readonly id: string | null; readonly ordinal: number }>({
@@ -27,6 +28,23 @@ const nextIsolateRead = Random.nextInt.pipe(
     }),
   ),
 );
+
+/**
+ * Bounded, single-line identity of the first defect: its class and top stack frame, so a 500 names the code that
+ * failed. The defect message is never logged: it can carry private database or payload detail.
+ */
+const DefectIdentitySchema = Schema.Struct({ name: Schema.String, stack: Schema.optional(Schema.String) });
+const defectLogFields = (cause: Cause.Cause<unknown>) => {
+  const defect = Cause.findDefect(cause);
+  const identity = Result.isSuccess(defect)
+    ? Schema.decodeUnknownOption(DefectIdentitySchema)(defect.success)
+    : Option.none();
+  if (Option.isNone(identity)) {
+    return { defectClass: 'unknown' };
+  }
+  const frame = identity.value.stack?.split('\n').find((line) => line.trim().startsWith('at ')) ?? '';
+  return { defectClass: identity.value.name, defectFrame: sanitizeErrorMessage(frame.trim()) };
+};
 
 interface HttpProblem<Status extends number> {
   readonly status: Status;
@@ -590,9 +608,10 @@ export function makeGovernedReadHttpHandler<
 
     return yield* execute.pipe(
       withRequestPermissionDecisions,
-      Effect.catchCauseIf(Cause.hasDies, () =>
+      Effect.catchCauseIf(Cause.hasDies, (cause) =>
         Effect.annotateLogs(Effect.logError('Unexpected governed-read HTTP defect'), {
           correlationId: correlationId === undefined || correlationId.trim().length === 0 ? 'missing' : correlationId,
+          ...defectLogFields(cause),
         }).pipe(Effect.andThen(Effect.fail(options.problems.internal()))),
       ),
       Effect.onExit(

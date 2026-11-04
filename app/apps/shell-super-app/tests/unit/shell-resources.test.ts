@@ -298,7 +298,7 @@ it.effect('search keeps an eligible provider with zero candidates as a successfu
   }),
 );
 
-it.effect('search filters resource denials and fails closed when an eligible owner stays unavailable', () =>
+it.effect('search filters resource denials and marks the answer partial when an eligible owner stays unavailable', () =>
   Effect.gen(function* searchFiltersResourceDenialsAndReports() {
     const result = yield* makeShellSearch(dependencies('active', 'allowed', 'denied'), {
       search: () => Effect.succeed([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]),
@@ -327,9 +327,10 @@ it.effect('search filters resource denials and fails closed when an eligible own
             : Effect.succeed([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]),
       },
     );
-    expect(Schema.is(ShellProviderUnavailableError)(yield* partial.search(context, 'unit').pipe(Effect.flip))).toBe(
-      true,
-    );
+    // The unavailable backup owner is omitted; the available owner's authorized hit is still returned.
+    const answer = yield* partial.search(context, 'unit');
+    expect(answer.partial).toBe(true);
+    expect(answer.results.map(({ title }) => title)).toEqual(['Unit 1']);
     expect(moduleChecks).toEqual([[moduleId]]);
   }),
 );
