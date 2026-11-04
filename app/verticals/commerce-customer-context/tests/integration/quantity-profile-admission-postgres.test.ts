@@ -948,6 +948,9 @@ const startQuantityPublicReceiver = Effect.fn('QuantityProfileAdmissionTests.pub
       Effect.provide(FetchHttpClient.layer),
       Effect.tapError(() => {
         const knownDiagnostics = [
+          'READ_RUNTIME_BEGIN',
+          'READ_RUNTIME_OK',
+          'READ_RUNTIME_FAIL_UNCLASSIFIED',
           'ReadHandlerUnavailable',
           'ReadHandlerExecutionError',
           'ReadScopeResolutionError',

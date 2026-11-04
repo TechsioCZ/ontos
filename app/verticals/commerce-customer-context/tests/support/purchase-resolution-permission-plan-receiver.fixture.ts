@@ -65,18 +65,21 @@ const observeReadFailure = (error: typeof DiagnosticCauseSchema.Type) =>
     }
     process.stderr.write(`${JSON.stringify({ known: [...known], stage: 'quantity-read-runtime' })}\n`);
   });
+const observeReadStage = (stage: 'READ_RUNTIME_BEGIN' | 'READ_RUNTIME_OK' | 'READ_RUNTIME_FAIL_UNCLASSIFIED') =>
+  Effect.sync(() => process.stderr.write(`${stage}\n`));
 const observedProductionReadRuntime = Layer.effect(
   ReadRuntime,
   Effect.gen(function* observeProductionReadRuntime() {
     const base = yield* ReadRuntime;
     const runRead: typeof base.runRead = (input) =>
-      base
-        .runRead(input)
-        .pipe(
-          Effect.tapError((failure) =>
-            Schema.is(DiagnosticCauseSchema)(failure) ? observeReadFailure(failure) : Effect.void,
-          ),
-        );
+      observeReadStage('READ_RUNTIME_BEGIN').pipe(
+        Effect.andThen(() => base.runRead(input)),
+        Effect.tap(() => observeReadStage('READ_RUNTIME_OK')),
+        Effect.tapError(() => observeReadStage('READ_RUNTIME_FAIL_UNCLASSIFIED')),
+        Effect.tapError((failure) =>
+          Schema.is(DiagnosticCauseSchema)(failure) ? observeReadFailure(failure) : Effect.void,
+        ),
+      );
     return { runRead };
   }),
 ).pipe(Layer.provide(productionReadRuntimeLive));
