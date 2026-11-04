@@ -13,7 +13,7 @@ import { CONNECTION_SCOPE_REASON_CODE, isConnectionReadAllowed } from '../auth/o
 import { CoreDatabase } from '../db/client.ts';
 import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
 import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
-import { installOperationalScope, installOperationalScopeAt } from '../db/scoped-transaction.ts';
+import { installOperationalScopeAt } from '../db/scoped-transaction.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import {
@@ -1396,7 +1396,7 @@ const readRuntimeFromDependencies = <
     ) =>
       readTransaction(
         Effect.fn('ReadRuntime.admittedTransaction')(function* admittedTransactionBody(transaction: CoreTransaction) {
-          const scoped = yield* installOperationalScope(transaction, scope, options.databaseIdentities);
+          const { scoped } = yield* installOperationalScopeAt(transaction, scope, options.databaseIdentities);
           if (compositionRevision !== undefined) {
             yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'read').pipe(
               Effect.mapError(compositionNoLongerAdmits),

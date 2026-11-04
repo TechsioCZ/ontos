@@ -180,6 +180,13 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       ) {
         return [{ legal_entity_id: scope.legalEntityId, role: connection.role, tenant_id: scope.tenantId }];
       }
+      // A gateway grant verified in the same statement as its transaction time (installOperationalScopeAt).
+      if (
+        text ===
+        "select current_user::text as role, coalesce(trust.current_tenant_id()::text, '') as tenant_id, coalesce(trust.current_legal_entity_id()::text, '') as legal_entity_id, transaction_timestamp() as operation_at"
+      ) {
+        return installedReadScopeRows(false);
+      }
       if (
         text ===
         "select set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id, transaction_timestamp() as operation_at"

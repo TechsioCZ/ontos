@@ -1,6 +1,19 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { sql } from 'drizzle-orm';
-import { Cause, Context, Crypto, Deferred, Effect, Exit, Fiber, Match, Predicate, Redacted, Schema } from 'effect';
+import {
+  Cause,
+  Context,
+  Crypto,
+  Deferred,
+  DateTime,
+  Effect,
+  Exit,
+  Fiber,
+  Match,
+  Predicate,
+  Redacted,
+  Schema,
+} from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
@@ -116,7 +129,14 @@ for (const boundary of ['context', 'evidence'] as const) {
           }
           return Effect.succeed(
             statement.includes('trust.')
-              ? [{ legal_entity_id: '', role: 'party_registry_runtime', tenant_id: scopedPrincipal.tenantId }]
+              ? [
+                  {
+                    legal_entity_id: '',
+                    operation_at: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+                    role: 'party_registry_runtime',
+                    tenant_id: scopedPrincipal.tenantId,
+                  },
+                ]
               : [],
           );
         });
@@ -142,7 +162,14 @@ for (const boundary of ['context', 'evidence'] as const) {
           ? Effect.die(defect)
           : Effect.succeed(
               statement.includes('trust.')
-                ? [{ legal_entity_id: '', role: 'party_registry_runtime', tenant_id: scopedPrincipal.tenantId }]
+                ? [
+                    {
+                      legal_entity_id: '',
+                      operation_at: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+                      role: 'party_registry_runtime',
+                      tenant_id: scopedPrincipal.tenantId,
+                    },
+                  ]
                 : [],
             ),
       );
@@ -169,7 +196,14 @@ for (const boundary of ['context', 'evidence'] as const) {
         }
         return Effect.succeed(
           statement.includes('trust.')
-            ? [{ legal_entity_id: '', role: 'party_registry_runtime', tenant_id: scopedPrincipal.tenantId }]
+            ? [
+                {
+                  legal_entity_id: '',
+                  operation_at: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+                  role: 'party_registry_runtime',
+                  tenant_id: scopedPrincipal.tenantId,
+                },
+              ]
             : [],
         );
       });

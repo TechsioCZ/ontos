@@ -173,6 +173,8 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly resultTenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly scopeResolutionAwaits?: Deferred.Deferred<boolean>;
     readonly sqlEvents?: string[];
+    /** Every statement the runtime sends, in order: one entry per PostgreSQL round trip. */
+    readonly statements?: string[];
     readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly transactionEvents?: string[];
     readonly transactionSettlementFailure?: SqlError;
@@ -222,6 +224,7 @@ const makeHarness = Effect.fn(function* makeHarness(
     });
   const query = (text: string, values: readonly unknown[]) =>
     Effect.gen(function* executeReadQuery() {
+      options.statements?.push(text);
       if (/^(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE SAVEPOINT)/u.test(text)) {
         options.sqlEvents?.push(text);
       }
@@ -805,7 +808,8 @@ it.effect('runs the owner authorization overlay inside the transaction before th
     expect(ownerInputs).toHaveLength(1);
     expect(ownerInputs[0]?.operation).toBe('read');
     expect(ownerInputs[0]?.operationAt).toEqual(DateTime.makeUnsafe(Date.parse('2026-09-28T09:00:00.000Z')));
-    expect(harness.transactionTimestampReads()).toBe(1);
+    // The owner transaction reads the clock once; the denial evidence transaction reads it in its scope statement.
+    expect(harness.transactionTimestampReads()).toBe(2);
     expect(ownerInputs[0]?.targets).toEqual([{ kind: 'module', moduleId: 'core.shell' }]);
     expect(handlerCalls).toBe(0);
     expect(harness.evidence()).toBe(1);
@@ -1751,6 +1755,46 @@ it.effect('refuses outbound fetch, module transport, and a second pooled connect
       'fetch:https://owner.example/current',
       'second-pool:select 1',
     ]);
+  }),
+);
+
+it.effect('sends one round trip per scope installation, including the denial evidence transaction', () =>
+  Effect.gen(function* scopeInstallationRoundTrips() {
+    const legalEntityId = '00000000-0000-4000-8000-000000000004';
+    const roundTripsFor = (principal: typeof scope, permissionDecision: 'allowed' | 'denied') =>
+      Effect.gen(function* countRoundTrips() {
+        const statements: string[] = [];
+        const harness = yield* makeHarness({
+          permissionDecision,
+          resolvedScope: { ...scope, legalEntityId },
+          statements,
+        });
+        yield* Effect.exit(
+          harness.runtime.runRead({
+            input: {},
+            principal,
+            registration: counterpartyReadRegistration('required', () => {}),
+            transport: { correlationId: scope.correlationId },
+          }),
+        );
+        return statements;
+      });
+    // The composition-verified principal is the same trusted shape as `scope`, only tagged with the revision.
+    const composition = trustVerifiedGatewayPrincipalContext(scope, approvedCompositionRevision);
+    const allowed = yield* roundTripsFor(composition, 'allowed');
+    // Authority precheck, then BEGIN, one scope-and-lock statement, one authority read, COMMIT; then BEGIN, one
+    // scope-and-verify statement, the evidence INSERT, COMMIT. The verify read is no longer a separate round trip.
+    expect(allowed).toHaveLength(9);
+    expect(allowed.filter((text) => text.includes('set_config'))).toHaveLength(2);
+    expect(allowed.filter((text) => text.includes('set_config')).every((text) => text.includes('current_user'))).toBe(
+      true,
+    );
+    const denied = yield* roundTripsFor(composition, 'denied');
+    // Authority precheck, then the denial transaction: BEGIN, scope, fence lock, authority read, INSERT, COMMIT.
+    expect(denied).toHaveLength(7);
+    const plain = yield* roundTripsFor({ ...scope, legalEntityId }, 'allowed');
+    // Main transaction: BEGIN, scope, COMMIT. Evidence transaction: BEGIN, scope-and-verify, INSERT, COMMIT.
+    expect(plain).toHaveLength(7);
   }),
 );
 

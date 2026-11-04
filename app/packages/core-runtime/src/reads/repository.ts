@@ -2,7 +2,7 @@ import { Duration, Effect } from 'effect';
 
 import { recoverSqlTransactionError } from '../actions/repository.ts';
 import { dataAccessEvents } from '../db/schema.ts';
-import { installOperationalScope } from '../db/scoped-transaction.ts';
+import { installOperationalScopeAt } from '../db/scoped-transaction.ts';
 import type { CoreDatabaseExecutor, CoreDbExecutor } from '../db/types.ts';
 import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
 import type { OperationalScope } from '../operations/context.ts';
@@ -83,9 +83,10 @@ export const persistReadEvidence = (
     );
 
 /**
- * Persists denial evidence written outside the governed read transaction. It installs the read's
- * trusted database scope first, so tenant-bound row-level security on `core.data_access_events`
- * admits only the request role's own tenant.
+ * Persists read evidence in its own short transaction, outside the governed read transaction. It installs the
+ * read's trusted database scope first, so tenant-bound row-level security on `core.data_access_events` admits
+ * only the request role's own tenant. The scope install verifies the role and reads back the scope in the same
+ * statement that sets it, so the evidence transaction costs one scope round trip.
  */
 export const persistScopedReadEvidence = (
   executor: Pick<CoreDatabaseExecutor, 'transaction'>,
@@ -94,7 +95,7 @@ export const persistScopedReadEvidence = (
 ): Effect.Effect<void, ReadEvidencePersistenceError> =>
   executor
     .transaction((transaction) =>
-      installOperationalScope(transaction, input.scope, enrollment).pipe(
+      installOperationalScopeAt(transaction, input.scope, enrollment).pipe(
         Effect.andThen(() => persistReadEvidence(transaction, input)),
       ),
     )
