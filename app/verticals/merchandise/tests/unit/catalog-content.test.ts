@@ -1,4 +1,4 @@
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { MerchandiseLifecycleConflict, MerchandiseNotFound } from '../../shared/actions/apply-command.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
@@ -11,6 +11,7 @@ import {
   assignCategory,
   categoryPathOf,
   contentChangeOf,
+  createCategoryCommand,
   updateCategoryCommand,
   withContentHistory,
 } from '../../src/services/catalog-content.ts';
@@ -153,5 +154,54 @@ it.effect('updateCategoryCommand fails with not found for an unknown category', 
       updateCategoryCommand(state, { _tag: 'UpdateCategory', id: categoryId('missing'), patch: { name: 'X' } }, input),
     );
     expect(Schema.is(MerchandiseNotFound)(error)).toBe(true);
+  }),
+);
+
+it.effect('createCategoryCommand adds a child, publishes it, and marks the parent as having children', () =>
+  Effect.gen(function* catalogContentCreateCase1() {
+    const created = yield* createCategoryCommand(
+      state,
+      { _tag: 'CreateCategory', id: 'new', name: 'Pánské', parentId: 'r', slug: 'panske' },
+      input,
+    );
+    const category = created.state.categories?.find((entry) => entry.id === 'new');
+    expect(Option.getOrNull(category?.parentId ?? Option.none())).toBe('r');
+    expect(category?.published).toBe(true);
+    expect(category?.heading).toBe('Pánské');
+    expect(category?.hasChildren).toBe(false);
+    expect(created.state.categories?.find((entry) => entry.id === 'r')?.hasChildren).toBe(true);
+    // The root already has children, so only the new category changes.
+    expect(created.entityIds).toEqual(['new']);
+  }),
+);
+
+it.effect('createCategoryCommand adds a root category that is not published when asked', () =>
+  Effect.gen(function* catalogContentCreateCase2() {
+    const created = yield* createCategoryCommand(
+      state,
+      { _tag: 'CreateCategory', id: 'root2', name: 'Ostatní', parentId: null, published: false, slug: 'ostatni' },
+      input,
+    );
+    const category = created.state.categories?.find((entry) => entry.id === 'root2');
+    expect(category?.published).toBe(false);
+    expect(Option.isNone(category?.parentId ?? Option.some('?'))).toBe(true);
+    expect(created.entityIds).toEqual(['root2']);
+  }),
+);
+
+it.effect('createCategoryCommand refuses an existing identifier and an unknown parent', () =>
+  Effect.gen(function* catalogContentCreateCase3() {
+    const existing = yield* Effect.flip(
+      createCategoryCommand(state, { _tag: 'CreateCategory', id: 'r', name: 'X', parentId: null, slug: 'x' }, input),
+    );
+    expect(Schema.is(MerchandiseLifecycleConflict)(existing)).toBe(true);
+    const orphan = yield* Effect.flip(
+      createCategoryCommand(
+        state,
+        { _tag: 'CreateCategory', id: 'y', name: 'Y', parentId: 'missing', slug: 'y' },
+        input,
+      ),
+    );
+    expect(Schema.is(MerchandiseNotFound)(orphan)).toBe(true);
   }),
 );

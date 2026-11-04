@@ -54,7 +54,7 @@ import { resetToAkrosBaseline } from './akros-demo-reset.ts';
 import { applyMerchandiseAiCommand, isMerchandiseAiCommand } from './ai-changes.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
 import { storefrontBrandOf } from '../../shared/domain/storefront-brand.ts';
-import { assignCategory, updateCategoryCommand, withContentHistory } from './catalog-content.ts';
+import { assignCategory, createCategoryCommand, updateCategoryCommand, withContentHistory } from './catalog-content.ts';
 import {
   categoryTrailsOf,
   categoryTree,
@@ -1559,6 +1559,7 @@ export const evolveMerchandiseState = (
       }),
     ),
     Match.tag('UpdateCategory', (value) => updateCategoryCommand(state, value, input)),
+    Match.tag('CreateCategory', (value) => createCategoryCommand(state, value, input)),
     // Replaces every row of the company in parts, so persistence (applyOnce) performs it; the pure evolve never does.
     Match.tag('ResetDemoData', () => Effect.fail(conflict('Demo reset runs only through persistence'))),
     Match.tag('ChangeProductImages', () => Effect.fail(conflict('Gallery changes run only through persistence'))),
@@ -1781,6 +1782,9 @@ export const workingSetRequestOf = (
       RecordStockMovement: (value): WorkingSetRequest => ({ movements: true, productIds: [value.productId] }),
       RemoveDemoOrder: (value): WorkingSetRequest => ({ movements: true, orderIds: [value.id] }),
       UpdateCategory: (value): WorkingSetRequest => ({ categoryIds: [value.id] }),
+      CreateCategory: (value): WorkingSetRequest => ({
+        categoryIds: value.parentId === null ? [value.id] : [value.id, value.parentId],
+      }),
       UpdateProduct: (value): WorkingSetRequest => {
         const request: Mutable<WorkingSetRequest> = { productIds: [value.id] };
         if (value.patch.slug !== undefined) {

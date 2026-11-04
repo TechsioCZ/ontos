@@ -51,6 +51,7 @@ const CATALOG_COMMANDS: ReadonlySet<string> = new Set([
   'RemoveMarket',
   'SetMarketProductOffers',
   'SetProductMarketOffer',
+  'CreateCategory',
   'UpdateCategory',
   'UpdateProduct',
 ]);

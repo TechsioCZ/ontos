@@ -9,6 +9,7 @@ import { expect, it } from 'effect-rstest';
 
 import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
+import { StorefrontCatalogQuerySchema } from '../../shared/apis/records.ts';
 import {
   CatalogChangeSchema,
   OrderSchema,
@@ -25,7 +26,7 @@ import {
   products,
   stockMovements,
 } from '../../src/database/schema.ts';
-import { storefrontProducts } from '../../src/services/merchandise-queries.ts';
+import { categoryTree, storefrontProducts } from '../../src/services/merchandise-queries.ts';
 import {
   decodeOrderDocument,
   loadHead,
@@ -548,6 +549,41 @@ it.live('UpdateCategory rename renames every product of the category in column a
     }),
   );
 });
+
+it.live('CreateCategory grows the tree after products exist; a product moved into it is listed under its slug', () =>
+  withMerchandise(decodeState(catalogInput), (fixture) =>
+    Effect.gen(function* createCategoryPersistence() {
+      const before = yield* rowsOf(fixture);
+      const { revision } = yield* runCommand(fixture, {
+        _tag: 'CreateCategory',
+        id: 'nove',
+        name: 'Nové šrouby',
+        parentId: 'r',
+        slug: 'nove-srouby',
+      });
+      expect(revision).toBe(fixture.revision + 1);
+      const after = yield* rowsOf(fixture);
+      const created = yield* requiredFixtureValue(after.categories.find((row) => row.id === 'nove'));
+      expect(created.parentId).toBe('r');
+      expect(created.published).toBe(true);
+      expect(after.categories.length).toBe(before.categories.length + 1);
+      expect(after.categories.find((row) => row.id === 'r')?.hasChildren).toBe(true);
+
+      yield* runCommand(fixture, { _tag: 'UpdateProduct', id: 'p1', patch: { categoryId: 'nove' } });
+      const moved = yield* requiredFixtureValue(productRow(yield* rowsOf(fixture), 'p1'));
+      expect(moved.categoryId).toBe('nove');
+      expect(moved.category).toBe('Nové šrouby');
+
+      const listed = yield* storefrontProducts(fixture.db, fixture.scope, {
+        query: Schema.decodeSync(StorefrontCatalogQuerySchema)({ categorySlug: 'nove-srouby', fields: 'card' }),
+      });
+      expect(listed.products.map((product) => product.id)).toEqual(['p1']);
+      // The storefront navigation shows the roots and the children of the active category.
+      const nodes = yield* categoryTree(fixture.db, fixture.scope, { activeId: 'r', storefront: true });
+      expect(nodes.map((node) => node.id)).toContain('nove');
+    }),
+  ),
+);
 
 it.live('UpdateCategory without a rename leaves every product row alone', () =>
   withMerchandise(catalogState, (fixture) =>
