@@ -29,6 +29,23 @@ export interface OverviewSources {
 
 export const readyData = <A>(source: Source<A>): A | undefined => (source.status === 'ready' ? source.data : undefined);
 
+/**
+ * The Shell page that serves each owning module's records. Owner keys name modules and are never URL segments: the
+ * Shell serves these localized paths, which are the same in cs and en.
+ */
+export const ownerRoutes = {
+  agreements: 'smlouvy',
+  finance: 'finance',
+  occupancy: 'najmy',
+  properties: 'nemovitosti',
+  work: 'ukoly',
+} as const;
+
+export const overviewHref = (lang: string, route: string, id?: string) => {
+  const queryString = id === undefined ? '' : `?resourceId=${encodeURIComponent(id)}`;
+  return `/${lang}/${route}${queryString}`;
+};
+
 const money = new Intl.NumberFormat('cs-CZ', { currency: 'CZK', maximumFractionDigits: 0, style: 'currency' });
 export const formatCzk = (minor: number) => money.format(Math.round(minor / 100));
 const dayFormat = new Intl.DateTimeFormat('cs-CZ', {

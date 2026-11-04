@@ -23,6 +23,8 @@ import {
   formatDay,
   isOpenTask,
   isOverdueInvoice,
+  overviewHref,
+  ownerRoutes,
   readyData,
   searchRentalOverview,
   unitAvailability,
@@ -75,7 +77,7 @@ export const projectOverviewAgenda = (records: AgendaSources) => {
             id: `task:${task.ref.resourceId}`,
             kind: 'task' as const,
             label: task.title,
-            owner: 'work',
+            owner: 'work' as const,
             resourceId: task.ref.resourceId,
           },
         ],
@@ -89,7 +91,7 @@ export const projectOverviewAgenda = (records: AgendaSources) => {
             id: `contract:${contract.contractRef.resourceId}`,
             kind: 'contract' as const,
             label: contract.contractRef.resourceId,
-            owner: 'agreements',
+            owner: 'agreements' as const,
             resourceId: contract.contractRef.resourceId,
           },
         ],
@@ -103,7 +105,7 @@ export const projectOverviewAgenda = (records: AgendaSources) => {
       id: `occupancy-start:${occupancy.occupancyRef.resourceId}`,
       kind: 'occupancyStart' as const,
       label: occupancy.unitRef.resourceId,
-      owner: 'occupancy',
+      owner: 'occupancy' as const,
       resourceId: occupancy.occupancyRef.resourceId,
     };
     return occupancy.endDate === null
@@ -503,7 +505,7 @@ const OverviewAgenda = ({
               <td>{formatDay(entry.date)}</td>
               <td>{agendaLabels[entry.kind]}</td>
               <td>
-                <a href={href(entry.owner, entry.resourceId)}>{agendaLabel(entry)} →</a>
+                <a href={href(ownerRoutes[entry.owner], entry.resourceId)}>{agendaLabel(entry)} →</a>
               </td>
             </tr>
           ))}
@@ -573,7 +575,7 @@ const overviewNavigation = (sources: OverviewSources | undefined) => {
     { label: 'Smlouvy', owner: 'agreements', source: sources?.agreements },
     { label: 'Provozní úkoly', owner: 'work', source: sources?.work },
     { label: 'Faktury a finance', owner: 'finance', source: sources?.finance },
-  ];
+  ] as const;
   return nav;
 };
 
@@ -598,10 +600,7 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
   const { agreements, occupancy, property, work } = portfolio;
   const attention = sources === undefined ? [] : attentionItems(sources, today, lang);
   const hits = sources === undefined ? [] : searchRentalOverview(sources, query, lang, includeClosed);
-  const href = (owner: string, id?: string) => {
-    const queryString = id === undefined ? '' : `?resourceId=${encodeURIComponent(id)}`;
-    return `/${lang}/${owner}${queryString}`;
-  };
+  const href = (route: string, id?: string) => overviewHref(lang, route, id);
   const rows = overviewRows({ href, portfolio, selection, today });
   const agenda = projectOverviewAgenda({
     agreements: agreements ?? { contracts: [] },
@@ -641,7 +640,7 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
           {nav.flatMap((item) =>
             item.source?.status === 'ready'
               ? [
-                  <a href={href(item.owner)} key={item.owner}>
+                  <a href={href(ownerRoutes[item.owner])} key={item.owner}>
                     {item.label} →
                   </a>,
                 ]

@@ -5,6 +5,7 @@ import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { projectOverviewAgenda } from '../../src/routes/[lang]/nemovitosti/prehled/page.tsx';
+import { overviewHref, ownerRoutes } from '../../src/routes/[lang]/nemovitosti/prehled/overview-model.ts';
 
 const ref = (owner: string, resource: string, index: number) => ({
   moduleId: owner,
@@ -102,6 +103,25 @@ it.effect('reflects owner changes, excludes cancelled/terminal records and has n
     expect(projectOverviewAgenda(records).map((entry) => [entry.date, entry.kind])).toEqual([
       ['2026-10-05', 'occupancyStart'],
       ['2026-10-06', 'task'],
+    ]);
+  }),
+);
+
+it.effect('links each agenda row to the Shell page that serves its owner, never to the owner key', () =>
+  Effect.gen(function* agendaLinksUseShellPaths() {
+    const records = yield* Schema.decodeUnknownEffect(SourceSchema)({
+      agreements: { contracts: [activeContract] },
+      occupancy: { occupancies: [activeOccupancy] },
+      work: { items: [task] },
+    });
+    const hrefs = projectOverviewAgenda(records).map((entry) =>
+      overviewHref('cs', ownerRoutes[entry.owner], entry.resourceId),
+    );
+    expect(hrefs).toEqual([
+      `/cs/ukoly?resourceId=${task.ref.resourceId}`,
+      `/cs/najmy?resourceId=${activeOccupancy.occupancyRef.resourceId}`,
+      `/cs/najmy?resourceId=${activeOccupancy.occupancyRef.resourceId}`,
+      `/cs/smlouvy?resourceId=${activeContract.contractRef.resourceId}`,
     ]);
   }),
 );
