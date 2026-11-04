@@ -36,7 +36,7 @@ import {
   ActionPermissionCheckError,
   ActionRuntime,
   ContextAccess,
-  ReadHandlerExecutionError,
+  ReadPermissionUnavailable,
   ReadHandlerNotFound,
   ReadPolicyDenied,
   ReadRuntime,
@@ -1441,7 +1441,7 @@ for (const scope of ['TENANT', 'STOREFRONT'] as const) {
             expect(failure.retryable).toBe(false);
           } else {
             const failure = yield* Schema.decodeUnknownEffect(ActionPermissionCheckError)(refused);
-            expect(failure.reason).toBe('The declared business permission target does not match trusted scope');
+            expect(failure.reason).toBe('The declared owner permission targets do not match trusted scope');
           }
           expect(test.authorityEntries()).toBe(entries);
           expect(yield* test.readProofs()).toEqual(original);
@@ -1605,11 +1605,11 @@ it.live(
           ...input,
           storefrontId: 'different-native-approval-storefront',
         });
-        const scopeFailure = yield* Schema.decodeUnknownEffect(ReadHandlerExecutionError)(
+        const scopeFailure = yield* Schema.decodeUnknownEffect(ReadPermissionUnavailable)(
           yield* Effect.flip(read(wrongStorefront)),
         );
-        expect(scopeFailure.code).toBe('read_handler_execution_failed');
-        expect(scopeFailure.reason).toBe('The declared read permission target is invalid');
+        expect(scopeFailure.code).toBe('read_permission_unavailable');
+        expect(scopeFailure.reason).toBe('The owner permission target cannot be verified in the trusted scope');
         expect(test.authorityEntries()).toBe(authorityEntries);
         expect(yield* test.readProofs()).toEqual(proofs);
         expect(yield* test.readRequest()).toEqual(request);
@@ -1736,10 +1736,11 @@ it.live(
           ...input,
           storefrontId: 'different-native-approval-storefront',
         });
-        const refused = yield* Schema.decodeUnknownEffect(ReadHandlerExecutionError)(
+        const refused = yield* Schema.decodeUnknownEffect(ReadPermissionUnavailable)(
           yield* Effect.flip(read(wrongStorefront)),
         );
-        expect(refused.reason).toBe('The declared read permission target is invalid');
+        expect(refused.code).toBe('read_permission_unavailable');
+        expect(refused.reason).toBe('The owner permission target cannot be verified in the trusted scope');
         expect(test.authorityEntries()).toBe(entries);
         expect(yield* test.readProofs()).toEqual(proofs);
         expect(yield* test.readRequest()).toEqual(requests);
