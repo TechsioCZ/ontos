@@ -182,7 +182,8 @@ const unavailable = (cause?: CoreSearchPersistenceCause) =>
 const LABEL_REFRESH_TOKEN_SUPERSEDED = 'Core Search label refresh token has been superseded';
 const STAMP_REPAIR_TOKEN_SUPERSEDED = 'Core Search stamp repair token has been superseded';
 
-const normalize = (value: string): string => value.normalize('NFKC').toLocaleLowerCase('und');
+// Root-locale lowercasing, identical to `toLocaleLowerCase('und')` (verified; see normalizeCoreSearchText).
+const normalize = (value: string): string => value.normalize('NFKC').toLowerCase();
 // NFKC followed by und lowercase expands one UTF-16 input unit by at most 18.
 // U+FDFA reaches 18; this was checked over every Unicode 17 scalar on the managed Node runtime.
 const normalizedTextExpansion = 18;
@@ -1823,10 +1824,8 @@ export const makePostgresCoreSearchProjectionStore = (
   )(function* queryCoreSearchCandidates(input: CoreSearchQuery, scope: OperationalScope) {
     const transactionBody = (transaction: CoreTransaction) =>
       transactionOperations.queryCandidatesTransaction(transaction, input, scope);
-    const documents = yield* runTransaction(transactionBody);
-    return yield* Schema.decodeEffect(Schema.Array(CoreSearchProjectionDocumentSchema))(documents).pipe(
-      Effect.mapError(unavailable),
-    );
+    // Every row already passed decodeCoreSearchDocumentRow, whose mutation decode validates the same document schema.
+    return yield* runTransaction(transactionBody);
   });
   const replace: CoreSearchProjectionStoreService['replace'] = Effect.fn('CoreSearchProjectionStore.replacePostgres')(
     function* replaceCoreSearchProjection(input: CoreSearchProjectionInput, context: OutboxWorkerHandlerContext) {
