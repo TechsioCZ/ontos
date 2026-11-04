@@ -14,7 +14,6 @@ import {
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type {
   ActionCoreError,
-  ContextAccess,
   PrincipalManagementError,
   PrincipalResolutionError,
   OperationalScopeRequest,
@@ -27,6 +26,7 @@ import {
   AgentProposalCommandPreparationLive,
   AgentProposalCommandAuthorizationPreflightLive,
   IdentityAdministrationDeniedAuditLive,
+  ContextAccess,
   ContextAccessLive,
   CorePersistenceLive,
   CoreSearchProjectionStoreLive,
@@ -150,6 +150,7 @@ import type {
   ShellCapabilityUnavailableProblem,
   ShellInternalProblem,
   ShellDocumentContextRequest,
+  ResolveModuleTargetPayload,
   ResolveModuleTargetsPayload,
   ShellInvalidRequestProblem,
   ShellSearchPayload,
@@ -1294,6 +1295,62 @@ const issueDocumentGatewayAssertions = Effect.fn('ShellGateway.issueDocumentAsse
 );
 
 /**
+ * The single-target resolution, exported so the runtime boundary is testable. A verified tenant session without a
+ * selected company may open only an explicitly opted-in page; every other page keeps the existing company
+ * requirement and is answered 409 `selection_required`. A company session always takes the company Read and module
+ * gate, even for an opted-in page. Run inside `withRequestPermissionDecisions`.
+ */
+export const resolveModuleTargetHandler = Effect.fn('shell.composition.resolveModuleTarget')(
+  function* resolveModuleTargetHandlerEffect(request: RequestWithHeaders, payload: ResolveModuleTargetPayload) {
+    yield* noStore;
+    const session = yield* requireShellSession(request.headers);
+    if (session.state !== 'authenticated' && session.state !== 'tenant_authenticated') {
+      return yield* failShellProblem(shellSelectionRequiredProblem());
+    }
+    const catalog = yield* captureShellRelease(payload.compositionRevision);
+    const governedReads = yield* ShellGovernedReads;
+    const correlationId = correlationFromRequest(request);
+    const selector = {
+      ...payload,
+      // The captured release: the pinned one when the caller sent it, otherwise the current one.
+      compositionRevision: catalog.composition.revision,
+      correlationId,
+      principal: session.principal,
+    };
+    const logTargetFailure = (error: ReadCoreError) =>
+      logShellReadFailure(
+        'module_target',
+        request,
+        error,
+        moduleTargetLogAnnotations(catalog, {
+          reportedSource: request.headers[moduleTargetSourceHeader],
+          selector: payload,
+          sourcePath: request.headers[moduleTargetSourcePathHeader],
+        }),
+      );
+    if (session.state === 'tenant_authenticated') {
+      // The tenant-only registration admits the target only when this exact page opted in and a genuine tenant
+      // module.access permission allowed it; a company module decision is never consulted.
+      const outcome = yield* governedReads.tenantModuleTarget(selector).pipe(
+        Effect.provideService(CapturedShellCompositionCatalog, catalog),
+        Effect.tapError(logTargetFailure),
+        Effect.catch((error) => pipe(error, shellReadProblem, failShellProblem)),
+      );
+      if (outcome.state === 'selection_required') {
+        return yield* failShellProblem(shellSelectionRequiredProblem());
+      }
+      return yield* decodeResponse(ResolvedModuleTargetSchema, outcome.target, shellInternalProblem);
+    }
+    const response = yield* governedReads.moduleTarget(selector).pipe(
+      Effect.provideService(CapturedShellCompositionCatalog, catalog),
+      Effect.tapError(logTargetFailure),
+      Effect.catch((error) => pipe(error, shellReadProblem, failShellProblem)),
+    );
+    return yield* decodeResponse(ResolvedModuleTargetSchema, response, shellInternalProblem);
+  },
+);
+
+/**
  * The targets the browser prepares together (every menu destination), with one session resolution and one captured
  * release. Each target is still its own governed read with its own evidence; its problem is its own outcome, while a
  * session or release problem fails the request. Run inside `withRequestPermissionDecisions`: SpiceDB decisions are
@@ -1487,7 +1544,11 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
           );
           const captured = yield* composition;
           const documentComposition = captured.composition;
-          const base = { composition: documentComposition, session, tenants };
+          const baseDocument = { composition: documentComposition, session, tenants };
+          const base =
+            documentComposition.state === 'available'
+              ? { ...baseDocument, compositionRevision: documentComposition.compositionRevision }
+              : baseDocument;
           if (documentComposition.state !== 'available' || captured.catalog === null) {
             return base;
           }
@@ -1528,7 +1589,23 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
       },
       { concurrency: 2 },
     );
-    return {
+    let tenantRelease = Option.none<string>();
+    if (context.state === 'tenant_authenticated') {
+      const access = yield* ContextAccess;
+      const decisions = yield* access.tenants({
+        permission: 'access',
+        principalId: context.principal.principalId,
+        tenantIds: [context.principal.tenantId],
+      });
+      const [decision] = decisions;
+      if (decisions.length === 1 && decision?.key === context.principal.tenantId && decision.decision === 'allowed') {
+        tenantRelease = yield* captureShellRelease(payload.compositionRevision).pipe(
+          Effect.map((catalog) => catalog.composition.revision),
+          Effect.option,
+        );
+      }
+    }
+    const result = {
       ...document,
       legalEntities: withOptionalProperty(
         { legalEntities: context.availableLegalEntities, tenantContextAvailable },
@@ -1538,6 +1615,7 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
         { state: context.state },
       ),
     };
+    return Option.isSome(tenantRelease) ? { ...result, compositionRevision: tenantRelease.value } : result;
   },
 );
 
@@ -1596,38 +1674,7 @@ const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'compo
       ),
     )
     .handle('resolveModuleTarget', ({ payload, request }) =>
-      Effect.gen(function* resolveModuleTargetHandler() {
-        yield* noStore;
-        const session = yield* requireAuthenticatedShellContext(request.headers);
-        const catalog = yield* captureShellRelease(payload.compositionRevision);
-        const governedReads = yield* ShellGovernedReads;
-        const correlationId = correlationFromRequest(request);
-        const response = yield* governedReads
-          .moduleTarget({
-            ...payload,
-            // The captured release: the pinned one when the caller sent it, otherwise the current one.
-            compositionRevision: catalog.composition.revision,
-            correlationId,
-            principal: session.principal,
-          })
-          .pipe(
-            Effect.provideService(CapturedShellCompositionCatalog, catalog),
-            Effect.tapError((error) =>
-              logShellReadFailure(
-                'module_target',
-                request,
-                error,
-                moduleTargetLogAnnotations(catalog, {
-                  reportedSource: request.headers[moduleTargetSourceHeader],
-                  selector: payload,
-                  sourcePath: request.headers[moduleTargetSourcePathHeader],
-                }),
-              ),
-            ),
-            Effect.catch((error) => pipe(error, shellReadProblem, failShellProblem)),
-          );
-        return yield* decodeResponse(ResolvedModuleTargetSchema, response, shellInternalProblem);
-      }).pipe(
+      resolveModuleTargetHandler(request, payload).pipe(
         withRequestPermissionDecisions,
         recoverUnexpectedDefect(request, 'Unexpected module target defect', () =>
           failShellProblem(shellInternalProblem()),

@@ -78,13 +78,20 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
   composition: ShellGovernedReadsService['composition'],
   issueDocument: Effect.Effect<readonly []> = Effect.succeed([] as const),
   peopleStarted: Effect.Effect<unknown> = Effect.void,
+  tenantAccess: TenantDecisions = Effect.succeed(denied),
 ) {
   const { catalog } = yield* fixture;
   const readComposition = rs.fn(composition);
   const issue = rs.fn(() => issueDocument);
-  const tenantPermissions = rs.fn(({ permission }: { readonly permission: string }) =>
-    permission === 'select_context' ? hint : peopleStarted.pipe(Effect.as(denied)),
-  );
+  const tenantPermissions = rs.fn(({ permission }: { readonly permission: string }) => {
+    if (permission === 'select_context') {
+      return hint;
+    }
+    if (permission === 'access') {
+      return tenantAccess;
+    }
+    return peopleStarted.pipe(Effect.as(denied));
+  });
   const response = yield* withRequestPermissionDecisions(documentContextHandler(request, {})).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -272,11 +279,89 @@ for (const state of ['selection_required', 'access_blocked', 'tenant_authenticat
       expect(response).not.toHaveProperty('gatewayAssertions');
       expect(readComposition).not.toHaveBeenCalled();
       expect(issue).not.toHaveBeenCalled();
-      expect(tenantPermissions).toHaveBeenCalledExactlyOnceWith({
+      expect(tenantPermissions).toHaveBeenCalledWith({
         permission: 'select_context',
         principalId: principal.principalId,
         tenantIds: [principal.tenantId],
       });
+      expect(tenantPermissions).toHaveBeenCalledTimes(state === 'tenant_authenticated' ? 2 : 1);
+      expect(response).not.toHaveProperty('compositionRevision');
+      if (state === 'tenant_authenticated') {
+        expect(tenantPermissions).toHaveBeenCalledWith({
+          permission: 'access',
+          principalId: principal.principalId,
+          tenantIds: [principal.tenantId],
+        });
+      }
+    }),
+  );
+}
+
+it.effect(
+  'exposes only the captured revision to a verified tenant with canonical access, independently of switcher permission',
+  () =>
+    Effect.gen(function* tenantSearchRevision() {
+      const { legalEntityId, ...tenantPrincipal } = principal;
+      void legalEntityId;
+      const context: ShellContextResult = {
+        availableLegalEntities: [legalEntity],
+        identity,
+        principal: tenantPrincipal,
+        setCookieHeaders: [],
+        state: 'tenant_authenticated',
+      };
+      const { catalog } = yield* fixture;
+      const { issue, readComposition, response, tenantPermissions } = yield* documentTest(
+        context,
+        Effect.succeed(denied),
+        () => Effect.die('Tenant search must not request a company composition'),
+        Effect.die('Tenant search must not issue gateway assertions'),
+        Effect.void,
+        Effect.succeed([{ decision: 'allowed', key: principal.tenantId }]),
+      );
+      expect(response.compositionRevision).toBe(catalog.composition.revision);
+      expect(response.composition).toEqual({ navigation: [], state: 'selection_required' });
+      expect(response.session.state).toBe('tenant_authenticated');
+      expect(response.legalEntities?.tenantContextAvailable).toBe(false);
+      expect(response.legalEntities).not.toHaveProperty('selectedLegalEntityId');
+      expect(response).not.toHaveProperty('gatewayAssertions');
+      expect(response).not.toHaveProperty('canManagePeople');
+      expect(response).not.toHaveProperty('home');
+      expect(issue).not.toHaveBeenCalled();
+      expect(readComposition).not.toHaveBeenCalled();
+      expect(tenantPermissions).toHaveBeenCalledWith({
+        permission: 'access',
+        principalId: principal.principalId,
+        tenantIds: [principal.tenantId],
+      });
+    }),
+);
+
+for (const decisions of [denied, unavailable, [{ decision: 'allowed' as const, key: 'foreign-tenant' }], []]) {
+  it.effect(`never exposes a search revision for non-canonical tenant admission ${JSON.stringify(decisions)}`, () =>
+    Effect.gen(function* noTenantSearchRevision() {
+      const { legalEntityId, ...tenantPrincipal } = principal;
+      void legalEntityId;
+      const context: ShellContextResult = {
+        availableLegalEntities: [legalEntity],
+        identity,
+        principal: tenantPrincipal,
+        setCookieHeaders: [],
+        state: 'tenant_authenticated',
+      };
+      const { issue, readComposition, response } = yield* documentTest(
+        context,
+        Effect.succeed([{ decision: 'allowed', key: principal.tenantId }]),
+        () => Effect.die('No company composition'),
+        Effect.succeed([] as const),
+        Effect.void,
+        Effect.succeed(decisions),
+      );
+      expect(response).not.toHaveProperty('compositionRevision');
+      expect(response).not.toHaveProperty('gatewayAssertions');
+      expect(response.legalEntities?.tenantContextAvailable).toBe(true);
+      expect(issue).not.toHaveBeenCalled();
+      expect(readComposition).not.toHaveBeenCalled();
     }),
   );
 }

@@ -158,24 +158,33 @@ export const RemotePagePreparation = Context.Reference<{
   defaultValue: () => ({ load: loadRemotePage, prefetch: prefetchRecordedReads }),
 });
 
-/** The props a page and its `preloadPage` both receive: the person's context, the route parameters and the query. */
+/**
+ * The props a page and its `preloadPage` both receive: the person's context, the route parameters and the query.
+ * A company session keeps its existing `context`; a tenant-authenticated session without a selected company gets
+ * only `tenantContext`, and every other state (company selection required, access blocked) gets neither.
+ */
 export const modulePageProps = (
   shell: HomePageModel,
   routeParams: Readonly<Record<string, string>>,
   search: string,
-): ModulePageProps =>
-  shell.state === 'authenticated' && shell.selectedLegalEntityId !== undefined
-    ? {
-        context: {
-          displayName: shell.identity.displayName,
-          legalEntityId: shell.selectedLegalEntityId,
-          principalId: shell.identity.principalId,
-          tenantId: shell.identity.tenantId,
-        },
-        routeParams,
-        search,
-      }
-    : { routeParams, search };
+): ModulePageProps => {
+  if (shell.state !== 'authenticated') {
+    return { routeParams, search };
+  }
+  if (shell.contextState === 'authenticated' && shell.selectedLegalEntityId !== undefined) {
+    const { displayName, principalId, tenantId } = shell.identity;
+    return {
+      context: { displayName, legalEntityId: shell.selectedLegalEntityId, principalId, tenantId },
+      routeParams,
+      search,
+    };
+  }
+  if (shell.contextState === 'tenant_authenticated') {
+    const { displayName, principalId, tenantId } = shell.identity;
+    return { routeParams, search, tenantContext: { displayName, principalId, tenantId } };
+  }
+  return { routeParams, search };
+};
 
 /** The target's page module when it is already loaded, so a page can render it in its first commit. */
 export const peekRemotePage = (target: RemotePage): Option.Option<ReadyRemotePage> =>

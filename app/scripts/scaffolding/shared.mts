@@ -198,6 +198,11 @@ export type ReadScaffoldAuthorization = typeof ReadScaffoldAuthorizationSchema.T
 
 export interface PageScaffoldConfig {
   readonly authorization: ReadScaffoldAuthorization;
+  /**
+   * Absent keeps the default company requirement; `optional` is the only opt-in and is the only
+   * accepted value, so a page can never widen its legal-entity behavior by omission or typo.
+   */
+  readonly legalEntityScope?: 'optional';
   readonly page: string;
   readonly permission?: string;
   readonly url?: string;

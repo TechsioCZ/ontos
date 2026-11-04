@@ -21,7 +21,7 @@ const withOptionalProperty = <Base extends object, Key extends PropertyKey, Valu
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 type ShellPageContribution = OntosShellContributions['pages'][number];
-type ShellRenderableContribution = ShellPageContribution | OntosShellContributions['publicComponents'][number];
+export type ShellRenderableContribution = ShellPageContribution | OntosShellContributions['publicComponents'][number];
 
 const shellCompositionUnavailableErrorFields = {
   cause: Schema.optionalKey(Schema.Defect()),
@@ -350,6 +350,37 @@ const resolvePublicComponentPermission = Effect.fn('ShellComposition.resolvePubl
 );
 
 /**
+ * Tenant-only module admission: a tenant-authenticated session without a selected company has no company module
+ * permission to ask for, so the target module is gated by the genuine tenant context permission instead. A missing
+ * adapter or an indeterminate decision fails closed; a real denial is forbidden. No company ID is invented.
+ */
+const resolveTenantModulePermission = Effect.fn('ShellComposition.resolveTenantModulePermission')(
+  function* resolveTenantModulePermissionEffect(
+    sources: ShellCompositionAccessSources,
+    context: ShellCompositionContext & { readonly moduleId: string },
+  ) {
+    const check = sources.contextAccess.contextPermissions;
+    if (check === undefined) {
+      return { outcome: 'unavailable' } as const;
+    }
+    const target = { moduleId: context.moduleId, permission: 'module.access' };
+    const [decision, ...extra] = yield* check({
+      principalId: context.principalId,
+      targets: [target],
+      tenantId: context.tenantId,
+    });
+    if (
+      extra.length > 0 ||
+      decision?.key !== toContextPermissionAccessKey(target) ||
+      decision.decision === 'unavailable'
+    ) {
+      return { outcome: 'unavailable' } as const;
+    }
+    return decision.decision === 'denied' ? ({ outcome: 'forbidden' } as const) : null;
+  },
+);
+
+/**
  * Navigation entries whose page requires a context permission beyond module access (for example restricted
  * agendas) are hidden when that permission is denied. Unavailable decisions keep the current behaviour (listed;
  * the page itself still enforces access).
@@ -418,18 +449,38 @@ export type ShellModuleTargetAuthorization =
       readonly appId: string;
       readonly compositionRevision: string;
       readonly denial: { readonly outcome: 'forbidden' | 'unavailable' } | null;
-      readonly federation: {
-        readonly expose: string;
-        readonly manifest: Extract<
-          ShellInstalledCatalog['composition']['modules'][number]['federation'],
-          { readonly execution: 'browser' }
-        >['manifest'];
-        readonly remoteName: string;
-      };
+      readonly federation: ShellModuleTargetFederation;
       readonly moduleId: string;
       readonly outcome: 'candidate';
       readonly page: ShellRenderableContribution;
       readonly routeParameters: Readonly<Record<string, string>>;
+    };
+
+/** The approved browser remote of a module target that the catalog confirms. */
+export interface ShellModuleTargetFederation {
+  readonly expose: string;
+  readonly manifest: Extract<
+    ShellInstalledCatalog['composition']['modules'][number]['federation'],
+    { readonly execution: 'browser' }
+  >['manifest'];
+  readonly remoteName: string;
+}
+
+/**
+ * The finished module-target decision: either a resolved browser page, or the exact reason no target may open
+ * (`forbidden`, `not_found`, `reload_required`, `selection_required`, `unavailable`).
+ */
+export type ShellModuleTargetResolution =
+  | { readonly outcome: 'forbidden' | 'not_found' | 'reload_required' | 'selection_required' | 'unavailable' }
+  | {
+      readonly appId: string;
+      readonly compositionRevision: string;
+      readonly federation: ShellModuleTargetFederation;
+      readonly moduleId: string;
+      readonly outcome: 'resolved';
+      readonly page: ShellRenderableContribution;
+      readonly routeParameters: Readonly<Record<string, string>>;
+      readonly writable: boolean;
     };
 
 const moduleTargetAuthorization = (authorization: ShellModuleTargetAuthorization) => authorization;
@@ -477,7 +528,10 @@ export const makeShellCompositionData = (sources: ShellCompositionDataSources) =
 };
 
 /** After commit: the module state read inside the transaction decides before the access outcome. */
-const finishShellModuleTarget = (authorization: ShellModuleTargetAuthorization, state: Option.Option<ModuleState>) => {
+const finishShellModuleTarget = (
+  authorization: ShellModuleTargetAuthorization,
+  state: Option.Option<ModuleState>,
+): ShellModuleTargetResolution => {
   if (authorization.outcome !== 'candidate') {
     return authorization;
   }
@@ -785,6 +839,75 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
   );
 
   /**
+   * Tenant-only page admission: the exact page must opt in with `legalEntityScope: 'optional'`, otherwise the
+   * request still requires a selected company (`selection_required`). A public component never opts in. The owning
+   * module is gated by a genuine tenant `module.access` context permission, never by a missing company or an
+   * inferred grant; the same module state and component-exposure checks as the company path still apply.
+   */
+  const authorizeTenantModuleTarget = Effect.fn('ShellCompositionAccess.authorizeTenantModuleTarget')(
+    function* authorizeTenantModuleTargetEffect(
+      context: ShellCompositionContext,
+      input: {
+        readonly access?: ModuleEntrypointAccess;
+        readonly canonicalPath?: string;
+        readonly compositionRevision?: string;
+        readonly entrypointKey?: string;
+        readonly moduleId?: string;
+      },
+    ) {
+      if (context.legalEntityId !== undefined) {
+        return moduleTargetAuthorization({ outcome: 'selection_required' });
+      }
+      const catalog = yield* loadCatalog(sources);
+      if (input.compositionRevision !== undefined && input.compositionRevision !== catalog.composition.revision) {
+        return moduleTargetAuthorization({ outcome: 'reload_required' });
+      }
+      const selected = resolvePageSelection(catalog, input);
+      if (selected === null) {
+        return moduleTargetAuthorization({ outcome: 'not_found' });
+      }
+      const { contract, page, routeParameters } = selected;
+      if (!('routePath' in page) || page.legalEntityScope !== 'optional') {
+        // Only an explicitly opted-in page may open without a selected company; everything else keeps the
+        // existing company requirement and the Shell answers 409 selection_required.
+        return moduleTargetAuthorization({ outcome: 'selection_required' });
+      }
+      const moduleId = contract.manifest.module.id;
+      const approvedModule = catalog.composition.modules.find((module) => module.moduleId === moduleId);
+      const component = contract.manifest.publicSurface.components.find(({ key }) => key === page.componentKey);
+      if (approvedModule?.federation.execution !== 'browser' || component === undefined) {
+        return moduleTargetAuthorization({ outcome: 'unavailable' });
+      }
+      if (!matchesComponentExposure(component, approvedModule.federation, page.expose)) {
+        return moduleTargetAuthorization({ outcome: 'unavailable' });
+      }
+      // The target module's tenant permission is an independent check beside any component permission.
+      const [permission, publicPermission] = yield* Effect.all(
+        [
+          resolveTenantModulePermission(sources, { ...context, moduleId }),
+          resolvePublicComponentPermission(sources, context, page),
+        ],
+        { concurrency: 2 },
+      );
+      return moduleTargetAuthorization({
+        access: input.access ?? page.entrypoint.access,
+        appId: contract.deployment.appId,
+        compositionRevision: catalog.composition.revision,
+        denial: permission ?? publicPermission,
+        federation: {
+          expose: page.expose,
+          manifest: approvedModule.federation.manifest,
+          remoteName: approvedModule.federation.remoteName,
+        },
+        moduleId,
+        outcome: 'candidate',
+        page,
+        routeParameters,
+      });
+    },
+  );
+
+  /**
    * Asks SpiceDB, in one round trip, for each module's access and navigation permissions in the captured release.
    * The Shell frame itself needs company admission, not a Shell module capability. Run beside the governed read
    * under `withRequestPermissionDecisions` so its content checks join these decisions. Failures are the read's to report.
@@ -842,6 +965,7 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
   return Object.freeze({
     authorizeComposition,
     authorizeModuleTarget,
+    authorizeTenantModuleTarget,
     finishComposition,
     finishModuleTarget: finishShellModuleTarget,
     prefetchCompositionDecisions,

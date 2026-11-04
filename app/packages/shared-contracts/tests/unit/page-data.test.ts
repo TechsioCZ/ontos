@@ -5,6 +5,7 @@ import {
   moduleWriteEvent,
   pageDataPending,
   pageDataScopeKey,
+  pageDataTenantScopeKey,
   pageDataWorkEvent,
 } from '@app/shared-contracts/page-data';
 import type { PageDataWork } from '@app/shared-contracts/page-data';
@@ -167,6 +168,23 @@ it('detail identity includes the tenant, company, principal and module and rejec
     expect(pageDataScopeKey({ ...context, [field]: '' }, 'orders')).toBeUndefined();
   }
   expect(pageDataScopeKey(context, 'customers')).not.toBe(key);
+});
+
+it('tenant-only identity includes the tenant, principal and module while company keys keep their company guard', () => {
+  const tenantContext = { principalId: 'principal', tenantId: 'tenant' };
+  const tenantKey = pageDataTenantScopeKey(tenantContext, 'projects.core');
+  expect(pageDataTenantScopeKey(undefined, 'projects.core')).toBeUndefined();
+  for (const field of ['principalId', 'tenantId'] as const) {
+    expect(pageDataTenantScopeKey({ ...tenantContext, [field]: 'other' }, 'projects.core')).not.toBe(tenantKey);
+    expect(pageDataTenantScopeKey({ ...tenantContext, [field]: '' }, 'projects.core')).toBeUndefined();
+  }
+  expect(pageDataTenantScopeKey(tenantContext, 'customers')).not.toBe(tenantKey);
+  expect(
+    pageDataScopeKey({ legalEntityId: 'company', principalId: 'principal', tenantId: 'tenant' }, 'projects.core'),
+  ).not.toBe(tenantKey);
+  expect(
+    pageDataScopeKey({ legalEntityId: '', principalId: 'principal', tenantId: 'tenant' }, 'projects.core'),
+  ).toBeUndefined();
 });
 
 it.live(

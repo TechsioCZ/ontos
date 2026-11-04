@@ -21,6 +21,18 @@ export interface ModulePageContext {
   readonly tenantId: string;
 }
 
+/**
+ * The verified tenant identity available when a signed-in session has selected no company. `ModulePageContext`
+ * remains the company-scoped context; a tenant-scoped module reads whichever context is present, so company pages
+ * keep their existing fail-closed guard.
+ */
+export interface ModuleTenantPageContext {
+  /** Signed-in principal name from the Shell session, never a demo persona lookup. */
+  readonly displayName?: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+}
+
 /** Missing Shell identity never shares a detail cache with an authenticated page. */
 const ScopeKeySchema = Schema.fromJsonString(
   Schema.Tuple([Schema.String, Schema.String, Schema.String, Schema.String]),
@@ -29,6 +41,29 @@ export const pageDataScopeKey = (context: ModulePageContext | undefined, moduleI
   context !== undefined && context.tenantId !== '' && context.principalId !== '' && context.legalEntityId !== ''
     ? Result.getOrThrow(
         Schema.encodeResult(ScopeKeySchema)([context.tenantId, context.legalEntityId, context.principalId, moduleId]),
+      )
+    : undefined;
+
+/**
+ * Key of a tenant-scoped dataset: tenant, principal and module without a company. Its JSON tuple is longer than the
+ * company key's, so a tenant identity and a company identity can never produce the same key.
+ */
+const TenantScopeKeySchema = Schema.fromJsonString(
+  Schema.Tuple([Schema.Literal('tenant'), Schema.String, Schema.String, Schema.String, Schema.Literal('tenant')]),
+);
+export const pageDataTenantScopeKey = (
+  context: ModuleTenantPageContext | undefined,
+  moduleId: string,
+): string | undefined =>
+  context !== undefined && context.tenantId !== '' && context.principalId !== ''
+    ? Result.getOrThrow(
+        Schema.encodeResult(TenantScopeKeySchema)([
+          'tenant',
+          context.tenantId,
+          context.principalId,
+          moduleId,
+          'tenant',
+        ]),
       )
     : undefined;
 
@@ -48,10 +83,16 @@ declare global {
 
 /** Props the Shell passes to every exposed page/component and to its preloadPage. */
 export interface ModulePageProps {
+  /** The company-scoped context; absent whenever the session has no selected company. */
   readonly context?: ModulePageContext;
   readonly routeParams: Readonly<Record<string, string>>;
   /** Raw query string of the URL being opened, with leading '?', or '' (same shape as TanStack location.searchStr). */
   readonly search: string;
+  /**
+   * The session's verified tenant identity, present instead of `context` for a tenant-authenticated session
+   * without a selected company, so a tenant-scoped module does not inherit a company prerequisite.
+   */
+  readonly tenantContext?: ModuleTenantPageContext;
 }
 
 /** Optional named export `preloadPage` of an exposed module. Resolves when the page's primary data settled; never rejects. */

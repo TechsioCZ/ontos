@@ -21,8 +21,9 @@ import {
  * One in-memory cache per document for the browser's module traffic, installed by the Shell around `fetch`.
  *
  * Every remote bundles its own copy of the generated clients, so a cache inside those clients would be one cache
- * per remote. `fetch` is the seam they all share: module reads (`/module-api/…/reads/…` and `…/search/…`) are
- * answered from memory and concurrent identical reads share one request. Each physical downstream request
+ * per remote. `fetch` is the seam they all share: ordinary module reads (`/module-api/…/reads/…`) are answered
+ * from memory and concurrent identical reads share one request. Search and explicit `no-store` target reads bypass
+ * both answer retention and single-flight without invalidating unrelated reads. Each physical downstream request
  * uses its own single-use gateway assertion. Any other module request is a write: once it settles, every cached
  * read is dropped and `moduleWriteEvent` is dispatched, so a user never sees their own change missing.
  *
@@ -175,9 +176,20 @@ const classify = (state: CacheState, input: RequestInfo | URL, init: RequestInit
   if (!url.pathname.includes('/module-api/')) {
     return pass;
   }
-  return /\/(?:reads|search)\//u.test(url.pathname) && body !== undefined
-    ? { kind: 'read', read: moduleRead(state, url, body, init) }
-    : { kind: 'write' };
+  if (/\/search\//u.test(url.pathname)) {
+    return pass;
+  }
+  const isRead = /\/reads\//u.test(url.pathname) && body !== undefined;
+  const noStore =
+    init.cache === 'no-store' ||
+    new Headers(init.headers)
+      .get('cache-control')
+      ?.split(',')
+      .some((directive) => directive.trim().toLowerCase() === 'no-store') === true;
+  if (isRead && noStore) {
+    return pass;
+  }
+  return isRead ? { kind: 'read', read: moduleRead(state, url, body, init) } : { kind: 'write' };
 };
 
 const toResponse = ({ body, headers, status, statusText }: BufferedResponse): Response =>

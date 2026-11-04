@@ -26,7 +26,35 @@ const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const principalId = '30000000-0000-4000-8000-000000000001';
 
-const deployment = (appId: string, moduleId: string, displayName: string, order: number) => ({
+/** The module's landing page contribution, optionally opted into tenant-only admission. */
+const pageHomeContribution = (appId: string, moduleId: string, legalEntityScope?: 'optional') => {
+  const page = {
+    componentKey: `${moduleId}.page-home`,
+    contributionKey: `${moduleId}.page.home`,
+    entrypoint: {
+      access: 'read',
+      authorization: {
+        kind: 'context_permission',
+        permission: 'module_access',
+      },
+      entrypointKey: `${moduleId}.page.home`,
+      moduleKey: moduleId,
+      role: 'page',
+      scope: 'tenant',
+    },
+    expose: './PageHome',
+    routePath: `/${appId}`,
+  };
+  return legalEntityScope === undefined ? page : { ...page, legalEntityScope };
+};
+
+const deployment = (
+  appId: string,
+  moduleId: string,
+  displayName: string,
+  order: number,
+  legalEntityScope?: 'optional',
+) => ({
   deployment: { appId, buildMarker: `build-${appId}` },
   manifest: {
     activation: {
@@ -79,25 +107,7 @@ const deployment = (appId: string, moduleId: string, displayName: string, order:
             pageKey: `${moduleId}.page.home`,
           },
         ],
-        pages: [
-          {
-            componentKey: `${moduleId}.page-home`,
-            contributionKey: `${moduleId}.page.home`,
-            entrypoint: {
-              access: 'read',
-              authorization: {
-                kind: 'context_permission',
-                permission: 'module_access',
-              },
-              entrypointKey: `${moduleId}.page.home`,
-              moduleKey: moduleId,
-              role: 'page',
-              scope: 'tenant',
-            },
-            expose: './PageHome',
-            routePath: `/${appId}`,
-          },
-        ],
+        pages: [pageHomeContribution(appId, moduleId, legalEntityScope)],
         publicComponents: [],
         reports: [],
         resourceDetails: [],
@@ -372,6 +382,19 @@ const makeShellComposition = (sources: ShellCompositionAccessSources & ShellComp
     ) =>
       access
         .authorizeModuleTarget(targetContext, input)
+        .pipe(
+          Effect.flatMap((authorization) =>
+            data
+              .loadModuleTarget(targetContext, authorization)
+              .pipe(Effect.map((state) => access.finishModuleTarget(authorization, state))),
+          ),
+        ),
+    resolveTenantModuleTarget: (
+      targetContext: ShellCompositionContext,
+      input: Parameters<typeof access.authorizeTenantModuleTarget>[1],
+    ) =>
+      access
+        .authorizeTenantModuleTarget(targetContext, input)
         .pipe(
           Effect.flatMap((authorization) =>
             data
@@ -1199,6 +1222,109 @@ it.effect(
       // Access is decided before the transaction reads the module state, so an inactive module was checked too.
       expect(calls.length).toBe(2);
     }),
+);
+
+/**
+ * The default catalog with exactly the property home page opted into tenant-only admission. The opt-in is built into
+ * the composition before decoding, so the installed catalog's own `getByModuleId` contract carries it (a post-hoc
+ * mutation of `catalog.contracts` would be invisible to that closure-held lookup).
+ */
+const optedInCatalog = () =>
+  makeInstalledModuleCatalogLoader(
+    makeCompositionSnapshot([
+      deployment('property-registry', 'property.registry', 'Property', 20, 'optional'),
+      deployment('documents-center', 'documents.center', 'Documents', 10),
+    ]),
+  );
+
+type ContextPermissionInput = Parameters<NonNullable<ContextAccessService['contextPermissions']>>[0];
+
+it.effect('admits an opted-in page to a tenant session only through a genuine tenant module permission', () =>
+  Effect.gen(function* tenantOnlyPageAdmission() {
+    const approvedCatalog = yield* optedInCatalog();
+    const calls: ContextPermissionInput[] = [];
+    let decision: ContextAccessDecision = 'allowed';
+    const source = {
+      catalog: Effect.succeed(approvedCatalog),
+      contextAccess: {
+        ...contextAccess({ 'property.registry': 'allowed' }),
+        contextPermissions: (input: ContextPermissionInput) => {
+          calls.push(input);
+          return Effect.succeed([{ decision, key: 'property.registry:module.access' }]);
+        },
+      },
+      moduleStates: {
+        getTenantModuleStates: () => Effect.succeed([{ moduleKey: 'property.registry', state: 'active' as const }]),
+      },
+      navigationExclusions: noExclusions,
+    };
+    const composition = makeShellComposition(source);
+    const tenantContext = { principalId, tenantId } as const;
+    expect(
+      (yield* composition.resolveTenantModuleTarget(tenantContext, { moduleId: 'property.registry' })).outcome,
+    ).toBe('resolved');
+    expect(calls).toEqual([
+      { principalId, targets: [{ moduleId: 'property.registry', permission: 'module.access' }], tenantId },
+    ]);
+    decision = 'denied';
+    expect(
+      (yield* composition.resolveTenantModuleTarget(tenantContext, { moduleId: 'property.registry' })).outcome,
+    ).toBe('forbidden');
+    decision = 'unavailable';
+    expect(
+      (yield* composition.resolveTenantModuleTarget(tenantContext, { moduleId: 'property.registry' })).outcome,
+    ).toBe('unavailable');
+    // A missing context-permission adapter fails closed instead of admitting on the missing company.
+    const noAdapter = makeShellComposition({
+      ...source,
+      contextAccess: contextAccess({ 'property.registry': 'allowed' }),
+    });
+    expect((yield* noAdapter.resolveTenantModuleTarget(tenantContext, { moduleId: 'property.registry' })).outcome).toBe(
+      'unavailable',
+    );
+    // The tenant path never admits a request that already carries a selected company.
+    expect((yield* composition.resolveTenantModuleTarget(context, { moduleId: 'property.registry' })).outcome).toBe(
+      'selection_required',
+    );
+  }),
+);
+
+it.effect('keeps a page without the opt-in and every public component company-required for a tenant session', () =>
+  Effect.gen(function* tenantOnlyPageRefusals() {
+    const calls: ContextPermissionInput[] = [];
+    const source = {
+      contextAccess: {
+        ...contextAccess({ 'property.registry': 'allowed' }),
+        contextPermissions: (input: ContextPermissionInput) => {
+          calls.push(input);
+          return Effect.succeed([{ decision: 'allowed' as const, key: 'property.registry:module.access' }]);
+        },
+      },
+      moduleStates: {
+        getTenantModuleStates: () => Effect.succeed([{ moduleKey: 'property.registry', state: 'active' as const }]),
+      },
+      navigationExclusions: noExclusions,
+    };
+    const composition = makeShellComposition({ ...source, catalog: catalog() });
+    const tenantContext = { principalId, tenantId } as const;
+    expect(
+      (yield* composition.resolveTenantModuleTarget(tenantContext, { moduleId: 'property.registry' })).outcome,
+    ).toBe('selection_required');
+    expect(
+      (yield* composition.resolveTenantModuleTarget(tenantContext, { canonicalPath: '/missing-module' })).outcome,
+    ).toBe('not_found');
+    const componentComposition = makeShellComposition({
+      ...source,
+      catalog: publicComponentCatalog(),
+    });
+    expect(
+      (yield* componentComposition.resolveTenantModuleTarget(tenantContext, {
+        entrypointKey: 'property.registry.component.overview',
+        moduleId: 'property.registry',
+      })).outcome,
+    ).toBe('selection_required');
+    expect(calls).toEqual([]);
+  }),
 );
 
 it.effect('uses the selected legal entity for navigation and direct page authorization', () =>

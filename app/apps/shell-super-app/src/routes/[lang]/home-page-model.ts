@@ -8,6 +8,7 @@ import type {
   SafeAuthenticatedIdentity,
   SafeTenantIdentity,
   ShellComposition,
+  ShellDocumentContext,
   ShellHomeComponent,
   ShellNavigationItem,
   ShellRecordDestination,
@@ -357,6 +358,12 @@ const presentedNavigation = (
 const navigationModuleIds = (navigation: ComposedNavigation) =>
   new Set(navigation.items.map(({ moduleId }) => String(moduleId)));
 
+/** Only a verified tenant session exposes the captured release; it never becomes a company or navigation grant. */
+const capturedTenantRevision = (
+  state: 'access_blocked' | 'selection_required' | 'tenant_authenticated',
+  compositionRevision: ShellDocumentContext['compositionRevision'],
+): string | undefined => (state === 'tenant_authenticated' ? compositionRevision : undefined);
+
 const legalEntitiesWithoutSelection = (session: Exclude<CurrentSession, { readonly state: 'anonymous' }>) => ({
   items:
     session.state === 'selection_required' || session.state === 'tenant_authenticated'
@@ -395,7 +402,10 @@ const loadServerHomePageModel = Effect.fn('HomePageModel.loadServerHomePageModel
       if (context.tenants?.state === 'authentication_required') {
         return sessionEndedModel;
       }
-      const model: AuthenticatedHomePageModel = {
+      // A verified tenant session may carry the real captured revision; it never carries company navigation,
+      // assertions or a fabricated selected company. A missing revision keeps the session ineligible.
+      const tenantRevision = capturedTenantRevision(session.state, context.compositionRevision);
+      const base: AuthenticatedHomePageModel = {
         contextState: session.state,
         identity: session.identity,
         legalEntities:
@@ -410,7 +420,7 @@ const loadServerHomePageModel = Effect.fn('HomePageModel.loadServerHomePageModel
         state: 'authenticated',
         tenants,
       };
-      return model;
+      return tenantRevision === undefined ? base : { ...base, compositionRevision: tenantRevision };
     }
     const composition = context.composition ?? { state: 'unavailable' as const };
     if (composition.state === 'reload_required') {
@@ -462,6 +472,27 @@ type BrowserCompanyReady = (
   options: ShellAuthenticationClientOptions,
 ) => Effect.Effect<void>;
 
+/** A verified tenant session may pin the real captured release; every other read keeps no company navigation. */
+const tenantRevisionFor = (
+  state: 'access_blocked' | 'selection_required' | 'tenant_authenticated',
+  identity: SafeTenantIdentity,
+  options: ShellAuthenticationClientOptions,
+  requestedRevision: string | undefined,
+) =>
+  state === 'tenant_authenticated'
+    ? documentContext(requestedRevision === undefined ? {} : { compositionRevision: requestedRevision }, options).pipe(
+        Effect.map((document) =>
+          document.session.state === 'tenant_authenticated' &&
+          document.session.identity.principalId === identity.principalId &&
+          document.session.identity.tenantId === identity.tenantId
+            ? document.compositionRevision
+            : undefined,
+        ),
+        Effect.option,
+        Effect.map(Option.getOrUndefined),
+      )
+    : Effect.void;
+
 /** Browser loaders: every read is shared and kept in the browser cache, so a navigation rarely waits for any. */
 const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageModel')(
   function* loadBrowserHomePageModelEffect(
@@ -474,6 +505,8 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
       return anonymousModel;
     }
     if (session.state !== 'authenticated') {
+      const requestedRevision = yield* requestedCompositionRevision(request);
+      const tenantRevision = yield* tenantRevisionFor(session.state, session.identity, options, requestedRevision);
       return yield* Effect.all(
         {
           legalEntities: legalEntitiesFor(session.identity, options).pipe(
@@ -494,18 +527,20 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
         },
         { concurrency: 2 },
       ).pipe(
-        Effect.map(({ legalEntities, tenants }): HomePageModel =>
-          tenants.state === 'stale'
-            ? sessionEndedModel
-            : {
-                contextState: session.state,
-                identity: session.identity,
-                legalEntities,
-                navigation: emptyNavigation,
-                state: 'authenticated',
-                tenants,
-              },
-        ),
+        Effect.map(({ legalEntities, tenants }): HomePageModel => {
+          if (tenants.state === 'stale') {
+            return sessionEndedModel;
+          }
+          const base = {
+            contextState: session.state,
+            identity: session.identity,
+            legalEntities,
+            navigation: emptyNavigation,
+            state: 'authenticated' as const,
+            tenants,
+          };
+          return tenantRevision === undefined ? base : { ...base, compositionRevision: tenantRevision };
+        }),
       );
     }
     const requestedRevision = yield* requestedCompositionRevision(request);

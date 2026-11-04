@@ -40,7 +40,7 @@ import type {
 } from '../../shared/api.ts';
 import { capturedShellCatalog } from './captured-shell-catalog.ts';
 import { ShellCompositionFactory } from './shell-composition.ts';
-import type { ShellModuleTargetSelector } from './shell-composition.ts';
+import type { ShellModuleTargetResolution, ShellModuleTargetSelector } from './shell-composition.ts';
 import {
   GovernedResolvedModuleTargetSchema,
   GovernedResolveModuleTargetPayloadSchema,
@@ -98,7 +98,108 @@ export interface ShellGovernedReadsService {
       readonly role?: 'CUSTOMER' | 'SUPPLIER';
     },
   ) => Effect.Effect<ShellSearchResponse, ReadCoreError>;
+  readonly tenantModuleTarget: (
+    input: ShellReadRequest & {
+      readonly canonicalPath?: string;
+      /** Absent: resolve against the current release; the caller compares the returned revision. */
+      readonly compositionRevision?: string;
+      readonly entrypointKey?: string;
+      readonly moduleId?: string;
+    },
+  ) => Effect.Effect<ShellTenantModuleTarget, ReadCoreError>;
 }
+
+/**
+ * A tenant-only module target read either resolves the target or reports that this exact page still requires a
+ * selected company. The selection outcome travels in the success channel so the Shell answers 409
+ * `selection_required` for exactly the pages that did not opt in, never a blanket 403.
+ */
+export const ShellTenantModuleTargetSchema = Schema.Union([
+  Schema.Struct({ state: Schema.Literal('selection_required') }),
+  Schema.Struct({ state: Schema.Literal('resolved'), target: GovernedResolvedModuleTargetSchema }),
+]);
+export type ShellTenantModuleTarget = Schema.Schema.Type<typeof ShellTenantModuleTargetSchema>;
+
+/** The typed failure contract shared by both module-target Read handlers. */
+type ModuleTargetHandlerFailure = ReadHandlerNotFound | ReadHandlerUnavailable | ReadPermissionDenied;
+
+/** The Read success contract of the company module target. */
+type CompanyModuleTargetHandlerResult = ReadHandlerResult<ResolvedModuleTarget>;
+
+/** The Read success contract of the tenant-only module target. */
+type TenantModuleTargetHandlerResult = ReadHandlerResult<ShellTenantModuleTarget>;
+
+/**
+ * The shared outcome mapping of a finished company module target: an unknown target is not found, a definite
+ * denial is forbidden, and anything indeterminate is unavailable. A resolved target decodes to the governed schema.
+ */
+const moduleTargetHandlerResult = (
+  resolution: ShellModuleTargetResolution,
+): Effect.Effect<CompanyModuleTargetHandlerResult, ModuleTargetHandlerFailure> => {
+  if (resolution.outcome === 'not_found') {
+    return Effect.fail(
+      new ReadHandlerNotFound({
+        code: 'read_handler_not_found',
+        reason: 'The requested module target was not found',
+      }),
+    );
+  }
+  if (resolution.outcome === 'forbidden') {
+    return Effect.fail(
+      new ReadPermissionDenied({
+        code: 'read_permission_denied',
+        reason: 'The requested module target is forbidden',
+      }),
+    );
+  }
+  if (resolution.outcome !== 'resolved') {
+    return Effect.fail(
+      new ReadHandlerUnavailable({
+        code: 'read_handler_unavailable',
+        reason: 'The Shell module target is temporarily unavailable',
+      }),
+    );
+  }
+  return Schema.decodeEffect(GovernedResolvedModuleTargetSchema)({
+    appId: resolution.appId,
+    componentKey: resolution.page.componentKey,
+    compositionRevision: resolution.compositionRevision,
+    entrypointKey: resolution.page.entrypoint.entrypointKey,
+    federation: resolution.federation,
+    moduleId: resolution.moduleId,
+    routeParameters: resolution.routeParameters,
+    writable: resolution.writable,
+  }).pipe(
+    Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+    Effect.mapError((cause) => {
+      const error = new ReadHandlerUnavailable({
+        code: 'read_handler_unavailable',
+        reason: 'The Shell module target is temporarily unavailable',
+      });
+      Object.defineProperty(error, 'cause', { configurable: true, value: cause });
+      return error;
+    }),
+  );
+};
+
+/**
+ * The tenant-only counterpart: a page that did not opt in reports `selection_required` in the success channel (the
+ * Shell answers 409 for exactly that page), and every other outcome maps exactly as the company target does.
+ */
+const tenantModuleTargetHandlerResult = (
+  resolution: ShellModuleTargetResolution,
+): Effect.Effect<TenantModuleTargetHandlerResult, ModuleTargetHandlerFailure> =>
+  resolution.outcome === 'selection_required'
+    ? Effect.succeed({
+        evidence: { resultCount: 0 },
+        result: { state: 'selection_required' as const },
+      })
+    : moduleTargetHandlerResult(resolution).pipe(
+        Effect.map(({ evidence, result }) => ({
+          evidence,
+          result: { state: 'resolved' as const, target: result },
+        })),
+      );
 
 export class ShellGovernedReads extends Context.Service<ShellGovernedReads, ShellGovernedReadsService>()(
   '@app/shell-super-app/api/modules/shell-governed-reads/ShellGovernedReads',
@@ -124,6 +225,18 @@ const moduleTargetEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'core.shell.module-target',
+  moduleKey: 'core.shell',
+  role: 'api',
+});
+/**
+ * Tenant-only counterpart of the module target. Its frame is the authenticated principal; the target page's owning
+ * module is gated by a genuine tenant `module.access` context permission in the handler, and the read is
+ * `legalEntityScope: 'optional'` so a verified tenant session without a selected company can be admitted.
+ */
+const tenantModuleTargetEntrypoint = defineSystemModuleEntrypoint({
+  access: 'read',
+  authorization: { kind: 'authenticated_principal' },
+  entrypointKey: 'core.shell.tenant-module-target',
   moduleKey: 'core.shell',
   role: 'api',
 });
@@ -364,71 +477,46 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
           .loadModuleTarget(context.scope, context.prepared)
           .pipe(Effect.mapError(moduleTargetUnavailable)),
       finish: (_input, context) =>
-        Effect.succeed(compositionAccess.finishModuleTarget(context.prepared, context.loaded)).pipe(
-          Effect.flatMap(
-            (
-              resolution,
-            ): Effect.Effect<
-              ReadHandlerResult<ResolvedModuleTarget>,
-              ReadHandlerNotFound | ReadHandlerUnavailable | ReadPermissionDenied
-            > => {
-              if (resolution.outcome === 'not_found') {
-                return Effect.fail(
-                  new ReadHandlerNotFound({
-                    code: 'read_handler_not_found',
-                    reason: 'The requested module target was not found',
-                  }),
-                );
-              }
-              if (resolution.outcome === 'forbidden') {
-                return Effect.fail(
-                  new ReadPermissionDenied({
-                    code: 'read_permission_denied',
-                    reason: 'The requested module target is forbidden',
-                  }),
-                );
-              }
-              if (resolution.outcome !== 'resolved') {
-                return Effect.fail(
-                  new ReadHandlerUnavailable({
-                    code: 'read_handler_unavailable',
-                    reason: 'The Shell module target is temporarily unavailable',
-                  }),
-                );
-              }
-              return Schema.decodeEffect(GovernedResolvedModuleTargetSchema)({
-                appId: resolution.appId,
-                componentKey: resolution.page.componentKey,
-                compositionRevision: resolution.compositionRevision,
-                entrypointKey: resolution.page.entrypoint.entrypointKey,
-                federation: resolution.federation,
-                moduleId: resolution.moduleId,
-                routeParameters: resolution.routeParameters,
-                writable: resolution.writable,
-              }).pipe(
-                Effect.map((result) => ({
-                  evidence: { resultCount: 1 },
-                  result,
-                })),
-                Effect.mapError((cause) => {
-                  const error = new ReadHandlerUnavailable({
-                    code: 'read_handler_unavailable',
-                    reason: 'The Shell module target is temporarily unavailable',
-                  });
-                  Object.defineProperty(error, 'cause', {
-                    configurable: true,
-                    value: cause,
-                  });
-                  return error;
-                }),
-              );
-            },
-          ),
-        ),
+        moduleTargetHandlerResult(compositionAccess.finishModuleTarget(context.prepared, context.loaded)),
       // oxlint-enable perfectionist/sort-objects
     },
     serviceFactory,
     () => ({ kind: 'legal_entity' }),
+  );
+  const tenantModuleTarget = defineRead(
+    {
+      accessKind: 'detail',
+      entrypoint: tenantModuleTargetEntrypoint,
+      evidencePolicy: {
+        captureMode: 'metadata_only',
+        policyKey: 'core.shell.tenant-module-target.evidence.v1',
+      },
+      inputSchema: GovernedResolveModuleTargetPayloadSchema,
+      legalEntityScope: 'optional',
+      owningModuleKey: 'core.shell',
+      // A tenant-only read has no company target to ask; the handler checks the owning module's tenant permission.
+      permissionTarget: 'tenant',
+      policies: [],
+      readKey: 'core.shell.tenant-module-target',
+      resultSchema: ShellTenantModuleTargetSchema,
+      schemaVersion: '1',
+    },
+    {
+      // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
+      prepare: (input, context) =>
+        compositionAccess
+          .authorizeTenantModuleTarget(context.scope, input)
+          .pipe(Effect.mapError(moduleTargetUnavailable)),
+      load: (_input, context) =>
+        context.services.composition
+          .loadModuleTarget(context.scope, context.prepared)
+          .pipe(Effect.mapError(moduleTargetUnavailable)),
+      finish: (_input, context): Effect.Effect<TenantModuleTargetHandlerResult, ModuleTargetHandlerFailure> =>
+        tenantModuleTargetHandlerResult(compositionAccess.finishModuleTarget(context.prepared, context.loaded)),
+      // oxlint-enable perfectionist/sort-objects
+    },
+    serviceFactory,
+    () => ({ kind: 'tenant', permission: 'access' }),
   );
   const resourceDetail = defineRead(
     {
@@ -552,6 +640,7 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       ),
     resourceDetail,
     search,
+    tenantModuleTarget,
   } as const;
 });
 
@@ -655,6 +744,35 @@ export const createShellGovernedReadsLayer = (
             registration: registrations.search,
             transport: { correlationId: request.correlationId },
           });
+        },
+        // A verified tenant session without a selected company uses the tenant-only registration, which admits only
+        // an explicitly opted-in page and gates its module by a genuine tenant `module.access` permission.
+        tenantModuleTarget: (request) => {
+          const input: MutableModuleTargetSelector = {};
+          if (request.compositionRevision !== undefined) {
+            input.compositionRevision = request.compositionRevision;
+          }
+          if (request.canonicalPath !== undefined) {
+            input.canonicalPath = request.canonicalPath;
+          }
+          if (request.entrypointKey !== undefined) {
+            input.entrypointKey = request.entrypointKey;
+          }
+          if (request.moduleId !== undefined) {
+            input.moduleId = request.moduleId;
+          }
+          const transport =
+            request.moduleId === undefined
+              ? { correlationId: request.correlationId }
+              : { correlationId: request.correlationId, targetModuleKey: request.moduleId };
+          return withRequestPermissionDecisions(
+            runtime.runRead({
+              input,
+              principal: request.principal,
+              registration: registrations.tenantModuleTarget,
+              transport,
+            }),
+          );
         },
       };
     }),

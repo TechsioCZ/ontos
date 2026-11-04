@@ -644,6 +644,8 @@ export type ShellDocumentHome = typeof ShellDocumentHomeSchema.Type;
 export const ShellDocumentContextSchema = Schema.Struct({
   canManagePeople: Schema.optionalKey(Schema.Boolean),
   composition: Schema.optionalKey(ShellDocumentCompositionSchema),
+  /** Captured release identity only; tenant authentication gains no company or navigation capability. */
+  compositionRevision: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u))),
   gatewayAssertions: Schema.optionalKey(Schema.Array(DocumentGatewayAssertionSchema)),
   home: Schema.optionalKey(ShellDocumentHomeSchema),
   legalEntities: Schema.optionalKey(AvailableLegalEntitiesResponseSchema),

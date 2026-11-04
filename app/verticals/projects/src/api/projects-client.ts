@@ -1,7 +1,8 @@
 import { Effect, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { makeEffectBffClientOptions } from '@app/shared-contracts/client-runtime';
-import type { EffectBffRequestContext } from '@app/shared-contracts/client-runtime';
+import type { EffectBffClientOptions, EffectBffRequestContext } from '@app/shared-contracts/client-runtime';
 import { projectsApi, projectsApiContract, projectsOperationContexts } from '../../shared/api.ts';
+import type { ReadProjectRequest } from '../../shared/apis/read-project.ts';
 import { executeCreateProject } from './create-project-action-client.ts';
 import { executeUpdateProject } from './update-project-action-client.ts';
 import { executeMoveProject } from './move-project-action-client.ts';
@@ -19,6 +20,14 @@ export const projectsClient = {
   unarchive: executeUnarchiveProject,
   update: executeUpdateProject,
 };
+/** Exact-target reads opt out explicitly; the generated client forwards these canonical transport options. */
+export const executeFreshReadProject = (payload: ReadProjectRequest, requestCorrelation: string) => {
+  const options: Pick<EffectBffClientOptions, 'baseUrl' | 'compositionRevision' | 'requestCache'> = {
+    requestCache: 'no-store',
+  };
+  return executeReadProject(payload, requestCorrelation, options);
+};
+
 // <generated-action-http-client-exports>
 export { executeArchiveProject, executeArchiveProjectWithAuthorization } from './archive-project-action-client.ts';
 export { executeCreateProject, executeCreateProjectWithAuthorization } from './create-project-action-client.ts';

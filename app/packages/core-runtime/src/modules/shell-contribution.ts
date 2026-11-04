@@ -205,11 +205,18 @@ export const ShellPageRecordTargetSchema = Schema.Struct({
   resourceType: stableKey,
 });
 
+/**
+ * A page contribution may opt in, one page at a time, to being opened by a tenant-authenticated session that has not
+ * selected a company. The only opt-in value is `optional`; an absent key keeps the existing company requirement, so a
+ * contribution that does not declare it is byte-identical to before. The Shell still admits a tenant-only request
+ * only after a genuine tenant membership and the owning module's tenant `module.access` permission.
+ */
 export const ShellPageContributionSchema = Schema.Struct({
   componentKey,
   contributionKey,
   entrypoint: pageEntrypoint,
   expose,
+  legalEntityScope: Schema.optionalKey(Schema.Literal('optional')),
   /**
    * The resource a page opens. `idParameter` must be the page's only route parameter and `resourceType` must be a type
    * the declaring module publishes, so the Shell can open the owner's exact record page from composed evidence.

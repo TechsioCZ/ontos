@@ -23,6 +23,8 @@ export interface EffectBffClientOptions {
   readonly baseUrl?: string | URL;
   readonly compositionRevision?: string;
   readonly referenceCredentials?: Redacted.Redacted;
+  /** Explicit read freshness; this transport directive grants no operation or data authority. */
+  readonly requestCache?: 'no-store';
   readonly requestContext?: EffectBffRequestContext;
   /** Owner-resolved transport headers; undefined values stay absent on the wire. */
   readonly transportHeaders?: HttpHeaders.Input;
@@ -112,12 +114,13 @@ export const makeGovernedEffectBffClient = <ApiId extends string, Groups extends
     requestCorrelation,
     requestTrace,
   }: GovernedEffectBffClientConfig<ApiId, Groups>,
-  options: Pick<EffectBffClientOptions, 'baseUrl' | 'compositionRevision' | 'referenceCredentials'>,
+  options: Pick<EffectBffClientOptions, 'baseUrl' | 'compositionRevision' | 'referenceCredentials' | 'requestCache'>,
 ) => {
   const baseUrl = String(options.baseUrl ?? defaultApiPrefix);
   // Header construction skips undefined values, so absent optional headers stay absent.
   const transportHeaders = {
     authorization: Redacted.value(credential),
+    'cache-control': options.requestCache,
     'idempotency-key': idempotencyKey,
     'x-correlation-id': requestCorrelation,
     'x-ontos-composition-revision': options.compositionRevision,

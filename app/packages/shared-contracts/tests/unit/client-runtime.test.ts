@@ -264,6 +264,40 @@ for (const [failureKind, transport, expectedTag] of [
   );
 }
 
+it.effect('governed exact-target reads can request no-store without changing credentials or ordinary requests', () =>
+  Effect.gen(function* explicitReadFreshness() {
+    const requests: Request[] = [];
+    const fakeFetch: typeof fetch = (input, init) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(Response.json({ value: 'current-owner' }));
+    };
+    const read = (requestCache?: 'no-store') =>
+      makeGovernedEffectBffClient(
+        {
+          api: RepresentativeApi,
+          credential: Redacted.make('Bearer unchanged-credential'),
+          defaultApiPrefix: 'https://owner.example/representative-api',
+          requestCorrelation: 'unchanged-correlation',
+        },
+        requestCache === undefined ? {} : { requestCache },
+      ).pipe(
+        Effect.flatMap((client) => client.representative.read({})),
+        Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+      );
+    yield* read();
+    yield* read('no-store');
+    expect(requests.map(({ headers }) => headers.get('cache-control'))).toEqual([null, 'no-store']);
+    expect(requests.map(({ headers }) => headers.get('authorization'))).toEqual([
+      'Bearer unchanged-credential',
+      'Bearer unchanged-credential',
+    ]);
+    expect(requests.map(({ headers }) => headers.get('x-correlation-id'))).toEqual([
+      'unchanged-correlation',
+      'unchanged-correlation',
+    ]);
+  }),
+);
+
 it.effect('governed clients send the Idempotency-Key as a transport header only when supplied', () =>
   Effect.gen(function* sendIdempotencyKeyTransportHeader() {
     const requests: Request[] = [];

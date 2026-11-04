@@ -4,8 +4,10 @@ import { TestClock } from 'effect/testing';
 import { afterAll, beforeEach, expect, it, rs } from 'effect-rstest';
 
 import { awaitPrimaryModuleReads } from '../../src/routes/browser-request-cache.ts';
-import { prepareModulePage, RemotePagePreparation } from '../../src/routes/remote-page-loader.ts';
+import { modulePageProps, prepareModulePage, RemotePagePreparation } from '../../src/routes/remote-page-loader.ts';
 import type { loadRemotePage, ReadyRemotePage } from '../../src/routes/remote-page-loader.ts';
+import type { AuthenticatedHomePageModel } from '../../src/routes/[lang]/home-page-model.ts';
+import { LegalEntityIdSchema, SafeTenantIdentitySchema } from '../../shared/api.ts';
 
 const transport = {
   load: rs.fn<typeof loadRemotePage>(),
@@ -371,3 +373,96 @@ it.live('keeps actual foreground data ahead of speculation after the router stop
     }).pipe(Effect.ensuring(Deferred.succeed(release, true)));
   }),
 );
+
+const companyLegalEntityId = Schema.decodeUnknownSync(LegalEntityIdSchema)('11111111-1111-4111-8111-111111111111');
+const tenantIdentity = Schema.decodeUnknownSync(SafeTenantIdentitySchema)({
+  displayName: 'Ada Lovelace',
+  email: 'ada@example.test',
+  principalId: 'person-one',
+  tenantId: 'tenant-one',
+});
+const tenantOnlyModel = (
+  identity: AuthenticatedHomePageModel['identity'] = tenantIdentity,
+): AuthenticatedHomePageModel => ({
+  contextState: 'tenant_authenticated',
+  identity,
+  legalEntities: { items: [], state: 'available' },
+  navigation: {
+    deniedAppIds: [],
+    items: [],
+    moduleIds: [],
+    recordDestinations: [],
+    state: 'available',
+    unavailableDeployments: [],
+  },
+  state: 'authenticated',
+  tenants: { items: [], state: 'available' },
+});
+const companyModel = (): AuthenticatedHomePageModel => ({
+  ...tenantOnlyModel(),
+  contextState: 'authenticated',
+  selectedLegalEntityId: companyLegalEntityId,
+});
+
+it('gives a tenant-only session tenant context without a company context', () => {
+  const result = modulePageProps(tenantOnlyModel(), { lang: 'cs' }, '?projectId=project-one');
+  expect(result.context).toBeUndefined();
+  expect(result.tenantContext).toEqual({
+    displayName: 'Ada Lovelace',
+    principalId: 'person-one',
+    tenantId: 'tenant-one',
+  });
+  expect(result.routeParams).toEqual({ lang: 'cs' });
+  expect(result.search).toBe('?projectId=project-one');
+});
+
+it('keeps the existing company context for a company session', () => {
+  const result = modulePageProps(companyModel(), {}, '');
+  expect(result.context).toEqual({
+    displayName: 'Ada Lovelace',
+    legalEntityId: companyLegalEntityId,
+    principalId: 'person-one',
+    tenantId: 'tenant-one',
+  });
+  expect(result.tenantContext).toBeUndefined();
+});
+
+it('never invents a company context from a tenant-only session', () => {
+  const result = modulePageProps({ ...tenantOnlyModel(), selectedLegalEntityId: companyLegalEntityId }, {}, '');
+  expect(result.context).toBeUndefined();
+  expect(result.tenantContext).toEqual({
+    displayName: 'Ada Lovelace',
+    principalId: 'person-one',
+    tenantId: 'tenant-one',
+  });
+});
+
+it.each(['selection_required', 'access_blocked'] as const)(
+  'keeps company pages fail-closed for a %s session',
+  (contextState) => {
+    const result = modulePageProps({ ...tenantOnlyModel(), contextState }, {}, '');
+    expect(result.context).toBeUndefined();
+    expect(result.tenantContext).toBeUndefined();
+  },
+);
+
+it('rebuilds tenant context from the current principal and tenant on every session', () => {
+  const first = modulePageProps(tenantOnlyModel(), {}, '');
+  const nextIdentity = Schema.decodeUnknownSync(SafeTenantIdentitySchema)({
+    ...tenantIdentity,
+    principalId: 'person-two',
+    tenantId: 'tenant-two',
+  });
+  const next = modulePageProps(tenantOnlyModel(nextIdentity), {}, '');
+  expect(first.tenantContext).toEqual({
+    displayName: 'Ada Lovelace',
+    principalId: 'person-one',
+    tenantId: 'tenant-one',
+  });
+  expect(next.tenantContext).toEqual({
+    displayName: 'Ada Lovelace',
+    principalId: 'person-two',
+    tenantId: 'tenant-two',
+  });
+  expect(next.tenantContext).not.toBe(first.tenantContext);
+});

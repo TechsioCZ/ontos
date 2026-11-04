@@ -507,9 +507,9 @@ Options:
         return yield* Effect.void;
       });
     },
-    flags: ['authorization', 'page', 'permission', 'url', 'vertical'],
+    flags: ['authorization', LEGAL_ENTITY_SCOPE_FLAG, 'page', 'permission', 'url', 'vertical'],
     generator: microverticalPageGenerator,
-    help: `Usage: pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page> --authorization <public|authenticated_principal|context_permission> [--permission <permission>] [--url <url>]
+    help: `Usage: pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page> --authorization <public|authenticated_principal|context_permission> [--permission <permission>] [--url <url>] [--legal-entity-scope optional]
 
 Generate one localized, private-first page with a governed tenant page/read entrypoint.
 
@@ -521,6 +521,7 @@ Required flags:
 Options:
   --url <url>            Root-relative canonical template of lowercase kebab segments and unique named :parameters; defaults to /<vertical>/<page>
   --permission <value>   Required only with context_permission
+  --legal-entity-scope optional  Opt the page into an optional company scope; absent keeps the required company scope
   --help                 Show this help without writing
 
 Example:
@@ -532,8 +533,19 @@ Example:
         const page = flags.page ?? '';
         const vertical = flags.vertical ?? '';
         const { url } = flags;
+        const { legalEntityScope } = flags;
+        if (legalEntityScope !== undefined && legalEntityScope !== 'optional') {
+          return yield* failScaffolding('--legal-entity-scope must be optional for pages');
+        }
         const authorization = yield* requireReadAuthorization(flags);
-        return url === undefined ? { ...authorization, page, vertical } : { ...authorization, page, url, vertical };
+        if (url === undefined) {
+          return legalEntityScope === undefined
+            ? { ...authorization, page, vertical }
+            : { ...authorization, legalEntityScope, page, vertical };
+        }
+        return legalEntityScope === undefined
+          ? { ...authorization, page, url, vertical }
+          : { ...authorization, legalEntityScope, page, url, vertical };
       }),
   }),
   'module-api': defineCommand({

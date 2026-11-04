@@ -864,14 +864,25 @@ it.effect('reconstructs explicit tenant scope on browser reload without company 
         tenantContextAvailable: true,
       }),
     );
+    documentContextMock.mockReturnValueOnce(
+      Effect.succeed(
+        documentContextOf({
+          composition: { navigation: [], state: 'selection_required' },
+          compositionRevision,
+          session: { availableLegalEntities: [], identity: tenantIdentity, state: 'tenant_authenticated' },
+        }),
+      ),
+    );
     const model = yield* loadModel({ request: request() });
     expect(model).toMatchObject({
+      compositionRevision,
       contextState: 'tenant_authenticated',
       legalEntities: { tenantContextAvailable: true },
       navigation: { items: [] },
     });
     expect(model).not.toHaveProperty('selectedLegalEntityId');
     expect(shellCompositionMock).not.toHaveBeenCalled();
+    expect(documentContextMock).toHaveBeenCalledTimes(1);
   }),
 );
 
@@ -883,6 +894,8 @@ it.effect('reconstructs explicit tenant scope from the server document context',
     documentContextMock.mockReturnValueOnce(
       Effect.succeed(
         documentContextOf({
+          composition: { navigation: [], state: 'selection_required' },
+          compositionRevision,
           legalEntities: { legalEntities: [], state: 'tenant_authenticated', tenantContextAvailable: true },
           session: { availableLegalEntities: [], identity: tenantIdentity, state: 'tenant_authenticated' },
         }),
@@ -890,11 +903,11 @@ it.effect('reconstructs explicit tenant scope from the server document context',
     );
     const model = yield* serverModel();
     expect(model).toMatchObject({
+      compositionRevision,
       contextState: 'tenant_authenticated',
       legalEntities: { tenantContextAvailable: true },
       navigation: { items: [] },
     });
     expect(model).not.toHaveProperty('selectedLegalEntityId');
-    expect(model).not.toHaveProperty('compositionRevision');
   }),
 );

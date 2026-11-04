@@ -129,6 +129,7 @@ export const projectsManifest = defineOntosModuleManifest({
             scope: 'tenant',
           },
           expose: './PageCreateProject',
+          legalEntityScope: 'optional',
           routePath: '/projects/create-project',
         }),
         // </generated-module-shell-pages>
