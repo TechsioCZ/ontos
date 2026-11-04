@@ -12,6 +12,11 @@ export const oxlintEntryPoint = join(
   dirname(createRequire(import.meta.url).resolve('oxlint/package.json')),
   'bin/oxlint',
 );
+// Production lint runs Oxlint through `effect-tsgo --tsrs-lint`, which serves type-aware rules from tsrs.
+const effectTsgoEntryPoint = join(
+  dirname(createRequire(import.meta.url).resolve('@effect/tsgo/package.json')),
+  'dist/effect-tsgo.cjs',
+);
 
 interface Diagnostic {
   readonly code: string;
@@ -91,7 +96,16 @@ export function runOxlint(configPath: string, paths: readonly string[], cwd: str
     selectedRule ?? (basename(dirname(dirname(configPath))) === 'fixtures' ? basename(dirname(configPath)) : undefined);
   const result = spawnSync(
     process.execPath,
-    [oxlintEntryPoint, '-c', configPath, '--format=json', '--disable-nested-config', ...paths],
+    [
+      effectTsgoEntryPoint,
+      '--tsrs-lint',
+      'oxlint',
+      '-c',
+      configPath,
+      '--format=json',
+      '--disable-nested-config',
+      ...paths,
+    ],
     {
       cwd,
       encoding: 'utf8',
