@@ -123,10 +123,57 @@ const overdueKpiLabel = (t: ReturnType<typeof useFinanceRecords>['t'], reference
 };
 
 const hasRecordDetail = (vm: ReturnType<typeof useFinanceRecords>) =>
-  vm.detailConflict || vm.documentId !== undefined || vm.selected !== undefined;
+  vm.detailConflict || vm.documentId !== undefined || vm.invoiceDetail !== undefined;
+
+type ClosedInvoiceDetailState = Exclude<
+  NonNullable<ReturnType<typeof useFinanceRecords>['invoiceDetail']>,
+  { readonly state: 'ready' }
+>;
+
+/** A failed read and an unknown ID are both "cannot show this invoice right now"; a denial says so explicitly. */
+const closedInvoiceMessage = {
+  forbidden: 'finance-billing.demo.feedback.forbidden',
+  loading: 'finance-billing.demo.feedback.loading',
+  unavailable: 'finance-billing.faktury.loadError',
+} satisfies Readonly<Record<ClosedInvoiceDetailState['state'], string>>;
+
+/** An explicit `?resourceId=` deep link keeps its target: loading, unavailable or denied — never the list. */
+const ClosedInvoiceDetail = ({
+  detail,
+  vm,
+}: {
+  readonly detail: ClosedInvoiceDetailState;
+  readonly vm: ReturnType<typeof useFinanceRecords>;
+}) => {
+  const { closeDetail: handleClose, reload: handleRetry, t } = vm;
+  return (
+    <section className="flex min-w-0 flex-col gap-250">
+      <div className="print:hidden">
+        <Button
+          className="whitespace-nowrap"
+          icon="icon-[mdi--arrow-left]"
+          onClick={handleClose}
+          size="sm"
+          theme="borderless"
+          variant="secondary"
+        >
+          {t(`${ns}.back`)}
+        </Button>
+      </div>
+      <StatusText aria-live="polite" showIcon status={detail.state === 'loading' ? 'default' : 'error'}>
+        {t(closedInvoiceMessage[detail.state])}
+      </StatusText>
+      {detail.state === 'unavailable' ? (
+        <Button className="self-start" onClick={handleRetry} size="sm" theme="outlined" variant="secondary">
+          {t(`${ns}.retry`)}
+        </Button>
+      ) : null}
+    </section>
+  );
+};
 
 const RecordDetail = ({ vm }: { readonly vm: ReturnType<typeof useFinanceRecords> }) => {
-  const { detailConflict, documentId, selected, t } = vm;
+  const { detailConflict, documentId, invoiceDetail, t } = vm;
   if (detailConflict) {
     return (
       <StatusText showIcon status="error">
@@ -134,11 +181,14 @@ const RecordDetail = ({ vm }: { readonly vm: ReturnType<typeof useFinanceRecords
       </StatusText>
     );
   }
-  if (selected !== undefined) {
-    return <FinanceInvoiceDetail invoice={selected} vm={vm} />;
+  if (invoiceDetail?.state === 'ready') {
+    return <FinanceInvoiceDetail invoice={invoiceDetail.invoice} vm={vm} />;
   }
   if (documentId !== undefined) {
     return <FinanceDocumentDetail documentId={documentId} key={documentId} vm={vm} />;
+  }
+  if (invoiceDetail !== undefined) {
+    return <ClosedInvoiceDetail detail={invoiceDetail} vm={vm} />;
   }
   return null;
 };

@@ -137,6 +137,7 @@ const model = (reminders: readonly InvoiceReminder[]): RemindersModel => ({
     throw new Error('The reminder section must not fetch documents while it is only rendered.');
   },
   indicators,
+  invoiceDetail: absent<NonNullable<RemindersModel['invoiceDetail']>>(),
   invoices: [],
   objects: {
     available: false,

@@ -178,16 +178,14 @@ export function hasMarketData(
 }
 
 /**
- * The market owner is not available to this storefront at all: module not active in the composition
- * (gateway audience rejected), the read not granted, or not published. Not an outage (those stay errors).
+ * An audience rejection identifies a market owner absent from the approved composition.
+ * A denied read or missing handler cannot prove that unrestricted catalogue access is appropriate.
  */
 export const isMarketOwnerNotProvisioned = (error: unknown): boolean =>
   OntosError.is(error) &&
-  (error.status === 403 ||
-    error.status === 404 ||
-    (error.status === 400 &&
-      isRaw(error.body) &&
-      error.body._tag === "GatewayAudienceInvalidProblem"));
+  error.status === 400 &&
+  isRaw(error.body) &&
+  error.body._tag === "GatewayAudienceInvalidProblem";
 
 /** The storefront's only market before any market exists: Czech, CZK, the whole published catalogue. */
 export const UNMARKETED_LOCALE = "cs";
