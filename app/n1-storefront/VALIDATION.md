@@ -1,5 +1,29 @@
 # Kontrola převodu N1 storefrontu
 
+## C10: navigace, katalog a detail — 2026-11-04
+
+Čerstvé Figma čtení ověřilo nav170:2077 skutečně16/bold700, kategorie214:3203
+nadpis32/underline28, count214:3240 výšku55/font14/21/p16/gap4. Produkt219:2758
+má vlastní nadpis36/underline32; mobil39:2453 text32/48 bez varianty v nadpisu.
+Shipping219:2816/39:2497 je skutečný Link do dopravy, nikoli další tlačítko.
+
+Produkční1440 a390 prohlédnuty se skutečným lokálním katalogem. Computed styly
+potvrzují tyto rozměry i nav16/bold. Mobilní produkt zachovává selected variantu
+před dostupností a shipping mezi cenou a QuantityField. Link skutečně naviguje
+na `/cs/doprava`, která z owner nabídky ukazuje PPL129Kč a Českou poštu119Kč.
+Desktop ani mobil nepřetéká; opravené screenshoty byly otevřeny, ne pouze uložené.
+Mobilní počet zůstává „Nalezeno2“, desktop používá skutečné total a český plurál.
+EN počet nelze označit za živě ověřený: lokální EN katalog vrací unavailable;
+anglická větev ani tento datový stav se nenahrazují CS daty.
+
+N1 testy295/295, lint a produkční build PASS. Nezávislé source review nenašlo novou
+P1/P2 chybu. Není to plný vizuální PASS produktu: desktopový selected-variant button,
+podkategorijní instance a některé Link metriky nemají přesný knihovní prop/role;
+související produkty, skladový max/ETA, výrobce a další fixture údaje bez owner
+projekce nejsou doplněné vymyšlenými daty. NumericInput compact104×36 a mobilní
+QuantityField používají platné API instalovaného balíčku; starší příklad ve skillu
+není důvod měnit string value/onValueChange zpět na zastaralé props.
+
 ## C9: katalogový strom — 2026-11-04
 
 Figma `214:3169`: skutečně vyhodnocené variables určují text16/24, nadpis700,

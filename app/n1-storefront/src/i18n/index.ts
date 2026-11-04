@@ -126,6 +126,7 @@ const cs = {
   cart: "Košík",
   catalog: "Katalog",
   categories: "TOP kategorie",
+  categoryProductCount: { few: "produkty", one: "produkt", other: "produktů" },
   checkout: {
     address: "Fakturační a doručovací adresa",
     back: "Zpět",
@@ -257,6 +258,7 @@ const cs = {
   productCode: "Kód produktu",
   productParameters: "PRODUKTOVÉ PARAMETRY",
   productsFound: "Nalezeno",
+  productsShown: "Zobrazeno",
   productUnavailable: "Produkt je dočasně nedostupný",
   promos: {
     ebikes: "Nabídka elektrokol",
@@ -273,6 +275,7 @@ const cs = {
   selectedVariant: "Zvolená varianta",
   selectVariant: "Zvolte variantu",
   shipping: "Způsoby dopravy",
+  shippingOptions: "Možnosti dopravy",
   shopping: {
     acceptPrice: "Přijmout aktuální cenu",
     added: "Zboží je ve vašem košíku. Cenu a dostupnost ověříme před nákupem.",
@@ -477,6 +480,7 @@ const en: typeof cs = {
   cart: "Cart",
   catalog: "Catalogue",
   categories: "Top categories",
+  categoryProductCount: { few: "products", one: "product", other: "products" },
   checkout: {
     address: "Billing and delivery address",
     back: "Back",
@@ -606,6 +610,7 @@ const en: typeof cs = {
   productCode: "Product code",
   productParameters: "PRODUCT PARAMETERS",
   productsFound: "Products found:",
+  productsShown: "Showing",
   productUnavailable: "The product is temporarily unavailable",
   promos: {
     ebikes: "Electric bikes",
@@ -622,6 +627,7 @@ const en: typeof cs = {
   selectedVariant: "Selected variant",
   selectVariant: "Select a variant",
   shipping: "Shipping methods",
+  shippingOptions: "Shipping options",
   shopping: {
     acceptPrice: "Accept current price",
     added: "The item is in your cart. Prices and availability will be checked before purchase.",

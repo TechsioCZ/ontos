@@ -32,6 +32,10 @@
   --text-product-card-featured-stock-size: var(--dimension-18);
   --color-header-bg: var(--color-base-dark);
   --color-header-nav-fg: var(--color-fg-reverse);
+  /* Desktop nav170:2077: resolved text/md16 and bold, independent of
+   * the compact utility/action row and the global Button typography. */
+  --font-weight-header-nav: var(--font-weight-bold);
+  --font-weight-header-nav-active: var(--font-weight-bold);
   --color-header-nav-fg-hover: var(--color-primary);
   --color-header-nav-fg-active: var(--color-primary);
   --color-header-actions-fg: var(--color-fg-reverse);

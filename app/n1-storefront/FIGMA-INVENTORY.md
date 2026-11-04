@@ -5,6 +5,15 @@ Zdroj: [N1 Storefront](https://www.figma.com/design/gIHtMwCCl2OXhMAW9s9LIn/N1-St
 Inventář top-level rámců není tvrzení vizuální parity. Každý návrhový fixture je pouze reference UI;
 produkty, ceny, objednávka #48, adresy ani doručení se nesmějí přenést do runtime jako data.
 
+Aktualizace4.11.: tabulky „při zahájení“ níže jsou historický inventář, nikoli
+aktuální seznam chybějící implementace. Portal login/registrace, mini okna, košík,
+guest checkout/obnova i vlastní profil a objednávky jsou již implementované.
+Pozitivní živý Portal účet a plná vizuální shoda všech stavů zatím ověřené nejsou.
+Strom C9 má desktop/mobil vizuální důkaz; C10 navazuje hlavičkou, katalogovým
+nadpisem/počtem a produktovým shipping linkem. Přesné současné hranice a výsledky
+jsou v VALIDATION.md a COMPONENT-MAPPING.md. CMS/adresy a další chybějící owner
+schopnosti zůstávají oddělené od existujících UI kompozic.
+
 Aktuální navazující převod: kontakty `43:1162/43:1595` nyní mají celou veřejnou
 adresní kompozici a FormInput/FormTextarea podle hlavních rámců `369:2578/369:2758`.
 Formulář volá skutečný work-tasks owner; success vyžaduje potvrzený taskRef.

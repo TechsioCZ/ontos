@@ -23,6 +23,25 @@ Původní 418-tokenový mix komponentových snapshotů a App overrides byl nahra
 
 ## Kompozice
 
+Navazující korekce C10:
+
+- Desktop nav `170:2077`: skutečný font16/bold700, veřejné Header.NavItem size=md
+  a vlastní existující header-nav weight role. Utility/action row zůstává sm;
+  nepřepisuje se globální Button typografie.
+- Kategorie `214:3203`: nadpis32, podtržení uvnitř na28; count `214:3240` používá
+  skutečný owner total, CS/EN plurály, desktop14/21/gap4/p16 a mobilní „Nalezeno“.
+  Pevné textové šířky Figma fixture se nekopírují do lokalizované věty.
+- Produkt `219:2758`: desktop nadpis36/podtržení32; mobil32/48 bez připojeného
+  názvu varianty v h1. Skutečná varianta má vlastní text i URL výběr.
+- Produkt shipping `219:2816/39:2497`: veřejný Link/NextLink na lokalizovanou
+  existující dopravu; desktop vpravo od selected-variant, mobil mezi cenou a
+  QuantityField. Mobilní medium/AUTO Figma instance nemá vlastní kit typography
+  prop; neupravuje se appearance className.
+- Podkategorie `214:3208`: veřejný LinkButton md/secondary/outlined je správné CC
+  mapování. Figma instance fill-hover/border-secondary/bold se liší od sdílených
+  outlined/secondary/medium defaultů. Chybí samostatná navigační role; globální
+  změna Button by měnila další ovládání. Tento rozpor zůstává otevřený.
+
 Katalogový strom `214:3169` skládá veřejné TreeView.NodeProvider, Branch,
 BranchTrigger/Control/Text/Indicator, BranchContent a Item/Text. Aplikační wrapper
 zajišťuje32px řádek; kit nadále vlastní výběr, rozbalení a klávesnici. Existující
