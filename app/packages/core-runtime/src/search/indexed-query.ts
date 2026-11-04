@@ -9,6 +9,16 @@ import { coreSearchResourceTypes, coreSearchTokens, escapeCoreSearchLike } from 
 /** A work budget, not a corpus cap or a public result limit. Overflow must fail closed. */
 export const CORE_SEARCH_CANDIDATE_BUDGET = 10_000;
 
+/** A live row whose derived stamp is missing or stale; the query must verify it from its v2 evidence. */
+export const coreSearchDerivedStampOutdated = () =>
+  or(
+    isNull(searchIndexEntries.searchTextV1),
+    isNull(searchIndexEntries.searchFormatVersion),
+    ne(searchIndexEntries.searchFormatVersion, CORE_SEARCH_FORMAT_VERSION),
+    isNull(searchIndexEntries.searchSourceVersion),
+    ne(searchIndexEntries.searchSourceVersion, searchIndexEntries.projectionVersion),
+  );
+
 /** Necessary conditions only: do not exclude missing, unsupported or stale derived rows.
  * The row's original v2 evidence is decoded and verified by the query runtime afterwards.
  * No temporal/facet predicates here: those require exact grouping and a fixed effectiveAt.
@@ -26,13 +36,7 @@ export const coreSearchCandidatePredicate = (input: CoreSearchQuery) => {
     }
     return inArray(table.sourceResourceType, resourceTypes);
   })();
-  const fallback = or(
-    isNull(table.searchTextV1),
-    isNull(table.searchFormatVersion),
-    ne(table.searchFormatVersion, CORE_SEARCH_FORMAT_VERSION),
-    isNull(table.searchSourceVersion),
-    ne(table.searchSourceVersion, table.projectionVersion),
-  );
+  const fallback = coreSearchDerivedStampOutdated();
   const indexed = and(
     eq(table.searchFormatVersion, CORE_SEARCH_FORMAT_VERSION),
     eq(table.searchSourceVersion, table.projectionVersion),
