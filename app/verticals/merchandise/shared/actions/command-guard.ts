@@ -68,9 +68,12 @@ export const assertCommandAllowed = (
 export const AKROS_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000024';
 export const AKROS_PLAYGROUND_LEGAL_ENTITY_ID = 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7';
 export const ESHOP_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000023';
+/** The N1 e-shop (its own storefront application and service key; see app/n1-storefront). */
+export const N1_LEGAL_ENTITY_ID = 'd7ad363a-ddb0-46c6-bb11-8d9362281297';
 export const isAkrosCompany = (id: string | undefined) =>
   id === AKROS_LEGAL_ENTITY_ID || id === AKROS_PLAYGROUND_LEGAL_ENTITY_ID;
-const isStorefrontCompany = (id: string | undefined) => id === ESHOP_LEGAL_ENTITY_ID || isAkrosCompany(id);
+const isStorefrontCompany = (id: string | undefined) =>
+  id === ESHOP_LEGAL_ENTITY_ID || id === N1_LEGAL_ENTITY_ID || isAkrosCompany(id);
 
 /** Only the storefront BFF's API key is limited to the storefront; people, MCP connections and agents use their grants. */
 export const isStorefrontServiceKey = (

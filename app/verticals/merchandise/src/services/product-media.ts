@@ -127,6 +127,23 @@ export const galleryAfterChange = Effect.fn('Merchandise.galleryAfterChange')(fu
  * One rendition of an image the product's gallery lists, when the image is a Core Media Asset linked to it.
  * The storefront service key receives images of published, active products only.
  */
+/**
+ * Whether a media read may serve `image` of `product`. The image must be one of the product's own gallery references.
+ * A storefront key reads only a published, active, unarchived product; staff reads are decided by their grants.
+ */
+export const mediaReadAllowed = (
+  product: {
+    readonly active: boolean;
+    readonly demoArchive?: unknown;
+    readonly images?: readonly string[];
+    readonly published?: boolean;
+  },
+  image: string,
+  storefront: boolean,
+): boolean =>
+  (product.images ?? []).includes(image) &&
+  (!storefront || (product.active && product.published !== false && product.demoArchive === undefined));
+
 export const readProductImage = Effect.fn('Merchandise.readProductImage')(function* readProductImage(
   transaction: ScopedTransactionExecutor,
   store: StoreScope,
@@ -145,11 +162,7 @@ export const readProductImage = Effect.fn('Merchandise.readProductImage')(functi
     variants: false,
   }).pipe(Effect.mapError(unavailable));
   const product = hydrated?.product;
-  if (
-    product === undefined ||
-    !(product.images ?? []).includes(input.image) ||
-    (input.storefront && (!product.active || product.published === false || product.demoArchive !== undefined))
-  ) {
+  if (product === undefined || !mediaReadAllowed(product, input.image, input.storefront)) {
     return Option.none();
   }
   return yield* readLinkedMediaRendition(transaction, {
