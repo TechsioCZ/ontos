@@ -1,3 +1,4 @@
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import {
   CoreSearchProjectionStoreLive,
@@ -208,6 +209,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
               compositionRevision,
+              ownerRegistration: partyRegistryBackendRegistration,
               runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
             }).pipe(Effect.orDie),
             (resource) => resource.close().pipe(Effect.orDie),

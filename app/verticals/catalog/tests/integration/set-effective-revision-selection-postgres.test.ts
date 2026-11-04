@@ -20,6 +20,7 @@ import {
 import { CreateSetCompositionActionUnavailableProblemSchema } from '../../shared/apis/create-set-composition-action.ts';
 import { createSetCompositionAction } from '../../src/actions/create-set-composition.action.ts';
 import { reviseSetCompositionAction } from '../../src/actions/revise-set-composition.action.ts';
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { createSetCompositionActionApiLive } from '../../api/create-set-composition-action-server.ts';
 import { reviseSetCompositionActionApiLive } from '../../api/revise-set-composition-action-server.ts';
 import { setCompositionCurrentReadApiLive } from '../../api/set-composition-current-read-server.ts';
@@ -761,6 +762,7 @@ const makeSetEffectiveFixture = Effect.fn('SetEffectiveRevision.makeFixture')(fu
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: composition.composition.revision,
       moduleKeys: ['commerce.catalog'],
+      ownerRegistration: catalogRegistration,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (value) => value.close().pipe(Effect.orDie),

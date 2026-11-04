@@ -33,7 +33,10 @@ const digest = Effect.fn('ActualCatalogComposition.digest')(function* digest(doc
 });
 
 /** Same-running SOURCE metadata, following the existing native owner-intent fixture projection. */
-const sourceContract = Effect.fn('ActualCatalogComposition.sourceContract')(function* sourceContract() {
+const sourceContract = Effect.fn('ActualCatalogComposition.sourceContract')(function* sourceContract(
+  mfBoundaryId: string,
+  declaredExposes: ReadonlySet<string>,
+) {
   const owner = yield* Effect.try({
     catch: () => unavailable('owner-registration'),
     try: () => extractVerticalRuntimeSafeDescriptors(catalogRegistration),
@@ -71,6 +74,16 @@ const sourceContract = Effect.fn('ActualCatalogComposition.sourceContract')(func
       ),
     });
   });
+  const bindings = [...owner.shellContributions.pages, ...owner.shellContributions.publicComponents];
+  const components = yield* Effect.forEach(Object.keys(catalogManifest.publicSurface.components), (localKey) => {
+    const key = canonicalOntosPublicApiKey(owner.moduleId, localKey);
+    const selectors = new Set(bindings.filter((binding) => binding.componentKey === key).map(({ expose }) => expose));
+    const [expose] = selectors;
+    if (selectors.size !== 1 || expose === undefined || !declaredExposes.has(expose)) {
+      return Effect.fail(unavailable('owner-component'));
+    }
+    return Effect.succeed({ expose, key, mfBoundaryId });
+  });
   const manifest = {
     activation: catalogManifest.activation,
     module: catalogManifest.module,
@@ -78,7 +91,7 @@ const sourceContract = Effect.fn('ActualCatalogComposition.sourceContract')(func
       actions: owner.actions,
       api: apis,
       businessPermissions: catalogManifest.publicSurface.businessPermissions ?? [],
-      components: Object.values(catalogManifest.publicSurface.components),
+      components,
       events,
       operationContracts: owner.operationContracts,
       reports: catalogManifest.publicSurface.reports,
@@ -100,22 +113,74 @@ const sourceContract = Effect.fn('ActualCatalogComposition.sourceContract')(func
 
 /** Actual owner SOURCE identity and observed MF bytes; no deployed backend/browser receipt is claimed. */
 export const deriveActualCatalogCompositionSnapshot = Effect.fn('ActualCatalogComposition.make')(function* make() {
-  const contract = yield* sourceContract();
+  const appRoot = process.cwd();
+  const fs = yield* FileSystem.FileSystem;
+  const boundarySchema = Schema.Struct({ name: Schema.NonEmptyString });
+  const topology = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        shell: Schema.Struct({ moduleFederation: boundarySchema }),
+        verticals: Schema.Array(
+          Schema.Struct({ id: Schema.String, moduleFederation: Schema.optionalKey(boundarySchema) }),
+        ),
+      }),
+    ),
+  )(yield* fs.readFileString(`${appRoot}/topology/reference-topology.json`));
+  const owners = topology.verticals.filter(({ id }) => id === ultramodernDeliveryUnit.appId);
+  const [owner] = owners;
+  if (owners.length !== 1 || owner?.moduleFederation === undefined) {
+    return yield* unavailable('owner-component');
+  }
+  // Same declared exposure extraction as the existing module-contract emitter; no component function is serialized.
+  const configuration = yield* fs.readFileString(`${appRoot}/verticals/catalog/module-federation.config.ts`);
+  const exposurePattern =
+    /['"](?<key>\.\/[A-Za-z][A-Za-z0-9._-]*(?:\/[A-Za-z][A-Za-z0-9._-]*)*)['"]\s*:\s*['"][^'"]+['"]/gu;
+  const declaredExposes = new Set<string>();
+  for (const match of configuration.matchAll(exposurePattern)) {
+    if (match.groups?.key !== undefined) {
+      declaredExposes.add(match.groups.key);
+    }
+  }
+  const contract = yield* sourceContract(owner.moduleFederation.name, declaredExposes);
   const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
     contract,
   );
-  const appRoot = process.cwd();
-  const fs = yield* FileSystem.FileSystem;
-  const catalogFederationDocument = yield* fs.readFileString(`${appRoot}/verticals/catalog/.output/mf-manifest.json`);
-  const shellFederationDocument = yield* fs.readFileString(`${appRoot}/apps/shell-super-app/.output/mf-manifest.json`);
+  const federationSchema = Schema.Struct({
+    exposes: Schema.Array(Schema.Struct({ path: Schema.String })),
+    name: Schema.String,
+    shared: Schema.Array(Schema.Never),
+  });
+  const catalogManifestPath = `${appRoot}/verticals/catalog/.output/mf-manifest.json`;
+  const shellManifestPath = `${appRoot}/apps/shell-super-app/.output/mf-manifest.json`;
+  // Backend-only CI uses explicitly SOURCE-native metadata, never an invented browser-build receipt.
+  const available = yield* Effect.all({ catalog: fs.exists(catalogManifestPath), shell: fs.exists(shellManifestPath) });
+  const observedBuildPair = available.catalog && available.shell;
+  const metadata = yield* Effect.all({
+    catalog: observedBuildPair
+      ? fs.readFileString(catalogManifestPath)
+      : Schema.encodeEffect(Schema.fromJsonString(federationSchema))({
+          exposes: [...declaredExposes].map((path) => ({ path })),
+          name: owner.moduleFederation.name,
+          shared: [],
+        }),
+    shell: observedBuildPair
+      ? fs.readFileString(shellManifestPath)
+      : Schema.encodeEffect(Schema.fromJsonString(federationSchema))({
+          exposes: [],
+          name: topology.shell.moduleFederation.name,
+          shared: [],
+        }),
+  });
+  const catalogFederationDocument = metadata.catalog;
+  const shellFederationDocument = metadata.shell;
   const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
   yield* server.serve(
     Effect.gen(function* serveObservedMetadata() {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      if (request.url === '/catalog/mf-manifest.json') {
+      if (request.url === '/catalog/source-native-mf-fixture.json') {
         return HttpServerResponse.text(catalogFederationDocument, { contentType: 'application/json' });
       }
-      if (request.url === '/shell-super-app/mf-manifest.json') {
+      if (request.url === '/shell-super-app/source-native-mf-fixture.json') {
         return HttpServerResponse.text(shellFederationDocument, { contentType: 'application/json' });
       }
       return HttpServerResponse.empty({ status: 404 });
@@ -154,10 +219,10 @@ export const deriveActualCatalogCompositionSnapshot = Effect.fn('ActualCatalogCo
         environment: 'development',
         modules: [{appId: contract.deployment.appId, backend: placement.backend,
           contract: artifact(placement.contract.url, contractDocument),
-          federationManifest: artifact(${JSON.stringify(`${origin}/catalog/mf-manifest.json`)}, ${JSON.stringify(catalogFederationDocument)})}],
+          federationManifest: artifact(${JSON.stringify(`${origin}/catalog/source-native-mf-fixture.json`)}, ${JSON.stringify(catalogFederationDocument)})}],
         observedAt: initial.observedAt,
         shell: {runtimeContract: artifact(initial.composition.shell.runtimeContract.url, shellDocument),
-          federationManifest: artifact(${JSON.stringify(`${origin}/shell-super-app/mf-manifest.json`)}, ${JSON.stringify(shellFederationDocument)})},
+          federationManifest: artifact(${JSON.stringify(`${origin}/shell-super-app/source-native-mf-fixture.json`)}, ${JSON.stringify(shellFederationDocument)})},
         validity: Duration.millis(DateTime.toEpochMillis(initial.validUntil) - DateTime.toEpochMillis(initial.observedAt))
       });
       return yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(composition);

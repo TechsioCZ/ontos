@@ -1486,13 +1486,53 @@ const deriveWholeCandidateSnapshot = Effect.fn('WholeCandidate.deriveSnapshot')(
   const pricingContractDocument = yield* Schema.encodeEffect(
     Schema.fromJsonString(OntosModuleDeploymentContractSchema),
   )(pricingContract);
+  const catalogContract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+    catalogContractDocument,
+  );
   const fs = yield* FileSystem.FileSystem;
-  const documents = new Map<string, string>();
-  for (const appId of ['catalog', 'pricing', 'shell-super-app']) {
-    const directory = appId === 'shell-super-app' ? 'apps' : 'verticals';
-    const document = yield* fs.readFileString(`${appRoot}${directory}/${appId}/.output/mf-manifest.json`);
-    documents.set(`/${appId}/mf-manifest.json`, document);
+  const topology = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        shell: Schema.Struct({ moduleFederation: Schema.Struct({ name: Schema.NonEmptyString }) }),
+      }),
+    ),
+  )(yield* fs.readFileString(`${appRoot}topology/reference-topology.json`));
+  const boundaries = new Set(catalogContract.manifest.publicSurface.components.map(({ mfBoundaryId }) => mfBoundaryId));
+  const [catalogBoundary] = boundaries;
+  if (boundaries.size !== 1 || catalogBoundary === undefined) {
+    return yield* unavailable('catalog-source-mf-boundary');
   }
+  const sourceFederationSchema = Schema.Struct({
+    exposes: Schema.Array(Schema.Struct({ path: Schema.String })),
+    name: Schema.String,
+    shared: Schema.Array(Schema.Never),
+  });
+  const catalogManifestPath = `${appRoot}verticals/catalog/.output/mf-manifest.json`;
+  const shellManifestPath = `${appRoot}apps/shell-super-app/.output/mf-manifest.json`;
+  const available = yield* Effect.all({ catalog: fs.exists(catalogManifestPath), shell: fs.exists(shellManifestPath) });
+  const observedBuildPair = available.catalog && available.shell;
+  // SOURCE-native fixture observations when backend-only CI has no browser artifacts; no browser receipt is claimed.
+  const metadata = yield* Effect.all({
+    catalog: observedBuildPair
+      ? fs.readFileString(catalogManifestPath)
+      : Schema.encodeEffect(Schema.fromJsonString(sourceFederationSchema))({
+          exposes: catalogContract.manifest.publicSurface.components.map(({ expose }) => ({ path: expose })),
+          name: catalogBoundary,
+          shared: [],
+        }),
+    shell: observedBuildPair
+      ? fs.readFileString(shellManifestPath)
+      : Schema.encodeEffect(Schema.fromJsonString(sourceFederationSchema))({
+          exposes: [],
+          name: topology.shell.moduleFederation.name,
+          shared: [],
+        }),
+  });
+  // Pricing is an actual API-only owner with no MF boundary or public components; its observation is server-only.
+  const documents = new Map<string, string>([
+    ['/catalog/source-native-mf-fixture.json', metadata.catalog],
+    ['/shell-super-app/source-native-mf-fixture.json', metadata.shell],
+  ]);
   const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
   yield* server.serve(
     Effect.gen(function* serveActualOwnerMetadata() {
@@ -1513,7 +1553,7 @@ const deriveWholeCandidateSnapshot = Effect.fn('WholeCandidate.deriveSnapshot')(
     origin: Schema.encodeEffect(Schema.fromJsonString(Schema.String))(origin),
     pricingContract: Schema.encodeEffect(Schema.fromJsonString(Schema.String))(pricingContractDocument),
     shellFederationUrl: Schema.encodeEffect(Schema.fromJsonString(Schema.String))(
-      `${origin}/shell-super-app/mf-manifest.json`,
+      `${origin}/shell-super-app/source-native-mf-fixture.json`,
     ),
   });
   // The existing publisher derives the two actual contracts, observed MF bytes and canonical revision together.
@@ -1544,18 +1584,19 @@ const deriveWholeCandidateSnapshot = Effect.fn('WholeCandidate.deriveSnapshot')(
       const artifact = (url, document) => ({url, bytes: new TextEncoder().encode(document)});
       const modules = contracts.map((contract, index) => {
         const placement = initial.composition.modules.find(module => module.deployment.appId === contract.deployment.appId);
-        const path = '/' + contract.deployment.appId + '/mf-manifest.json';
-        if (placement === undefined || !metadata.has(path)) { throw new Error('Actual owner placement is missing'); }
-        return {appId: contract.deployment.appId, backend: placement.backend,
-          contract: artifact(placement.contract.url, sourceDocuments[index]),
-          federationManifest: artifact(${literals.origin} + path, metadata.get(path))};
+        const path = '/' + contract.deployment.appId + '/source-native-mf-fixture.json';
+        if (placement === undefined) { throw new Error('Actual owner placement is missing'); }
+        const observed = {appId: contract.deployment.appId, backend: placement.backend,
+          contract: artifact(placement.contract.url, sourceDocuments[index])};
+        if (metadata.has(path)) { Object.assign(observed, {federationManifest: artifact(${literals.origin} + path, metadata.get(path))}); }
+        return observed;
       });
       const shellDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
         createShellRuntimeContract(shellIdentity.buildMarker));
       const composition = yield* deriveActiveApplicationCompositionSnapshot({environment: 'development', modules,
         observedAt: initial.observedAt,
         shell: {runtimeContract: artifact(initial.composition.shell.runtimeContract.url, shellDocument),
-          federationManifest: artifact(${literals.shellFederationUrl}, metadata.get('/shell-super-app/mf-manifest.json'))},
+          federationManifest: artifact(${literals.shellFederationUrl}, metadata.get('/shell-super-app/source-native-mf-fixture.json'))},
         validity: Duration.millis(DateTime.toEpochMillis(initial.validUntil) - DateTime.toEpochMillis(initial.observedAt))});
       return yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(composition);
     })); process.stdout.write(text); } finally { await runtime.dispose(); }`;

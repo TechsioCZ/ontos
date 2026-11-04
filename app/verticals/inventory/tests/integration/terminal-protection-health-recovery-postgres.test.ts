@@ -1,3 +1,4 @@
+import { inventoryRegistration } from '../../vertical.registration.ts';
 import {
   ActionTransactionError,
   OwnerAuthorizationOverlay,
@@ -291,6 +292,7 @@ const makeScenario = Effect.fn('TerminalProtectionHealth.makeScenario')(function
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
       moduleKeys: ['commerce.inventory'],
+      ownerRegistration: inventoryRegistration,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (value) => value.close().pipe(Effect.orDie),

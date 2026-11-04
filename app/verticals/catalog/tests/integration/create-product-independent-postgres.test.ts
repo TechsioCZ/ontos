@@ -42,6 +42,7 @@ import { VariantHistoryResponseSchema } from '../../shared/apis/variant-history.
 import { catalogApi } from '../../shared/api.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { createProductAction } from '../../src/actions/create-product.action.ts';
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { catalogPersistenceForScope } from '../../src/persistence/catalog-persistence.ts';
 import { executeCreateProductWithAuthorization } from '../../src/api/create-product-action-client.ts';
 import {
@@ -95,6 +96,7 @@ it.live(
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: composition.composition.revision,
           moduleKeys: ['commerce.catalog'],
+          ownerRegistration: catalogRegistration,
           runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
         }),
         (value) => value.close().pipe(Effect.orDie),
@@ -109,6 +111,7 @@ it.live(
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: composition.composition.revision,
           moduleKeys: ['commerce.catalog'],
+          ownerRegistration: catalogRegistration,
           runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
         }),
         (value) => value.close().pipe(Effect.orDie),

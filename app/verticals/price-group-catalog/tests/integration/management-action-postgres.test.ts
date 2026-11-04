@@ -27,6 +27,7 @@ import type { ContextAccessService } from '../../../../packages/core-runtime/src
 import { toBusinessPermissionAccessKey } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { createPriceGroupAction } from '../../src/actions/create-price-group.action.ts';
 import { retirePriceGroupAction } from '../../src/actions/retire-price-group.action.ts';
+import { priceGroupCatalogRegistration } from '../../vertical.registration.ts';
 import {
   priceGroupCatalogLedger,
   priceGroupCatalogRelations,
@@ -180,6 +181,7 @@ it.live('commits a scheduled retirement with server-trusted acceptance chronolog
           ...openActionRuntimeOptions,
           contextAccess,
           ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+          ownerRegistration: priceGroupCatalogRegistration,
         },
       );
       const [clock] = yield* admin.execute<DatabaseClockRow>(sql`select clock_timestamp() as "currentTime"`, 'objects');

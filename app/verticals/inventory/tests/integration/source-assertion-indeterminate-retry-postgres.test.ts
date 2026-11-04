@@ -1,3 +1,4 @@
+import { inventoryRegistration } from '../../vertical.registration.ts';
 import { Reactivity } from 'effect/reactivity';
 import { PgClient } from '@effect/sql-pg';
 import { generateKeyPairSync, sign } from 'node:crypto';
@@ -94,6 +95,7 @@ it.live(
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: composition.composition.revision,
           moduleKeys: ['commerce.inventory'],
+          ownerRegistration: inventoryRegistration,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         }),
         (value) => value.close().pipe(Effect.orDie),
