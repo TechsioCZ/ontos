@@ -28,7 +28,9 @@ interface ShellProps {
 /** N1 composition of existing kit components; no backend or primitive implementation lives here. */
 export const StorefrontShell = ({ categories, children, dictionary: d, locale }: ShellProps) => {
   const pathname = usePathname();
-  const compactContent = ["prihlaseni", "registrace"].includes(pathname.split("/")[2] ?? "");
+  const compactContent = ["prihlaseni", "registrace", "kosik", "pokladna"].includes(
+    pathname.split("/")[2] ?? "",
+  );
   const [headerPanel, setHeaderPanel] = useState<HeaderPanel>(null);
   const mobileMenuOpen = headerPanel === "navigation";
   useEffect(() => {

@@ -6,12 +6,12 @@ import { useRouter } from "next/navigation";
 import NextImage from "next/image";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Link } from "@techsio/ui-kit/atoms/link";
-import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Image } from "@techsio/ui-kit/atoms/image";
 import { LineItem } from "@techsio/ui-kit/organisms/line-item";
 import { PriceBlock } from "@techsio/ui-kit/molecules/price-block";
 import { QuantityField } from "@techsio/ui-kit/molecules/quantity-field";
 import { CartSummary } from "./cart-summary";
+import { EmptyCartView } from "./empty-cart-view";
 import type { Dictionary } from "@/i18n";
 import type { CartQuote } from "@/ontos/cart-quote";
 import { publicImage } from "@/ontos/catalog-model";
@@ -228,18 +228,6 @@ const CartContent = ({
       </>
     );
   }
-  if (cart.entries.length === 0) {
-    return (
-      <>
-        <p className="text-fg-secondary">{d.shopping.emptyDescription}</p>
-        <div>
-          <LinkButton as={NextLink} href={`/${locale}`} size="md" theme="solid" variant="primary">
-            {d.shopping.backHome}
-          </LinkButton>
-        </div>
-      </>
-    );
-  }
   const verified = verifiedCartQuote(quote, invalid);
   return (
     <>
@@ -302,10 +290,13 @@ export const CartView = ({ dictionary: d, locale }: { dictionary: Dictionary; lo
       heading.current?.focus();
     }
   }, [removal]);
+  if (emptyCart(cart)) {
+    return <EmptyCartView dictionary={d} headingRef={heading} locale={locale} />;
+  }
   return (
     <article className="mx-auto flex min-h-n1-cart-empty-mobile max-w-n1-product-content md:min-h-n1-cart-empty flex-col gap-4 p-5">
       <h1 className="text-xl font-bold" ref={heading} tabIndex={-1}>
-        {emptyCart(cart) ? d.shopping.empty : d.cart}
+        {d.cart}
       </h1>
       <CartContent
         cart={cart}
