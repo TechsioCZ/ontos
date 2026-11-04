@@ -4,6 +4,11 @@
  * Source: N1 storefront Header 33:635 / Footer 33:1100.
  */
 [data-theme="n1"] {
+  /* Category navigation214:3169: preserve canonical text/md16/24.
+   * A 32px layout row surrounds the native controls; it is not file-picker UI. */
+  --color-tree-view-bg: var(--color-fill-hover);
+  --font-weight-tree-view-label: var(--font-weight-bold);
+  --spacing-tree-view-node-padding: var(--dimension-0);
   /* Checkout shipping319:1756/319:1977 is a neutral exclusive choice.
    * RadioCard has no tone prop: bind only its outline role to existing N1
    * semantics; primary actions and the brand palette keep their own roles. */
@@ -55,4 +60,14 @@
   --padding-dialog-content: var(--dimension-0);
   --spacing-dialog-content: var(--dimension-0);
   --color-dialog-content-bg: var(--color-fill-hover);
+}
+
+/* Rebind existing semantic kit glyph roles, without custom SVG masks or
+ * appearance classes on TreeView. Expanded state remains owned by Zag. */
+@utility token-icon-tree-indicator {
+  @apply token-icon-plus;
+}
+
+@utility token-icon-tree-indicator-open {
+  @apply token-icon-minus;
 }

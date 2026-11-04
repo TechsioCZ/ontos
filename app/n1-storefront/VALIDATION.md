@@ -1,5 +1,24 @@
 # Kontrola převodu N1 storefrontu
 
+## C9: katalogový strom — 2026-11-04
+
+Figma `214:3169`: skutečně vyhodnocené variables určují text16/24, nadpis700,
+řádky32, padding panelu8 a fill-hover `#f6f6f6`. Generovaný fallback20 není
+skutečná hodnota proměnné. Kategorie používá veřejné compound části TreeView,
+bez folder/file ikon a indent guides; existující sémantické ikony jsou plus/minus.
+Kanonický N1 theme se nekopíruje ani nepřepisuje vlastní paletou.
+
+Produkční browser1440: panel256, text16/24, nadpis700, řádek32, šedé pozadí
+a skutečné SVG masky plus/minus ověřeny přes computed styles. ArrowLeft zavře
+fokusovanou větev, ArrowRight ji otevře; URL se nemění. Kliknutí na text kategorie
+naviguje na skutečný slug. Mobil390: otevření „Procházet kategorie“, strom342,
+řádky32, scrollWidth390 bez horizontálního přetékání. Desktop i mobil zachyceny
+a otevřeny; nejedná se o tvrzení úplné shody celého katalogu. Podkategorijní
+tlačítka mají stále odlišné instance oproti Figmě a budou řešena samostatně.
+
+N1 testy295/295, lint a produkční build prošly. Zdrojové review nepotvrdilo novou
+P1/P2 chybu; nativní Zag collection/selection/focus zůstává zachován.
+
 Nejnovější stav je popsán v závěrečné sekci „Integration checkpoint before the work-in-progress commit“;
 starší části níže zachovávají výsledky svých předchozích běhů.
 

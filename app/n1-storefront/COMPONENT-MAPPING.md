@@ -23,6 +23,14 @@ Původní 418-tokenový mix komponentových snapshotů a App overrides byl nahra
 
 ## Kompozice
 
+Katalogový strom `214:3169` skládá veřejné TreeView.NodeProvider, Branch,
+BranchTrigger/Control/Text/Indicator, BranchContent a Item/Text. Aplikační wrapper
+zajišťuje32px řádek; kit nadále vlastní výběr, rozbalení a klávesnici. Existující
+role `color-tree-view-bg`, `font-weight-tree-view-label`,
+`spacing-tree-view-node-padding` odkazují na fill-hover, bold a dimension-0.
+Existující `token-icon-tree-indicator[-open]` používají kit plus/minus. Žádné
+vzhledové className/style na komponentách ani nové nečtené knihovní tokeny.
+
 | Oblast / Figma                | Skutečné komponenty                                                                              | Stav / hranice                                                                                |
 | ----------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
 | Header `33:635/34:915`        | Header vertical/sm; Actions/ActionItem; Button current/unstyled; Image/Link s Next adaptéry      | Tmavé role globálně, menu řídí skutečný state; account/cart/favorites disabled                |

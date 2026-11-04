@@ -15,6 +15,7 @@ import { categoryTrail, categoryTree } from "@/ontos/catalog-navigation";
 import { CatalogView } from "./catalog-view";
 import { ListingCards } from "./listing-cards";
 import { CatalogPagination } from "./catalog-pagination";
+import { CategoryTreeNode } from "./category-tree-node";
 
 const countFormats = { cs: new Intl.NumberFormat("cs"), en: new Intl.NumberFormat("en") };
 
@@ -99,12 +100,7 @@ export const CategoryView = ({
                 <TreeView.Label>{treeRoot?.name ?? d.menu}</TreeView.Label>
                 <TreeView.Tree>
                   {browseNodes.map((node, index) => (
-                    <TreeView.Node
-                      indexPath={[index]}
-                      key={node.id}
-                      node={node}
-                      showNodeIcons={false}
-                    />
+                    <CategoryTreeNode indexPath={[index]} key={node.id} node={node} />
                   ))}
                 </TreeView.Tree>
               </TreeView>
