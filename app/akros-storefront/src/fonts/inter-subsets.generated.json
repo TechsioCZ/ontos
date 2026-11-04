@@ -2,23 +2,10 @@
   "source": "InterVariable-latin.woff2",
   "sourceBytes": 145612,
   "axes": {
-    "wght": [
-      400,
-      900
-    ],
-    "opsz": [
-      14,
-      32
-    ]
+    "wght": [400, 900],
+    "opsz": [14, 32]
   },
-  "features": [
-    "ccmp",
-    "locl",
-    "calt",
-    "kern",
-    "mark",
-    "mkmk"
-  ],
+  "features": ["ccmp", "locl", "calt", "kern", "mark", "mkmk"],
   "core": {
     "file": "InterVariable-core.woff2",
     "bytes": 68140,

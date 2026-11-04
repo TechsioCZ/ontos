@@ -57,9 +57,7 @@ const failureMessage = (
 const statusText = (t: GalleryTranslate, state: GalleryState) => {
   const uploading = activeUploads(state).length;
   if (uploading > 0) {
-    return uploading === 1
-      ? t('merchandise.pages.products.gallery.uploadingOne')
-      : t('merchandise.pages.products.gallery.uploadingMany', { count: uploading });
+    return t('merchandise.pages.products.gallery.uploading', { count: uploading });
   }
   if (state.status === 'saving') {
     return t('merchandise.pages.products.gallery.saving');

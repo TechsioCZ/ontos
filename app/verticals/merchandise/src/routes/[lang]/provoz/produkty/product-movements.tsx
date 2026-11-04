@@ -13,20 +13,14 @@ import { DateTime } from 'effect';
 import { useRef, useState } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
-import type { StockMovementReason } from '../../../../../shared/domain/merchandise-model.ts';
 import { WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import { formatDelta } from './products-format.ts';
-import {
-  PRODUCT_LIMITS,
-  fieldError,
-  focusFirstInvalid,
-  tooLongMessage,
-  useCommandFailure,
-  useProductLabel,
-} from './product-forms.tsx';
+import { PRODUCT_LIMITS, fieldError, focusFirstInvalid, tooLongMessage } from './product-form-validation.ts';
+import { useCommandFailure, useProductLabel } from './product-form-labels.ts';
+import { EMPTY_MOVEMENT_DRAFT } from './product-movement-draft.ts';
+import type { ManualReason, MovementDraft } from './product-movement-draft.ts';
 
-type ManualReason = Exclude<StockMovementReason, 'ORDER'>;
 type VariantRow = NonNullable<ProductRecord['variantRecords']>[number];
 const NO_VARIANTS: readonly VariantRow[] = [];
 const variantLabel = (variant: VariantRow) => `${variant.name} (${variant.sku})`;
@@ -118,26 +112,6 @@ const quantityErrorKey = (reason: ManualReason, quantity: number, stockOnHand: n
   }
   return stockOnHand + signedDelta(reason, quantity) < 0 ? 'validation.stock' : undefined;
 };
-
-/** Typed movement fields. The product panel owns them, so Esc and outside clicks can see an unsent movement. */
-export interface MovementDraft {
-  readonly note: string;
-  readonly quantity: number;
-  /** The quantity input's text, kept as typed so "2,5" reaches validation instead of becoming 25. */
-  readonly quantityText: string;
-  readonly reason: ManualReason;
-  /** Required on a product with variants: the storefront sells variant stock, not the product total. */
-  readonly variantId?: string | undefined;
-}
-
-export const EMPTY_MOVEMENT_DRAFT: MovementDraft = { note: '', quantity: 1, quantityText: '1', reason: 'RECEIPT' };
-
-/** True when the movement form holds something the user typed or picked beyond the empty defaults. */
-export const isMovementDraftDirty = (draft: MovementDraft): boolean =>
-  draft.reason !== EMPTY_MOVEMENT_DRAFT.reason ||
-  draft.quantity !== EMPTY_MOVEMENT_DRAFT.quantity ||
-  draft.note.trim() !== EMPTY_MOVEMENT_DRAFT.note ||
-  draft.variantId !== undefined;
 
 /**
  * Manual stock movement. Výdej is sent as a negative delta; korekce takes the signed value as typed.

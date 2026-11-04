@@ -34,7 +34,7 @@ import type { SubjectTagFilter } from '../../../../tags/subject-tags.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
 import { paginationProps } from '../../../../form-number.ts';
-import { formatKc } from '../../../../list-cells.tsx';
+import { formatKc } from '../../../../list-format.ts';
 import { customersMatching, useCustomerDirectory } from './customers-directory.ts';
 import { OrderCancelDialog } from './order-cancel-dialog.tsx';
 import { OrderCreateDialog } from './order-create-dialog.tsx';

@@ -1,4 +1,4 @@
-import { Effect, Match, Redacted, Schema } from 'effect';
+import { Effect, Exit, Match, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import {
@@ -64,7 +64,7 @@ it.effect('rejects the demo tenant, another company and another origin before se
       { ...enrollmentInput, storefrontOrigin: 'https://ontos-stage-shop.web-revolution.cz' },
     ]) {
       const result = yield* Schema.decodeUnknownEffect(AkrosCustomerEnrollmentInput)(wrongScope).pipe(Effect.exit);
-      expect(result._tag).toBe('Failure');
+      expect(Exit.isFailure(result)).toBe(true);
     }
   }),
 );

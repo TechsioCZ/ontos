@@ -26,7 +26,7 @@ import { toSubjectIds, useSubjectTagFilter, useSubjectTags } from '../../../../t
 import type { SubjectTagFilter } from '../../../../tags/subject-tags.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
-import { formatKc } from '../../../../list-cells.tsx';
+import { formatKc } from '../../../../list-format.ts';
 import {
   categoryChoicesData,
   firstProductPage,

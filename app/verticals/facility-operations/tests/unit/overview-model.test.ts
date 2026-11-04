@@ -72,31 +72,32 @@ const sources = (extra: Partial<RentalOverviewSources> = {}): RentalOverviewSour
   ...extra,
 });
 
+const occupancy = (
+  id: string,
+  state: OccupancyData['occupancies'][number]['state'],
+  startDate: string,
+  endDate: string | null,
+): OccupancyData['occupancies'][number] => ({
+  contractRef: null,
+  customerCounterpartyRef: null,
+  endDate,
+  externalBookingCorrelation: null,
+  guestPartyRef: null,
+  kind: 'LONG_TERM_LEASE',
+  note: null,
+  occupancyRef: {
+    moduleId: 'property.leasing',
+    resourceId: id,
+    resourceType: 'property.leasing.occupancy',
+    tenantId,
+  },
+  peopleCount: null,
+  startDate,
+  state,
+  unitRef: { moduleId: 'property.portfolio', resourceId: id, resourceType: 'property.portfolio.unit', tenantId },
+});
+
 it('active lease KPI and drill-down use exactly the same current active records', () => {
-  const occupancy = (
-    id: string,
-    state: OccupancyData['occupancies'][number]['state'],
-    startDate: string,
-    endDate: string | null,
-  ): OccupancyData['occupancies'][number] => ({
-    contractRef: null,
-    customerCounterpartyRef: null,
-    endDate,
-    externalBookingCorrelation: null,
-    guestPartyRef: null,
-    kind: 'LONG_TERM_LEASE',
-    note: null,
-    occupancyRef: {
-      moduleId: 'property.leasing',
-      resourceId: id,
-      resourceType: 'property.leasing.occupancy',
-      tenantId,
-    },
-    peopleCount: null,
-    startDate,
-    state,
-    unitRef: { moduleId: 'property.portfolio', resourceId: id, resourceType: 'property.portfolio.unit', tenantId },
-  });
   const source = sources({
     occupancy: {
       data: {
@@ -189,31 +190,32 @@ it('operations search preserves text precedence, short search fields and the loc
   expect(rows).toEqual(expected);
 });
 
+const property = (
+  id: string,
+  lifecycleState: PropertyData['properties'][number]['lifecycleState'],
+): PropertyData['properties'][number] => ({
+  address: id,
+  code: id,
+  createdAt: at,
+  legalEntityRef: {
+    moduleId: 'core.identity',
+    resourceId: 'company',
+    resourceType: 'core.identity.legal-entity',
+    tenantId,
+  },
+  lifecycleState,
+  name: id,
+  note: null,
+  propertyRef: {
+    moduleId: 'property.portfolio',
+    resourceId: id,
+    resourceType: 'property.portfolio.property',
+    tenantId,
+  },
+  updatedAt: at,
+});
+
 it('S15-01 active property count and rows exclude disposed records', () => {
-  const property = (
-    id: string,
-    lifecycleState: PropertyData['properties'][number]['lifecycleState'],
-  ): PropertyData['properties'][number] => ({
-    address: id,
-    code: id,
-    createdAt: at,
-    legalEntityRef: {
-      moduleId: 'core.identity',
-      resourceId: 'company',
-      resourceType: 'core.identity.legal-entity',
-      tenantId,
-    },
-    lifecycleState,
-    name: id,
-    note: null,
-    propertyRef: {
-      moduleId: 'property.portfolio',
-      resourceId: id,
-      resourceType: 'property.portfolio.property',
-      tenantId,
-    },
-    updatedAt: at,
-  });
   const source = sources({
     property: {
       data: {

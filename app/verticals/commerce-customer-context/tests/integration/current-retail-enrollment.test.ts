@@ -35,10 +35,10 @@ it.live('recovers only the live subject’s exact durable Attempt, refusing cros
       });
       const rollback = new Error('current enrollment acceptance rollback');
       yield* admin
-        .transaction((transaction) =>
-          Effect.gen(function* scopedLookup() {
-            const execute = (statement: Parameters<typeof transaction.execute>[0]) =>
-              transaction.execute(statement, 'objects');
+        .transaction((transaction) => {
+          const execute = (statement: Parameters<typeof transaction.execute>[0]) =>
+            transaction.execute(statement, 'objects');
+          return Effect.gen(function* scopedLookup() {
             // Exercise the migrated database as deployed. Replaying this historical migration
             // would collide with its installed function or replace a newer production body.
             yield* execute(
@@ -97,8 +97,8 @@ it.live('recovers only the live subject’s exact durable Attempt, refusing cros
             yield* execute(sql`set local role ontos_runtime`);
             expect(Result.isFailure(yield* read().pipe(Effect.result))).toBe(true);
             return yield* Effect.fail(rollback);
-          }),
-        )
+          });
+        })
         .pipe(Effect.catch((error) => (error === rollback ? Effect.void : Effect.fail(error))));
     }),
   ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),

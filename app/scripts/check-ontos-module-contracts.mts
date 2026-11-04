@@ -170,9 +170,9 @@ const moduleSourceCandidates = (node: Expression | Argument | undefined): readon
   return candidates;
 };
 
-export const moduleImportSources = (filePath: string, content: string) =>
-  Effect.gen(function* discoverModuleImports() {
-    const parseFailure = () => failure(`${filePath} could not be parsed for module-boundary import checks`);
+export const moduleImportSources = (filePath: string, content: string) => {
+  const parseFailure = () => failure(`${filePath} could not be parsed for module-boundary import checks`);
+  return Effect.gen(function* discoverModuleImports() {
     const parsed = yield* Effect.try({
       catch: parseFailure,
       try: () => parseSync(filePath, content, { astType: 'ts', sourceType: 'unambiguous' }),
@@ -223,6 +223,7 @@ export const moduleImportSources = (filePath: string, content: string) =>
       },
     });
   });
+};
 
 /** Inspect executable/type import syntax, never strings or comments containing fixture source. */
 export const checkModuleContractSourceImports = (filePath: string, content: string, ownerRoot?: string) =>

@@ -1,6 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
 import { readFileSync } from 'node:fs';
-import { Array as EffectArray, Effect, Order, Schema } from 'effect';
+import { Array as EffectArray, Effect, Exit, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { agentGrantRelationships } from '../../packages/core-runtime/src/install/agent-entity-grants.ts';
 import { toSpiceDbActionGrantObjectId } from '../../packages/core-runtime/src/permissions/service.ts';
@@ -91,7 +91,7 @@ it.effect('refuses any undeclared, destructive, profile-changing, creation or du
       { ...evidence, expected: [...evidence.expected, missingLifecycle] },
       { ...evidence, missing: [missingLifecycle, missingLifecycle] },
     ]) {
-      expect((yield* Effect.exit(validateDeclaredAgentRepair(changed)))._tag).toBe('Failure');
+      expect(Exit.isFailure(yield* Effect.exit(validateDeclaredAgentRepair(changed)))).toBe(true);
     }
   }),
 );

@@ -27,7 +27,7 @@ const entityPattern = /&(?:#(?<code>\d{1,6})|(?<name>[a-z]+));/gu;
 
 /** Kai's source category copy carries HTML entities (`&ndash;`); OntOS stores and the storefront shows plain text. */
 export const decodeHtmlEntities = (value: string): string =>
-  value.replace(entityPattern, (match, code: string | undefined, name: string | undefined) =>
+  value.replaceAll(entityPattern, (match, code: string | undefined, name: string | undefined) =>
     code === undefined ? (namedEntities[name ?? ''] ?? match) : String.fromCodePoint(Number(code)),
   );
 
@@ -66,7 +66,7 @@ const unbackedDiscountPattern = /Limity množstevních slev[\s\S]*?vložení zbo
 export const stripUnbackedDiscount = (value: string): string =>
   value.includes('Limity množstevních slev')
     ? value
-        .replace(unbackedDiscountPattern, '')
+        .replaceAll(unbackedDiscountPattern, '')
         .split(/\n\s*\n/u)
         .map((part) => part.replaceAll(/[ \t]{2,}/gu, ' ').trim())
         .filter((part) => part !== '')

@@ -71,6 +71,7 @@ export class PreparationSource {
   readonly safeCalls = new Set<number>();
   readonly executorEscapes = new Map<PreparationFunction, Map<string, boolean>>();
   resolveCallable?: (expression: Expression) => ResolvedPreparation | undefined;
+  provesGuardWrapper?: (expression: Expression) => boolean;
 
   constructor(file: string, source: string) {
     const parsed = parseSync(file, source, { astType: 'ts', lang: file.endsWith('.tsx') ? 'tsx' : 'ts' });
@@ -287,12 +288,41 @@ export class PreparationSource {
     );
   }
 
+  nativeImplementation(expression: CallExpression): PreparationFunction | undefined {
+    const [argument, ...transforms] = expression.arguments;
+    return transforms.every(
+      (transform) =>
+        transform.type === 'CallExpression' &&
+        this.effectCall(transform, 'mapError') &&
+        transform.arguments.length === 1 &&
+        transform.arguments[0]?.type !== 'SpreadElement',
+    ) &&
+      argument !== undefined &&
+      argument.type !== 'SpreadElement' &&
+      (argument.type === 'ArrowFunctionExpression' || argument.type === 'FunctionExpression')
+      ? argument
+      : undefined;
+  }
+
   implementation(
     expression: Expression | null | undefined,
     seen: ReadonlySet<Binding> = new Set(),
   ): PreparationFunction | undefined {
     if (expression === undefined || expression === null) {
       return undefined;
+    }
+    const erased = Match.value(expression).pipe(
+      Match.whenOr(
+        { type: 'ParenthesizedExpression' },
+        { type: 'TSSatisfiesExpression' },
+        { type: 'TSAsExpression' },
+        { type: 'TSNonNullExpression' },
+        (value) => value.expression,
+      ),
+      Match.orElse(() => expression),
+    );
+    if (erased !== expression) {
+      return this.implementation(erased, seen);
     }
     if (expression.type === 'ArrowFunctionExpression' || expression.type === 'FunctionExpression') {
       return expression;
@@ -304,19 +334,23 @@ export class PreparationSource {
       }
       return binding.implementation ?? this.implementation(binding.init, new Set([...seen, binding]));
     }
-    // Only the real Effect.fn(label)(implementation), never a same-named wrapper.
+    // Native error mapping cannot replace the implementation's acquired success value.
     if (
       expression.type === 'CallExpression' &&
       expression.callee.type === 'CallExpression' &&
       this.effectCall(expression.callee, 'fn')
     ) {
+      return this.nativeImplementation(expression);
+    }
+    if (
+      expression.type === 'CallExpression' &&
+      expression.arguments.length === 1 &&
+      this.provesGuardWrapper?.(expression.callee) === true
+    ) {
       const [argument] = expression.arguments;
-      return expression.arguments.length === 1 &&
-        argument !== undefined &&
-        argument.type !== 'SpreadElement' &&
-        (argument.type === 'ArrowFunctionExpression' || argument.type === 'FunctionExpression')
-        ? argument
-        : undefined;
+      return argument === undefined || argument.type === 'SpreadElement'
+        ? undefined
+        : this.implementation(argument, seen);
     }
     return undefined;
   }
@@ -420,7 +454,255 @@ export class PreparationSource {
 }
 
 type ResolvedPreparation = readonly [PreparationSource, PreparationFunction];
-type ResolvePreparation = (model: PreparationSource, expression: Expression) => ResolvedPreparation | undefined;
+type ResolvePreparation = (
+  model: PreparationSource,
+  expression: Expression,
+  seen?: ReadonlySet<Binding>,
+) => ResolvedPreparation | undefined;
+
+const directReturn = (node: PreparationFunction): Expression | undefined => {
+  if (node.async || (node.type !== 'ArrowFunctionExpression' && node.generator)) {
+    return undefined;
+  }
+  if (node.body?.type !== 'BlockStatement') {
+    return node.type === 'ArrowFunctionExpression' ? node.body : undefined;
+  }
+  const [statement] = node.body.body;
+  return node.body.body.length === 1 && statement?.type === 'ReturnStatement'
+    ? (statement.argument ?? undefined)
+    : undefined;
+};
+
+/** Guard arguments must not execute opaque code or mutate the forwarded inputs. */
+const guardValue = (
+  model: PreparationSource,
+  expression: Expression,
+  seen: ReadonlySet<PreparationFunction> = new Set(),
+): boolean => {
+  const check = (value: Expression): boolean => guardValue(model, value, seen);
+  const callValue = (call: CallExpression): boolean => {
+    if (!call.arguments.every((argument) => argument.type !== 'SpreadElement' && check(argument))) {
+      return false;
+    }
+    const { callee } = call;
+    if (
+      callee.type === 'MemberExpression' &&
+      !callee.computed &&
+      callee.property.type === 'Identifier' &&
+      callee.property.name === 'has' &&
+      callee.object.type === 'Identifier'
+    ) {
+      const binding = model.stable(model.resolve(callee.object.name, callee.object));
+      const init = binding?.init;
+      return (
+        init?.type === 'NewExpression' &&
+        init.callee.type === 'Identifier' &&
+        init.callee.name === 'Set' &&
+        model.resolve('Set', init.callee) === undefined &&
+        init.arguments.length === 1 &&
+        init.arguments[0]?.type === 'ArrayExpression' &&
+        init.arguments[0].elements.every((element) => element?.type === 'Literal')
+      );
+    }
+    const helper = model.implementation(callee);
+    const returned = helper === undefined ? undefined : directReturn(helper);
+    return (
+      helper !== undefined &&
+      returned !== undefined &&
+      !seen.has(helper) &&
+      guardValue(model, returned, new Set([...seen, helper]))
+    );
+  };
+  return Match.value(expression).pipe(
+    Match.when({ type: 'Literal' }, () => true),
+    Match.when({ type: 'Identifier' }, (value) => {
+      const binding = model.resolve(value.name, value);
+      return binding === undefined || !model.writes.has(binding);
+    }),
+    Match.whenOr(
+      { type: 'ParenthesizedExpression' },
+      { type: 'TSAsExpression' },
+      { type: 'TSSatisfiesExpression' },
+      { type: 'TSNonNullExpression' },
+      (value) => check(value.expression),
+    ),
+    Match.when({ type: 'MemberExpression' }, (value) => !value.computed && check(value.object)),
+    Match.when({ type: 'UnaryExpression' }, (value) => value.operator !== 'delete' && check(value.argument)),
+    Match.whenOr(
+      { type: 'BinaryExpression' },
+      { type: 'LogicalExpression' },
+      (value) => value.left.type !== 'PrivateIdentifier' && check(value.left) && check(value.right),
+    ),
+    Match.when(
+      { type: 'ConditionalExpression' },
+      (value) => check(value.test) && check(value.consequent) && check(value.alternate),
+    ),
+    Match.when({ type: 'TemplateLiteral' }, (value) => value.expressions.every(check)),
+    Match.when({ type: 'NewExpression' }, (value) =>
+      value.arguments.every(
+        (argument) =>
+          argument.type === 'ObjectExpression' &&
+          argument.properties.every(
+            (property) =>
+              property.type === 'Property' &&
+              !property.computed &&
+              property.kind === 'init' &&
+              (property.value.type === 'Literal' ||
+                (property.value.type === 'TemplateLiteral' && check(property.value))),
+          ),
+      ),
+    ),
+    Match.when({ type: 'CallExpression' }, callValue),
+    Match.orElse(() => false),
+  );
+};
+
+/** A user-defined `pipe` method must not masquerade as an Effect guard. */
+const nativeGuardEffect = (
+  model: PreparationSource,
+  expression: Expression | undefined,
+  seen: ReadonlySet<PreparationFunction> = new Set(),
+): boolean =>
+  Match.value(expression).pipe(
+    Match.when(
+      { type: 'ConditionalExpression' },
+      (value) =>
+        guardValue(model, value.test) &&
+        nativeGuardEffect(model, value.consequent, seen) &&
+        nativeGuardEffect(model, value.alternate, seen),
+    ),
+    Match.when(
+      { type: 'MemberExpression' },
+      (value) =>
+        !value.computed &&
+        value.property.type === 'Identifier' &&
+        value.property.name === 'void' &&
+        value.object.type === 'Identifier' &&
+        model.imported(value.object.name, value.object, 'Effect', 'effect', true),
+    ),
+    Match.when({ type: 'CallExpression' }, (value) => {
+      if (model.effectCall(value, 'fail') || model.effectCall(value, 'succeed')) {
+        const [argument] = value.arguments;
+        return (
+          value.arguments.length === 1 &&
+          argument?.type !== 'SpreadElement' &&
+          argument !== undefined &&
+          guardValue(model, argument)
+        );
+      }
+      const helper = model.implementation(value.callee);
+      return (
+        helper !== undefined &&
+        !seen.has(helper) &&
+        value.arguments.every((argument) => argument.type !== 'SpreadElement' && guardValue(model, argument)) &&
+        nativeGuardEffect(model, directReturn(helper), new Set([...seen, helper]))
+      );
+    }),
+    Match.orElse(() => false),
+  );
+
+const guardPipeline = (model: PreparationSource, value: Expression | undefined): CallExpression | undefined => {
+  if (
+    value?.type !== 'CallExpression' ||
+    value.callee.type !== 'MemberExpression' ||
+    value.callee.computed ||
+    value.callee.property.type !== 'Identifier' ||
+    value.callee.property.name !== 'pipe' ||
+    value.callee.object.type !== 'CallExpression' ||
+    !nativeGuardEffect(model, value.callee.object) ||
+    value.arguments.length === 0 ||
+    !value.arguments.every(
+      (argument) =>
+        argument.type === 'CallExpression' && model.effectCall(argument, 'flatMap') && argument.arguments.length === 1,
+    )
+  ) {
+    return undefined;
+  }
+  return value;
+};
+
+const guardCallback = (value: CallExpression['arguments'][number] | undefined): PreparationFunction | undefined => {
+  const callback = value?.type === 'CallExpression' ? value.arguments[0] : undefined;
+  return (callback?.type === 'ArrowFunctionExpression' || callback?.type === 'FunctionExpression') &&
+    callback.params.length === 0
+    ? callback
+    : undefined;
+};
+
+const forwardedGuardCall = (
+  model: PreparationSource,
+  callback: PreparationFunction | undefined,
+  handler: Binding,
+  parameters: readonly (Binding | undefined)[],
+): CallExpression | undefined => {
+  const invocation = callback === undefined ? undefined : directReturn(callback);
+  return invocation?.type === 'CallExpression' &&
+    invocation.callee.type === 'Identifier' &&
+    model.resolve(invocation.callee.name, invocation.callee) === handler &&
+    invocation.arguments.length === parameters.length &&
+    invocation.arguments.every(
+      (argument, index) =>
+        argument.type === 'Identifier' && model.resolve(argument.name, argument) === parameters[index],
+    )
+    ? invocation
+    : undefined;
+};
+
+/**
+ * Prove a guard's shape from its resolved definition, not its import name. Checks may precede
+ * the handler, but its arguments and success must pass through unchanged and it cannot escape.
+ */
+const isGuardWrapper = (model: PreparationSource, wrapper: PreparationFunction): boolean => {
+  const [handler] = wrapper.params;
+  const returned = directReturn(wrapper);
+  if (
+    wrapper.params.length !== 1 ||
+    handler?.type !== 'Identifier' ||
+    (returned?.type !== 'ArrowFunctionExpression' && returned?.type !== 'FunctionExpression')
+  ) {
+    return false;
+  }
+  const handlerBinding = model.resolve(handler.name, handler);
+  const parameters = returned.params.map((parameter) =>
+    parameter.type === 'Identifier' ? model.resolve(parameter.name, parameter) : undefined,
+  );
+  const pipeline = guardPipeline(model, directReturn(returned));
+  if (
+    handlerBinding === undefined ||
+    model.writes.has(handlerBinding) ||
+    parameters.length === 0 ||
+    parameters.some((binding) => binding === undefined || model.writes.has(binding)) ||
+    pipeline === undefined
+  ) {
+    return false;
+  }
+  if (
+    !pipeline.arguments.slice(0, -1).every((guard) => {
+      const callback = guardCallback(guard);
+      return callback !== undefined && nativeGuardEffect(model, directReturn(callback));
+    })
+  ) {
+    return false;
+  }
+  const invocation = forwardedGuardCall(model, guardCallback(pipeline.arguments.at(-1)), handlerBinding, parameters);
+  if (invocation === undefined) {
+    return false;
+  }
+  let closed = true;
+  new Visitor({
+    Identifier: (reference) => {
+      if (
+        contains(wrapper, reference) &&
+        reference.start !== handler.start &&
+        model.resolve(reference.name, reference) === handlerBinding &&
+        reference !== invocation.callee
+      ) {
+        closed = false;
+      }
+    },
+  }).visit(model.program);
+  return closed;
+};
 
 const exportedImplementation = (target: PreparationSource, name: string): PreparationFunction | undefined => {
   for (const statement of target.program.body) {
@@ -575,13 +857,85 @@ const nativePreparationMethod = (
   return definition === undefined ? undefined : nativeServiceMethod(definition, member.property.name);
 };
 
+const configurePreparationModel = (
+  model: PreparationSource,
+  resolve: ResolvePreparation,
+  checkingWrappers: Set<Expression>,
+): void => {
+  model.resolveCallable = (expression) => resolve(model, expression);
+  model.provesGuardWrapper = (expression) => {
+    if (checkingWrappers.has(expression)) {
+      return false;
+    }
+    checkingWrappers.add(expression);
+    try {
+      const resolved = resolve(model, expression);
+      return resolved !== undefined && isGuardWrapper(...resolved);
+    } finally {
+      checkingWrappers.delete(expression);
+    }
+  };
+};
+
+const namedReexport = (
+  definition: SourceDefinition,
+): { readonly name: string; readonly source: string } | undefined => {
+  for (const statement of definition.model.program.body) {
+    if (statement.type !== 'ExportNamedDeclaration' || statement.exportKind === 'type' || statement.source === null) {
+      continue;
+    }
+    for (const specifier of statement.specifiers) {
+      if (
+        specifier.type === 'ExportSpecifier' &&
+        specifier.exportKind !== 'type' &&
+        specifier.exported.type === 'Identifier' &&
+        specifier.exported.name === definition.name &&
+        specifier.local.type === 'Identifier'
+      ) {
+        return { name: specifier.local.name, source: statement.source.value };
+      }
+    }
+  }
+  return undefined;
+};
+
 const preparationResolver = (
   models: Map<string, PreparationSource>,
   sources: ReadonlyMap<string, string>,
   dependency: (file: string, specifier: string) => string | undefined,
 ): ResolvePreparation => {
   const resolveDefinition = sourceDefinitionResolver(models, sources, dependency);
-  const resolve: ResolvePreparation = (model, expression): ResolvedPreparation | undefined => {
+  const checkingWrappers = new Set<Expression>();
+  const resolveExport = (initial: SourceDefinition, resolver: ResolvePreparation): ResolvedPreparation | undefined => {
+    const seen = new Map<PreparationSource, Set<string>>();
+    let definition = initial;
+    for (let depth = 0; depth < 128; depth += 1) {
+      const names = seen.get(definition.model) ?? new Set<string>();
+      if (names.has(definition.name)) {
+        return undefined;
+      }
+      names.add(definition.name);
+      seen.set(definition.model, names);
+      configurePreparationModel(definition.model, resolver, checkingWrappers);
+      const implementation = exportedImplementation(definition.model, definition.name);
+      if (implementation !== undefined) {
+        return [definition.model, implementation];
+      }
+      const forwarded = namedReexport(definition);
+      const currentModel = definition.model;
+      const file = [...models].find(([, model]) => model === currentModel)?.[0];
+      const targetFile = file === undefined || forwarded === undefined ? undefined : dependency(file, forwarded.source);
+      const source = targetFile === undefined ? undefined : sources.get(targetFile);
+      if (targetFile === undefined || source === undefined || forwarded === undefined) {
+        return undefined;
+      }
+      const target = models.get(targetFile) ?? new PreparationSource(targetFile, source);
+      models.set(targetFile, target);
+      definition = { exported: true, model: target, name: forwarded.name };
+    }
+    return undefined;
+  };
+  const resolve: ResolvePreparation = (model, expression, seen = new Set()): ResolvedPreparation | undefined => {
     const local = model.implementation(expression);
     if (local !== undefined) {
       return [model, local];
@@ -589,17 +943,25 @@ const preparationResolver = (
     if (expression.type === 'MemberExpression') {
       return nativePreparationMethod(model, expression, resolveDefinition);
     }
-    if (expression.type !== 'Identifier' || model.stable(model.resolve(expression.name, expression)) === undefined) {
+    if (expression.type !== 'Identifier') {
       return undefined;
+    }
+    const binding = model.stable(model.resolve(expression.name, expression));
+    if (binding === undefined || seen.has(binding)) {
+      return undefined;
+    }
+    if (binding.init?.type === 'Identifier') {
+      return resolve(model, binding.init, new Set([...seen, binding]));
     }
     const definition = resolveDefinition(model, expression);
     if (definition === undefined || definition.model === model) {
       return undefined;
     }
-    definition.model.resolveCallable = (callee) => resolve(definition.model, callee);
-    const implementation = exportedImplementation(definition.model, definition.name);
-    return implementation === undefined ? undefined : [definition.model, implementation];
+    return resolveExport(definition, resolve);
   };
+  for (const model of models.values()) {
+    configurePreparationModel(model, resolve, checkingWrappers);
+  }
   return resolve;
 };
 
@@ -925,6 +1287,146 @@ const privateFactoryConsumers = (model: PreparationSource): void => {
   }
 };
 
+/** A proven call cannot authorize returning or otherwise escaping its executor-input helper. */
+const escapingConsumerReferences = (
+  model: PreparationSource,
+  resolve: ResolvePreparation,
+): ReadonlySet<PreparationFunction> => {
+  const declarations = new Set(model.bindings.map((binding) => binding.declaration.start));
+  const callTargets = new Set(model.calls.map((call) => call.callee.start));
+  const escapedBindings = new Set<Binding>();
+  const erasedTypes: Span[] = [];
+  new Visitor({
+    TSTypeQuery: (node) => {
+      erasedTypes.push(node);
+    },
+    TSTypeReference: (node) => {
+      erasedTypes.push(node);
+    },
+  }).visit(model.program);
+  new Visitor({
+    Identifier: (node) => {
+      if (
+        node.type !== 'Identifier' ||
+        declarations.has(node.start) ||
+        callTargets.has(node.start) ||
+        erasedTypes.some((type) => contains(type, node))
+      ) {
+        return;
+      }
+      const binding = model.resolve(node.name, node);
+      if (binding !== undefined && binding.stable && binding.imported?.typeOnly !== true) {
+        escapedBindings.add(binding);
+      }
+    },
+  }).visit(model.program);
+  const escaping = new Set<PreparationFunction>();
+  for (const binding of escapedBindings) {
+    const resolved = resolve(model, {
+      end: binding.declaration.end,
+      name: binding.name,
+      start: binding.declaration.start,
+      type: 'Identifier',
+    });
+    if (resolved !== undefined) {
+      escaping.add(resolved[1]);
+    }
+  }
+  return escaping;
+};
+
+const closedFactoryConsumer = (
+  models: ReadonlyMap<string, PreparationSource>,
+  helper: PreparationFunction,
+  resolve: ResolvePreparation,
+  cache: Map<PreparationSource, ReadonlySet<PreparationFunction>>,
+): boolean => {
+  for (const model of models.values()) {
+    const escaping = cache.get(model) ?? escapingConsumerReferences(model, resolve);
+    cache.set(model, escaping);
+    if (escaping.has(helper)) {
+      return false;
+    }
+  }
+  return true;
+};
+
+/** Follow the actual Core factory input into exact, typed private helper calls across modules. */
+const registeredFactoryConsumers = (
+  models: ReadonlyMap<string, PreparationSource>,
+  resolve: ResolvePreparation,
+): void => {
+  const pending: ResolvedPreparation[] = [...models.values()].flatMap((model) =>
+    model.functions.flatMap((implementation) =>
+      model.factories.has(implementation.start) || model.privateConsumers.has(implementation.start)
+        ? [[model, implementation] as const]
+        : [],
+    ),
+  );
+  const visited = new Set<PreparationFunction>();
+  const closed = new Map<PreparationFunction, boolean>();
+  const consumerEscapes = new Map<PreparationSource, ReadonlySet<PreparationFunction>>();
+  while (pending.length > 0) {
+    const item = pending.pop();
+    if (item === undefined || visited.has(item[1])) {
+      continue;
+    }
+    const [model, implementation] = item;
+    visited.add(implementation);
+    const inputs = implementation.params.flatMap((parameter, index) => {
+      if (
+        parameter.type !== 'Identifier' ||
+        !(
+          (index === 0 && model.factories.has(implementation.start)) ||
+          model.coreType(parameter.typeAnnotation, 'ScopedTransactionExecutor')
+        )
+      ) {
+        return [];
+      }
+      const binding = model.resolve(parameter.name, parameter);
+      return binding === undefined || model.writes.has(binding) ? [] : [binding];
+    });
+    for (const call of model.calls) {
+      if (
+        !contains(implementation, call) ||
+        !call.arguments.some(
+          (argument) =>
+            argument.type === 'Identifier' &&
+            inputs.some((binding) => model.resolve(argument.name, argument) === binding),
+        )
+      ) {
+        continue;
+      }
+      const resolved = resolve(model, call.callee);
+      if (resolved !== undefined) {
+        const [target, helper] = resolved;
+        const executorIndexes = helper.params.flatMap((parameter, index) =>
+          parameter.type === 'Identifier' && target.coreType(parameter.typeAnnotation, 'ScopedTransactionExecutor')
+            ? [index]
+            : [],
+        );
+        if (!closed.has(helper)) {
+          closed.set(helper, closedFactoryConsumer(models, helper, resolve, consumerEscapes));
+        }
+        if (
+          closed.get(helper) === true &&
+          executorIndexes.length > 0 &&
+          executorIndexes.every((index) => {
+            const argument = call.arguments[index];
+            return (
+              argument?.type === 'Identifier' &&
+              inputs.some((binding) => model.resolve(argument.name, argument) === binding)
+            );
+          })
+        ) {
+          target.privateConsumers.add(helper.start);
+          pending.push(resolved);
+        }
+      }
+    }
+  }
+};
+
 /** Error mapping preserves the acquired success value; arbitrary success transforms do not. */
 const preparationEffect = (model: PreparationSource, expression: Expression | null): CallExpression | undefined => {
   if (expression?.type !== 'CallExpression') {
@@ -1066,5 +1568,6 @@ export const actionPreparationBoundaries = (
     preparedFactoryCalls(model, resolve);
     privateFactoryConsumers(model);
   }
+  registeredFactoryConsumers(models, resolve);
   return models;
 };

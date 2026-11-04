@@ -1,5 +1,5 @@
 import { ActionPermissionDenied, OperationAuthenticationRequired } from '@app/core-runtime';
-import { Schema } from 'effect';
+import { Exit, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { mapRegisterStorefrontApplicationActionProblem } from '../../api/register-storefront-application-action-problems.ts';
 import { mapReviseStorefrontApplicationActionProblem } from '../../api/revise-storefront-application-action-problems.ts';
@@ -35,9 +35,9 @@ describe('Storefront Registry administration Action HTTP transport', () => {
       reason: 'Demo storefront registration',
       storefrontAppId: 'akros-storefront',
     };
-    expect(decode(valid)._tag).toBe('Success');
-    expect(decode({ ...valid, lifecycle: 'SUSPENDED' })._tag).toBe('Failure');
-    expect(decode({ ...valid, allowedChannels: ['B2C', 'B2C'] })._tag).toBe('Failure');
+    expect(Exit.isSuccess(decode(valid))).toBe(true);
+    expect(Exit.isFailure(decode({ ...valid, lifecycle: 'SUSPENDED' }))).toBe(true);
+    expect(Exit.isFailure(decode({ ...valid, allowedChannels: ['B2C', 'B2C'] }))).toBe(true);
   });
 
   it('maps owner rejections to conflict or not-found and persistence loss to a retryable unavailable problem', () => {

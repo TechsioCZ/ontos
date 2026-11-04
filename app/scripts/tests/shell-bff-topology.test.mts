@@ -27,6 +27,105 @@ const sourceFiles = Effect.gen(function* shellBffSources() {
 
 const testServices = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
 
+const plainRouteBody = 'return yield* Effect.void; });';
+
+const nativeRouteTopology = `
+import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
+import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
+import { Effect } from 'effect';
+import { HttpRouter } from 'effect/http';
+import { fixtureApi } from '../shared/api.ts';
+const handlers = HttpApiBuilder.group(fixtureApi, 'fixture', h => h.handle('get', () => Effect.void));
+const routePath = '/live-changes';
+const serveRoute = Effect.fn('LiveChanges.serve')(function* serve() { return yield* Effect.void; });
+const transport = HttpRouter.add('GET', routePath, serveRoute);
+export default assembleEffectBffRuntime({ api: fixtureApi, handlers, transport });
+`;
+
+it('accepts immutable native route paths and Effect.fn handlers without changing the transport', () => {
+  expect(strictEffectRuntimeTopologyViolation(nativeRouteTopology)).toBeUndefined();
+  expect(
+    strictEffectRuntimeTopologyViolation(
+      nativeRouteTopology.replace(
+        plainRouteBody,
+        "return yield* Effect.void; }, Effect.catchTag('Unavailable', () => Effect.void));",
+      ),
+    ),
+  ).toBeUndefined();
+  expect(
+    strictEffectRuntimeTopologyViolation(
+      nativeRouteTopology.replace('routePath, serveRoute', "'/live-changes', () => Effect.void"),
+    ),
+  ).toBeUndefined();
+});
+
+it('rejects malformed, mutable, shadowed and cyclic native route declarations', () => {
+  for (const invalid of [
+    nativeRouteTopology.replace("'/live-changes'", "'live-changes'"),
+    nativeRouteTopology.replace("'GET', routePath", "'INVALID', routePath"),
+    nativeRouteTopology.replace('routePath, serveRoute', 'routePath, {}'),
+    nativeRouteTopology.replace("const routePath = '/live-changes';", "let routePath = '/live-changes';"),
+    nativeRouteTopology.replace('const transport =', "routePath = '/other'; const transport ="),
+    nativeRouteTopology.replace('const transport =', 'serveRoute = () => Effect.void; const transport ='),
+    nativeRouteTopology.replace("import { Effect } from 'effect';", "import { fake as Effect } from 'effect';"),
+    nativeRouteTopology.replace('function* serve()', 'undefined, function* serve()'),
+    nativeRouteTopology.replace(plainRouteBody, 'return yield* Effect.void; }, () => ({}));'),
+    nativeRouteTopology.replace(
+      "const routePath = '/live-changes';",
+      'const routePath = alias; const alias = routePath;',
+    ),
+    nativeRouteTopology.replace('export default assembleEffectBffRuntime', 'assembleEffectBffRuntime'),
+  ]) {
+    expect(strictEffectRuntimeTopologyViolation(invalid)).toBeDefined();
+  }
+});
+
+it('rejects native method mutations through direct, aliased and type-wrapped receivers', () => {
+  for (const method of ['fn', 'catchTag']) {
+    for (const mutation of [
+      `Effect.${method} = () => 123;`,
+      `const alias = Effect; alias.${method} = () => 123;`,
+      `let alias = Effect; alias.${method} = () => 123;`,
+      `var alias = Effect; alias.${method} = () => 123;`,
+      `(Effect as any).${method} = () => 123;`,
+      `let alias = Effect; (alias as any).${method} = () => 123;`,
+    ]) {
+      const source = nativeRouteTopology
+        .replace(plainRouteBody, "return yield* Effect.void; }, Effect.catchTag('Unavailable', () => Effect.void));")
+        .replace('const routePath', `${mutation}\nconst routePath`);
+      expect(strictEffectRuntimeTopologyViolation(source), mutation).toBeDefined();
+    }
+  }
+});
+
+const capturedNativeRouteTopology = nativeRouteTopology
+  .replace(
+    "import { Effect } from 'effect';",
+    "import { Effect } from 'effect'; import { service } from './service.ts';",
+  )
+  .replace(
+    "const transport = HttpRouter.add('GET', routePath, serveRoute);",
+    `const transport = Layer.unwrap(
+      Effect.map(service, value => HttpRouter.add(
+        'GET', routePath,
+        Effect.fn('serve')(
+          function* () { return yield* Effect.fail({ _tag: 'Unavailable' }); },
+          Effect.catchTag('Unavailable', () => value.serve),
+        ),
+      )),
+    ).pipe(Layer.provide(Layer.empty));`,
+  );
+
+it('retains native recovery callback captures with their original lexical binding', () => {
+  expect(strictEffectRuntimeTopologyViolation(capturedNativeRouteTopology)).toBeUndefined();
+  for (const replacement of ['() => Effect.void', '(value) => value.serve']) {
+    expect(
+      strictEffectRuntimeTopologyViolation(capturedNativeRouteTopology.replace('() => value.serve', replacement)),
+      replacement,
+    ).toBeDefined();
+  }
+});
+
 it.effect('proves the real Shell handler and protocol composition with the installed native analyzer', () =>
   Effect.gen(function* nativeShellTopology() {
     const { entry, entrySource } = yield* sourceFiles;

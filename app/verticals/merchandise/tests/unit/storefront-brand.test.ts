@@ -32,11 +32,12 @@ const now = DateTime.makeUnsafe('2026-11-02T10:00:00Z');
 const decodeCommand = Schema.decodeUnknownSync(MerchandiseCommandSchema);
 type CommandInput = typeof MerchandiseCommandSchema.Encoded;
 
+const apply = (state: MerchandiseState, command: CommandInput, resourceId: string) =>
+  evolveMerchandiseState(state, decodeCommand(command), { actor, now, resourceId });
+
 /** One stocked product of an imported source catalog. */
 const sourceCatalogState = Effect.gen(function* seedSourceCatalog() {
   const empty: MerchandiseState = { movements: [], orders: [], products: [] };
-  const apply = (state: MerchandiseState, command: CommandInput, resourceId: string) =>
-    evolveMerchandiseState(state, decodeCommand(command), { actor, now, resourceId });
   const created = yield* apply(
     empty,
     {

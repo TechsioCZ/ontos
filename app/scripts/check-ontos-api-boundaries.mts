@@ -268,13 +268,15 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       const sharedApi = `${verticalPath}/shared/api.ts`;
       const sharedApiContent = (yield* exists(sharedApi)) ? yield* readText(sharedApi) : '';
       assertVerticalBaseline(verticalPath, sharedApi);
+      const diagnostics: string[] = [];
       if (
         /\bHttpApiEndpoint\./u.test(sharedApiContent) &&
         !isGeneratedInfrastructureReadinessApi(verticalPath, sharedApiContent) &&
-        !hasCompleteGeneratedModuleApiSeam(sourceByFile, sharedApi)
+        !hasCompleteGeneratedModuleApiSeam(sourceByFile, sharedApi, path.basename(verticalPath), diagnostics)
       ) {
+        const failedChecks = diagnostics.length === 0 ? '' : ` (failed: ${diagnostics.join('; ')})`;
         fail(
-          `${sharedApi}: module APIs require an approved Codesmith generator, structured api registration, verified trusted tenant context, and the server ModuleEntrypointGateway before an endpoint may be introduced.`,
+          `${sharedApi}: module APIs require an approved Codesmith generator, structured api registration, verified trusted tenant context, and the server ModuleEntrypointGateway before an endpoint may be introduced.${failedChecks}`,
         );
       }
     }

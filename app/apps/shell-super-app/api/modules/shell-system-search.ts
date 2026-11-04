@@ -13,16 +13,15 @@ import { ShellProviderUnavailableError } from './shell-resources.ts';
 import type { ShellResourceContext } from './shell-resources.ts';
 import { observeShellSearchProvider } from './shell-search-diagnostics.ts';
 
-type UnparsedSystemSearchResults = typeof Schema.Unknown.Type;
 const unavailable = (cause?: unknown) => new ShellProviderUnavailableError(cause === undefined ? {} : { cause });
 /** Core remains outside the installed business-module catalog. This branch admits one exact system contract. */
 export const authorizePeopleSearchResults: (
   scope: ShellResourceContext,
-  values: UnparsedSystemSearchResults,
+  values: PeopleSearchResponse,
 ) => Effect.Effect<ShellSearchResponse['results'], ShellProviderUnavailableError, ContextAccess> = Effect.fn(
   'ShellSystemSearch.authorizePeopleResults',
-)(function* authorize(scope: ShellResourceContext, values: UnparsedSystemSearchResults) {
-  const decoded: PeopleSearchResponse = yield* Schema.decodeUnknownEffect(PeopleSearchResponseSchema, {
+)(function* authorize(scope: ShellResourceContext, values: PeopleSearchResponse) {
+  const decoded = yield* Schema.decodeEffect(PeopleSearchResponseSchema, {
     onExcessProperty: 'error',
   })(values).pipe(Effect.mapError(unavailable));
   if (scope.legalEntityId === undefined) {
@@ -62,7 +61,7 @@ export const authorizePeopleSearchResults: (
   const results = scoped.flatMap((row, index) =>
     decisions[index]?.decision === 'allowed' ? [{ ...row, kind: 'resource' as const }] : [],
   );
-  const response = yield* Schema.decodeUnknownEffect(ShellSearchResponseSchema)({ partial: false, results }).pipe(
+  const response = yield* Schema.decodeEffect(ShellSearchResponseSchema)({ partial: false, results }).pipe(
     Effect.mapError(unavailable),
   );
   return response.results;

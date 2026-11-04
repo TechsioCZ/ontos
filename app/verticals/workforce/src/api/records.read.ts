@@ -46,10 +46,7 @@ const recordsEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 
-const makeRecordsServices: ReadServiceFactory<Services> = (
-  transaction,
-  scope,
-) =>
+const makeRecordsServices: ReadServiceFactory<Services> = (transaction, scope) =>
   persistenceService(transaction, { scope }).pipe(
     Effect.mapError((cause) =>
       Object.defineProperty(

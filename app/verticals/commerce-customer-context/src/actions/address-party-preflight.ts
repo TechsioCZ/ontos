@@ -78,6 +78,10 @@ export const prepareAddressPartyServices = Effect.fn('AddressAction.prepareServi
       ? yield* context.transaction((transaction) => ownerSnapshot(transaction, scope, selector, savedAddressId))
       : null;
     const evidence = isParty ? yield* preparePartyAddressSource(selector, scope.correlationId) : null;
+    const validatePartySource = (candidate: Payload) =>
+      matches(candidate) && evidence !== null
+        ? assertPreparedPartyAddressCurrent(evidence)
+        : Effect.fail(unavailableSource());
     return Effect.fn('AddressAction.bindPreparedServices')(function* bindPreparedAddressServices(
       transaction: ScopedTransactionExecutor,
       verifiedScope: OperationalScope,
@@ -92,10 +96,6 @@ export const prepareAddressPartyServices = Effect.fn('AddressAction.prepareServi
           return yield* unavailable();
         }
       }
-      const validatePartySource = (candidate: Payload) =>
-        matches(candidate) && evidence !== null
-          ? assertPreparedPartyAddressCurrent(evidence)
-          : Effect.fail(unavailableSource());
       const services = addressActionPersistenceForTransaction(transaction, verifiedScope, validatePartySource);
       return {
         ...services,

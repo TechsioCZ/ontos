@@ -47,8 +47,6 @@ const MANIFEST_SHELL_SEARCH_SLOT = [
 
 export { toPascalCase } from './boundary-source-structure.mts';
 
-const escapeRegExp = (value: string): string => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
-
 export interface GovernedClientToken {
   readonly kind: SyntaxKind;
   readonly value: string;
@@ -2184,6 +2182,9 @@ const objectHasExactStringsOrConstAliases = (
     if (directObjectPropertyOccurrences(tokens, open, close, property) !== 1) {
       return false;
     }
+    if (property === 'moduleKey' || property === 'owningModuleKey') {
+      return objectHasExactString(tokens, open, close, property, value);
+    }
     const valueStart = findObjectPropertyValue(tokens, open, close, property);
     if (hasExactObjectPropertyValue(tokens, valueStart, [[SyntaxKind.StringLiteral, value]])) {
       return true;
@@ -2553,6 +2554,179 @@ const matchesGeneratedReadAuthorization = (
   (expected === undefined || (actual.kind === expected.kind && actual.permission === expected.permission));
 
 const PROVIDER_MODULE_ID_PROPERTIES = new Set(['moduleId', 'moduleKey', 'owningModuleKey']);
+const PROVIDER_READ_KEY_PROPERTIES = new Set(['entrypointKey', 'readKey']);
+const PROVIDER_CONTRIBUTION_KEY_PROPERTIES = new Set(['contributionKey', 'entrypointKey']);
+
+const bindingAndMutationTargets = (program: Program): readonly Span[] => {
+  const targets: Span[] = [];
+  new Visitor({
+    ArrowFunctionExpression: (node) => {
+      targets.push(...node.params);
+    },
+    AssignmentExpression: (node) => {
+      targets.push(node.left);
+    },
+    CatchClause: (node) => {
+      targets.push(...(node.param === null ? [] : [node.param]));
+    },
+    ClassDeclaration: (node) => {
+      targets.push(...(node.id === null ? [] : [node.id]));
+    },
+    ClassExpression: (node) => {
+      targets.push(...(node.id === null ? [] : [node.id]));
+    },
+    ForInStatement: (node) => {
+      targets.push(node.left);
+    },
+    ForOfStatement: (node) => {
+      targets.push(node.left);
+    },
+    FunctionDeclaration: (node) => {
+      targets.push(...node.params, ...(node.id === null ? [] : [node.id]));
+    },
+    FunctionExpression: (node) => {
+      targets.push(...node.params, ...(node.id === null ? [] : [node.id]));
+    },
+    ImportDefaultSpecifier: (node) => {
+      targets.push(node.local);
+    },
+    ImportNamespaceSpecifier: (node) => {
+      targets.push(node.local);
+    },
+    ImportSpecifier: (node) => {
+      targets.push(node.local);
+    },
+    UpdateExpression: (node) => {
+      targets.push(node.argument);
+    },
+    VariableDeclarator: (node) => {
+      targets.push(node.id);
+    },
+  }).visit(program);
+  return targets;
+};
+
+/** A native value import cannot be replaced by another binding, including destructuring targets. */
+export const hasUnshadowedNativeValueImport = (
+  source: string,
+  binding: string,
+  modulePath: string,
+  exportedName = binding,
+): boolean => {
+  const parsed = parseSync('native-value-import.ts', source);
+  if (parsed.errors.length > 0) {
+    return false;
+  }
+  const imports = parsed.program.body.flatMap((statement) =>
+    statement.type === 'ImportDeclaration' && statement.importKind !== 'type' && statement.source.value === modulePath
+      ? statement.specifiers.filter(
+          (specifier) =>
+            specifier.type === 'ImportSpecifier' &&
+            specifier.importKind !== 'type' &&
+            specifier.local.name === binding &&
+            (specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value) ===
+              exportedName,
+        )
+      : [],
+  );
+  const native = imports.length === 1 ? imports[0]?.local : undefined;
+  if (native === undefined) {
+    return false;
+  }
+  const targets = bindingAndMutationTargets(parsed.program);
+  let stable = true;
+  new Visitor({
+    Identifier: (node) => {
+      if (
+        node.name === binding &&
+        node.start !== native.start &&
+        targets.some((target) => target.start <= node.start && node.end <= target.end)
+      ) {
+        stable = false;
+      }
+    },
+  }).visit(parsed.program);
+  return stable;
+};
+
+/** Project only proven immutable literal properties, including shorthand, never executable expressions. */
+export const normalizedModuleIdentitySource = (
+  source: string,
+  moduleId: string,
+  properties: ReadonlySet<string>,
+): string => {
+  const parsed = parseSync('module-identity.ts', source);
+  if (parsed.errors.length > 0) {
+    return source;
+  }
+  const bindings = new Map<string, Span & { readonly literal: string }>();
+  for (const statement of parsed.program.body) {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    if (declaration?.type !== 'VariableDeclaration' || declaration.kind !== 'const' || declaration.declare === true) {
+      continue;
+    }
+    for (const binding of declaration.declarations) {
+      const initializer = binding.init;
+      const value =
+        initializer?.type === 'TSAsExpression' &&
+        initializer.typeAnnotation.type === 'TSTypeReference' &&
+        initializer.typeAnnotation.typeName.type === 'Identifier' &&
+        initializer.typeAnnotation.typeName.name === 'const'
+          ? initializer.expression
+          : initializer;
+      if (binding.id.type === 'Identifier' && value?.type === 'Literal' && value.value === moduleId) {
+        bindings.set(binding.id.name, { ...binding.id, literal: source.slice(value.start, value.end) });
+      }
+    }
+  }
+  // Any other binding or assignment with the same name makes that alias unproven.
+  // Read expressions may use the constant without changing its identity.
+  const targets = bindingAndMutationTargets(parsed.program);
+  new Visitor({
+    Identifier: (node) => {
+      const binding = bindings.get(node.name);
+      if (
+        binding !== undefined &&
+        node.start !== binding.start &&
+        targets.some((target) => target.start <= node.start && node.end <= target.end)
+      ) {
+        bindings.delete(node.name);
+      }
+    },
+  }).visit(parsed.program);
+  const replacements: { readonly end: number; readonly start: number; readonly value: string }[] = [];
+  new Visitor({
+    Property: (node) => {
+      if (
+        !node.computed &&
+        !node.method &&
+        node.kind === 'init' &&
+        node.value.type === 'Identifier' &&
+        node.value.start > (bindings.get(node.value.name)?.end ?? Number.POSITIVE_INFINITY)
+      ) {
+        let key: string | undefined;
+        if (node.key.type === 'Identifier') {
+          key = node.key.name;
+        } else if (node.key.type === 'Literal' && Predicate.isString(node.key.value)) {
+          key = node.key.value;
+        }
+        const literal = bindings.get(node.value.name)?.literal;
+        if (key !== undefined && properties.has(key) && literal !== undefined) {
+          replacements.push({
+            end: node.value.end,
+            start: node.value.start,
+            value: node.shorthand ? `${key}: ${literal}` : literal,
+          });
+        }
+      }
+    },
+  }).visit(parsed.program);
+  // Identifier-valued properties have disjoint spans in visitor source order.
+  return replacements.reduceRight(
+    (result, replacement) => result.slice(0, replacement.start) + replacement.value + result.slice(replacement.end),
+    source,
+  );
+};
 
 const hasGeneratedReadContract = (
   source: string,
@@ -2561,7 +2735,13 @@ const hasGeneratedReadContract = (
   role: 'api' | 'report' | 'search',
   authorization?: GeneratedReadAuthorization,
 ): boolean => {
-  const tokens = tokenizeGovernedClient(source);
+  const tokens = tokenizeGovernedClient(
+    normalizedModuleIdentitySource(
+      normalizedModuleIdentitySource(source, moduleId, PROVIDER_MODULE_ID_PROPERTIES),
+      `${moduleId}.${role}.${name}`,
+      PROVIDER_READ_KEY_PROPERTIES,
+    ),
+  );
   const camel = toCamelCase(name);
   const entrypointName = `${camel}Entrypoint`;
   const entrypoint = topLevelCallObject(tokens, entrypointName, 'defineTenantModuleEntrypoint', false);
@@ -2686,26 +2866,8 @@ export const hasMatchingGeneratedProviderAuthorization = (
   return matchesGeneratedReadAuthorization(providerAuthorization, manifestAuthorization);
 };
 
-const normalizedModuleApiReadContractSource = (source: string, moduleId: string): string => {
-  const aliases = [
-    ...source.matchAll(
-      new RegExp(
-        `^const\\s+(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*(['"])${escapeRegExp(moduleId)}\\2(?:\\s+as\\s+const)?;\\s*$`,
-        'gmu',
-      ),
-    ),
-  ];
-  const alias = aliases.length === 1 ? aliases[0]?.groups?.name : undefined;
-  if (alias === undefined) {
-    return source;
-  }
-  return source
-    .replaceAll(
-      new RegExp(`(?<property>\\b(?:moduleKey|owningModuleKey))\\s*:\\s*${escapeRegExp(alias)}(?=\\s*[,}])`, 'gu'),
-      `$<property>: '${moduleId}'`,
-    )
-    .replaceAll(new RegExp(`\\b${escapeRegExp(alias)}(?=\\s*[,}])`, 'gu'), `moduleKey: '${moduleId}'`);
-};
+const normalizedModuleApiReadContractSource = (source: string, moduleId: string): string =>
+  normalizedModuleIdentitySource(source, moduleId, PROVIDER_MODULE_ID_PROPERTIES);
 
 const hasGeneratedModuleApiEntrypointContract = (
   tokens: readonly GovernedClientToken[],
@@ -2893,11 +3055,12 @@ export const hasGeneratedModuleApiReadContract = (
   authorization?: GeneratedReadAuthorization,
   entrypointName = `${toCamelCase(name)}Entrypoint`,
 ): boolean => {
-  const connected = generatedModuleApiEntrypointReference(source, `${toCamelCase(name)}Read`);
+  const normalized = normalizedModuleApiReadContractSource(source, moduleId);
+  const connected = generatedModuleApiEntrypointReference(normalized, `${toCamelCase(name)}Read`);
   if (connected?.name !== entrypointName) {
     return false;
   }
-  const tokens = tokenizeGovernedClient(normalizedModuleApiReadContractSource(source, moduleId));
+  const tokens = tokenizeGovernedClient(normalized);
   const camel = toCamelCase(name);
   const entrypointTokens = connected.initializer === undefined ? tokens : tokenizeGovernedClient(connected.initializer);
   const inlineClose = connected.initializer === undefined ? undefined : findClosingBrace(entrypointTokens, 2);
@@ -3235,12 +3398,17 @@ export const hasGeneratedProviderManifest = (
     kind === 'report'
       ? [MANIFEST_REPORT_SLOT, MANIFEST_SHELL_REPORT_SLOT, MANIFEST_SEARCH_SLOT, MANIFEST_SHELL_SEARCH_SLOT]
       : [MANIFEST_SEARCH_SLOT, MANIFEST_SHELL_SEARCH_SLOT, MANIFEST_REPORT_SLOT, MANIFEST_SHELL_REPORT_SLOT];
-  const descriptorSlot = generatedSlotSource(manifest, descriptorMarkers);
-  const shellSlot = generatedSlotSource(manifest, shellMarkers);
+  const normalizedManifest = normalizedModuleIdentitySource(
+    normalizedModuleIdentitySource(manifest, moduleId, MANIFEST_MODULE_ID_PROPERTIES),
+    `${moduleId}.${kind}.${name}`,
+    PROVIDER_CONTRIBUTION_KEY_PROPERTIES,
+  );
+  const descriptorSlot = generatedSlotSource(normalizedManifest, descriptorMarkers);
+  const shellSlot = generatedSlotSource(normalizedManifest, shellMarkers);
   if (descriptorSlot === undefined || shellSlot === undefined) {
     return false;
   }
-  const manifestTokens = tokenizeGovernedClient(manifest);
+  const manifestTokens = tokenizeGovernedClient(normalizedManifest);
   const descriptorTokens = tokenizeGovernedClient(descriptorSlot);
   const shellTokens = tokenizeGovernedClient(shellSlot);
   const descriptorKey = `${moduleId}.${name}`;
@@ -3255,8 +3423,8 @@ export const hasGeneratedProviderManifest = (
     [SyntaxKind.ColonToken],
     [SyntaxKind.StringLiteral, shellContributionKey],
   ] satisfies readonly ExpectedToken[];
-  const otherDescriptorSlot = generatedSlotSource(manifest, otherDescriptorMarkers);
-  const otherShellSlot = generatedSlotSource(manifest, otherShellMarkers);
+  const otherDescriptorSlot = generatedSlotSource(normalizedManifest, otherDescriptorMarkers);
+  const otherShellSlot = generatedSlotSource(normalizedManifest, otherShellMarkers);
   const shellIdentityIndex = findSequenceAtBraceDepth(shellTokens, shellIdentity, 0, shellTokens.length, 1);
   const shellContribution =
     shellIdentityIndex === undefined ? undefined : enclosingBraceRange(shellTokens, shellIdentityIndex);
@@ -3319,6 +3487,35 @@ const slotProviderNames = (
 const registrationProviderNames = (source: string | undefined): readonly string[] =>
   (directSlotPropertyNames(source) ?? []).filter((name) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name));
 
+/** Derive candidate keys from the descriptor and registration, then prove each
+ * literal alias against the complete manifest before comparing slot identities.
+ */
+const normalizedProviderManifestIdentities = (manifest: string, registration: string, moduleId: string): string => {
+  let normalized = manifest;
+  for (const kind of ['report', 'search'] as const) {
+    const descriptorSlot = generatedSlotSource(
+      manifest,
+      kind === 'report' ? MANIFEST_REPORT_SLOT : MANIFEST_SEARCH_SLOT,
+    );
+    const registrationSlot = generatedSlotSource(
+      registration,
+      kind === 'report' ? REGISTRATION_REPORT_SLOT : REGISTRATION_SEARCH_SLOT,
+    );
+    const names = new Set([
+      ...slotProviderNames(descriptorSlot, moduleId, kind, 'key', 1),
+      ...registrationProviderNames(registrationSlot),
+    ]);
+    for (const name of names) {
+      normalized = normalizedModuleIdentitySource(
+        normalized,
+        `${moduleId}.${kind}.${name}`,
+        PROVIDER_CONTRIBUTION_KEY_PROPERTIES,
+      );
+    }
+  }
+  return normalized;
+};
+
 const providerIdentitySlotIsExact = (
   source: string | undefined,
   names: readonly string[],
@@ -3328,7 +3525,7 @@ const providerIdentitySlotIsExact = (
   source !== undefined &&
   sequenceOccurrencesAtBraceDepth(
     tokenizeGovernedClient(source),
-    [[SyntaxKind.Identifier, identityProperty], [SyntaxKind.ColonToken], [SyntaxKind.StringLiteral]],
+    [[SyntaxKind.Identifier, identityProperty], [SyntaxKind.ColonToken]],
     depth,
   ) === names.length;
 
@@ -3351,6 +3548,7 @@ export const hasExactGeneratedProviderIdentityTopology = (
   registration: string,
   moduleId: string,
 ): boolean => {
+  const normalizedManifest = normalizedProviderManifestIdentities(manifest, registration, moduleId);
   const slotsPresent =
     [MANIFEST_REPORT_SLOT, MANIFEST_SEARCH_SLOT, MANIFEST_SHELL_REPORT_SLOT, MANIFEST_SHELL_SEARCH_SLOT].some(
       (slot) => generatedSlotSource(manifest, slot) !== undefined,
@@ -3363,11 +3561,11 @@ export const hasExactGeneratedProviderIdentityTopology = (
   }
   return (['report', 'search'] as const).every((kind) => {
     const descriptorSlot = generatedSlotSource(
-      manifest,
+      normalizedManifest,
       kind === 'report' ? MANIFEST_REPORT_SLOT : MANIFEST_SEARCH_SLOT,
     );
     const shellSlot = generatedSlotSource(
-      manifest,
+      normalizedManifest,
       kind === 'report' ? MANIFEST_SHELL_REPORT_SLOT : MANIFEST_SHELL_SEARCH_SLOT,
     );
     const registrationSlot = generatedSlotSource(
@@ -3393,14 +3591,15 @@ export const generatedProviderIdentities = (
   registration: string,
   moduleId: string,
 ): readonly GeneratedProviderIdentity[] => {
+  const normalizedManifest = normalizedProviderManifestIdentities(manifest, registration, moduleId);
   const identities = new Map<string, GeneratedProviderIdentity>();
   for (const kind of ['report', 'search'] as const) {
     const descriptorSlot = generatedSlotSource(
-      manifest,
+      normalizedManifest,
       kind === 'report' ? MANIFEST_REPORT_SLOT : MANIFEST_SEARCH_SLOT,
     );
     const shellSlot = generatedSlotSource(
-      manifest,
+      normalizedManifest,
       kind === 'report' ? MANIFEST_SHELL_REPORT_SLOT : MANIFEST_SHELL_SEARCH_SLOT,
     );
     const registrationSlot = generatedSlotSource(

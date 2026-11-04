@@ -60,7 +60,10 @@ describe("Smart Suggest public v1 integration", () => {
     vi.stubGlobal("fetch", fetcher);
     expect(await suggestAddresses(" Praha 1 ", new AbortController().signal)).toEqual([suggestion]);
     const [url, options] = fetcher.mock.calls[0];
-    const parsedUrl = new URL(url instanceof Request ? url.url : url, "http://localhost:3000");
+    const parsedUrl = new URL(
+      typeof url !== "string" && "url" in url ? url.url : url,
+      "http://localhost:3000",
+    );
     expect(parsedUrl.pathname).toBe("/api/address-suggestions");
     expect(Object.fromEntries(parsedUrl.searchParams)).toEqual({
       q: "Praha 1",

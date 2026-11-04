@@ -1,0 +1,270 @@
+diff --git a/dist/esm-node/strict-effect-runtime.js b/dist/esm-node/strict-effect-runtime.js
+--- a/dist/esm-node/strict-effect-runtime.js
++++ b/dist/esm-node/strict-effect-runtime.js
+@@ -67,12 +67,13 @@
+                     operator: 'delete'
+                 })) {
+                     let target = nodePath.isAssignmentExpression() ? nodePath.node.left : nodePath.node.argument;
+-                    while(__rspack_external__babel_types_6e8337dd.isMemberExpression(target))target = target.object;
++                    target = unwrapExpression(target, true);
++                    while(__rspack_external__babel_types_6e8337dd.isMemberExpression(target))target = unwrapExpression(target.object, true);
+                     let binding = __rspack_external__babel_types_6e8337dd.isIdentifier(target) ? nodePath.scope.getBinding(target.name) : void 0;
+                     while(binding && !mutated.has(binding)){
+                         mutated.add(binding);
+                         const declarator = binding.path.node;
+-                        const alias = 'const' === binding.kind && __rspack_external__babel_types_6e8337dd.isVariableDeclarator(declarator) && declarator.init ? unwrapExpression(declarator.init, true) : void 0;
++                        const alias = ('const' === binding.kind || binding.constant) && __rspack_external__babel_types_6e8337dd.isVariableDeclarator(declarator) && declarator.init ? unwrapExpression(declarator.init, true) : void 0;
+                         binding = __rspack_external__babel_types_6e8337dd.isIdentifier(alias) ? binding.path.scope.getBinding(alias.name) : void 0;
+                     }
+                 }
+@@ -253,11 +254,56 @@
+             'effect',
+             'effect/Effect'
+         ];
+-        const routeHandler = (node)=>{
+-            node = unwrap(node);
+-            if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) || !method(node.callee, 'HttpRouter', 'add') || 3 !== node.arguments.length) return;
+-            const [verb, route, handler] = node.arguments;
+-            return __rspack_external__babel_types_6e8337dd.isStringLiteral(verb) && httpRouteMethods.has(verb.value) && __rspack_external__babel_types_6e8337dd.isStringLiteral(route) && (route.value.startsWith('/') || '*' === route.value) && (__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(handler) || __rspack_external__babel_types_6e8337dd.isFunctionExpression(handler)) ? handler : void 0;
++        /** Resolve immutable owner-local aliases without evaluating application code. */
++        const routeValue = (node, seen = new Set()) => {
++          node = unwrap(node);
++          if (seen.has(node) || seen.size >= 128) return undefined;
++          seen.add(node);
++          const init = initialized(node) ?? externalValue(node);
++          return init ? routeValue(init, seen) : node;
++        };
++        /** Native catchTag preserves the route function while handling a declared failure. */
++        const routeTransform = (node) => {
++          const value = routeValue(node);
++          if (!__rspack_external__babel_types_6e8337dd.isCallExpression(value) ||
++            !method(value.callee, 'Effect', 'catchTag', effectSources) ||
++            value.arguments.length !== 2 ||
++            !__rspack_external__babel_types_6e8337dd.isStringLiteral(routeValue(value.arguments[0]))) return undefined;
++          const handler = routeValue(value.arguments[1]);
++          return __rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(handler) || __rspack_external__babel_types_6e8337dd.isFunctionExpression(handler) ? handler : undefined;
++        };
++        /** Retain primary and recovery function nodes for lexical capture checks. */
++        const routeFunction = (node) => {
++          let value = routeValue(node);
++          const functions = [];
++          if (__rspack_external__babel_types_6e8337dd.isCallExpression(value)) {
++            const factory = unwrap(value.callee);
++            const direct = method(factory, 'Effect', 'fn', effectSources);
++            const named = __rspack_external__babel_types_6e8337dd.isCallExpression(factory) &&
++              method(factory.callee, 'Effect', 'fn', effectSources) &&
++              factory.arguments.length === 1 &&
++              __rspack_external__babel_types_6e8337dd.isStringLiteral(routeValue(factory.arguments[0]));
++            if ((!direct && !named) || value.arguments.length === 0) return undefined;
++            for (const argument of value.arguments.slice(1)) {
++              const recovery = routeTransform(argument);
++              if (!recovery) return undefined;
++              functions.push(recovery);
++            }
++            value = routeValue(value.arguments[0]);
++          }
++          return __rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(value) || __rspack_external__babel_types_6e8337dd.isFunctionExpression(value) ? [value, ...functions] : undefined;
++        };
++        /** The proven native functions of a static HttpRouter.add declaration. */
++        const routeHandler = (node) => {
++          node = unwrap(node);
++          if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) || !method(node.callee, 'HttpRouter', 'add') ||
++            node.arguments.length !== 3) return undefined;
++          const [verbInput, routeInput, handlerInput] = node.arguments;
++          const verb = routeValue(verbInput);
++          const route = routeValue(routeInput);
++          const handler = routeFunction(handlerInput);
++          return __rspack_external__babel_types_6e8337dd.isStringLiteral(verb) && httpRouteMethods.has(verb.value) &&
++            __rspack_external__babel_types_6e8337dd.isStringLiteral(route) && (route.value.startsWith('/') || route.value === '*') ? handler : undefined;
+         };
+         const effectReference = (node)=>guarded(node, (node)=>{
+                 const init = initialized(node);
+@@ -271,7 +317,7 @@
+                 if (!__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(node) || node.async || 1 !== node.params.length || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.params[0]) || __rspack_external__babel_types_6e8337dd.isBlockStatement(node.body)) return false;
+                 const handler = routeHandler(node.body);
+                 const parameter = binding(node.params[0]);
+-                return !!handler && !!parameter && parameter.referencePaths.some((reference)=>!!reference.findParent((path)=>path.node === handler));
++                return !!handler && !!parameter && parameter.referencePaths.some((reference)=>!!reference.findParent((path)=>handler.some((fn)=>path.node === fn)));
+             });
+         const capturedTransport = (node)=>guarded(node, (node)=>{
+                 const init = initialized(node);
+diff --git a/dist/esm/strict-effect-runtime.js b/dist/esm/strict-effect-runtime.js
+--- a/dist/esm/strict-effect-runtime.js
++++ b/dist/esm/strict-effect-runtime.js
+@@ -66,12 +66,13 @@
+                     operator: 'delete'
+                 })) {
+                     let target = nodePath.isAssignmentExpression() ? nodePath.node.left : nodePath.node.argument;
+-                    while(__rspack_external__babel_types_6e8337dd.isMemberExpression(target))target = target.object;
++                    target = unwrapExpression(target, true);
++                    while(__rspack_external__babel_types_6e8337dd.isMemberExpression(target))target = unwrapExpression(target.object, true);
+                     let binding = __rspack_external__babel_types_6e8337dd.isIdentifier(target) ? nodePath.scope.getBinding(target.name) : void 0;
+                     while(binding && !mutated.has(binding)){
+                         mutated.add(binding);
+                         const declarator = binding.path.node;
+-                        const alias = 'const' === binding.kind && __rspack_external__babel_types_6e8337dd.isVariableDeclarator(declarator) && declarator.init ? unwrapExpression(declarator.init, true) : void 0;
++                        const alias = ('const' === binding.kind || binding.constant) && __rspack_external__babel_types_6e8337dd.isVariableDeclarator(declarator) && declarator.init ? unwrapExpression(declarator.init, true) : void 0;
+                         binding = __rspack_external__babel_types_6e8337dd.isIdentifier(alias) ? binding.path.scope.getBinding(alias.name) : void 0;
+                     }
+                 }
+@@ -252,11 +253,56 @@
+             'effect',
+             'effect/Effect'
+         ];
+-        const routeHandler = (node)=>{
+-            node = unwrap(node);
+-            if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) || !method(node.callee, 'HttpRouter', 'add') || 3 !== node.arguments.length) return;
+-            const [verb, route, handler] = node.arguments;
+-            return __rspack_external__babel_types_6e8337dd.isStringLiteral(verb) && httpRouteMethods.has(verb.value) && __rspack_external__babel_types_6e8337dd.isStringLiteral(route) && (route.value.startsWith('/') || '*' === route.value) && (__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(handler) || __rspack_external__babel_types_6e8337dd.isFunctionExpression(handler)) ? handler : void 0;
++        /** Resolve immutable owner-local aliases without evaluating application code. */
++        const routeValue = (node, seen = new Set()) => {
++          node = unwrap(node);
++          if (seen.has(node) || seen.size >= 128) return undefined;
++          seen.add(node);
++          const init = initialized(node) ?? externalValue(node);
++          return init ? routeValue(init, seen) : node;
++        };
++        /** Native catchTag preserves the route function while handling a declared failure. */
++        const routeTransform = (node) => {
++          const value = routeValue(node);
++          if (!__rspack_external__babel_types_6e8337dd.isCallExpression(value) ||
++            !method(value.callee, 'Effect', 'catchTag', effectSources) ||
++            value.arguments.length !== 2 ||
++            !__rspack_external__babel_types_6e8337dd.isStringLiteral(routeValue(value.arguments[0]))) return undefined;
++          const handler = routeValue(value.arguments[1]);
++          return __rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(handler) || __rspack_external__babel_types_6e8337dd.isFunctionExpression(handler) ? handler : undefined;
++        };
++        /** Retain primary and recovery function nodes for lexical capture checks. */
++        const routeFunction = (node) => {
++          let value = routeValue(node);
++          const functions = [];
++          if (__rspack_external__babel_types_6e8337dd.isCallExpression(value)) {
++            const factory = unwrap(value.callee);
++            const direct = method(factory, 'Effect', 'fn', effectSources);
++            const named = __rspack_external__babel_types_6e8337dd.isCallExpression(factory) &&
++              method(factory.callee, 'Effect', 'fn', effectSources) &&
++              factory.arguments.length === 1 &&
++              __rspack_external__babel_types_6e8337dd.isStringLiteral(routeValue(factory.arguments[0]));
++            if ((!direct && !named) || value.arguments.length === 0) return undefined;
++            for (const argument of value.arguments.slice(1)) {
++              const recovery = routeTransform(argument);
++              if (!recovery) return undefined;
++              functions.push(recovery);
++            }
++            value = routeValue(value.arguments[0]);
++          }
++          return __rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(value) || __rspack_external__babel_types_6e8337dd.isFunctionExpression(value) ? [value, ...functions] : undefined;
++        };
++        /** The proven native functions of a static HttpRouter.add declaration. */
++        const routeHandler = (node) => {
++          node = unwrap(node);
++          if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) || !method(node.callee, 'HttpRouter', 'add') ||
++            node.arguments.length !== 3) return undefined;
++          const [verbInput, routeInput, handlerInput] = node.arguments;
++          const verb = routeValue(verbInput);
++          const route = routeValue(routeInput);
++          const handler = routeFunction(handlerInput);
++          return __rspack_external__babel_types_6e8337dd.isStringLiteral(verb) && httpRouteMethods.has(verb.value) &&
++            __rspack_external__babel_types_6e8337dd.isStringLiteral(route) && (route.value.startsWith('/') || route.value === '*') ? handler : undefined;
+         };
+         const effectReference = (node)=>guarded(node, (node)=>{
+                 const init = initialized(node);
+@@ -270,7 +316,7 @@
+                 if (!__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(node) || node.async || 1 !== node.params.length || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.params[0]) || __rspack_external__babel_types_6e8337dd.isBlockStatement(node.body)) return false;
+                 const handler = routeHandler(node.body);
+                 const parameter = binding(node.params[0]);
+-                return !!handler && !!parameter && parameter.referencePaths.some((reference)=>!!reference.findParent((path)=>path.node === handler));
++                return !!handler && !!parameter && parameter.referencePaths.some((reference)=>!!reference.findParent((path)=>handler.some((fn)=>path.node === fn)));
+             });
+         const capturedTransport = (node)=>guarded(node, (node)=>{
+                 const init = initialized(node);
+diff --git a/dist/cjs/strict-effect-runtime.cjs b/dist/cjs/strict-effect-runtime.cjs
+--- a/dist/cjs/strict-effect-runtime.cjs
++++ b/dist/cjs/strict-effect-runtime.cjs
+@@ -110,12 +110,13 @@
+                     operator: 'delete'
+                 })) {
+                     let target = nodePath.isAssignmentExpression() ? nodePath.node.left : nodePath.node.argument;
+-                    while(types_namespaceObject.isMemberExpression(target))target = target.object;
++                    target = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(target, true);
++                    while(types_namespaceObject.isMemberExpression(target))target = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(target.object, true);
+                     let binding = types_namespaceObject.isIdentifier(target) ? nodePath.scope.getBinding(target.name) : void 0;
+                     while(binding && !mutated.has(binding)){
+                         mutated.add(binding);
+                         const declarator = binding.path.node;
+-                        const alias = 'const' === binding.kind && types_namespaceObject.isVariableDeclarator(declarator) && declarator.init ? (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(declarator.init, true) : void 0;
++                        const alias = ('const' === binding.kind || binding.constant) && types_namespaceObject.isVariableDeclarator(declarator) && declarator.init ? (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(declarator.init, true) : void 0;
+                         binding = types_namespaceObject.isIdentifier(alias) ? binding.path.scope.getBinding(alias.name) : void 0;
+                     }
+                 }
+@@ -296,11 +297,56 @@
+             'effect',
+             'effect/Effect'
+         ];
+-        const routeHandler = (node)=>{
+-            node = unwrap(node);
+-            if (!types_namespaceObject.isCallExpression(node) || !method(node.callee, 'HttpRouter', 'add') || 3 !== node.arguments.length) return;
+-            const [verb, route, handler] = node.arguments;
+-            return types_namespaceObject.isStringLiteral(verb) && httpRouteMethods.has(verb.value) && types_namespaceObject.isStringLiteral(route) && (route.value.startsWith('/') || '*' === route.value) && (types_namespaceObject.isArrowFunctionExpression(handler) || types_namespaceObject.isFunctionExpression(handler)) ? handler : void 0;
++        /** Resolve immutable owner-local aliases without evaluating application code. */
++        const routeValue = (node, seen = new Set()) => {
++          node = unwrap(node);
++          if (seen.has(node) || seen.size >= 128) return undefined;
++          seen.add(node);
++          const init = initialized(node) ?? externalValue(node);
++          return init ? routeValue(init, seen) : node;
++        };
++        /** Native catchTag preserves the route function while handling a declared failure. */
++        const routeTransform = (node) => {
++          const value = routeValue(node);
++          if (!types_namespaceObject.isCallExpression(value) ||
++            !method(value.callee, 'Effect', 'catchTag', effectSources) ||
++            value.arguments.length !== 2 ||
++            !types_namespaceObject.isStringLiteral(routeValue(value.arguments[0]))) return undefined;
++          const handler = routeValue(value.arguments[1]);
++          return types_namespaceObject.isArrowFunctionExpression(handler) || types_namespaceObject.isFunctionExpression(handler) ? handler : undefined;
++        };
++        /** Retain primary and recovery function nodes for lexical capture checks. */
++        const routeFunction = (node) => {
++          let value = routeValue(node);
++          const functions = [];
++          if (types_namespaceObject.isCallExpression(value)) {
++            const factory = unwrap(value.callee);
++            const direct = method(factory, 'Effect', 'fn', effectSources);
++            const named = types_namespaceObject.isCallExpression(factory) &&
++              method(factory.callee, 'Effect', 'fn', effectSources) &&
++              factory.arguments.length === 1 &&
++              types_namespaceObject.isStringLiteral(routeValue(factory.arguments[0]));
++            if ((!direct && !named) || value.arguments.length === 0) return undefined;
++            for (const argument of value.arguments.slice(1)) {
++              const recovery = routeTransform(argument);
++              if (!recovery) return undefined;
++              functions.push(recovery);
++            }
++            value = routeValue(value.arguments[0]);
++          }
++          return types_namespaceObject.isArrowFunctionExpression(value) || types_namespaceObject.isFunctionExpression(value) ? [value, ...functions] : undefined;
++        };
++        /** The proven native functions of a static HttpRouter.add declaration. */
++        const routeHandler = (node) => {
++          node = unwrap(node);
++          if (!types_namespaceObject.isCallExpression(node) || !method(node.callee, 'HttpRouter', 'add') ||
++            node.arguments.length !== 3) return undefined;
++          const [verbInput, routeInput, handlerInput] = node.arguments;
++          const verb = routeValue(verbInput);
++          const route = routeValue(routeInput);
++          const handler = routeFunction(handlerInput);
++          return types_namespaceObject.isStringLiteral(verb) && httpRouteMethods.has(verb.value) &&
++            types_namespaceObject.isStringLiteral(route) && (route.value.startsWith('/') || route.value === '*') ? handler : undefined;
+         };
+         const effectReference = (node)=>guarded(node, (node)=>{
+                 const init = initialized(node);
+@@ -314,7 +360,7 @@
+                 if (!types_namespaceObject.isArrowFunctionExpression(node) || node.async || 1 !== node.params.length || !types_namespaceObject.isIdentifier(node.params[0]) || types_namespaceObject.isBlockStatement(node.body)) return false;
+                 const handler = routeHandler(node.body);
+                 const parameter = binding(node.params[0]);
+-                return !!handler && !!parameter && parameter.referencePaths.some((reference)=>!!reference.findParent((path)=>path.node === handler));
++                return !!handler && !!parameter && parameter.referencePaths.some((reference)=>!!reference.findParent((path)=>handler.some((fn)=>path.node === fn)));
+             });
+         const capturedTransport = (node)=>guarded(node, (node)=>{
+                 const init = initialized(node);

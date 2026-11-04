@@ -11,10 +11,20 @@ import {
   Match,
   Option,
   Path,
+  Predicate,
   Schema,
 } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
+import { parseSync, Visitor } from 'oxc-parser';
+import type {
+  ArrowFunctionExpression,
+  Expression,
+  ImportDeclaration,
+  Program,
+  SpreadElement,
+  Statement,
+} from 'oxc-parser';
 
 import { ActionProvisioningIntentSchema } from '../packages/core-runtime/src/authorization/entrypoint-classification.ts';
 import {
@@ -54,6 +64,9 @@ import {
   hasGeneratedProviderReadContract,
   hasGeneratedProviderRegistration,
   hasGeneratedSourceHeader,
+  hasExactSourceTokens,
+  hasUnshadowedNativeValueImport,
+  tokenizeGovernedClient,
 } from './generated-module-api-boundary.mts';
 import { maskNonCode } from './scaffolding/shared.mts';
 
@@ -829,13 +842,332 @@ const validateRouteSource = (state: BoundaryCheckState, file: string, source: st
     });
   });
 
+interface PrivateReadFailureConstruction {
+  readonly causeName: string;
+  readonly failureName: string;
+  readonly reasonLiteral: string;
+}
+
+interface PrivateReadFailureNames extends PrivateReadFailureConstruction {
+  readonly constructorName: string;
+  readonly factoryName: string;
+}
+
+const readFailureConstruction = (
+  factory: ArrowFunctionExpression,
+  source: string,
+): PrivateReadFailureConstruction | undefined => {
+  const [parameter] = factory.params;
+  if (parameter?.type !== 'Identifier' || factory.body.type !== 'BlockStatement') {
+    return undefined;
+  }
+  const [declaration] = factory.body.body;
+  if (declaration?.type !== 'VariableDeclaration') {
+    return undefined;
+  }
+  const [failure] = declaration.declarations;
+  if (failure?.id.type !== 'Identifier' || failure.init?.type !== 'NewExpression') {
+    return undefined;
+  }
+  const [options] = failure.init.arguments;
+  if (options?.type !== 'ObjectExpression') {
+    return undefined;
+  }
+  const reason = options.properties.find(
+    (property) => property.type === 'Property' && property.key.type === 'Identifier' && property.key.name === 'reason',
+  );
+  if (reason?.type !== 'Property' || reason.value.type !== 'Literal' || !Predicate.isString(reason.value.value)) {
+    return undefined;
+  }
+  return {
+    causeName: parameter.name,
+    failureName: failure.id.name,
+    reasonLiteral: source.slice(reason.value.start, reason.value.end),
+  };
+};
+
+const readFailureFactoryNames = (program: Program, source: string): PrivateReadFailureNames | undefined => {
+  const [imported, exported] = program.body;
+  if (
+    imported?.type !== 'ImportDeclaration' ||
+    exported?.type !== 'ExportNamedDeclaration' ||
+    exported.declaration?.type !== 'VariableDeclaration'
+  ) {
+    return undefined;
+  }
+  const [native] = imported.specifiers;
+  const [factory] = exported.declaration.declarations;
+  if (
+    native?.type !== 'ImportSpecifier' ||
+    factory?.id.type !== 'Identifier' ||
+    factory.init?.type !== 'ArrowFunctionExpression'
+  ) {
+    return undefined;
+  }
+  const construction = readFailureConstruction(factory.init, source);
+  return construction === undefined
+    ? undefined
+    : { ...construction, constructorName: native.local.name, factoryName: factory.id.name };
+};
+
+/** Extraction only supplies names and the reason literal. The whole-module token
+ * comparison proves every import, declaration, expression and return unchanged.
+ */
+const isPrivateReadFailureFactory = (source: string): boolean => {
+  const parsed = parseSync('private-read-failure.ts', source, { astType: 'ts', lang: 'ts', sourceType: 'module' });
+  const names = parsed.errors.length === 0 ? readFailureFactoryNames(parsed.program, source) : undefined;
+  if (names === undefined) {
+    return false;
+  }
+  const { causeName, constructorName, factoryName, failureName, reasonLiteral } = names;
+  const bindings = [constructorName, factoryName, causeName, failureName];
+  if (new Set(bindings).size !== bindings.length || bindings.some((name) => ['Object', 'undefined'].includes(name))) {
+    return false;
+  }
+  const nativeImport =
+    constructorName === 'ReadHandlerUnavailable' ? constructorName : `ReadHandlerUnavailable as ${constructorName}`;
+  return hasExactSourceTokens(
+    tokenizeGovernedClient(source),
+    `import { ${nativeImport} } from '@app/core-runtime';
+export const ${factoryName} = (${causeName}?: unknown) => {
+  const ${failureName} = new ${constructorName}({
+    code: 'read_handler_unavailable',
+    reason: ${reasonLiteral},
+  });
+  return ${causeName} === undefined ? ${failureName} : Object.defineProperty(${failureName}, 'cause', { value: ${causeName} });
+};`,
+  );
+};
+
+const PRIVATE_SEARCH_CORE_IMPORTS = new Set([
+  'CoreSearchProjectionDocumentSchema',
+  'CoreSearchProjectionHitSchema',
+  'CoreSearchProjectionInvalid',
+  'CoreSearchQueryRuntime',
+  'OperationContextUnavailable',
+  'ReadHandlerUnavailable',
+]);
+
+const expressionRoot = (expression: Expression): string | undefined => {
+  if (expression.type === 'Identifier') {
+    return expression.name;
+  }
+  if (expression.type === 'MemberExpression') {
+    return expressionRoot(expression.object);
+  }
+  return expression.type === 'CallExpression' ? expressionRoot(expression.callee) : undefined;
+};
+
+const isDeferredEffectFunction = (expression: Expression, effectBinding: string): boolean =>
+  expression.type === 'CallExpression' &&
+  expression.arguments.length === 1 &&
+  ['ArrowFunctionExpression', 'FunctionExpression'].includes(expression.arguments[0]?.type ?? '') &&
+  expression.callee.type === 'CallExpression' &&
+  expression.callee.arguments.length === 1 &&
+  expression.callee.arguments[0]?.type === 'Literal' &&
+  Predicate.isString(expression.callee.arguments[0].value) &&
+  expression.callee.callee.type === 'MemberExpression' &&
+  !expression.callee.callee.computed &&
+  expression.callee.callee.object.type === 'Identifier' &&
+  expression.callee.callee.object.name === effectBinding &&
+  expression.callee.callee.property.type === 'Identifier' &&
+  expression.callee.callee.property.name === 'fn';
+
+/** Only deferred functions, native schema construction, and literal metadata may
+ * initialize a helper module. Arbitrary top-level calls never gain an exemption.
+ */
+const isPrivateHelperInitializer = (
+  expression: Expression | SpreadElement,
+  effectBinding: string,
+  schemaBinding: string | undefined,
+): boolean => {
+  const accepts = (value: Expression | SpreadElement) =>
+    isPrivateHelperInitializer(value, effectBinding, schemaBinding);
+  return Match.value(expression).pipe(
+    Match.when(
+      { type: Match.is('ArrowFunctionExpression', 'FunctionExpression', 'Identifier', 'Literal') },
+      EffectFunction.constTrue,
+    ),
+    Match.when({ type: Match.is('TSAsExpression', 'TSSatisfiesExpression') }, (node) => accepts(node.expression)),
+    Match.when({ type: 'ArrayExpression' }, (node) =>
+      node.elements.every((element) => element !== null && accepts(element)),
+    ),
+    Match.when({ type: 'ObjectExpression' }, (node) =>
+      node.properties.every(
+        (property) =>
+          property.type === 'Property' && !property.computed && property.kind === 'init' && accepts(property.value),
+      ),
+    ),
+    Match.when({ type: 'MemberExpression' }, (node) => !node.computed && accepts(node.object)),
+    Match.when(
+      { type: 'CallExpression' },
+      (node) =>
+        isDeferredEffectFunction(node, effectBinding) ||
+        (schemaBinding !== undefined &&
+          expressionRoot(node) === schemaBinding &&
+          accepts(node.callee) &&
+          node.arguments.every(accepts)),
+    ),
+    Match.orElse(EffectFunction.constFalse),
+  );
+};
+
+const sourceWithoutTypeAnnotations = (source: string, program: Program): string => {
+  // Binding spans include their type annotations. A Schema.Codec reference in
+  // a parameter type is not a shadowing runtime binding.
+  const typeAnnotations: { readonly end: number; readonly start: number }[] = [];
+  new Visitor({
+    TSTypeAnnotation: (node) => {
+      typeAnnotations.push(node);
+    },
+  }).visit(program);
+  return source
+    .split('')
+    .map((character, index) =>
+      typeAnnotations.some(({ end, start }) => start <= index && index < end) ? ' ' : character,
+    )
+    .join('');
+};
+
+const isPrivateEffectHelperImport = (statement: ImportDeclaration, bindingSource: string): boolean =>
+  statement.specifiers.length > 0 &&
+  statement.specifiers.every((specifier) => {
+    if (statement.importKind === 'type' || (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type')) {
+      return true;
+    }
+    if (specifier.type !== 'ImportSpecifier' || specifier.imported.type !== 'Identifier') {
+      return false;
+    }
+    const imported = specifier.imported.name;
+    const module = statement.source.value;
+    if (module === 'effect' && ['Effect', 'Schema'].includes(imported)) {
+      return hasUnshadowedNativeValueImport(bindingSource, specifier.local.name, module, imported);
+    }
+    return (
+      (module === '@app/core-runtime' && PRIVATE_SEARCH_CORE_IMPORTS.has(imported)) ||
+      /^\.{2}\/services\/[^/.][^/]*\.ts$/u.test(module) ||
+      (/^\.{2}\/\.{2}\/shared\/(?:apis|domain|resources)\/[^/.][^/]*\.ts$/u.test(module) && imported.endsWith('Schema'))
+    );
+  });
+
+const nativeHelperBinding = (imports: readonly ImportDeclaration[], exported: string): string | undefined => {
+  const specifiers = imports
+    .filter((statement) => statement.importKind !== 'type' && statement.source.value === 'effect')
+    .flatMap((statement) => statement.specifiers);
+  return specifiers.find(
+    (specifier) =>
+      specifier.type === 'ImportSpecifier' &&
+      specifier.importKind !== 'type' &&
+      specifier.imported.type === 'Identifier' &&
+      specifier.imported.name === exported,
+  )?.local.name;
+};
+
+const hasUnprovenPrivateHelperCode = (program: Program): boolean => {
+  // Reject dynamic code and provider descriptors even inside deferred callbacks.
+  let unprovenCode = false;
+  new Visitor({
+    Identifier: (node) => {
+      if (['require', 'eval', 'Function'].includes(node.name)) {
+        unprovenCode = true;
+      }
+    },
+    ImportExpression: () => {
+      unprovenCode = true;
+    },
+    Property: (node) => {
+      let key;
+      if (node.key.type === 'Identifier') {
+        key = node.key.name;
+      } else if (node.key.type === 'Literal') {
+        key = node.key.value;
+      }
+      if (node.computed || key === 'entrypoint' || key === 'entrypointKey') {
+        unprovenCode = true;
+      }
+    },
+  }).visit(program);
+  return unprovenCode;
+};
+
+/** Undefined is an invalid statement; true is an exported native Effect
+ * function; false is permitted private support code.
+ */
+const privateEffectHelperStatement = (
+  statement: Statement,
+  effectBinding: string,
+  schemaBinding: string | undefined,
+): boolean | undefined => {
+  if (statement.type === 'ImportDeclaration') {
+    return false;
+  }
+  const exported = statement.type === 'ExportNamedDeclaration';
+  if (exported && (statement.source !== null || statement.specifiers.length !== 0)) {
+    return undefined;
+  }
+  const declaration = exported ? statement.declaration : statement;
+  if (declaration?.type === 'TSInterfaceDeclaration' || declaration?.type === 'TSTypeAliasDeclaration') {
+    return false;
+  }
+  if (declaration?.type !== 'VariableDeclaration' || declaration.kind !== 'const' || declaration.declare === true) {
+    return undefined;
+  }
+  const { declarations } = declaration;
+  if (
+    !declarations.every(
+      (binding) =>
+        binding.id.type === 'Identifier' &&
+        binding.init !== null &&
+        isPrivateHelperInitializer(binding.init, effectBinding, schemaBinding) &&
+        (!exported ||
+          isDeferredEffectFunction(binding.init, effectBinding) ||
+          ['ArrowFunctionExpression', 'FunctionExpression'].includes(binding.init.type)),
+    )
+  ) {
+    return undefined;
+  }
+  return (
+    exported &&
+    declarations.some((binding) => binding.init !== null && isDeferredEffectFunction(binding.init, effectBinding))
+  );
+};
+
+/** Effect helpers export deferred functions, never provider values. Native
+ * imports are a closed helper-only set; owner-local dependencies stay private.
+ * Provider filenames, descriptors, publication, and registration stay governed.
+ */
+const isPrivateEffectHelperModule = (source: string): boolean => {
+  const parsed = parseSync('private-effect-helper.ts', source, { astType: 'ts', lang: 'ts', sourceType: 'module' });
+  if (parsed.errors.length > 0) {
+    return false;
+  }
+  const bindingSource = sourceWithoutTypeAnnotations(source, parsed.program);
+  const imports = parsed.program.body.filter((statement) => statement.type === 'ImportDeclaration');
+  if (!imports.every((statement) => isPrivateEffectHelperImport(statement, bindingSource))) {
+    return false;
+  }
+  const effectBinding = nativeHelperBinding(imports, 'Effect');
+  const schemaBinding = nativeHelperBinding(imports, 'Schema');
+  if (effectBinding === undefined || hasUnprovenPrivateHelperCode(parsed.program)) {
+    return false;
+  }
+  const statements = parsed.program.body.map((statement) =>
+    privateEffectHelperStatement(statement, effectBinding, schemaBinding),
+  );
+  return statements.every((statement) => statement !== undefined) && statements.includes(true);
+};
+
 const validateGovernedSource = (file: string, source: string) =>
   Effect.gen(function* validateGovernedSourceEffect() {
     const category = /\/src\/(?<category>components|search|reports)\//u.exec(`/${file}`)?.groups?.category;
     const expectedHeader = governedSourceHeader(category);
+    const privateFailureFactory =
+      (category === 'search' || category === 'reports') &&
+      !/\.provider\.[^/]+$/u.test(file) &&
+      (isPrivateReadFailureFactory(source) || isPrivateEffectHelperModule(source));
     const invalidGovernedSource =
       /\/src\/public-components\//u.test(`/${file}`) ||
-      (expectedHeader !== undefined && !hasGeneratedSourceHeader(source, expectedHeader));
+      (expectedHeader !== undefined && !hasGeneratedSourceHeader(source, expectedHeader) && !privateFailureFactory);
     if (invalidGovernedSource) {
       yield* fail(
         file,

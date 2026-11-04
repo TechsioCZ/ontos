@@ -49,20 +49,20 @@ export const startProcessObservability = (role: ProcessRole) =>
       const write = yield* Effect.service(Console.Console).pipe(
         Effect.map((console) => (line: string) => console.log(line)),
       );
+      const emit = (
+        event: (typeof RuntimeLog.Type)['event'],
+        at: number,
+        fields: (typeof RuntimeLog.Type)['fields'],
+      ) => {
+        const encoded = encodeLog({ at, event, fields, pid: process.pid, role });
+        if (Result.isSuccess(encoded)) {
+          write(encoded.success);
+        }
+      };
       return yield* Effect.sync(() => {
         const summary = createRuntimeSummary();
         const runtime = process.versions.bun === undefined ? 'node' : 'bun';
         const capabilities = runtimeObservabilityCapabilities(runtime, PerformanceObserver.supportedEntryTypes);
-        const emit = (
-          event: (typeof RuntimeLog.Type)['event'],
-          at: number,
-          fields: (typeof RuntimeLog.Type)['fields'],
-        ) => {
-          const encoded = encodeLog({ at, event, fields, pid: process.pid, role });
-          if (Result.isSuccess(encoded)) {
-            write(encoded.success);
-          }
-        };
         emit('runtime.capabilities', performance.timeOrigin + performance.now(), {
           eventLoopUtilization: capabilities.eventLoopUtilization ? 'available' : 'unavailable',
           gc: capabilities.gc ? 'available' : 'unavailable',

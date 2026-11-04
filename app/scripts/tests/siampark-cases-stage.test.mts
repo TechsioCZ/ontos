@@ -1,5 +1,5 @@
 import { toResourceAccessObjectId } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Exit } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   stageCaseFingerprint,
@@ -42,25 +42,27 @@ it.effect('builds only three exact external reader grants and the same resource 
 );
 it.effect('never grants an ambiguous, missing or differently assigned fixture', () =>
   Effect.gen(function* rejectedGrants() {
-    expect((yield* Effect.exit(stageCaseGrants(records.slice(1), owners.external)))._tag).toBe('Failure');
-    expect((yield* Effect.exit(stageCaseGrants([...records, records[0]], owners.external)))._tag).toBe('Failure');
-    expect((yield* Effect.exit(stageCaseGrants(records, 'different-owner')))._tag).toBe('Failure');
+    expect(Exit.isFailure(yield* Effect.exit(stageCaseGrants(records.slice(1), owners.external)))).toBe(true);
+    expect(Exit.isFailure(yield* Effect.exit(stageCaseGrants([...records, records[0]], owners.external)))).toBe(true);
+    expect(Exit.isFailure(yield* Effect.exit(stageCaseGrants(records, 'different-owner')))).toBe(true);
   }),
 );
 it.effect('rejects duplicates and wrong assignment without silently rewriting records', () =>
   Effect.gen(function* rejectConflicts() {
-    expect((yield* Effect.exit(validateStageCases([...records, records[0]], owners, true)))._tag).toBe('Failure');
+    expect(Exit.isFailure(yield* Effect.exit(validateStageCases([...records, records[0]], owners, true)))).toBe(true);
     expect(
-      (yield* Effect.exit(
-        validateStageCases(
-          records.map((r) => ({ ...r, ownerEmployeeId: 'someone-else' })),
-          owners,
-          true,
+      Exit.isFailure(
+        yield* Effect.exit(
+          validateStageCases(
+            records.map((r) => ({ ...r, ownerEmployeeId: 'someone-else' })),
+            owners,
+            true,
+          ),
         ),
-      ))._tag,
-    ).toBe('Failure');
+      ),
+    ).toBe(true);
     yield* validateStageCases([], owners, false);
-    expect((yield* Effect.exit(validateStageCases([], owners, true)))._tag).toBe('Failure');
+    expect(Exit.isFailure(yield* Effect.exit(validateStageCases([], owners, true)))).toBe(true);
     yield* validateStageCases(records, owners, true);
   }),
 );

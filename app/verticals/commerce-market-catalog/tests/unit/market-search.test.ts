@@ -120,6 +120,19 @@ const withPurpose = (purpose: string): MarketSearchSnapshot => ({
   })),
 });
 
+const historySnapshot = (count: number, purpose: string): MarketSearchSnapshot => ({
+  ...initial,
+  projectionVersion: '2',
+  records: initial.records.map((row) => ({
+    ...row,
+    definitions: Array.from({ length: count }, (_, index) => ({
+      effectiveFrom: new Date(Date.UTC(2025, 0, index + 1)),
+      effectiveTo: index === count - 1 ? null : new Date(Date.UTC(2025, 0, index + 2)),
+      purpose,
+    })),
+  })),
+});
+
 const loadMarkets = (
   search: CoreSearchQueryRuntimeService,
   selectedScope: OperationalScope,
@@ -333,25 +346,13 @@ describe('Market search projection', () => {
 
   it.effect('rejects temporal-budget overflow atomically instead of silently dropping purpose history', () =>
     Effect.gen(function* historyBudget() {
-      const snapshot = (count: number, purpose: string): MarketSearchSnapshot => ({
-        ...initial,
-        projectionVersion: '2',
-        records: initial.records.map((row) => ({
-          ...row,
-          definitions: Array.from({ length: count }, (_, index) => ({
-            effectiveFrom: new Date(Date.UTC(2025, 0, index + 1)),
-            effectiveTo: index === count - 1 ? null : new Date(Date.UTC(2025, 0, index + 2)),
-            purpose,
-          })),
-        })),
-      });
-      const [shortHistory] = yield* buildMarketSearchDocuments(snapshot(100, 'purpose'));
+      const [shortHistory] = yield* buildMarketSearchDocuments(historySnapshot(100, 'purpose'));
       expect(shortHistory?.temporalSearchableText).toHaveLength(100);
-      const [longHistory] = yield* buildMarketSearchDocuments(snapshot(33, longPurpose));
+      const [longHistory] = yield* buildMarketSearchDocuments(historySnapshot(33, longPurpose));
       expect(longHistory?.temporalSearchableText).toHaveLength(99);
       const harness = yield* searchHarness;
       yield* harness.projector.project(context, { marketId });
-      for (const oversized of [snapshot(101, 'purpose'), snapshot(34, longPurpose)]) {
+      for (const oversized of [historySnapshot(101, 'purpose'), historySnapshot(34, longPurpose)]) {
         harness.setSnapshot(oversized);
         expect(yield* harness.projector.project(context, { marketId }).pipe(Effect.flip)).toBeInstanceOf(
           MarketSearchUnavailable,

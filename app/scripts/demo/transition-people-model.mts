@@ -520,18 +520,18 @@ const validateProfiles = (
     }
     return { deferred, expectedProfiles, profiles };
   });
+const canonical = (rows: readonly (typeof RelationshipSchema.Type)[]) =>
+  EffectArray.sortWith(
+    [...new Set(rows.map((row) => v1.Relationship.toJsonString(relationship(row))))],
+    (row) => row,
+    Order.String,
+  );
 const validateFixture = (
   document: MembershipDocument,
   fixture: readonly (typeof RelationshipSchema.Type)[],
   revision: string,
 ) =>
   Effect.gen(function* pinFixture() {
-    const canonical = (rows: readonly (typeof RelationshipSchema.Type)[]) =>
-      EffectArray.sortWith(
-        [...new Set(rows.map((row) => v1.Relationship.toJsonString(relationship(row))))],
-        (row) => row,
-        Order.String,
-      );
     const current = canonical(fixture);
     const reviewed = canonical(document.fixtureRelationships);
     if (

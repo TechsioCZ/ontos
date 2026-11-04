@@ -34,8 +34,11 @@ import {
   hasGeneratedModuleApiReadContract,
   hasGeneratedProviderManifest,
   hasGeneratedProviderReadContract,
+  hasMatchingGeneratedProviderAuthorization,
   generatedModuleApiEntrypointReference,
   hasGeneratedSourceHeader,
+  hasExactGeneratedProviderIdentityTopology,
+  generatedProviderIdentities,
 } from '../generated-module-api-boundary.mts';
 import {
   assertPublishedCrossMicroVerticalContractUsage,
@@ -70,8 +73,12 @@ const MODULE_ACCESS_PERMISSION = 'module.access';
 const CONTEXT_PERMISSION_KIND = 'context_permission' as const;
 const CONNECTED_ENTRYPOINT_PROPERTY = 'entrypoint: selectedReadContext';
 const MODULE_ACCESS_PERMISSION_PROPERTY = "permission: 'module.access'";
+const WRONG_READ_PERMISSION_PROPERTY = "permission: 'other.permission'";
+const MODULE_MANIFEST_FILENAME = 'vertical.manifest.ts';
 const CORE_RUNTIME_SOURCE_IMPORT = "from '@app/core-runtime'";
 const FAKE_CORE_SOURCE_IMPORT = "from './fake-core.ts'";
+const API_ROLE_PROPERTY = "role: 'api'";
+const INVENTORY_OWNING_MODULE_PROPERTY = "owningModuleKey: 'inventory.stock'";
 
 const EXPECTED_EFFECT_FAILURE = 'Expected the Effect to fail';
 const GOVERNED_SEARCH_HEADER =
@@ -415,6 +422,98 @@ it.live(
 
 const INVENTORY_RUNTIME_ID = 'inventory-runtime';
 
+it.live('proves Sales Pipeline search contribution aliases across manifest and registration identity checks', () =>
+  Effect.gen(function* salesSearchContributionAliases() {
+    const owner = new URL('../../verticals/sales-pipeline/', import.meta.url);
+    const manifest = yield* Effect.promise(() => readFile(new URL(MODULE_MANIFEST_FILENAME, owner), 'utf-8'));
+    const registration = yield* Effect.promise(() => readFile(new URL('vertical.registration.ts', owner), 'utf-8'));
+    const moduleId = 'demo.sales-pipeline';
+    const contributionKey = `${moduleId}.search.opportunities`;
+    const declaration = `const searchEntrypointKey = '${contributionKey}';`;
+    const accepts = (source: string) => hasGeneratedProviderManifest(source, moduleId, 'opportunities', 'search');
+    expect(manifest).toContain(declaration);
+    expect(accepts(manifest)).toBe(true);
+    expect(accepts(manifest.replace(declaration, declaration.replace(';', ' as const;')))).toBe(true);
+    expect(hasExactGeneratedProviderIdentityTopology(manifest, registration, moduleId)).toBe(true);
+    expect(generatedProviderIdentities(manifest, registration, moduleId)).toEqual([
+      { kind: 'search', name: 'opportunities' },
+    ]);
+    for (const [name, source] of [
+      ['wrong identity', manifest.replace(declaration, "const searchEntrypointKey = 'other.search.opportunities';")],
+      ['mutable identity', manifest.replace(declaration, declaration.replace('const', 'let'))],
+      ['computed identity', manifest.replace(declaration, 'const searchEntrypointKey = chooseKey();')],
+      ['missing identity', manifest.replace(declaration, '')],
+      ['duplicated identity', `${manifest}\n${declaration}`],
+      ['assigned identity', `${manifest}\nsearchEntrypointKey = 'other.search.opportunities';`],
+      ['destructured identity', `${manifest}\n({ key: searchEntrypointKey } = attacker);`],
+      ['shadowed identity', `${manifest}\nconst other = (searchEntrypointKey: string) => searchEntrypointKey;`],
+    ] as const) {
+      expect({ accepted: accepts(source), name }).toEqual({ accepted: false, name });
+      expect({ accepted: hasExactGeneratedProviderIdentityTopology(source, registration, moduleId), name }).toEqual({
+        accepted: false,
+        name,
+      });
+    }
+    expect(
+      accepts(manifest.replace('entrypointKey: searchEntrypointKey', "entrypointKey: 'other.search.opportunities'")),
+    ).toBe(false);
+    expect(
+      hasExactGeneratedProviderIdentityTopology(
+        manifest,
+        registration.replaceAll(/^\s*opportunities:.*$/gmu, ''),
+        moduleId,
+      ),
+    ).toBe(false);
+    const wrongSlot = manifest.replace(
+      '// <generated-module-shell-reports>',
+      `// <generated-module-shell-reports>\n{ contributionKey: searchEntrypointKey },`,
+    );
+    expect(accepts(wrongSlot)).toBe(false);
+    expect(hasExactGeneratedProviderIdentityTopology(wrongSlot, registration, moduleId)).toBe(false);
+  }),
+);
+
+it.live('proves the finance search read key through immutable literals without accepting forged identity aliases', () =>
+  Effect.gen(function* financeSearchReadKeyAliases() {
+    const provider = yield* Effect.promise(() =>
+      readFile(new URL('../../verticals/finance-billing/src/search/documents.provider.ts', import.meta.url), 'utf-8'),
+    );
+    const moduleId = 'finance.billing';
+    const readKey = `${moduleId}.search.documents`;
+    const declaration = `const readKey = '${readKey}';`;
+    const accepts = (source: string) =>
+      hasGeneratedProviderReadContract(source, moduleId, 'documents', 'search', {
+        kind: CONTEXT_PERMISSION_KIND,
+        permission: MODULE_ACCESS_PERMISSION,
+      });
+    expect(provider).toContain(declaration);
+    expect(accepts(provider)).toBe(true);
+    expect(accepts(provider.replace(declaration, declaration.replace(';', ' as const;')))).toBe(true);
+    expect(accepts(provider.replace('    readKey,', '    readKey: readKey,'))).toBe(true);
+    expect(accepts(`${provider}\nconst copied = () => readKey;`)).toBe(true);
+    for (const [name, source] of [
+      ['wrong identity', provider.replace(declaration, "const readKey = 'other.search.documents';")],
+      ['mutable identity', provider.replace(declaration, declaration.replace('const', 'let'))],
+      ['computed identity', provider.replace(declaration, 'const readKey = getReadKey();')],
+      ['imported identity', provider.replace(declaration, "import { readKey } from './foreign.ts';")],
+      ['missing identity', provider.replace(declaration, '')],
+      ['duplicate identity', `${provider}\n${declaration}`],
+      ['assigned identity', `${provider}\nreadKey = 'other.search.documents';`],
+      ['updated identity', `${provider}\nreadKey++;`],
+      ['destructured assignment', `${provider}\n({ readKey } = attacker);`],
+      ['loop target', `${provider}\nfor (readKey of attacker) {}`],
+      ['shadowed parameter', `${provider}\nfunction other(readKey: string) { return readKey; }`],
+      ['shadowed pattern', `${provider}\nconst other = ({ readKey }: { readKey: string }) => readKey;`],
+      ['shadowed catch', `${provider}\ntry {} catch (readKey) { consume(readKey); }`],
+      ['mismatched entrypoint', provider.replace('entrypointKey: readKey', "entrypointKey: 'other.search.documents'")],
+      ['mismatched read', provider.replace('    readKey,', "    readKey: 'other.search.documents',")],
+      ['changed authorization', provider.replace(MODULE_ACCESS_PERMISSION_PROPERTY, WRONG_READ_PERMISSION_PROPERTY)],
+    ] as const) {
+      expect({ accepted: accepts(source), name }).toEqual({ accepted: false, name });
+    }
+  }),
+);
+
 it.live('proves real provider read ownership through immutable aliases used by native queries', () =>
   Effect.gen(function* providerReadOwnerAliases() {
     const provider = yield* Effect.promise(() =>
@@ -458,7 +557,7 @@ it.live('proves real provider read ownership through immutable aliases used by n
       ],
       [
         'changed provider authorization',
-        provider.replace(MODULE_ACCESS_PERMISSION_PROPERTY, "permission: 'other.permission'"),
+        provider.replace(MODULE_ACCESS_PERMISSION_PROPERTY, WRONG_READ_PERMISSION_PROPERTY),
       ],
       ['mismatched read owner', provider.replace(`owningModuleKey: ${ownerBinding}`, "owningModuleKey: 'other.owner'")],
     ] as const) {
@@ -931,6 +1030,199 @@ it.live('accepts governed generated Actions, pages, Workers, catalogs, and route
   }),
 );
 
+const PRIVATE_SEARCH_HELPER_FILE = `${INVENTORY_OWNER_PATH}/src/search/search-unavailable.ts`;
+const GOVERNED_SOURCE_REJECTION = /public components, search, and reports require an approved Codesmith generator/u;
+const PRIVATE_HELPER_RUNTIME_LOOKUP = 'const runtime = yield* CoreSearchQueryRuntime;';
+const readPrivateSearchHelper = () =>
+  Effect.promise(() =>
+    readFile(new URL('../../verticals/crm/src/search/search-unavailable.ts', import.meta.url), 'utf-8'),
+  );
+
+it.live('accepts the production private search failure factory without claiming generated provider provenance', () =>
+  Effect.gen(function* privateSearchFailureFactory() {
+    const root = yield* makeFixture();
+    const helper = yield* readPrivateSearchHelper();
+    yield* write(root, PRIVATE_SEARCH_HELPER_FILE, helper);
+    yield* write(
+      root,
+      `${INVENTORY_OWNER_PATH}/src/api/map-search-error.ts`,
+      "import { searchUnavailable } from '../search/search-unavailable.ts';",
+    );
+    yield* checkModuleEntrypointBoundaries(root);
+    // Classification follows the complete factory structure, not the CRM path,
+    // exported name, quote style, or formatter's trailing commas.
+    yield* write(
+      root,
+      `${INVENTORY_OWNER_PATH}/src/reports/report-failure.ts`,
+      helper
+        .replaceAll('ReadHandlerUnavailable', 'UnavailableRead')
+        .replace('{ UnavailableRead }', '{ ReadHandlerUnavailable as UnavailableRead }')
+        .replaceAll('searchUnavailable', 'reportFailure')
+        .replaceAll('cause', 'underlying')
+        .replace("'underlying'", "'cause'")
+        .replaceAll('failure', 'unavailable')
+        .replaceAll('CRM search is temporarily unavailable', 'Report unavailable')
+        .replaceAll("'", '"')
+        .replaceAll(/,\n(?<close>\s*\})/gu, '\n$<close>'),
+    );
+    yield* checkModuleEntrypointBoundaries(root);
+  }),
+);
+
+it.live('does not let provider filenames or renamed real providers evade generated governance as private helpers', () =>
+  Effect.gen(function* privateHelperProviderControls() {
+    const root = yield* makeFixture();
+    const helper = yield* readPrivateSearchHelper();
+    const provider = yield* Effect.promise(() =>
+      readFile(new URL('../../verticals/crm/src/search/contacts.provider.ts', import.meta.url), 'utf-8'),
+    );
+    const withoutHeader = provider.replace(GOVERNED_SEARCH_HEADER, '');
+    expect(withoutHeader).not.toBe(provider);
+    for (const [file, source] of [
+      [PRIVATE_SEARCH_HELPER_FILE, withoutHeader],
+      [`${INVENTORY_OWNER_PATH}/src/search/contacts.provider.ts`, helper],
+      [`${INVENTORY_OWNER_PATH}/src/reports/contacts.provider.ts`, helper],
+      [`${INVENTORY_OWNER_PATH}/src/components/failure.ts`, helper],
+      [`${INVENTORY_OWNER_PATH}/src/public-components/failure.ts`, helper],
+    ] as const) {
+      yield* write(root, file, source);
+      expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root))), file).toMatch(
+        GOVERNED_SOURCE_REJECTION,
+      );
+      yield* Effect.promise(() => rm(path.join(root, file)));
+    }
+  }),
+);
+
+it.live('rejects private search failure factories with fake imports, shadowing, or extra executable behavior', () =>
+  Effect.gen(function* strictPrivateSearchFailureFactory() {
+    const root = yield* makeFixture();
+    const helper = yield* readPrivateSearchHelper();
+    yield* assertRejectedSources(
+      root,
+      PRIVATE_SEARCH_HELPER_FILE,
+      [
+        helper.replace(CORE_RUNTIME_SOURCE_IMPORT, FAKE_CORE_SOURCE_IMPORT),
+        helper.replace('import {', 'import type {'),
+        helper.replace('ReadHandlerUnavailable', 'ReadHandlerUnavailable, defineRead'),
+        helper.replace('export const', 'export let'),
+        helper.replace('= (cause?', '= async (cause?'),
+        helper.replace('const failure =', 'let failure ='),
+        helper.replace('const failure =', 'fetch("/private"); const failure ='),
+        helper.replace("reason: 'CRM search is temporarily unavailable'", 'reason: computeReason()'),
+        helper.replace("code: 'read_handler_unavailable'", "code: 'bypass'"),
+        helper.replace("reason: 'CRM search is temporarily unavailable'", '...options'),
+        helper.replace('value: cause', 'value: publishProvider()'),
+        helper.replaceAll('cause', 'Object').replace("'Object'", "'cause'"),
+        helper.replaceAll('searchUnavailable', 'Object'),
+        helper.replaceAll('failure', 'undefined'),
+        `${helper}\nexport const search = true;`,
+        `${helper}\nexport { contactsRead } from './contacts.provider.ts';`,
+        `${helper}\nexport * from './contacts.provider.ts';`,
+        `${helper}\nregisterProvider();`,
+      ],
+      GOVERNED_SOURCE_REJECTION,
+    );
+  }),
+);
+
+it.live(
+  'accepts production private Effect search, projection, and publication helpers without provider provenance',
+  () =>
+    Effect.gen(function* privateEffectSearchHelpers() {
+      const root = yield* makeFixture();
+      for (const [index, file] of [
+        'facility-operations/src/search/search-read.ts',
+        'merchandise/src/search/catalog-publication.ts',
+        'property-leasing/src/search/projection.ts',
+        'property-leasing/src/search/search-read.ts',
+        'property-portfolio/src/search/projection.ts',
+        'property-portfolio/src/search/search-read.ts',
+      ].entries()) {
+        const source = yield* Effect.promise(() =>
+          readFile(new URL(`../../verticals/${file}`, import.meta.url), 'utf-8'),
+        );
+        yield* write(root, `${INVENTORY_OWNER_PATH}/src/search/helper-${index}.ts`, source);
+        yield* checkModuleEntrypointBoundaries(root);
+      }
+    }),
+);
+
+it.live(
+  'rejects Effect helper lookalikes that publish providers or introduce unproven imports and top-level execution',
+  () =>
+    Effect.gen(function* strictPrivateEffectSearchHelpers() {
+      const root = yield* makeFixture();
+      const helper = yield* Effect.promise(() =>
+        readFile(new URL('../../verticals/facility-operations/src/search/search-read.ts', import.meta.url), 'utf-8'),
+      );
+      yield* assertRejectedSources(
+        root,
+        PRIVATE_SEARCH_HELPER_FILE,
+        [
+          helper.replace(CORE_RUNTIME_SOURCE_IMPORT, FAKE_CORE_SOURCE_IMPORT),
+          helper.replace("from 'effect'", "from './fake-effect.ts'"),
+          helper.replace('CoreSearchQueryRuntime,', 'defineRead as providerFactory, CoreSearchQueryRuntime,'),
+          helper.replace('import { CoreSearchQueryRuntime, ReadHandlerUnavailable }', 'import * as Core'),
+          helper.replace(
+            'export type FacilitySearchRelevance',
+            "export const provider = { role: 'search' };\nexport type FacilitySearchRelevance",
+          ),
+          `${helper}\nexport const provider = Effect.fn('provider')(() => ({ entrypointKey: 'bypass' }));`,
+          `${helper}\nexport const provider = Effect.fn('provider')(() => ({ ['entry' + 'pointKey']: 'bypass' }));`,
+          `${helper}\nexport { contactsRead } from './contacts.provider.ts';`,
+          `${helper}\nexport * from './contacts.provider.ts';`,
+          `${helper}\nexport default () => true;`,
+          `${helper}\nconst provider = registerProvider();`,
+          `${helper}\nregisterProvider();`,
+          helper.replace(PRIVATE_HELPER_RUNTIME_LOOKUP, "const runtime = yield* import('./provider.ts');"),
+          helper.replace(PRIVATE_HELPER_RUNTIME_LOOKUP, "const runtime = require('./provider.ts');"),
+          `${helper}\nconst eager = Schema.Struct({ value: loadProvider() });`,
+          `${helper}\nconst eager = Schema.Struct({ [loadProvider()]: Schema.String });`,
+          `${helper}\nconst alias = Effect; export const provider = alias.fn('provider')(() => true);`,
+          `${helper}\nEffect = otherEffect;`,
+          `${helper}\nSchema.Struct = otherSchema;`,
+          helper.replace(
+            PRIVATE_HELPER_RUNTIME_LOOKUP,
+            'const Schema = otherSchema; const runtime = yield* CoreSearchQueryRuntime;',
+          ),
+          helper.replace(
+            PRIVATE_HELPER_RUNTIME_LOOKUP,
+            '[Schema] = replacements; const runtime = yield* CoreSearchQueryRuntime;',
+          ),
+        ],
+        GOVERNED_SOURCE_REJECTION,
+      );
+    }),
+);
+
+it.live('keeps private search failure factories owner-local and unpublished', () =>
+  Effect.gen(function* privateSearchFailurePublication() {
+    const root = yield* makeFixture();
+    yield* write(root, PRIVATE_SEARCH_HELPER_FILE, yield* readPrivateSearchHelper());
+    yield* write(
+      root,
+      `${INVENTORY_OWNER_PATH}/package.json`,
+      JSON.stringify({
+        exports: { './search-error': './src/search/search-unavailable.ts' },
+        name: INVENTORY_PACKAGE_SPECIFIER,
+      }),
+    );
+    expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toMatch(
+      /package exports must not publish private/u,
+    );
+    yield* write(root, `${INVENTORY_OWNER_PATH}/package.json`, JSON.stringify({ name: INVENTORY_PACKAGE_SPECIFIER }));
+    yield* write(
+      root,
+      'verticals/billing/src/borrowed-search-error.ts',
+      "import { searchUnavailable } from '../../inventory-stock/src/search/search-unavailable.ts';",
+    );
+    expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toMatch(
+      /cross-vertical private imports.*gateway/u,
+    );
+  }),
+);
+
 it.live('confines native Federation imports, including aliases and dynamic imports, to governed Shell edges', () =>
   Effect.gen(function* nativeFederationBoundary() {
     const root = yield* makeFixture();
@@ -1318,7 +1610,7 @@ it.live(
       [ACTION_EXECUTION_KIND_SOURCE, PUBLIC_AUTHORIZATION_SOURCE],
       [TENANT_MEMBERSHIP_PROVISIONING_SOURCE, "provisioning: 'explicit'"],
       ["access: 'write'", READ_ACCESS_SOURCE],
-      ["role: 'action'", "role: 'api'"],
+      ["role: 'action'", API_ROLE_PROPERTY],
       ["moduleKey: 'party.registry'", "moduleKey: 'other.owner'"],
       ['entrypointKey: actionKey', "entrypointKey: 'party.registry.wrong'"],
       ["legalEntityScope: 'required'", "legalEntityScope: 'optional'"],
@@ -1435,6 +1727,8 @@ export const api = HttpApi.make('InventoryApi')
     root,
     `${vertical}/api/index.ts`,
     `import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
+import { Layer } from '@modern-js/bff-effect/effect-edge';
+import { Layer as GovernedReadLayer } from 'effect';
 // <generated-governed-http-handler-imports>
 import { stockListReadApiLive } from './stock-list-read-server.ts';
 // </generated-governed-http-handler-imports>
@@ -1541,7 +1835,7 @@ for (const suffix of ['search', 'report']) {
         'src/api/stock-list.read.ts',
         'src/api/stock-list-client.ts',
         'api/stock-list-read-server.ts',
-        'vertical.manifest.ts',
+        MODULE_MANIFEST_FILENAME,
         'vertical.registration.ts',
       ];
       yield* Effect.all(
@@ -1953,7 +2247,7 @@ it.live(
           'policies: []',
           "policies: [], ...{ entrypoint: attackerEntrypoint, legalEntityScope: 'required' }",
         ),
-        validRead.replace("owningModuleKey: 'inventory.stock'", "owningModuleKey: 'attacker.module'"),
+        validRead.replace(INVENTORY_OWNING_MODULE_PROPERTY, "owningModuleKey: 'attacker.module'"),
         validRead.replace("readKey: 'inventory.stock.api.stock-list'", "readKey: 'attacker.read'"),
         validRead.replace(SCHEMA_VERSION_ONE, "schemaVersion: '2'"),
       ],
@@ -3816,8 +4110,8 @@ it('follows the actual immutable Core entrypoint reference while preserving owne
     renamed.replace('export const selectedReadContext', 'export let selectedReadContext'),
     `${renamed.replace(CONNECTED_ENTRYPOINT_PROPERTY, 'entrypoint: wrongContext')}\nconst wrongContext = fakeFactory();`,
     renamed.replace("moduleKey: 'inventory.stock'", "moduleKey: 'other.owner'"),
-    renamed.replace(MODULE_ACCESS_PERMISSION_PROPERTY, "permission: 'other.permission'"),
-    renamed.replace("role: 'api'", "role: 'worker'"),
+    renamed.replace(MODULE_ACCESS_PERMISSION_PROPERTY, WRONG_READ_PERMISSION_PROPERTY),
+    renamed.replace(API_ROLE_PROPERTY, "role: 'worker'"),
     renamed.replace('= defineTenantModuleEntrypoint(', '= defineSystemModuleEntrypoint('),
     renamed.replace(CORE_RUNTIME_SOURCE_IMPORT, FAKE_CORE_SOURCE_IMPORT),
     `${renamed}\nconst escaped = selectedReadContext;`,
@@ -3917,6 +4211,77 @@ it('resolves only immutable literal permission aliases and preserves exact autho
 });
 
 it.live(
+  'proves the Market Catalog search identity through immutable aliases and shorthand, but not shadowed or assigned bindings',
+  () =>
+    Effect.gen(function* marketSearchModuleIdentity() {
+      const root = path.resolve(import.meta.dirname, '../..');
+      const owner = path.join(root, 'verticals/commerce-market-catalog');
+      const provider = yield* Effect.promise(() =>
+        readFile(path.join(owner, 'src/search/markets.provider.ts'), 'utf-8'),
+      );
+      const manifest = yield* Effect.promise(() => readFile(path.join(owner, MODULE_MANIFEST_FILENAME), 'utf-8'));
+      const moduleId = 'commerce.market-catalog';
+      const declaration = `const moduleKey = '${moduleId}';`;
+      const acceptsRead = (source: string) => hasGeneratedProviderReadContract(source, moduleId, 'markets', 'search');
+      const acceptsManifest = (source: string) => hasGeneratedProviderManifest(source, moduleId, 'markets', 'search');
+      expect(provider.includes(declaration)).toBe(true);
+      expect(manifest.includes(declaration)).toBe(true);
+      expect(acceptsRead(provider)).toBe(true);
+      expect(acceptsManifest(manifest)).toBe(true);
+      expect(hasMatchingGeneratedProviderAuthorization(provider, manifest, moduleId, 'markets', 'search')).toBe(true);
+      for (const accepts of [acceptsRead, acceptsManifest]) {
+        const source = accepts === acceptsRead ? provider : manifest;
+        expect(accepts(source.replace(declaration, declaration.replace(';', ' as const;')))).toBe(true);
+        expect(accepts(source.replaceAll(/^(?<indent>\s*)moduleKey,/gmu, '$<indent>moduleKey: moduleKey,'))).toBe(true);
+        expect(accepts(`${source}\nconst moduleIdentityRead = () => moduleKey === '${moduleId}';`)).toBe(true);
+        for (const invalid of [
+          source.replace(declaration, declaration.replace('const', 'let')),
+          source.replace(declaration, ''),
+          source.replace(declaration, "const moduleKey = 'other.owner';"),
+          source.replace(declaration, `const moduleKey = 'commerce.' + 'market-catalog';`),
+          `${source}\nmoduleKey = 'other.owner';`,
+          `${source}\nmoduleKey += '.other';`,
+          `${source}\n({ moduleKey } = attacker);`,
+          `${source}\nfor (moduleKey of attacker) {}`,
+          `${source}\nfunction shadow(moduleKey: string) { return { moduleKey }; }`,
+          `${source}\nfunction shadow({ moduleKey }: { moduleKey: string }) { return moduleKey; }`,
+          `${source}\n{ const moduleKey = 'other.owner'; consume(moduleKey); }`,
+          `${source}\ntry {} catch (moduleKey) { consume(moduleKey); }`,
+        ]) {
+          expect(accepts(invalid), invalid.slice(-180)).toBe(false);
+        }
+      }
+      expect(acceptsRead(provider.replace('owningModuleKey: moduleKey', "owningModuleKey: 'other.owner'"))).toBe(false);
+      expect(acceptsRead(provider.replace("role: 'search'", API_ROLE_PROPERTY))).toBe(false);
+      expect(acceptsManifest(manifest.replace('owningModuleId: moduleKey', "owningModuleId: 'other.owner'"))).toBe(
+        false,
+      );
+      expect(
+        hasMatchingGeneratedProviderAuthorization(
+          provider.replace("permission: 'module.access'", "permission: 'module.other'"),
+          manifest,
+          moduleId,
+          'markets',
+          'search',
+        ),
+      ).toBe(false);
+    }),
+);
+
+it('preserves immutable module identity in API read descriptors without rewriting strings or accepting shadowed aliases', () => {
+  const base = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
+  const declaration = `const moduleKey = '${INVENTORY_MODULE_ID}';\n`;
+  const source = `${declaration}${base.replace("moduleKey: 'inventory.stock'", 'moduleKey').replace(INVENTORY_OWNING_MODULE_PROPERTY, 'owningModuleKey: moduleKey')}`;
+  const accepts = (candidate: string) =>
+    hasGeneratedModuleApiReadContract(candidate, INVENTORY_MODULE_ID, STOCK_LIST_STEM);
+  expect(accepts(source)).toBe(true);
+  expect(accepts(`${source}\nconst text = 'moduleKey,'; const value = { moduleId: moduleKey };`)).toBe(true);
+  expect(accepts(`${source}\nfunction shadow(moduleKey: string) { return moduleKey; }`)).toBe(false);
+  expect(accepts(`${source}\n({ moduleKey } = attacker);`)).toBe(false);
+  expect(accepts(source.replace(declaration, "let moduleKey = 'inventory.stock';\n"))).toBe(false);
+});
+
+it.live(
   'accepts canonical additional Layer provisions and rejects unsupported aliases without dropping the governed runtime',
   Effect.fn(function* canonicalLayerProvisionScenario() {
     const root = yield* makeFixture();
@@ -3931,9 +4296,18 @@ it.live(
     );
     yield* write(root, handlerPath, provisioned);
     yield* checkModuleEntrypointBoundaries(root);
-    const invalidSources = [
+    yield* write(
+      root,
+      handlerPath,
       provisioned.replace(ownerProvision, 'GovernedReadLayer.provide(ownerDependenciesLive)'),
+    );
+    yield* checkModuleEntrypointBoundaries(root);
+    const invalidSources = [
       provisioned.replace(ownerProvision, 'UnknownLayer.provide(ownerDependenciesLive)'),
+      provisioned.replace(
+        "import { Layer } from '@modern-js/bff-effect/effect-edge';",
+        "import { Layer } from './fake-native.ts';",
+      ),
       provisioned.replace(ownerProvision, 'Layer.provide(makeDependencies())'),
       provisioned.replace(ownerProvision, 'Layer.provide(ownerDependenciesLive, attacker)'),
       provisioned.replace(ownerProvision, 'ownerDependenciesLive'),

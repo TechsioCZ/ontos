@@ -111,6 +111,7 @@ export const stockListReadApiLive = HttpApiBuilder.group(api, 'stockList',
   [
     `${owner}/api/index.ts`,
     `import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
+import { Layer, Layer as GovernedReadLayer } from 'effect';
 import { stockListReadApiLive } from './stock-list-read-server.ts';
 const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(GovernedReadLayer.provide(governedReadRuntimeDependenciesLive));
 const handlersLive = Layer.mergeAll(

@@ -1189,6 +1189,9 @@ it.live(
         ref: resourceRef,
       })
       .pipe(Effect.provideService(CapturedShellCompositionCatalog, catalog));
+    if ('outcome' in detailA || 'outcome' in detailB) {
+      expect.unreachable('The generated owner must support resource detail for both tenants');
+    }
     expect(searchA.results.map(({ title }) => title)).toEqual(['A1 searchable']);
     expect(detailA.detail.title).toBe('A1 searchable');
     expect(detailA.timeline.map(({ summary }) => summary)).toEqual(['Tenant A list']);

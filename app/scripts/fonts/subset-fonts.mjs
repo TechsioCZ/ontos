@@ -20,48 +20,65 @@
  * workspace manifest. HarfBuzz is only used to detect kerning pairs, so no
  * kerned pair can end up split across the two files.
  */
-import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const pythonScript = join(here, 'subset-fonts.py');
+import { NodeServices } from '@effect/platform-node';
+import { Console, Effect, Exit, FileSystem, Predicate, Schema } from 'effect';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
-if (!existsSync(pythonScript)) {
-  console.error(`missing ${pythonScript}`);
-  process.exit(1);
+class FontSubsettingError extends Schema.TaggedError()('FontSubsettingError', { message: Schema.String }) {}
+
+const pythonScript = path.join(import.meta.dirname, 'subset-fonts.py');
+const missingUv = [
+  'This script needs `uv` to run fonttools in a pinned throwaway environment.',
+  'Install it (brew install uv, or https://docs.astral.sh/uv/getting-started/installation/)',
+  'and run this script again. Nothing is added to the workspace dependencies.',
+].join('\n');
+
+export const subsetFonts = Effect.gen(function* subsetFontsProgram() {
+  const fs = yield* FileSystem.FileSystem;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  if (!(yield* fs.exists(pythonScript))) {
+    return yield* Effect.fail(new FontSubsettingError({ message: `missing ${pythonScript}` }));
+  }
+
+  const probeCode = yield* spawner
+    .exitCode(ChildProcess.make('uv', ['--version']))
+    .pipe(Effect.mapError(() => new FontSubsettingError({ message: missingUv })));
+  if (probeCode !== 0) {
+    return yield* Effect.fail(new FontSubsettingError({ message: missingUv }));
+  }
+
+  const child = yield* spawner
+    .spawn(
+      ChildProcess.make(
+        'uv',
+        [
+          'run',
+          '--no-project',
+          '--with',
+          'fonttools[woff]==4.59.2',
+          '--with',
+          'uharfbuzz==0.51.1',
+          'python',
+          path.resolve(pythonScript),
+        ],
+        { stderr: 'inherit', stdin: 'inherit', stdout: 'inherit' },
+      ),
+    )
+    .pipe(
+      Effect.mapError(
+        (failure) =>
+          new FontSubsettingError({
+            message: Predicate.isError(failure.reason.cause) ? failure.reason.cause.message : failure.message,
+          }),
+      ),
+    );
+  // A signal gives spawnSync a null status; retain its existing fallback exit code.
+  return yield* child.exitCode.pipe(Effect.orElseSucceed(() => 1));
+}).pipe(Effect.tapError((failure) => Console.error(failure.message)));
+
+if (import.meta.main) {
+  const exit = await Effect.runPromiseExit(subsetFonts.pipe(Effect.scoped, Effect.provide(NodeServices.layer)));
+  process.exitCode = Exit.match(exit, { onFailure: () => 1, onSuccess: (code) => code });
 }
-
-const probe = spawnSync('uv', ['--version'], { encoding: 'utf8' });
-if (probe.error || probe.status !== 0) {
-  console.error(
-    [
-      'This script needs `uv` to run fonttools in a pinned throwaway environment.',
-      'Install it (brew install uv, or https://docs.astral.sh/uv/getting-started/installation/)',
-      'and run this script again. Nothing is added to the workspace dependencies.',
-    ].join('\n'),
-  );
-  process.exit(1);
-}
-
-const result = spawnSync(
-  'uv',
-  [
-    'run',
-    '--no-project',
-    '--with',
-    'fonttools[woff]==4.59.2',
-    '--with',
-    'uharfbuzz==0.51.1',
-    'python',
-    resolve(pythonScript),
-  ],
-  { stdio: 'inherit' },
-);
-
-if (result.error) {
-  console.error(result.error.message);
-  process.exit(1);
-}
-process.exit(result.status ?? 1);

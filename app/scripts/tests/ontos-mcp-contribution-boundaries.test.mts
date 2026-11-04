@@ -38,6 +38,8 @@ const derive = (overrides: Partial<DeriveOntosMcpContributionInput>) =>
     ...overrides,
   });
 
+const unauthored = (mcp?: OntosMcpContributionInput) => derive({ actions: [null], authored: mcp });
+
 const catalogOf = (overrides: Partial<DeriveOntosMcpContributionInput>) => {
   const derived = derive(overrides);
   if (derived === undefined) {
@@ -179,7 +181,6 @@ it('takes the first duplicate read slug, ignores other routes and omits absent o
 });
 
 it('does not inspect registrations when MCP is not authored', () => {
-  const unauthored = (mcp?: OntosMcpContributionInput) => derive({ actions: [null], authored: mcp });
   expect(unauthored()).toBeUndefined();
 });
 

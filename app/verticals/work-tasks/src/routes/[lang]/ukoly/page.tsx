@@ -792,6 +792,8 @@ const useTasksPage = (
     );
   };
 
+  const putRow = (row: Task) => taskRecords.update(input, (current) => withSavedTask(current, row, current.revision));
+
   // Row start and complete. Only transitions the table allows are offered, so the server accepts them. The status
   // cell changes at once; the saved task replaces it when the command answers, and a failure puts the old one back.
   // Start and complete wait for the answer, so a second click cannot race the first against the same revision.
@@ -799,7 +801,6 @@ const useTasksPage = (
     if (records === undefined) {
       return;
     }
-    const putRow = (row: Task) => taskRecords.update(input, (current) => withSavedTask(current, row, current.revision));
     setActionError(undefined);
     setRowBusy(true);
     putRow({ ...task, state: toState });

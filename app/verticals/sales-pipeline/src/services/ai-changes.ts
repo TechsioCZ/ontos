@@ -102,99 +102,101 @@ const line = (field: string, before: string | undefined, after: string | undefin
   return [change];
 };
 
-const describe = Effect.fn('SalesPipeline.describeAiOperation')(
-  (state: SalesPipelineState, operation: SalesPipelineAiOperation): Effect.Effect<AiDescribed> =>
-    Effect.sync(() => {
-      const existing = (id: string) => state.opportunities.find((entry) => entry.id === id);
-      const target = (id: string) => ({
-        id,
-        kind: 'opportunity',
-        label: existing(id)?.title ?? 'Neznámá příležitost',
-      });
-      return Match.value(operation).pipe(
-        Match.tagsExhaustive({
-          AssignOpportunity: (value): AiDescribed => ({
-            diff: line(
-              'ownerEmployeeId',
-              existing(value.id)?.ownerEmployeeId,
-              Option.getOrUndefined(value.ownerEmployeeId),
-            ),
-            summary: Option.isNone(value.ownerEmployeeId)
-              ? 'Odebrání obchodníka z příležitosti'
-              : 'Předání příležitosti obchodníkovi',
-            target: target(value.id),
-          }),
-          ChangeOpportunityStage: (value): AiDescribed => {
-            const current = existing(value.id);
-            return {
-              diff: [
-                ...line(
-                  'stage',
-                  current === undefined ? undefined : stageLabel[current.stage],
-                  stageLabel[value.toStage],
-                ),
-                ...(value.note === undefined ? [] : line('note', current?.note, value.note)),
-              ],
-              summary: 'Změna fáze příležitosti',
-              target: target(value.id),
-            };
-          },
-          CreateOpportunity: (value): AiDescribed => ({
-            diff: [
-              ...line('title', undefined, value.title),
-              ...line('partyId', undefined, value.partyId),
-              ...line('stage', undefined, stageLabel[value.stage ?? 'LEAD']),
-              ...line('expectedCloseDate', undefined, value.expectedCloseDate),
-              ...line('amount', undefined, czk(opportunityAmountMinor(value.lines))),
-              ...(value.lines.length === 0 ? [] : line('lines', undefined, linesText(value.lines))),
-              ...(value.probability === undefined ? [] : line('probability', undefined, `${value.probability} %`)),
-              ...line('ownerEmployeeId', undefined, value.ownerEmployeeId),
-              ...line('note', undefined, value.note),
-            ],
-            summary: 'Založení nové příležitosti',
-            target: { kind: 'opportunity', label: value.title },
-          }),
-          UpdateOpportunity: (value): AiDescribed => {
-            const current = existing(value.id);
-            const { patch } = value;
-            return {
-              diff: [
-                ...(patch.title === undefined ? [] : line('title', current?.title, patch.title)),
-                ...(patch.partyId === undefined ? [] : line('partyId', current?.partyId, patch.partyId)),
-                ...(patch.expectedCloseDate === undefined
-                  ? []
-                  : line('expectedCloseDate', current?.expectedCloseDate, patch.expectedCloseDate)),
-                ...(patch.probability === undefined
-                  ? []
-                  : line(
-                      'probability',
-                      current === undefined ? undefined : `${current.probability} %`,
-                      `${patch.probability} %`,
-                    )),
-                ...(patch.lines === undefined
-                  ? []
-                  : [
-                      ...line(
-                        'amount',
-                        current === undefined ? undefined : czk(current.amountMinor),
-                        czk(opportunityAmountMinor(patch.lines)),
-                      ),
-                      ...line(
-                        'lines',
-                        current === undefined ? undefined : linesText(current.lines),
-                        linesText(patch.lines),
-                      ),
-                    ]),
-                ...(patch.note === undefined ? [] : line('note', current?.note, patch.note)),
-              ],
-              summary: 'Úprava údajů příležitosti',
-              target: target(value.id),
-            };
-          },
+const describe = Effect.fn('SalesPipeline.describeAiOperation')((
+  state: SalesPipelineState,
+  operation: SalesPipelineAiOperation,
+): Effect.Effect<AiDescribed> => {
+  const existing = (id: string) => state.opportunities.find((entry) => entry.id === id);
+  const target = (id: string) => ({
+    id,
+    kind: 'opportunity',
+    label: existing(id)?.title ?? 'Neznámá příležitost',
+  });
+  return Effect.sync(() =>
+    Match.value(operation).pipe(
+      Match.tagsExhaustive({
+        AssignOpportunity: (value): AiDescribed => ({
+          diff: line(
+            'ownerEmployeeId',
+            existing(value.id)?.ownerEmployeeId,
+            Option.getOrUndefined(value.ownerEmployeeId),
+          ),
+          summary: Option.isNone(value.ownerEmployeeId)
+            ? 'Odebrání obchodníka z příležitosti'
+            : 'Předání příležitosti obchodníkovi',
+          target: target(value.id),
         }),
-      );
-    }),
-);
+        ChangeOpportunityStage: (value): AiDescribed => {
+          const current = existing(value.id);
+          return {
+            diff: [
+              ...line(
+                'stage',
+                current === undefined ? undefined : stageLabel[current.stage],
+                stageLabel[value.toStage],
+              ),
+              ...(value.note === undefined ? [] : line('note', current?.note, value.note)),
+            ],
+            summary: 'Změna fáze příležitosti',
+            target: target(value.id),
+          };
+        },
+        CreateOpportunity: (value): AiDescribed => ({
+          diff: [
+            ...line('title', undefined, value.title),
+            ...line('partyId', undefined, value.partyId),
+            ...line('stage', undefined, stageLabel[value.stage ?? 'LEAD']),
+            ...line('expectedCloseDate', undefined, value.expectedCloseDate),
+            ...line('amount', undefined, czk(opportunityAmountMinor(value.lines))),
+            ...(value.lines.length === 0 ? [] : line('lines', undefined, linesText(value.lines))),
+            ...(value.probability === undefined ? [] : line('probability', undefined, `${value.probability} %`)),
+            ...line('ownerEmployeeId', undefined, value.ownerEmployeeId),
+            ...line('note', undefined, value.note),
+          ],
+          summary: 'Založení nové příležitosti',
+          target: { kind: 'opportunity', label: value.title },
+        }),
+        UpdateOpportunity: (value): AiDescribed => {
+          const current = existing(value.id);
+          const { patch } = value;
+          return {
+            diff: [
+              ...(patch.title === undefined ? [] : line('title', current?.title, patch.title)),
+              ...(patch.partyId === undefined ? [] : line('partyId', current?.partyId, patch.partyId)),
+              ...(patch.expectedCloseDate === undefined
+                ? []
+                : line('expectedCloseDate', current?.expectedCloseDate, patch.expectedCloseDate)),
+              ...(patch.probability === undefined
+                ? []
+                : line(
+                    'probability',
+                    current === undefined ? undefined : `${current.probability} %`,
+                    `${patch.probability} %`,
+                  )),
+              ...(patch.lines === undefined
+                ? []
+                : [
+                    ...line(
+                      'amount',
+                      current === undefined ? undefined : czk(current.amountMinor),
+                      czk(opportunityAmountMinor(patch.lines)),
+                    ),
+                    ...line(
+                      'lines',
+                      current === undefined ? undefined : linesText(current.lines),
+                      linesText(patch.lines),
+                    ),
+                  ]),
+              ...(patch.note === undefined ? [] : line('note', current?.note, patch.note)),
+            ],
+            summary: 'Úprava údajů příležitosti',
+            target: target(value.id),
+          };
+        },
+      }),
+    ),
+  );
+});
 
 const risk = (operation: SalesPipelineAiOperation): AiRisk =>
   Match.value(operation).pipe(

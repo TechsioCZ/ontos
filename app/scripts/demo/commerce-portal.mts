@@ -126,6 +126,7 @@ class CommercePortalError extends Schema.TaggedError<CommercePortalError>()('Com
   reason: Schema.String,
 }) {}
 const fail = (reason: string) => new CommercePortalError({ reason });
+const metadataUnavailable = () => fail('Commerce release secrets require valid Shell provider workload metadata');
 
 /** Run on the assembled bundle before upload; the receiving owner grant is never a manual extra. */
 export const commercePortalReleaseSecrets = Effect.fn('CommercePortal.releaseSecrets')(function* releaseSecrets(
@@ -136,7 +137,6 @@ export const commercePortalReleaseSecrets = Effect.fn('CommercePortal.releaseSec
   if (commerce === undefined || shell === undefined) {
     return yield* fail('Commerce release secrets require the Commerce and Shell units');
   }
-  const metadataUnavailable = () => fail('Commerce release secrets require valid Shell provider workload metadata');
   const deployment = yield* Schema.decodeUnknownEffect(
     Schema.fromJsonString(ExternalIdentityProviderConfigurationSchema),
     {

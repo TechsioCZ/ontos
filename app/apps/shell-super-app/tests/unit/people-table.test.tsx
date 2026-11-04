@@ -1,8 +1,15 @@
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { getI18nInstance as createModernI18n } from '@modern-js/plugin-i18n/i18n';
+import type { I18nInstance } from '@modern-js/plugin-i18n/runtime';
+import { ModernI18nProvider } from '@modern-js/plugin-i18n/runtime/consumer';
+import { cleanup, render as renderView, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect } from 'effect';
-import { afterEach, describe, expect, it, rstest } from 'effect-rstest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
+import type { PropsWithChildren, ReactElement } from 'react';
 import { useState } from 'react';
+
+import csResource from '../../locales/cs/shell.json';
+import enResource from '../../locales/en/shell.json';
 
 import type { PeopleRoleCatalog, Person } from '../../shared/people-api.ts';
 import {
@@ -20,6 +27,27 @@ import {
   PersonStatusDot,
   RoleChips,
 } from '../../src/routes/people/people-table.tsx';
+
+let i18nInstance: I18nInstance;
+beforeAll(async () => {
+  i18nInstance = await createModernI18n();
+  await i18nInstance.init({
+    defaultNS: 'shell',
+    lng: 'cs',
+    ns: ['shell'],
+    resources: { cs: { shell: csResource }, en: { shell: enResource } },
+    supportedLngs: ['cs', 'en'],
+  });
+});
+beforeEach(async () => {
+  await i18nInstance.changeLanguage?.('cs');
+});
+const I18nProvider = ({ children }: PropsWithChildren) => (
+  <ModernI18nProvider value={{ i18nInstance, language: i18nInstance.language, languages: ['cs', 'en'] }}>
+    {children}
+  </ModernI18nProvider>
+);
+const render = (ui: ReactElement) => renderView(ui, { wrapper: I18nProvider });
 
 const tenantId = '00000000-0000-4000-8000-000000000001';
 const companyId = '00000000-0000-4000-8000-000000000002';
@@ -71,7 +99,40 @@ const blocked = person('Karel Blokovaný', { principalStatus: 'disabled' });
 const departed = person('Eva Odešlá', { status: 'departed' });
 const people = [jana, petr, agent, blocked, departed];
 
-afterEach(cleanup);
+const names = (filters: Partial<PeopleFilters>) =>
+  filterPeople(people, { ...defaultPeopleFilters, ...filters }, catalog).map(({ displayName }) => displayName);
+
+const Harness = () => {
+  const [filters, setFilters] = useState(defaultPeopleFilters);
+  return (
+    <>
+      <PeopleToolbar
+        actions={null}
+        catalog={catalog}
+        companyAvailable
+        filters={filters}
+        onFiltersChange={setFilters}
+        onScopeChange={() => {}}
+        scope="company"
+      />
+      <PeopleTable
+        catalog={catalog}
+        filters={filters}
+        loading={false}
+        onEdit={() => {}}
+        onFiltersChange={setFilters}
+        onOpen={() => {}}
+        people={people}
+        scope="company"
+      />
+    </>
+  );
+};
+
+afterEach(() => {
+  cleanup();
+  rstest.restoreAllMocks();
+});
 
 describe('status dot', () => {
   it('always pairs the decorative colour dot with a visible Czech label', () => {
@@ -118,6 +179,119 @@ describe('role chips', () => {
   });
 });
 
+describe('translations', () => {
+  it.live.each([
+    {
+      language: 'cs',
+      list: 'Lidé a role',
+      loading: 'Načítám lidi a role…',
+      name: 'Jméno',
+      noMemberships: 'V tomto rozsahu nejsou žádná evidovaná členství.',
+      personActions: 'Akce: Jana Nováková',
+      searchLabel: 'Hledat podle jména, typu nebo role',
+      searchPlaceholder: 'Hledat jméno, typ nebo roli',
+    },
+    {
+      language: 'en',
+      list: 'People and roles',
+      loading: 'Loading people and roles…',
+      name: 'Name',
+      noMemberships: 'There are no recorded memberships in this scope.',
+      personActions: 'Actions: Jana Nováková',
+      searchLabel: 'Search by name, type or role',
+      searchPlaceholder: 'Search name, type or role',
+    },
+  ])('renders toolbar, table and compact states in $language', (copy) =>
+    Effect.gen(function* localizedTable() {
+      yield* Effect.promise(async () => await i18nInstance.changeLanguage?.(copy.language));
+      render(<Harness />);
+      expect(screen.getByRole('searchbox', { name: copy.searchLabel }).getAttribute('placeholder')).toBe(
+        copy.searchPlaceholder,
+      );
+      expect(screen.getByRole('columnheader', { name: copy.name })).toBeDefined();
+      expect(screen.getByRole('button', { name: copy.personActions })).toBeDefined();
+      cleanup();
+
+      const media = globalThis.matchMedia('(min-width: 48rem)');
+      rstest.spyOn(media, 'matches', 'get').mockReturnValue(false);
+      rstest.spyOn(globalThis, 'matchMedia').mockReturnValue(media);
+      const table = render(
+        <PeopleTable
+          catalog={catalog}
+          filters={defaultPeopleFilters}
+          loading
+          onEdit={() => {}}
+          onFiltersChange={() => {}}
+          onOpen={() => {}}
+          people={[]}
+          scope="company"
+        />,
+      );
+      expect(screen.getByRole('status').textContent).toBe(copy.loading);
+      table.rerender(
+        <PeopleTable
+          catalog={catalog}
+          filters={defaultPeopleFilters}
+          loading={false}
+          onEdit={() => {}}
+          onFiltersChange={() => {}}
+          onOpen={() => {}}
+          people={[]}
+          scope="company"
+        />,
+      );
+      expect(screen.getByText(copy.noMemberships)).toBeDefined();
+      table.rerender(
+        <PeopleTable
+          catalog={catalog}
+          filters={defaultPeopleFilters}
+          loading={false}
+          onEdit={() => {}}
+          onFiltersChange={() => {}}
+          onOpen={() => {}}
+          people={[jana]}
+          scope="company"
+        />,
+      );
+      expect(screen.getByRole('list', { name: copy.list })).toBeDefined();
+      expect(screen.getByRole('button', { name: copy.personActions })).toBeDefined();
+      expect(document.body.textContent).not.toContain('shell.people.');
+    }),
+  );
+
+  it.live('uses English invitation notes, overflow announcements and menu labels with unchanged action values', () =>
+    Effect.gen(function* englishActions() {
+      yield* Effect.promise(async () => await i18nInstance.changeLanguage?.('en'));
+      const user = userEvent.setup();
+      const onEdit = rstest.fn();
+      const invited = { ...petr, invitationDelivery: { status: 'pending' } } as const;
+      render(
+        <>
+          <RoleChips names={['Obchodník', 'Správce firmy', 'Účetní', 'Vedení']} />
+          <PeopleTable
+            catalog={catalog}
+            filters={defaultPeopleFilters}
+            loading={false}
+            onEdit={(kind, edited) => {
+              onEdit(kind, edited);
+            }}
+            onFiltersChange={() => {}}
+            onOpen={() => {}}
+            people={[invited]}
+            scope="company"
+          />
+        </>,
+      );
+      expect(screen.getByText('and more roles: Účetní, Vedení')).toBeDefined();
+      expect(screen.getByText('Invitation waiting to be sent')).toBeDefined();
+      yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Actions: Petr Dvořák' })));
+      expect(yield* Effect.promise(() => screen.findByRole('menuitem', { name: 'Manage roles' }))).toBeDefined();
+      yield* Effect.promise(() => user.click(screen.getByRole('menuitem', { name: 'Edit membership' })));
+      expect(onEdit).toHaveBeenCalledWith('membership', invited);
+    }),
+  );
+});
+
 describe('row action menu', () => {
   it.live('offers membership and role changes without opening the row detail', () =>
     Effect.gen(function* chooseAction() {
@@ -162,9 +336,6 @@ describe('row action menu', () => {
 });
 
 describe('filters', () => {
-  const names = (filters: Partial<PeopleFilters>) =>
-    filterPeople(people, { ...defaultPeopleFilters, ...filters }, catalog).map(({ displayName }) => displayName);
-
   it('hides ended memberships by default and shows them on request', () => {
     expect(names({})).not.toContain('Eva Odešlá');
     expect(names({ status: 'all' })).toContain('Eva Odešlá');
@@ -203,32 +374,6 @@ describe('filters', () => {
   it.live('narrows the table from the toolbar search and offers to clear filters when nothing matches', () =>
     Effect.gen(function* searchTable() {
       const user = userEvent.setup();
-      const Harness = () => {
-        const [filters, setFilters] = useState(defaultPeopleFilters);
-        return (
-          <>
-            <PeopleToolbar
-              actions={null}
-              catalog={catalog}
-              companyAvailable
-              filters={filters}
-              onFiltersChange={setFilters}
-              onScopeChange={() => {}}
-              scope="company"
-            />
-            <PeopleTable
-              catalog={catalog}
-              filters={filters}
-              loading={false}
-              onEdit={() => {}}
-              onFiltersChange={setFilters}
-              onOpen={() => {}}
-              people={people}
-              scope="company"
-            />
-          </>
-        );
-      };
       render(<Harness />);
       expect(screen.queryByRole('button', { name: 'Obnovit seznam' })).toBeNull();
       const search = screen.getByRole('searchbox', { name: 'Hledat podle jména, typu nebo role' });
