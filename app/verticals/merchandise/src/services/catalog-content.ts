@@ -209,7 +209,6 @@ type CreateCategoryCommand = Extract<MerchandiseCommand, { readonly _tag: 'Creat
 export const createCategoryCommand = Effect.fn('Merchandise.createCategoryCommand')(function* createCategoryCommand(
   state: MerchandiseState,
   value: CreateCategoryCommand,
-  input: MerchandiseCommandInput,
 ): Effect.fn.Return<MerchandiseChange, MerchandiseCommandError> {
   const categories = state.categories ?? [];
   if (categories.some((category) => category.id === value.id)) {

@@ -18,7 +18,6 @@ export const authenticatedShellFixture = (): AuthenticatedHomePageModel => ({
     deniedAppIds: [],
     items: [],
     moduleIds: [],
-    recordDestinations: [],
     state: 'available',
     unavailableDeployments: [],
   },

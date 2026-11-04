@@ -159,11 +159,13 @@ it.effect('updateCategoryCommand fails with not found for an unknown category', 
 
 it.effect('createCategoryCommand adds a child, publishes it, and marks the parent as having children', () =>
   Effect.gen(function* catalogContentCreateCase1() {
-    const created = yield* createCategoryCommand(
-      state,
-      { _tag: 'CreateCategory', id: 'new', name: 'Pánské', parentId: 'r', slug: 'panske' },
-      input,
-    );
+    const created = yield* createCategoryCommand(state, {
+      _tag: 'CreateCategory',
+      id: categoryId('new'),
+      name: 'Pánské',
+      parentId: categoryId('r'),
+      slug: 'panske',
+    });
     const category = created.state.categories?.find((entry) => entry.id === 'new');
     expect(Option.getOrNull(category?.parentId ?? Option.none())).toBe('r');
     expect(category?.published).toBe(true);
@@ -177,11 +179,14 @@ it.effect('createCategoryCommand adds a child, publishes it, and marks the paren
 
 it.effect('createCategoryCommand adds a root category that is not published when asked', () =>
   Effect.gen(function* catalogContentCreateCase2() {
-    const created = yield* createCategoryCommand(
-      state,
-      { _tag: 'CreateCategory', id: 'root2', name: 'Ostatní', parentId: null, published: false, slug: 'ostatni' },
-      input,
-    );
+    const created = yield* createCategoryCommand(state, {
+      _tag: 'CreateCategory',
+      id: categoryId('root2'),
+      name: 'Ostatní',
+      parentId: null,
+      published: false,
+      slug: 'ostatni',
+    });
     const category = created.state.categories?.find((entry) => entry.id === 'root2');
     expect(category?.published).toBe(false);
     expect(Option.isNone(category?.parentId ?? Option.some('?'))).toBe(true);
@@ -192,15 +197,23 @@ it.effect('createCategoryCommand adds a root category that is not published when
 it.effect('createCategoryCommand refuses an existing identifier and an unknown parent', () =>
   Effect.gen(function* catalogContentCreateCase3() {
     const existing = yield* Effect.flip(
-      createCategoryCommand(state, { _tag: 'CreateCategory', id: 'r', name: 'X', parentId: null, slug: 'x' }, input),
+      createCategoryCommand(state, {
+        _tag: 'CreateCategory',
+        id: categoryId('r'),
+        name: 'X',
+        parentId: null,
+        slug: 'x',
+      }),
     );
     expect(Schema.is(MerchandiseLifecycleConflict)(existing)).toBe(true);
     const orphan = yield* Effect.flip(
-      createCategoryCommand(
-        state,
-        { _tag: 'CreateCategory', id: 'y', name: 'Y', parentId: 'missing', slug: 'y' },
-        input,
-      ),
+      createCategoryCommand(state, {
+        _tag: 'CreateCategory',
+        id: categoryId('y'),
+        name: 'Y',
+        parentId: categoryId('missing'),
+        slug: 'y',
+      }),
     );
     expect(Schema.is(MerchandiseNotFound)(orphan)).toBe(true);
   }),

@@ -43,6 +43,11 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
       liveRight: 'canManageMarkets',
       title: { cs: 'Nastavit sortiment a ceník trhu', en: 'Configure a market offer and price list' },
     },
+    CreateCategory: {
+      agentProposalOnly: true,
+      liveRight: 'canManageCatalog',
+      title: { cs: 'Vytvořit kategorii', en: 'Create a category' },
+    },
     CreateOrder: { title: { cs: 'Vytvořit objednávku', en: 'Create an order' } },
     CreateProduct: {
       liveRight: 'canManageCatalog',
@@ -84,11 +89,6 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
       },
       liveRight: 'canManageMarkets',
       title: { cs: 'Změnit nabídku produktu v trhu', en: 'Change a product offer in a market' },
-    },
-    CreateCategory: {
-      agentProposalOnly: true,
-      liveRight: 'canManageCatalog',
-      title: { cs: 'Vytvořit kategorii', en: 'Create a category' },
     },
     UpdateCategory: {
       agentProposalOnly: true,

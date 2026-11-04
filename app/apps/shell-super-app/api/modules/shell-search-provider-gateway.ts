@@ -17,7 +17,7 @@ type ProviderPayload = {
 };
 const encodeProviderPayload = Schema.encodeEffect(Schema.fromJsonString(ProviderPayloadSchema));
 /** Parses the owner body only; the typed hit contract is decoded once, by the search provider decode in shell-resources. */
-const decodeProviderResults = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.Unknown)));
+const decodeProviderResults = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.Json)));
 
 /**
  * The Codesmith search-provider route inside the owner's own BFF: search key `<module>.<name>` is served at
@@ -73,11 +73,6 @@ export const makeModuleSearchProviderGateway = (transport: ModuleReleaseTranspor
         });
       }
       const body = yield* Effect.tryPromise(response.text.bind(response)).pipe(Effect.timeout('10 seconds'));
-      // The Shell already admitted the module; an owner refusing the rows means nothing here is readable by this person,
-      // which is an empty result, not an outage.
-      if (response.status === 403) {
-        return [];
-      }
       if (!response.ok) {
         return yield* new ShellProviderUnavailableError({ cause: { body, status: response.status } });
       }

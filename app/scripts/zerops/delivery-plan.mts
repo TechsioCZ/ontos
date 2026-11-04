@@ -191,6 +191,20 @@ const nextAttempt = (input: DeliveryInputs, services: readonly DeliveryService[]
     ? { runAttempt: input.runAttempt, runId: input.runId, sourceRevision: input.head }
     : input.previousReceipt?.lastAttempt;
 
+const dependentUnitIds = (
+  units: readonly DeliveryUnit[],
+  closures: ReadonlyMap<string, readonly string[]>,
+  directory: string,
+): readonly string[] => units.filter((unit) => closures.get(unit.id)?.includes(directory) === true).map(({ id }) => id);
+
+const nextServicePins = (input: DeliveryInputs, selected: ReadonlySet<DeliveryService>) =>
+  Object.fromEntries(
+    SERVICES.flatMap((service) => {
+      const revision = selected.has(service) ? input.head : input.previousReceipt?.services[service];
+      return revision === undefined ? [] : [[service, revision]];
+    }),
+  );
+
 export const planDelivery = (input: DeliveryInputs) =>
   Effect.gen(function* createDeliveryPlan() {
     const base = previousVerifiedBase(input.previousReceipt, input.previousRuns, input.runNumber);
@@ -212,11 +226,9 @@ export const planDelivery = (input: DeliveryInputs) =>
       if (inside(filepath, STOREFRONT_DIRECTORY)) {
         selected.add('storefront');
         selected.add('shop');
-        for (const unit of input.units) {
-          if (closures.get(unit.id)?.includes(STOREFRONT_DIRECTORY) === true) {
-            selected.add('app');
-            affected.add(unit.id);
-          }
+        for (const id of dependentUnitIds(input.units, closures, STOREFRONT_DIRECTORY)) {
+          selected.add('app');
+          affected.add(id);
         }
       } else if (inside(filepath, N1_DIRECTORY)) {
         selected.add('n1');
@@ -227,10 +239,8 @@ export const planDelivery = (input: DeliveryInputs) =>
           reasons.push(`shared or unknown input: ${filepath}`);
         } else {
           selected.add('app');
-          for (const unit of input.units) {
-            if (closures.get(unit.id)?.includes(owner.directory) === true) {
-              affected.add(unit.id);
-            }
+          for (const id of dependentUnitIds(input.units, closures, owner.directory)) {
+            affected.add(id);
           }
           if (storefrontClosure.includes(owner.directory)) {
             selected.add('storefront');
@@ -255,18 +265,12 @@ export const planDelivery = (input: DeliveryInputs) =>
     }
     const services = SERVICES.filter((service) => selected.has(service));
     // A service with no revision yet (N1 before its first deploy) carries no pin, rather than an undefined one.
-    const pins = Object.fromEntries(
-      SERVICES.flatMap((service) => {
-        const revision = selected.has(service) ? input.head : input.previousReceipt?.services[service];
-        return revision === undefined ? [] : [[service, revision]];
-      }),
-    );
     const receipt = yield* Schema.decodeUnknownEffect(DeliveryReceiptSchema)({
       lastAttempt: nextAttempt(input, services),
       runAttempt: input.runAttempt,
       runId: input.runId,
       schemaVersion: 1,
-      services: pins,
+      services: nextServicePins(input, selected),
       validatedHead: input.head,
     });
     return {
