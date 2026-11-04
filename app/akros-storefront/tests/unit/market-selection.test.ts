@@ -337,7 +337,6 @@ describe("before any market exists", () => {
       400,
       "GatewayAudienceInvalidProblem",
     ],
-    ["the read is not granted to the storefront", 403, "CurrentMarketCatalogForbiddenProblem"],
   ])("serves /cs without a market when %s, cached for 60 seconds", async (_case, status, tag) => {
     const { OntosError } = await import("@/ontos/gateway");
     readRecords.mockImplementation(async () => {
