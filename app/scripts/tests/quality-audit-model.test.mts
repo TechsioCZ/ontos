@@ -2686,9 +2686,14 @@ it.live(
     for (const invalid of [
       actualHarness.replace('node:child_process', counterfeitModule),
       actualHarness.replace('process.execPath,', "'printf',"),
-      actualHarness.replace("'-c', configPath", "'--unused', configPath"),
+      actualHarness.replace("'-c',\n      configPath", "'--unused',\n      configPath"),
+      actualHarness.replace("'--tsrs-lint',", "'--tsgolint',"),
+      actualHarness.replace("'dist/effect-tsgo.cjs'", "'dist/counterfeit.cjs'"),
       actualHarness.replace('  const result = spawnSync(', '  const result = () => spawnSync('),
-      actualHarness.replace('export function runOxlint', 'oxlintEntryPoint = replacement;\nexport function runOxlint'),
+      actualHarness.replace(
+        'export function runOxlint',
+        'effectTsgoEntryPoint = replacement;\nexport function runOxlint',
+      ),
     ]) {
       write(root, harness, invalid);
       const control = yield* buildKnipModel(root, base).pipe(Effect.provide(NodeServices.layer));
