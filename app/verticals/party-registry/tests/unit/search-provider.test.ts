@@ -351,20 +351,9 @@ it.layer(NodeCrypto.layer)('current Party evidence during projection delivery la
           expect(query.params).toContain(partyId);
           const sql = query.sql.replaceAll('"party".', '');
           expect(sql).not.toMatch(/limit|offset/iu);
-          if (sql.includes('from "party_aliases"')) {
-            return Effect.succeed([]);
-          }
-          if (sql.includes('from "parties"')) {
-            return Effect.succeed([
-              { archived_at: null, current_display_name: 'Jana Nováková', party_id: partyId, tenant_id: tenantId },
-            ]);
-          }
-          if (sql.includes('from "party_official_identifiers"')) {
-            expect(query.params).toContain('ACTIVE');
-            expect(sql).toContain('"is_current"');
-            return Effect.succeed([]);
-          }
-          if (sql.includes('from "party_contact_points"')) {
+          if (sql.includes(' union all ')) {
+            // Owner evidence is one UNION ALL statement. Rows arrive positionally in its column order:
+            // kind, partyId, tenantId, archivedAt, displayName, isCurrent, privacy, state, type, validFrom, validTo, value.
             expect(query.params).toContain('ACTIVE');
             expect(query.params).toContain('PUBLIC');
             expect(query.params).toContain('EMAIL');
@@ -375,17 +364,37 @@ it.layer(NodeCrypto.layer)('current Party evidence during projection delivery la
             // outbox delivery has not run and the Core gateway still supplies its stale hit.
             return Effect.succeed([
               {
-                isCurrent: true,
+                kind: 'party',
                 partyId,
+                tenantId,
+                archivedAt: null,
+                displayName: 'Jana Nováková',
+                isCurrent: null,
+                privacy: null,
+                state: null,
+                type: null,
+                validFrom: null,
+                validTo: null,
+                value: null,
+              },
+              {
+                kind: 'contact',
+                partyId,
+                tenantId,
+                archivedAt: null,
+                displayName: null,
+                isCurrent: true,
                 privacy: 'PUBLIC',
                 state: 'ACTIVE',
-                tenantId,
                 type: 'EMAIL',
-                validFrom: '2026-01-01T00:00:00.000Z',
+                validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
                 validTo: null,
                 value: 'replacement@example.test',
               },
             ]);
+          }
+          if (sql.includes('from "party_aliases"')) {
+            return Effect.succeed([]);
           }
           return Effect.die('Unexpected owner evidence query');
         },
@@ -449,7 +458,9 @@ it.layer(NodeCrypto.layer)('current Party evidence during projection delivery la
         title: 'Jana Nováková',
       });
       expect(counterparties[0]?.ref).toEqual(counterpartyHit.counterpartyRef);
-      expect(harness.snapshot().ownerQueries).toHaveLength(24);
+      // Six evidence loads, two owner statements each: the alias component and one UNION ALL of the owner rows.
+      // The per-hop alias pages and the three per-table selects used to make four per load.
+      expect(harness.snapshot().ownerQueries).toHaveLength(12);
       expect(harness.snapshot().evidenceWrites).toBe(6);
       expect(sourceAuthority.calls).toHaveLength(6);
       expect(sourceAuthority.calls.every((call) => !Object.hasOwn(call, 'legalEntityId'))).toBe(true);
