@@ -12,7 +12,7 @@ import type {
   CoreSystemSearchPresentationAuthority,
 } from '@app/core-runtime/search-contract';
 import { corePeopleSystemSearchProvider } from '@app/core-runtime/people/search';
-import { Option, Result, Schema } from 'effect';
+import { Option, Ref, Result, Schema } from 'effect';
 
 import { ShellSearchPresentationInventorySchema } from '../../shared/api.ts';
 import type { ShellSearchPresentationInventory } from '../../shared/api.ts';
@@ -171,19 +171,12 @@ const ownerPresentation = (catalog: ShellInstalledCatalog, binding: Presentation
   return Option.some({ pages, presentation });
 };
 
-/**
- * Compile only providers already admitted by the governed read. This performs no permission check and grants none:
- * the caller retains current tenant/company/module/record authorization. All routes come from the captured release.
- */
-export const compileShellSearchPresentation = ({
+const compileShellSearchInventory = ({
   admitted,
   catalog,
   compositionRevision,
   system,
 }: PresentationInput): Result.Result<ShellSearchPresentationInventory, CoreSearchPresentationIssue> => {
-  if (compositionRevision !== catalog.composition.revision) {
-    return invalid('Search presentation revision differs from the captured composition');
-  }
   const entries: CoreSearchPresentationEntry[] = [];
   const pages = new Map<string, CapturedPage>();
   const claimed = new Set<string>();
@@ -221,4 +214,54 @@ export const compileShellSearchPresentation = ({
   return Result.isSuccess(decoded)
     ? Result.succeed(decoded.success)
     : Result.fail({ code: 'catalog_invalid', message: 'Search presentation inventory is malformed or inconsistent' });
+};
+
+type CompiledInventory = Result.Result<ShellSearchPresentationInventory, CoreSearchPresentationIssue>;
+
+/**
+ * The business inventory is pure over the frozen composition and the admitted binding list, so it is memoized per
+ * captured composition and admitted set. The memo never holds a search answer, and the Core system branch is compiled
+ * per call rather than keyed into it.
+ */
+const compiledInventories = Ref.makeUnsafe(
+  new WeakMap<ShellInstalledCatalog['composition'], Map<string, CompiledInventory>>(),
+);
+const MAX_INVENTORIES_PER_COMPOSITION = 64;
+
+const admittedKey = (admitted: readonly AdmittedSearchBinding[]): string =>
+  admitted
+    .map(({ ownerModuleId, resourceType, searchKey }) =>
+      [ownerModuleId, resourceType, searchKey].map((part) => encodeURIComponent(part)).join('/'),
+    )
+    .join(',');
+
+/**
+ * Compile only providers already admitted by the governed read. This performs no permission check and grants none:
+ * the caller retains current tenant/company/module/record authorization. All routes come from the captured release.
+ */
+export const compileShellSearchPresentation = (input: PresentationInput): CompiledInventory => {
+  const { admitted, catalog, compositionRevision, system } = input;
+  if (compositionRevision !== catalog.composition.revision) {
+    return invalid('Search presentation revision differs from the captured composition');
+  }
+  if (system !== undefined) {
+    return compileShellSearchInventory(input);
+  }
+  const inventories = Ref.getUnsafe(compiledInventories);
+  let byAdmitted = inventories.get(catalog.composition);
+  if (byAdmitted === undefined) {
+    byAdmitted = new Map();
+    inventories.set(catalog.composition, byAdmitted);
+  }
+  const key = admittedKey(admitted);
+  const memoized = byAdmitted.get(key);
+  if (memoized !== undefined) {
+    return memoized;
+  }
+  const compiled = compileShellSearchInventory(input);
+  if (byAdmitted.size >= MAX_INVENTORIES_PER_COMPOSITION) {
+    byAdmitted.clear();
+  }
+  byAdmitted.set(key, compiled);
+  return compiled;
 };

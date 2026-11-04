@@ -202,6 +202,24 @@ it.effect('does not expose installed metadata when no provider has been admitted
   }),
 );
 
+it.effect('reuses one inventory per captured composition and admitted set, never across different sets', () =>
+  Effect.gen(function* memoized() {
+    const catalog = yield* installed();
+    const compile = (bindings: typeof admitted) =>
+      compileShellSearchPresentation({
+        admitted: bindings,
+        catalog,
+        compositionRevision: catalog.composition.revision,
+      });
+    const first = compile(admitted);
+    expect(compile(admitted.map((binding) => ({ ...binding })))).toBe(first);
+    const withoutProviders = compile([]);
+    expect(withoutProviders).not.toBe(first);
+    expect(Result.isSuccess(withoutProviders) && withoutProviders.success.business.entries).toEqual([]);
+    expect(Result.isSuccess(first) && first.success.business.entries).toHaveLength(1);
+  }),
+);
+
 it.effect('refuses stale revision and duplicate provider bindings, and degrades a foreign binding alone', () =>
   Effect.gen(function* refuse() {
     const catalog = yield* installed();

@@ -110,6 +110,12 @@ export type ShellSearchResult = SharedShellSearchResult;
 
 /** Decode the provider wire contract, including leaf/scope checks, before authorizing each current owner result. */
 export const ShellSearchProviderResultsSchema = Schema.Array(RawShellSearchResultSchema);
+// Built once: a validator or schema constructed per owner hit is recompiled on every call.
+const isCounterpartyShellSearchResult = Schema.is(CounterpartyShellSearchResultSchema);
+const isPartyShellSearchResult = Schema.is(PartyShellSearchResultSchema);
+const decodeProviderResultValues = Schema.decodeUnknownEffect(ShellSearchProviderResultsSchema, {
+  onExcessProperty: 'ignore',
+});
 
 export interface ShellSearchRequest {
   /** When supplied by a governed request it must still name the captured release. */
@@ -358,7 +364,7 @@ const resultBelongsToProvider = (
 };
 
 const normalizeProviderResult = (value: Schema.Schema.Type<typeof RawShellSearchResultSchema>): ShellSearchResult => {
-  if (Schema.is(CounterpartyShellSearchResultSchema)(value)) {
+  if (isCounterpartyShellSearchResult(value)) {
     return {
       ...value,
       kind: 'counterparty',
@@ -368,7 +374,7 @@ const normalizeProviderResult = (value: Schema.Schema.Type<typeof RawShellSearch
       title: value.party.title,
     };
   }
-  if (Schema.is(PartyShellSearchResultSchema)(value)) {
+  if (isPartyShellSearchResult(value)) {
     return { ...value, kind: 'party' };
   }
   return { ...value, kind: 'resource' };
@@ -380,9 +386,7 @@ const decodeProviderResults = (
 ): Effect.Effect<readonly ShellSearchResult[], ShellProviderUnavailableError> =>
   // Project the owner's public DTO onto the shared hit contract. Additional owner fields are never returned;
   // every known identity, scope, variant and value constraint still decodes and is rechecked below.
-  Schema.decodeUnknownEffect(Schema.Array(RawShellSearchResultSchema), {
-    onExcessProperty: 'ignore',
-  })(values).pipe(
+  decodeProviderResultValues(values).pipe(
     Effect.map((decoded) => decoded.map(normalizeProviderResult)),
     Effect.flatMap((decoded) =>
       decoded.some((value) => {
@@ -429,11 +433,12 @@ type SearchProvider = ReturnType<typeof searchProviders>[number];
 export const searchProviderModuleIds = (catalog: InstalledModuleCatalog): readonly string[] =>
   [...new Set(searchProviders(catalog).map(({ moduleId }) => moduleId))].toSorted();
 
+const isTenantModuleStateRecords = Schema.is(Schema.Array(TenantModuleStateRecordSchema));
 const validSearchStates = (states: readonly TenantModuleStateRecord[], moduleIds: readonly string[]): boolean => {
   const keys = states.map(({ moduleKey }) => moduleKey);
   const moduleIdSet = new Set(moduleIds);
   return (
-    Schema.is(Schema.Array(TenantModuleStateRecordSchema))(states) &&
+    isTenantModuleStateRecords(states) &&
     new Set(keys).size === keys.length &&
     keys.every((key) => moduleIdSet.has(key))
   );
