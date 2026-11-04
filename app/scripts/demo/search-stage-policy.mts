@@ -89,6 +89,8 @@ const rebuildDescriptors: readonly DemoAction[] = [
     'legal.agreements',
     'facility.operations',
     'commerce.market-catalog',
+    'demo.workforce',
+    'projects.core',
   ].map((owningModuleKey): DemoAction => ({
     actionKey: `${owningModuleKey}.request-search-rebuild`,
     legalEntityScope: 'optional',

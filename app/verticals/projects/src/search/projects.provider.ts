@@ -2,33 +2,22 @@
 // @ontos-contribution-kind search-provider
 import {
   ContextAccess,
-  CoreSearchIngestion,
-  CoreSearchProjectionDocumentSchema,
   CoreSearchProjectionHitSchema,
-  CoreSearchWorkerSnapshot,
-  coreSearchIngestionRegistryLayer,
-  defineCoreSearchIngestionRegistrations,
   CoreSearchQueryRuntime,
   ReadHandlerUnavailable,
   ReadPermissionDenied,
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type {
-  OperationalScope,
-  OutboxWorkerHandlerContext,
-  ReadFinishContext,
-  ReadLoadContext,
-  ReadPrepareContext,
-} from '@app/core-runtime';
+import type { OperationalScope, ReadFinishContext, ReadLoadContext, ReadPrepareContext } from '@app/core-runtime';
 import { matchesCoreSearchValues, parseCoreSearchQuery } from '@app/core-runtime/search-contract';
 import { compareCoreSearchHits, coreSearchRelevance } from '@app/core-runtime/search-ranking';
 import { Effect, Schema } from 'effect';
 import { ProjectsProviderRequestSchema, ProjectsProviderResponseSchema } from '../../shared/apis/projects-search.ts';
 import type { ProjectsProviderRequest } from '../../shared/apis/projects-search.ts';
 import { ProjectUuidSchema } from '../../shared/domain/project.ts';
-import { loadProjectSearchSnapshot, projectSearchMetadataService } from '../services/project-persistence.service.ts';
-import type { ProjectSearchMetadata, ProjectSearchSnapshot } from '../services/project-persistence.service.ts';
+import { projectSearchMetadataService } from '../services/project-persistence.service.ts';
+import type { ProjectSearchMetadata } from '../services/project-search-projection.ts';
 
 const moduleId = 'projects.core';
 const resourceType = 'projects.project';
@@ -41,97 +30,6 @@ const searchUnavailable = (cause?: unknown) =>
     'cause',
     { value: cause },
   );
-
-/** Exact self-consumer identities for the generated lifecycle and explicit rebuild workers. */
-export const projectSearchIngestionRegistrations = defineCoreSearchIngestionRegistrations([
-  {
-    consumerModuleKey: moduleId,
-    producerModuleKey: moduleId,
-    topic: 'projects.core.search-refresh-requested.v1',
-    workerKey: 'projects.core.refresh-search',
-  },
-  {
-    consumerModuleKey: moduleId,
-    producerModuleKey: moduleId,
-    topic: 'projects.core.search-rebuild-requested.v1',
-    workerKey: 'projects.core.rebuild-search',
-  },
-]);
-export const projectSearchIngestionRegistryLive = coreSearchIngestionRegistryLayer(projectSearchIngestionRegistrations);
-
-export const buildProjectSearchDocuments = Effect.fn('Projects.buildSearchDocuments')(function* buildSearchDocuments(
-  snapshot: ProjectSearchSnapshot,
-) {
-  if (
-    !/^[1-9][0-9]*$/u.test(snapshot.projectionVersion) ||
-    snapshot.projects.some((project) => project.tenantId !== snapshot.tenantId) ||
-    new Set(snapshot.projects.map((project) => project.projectId)).size !== snapshot.projects.length
-  ) {
-    return yield* searchUnavailable();
-  }
-  return yield* Effect.forEach(
-    snapshot.projects,
-    (project) =>
-      Schema.decodeUnknownEffect(CoreSearchProjectionDocumentSchema)({
-        archived: project.lifecycleState === 'archived',
-        facets: [],
-        metadata: [],
-        projectionVersion: snapshot.projectionVersion,
-        ref: { moduleId, resourceId: project.projectId, resourceType, tenantId: snapshot.tenantId },
-        searchableText: [project.name, project.prefix],
-        title: project.name,
-      }).pipe(Effect.mapError(searchUnavailable)),
-    { concurrency: 1 },
-  );
-});
-
-/**
- * Generated self-consuming workers call this only after a committed Action. Core validates the
- * claim/registration and reserves a fresh generation; owner reads finish before any index write.
- * Every delivery publishes every Project, including archived and previously untouched rows. This
- * deliberately uses ingestion rather than paged replacements: a page is not a complete rebuild,
- * and the public replacement contract is bounded at 10,000 documents. No row cap, fake timestamp
- * version, empty rebuild floor or fabricated tombstone is used. A failed publication fails the
- * delivery; retry re-reads current persistence and cannot overwrite a newer generation.
- */
-export const refreshProjectSearchProjection = Effect.fn('Projects.refreshSearchProjection')(function* refreshSearch(
-  context: OutboxWorkerHandlerContext,
-) {
-  if (
-    context.producerModuleKey !== moduleId ||
-    context.consumerModuleKey !== moduleId ||
-    !projectSearchIngestionRegistrations.some(
-      (registration) => registration.topic === context.topic && registration.workerKey === context.workerKey,
-    )
-  ) {
-    return yield* searchUnavailable();
-  }
-  const reader = yield* CoreSearchWorkerSnapshot;
-  const snapshot = yield* reader
-    .read(context, (view) => loadProjectSearchSnapshot(view, context.tenantId))
-    .pipe(Effect.mapError(searchUnavailable));
-  const documents = yield* buildProjectSearchDocuments(snapshot);
-  const ingestion = yield* CoreSearchIngestion;
-  return yield* Effect.forEach(
-    documents,
-    (document) =>
-      ingestion
-        .ingest(
-          {
-            consumerModuleKey: moduleId,
-            mutation: { document, kind: 'upsert' },
-            producerModuleKey: moduleId,
-            projectionVersion: snapshot.projectionVersion,
-            tenantId: snapshot.tenantId,
-            topic: context.topic,
-            workerKey: context.workerKey,
-          },
-          context,
-        )
-        .pipe(Effect.mapError(searchUnavailable)),
-    { concurrency: 1, discard: true },
-  );
-});
 
 /** Core owns the indexed shortlist and generation/floor semantics. The caller's scope is never rewritten. */
 export const prepareProjectSearch = Effect.fn('Projects.prepareSearch')(function* prepareSearch(

@@ -44,12 +44,12 @@ const fixtureOwner = (prefix: string): DatabaseOwnerIdentityDescriptor => ({
 });
 
 const enrollments = [
-  { enrollment: APP_DATABASE_IDENTITY_ENROLLMENT, name: 'application', policyCount: 43 },
-  { enrollment: defineDatabaseIdentityEnrollment([]), name: 'empty', policyCount: 11 },
+  { enrollment: APP_DATABASE_IDENTITY_ENROLLMENT, name: 'application', policyCount: 61 },
+  { enrollment: defineDatabaseIdentityEnrollment([]), name: 'empty', policyCount: 20 },
   {
     enrollment: defineDatabaseIdentityEnrollment([fixtureOwner('stock'), fixtureOwner('orders')]),
     name: 'two unrelated owners',
-    policyCount: 75,
+    policyCount: 102,
   },
 ];
 

@@ -233,8 +233,12 @@ export const searchLabelsRead = defineRead(
     schemaVersion: '1',
   },
   {
-    load: (input, context: ReadLoadContext<LabelServices>) =>
-      context.services.lookup(uniqueRefs(input.refs, context.scope.tenantId)),
+    load: Effect.fn('PropertyLabels.load')(function* loadLabels(
+      input: SearchLabelsRequest,
+      context: ReadLoadContext<LabelServices>,
+    ): Effect.fn.Return<SearchLabelsResponse, ReadHandlerUnavailable> {
+      return yield* context.services.lookup(uniqueRefs(input.refs, context.scope.tenantId));
+    }),
     // Module APIs cannot use Core's search-entrypoint-only collection adapter. Use the same current
     // Core resource read authority explicitly, after the scoped owner transaction, before evidence/result release.
     finish: Effect.fn('PropertyLabels.authorize')(function* authorizeLabels(

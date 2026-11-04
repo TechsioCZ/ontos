@@ -25,8 +25,8 @@ import {
   buildProjectSearchDocuments,
   projectSearchIngestionRegistrations,
   refreshProjectSearchProjection,
-} from '../../src/search/projects.provider.ts';
-import type { ProjectSearchMetadata } from '../../src/services/project-persistence.service.ts';
+} from '../../src/services/project-search-projection.ts';
+import type { ProjectSearchMetadata } from '../../src/services/project-search-projection.ts';
 import { creatorId, tenantId } from '../support/project.ts';
 
 const scope = {

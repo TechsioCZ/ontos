@@ -7,12 +7,14 @@ import {
   ResourceContainmentRelationshipMutation,
   ownerResourceModuleContainment,
   ReadHandlerUnavailable,
+} from '@app/core-runtime';
+import {
   CORE_SEARCH_RELEVANCE_MAX_SCORE,
-  coreSearchRelevance,
   matchesCoreSearchValues,
   normalizeCoreSearchText,
   parseCoreSearchQuery,
-} from '@app/core-runtime';
+} from '@app/core-runtime/search-contract';
+import { coreSearchRelevance, compareCoreSearchHits } from '@app/core-runtime/search-ranking';
 import type {
   CoreSearchProjectionDocument,
   CoreSearchSnapshotReadExecutor,
@@ -20,7 +22,6 @@ import type {
   OperationalScope,
   OutboxWorkerHandlerContext,
 } from '@app/core-runtime';
-import { compareCoreSearchHits } from '@app/core-runtime/search-ranking';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { Array as Arr, Effect, Match, Result, Schema } from 'effect';
 import { catalogHeads, products, productVariants, orders } from '../database/schema.ts';

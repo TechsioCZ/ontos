@@ -16,11 +16,13 @@ Optional owner rebuild Actions use **tenant ingress**. The native `action.tenant
 - `legal.agreements.request-search-rebuild`
 - `facility.operations.request-search-rebuild`
 - `commerce.market-catalog.request-search-rebuild`
+- `demo.workforce.request-search-rebuild`
+- `projects.core.request-search-rebuild`
 - `core.identity.request-people-search-rebuild`, whose Action forbids company context
 
 Each writable relationship is an `action.tenant_scope` link to the original demo tenant. No `action_grant.role`, company scope, module, resource or membership relationship is writable in this policy.
 
-The nine-link tenant policy never changes property scopes. A separate, approved drift repair restores exactly two source-declared `action.company_scope` links at Nájempark, `71000000-0000-4000-8000-000000000021`: `property.portfolio.request-search-rebuild` and `property.leasing.request-search-rebuild`. Its independent allowlist permits only those two CREATE operations. Native source derivation, the full company-admin and tenant-superadmin role graph, unchanged unrelated links and the complete gaining-principal list must pass before apply. It never repairs memberships or other missing grants. Party Registry keeps its existing tenant-membership-default Action policy and uses its already admitted original-demo company context. These ingress choices do not change the rebuild workers' complete-tenant snapshot scope.
+The eleven-link tenant policy never changes property scopes. The two Workforce and Projects links are not in the nine links installed on 2 November; they are created only by a new reviewed plan and apply, and the verified installation receipts below stay historical. A separate, approved drift repair restores exactly two source-declared `action.company_scope` links at Nájempark, `71000000-0000-4000-8000-000000000021`: `property.portfolio.request-search-rebuild` and `property.leasing.request-search-rebuild`. Its independent allowlist permits only those two CREATE operations. Native source derivation, the full company-admin and tenant-superadmin role graph, unchanged unrelated links and the complete gaining-principal list must pass before apply. It never repairs memberships or other missing grants. Party Registry keeps its existing tenant-membership-default Action policy and uses its already admitted original-demo company context. These ingress choices do not change the rebuild workers' complete-tenant snapshot scope.
 
 The playground tenant is excluded. Its administrator performs a separately reviewed rebuild in that tenant. Never give playground access to the original-demo operator.
 

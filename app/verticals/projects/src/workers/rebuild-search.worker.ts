@@ -11,7 +11,7 @@ import {
   outboxTopic,
 } from '@app/projects/outbox/projects-core-search-rebuild-requested-v1';
 
-import { refreshProjectSearchProjection } from '../search/projects.provider.ts';
+import { refreshProjectSearchProjection } from '../services/project-search-projection.ts';
 
 /** Initial population and later refreshes share one real projector; both reread committed owner state. */
 export const handleRebuildSearch = (_payload: typeof OutboxPayloadSchema.Type, context: OutboxWorkerHandlerContext) =>

@@ -99,9 +99,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   propertiesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   requestSearchRebuildActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  searchLabelsReadApiLive.pipe(
-    GovernedReadLayer.provide(GovernedReadLayer.mergeAll(governedReadRuntimeLive, GovernedContextAccessLive)),
-  ),
+  searchLabelsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   unitsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(

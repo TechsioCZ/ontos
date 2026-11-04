@@ -49,23 +49,21 @@ export const SearchLabelsPolicyConflictProblemSchema = makeProblemDetailsSchema(
 );
 export const SearchLabelsInternalProblemSchema = makeProblemDetailsSchema('SearchLabelsInternalProblem', 500);
 
-export const SearchLabelsApi = HttpApi.make('SearchLabelsApi')
-  .add(
-    HttpApiGroup.make('searchLabels').add(
-      HttpApiEndpoint.post('execute', '/reads/search-labels', {
-        error: [
-          SearchLabelsInvalidProblemSchema,
-          SearchLabelsAuthenticationProblemSchema,
-          SearchLabelsForbiddenProblemSchema,
-          SearchLabelsNotFoundProblemSchema,
-          SearchLabelsPolicyConflictProblemSchema,
-          SearchLabelsPolicyProblemSchema,
-          SearchLabelsUnavailableProblemSchema,
-          SearchLabelsInternalProblemSchema,
-        ],
-        payload: SearchLabelsRequestSchema,
-        success: SearchLabelsResponseSchema,
-      }),
-    ),
-  )
-  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });
+export const SearchLabelsApi = HttpApi.make('SearchLabelsApi').add(
+  HttpApiGroup.make('searchLabels').add(
+    HttpApiEndpoint.post('execute', '/reads/search-labels', {
+      error: [
+        SearchLabelsInvalidProblemSchema,
+        SearchLabelsAuthenticationProblemSchema,
+        SearchLabelsForbiddenProblemSchema,
+        SearchLabelsNotFoundProblemSchema,
+        SearchLabelsPolicyConflictProblemSchema,
+        SearchLabelsPolicyProblemSchema,
+        SearchLabelsUnavailableProblemSchema,
+        SearchLabelsInternalProblemSchema,
+      ],
+      payload: SearchLabelsRequestSchema,
+      success: SearchLabelsResponseSchema,
+    }),
+  ),
+);

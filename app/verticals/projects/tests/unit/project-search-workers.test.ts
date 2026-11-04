@@ -6,10 +6,7 @@ import {
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
 import type { CoreSearchWorkerSnapshotService, OutboxWorkerHandlerContext } from '@app/core-runtime';
-import {
-  attestOutboxWorkerHandlerContext,
-  invokeRegisteredOutboxWorkerHandler,
-} from '@app/core-runtime/testing/outbox';
+import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Array as EffectArray, Effect, Layer, Order, Schema, Struct } from 'effect';
@@ -18,12 +15,12 @@ import { expect, it } from 'effect-rstest';
 import { ProjectSearchRequestIdSchema } from '../../shared/actions/request-search-rebuild.ts';
 import { requestSearchRebuildAction } from '../../src/actions/request-search-rebuild.action.ts';
 import { projectsRelations } from '../../src/db/schema.ts';
-import { projectSearchIngestionRegistrations } from '../../src/search/projects.provider.ts';
-import type { ProjectSearchMetadata } from '../../src/services/project-persistence.service.ts';
+import { projectSearchIngestionRegistrations } from '../../src/services/project-search-projection.ts';
+import type { ProjectSearchMetadata } from '../../src/services/project-search-projection.ts';
 import { outboxWorkerEntry } from '../../src/worker-host/entry.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
-import { rebuildSearchWorker } from '../../src/workers/rebuild-search.worker.ts';
-import { refreshSearchWorker } from '../../src/workers/refresh-search.worker.ts';
+import { handleRebuildSearch, rebuildSearchWorker } from '../../src/workers/rebuild-search.worker.ts';
+import { handleRefreshSearch, refreshSearchWorker } from '../../src/workers/refresh-search.worker.ts';
 import { creatorId, tenantId } from '../support/project.ts';
 
 const projectModuleKey = 'projects.core';
@@ -41,15 +38,13 @@ const scope = {
  * Public Core surfaces assert the compiled registry (`outboxWorkers`), each registration's descriptor
  * identity and the ingestion admission Core validates before publishing. Core deliberately keeps the
  * handler off the public `OutboxWorkerRegistration` type ("Internal Core seam. Worker handlers are
- * absent from public registrations."), so the registry -> handler dispatch is asserted through the
- * test-only `invokeRegisteredOutboxWorkerHandler` adapter: it resolves the handler the registration
- * actually binds and decodes the payload with the descriptor schema. The effect tests below therefore
- * prove the real projector/ingestion pipeline, its negative guards and the registration's own handler
- * binding together.
+ * absent from public registrations."), so each test decodes the payload with the registration's own
+ * descriptor schema and runs the handler the worker module exports and registers. The effect tests below
+ * therefore prove the real projector/ingestion pipeline and its negative guards.
  */
 const workers = [
-  { kind: 'refresh', registration: refreshSearchWorker },
-  { kind: 'rebuild', registration: rebuildSearchWorker },
+  { handle: handleRefreshSearch, kind: 'refresh', registration: refreshSearchWorker },
+  { handle: handleRebuildSearch, kind: 'rebuild', registration: rebuildSearchWorker },
 ] as const;
 
 const workerContext = (kind: 'refresh' | 'rebuild'): OutboxWorkerHandlerContext =>
@@ -107,7 +102,7 @@ it('the explicit rebuild Action stays an idempotent, explicitly provisioned, ten
   expect(descriptor.entrypoint.authorization).toEqual({ kind: 'action_execution', provisioning: 'explicit' });
 });
 
-for (const { kind, registration } of workers) {
+for (const { handle, kind, registration } of workers) {
   it.effect(
     `${kind} worker handler delegates to the real projector and publishes only after its source transaction closes`,
     () =>
@@ -157,7 +152,8 @@ for (const { kind, registration } of workers) {
           },
           projectSearchIngestionRegistrations,
         );
-        yield* invokeRegisteredOutboxWorkerHandler(registration, { requestId }, context).pipe(
+        const payload = yield* Schema.decodeUnknownEffect(registration.descriptor.payloadSchema)({ requestId });
+        yield* handle(payload, context).pipe(
           Effect.provideService(CoreSearchWorkerSnapshot, reader),
           Effect.provideService(CoreSearchIngestion, ingestion),
         );

@@ -15,7 +15,7 @@ import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ProjectsProviderRequestSchema, ProjectsProviderResponseSchema } from '../../shared/apis/projects-search.ts';
 import { projectsRead } from '../../src/search/projects.provider.ts';
-import type { ProjectSearchMetadata } from '../../src/services/project-persistence.service.ts';
+import type { ProjectSearchMetadata } from '../../src/services/project-search-projection.ts';
 import { projectsManifest } from '../../vertical.manifest.ts';
 import { creatorId, tenantId } from '../support/project.ts';
 

@@ -11,7 +11,7 @@ import {
   outboxTopic,
 } from '@app/projects/outbox/projects-core-search-refresh-requested-v1';
 
-import { refreshProjectSearchProjection } from '../search/projects.provider.ts';
+import { refreshProjectSearchProjection } from '../services/project-search-projection.ts';
 
 /** The payload is a queue acknowledgement only; the shared projector rereads committed owner state. */
 export const handleRefreshSearch = (_payload: typeof OutboxPayloadSchema.Type, context: OutboxWorkerHandlerContext) =>

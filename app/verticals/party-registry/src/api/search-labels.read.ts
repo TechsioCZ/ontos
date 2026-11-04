@@ -3,6 +3,7 @@ import { ContextAccess, ReadHandlerUnavailable, defineRead, defineTenantModuleEn
 import type {
   ContextAccessResult,
   OperationalScope,
+  ReadFinishContext,
   ReadLoadContext,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
@@ -261,10 +262,14 @@ export const searchLabelsRead = defineRead(
     schemaVersion: '1',
   },
   {
-    load: (input, context: ReadLoadContext<Services>) =>
-      context.services.load(deduplicateSearchLabelRefs(input.refs, context.scope.tenantId)),
+    load: Effect.fn('PartySearchLabels.load')(function* loadSearchLabelRows(
+      input: SearchLabelsRequest,
+      context: ReadLoadContext<Services>,
+    ): Effect.fn.Return<readonly SourceRow[], ReadHandlerUnavailable> {
+      return yield* context.services.load(deduplicateSearchLabelRefs(input.refs, context.scope.tenantId));
+    }),
     // Remote permission checks run after the owner transaction, never while holding its connection.
-    finish: (input, context) =>
+    finish: (input: SearchLabelsRequest, context: ReadFinishContext<undefined, readonly SourceRow[]>) =>
       authorizePartySearchLabels(input, context.scope, context.loaded).pipe(
         Effect.map((result) => ({ evidence: { resultCount: result.labels.length }, result })),
       ),

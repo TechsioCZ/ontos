@@ -48,6 +48,8 @@ const catalog = [
   moduleAction('facility.operations'),
   moduleAction('demo.sales-pipeline'),
   moduleAction('work.tasks'),
+  moduleAction('demo.workforce'),
+  moduleAction('projects.core'),
 ];
 const party: DemoAction = {
   actionKey: 'party.registry.request-search-rebuild',
@@ -272,6 +274,8 @@ it.effect('rejects missing, duplicate, foreign-owner, unknown and mis-scoped reb
       [core, { ...moduleAction(portfolioModule), legalEntityScope: 'optional' as const }],
       [core, { ...moduleAction(leasingModule), legalEntityScope: 'optional' as const }],
       [core, { ...moduleAction('demo.crm'), provisioning: 'tenant_membership_default' as const }],
+      [core, { ...moduleAction('demo.workforce'), legalEntityScope: 'required' as const }],
+      [core, { ...moduleAction('projects.core'), provisioning: 'tenant_membership_default' as const }],
       [core, { ...party, provisioning: 'explicit' as const }],
       [core, { ...party, legalEntityScope: 'required' as const }],
       [core, party, party],

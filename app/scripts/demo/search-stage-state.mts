@@ -78,7 +78,7 @@ const searchStageTopicWorkers = {
     ['official-identifier-updated', 'project-official-identifier-updated-to-search'],
     ['official-identifier-ended', 'project-official-identifier-ended-to-search'],
   ],
-  'projects.core': [],
+  'projects.core': refreshTopicWorkers,
   'property.leasing': refreshTopicWorkers,
   'property.portfolio': refreshTopicWorkers,
   'work.tasks': refreshTopicWorkers,
@@ -137,13 +137,14 @@ export const summarizeSearchStageInventory = (observations: readonly DerivedObse
     const missingCount = rows.length === 0 ? null : rows.reduce((total, row) => total + row.missingCount, 0);
     const staleCount = rows.length === 0 ? null : rows.reduce((total, row) => total + row.staleCount, 0);
     const status: InventoryStatus = (() => {
-      if (searchStageTopicWorkers[owner].length === 0) {
+      const registeredWorkers: readonly (readonly [string, string])[] = searchStageTopicWorkers[owner];
+      if (registeredWorkers.length === 0) {
         return 'producer_missing';
       }
-      // Concurrent Workforce delivery has registered workers; registration alone does not prove
+      // Workforce and Projects have registered workers; registration alone does not prove
       // implemented handlers, committed producer emission or a deployed/settled projection.
-      // Parent must re-admit this owner after its delivery slice, not infer readiness from stamps.
-      if (owner === 'demo.workforce') {
+      // Parent must re-admit these owners after their delivery slice, not infer readiness from stamps.
+      if (owner === 'demo.workforce' || owner === 'projects.core') {
         return 'producer_unverified';
       }
       if (liveCount === null || liveCount === 0) {

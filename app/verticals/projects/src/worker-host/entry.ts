@@ -11,7 +11,7 @@ import {
 } from '@app/core-runtime/outbox/worker';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
-import { projectSearchIngestionRegistryLive } from '../search/projects.provider.ts';
+import { projectSearchIngestionRegistryLive } from '../services/project-search-projection.ts';
 import { outboxWorkers } from '../workers/index.ts';
 import {
   outboxWorkerCorePersistenceLive,

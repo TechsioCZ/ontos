@@ -5,13 +5,6 @@ import { SearchLabelsApi } from '../../shared/apis/search-labels.ts';
 import type { SearchLabelsRequest } from '../../shared/apis/search-labels.ts';
 import { operationGateway } from './action-gateway.ts';
 
-export type {
-  SearchLabel,
-  SearchLabelSourceRef,
-  SearchLabelsRequest,
-  SearchLabelsResponse,
-} from '../../shared/apis/search-labels.ts';
-
 export interface SearchLabelsClientOptions {
   readonly baseUrl?: string | URL;
   readonly compositionRevision?: string;

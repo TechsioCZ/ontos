@@ -25,6 +25,7 @@ const owners = {
   workforce: 'demo.workforce',
 } as const;
 const rebuildTopicWorker = ['search-rebuild-requested', 'rebuild-search'] as const;
+const refreshTopicWorker = ['search-refresh-requested', 'refresh-search'] as const;
 
 it('inventories the actual owner names, including owners without registered producers', () => {
   expect(new Set(searchStageOwners)).toEqual(new Set(Object.values(owners)));
@@ -70,7 +71,7 @@ it('distinguishes actual refresh/rebuild owners from changed/rebuild owners', ()
     owners.leasing,
     owners.facility,
   ]) {
-    expectTopicWorkers(owner, [['search-refresh-requested', 'refresh-search'], rebuildTopicWorker]);
+    expectTopicWorkers(owner, [refreshTopicWorker, rebuildTopicWorker]);
     expect(searchStageTopics).not.toContain(`${owner}.search-changed.v1`);
   }
   for (const owner of [owners.crm, owners.finance, owners.legal]) {
@@ -110,16 +111,19 @@ it('keeps exact Party lifecycle and Core People registrations', () => {
   expect(searchStageTopics.every((topic) => topic.endsWith('.v1'))).toBe(true);
 });
 
-it('does not invent Projects topics, document counts or readiness from missing evidence', () => {
+it('mirrors the registered Projects refresh/rebuild workers without inventing document counts or readiness', () => {
   const inventory = summarizeSearchStageInventory([]);
-  expect(subscriptionsFor(owners.projects)).toEqual([]);
-  expect(searchStageTopics.some((topic) => topic.startsWith(`${owners.projects}.`))).toBe(false);
+  expectTopicWorkers(owners.projects, [refreshTopicWorker, rebuildTopicWorker]);
+  expect(searchStageTopics.filter((topic) => topic.startsWith(`${owners.projects}.`))).toEqual([
+    'projects.core.search-refresh-requested.v1',
+    'projects.core.search-rebuild-requested.v1',
+  ]);
   expect(inventory.find(({ owner }) => owner === owners.projects)).toEqual({
     liveCount: null,
     missingCount: null,
     owner: owners.projects,
     staleCount: null,
-    status: 'producer_missing',
+    status: 'producer_unverified',
   });
   expect(inventory.find(({ owner }) => owner === owners.workforce)).toEqual({
     liveCount: null,
@@ -182,7 +186,7 @@ it('limits positive evidence to observed stamps, never source completeness or an
   for (const owner of [owners.workforce, owners.projects]) {
     const row = summarizeSearchStageInventory([{ ...observed, owner }]).find((item) => item.owner === owner);
     expect(row?.liveCount).toBe(observed.liveCount);
-    expect(row?.status).toBe(owner === owners.projects ? 'producer_missing' : 'producer_unverified');
+    expect(row?.status).toBe('producer_unverified');
   }
 });
 
@@ -229,7 +233,8 @@ it.effect('checks mirrored vertical subscriptions against source registrations w
           /export const \{\s*worker:\s*(?<symbol>\w+)\s*(?:,\s*handle:\s*\w+\s*,?)?\s*\}\s*=\s*definePartySearchWorker\(/u.exec(
             source,
           );
-        const symbol = direct?.groups?.symbol ?? factory?.groups?.symbol;
+        const symbolGroup = 'symbol';
+        const symbol = direct?.groups?.[symbolGroup] ?? factory?.groups?.[symbolGroup];
         expect(symbol, `${owner}: ${file} must export its registered worker`).toBeDefined();
         expect(workers).toContain(`${symbol},`);
       }
