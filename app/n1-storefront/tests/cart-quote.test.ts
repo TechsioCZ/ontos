@@ -2,7 +2,12 @@ import { rs } from "@rstest/core";
 import { Effect, Schema } from "effect";
 import { describe, expect, it } from "effect-rstest";
 import { ApplyCommandResultSchema } from "@app/merchandise/contracts/apply-command";
-import { CartQuoteRequestSchema, CartQuoteSchema, CartScopeSchema } from "../src/ontos/cart-quote";
+import {
+  CartQuoteDiagnosticSchema,
+  CartQuoteRequestSchema,
+  CartQuoteSchema,
+  CartScopeSchema,
+} from "../src/ontos/cart-quote";
 import { confirmCartQuote } from "../src/ontos/cart-quote-server";
 
 rs.mock("server-only", () => ({}));
@@ -16,6 +21,28 @@ const line = { expectedUnitPriceMinor: 1210, productId: "product-1", quantity: 2
 const request = { lines: [line], locale: "cs", scope };
 
 describe("cart quote wire and owner verdict", () => {
+  it.effect("allows only the declared finite phase diagnostics", () =>
+    Effect.gen(function* closedDiagnosticContract() {
+      for (const diagnostic of [
+        "context-read-forbidden",
+        "context-read-unavailable",
+        "gateway-context-forbidden",
+        "gateway-context-unavailable",
+        "native-action-forbidden",
+        "native-action-unavailable",
+      ]) {
+        expect(yield* Schema.decodeUnknownEffect(CartQuoteDiagnosticSchema)(diagnostic)).toBe(
+          diagnostic,
+        );
+      }
+      for (const untrusted of ["PRIVATE_PROVIDER_ERROR", { token: "PRIVATE_TOKEN" }, 403]) {
+        const failure = yield* Effect.flip(
+          Schema.decodeUnknownEffect(CartQuoteDiagnosticSchema)(untrusted),
+        );
+        expect(failure._tag).toBe("SchemaError");
+      }
+    }),
+  );
   it("rejects repeated product/variant pairs while allowing distinct variants", () => {
     expect(Schema.is(CartQuoteRequestSchema)({ ...request, lines: [line, line] })).toBe(false);
     expect(

@@ -61,13 +61,25 @@ export const CartQuoteSchema = Schema.Struct({
   ),
 );
 export type CartQuote = typeof CartQuoteSchema.Type;
+/** Finite failure phase only; never carries upstream errors or authorization details. */
+export const CartQuoteDiagnosticSchema = Schema.Literals([
+  "context-read-forbidden",
+  "context-read-unavailable",
+  "gateway-context-forbidden",
+  "gateway-context-unavailable",
+  "native-action-forbidden",
+  "native-action-unavailable",
+]);
 export const CartQuoteInvalidProblem = makeProblemDetailsSchema("CartQuoteInvalidProblem", 400, {
   state: Schema.Literal("invalid"),
 });
 export const CartQuoteForbiddenProblem = makeProblemDetailsSchema(
   "CartQuoteForbiddenProblem",
   403,
-  { state: Schema.Literal("forbidden") },
+  {
+    diagnostic: Schema.optionalKey(CartQuoteDiagnosticSchema),
+    state: Schema.Literal("forbidden"),
+  },
 );
 export const CartQuoteScopeProblem = makeProblemDetailsSchema("CartQuoteScopeProblem", 409, {
   state: Schema.Literal("scope-mismatch"),
@@ -75,7 +87,10 @@ export const CartQuoteScopeProblem = makeProblemDetailsSchema("CartQuoteScopePro
 export const CartQuoteUnavailableProblem = makeProblemDetailsSchema(
   "CartQuoteUnavailableProblem",
   503,
-  { state: Schema.Literal("unavailable") },
+  {
+    diagnostic: Schema.optionalKey(CartQuoteDiagnosticSchema),
+    state: Schema.Literal("unavailable"),
+  },
 );
 export class CartQuoteSchemaErrorMiddleware extends HttpApiMiddleware.Service<CartQuoteSchemaErrorMiddleware>()(
   "n1/CartQuoteSchemaErrorMiddleware",

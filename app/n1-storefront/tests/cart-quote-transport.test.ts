@@ -6,6 +6,7 @@ import { cartQuoteHandler, cartQuoteWeb } from "../src/ontos/cart-quote-http";
 
 rs.mock("server-only", () => ({}));
 afterEach(() => {
+  rs.restoreAllMocks();
   rs.unstubAllEnvs();
 });
 const tenantId = "71000000-0000-4000-8000-000000000098";
@@ -20,12 +21,16 @@ const input = {
 const origin = "https://n1.example";
 interface BackendOptions {
   readonly actionStatus?: number;
+  readonly actionTransportFailure?: boolean;
   readonly marketConfigured?: boolean;
   readonly mintStatus?: number;
+  readonly nativeForbidden?: boolean;
   readonly outcome?: "VALID" | "REJECTED";
+  readonly readStatus?: number;
   readonly responseConfigured?: boolean;
   readonly responseCurrency?: "CZK" | "EUR";
   readonly responseMarketId?: string;
+  readonly secretMarker?: string;
 }
 const backend = (options: BackendOptions = {}) => {
   rs.stubEnv("ONTOS_N1_STOREFRONT_API_KEY", "cart-test-key");
@@ -33,6 +38,7 @@ const backend = (options: BackendOptions = {}) => {
   rs.stubEnv("ONTOS_STOREFRONT_LEGAL_ENTITY_ID", legalEntityId);
   rs.stubEnv("ONTOS_SHELL_URL", "https://shell.example");
   const calls: Request[] = [];
+  const upstreamMarker = options.secretMarker ?? "Upstream failure";
   let reads = 0;
   const fetch: typeof globalThis.fetch = (url, init) => {
     const request = new Request(url, init);
@@ -40,6 +46,17 @@ const backend = (options: BackendOptions = {}) => {
     const path = new URL(request.url).pathname;
     if (path.endsWith("/gateway-read")) {
       reads += 1;
+      if (options.readStatus !== undefined) {
+        return Promise.resolve(
+          Response.json(
+            { message: upstreamMarker },
+            {
+              headers: { "x-private-upstream": upstreamMarker },
+              status: options.readStatus,
+            },
+          ),
+        );
+      }
       const body =
         reads === 1
           ? {
@@ -82,7 +99,15 @@ const backend = (options: BackendOptions = {}) => {
     }
     if (path.endsWith("/gateway-context")) {
       if (options.mintStatus !== undefined) {
-        return Promise.resolve(Response.json({}, { status: options.mintStatus }));
+        return Promise.resolve(
+          Response.json(
+            { message: upstreamMarker },
+            {
+              headers: { "x-private-upstream": upstreamMarker },
+              status: options.mintStatus,
+            },
+          ),
+        );
       }
       return Promise.resolve(
         Response.json({
@@ -93,8 +118,40 @@ const backend = (options: BackendOptions = {}) => {
         }),
       );
     }
+    if (options.nativeForbidden === true) {
+      return Promise.resolve(
+        Response.json(
+          {
+            _tag: "ApplyCommandActionForbiddenProblem",
+            code: "action_permission_denied",
+            detail: upstreamMarker,
+            status: 403,
+            title: "Forbidden",
+            type: "urn:test:quote-forbidden",
+          },
+          {
+            headers: {
+              "content-type": "application/problem+json",
+              "x-private-upstream": upstreamMarker,
+            },
+            status: 403,
+          },
+        ),
+      );
+    }
+    if (options.actionTransportFailure === true) {
+      return Promise.reject(new TypeError(upstreamMarker));
+    }
     if (options.actionStatus !== undefined) {
-      return Promise.resolve(Response.json({}, { status: options.actionStatus }));
+      return Promise.resolve(
+        Response.json(
+          { message: upstreamMarker },
+          {
+            headers: { "x-private-upstream": upstreamMarker },
+            status: options.actionStatus,
+          },
+        ),
+      );
     }
     return Promise.resolve(
       Response.json({
@@ -213,6 +270,9 @@ describe("governed cart quote transport", () => {
           ),
       );
       expect(response.status).toBe(409);
+      expect(yield* Effect.promise(async () => await response.json())).not.toHaveProperty(
+        "diagnostic",
+      );
       expect(owner.calls).toHaveLength(0);
     }),
   );
@@ -257,6 +317,11 @@ describe("governed cart quote transport", () => {
       );
       expect(response.status).toBe(503);
       expect(owner.calls).toHaveLength(4);
+      expect(yield* Effect.promise(async () => await response.json())).toMatchObject({
+        diagnostic: "native-action-unavailable",
+        state: "unavailable",
+        status: 503,
+      });
     }),
   );
   for (const quantity of [0.0001, 1_000_001]) {
@@ -271,6 +336,9 @@ describe("governed cart quote transport", () => {
             ),
         );
         expect(response.status).toBe(400);
+        expect(yield* Effect.promise(async () => await response.json())).not.toHaveProperty(
+          "diagnostic",
+        );
         expect(owner.calls).toHaveLength(0);
       }),
     );
@@ -300,6 +368,9 @@ describe("governed cart quote transport", () => {
           ),
       );
       expect(foreign.status).toBe(403);
+      expect(yield* Effect.promise(async () => await foreign.json())).not.toHaveProperty(
+        "diagnostic",
+      );
       const oversized = yield* Effect.promise(
         async () =>
           await cartQuoteWeb.handler(
@@ -308,6 +379,9 @@ describe("governed cart quote transport", () => {
           ),
       );
       expect(oversized.status).toBe(400);
+      expect(yield* Effect.promise(async () => await oversized.json())).not.toHaveProperty(
+        "diagnostic",
+      );
       expect(owner.calls).toHaveLength(0);
     }),
   );
@@ -363,6 +437,120 @@ it.effect("keeps definite gateway denial separate from owner rejection", () =>
     );
     expect(response.status).toBe(403);
     expect(owner.calls).toHaveLength(3);
+    expect(owner.calls.filter((call) => call.url.includes("/actions/"))).toHaveLength(0);
+    expect(yield* Effect.promise(async () => await response.json())).toMatchObject({
+      diagnostic: "gateway-context-forbidden",
+      state: "forbidden",
+      status: 403,
+    });
+  }),
+);
+for (const scenario of [
+  {
+    calls: 1,
+    diagnostic: "context-read-forbidden",
+    label: "context read denial",
+    options: { readStatus: 403 },
+    status: 403,
+  },
+  {
+    calls: 3,
+    diagnostic: "context-read-unavailable",
+    label: "context read unavailable after its existing bounded retry policy",
+    options: { readStatus: 503 },
+    status: 503,
+  },
+  {
+    calls: 3,
+    diagnostic: "gateway-context-unavailable",
+    label: "gateway context unavailable",
+    options: { mintStatus: 503 },
+    status: 503,
+  },
+  {
+    calls: 4,
+    diagnostic: "native-action-forbidden",
+    label: "decoded native Action denial",
+    options: { nativeForbidden: true },
+    status: 403,
+  },
+  {
+    calls: 4,
+    diagnostic: "native-action-unavailable",
+    label: "undecodable native 403 remains unavailable",
+    options: { actionStatus: 403 },
+    status: 503,
+  },
+  {
+    calls: 4,
+    diagnostic: "native-action-unavailable",
+    label: "native transport failure remains unavailable",
+    options: { actionTransportFailure: true },
+    status: 503,
+  },
+]) {
+  it.effect(`reports only a finite phase for ${scenario.label}`, () =>
+    Effect.gen(function* boundedFailurePhase() {
+      const secretMarker = "PRIVATE_QUOTE_UPSTREAM_BODY_HEADER_MESSAGE";
+      const owner = backend({ ...scenario.options, secretMarker });
+      const errors = rs.spyOn(console, "error").mockImplementation(() => {
+        // Capture any unexpected output without forwarding upstream diagnostics.
+      });
+      const warnings = rs.spyOn(console, "warn").mockImplementation(() => {
+        // Capture any unexpected output without forwarding upstream diagnostics.
+      });
+      const response = yield* Effect.promise(
+        async () =>
+          await cartQuoteWeb.handler(
+            request(JSON.stringify(input)),
+            Context.make(FetchHttpClient.Fetch, owner.fetch),
+          ),
+      );
+      const body = yield* Effect.promise(async () => await response.text());
+      expect(response.status).toBe(scenario.status);
+      expect(response.headers.get("content-type")).toContain("application/problem+json");
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(response.headers.get("x-private-upstream")).toBeNull();
+      expect(JSON.parse(body)).toMatchObject({
+        diagnostic: scenario.diagnostic,
+        state: scenario.status === 403 ? "forbidden" : "unavailable",
+        status: scenario.status,
+      });
+      for (const privateValue of [
+        secretMarker,
+        "cart-test-key",
+        "fresh-quote-assertion",
+        "ApplyCommandActionForbiddenProblem",
+        "action_permission_denied",
+        "urn:test:quote-forbidden",
+      ]) {
+        expect(body).not.toContain(privateValue);
+      }
+      expect(errors).not.toHaveBeenCalled();
+      expect(warnings).not.toHaveBeenCalled();
+      expect(owner.calls).toHaveLength(scenario.calls);
+      expect(owner.calls.filter((call) => call.url.includes("/actions/"))).toHaveLength(
+        scenario.calls === 4 ? 1 : 0,
+      );
+    }),
+  );
+}
+
+it.effect("omits owner-phase diagnostics for malformed public input", () =>
+  Effect.gen(function* invalidPayloadHasNoUpstreamPhase() {
+    const owner = backend();
+    const response = yield* Effect.promise(
+      async () =>
+        await cartQuoteWeb.handler(
+          request("invalid-json"),
+          Context.make(FetchHttpClient.Fetch, owner.fetch),
+        ),
+    );
+    expect(response.status).toBe(400);
+    expect(yield* Effect.promise(async () => await response.json())).not.toHaveProperty(
+      "diagnostic",
+    );
+    expect(owner.calls).toHaveLength(0);
   }),
 );
 it.effect("keeps a matching-market owner rejection when the offer becomes unavailable", () =>

@@ -12,7 +12,7 @@ import type {
 import { StorefrontMarketSchema } from "@app/merchandise/domain/market-offers";
 import { Clock, Effect, Match, Schema, Struct } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
-import { CartQuoteRequestSchema, CartQuoteSchema } from "./cart-quote";
+import { CartQuoteDiagnosticSchema, CartQuoteRequestSchema, CartQuoteSchema } from "./cart-quote";
 import type { CartQuoteRequest, CartScope } from "./cart-quote";
 import { readConfiguration } from "./config";
 import type { StorefrontConfiguration } from "./config";
@@ -20,10 +20,12 @@ import { readOwner } from "./gateway";
 import { MarketCatalogSchema, selectMarket } from "./market";
 
 export class CartQuoteFailure extends Schema.TaggedError<CartQuoteFailure>()("CartQuoteFailure", {
+  diagnostic: Schema.optionalKey(CartQuoteDiagnosticSchema),
   state: Schema.Literals(["unavailable", "invalid", "forbidden", "scope-mismatch"]),
 }) {}
 const scopeMismatchState = "scope-mismatch";
 const readDeadline = "10 seconds";
+const gatewayContextUnavailableDiagnostic = "gateway-context-unavailable";
 const DryRunEvidenceSchema = Schema.Struct({
   entityIds: Schema.Array(Schema.Never),
   storefrontOrder: Schema.Struct({
@@ -89,10 +91,14 @@ const readQuoteContext = (config: StorefrontConfiguration, locale: string) =>
   }).pipe(
     Effect.catchTags({
       StorefrontMarketUnavailable: () =>
-        Effect.fail(new CartQuoteFailure({ state: "unavailable" })),
+        Effect.fail(
+          new CartQuoteFailure({ diagnostic: "context-read-unavailable", state: "unavailable" }),
+        ),
       StorefrontReadUnavailable: (error) =>
         Effect.fail(
           new CartQuoteFailure({
+            diagnostic:
+              error.reason === "forbidden" ? "context-read-forbidden" : "context-read-unavailable",
             state: error.reason === "forbidden" ? "forbidden" : "unavailable",
           }),
         ),
@@ -123,20 +129,44 @@ const mintQuoteContext = (config: StorefrontConfiguration) =>
         }),
       ),
       { audience: "merchandise", legalEntityId: config.legalEntityId },
-    ).pipe(Effect.mapError(() => new CartQuoteFailure({ state: "unavailable" })));
+    ).pipe(
+      Effect.mapError(
+        () =>
+          new CartQuoteFailure({
+            diagnostic: gatewayContextUnavailableDiagnostic,
+            state: "unavailable",
+          }),
+      ),
+    );
     const response = yield* HttpClient.execute(request).pipe(
       Effect.timeout(readDeadline),
-      Effect.mapError(() => new CartQuoteFailure({ state: "unavailable" })),
+      Effect.mapError(
+        () =>
+          new CartQuoteFailure({
+            diagnostic: gatewayContextUnavailableDiagnostic,
+            state: "unavailable",
+          }),
+      ),
     );
     if (response.status < 200 || response.status >= 300) {
       return yield* new CartQuoteFailure({
+        diagnostic:
+          response.status === 401 || response.status === 403
+            ? "gateway-context-forbidden"
+            : gatewayContextUnavailableDiagnostic,
         state: response.status === 401 || response.status === 403 ? "forbidden" : "unavailable",
       });
     }
     return yield* response.json.pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(ContextSchema)),
       Effect.timeout(readDeadline),
-      Effect.mapError(() => new CartQuoteFailure({ state: "unavailable" })),
+      Effect.mapError(
+        () =>
+          new CartQuoteFailure({
+            diagnostic: gatewayContextUnavailableDiagnostic,
+            state: "unavailable",
+          }),
+      ),
     );
   });
 
@@ -224,9 +254,18 @@ export const quoteCart = (input: CartQuoteRequest) =>
       Effect.catch((error) =>
         Match.value(error).pipe(
           Match.tag("ApplyCommandActionForbiddenProblem", () =>
-            Effect.fail(new CartQuoteFailure({ state: "forbidden" })),
+            Effect.fail(
+              new CartQuoteFailure({ diagnostic: "native-action-forbidden", state: "forbidden" }),
+            ),
           ),
-          Match.orElse(() => Effect.fail(new CartQuoteFailure({ state: "unavailable" }))),
+          Match.orElse(() =>
+            Effect.fail(
+              new CartQuoteFailure({
+                diagnostic: "native-action-unavailable",
+                state: "unavailable",
+              }),
+            ),
+          ),
         ),
       ),
     );
