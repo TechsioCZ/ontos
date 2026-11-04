@@ -168,7 +168,7 @@ jobs:
   # once, and every gate job of the first wave must start at once to finish in time.
   workspace-gate:
     name: ${{ matrix.name }}
-    needs: [queue-proof]
+    needs: [queue-proof, node-artifact-build]
     if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -194,10 +194,12 @@ jobs:
           # shards of packages balanced by measured test time. The last shard runs every package the others
           # do not name, so a new package is always tested; Repository Tooling Tests check the split.
           - name: Unit and Component Tests (Catalog, Commerce Customer Context, and Inventory)
+            node-artifacts: true
             commands: |
               pnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:unit
               pnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:component
           - name: Unit and Component Tests (every other package)
+            node-artifacts: true
             # Pricing's issue #890 traceability test compares immutable historical revisions and the
             # branch's latest main integration merge. Keep that bounded history in this shard only.
             fetch_depth: 512
@@ -220,6 +222,18 @@ jobs:
         uses: ./.github/actions/install-app
         with:
           restore-typescript-build: ${{ matrix.typescript-build == true }}
+
+      - name: Download the same-run Node artifacts for unit contract fixtures
+        if: matrix.node-artifacts == true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: node-units-*
+          path: ${{ runner.temp }}/native-composition-units
+
+      - name: Unpack the Node artifacts for unit contract fixtures
+        if: matrix.node-artifacts == true
+        working-directory: app
+        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
 
       - name: Run ${{ matrix.name }}
         working-directory: app
