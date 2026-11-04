@@ -11,6 +11,7 @@ import {
   isCurrentQuoteSnapshot,
   quoteFailureState,
 } from "./cart-quote-state";
+import type { CartQuoteFeedbackState } from "./cart-quote-state";
 
 const quoteClient = HttpApiClient.make(CartQuoteApi);
 /** Consumer chooses an explicit first check or automatic checks while its panel is open. */
@@ -58,7 +59,7 @@ export const useCartQuote = (input: CartQuoteRequest | null, automatic = false) 
     };
   }, [attempt, generation, key]);
   const current = isCurrentQuoteSnapshot(snapshot, selection, attempt);
-  let state: "idle" | "pending" | "unavailable" | "scope-mismatch" | "ready" = "idle";
+  let state: CartQuoteFeedbackState["state"] = "idle";
   if (key !== null && attempt > 0) {
     state = current ? "ready" : "pending";
     if (current && snapshot?.result === null) {

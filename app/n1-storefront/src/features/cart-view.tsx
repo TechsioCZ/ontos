@@ -13,9 +13,12 @@ import { PriceBlock } from "@techsio/ui-kit/molecules/price-block";
 import { QuantityField } from "@techsio/ui-kit/molecules/quantity-field";
 import { CartSummary } from "./cart-summary";
 import type { Dictionary } from "@/i18n";
-import type { CartQuoteRequest, CartQuote } from "@/ontos/cart-quote";
+import type { CartQuote } from "@/ontos/cart-quote";
 import { publicImage } from "@/ontos/catalog-model";
 import { useCart } from "./cart-provider";
+import { CartQuoteFeedback } from "./cart-quote-feedback";
+import { requestForCart } from "./cart-quote-request";
+import { verifiedCartQuote } from "./cart-quote-state";
 import { cartLineKey } from "./cart-state";
 import type { CartEntry } from "./cart-state";
 import { useCartQuote } from "./use-cart-quote";
@@ -62,6 +65,7 @@ const CartRow = ({
   locale,
   onDraft,
   onRemove,
+  pricesVerified,
 }: {
   dictionary: Dictionary;
   draft: QuantityDraft | undefined;
@@ -70,6 +74,7 @@ const CartRow = ({
   locale: string;
   onDraft: (draft: QuantityDraft) => void;
   onRemove: () => void;
+  pricesVerified: boolean;
 }) => {
   const cart = useCart();
   const [saveError, setSaveError] = useState(false);
@@ -110,7 +115,9 @@ const CartRow = ({
               )}
               state="known"
             />
-            <p className="text-xs text-fg-secondary">{d.shopping.draftPrice}</p>
+            {!pricesVerified && (
+              <p className="text-xs text-fg-secondary">{d.shopping.draftPrice}</p>
+            )}
           </LineItem.Price>
         </LineItem.Heading>
         <LineItem.Options>
@@ -174,53 +181,6 @@ const CartRow = ({
 
 type Cart = ReturnType<typeof useCart>;
 type Quote = ReturnType<typeof useCartQuote>;
-const requestForCart = (cart: Cart, locale: string, invalid: boolean): CartQuoteRequest | null => {
-  if (
-    cart === null ||
-    cart.scope === null ||
-    !cart.loaded ||
-    cart.entries.length === 0 ||
-    invalid
-  ) {
-    return null;
-  }
-  return {
-    lines: cart.entries.map((entry) => {
-      const line = {
-        expectedUnitPriceMinor: entry.expectedUnitPriceMinor,
-        productId: entry.productId,
-        quantity: entry.quantity,
-      };
-      if (entry.variantId === undefined) {
-        return line;
-      }
-      return { ...line, variantId: entry.variantId };
-    }),
-    locale: locale === "en" ? "en" : "cs",
-    scope: cart.scope,
-  };
-};
-const cartNotice = (quote: Quote, invalid: boolean, d: Dictionary) => {
-  if (invalid) {
-    return d.shopping.invalidDraft;
-  }
-  if (quote.state === "pending") {
-    return d.shopping.checking;
-  }
-  if (quote.state === "scope-mismatch") {
-    return d.shopping.marketChanged;
-  }
-  if (quote.state === "unavailable") {
-    return d.shopping.unavailable;
-  }
-  if (quote.result?.outcome === "VALID") {
-    return d.shopping.verified;
-  }
-  if (quote.result?.outcome === "REJECTED") {
-    return d.shopping.rejected;
-  }
-  return d.shopping.unverified;
-};
 const emptyCart = (cart: Cart) =>
   cart !== null && cart.scope !== null && cart.loaded && cart.entries.length === 0 && !cart.error;
 const CartContent = ({
@@ -280,11 +240,10 @@ const CartContent = ({
       </>
     );
   }
-  const verified =
-    quote.state === "ready" && quote.result?.outcome === "VALID" && !invalid ? quote.result : null;
+  const verified = verifiedCartQuote(quote, invalid);
   return (
     <>
-      <output aria-live="polite">{cartNotice(quote, invalid, d)}</output>
+      <CartQuoteFeedback dictionary={d} invalid={invalid} quote={quote} />
       {mutationError && <p role="alert">{d.shopping.addFailed}</p>}
       {quote.state === "scope-mismatch" && (
         <Button onClick={() => router.refresh()} size="md" theme="outlined" variant="secondary">
@@ -308,6 +267,7 @@ const CartContent = ({
               locale={locale}
               onDraft={(value) => onDraft(entry, value)}
               onRemove={() => onRemove(entry)}
+              pricesVerified={verified !== null}
             />
           ))}
         </div>
@@ -336,7 +296,7 @@ export const CartView = ({ dictionary: d, locale }: { dictionary: Dictionary; lo
   if (reconciledDrafts !== drafts) {
     setDrafts(reconciledDrafts);
   }
-  const quote = useCartQuote(requestForCart(cart, locale, invalid));
+  const quote = useCartQuote(requestForCart(cart, locale, invalid), true);
   useEffect(() => {
     if (removal > 0 && document.activeElement === document.body) {
       heading.current?.focus();

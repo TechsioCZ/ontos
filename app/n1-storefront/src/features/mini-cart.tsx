@@ -17,6 +17,8 @@ import type { Dictionary } from "@/i18n";
 import type { CartQuote } from "@/ontos/cart-quote";
 import { publicImage } from "@/ontos/catalog-model";
 import { useCart } from "./cart-provider";
+import { CartQuoteFeedback } from "./cart-quote-feedback";
+import { verifiedCartQuote } from "./cart-quote-state";
 import { cartLineKey } from "./cart-state";
 import type { CartEntry } from "./cart-state";
 import {
@@ -37,33 +39,6 @@ const noEntries: readonly CartEntry[] = [];
 const formatMoney = (amount: number, currency: string, locale: string) =>
   new Intl.NumberFormat(locale, { currency, style: "currency" }).format(amount / 100);
 
-const miniCartQuoteNotice = (
-  quote: ReturnType<typeof useCartQuote>,
-  invalid: boolean,
-  d: Dictionary,
-) => {
-  const { state } = quote;
-  if (invalid) {
-    return d.shopping.invalidDraft;
-  }
-  if (state === "pending") {
-    return d.shopping.checking;
-  }
-  if (state === "scope-mismatch") {
-    return d.shopping.marketChanged;
-  }
-  if (state === "unavailable") {
-    return d.shopping.unavailable;
-  }
-  if (quote.result?.outcome === "VALID") {
-    return d.shopping.verified;
-  }
-  if (quote.result?.outcome === "REJECTED") {
-    return d.shopping.rejected;
-  }
-  return d.shopping.unverified;
-};
-
 const MiniCartLine = ({
   dictionary: d,
   draft,
@@ -72,6 +47,7 @@ const MiniCartLine = ({
   locale,
   onDraft,
   onRemove,
+  pricesVerified,
 }: {
   dictionary: Dictionary;
   draft: QuantityDraft | undefined;
@@ -80,6 +56,7 @@ const MiniCartLine = ({
   locale: string;
   onDraft: (draft: QuantityDraft) => void;
   onRemove: () => void;
+  pricesVerified: boolean;
 }) => {
   const cart = useCart();
   const value = draft?.value ?? String(entry.quantity);
@@ -117,7 +94,7 @@ const MiniCartLine = ({
             )}
             state="known"
           />
-          <p className="text-xs text-fg-secondary">{d.shopping.draftPrice}</p>
+          {!pricesVerified && <p className="text-xs text-fg-secondary">{d.shopping.draftPrice}</p>}
         </div>
         <div className="w-23 shrink-0 self-center">
           <NumericInput
@@ -314,6 +291,7 @@ export const MiniCart = ({
         }
       : null;
   const quote = useCartQuote(request, true);
+  const pricesVerified = verifiedCartQuote(quote, invalid) !== null;
   const [removal, setRemoval] = useState(0);
   const [mutationError, setMutationError] = useState(false);
   const heading = useRef<HTMLDivElement>(null);
@@ -364,9 +342,10 @@ export const MiniCart = ({
                         setRemoval((value) => value + 1);
                       }
                     }}
+                    pricesVerified={pricesVerified}
                   />
                 ))}
-                <output aria-live="polite">{miniCartQuoteNotice(quote, invalid, d)}</output>
+                <CartQuoteFeedback dictionary={d} invalid={invalid} quote={quote} />
                 {mutationError && <p role="alert">{d.shopping.addFailed}</p>}
                 {globalCartIssues(quote.result?.issues ?? []).map((issue) => (
                   <p key={issue.code}>
@@ -383,33 +362,36 @@ export const MiniCart = ({
                     {d.contact.retry}
                   </Button>
                 )}
+                <hr className="border-0 border-t border-border-secondary" />
                 <MiniCartTotals
                   currency={cart.scope.currency}
                   dictionary={d}
                   locale={locale}
                   quote={quote}
                 />
-                <LinkButton
-                  as={NextLink}
-                  block
-                  href={`/${locale}/kosik`}
-                  onClick={continueShopping}
-                  size="md"
-                  theme="solid"
-                  variant="secondary"
-                >
-                  {d.shopping.openCart}
-                </LinkButton>
-                <Button
-                  block
-                  density="compact"
-                  onClick={continueShopping}
-                  size="sm"
-                  theme="outlined"
-                  variant="secondary"
-                >
-                  {d.shopping.continueShopping}
-                </Button>
+                <div className="flex flex-col gap-3">
+                  <LinkButton
+                    as={NextLink}
+                    block
+                    href={`/${locale}/kosik`}
+                    onClick={continueShopping}
+                    size="md"
+                    theme="solid"
+                    variant="secondary"
+                  >
+                    {d.shopping.openCart}
+                  </LinkButton>
+                  <Button
+                    block
+                    density="compact"
+                    onClick={continueShopping}
+                    size="sm"
+                    theme="outlined"
+                    variant="secondary"
+                  >
+                    {d.shopping.continueShopping}
+                  </Button>
+                </div>
               </>
             )}
             {state !== "filled" && (

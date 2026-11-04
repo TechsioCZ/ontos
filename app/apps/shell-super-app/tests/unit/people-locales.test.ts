@@ -42,6 +42,7 @@ it('gives every plural people and agent message exactly its locale plural forms'
 
 it('resolves every message path used by the people and agents views, including interpolated namespaces', () => {
   const paths = new Set(leaves(cs));
+  const englishPaths = new Set(leaves(en));
   const root = new URL('../../src/routes/people/', import.meta.url);
   let checked = 0;
   for (const file of readdirSync(root).filter((name) => name.endsWith('.tsx'))) {
@@ -64,7 +65,7 @@ it('resolves every message path used by the people and agents views, including i
       const { value } = match.groups ?? {};
       const path = expand(value ?? '');
       const namespace = [...constants.values()].some((constant) => expand(constant) === path) && !paths.has(path);
-      if (!path.startsWith('shell.agents.') || namespace) {
+      if (!(path.startsWith('shell.agents.') || path.startsWith('shell.people.')) || namespace) {
         continue;
       }
       if (path.includes('${')) {
@@ -73,9 +74,15 @@ it('resolves every message path used by the people and agents views, including i
           [...paths].some((candidate) => candidate.startsWith(prefix)),
           `${file}: ${path}`,
         ).toBe(true);
+        expect(
+          [...englishPaths].some((candidate) => candidate.startsWith(prefix)),
+          `${file}: ${path}`,
+        ).toBe(true);
       } else {
         const plural = pluralCategories('cs').every((category) => paths.has(`${path}_${category}`));
         expect(paths.has(path) || plural, `${file}: missing Czech message ${path}`).toBe(true);
+        const englishPlural = pluralCategories('en').every((category) => englishPaths.has(`${path}_${category}`));
+        expect(englishPaths.has(path) || englishPlural, `${file}: missing English message ${path}`).toBe(true);
       }
       checked += 1;
     }
