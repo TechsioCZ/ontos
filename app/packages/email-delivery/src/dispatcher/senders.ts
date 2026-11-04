@@ -52,7 +52,7 @@ export const senderFor = Effect.fn('EmailSender.senderFor')(function* companySen
   planned: Pick<PlannedEmail, 'legalEntityId'>,
   legalName: string | null,
   environment: EmailEnvironment,
-  transport: 'cloudflare' | 'smtp' = 'smtp',
+  transport: 'cloudflare' | 'cloudflare-api' | 'smtp' = 'smtp',
 ) {
   const known = knownSenders.get(planned.legalEntityId);
   const displayName = known?.displayName ?? `${companyDisplayName(legalName)} – finanční oddělení`;
@@ -76,7 +76,7 @@ export const senderFor = Effect.fn('EmailSender.senderFor')(function* companySen
 export const agendaSenderFor = Effect.fn('EmailSender.agendaSenderFor')(function* agendaSender(
   person: Pick<AgendaRecipientInput, 'legalEntityId' | 'legalName'>,
   environment: EmailEnvironment,
-  transport: 'cloudflare' | 'smtp' = 'smtp',
+  transport: 'cloudflare' | 'cloudflare-api' | 'smtp' = 'smtp',
 ) {
   const provider = ConfigProvider.fromUnknown(environment);
   if (transport === 'cloudflare') {

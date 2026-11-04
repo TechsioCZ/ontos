@@ -71,9 +71,12 @@ export const SEEDED_UNDELIVERABLE_DOMAINS = 'demo,demo.ontos,test,test.com,inval
 const DOCUMENTATION_DOMAINS = 'example,example.com,example.net,example.org';
 
 /** `ONTOS_EMAIL_UNDELIVERABLE_DOMAINS` replaces the list; otherwise Workers also skip the documentation domains. */
-export const undeliverableDomainsFor = (transport: 'cloudflare' | 'smtp', env: EmailEnvironment): string =>
+export const undeliverableDomainsFor = (
+  transport: 'cloudflare' | 'cloudflare-api' | 'smtp',
+  env: EmailEnvironment,
+): string =>
   env.ONTOS_EMAIL_UNDELIVERABLE_DOMAINS ??
-  (transport === 'cloudflare'
+  (transport === 'cloudflare' || transport === 'cloudflare-api'
     ? `${SEEDED_UNDELIVERABLE_DOMAINS},${DOCUMENTATION_DOMAINS}`
     : SEEDED_UNDELIVERABLE_DOMAINS);
 

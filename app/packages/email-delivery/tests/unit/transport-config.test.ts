@@ -75,3 +75,34 @@ it.effect('an explicit empty dispatch credential remains empty, not a cached pre
     expect(absent.ONTOS_EMAIL_DISPATCH_SECRET).toBeUndefined();
   }),
 );
+
+it.effect('EMAIL_PROVIDER=cloudflare-api selects the Cloudflare Email Service API and needs both credentials', () =>
+  Effect.gen(function* cloudflareApiSelection() {
+    const withCredentials = yield* emailTransport.pipe(
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromUnknown(
+          {
+            CLOUDFLARE_EMAIL_ACCOUNT_ID: '384e8a94acf428ce447e7e73122d91d1',
+            CLOUDFLARE_EMAIL_API_TOKEN: 'cfut_test_fixture_token',
+            EMAIL_PROVIDER: 'cloudflare-api',
+            EMAIL_TEST_SMTP_HOST: 'none',
+          },
+          { preserveEmptyStrings: true },
+        ),
+      ),
+    );
+    expect(withCredentials.kind).toBe('cloudflare-api');
+    expect(withCredentials.provider).toEqual({ configured: true, label: 'Cloudflare Email Service API' });
+    const withoutToken = yield* emailTransport.pipe(
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromUnknown(
+          { CLOUDFLARE_EMAIL_ACCOUNT_ID: '384e8a94acf428ce447e7e73122d91d1', EMAIL_PROVIDER: 'cloudflare-api' },
+          { preserveEmptyStrings: true },
+        ),
+      ),
+    );
+    expect(withoutToken.provider).toEqual({ configured: false, label: null });
+  }),
+);

@@ -66,8 +66,8 @@ Probes:
 
 ### Email
 
-- SMTP goes through the Cloudflare SMTP bridge at `smtp.mx.cloudflare.net:465`, with implicit TLS (`SMTP_SECURE=true`).
-- User `api_token`. The password is a Cloudflare API token with Email Sending, stored as the `app` service secret `SMTP_PASSWORD`.
+- `EMAIL_PROVIDER=cloudflare-api`: mail is sent through the Cloudflare Email Service REST API for account `CLOUDFLARE_EMAIL_ACCOUNT_ID`. Outbound SMTP on port 465 is blocked from Zerops, so the SMTP adapter is not used on stage.
+- The API token is a Cloudflare API token with Email Sending. It is stored as the `app` service secret `SMTP_PASSWORD` and referenced as `CLOUDFLARE_EMAIL_API_TOKEN: ${SMTP_PASSWORD}`.
 - Sender: `noreply@ontos-stage.web-revolution.cz`.
 
 ### Build

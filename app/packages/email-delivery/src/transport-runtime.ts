@@ -49,7 +49,7 @@ export const emailSettings = Config.all({
 /** A Layer per configured submission; its resources belong to the dispatching request. */
 export interface EmailTransportRuntime {
   readonly deliveryLayer: (from: string, recipient: string) => Layer.Layer<EmailDeliveryService, never, Crypto.Crypto>;
-  readonly kind: 'cloudflare' | 'smtp';
+  readonly kind: 'cloudflare' | 'cloudflare-api' | 'smtp';
   readonly provider: EmailProviderView;
 }
 
@@ -57,7 +57,7 @@ export const configuredProvider = Config.String('EMAIL_PROVIDER').pipe(
   Config.withDefault('smtp'),
   Config.map((value) => value.trim().toLowerCase()),
   Config.mapEffect((value) =>
-    Schema.decodeUnknownEffect(Schema.Literals(['smtp', 'cloudflare', 'none']))(value).pipe(
+    Schema.decodeUnknownEffect(Schema.Literals(['smtp', 'cloudflare', 'cloudflare-api', 'none']))(value).pipe(
       Effect.mapError((issue) => new Config.ConfigError(issue)),
     ),
   ),

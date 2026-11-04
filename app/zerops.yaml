@@ -141,7 +141,10 @@ zerops:
         COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         DATABASE_ADMIN_URL: postgresql://${db18_superUser}:${db18_superUserPassword}@${db18_hostname}:${db18_port}/${db18_dbName}
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
-        EMAIL_PROVIDER: smtp
+        # Stage mail goes through the Cloudflare Email Service REST API. Outbound SMTP over TLS is blocked from Zerops.
+        CLOUDFLARE_EMAIL_ACCOUNT_ID: 384e8a94acf428ce447e7e73122d91d1
+        CLOUDFLARE_EMAIL_API_TOKEN: ${SMTP_PASSWORD}
+        EMAIL_PROVIDER: cloudflare-api
         NODE_ENV: production
         # YAML variables are read-only in Zerops. Keep ONTOS_SHELL_RUNTIME as an editable service override.
         # Both binaries ship, so rollback is ONTOS_SHELL_RUNTIME=node plus a restart, without a rebuild.
@@ -165,10 +168,6 @@ zerops:
         SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:${migrator_SHELL_GATEWAY_ISSUER_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
         SHELL_GATEWAY_ISSUER_DB_PASSWORD: ${migrator_SHELL_GATEWAY_ISSUER_DB_PASSWORD}
         SMTP_FROM: OntOS <noreply@ontos-stage.web-revolution.cz>
-        SMTP_HOST: smtp.mx.cloudflare.net
-        SMTP_PORT: '465'
-        SMTP_SECURE: 'true'
-        SMTP_USER: api_token
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
         SPICEDB_DATABASE_PASSWORD: ${spicedb_SPICEDB_DATABASE_PASSWORD}
         SPICEDB_ENDPOINT: spicedb:50051
