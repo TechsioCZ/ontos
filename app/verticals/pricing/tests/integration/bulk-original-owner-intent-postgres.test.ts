@@ -1,3 +1,8 @@
+import { Hex } from 'effect/encoding';
+import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
+import { makeApiKeyGatewayNativeComposition } from '@app/shell-super-app/testing/api-key-gateway-native';
+import { pricingRegistration } from '../../vertical.registration.ts';
+import { pricingManifest } from '../../vertical.manifest.ts';
 // @effect-diagnostics strictEffectProvide:off -- Integration test entrypoint composes its layers once; expires: 2027-03-31.
 import { Buffer } from 'node:buffer';
 import { makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
@@ -5,19 +10,22 @@ import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import {
+  canonicalOntosPublicApiKey,
+  extractVerticalRuntimeSafeDescriptors,
+  OntosModuleDeploymentContractSchema,
   loadDatabaseConnectionPair,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfig,
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
+  OntosShellRuntimeContractSchema,
+  validateActiveApplicationCompositionSnapshot,
   TenantModuleStateServiceLive,
   TrustedPrincipalContextSchema,
   makeActionRuntimeLive,
   parseDatabaseConfig,
-  canonicalizeApplicationComposition,
-  validateActiveApplicationCompositionSnapshot,
   makeContextPermissionRelationshipMutationLive,
 } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
@@ -44,6 +52,7 @@ import {
   Schema,
   Stream,
   Config,
+  Array as EffectArray,
   ConfigProvider,
   Context,
   Queue,
@@ -1017,6 +1026,8 @@ class BulkOriginalIntentInfrastructureUnavailable extends Schema.TaggedError<Bul
       'public-key',
       'assertion-sign',
       'composition-digest',
+      'source-owner-contract',
+      'catalog-release-identity',
       'http-adapter',
       'http-dispose',
       'child-protocol',
@@ -1029,6 +1040,8 @@ const bulkInfrastructureUnavailable = (
     | 'public-key'
     | 'assertion-sign'
     | 'composition-digest'
+    | 'source-owner-contract'
+    | 'catalog-release-identity'
     | 'http-adapter'
     | 'http-dispose'
     | 'child-protocol',
@@ -1148,11 +1161,14 @@ const bulkRegisteredRuntime = (input: BulkRegisteredRuntimeInput) => {
   const namespace = staffAuthenticationNamespaceRegistryLayer(['pricing']);
   const composition = makeActiveApplicationCompositionLayer(Effect.succeed(input.composition));
   const common = Layer.mergeAll(persistence, ContextAccessLive, gate, gateway, scopes, namespace, composition);
-  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, pricingRegistration).pipe(
     Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
     Layer.provide(NodeCrypto.layer),
   );
-  const reads = ReadRuntimeLive.pipe(Layer.provide(common), Layer.provide(NodeCrypto.layer));
+  const reads = makeReadRuntimeLive(ultramodernDeliveryUnit, pricingRegistration).pipe(
+    Layer.provide(common),
+    Layer.provide(NodeCrypto.layer),
+  );
   // TEST authority only: constrain identity/context/destination; never bypass Catalog's generated executor or policy.
   const catalogCredentials = Layer.succeed(CatalogSelectionGatewayCredentialService, {
     issue: Effect.fn('BulkOriginalIntent.issueCatalogCredential')(function* issueCatalogCredential(
@@ -1425,14 +1441,119 @@ const WholeCandidateCatalogDescriptionSchema = Schema.Struct({
   actionKeys: Schema.Array(Schema.String.pipe(Schema.brand('ActionKey'))),
   appId: Schema.Literal('catalog'),
   buildMarker: Schema.String,
+  contractDocument: Schema.String,
   type: Schema.Literal('description'),
   version: Schema.Literal(protocolVersion),
 }).annotate({ parseOptions: { onExcessProperty: 'error' } });
+
+const sourceContractUnavailable = () => bulkInfrastructureUnavailable('source-owner-contract');
+const compareFixtureApiKeys = (left: string, right: string): -1 | 0 | 1 => {
+  const compared = left.localeCompare(right);
+  if (compared < 0) {
+    return -1;
+  }
+  if (compared > 0) {
+    return 1;
+  }
+  return 0;
+};
+const fixtureDigest = Effect.fn('SourceOwnerFixture.digest')(function* digest(document: string) {
+  const crypto = yield* Crypto.Crypto;
+  return Hex.encode(new Uint8Array(yield* crypto.digest('SHA-256', new TextEncoder().encode(document))));
+});
+/** Controlled SOURCE fixture DTO from the actual owner; this is not a published receiver claim. */
+const makePricingSourceContract = Effect.fn('BulkOriginalIntent.sourceContract')(function* sourceContract() {
+  const owner = yield* Effect.try({
+    catch: sourceContractUnavailable,
+    try: () => extractVerticalRuntimeSafeDescriptors(pricingRegistration),
+  });
+  const manifest = pricingManifest;
+  const events = yield* Effect.all(
+    manifest.publicSurface.events.map((event) =>
+      Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(
+        Schema.toJsonSchemaDocument(event.payloadSchema),
+      ).pipe(
+        Effect.flatMap((document) => fixtureDigest(`${document}\n`)),
+        Effect.map((payloadContract) => ({
+          key: event.key,
+          owningModuleId: event.owningModuleId,
+          payloadContract,
+          referencesResourceTypes: event.referencesResourceTypes,
+          tense: event.tense,
+          visibility: event.visibility,
+        })),
+      ),
+    ),
+  );
+  const apis = yield* Effect.forEach(Object.entries(manifest.publicSurface.api), ([key, api]) => {
+    if (!HttpApi.isHttpApi(api)) {
+      return Effect.fail(sourceContractUnavailable());
+    }
+    return Effect.succeed({
+      key: canonicalOntosPublicApiKey(owner.moduleId, key),
+      operationKeys: EffectArray.sort(
+        Object.values(api.groups).flatMap((group) =>
+          Object.values(group.endpoints).map((endpoint) =>
+            group.topLevel ? endpoint.identifier : `${group.identifier}.${endpoint.identifier}`,
+          ),
+        ),
+        compareFixtureApiKeys,
+      ),
+    });
+  });
+  const authoredManifest = {
+    activation: manifest.activation,
+    module: manifest.module,
+    publicSurface: {
+      actions: owner.actions,
+      api: apis,
+      businessPermissions: manifest.publicSurface.businessPermissions ?? [],
+      components: Object.values(manifest.publicSurface.components),
+      events,
+      operationContracts: owner.operationContracts,
+      reports: manifest.publicSurface.reports,
+      resourceTypes: manifest.publicSurface.resourceTypes,
+      search: manifest.publicSurface.search,
+      shellContributions: owner.shellContributions,
+    },
+  };
+  if (owner.requirements !== undefined) {
+    Object.assign(authoredManifest, { requirements: owner.requirements });
+  }
+  return yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema, { onExcessProperty: 'error' })({
+    deployment: { appId: ultramodernApiMarker.appId, buildMarker: ultramodernApiMarker.buildMarker },
+    manifest: authoredManifest,
+    runtime: { outboxSubscriptions: owner.outboxSubscriptions },
+    schemaVersion: '2',
+  });
+});
+
+const fixtureDeliveryUnitIdSchema = Schema.NonEmptyString.pipe(
+  Schema.brand('DeliveryUnitId'),
+  Schema.decodeTo(Schema.String),
+);
 
 const makeRegisteredBulkFixture = Effect.fn('BulkOriginalIntent.makeRegisteredFixture')(
   function* makeRegisteredBulkFixture() {
     const fs = yield* FileSystem.FileSystem;
     const appRoot = new URL('../../../../', import.meta.url).pathname;
+    // Resolve the real Catalog compiler identity independently from this source-loaded Pricing owner.
+    const catalogGeneration = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          deliveryUnit: Schema.Struct({ buildMarker: Schema.String, unitId: fixtureDeliveryUnitIdSchema }),
+        }),
+      ),
+    )(yield* fs.readFileString(`${appRoot}verticals/catalog/shared/ultramodern-build.json`));
+    const catalogIdentity = yield* Effect.try({
+      catch: () => bulkInfrastructureUnavailable('catalog-release-identity'),
+      try: () =>
+        resolveUltramodernReleaseIdentity({
+          generationBuildMarker: catalogGeneration.deliveryUnit.buildMarker,
+          unitId: catalogGeneration.deliveryUnit.unitId,
+          workspaceRoot: appRoot,
+        }),
+    });
     const directory = `${appRoot}verticals/catalog/.cache/ontos-1278/`;
     yield* fs.makeDirectory(directory, { recursive: true });
     const artifact = `${directory}${yield* nextId}.mjs`;
@@ -1450,6 +1571,8 @@ const makeRegisteredBulkFixture = Effect.fn('BulkOriginalIntent.makeRegisteredFi
         '--platform=node',
         '--format=esm',
         '--packages=external',
+        `--define:ULTRAMODERN_BUILD_MARKER=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(catalogIdentity.buildMarker)}`,
+        `--define:ULTRAMODERN_SOURCE_REVISION=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(catalogIdentity.sourceRevision)}`,
         `--outfile=${artifact}`,
       ],
       { cwd: appRoot, stderr: 'pipe', stdout: 'pipe' },
@@ -1478,30 +1601,27 @@ const makeRegisteredBulkFixture = Effect.fn('BulkOriginalIntent.makeRegisteredFi
     const description = yield* Schema.decodeUnknownEffect(
       Schema.fromJsonString(WholeCandidateCatalogDescriptionSchema),
     )(described.join('').trim());
-    // Obtain each owner's actual marker separately; never assume Catalog == Pricing.
-    const catalogComposition = yield* makeApplicationCompositionSnapshotFixture(['catalog'], description.buildMarker);
-    const pricingComposition = yield* makeApplicationCompositionSnapshotFixture(
-      ['pricing'],
-      ultramodernApiMarker.buildMarker,
+    // Keep the complete emitted Catalog document intact and bind it to the independently compiled receiver.
+    const catalogContract = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(OntosModuleDeploymentContractSchema),
+    )(description.contractDocument);
+    expect(description.buildMarker).toBe(catalogIdentity.buildMarker);
+    expect(catalogContract.deployment).toEqual({ appId: description.appId, buildMarker: description.buildMarker });
+    const pricingContract = yield* makePricingSourceContract();
+    const shellRuntimeDocument = yield* fs.readFileString(
+      `${appRoot}apps/shell-super-app/dist/public/.well-known/ontos-shell-runtime.json`,
     );
-    const combined = {
-      ...pricingComposition.composition,
-      modules: [...catalogComposition.composition.modules, ...pricingComposition.composition.modules],
-      revision: '0'.repeat(64),
-    };
-    const digest = yield* Effect.tryPromise({
-      catch: () => bulkInfrastructureUnavailable('composition-digest'),
-      try: () =>
-        globalThis.crypto.subtle.digest(
-          'SHA-256',
-          new TextEncoder().encode(canonicalizeApplicationComposition(combined)),
-        ),
-    });
-    const composition = yield* validateActiveApplicationCompositionSnapshot({
-      composition: { ...combined, revision: Buffer.from(digest).toString('hex') },
-      observedAt: pricingComposition.observedAt,
-      validUntil: pricingComposition.validUntil,
-    });
+    const shellRuntime = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+      shellRuntimeDocument,
+    );
+    const composition = yield* makeApiKeyGatewayNativeComposition(
+      [
+        description.contractDocument,
+        yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(pricingContract),
+      ],
+      3_600_000,
+      { document: shellRuntimeDocument, receiverDeployment: shellRuntime.deployment },
+    ).pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: composition,
       mode: 'schema-only',
@@ -1528,10 +1648,13 @@ const makeRegisteredBulkFixture = Effect.fn('BulkOriginalIntent.makeRegisteredFi
         ],
         adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
         allowedAudiences: ['catalog', 'pricing'],
+        applicationComposition: { load: Effect.succeed(composition) },
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         compositionRevision: composition.composition.revision,
+        expectedDeployment: ultramodernDeliveryUnit,
         moduleAccess: 'configured-modules',
         moduleKeys: ['commerce.catalog', 'commerce.pricing'],
+        ownerRegistration: pricingRegistration,
         runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
       }),
       (value) => value.close().pipe(Effect.orDie),

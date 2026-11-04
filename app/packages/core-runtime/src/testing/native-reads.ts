@@ -18,6 +18,7 @@ import {
 } from '../auth/staff-authentication-namespace.ts';
 import { AuthenticationNamespaceRegistry } from '../auth/external-identity/verifier.ts';
 import { makeCoreDatabase } from '../db/client.ts';
+import { NativeReadTestOwnerRegistration } from './native-read-owner-registration.ts';
 import { SHARED_RUNTIME_IDENTITY } from '../db/database-identities.ts';
 import { loadDatabaseConfig, loadDatabaseConnectionPair, parseDatabaseConnectionPair } from '../db/config.ts';
 import {
@@ -69,6 +70,8 @@ const unavailable = (cause?: unknown, reason = 'The isolated native Read test fi
   });
 const requiredObjectId = (id: string | undefined) =>
   id === undefined ? Effect.fail(unavailable()) : Effect.succeed(id);
+
+export { NativeReadTestOwnerRegistration } from './native-read-owner-registration.ts';
 
 export interface NativeReadTestContextOptions {
   /** Only the disposable localhost database created by the isolated-native-database fixture. */
@@ -304,7 +307,14 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
   const contextAccess = yield* makeContextAccessLive();
   const scopeResolver = yield* makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess);
   const gateway = makeModuleEntrypointGateway(makeModuleStateGate(makeTenantModuleStateService(database)));
-  const runtime = makeReadRuntime(database, gateway, scopeResolver, contextAccess);
+  const ownerRegistration = yield* Effect.serviceOption(NativeReadTestOwnerRegistration);
+  const runtime = makeReadRuntime(
+    database,
+    gateway,
+    scopeResolver,
+    contextAccess,
+    Option.isNone(ownerRegistration) ? {} : { ownerRegistration: ownerRegistration.value },
+  );
   const registry = staffAuthenticationNamespaceRegistryLayer(['catalog']);
   const layer = Layer.mergeAll(
     registry,

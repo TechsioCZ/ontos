@@ -1,6 +1,8 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import {
   enrollmentApplicationCompositionLayer,
+  enrollmentApplicationCompositionSnapshot,
+  enrollmentApplicationCompositionVerificationLayer,
   enrollmentApplicationCompositionRevision,
 } from '../support/enrollment-application-composition.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
@@ -203,12 +205,13 @@ const configuredRealmLive = Effect.fnUntraced(function* configuredRealmLive(
 const configuredRuntime = Effect.acquireRelease(
   Effect.gen(function* buildConfiguredRuntime() {
     const realmLive = yield* configuredRealmLive();
+    const snapshot = yield* enrollmentApplicationCompositionSnapshot;
     return makeCommerceCustomerContextApiRuntime(
       productionReadRuntimeLive,
       productionActionRuntimeLive,
       configuredGatewayAssertionRedemptionLive,
       realmLive,
-      Layer.empty,
+      enrollmentApplicationCompositionVerificationLayer(snapshot),
       DatabaseConfigLive,
       ContextAccessLive,
     ).createHandler();

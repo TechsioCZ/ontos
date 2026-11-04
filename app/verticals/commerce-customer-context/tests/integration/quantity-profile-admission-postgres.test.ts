@@ -1,3 +1,5 @@
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -103,9 +105,12 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
       additionalLegalEntity: 'same-tenant',
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: ['commerce-customer-context'],
+      applicationComposition: { load: Effect.succeed(snapshot) },
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
+      expectedDeployment: { ...ultramodernApiMarker, buildMarker },
       moduleKeys: ['commerce.customer-context'],
+      ownerRegistration: commerceCustomerContextRegistration,
       runtimeConnectionString:
         databaseTransport?.connectionString ?? Redacted.make(isolated.connections.runtime.connectionString),
     }),

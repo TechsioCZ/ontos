@@ -1,3 +1,4 @@
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { consumePurchaseApprovalAction } from '../../src/actions/consume-purchase-approval.action.ts';
 import { revokeCounterpartyCommerceAccessAction } from '../../src/actions/revoke-counterparty-commerce-access.action.ts';
 import { suspendCustomerProfileAction } from '../../src/actions/suspend-customer-profile.action.ts';
@@ -199,11 +200,14 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
         ].map((action) => action.descriptor.actionKey),
         adminConnectionString: Redacted.make(input.connections.admin.connectionString),
         allowedAudiences: [audience],
+        applicationComposition: { load: Effect.succeed(input.snapshot) },
         authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
         authenticationSubjectTypes: input.finalProofTest === true ? ['user', 'api_key'] : ['user'],
         compositionRevision: input.snapshot.composition.revision,
+        expectedDeployment: ultramodernApiMarker,
         managerAuthenticationMethod: input.apiKeyManager === true ? 'api_key' : 'session',
         moduleKeys: [ownerModuleKey],
+        ownerRegistration: commerceCustomerContextRegistration,
         runtimeConnectionString: Redacted.make(input.connections.runtime.connectionString),
       }),
       (resource) => resource.close().pipe(Effect.orDie),

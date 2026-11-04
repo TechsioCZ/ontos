@@ -72,6 +72,7 @@ import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
 import { enrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import {
   issueAcceptanceGatewayAssertion,
   makeAcceptanceGatewayIssuer,
@@ -377,9 +378,12 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
   );
   const ownerAuthorizationOverlay = Context.get(ownerServices, OwnerAuthorizationOverlay);
   const readRuntime = makeReadRuntime(database, moduleGateway, scopeResolver, contextAccess, {
+    applicationComposition: { load: Effect.succeed(snapshot) },
+    expectedDeployment: ultramodernApiMarker,
     ownerAuthorizationOverlay,
+    ownerRegistration: commerceCustomerContextRegistration,
   });
-  const actionRuntime = makeActionRuntimeLive(ultramodernApiMarker).pipe(
+  const actionRuntime = makeActionRuntimeLive(ultramodernApiMarker, commerceCustomerContextRegistration).pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(ActionRepository, makeActionRepository(crypto)),

@@ -6,6 +6,10 @@ import {
   ActiveApplicationCompositionSnapshotSchema,
   canonicalizeApplicationComposition,
   OntosModuleDeploymentContractSchema,
+  OntosActionContractSchema,
+  OntosApiContractSchema,
+  OntosOperationContractSchema,
+  OntosModuleRequirementsSchema,
   OntosOutboxSubscriptionContractSchema,
   OntosShellRuntimeContractSchema,
   TrustedPrincipalContextSchema,
@@ -59,6 +63,7 @@ import { HttpServer, HttpServerResponse } from 'effect/http';
 import { Socket } from 'effect/socket';
 import { sql, eq, and } from 'drizzle-orm';
 import { CoreDatabase } from '../../../packages/core-runtime/src/db/client.ts';
+import { deriveModuleIntrinsicRequirements } from '../../../packages/core-runtime/src/modules/module-dependency-contracts.ts';
 import {
   applicationCompositionAuthority,
   applicationCompositionDurableWork,
@@ -115,6 +120,7 @@ const shellDescriptionSchema = Schema.Struct({
   protocolVersion: Schema.Literal(2),
   responseSocketEnvironment: Schema.Literal('ONTOS_1258_TEST_RESPONSE_SOCKET'),
   responseTransport: Schema.Literal('private-unix-socket'),
+  runtimeContract: OntosShellRuntimeContractSchema,
 });
 const shellReadySchema = Schema.Struct({
   ...readySchema.fields,
@@ -126,10 +132,35 @@ const shellReadySchema = Schema.Struct({
   responseTransport: Schema.Literal('private-unix-socket'),
   tenantId: TrustedPrincipalContextSchema.fields.tenantId,
 });
+const runtimeDescriptionSchema = Schema.Struct({
+  actions: Schema.Array(OntosActionContractSchema),
+  api: Schema.Array(OntosApiContractSchema),
+  operationContracts: Schema.Array(OntosOperationContractSchema),
+  outboxSubscriptions: Schema.Array(OntosOutboxSubscriptionContractSchema),
+  requirements: Schema.optionalKey(OntosModuleRequirementsSchema),
+});
+const privacyDescriptionSchema = Schema.Struct({ marker: markerSchema, runtime: runtimeDescriptionSchema });
 const partyDescriptionSchema = Schema.Struct({
   marker: markerSchema,
+  runtime: runtimeDescriptionSchema,
   subscriptions: Schema.Array(OntosOutboxSubscriptionContractSchema),
 });
+const exactConsumerAcknowledgement = (
+  expectedWorkerKeys: readonly string[],
+  deliveries: readonly (typeof outboxDeliveries.$inferSelect)[],
+) => {
+  const [delivery] = deliveries;
+  if (
+    expectedWorkerKeys.length !== 1 ||
+    deliveries.length !== 1 ||
+    delivery === undefined ||
+    delivery.workerKey !== expectedWorkerKeys[0] ||
+    delivery.status !== 'done'
+  ) {
+    return Option.none();
+  }
+  return Option.some(delivery);
+};
 const cycleSchema = Schema.Struct({
   cycle: Schema.Struct({
     claimed: Schema.Int,
@@ -140,6 +171,12 @@ const cycleSchema = Schema.Struct({
   }),
   matched: Schema.Struct({ deliveriesCreated: Schema.Int, messagesMatched: Schema.Int }),
   type: Schema.Literal('cycle'),
+});
+const workerFailureSchema = Schema.Struct({
+  code: Schema.Literals(['composition-unavailable', 'worker-unavailable']),
+  diagnostic: Schema.Array(Schema.Struct({ code: Schema.String, reason: Schema.String, tag: Schema.String })),
+  reasonCode: Schema.Literals(['native-claim-admission', 'other']),
+  type: Schema.Literal('failed'),
 });
 const childEnvironment = (
   transport: {
@@ -534,6 +571,25 @@ const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
   };
 });
 
+const readActualWorkerCycle = Effect.fn('PrivacyPublicSession.readActualWorkerCycle')(function* readActualWorkerCycle(
+  worker: Effect.Success<ReturnType<typeof start>>,
+) {
+  const cycle = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(Schema.Union([cycleSchema, workerFailureSchema])),
+  )(worker.line);
+  if (cycle.type === 'failed') {
+    const workerExit = yield* Effect.exit(worker.child.exitCode);
+    yield* Effect.logError('Real Party public completion worker refused its cycle', {
+      code: cycle.code,
+      diagnostic: cycle.diagnostic,
+      exitCode: Exit.isSuccess(workerExit) ? workerExit.value : 'unavailable',
+      reasonCode: cycle.reasonCode,
+    });
+    return yield* failure(`Party completion worker refused cycle: ${cycle.code}/${cycle.reasonCode}`);
+  }
+  return cycle;
+});
+
 const bootstrapOwnerCapabilities = Effect.fn('PrivacyPublicSession.bootstrapOwnerCapabilities')(
   function* bootstrapOwnerCapabilities(runtimeUser: string) {
     const database = yield* CoreDatabase;
@@ -697,6 +753,8 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
           '--platform=node',
           '--format=esm',
           '--packages=external',
+          // These test drivers start explicitly; imported generation CLIs must remain inactive.
+          '--define:import.meta.main=false',
           `--outfile=${entry.output}`,
         ],
         {},
@@ -705,9 +763,10 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
     const shellDescription = yield* describe(paths.shell).pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(shellDescriptionSchema))),
     );
-    const privacyMarker = yield* describe(paths.privacy).pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(markerSchema))),
+    const privacyDescription = yield* describe(paths.privacy).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(privacyDescriptionSchema))),
     );
+    const privacyMarker = privacyDescription.marker;
     const party = yield* describe(paths.worker).pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(partyDescriptionSchema))),
     );
@@ -718,20 +777,36 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
         const isParty = value.deployment.appId === party.marker.appId;
         const marker = isParty ? party.marker : privacyMarker;
         const moduleId = isParty ? partyModuleKey : privacyModuleKey;
-        const contract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(
-          makeModuleContractFixture({
-            appId: marker.appId,
-            buildMarker: marker.buildMarker,
-            moduleId,
-            outboxSubscriptions: isParty ? party.subscriptions : [],
-          }),
-        );
+        const ownerRuntime = isParty ? party.runtime : privacyDescription.runtime;
+        const fixture = makeModuleContractFixture({
+          appId: marker.appId,
+          buildMarker: marker.buildMarker,
+          moduleId,
+          outboxSubscriptions: ownerRuntime.outboxSubscriptions,
+        });
+        const manifest = {
+          ...fixture.manifest,
+          publicSurface: {
+            ...fixture.manifest.publicSurface,
+            actions: ownerRuntime.actions,
+            api: ownerRuntime.api,
+            operationContracts: ownerRuntime.operationContracts,
+          },
+        };
+        if (ownerRuntime.requirements !== undefined) {
+          Object.assign(manifest, { requirements: ownerRuntime.requirements });
+        }
+        const contract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)({
+          ...fixture,
+          manifest,
+        });
         const document = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
           contract,
         );
         const hash = digest(document);
         return {
           ...value,
+          ...deriveModuleIntrinsicRequirements(contract.manifest.requirements),
           backend: { baseUrl: `https://${marker.appId}.fixture.example.test/`, transport: 'node-http' as const },
           contract: { ...value.contract, sha256: hash },
           contractDocument: document,
@@ -742,18 +817,17 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
       }),
       { concurrency: 2 },
     );
-    const shellDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))({
-      contributionAbi: base.composition.shell.contributionAbi,
-      coreCapabilities: base.composition.shell.coreCapabilities,
-      deployment: shellDescription.marker,
-      schemaVersion: '2',
-    });
+    const shellDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+      shellDescription.runtimeContract,
+    );
     const composition = {
       ...base.composition,
       modules,
       shell: {
         ...base.composition.shell,
-        deployment: shellDescription.marker,
+        contributionAbi: shellDescription.runtimeContract.contributionAbi,
+        coreCapabilities: shellDescription.runtimeContract.coreCapabilities,
+        deployment: shellDescription.runtimeContract.deployment,
         runtimeContract: { ...base.composition.shell.runtimeContract, sha256: digest(shellDocument) },
       },
     };
@@ -996,7 +1070,7 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
           false,
           ownedPids,
         );
-        const cycle = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(cycleSchema))(worker.line);
+        const cycle = yield* readActualWorkerCycle(worker);
         if ((yield* worker.child.exitCode) !== 0 || cycle.cycle.succeeded !== 1) {
           return yield* failure('Real Party public completion cycle failed');
         }
@@ -1028,9 +1102,69 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
           .select()
           .from(applicationCompositionDurableWork)
           .where(eq(applicationCompositionDurableWork.workId, debtId));
-        if (deliveries.length !== 1 || deliveries[0]?.status !== 'done' || remaining.length !== 0) {
+        const expectedWorkerKeys = party.runtime.outboxSubscriptions
+          .filter(
+            ({ consumerModuleKey, producerModuleKey, topic }) =>
+              consumerModuleKey === partyModuleKey &&
+              producerModuleKey === message.producerModuleKey &&
+              topic === message.topic,
+          )
+          .map(({ workerKey }) => workerKey);
+        const partyDeliveries = deliveries.filter(({ consumerModuleKey }) => consumerModuleKey === partyModuleKey);
+        const partyAcknowledgement = exactConsumerAcknowledgement(expectedWorkerKeys, partyDeliveries);
+        if (Option.isNone(partyAcknowledgement) || remaining.length !== 0) {
+          yield* Effect.logError('Actual public completion delivery settlement differs from the required boundary', {
+            deliveryCount: deliveries.length,
+            deliveryStatuses: deliveries.slice(0, 8).map(({ status, workerKey }) => ({ status, workerKey })),
+            remainingDebtCount: remaining.length,
+            remainingDebtRows: remaining.slice(0, 8).map(({ originalRevision, ownerModuleKey }) => ({
+              matchesCurrentRevision: originalRevision === snapshot.composition.revision,
+              ownerModuleKey,
+            })),
+          });
           return yield* failure('Public ACK did not settle exact Core delivery debt');
         }
+        yield* Effect.logInfo('Other consumers retain their actual delivery state after the Party ACK', {
+          deliveries: deliveries
+            .filter(({ consumerModuleKey }) => consumerModuleKey !== partyModuleKey)
+            .slice(0, 8)
+            .map(({ consumerModuleKey, status, workerKey }) => ({ consumerModuleKey, status, workerKey })),
+        });
+        const watchdogResponse = yield* Effect.tryPromise({
+          catch: () => failure('The actual Privacy watchdog test transport failed'),
+          try: async (signal) =>
+            await fetch(`${privacyUrl}/__1258/dispatch-watchdog/complete`, { method: 'POST', signal }),
+        }).pipe(Effect.timeout('30 seconds'));
+        if (watchdogResponse.status !== 204) {
+          return yield* failure('The actual Privacy watchdog did not complete its cycle');
+        }
+        const privacyDeliveries = yield* database.executor
+          .select()
+          .from(outboxDeliveries)
+          .where(
+            and(
+              eq(outboxDeliveries.outboxMessageId, message.outboxMessageId),
+              eq(outboxDeliveries.consumerModuleKey, privacyModuleKey),
+            ),
+          );
+        const expectedPrivacyWorkerKeys = privacyDescription.runtime.outboxSubscriptions
+          .filter(
+            ({ consumerModuleKey, producerModuleKey, topic }) =>
+              consumerModuleKey === privacyModuleKey &&
+              producerModuleKey === message.producerModuleKey &&
+              topic === message.topic,
+          )
+          .map(({ workerKey }) => workerKey);
+        const privacyAcknowledgement = exactConsumerAcknowledgement(expectedPrivacyWorkerKeys, privacyDeliveries);
+        if (Option.isNone(privacyAcknowledgement)) {
+          return yield* failure('The actual Privacy watchdog did not ACK its exact intended delivery');
+        }
+        yield* Effect.logInfo('Both intended consumers completed their actual deliveries', {
+          partyStatus: partyAcknowledgement.value.status,
+          partyWorkerKey: partyAcknowledgement.value.workerKey,
+          privacyStatus: privacyAcknowledgement.value.status,
+          privacyWorkerKey: privacyAcknowledgement.value.workerKey,
+        });
         const [event] = yield* database.executor
           .select()
           .from(domainEvents)
@@ -1045,7 +1179,7 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
           creatorPid: process.pid,
           databaseOid: capability.databaseOid,
           debtId,
-          deliveryId: deliveries[0].outboxDeliveryId,
+          deliveryId: partyAcknowledgement.value.outboxDeliveryId,
           domainEventId: message.domainEventId,
           invocationId: event.actionInvocationId,
           measureId: handoff.measureId,

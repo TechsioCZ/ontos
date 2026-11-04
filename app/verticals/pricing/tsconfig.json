@@ -24,6 +24,7 @@
     "vertical.registration.ts"
   ],
   "references": [
+    { "path": "../../apps/shell-super-app" },
     { "path": "../catalog" },
     { "path": "../commerce-customer-context" },
     { "path": "../commerce-market-catalog" },

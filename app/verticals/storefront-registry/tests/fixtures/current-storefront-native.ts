@@ -1,6 +1,13 @@
+import { Hex } from 'effect/encoding';
+import { storefrontRegistryRegistration } from '../../vertical.registration.ts';
+import { storefrontRegistryManifest } from '../../vertical.manifest.ts';
+import { HttpApi } from 'effect/http-api';
 import { resolveEffectBffModuleHandler } from '@modern-js/bff-effect/effect';
 import type { DatabaseConnectionPair, TrustedPrincipalContext } from '@app/core-runtime';
 import {
+  canonicalOntosPublicApiKey,
+  extractVerticalRuntimeSafeDescriptors,
+  OntosModuleDeploymentContractSchema,
   ActionRuntime,
   ReadRuntime,
   DatabaseConfig,
@@ -23,7 +30,9 @@ import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/module
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { defineEffectBff, dispatchEffectBffRequest } from '@modern-js/bff-effect/effect-edge';
 import {
+  Array as EffectArray,
   ConfigProvider,
+  Crypto,
   Context,
   Duration,
   Effect,
@@ -47,7 +56,6 @@ import {
 import { storefrontRegistryApiRuntimeFromContext } from '../../api/index.ts';
 import { storefrontRegistryApiContract } from '../../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
-import { storefrontRegistryRegistration } from '../../vertical.registration.ts';
 
 import type { RegisterStorefrontApplicationPayloadSchema } from '../../shared/action-contracts.ts';
 import { registerStorefrontApplicationAction } from '../../src/actions/register-storefront-application.action.ts';
@@ -208,8 +216,90 @@ interface RegistryNativeConnectionOptions {
 }
 
 /** Allocate the receiving address before sealing the immutable cross-owner test composition. */
+const compareFixtureApiKeys = (left: string, right: string): -1 | 0 | 1 => {
+  const compared = left.localeCompare(right);
+  if (compared < 0) {
+    return -1;
+  }
+  if (compared > 0) {
+    return 1;
+  }
+  return 0;
+};
+const fixtureDigest = Effect.fn('SourceOwnerFixture.digest')(function* digest(document: string) {
+  const crypto = yield* Crypto.Crypto;
+  return Hex.encode(new Uint8Array(yield* crypto.digest('SHA-256', new TextEncoder().encode(document))));
+});
+/** Controlled SOURCE fixture DTO from the actual owner; this is not a published receiver claim. */
+const makeRegistrySourceContract = Effect.fn('CurrentStorefrontNative.sourceContract')(function* sourceContract() {
+  const owner = yield* Effect.try({
+    catch: unavailable,
+    try: () => extractVerticalRuntimeSafeDescriptors(storefrontRegistryRegistration),
+  });
+  const manifest = storefrontRegistryManifest;
+  const events = yield* Effect.all(
+    manifest.publicSurface.events.map((event) =>
+      Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(
+        Schema.toJsonSchemaDocument(event.payloadSchema),
+      ).pipe(
+        Effect.flatMap((document) => fixtureDigest(`${document}\n`)),
+        Effect.map((payloadContract) => ({
+          key: event.key,
+          owningModuleId: event.owningModuleId,
+          payloadContract,
+          referencesResourceTypes: event.referencesResourceTypes,
+          tense: event.tense,
+          visibility: event.visibility,
+        })),
+      ),
+    ),
+  );
+  const apis = yield* Effect.forEach(Object.entries(manifest.publicSurface.api), ([key, api]) => {
+    if (!HttpApi.isHttpApi(api)) {
+      return Effect.fail(unavailable('Actual fixture owner API is not an HttpApi'));
+    }
+    return Effect.succeed({
+      key: canonicalOntosPublicApiKey(owner.moduleId, key),
+      operationKeys: EffectArray.sort(
+        Object.values(api.groups).flatMap((group) =>
+          Object.values(group.endpoints).map((endpoint) =>
+            group.topLevel ? endpoint.identifier : `${group.identifier}.${endpoint.identifier}`,
+          ),
+        ),
+        compareFixtureApiKeys,
+      ),
+    });
+  });
+  const authoredManifest = {
+    activation: manifest.activation,
+    module: manifest.module,
+    publicSurface: {
+      actions: owner.actions,
+      api: apis,
+      businessPermissions: manifest.publicSurface.businessPermissions ?? [],
+      components: Object.values(manifest.publicSurface.components),
+      events,
+      operationContracts: owner.operationContracts,
+      reports: manifest.publicSurface.reports,
+      resourceTypes: manifest.publicSurface.resourceTypes,
+      search: manifest.publicSurface.search,
+      shellContributions: owner.shellContributions,
+    },
+  };
+  if (owner.requirements !== undefined) {
+    Object.assign(authoredManifest, { requirements: owner.requirements });
+  }
+  return yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema, { onExcessProperty: 'error' })({
+    deployment: { appId: ultramodernApiMarker.appId, buildMarker: ultramodernApiMarker.buildMarker },
+    manifest: authoredManifest,
+    runtime: { outboxSubscriptions: owner.outboxSubscriptions },
+    schemaVersion: '2',
+  });
+});
+
 export const makeCurrentStorefrontNativeReceiver = Effect.fn('CurrentStorefrontNativeReceiver.make')(
   function* makeCurrentStorefrontNativeReceiver() {
+    const contract = yield* makeRegistrySourceContract();
     const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
     if (!Schema.is(Schema.Struct({ port: Schema.Int }))(server.address)) {
       return yield* unavailable();
@@ -257,6 +347,7 @@ export const makeCurrentStorefrontNativeReceiver = Effect.fn('CurrentStorefrontN
         return fixture;
       }),
       baseUrl: `http://127.0.0.1:${server.address.port}/`,
+      contract,
       deployment: Object.freeze({ appId: ultramodernApiMarker.appId, buildMarker: ultramodernApiMarker.buildMarker }),
       migrate: Effect.fn('CurrentStorefrontNativeReceiver.migrate')(function* migrate(
         options: RegistryNativeConnectionOptions,

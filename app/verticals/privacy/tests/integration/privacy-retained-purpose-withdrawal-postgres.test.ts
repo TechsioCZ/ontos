@@ -4,20 +4,17 @@ import { recordConsentDecisionAction } from '../../src/actions/record-consent-de
 import { addProcessingPurposeVersionAction } from '../../src/actions/add-processing-purpose-version.action.ts';
 import { PurposeVersionConflict } from '../../shared/domain/processing-purpose.ts';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
-import { createHash } from 'node:crypto';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import {
   makeContextPermissionRelationshipMutationLive,
   runAction,
   TrustedPrincipalContextSchema,
   ReadRuntime,
-  canonicalizeApplicationComposition,
-  OntosModuleDeploymentContractSchema,
-  validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
-import { makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
+import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { privacyRegistration } from '../../vertical.registration.ts';
+import { makePrivacyDsrCompositionSnapshot } from '../support/dsr-obligation-native.ts';
+import { makeNativeReadTestContext, NativeReadTestOwnerRegistration } from '@app/core-runtime/testing/native-reads';
 import { eq } from 'drizzle-orm';
 import { currentConsentRead } from '../../src/api/current-consent.read.ts';
 import { processingPurposesRead } from '../../src/api/processing-purposes.read.ts';
@@ -49,41 +46,8 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
 );
-const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const makeRetainedIsolation = Effect.fn('RetainedWithdrawal.makeIsolation')(function* makeRetainedIsolation() {
-  const base = yield* makeApplicationCompositionSnapshotFixture(
-    [ultramodernApiMarker.appId],
-    ultramodernApiMarker.buildMarker,
-  );
-  const modules = yield* Effect.forEach(
-    base.composition.modules,
-    Effect.fn('RetainedWithdrawal.moduleContract')(function* moduleContract(module) {
-      const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-        module.contractDocument,
-      );
-      const document = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))({
-        ...contract,
-        manifest: { ...contract.manifest, module: { ...contract.manifest.module, id: 'privacy.core' } },
-      });
-      const sha256 = digest(document);
-      return {
-        ...module,
-        contract: { ...module.contract, sha256 },
-        contractDocument: document,
-        moduleId: 'privacy.core',
-        publicContract: { ...module.publicContract, id: 'privacy.core', sha256 },
-      };
-    }),
-    { concurrency: 1 },
-  );
-  const composition = { ...base.composition, modules };
-  const snapshot = yield* validateActiveApplicationCompositionSnapshot({
-    ...base,
-    composition: {
-      ...composition,
-      revision: digest(canonicalizeApplicationComposition({ ...composition, revision: '0'.repeat(64) })),
-    },
-  });
+  const snapshot = yield* makePrivacyDsrCompositionSnapshot();
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
     mode: 'schema-only',
@@ -105,7 +69,7 @@ const makeRetainedNative = Effect.fn('RetainedWithdrawal.makeNative')(function* 
     contextPermissions,
     moduleId: 'privacy.core',
     ownerFixtureRetention: 'retain-complete-context',
-  });
+  }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, privacyRegistration));
 });
 
 // Normal owner producers; the channel proof is an explicit fixture precondition,
@@ -879,9 +843,12 @@ it.live(
             recordConsentDecisionAction.descriptor.actionKey,
           ],
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
+          applicationComposition: { load: Effect.succeed(snapshot) },
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: snapshot.composition.revision,
+          expectedDeployment: ultramodernDeliveryUnit,
           moduleKeys: ['privacy.core'],
+          ownerRegistration: privacyRegistration,
           runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
         }),
         (value) => value.close().pipe(Effect.orDie),

@@ -185,6 +185,31 @@ const permissionResponse = (allowed: boolean) =>
   });
 
 it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
+  suite.effect('refuses partial authoritative runtime bindings before seeding or loading authority', () =>
+    Effect.gen(function* refusePartialRuntimeBindings() {
+      const beforeInsert = transport.insert.mock.calls.length;
+      const beforeRelationships = transport.writeRelationships.mock.calls.length;
+      const applicationComposition = { load: Effect.die('Partial runtime binding must not load authority') };
+      const expectedDeployment = { appId: 'fixture-owner', buildMarker: 'fixture-build' };
+      const failures = yield* Effect.all(
+        [
+          Effect.flip(makeLiveOperationFixture({ ...configuration, applicationComposition })),
+          Effect.flip(makeLiveOperationFixture({ ...configuration, expectedDeployment })),
+          Effect.flip(makeLiveOperationFixture({ ...configuration, applicationComposition, expectedDeployment })),
+        ],
+        { concurrency: 1 },
+      );
+      for (const failure of failures) {
+        expect(Predicate.isTagged(failure, 'LiveOperationFixtureError')).toBe(true);
+        expect(failure.reason).toBe(
+          'Authoritative fixture runtime requires Composition, deployment and owner registration',
+        );
+      }
+      expect(transport.insert.mock.calls.length).toBe(beforeInsert);
+      expect(transport.writeRelationships.mock.calls.length).toBe(beforeRelationships);
+    }),
+  );
+
   suite.effect('verifies declared withheld executor rights without granting or querying foreign targets', () =>
     Effect.gen(function* verifyReadOnlyExecutorProbe() {
       transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());

@@ -1,6 +1,9 @@
+import { createHash } from 'node:crypto';
+
+import { applicationCompositionContentRevision } from '@app/core-runtime';
 import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
-import { sql } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { eq, sql } from 'drizzle-orm';
+import { Crypto, DateTime, Deferred, Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CoreDatabase, makeCoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
@@ -8,11 +11,17 @@ import {
   applicationCompositionAuthority,
   applicationCompositionDurableWork,
   domainEvents,
+  outboxDeliveries,
   outboxMessages,
   tenantModuleStates,
   tenants,
 } from '../../packages/core-runtime/src/db/schema.ts';
 import { ApplicationCompositionAuthorityError } from '../../packages/core-runtime/src/modules/application-composition-authority.ts';
+import {
+  ActiveApplicationCompositionService,
+  validateActiveApplicationCompositionSnapshot,
+} from '../../packages/core-runtime/src/modules/active-application-composition.ts';
+import { OntosModuleDeploymentContractSchema } from '../../packages/core-runtime/src/modules/manifest.ts';
 import {
   LegacyCompletionPublication,
   LegacyCompletionTransactionIdSchema,
@@ -24,14 +33,23 @@ import {
   extractOutboxWorkerSubscriptions,
 } from '../../packages/core-runtime/src/outbox/definition.ts';
 import { makeOutboxRepository } from '../../packages/core-runtime/src/outbox/repository.ts';
+import { defineOutboxWorkerEntry } from '../../packages/core-runtime/src/outbox/process.ts';
+import { makeOutboxRuntime, OutboxRuntime } from '../../packages/core-runtime/src/outbox/runtime.ts';
 import { makeIsolatedNativeDatabaseFixture } from '../../packages/core-runtime/src/testing/isolated-native-database.ts';
-import { makeApplicationCompositionSnapshotFixture } from '../../packages/core-runtime/src/testing/module-contract.ts';
+import {
+  makeApplicationCompositionSnapshotFixture,
+  makeModuleContractFixture,
+} from '../../packages/core-runtime/src/testing/module-contract.ts';
 import { runApplicationCompositionMigration } from '../application-composition-authority-publication.mts';
 
 const services = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
 const producer = 'producer.fixture';
 const consumer = 'consumer.fixture';
 const topic = 'producer.fixture.accepted';
+class DeadDeliveryFixtureFailure extends Schema.TaggedError<DeadDeliveryFixtureFailure>()(
+  'DeadDeliveryFixtureFailure',
+  { reason: Schema.String },
+) {}
 const worker = (suffix: string) =>
   defineOutboxWorker(
     {
@@ -50,7 +68,10 @@ const worker = (suffix: string) =>
       topic,
       workerKey: `${consumer}.${suffix}`,
     },
-    () => Effect.void,
+    () =>
+      suffix === 'secondary'
+        ? Effect.fail(new DeadDeliveryFixtureFailure({ reason: 'Owner temporarily refused' }))
+        : Effect.void,
   );
 const workers = [worker('primary'), worker('secondary')];
 const FIXTURE_NAME = 'dead-delivery-drain';
@@ -61,14 +82,38 @@ const fixture = Effect.gen(function* deadDeliveryDrainFixture() {
     purpose: 'stabilization-1258-privacy-drain',
   });
   yield* isolated.migrateCoreSchema();
-  const snapshot = yield* makeApplicationCompositionSnapshotFixture([], FIXTURE_NAME);
+  const base = yield* makeApplicationCompositionSnapshotFixture([FIXTURE_NAME], FIXTURE_NAME);
+  const subscriptions = extractOutboxWorkerSubscriptions(workers);
+  // This test owner declares only its two real workers, with their exact compiled subscriptions.
+  const contract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(
+    makeModuleContractFixture({
+      appId: FIXTURE_NAME,
+      buildMarker: FIXTURE_NAME,
+      moduleId: consumer,
+      outboxSubscriptions: subscriptions,
+    }),
+  );
+  const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+    contract,
+  );
+  const sha256 = createHash('sha256').update(contractDocument, 'utf-8').digest('hex');
+  const composition = {
+    ...base.composition,
+    modules: base.composition.modules.map((module) => ({
+      ...module,
+      contract: { ...module.contract, sha256 },
+      contractDocument,
+      moduleId: consumer,
+      publicContract: { id: consumer, sha256, version: contract.schemaVersion },
+    })),
+  };
+  const snapshot = yield* validateActiveApplicationCompositionSnapshot({
+    ...base,
+    composition: { ...composition, revision: yield* applicationCompositionContentRevision(composition) },
+  });
   yield* isolated.publishInitialComposition(snapshot);
   const admin = yield* makeCoreDatabase(isolated.connections.admin);
   const { executor: runtime } = yield* makeCoreDatabase(isolated.connections.runtime);
-  // Native infrastructure fixture: validated test workers stand in for an owner such as Order.
-  yield* admin.executor
-    .update(applicationCompositionAuthority)
-    .set({ subscriptionsJson: extractOutboxWorkerSubscriptions(workers) });
   const [identity] = yield* admin.executor.execute<{
     readonly databaseName: string;
     readonly databaseOid: string;
@@ -159,15 +204,45 @@ const fixture = Effect.gen(function* deadDeliveryDrainFixture() {
     }),
   );
   const repository = makeOutboxRepository(runtime, yield* Crypto.Crypto);
-  const claim = Effect.fn('DeadDeliveryDrain.claim')(function* claim(index: number) {
-    const registration = Option.getOrThrow(Option.fromNullishOr(workers[index]));
-    const now = DateTime.makeUnsafe(yield* DateTime.nowAsDate).pipe(DateTime.add({ seconds: 1 }), DateTime.toDateUtc);
-    return Option.getOrThrow(yield* repository.claimNext([registration], FIXTURE_NAME, now, revision));
+  const completed = yield* Deferred.make<true, DeadDeliveryFixtureFailure>();
+  const entry = defineOutboxWorkerEntry({
+    claimOwnerPrefix: FIXTURE_NAME,
+    expectedDeployment: contract.deployment,
+    layer: Layer.mergeAll(
+      Layer.succeed(OutboxRuntime, makeOutboxRuntime(repository)),
+      Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+    ),
+    registrations: workers,
+    subscriptions,
   });
   yield* repository.matchUnmatched(revision, yield* DateTime.nowAsDate);
-  yield* repository.complete(yield* claim(0), yield* DateTime.nowAsDate);
-  const dead = yield* claim(1);
-  expect(yield* repository.fail(dead, 'Owner temporarily refused', yield* DateTime.nowAsDate)).toBe('dead');
+  yield* Effect.raceFirst(
+    entry.runLoop({
+      config: { claimOwner: FIXTURE_NAME, maxDeliveries: 2, pollIntervalMs: 10 },
+      health: {
+        cycleFailed: Deferred.fail(
+          completed,
+          new DeadDeliveryFixtureFailure({ reason: 'The genuine test-owner worker cycle failed' }),
+        ).pipe(Effect.asVoid),
+        cycleSucceeded: Deferred.succeed(completed, true).pipe(Effect.asVoid),
+      },
+    }),
+    Deferred.await(completed),
+  );
+  const deliveries = yield* runtime
+    .select()
+    .from(outboxDeliveries)
+    .where(eq(outboxDeliveries.outboxMessageId, messageId));
+  expect(deliveries).toHaveLength(2);
+  expect(deliveries.find((delivery) => delivery.workerKey === `${consumer}.primary`)).toMatchObject({
+    attemptsCount: 1,
+    status: 'done',
+  });
+  const dead = deliveries.find((delivery) => delivery.workerKey === `${consumer}.secondary`);
+  expect(dead).toMatchObject({ attemptsCount: 1, status: 'dead' });
+  if (dead === undefined) {
+    return yield* new DeadDeliveryFixtureFailure({ reason: 'The real secondary worker delivery is missing' });
+  }
   return {
     admin,
     layer: Layer.merge(owners, Layer.succeed(CoreDatabase, admin)),

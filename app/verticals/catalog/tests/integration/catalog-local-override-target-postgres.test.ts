@@ -12,6 +12,7 @@ import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
@@ -193,6 +194,7 @@ it.live(
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: composition.composition.revision,
           moduleKeys: ['commerce.catalog'],
+          ownerRegistration: catalogRegistration,
           runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
         }),
         (value) => value.close().pipe(Effect.orDie),
@@ -208,6 +210,7 @@ it.live(
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: composition.composition.revision,
           moduleKeys: ['commerce.catalog'],
+          ownerRegistration: catalogRegistration,
           runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
         }),
         (value) => value.close().pipe(Effect.orDie),

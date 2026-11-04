@@ -568,14 +568,14 @@ jobs:
       # Native receiving fixtures and Inventory workers use genuine published owner metadata.
       # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
       - name: Download the same-run Node artifacts for native owner fixtures
-        if: matrix.root-suite == true || contains(matrix.package-filters, '--filter ./verticals/inventory') || matrix.native-preproposal == true
+        if: matrix.suite == 'integration'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: node-units-*
           path: ${{ runner.temp }}/native-composition-units
 
       - name: Unpack the Node artifacts for native owner fixtures
-        if: matrix.root-suite == true || contains(matrix.package-filters, '--filter ./verticals/inventory') || matrix.native-preproposal == true
+        if: matrix.suite == 'integration'
         working-directory: app
         run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
 

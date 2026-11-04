@@ -1532,6 +1532,7 @@ it('hands the edge deployment planner the Outbox Worker mode it requires', () =>
 const QUEUE_PROOF_JOB = 'queue-proof';
 const NODE_ARTIFACT_BUILD_JOB = 'node-artifact-build';
 const NODE_BUILD_ARTIFACT_PATTERN = 'node-units-*';
+const BACKEND_INTEGRATION_CONDITION = "matrix.suite == 'integration'";
 const CLOUDFLARE_ARTIFACT_BUILD_JOB = 'cloudflare-artifact-build';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 const FORMAT_AND_LINT_JOB = 'format-and-lint';
@@ -1977,7 +1978,7 @@ const IntegrationShardsWorkflowSchema = Schema.Struct({
 const shardFilters = (shard: { readonly 'package-filters'?: string | undefined }) =>
   [...(shard['package-filters'] ?? '').matchAll(/--filter (?<filter>\S+)/gu)].map(({ groups }) => groups?.filter ?? '');
 
-it('restores same-run Node artifacts for root receiving and Inventory native worker tests', () => {
+it('restores same-run Node artifacts for every backend integration fixture and excludes browser rows', () => {
   const source: unknown = parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'));
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(source);
   const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs['service-integration'];
@@ -1987,6 +1988,12 @@ it('restores same-run Node artifacts for root receiving and Inventory native wor
   const roots = integration.strategy.matrix.include.filter((shard) => shard['root-suite'] === true);
   expect(roots).toHaveLength(1);
   expect(roots[0]?.suite).toBe('integration');
+  const customerContext = integration.strategy.matrix.include.filter((shard) =>
+    shardFilters(shard).includes('./verticals/commerce-customer-context'),
+  );
+  expect(customerContext).toHaveLength(6);
+  expect(customerContext.every(({ suite }) => suite === 'integration')).toBe(true);
+  expect(integration.strategy.matrix.include.some(({ suite }) => suite === 'browser')).toBe(true);
   const { steps } = integration;
   const download = steps.findIndex(({ with: inputs }) => inputs?.pattern === NODE_BUILD_ARTIFACT_PATTERN);
   const unpack = steps.findIndex(({ run }) => run?.startsWith('bash scripts/unpack-unit-build-outputs.sh') === true);
@@ -2008,9 +2015,7 @@ it('restores same-run Node artifacts for root receiving and Inventory native wor
   );
   expect(steps[worker]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
   for (const index of [download, unpack]) {
-    expect(steps[index]?.if).toBe(
-      "matrix.root-suite == true || contains(matrix.package-filters, '--filter ./verticals/inventory') || matrix.native-preproposal == true",
-    );
+    expect(steps[index]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   }
   expect(steps[worker]?.if).toBe('matrix.root-suite == true');
   const preproposal = integration.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
@@ -2080,7 +2085,7 @@ it('runs the root integration suite once and every package integration suite in 
     parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')),
   ).jobs['service-integration'];
   const run = job.steps.find(({ env }) => env?.PACKAGE_FILTERS !== undefined);
-  expect(run?.if).toBe("matrix.suite == 'integration'");
+  expect(run?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   expect(run?.env).toMatchObject({ APP_ENV_PATH: '/dev/null' });
   expect(run?.run).toContain('mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1');
   expect(run?.run).toContain(
@@ -2231,7 +2236,7 @@ it('gives every CI database tool a separate login per runtime identity and audit
   const audit = steps.findIndex(({ name }) => name === AUDIT_STEP);
   expect(migrations).toBeGreaterThanOrEqual(0);
   expect(audit).toBe(migrations + 1);
-  expect(steps[audit]?.if).toBe("matrix.suite == 'integration'");
+  expect(steps[audit]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   expect(steps[audit]?.run).toBe('mise exec -- pnpm database-trust:audit');
 });
 

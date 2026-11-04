@@ -1,3 +1,4 @@
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
 import {
@@ -509,9 +510,12 @@ const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFi
       ].map((action) => action.descriptor.actionKey),
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: [audience],
+      applicationComposition: { load: Effect.succeed(snapshot) },
       authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
+      expectedDeployment: ultramodernApiMarker,
       moduleKeys: [ownerModuleKey],
+      ownerRegistration: commerceCustomerContextRegistration,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (resource) => resource.close().pipe(Effect.orDie),

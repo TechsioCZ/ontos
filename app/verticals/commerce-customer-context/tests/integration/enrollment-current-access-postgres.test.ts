@@ -770,9 +770,9 @@ const pendingInvitation = Effect.gen(function* pendingInvitationEffect() {
   const owned = yield* makeOwnedEnrollmentCurrentAccessDatabase(baseSnapshot);
   const recipientRealm = yield* makeEnrollmentRecipientRealm(owned);
   const preparedNative = yield* makeEnrollmentCurrentAccessFixture({
-    compositionRevision: owned.snapshot.composition.revision,
     connections: owned.connections,
     managerProviderSubjectId: recipientRealm.providerSubjectId,
+    snapshot: owned.snapshot,
   }).pipe(Effect.provide(capture.live));
   const native = { ...preparedNative, snapshot: owned.snapshot };
   const coreEvidenceContext = yield* Layer.build(
@@ -995,8 +995,8 @@ const pendingInvitation = Effect.gen(function* pendingInvitationEffect() {
   );
   expect(wrongLegalEntity.status).toBe(404);
   const foreign = yield* makeEnrollmentCurrentAccessFixture({
-    compositionRevision: owned.snapshot.composition.revision,
     connections: owned.connections,
+    snapshot: owned.snapshot,
   }).pipe(Effect.provide(capture.live));
   const foreignTenant = yield* receiver(claimPath, replayPayload, foreign.principal, recipientRealm.cookie);
   expect(foreignTenant.status).toBe(404);

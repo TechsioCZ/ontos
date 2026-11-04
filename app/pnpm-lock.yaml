@@ -2325,6 +2325,9 @@ importers:
         specifier: 4.0.7
         version: 4.0.7
     devDependencies:
+      '@app/shell-super-app':
+        specifier: workspace:*
+        version: link:../../apps/shell-super-app
       '@modern-js/app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-app-tools@3.9.3-ultramodern.17(18205c6dd51a20ab865c13b546e24629)'

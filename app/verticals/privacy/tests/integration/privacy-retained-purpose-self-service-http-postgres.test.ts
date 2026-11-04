@@ -167,7 +167,11 @@ import { NoticeChannelDeliveryAuthorityForAcknowledgementsLive } from '../../src
 import { createEffectBffTestHandler, defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import type { RetainedConsentAccountTransport } from '../support/privacy-retained-purpose-self-service-http.ts';
 
-import { makeDsrObligationNative } from '../support/dsr-obligation-native.ts';
+import {
+  makeDsrObligationNative,
+  privacyDsrOwnerRuntimeLive,
+  readPrivacyFixtureShellObservation,
+} from '../support/dsr-obligation-native.ts';
 
 // Real public retained-V1 consent lifecycle, using one isolated enrolled account and actual owner services.
 class RetainedAccountNativeError extends Schema.TaggedError<RetainedAccountNativeError>()(
@@ -628,12 +632,11 @@ const makeSnapshot = Effect.fn('RetainedAccount.makeSnapshot')(function* makeSna
   origins: Readonly<Record<string, string>>,
 ) {
   const base = yield* makeApplicationCompositionSnapshotFixture(ownerIds);
-  const shellContract = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))({
-    contributionAbi: base.composition.shell.contributionAbi,
-    coreCapabilities: [],
-    deployment: shell,
-    schemaVersion: '2',
-  });
+  const { sharedSingletons, shellFederationDocument, shellRuntime, shellRuntimeDocument } =
+    yield* readPrivacyFixtureShellObservation();
+  if (shellRuntime.deployment.appId !== shell.appId || shellRuntime.deployment.buildMarker !== shell.buildMarker) {
+    return yield* failed('published-shell-running-identity');
+  }
   const modules = yield* Effect.forEach(
     base.composition.modules,
     Effect.fn('RetainedAccount.module')(function* module(entry) {
@@ -645,6 +648,10 @@ const makeSnapshot = Effect.fn('RetainedAccount.makeSnapshot')(function* makeSna
         owner,
       );
       const hash = digest(contractDocument);
+      const { requirements } = owner.manifest;
+      if (requirements === undefined) {
+        return yield* failed('owner-requirements');
+      }
       const baseUrl = new URL(origins[entry.deployment.appId] ?? 'http://127.0.0.1:1/').href;
       const { components } = owner.manifest.publicSurface;
       const [component] = components;
@@ -660,6 +667,7 @@ const makeSnapshot = Effect.fn('RetainedAccount.makeSnapshot')(function* makeSna
         },
         contract: { ...entry.contract, sha256: hash },
         contractDocument,
+        dependencies: requirements.intrinsic.map(({ moduleId }) => moduleId),
         deployment: owner.deployment,
         federation:
           component === undefined
@@ -675,6 +683,8 @@ const makeSnapshot = Effect.fn('RetainedAccount.makeSnapshot')(function* makeSna
               },
         moduleId: owner.manifest.module.id,
         publicContract: { id: owner.manifest.module.id, sha256: hash, version: owner.schemaVersion },
+        requiredCoreCapabilities: requirements.coreCapabilities,
+        requiredShellAbi: shellRuntime.contributionAbi,
       };
     }),
     { concurrency: 1 },
@@ -684,8 +694,12 @@ const makeSnapshot = Effect.fn('RetainedAccount.makeSnapshot')(function* makeSna
     modules,
     shell: {
       ...base.composition.shell,
-      deployment: shell,
-      runtimeContract: { ...base.composition.shell.runtimeContract, sha256: digest(shellContract) },
+      contributionAbi: shellRuntime.contributionAbi,
+      coreCapabilities: shellRuntime.coreCapabilities,
+      deployment: shellRuntime.deployment,
+      federationManifest: { ...base.composition.shell.federationManifest, sha256: digest(shellFederationDocument) },
+      runtimeContract: { ...base.composition.shell.runtimeContract, sha256: digest(shellRuntimeDocument) },
+      sharedSingletons,
     },
   };
   return yield* validateActiveApplicationCompositionSnapshot({
@@ -2165,16 +2179,13 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   yield* Effect.gen(function* actualRetainedPurposeLifecycle() {
     // Select only real runtime services. The fixture's STAFF-only registry must not override
     // the receiving owner's reviewed canonical Commerce+STAFF registry at invocation time.
-    const readLayer = Layer.effect(ReadRuntime, ReadRuntime).pipe(
+    const ownerRuntime = privacyDsrOwnerRuntimeLive(admitted).pipe(
       Layer.provide(fixture.layer),
       Layer.provide(NodeCrypto.layer),
       Layer.orDie,
     );
-    const actionLayer = Layer.effect(ActionRuntime, ActionRuntime).pipe(
-      Layer.provide(fixture.layer),
-      Layer.provide(NodeCrypto.layer),
-      Layer.orDie,
-    );
+    const readLayer = Layer.effect(ReadRuntime, ReadRuntime).pipe(Layer.provide(ownerRuntime));
+    const actionLayer = Layer.effect(ActionRuntime, ActionRuntime).pipe(Layer.provide(ownerRuntime));
     const privacyRuntime: Parameters<typeof makePrivacyApiRuntime> = [readLayer, actionLayer, yield* makeRedemption()];
     const presentationConfiguration = {
       keyId: `retained-notice:${suffix}`,
