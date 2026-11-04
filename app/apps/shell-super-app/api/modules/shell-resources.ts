@@ -139,6 +139,9 @@ const ShellResourceDetailSchema = Schema.Struct({
 
 const ProviderFailureCauseSchema = Schema.Defect();
 
+/** Above the number of installed search owners, so one search starts every owner at once and waits only for the slowest. */
+const SHELL_SEARCH_OWNER_CONCURRENCY = 32;
+
 export class ShellProviderUnavailableError extends Schema.TaggedError<ShellProviderUnavailableError>()(
   'ShellProviderUnavailableError',
   { cause: Schema.optionalKey(ProviderFailureCauseSchema) },
@@ -766,7 +769,7 @@ const admitSearchProviders = Effect.fn('ShellSearch.admitProviders')(function* a
         provider,
       });
     },
-    { concurrency: 4 },
+    { concurrency: SHELL_SEARCH_OWNER_CONCURRENCY },
   );
   if (permissionOutcomes.some(({ decision }) => decision === 'unavailable')) {
     return yield* unavailable();
@@ -901,7 +904,8 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
             Effect.map((result) => ({ provider, result })),
           );
         },
-        { concurrency: 4 },
+        // Every admitted owner starts at once: the answer waits for the slowest owner, never for queued waves.
+        { concurrency: SHELL_SEARCH_OWNER_CONCURRENCY },
       );
       const succeeded = attempts.filter(({ result }) => result.ok);
       // One unavailable owner never hides every other owner's results: its hits are omitted and the answer is marked

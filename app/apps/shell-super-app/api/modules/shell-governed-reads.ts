@@ -23,7 +23,7 @@ import type {
   makeTenantModuleStateService,
 } from '@app/core-runtime';
 import { makeLegalEntityNavigationExclusions } from '@app/core-runtime/modules/legal-entity-navigation-exclusions';
-import { Context, Effect, Layer, Option, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Result, Schema } from 'effect';
 
 import {
   ResourceRefSchema,
@@ -52,6 +52,7 @@ import {
   searchProviderModuleIds,
   resolveShellOAuthSearchResourceTypes,
   shellSearchAdmittedResourceTypes,
+  ShellProviderUnavailableError,
   ShellResourceServicesFactory,
   sortShellSearchResults,
 } from './shell-resources.ts';
@@ -558,28 +559,38 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
             )
           : false;
         const includeSystem = admittedCoreSystem && system !== undefined;
+        // People search runs beside the business fan-out instead of after it. A refused business selection
+        // (validation or permission) still fails in its genuine channel and the People answer is discarded;
+        // the merge adapter owns provider unavailability only.
         const combined =
           includeSystem && system !== undefined
-            ? business.pipe(
-                // Keep validation/403 failures in their genuine channel. Never start the system branch after a
-                // refused business selection; the merge adapter owns provider-unavailability only.
-                Effect.flatMap((result) =>
-                  compileShellSearchInventory({
-                    businessPresentation: result.presentation,
-                    catalog,
-                    compositionRevision: request.compositionRevision,
-                    system: true,
-                  }).pipe(
-                    Effect.flatMap((presentation) =>
-                      mergeShellSystemSearch(
-                        Effect.succeed(result),
-                        system.search(context.scope, request.query),
-                        presentation,
-                      ),
-                    ),
-                  ),
-                ),
-              )
+            ? Effect.gen(function* searchWithPeople() {
+                const [businessOutcome, systemOutcome] = yield* Effect.all(
+                  [Effect.result(business), Effect.result(system.search(context.scope, request.query))],
+                  { concurrency: 2 },
+                );
+                if (
+                  Result.isFailure(businessOutcome) &&
+                  !Schema.is(ShellProviderUnavailableError)(businessOutcome.failure)
+                ) {
+                  return yield* businessOutcome.failure;
+                }
+                const presentation = yield* compileShellSearchInventory({
+                  businessPresentation: Result.isSuccess(businessOutcome)
+                    ? businessOutcome.success.presentation
+                    : undefined,
+                  catalog,
+                  compositionRevision: request.compositionRevision,
+                  system: true,
+                });
+                return yield* mergeShellSystemSearch(
+                  Result.isSuccess(businessOutcome)
+                    ? Effect.succeed(businessOutcome.success)
+                    : Effect.fail(new ShellProviderUnavailableError({})),
+                  Effect.fromResult(systemOutcome),
+                  presentation,
+                );
+              })
             : business;
         return yield* combined.pipe(
           Effect.map((result) => ({
