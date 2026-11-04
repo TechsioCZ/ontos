@@ -1,8 +1,9 @@
-import { Effect, Option, Ref } from 'effect';
+import { Duration, Effect, Option, Ref } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
+  awaitSupersedingRevision,
   CONTROL_PORT,
   derivedEnvironment,
   finiteProcessEnvironment,
@@ -61,6 +62,24 @@ it.effect('the control port answers probes from the start and never serves appli
     }
     yield* Ref.set(published, true);
     expect((yield* control.pipe(requestAt('/_host/ready'))).status).toBe(200);
+  }),
+);
+
+it.live('a host notices the release that replaced it, ignoring failed reads and its own revision', () =>
+  Effect.gen(function* supersedingRevision() {
+    const answers: readonly Effect.Effect<Option.Option<string>, string>[] = [
+      Effect.succeed(Option.some('own')),
+      Effect.fail('database unavailable'),
+      Effect.succeed(Option.none()),
+      Effect.succeed(Option.some('own')),
+      Effect.succeed(Option.some('newer')),
+    ];
+    const reads = yield* Ref.make(0);
+    const activeRevision = Ref.getAndUpdate(reads, (count) => count + 1).pipe(
+      Effect.flatMap((count) => answers[Math.min(count, answers.length - 1)] ?? Effect.die('no answer')),
+    );
+    expect(yield* awaitSupersedingRevision('own', activeRevision, Duration.millis(1))).toBe('newer');
+    expect(yield* Ref.get(reads)).toBe(answers.length);
   }),
 );
 

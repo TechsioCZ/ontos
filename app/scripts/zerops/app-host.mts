@@ -20,8 +20,8 @@ import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@ap
  * - The public port opens only once this host's composition is published. Zerops readiness gates its public
  *   balancer, but project-internal callers (`http://app:3000`) reach every running container. A host that is still
  *   migrating therefore refuses connections instead of answering 503 on a kept-alive socket, so a caller's connect
- *   falls through to the container that still serves. Probes and the composition source live on the loopback
- *   control port from the first moment.
+ *   falls through to the container that still serves. When a newer release takes the authority, this host closes
+ *   its public port for the same reason. Probes and the composition source live on the loopback control port.
  */
 import { createServer } from 'node:http';
 import path from 'node:path';
@@ -45,6 +45,7 @@ import {
   Ref,
   Schedule,
   Schema,
+  Scope,
   Stream,
   Struct,
 } from 'effect';
@@ -592,6 +593,25 @@ export const makeCompositionPointer = <Failure, Requirements>(
     return { load, publish };
   });
 
+/**
+ * Resolves with the revision that replaced `ownRevision` once the authority names another one. Only a newer release
+ * can take the authority row, and a superseded revision is never admitted again. A failed read is not evidence.
+ */
+export const awaitSupersedingRevision = <Failure, Requirements>(
+  ownRevision: string,
+  activeRevision: Effect.Effect<Option.Option<string>, Failure, Requirements>,
+  interval: Duration.Input = Duration.seconds(1),
+) =>
+  Effect.gen(function* awaitSuperseding() {
+    for (;;) {
+      const active = yield* activeRevision.pipe(Effect.option, Effect.map(Option.flatten));
+      if (Option.isSome(active) && active.value !== ownRevision) {
+        return active.value;
+      }
+      yield* Effect.sleep(interval);
+    }
+  });
+
 const publicArtifactUrl = (owner: HostedUnit, artifactPath: string, publicOrigin: string) =>
   new URL(owner.id === SHELL_ID ? artifactPath : `${MODULE_ASSET_PREFIX}${owner.id}${artifactPath}`, publicOrigin).href;
 
@@ -657,24 +677,37 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   const runtime = yield* shellRuntime;
   const published = yield* Ref.make(false);
   const database = yield* CoreDatabase;
-  const pointer = yield* makeCompositionPointer(
-    database.executor.execute<{
-      readonly phase: string;
-      readonly revision: string;
-      readonly validUntilMillis: number;
-    }>(
-      sql`select phase, revision, (extract(epoch from valid_until) * 1000)::double precision as "validUntilMillis" from core.application_composition_authority where authority_key = 'active'`,
-      'objects',
-    ),
+  const readAuthority = database.executor.execute<{
+    readonly phase: string;
+    readonly revision: string;
+    readonly validUntilMillis: number;
+  }>(
+    sql`select phase, revision, (extract(epoch from valid_until) * 1000)::double precision as "validUntilMillis" from core.application_composition_authority where authority_key = 'active'`,
+    'objects',
   );
+  const pointer = yield* makeCompositionPointer(readAuthority);
 
-  // The provided server is the loopback control port. The public port opens below, once this host can serve.
+  // The provided server is the loopback control port. The public port opens below, once this host can serve, and
+  // closes when a newer release takes the authority: from then on this host refuses every governed request.
   yield* HttpServer.serveEffect(hostControlApplication(published, pointer.load));
+  const publicScope = yield* Scope.make();
+  yield* Effect.addFinalizer(() => Scope.close(publicScope, Exit.void));
   const openPublicPort = NodeHttpServer.make(createServer, { host: '0.0.0.0', port: publicPort }).pipe(
     Effect.mapError(() => failure(`public port ${String(publicPort)} could not be opened`)),
     Effect.flatMap((server) => server.serve(hostApplication(ports, published, pointer.load))),
+    Scope.provide(publicScope),
     Effect.andThen(Console.log(`[app-host] accepting application traffic on port ${String(publicPort)}`)),
   );
+  const closePublicPortWhenSuperseded = (ownRevision: string) =>
+    awaitSupersedingRevision(
+      ownRevision,
+      readAuthority.pipe(Effect.map((rows) => Option.map(EffectArray.head(rows), ({ revision }) => revision))),
+    ).pipe(
+      Effect.flatMap((revision) =>
+        Console.log(`[app-host] superseded by composition ${revision}; closing public port ${String(publicPort)}`),
+      ),
+      Effect.andThen(Scope.close(publicScope, Exit.void)),
+    );
 
   // Two processes serve every unit: the Shell alone (its SSR owns the Module Federation host runtime), and every
   // owner together, so their shared dependencies load once.
@@ -704,6 +737,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     yield* Console.log(
       `[app-host] composition ${snapshot.composition.revision} (${String(snapshot.composition.modules.length)} owners) valid until ${DateTime.formatIso(snapshot.validUntil)}`,
     );
+    return snapshot.composition.revision;
   }).pipe(observeRuntimeJob('composition-publish'));
 
   // ONTOS_APP_HOST_PUBLISH=false starts and observes every unit without migrating or taking the authority, so a new
@@ -743,10 +777,12 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       ],
       { concurrency: 'unbounded' },
     );
-    yield* publish;
-    // From this commit on the old release refuses every governed request, so this one serves internal callers at
-    // once. The Zerops readiness answer (public balancer) still follows the service grants below.
+    const revision = yield* publish;
+    // From this commit on the old release refuses every governed request and closes its public port, so this one
+    // serves internal callers and reports ready to the Zerops balancer at once.
     yield* openPublicPort;
+    yield* Ref.set(published, true);
+    yield* closePublicPortWhenSuperseded(revision).pipe(Effect.forkChild);
     // The canonical SpiceDB schema and the stage service grants follow the published release. A failure is logged
     // loudly but does not stop a release whose data is already served. Like the migrator, the reconciliation is
     // supervisor work: it installs the stage service principals with the database administrator identity.
@@ -762,7 +798,6 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       Effect.tapError((problem) => Console.error(`[app-host] service grant reconciliation failed: ${problem.reason}`)),
       Effect.ignore,
     );
-    yield* Ref.set(published, true);
     const outbox = yield* startChild(OUTBOX_HOST_ID, node, [OUTBOX_HOST_BUNDLE], workspaceRoot, {
       ...processEnvironment([OUTBOX_HOST_ID, ...ownerIds], ownerSecrets, derived).environment,
       // The host's email trigger authenticates to the Shell's dispatch endpoint with the Shell's own secret.
