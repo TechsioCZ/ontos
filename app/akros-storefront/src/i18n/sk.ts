@@ -646,7 +646,8 @@ export const sk: Dictionary = {
       title: "E-maily k objednávke",
       recipient: (email: string) => `Potvrdenie a zmeny stavu posielame na ${email}.`,
       loading: "Overujem odoslanie potvrdzujúceho e-mailu…",
-      unavailable: "Stav e-mailov sa nepodarilo overiť.",
+      unavailable:
+        "Stav e-mailov sa zatiaľ nepodarilo načítať. Vaša objednávka je prijatá, skúsime to znova o chvíľu.",
       preparing: "Potvrdzujúci e-mail sa pripravuje na odoslanie.",
       pickupReady: "Pripravené na vyzdvihnutie",
       events: {

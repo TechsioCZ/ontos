@@ -649,7 +649,8 @@ export const en: Dictionary = {
       title: "Order e-mails",
       recipient: (email: string) => `We send the confirmation and status updates to ${email}.`,
       loading: "Checking that the confirmation e-mail has been sent…",
-      unavailable: "The e-mail status could not be verified.",
+      unavailable:
+        "We could not load the e-mail status just yet. Your order is received; we will try again shortly.",
       preparing: "The confirmation e-mail is being prepared for sending.",
       pickupReady: "Ready for collection",
       events: {

@@ -33,7 +33,8 @@ export async function GET(request: Request) {
     return Response.json({ message: t.missingEmail }, { status: 400 });
   try {
     const params = new URLSearchParams({
-      source: "sf-order",
+      // The Shell's receipt source for storefront orders; any other value is rejected as invalid_query.
+      source: "akros-order",
       subjectNumber: orderNumber,
       recipient: email,
     });

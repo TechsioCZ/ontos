@@ -643,7 +643,8 @@ export const cs = {
       title: "E-maily k objednávce",
       recipient: (email: string) => `Potvrzení a změny stavu posíláme na ${email}.`,
       loading: "Ověřuji odeslání potvrzovacího e-mailu…",
-      unavailable: "Stav e-mailů se nepodařilo ověřit.",
+      unavailable:
+        "Stav e-mailů se zatím nepodařilo načíst. Vaše objednávka je přijatá, zkusíme to znovu za chvíli.",
       preparing: "Potvrzovací e-mail se připravuje k odeslání.",
       pickupReady: "Připraveno k vyzvednutí",
       events: {

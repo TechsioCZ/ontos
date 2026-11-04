@@ -49,7 +49,7 @@ describe("order e-mail status route", () => {
       ],
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://ontos-stage.web-revolution.cz/shell-super-app-api/email/deliveries?source=sf-order&subjectNumber=OBJ-2026-0026&recipient=pavel%40zakaznik.example",
+      "https://ontos-stage.web-revolution.cz/shell-super-app-api/email/deliveries?source=akros-order&subjectNumber=OBJ-2026-0026&recipient=pavel%40zakaznik.example",
       expect.anything(),
     );
   });

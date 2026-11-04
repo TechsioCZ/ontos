@@ -63,6 +63,20 @@ it("mounts one real receipt panel and polls with only the saved recipient and or
   );
 });
 
+it("tells the customer calmly that the e-mail status will be retried when it cannot be loaded", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(async () => Response.json({ message: "unavailable" }, { status: 503 })),
+  );
+
+  await act(async () => {
+    render(<OrderConfirmation order={savedOrder} />);
+  });
+
+  expect(screen.getByText(/zkusíme to znovu za chvíli/)).toBeDefined();
+  expect(screen.queryByText(/nepodařilo ověřit/)).toBeNull();
+});
+
 it.each([undefined, ""])(
   "does not use a fallback or poll when the saved recipient is %s",
   async (email) => {
