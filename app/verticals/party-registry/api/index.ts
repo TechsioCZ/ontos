@@ -3,7 +3,7 @@ import {
   PARTY_REGISTRY_REQUEST_IDENTITY,
 } from '@app/party-registry-identity-contracts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
-import { DatabaseIdentityEnrollmentContext, makeDatabaseConfigLive } from '@app/core-runtime';
+import { ContextAccessLive, DatabaseIdentityEnrollmentContext, makeDatabaseConfigLive } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type { ActionRuntime, ReadRuntime, GatewayAssertionRedemptionService } from '@app/core-runtime';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
@@ -176,6 +176,8 @@ export const makePartyRegistryApiRuntime = (
   ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nodeCryptoLayer)),
+    // Search providers and the search-labels read check current Party authority in `finish` with ContextAccess.
+    Layer.provide(ContextAccessLive),
     Layer.provide(
       ActiveApplicationCompositionSourceLive.pipe(
         Layer.provide(

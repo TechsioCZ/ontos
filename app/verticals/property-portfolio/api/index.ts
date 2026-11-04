@@ -115,7 +115,8 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
     ),
   ),
   // </generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provide(GovernedReadLayer.empty),
+  // The search-labels read checks current resource authority in `finish` with ContextAccess.
+  GovernedReadLayer.provide(GovernedContextAccessLive),
 );
 
 const operationAttributes = (operationContext: OperationContext) => {
