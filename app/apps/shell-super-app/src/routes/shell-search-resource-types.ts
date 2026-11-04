@@ -74,18 +74,34 @@ export interface ShellSearchNavigationItem {
 /**
  * What the composed navigation proves about this document: the destinations every composed module declares and the
  * navigation section it places them in. A record presentation applies only when this evidence names the hit's owner
- * and the destination the presentation opens; anything short of that opens the generic Shell record page.
+ * and the destination the presentation opens; anything short of that opens the generic Shell record page. The
+ * composition also carries the record destinations its owner pages declare, keyed by the exact owner and type.
  */
 export interface ShellSearchPresentationContext {
   readonly hrefs: ReadonlyMap<string, readonly string[]>;
+  readonly recordDestinations: ReadonlyMap<string, readonly ShellSearchRecordDestination[]>;
   readonly sections: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+/**
+ * One owner page that opens a record type, as the composition carries it: the route template and the single parameter
+ * that selects the record. The Shell never derives a destination from a type name; it looks up this exact pair.
+ */
+export interface ShellSearchRecordDestination {
+  readonly idParameter: string;
+  readonly moduleId: string;
+  readonly resourceType: string;
+  readonly routePath: string;
 }
 
 /** `shell.navigation.finance` is the navigation section `finance`. */
 const navigationSection = (groupKey: string): string => groupKey.replace(/^shell\.navigation\./u, '');
 
+const recordDestinationKey = (moduleId: string, resourceType: string): string => `${moduleId}\u0000${resourceType}`;
+
 export const shellSearchPresentationContext = (
   navigation: readonly ShellSearchNavigationItem[],
+  recordDestinations: readonly ShellSearchRecordDestination[] = [],
 ): ShellSearchPresentationContext => {
   const sections = new Map<string, ReadonlySet<string>>();
   const hrefs = new Map<string, readonly string[]>();
@@ -95,19 +111,27 @@ export const shellSearchPresentationContext = (
       hrefs.set(moduleId, [...(hrefs.get(moduleId) ?? []), href]);
     }
   }
-  return { hrefs, sections };
+  const destinations = new Map<string, readonly ShellSearchRecordDestination[]>();
+  for (const destination of recordDestinations) {
+    const key = recordDestinationKey(destination.moduleId, destination.resourceType);
+    destinations.set(key, [...(destinations.get(key) ?? []), destination]);
+  }
+  return { hrefs, recordDestinations: destinations, sections };
 };
 
 /**
  * The owner page that opens one record, with the owner's resource ID either as the `$id` path segment or as one
  * query parameter. A query target without `to` opens the owner's own agenda destination, resolved from navigation.
+ * An owner target names no Shell path at all: the page comes from the destination the owner page declared.
  */
 type RecordRoute =
   | { readonly kind: 'path'; readonly to: string }
+  | { readonly kind: 'owner' }
   | { readonly kind: 'query'; readonly param: string; readonly to?: string | undefined };
 
 type ResolvedRecordRoute =
   | { readonly kind: 'path'; readonly to: string }
+  | { readonly idParameter: string; readonly kind: 'owner'; readonly to: string }
   | { readonly kind: 'query'; readonly param: string; readonly to: string };
 
 /**
@@ -194,7 +218,8 @@ const resourceTypes = new Map<string, readonly ResourceTypePresentation[]>([
   ['occupancy', [{ group: 'lease', record: query('resourceId', '/najmy') }]],
   ['opportunity', [{ group: 'opportunity', record: query('opportunityId', '/prodej/prilezitosti') }]],
   ['order', [{ group: 'order', idScope: 'company', record: query('orderId', '/prodej/objednavky') }]],
-  ['party', [{ group: 'party', idFormat: 'uuid', record: path('/prodej/strany/$id') }]],
+  // The Party identity page is the owner's own record destination; the Shell names no Party path or ID class here.
+  ['party', [{ group: 'party', idFormat: 'uuid', record: { kind: 'owner' } }]],
   [
     'person',
     [
@@ -262,6 +287,28 @@ const destinationIsComposed = (
   );
 };
 
+/**
+ * The owner page's route template with its one declared parameter replaced by the Shell's `$id` segment. A template
+ * that does not carry exactly the declared parameter proves nothing, so the hit keeps the generic Shell record page.
+ */
+const ownerRecordRoute = (
+  destination: ShellSearchRecordDestination,
+): Extract<ResolvedRecordRoute, { readonly kind: 'owner' }> | undefined => {
+  const segments = destination.routePath.slice(1).split('/');
+  const parameters = segments.flatMap((segment, index) =>
+    segment.startsWith(':') ? [{ index, name: segment.slice(1) }] : [],
+  );
+  const [parameter] = parameters;
+  if (parameters.length !== 1 || parameter === undefined || parameter.name !== destination.idParameter) {
+    return undefined;
+  }
+  return {
+    idParameter: destination.idParameter,
+    kind: 'owner',
+    to: `/${segments.map((segment, index) => (index === parameter.index ? '$id' : segment)).join('/')}`,
+  };
+};
+
 const recordOf = (
   presentation: ResourceTypePresentation,
   ref: SearchRef,
@@ -274,6 +321,12 @@ const recordOf = (
   }
   if (route.kind === 'path') {
     return destinationIsComposed(presentation, ref, context, route.to) ? route : undefined;
+  }
+  if (route.kind === 'owner') {
+    // Only the exact pair the owner page declared for this hit is evidence; several entries prove nothing.
+    const destinations = context.recordDestinations.get(recordDestinationKey(ref.moduleId, ref.resourceType)) ?? [];
+    const [destination] = destinations;
+    return destinations.length === 1 && destination !== undefined ? ownerRecordRoute(destination) : undefined;
   }
   const to = route.to ?? agenda;
   return to === undefined || !destinationIsComposed(presentation, ref, context, to)
@@ -456,7 +509,9 @@ export const ownerRecordTarget = (
   if (id === undefined) {
     return undefined;
   }
-  return record.kind === 'path' ? { params: { id }, to: record.to } : { search: { [record.param]: id }, to: record.to };
+  return record.kind === 'query'
+    ? { search: { [record.param]: id }, to: record.to }
+    : { params: { id }, to: record.to };
 };
 
 export const shellSearchLinkTarget = (

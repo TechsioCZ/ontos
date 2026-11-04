@@ -959,6 +959,7 @@ export {
   ShellMediaAttachmentContributionSchema,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
+  ShellPageRecordTargetSchema,
   ShellPublicComponentContributionSchema,
   ShellReportContributionSchema,
   ShellResourceDetailContributionSchema,

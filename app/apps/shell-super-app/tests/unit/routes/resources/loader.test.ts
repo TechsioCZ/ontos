@@ -11,7 +11,7 @@ import {
   ModuleIdSchema,
   ShellResourceResponseSchema,
 } from '../../../../shared/api.ts';
-import type { ShellNavigationItem } from '../../../../shared/api.ts';
+import type { ShellNavigationItem, ShellRecordDestination } from '../../../../shared/api.ts';
 
 const { loadHomePageModelMock, resourceDetailMock } = rstest.hoisted(() => ({
   loadHomePageModelMock: rstest.fn(),
@@ -44,8 +44,16 @@ const navigationItem = (moduleId: string, groupKey: string, href: string): Shell
   writable: true,
 });
 
+/** The Party identity page the party owner declares for its own record type. */
+const partyRecordDestination: ShellRecordDestination = {
+  idParameter: 'partyId',
+  moduleId: ModuleIdSchema.make('party.registry'),
+  resourceType: 'party.registry.party',
+  routePath: '/prodej/strany/:partyId',
+};
+
 /** The composed navigation a loaded Shell document has; the record targets are resolved from it, never repeated. */
-const shell = () => {
+const shell = (recordDestinations: readonly ShellRecordDestination[] = []) => {
   const fixture = authenticatedShellFixture();
   const items = [
     navigationItem('demo.crm', 'shell.navigation.sales', '/crm/klienti'),
@@ -60,7 +68,7 @@ const shell = () => {
   ];
   return {
     ...fixture,
-    navigation: { ...fixture.navigation, items, moduleIds: items.map(({ moduleId }) => moduleId) },
+    navigation: { ...fixture.navigation, items, moduleIds: items.map(({ moduleId }) => moduleId), recordDestinations },
   };
 };
 
@@ -127,11 +135,15 @@ it.effect('retains the language prefix and never trusts an unrelated legacy quer
   }),
 );
 
-it.effect('never redirects to an owner page the composed navigation does not declare', () =>
-  Effect.gen(function* noUnprovenOwnerRedirect() {
-    // The party identity page is a page of the party owner, but not a destination of its composed navigation, so the
-    // Shell opens its own record page for the admitted record instead of naming an unproven owner route.
+it.effect('opens the Party identity page only when the owner declared that record destination', () =>
+  Effect.gen(function* partyIdentityRedirectsOnlyOnceDeclared() {
+    // The owner page declares the record destination, so the Shell opens the exact identity page.
     const params = { moduleId: 'party.registry', resourceId: evaId, resourceType: 'party.registry.party' };
+    loadHomePageModelMock.mockReturnValueOnce(Effect.succeed(shell([partyRecordDestination])));
+    const result = yield* rejected(params);
+    expect(isRedirect(result)).toBe(true);
+    expect(result).toMatchObject({ options: { to: `/cs/prodej/strany/${evaId}` } });
+    // Without that declaration the admitted record keeps the Shell record page: no route is guessed from the type.
     expect(yield* Effect.promise(() => loader({ params, request: requestFor(params) }))).toMatchObject({
       detailSupport: 'not_supported',
       state: 'unavailable',

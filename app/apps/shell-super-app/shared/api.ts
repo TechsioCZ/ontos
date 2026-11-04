@@ -486,6 +486,24 @@ export const ShellHomeComponentSchema = Schema.Struct({
 });
 export type ShellHomeComponent = typeof ShellHomeComponentSchema.Type;
 
+/**
+ * The owner page that opens one record type: the owning module, the route template and the single parameter that
+ * selects the record. The template is owner data, never a Shell path; the Shell substitutes the validated record ID.
+ */
+export const ShellRecordDestinationSchema = Schema.Struct({
+  idParameter: Schema.String.check(Schema.isPattern(/^[a-z][A-Za-z0-9]*$/u)),
+  moduleId: ModuleIdSchema,
+  resourceType: Schema.String.check(Schema.isMinLength(3), Schema.isMaxLength(300)),
+  routePath: Schema.String.check(
+    Schema.isMinLength(2),
+    Schema.isMaxLength(200),
+    Schema.isPattern(
+      /^\/(?:[a-z][a-z0-9]*(?:-[a-z0-9]+)*|:[a-z][A-Za-z0-9]*)(?:\/(?:[a-z][a-z0-9]*(?:-[a-z0-9]+)*|:[a-z][A-Za-z0-9]*))*$/u,
+    ),
+  ),
+});
+export type ShellRecordDestination = typeof ShellRecordDestinationSchema.Type;
+
 export const ShellUnavailableDeploymentSchema = Schema.Union([
   Schema.Struct({
     appId: AppIdSchema,
@@ -522,6 +540,8 @@ export const ShellCompositionSchema = Schema.Union([
     /** Home summary components of modules the person may open, lowest order first. */
     homeComponents: Schema.Array(ShellHomeComponentSchema),
     navigation: Schema.Array(ShellNavigationItemSchema),
+    /** Record destinations the composed modules declare; absent when no page declares one. */
+    recordDestinations: Schema.optionalKey(Schema.Array(ShellRecordDestinationSchema)),
     state: Schema.Literal('available'),
     unavailableDeployments: Schema.Array(ShellUnavailableDeploymentSchema),
   }),

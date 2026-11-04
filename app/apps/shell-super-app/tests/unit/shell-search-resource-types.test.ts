@@ -15,12 +15,13 @@ import {
   groupShellSearchResults as groupShellSearchResultsOf,
   groupShellSearchSuggestions as groupShellSearchSuggestionsOf,
 } from '../../src/routes/shell-search-suggestions.ts';
+import type { ShellSearchRecordDestination } from '../../src/routes/shell-search-resource-types.ts';
 
 /**
  * The composed navigation the Shell receives for the demo document: it names every destination a record type opens,
  * the section that settles names several owners share, and no destination a record type does not open.
  */
-const presentation = shellSearchPresentationContext([
+const demoNavigation = [
   { groupKey: 'shell.navigation.finance', href: '/finance', moduleId: 'finance.billing' },
   { groupKey: 'shell.navigation.sales', href: '/crm/klienti', moduleId: 'demo.crm' },
   { groupKey: 'shell.navigation.sales', href: '/prodej/zakaznici', moduleId: 'party.registry' },
@@ -36,7 +37,20 @@ const presentation = shellSearchPresentationContext([
   { groupKey: 'shell.navigation.facility', href: '/provoz/bezpecnost', moduleId: 'facility.operations' },
   { groupKey: 'shell.navigation.facility', href: '/provoz/meridla', moduleId: 'facility.operations' },
   { groupKey: 'shell.navigation.facility', href: '/provoz/dokumenty', moduleId: 'facility.operations' },
-]);
+] as const;
+
+const presentation = shellSearchPresentationContext(demoNavigation);
+
+/** The Party identity page its owner declares for `party.registry.party`; the Shell names no Party path itself. */
+const partyRecordDestination: ShellSearchRecordDestination = {
+  idParameter: 'partyId',
+  moduleId: 'party.registry',
+  resourceType: 'party.registry.party',
+  routePath: '/prodej/strany/:partyId',
+};
+
+/** The same document plus that one declared record destination. */
+const partyPresentation = shellSearchPresentationContext(demoNavigation, [partyRecordDestination]);
 
 const ownerRecordTarget = (ref: Parameters<typeof ownerRecordTargetOf>[0], company: string | undefined) =>
   ownerRecordTargetOf(ref, company, presentation);
@@ -128,6 +142,91 @@ test.each(['', 'not-a-uuid', `${selectedLegalEntityId}.${evaCounterpartyId}`, `$
       ownerRecordTarget(
         { moduleId: 'party.registry', resourceId, resourceType: 'party.registry.counterparty' },
         selectedLegalEntityId,
+      ),
+    ).toBeUndefined();
+  },
+);
+
+test('the declared Party page opens the exact Party identity, by kind and by owner result', () => {
+  const party = {
+    archived: false,
+    kind: 'party',
+    matchedViaAlias: false,
+    ref: partyRef,
+    title: 'Eva Bílá',
+  } satisfies ShellSearchResult;
+  expect(shellSearchGroupOfOf(party, partyPresentation)).toBe('party');
+  expect(shellSearchResultTargetOf(party, partyPresentation)).toEqual({
+    params: { id: partyRef.resourceId },
+    to: '/prodej/strany/$id',
+  });
+  const resource = resourceHit('party.registry', 'party.registry.party', 'Eva Bílá');
+  expect(shellSearchGroupOfOf(resource, partyPresentation)).toBe('party');
+  expect(shellSearchResultTargetOf(resource, partyPresentation)).toEqual({
+    params: { id: resource.ref.resourceId },
+    to: '/prodej/strany/$id',
+  });
+});
+
+test('without the declared destination the Party hit keeps the generic Shell record page', () => {
+  const party = {
+    archived: false,
+    kind: 'party',
+    matchedViaAlias: false,
+    ref: partyRef,
+    title: 'Eva Bílá',
+  } satisfies ShellSearchResult;
+  // The group is the server-assigned kind, so it stays honest without any owner metadata.
+  expect(shellSearchGroupOfOf(party)).toBe('party');
+  expect(shellSearchResultTargetOf(party)).toMatchObject({ to: '/resources/$moduleId/$resourceType/$resourceId' });
+  // The generic owner result of that type is not proven either, so it stays under other records.
+  const resource = resourceHit('party.registry', 'party.registry.party', 'Eva Bílá');
+  expect(shellSearchGroupOfOf(resource)).toBe('resource');
+  expect(shellSearchResultTargetOf(resource)).toMatchObject({ to: '/resources/$moduleId/$resourceType/$resourceId' });
+});
+
+const unusablePartyDestinations: readonly [string, readonly ShellSearchRecordDestination[]][] = [
+  ['another module names the pair', [{ ...partyRecordDestination, moduleId: 'demo.crm' }]],
+  ['the owner declares another type', [{ ...partyRecordDestination, resourceType: 'party.registry.counterparty' }]],
+  ['the template carries no parameter', [{ ...partyRecordDestination, routePath: '/prodej/strany' }]],
+  [
+    'the template carries a second parameter',
+    [{ ...partyRecordDestination, routePath: '/prodej/strany/:partyId/:tab' }],
+  ],
+  ['the template names another parameter', [{ ...partyRecordDestination, routePath: '/prodej/strany/:otherId' }]],
+  [
+    'the owner declares the pair twice',
+    [partyRecordDestination, { ...partyRecordDestination, routePath: '/prodej/strany-archive/:partyId' }],
+  ],
+];
+
+test.each(unusablePartyDestinations)('a destination where %s never opens the Party page', (_case, destinations) => {
+  const context = shellSearchPresentationContext(demoNavigation, destinations);
+  const party = {
+    archived: false,
+    kind: 'party',
+    matchedViaAlias: false,
+    ref: partyRef,
+    title: 'Eva Bílá',
+  } satisfies ShellSearchResult;
+  expect(shellSearchGroupOfOf(party, context)).toBe('party');
+  expect(shellSearchResultTargetOf(party, context)).toMatchObject({
+    to: '/resources/$moduleId/$resourceType/$resourceId',
+  });
+  // A generic owner result of the unproven type stays under other records.
+  expect(shellSearchGroupOfOf(resourceHit('party.registry', 'party.registry.party', 'Eva Bílá'), context)).toBe(
+    'resource',
+  );
+});
+
+test.each(['', 'not-a-uuid', `${selectedLegalEntityId}.${partyRef.resourceId}`] as const)(
+  'a Party identity with ID %s never opens the owner page',
+  (resourceId) => {
+    expect(
+      ownerRecordTargetOf(
+        { moduleId: 'party.registry', resourceId, resourceType: 'party.registry.party' },
+        selectedLegalEntityId,
+        partyPresentation,
       ),
     ).toBeUndefined();
   },

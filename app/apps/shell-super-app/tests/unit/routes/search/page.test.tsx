@@ -248,6 +248,7 @@ const authenticatedShell = (): HomePageModel => ({
       Schema.decodeUnknownSync(ModuleIdSchema)('party.registry'),
       Schema.decodeUnknownSync(ModuleIdSchema)('work.tasks'),
     ],
+    recordDestinations: [],
     state: 'available',
     unavailableDeployments: [],
   },

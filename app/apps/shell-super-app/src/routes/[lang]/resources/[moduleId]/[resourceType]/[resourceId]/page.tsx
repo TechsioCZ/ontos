@@ -22,6 +22,13 @@ import type { ResourcePageModel } from './resource-page-model.ts';
 const MediaStateSchema = Schema.Literals(['failed', 'idle', 'pending', 'success']);
 type MediaState = typeof MediaStateSchema.Type;
 type ReadyResourceModel = Extract<ResourcePageModel, { state: 'ready' }>;
+type AuthenticatedShell = Extract<ResourcePageModel['shell'], { readonly state: 'authenticated' }>;
+
+/** The document's composed navigation, when it has one; the Shell reads record destinations from it. */
+const composedSearchContextOf = (shell: AuthenticatedShell) => {
+  const navigation = shell.navigation.state === 'available' ? shell.navigation : undefined;
+  return shellSearchPresentationContext(navigation?.items ?? [], navigation?.recordDestinations ?? []);
+};
 
 const ResourceDetails = ({
   mediaState,
@@ -249,7 +256,7 @@ const ResourcePage = () => {
     );
   }
   const recordRef = { moduleId, resourceId, resourceType };
-  const agendaPaths = recordAgendaPaths(recordRef, shellSearchPresentationContext(model.shell.navigation.items));
+  const agendaPaths = recordAgendaPaths(recordRef, composedSearchContextOf(model.shell));
   // Only an admitted, authorized detail response proves the record and may render its title, fields or actions.
   // A search history title is navigation input, never evidence that a failed, missing or unsupported read found a record.
   const detailNotSupported = model.state === 'unavailable' && model.detailSupport === 'not_supported';

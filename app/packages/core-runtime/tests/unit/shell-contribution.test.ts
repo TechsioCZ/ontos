@@ -34,6 +34,16 @@ const references = {
   searchKeys: new Set([`${moduleId}.unit-search`]),
 };
 
+/** The page fixture shape, including the optional record target these tests vary. */
+interface PageContributionFixture {
+  readonly componentKey: string;
+  readonly contributionKey: string;
+  readonly entrypoint: ReturnType<typeof entrypoint>;
+  readonly expose: string;
+  readonly recordTarget?: { readonly idParameter: string; readonly resourceType: string } | undefined;
+  readonly routePath: string;
+}
+
 const full = () => ({
   mediaAttachments: [
     {
@@ -56,13 +66,14 @@ const full = () => ({
     },
   ],
   pages: [
+    // SAFETY: The literal is the checked page fixture shape; the assertion only widens its inferred type for variants.
     {
       componentKey: `${moduleId}.dashboard`,
       contributionKey: `${moduleId}.page.dashboard`,
       entrypoint: entrypoint('page'),
       expose: './Dashboard',
       routePath: '/property-dashboard',
-    },
+    } as PageContributionFixture,
   ],
   publicComponents: [
     {
@@ -131,6 +142,79 @@ it('accepts safe dynamic page templates as plain serialized data', () => {
   expect(decoded.pages[0]?.routePath).toBe('/contacts/customers/:id/edit');
   expect(structuredClone(decoded)).toEqual(decoded);
   expect(encodeJson(decoded)).not.toMatch(/handler|loader|sourcePath|remote|import/iu);
+});
+
+it('accepts an owner page record destination and preserves it as plain serialized data', () => {
+  const candidate = full();
+  candidate.pages[0] = {
+    ...first(candidate.pages),
+    recordTarget: { idParameter: 'unitId', resourceType: `${moduleId}.unit` },
+    routePath: '/property-units/:unitId',
+  };
+  const decoded = validateShellContributions(candidate, references);
+  expect(decoded.pages[0]?.recordTarget).toEqual({ idParameter: 'unitId', resourceType: `${moduleId}.unit` });
+  expect(encodeJson(decoded)).toContain(
+    '"recordTarget":{"idParameter":"unitId","resourceType":"property.registry.unit"}',
+  );
+  // A page without the optional field keeps working, so the field is additive to every existing manifest.
+  expect(validateShellContributions(full(), references).pages[0]?.recordTarget).toBeUndefined();
+});
+
+it('rejects a page record destination that does not bind its own route parameter or a declared resource type', () => {
+  const candidate = full();
+  const recordTarget = { idParameter: 'unitId', resourceType: `${moduleId}.unit` };
+  const withRecordTarget = (
+    routePath: string,
+    target: { readonly idParameter: string; readonly resourceType: string } = recordTarget,
+  ) => ({ ...candidate, pages: [{ ...first(candidate.pages), recordTarget: target, routePath }] });
+
+  // The route carries no parameter at all.
+  expect(() => validateShellContributions(withRecordTarget('/property-units'), references)).toThrow(/route parameter/u);
+  // The route declares a different parameter than the record target names.
+  expect(() => validateShellContributions(withRecordTarget('/property-units/:otherId'), references)).toThrow(
+    /route parameter/u,
+  );
+  // The route declares more than the one parameter the record target selects.
+  expect(() => validateShellContributions(withRecordTarget('/property-units/:unitId/:revision'), references)).toThrow(
+    /route parameter/u,
+  );
+  // Another module's resource type, and a type this module never declares, are both foreign.
+  for (const resourceType of ['party.registry.party', `${moduleId}.building`]) {
+    expect(() =>
+      validateShellContributions(
+        withRecordTarget('/property-units/:unitId', { idParameter: 'unitId', resourceType }),
+        references,
+      ),
+    ).toThrow(/undeclared/u);
+  }
+  // A parameter name that is not a plain route identifier.
+  for (const idParameter of ['unit_id', '1unit', 'unit-id', '']) {
+    expect(() =>
+      validateShellContributions(
+        withRecordTarget('/property-units/:unitId', { idParameter, resourceType: `${moduleId}.unit` }),
+        references,
+      ),
+    ).toThrow();
+  }
+});
+
+it('rejects two pages of one module that claim the same record destination', () => {
+  const candidate = full();
+  const firstPage = first(candidate.pages);
+  candidate.pages = [
+    {
+      ...firstPage,
+      recordTarget: { idParameter: 'unitId', resourceType: `${moduleId}.unit` },
+      routePath: '/units/:unitId',
+    },
+    {
+      ...firstPage,
+      contributionKey: `${moduleId}.page.unit-archive`,
+      recordTarget: { idParameter: 'unitId', resourceType: `${moduleId}.unit` },
+      routePath: '/units/archive/:unitId',
+    },
+  ];
+  expect(() => validateShellContributions(candidate, references)).toThrow(/ambiguous/u);
 });
 
 it('requires explicit native Federation selectors for pages and public components', () => {

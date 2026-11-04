@@ -19,6 +19,7 @@ import type {
   ShellCompositionDataSources,
 } from '../../api/modules/shell-composition.ts';
 import { ShellCompositionSchema } from '../../shared/api.ts';
+import type { ShellComposition, ShellRecordDestination } from '../../shared/api.ts';
 import { moduleTargetLogAnnotations } from '../../api/modules/module-target-log.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -209,6 +210,84 @@ const catalogWithContactPages = (
   return makeInstalledModuleCatalogLoader(makeCompositionSnapshot([party]));
 };
 
+/** A module that declares one page opening its own record type, alongside its ordinary Home page. */
+const catalogWithRecordPage = (
+  input: {
+    readonly entrypointKey?: string;
+    readonly recordTarget?: { readonly idParameter: string; readonly resourceType: string } | undefined;
+  } = {},
+) => {
+  const base = deployment('party-registry', 'party.registry', 'Contacts', 10);
+  const { publicSurface } = base.manifest;
+  const page = {
+    componentKey: 'party.registry.page-party-identity',
+    contributionKey: 'party.registry.page.party-identity',
+    entrypoint: {
+      access: 'read',
+      authorization: {
+        kind: 'context_permission',
+        permission: 'module_access',
+      },
+      entrypointKey: input.entrypointKey ?? 'party.registry.page.party-identity',
+      moduleKey: 'party.registry',
+      role: 'page',
+      scope: 'tenant',
+    },
+    expose: './PagePartyIdentity',
+    routePath: '/contacts/parties/:partyId',
+  } as const;
+  return makeInstalledModuleCatalogLoader(
+    makeCompositionSnapshot([
+      {
+        ...base,
+        manifest: {
+          ...base.manifest,
+          publicSurface: {
+            ...publicSurface,
+            components: [
+              ...publicSurface.components,
+              {
+                expose: './PagePartyIdentity',
+                key: 'party.registry.page-party-identity',
+                mfBoundaryId: 'verticalpartyregistry',
+              },
+            ],
+            resourceTypes: [
+              {
+                capabilities: {
+                  graphVisible: false,
+                  linkable: true,
+                  mediaAttachable: false,
+                  searchable: true,
+                  timelineVisible: true,
+                },
+                description: 'Party resource.',
+                key: 'party.registry.party',
+                label: 'Party',
+                owningModuleId: 'party.registry',
+              },
+            ],
+            shellContributions: {
+              ...publicSurface.shellContributions,
+              pages: [
+                ...publicSurface.shellContributions.pages,
+                input.recordTarget === undefined ? page : { ...page, recordTarget: input.recordTarget },
+              ],
+            },
+          },
+        },
+      },
+    ]),
+  );
+};
+
+const partyRecordDestination = {
+  idParameter: 'partyId',
+  moduleId: 'party.registry',
+  resourceType: 'party.registry.party',
+  routePath: '/contacts/parties/:partyId',
+} as const;
+
 it.effect(
   'module-target diagnostics identify the approved target and caller without logging resource IDs or secrets',
   () =>
@@ -386,6 +465,94 @@ it.effect('composes one deterministic state and permission batch with lifecycle 
       permissionBatches: 1,
       stateBatches: 1,
     });
+  }),
+);
+
+/** The record destinations of a composition; absence is the empty list every older document decodes to. */
+const recordDestinationsOf = (composition: ShellComposition): readonly ShellRecordDestination[] =>
+  'recordDestinations' in composition ? composition.recordDestinations : [];
+
+it.effect('composes exactly the record destination an owner page declares', () =>
+  Effect.gen(function* composesOwnerRecordDestination() {
+    const approvedCatalog = yield* catalogWithRecordPage({
+      recordTarget: { idParameter: 'partyId', resourceType: 'party.registry.party' },
+    });
+    const result = yield* makeShellComposition({
+      catalog: Effect.succeed(approvedCatalog),
+      contextAccess: contextAccess({ 'party.registry': 'allowed' }),
+      moduleStates: {
+        getTenantModuleStates: (_tenantId, moduleIds) =>
+          Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' as const }))),
+      },
+      navigationExclusions: noExclusions,
+    }).compose(context);
+    expect(recordDestinationsOf(result)).toEqual([partyRecordDestination]);
+    expect(() => Schema.decodeUnknownSync(ShellCompositionSchema)(result)).not.toThrow();
+  }),
+);
+
+it.effect('record destinations follow the same visibility gates as navigation', () =>
+  Effect.gen(function* gatesRecordDestinations() {
+    const approvedCatalog = yield* catalogWithRecordPage({
+      recordTarget: { idParameter: 'partyId', resourceType: 'party.registry.party' },
+    });
+    const compose = (input: {
+      readonly decision?: ContextAccessDecision;
+      readonly excluded?: readonly string[];
+      readonly state?: TenantModuleState;
+    }) =>
+      makeShellComposition({
+        catalog: Effect.succeed(approvedCatalog),
+        contextAccess: contextAccess({ 'party.registry': input.decision ?? 'allowed' }),
+        moduleStates: {
+          getTenantModuleStates: (_tenantId, moduleIds) =>
+            Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: input.state ?? 'active' }))),
+        },
+        navigationExclusions: {
+          listExcludedEntrypoints: () => Effect.succeed(new Set(input.excluded)),
+        },
+      }).compose(context);
+
+    expect(recordDestinationsOf(yield* compose({}))).toEqual([partyRecordDestination]);
+    // A module the person definitely cannot open, or one whose access the Shell cannot determine, declares nothing.
+    expect(recordDestinationsOf(yield* compose({ decision: 'denied' }))).toEqual([]);
+    expect(recordDestinationsOf(yield* compose({ decision: 'unavailable' }))).toEqual([]);
+    // A lifecycle that is not visible carries no destination, exactly like its navigation.
+    expect(recordDestinationsOf(yield* compose({ state: 'inactive' }))).toEqual([]);
+    // The selected company's own exclusion of the declaring page removes it too.
+    expect(recordDestinationsOf(yield* compose({ excluded: ['party.registry.page.party-identity'] }))).toEqual([]);
+
+    // A record page that declares no record target contributes nothing; the document keeps its older shape.
+    const withoutTarget = yield* catalogWithRecordPage();
+    const plain = yield* makeShellComposition({
+      catalog: Effect.succeed(withoutTarget),
+      contextAccess: contextAccess({ 'party.registry': 'allowed' }),
+      moduleStates: {
+        getTenantModuleStates: (_tenantId, moduleIds) =>
+          Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' as const }))),
+      },
+      navigationExclusions: noExclusions,
+    }).compose(context);
+    expect('recordDestinations' in plain).toBe(false);
+    expect(recordDestinationsOf(plain)).toEqual([]);
+  }),
+);
+
+it.effect('selection_required composes no destinations and invents no capability', () =>
+  Effect.gen(function* selectionRequiredComposesNoDestinations() {
+    const approvedCatalog = yield* catalogWithRecordPage({
+      recordTarget: { idParameter: 'partyId', resourceType: 'party.registry.party' },
+    });
+    const result = yield* makeShellComposition({
+      catalog: Effect.succeed(approvedCatalog),
+      contextAccess: contextAccess({ 'party.registry': 'allowed' }),
+      moduleStates: {
+        getTenantModuleStates: (_tenantId, moduleIds) =>
+          Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' as const }))),
+      },
+      navigationExclusions: noExclusions,
+    }).compose({ principalId, tenantId });
+    expect(result).toEqual({ navigation: [], state: 'selection_required' });
   }),
 );
 

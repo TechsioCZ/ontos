@@ -204,6 +204,7 @@ const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): Hom
       },
     ],
     moduleIds: [inventoryModuleId],
+    recordDestinations: [],
     state: 'available',
     unavailableDeployments: [],
   },
@@ -587,7 +588,14 @@ it('keeps an admitted company selectable with a clear empty state when no role g
       initialModel={{
         ...model,
         homeContribution: { state: 'forbidden' },
-        navigation: { deniedAppIds: [], items: [], moduleIds: [], state: 'available', unavailableDeployments: [] },
+        navigation: {
+          deniedAppIds: [],
+          items: [],
+          moduleIds: [],
+          recordDestinations: [],
+          state: 'available',
+          unavailableDeployments: [],
+        },
       }}
     />,
   );

@@ -21,6 +21,7 @@ const expose = Schema.String.check(
   Schema.isPattern(/^\.\/[A-Za-z][A-Za-z0-9._-]*(?:\/[A-Za-z][A-Za-z0-9._-]*)*$/u),
 );
 const routeParameterPattern = /^:(?<name>[a-z][A-Za-z0-9]*)$/u;
+const routeParameterName = Schema.String.check(Schema.isPattern(/^[a-z][A-Za-z0-9]*$/u));
 const routeLocalePrefixPattern = /^[a-z]{2}(?:-[a-z]{2})?$/u;
 const routePath = Schema.String.check(
   Schema.isMinLength(2),
@@ -48,6 +49,16 @@ const routePath = Schema.String.check(
     }),
   ),
 );
+
+/** The parameter names one already-validated page route template declares, in route order. */
+const pageRouteParameters = (path: string): readonly string[] =>
+  path
+    .slice(1)
+    .split('/')
+    .flatMap((segment) => {
+      const name = routeParameterPattern.exec(segment)?.groups?.['name'];
+      return name === undefined ? [] : [name];
+    });
 
 /** Native Shell screens and ingress prefixes are never installable module page roots. */
 const reservedShellRouteRoots = new Set([
@@ -185,11 +196,25 @@ export const ShellNavigationContributionSchema = Schema.Struct({
   requiresCapability: Schema.optionalKey(Schema.Literals(SHELL_NAVIGATION_CAPABILITIES)),
 });
 
+/**
+ * The record a governed page opens: the page's own route parameter and the resource type that parameter identifies.
+ * Both are semantic names the owner already declares, never a record route value.
+ */
+export const ShellPageRecordTargetSchema = Schema.Struct({
+  idParameter: routeParameterName,
+  resourceType: stableKey,
+});
+
 export const ShellPageContributionSchema = Schema.Struct({
   componentKey,
   contributionKey,
   entrypoint: pageEntrypoint,
   expose,
+  /**
+   * The resource a page opens. `idParameter` must be the page's only route parameter and `resourceType` must be a type
+   * the declaring module publishes, so the Shell can open the owner's exact record page from composed evidence.
+   */
+  recordTarget: Schema.optionalKey(ShellPageRecordTargetSchema),
   routePath,
 });
 
@@ -291,6 +316,37 @@ const validatePageReferences = (
   return undefined;
 };
 
+/**
+ * A page's record target is bound to that page: the parameter must be the page route's only parameter, and the type
+ * must be one this module publishes. One page per type keeps the Shell's exact lookup unambiguous; a second page for
+ * the same record type is a manifest error, not a runtime choice.
+ */
+const validatePageRecordTargets = (
+  contributions: OntosShellContributions,
+  references: ShellContributionReferenceSets,
+): string | undefined => {
+  const declared = new Set<string>();
+  for (const page of contributions.pages) {
+    const target = page.recordTarget;
+    if (target === undefined) {
+      continue;
+    }
+    const resourceIssue = referenceIssue(references.resourceTypeKeys, target.resourceType, 'page record target');
+    if (resourceIssue !== undefined) {
+      return resourceIssue;
+    }
+    const parameters = pageRouteParameters(page.routePath);
+    if (parameters.length !== 1 || parameters[0] !== target.idParameter) {
+      return `page record target must name the only route parameter of ${page.routePath}`;
+    }
+    if (declared.has(target.resourceType)) {
+      return `ambiguous page record destinations for resource type ${target.resourceType}`;
+    }
+    declared.add(target.resourceType);
+  }
+  return undefined;
+};
+
 const validateDiscoveryReferences = (
   contributions: OntosShellContributions,
   references: ShellContributionReferenceSets,
@@ -381,6 +437,7 @@ const validateReferences = (
     }
   }
   return (
+    validatePageRecordTargets(contributions, references) ??
     validatePageReferences(contributions, references) ??
     validateDiscoveryReferences(contributions, references) ??
     validateResourceReferences(contributions, references) ??

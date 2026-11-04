@@ -618,6 +618,32 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
         return remote === undefined ? [item] : [{ ...item, remote }];
       });
     });
+    /**
+     * The owner pages that open one record type, gated like a navigation destination: the module is visible, the person
+     * may open it, and the selected company does not exclude the declaring page. A destination is bound to the exact
+     * module and resource type its owner declared; the Shell looks it up by that pair and by nothing else.
+     */
+    const recordDestinations = catalog.contracts.flatMap((contract) => {
+      const moduleId = contract.manifest.module.id;
+      const state = states.get(moduleId);
+      const permission = permissionByModule.get(moduleId);
+      if (state === undefined || !isVisibleState(state) || permission !== 'allowed') {
+        return [];
+      }
+      return contract.manifest.publicSurface.shellContributions.pages.flatMap((page) => {
+        const target = page.recordTarget;
+        return target === undefined || excludedEntrypoints.has(page.entrypoint.entrypointKey)
+          ? []
+          : [
+              {
+                idParameter: target.idParameter,
+                moduleId,
+                resourceType: target.resourceType,
+                routePath: page.routePath,
+              },
+            ];
+      });
+    });
     const appIds = [...new Set(catalog.contracts.map((contract) => contract.deployment.appId))].toSorted();
     // A deployment counts as denied only when access to every module it serves is definitely denied.
     const deniedAppIds = appIds.filter((appId) =>
@@ -630,50 +656,62 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
     const unavailableAppIds = new Set(
       catalog.deploymentStatuses.flatMap((deployment) => (deployment.status === 'available' ? [] : [deployment.appId])),
     );
-    const composition = yield* Schema.decodeEffect(ShellCompositionSchema)({
-      compositionRevision: catalog.composition.revision,
-      deniedAppIds,
-      gatewayAudiences: appIds.filter((appId) => !denied.has(appId) && !unavailableAppIds.has(appId)),
-      homeComponents: catalog.contracts
-        .flatMap((contract) => {
-          const permission = permissionByModule.get(contract.manifest.module.id);
-          return permission === 'allowed'
-            ? contract.manifest.publicSurface.shellContributions.publicComponents.flatMap(({ entrypoint, home }) =>
-                home === undefined
-                  ? []
-                  : [
-                      {
-                        entrypointKey: entrypoint.entrypointKey,
-                        moduleId: entrypoint.moduleKey,
-                        order: Number(home.order),
-                        requiresModules: home.requiresModules,
-                      },
-                    ],
-              )
-            : [];
-        })
-        .toSorted((left, right) => left.order - right.order || left.entrypointKey.localeCompare(right.entrypointKey)),
-      navigation: navigation.toSorted(
-        (left, right) =>
-          left.order - right.order ||
-          left.label.cs.localeCompare(right.label.cs) ||
-          left.moduleId.localeCompare(right.moduleId),
+    const composition = yield* Schema.decodeEffect(ShellCompositionSchema)(
+      withOptionalProperty(
+        {
+          compositionRevision: catalog.composition.revision,
+          deniedAppIds,
+          gatewayAudiences: appIds.filter((appId) => !denied.has(appId) && !unavailableAppIds.has(appId)),
+          homeComponents: catalog.contracts
+            .flatMap((contract) => {
+              const permission = permissionByModule.get(contract.manifest.module.id);
+              return permission === 'allowed'
+                ? contract.manifest.publicSurface.shellContributions.publicComponents.flatMap(({ entrypoint, home }) =>
+                    home === undefined
+                      ? []
+                      : [
+                          {
+                            entrypointKey: entrypoint.entrypointKey,
+                            moduleId: entrypoint.moduleKey,
+                            order: Number(home.order),
+                            requiresModules: home.requiresModules,
+                          },
+                        ],
+                  )
+                : [];
+            })
+            .toSorted(
+              (left, right) => left.order - right.order || left.entrypointKey.localeCompare(right.entrypointKey),
+            ),
+          navigation: navigation.toSorted(
+            (left, right) =>
+              left.order - right.order ||
+              left.label.cs.localeCompare(right.label.cs) ||
+              left.moduleId.localeCompare(right.moduleId),
+          ),
+        },
+        // Absent when no composed page declares a record destination, so every existing document decodes unchanged.
+        recordDestinations.length > 0,
+        'recordDestinations',
+        recordDestinations,
+        {
+          state: 'available' as const,
+          unavailableDeployments: catalog.deploymentStatuses.flatMap((deployment) =>
+            deployment.status === 'available'
+              ? []
+              : [
+                  deployment.status === 'unavailable'
+                    ? {
+                        appId: deployment.appId,
+                        reason: deployment.reason,
+                        status: deployment.status,
+                      }
+                    : { appId: deployment.appId, status: deployment.status },
+                ],
+          ),
+        },
       ),
-      state: 'available',
-      unavailableDeployments: catalog.deploymentStatuses.flatMap((deployment) =>
-        deployment.status === 'available'
-          ? []
-          : [
-              deployment.status === 'unavailable'
-                ? {
-                    appId: deployment.appId,
-                    reason: deployment.reason,
-                    status: deployment.status,
-                  }
-                : { appId: deployment.appId, status: deployment.status },
-            ],
-      ),
-    }).pipe(Effect.mapError((cause) => new ShellCompositionUnavailableErrorConstructor({ cause })));
+    ).pipe(Effect.mapError((cause) => new ShellCompositionUnavailableErrorConstructor({ cause })));
     if (composition.state !== 'available') {
       return yield* new ShellCompositionUnavailableErrorConstructor({
         cause: 'Shell composition decoded to an unexpected state',

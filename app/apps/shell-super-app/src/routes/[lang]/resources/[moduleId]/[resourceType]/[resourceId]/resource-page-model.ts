@@ -65,11 +65,12 @@ export const loader = ({ params, request }: ResourceLoaderArguments): Promise<Re
                 resource.ref.moduleId === params.moduleId &&
                 resource.ref.resourceType === params.resourceType &&
                 resource.ref.resourceId === params.resourceId;
+              const composed = shell.navigation.state === 'available' ? shell.navigation : undefined;
               const target = sameRef
                 ? ownerRecordTarget(
                     resource.ref,
                     shell.selectedLegalEntityId,
-                    shellSearchPresentationContext(shell.navigation.items),
+                    shellSearchPresentationContext(composed?.items ?? [], composed?.recordDestinations ?? []),
                   )
                 : undefined;
               if (target !== undefined) {

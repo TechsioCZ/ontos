@@ -169,8 +169,9 @@ const searchWithFilters = ({
 }): Effect.Effect<SearchPageModel, ShellSearchClientError> =>
   searchResources({ compositionRevision, query }, options).pipe(
     Effect.flatMap((unfiltered) => {
+      const composed = shell.navigation.state === 'available' ? shell.navigation : undefined;
       const plan = planShellSearchFilters({
-        context: shellSearchPresentationContext(shell.navigation.items),
+        context: shellSearchPresentationContext(composed?.items ?? [], composed?.recordDestinations ?? []),
         partial: unfiltered.partial,
         requestedFamilies,
         results: unfiltered.results,
