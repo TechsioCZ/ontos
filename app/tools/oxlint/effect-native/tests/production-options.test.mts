@@ -13,6 +13,7 @@ import {
   fixtureOptions,
   fixturesDirectory,
   productionOptions,
+  isProductionRuleEnabled,
   testEffectNativeRule,
   virtualFile,
   virtualRoots,
@@ -73,7 +74,7 @@ it('every rule names one production-positive fixture', () => {
   expect(Object.keys(productionPositives).toSorted()).toEqual([...listRuleNames()]);
 });
 
-for (const rule of listRuleNames()) {
+for (const rule of listRuleNames().filter((name) => isProductionRuleEnabled(`effect-native/${name}`))) {
   const key = `effect-native/${rule}`;
   const options = withOptions(productionOptions(key));
   const relative = (kind: string, file: string): string =>

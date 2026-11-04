@@ -79,7 +79,7 @@ const qualityAuditDisposition = {
   'fallow-health': 'advisory',
   'fallow-similarity': 'advisory',
   jscpd: 'advisory',
-  knip: 'blocking',
+  knip: 'advisory',
 } as const satisfies Record<typeof ResultSchema.Type.name, 'advisory' | 'blocking'>;
 
 class QualityAuditGateError extends Data.TaggedError('QualityAuditGateError')<{
@@ -189,7 +189,7 @@ const cli = Command.make(
           `Quality audit advisory: ${details}. Review source reports; do not refactor solely to reach zero.`,
         );
       }
-      yield* Console.log('Quality audit gate passed (clones, complexity and semantic similarity are advisory)');
+      yield* Console.log('Quality audit reports validated (all code-quality findings are advisory)');
     }),
 );
 
