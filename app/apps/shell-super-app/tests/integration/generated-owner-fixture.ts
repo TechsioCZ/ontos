@@ -463,8 +463,9 @@ export const recordsRead = defineRead(
         const normalized = query.toLocaleLowerCase('en');
         const result = rows
           .filter((row: { readonly title: string }) => row.title.toLocaleLowerCase('en').includes(normalized))
-          .map((row: { readonly resourceId: string; readonly title: string }) => ({
-            ref: { moduleId: '${GENERATED_OWNER.moduleId}', resourceId: row.resourceId, resourceType: '${GENERATED_OWNER.resourceType}' },
+          .map((row: { readonly legalEntityId: string; readonly resourceId: string; readonly tenantId: string; readonly title: string }) => ({
+            ref: { moduleId: '${GENERATED_OWNER.moduleId}', resourceId: row.resourceId, resourceType: '${GENERATED_OWNER.resourceType}', tenantId: row.tenantId },
+            selectedLegalEntityId: row.legalEntityId,
             title: row.title,
           }));
         return { evidence: { resultCount: result.length }, result };
@@ -558,6 +559,24 @@ const adaptGeneratedOwner = Effect.fn('adaptGeneratedOwner')(function* adaptGene
   })),
   projectionLagging: Schema.Boolean,
 })`,
+  );
+  // This owner publishes company-scoped rows. Its BFF codec must retain that scope on the wire.
+  const fileSystem = yield* FileSystem.FileSystem;
+  const searchContractPath = path.join(root, `${verticalRoot}/shared/apis/records-search.ts`);
+  const searchContract = yield* fileSystem.readFileString(searchContractPath);
+  yield* fileSystem.writeFileString(
+    searchContractPath,
+    replaceRequired(
+      searchContract,
+      'ref: Schema.Struct({ moduleId: Schema.String, resourceId: Schema.String, resourceType: Schema.String }),',
+      `ref: Schema.Struct({
+      moduleId: Schema.String,
+      resourceId: Schema.String,
+      resourceType: Schema.String,
+      tenantId: Schema.String.check(Schema.isUUID()),
+    }),
+    selectedLegalEntityId: Schema.String.check(Schema.isUUID()),`,
+    ),
   );
   yield* Effect.all(
     [
