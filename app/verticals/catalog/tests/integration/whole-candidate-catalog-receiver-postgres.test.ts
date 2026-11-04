@@ -121,7 +121,7 @@ const launchReceiver = Effect.fn('CatalogTargetAgreement.launchReceiver')(functi
 
 const runCatalogReceiver = (mode: 'strict-whole-candidate' | 'target-agreement') =>
   Effect.gen(function* actualCatalogWholeCandidateReceiver() {
-    const composition = yield* deriveActualCatalogCompositionSnapshot();
+    const composition = yield* deriveActualCatalogCompositionSnapshot(appRoot);
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: composition,
       mode: 'schema-only',

@@ -948,6 +948,7 @@ const startQuantityPublicReceiver = Effect.fn('QuantityProfileAdmissionTests.pub
       Effect.provide(FetchHttpClient.layer),
       Effect.tapError(() => {
         const knownDiagnostics = [
+          ...Array.from({ length: 500 }, (_, index) => `SOURCE_HTTP_STATUS_${index + 100}`),
           'schema.field.composition',
           'schema.field.observedAt',
           'schema.field.validUntil',

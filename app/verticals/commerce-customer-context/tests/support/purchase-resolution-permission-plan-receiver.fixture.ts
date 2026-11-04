@@ -129,6 +129,17 @@ const observeReadFailure = (
     const known = new Set<string>();
     let current: unknown = error;
     for (let depth = 0; depth < 8 && Schema.is(DiagnosticCauseSchema)(current); depth += 1) {
+      if (
+        Schema.is(Schema.TaggedStruct('ActiveApplicationCompositionSourceReadError', { reason: Schema.String }))(
+          current,
+        )
+      ) {
+        for (let status = 100; status <= 599; status += 1) {
+          if (current.reason === `The active Application Composition source returned HTTP ${status}`) {
+            known.add(`SOURCE_HTTP_STATUS_${status}`);
+          }
+        }
+      }
       const values = new Set([current._tag, current.code, current.reason]);
       for (const label of allowed) {
         if (values.has(label)) {

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { generateKeyPairSync, sign } from 'node:crypto';
 
@@ -601,7 +602,9 @@ export const makeSetComponentFixture = Effect.fn('SetComponentClosure.makeFixtur
   configuration,
   verification,
 }: ReceiverOptions = {}) {
-  const composition = yield* deriveActualCatalogCompositionSnapshot();
+  const composition = yield* deriveActualCatalogCompositionSnapshot(
+    fileURLToPath(new URL('../../../../', import.meta.url)),
+  );
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: composition,
     mode: 'schema-only',

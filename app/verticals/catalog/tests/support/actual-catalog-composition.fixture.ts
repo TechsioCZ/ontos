@@ -112,8 +112,9 @@ const sourceContract = Effect.fn('ActualCatalogComposition.sourceContract')(func
 });
 
 /** Actual owner SOURCE identity and observed MF bytes; no deployed backend/browser receipt is claimed. */
-export const deriveActualCatalogCompositionSnapshot = Effect.fn('ActualCatalogComposition.make')(function* make() {
-  const appRoot = process.cwd();
+export const deriveActualCatalogCompositionSnapshot = Effect.fn('ActualCatalogComposition.make')(function* make(
+  appRoot: string,
+) {
   const fs = yield* FileSystem.FileSystem;
   const boundarySchema = Schema.Struct({ name: Schema.NonEmptyString });
   const topology = yield* Schema.decodeUnknownEffect(
