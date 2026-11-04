@@ -181,17 +181,21 @@ const exchange = (
 ) =>
   Effect.tryPromise({
     catch: (cause) => transportFailure(cause),
-    try: async (signal): Promise<CloudflareExchange> => {
-      const response = await fetchImpl(url, {
-        body,
-        headers: { authorization: `Bearer ${Redacted.value(token)}`, 'content-type': 'application/json' },
-        method: 'POST',
-        signal,
-      });
-      const parsed: unknown = response.ok ? await response.json().catch(() => null) : null;
-      return { body: parsed, status: response.status };
-    },
+    try: fetchImpl.bind(globalThis, url, {
+      body,
+      headers: { authorization: `Bearer ${Redacted.value(token)}`, 'content-type': 'application/json' },
+      method: 'POST',
+    }),
   }).pipe(
+    Effect.flatMap((response) =>
+      response.ok
+        ? Effect.tryPromise({ catch: (cause) => transportFailure(cause), try: response.json.bind(response) }).pipe(
+            // A success status with an unreadable body still reports the status; the caller decodes the body.
+            Effect.orElseSucceed(() => null),
+            Effect.map((parsed): CloudflareExchange => ({ body: parsed, status: response.status })),
+          )
+        : Effect.succeed<CloudflareExchange>({ body: null, status: response.status }),
+    ),
     Effect.timeoutOrElse({
       duration: timeout,
       orElse: () => Effect.fail(timedOut()),
