@@ -60,7 +60,7 @@ const MiniCartLine = ({
 }) => {
   const cart = useCart();
   const value = draft?.value ?? String(entry.quantity);
-  const invalid = !validCartQuantity(Number(value));
+  const invalid = !validCartQuantity(Number(value), entry.minimumQuantity);
   const inputId = `mini-cart-${encodeURIComponent(cartLineKey(entry))}`;
   const image = publicImage(entry.image ?? undefined, cart?.imageHosts ?? []);
   const href = `/${locale}/produkt/${encodeURIComponent(entry.slug)}`;
@@ -105,10 +105,10 @@ const MiniCartLine = ({
             invalid={invalid || draft?.saveError === true}
             locale={locale}
             max={1_000_000}
-            min={0.001}
+            min={entry.minimumQuantity ?? 0.001}
             onValueChange={({ value: next }) => {
               const quantity = Number(next);
-              const valid = validCartQuantity(quantity);
+              const valid = validCartQuantity(quantity, entry.minimumQuantity);
               const saved = valid && (cart?.update(entry, quantity) ?? false);
               onDraft({
                 quantity: saved ? quantity : entry.quantity,
@@ -161,7 +161,13 @@ const MiniCartLine = ({
         </div>
       </div>
       <div className="text-sm" id={`${inputId}-feedback`}>
-        {invalid && <p>{d.shopping.invalidQuantity}</p>}
+        {invalid && (
+          <p>
+            {d.shopping.invalidQuantity}
+            {entry.minimumQuantity !== undefined &&
+              ` ${d.minimumQuantity}: ${entry.minimumQuantity} ${entry.unit}`}
+          </p>
+        )}
         {draft?.saveError === true && <p>{d.shopping.addFailed}</p>}
         {issueMessages.map((message) => (
           <p key={message}>{message}</p>

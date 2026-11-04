@@ -6,13 +6,16 @@ import type { CartScope } from "@/ontos/cart-quote";
 const CartEntrySchema = Schema.Struct({
   ...CartQuoteLineSchema.fields,
   image: Schema.NullOr(Schema.String.check(Schema.isMaxLength(500))),
+  minimumQuantity: Schema.optionalKey(
+    Schema.Finite.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(1_000_000)),
+  ),
   name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
   quantity: Schema.Finite.check(Schema.isBetween({ maximum: 1_000_000, minimum: 0.001 })),
   sku: Schema.String.check(Schema.isMaxLength(300)),
   slug: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
   unit: Schema.String.check(Schema.isMaxLength(100)),
   variantName: Schema.String.check(Schema.isMaxLength(300)),
-});
+}).check(Schema.makeFilter((entry) => entry.quantity >= (entry.minimumQuantity ?? 0.001)));
 export type CartEntry = typeof CartEntrySchema.Type;
 export const cartLineKey = (line: { productId: string; variantId?: string }) =>
   JSON.stringify([line.productId, line.variantId ?? null]);
@@ -40,19 +43,25 @@ export const decodeStoredCart = (raw: string, scope: CartScope) =>
     ),
     Effect.mapError(() => new CartDraftInvalid()),
   );
-export const addCartEntry = (entries: readonly CartEntry[], entry: CartEntry) => {
-  const key = cartLineKey(entry);
-  const existing = entries.find((line) => cartLineKey(line) === key);
-  const updated =
-    existing === undefined
-      ? [...entries, entry]
-      : entries.map((line) =>
-          cartLineKey(line) === key ? { ...entry, quantity: line.quantity + entry.quantity } : line,
-        );
-  return Schema.decodeUnknownEffect(EntriesSchema)(updated).pipe(
+export const addCartEntry = (entries: readonly CartEntry[], entry: CartEntry) =>
+  Schema.decodeUnknownEffect(CartEntrySchema)(entry).pipe(
+    Effect.flatMap((incoming) => {
+      const key = cartLineKey(incoming);
+      const existing = entries.find((line) => cartLineKey(line) === key);
+      const minimumQuantity = incoming.minimumQuantity ?? existing?.minimumQuantity;
+      const latest = minimumQuantity === undefined ? incoming : { ...incoming, minimumQuantity };
+      const updated =
+        existing === undefined
+          ? [...entries, latest]
+          : entries.map((line) =>
+              cartLineKey(line) === key
+                ? { ...latest, quantity: line.quantity + incoming.quantity }
+                : line,
+            );
+      return Schema.decodeUnknownEffect(EntriesSchema)(updated);
+    }),
     Effect.mapError(() => new CartDraftInvalid()),
   );
-};
 export const replaceCartQuantity = (
   entries: readonly CartEntry[],
   entry: CartEntry,

@@ -327,7 +327,7 @@ const cs = {
     increaseQuantity: "Zvýšit množství",
     invalidDraft:
       "Nejdřív opravte množství. Zobrazené uložené ceny nejsou ověřené pro tento návrh.",
-    invalidQuantity: "Zadejte platné množství od 0,001 do 1 000 000.",
+    invalidQuantity: "Zadejte platné množství.",
     issues: {
       AVAILABILITY_UNKNOWN: "Dostupnost nelze potvrdit.",
       INSUFFICIENT_STOCK: "Pro toto množství není dostatečná zásoba.",
@@ -712,7 +712,7 @@ const en: typeof cs = {
     feesNote: "Shipping and payment are not included.",
     increaseQuantity: "Increase quantity",
     invalidDraft: "Correct the quantity first. Saved prices have not been verified for this draft.",
-    invalidQuantity: "Enter a valid quantity between 0.001 and 1,000,000.",
+    invalidQuantity: "Enter a valid quantity.",
     issues: {
       AVAILABILITY_UNKNOWN: "Availability cannot be confirmed.",
       INSUFFICIENT_STOCK: "There is not enough stock for this quantity.",

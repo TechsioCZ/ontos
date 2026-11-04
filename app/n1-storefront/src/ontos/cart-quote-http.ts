@@ -1,5 +1,5 @@
 import "server-only";
-import { ByteSize, Effect, Layer, ManagedRuntime, Match } from "effect";
+import { ByteSize, Effect, Layer, ManagedRuntime, Match, Struct } from "effect";
 import {
   FetchHttpClient,
   HttpRouter,
@@ -35,13 +35,23 @@ const toProblem = (error: CartQuoteFailure) =>
   Match.value(error.state).pipe(
     Match.when("invalid", invalidProblem),
     Match.when("forbidden", () =>
-      CartQuoteForbiddenProblem.make({ ...details, state: "forbidden", status: 403 }),
+      CartQuoteForbiddenProblem.make({
+        ...details,
+        ...Struct.pick(error, ["diagnostic"]),
+        state: "forbidden",
+        status: 403,
+      }),
     ),
     Match.when("scope-mismatch", () =>
       CartQuoteScopeProblem.make({ ...details, state: "scope-mismatch", status: 409 }),
     ),
     Match.when("unavailable", () =>
-      CartQuoteUnavailableProblem.make({ ...details, state: "unavailable", status: 503 }),
+      CartQuoteUnavailableProblem.make({
+        ...details,
+        ...Struct.pick(error, ["diagnostic"]),
+        state: "unavailable",
+        status: 503,
+      }),
     ),
     Match.exhaustive,
   );

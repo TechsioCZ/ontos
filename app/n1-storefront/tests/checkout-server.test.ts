@@ -1,7 +1,8 @@
 import { describe, expect } from "@rstest/core";
 import { it } from "effect-rstest";
-import { Effect, Result, Schema } from "effect";
+import { Effect, Fiber, Result, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
+import { TestClock } from "effect/testing";
 import type { OrderSchema } from "@app/merchandise/domain/merchandise-model";
 import type { StorefrontConfiguration } from "../src/ontos/config";
 import { CheckoutRequestSchema, CheckoutResultSchema } from "../src/ontos/checkout";
@@ -69,12 +70,59 @@ const order = {
 interface BackendOptions {
   readonly actionStatus?: number;
   readonly badPlacedProof?: boolean;
+  readonly catalogBody?: unknown;
+  readonly catalogStall?: boolean;
+  readonly catalogStatus?: number;
   readonly countryCodes?: readonly string[];
-  readonly existingOrder?: typeof order;
+  readonly existingOrder?: typeof OrderSchema.Encoded;
   readonly locale?: "cs" | "en";
   readonly noReceipt?: boolean;
   readonly shippingPriceMinor?: number;
 }
+const readHeaders = {
+  "x-ontos-gateway-context": JSON.stringify({
+    apiBaseUrl: "/shell-super-app-api/gateway/merchandise",
+    compositionRevision: "a".repeat(64),
+    expiresAt: 9_999_999_999,
+    token: "redeemed-read-token",
+  }),
+};
+const catalogResponse = (productIds: readonly string[], options: BackendOptions) => {
+  if (options.catalogStall === true) {
+    // An open transport response body exercises the optional read deadline without a new Effect root.
+    return new Response(new ReadableStream(), { headers: readHeaders });
+  }
+  if (options.catalogStatus !== undefined) {
+    return Response.json({}, { status: options.catalogStatus });
+  }
+  return Response.json(
+    options.catalogBody ?? {
+      market: { configured: true, currency: "CZK", marketId },
+      products: productIds.map((id) => ({
+        grossPriceMinor: 999_999,
+        id,
+        imageSrc: "media:a973f79c-0f97-476f-a003-f6db822156fb",
+        name: "Renamed current product",
+        slug: `${id}-current-slug`,
+      })),
+    },
+    { headers: readHeaders },
+  );
+};
+const savedLine = (index: number): (typeof OrderSchema.Encoded)["lines"][number] => ({
+  productId: `product-${index + 1}`,
+  productName: `Saved product ${index + 1}`,
+  quantity: 2,
+  sku: `SKU-${index + 1}`,
+  unitPriceMinor: 1210,
+  vatRate: 21,
+});
+const receiptOrders = (placed: boolean, options: BackendOptions) => {
+  if (options.existingOrder !== undefined) {
+    return [options.existingOrder];
+  }
+  return placed ? [order] : [];
+};
 const backend = (options: BackendOptions = {}) => {
   const calls: Request[] = [];
   const countryCodes = options.countryCodes ?? ["CZ"];
@@ -115,6 +163,8 @@ const backend = (options: BackendOptions = {}) => {
             },
           ],
         };
+      } else if (payload.query.view.storefrontCatalog?.productIds !== undefined) {
+        return catalogResponse(payload.query.view.storefrontCatalog.productIds, options);
       } else if (payload.query.view.orderClientRequestId === undefined) {
         body = {
           checkout: {
@@ -129,26 +179,9 @@ const backend = (options: BackendOptions = {}) => {
         if (placed && options.noReceipt === true) {
           return Response.json({}, { status: 503 });
         }
-        const orders = [];
-        if (options.existingOrder === undefined) {
-          if (placed) {
-            orders.push(order);
-          }
-        } else {
-          orders.push(options.existingOrder);
-        }
-        body = { orders };
+        body = { orders: receiptOrders(placed, options) };
       }
-      return Response.json(body, {
-        headers: {
-          "x-ontos-gateway-context": JSON.stringify({
-            apiBaseUrl: "/shell-super-app-api/gateway/merchandise",
-            compositionRevision: "a".repeat(64),
-            expiresAt: 9_999_999_999,
-            token: "redeemed-read-token",
-          }),
-        },
-      });
+      return Response.json(body, { headers: readHeaders });
     }
     if (path.endsWith("/gateway-context")) {
       return Response.json({
@@ -407,7 +440,7 @@ describe("owner-backed guest checkout", () => {
         },
         state: "confirmed",
       });
-      expect(owner.calls).toHaveLength(3);
+      expect(owner.calls).toHaveLength(4);
       expect(
         owner.calls.every((call) => new URL(call.url).pathname.endsWith("/gateway-read")),
       ).toBe(true);
@@ -421,6 +454,214 @@ describe("owner-backed guest checkout", () => {
       });
       expect(JSON.stringify(result)).not.toContain("customerAccountId");
       expect(JSON.stringify(result)).not.toContain("partyId");
+      expect(result).toMatchObject({
+        result: {
+          lines: [{ name: "Triko", quantity: 2, unitPriceMinor: 1210 }],
+          productPresentation: [
+            {
+              image: "/obrazky/product-1/a973f79c-0f97-476f-a003-f6db822156fb",
+              productId: "product-1",
+              slug: "product-1-current-slug",
+            },
+          ],
+          totalMinor: 15_320,
+          totalVatMinor: 2659,
+        },
+      });
+      const catalog = yield* Effect.promise(() => owner.calls[3]?.json());
+      expect(catalog).toMatchObject({
+        audience: "merchandise",
+        legalEntityId: config.legalEntityId,
+        query: {
+          view: {
+            storefront: true,
+            storefrontCatalog: {
+              fields: "card",
+              includeCategories: false,
+              marketId,
+              pageSize: 1,
+              productIds: ["product-1"],
+            },
+          },
+        },
+        readName: "records",
+      });
+    }),
+  );
+  it.effect("enriches fifty exact products in three bounded card reads", () =>
+    Effect.gen(function* boundedReceiptMedia() {
+      const lines = Array.from({ length: 50 }).map((_, index) => savedLine(index));
+      const owner = backend({ existingOrder: { ...order, lines } });
+      const recovery = yield* recoverCheckoutWithConfiguration(config, {
+        clientRequestId,
+        locale: "cs",
+        scope,
+      }).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+      );
+      expect(recovery.state).toBe("confirmed");
+      if (recovery.state === "confirmed") {
+        expect(recovery.result.productPresentation).toHaveLength(50);
+        expect(recovery.result.lines.map((line) => line.name)).toEqual(
+          lines.map((line) => line.productName),
+        );
+        expect(recovery.result.lines.every((line) => line.unitPriceMinor === 1210)).toBe(true);
+        expect(recovery.result.totalMinor).toBe(15_320);
+      }
+      const reads = yield* Effect.all(
+        owner.calls.map((call) => Effect.promise(() => call.json())),
+        { concurrency: 1 },
+      );
+      const catalogs = reads.filter(
+        (read) => read.query.view?.storefrontCatalog?.productIds !== undefined,
+      );
+      expect(catalogs.map((read) => read.query.view.storefrontCatalog.productIds.length)).toEqual([
+        24, 24, 2,
+      ]);
+      expect(catalogs.map((read) => read.query.view.storefrontCatalog.pageSize)).toEqual([
+        24, 24, 2,
+      ]);
+      expect(
+        catalogs.every(
+          (read) =>
+            read.legalEntityId === config.legalEntityId &&
+            read.query.view.storefrontCatalog.marketId === marketId &&
+            read.query.view.storefrontCatalog.fields === "card",
+        ),
+      ).toBe(true);
+      expect(catalogs.flatMap((read) => read.query.view.storefrontCatalog.productIds)).toEqual(
+        lines.map((line) => line.productId),
+      );
+      expect(owner.calls).toHaveLength(6);
+    }),
+  );
+  it.effect("deduplicates product reads while preserving separate saved variants", () =>
+    Effect.gen(function* sharedProductMedia() {
+      const lines = ["small", "large"].map(
+        (variantId): (typeof OrderSchema.Encoded)["lines"][number] => ({
+          productId: "product-1",
+          productName: "Saved shirt",
+          quantity: 2,
+          sku: variantId,
+          unitPriceMinor: 1210,
+          variantId,
+          variantName: `Saved ${variantId}`,
+          vatRate: 21,
+        }),
+      );
+      const owner = backend({ existingOrder: { ...order, lines } });
+      const recovery = yield* recoverCheckoutWithConfiguration(config, {
+        clientRequestId,
+        locale: "cs",
+        scope,
+      }).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+      );
+      expect(recovery).toMatchObject({
+        result: {
+          lines: [{ variantName: "Saved small" }, { variantName: "Saved large" }],
+          productPresentation: [{ productId: "product-1" }],
+        },
+        state: "confirmed",
+      });
+      const catalog = yield* Effect.promise(() => owner.calls[3]?.json());
+      expect(catalog.query.view.storefrontCatalog.productIds).toEqual(["product-1"]);
+      expect(owner.calls).toHaveLength(4);
+    }),
+  );
+  const catalogProduct = { id: "product-1", name: "Current name", slug: "current-slug" };
+  const catalogMarket = { configured: true, currency: "CZK", marketId };
+  for (const catalogBody of [
+    { market: { ...catalogMarket, configured: false }, products: [catalogProduct] },
+    { market: { ...catalogMarket, currency: "EUR" }, products: [catalogProduct] },
+    { market: { ...catalogMarket, marketId: "foreign-market" }, products: [catalogProduct] },
+    { market: catalogMarket, products: [{ ...catalogProduct, id: "unrequested-product" }] },
+    { market: catalogMarket, products: [catalogProduct, catalogProduct] },
+    { market: catalogMarket, products: [{ id: "product-1" }] },
+    { market: catalogMarket, products: [{ ...catalogProduct, slug: "" }] },
+  ]) {
+    it.effect(
+      `keeps confirmed order when optional catalog data is invalid ${JSON.stringify(catalogBody)}`,
+      () =>
+        Effect.gen(function* optionalMediaCannotLoseOrder() {
+          const owner = backend({ catalogBody, existingOrder: order });
+          const recovery = yield* recoverCheckoutWithConfiguration(config, {
+            clientRequestId,
+            locale: "cs",
+            scope,
+          }).pipe(
+            Effect.provide(FetchHttpClient.layer),
+            Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+          );
+          expect(recovery).toMatchObject({
+            result: {
+              lines: [{ name: "Triko", quantity: 2, unitPriceMinor: 1210 }],
+              orderId: "order-1",
+              outcome: "REPLAYED",
+              totalMinor: 15_320,
+              totalVatMinor: 2659,
+            },
+            state: "confirmed",
+          });
+          if (recovery.state === "confirmed") {
+            expect(recovery.result).not.toHaveProperty("productPresentation");
+          }
+          expect(owner.calls).toHaveLength(4);
+        }),
+    );
+  }
+  it.effect(
+    "keeps confirmation after optional media denial and skips more than fifty product IDs",
+    () =>
+      Effect.gen(function* optionalMediaBounds() {
+        const scenarios: readonly BackendOptions[] = [
+          { catalogStatus: 403, existingOrder: order },
+          {
+            existingOrder: {
+              ...order,
+              lines: Array.from({ length: 51 }).map((_, index) => savedLine(index)),
+            },
+          },
+        ];
+        for (const options of scenarios) {
+          const owner = backend(options);
+          const recovery = yield* recoverCheckoutWithConfiguration(config, {
+            clientRequestId,
+            locale: "cs",
+            scope,
+          }).pipe(
+            Effect.provide(FetchHttpClient.layer),
+            Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+          );
+          expect(recovery.state).toBe("confirmed");
+          if (recovery.state === "confirmed") {
+            expect(recovery.result).not.toHaveProperty("productPresentation");
+          }
+          expect(owner.calls).toHaveLength(options.catalogStatus === 403 ? 4 : 3);
+        }
+      }),
+  );
+  it.effect("times out only optional receipt media while keeping the confirmed order", () =>
+    Effect.gen(function* optionalMediaDeadline() {
+      const owner = backend({ catalogStall: true, existingOrder: order });
+      const fiber = yield* Effect.forkChild(
+        recoverCheckoutWithConfiguration(config, { clientRequestId, locale: "cs", scope }).pipe(
+          Effect.provide(FetchHttpClient.layer),
+          Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+        ),
+      );
+      yield* TestClock.adjust("3 seconds");
+      const recovery = yield* Fiber.join(fiber);
+      expect(recovery).toMatchObject({
+        result: { orderId: "order-1", outcome: "REPLAYED", totalMinor: 15_320 },
+        state: "confirmed",
+      });
+      if (recovery.state === "confirmed") {
+        expect(recovery.result).not.toHaveProperty("productPresentation");
+      }
+      expect(owner.calls).toHaveLength(4);
     }),
   );
   for (const foreign of [

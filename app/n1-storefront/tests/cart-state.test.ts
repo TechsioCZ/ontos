@@ -27,6 +27,82 @@ const entry = {
   variantName: "Large",
 };
 describe("N1 scoped local cart", () => {
+  it.effect("retains the selected minimum through persistence and rejects smaller quantities", () =>
+    Effect.gen(function* minimumSnapshot() {
+      const selected = { ...entry, minimumQuantity: 1, quantity: 1 };
+      const entries = yield* addCartEntry([], selected);
+      const restored = yield* decodeStoredCart(
+        JSON.stringify({ entries, scope, version: 1 }),
+        scope,
+      );
+      expect(restored.entries).toEqual([selected]);
+      const failure = yield* Effect.flip(replaceCartQuantity(restored.entries, selected, 0.001));
+      expect(failure).toBeInstanceOf(CartDraftInvalid);
+      expect(restored.entries[0]?.quantity).toBe(1);
+      const invalidAddition = yield* Effect.flip(
+        addCartEntry(entries, { ...selected, quantity: 0.001 }),
+      );
+      expect(invalidAddition).toBeInstanceOf(CartDraftInvalid);
+      const invalidStored = yield* Effect.flip(
+        decodeStoredCart(
+          JSON.stringify({ entries: [{ ...selected, quantity: 0.001 }], scope, version: 1 }),
+          scope,
+        ),
+      );
+      expect(invalidStored).toBeInstanceOf(CartDraftInvalid);
+    }),
+  );
+  it.effect("allows fractional owner minima and keeps legacy drafts without guessed minima", () =>
+    Effect.gen(function* fractionalMinimum() {
+      const selected = { ...entry, minimumQuantity: 0.25, quantity: 0.5 };
+      const entries = yield* addCartEntry([], selected);
+      const updated = yield* replaceCartQuantity(entries, selected, 0.25);
+      expect(updated[0]?.quantity).toBe(0.25);
+      expect(updated[0]?.minimumQuantity).toBe(0.25);
+      const legacy = yield* decodeStoredCart(
+        JSON.stringify({ entries: [{ ...entry, quantity: 0.001 }], scope, version: 1 }),
+        scope,
+      );
+      expect(legacy.entries[0]?.quantity).toBe(0.001);
+      expect(legacy.entries[0]).not.toHaveProperty("minimumQuantity");
+    }),
+  );
+  it.effect("rejects malformed minimum snapshots instead of silently dropping them", () =>
+    Effect.gen(function* invalidMinimum() {
+      for (const minimumQuantity of [0, -1, 1_000_001, "1", null]) {
+        const failure = yield* Effect.flip(
+          decodeStoredCart(
+            JSON.stringify({ entries: [{ ...entry, minimumQuantity }], scope, version: 1 }),
+            scope,
+          ),
+        );
+        expect(failure).toBeInstanceOf(CartDraftInvalid);
+      }
+      for (const minimumQuantity of [Number.NaN, Number.POSITIVE_INFINITY]) {
+        const failure = yield* Effect.flip(addCartEntry([], { ...entry, minimumQuantity }));
+        expect(failure).toBeInstanceOf(CartDraftInvalid);
+      }
+    }),
+  );
+  it.effect("uses the latest exact selection minimum and preserves unrelated variants", () =>
+    Effect.gen(function* latestMinimum() {
+      const selected = { ...entry, minimumQuantity: 1 };
+      const other = { ...entry, minimumQuantity: 0.25, quantity: 0.5, variantId: "v2" };
+      const entries = yield* addCartEntry([selected, other], {
+        ...selected,
+        minimumQuantity: 3,
+        quantity: 3,
+      });
+      expect(entries[0]?.minimumQuantity).toBe(3);
+      expect(entries[0]?.quantity).toBe(5);
+      expect(entries[1]).toEqual(other);
+      const failure = yield* Effect.flip(replaceCartQuantity(entries, selected, 2));
+      expect(failure).toBeInstanceOf(CartDraftInvalid);
+      const legacyAddition = yield* addCartEntry(entries, entry);
+      expect(legacyAddition[0]?.minimumQuantity).toBe(3);
+      expect(legacyAddition[0]?.quantity).toBe(7);
+    }),
+  );
   it.effect("rejects two individually valid additions that exceed the owner aggregate limit", () =>
     Effect.gen(function* aggregateLimit() {
       const failure = yield* Effect.flip(

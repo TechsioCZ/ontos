@@ -94,15 +94,19 @@ export const CheckoutItems = ({
     <div className="flex min-w-0 flex-col gap-4">
       {rows.map((line) => {
         const entry = entries.find((item) => cartLineKey(item) === cartLineKey(line));
-        const image = publicImage(entry?.image ?? undefined, imageHosts);
+        const presentation = result?.productPresentation?.find(
+          (item) => item.productId === line.productId,
+        );
+        const image = publicImage(entry?.image ?? presentation?.image ?? undefined, imageHosts);
         const variantSuffix =
           line.variantId === undefined
             ? ""
             : `?${new URLSearchParams({ variantId: line.variantId })}`;
+        const slug = entry?.slug ?? presentation?.slug;
         const target =
-          entry === undefined
+          slug === undefined
             ? null
-            : `/${locale}/produkt/${encodeURIComponent(entry.slug)}${variantSuffix}`;
+            : `/${locale}/produkt/${encodeURIComponent(slug)}${variantSuffix}`;
         return (
           <div className="flex min-w-0 items-start gap-2" key={cartLineKey(line)}>
             {image !== null && (

@@ -13,15 +13,17 @@ import type {
 } from "@app/merchandise/contracts/apply-command";
 import { OrderContactSchema, OrderSchema } from "@app/merchandise/domain/merchandise-model";
 import {
+  CheckoutProductPresentationSchema,
   CheckoutRecoveryRequestSchema,
   CheckoutRequestSchema,
   CheckoutResultSchema,
 } from "./checkout";
-import type { CheckoutRecoveryRequest, CheckoutRequest } from "./checkout";
+import type { CheckoutRecoveryRequest, CheckoutRequest, CheckoutResult } from "./checkout";
 import type { CartScope } from "./cart-quote";
 import { readConfiguration } from "./config";
 import type { StorefrontConfiguration } from "./config";
-import { readOwner } from "./gateway";
+import { readOwner, StorefrontReadUnavailable } from "./gateway";
+import { CatalogResponseSchema, projectCatalog } from "./catalog-model";
 import { storefrontRuntime } from "./runtime";
 import {
   CheckoutFailure,
@@ -175,6 +177,62 @@ const confirmCheckoutResult = (request: CheckoutRequest, result: ApplyCommandRes
 
 const GuestOrderSnapshotSchema = Schema.Struct({ orders: Schema.Array(OrderSchema) });
 
+/** Optional current catalog media never replaces the saved order's names, prices or quantities. */
+const readReceiptPresentation = (
+  config: StorefrontConfiguration,
+  scope: CartScope,
+  lines: CheckoutResult["lines"],
+) =>
+  Effect.gen(function* readReceiptPresentationProgram() {
+    const productIds = [...new Set(lines.map((line) => line.productId))];
+    if (productIds.length > 50) {
+      return [];
+    }
+    const hosts = (process.env.STOREFRONT_IMAGE_HOSTS ?? "")
+      .split(",")
+      .map((host) => host.trim())
+      .filter(Boolean);
+    const presentation: (typeof CheckoutProductPresentationSchema.Encoded)[number][] = [];
+    for (let offset = 0; offset < productIds.length; offset += 24) {
+      const chunk = productIds.slice(offset, offset + 24);
+      const requestedIds = new Set<string>(chunk);
+      const body = yield* readOwner(
+        config,
+        "merchandise",
+        "records",
+        {
+          view: {
+            storefront: true,
+            storefrontCatalog: {
+              fields: "card",
+              includeCategories: false,
+              marketId: scope.marketId,
+              pageSize: chunk.length,
+              productIds: chunk,
+            },
+          },
+        },
+        CatalogResponseSchema,
+      );
+      if (
+        !body.market.configured ||
+        body.market.marketId !== scope.marketId ||
+        body.market.currency !== scope.currency ||
+        body.products.some((product) => !requestedIds.has(product.id)) ||
+        new Set(body.products.map((product) => product.id)).size !== body.products.length
+      ) {
+        return yield* new StorefrontReadUnavailable({ reason: "contract" });
+      }
+      for (const product of projectCatalog(body, hosts).products) {
+        presentation.push({ image: product.image, productId: product.id, slug: product.slug });
+      }
+    }
+    return yield* Schema.decodeUnknownEffect(CheckoutProductPresentationSchema)(presentation);
+  }).pipe(
+    Effect.timeout("2 seconds"),
+    Effect.match({ onFailure: () => [], onSuccess: (presentation) => presentation }),
+  );
+
 /** Public guest nonce lookup returns no catalog rows. Catalog-mode reads do not implement this owner capability. */
 const readGuestReceipt = (config: StorefrontConfiguration, request: CheckoutRecoveryRequest) =>
   Effect.gen(function* readGuestReceiptProgram() {
@@ -236,7 +294,11 @@ const readGuestReceipt = (config: StorefrontConfiguration, request: CheckoutReco
       totalMinor: order.totalMinor,
       totalVatMinor: order.totalVatMinor,
     }).pipe(Effect.mapError(() => new CheckoutFailure({ state: "unavailable" })));
-    return { result, state: "confirmed" as const };
+    const productPresentation = yield* readReceiptPresentation(config, request.scope, result.lines);
+    return {
+      result: productPresentation.length === 0 ? result : { ...result, productPresentation },
+      state: "confirmed" as const,
+    };
   });
 
 export const recoverCheckoutWithConfiguration = (

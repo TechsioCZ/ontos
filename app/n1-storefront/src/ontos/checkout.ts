@@ -38,6 +38,17 @@ const CheckoutReceiptSchema = Schema.Struct({
   shippingMethod: Schema.NullOr(ShippingMethodSchema),
 });
 
+export const CheckoutProductPresentationSchema = Schema.Array(
+  Schema.Struct({
+    image: Schema.NullOr(Schema.String.check(Schema.isMaxLength(500))),
+    productId: StorefrontOrderLineResultSchema.fields.productId,
+    slug: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  }),
+).check(
+  Schema.isMaxLength(50),
+  Schema.makeFilter((items) => new Set(items.map((item) => item.productId)).size === items.length),
+);
+
 /** Amounts include the selected shipping method. Never reuse the goods-only CartQuote. */
 export const CheckoutResultSchema = Schema.Struct({
   issues: CartQuoteSchema.fields.issues,
@@ -51,6 +62,7 @@ export const CheckoutResultSchema = Schema.Struct({
   orderId: Schema.NullOr(Schema.String.check(Schema.isMinLength(1))),
   orderNumber: Schema.NullOr(Schema.String.check(Schema.isMinLength(1))),
   outcome: Schema.Literals(["VALID", "REJECTED", "PLACED", "REPLAYED"]),
+  productPresentation: Schema.optionalKey(CheckoutProductPresentationSchema),
   receipt: Schema.optionalKey(Schema.NullOr(CheckoutReceiptSchema)),
   scope: CartScopeSchema,
   shippingPriceMinor: Schema.NullOr(minor),

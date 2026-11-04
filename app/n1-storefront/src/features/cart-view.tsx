@@ -47,10 +47,14 @@ const quantityErrorText = (
   saveError: boolean,
   draft: QuantityDraft | undefined,
   d: Dictionary,
+  entry: CartEntry,
 ) => {
   let error: string | undefined;
   if (invalid) {
-    error = d.shopping.invalidQuantity;
+    error =
+      entry.minimumQuantity === undefined
+        ? d.shopping.invalidQuantity
+        : `${d.shopping.invalidQuantity} ${d.minimumQuantity}: ${entry.minimumQuantity} ${entry.unit}`;
   } else if (saveError || draft?.saveError === true) {
     error = d.shopping.addFailed;
   }
@@ -80,7 +84,7 @@ const CartRow = ({
   const [saveError, setSaveError] = useState(false);
   const value = draft?.value ?? String(entry.quantity);
   const quantity = Number(value);
-  const invalid = !validCartQuantity(quantity);
+  const invalid = !validCartQuantity(quantity, entry.minimumQuantity);
   const image = publicImage(entry.image ?? undefined, cart?.imageHosts ?? []);
   const changedPrice = issues.find(
     (issue) => issue.code === "PRICE_CHANGED",
@@ -90,7 +94,7 @@ const CartRow = ({
     entry.variantId === undefined
       ? pathname
       : `${pathname}?${new URLSearchParams({ variantId: entry.variantId })}`;
-  const quantityError = quantityErrorText(invalid, saveError, draft, d);
+  const quantityError = quantityErrorText(invalid, saveError, draft, d, entry);
   const uniqueIssues = [...new Map(issues.map((issue) => [issue.code, issue])).values()];
   return (
     <LineItem title={entry.name}>
@@ -128,12 +132,13 @@ const CartRow = ({
           <LineItem.Quantity readOnlyLabel={`${entry.quantity} ${entry.unit}`}>
             <QuantityField
               error={quantityError}
+              hideLabel
               label={`${d.quantity}: ${entry.name}`}
               max={1_000_000}
-              min={0.001}
+              min={entry.minimumQuantity ?? 0.001}
               onValueChange={({ value: next }) => {
                 const parsed = Number(next);
-                const valid = validCartQuantity(parsed);
+                const valid = validCartQuantity(parsed, entry.minimumQuantity);
                 const saved = valid && (cart?.update(entry, parsed) ?? false);
                 onDraft({
                   quantity: saved ? parsed : entry.quantity,
@@ -153,7 +158,13 @@ const CartRow = ({
             />
           </LineItem.Quantity>
           <LineItem.Actions>
-            <LineItem.Remove label={d.shopping.remove} onClick={onRemove} />
+            <LineItem.Remove
+              label={d.shopping.remove}
+              onClick={onRemove}
+              size="md"
+              theme="borderless"
+              variant="tertiary"
+            />
           </LineItem.Actions>
         </LineItem.Controls>
         {uniqueIssues.map((issue) => (

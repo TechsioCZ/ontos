@@ -38,6 +38,7 @@ type OwnerReadQuery =
               readonly marketId: string;
               readonly page?: number;
               readonly pageSize: number;
+              readonly productIds?: readonly string[];
               readonly q?: string;
               readonly slug?: string;
             }
