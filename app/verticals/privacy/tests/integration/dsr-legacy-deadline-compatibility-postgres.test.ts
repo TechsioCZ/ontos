@@ -1,3 +1,4 @@
+import { readPrivacyFixtureShellObservation } from '../support/dsr-obligation-native.ts';
 import { Reactivity } from 'effect/reactivity';
 import { PgClient } from '@effect/sql-pg';
 import { Socket } from 'effect/socket';
@@ -116,32 +117,112 @@ const command = Effect.fn('DsrLegacyTest.ownedMigration')(function* command(env:
 // Same current TEST composition seam as the accepted current Deadline native cases.
 // It is not a browser/federation deployment receipt.
 const makeCurrentNativeSnapshot = Effect.fn('DsrLegacyTest.currentNativeSnapshot')(function* makeCurrentNativeSnapshot(
-  buildMarker: string,
+  artifact: DsrLegacyOwnerArtifact,
   now: number,
 ) {
-  const base = yield* makeApplicationCompositionSnapshotFixture(['privacy'], buildMarker);
-  const modules = yield* Effect.forEach(
-    base.composition.modules,
-    Effect.fn('DsrLegacyTest.currentContract')(function* currentContract(entry) {
-      const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-        entry.contractDocument,
-      );
-      const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))({
-        ...contract,
-        manifest: { ...contract.manifest, module: { ...contract.manifest.module, id: 'privacy.core' } },
-      });
-      const sha256 = digest(contractDocument);
-      return {
-        ...entry,
-        contract: { ...entry.contract, sha256 },
-        contractDocument,
-        moduleId: 'privacy.core',
-        publicContract: { ...entry.publicContract, id: 'privacy.core', sha256 },
-      };
-    }),
-    { concurrency: 1 },
+  yield* verifyDsrOwnerLaunchIdentity(artifact);
+  const child = yield* ChildProcess.make(artifact.nodeExecutable, [artifact.bundlePath, '--describe'], {
+    cwd: artifact.staged,
+    env: { APP_ENV_PATH: '/dev/null' },
+    extendEnv: false,
+    stderr: 'pipe',
+    stdout: 'pipe',
+  });
+  const [lines, code] = yield* Effect.all(
+    [
+      child.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runCollect),
+      child.exitCode,
+      Stream.runDrain(child.stderr),
+    ],
+    { concurrency: 3 },
   );
-  const composition = { ...base.composition, modules };
+  if (code !== 0 || lines.length !== 1) {
+    return yield* failure('actual-owner-description');
+  }
+  const description = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        deadlineSchemaVersion: Schema.String,
+        deliveryUnit: readySchema.fields.deliveryUnit,
+        marker: markerSchema,
+        type: Schema.Literal('description'),
+        value: Schema.Struct({
+          contractDocument: Schema.String,
+          federation: Schema.Struct({ exposes: Schema.Array(Schema.String), name: Schema.String }),
+        }),
+      }),
+    ),
+  )(lines[0]);
+  const { contractDocument, federation } = description.value;
+  const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+    contractDocument,
+  );
+  if (
+    description.marker.appId !== 'privacy' ||
+    description.marker.buildMarker !== artifact.buildMarker ||
+    description.deliveryUnit.buildMarker !== artifact.buildMarker ||
+    contract.deployment.appId !== 'privacy' ||
+    contract.deployment.buildMarker !== artifact.buildMarker ||
+    contract.manifest.module.id !== 'privacy.core' ||
+    contract.manifest.requirements === undefined ||
+    !contract.manifest.publicSurface.actions.some(
+      (action) =>
+        action.actionKey === 'privacy.core.record-dsr-deadline' &&
+        action.schemaVersion === description.deadlineSchemaVersion,
+    )
+  ) {
+    return yield* failure('actual-owner-contract-identity');
+  }
+  const { requirements } = contract.manifest;
+  const base = yield* makeApplicationCompositionSnapshotFixture(['privacy'], artifact.buildMarker);
+  const { sharedSingletons, shellFederationDocument, shellRuntime, shellRuntimeDocument } =
+    yield* readPrivacyFixtureShellObservation();
+  const federationDocument = yield* Schema.encodeEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        exposes: Schema.Array(Schema.String),
+        name: Schema.String,
+        shared: Schema.Array(Schema.Never),
+      }),
+    ),
+  )({ ...federation, shared: [] });
+  const sha256 = digest(contractDocument);
+  const modules = base.composition.modules.map((entry) => ({
+    ...entry,
+    allowedContributions: Object.values(contract.manifest.publicSurface.shellContributions).flatMap((items) =>
+      items.map(({ contributionKey }) => contributionKey),
+    ),
+    contract: { ...entry.contract, sha256 },
+    contractDocument,
+    dependencies: requirements.intrinsic.map(({ moduleId }) => moduleId),
+    deployment: contract.deployment,
+    federation: {
+      execution: 'browser' as const,
+      exposes: federation.exposes,
+      manifest: {
+        sha256: digest(federationDocument),
+        url: new URL('__fixture__/mf-manifest.json', entry.contract.url).href,
+      },
+      remoteName: federation.name,
+    },
+    moduleId: contract.manifest.module.id,
+    publicContract: { id: contract.manifest.module.id, sha256, version: contract.schemaVersion },
+    requiredCoreCapabilities: requirements.coreCapabilities,
+    requiredShellAbi: shellRuntime.contributionAbi,
+  }));
+  const composition = {
+    ...base.composition,
+    modules,
+    shell: {
+      ...base.composition.shell,
+      contributionAbi: shellRuntime.contributionAbi,
+      coreCapabilities: shellRuntime.coreCapabilities,
+      deployment: shellRuntime.deployment,
+      federationManifest: { ...base.composition.shell.federationManifest, sha256: digest(shellFederationDocument) },
+      runtimeContract: { ...base.composition.shell.runtimeContract, sha256: digest(shellRuntimeDocument) },
+      sharedSingletons,
+    },
+  };
   return yield* validateActiveApplicationCompositionSnapshot({
     composition: {
       ...composition,
@@ -372,7 +453,7 @@ const legacyCompatibility = Effect.fn('DsrLegacyTest.nativeCompatibility')(funct
   artifacts: DsrCompatibilityArtifacts,
   focused: boolean,
 ) {
-  const oldSnapshot = yield* makeCurrentNativeSnapshot(artifacts.old.buildMarker, yield* clock.currentTimeMillis);
+  const oldSnapshot = yield* makeCurrentNativeSnapshot(artifacts.old, yield* clock.currentTimeMillis);
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     mode: 'empty',
     purpose: 'stabilization-1271-exact-obligation-deadline',
@@ -714,10 +795,7 @@ const legacyCompatibility = Effect.fn('DsrLegacyTest.nativeCompatibility')(funct
         phase: 'draining',
         revision: oldSnapshot.composition.revision,
       });
-      const currentSnapshot = yield* makeCurrentNativeSnapshot(
-        artifacts.current.buildMarker,
-        yield* clock.currentTimeMillis,
-      );
+      const currentSnapshot = yield* makeCurrentNativeSnapshot(artifacts.current, yield* clock.currentTimeMillis);
       expect(currentSnapshot.composition.revision).not.toBe(oldSnapshot.composition.revision);
       const replacement = yield* isolated.composition.publishReplacement(currentSnapshot);
       expect(replacement).toEqual({

@@ -11,6 +11,7 @@ import {
   runAction,
 } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import {
   addTestGatewayScopeGrantCleanup,
   registerTestGatewayScopeGrant,
@@ -133,6 +134,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
               compositionRevision: compositionSnapshot.composition.revision,
+              ownerRegistration: partyRegistryBackendRegistration,
               runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
             }).pipe(Effect.orDie),
             (resource) => resource.close().pipe(Effect.orDie),
@@ -143,6 +145,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
               compositionRevision: compositionSnapshot.composition.revision,
+              ownerRegistration: partyRegistryBackendRegistration,
               runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
             }).pipe(Effect.orDie),
             (resource) => resource.close().pipe(Effect.orDie),

@@ -1,5 +1,5 @@
 import { parseDatabaseConnectionPair } from '@app/core-runtime';
-import { Effect, Redacted, Schema, Stream } from 'effect';
+import { Config, Effect, Option, Redacted, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 
 export class PriceGroupCatalogNativeUnavailable extends Schema.TaggedError<PriceGroupCatalogNativeUnavailable>()(
@@ -11,8 +11,10 @@ interface PriceGroupCatalogNativeConnections {
   readonly adminConnectionString: Redacted.Redacted;
   readonly runtimeConnectionString: Redacted.Redacted;
 }
-const isApprovedFixtureDatabase = (name: string): boolean =>
-  name === 'ontos_1094_ab3_20261030' || /^ontos_test_party_gateway_[a-f0-9]{32}$/u.test(name);
+const isApprovedFixtureDatabase = (name: string, ci: boolean): boolean =>
+  name === 'ontos_1094_ab3_20261030' ||
+  /^ontos_test_party_gateway_[a-f0-9]{32}$/u.test(name) ||
+  (ci && name === 'ontos_ci');
 
 /** Existing owner baseline only. Actual receiving/identity come from the normal packaged application. */
 export const migratePriceGroupCatalogNativeBaseline = Effect.fn('PriceGroupCatalogNative.migrateBaseline')(
@@ -21,7 +23,18 @@ export const migratePriceGroupCatalogNativeBaseline = Effect.fn('PriceGroupCatal
       DATABASE_ADMIN_URL: Redacted.value(options.adminConnectionString),
       DATABASE_URL: Redacted.value(options.runtimeConnectionString),
     }).pipe(Effect.mapError(() => new PriceGroupCatalogNativeUnavailable({ stage: 'configuration' })));
-    if (!isApprovedFixtureDatabase(connections.runtime.database)) {
+    const ci = yield* Config.Boolean('CI').pipe(Config.withDefault(false));
+    const deployment = yield* Config.option(Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'));
+    if (
+      (Option.isSome(deployment) && ['stage', 'production'].includes(deployment.value)) ||
+      ![connections.admin, connections.runtime].every((configuration) =>
+        ['localhost', '127.0.0.1'].includes(configuration.host),
+      ) ||
+      connections.admin.host !== connections.runtime.host ||
+      connections.admin.port !== connections.runtime.port ||
+      connections.admin.database !== connections.runtime.database ||
+      !isApprovedFixtureDatabase(connections.runtime.database, ci)
+    ) {
       return yield* new PriceGroupCatalogNativeUnavailable({ stage: 'configuration' });
     }
     const process = yield* ChildProcess.make(

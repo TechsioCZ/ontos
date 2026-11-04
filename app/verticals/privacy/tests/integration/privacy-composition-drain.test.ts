@@ -317,6 +317,11 @@ const describe = Effect.fn('PrivacyCompletionTest.describe')(function* describe(
     { concurrency: 3 },
   );
   if (code !== 0 || lines.length !== 1) {
+    yield* Effect.logInfo('Privacy owner description result', {
+      artifact: path.split('/').at(-1),
+      exitStatus: Number(code),
+      stdoutLineCount: lines.length,
+    });
     return yield* failure('An owner fixture description was unavailable');
   }
   return lines[0];

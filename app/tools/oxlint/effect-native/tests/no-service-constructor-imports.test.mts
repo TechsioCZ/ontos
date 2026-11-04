@@ -2194,3 +2194,108 @@ describe('keeps scoped Effect-valued acquisitions inside the genuine native fact
   service.register();
   provide.register();
 });
+
+const injectedBffFactorySource = bffFactorySource
+  .replace(
+    "import { Layer } from '@modern-js/bff-effect/effect-edge';",
+    "import { Layer } from '@modern-js/bff-effect/effect-edge';\nimport { Layer as GovernedReadLayer } from 'effect';\nimport type { ReadRuntime } from '@app/core-runtime';\nimport { HandlerLive } from './handler.ts';",
+  )
+  .replace(
+    'export const makeRuntime = ():',
+    'type RuntimeArgs = readonly [read: Layer.Layer<ReadRuntime>];\nexport const makeRuntime = (...args: RuntimeArgs):',
+  )
+  .replace(
+    'const handlers = Layer.mergeAll(group).pipe(Layer.provide(group), Layer.orDie);',
+    'const [read] = args; const handlers = Layer.mergeAll(HandlerLive.pipe(GovernedReadLayer.provide(read))).pipe(Layer.provide(Layer.mergeAll(group, read)), Layer.orDie);',
+  )
+  .replace('const runtime = makeRuntime();', 'const runtime = makeRuntime(group);');
+
+describe('proves actual parameterized owner BFF composition without admitting constructors or foreign Layers', () => {
+  ruleTester.run(serviceRuleTitle, serviceRule, {
+    invalid: [],
+    valid: [repositoryCase('verticals/privacy/tests/support/dsr-legacy-owner.fixture.ts')],
+  });
+  const cases: readonly BffCase[] = [
+    { expected: 0, name: 'bff-injected-nested-layers', source: injectedBffFactorySource },
+    {
+      consumer: `${processImports} import { makeRuntime } from '../../api/index.ts'; void makeRuntime; const directory = process.cwd(); void directory; ${directRunMain}`,
+      expected: 0,
+      name: 'bff-cwd-observation',
+    },
+    {
+      consumer: `${processImports} import { makeRuntime } from '../../api/index.ts'; void makeRuntime; const cwd = process.cwd; cwd(); ${directRunMain}`,
+      expected: 1,
+      name: 'bff-cwd-alias',
+    },
+    {
+      consumer: `${processImports} import { makeRuntime } from '../../api/index.ts'; void makeRuntime; process.cwd = replacement; process.cwd(); ${directRunMain}`,
+      expected: 1,
+      name: 'bff-cwd-mutation',
+    },
+    {
+      consumer: `${processImports} import { makeRuntime } from '../../api/index.ts'; void makeRuntime; process.cwd('foreign'); ${directRunMain}`,
+      expected: 1,
+      name: 'bff-cwd-argument',
+    },
+    {
+      consumer: `${processImports} import { makeRuntime } from '../../api/index.ts'; void makeRuntime; const process = { cwd: () => 'fake' }; process.cwd(); ${directRunMain}`,
+      expected: 1,
+      name: 'bff-cwd-shadow',
+    },
+    {
+      expected: 1,
+      name: 'bff-injected-fake-core-type',
+      source: injectedBffFactorySource.replace("from '@app/core-runtime'", "from 'foreign-runtime'"),
+    },
+    {
+      expected: 1,
+      name: 'bff-injected-mutated-read',
+      source: injectedBffFactorySource.replace('const [read] = args;', 'const [read] = args; read = replacement;'),
+    },
+    {
+      expected: 1,
+      name: 'bff-injected-fake-layer',
+      source: injectedBffFactorySource.replace("from 'effect'", "from 'foreign-effect'"),
+    },
+    {
+      expected: 1,
+      name: 'bff-injected-service-constructor',
+      source: injectedBffFactorySource.replace(
+        'HandlerLive.pipe(GovernedReadLayer.provide(read))',
+        'makeContextualService(read)',
+      ),
+    },
+  ];
+  describeWorkspace(
+    'parameterized BFF owner workspace',
+    cases.flatMap((scenario) => {
+      const owner = `app/verticals/${scenario.name}`;
+      return [
+        { path: `${owner}/shared/api.ts`, source: 'export const Api = {};' },
+        { path: `${owner}/api/handler.ts`, source: 'export const HandlerLive = {};' },
+        { path: `${owner}/api/index.ts`, source: scenario.source ?? bffFactorySource },
+        {
+          path: `${owner}/${supportDirectory}/${bootstrapFilename}`,
+          source:
+            scenario.consumer ??
+            `${processImports} import { makeRuntime } from '../../api/index.ts'; void makeRuntime; ${directRunMain}`,
+        },
+      ];
+    }),
+    (workspace) => {
+      const toCase = (scenario: BffCase) => ({
+        code:
+          scenario.consumer ??
+          `${processImports} import { makeRuntime } from '../../api/index.ts'; void makeRuntime; ${directRunMain}`,
+        filename: workspace.file(`app/verticals/${scenario.name}/${supportDirectory}/${bootstrapFilename}`),
+        name: scenario.name,
+      });
+      ruleTester.run(serviceRuleTitle, serviceRule, {
+        invalid: cases
+          .filter((scenario) => scenario.expected !== 0)
+          .map((scenario) => ({ ...toCase(scenario), errors: scenario.expected })),
+        valid: cases.filter((scenario) => scenario.expected === 0).map(toCase),
+      });
+    },
+  );
+});

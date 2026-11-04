@@ -38,8 +38,6 @@ import { exportJWK, generateKeyPair } from 'jose';
 import { OwnedAuthRuntimeContract, OwnedAuthRuntimeContractLive } from '../support/api-key-gateway-auth-runtime.ts';
 import type { ShellNativeOwnedDatabase } from '../support/api-key-gateway-auth-runtime.ts';
 
-import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
-
 export class ApiKeyGatewayNativeFixtureError extends Schema.TaggedError<ApiKeyGatewayNativeFixtureError>()(
   'ApiKeyGatewayNativeFixtureError',
   { cause: Schema.optionalKey(Schema.Redacted(Schema.Defect())), reason: Schema.String },
@@ -166,7 +164,32 @@ const bundleChild = Effect.fn('ApiKeyGatewayNativeFixture.bundle')(function* bun
   if (Number(exit) !== 0) {
     return yield* unavailable();
   }
-  return artifact;
+  const description = yield* ChildProcess.make(process.execPath, [artifact, '--describe'], {
+    cwd: appRoot,
+    extendEnv: true,
+    stderr: 'pipe',
+    stdin: 'ignore',
+    stdout: 'pipe',
+  });
+  const [descriptionExit, descriptionLines] = yield* Effect.all(
+    [
+      description.exitCode,
+      description.stdout.pipe(Stream.decodeText(), Stream.runCollect),
+      Stream.runDrain(description.stderr),
+    ],
+    { concurrency: 3 },
+  ).pipe(requestTimeout);
+  if (Number(descriptionExit) !== 0) {
+    return yield* unavailable();
+  }
+  const receiverDeployment = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(Schema.Struct({ appId: Schema.Literal('shell-super-app'), buildMarker: Schema.String })),
+    { onExcessProperty: 'error' },
+  )(descriptionLines.join('').trim()).pipe(Effect.mapError(unavailable));
+  if (receiverDeployment.buildMarker !== identity.buildMarker) {
+    return yield* unavailable();
+  }
+  return { artifact, receiverDeployment };
 });
 
 const migrateAuth = Effect.fn('ApiKeyGatewayNativeFixture.migrateAuth')(function* migrateAuth(adminUrl: string) {
@@ -307,9 +330,10 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
       Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
     )(options.snapshotJson).pipe(Effect.mapError(unavailable));
     yield* validateActiveApplicationCompositionSnapshot(snapshot).pipe(Effect.mapError(unavailable));
+    const { artifact, receiverDeployment } = yield* bundleChild();
     if (
-      snapshot.composition.shell.deployment.appId !== ultramodernDeliveryUnit.appId ||
-      snapshot.composition.shell.deployment.buildMarker !== ultramodernDeliveryUnit.buildMarker
+      snapshot.composition.shell.deployment.appId !== receiverDeployment.appId ||
+      snapshot.composition.shell.deployment.buildMarker !== receiverDeployment.buildMarker
     ) {
       return yield* unavailable();
     }
@@ -335,7 +359,6 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
       ),
       OwnedAuthRuntimeContract,
     );
-    const artifact = yield* bundleChild();
     yield* migrateAuth(Redacted.value(authRuntime.adminConnectionString));
     yield* authRuntime.establish().pipe(Effect.mapError(unavailable));
     const crypto = yield* Crypto.Crypto;

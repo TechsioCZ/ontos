@@ -302,6 +302,37 @@ const prepareDedicatedIdentities = Effect.fn('PricingTemporal.prepareDedicatedId
     return physical?.ready === true ? ('existing' as const) : ('fresh' as const);
   },
 );
+const TemporalChildDiagnosticStageSchema = Schema.Literals([
+  'C_SOCKET_CONNECTED',
+  'C_BOOTSTRAP_VALID',
+  'C_CCC_MIGRATION_BEGIN',
+  'C_CCC_MIGRATION_DONE',
+  'C_PARTY_MIGRATION_BEGIN',
+  'C_PARTY_MIGRATION_DONE',
+  'C_SCHEMAS_READY_SENT',
+  'C_IDENTITIES_READY_RECEIVED',
+  'C_AUTHORITY_READY',
+  'C_PARTY_ARTIFACT_VERIFIED',
+  'C_PARTY_HTTP_READY',
+  'C_CATALOG_ARTIFACT_VERIFY_BEGIN',
+  'C_CATALOG_ARTIFACT_VERIFIED',
+  'C_CATALOG_CHANNEL_READY',
+  'C_CATALOG_SPAWNED',
+  'C_CATALOG_BOOTSTRAP_SEND_BEGIN',
+  'C_CATALOG_BOOTSTRAP_SEND_DONE',
+  'C_CATALOG_BOOTED_RECEIVED',
+  'C_CATALOG_EXITED_ZERO',
+  'C_CATALOG_EXITED_NONZERO',
+  'C_CATALOG_HTTP_READY',
+  'C_COMMERCE_READY',
+  'C_BOOTED_SENT',
+  'BOOTSTRAP_OWNED_DATABASE',
+  'BOOTSTRAP_CONFIGURATION',
+  'BOOTSTRAP_MIGRATION',
+  'BOOTSTRAP_RUNTIME',
+  'BOOTSTRAP_OTHER',
+]);
+
 const startReceiver = Effect.fn('TemporalNative.startReceiver')(function* startReceiver(
   bundle: Effect.Success<ReturnType<typeof describeOwner>>,
   bootstrap: typeof PriceGroupTemporalBootstrapSchema.Type,
@@ -326,8 +357,20 @@ const startReceiver = Effect.fn('TemporalNative.startReceiver')(function* startR
     stdout: 'pipe',
   });
   yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
-  yield* Stream.runDrain(child.stdout).pipe(Effect.forkScoped);
-  const receiverExited = child.exitCode.pipe(Effect.flatMap((code) => Effect.fail(fail(`receiver-exited:${code}`))));
+  yield* child.stdout.pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.runForEach((line) =>
+      Schema.is(TemporalChildDiagnosticStageSchema)(line)
+        ? Effect.logInfo('PriceGroup temporal child stage', { stage: line })
+        : Effect.void,
+    ),
+    Effect.forkScoped,
+  );
+  const receiverExited = child.exitCode.pipe(
+    Effect.tap((code) => Effect.logInfo('PriceGroup temporal child exit', { exitCode: code })),
+    Effect.flatMap((code) => Effect.fail(fail(`receiver-exited:${code}`))),
+  );
   const receive = Effect.raceFirst(channel.next, receiverExited).pipe(
     Effect.flatMap((response) =>
       response.type === 'FAILED'

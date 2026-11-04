@@ -91,7 +91,7 @@ export const makeEnrollmentApplicationCompositionSnapshot = Effect.fn('Enrollmen
         actions: owner.actions,
         api: apis,
         businessPermissions: manifest.publicSurface.businessPermissions ?? [],
-        components: manifest.publicSurface.components,
+        components: Object.values(manifest.publicSurface.components),
         events,
         operationContracts: owner.operationContracts,
         reports: manifest.publicSurface.reports,

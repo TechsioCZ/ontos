@@ -5,6 +5,8 @@ import {
   ContextAccess,
   DatabaseConfig,
   GatewayAssertionRedemptionService,
+  extractVerticalRuntimeSafeDescriptors,
+  OntosModuleDeploymentContractSchema,
   ReadRuntime,
 } from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
@@ -12,12 +14,15 @@ import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/mo
 import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Clock, ConfigProvider, Crypto, Effect, Layer, Option, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { makeCommerceCustomerContextApiRuntime } from '../../api/index.ts';
 import { commercePortalAuthRealmUnavailableLive } from '../../api/portal-auth/realm-unavailable.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { commerceCustomerContextManifest } from '../../vertical.manifest.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
+import { enrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
 
 const origin = 'http://localhost:3020';
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -150,4 +155,24 @@ it.live('provides host Crypto to a deferred business Read without a portal realm
       expect(readCalls).toBe(1);
     }),
   ),
+);
+
+/** Validate the actual source fixture protocol before any native database or receiver is started. */
+it.live('projects the actual enrollment owner into a closed composition with a stable revision', () =>
+  Effect.gen(function* verifyEnrollmentFixtureContract() {
+    const first = yield* enrollmentApplicationCompositionSnapshot;
+    const second = yield* enrollmentApplicationCompositionSnapshot;
+    const owner = first.composition.modules.find((module) => module.deployment.appId === ultramodernApiMarker.appId);
+    assert.isOk(owner !== undefined);
+    const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+      owner.contractDocument,
+    );
+    const authored = extractVerticalRuntimeSafeDescriptors(commerceCustomerContextRegistration);
+    expect(contract.manifest.publicSurface.components).toHaveLength(
+      Object.keys(commerceCustomerContextManifest.publicSurface.components).length,
+    );
+    expect(contract.manifest.requirements).toEqual(authored.requirements);
+    expect(contract.manifest.publicSurface.operationContracts).toEqual(authored.operationContracts);
+    expect(first.composition.revision).toBe(second.composition.revision);
+  }),
 );

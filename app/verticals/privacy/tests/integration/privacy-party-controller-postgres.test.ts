@@ -1,10 +1,8 @@
 import type { DatabaseConnectionPair } from '@app/core-runtime';
 import { Reactivity } from 'effect/reactivity';
 import { PgClient } from '@effect/sql-pg';
-import { createHash } from 'node:crypto';
 import { makeLiveOperationFixture, makeGatewayScopeGrantRegistrar } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import {
@@ -13,9 +11,6 @@ import {
   SHELL_GATEWAY_ISSUER_IDENTITY,
   PARTY_REGISTRY_REQUEST_IDENTITY,
   ActiveApplicationCompositionSnapshotSchema,
-  canonicalizeApplicationComposition,
-  OntosModuleDeploymentContractSchema,
-  validateActiveApplicationCompositionSnapshot,
   makeContextPermissionRelationshipMutationLive,
   ReadRuntime,
   runAction,
@@ -50,7 +45,11 @@ import { ChildProcess } from 'effect/process';
 import { HttpServer, HttpServerResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import { privacyRegistration } from '../../vertical.registration.ts';
-import { readPrivacyFixtureShellObservation } from '../support/dsr-obligation-native.ts';
+import {
+  describeControllerContracts,
+  identityFailure,
+  makePrivacyPartyCompositionSnapshot,
+} from '../support/dsr-obligation-native.ts';
 import { createProcessingPurposeAction } from '../../src/actions/create-processing-purpose.action.ts';
 import { assignPrivacyResponsibilityAction } from '../../src/actions/assign-privacy-responsibility.action.ts';
 import { AssignPrivacyResponsibilityPayloadSchema } from '../../shared/actions/assign-privacy-responsibility.ts';
@@ -90,11 +89,6 @@ import { legalBasisAssignmentsRead } from '../../src/api/legal-basis-assignments
 import { processingActivitiesRead } from '../../src/api/processing-activities.read.ts';
 
 const appRoot = new URL('../../../../', import.meta.url).pathname;
-class PrivacyPartyNativeIdentityError extends Schema.TaggedError<PrivacyPartyNativeIdentityError>()(
-  'PrivacyPartyNativeIdentityError',
-  { stage: Schema.String },
-) {}
-const identityFailure = (stage: string) => new PrivacyPartyNativeIdentityError({ stage });
 
 const partyNativeCloneTargetMatches = (
   connections: DatabaseConnectionPair,
@@ -223,86 +217,9 @@ const preparePartyNativeIdentities = Effect.fn('PrivacyPartyNative.prepareIdenti
     return { PARTY_REGISTRY_DATABASE_URL: requestUrl, SHELL_GATEWAY_ISSUER_DATABASE_URL: issuerUrl };
   },
 );
-const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const ownerMarkerSchema = Schema.Struct({ appId: Schema.Literal('party-registry'), buildMarker: Schema.String });
 const ownerReadySchema = Schema.Struct({ marker: ownerMarkerSchema, port: Schema.Number });
 const publicProofServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
-
-// The normal owner emitter and canonical SDK identity run in their supported owner-loading process.
-// No foreign private registration is imported by this consumer fixture.
-const describeControllerContracts = Effect.fn('ControllerOwnerTest.describeContracts')(
-  function* describeControllerContracts() {
-    const program = `import { Effect, FileSystem, ManagedRuntime, Schema } from 'effect';
-    import { NodeServices } from '@effect/platform-node';
-    import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
-    import { deriveOntosModuleDeploymentContract } from './scripts/generate-ontos-module-contract.mts';
-    import { OntosModuleDeploymentContractSchema } from '@app/core-runtime';
-    const runtime = ManagedRuntime.make(NodeServices.layer);
-    const ownerIds = ['party-registry', 'privacy'];
-    const identitySchema = Schema.Struct({buildMarker: Schema.String, sourceRevision: Schema.String});
-    const ownerSchema = Schema.Struct({id: Schema.String,
-      deliveryUnit: Schema.Struct({buildMarker: Schema.String, unitId: Schema.String})});
-    const descriptionSchema = Schema.Struct({
-      contracts: Schema.Array(OntosModuleDeploymentContractSchema),
-      buildIdentities: Schema.Record(Schema.Literals(['party-registry', 'privacy']), identitySchema)
-    });
-    try { const text = await runtime.runPromise(Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Struct({
-        verticals: Schema.Array(ownerSchema)
-      })))(yield* fs.readFileString('./topology/reference-topology.json'));
-      const buildIdentities = {};
-      for (const owner of topology.verticals) {
-        if (!ownerIds.includes(owner.id)) continue;
-        buildIdentities[owner.id] = yield* Effect.try(() => resolveUltramodernReleaseIdentity({
-          generationBuildMarker: owner.deliveryUnit.buildMarker,
-          unitId: owner.deliveryUnit.unitId, workspaceRoot: process.cwd()
-        }));
-      }
-      const contracts = yield* Effect.forEach(ownerIds,
-        vertical => deriveOntosModuleDeploymentContract({vertical}), {concurrency:1});
-      return yield* Schema.encodeEffect(Schema.fromJsonString(descriptionSchema))({contracts, buildIdentities});
-    })); process.stdout.write(text); } finally { await runtime.dispose(); }`;
-    const child = yield* ChildProcess.make(
-      'mise',
-      ['exec', '--', 'node', '--experimental-strip-types', '--input-type=module', '--eval', program],
-      { cwd: appRoot, env: { APP_ENV_PATH: '/dev/null' }, extendEnv: true, stderr: 'pipe', stdout: 'pipe' },
-    );
-    const [code, output] = yield* Effect.all(
-      [child.exitCode, child.stdout.pipe(Stream.decodeText(), Stream.runCollect), Stream.runDrain(child.stderr)],
-      { concurrency: 3 },
-    );
-    if (Number(code) !== 0) {
-      return yield* identityFailure('Canonical owner contract derivation failed');
-    }
-    const description = yield* Schema.decodeUnknownEffect(
-      Schema.fromJsonString(
-        Schema.Struct({
-          buildIdentities: Schema.Record(
-            Schema.Literals(['party-registry', 'privacy']),
-            Schema.Struct({
-              buildMarker: Schema.NonEmptyString,
-              sourceRevision: Schema.NonEmptyString,
-            }),
-          ),
-          contracts: Schema.Array(OntosModuleDeploymentContractSchema),
-        }),
-      ),
-    )([...output].join(''));
-    const partyContract = description.contracts.find(({ deployment }) => deployment.appId === 'party-registry');
-    const privacyContract = description.contracts.find(({ deployment }) => deployment.appId === 'privacy');
-    if (
-      description.contracts.length !== 2 ||
-      partyContract === undefined ||
-      privacyContract === undefined ||
-      partyContract.deployment.buildMarker !== description.buildIdentities['party-registry'].buildMarker ||
-      privacyContract.deployment.buildMarker !== description.buildIdentities.privacy.buildMarker
-    ) {
-      return yield* identityFailure('Canonical owner projection and SDK identities disagree');
-    }
-    return { ...description, partyContract, privacyContract };
-  },
-);
 
 const makeControllerOwner = Effect.fn('ControllerOwnerTest.makeFixture')(function* makeControllerOwner() {
   const crypto = yield* Crypto.Crypto;
@@ -355,94 +272,7 @@ const makeControllerOwner = Effect.fn('ControllerOwnerTest.makeFixture')(functio
   const marker = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ownerMarkerSchema))(markerLines[0]);
   expect(marker.appId).toBe('party-registry');
   expect(marker).toEqual(description.partyContract.deployment);
-  const base = yield* makeApplicationCompositionSnapshotFixture(
-    description.contracts.map(({ deployment }) => deployment.appId),
-    Object.fromEntries(description.contracts.map(({ deployment }) => [deployment.appId, deployment.buildMarker])),
-  );
-  const { sharedSingletons, shellFederationDocument, shellRuntime, shellRuntimeDocument } =
-    yield* readPrivacyFixtureShellObservation();
-  const modules = yield* Effect.forEach(
-    base.composition.modules,
-    Effect.fn('ControllerOwnerTest.moduleContract')(function* moduleContract(module) {
-      const owner = description.contracts.find(({ deployment }) => deployment.appId === module.deployment.appId);
-      if (owner === undefined) {
-        return yield* identityFailure('Exact owner contract is missing');
-      }
-      const document = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(owner);
-      const hash = digest(document);
-      const { requirements } = owner.manifest;
-      if (requirements === undefined) {
-        return yield* identityFailure('Actual owner requirements are missing');
-      }
-      const { components } = owner.manifest.publicSurface;
-      const [component] = components;
-      // Only immutable declared exposure metadata is claimed here, never browser execution.
-      const federationDocument = yield* Schema.encodeEffect(
-        Schema.fromJsonString(
-          Schema.Struct({
-            exposes: Schema.Array(Schema.String),
-            name: Schema.String,
-            shared: Schema.Array(Schema.Never),
-          }),
-        ),
-      )({
-        exposes: components.map(({ expose }) => expose),
-        name: component?.mfBoundaryId ?? owner.deployment.appId,
-        shared: [],
-      });
-      return {
-        ...module,
-        allowedContributions: Object.values(owner.manifest.publicSurface.shellContributions).flatMap((items) =>
-          items.map(({ contributionKey }) => contributionKey),
-        ),
-        backend: {
-          baseUrl: `https://${module.deployment.appId}.fixture.example.test/`,
-          transport: 'node-http' as const,
-        },
-        contract: { ...module.contract, sha256: hash },
-        contractDocument: document,
-        dependencies: requirements.intrinsic.map(({ moduleId }) => moduleId),
-        deployment: owner.deployment,
-        federation:
-          component === undefined
-            ? { execution: 'server' as const }
-            : {
-                execution: 'browser' as const,
-                exposes: components.map(({ expose }) => expose),
-                manifest: {
-                  sha256: digest(federationDocument),
-                  url: new URL('__fixture__/mf-manifest.json', module.contract.url).href,
-                },
-                remoteName: component.mfBoundaryId,
-              },
-        moduleId: owner.manifest.module.id,
-        publicContract: { id: owner.manifest.module.id, sha256: hash, version: owner.schemaVersion },
-        requiredCoreCapabilities: requirements.coreCapabilities,
-        requiredShellAbi: shellRuntime.contributionAbi,
-      };
-    }),
-    { concurrency: 2 },
-  );
-  const composition = {
-    ...base.composition,
-    modules,
-    shell: {
-      ...base.composition.shell,
-      contributionAbi: shellRuntime.contributionAbi,
-      coreCapabilities: shellRuntime.coreCapabilities,
-      deployment: shellRuntime.deployment,
-      federationManifest: { ...base.composition.shell.federationManifest, sha256: digest(shellFederationDocument) },
-      runtimeContract: { ...base.composition.shell.runtimeContract, sha256: digest(shellRuntimeDocument) },
-      sharedSingletons,
-    },
-  };
-  const snapshot = yield* validateActiveApplicationCompositionSnapshot({
-    ...base,
-    composition: {
-      ...composition,
-      revision: digest(canonicalizeApplicationComposition({ ...composition, revision: '0'.repeat(64) })),
-    },
-  });
+  const snapshot = yield* makePrivacyPartyCompositionSnapshot(description);
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
     mode: 'schema-only',

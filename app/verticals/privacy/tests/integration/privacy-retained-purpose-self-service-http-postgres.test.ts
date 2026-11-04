@@ -1276,6 +1276,14 @@ const retainedNativeInfrastructure = Layer.effect(
   acquireRetainedInfrastructure().pipe(Effect.provideService(Clock.Clock, defaultNativeClock)),
 ).pipe(Layer.provideMerge(retainedPublicArtifacts), Layer.provide(nativeServices));
 
+const knownAuditCodes = Schema.Literals([
+  'action_executed',
+  'spicedb_permission_denied',
+  'action_transaction_failed',
+  'identity_unavailable',
+  'action_permission_check_failed',
+]);
+
 const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(function* actualAccountPrerequisite(
   terminalMode: 'revoked' | 'owner-outage',
 ) {
@@ -1760,13 +1768,6 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
             row.idempotencyKey === `retained-reserve:${suffix}`,
         );
         const invocationIds = new Set(invocations.map((row) => row.actionInvocationId));
-        const knownAuditCodes = Schema.Literals([
-          'action_executed',
-          'spicedb_permission_denied',
-          'action_transaction_failed',
-          'identity_unavailable',
-          'action_permission_check_failed',
-        ]);
         yield* Effect.logInfo('Retained reserve invocation evidence', {
           audits: evidence.audits
             .filter((row) => row.actionInvocationId !== null && invocationIds.has(row.actionInvocationId))
@@ -1809,6 +1810,50 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     },
     { ...identityOptions, idempotencyKey: `retained-activate:${suffix}` },
   ).pipe(
+    Effect.tapError((failure) =>
+      Effect.gen(function* observeActivationFailure() {
+        const published = Schema.decodeUnknownResult(Schema.Union(externalIdentityProblems))(failure);
+        if (Result.isSuccess(published)) {
+          const problem = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Union(externalIdentityProblems)))(
+            published.success,
+          );
+          yield* Effect.logInfo('Retained activation published problem', problem);
+        }
+        const evidence = yield* fixture.evidence(coreEvidenceExecutor);
+        const invocations = evidence.invocations.filter(
+          (row) =>
+            row.actionKey === activatePrincipalBindingAction.descriptor.actionKey &&
+            row.idempotencyKey === `retained-activate:${suffix}`,
+        );
+        const invocationIds = new Set(invocations.map((row) => row.actionInvocationId));
+        yield* Effect.logInfo('Retained activation invocation evidence', {
+          audits: evidence.audits
+            .filter((row) => row.actionInvocationId !== null && invocationIds.has(row.actionInvocationId))
+            .map((row) => {
+              const code = Schema.decodeUnknownResult(knownAuditCodes)(row.outcomeCode);
+              return Result.isSuccess(code) ? code.success : 'OTHER_AUDIT_CODE';
+            }),
+          operationIds: invocations.map((row) => row.actionInvocationId),
+          statuses: invocations.map((row) => row.status),
+        });
+        const observation = yield* privateExchange(
+          accountReplySchema,
+          nativeClock,
+          account,
+          yield* Schema.decodeUnknownEffect(Schema.toType(ownerControlCommandSchema))({
+            _tag: 'observe-enrollment',
+            attemptId: enrolled.attemptId,
+            authorization: Redacted.make(`Bearer ${credential.token}`),
+          }),
+        );
+        if (Schema.is(enrollmentObservationSchema)(observation)) {
+          yield* Effect.logInfo(
+            'Retained activation provider verification transport',
+            observation.providerVerification,
+          );
+        }
+      }).pipe(Effect.catch(() => Effect.logInfo('Retained activation observation unavailable'))),
+    ),
     Effect.mapError((error) =>
       failed(
         Schema.is(Schema.Union(externalIdentityProblems))(error)

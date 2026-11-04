@@ -5,6 +5,7 @@ import {
 import { ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -57,6 +58,7 @@ const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvi
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         compositionRevision: snapshot.composition.revision,
         adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
+        ownerRegistration: partyRegistryBackendRegistration,
         runtimeConnectionString: Redacted.make(native.partyConfiguration.connectionString),
       }),
       (resource) => resource.close().pipe(Effect.orDie),

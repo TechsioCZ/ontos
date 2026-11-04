@@ -1,3 +1,4 @@
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import type { Issue } from 'effect/SchemaIssue';
 import { makeGatewayScopeGrantRegistrar } from '@app/core-runtime/testing/actions';
 import { Socket } from 'effect/socket';
@@ -8,7 +9,7 @@ import {
   findPostgresFailure,
   CorePersistenceLive,
   DatabaseConfig,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   ReadRuntime,
   ReadResultValidationError,
   ReadEvidenceValidationError,
@@ -177,6 +178,11 @@ const CatalogResponseSchema = Schema.Union([
       ]),
     ),
     stage: Schema.Literals([
+      'BOOTSTRAP_OWNED_DATABASE',
+      'BOOTSTRAP_CONFIGURATION',
+      'BOOTSTRAP_MIGRATION',
+      'BOOTSTRAP_RUNTIME',
+      'BOOTSTRAP_OTHER',
       'CREATE_INVALID',
       'CREATE_AUTHENTICATION',
       'CREATE_FORBIDDEN',
@@ -211,6 +217,13 @@ const CatalogResponseSchema = Schema.Union([
     version: Schema.Literal(catalogProtocol),
   }),
   Schema.Struct({ type: Schema.Literal('STOPPED'), version: Schema.Literal(catalogProtocol) }),
+]);
+const ChildBootstrapDiagnosticStageSchema = Schema.Literals([
+  'BOOTSTRAP_OWNED_DATABASE',
+  'BOOTSTRAP_CONFIGURATION',
+  'BOOTSTRAP_MIGRATION',
+  'BOOTSTRAP_RUNTIME',
+  'BOOTSTRAP_OTHER',
 ]);
 const ChildDiagnosticStageSchema = Schema.Literals([
   'C_SOCKET_CONNECTED',
@@ -250,7 +263,9 @@ const ChildDiagnosticStageSchema = Schema.Literals([
   'READ_RESULT_RESOLUTION_SHAPE',
   'READ_RESULT_UNCLASSIFIED',
 ]);
-const diagnosticStage = (stage: typeof ChildDiagnosticStageSchema.Type) =>
+const diagnosticStage = (
+  stage: typeof ChildDiagnosticStageSchema.Type | typeof ChildBootstrapDiagnosticStageSchema.Type,
+) =>
   Effect.sync(() => {
     process.stdout.write(`${stage}\n`);
   });
@@ -812,6 +827,12 @@ const startCatalog = Effect.fn('PriceGroupTemporal.startCatalog')(function* star
   );
   yield* diagnosticStage('C_CATALOG_BOOTSTRAP_SEND_DONE');
   const ready = yield* receive;
+  if (ready.type === 'FAILED') {
+    if (Schema.is(ChildBootstrapDiagnosticStageSchema)(ready.stage)) {
+      yield* diagnosticStage(ready.stage);
+    }
+    return yield* failure(`catalog-bootstrap-${ready.stage}`);
+  }
   if (ready.type !== 'BOOTED') {
     return yield* failure('catalog-ready-order');
   }
@@ -932,7 +953,7 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
     composition,
     ownerServices,
   );
-  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration).pipe(
     Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
     Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(ownerServices),
@@ -956,7 +977,14 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
       };
       return observed;
     }),
-  ).pipe(Layer.provide(ReadRuntimeLive.pipe(Layer.provide(common), Layer.provide(NodeCrypto.layer))));
+  ).pipe(
+    Layer.provide(
+      makeReadRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration).pipe(
+        Layer.provide(common),
+        Layer.provide(NodeCrypto.layer),
+      ),
+    ),
+  );
   const encodedComposition = yield* Schema.encodeEffect(
     Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
   )(bootstrap.composition);
@@ -1327,7 +1355,15 @@ export const runReceiver = Effect.fn('PriceGroupTemporal.runReceiver')(function*
       if (result.type === 'BOOTED' || result.type === 'STOPPED') {
         return yield* failure('catalog-mutation-order');
       }
-      yield* sendParent({ ...result, version: priceGroupTemporalProtocol });
+      if (result.type === 'FAILED' && Schema.is(ChildBootstrapDiagnosticStageSchema)(result.stage)) {
+        yield* diagnosticStage(result.stage);
+        return yield* failure(`catalog-command-bootstrap-${result.stage}`);
+      }
+      const businessResponse = yield* Schema.decodeUnknownEffect(Schema.toType(PriceGroupTemporalResponseSchema))({
+        ...result,
+        version: priceGroupTemporalProtocol,
+      });
+      yield* sendParent(businessResponse);
     }
   }
 });

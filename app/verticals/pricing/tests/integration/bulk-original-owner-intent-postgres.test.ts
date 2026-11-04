@@ -1178,7 +1178,7 @@ const bulkRegisteredRuntime = (input: BulkRegisteredRuntimeInput) => {
         request.audience !== 'catalog' ||
         request.compositionRevision !== input.composition.composition.revision ||
         request.compositionRevision !== input.catalog.compositionRevision ||
-        request.legalEntityId !== input.actor.legalEntityId ||
+        (request.legalEntityId !== undefined && request.legalEntityId !== input.actor.legalEntityId) ||
         input.catalog.actor.legalEntityId !== undefined ||
         input.catalog.actor.tenantId !== input.actor.tenantId ||
         input.catalog.actor.principalId !== input.actor.principalId ||
