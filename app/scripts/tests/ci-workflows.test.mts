@@ -1582,7 +1582,9 @@ it('skips the gates on main only for a commit the merge queue already proved', (
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
   for (const gate of ROOT_GATE_JOBS) {
     expect(jobs[gate]?.needs).toEqual(
-      gate === 'service-integration' ? [QUEUE_PROOF_JOB, NODE_ARTIFACT_BUILD_JOB] : [QUEUE_PROOF_JOB],
+      gate === 'service-integration' || gate === WORKSPACE_GATE_JOB
+        ? [QUEUE_PROOF_JOB, NODE_ARTIFACT_BUILD_JOB]
+        : [QUEUE_PROOF_JOB],
     );
     expect(jobs[gate]?.if).toBe(expression("!cancelled() && needs.queue-proof.outputs.proven != 'true'"));
   }
@@ -1821,9 +1823,16 @@ const GateCommandsWorkflowSchema = Schema.Struct({
       ),
     }),
     [WORKSPACE_GATE_JOB]: Schema.Struct({
+      steps: Schema.Array(PublicationWorkflowStepSchema),
       strategy: Schema.Struct({
         matrix: Schema.Struct({
-          include: Schema.Array(Schema.Struct({ commands: Schema.String, name: Schema.String })),
+          include: Schema.Array(
+            Schema.Struct({
+              commands: Schema.String,
+              name: Schema.String,
+              'node-artifacts': Schema.optional(Schema.Boolean),
+            }),
+          ),
         }),
       }),
     }),
@@ -1875,6 +1884,32 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
     parallel ? parallel.map((step) => step.run) : [run ?? ''],
   );
   expect(staticChecks).toContain('mise exec -- pnpm database-access:check');
+});
+
+it('restores same-run Node metadata only for unit shards that execute public contract fixtures', () => {
+  const job = readGateCommandJobs()[WORKSPACE_GATE_JOB];
+  const restored = job.strategy.matrix.include.filter((entry) => entry['node-artifacts'] === true);
+  expect(restored.map(({ name }) => name)).toEqual([
+    'Unit and Component Tests (Catalog, Commerce Customer Context, and Inventory)',
+    'Unit and Component Tests (every other package)',
+  ]);
+  const download = job.steps.findIndex(
+    ({ name }) => name === 'Download the same-run Node artifacts for unit contract fixtures',
+  );
+  const unpack = job.steps.findIndex(({ name }) => name === 'Unpack the Node artifacts for unit contract fixtures');
+  const run = job.steps.findIndex(({ name }) => name === `Run ${expression('matrix.name')}`);
+  expect(download !== -1 && download < unpack && unpack < run).toBe(true);
+  expect(job.steps[download]?.if).toBe('matrix.node-artifacts == true');
+  expect(job.steps[download]?.uses).toBe('actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333');
+  expect(job.steps[download]?.with).toEqual({
+    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units`,
+    pattern: NODE_BUILD_ARTIFACT_PATTERN,
+  });
+  expect(job.steps[unpack]?.if).toBe('matrix.node-artifacts == true');
+  expect(job.steps[unpack]?.['working-directory']).toBe('app');
+  expect(job.steps[unpack]?.run).toBe(
+    'bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output',
+  );
 });
 
 it('runs the root unit and component tests of every workspace package in exactly one shard', () => {
