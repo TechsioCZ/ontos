@@ -17,6 +17,8 @@
   --spacing-n1-header-panel-content: 22.625rem;
   --container-n1-header-panel-viewport: calc(100vw - var(--dimension-40));
   --container-n1-product-content: 80rem;
+  /* Figma219:2819: layout between PriceBlock and the quantity/action group. */
+  --spacing-n1-product-price-quantity: calc(var(--dimension-8) - var(--dimension-1));
   --spacing-n1-category-sidebar: 16rem;
   --spacing-n1-loading-image: 13.75rem;
   --spacing-n1-breadcrumb-icon: var(--dimension-14);

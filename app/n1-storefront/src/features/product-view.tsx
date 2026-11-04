@@ -139,16 +139,16 @@ export const ProductView = ({
             <Gallery.Thumbnails />
           </Gallery>
         </div>
-        <div className="flex min-w-0 flex-col gap-6 md:gap-4">
+        <div className="flex min-w-0 flex-col gap-6 md:gap-0">
           {current.sku.length > 0 && (
-            <dl className="order-0 hidden flex-wrap justify-between gap-2 text-fg-secondary md:flex">
+            <dl className="order-0 hidden flex-wrap justify-between gap-2 text-fg-secondary md:mb-4 md:flex">
               <dt>{d.productCode}</dt>
               <dd>{current.sku}</dd>
             </dl>
           )}
           {product.variants.length > 0 && (
-            <fieldset className="order-1">
-              <legend className="mb-2 font-bold">{d.selectVariant}</legend>
+            <fieldset className="order-1 md:mb-5">
+              <legend className="mb-6 font-semibold md:mb-2 md:font-bold">{d.selectVariant}</legend>
               <div className="flex flex-wrap gap-2">
                 {product.variants.map((item) => (
                   <div key={item.id}>
@@ -176,6 +176,7 @@ export const ProductView = ({
                         variant={item.id === variant?.id ? "primary" : "secondary"}
                       >
                         {item.name}
+                        {item.id === variant?.id && ` · ${d.selectedOption}`}
                       </LinkButton>
                     </div>
                   </div>
@@ -183,17 +184,29 @@ export const ProductView = ({
               </div>
             </fieldset>
           )}
-          <div className="order-3 md:order-2">
-            <AvailabilityStatus
-              label={productStockLabel(selection, d, locale)}
-              status={selectionRequired ? "unknown" : current.stock}
-            />
+          <div className="order-3 md:order-2 md:mb-6">
+            <div className="hidden md:block">
+              <AvailabilityStatus
+                label={productStockLabel(selection, d, locale)}
+                showIcon={false}
+                status={selectionRequired ? "unknown" : current.stock}
+              />
+            </div>
+            <div className="md:hidden">
+              <AvailabilityStatus
+                label={productStockLabel(selection, d, locale)}
+                status={selectionRequired ? "unknown" : current.stock}
+              />
+            </div>
           </div>
-          <div aria-hidden="true" className="order-3 hidden h-px bg-border-primary md:block" />
-          <div className="contents md:order-4 md:flex md:items-center md:justify-between md:gap-4">
+          <div
+            aria-hidden="true"
+            className="order-3 hidden h-px bg-border-primary md:mb-3 md:block"
+          />
+          <div className="contents md:order-4 md:mb-4 md:flex md:items-center md:justify-between md:gap-4">
             {variant && (
-              <p className="order-2 md:order-none">
-                <strong>{d.selectedVariant}: </strong>
+              <p className="order-2 font-semibold md:order-none md:font-normal">
+                <span className="md:font-bold">{d.selectedVariant}: </span>
                 {variant.name}
               </p>
             )}
@@ -203,7 +216,7 @@ export const ProductView = ({
               </Link>
             </div>
           </div>
-          <div className="order-4 md:order-5">
+          <div className="order-4 md:order-5 md:mb-n1-product-price-quantity">
             <PriceBlock {...priceProps(current, d, locale, current.priceExcludingVatMinor)} />
           </div>
           <div className="order-5 md:hidden">
@@ -211,7 +224,7 @@ export const ProductView = ({
               {d.shippingOptions}
             </Link>
           </div>
-          <div className="order-6">
+          <div className="order-6 md:mb-2">
             <ProductPurchase
               dictionary={d}
               locale={locale}
@@ -231,7 +244,7 @@ export const ProductView = ({
               <Tabs.Indicator />
             </Tabs.List>
           </div>
-          <div className="flex flex-col gap-3 py-3">
+          <div className="flex flex-col gap-3 py-8 md:py-3">
             {product.paragraphs.map((paragraph) => (
               <p className="whitespace-pre-line" key={paragraph}>
                 {paragraph}

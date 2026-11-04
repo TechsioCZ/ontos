@@ -99,9 +99,11 @@ const CartRow = ({
   return (
     <LineItem title={entry.name}>
       {image !== null && (
-        <LineItem.Image>
-          <Image alt="" as={NextImage} height={64} src={image} width={64} />
-        </LineItem.Image>
+        <div className="hidden n1-compact:block">
+          <LineItem.Image>
+            <Image alt="" as={NextImage} height={64} src={image} width={64} />
+          </LineItem.Image>
+        </div>
       )}
       <LineItem.Body>
         <LineItem.Heading>
