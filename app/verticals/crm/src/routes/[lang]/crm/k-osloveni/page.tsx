@@ -16,6 +16,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { salespersonOptions } from '../../../../crm/option-labels.ts';
 import { Schema } from 'effect';
 import { useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
@@ -442,10 +443,7 @@ const PlanContent = () => {
                   <SelectTemplate
                     items={[
                       { label: 'Všichni obchodníci', value: ALL },
-                      ...records.state.salespeople.map((person) => ({
-                        label: person.active ? person.name : `${person.name} (vyřazen)`,
-                        value: person.id,
-                      })),
+                      ...salespersonOptions(records.state.salespeople),
                     ]}
                     label={t('crm.ciWorkflow.salesperson')}
                     name="salespersonFilter"

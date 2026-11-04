@@ -7,6 +7,15 @@ export const technicalIdentifiersInText = (text: string): readonly string[] => [
   ...new Set(text.match(technicalIdentifierPattern)),
 ];
 
+/**
+ * A stored name a person can read. Undefined when it is empty or an opaque ID, so the caller shows another
+ * label or hides the option.
+ */
+export const readableName = (name: string | null | undefined): string | undefined => {
+  const trimmed = name?.trim() ?? '';
+  return trimmed === '' || technicalIdentifiersInText(trimmed).length > 0 ? undefined : trimmed;
+};
+
 const textIsVisible = (element: Element, root: Element): boolean => {
   let current: Element | null = element;
   while (current !== null) {

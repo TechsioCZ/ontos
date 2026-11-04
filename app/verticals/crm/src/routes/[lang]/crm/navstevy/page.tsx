@@ -20,6 +20,7 @@ import { lastVisitOf, nextPlanItemOf, visitKinds } from '../../../../../shared/d
 import type { Visit, VisitKind } from '../../../../../shared/domain/visits.ts';
 
 import { CrmPage } from '../../../../crm/crm-page.tsx';
+import { clientOptions, salespersonOptions } from '../../../../crm/option-labels.ts';
 import { useCrmRecords } from '../../../../crm/records.ts';
 import {
   CrmScopeNote,
@@ -389,12 +390,7 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
               />
               <div className="w-56">
                 <SelectTemplate
-                  items={[
-                    { label: 'Všichni klienti', value: ALL },
-                    ...records.state.clients.items
-                      .toSorted((left, right) => left.name.localeCompare(right.name, 'cs'))
-                      .map((client) => ({ label: client.name, value: client.id })),
-                  ]}
+                  items={[{ label: 'Všichni klienti', value: ALL }, ...clientOptions(records.state.clients.items)]}
                   label={t('crm.ciClientsVisits.fields.client')}
                   name="clientFilter"
                   onValueChange={(details) => patchForm({ clientFilter: details.value[0] ?? ALL })}
@@ -407,10 +403,7 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
                   <SelectTemplate
                     items={[
                       { label: 'Všichni obchodníci', value: ALL },
-                      ...records.state.salespeople.map((person) => ({
-                        label: person.active ? person.name : `${person.name} (vyřazen)`,
-                        value: person.id,
-                      })),
+                      ...salespersonOptions(records.state.salespeople),
                     ]}
                     label={t('crm.ciClientsVisits.fields.salesperson')}
                     name="salespersonFilter"

@@ -32,6 +32,8 @@ import { useCrmRecords } from '../../../../crm/records.ts';
 import type { CrmCommandSubmit } from '../../../../crm/records.ts';
 
 import { CrmStateGate, crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
+import { clientOptions } from '../../../../crm/option-labels.ts';
+import { readableName } from '@app/admin-ui/visible-text';
 import {
   RESIZE_LABEL,
   clientLabel,
@@ -242,7 +244,8 @@ const sourceCustomerOptions = (records: RecordsResponse, source: string) => [
               {
                 label:
                   [order.customerName, order.customerRegNo, order.customerEmail]
-                    .filter((part) => part !== undefined && part !== '')
+                    .map(readableName)
+                    .filter((part) => part !== undefined)
                     .join(' · ') || orderTitle(order),
                 value: order.externalCustomerId,
               },
@@ -469,10 +472,7 @@ const NewLinkPanel = ({
           value={externalCustomerId === '' ? [] : [externalCustomerId]}
         />
         <SelectTemplate
-          items={records.state.clients.items
-            .filter((client) => client.status === 'active')
-            .toSorted((left, right) => left.name.localeCompare(right.name, 'cs'))
-            .map((client) => ({ label: client.name, value: client.id }))}
+          items={clientOptions(records.state.clients.items.filter((client) => client.status === 'active'))}
           label={t('crm.ciWorkflow.crmClient')}
           name="link-client"
           onValueChange={(details) => setClientId(details.value[0] ?? '')}

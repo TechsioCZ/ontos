@@ -1,4 +1,5 @@
 import { formatPercent, StatCard, statusPresentation } from '@app/admin-ui';
+import { readableName } from '@app/admin-ui/visible-text';
 import type { OpportunityIndicators } from '../../../../../shared/apis/records.ts';
 import {
   EmployeeIdSchema,
@@ -109,6 +110,18 @@ interface PipelineFiltersProps {
   readonly unassignedOnly: boolean;
 }
 
+/**
+ * A customer's label: its name, else its IČO. A stored name that is an opaque ID is never shown; a customer with no
+ * readable label is left out of the list.
+ */
+const customerLabel = (item: CustomerOption, unknownCustomer: string): string | undefined => {
+  const name = item.name === null ? unknownCustomer : readableName(item.name);
+  if (name === undefined) {
+    return item.companyId === null ? undefined : `IČO ${item.companyId}`;
+  }
+  return item.companyId === null ? name : `${name} (IČO ${item.companyId})`;
+};
+
 /** Search and filters above the table. Stage, owner and customer go to the server; search, tag and assignment narrow the rows. */
 export const PipelineFilters = ({
   customer,
@@ -136,26 +149,21 @@ export const PipelineFilters = ({
   ];
   const ownerItems = [
     { label: t(`${K}.filters.allOwners`), value: ALL },
-    ...employees.map((employee) => ({ label: employee.fullName, value: employee.id })),
+    ...employees.flatMap((employee) => {
+      const label = readableName(employee.fullName);
+      return label === undefined ? [] : [{ label, value: employee.id }];
+    }),
   ];
   const unknownCustomer = t(`${K}.create.unknownCustomer`);
   const [customerQuery, setCustomerQuery] = useState('');
   const customerItems =
     customers.status === 'ready'
-      ? customers.items.flatMap((item) =>
-          item.archived && item.id !== customer
+      ? customers.items.flatMap((item) => {
+          const label = customerLabel(item, unknownCustomer);
+          return (item.archived && item.id !== customer) || label === undefined
             ? []
-            : [
-                {
-                  id: item.id,
-                  label:
-                    item.companyId === null
-                      ? (item.name ?? unknownCustomer)
-                      : `${item.name ?? unknownCustomer} (IČO ${item.companyId})`,
-                  value: item.id,
-                },
-              ],
-        )
+            : [{ id: item.id, label, value: item.id }];
+        })
       : [];
   // The list filters on the typed text here, not inside Combobox, so it always follows the input.
   const shownCustomerItems = filterItemsByQuery(

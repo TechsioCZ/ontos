@@ -17,6 +17,7 @@ import {
   statusMeaningLabels,
   statusMeanings,
 } from '../../../../../shared/domain/reports.ts';
+import { clientOptions, salespersonOptions } from '../../../../crm/option-labels.ts';
 import { orderStatusLabel } from '../../../../crm/order-status-presentation.ts';
 import type { ReportQuery } from '../../../../crm/report-query.ts';
 import { ALL, periodOf, periodWithDate } from '../../../../crm/report-query.ts';
@@ -115,21 +116,10 @@ export const ReportFilterBar = ({ onChange, periods, query, records, scopeAll }:
   }
   const salespeopleItems = [
     { label: 'Všichni obchodníci', value: ALL },
-    ...records.state.salespeople.map((person) => ({
-      label: person.active ? person.name : `${person.name} (vyřazen)`,
-      value: person.id,
-    })),
+    ...salespersonOptions(records.state.salespeople),
     { label: 'Nepřiděleno', value: UNASSIGNED },
   ];
-  const clientItems = [
-    { label: 'Všichni klienti', value: ALL },
-    ...records.state.clients.items
-      .toSorted((left, right) => left.name.localeCompare(right.name, 'cs'))
-      .map((client) => ({
-        label: client.status === 'archived' ? `${client.name} (archivovaný)` : client.name,
-        value: client.id,
-      })),
-  ];
+  const clientItems = [{ label: 'Všichni klienti', value: ALL }, ...clientOptions(records.state.clients.items)];
   const rawStatuses = rawStatusesInUse(records.state);
   const statusItems = [
     { label: 'Všechny stavy', value: ALL },

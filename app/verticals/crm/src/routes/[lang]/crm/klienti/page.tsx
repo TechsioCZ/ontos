@@ -16,6 +16,7 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { CrmPage } from '../../../../crm/crm-page.tsx';
 import { useCrmRecords } from '../../../../crm/records.ts';
 import { CrmStateGate, useCrmRouteSelection, crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
+import { salespersonOptions } from '../../../../crm/option-labels.ts';
 import { CrmSalesKpiStrip } from '../prehled-prodeju/sales-kpi-strip.tsx';
 import { downloadCsv } from '../prehled-prodeju/report-format.ts';
 import { ClientCard, ContactUnavailable } from './client-card.tsx';
@@ -147,7 +148,7 @@ const FiltersBar = ({ entity, filters, manager, onChange, onReset, records }: Fi
             <SelectTemplate
               items={[
                 { label: t('crm.clientFilters.filters.ownerAll'), value: KPI_ALL },
-                ...records.state.salespeople.map((person) => ({ label: person.name, value: person.id })),
+                ...salespersonOptions(records.state.salespeople),
                 { label: t('crm.clientFilters.filters.ownerNone'), value: KPI_UNASSIGNED },
               ]}
               label={t('crm.clientFilters.filters.owner')}
