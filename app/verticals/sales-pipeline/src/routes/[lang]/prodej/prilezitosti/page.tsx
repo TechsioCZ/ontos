@@ -669,6 +669,9 @@ const RecordsPageContent = ({
       <PipelineDetailPanel
         canWrite={canWrite}
         context={context}
+        hasResponse={response !== undefined}
+        items={items}
+        loadError={loadError}
         lookups={lookups}
         onClose={() => setDetailId(undefined)}
         onEdit={(opportunity) => {
@@ -679,7 +682,8 @@ const RecordsPageContent = ({
           setDetailId(undefined);
           openStage({ mode: 'row', opportunity });
         }}
-        opportunity={detailId === undefined ? undefined : items.find((item) => item.id === detailId)}
+        pending={pending}
+        requestedId={detailId}
         revision={revision}
       />
 
