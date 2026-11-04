@@ -1,8 +1,11 @@
 import { NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
-import { Effect, Layer, Option, Schema } from 'effect';
+import { Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import { ContextAccessLive, DatabaseConfigLive, ReadRuntime } from '@app/core-runtime';
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
-import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
+import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 
 import {
   configuredGatewayAssertionRedemptionLive,
@@ -28,7 +31,7 @@ const DiagnosticCauseSchema = Schema.Struct({
 });
 const observeReadFailure = (
   error: typeof DiagnosticCauseSchema.Type,
-  stage: 'quantity-read-runtime' | 'quantity-redemption' = 'quantity-read-runtime',
+  stage: 'quantity-read-runtime' | 'quantity-redemption' | 'quantity-verification' = 'quantity-read-runtime',
 ) =>
   Effect.sync(() => {
     const allowed = [
@@ -36,6 +39,10 @@ const observeReadFailure = (
       'GatewayAssertionReplayError',
       'ActionPrincipalConfigurationError',
       'ActionPrincipalUnavailableError',
+      'ActionPrincipalExpiredError',
+      'ActionPrincipalInvalidError',
+      'ActionPrincipalMissingError',
+      'ActionPrincipalScopeError',
       'ReadHandlerUnavailable',
       'ReadHandlerExecutionError',
       'ReadScopeResolutionError',
@@ -80,7 +87,11 @@ const observeReadStage = (
     | 'READ_RUNTIME_FAIL_UNCLASSIFIED'
     | 'REDEMPTION_CONSUME_BEGIN'
     | 'REDEMPTION_CONSUME_OK'
-    | 'REDEMPTION_CONSUME_FAIL_UNCLASSIFIED',
+    | 'REDEMPTION_CONSUME_FAIL_UNCLASSIFIED'
+    | 'VERIFY_CREATED'
+    | 'VERIFY_BEGIN'
+    | 'VERIFY_OK'
+    | 'VERIFY_FAIL_UNCLASSIFIED',
 ) => Effect.sync(() => process.stderr.write(`${stage}\n`));
 const observedProductionReadRuntime = Layer.effect(
   ReadRuntime,
@@ -134,6 +145,22 @@ const serve = Effect.scoped(
       DatabaseConfigLive,
       ContextAccessLive,
     );
+    // Non-redeeming observation only: the original HTTP request below still executes every genuine gate.
+    const verificationContext = yield* Layer.build(
+      ActionPrincipalVerifierLive.pipe(
+        Layer.provide(
+          ActiveApplicationCompositionSourceLive.pipe(
+            Layer.provide(
+              FetchHttpClient.layer.pipe(
+                Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    const verification = bindGatewayPrincipalVerifier('commerce-customer-context', ultramodernApiMarker);
+    yield* observeReadStage('VERIFY_CREATED');
     const runtime = yield* Effect.acquireRelease(
       Effect.sync(() => apiRuntime.createHandler()),
       (handler) => Effect.promise(async () => await handler.dispose()),
@@ -146,8 +173,27 @@ const serve = Effect.scoped(
         const response = yield* Effect.tryPromise({
           catch: () => new PurchaseReceiverFixtureError({ reason: 'The default purchase HTTP adapter failed' }),
           try: async () => await runtime.handler(webRequest),
-        });
-        return HttpServerResponse.fromWeb(response);
+        }).pipe(Effect.result);
+        // Observe only after the original request failed: never warm verification caches before its gates.
+        if (Result.isFailure(response) || response.success.status === 503) {
+          yield* observeReadStage('VERIFY_BEGIN');
+          const verified = yield* verification
+            .verify(Redacted.make(webRequest.headers.get('authorization') ?? undefined))
+            .pipe(
+              Effect.tapError((error) =>
+                Schema.is(DiagnosticCauseSchema)(error)
+                  ? observeReadFailure(error, 'quantity-verification')
+                  : Effect.void,
+              ),
+              Effect.provideContext(verificationContext),
+              Effect.result,
+            );
+          yield* observeReadStage(Result.isSuccess(verified) ? 'VERIFY_OK' : 'VERIFY_FAIL_UNCLASSIFIED');
+        }
+        if (Result.isFailure(response)) {
+          return yield* Effect.fail(response.failure);
+        }
+        return HttpServerResponse.fromWeb(response.success);
       }),
     );
     const { address } = server;

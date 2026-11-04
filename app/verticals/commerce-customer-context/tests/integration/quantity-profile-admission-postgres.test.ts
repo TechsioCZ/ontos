@@ -948,6 +948,14 @@ const startQuantityPublicReceiver = Effect.fn('QuantityProfileAdmissionTests.pub
       Effect.provide(FetchHttpClient.layer),
       Effect.tapError(() => {
         const knownDiagnostics = [
+          'VERIFY_CREATED',
+          'VERIFY_BEGIN',
+          'VERIFY_OK',
+          'VERIFY_FAIL_UNCLASSIFIED',
+          'ActionPrincipalExpiredError',
+          'ActionPrincipalInvalidError',
+          'ActionPrincipalMissingError',
+          'ActionPrincipalScopeError',
           'REDEMPTION_CONSUME_BEGIN',
           'REDEMPTION_CONSUME_OK',
           'REDEMPTION_CONSUME_FAIL_UNCLASSIFIED',
