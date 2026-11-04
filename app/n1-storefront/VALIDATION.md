@@ -1,5 +1,55 @@
 # Kontrola převodu N1 storefrontu
 
+## C22–C25: košík, obnova a konkrétní Figma regiony — 2026-11-05
+
+- C22 rozlišuje pouze šest pevných fází selhání quote. Žádná upstream těla,
+  klíče nebo chybové zprávy; origin/scope odmítnutí diagnostiku nedostávají.
+  Transportní regrese odlišují gateway403 od decoded native403, nulový/jeden
+  Action call, žádný Action retry a redakci markeru z nepřátelské odpovědi.
+- C23 uchovává skutečné minimum vybrané varianty v nových košíkových draftech.
+  Staré v1 drafy zůstávají kompatibilní bez odhadu owner minima. Fractional
+  minimum zůstává podporované; quote stále rozhoduje o ceně/skladu. Živě min1
+  v košíku i mini okně, decrement vypnutý, ruční0 blokuje pokračování;
+  nadskladové množství odmítl skutečný backend. Žádný nový order tím nevznikl.
+- C24 po nativním guest potvrzení obnovuje jen současnou fotografii/slug podle
+  přesných ID produktů. Nejvýše50 ID, sériové card dávky24/24/2, celkový deadline2s.
+  Chyba, cizí trh/měna, duplicitní/nevyžádané ID nebo timeout ponechá potvrzenou
+  objednávku bez těchto volitelných metadat. Historické částky/jména/quantity
+  se nepřepisují katalogovými údaji. Transportní a SSR regrese PASS.
+- C25 vychází z čerstvých konkrétních uzlů: mobil39:2460/2462/2480 má legendu
+  600 a24px odstup, vybranou skutečnou velikost s lokalizovaným „zvoleno“ a celý
+  řádek výběru600; popis má mobilně32px okraje. Desktop219:2768 má nativní
+  layout mezery20/24/12/16/7/8, bez ikony dostupnosti;7px je app layout alias
+  dimension8−dimension1, nikoli změna primitivu nebo interního stylu komponenty.
+- Úzký košík25:591 používá skrytý přístupný label, borderless/tertiary Odebrat
+  a pod existujícím n1-compact breakpointem skrývá náhled v nativním wrapperu.
+- Success372:3126/3357 je Theme/N1#86efac s PAINT alpha15%, nikoli jiná globální
+  barva. Nativní banner používá bg-bg-success/15; text/rámeček zůstávají opaque.
+  Figma variable defs samy alpha nepředaly; ověřený skutečný paint rozhodl.
+
+Finální399/399 N1 testů, lint a produkční Next build PASS. Skutečné screenshoty
+desktop1440/mobile390 a košík320 byly otevřené. Po odstranění draft košíku se
+OBJ-2026-0004 znovu načetla pouze přes status; obrázek se načetl, odkaz zachoval
+LXL variantId a historická quantity2 i celkem1887. Žádný další place nebyl volán.
+DOM success: background alpha0.15, node opacity1, border#15803d, bez overflow.
+
+Nejde o celé vizuální PASS PDP: Figma má komponentové line-height role ceny36
+a metadata18 a desktop dostupnost18/28; instalovaný i poslední publikovaný
+kit0.57.0 tento responzivní kontrakt neobsahuje. Mobilní struktura záložek
+a další skutečné API mezery zůstávají otevřené. Nepřidáváme prázdné min-height,
+globální typografické přepisy, výrobce/ETA/guide/related fixtures ani falešný
+e-mail/platbu. Lokální /api/account vrací503 kvůli chybějícímu identity runtime;
+proto celá konzole není prohlášena za čistou a pozitivní Portal tok za ověřený.
+
+## Navazující košík: doložená kompozice
+
+Figma25:591 (skutečně znovu načtený kontext i screenshot) nastavuje QuantityField
+size md/hideLabel a Odebrat size md/tertiary/borderless. CartRow nyní používá
+přesně tyto veřejné props, nikoli vlastní CSS nebo změnu základních tokenů.
+Skrytý label ponechává přístupný název množství s konkrétním produktem.
+Živě320px náhled skrytý, label pouze pro čtečku, Odebrat bez rámečku;
+žádný horizontální overflow. Viz C22–C25 výše.
+
 ## C21: skutečná hierarchie na detailu produktu — 2026-11-04
 
 Veřejné API již předává categoryId; N1 dekodér jej zahazoval. Nyní detail

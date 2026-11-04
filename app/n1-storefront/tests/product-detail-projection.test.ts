@@ -43,6 +43,23 @@ const variant = {
 };
 
 describe("owner-backed PDP amounts and stock", () => {
+  it.each(["cs", "en"])("marks only the actual selected variant in %s", (locale) => {
+    const product = detail({
+      ...leaf,
+      variantRecords: [variant, { ...variant, id: "second", name: "L" }],
+      variantSummary: { count: 2, minGrossPriceMinor: 10_890, stockOnHand: 4 },
+    });
+    const dictionary = getDictionary(locale);
+    const selected = renderToStaticMarkup(
+      createElement(ProductView, { dictionary, locale, product, variantId: variant.id }),
+    );
+    const unselected = renderToStaticMarkup(
+      createElement(ProductView, { dictionary, locale, product }),
+    );
+    expect(selected).toContain(`M · ${dictionary.selectedOption}`);
+    expect(selected).not.toContain(`L · ${dictionary.selectedOption}`);
+    expect(unselected).not.toContain(` · ${dictionary.selectedOption}`);
+  });
   it.each([
     { ...leaf, variantRecords: [variant] },
     {

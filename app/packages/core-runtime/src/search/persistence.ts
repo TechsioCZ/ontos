@@ -1,5 +1,5 @@
-import { and, asc, eq, gt, or, sql } from 'drizzle-orm';
-import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
+import { and, asc, eq, gt, inArray, notInArray, or, sql } from 'drizzle-orm';
+import { Context, DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
 import { isSqlError } from 'effect/sql/SqlError';
 
 import { CoreDatabase } from '../db/client.ts';
@@ -11,6 +11,7 @@ import {
   searchLabelRefreshJobs,
   searchLabelSourceRevisions,
   searchProjectionRebuilds,
+  tenants,
 } from '../db/schema.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
@@ -92,7 +93,11 @@ import {
 import { coreSearchQueryMatchesScope } from './projection-store.ts';
 import { decodeCoreSearchResourceRef } from './resource-ref.ts';
 import { deriveCoreSearchRepresentation } from './evidence-codec.ts';
-import { CORE_SEARCH_CANDIDATE_BUDGET, selectCoreSearchCandidates } from './indexed-query.ts';
+import {
+  CORE_SEARCH_CANDIDATE_BUDGET,
+  coreSearchDerivedStampOutdated,
+  selectCoreSearchCandidates,
+} from './indexed-query.ts';
 
 /** Private storage format. Version 1 rows must be retired by migration before deploying this codec. */
 export const CoreSearchPersistedPayloadSchema = Schema.Struct({
@@ -132,6 +137,7 @@ type CoreSearchPersistenceDatabase = Readonly<{
 }>;
 type CoreSearchProjectionInput = Parameters<CoreSearchProjectionStoreService['apply']>[0];
 type CoreSearchPersistenceCause = typeof Schema.Unknown.Type;
+type CoreSearchProjectionUnavailableInstance = InstanceType<typeof CoreSearchProjectionUnavailable>;
 type SearchIndexEntry = typeof searchIndexEntries.$inferSelect;
 interface PersistedDocumentInput {
   aliases?: PersistedDocumentPayload['aliases'];
@@ -1508,6 +1514,35 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
     return result;
   });
 
+  /** Units of one tenant that still hold a live row with a missing or stale derived stamp. */
+  const listOutdatedDerivedUnitsTransaction = Effect.fn('CoreSearchPersistence.listOutdatedDerivedUnitsTransaction')(
+    function* listOutdatedDerivedUnitsTransactionEffect(
+      transaction: CoreTransaction,
+      tenantId: string,
+      modules: CoreSearchDerivedStampModules,
+    ) {
+      yield* installTenantScope(transaction, tenantId);
+      const select = transaction
+        .selectDistinct({
+          moduleId: searchIndexEntries.sourceModuleKey,
+          resourceType: searchIndexEntries.sourceResourceType,
+        })
+        .from(searchIndexEntries)
+        .where(
+          and(
+            eq(searchIndexEntries.tenantId, tenantId),
+            eq(searchIndexEntries.deleted, false),
+            'only' in modules
+              ? inArray(searchIndexEntries.sourceModuleKey, [...modules.only])
+              : notInArray(searchIndexEntries.sourceModuleKey, [...modules.except]),
+            coreSearchDerivedStampOutdated(),
+          ),
+        )
+        .orderBy(asc(searchIndexEntries.sourceModuleKey), asc(searchIndexEntries.sourceResourceType));
+      return yield* select.execute.bind(select)().pipe(Effect.mapError(unavailable));
+    },
+  );
+
   /** Decode the phase cursor and reject one that does not belong to this resource type. */
   const repairCursorId = Effect.fn('CoreSearchPersistence.repairCursorId')(function* repairCursorIdEffect(
     job: CoreSearchDerivedRepairJob,
@@ -1781,6 +1816,7 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
     commitLabelRefreshPageTransaction,
     decodeMutation,
     decodeReplacement,
+    listOutdatedDerivedUnitsTransaction,
     openDerivedRepairJobTransaction,
     openLabelRefreshTransaction,
     queryCandidatesTransaction,
@@ -1792,16 +1828,20 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
   });
 };
 
+const makeTransactionRunner =
+  (database: CoreSearchPersistenceDatabase) =>
+  <Value, Failure>(body: (transaction: CoreTransaction) => Effect.Effect<Value, Failure>) =>
+    database.executor.transaction(body).pipe(
+      Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
+      Effect.catchTag('SqlError', (failure) => Effect.fail(unavailable(failure))),
+    );
+
 export const makePostgresCoreSearchProjectionStore = (
   database: CoreSearchPersistenceDatabase,
   databaseIdentities: DatabaseIdentityEnrollment,
 ): CoreSearchProjectionStoreService & CoreSearchProjectionRefreshStoreService => {
   const transactionOperations = makeTransactionOperations(databaseIdentities);
-  const runTransaction = <Value, Failure>(body: (transaction: CoreTransaction) => Effect.Effect<Value, Failure>) =>
-    database.executor.transaction(body).pipe(
-      Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
-      Effect.catchTag('SqlError', (failure) => Effect.fail(unavailable(failure))),
-    );
+  const runTransaction = makeTransactionRunner(database);
   const apply: CoreSearchProjectionStoreService['apply'] = Effect.fn('CoreSearchProjectionStore.applyPostgres')(
     function* applyCoreSearchProjection(input: CoreSearchProjectionInput, context: OutboxWorkerHandlerContext) {
       const mutation = yield* transactionOperations.decodeMutation(input);
@@ -1998,6 +2038,107 @@ export const makePostgresCoreSearchProjectionStore = (
     replace,
   });
 };
+
+/** The owners one database identity may repair; Core Search RLS enforces the same split. */
+export type CoreSearchDerivedStampModules =
+  | { readonly only: readonly string[] }
+  | { readonly except: readonly string[] };
+
+export interface CoreSearchDerivedStampSweepInput {
+  readonly compositionRevision: string;
+  readonly modules: CoreSearchDerivedStampModules;
+}
+
+export interface CoreSearchDerivedStampSweepResult {
+  readonly repaired: number;
+  readonly units: number;
+}
+
+interface DerivedStampUnit {
+  readonly moduleId: string;
+  readonly resourceType: string;
+  readonly tenantId: string;
+}
+
+/**
+ * Core-owned stamp maintenance, so the indexed query never verifies a whole owner bucket in memory after a
+ * deploy, a format change or a legacy write. It re-derives missing or stale stamps of live rows from their
+ * accepted persisted documents, one bounded page per transaction under the composition worker fence, so a
+ * superseded release cannot rewrite them. Lifecycle versions, payloads, generations and rebuild floors never
+ * change, and a row whose projection version moved meanwhile is left to its newer write.
+ */
+export const makeCoreSearchDerivedStampSweep = (
+  database: CoreSearchPersistenceDatabase,
+  databaseIdentities: DatabaseIdentityEnrollment,
+) => {
+  const transactionOperations = makeTransactionOperations(databaseIdentities);
+  const runTransaction = makeTransactionRunner(database);
+  const listTenants = runTransaction((transaction) => {
+    const select = transaction.select({ tenantId: tenants.tenantId }).from(tenants).orderBy(asc(tenants.tenantId));
+    return select.execute.bind(select)().pipe(Effect.mapError(unavailable));
+  });
+  const repairUnit: (
+    unit: DerivedStampUnit,
+    compositionRevision: string,
+    cursor: Option.Option<string>,
+  ) => Effect.Effect<number, CoreSearchProjectionInvalid | CoreSearchProjectionUnavailableInstance> = Effect.fn(
+    'CoreSearchDerivedStampSweep.repairUnit',
+  )(function* repairDerivedStampUnit(unit, compositionRevision, cursor) {
+    const request = yield* decodeCoreSearchDerivedRepairRequest({ ...unit, cursor: Option.getOrNull(cursor) });
+    const page = yield* runTransaction((transaction) =>
+      lockApplicationCompositionAuthority(transaction, compositionRevision, 'worker').pipe(
+        Effect.mapError(unavailable),
+        Effect.andThen(transactionOperations.repairDerivedRepresentationTransaction(transaction, request)),
+      ),
+    );
+    if (page.complete || Option.isNone(page.cursor)) {
+      return page.repaired;
+    }
+    return page.repaired + (yield* repairUnit(unit, compositionRevision, page.cursor));
+  });
+  const listTenantUnits = Effect.fn('CoreSearchDerivedStampSweep.listTenantUnits')(function* listTenantUnits(
+    tenantId: string,
+    modules: CoreSearchDerivedStampModules,
+  ) {
+    const rows = yield* runTransaction((transaction) =>
+      transactionOperations.listOutdatedDerivedUnitsTransaction(transaction, tenantId, modules),
+    );
+    return rows.map((row): DerivedStampUnit => ({ ...row, tenantId }));
+  });
+  /** One unit at a time: maintenance must never compete with live searches for the host's CPU or pool. */
+  return Effect.fn('CoreSearchDerivedStampSweep.sweep')(function* sweepDerivedStamps({
+    compositionRevision,
+    modules,
+  }: CoreSearchDerivedStampSweepInput) {
+    const tenantRows = yield* listTenants;
+    const tenantUnits = yield* Effect.forEach(tenantRows, ({ tenantId }) => listTenantUnits(tenantId, modules), {
+      concurrency: 1,
+    });
+    const units = tenantUnits.flat();
+    const repaired = yield* Effect.forEach(units, (unit) => repairUnit(unit, compositionRevision, Option.none()), {
+      concurrency: 1,
+    });
+    return {
+      repaired: repaired.reduce((total, count) => total + count, 0),
+      units: units.length,
+    } satisfies CoreSearchDerivedStampSweepResult;
+  });
+};
+
+export class CoreSearchDerivedStampSweep extends Context.Service<
+  CoreSearchDerivedStampSweep,
+  { readonly sweep: ReturnType<typeof makeCoreSearchDerivedStampSweep> }
+>()('@app/core-runtime/search/persistence/CoreSearchDerivedStampSweep') {}
+
+/** Sweeps with the provided database identity; its enrollment and RLS bound which owners it may repair. */
+export const CoreSearchDerivedStampSweepLive = Layer.effect(
+  CoreSearchDerivedStampSweep,
+  Effect.gen(function* makeCoreSearchDerivedStampSweepLive() {
+    const database = yield* CoreDatabase;
+    const databaseIdentities = yield* DatabaseIdentityEnrollmentContext;
+    return { sweep: makeCoreSearchDerivedStampSweep(database, databaseIdentities) };
+  }),
+);
 
 export const CoreSearchProjectionStoreLive = Layer.effect(
   CoreSearchProjectionStore,
