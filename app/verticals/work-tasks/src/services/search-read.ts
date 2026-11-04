@@ -2,7 +2,6 @@ import { CoreSearchQueryRuntime, ReadHandlerUnavailable } from '@app/core-runtim
 import type { OperationalScope } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { TasksProviderResponseSchema } from '../../shared/apis/tasks-search.ts';
-import { TaskRefSchema } from '../../shared/resources/task.ts';
 
 export const searchUnavailable = (cause?: unknown) =>
   Object.defineProperty(
@@ -35,25 +34,25 @@ export const loadSearch = Effect.fn('Tasks.loadSearch')(function* loadSearch(sco
       scope,
     )
     .pipe(Effect.mapError(searchUnavailable));
-  return yield* Effect.forEach(
-    hits,
-    Effect.fn('WorkTasks.validateSearchHit')(function* validateHit(hit) {
-      if (
-        hit.ref.tenantId !== scope.tenantId ||
-        hit.selectedLegalEntityId !== legalEntityId ||
-        hit.ref.moduleId !== 'work.tasks' ||
-        hit.ref.resourceType !== 'work.tasks.task' ||
-        hit.archived ||
-        hit.subjectRef !== undefined ||
-        hit.matchedRef !== undefined ||
-        hit.matchedSubjectRef !== undefined
-      ) {
-        return yield* searchUnavailable();
-      }
-      const ref = yield* Schema.decodeUnknownEffect(TaskRefSchema)(hit.ref).pipe(Effect.mapError(searchUnavailable));
-      const result = { ref, selectedLegalEntityId: legalEntityId, title: hit.title };
-      return hit.relevance === undefined ? result : { ...result, relevance: hit.relevance };
-    }),
-    { concurrency: 1 },
-  ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(TasksProviderResponseSchema)), Effect.mapError(searchUnavailable));
+  const owned = hits.every(
+    (hit) =>
+      hit.ref.tenantId === scope.tenantId &&
+      hit.selectedLegalEntityId === legalEntityId &&
+      hit.ref.moduleId === 'work.tasks' &&
+      hit.ref.resourceType === 'work.tasks.task' &&
+      !hit.archived &&
+      hit.subjectRef === undefined &&
+      hit.matchedRef === undefined &&
+      hit.matchedSubjectRef === undefined,
+  );
+  if (!owned) {
+    return yield* searchUnavailable();
+  }
+  const results = hits.map((hit) => {
+    const result = { ref: hit.ref, selectedLegalEntityId: legalEntityId, title: hit.title };
+    return hit.relevance === undefined ? result : { ...result, relevance: hit.relevance };
+  });
+  return yield* Schema.decodeUnknownEffect(TasksProviderResponseSchema)(results).pipe(
+    Effect.mapError(searchUnavailable),
+  );
 });

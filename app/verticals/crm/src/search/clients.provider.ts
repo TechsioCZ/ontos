@@ -46,13 +46,13 @@ export const loadCrmSearch = Effect.fn('Crm.loadSearch')(function* loadSearch(
       client.status === 'active' && client.archivedAt === undefined ? [[String(client.id), client] as const] : [],
     ),
   );
-  const current = new Map(
+  const currentEvidence = new Map(
     input.resourceType === 'demo.crm.client'
       ? [...clients.values()].map(
           (client) =>
             [
               String(client.id),
-              { ref: currentRef(client.id), terms: crmClientSearchTerms(client), title: client.name },
+              () => ({ ref: currentRef(client.id), terms: crmClientSearchTerms(client), title: client.name }),
             ] as const,
         )
       : input.visible.clients.contacts.flatMap((contact) => {
@@ -61,11 +61,11 @@ export const loadCrmSearch = Effect.fn('Crm.loadSearch')(function* loadSearch(
             ? [
                 [
                   String(contact.id),
-                  {
+                  () => ({
                     ref: currentRef(contact.id),
                     terms: crmContactRecordSearchTerms(contact, client),
                     title: contact.name,
-                  },
+                  }),
                 ] as const,
               ]
             : [];
@@ -86,7 +86,7 @@ export const loadCrmSearch = Effect.fn('Crm.loadSearch')(function* loadSearch(
   const results = yield* Effect.forEach(
     hits,
     (hit) => {
-      const evidence = current.get(hit.ref.resourceId);
+      const evidence = currentEvidence.get(hit.ref.resourceId)?.();
       if (
         hit.ref.tenantId !== scope.tenantId ||
         hit.selectedLegalEntityId !== legalEntityId ||
