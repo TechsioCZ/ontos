@@ -10,6 +10,8 @@
 #
 # ZEROPS_SHARED_IPV4 is the shared IPv4 address the Zerops dashboard shows for the project (the API does not).
 set -euo pipefail
+work_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/route-stage-domains.XXXXXX")"
+trap 'rm -rf "$work_dir"' EXIT
 
 : "${CLOUDFLARE_API_TOKEN:?}" "${CLOUDFLARE_ZONE_ID:?}" "${CLOUDFLARE_ACCOUNT_ID:?}" "${ZEROPS_TOKEN:?}" "${ZEROPS_PROJECT_ID:?}"
 : "${ZEROPS_SHARED_IPV4:?}"
@@ -24,14 +26,45 @@ routings="$(curl -fsS "${z_auth[@]}" "$zerops/project/$ZEROPS_PROJECT_ID/public-
 while (($# >= 3)); do
   host="$1" service="$2" port="$3"
   shift 3
-  # Zerops: one routing per hostname, path / to the service port.
-  if jq -e --arg host "$host" '.list[]? | select(.domains | index($host))' <<<"$routings" >/dev/null; then
-    echo "$host already has a Zerops routing"
+  # Zerops: one routing per hostname, path / to the service port. The lookup does not depend on the list's envelope:
+  # any object that names the hostname in its domains counts, and it is the same target only when it also names the
+  # service and the port.
+  # shellcheck disable=SC2329
+  routing_for_host() { jq -e --arg host "$host" '[.. | objects | select(has("domains") and ((.domains | tostring) | contains($host)))] | length > 0' >/dev/null; }
+  # shellcheck disable=SC2329
+  routing_is_current() {
+    jq -e --arg host "$host" --arg service "$service" --argjson port "$port" '
+      [.. | objects | select(has("domains") and ((.domains | tostring) | contains($host)))]
+      | length > 0 and all(.[]; (tostring | contains($service)) and (tostring | contains("\"port\":" + ($port | tostring))))' \
+      >/dev/null
+  }
+  if routing_is_current <<<"$routings"; then
+    echo "$host already routed to Zerops service $service:$port"
+  elif routing_for_host <<<"$routings"; then
+    # A different target exists. Updating it needs the Zerops routing update call, which this script does not use:
+    # fail loudly with the current entry instead of guessing.
+    echo "$host has a Zerops routing to a different target; update it in Zerops, then rerun" >&2
+    jq -c --arg host "$host" '[.. | objects | select(has("domains") and ((.domains | tostring) | contains($host)))]' <<<"$routings" >&2
+    exit 1
   else
-    jq -n --arg host "$host" --arg service "$service" --argjson port "$port" \
+    status="$(jq -n --arg host "$host" --arg service "$service" --argjson port "$port" \
       '{domains: [$host], sslEnabled: true, locations: [{path: "/", port: $port, serviceStackId: $service}]}' |
-      curl -sS --fail-with-body -X POST "${z_auth[@]}" "$zerops/project/$ZEROPS_PROJECT_ID/public-http-routing" -d @- >/dev/null
-    echo "$host routed to Zerops service $service:$port"
+      curl -sS -o "$work_dir/routing-response" -w '%{http_code}' -X POST "${z_auth[@]}" \
+        "$zerops/project/$ZEROPS_PROJECT_ID/public-http-routing" -d @-)"
+    if [[ "$status" == 2* ]]; then
+      echo "$host routed to Zerops service $service:$port"
+    else
+      # A 400 here is usually the routing that already exists: re-read the list before failing.
+      routings="$(curl -fsS "${z_auth[@]}" "$zerops/project/$ZEROPS_PROJECT_ID/public-http-routing?limit=100&offset=0")"
+      if routing_is_current <<<"$routings"; then
+        echo "$host already routed to Zerops service $service:$port (after a $status on create)"
+      else
+        echo "creating the Zerops routing for $host returned HTTP $status:" >&2
+        head -c 2000 "$work_dir/routing-response" >&2
+        echo >&2
+        exit 1
+      fi
+    fi
   fi
   # Cloudflare: detach a Worker custom domain, then exactly one DNS-only A and AAAA.
   for domain in $(curl -fsS "${cf_auth[@]}" "$cf/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains?hostname=$host" |
