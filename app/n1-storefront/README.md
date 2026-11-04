@@ -24,7 +24,8 @@ Neimportuje privátní zdroje jiné aplikace.
 Je to rozpracovaný storefront, nikoliv hotový převod všech obrazovek Figmy. Login,
 registrace a ověření e-mailu mají existující Portal integraci; košík a owner dry-run
 ověření jsou popsané níže. Účet/profil, adresy, objednávky a celý checkout nejsou
-dokončené. Právní texty a obsahové stránky kromě kontaktů čekají na skutečný obsah.
+dokončené. Doprava a platby čtou skutečné market checkout možnosti; právní
+texty a ostatní obsahové stránky kromě kontaktů čekají na skutečný obsah.
 
 Úplný seznam všech aktuálních rámců a stavů je v `FIGMA-INVENTORY.md`. Kategorie nyní
 obsahuje skutečný strom, breadcrumb, podkategorie, počet a serverové stránkování;
@@ -167,6 +168,9 @@ Storefront Application ID je `n1-storefront`. Vlastník `commerce.market-catalog
 vrátit právě jeden účinný ACTIVE B2C trh pro danou identitu a locale (`cs` / `en`).
 Merchandise odpověď musí potvrdit stejné `marketId`. Chybějící, zakázaný, neaktivní či
 nejednoznačný kontext zablokuje čtení; aplikace nikdy neotevře nefiltrovaný katalog.
+
+Pořadí provisioningu, samostatné Action oprávnění, ověření asociací a bezpečný
+import historického skladu popisuje [Napojení N1 storefrontu](INTEGRATION.md).
 
 Použitý veřejný kontrakt: serverové `POST /shell-super-app-api/auth/api-key/gateway-read`
 s `audience`, `legalEntityId`, `readName` a `query`. Trhy používají
