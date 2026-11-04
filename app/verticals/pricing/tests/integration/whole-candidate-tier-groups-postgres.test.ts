@@ -2561,12 +2561,16 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
     return yield* Effect.void;
   });
 
-it.live('preserves original Catalog occurrences and native Pricing Tier components with one real Core identity', () =>
-  Effect.scoped(
-    Effect.gen(function* nativeWholeCandidateBoundary() {
-      const nativeClock = yield* Clock.Clock;
-      const context = yield* Layer.build(services);
-      return yield* nativeWholeCandidateComponents(nativeClock).pipe(Effect.provideContext(context));
-    }),
-  ),
+// Real owner compilation, native publication and scoped cleanup share this cross-process case budget.
+it.live(
+  'preserves original Catalog occurrences and native Pricing Tier components with one real Core identity',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* nativeWholeCandidateBoundary() {
+        const nativeClock = yield* Clock.Clock;
+        const context = yield* Layer.build(services);
+        return yield* nativeWholeCandidateComponents(nativeClock).pipe(Effect.provideContext(context));
+      }),
+    ),
+  120_000,
 );

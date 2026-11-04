@@ -1,6 +1,13 @@
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
-import type { TrustedPrincipalContext } from '@app/core-runtime';
+import type {
+  OutboxCycleError,
+  OutboxCycleResult,
+  OutboxWorkerRequirements,
+  TrustedPrincipalContext,
+} from '@app/core-runtime';
 import {
+  ActiveApplicationCompositionService,
   CoreSearchProjectionStoreLive,
   CoreSearchQueryRuntimeLive,
   loadDatabaseIdentityConnections,
@@ -10,7 +17,7 @@ import {
   SHELL_GATEWAY_ISSUER_IDENTITY,
   runAction,
 } from '@app/core-runtime';
-import { extractOutboxWorkerSubscriptions } from '@app/core-runtime/outbox/worker';
+import { defineOutboxWorkerEntry, extractOutboxWorkerSubscriptions } from '@app/core-runtime/outbox/worker';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import {
   addTestGatewayScopeGrantCleanup,
@@ -19,12 +26,16 @@ import {
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Crypto, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
+import { Crypto, Deferred, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 import type { Row } from 'effect/sql/SqlConnection';
 
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
-import { testCoreDatabase, deleteTestCoreOutbox } from '@app/core-runtime/testing/owner-evidence';
+import {
+  testCoreDatabase,
+  deleteTestCoreOutbox,
+  publishTestApplicationCompositionAuthority,
+} from '@app/core-runtime/testing/owner-evidence';
 import { makeTestPgClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
 import { outboxTopic as partyCreatedTopic } from '../../shared/outbox/party-registry-party-created-v1.ts';
@@ -104,16 +115,41 @@ const partyWorkerRuntimeLive = outboxWorkerLayer.pipe(
 const runCycleOnce = (compositionRevision: string) =>
   Effect.gen(function* runCycleOnceEffect() {
     const runtime = yield* OutboxRuntime;
+    const workerServices = yield* Effect.context<OutboxWorkerRequirements<(typeof outboxWorkers)[number]>>();
+    const snapshot = yield* partyCompositionSnapshot;
+    expect(snapshot.composition.revision).toBe(compositionRevision);
     const claimOwner = `party.registry-identity-runtime-${yield* nextUuid}`;
     const matched = yield* runtime.matchMessages({ compositionRevision });
-    const cycle = yield* runtime.runCycle({
-      claimOwner,
-      compositionRevision,
+    const subscriptions = extractOutboxWorkerSubscriptions(outboxWorkers);
+    const completed = yield* Deferred.make<OutboxCycleResult, OutboxCycleError>();
+    const entry = defineOutboxWorkerEntry({
+      claimOwnerPrefix: 'party.registry-identity-runtime',
+      expectedDeployment: ultramodernApiMarker,
+      layer: Layer.mergeAll(
+        Layer.succeedContext(workerServices),
+        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+        Layer.succeed(OutboxRuntime, {
+          ...runtime,
+          runCycle: () =>
+            runtime.runCycle({ claimOwner, compositionRevision, registrations: outboxWorkers, subscriptions }).pipe(
+              Effect.provideContext(workerServices),
+              Effect.onExit((exit) => Deferred.done(completed, exit)),
+            ),
+        }),
+      ),
+      ownerRegistration: partyRegistryBackendRegistration,
       registrations: outboxWorkers,
-      subscriptions: extractOutboxWorkerSubscriptions(outboxWorkers),
+      subscriptions,
     });
+    const cycle = yield* Deferred.await(completed).pipe(
+      Effect.raceFirst(
+        entry
+          .runLoop({ config: { claimOwner, maxDeliveries: 50, pollIntervalMs: 1000 } })
+          .pipe(Effect.andThen(Effect.never)),
+      ),
+    );
     return { cycle, matched };
-  });
+  }).pipe(Effect.scoped);
 
 /** One match + claim/handle/complete cycle over the Party Outbox Workers as `party_registry_worker`. */
 const runPartyWorkerCycle = (compositionRevision: string) =>
@@ -127,39 +163,12 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const query = (client: PgClient.PgClient, statement: string, parameters: readonly unknown[] = []) =>
   client.unsafe<Row>(statement, parameters);
 
-/**
- * Each integration file's setup republishes the composition authority and resets its
- * subscriptions, so a test re-applies the Party subscriptions right before a worker cycle matches.
- */
-const applyPartyWorkerSubscriptions = (admin: PgClient.PgClient) =>
-  query(
-    admin,
-    `update core.application_composition_authority set subscriptions_json = $1::jsonb
-      where authority_key = 'active'`,
-    [encodeJson(extractOutboxWorkerSubscriptions(outboxWorkers))],
-  );
-
-/**
- * Subscribes the active Application Composition to the Party Outbox Workers for this scope, as a
- * deployment with those workers would, and restores the previous subscriptions afterwards.
- */
-const subscribePartyWorkers = (admin: PgClient.PgClient) =>
-  Effect.gen(function* subscribePartyWorkersEffect() {
-    const [previous] = yield* query(
-      admin,
-      `select subscriptions_json::text as subscriptions from core.application_composition_authority
-        where authority_key = 'active'`,
-    );
-    assert.isOk(previous);
-    yield* Effect.addFinalizer(() =>
-      query(
-        admin,
-        `update core.application_composition_authority set subscriptions_json = $1::jsonb
-          where authority_key = 'active'`,
-        [previous['subscriptions']],
-      ).pipe(Effect.orDie),
-    );
-    yield* applyPartyWorkerSubscriptions(admin);
+/** Re-publish this same complete fixture through Core's supported owning publication API. */
+const publishPartyWorkerComposition = (admin: PgClient.PgClient) =>
+  Effect.gen(function* publishPartyWorkerCompositionEffect() {
+    const executor = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, admin));
+    const snapshot = yield* partyCompositionSnapshot;
+    yield* publishTestApplicationCompositionAuthority(executor, snapshot);
   });
 
 /** Removes every row a worker-cycle fixture tenant owns, deliveries and attempts first. */
@@ -218,7 +227,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const other = yield* openFixture;
           const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
           const coreAdmin = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, adminClient));
-          yield* subscribePartyWorkers(adminClient);
+          yield* publishPartyWorkerComposition(adminClient);
           yield* addTestGatewayScopeGrantCleanup(adminClient, [fixture.tenantId, other.tenantId]);
           // Release only these disposable tenants' dispatch queues; retain append-only Core evidence.
           yield* Effect.addFinalizer(() =>
@@ -344,7 +353,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           // The worker projects both tenants' counterparties; Search returns only the caller's tenant.
           // Owning a Counterparty does not grant resource permission; Search filters results by it.
           yield* fixture.grantResourceAccess(own.counterpartyRef, legalEntityPrincipal.principalId);
-          yield* applyPartyWorkerSubscriptions(adminClient);
+          yield* publishPartyWorkerComposition(adminClient);
           yield* runPartyWorkerCycle(compositionRevision);
           const searchContext = yield* Layer.build(
             PartySearchProjectionGatewayLive.pipe(
@@ -383,7 +392,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const compositionRevision = (yield* partyCompositionSnapshot).composition.revision;
           const [tenantId, partyId] = yield* Effect.all([nextUuid, nextUuid]);
           yield* Effect.addFinalizer(() => purgeWorkerTenant(admin, tenantId).pipe(Effect.orDie));
-          yield* subscribePartyWorkers(admin);
+          yield* publishPartyWorkerComposition(admin);
 
           yield* query(
             admin,
