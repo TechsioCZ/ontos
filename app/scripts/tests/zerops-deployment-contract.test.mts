@@ -296,10 +296,12 @@ it("stops the other Outbox Worker mode's workers after this mode's workers deplo
   const plan = deployPlan.steps.find((step) => step.name === 'Generate topology-driven deployment impact plan');
   expect(plan?.run).toContain('plan_arguments+=(--reconcile-workers)');
   const deploySteps = deployZerops.steps.map((step) => step.name);
-  expect(deploySteps.indexOf('Publish the complete active Application Composition')).toBeGreaterThanOrEqual(0);
-  expect(deploySteps.indexOf("Stop the other Outbox Worker mode's workers")).toBeGreaterThan(
-    deploySteps.indexOf('Publish the complete active Application Composition'),
-  );
+  const deploy = deploySteps.indexOf('Deploy the selected Outbox Workers');
+  const stopOtherMode = deploySteps.indexOf("Stop the other Outbox Worker mode's workers");
+  const publish = deploySteps.indexOf('Publish the complete active Application Composition');
+  expect(deploy).toBeGreaterThanOrEqual(0);
+  expect(stopOtherMode).toBeGreaterThan(deploy);
+  expect(publish).toBeGreaterThan(stopOtherMode);
 });
 
 it('declares the Inventory public URL for Cloudflare proof', () => {

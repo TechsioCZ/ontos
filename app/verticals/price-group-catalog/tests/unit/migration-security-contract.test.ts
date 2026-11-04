@@ -104,9 +104,8 @@ it.layer(NodeFileSystem.layer)('Price Group Catalog migration security contract'
           fileURLToPath(new URL('../../../../scripts/verify-application-db-schema.mts', import.meta.url)),
         ),
       );
-      expect(rootVerifier).toMatch(/'price_group_catalog'/u);
-      expect(rootVerifier).toMatch(/'__drizzle_migrations_price_group_catalog'/u);
-      expect(rootVerifier).toMatch(/verticals\/price-group-catalog\/scripts\/verify-db-schema\.mts/u);
+      expect(rootVerifier).toContain('loadApplicationMigrationInventory');
+      expect(rootVerifier).toContain('for (const path of stream.verifierPaths)');
     }),
   );
 

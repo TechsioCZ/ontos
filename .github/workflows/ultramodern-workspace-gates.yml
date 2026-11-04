@@ -721,6 +721,7 @@ jobs:
         # dotenv discovery is closed, so no workspace .env file can leak into an owned test database.
         env:
           APP_ENV_PATH: /dev/null
+          SPICEDB_DATABASE_PASSWORD: spicedb
           PACKAGE_FILTERS: ${{ matrix.package-filters }}
           ROOT_SUITE: ${{ matrix.root-suite }}
           RSTEST_SHARD: ${{ matrix.rstest-shard }}

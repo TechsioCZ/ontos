@@ -447,6 +447,7 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
         'counterparty.approval.request.manage',
         'counterparty.approval.decide',
       ] as const) {
+        const isRequestManagement = permission === 'counterparty.approval.request.manage';
         const prepared = yield* fixture
           .prepareOwner(
             (transaction) =>
@@ -454,7 +455,7 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
                 counterpartyRef.resourceId,
                 principal.principalId,
                 permission,
-                null,
+                isRequestManagement ? storefrontId : null,
                 principal.principalId,
                 randomUUID(),
                 'TEST initial exact Approval authorization prerequisite',
@@ -468,16 +469,29 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
           return yield* Effect.die('The native initial grant was not prepared');
         }
         const mutation = Context.get(runtimeContext, BusinessPermissionRelationshipMutation);
-        const relation = {
-          permission,
-          principal,
-          target: {
-            counterpartyId: counterpartyRef.resourceId,
-            kind: 'counterparty' as const,
-            legalEntityId,
-            tenantId,
-          },
-        };
+        const relation = isRequestManagement
+          ? {
+              permission,
+              principal,
+              target: {
+                counterpartyId: counterpartyRef.resourceId,
+                kind: 'counterparty_storefront' as const,
+                legalEntityId,
+                storefrontId,
+                tenantId,
+              },
+              trustedStorefrontId: storefrontId,
+            }
+          : {
+              permission,
+              principal,
+              target: {
+                counterpartyId: counterpartyRef.resourceId,
+                kind: 'counterparty' as const,
+                legalEntityId,
+                tenantId,
+              },
+            };
         yield* mutation.mutate({ ...relation, operation: 'grant', target: customerOwnerPermissionTarget(relation) });
         yield* Effect.addFinalizer(() =>
           mutation

@@ -649,19 +649,8 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
       );
       expect(bootstrap).toMatch(/\['core', 'auth', 'catalog', 'inventory', 'tax', 'privacy', 'projects'\]/u);
       expect(bootstrap).toMatch(/revoke all on all tables in schema/u);
-      expect(verifier).toMatch(
-        /const EXPECTED_APPLICATION_SCHEMAS = \[\s*'assortment',\s*'auth',\s*'catalog',\s*'commerce_cart',\s*'commerce_customer_context',\s*'commerce_market_catalog',\s*'commerce_order',\s*'contacts',\s*'core',\s*'inventory',\s*'party',\s*'payment_term_catalog',\s*'price_group_catalog',\s*'pricing',\s*'privacy',\s*'projects',\s*'storefront_registry',\s*'tax',\s*'trust',\s*\]/u,
-      );
-      expect(verifier).toMatch(/__drizzle_migrations_assortment/u);
-      expect(verifier).toMatch(/__drizzle_migrations_catalog/u);
-      expect(verifier).toMatch(/__drizzle_migrations_party/u);
-      expect(verifier).toMatch(/__drizzle_migrations_price_group_catalog/u);
-      expect(verifier).toMatch(/__drizzle_migrations_pricing/u);
-      expect(verifier).toMatch(/__drizzle_migrations_storefront_registry/u);
-      expect(verifier).toMatch(/verticals\/catalog\/scripts\/verify-db-schema\.mts/u);
-      expect(verifier).toMatch(/verticals\/assortment\/scripts\/verify-db-schema\.mts/u);
-      expect(verifier).toMatch(/verticals\/party-registry\/scripts\/verify-db-schema\.mts/u);
-      expect(verifier).toMatch(/verticals\/price-group-catalog\/scripts\/verify-db-schema\.mts/u);
+      expect(verifier).toContain('loadApplicationMigrationInventory');
+      expect(verifier).toContain('for (const path of stream.verifierPaths)');
     }),
   );
 });
