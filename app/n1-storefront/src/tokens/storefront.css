@@ -1,6 +1,6 @@
 /* App-wide shell composition: Header/Footer have no tone prop in kit 0.57.0.
- * Bind their existing slots to canonical N1 roles; do not redefine the palette,
- * component sizing or per-instance appearance here.
+ * Bind existing slots to canonical N1 roles; do not redefine the primitive
+ * palette/dimension scale or per-instance appearance here.
  * Source: N1 storefront Header 33:635 / Footer 33:1100.
  */
 [data-theme="n1"] {
@@ -16,6 +16,10 @@
   --color-radio-card-item-border-outline-checked: var(--color-fg-secondary);
   --color-radio-card-item-border-outline-checked-hover: var(--color-fg-secondary);
   --color-radio-card-item-bg-outline-checked: var(--color-fill-overlay);
+  /* Shipping319:1756/1977: control p12, content gap8, StatusText sm. */
+  --padding-radio-card-item-control-sm: var(--dimension-12);
+  --spacing-radio-card-item-content-sm: var(--dimension-8);
+  --text-radio-card-item-description-sm: var(--text-sm);
   --color-numeric-input-compact-border: var(--color-border-secondary);
   --font-weight-price-block-amount: var(--font-weight-bold);
   /* Homepage31:636/31:637, card33:1018: installed0.57 component
@@ -40,6 +44,9 @@
   --color-header-nav-fg-active: var(--color-primary);
   --color-header-actions-fg: var(--color-fg-reverse);
   --color-header-actions-fg-hover: var(--color-primary);
+  /* Header208:2267: four native actions use gap12, preserving the mobile logo.
+   * Bind the existing composition role; individual control sizes stay native. */
+  --spacing-header-actions-sm: var(--dimension-12);
   --color-footer-bg: var(--color-highlight);
   --color-footer-container-bg: var(--color-highlight);
   --color-footer-section-bg: var(--color-highlight);

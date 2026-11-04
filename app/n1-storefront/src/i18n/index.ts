@@ -306,7 +306,7 @@ const cs = {
   shippingOptions: "Možnosti dopravy",
   shopping: {
     acceptPrice: "Přijmout aktuální cenu",
-    added: "Zboží je ve vašem košíku. Cenu a dostupnost ověříme před nákupem.",
+    added: "Zboží je ve vašem košíku.",
     addFailed: "Změnu košíku se nepodařilo uložit. Zkontrolujte košík a zkuste to znovu.",
     backHome: "Zpět na hlavní stránku",
     checking: "Ověřujeme ceny a dostupnost…",
@@ -320,7 +320,7 @@ const cs = {
     emptyDescription: "Přidejte produkty do košíku před pokračováním na checkout.",
     emptyPreview: "Váš košík je prázdný",
     emptyPreviewDescription: "Přidejte si něco hezkého z naší nabídky",
-    feesNote: "Doprava a platba nejsou zahrnuté. Objednávka zatím nebyla vytvořená.",
+    feesNote: "Doprava a platba nejsou zahrnuté.",
     increaseQuantity: "Zvýšit množství",
     invalidDraft:
       "Nejdřív opravte množství. Zobrazené uložené ceny nejsou ověřené pro tento návrh.",
@@ -687,7 +687,7 @@ const en: typeof cs = {
   shippingOptions: "Shipping options",
   shopping: {
     acceptPrice: "Accept current price",
-    added: "The item is in your cart. Prices and availability will be checked before purchase.",
+    added: "The item is in your cart.",
     addFailed: "The cart change could not be saved. Check your cart and try again.",
     backHome: "Back to the home page",
     checking: "Checking prices and availability…",
@@ -701,7 +701,7 @@ const en: typeof cs = {
     emptyDescription: "Add products to your cart before continuing to checkout.",
     emptyPreview: "Your cart is empty",
     emptyPreviewDescription: "Find something you like in our store",
-    feesNote: "Shipping and payment are not included. No order has been created.",
+    feesNote: "Shipping and payment are not included.",
     increaseQuantity: "Increase quantity",
     invalidDraft: "Correct the quantity first. Saved prices have not been verified for this draft.",
     invalidQuantity: "Enter a valid quantity between 0.001 and 1,000,000.",

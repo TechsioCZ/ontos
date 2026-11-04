@@ -40,15 +40,17 @@ export const CartSummary = ({
       <TotalsSummary
         actions={
           <div className="flex flex-col gap-3">
-            <Button
-              disabled={invalid || quote.state === "pending" || quote.state === "scope-mismatch"}
-              onClick={() => quote.verify()}
-              size="md"
-              theme="solid"
-              variant="secondary"
-            >
-              {d.shopping.verify}
-            </Button>
+            {verified === null && (
+              <Button
+                disabled={invalid || quote.state === "pending" || quote.state === "scope-mismatch"}
+                onClick={() => quote.verify()}
+                size="md"
+                theme="solid"
+                variant="secondary"
+              >
+                {d.shopping.verify}
+              </Button>
+            )}
             <LinkButton
               as={NextLink}
               disabled={verified === null || invalid || quote.state !== "ready"}
