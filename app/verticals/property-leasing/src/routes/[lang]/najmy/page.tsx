@@ -28,6 +28,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Select } from '@techsio/ui-kit/molecules/select';
+import { withNativeLabels } from '@app/admin-ui/select-template';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { DateTime, Effect, Match, Option, Predicate } from 'effect';
 import { useEffect, useEffectEvent, useId, useReducer, useRef, useState } from 'react';
@@ -1459,7 +1460,9 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
           {editingId.length === 0 && (
             <div className="propertyleasing:grid propertyleasing:gap-4 propertyleasing:md:grid-cols-2">
               <Select
-                items={activeUnits.map((record) => ({ label: record.name, value: record.unitRef.resourceId }))}
+                items={withNativeLabels(
+                  activeUnits.map((record) => ({ label: record.name, value: record.unitRef.resourceId })),
+                )}
                 onValueChange={({ value }) => setUnitId(value[0] ?? '')}
                 value={unitId.length > 0 ? [unitId] : []}
               >

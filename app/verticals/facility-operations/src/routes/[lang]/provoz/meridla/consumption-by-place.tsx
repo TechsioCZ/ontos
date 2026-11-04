@@ -6,7 +6,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { useState } from 'react';
 import { meterMedia, monthlySeries } from '../../../../../shared/domain/meters.ts';
 import type { Meter, MeterMedium } from '../../../../../shared/domain/meters.ts';

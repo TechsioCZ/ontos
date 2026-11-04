@@ -6,7 +6,7 @@ import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { PageHeader, StatCard, StatRow, formatNumber, Toaster } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
 import { Effect, Result, Schema } from 'effect';

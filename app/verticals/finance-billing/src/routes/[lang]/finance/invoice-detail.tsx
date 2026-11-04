@@ -29,7 +29,7 @@ import type { useFinanceRecords } from './use-finance-records.ts';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { InvoicePrint } from './invoice-print.tsx';
 import { useInvoiceIssuer } from './use-invoice-issuer.ts';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import {
   CounterpartyHistory,
   InvoiceDocuments,

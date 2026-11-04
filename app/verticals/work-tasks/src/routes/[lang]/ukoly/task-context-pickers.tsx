@@ -1,7 +1,7 @@
 import { executeRecords as propertyRecords } from '@app/property-portfolio/clients/records';
 import { executeRecords as agreementRecords } from '@app/legal-agreements/clients/records';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Effect, Random, Schedule } from 'effect';

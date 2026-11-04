@@ -12,7 +12,7 @@ import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { lastVisitOf } from '../../../../../shared/domain/visits.ts';

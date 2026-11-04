@@ -13,7 +13,7 @@ import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef } from '@techsio/ui-kit/organisms/data-table';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { createContext, useContext, useState } from 'react';
 import { Option, Schema } from 'effect';
 import { isInspectionOverdue } from '../../../../../shared/commands/security.ts';

@@ -3,7 +3,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { assignmentOptions } from './assignment-options.ts';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { Schema } from 'effect';
 import { TaskPrioritySchema, TaskStateSchema } from '../../../../shared/apis/records.ts';
 import type { AssignmentPrincipal, TaskState } from '../../../../shared/apis/records.ts';

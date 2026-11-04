@@ -12,6 +12,7 @@ import { Menu } from '@techsio/ui-kit/molecules/menu';
 import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import type { SelectItem } from '@techsio/ui-kit/molecules/select';
+import { withNativeLabels } from '@app/admin-ui/select-template';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { Sidebar } from '@techsio/ui-kit/organisms/sidebar';
 import type { SidebarExpandedChangeDetails, SidebarSide } from '@techsio/ui-kit/organisms/sidebar';
@@ -396,7 +397,7 @@ const DashboardSelector = ({
 }: DashboardSelectorProps) => (
   <Select
     disabled={disabled}
-    items={items}
+    items={withNativeLabels(items)}
     name={name}
     onValueChange={({ value }) => {
       const [selected] = value;

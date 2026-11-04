@@ -3,7 +3,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import type { ReactNode } from 'react';
 
 export interface Option {

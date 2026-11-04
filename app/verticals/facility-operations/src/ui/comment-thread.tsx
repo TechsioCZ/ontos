@@ -11,7 +11,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Textarea } from '@techsio/ui-kit/atoms/textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { Fragment, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { CommentRecord, DocumentsState, SubjectRef } from '../../shared/domain/documents.ts';

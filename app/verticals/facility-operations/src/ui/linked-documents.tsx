@@ -8,7 +8,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { useState } from 'react';
 import type { StoredFileRef, SubjectRef } from '../../shared/domain/documents.ts';
 import { documentLinks, sameSubject } from '../../shared/domain/documents.ts';

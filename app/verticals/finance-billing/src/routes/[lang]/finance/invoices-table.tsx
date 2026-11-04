@@ -7,7 +7,7 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
 import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { useState } from 'react';
 import type { DataTableProps } from '@techsio/ui-kit/organisms/data-table';
 import type { Invoice } from '../../../../shared/apis/records.ts';

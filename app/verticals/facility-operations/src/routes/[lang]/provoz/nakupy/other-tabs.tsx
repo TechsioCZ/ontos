@@ -21,7 +21,7 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { createContext, useContext, useState } from 'react';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import type { PurchasingState, Supplier, SupplierQuote } from '../../../../../shared/domain/purchasing.ts';

@@ -7,7 +7,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { DateTime, Effect, Schema } from 'effect';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { useState } from 'react';

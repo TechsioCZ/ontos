@@ -5,7 +5,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { SidePanel, dialogCloseLabel } from '@app/admin-ui';
 import { useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';

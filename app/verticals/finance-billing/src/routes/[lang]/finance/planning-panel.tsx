@@ -18,7 +18,7 @@ import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { DateTime, Effect } from 'effect';
 import { useState } from 'react';
 import type { BudgetLine, Invoice } from '../../../../shared/apis/records.ts';

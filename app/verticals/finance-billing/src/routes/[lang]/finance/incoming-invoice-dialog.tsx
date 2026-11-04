@@ -6,7 +6,7 @@ import { DetailList, formatMoney, SidePanel } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useRef, useState } from 'react';
 import { addCalendarDaysTo } from '../../../../shared/domain/finance-planning.ts';
 import {

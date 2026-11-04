@@ -13,7 +13,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useState } from 'react';
 import type { RecurringTemplate, VatRate } from '../../../../shared/apis/records.ts';
 import { addMonths, monthOf } from '../../../../shared/domain/finance-planning.ts';

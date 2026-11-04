@@ -6,7 +6,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { DateTime, Effect, Predicate, Result, Schema } from 'effect';
 import { useRef, useState } from 'react';
 import type { ReactNode } from 'react';

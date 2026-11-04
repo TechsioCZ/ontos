@@ -11,7 +11,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Effect, Option, Schema } from 'effect';
 import { useState } from 'react';

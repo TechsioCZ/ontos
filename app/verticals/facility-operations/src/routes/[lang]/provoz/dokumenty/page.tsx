@@ -10,7 +10,7 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { Effect, Result, Schema } from 'effect';
 import { useState } from 'react';
 import type { DocumentRecord, SubjectRef } from '../../../../../shared/domain/documents.ts';

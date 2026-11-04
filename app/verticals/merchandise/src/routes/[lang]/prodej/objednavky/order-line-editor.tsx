@@ -3,7 +3,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { selectItem } from '../../../../ui/select-item.ts';
 import { formatMoney, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';

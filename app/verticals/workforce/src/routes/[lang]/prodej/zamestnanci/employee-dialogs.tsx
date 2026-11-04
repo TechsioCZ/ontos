@@ -5,7 +5,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { Effect, Option, Schema } from 'effect';
 import { Url } from 'effect/http';
 import { useState } from 'react';

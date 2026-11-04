@@ -23,7 +23,7 @@ import type {
   DataTableTranslations,
   TanstackTable,
 } from '@techsio/ui-kit/organisms/data-table';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { BulkTagDialog, TagCell, TagFilter } from '@app/tagging/components/tag-controls';
 import type { TagsStatus } from '@app/tagging/components/tag-controls';

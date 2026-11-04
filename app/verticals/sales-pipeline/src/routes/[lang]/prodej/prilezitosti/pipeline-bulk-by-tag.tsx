@@ -4,7 +4,7 @@ import type { TagId } from '@app/tagging/contracts/records';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { Effect, Match, Option, Schema } from 'effect';
 import { useState } from 'react';
 import type { BulkOpportunityPatch } from '../../../../../shared/actions/apply-command.ts';

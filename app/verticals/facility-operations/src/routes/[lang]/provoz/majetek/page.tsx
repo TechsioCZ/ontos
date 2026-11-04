@@ -24,7 +24,7 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { createContext, useContext, useState } from 'react';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type { Asset, AssetsState, Inventory, InventoryItem, Investment } from '../../../../../shared/domain/assets.ts';

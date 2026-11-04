@@ -8,7 +8,7 @@ import { Menu } from '@techsio/ui-kit/molecules/menu';
 import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { Schema } from 'effect';
 import type { ReactNode } from 'react';
 import { useSyncExternalStore } from 'react';

@@ -34,7 +34,7 @@ import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef, DataTableTranslations, Row } from '@techsio/ui-kit/organisms/data-table';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { Effect, Fiber, Match, Option, Schema } from 'effect';
 import { createContext, use, useEffect, useRef, useState } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';

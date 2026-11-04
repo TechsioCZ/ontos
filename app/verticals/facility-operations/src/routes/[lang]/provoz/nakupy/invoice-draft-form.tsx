@@ -5,7 +5,7 @@ import { SectionCard } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { Effect, Option, Random } from 'effect';
 import { useRef, useState } from 'react';
 import type { PurchaseOrder, Supplier } from '../../../../../shared/domain/purchasing.ts';

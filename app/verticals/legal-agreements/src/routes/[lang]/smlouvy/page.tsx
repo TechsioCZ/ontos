@@ -15,6 +15,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Select } from '@techsio/ui-kit/molecules/select';
+import { withNativeLabels } from '@app/admin-ui/select-template';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { Match } from 'effect';
@@ -394,10 +395,12 @@ const AgreementsDraftForm = ({ state }: { readonly state: ReturnType<typeof useR
         {feedback !== 'ready' && <output aria-live="polite">{t(`legal-agreements.demo.feedback.${feedback}`)}</output>}
         {!editingDraft && (
           <Select
-            items={(['OTHER', 'LEASE'] as const).map((value) => ({
-              label: t(`legal-agreements.demo.kinds.${value}`),
-              value,
-            }))}
+            items={withNativeLabels(
+              (['OTHER', 'LEASE'] as const).map((value) => ({
+                label: t(`legal-agreements.demo.kinds.${value}`),
+                value,
+              })),
+            )}
             onValueChange={({ value }) => state.selectContractKind(value[0] === 'LEASE' ? 'LEASE' : 'OTHER')}
             value={[state.contractKind]}
           >

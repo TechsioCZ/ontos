@@ -11,6 +11,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { Select } from '@techsio/ui-kit/molecules/select';
+import { withNativeLabels } from '@app/admin-ui/select-template';
 import { DateTime, Effect, Match, Option, Random, Schema } from 'effect';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
@@ -462,7 +463,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                         </Button>
                       </div>
                       <Select
-                        items={partyItems}
+                        items={withNativeLabels(partyItems)}
                         onValueChange={({ value }) => setCounterpartyId(value)}
                         value={counterpartyId}
                       >

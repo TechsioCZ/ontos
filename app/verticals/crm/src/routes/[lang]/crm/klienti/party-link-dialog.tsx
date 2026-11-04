@@ -6,7 +6,7 @@ import { dialogCloseLabel, foldSearchText } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { Effect, Fiber, Option } from 'effect';
 import { useEffect, useState } from 'react';
 import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';

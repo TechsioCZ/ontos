@@ -17,7 +17,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { DatePicker } from '@techsio/ui-kit/molecules/date-picker';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { DateTime, Effect } from 'effect';
 import { useRef, useState } from 'react';
 import {

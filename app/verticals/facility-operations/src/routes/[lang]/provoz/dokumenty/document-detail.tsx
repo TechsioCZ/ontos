@@ -8,7 +8,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { Effect } from 'effect';
 import { useState } from 'react';
 import { optionalField } from '../../../../../shared/domain/common.ts';

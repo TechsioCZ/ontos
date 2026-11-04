@@ -2207,6 +2207,9 @@ importers:
 
   verticals/crm-activities:
     dependencies:
+      '@app/admin-ui':
+        specifier: workspace:*
+        version: link:../../packages/admin-ui
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime

@@ -16,7 +16,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useEffect, useRef, useState } from 'react';
 import type { PriceListItem, VatRate } from '../../../../shared/apis/records.ts';
 import { lineDiscountMinor } from '../../../../shared/domain/invoice-totals.ts';

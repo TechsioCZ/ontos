@@ -296,6 +296,25 @@ export default defineConfig({
       },
     },
     {
+      // ui-kit's hidden native <option> prints displayValue, else the item value (an ID). The admin-ui wrapper passes
+      // each label as displayValue, so every select in the app goes through it.
+      excludeFiles: ['packages/admin-ui/src/select-template.tsx'],
+      files: ['apps/**/*.{ts,tsx}', 'verticals/**/*.{ts,tsx}', 'packages/**/*.{ts,tsx}'],
+      rules: {
+        'eslint/no-restricted-imports': [
+          'error',
+          {
+            paths: [
+              {
+                message: "Import SelectTemplate from '@app/admin-ui/select-template' so native options carry labels.",
+                name: '@techsio/ui-kit/templates/select',
+              },
+            ],
+          },
+        ],
+      },
+    },
+    {
       // The shared scroll region joins the tab order only while its content overflows, so keyboard users can reach
       // and scroll a wide table or document (WCAG 2.1.1, axe scrollable-region-focusable). A named region is not an
       // interactive role, so the rule cannot tell this case apart; every other element keeps it.

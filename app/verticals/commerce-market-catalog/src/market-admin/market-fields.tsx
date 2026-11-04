@@ -1,7 +1,7 @@
 // The market definition and price-list fields, shared by "Nový trh", "Upravit" and the price-list editor.
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import type { MarketChannel } from './eshops-model.ts';
 import type {
   DefinitionField,

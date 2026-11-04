@@ -7,7 +7,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useState } from 'react';
 import type { ComponentProps } from 'react';
 import {

@@ -3,7 +3,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { DatePicker } from '@techsio/ui-kit/molecules/date-picker';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { CalendarDate } from '@internationalized/date';
 import { Schema } from 'effect';
 import type { FocusEvent } from 'react';

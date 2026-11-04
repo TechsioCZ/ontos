@@ -3,7 +3,7 @@ import { SectionCard } from '@app/admin-ui';
 import type { StorefrontApplicationSummary } from '@app/storefront-registry/api/storefront-applications';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { DateTime, Effect, Schema } from 'effect';
 import { useState } from 'react';
 import { AssociateStorefrontPayloadSchema } from '../../shared/actions/associate-storefront.ts';

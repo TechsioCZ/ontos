@@ -20,7 +20,7 @@ import { DatePicker } from '@techsio/ui-kit/molecules/date-picker';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 import type { Dispatch, FocusEvent, KeyboardEvent, ReactNode, SetStateAction } from 'react';

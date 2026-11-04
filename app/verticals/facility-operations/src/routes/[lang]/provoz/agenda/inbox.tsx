@@ -4,7 +4,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { DateTime } from 'effect';
 import { useState } from 'react';
 import type { Notification, NotificationPreference, AgendaState } from '../../../../../shared/domain/agenda.ts';

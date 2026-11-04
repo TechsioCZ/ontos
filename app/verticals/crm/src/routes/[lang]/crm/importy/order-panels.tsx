@@ -12,7 +12,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 

@@ -1,5 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { COST_CENTERS } from './use-rental-objects.ts';
 import type { ContractRef, PropertyRef, RentalObjects, UnitRef } from './use-rental-objects.ts';
 

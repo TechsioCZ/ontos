@@ -26,7 +26,7 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { Effect, Random, Result, Schema } from 'effect';
 import { useEffect, useId, useRef, useState } from 'react';
 import { salesRemainder } from '../../../../../shared/commands/sales.ts';

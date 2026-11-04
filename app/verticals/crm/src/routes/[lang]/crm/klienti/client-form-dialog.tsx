@@ -21,7 +21,7 @@ import { RadioGroup } from '@techsio/ui-kit/molecules/radio-group';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useState } from 'react';
 import type { ComponentProps } from 'react';
 import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
