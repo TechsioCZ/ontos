@@ -2091,7 +2091,7 @@ it('runs the root integration suite once and every package integration suite in 
   ).jobs['service-integration'];
   const run = job.steps.find(({ env }) => env?.PACKAGE_FILTERS !== undefined);
   expect(run?.if).toBe(BACKEND_INTEGRATION_CONDITION);
-  expect(run?.env).toMatchObject({ APP_ENV_PATH: '/dev/null' });
+  expect(run?.env).toMatchObject({ APP_ENV_PATH: '/dev/null', SPICEDB_DATABASE_PASSWORD: 'spicedb' });
   expect(run?.run).toContain('mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1');
   expect(run?.run).toContain(
     'mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1',

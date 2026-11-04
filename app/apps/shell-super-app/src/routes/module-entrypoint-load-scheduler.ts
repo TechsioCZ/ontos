@@ -274,8 +274,10 @@ class BrowserModuleLoadScheduler {
               ),
             ),
           ),
-          Effect.timeout(Duration.millis(deadline - now)),
-          Effect.catchTag('TimeoutError', () => Effect.succeed(timeoutResult)),
+          Effect.timeoutOrElse({
+            duration: Duration.millis(deadline - now),
+            orElse: () => Effect.succeed(timeoutResult),
+          }),
         );
       }),
       Effect.map((result) => ({ ...result, identity: request.identity })),

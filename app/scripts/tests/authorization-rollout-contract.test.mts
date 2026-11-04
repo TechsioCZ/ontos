@@ -51,6 +51,8 @@ it.effect(
     });
     expect(validated.baselineInventoryHash).toBe(inventory.inventoryHash);
   }, Effect.provide(NodeServices.layer)),
+  // The real workspace classifier includes cold source analysis, measured beyond two minutes.
+  240_000,
 );
 
 it('rollout contract accepts an active configuration bound to the classified inventory', () => {

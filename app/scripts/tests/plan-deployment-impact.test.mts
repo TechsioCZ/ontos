@@ -1295,6 +1295,10 @@ for (const changedPath of [
   'tsconfig.base.json',
   'scripts/generate-ontos-module-contract.mts',
   'scripts/ontos-shell-runtime-contract.ts',
+  'scripts/application-migration-inventory.mts',
+  'scripts/application-migration-plan.mts',
+  'scripts/application-migration-publication.mts',
+  'scripts/application-migration-runtime.mts',
 ]) {
   it.live(`conservatively deploys every phase for ${changedPath}`, () =>
     Effect.gen(function* testEffect24() {

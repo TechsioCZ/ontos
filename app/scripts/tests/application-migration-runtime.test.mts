@@ -1,6 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
 import { Reactivity } from 'effect/reactivity';
-import { ConfigProvider, Effect } from 'effect';
+import { Array as EffectArray, ConfigProvider, Effect, Order } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { selectApplicationMigrationPlan } from '../application-migration-plan.mts';
@@ -180,6 +180,90 @@ it.effect(
         'commerce-cart',
         'commerce-order',
       ]);
+      // Controller metadata is asserted at its actual source inventory, rather than its former inline location.
+      expect(
+        EffectArray.sort(
+          [...new Set(inventory.filter(({ database }) => database === 'primary').flatMap(({ schemas }) => schemas))],
+          Order.String,
+        ),
+      ).toEqual([
+        'assortment',
+        'auth',
+        'catalog',
+        'commerce_cart',
+        'commerce_customer_context',
+        'commerce_market_catalog',
+        'commerce_order',
+        'contacts',
+        'core',
+        'inventory',
+        'party',
+        'payment_term_catalog',
+        'price_group_catalog',
+        'pricing',
+        'privacy',
+        'projects',
+        'storefront_registry',
+        'tax',
+        'trust',
+      ]);
+      for (const expected of [
+        {
+          journalName: '__drizzle_migrations_assortment',
+          ownerId: 'assortment',
+          runtimeIdentityIds: ['shared_runtime'],
+          schemas: ['assortment'],
+          verifierPaths: ['verticals/assortment/scripts/verify-db-schema.mts'],
+        },
+        {
+          journalName: '__drizzle_migrations_catalog',
+          ownerId: 'catalog',
+          runtimeIdentityIds: ['shared_runtime'],
+          schemas: ['catalog'],
+          verifierPaths: ['verticals/catalog/scripts/verify-db-schema.mts'],
+        },
+        {
+          journalName: '__drizzle_migrations_inventory',
+          ownerId: 'inventory',
+          runtimeIdentityIds: ['shared_runtime'],
+          schemas: ['inventory'],
+          verifierPaths: ['verticals/inventory/scripts/verify-db-schema.mts'],
+        },
+        {
+          journalName: '__drizzle_migrations_party',
+          ownerId: 'party-registry',
+          runtimeIdentityIds: ['shared_runtime', 'party_registry_request', 'party_registry_worker'],
+          schemas: ['party'],
+          verifierPaths: ['verticals/party-registry/scripts/verify-db-schema.mts'],
+        },
+        {
+          journalName: '__drizzle_migrations_price_group_catalog',
+          ownerId: 'price-group-catalog',
+          runtimeIdentityIds: ['shared_runtime'],
+          schemas: ['price_group_catalog'],
+          verifierPaths: ['verticals/price-group-catalog/scripts/verify-db-schema.mts'],
+        },
+        {
+          journalName: '__drizzle_migrations_pricing',
+          ownerId: 'pricing',
+          runtimeIdentityIds: ['shared_runtime'],
+          schemas: ['pricing'],
+          verifierPaths: ['verticals/pricing/scripts/verify-db-schema.mts'],
+        },
+        {
+          journalName: '__drizzle_migrations_storefront_registry',
+          ownerId: 'storefront-registry',
+          runtimeIdentityIds: ['shared_runtime'],
+          schemas: ['storefront_registry'],
+          verifierPaths: ['verticals/storefront-registry/scripts/verify-db-schema.mts'],
+        },
+      ]) {
+        const matching = inventory.filter(({ ownerId }) => ownerId === expected.ownerId);
+        expect(matching).toHaveLength(1);
+        for (const { journalName, ownerId, runtimeIdentityIds, schemas, verifierPaths } of matching) {
+          expect({ journalName, ownerId, runtimeIdentityIds, schemas, verifierPaths }).toEqual(expected);
+        }
+      }
       expect(inventory.find((owner) => owner.ownerId === 'commerce-customer-context-portal-auth')?.optional).toBe(true);
       expect(
         inventory
