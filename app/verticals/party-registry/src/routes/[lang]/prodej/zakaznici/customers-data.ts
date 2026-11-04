@@ -299,7 +299,7 @@ export const usePrefetchCustomerDetails = (
     customerDetailData.subscribe,
     () =>
       scope !== undefined &&
-      rows.slice(0, 200).some((customer) => customerDetailData.snapshot({ customer, scope }).state !== 'ready'),
+      rows.slice(0, 200).some((customer) => customerDetailData.snapshot({ customer, scope }).state === 'pending'),
     () => false,
   );
   const preload = useEffectEvent(() => preloadCustomerDetails(context, rows));
