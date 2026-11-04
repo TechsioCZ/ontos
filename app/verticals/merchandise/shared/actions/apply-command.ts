@@ -238,6 +238,23 @@ export const MerchandiseCommandSchema = Schema.Union([
     id: CatalogCategoryIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
     patch: CategoryPatchSchema,
   }),
+  /**
+   * Adds one storefront category under an existing parent (or at the root). The company may grow its tree at any time,
+   * including after it has products. Products join a category through UpdateProduct `categoryId`.
+   */
+  Schema.TaggedStruct('CreateCategory', {
+    heading: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(300))),
+    id: CatalogCategoryIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+    name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+    parentId: Schema.NullOr(CatalogCategoryIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
+    position: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+    published: Schema.optionalKey(Schema.Boolean),
+    slug: Schema.Trim.check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(200),
+      Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u),
+    ),
+  }),
   Schema.TaggedStruct('UpdateProduct', {
     id: ProductIdSchema,
     patch: ProductPatchSchema,

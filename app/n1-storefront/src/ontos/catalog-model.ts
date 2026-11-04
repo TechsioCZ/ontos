@@ -41,6 +41,7 @@ export const CatalogResponseSchema = Schema.Struct({
     Schema.Struct({
       active: Schema.optionalKey(Schema.Boolean),
       availability: optionalString,
+      categoryId: optionalString,
       currency: optionalString,
       currentPriceMinor: optionalNumber,
       description: optionalString,
@@ -131,6 +132,7 @@ interface ProductVariantModel {
 }
 
 export interface ProductDetailModel extends ProductCardModel {
+  readonly categoryId: string | null;
   readonly imageAlt: string;
   readonly images: readonly string[];
   readonly minimumQuantity: number;
@@ -304,6 +306,7 @@ const detailOf = (
   const variants = variantDetailsOf(product, card, hosts);
   return {
     ...card,
+    categoryId: product.categoryId ?? null,
     imageAlt: product.imageAlt ?? product.name,
     images: [
       ...new Set(

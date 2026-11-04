@@ -1034,6 +1034,12 @@ const persistCategories = Effect.fn('MerchandiseStore.persistCategories')(functi
     changedEntities(before.categories ?? [], after.categories ?? []),
     Effect.fn('MerchandiseStore.persistCategory')(function* persistCategory(category: CatalogCategory) {
       const row = yield* query(categoryRowOf(scope, category), 'Category does not encode');
+      const previous = previousCategories.get(category.id);
+      if (previous === undefined) {
+        // A category the company just added (CreateCategory): the tree may grow after it has products.
+        yield* query(db.insert(categories).values(row), 'Category could not be written');
+        return;
+      }
       yield* query(
         db
           .update(categories)
@@ -1041,7 +1047,7 @@ const persistCategories = Effect.fn('MerchandiseStore.persistCategories')(functi
           .where(and(whereScope(categories, scope), eq(categories.id, category.id))),
         'Category could not be written',
       );
-      const renamed = previousCategories.get(category.id)?.name !== category.name;
+      const renamed = previous.name !== category.name;
       if (renamed) {
         // Products of the category carry its name; one statement renames all of them, loaded or not.
         const name = category.name.slice(0, 120);

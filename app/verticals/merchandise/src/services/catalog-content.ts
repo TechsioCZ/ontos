@@ -199,3 +199,61 @@ export const updateCategoryCommand = Effect.fn('Merchandise.updateCategoryComman
     },
   };
 });
+
+type CreateCategoryCommand = Extract<MerchandiseCommand, { readonly _tag: 'CreateCategory' }>;
+
+/**
+ * Adds one category under an existing parent (or at the root) and marks the parent as having children. The new category
+ * is published unless the command says otherwise; its position follows its siblings unless the command gives one.
+ */
+export const createCategoryCommand = Effect.fn('Merchandise.createCategoryCommand')(function* createCategoryCommand(
+  state: MerchandiseState,
+  value: CreateCategoryCommand,
+  input: MerchandiseCommandInput,
+): Effect.fn.Return<MerchandiseChange, MerchandiseCommandError> {
+  const categories = state.categories ?? [];
+  if (categories.some((category) => category.id === value.id)) {
+    return yield* new MerchandiseLifecycleConflict({
+      code: 'merchandise_lifecycle_conflict',
+      reason: 'Kategorie s tímto identifikátorem už existuje',
+    });
+  }
+  const parent = value.parentId === null ? undefined : categories.find((category) => category.id === value.parentId);
+  if (value.parentId !== null && parent === undefined) {
+    return yield* new MerchandiseNotFound({ code: 'merchandise_not_found', reason: 'Nadřazená kategorie neexistuje' });
+  }
+  const siblings = categories.filter((category) => Option.getOrNull(category.parentId) === value.parentId);
+  const created: CatalogCategory = {
+    description: '',
+    hasChildren: false,
+    heading: value.heading ?? value.name,
+    id: value.id,
+    imageAlt: '',
+    imageSrc: '',
+    longDescription: '',
+    name: value.name,
+    parentId: Option.fromNullishOr(value.parentId ?? undefined),
+    position: value.position ?? siblings.length,
+    published: value.published ?? true,
+    slug: value.slug,
+  };
+  const entity = yield* Schema.decodeEffect(EntityIdSchema)(created.id).pipe(Effect.orDie);
+  const parentUpdated = parent !== undefined && !parent.hasChildren ? { ...parent, hasChildren: true } : undefined;
+  const parentEntity =
+    parentUpdated === undefined
+      ? undefined
+      : yield* Schema.decodeEffect(EntityIdSchema)(parentUpdated.id).pipe(Effect.orDie);
+  const entityIds = parentEntity === undefined ? [entity] : [entity, parentEntity];
+  return {
+    entityIds,
+    state: {
+      ...state,
+      categories: [
+        ...categories.map((category) =>
+          parentUpdated !== undefined && category.id === parentUpdated.id ? parentUpdated : category,
+        ),
+        created,
+      ],
+    },
+  };
+});

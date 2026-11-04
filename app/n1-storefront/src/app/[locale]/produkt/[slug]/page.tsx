@@ -29,6 +29,7 @@ const ProductPage = async ({
   const variantId = Schema.is(Schema.String)(search.variantId) ? search.variantId : undefined;
   return (
     <ProductView
+      categories={result.catalog.categories}
       dictionary={d}
       key={`${product.id}:${variantId ?? ""}`}
       locale={locale}

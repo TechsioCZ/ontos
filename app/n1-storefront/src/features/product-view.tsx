@@ -1,5 +1,6 @@
 "use client";
 
+import { Fragment } from "react";
 import NextImage from "next/image";
 import NextLink from "next/link";
 import { Gallery } from "@techsio/ui-kit/organisms/gallery";
@@ -12,12 +13,14 @@ import { Link } from "@techsio/ui-kit/atoms/link";
 import { AvailabilityStatus } from "@techsio/ui-kit/molecules/availability-status";
 import { PriceBlock } from "@techsio/ui-kit/molecules/price-block";
 import type { Dictionary } from "@/i18n";
-import type { ProductDetailModel } from "@/ontos/catalog-model";
+import type { CatalogModel, ProductDetailModel } from "@/ontos/catalog-model";
+import { categoryTrail } from "@/ontos/catalog-navigation";
 import { priceProps } from "./price-props";
 import { ProductPurchase } from "./product-purchase";
 import { selectProductDetail } from "./product-selection";
 
 type Parameter = ProductDetailModel["parameters"][number];
+const emptyCategories: CatalogModel["categories"] = [];
 const parameterColumns = (d: Dictionary): ColumnDef<Parameter>[] => [
   { accessorKey: "label", header: d.parameterName, id: "label" },
   {
@@ -54,11 +57,13 @@ const productStockLabel = (
 
 /** Actual owner selection adds an unverified draft; only an owner quote confirms prices. */
 export const ProductView = ({
+  categories = emptyCategories,
   dictionary: d,
   locale,
   product,
   variantId,
 }: {
+  categories?: CatalogModel["categories"];
   dictionary: Dictionary;
   locale: string;
   product: ProductDetailModel;
@@ -66,6 +71,8 @@ export const ProductView = ({
 }) => {
   const selection = selectProductDetail(product, variantId);
   const { current, images, parameters, selectionRequired, variant } = selection;
+  const category = categories.find((item) => item.id === product.categoryId);
+  const trail = category === undefined ? [] : categoryTrail(categories, category.slug);
   const pathname = `/${locale}/produkt/${encodeURIComponent(product.slug)}`;
   return (
     <article className="mx-auto max-w-n1-product-content p-4 md:py-6">
@@ -76,6 +83,19 @@ export const ProductView = ({
               {d.home}
             </Breadcrumb.Link>
           </Breadcrumb.Item>
+          {trail.map((item) => (
+            <Fragment key={item.id}>
+              <Breadcrumb.Separator />
+              <Breadcrumb.Item>
+                <Breadcrumb.Link
+                  as={NextLink}
+                  href={`/${locale}/kategorie/${encodeURIComponent(item.slug)}`}
+                >
+                  {item.name}
+                </Breadcrumb.Link>
+              </Breadcrumb.Item>
+            </Fragment>
+          ))}
           <Breadcrumb.Separator />
           <Breadcrumb.Item>
             <Breadcrumb.CurrentLink>{product.name}</Breadcrumb.CurrentLink>
