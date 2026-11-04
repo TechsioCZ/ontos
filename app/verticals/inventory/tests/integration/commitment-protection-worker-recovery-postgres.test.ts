@@ -1,3 +1,4 @@
+import { inventoryRegistration } from '../../vertical.registration.ts';
 import { randomUUID } from 'node:crypto';
 
 import { and, eq, sql } from 'drizzle-orm';
@@ -448,6 +449,7 @@ it.live(
             ...openActionRuntimeOptions,
             contextAccess,
             ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+            ownerRegistration: inventoryRegistration,
           },
         );
         const pending = yield* actionRuntime.runAction({

@@ -1,3 +1,4 @@
+import { inventoryRegistration } from '../../vertical.registration.ts';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
 import { Context, Crypto, Effect, Match, Ref, Schema } from 'effect';
@@ -522,6 +523,7 @@ it.live('repairs physical and reservation owner state before terminal recovery w
           ...openActionRuntimeOptions,
           contextAccess,
           ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+          ownerRegistration: inventoryRegistration,
         },
       );
       const recover = (kind: 'PHYSICAL_ISSUE' | 'RESERVATION_CREATE', replay: boolean) => {

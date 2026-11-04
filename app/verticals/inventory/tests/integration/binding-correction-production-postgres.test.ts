@@ -1,3 +1,4 @@
+import { inventoryRegistration } from '../../vertical.registration.ts';
 import { randomUUID } from 'node:crypto';
 
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
@@ -415,6 +416,7 @@ it.live(
             ...openActionRuntimeOptions,
             contextAccess,
             ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+            ownerRegistration: inventoryRegistration,
           },
         );
 
