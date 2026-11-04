@@ -1,6 +1,7 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { Effect, Schema } from 'effect';
-import { afterEach, beforeEach, expect, rstest, test } from 'effect-rstest';
+import type { CoreSearchPresentationEntry } from '@app/core-runtime/search-contract';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { Deferred, Effect, Schema } from 'effect';
+import { afterEach, beforeEach, expect, it as effectTest, rstest, test } from 'effect-rstest';
 
 import {
   AppIdSchema,
@@ -12,20 +13,32 @@ import {
   ResourceIdSchema,
   TenantIdSchema,
 } from '../../../../shared/api.ts';
-import type { ShellNavigationItem, ShellSearchResult } from '../../../../shared/api.ts';
+import type {
+  ShellSearchPayload,
+  ShellSearchPresentationInventory,
+  ShellSearchResponse,
+  ShellSearchResult,
+} from '../../../../shared/api.ts';
 import type { HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
 import type { SearchFilterPlan, SearchPageModel } from '../../../../src/routes/[lang]/search/search-page-model.ts';
 import SearchPage from '../../../../src/routes/[lang]/search/page.tsx';
+import { shellSearchPresentationIndex } from '../../../../src/routes/shell-search-resource-types.ts';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
   rstest: 'importActual',
 };
 import type { LocalizedLinkCall, LocalizedLinkDoubleProps } from '../../../support/localized-link-double.tsx';
 import { renderLocalizedLinkDouble } from '../../../support/localized-link-double.tsx';
 
+interface RouterSearchDouble {
+  families?: string;
+  q?: string;
+}
+
 interface RouterLocationDouble {
   readonly href: string;
   readonly pathname: string;
-  readonly search: Readonly<Record<string, string>>;
+  readonly search: RouterSearchDouble;
+  readonly state: { readonly __TSR_index: number; readonly __TSR_key: string };
 }
 
 interface RouterStateDouble {
@@ -34,25 +47,40 @@ interface RouterStateDouble {
 }
 
 /** The router's parsed search for a URL, as TanStack hands it to `useRouterState`. */
-const searchOf = (href: string): Readonly<Record<string, string>> => {
-  const query = new URL(href, 'http://localhost').searchParams.get('q');
-  return query === null ? {} : { q: query };
+const searchOf = (href: string): RouterSearchDouble => {
+  const params = new URL(href, 'http://localhost').searchParams;
+  const query = params.get('q');
+  const families = params.get('families');
+  const search: RouterSearchDouble = {};
+  if (families !== null) {
+    search.families = families;
+  }
+  if (query !== null) {
+    search.q = query;
+  }
+  return search;
 };
 
-const routerLocation = (href: string, pathname = '/en/search'): RouterLocationDouble => ({
+const routerLocation = (href: string, pathname = '/en/search', navigationKey = href): RouterLocationDouble => ({
   href,
   pathname,
   search: searchOf(href),
+  state: { __TSR_index: 0, __TSR_key: navigationKey },
 });
 
-const settledRouterState = (href: string, pathname = '/en/search'): RouterStateDouble => ({
-  location: routerLocation(href, pathname),
-  resolvedLocation: routerLocation(href, pathname),
+const settledRouterState = (href: string, pathname = '/en/search', navigationKey = href): RouterStateDouble => ({
+  location: routerLocation(href, pathname, navigationKey),
+  resolvedLocation: routerLocation(href, pathname, navigationKey),
 });
 
-const pendingRouterState = (href: string, resolvedHref: string): RouterStateDouble => ({
-  location: routerLocation(href),
-  resolvedLocation: routerLocation(resolvedHref),
+const pendingRouterState = (
+  href: string,
+  resolvedHref: string,
+  navigationKey = href,
+  resolvedNavigationKey = resolvedHref,
+): RouterStateDouble => ({
+  location: routerLocation(href, '/en/search', navigationKey),
+  resolvedLocation: routerLocation(resolvedHref, '/en/search', resolvedNavigationKey),
 });
 
 const {
@@ -62,6 +90,7 @@ const {
   localizedLinkMock,
   navigateMock,
   routerState,
+  searchResourcesMock,
   signOutMock,
   switchLegalEntityMock,
   switchTenantMock,
@@ -77,10 +106,21 @@ const {
     // Mutable on purpose: one test can hold a navigation whose loader has not answered yet.
     routerState: {
       current: {
-        location: { href: '/en/search', pathname: '/en/search', search: {} },
-        resolvedLocation: { href: '/en/search', pathname: '/en/search', search: {} },
+        location: {
+          href: '/en/search',
+          pathname: '/en/search',
+          search: {},
+          state: { __TSR_index: 0, __TSR_key: '/en/search' },
+        },
+        resolvedLocation: {
+          href: '/en/search',
+          pathname: '/en/search',
+          search: {},
+          state: { __TSR_index: 0, __TSR_key: '/en/search' },
+        },
       },
     },
+    searchResourcesMock: rstest.fn(),
     signOutMock: rstest.fn(),
     switchLegalEntityMock: rstest.fn(),
     switchTenantMock: rstest.fn(),
@@ -111,6 +151,7 @@ const translations = new Map(
     'shell.search.empty': 'No authorized results found.',
     'shell.search.groups.counterparty': 'Customers and suppliers',
     'shell.search.groups.invoice': 'Invoices',
+    'shell.search.groups.product': 'Products',
     'shell.search.groups.resource': 'Other records',
     'shell.search.groups.task': 'Tasks',
     'shell.search.label': 'Search',
@@ -166,6 +207,7 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
 }));
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
+  searchResources: searchResourcesMock,
   signOut: signOutMock,
   switchLegalEntity: switchLegalEntityMock,
   switchTenant: switchTenantMock,
@@ -188,25 +230,6 @@ const navigationGroupKey = Schema.decodeUnknownSync(GroupKeySchema)('shell.navig
 const inventoryModuleId = Schema.decodeUnknownSync(ModuleIdSchema)('inventory.stock');
 const plainResourceId = Schema.decodeUnknownSync(ResourceIdSchema)('unit-1');
 const awkwardResourceId = Schema.decodeUnknownSync(ResourceIdSchema)('unit #1/2');
-const financeGroupKey = Schema.decodeUnknownSync(GroupKeySchema)('shell.navigation.finance');
-const salesGroupKey = Schema.decodeUnknownSync(GroupKeySchema)('shell.navigation.sales');
-const teamGroupKey = Schema.decodeUnknownSync(GroupKeySchema)('shell.navigation.team');
-
-/** One destination of the composed navigation: the page a record type of this document opens. */
-const navigationItem = (moduleId: string, groupKey: typeof navigationGroupKey, href: string): ShellNavigationItem => ({
-  appId: Schema.decodeUnknownSync(AppIdSchema)(`${moduleId}-app`),
-  enabled: true,
-  entrypointKey: Schema.decodeUnknownSync(EntrypointKeySchema)(`${moduleId}.page.records`),
-  groupKey,
-  href,
-  icon: 'icon-[mdi--file-outline]',
-  label: { cs: href, en: href },
-  moduleId: Schema.decodeUnknownSync(ModuleIdSchema)(moduleId),
-  order: 20,
-  state: 'active' as const,
-  unavailable: false,
-  writable: true,
-});
 
 const authenticatedShell = (): HomePageModel => ({
   compositionRevision: '1'.repeat(64),
@@ -238,17 +261,8 @@ const authenticatedShell = (): HomePageModel => ({
         unavailable: false,
         writable: false,
       },
-      navigationItem('finance.billing', financeGroupKey, '/finance'),
-      navigationItem('party.registry', salesGroupKey, '/prodej/zakaznici'),
-      navigationItem('work.tasks', teamGroupKey, '/ukoly'),
     ],
-    moduleIds: [
-      inventoryModuleId,
-      Schema.decodeUnknownSync(ModuleIdSchema)('finance.billing'),
-      Schema.decodeUnknownSync(ModuleIdSchema)('party.registry'),
-      Schema.decodeUnknownSync(ModuleIdSchema)('work.tasks'),
-    ],
-    recordDestinations: [],
+    moduleIds: [inventoryModuleId],
     state: 'available',
     unavailableDeployments: [],
   },
@@ -275,11 +289,164 @@ const resourceHit = (
 
 const emptyFilters: SearchFilterPlan = { availableFamilies: [], selectedFamilies: [] };
 
+const compositionRevision = '1'.repeat(64);
+const presentationMetadata = (key: string, order: number, cs: string, en: string) => ({
+  icon: 'icon-[mdi--file-outline]' as const,
+  key,
+  label: { cs, en },
+  order,
+});
+
+interface PresentationRoute {
+  readonly groupLabel: string;
+  readonly idEncoding: 'native' | 'selected_company_dot_prefix';
+  readonly idFormat: 'opaque' | 'uuid';
+  readonly kind: 'path' | 'query';
+  readonly ownerModuleId: string;
+  readonly pageKey: string;
+  readonly parameterName: string;
+  readonly resourceType: string;
+  readonly routePath: string;
+}
+
+const presentationRoutes: readonly PresentationRoute[] = [
+  {
+    groupLabel: 'Customers and suppliers',
+    idEncoding: 'native',
+    idFormat: 'uuid',
+    kind: 'path',
+    ownerModuleId: 'party.registry',
+    pageKey: 'customers',
+    parameterName: 'id',
+    resourceType: 'party.registry.counterparty',
+    routePath: '/prodej/zakaznici/:id',
+  },
+  {
+    groupLabel: 'Tasks',
+    idEncoding: 'native',
+    idFormat: 'opaque',
+    kind: 'query',
+    ownerModuleId: 'work.tasks',
+    pageKey: 'tasks',
+    parameterName: 'resourceId',
+    resourceType: 'work.tasks.task',
+    routePath: '/ukoly',
+  },
+  {
+    groupLabel: 'Invoices',
+    idEncoding: 'native',
+    idFormat: 'opaque',
+    kind: 'query',
+    ownerModuleId: 'finance.billing',
+    pageKey: 'finance',
+    parameterName: 'resourceId',
+    resourceType: 'finance.billing.invoice',
+    routePath: '/finance',
+  },
+  {
+    groupLabel: 'Products',
+    idEncoding: 'selected_company_dot_prefix',
+    idFormat: 'opaque',
+    kind: 'path',
+    ownerModuleId: 'demo.merchandise',
+    pageKey: 'products',
+    parameterName: 'id',
+    resourceType: 'demo.merchandise.product',
+    routePath: '/provoz/produkty/:id',
+  },
+];
+
+interface MutableSearchPresentation {
+  family: ReturnType<typeof presentationMetadata>;
+  group: ReturnType<typeof presentationMetadata>;
+  record: {
+    pageKey: string;
+    selector: {
+      idEncoding: 'native' | 'selected_company_dot_prefix';
+      idFormat: 'opaque' | 'uuid';
+      kind: 'path' | 'query';
+      parameterName: string;
+    };
+  };
+  refinement?: { kind: 'matched_variant'; parameterName: string };
+  scope: 'company';
+}
+
+const presentationEntryFor = (route: PresentationRoute): CoreSearchPresentationEntry => {
+  const ownerModuleId = Schema.decodeUnknownSync(ModuleIdSchema)(route.ownerModuleId);
+  const presentation: MutableSearchPresentation = {
+    family: presentationMetadata(
+      route.ownerModuleId === 'party.registry' ? 'companies' : route.ownerModuleId,
+      10,
+      route.resourceType,
+      route.resourceType,
+    ),
+    group: presentationMetadata(route.groupLabel, 10, route.groupLabel, route.groupLabel),
+    record: {
+      pageKey: route.pageKey,
+      selector: {
+        idEncoding: route.idEncoding,
+        idFormat: route.idFormat,
+        kind: route.kind,
+        parameterName: route.parameterName,
+      },
+    },
+    scope: 'company',
+  };
+  if (route.resourceType === 'demo.merchandise.product') {
+    presentation.refinement = { kind: 'matched_variant', parameterName: 'variantId' };
+  }
+  return {
+    ownerModuleId,
+    presentation,
+    resourceType: route.resourceType,
+    searchKey: `${route.ownerModuleId}.search`,
+  };
+};
+
+const presentationInventory = {
+  business: {
+    compositionRevision,
+    entries: presentationRoutes.map(presentationEntryFor),
+    schemaVersion: '1' as const,
+  },
+  pages: presentationRoutes.map((route) => ({
+    ownerModuleId: Schema.decodeUnknownSync(ModuleIdSchema)(route.ownerModuleId),
+    pageKey: route.pageKey,
+    routePath: route.routePath,
+  })),
+} satisfies ShellSearchPresentationInventory;
+const searchIndex = shellSearchPresentationIndex(presentationInventory, compositionRevision);
+if (searchIndex === undefined) {
+  throw new Error('search page fixture inventory must be current');
+}
+
+const familyFixture = (
+  key: string,
+  label: string,
+  order: number,
+  resourceTypes: readonly string[],
+): SearchFilterPlan['availableFamilies'][number] => ({
+  family: {
+    ...presentationMetadata(key, order, label, label),
+    groups: [],
+    resourceTypes: [...resourceTypes],
+  },
+  key,
+});
+
+const filterPlan = (
+  families: readonly SearchFilterPlan['availableFamilies'][number][],
+  selectedFamilies: readonly string[],
+): SearchFilterPlan => ({ availableFamilies: families, selectedFamilies });
+
 const readyModel = (resourceType: string, resourceId: typeof plainResourceId): SearchPageModel => ({
   filters: emptyFilters,
+  index: searchIndex,
   query: 'unit',
   response: {
     partial: false,
+    presentation: presentationInventory,
     results: [resourceHit('inventory.stock', resourceType, resourceId, 'Unit 1')],
   },
   shell: authenticatedShell(),
@@ -342,6 +509,32 @@ const counterpartyHit = ({
   };
 };
 
+const variantProductHit = (): ShellSearchResult => ({
+  kind: 'resource',
+  matchedVariant: { id: 'item-6692', name: 'Adaptér 18 mm', sku: '18kop009' },
+  ref: {
+    moduleId: Schema.decodeUnknownSync(ModuleIdSchema)('demo.merchandise'),
+    resourceId: Schema.decodeUnknownSync(ResourceIdSchema)(`${legalEntityId}.product-1`),
+    resourceType: 'demo.merchandise.product',
+    tenantId,
+  },
+  selectedLegalEntityId: legalEntityId,
+  title: 'Product parent',
+});
+
+const queryModel = (query: string, title: string): SearchPageModel => ({
+  filters: emptyFilters,
+  index: searchIndex,
+  query,
+  response: {
+    partial: false,
+    presentation: presentationInventory,
+    results: [resourceHit('work.tasks', 'work.tasks.task', plainResourceId, title)],
+  },
+  shell: authenticatedShell(),
+  state: 'ready',
+});
+
 const resourceLinkCalls = () => localizedLinkCalls.filter((call) => call.to.startsWith('/resources'));
 
 /** Rows the page rendered, in document order. */
@@ -352,6 +545,7 @@ beforeEach(() => {
   signOutMock.mockReturnValue(Effect.succeed({ signedOut: true }));
   switchTenantMock.mockReturnValue(Effect.succeed({ selectedTenantId: tenantId }));
   switchLegalEntityMock.mockReturnValue(Effect.succeed({ selectedLegalEntityId: legalEntityId }));
+  searchResourcesMock.mockReturnValue(Effect.never);
   useLoaderDataMock.mockReturnValue(readyModel('stock-item', plainResourceId));
   routerState.current = settledRouterState('/en/search?q=unit');
 });
@@ -414,9 +608,11 @@ test('results keep the server-wide order across families and name each type', ()
   const taskId = Schema.decodeUnknownSync(ResourceIdSchema)('00000000-0000-4000-8000-000000000402');
   useLoaderDataMock.mockReturnValue({
     filters: emptyFilters,
+    index: searchIndex,
     query: 'novák',
     response: {
       partial: false,
+      presentation: presentationInventory,
       results: [
         resourceHit('inventory.stock', 'stock-item', plainResourceId, 'Novák sklad'),
         resourceHit('finance.billing', 'finance.billing.invoice', invoiceId, 'Faktura Novák'),
@@ -426,12 +622,12 @@ test('results keep the server-wide order across families and name each type', ()
     shell: authenticatedShell(),
     state: 'ready',
   } satisfies SearchPageModel);
+  routerState.current = settledRouterState('/en/search?q=novák');
   render(<SearchPage />);
 
   const linkProps = localizedLinkMock.mock.calls.map(([props]) => props);
-  // The sidebar also links these destinations; the result row is the call carrying the record it opens.
-  expect(linkProps.findLast(({ to }) => to === '/finance')).toMatchObject({ search: { resourceId: invoiceId } });
-  expect(linkProps.findLast(({ to }) => to === '/ukoly')).toMatchObject({ search: { resourceId: taskId } });
+  expect(linkProps.find(({ to }) => to === '/finance')).toMatchObject({ search: { resourceId: invoiceId } });
+  expect(linkProps.find(({ to }) => to === '/ukoly')).toMatchObject({ search: { resourceId: taskId } });
   expect(new Set(resourceLinkCalls().map(({ params }) => params?.['resourceType']))).toEqual(new Set(['stock-item']));
   // The type is translated context in the row; the technical owner key is never visible.
   expect(screen.queryByText('finance.billing.invoice')).toBeNull();
@@ -448,18 +644,19 @@ test('results keep the server-wide order across families and name each type', ()
 
 test('a family selection is a server navigation carrying the query, never a local filter', () => {
   useLoaderDataMock.mockReturnValue({
-    filters: {
-      availableFamilies: [
-        { groups: ['counterparty'], key: 'companies' },
-        { groups: ['task'], key: 'work' },
+    filters: filterPlan(
+      [
+        familyFixture('companies', 'Customers and suppliers', 10, ['party.registry.counterparty']),
+        familyFixture('work', 'Tasks', 20, ['work.tasks.task']),
       ],
-      selectedFamilies: [],
-    },
+      [],
+    ),
     query: 'novák',
     response: { partial: false, results: [resourceHit('work.tasks', 'work.tasks.task', plainResourceId, 'Úkol')] },
     shell: authenticatedShell(),
     state: 'ready',
   } satisfies SearchPageModel);
+  routerState.current = settledRouterState('/en/search?q=novák');
   render(<SearchPage />);
 
   const work = screen.getByRole('button', { name: 'Tasks' });
@@ -474,15 +671,13 @@ test('a family selection is a server navigation carrying the query, never a loca
 
 test('clearing the last selected family keeps the query and drops the filter field', () => {
   useLoaderDataMock.mockReturnValue({
-    filters: {
-      availableFamilies: [{ groups: ['task'], key: 'work' }],
-      selectedFamilies: ['work'],
-    },
+    filters: filterPlan([familyFixture('work', 'Tasks', 20, ['work.tasks.task'])], ['work']),
     query: 'novák',
     response: { partial: false, results: [resourceHit('work.tasks', 'work.tasks.task', plainResourceId, 'Úkol')] },
     shell: authenticatedShell(),
     state: 'ready',
   } satisfies SearchPageModel);
+  routerState.current = settledRouterState('/en/search?q=novák&families=work');
   render(<SearchPage />);
 
   const work = screen.getByRole('button', { name: 'Tasks' });
@@ -494,14 +689,17 @@ test('clearing the last selected family keeps the query and drops the filter fie
 test('a relationship row opens its owner record and shows at most two owner badges', () => {
   useLoaderDataMock.mockReturnValue({
     filters: emptyFilters,
+    index: searchIndex,
     query: 'acme',
     response: {
       partial: false,
+      presentation: presentationInventory,
       results: [counterpartyHit({ alias: true, archived: true, collision: true, roles: ['CUSTOMER', 'SUPPLIER'] })],
     },
     shell: authenticatedShell(),
     state: 'ready',
   } satisfies SearchPageModel);
+  routerState.current = settledRouterState('/en/search?q=acme');
   render(<SearchPage />);
 
   const link = screen.getByRole('link', { name: /Acme s\.r\.o\./u });
@@ -564,7 +762,6 @@ test('an empty result set names the query and exposes no resource affordance', (
   render(<SearchPage />);
 
   expect(screen.getByText('Nothing found for “unit”.')).toBeTruthy();
-  expect(screen.queryByText('No authorized results found.')).toBeNull();
   expect(resourceLinkCalls()).toHaveLength(0);
   expect(renderedRows()).toHaveLength(0);
 });
@@ -577,10 +774,10 @@ test('a page opened without a query invites a search instead of claiming that no
     shell: authenticatedShell(),
     state: 'ready',
   } satisfies SearchPageModel);
+  routerState.current = settledRouterState('/en/search');
   render(<SearchPage />);
 
   expect(screen.getByText('Search clients, tasks, invoices, contracts…')).toBeTruthy();
-  expect(screen.queryByText('No authorized results found.')).toBeNull();
   expect(screen.queryByText('Nothing found for “”.')).toBeNull();
   // The scope still explains the authorized context; there is no query term to name yet.
   expect(screen.getAllByRole('term').map((term) => [term.textContent, term.nextElementSibling?.textContent])).toEqual([
@@ -684,4 +881,301 @@ test('a stale search release exposes only the reload message', () => {
   expect(screen.getByText('Reload this page to continue')).toBeTruthy();
   expect(screen.queryAllByRole('link')).toHaveLength(0);
   expect(resourceLinkCalls()).toHaveLength(0);
+});
+
+effectTest.effect('a same-mounted query change shows fresh loading and then the new answer', () =>
+  Effect.gen(function* sameMountedQueryChange() {
+    const nextResponse: ShellSearchResponse = {
+      partial: false,
+      results: [resourceHit('work.tasks', 'work.tasks.task', plainResourceId, 'ADAPTÉRY definition')],
+    };
+    const response = Deferred.makeUnsafe<ShellSearchResponse>();
+    searchResourcesMock.mockReturnValue(Deferred.await(response));
+    useLoaderDataMock.mockReturnValue(queryModel('18kop009', 'Definition 18kop009'));
+    routerState.current = settledRouterState('/en/search?q=18kop009');
+    const { rerender } = render(<SearchPage />);
+    expect(screen.getByRole('link', { name: /Definition 18kop009/u })).toBeTruthy();
+
+    routerState.current = pendingRouterState('/en/search?q=ADAPTÉRY', '/en/search?q=18kop009');
+    rerender(<SearchPage />);
+    expect(screen.getByText('Searching…')).toBeTruthy();
+    expect(screen.queryByText('Definition 18kop009')).toBeNull();
+
+    yield* Deferred.succeed(response, nextResponse);
+    yield* Effect.promise(() =>
+      act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      }),
+    );
+    expect(screen.getByRole('link', { name: /ADAPTÉRY definition/u })).toBeTruthy();
+    expect(searchResourcesMock).toHaveBeenCalledWith(
+      { compositionRevision: '1'.repeat(64), query: 'ADAPTÉRY' },
+      { locale: 'en' },
+    );
+  }),
+);
+
+effectTest.effect('a stale answer from the previous same-route query cannot paint', () =>
+  Effect.gen(function* stalePriorQuery() {
+    const first = Deferred.makeUnsafe<ShellSearchResponse>();
+    const second = Deferred.makeUnsafe<ShellSearchResponse>();
+    searchResourcesMock.mockImplementation((payload: ShellSearchPayload) =>
+      payload.query === 'first' ? Deferred.await(first) : Deferred.await(second),
+    );
+    useLoaderDataMock.mockReturnValue(queryModel('initial', 'Initial definition'));
+    routerState.current = settledRouterState('/en/search?q=initial');
+    const { rerender } = render(<SearchPage />);
+    expect(screen.getByRole('link', { name: /Initial definition/u })).toBeTruthy();
+
+    routerState.current = pendingRouterState('/en/search?q=first', '/en/search?q=initial');
+    rerender(<SearchPage />);
+    yield* Effect.promise(() =>
+      act(async () => {
+        await Promise.resolve();
+      }),
+    );
+
+    routerState.current = pendingRouterState('/en/search?q=second', '/en/search?q=first');
+    rerender(<SearchPage />);
+    yield* Deferred.succeed(first, {
+      partial: false,
+      results: [resourceHit('work.tasks', 'work.tasks.task', plainResourceId, 'FIRST definition')],
+    });
+    yield* Effect.promise(() =>
+      act(async () => {
+        await Promise.resolve();
+      }),
+    );
+    expect(screen.queryByRole('link', { name: /FIRST definition/u })).toBeNull();
+    expect(screen.getByText('Searching…')).toBeTruthy();
+
+    yield* Deferred.succeed(second, {
+      partial: false,
+      results: [resourceHit('work.tasks', 'work.tasks.task', plainResourceId, 'SECOND definition')],
+    });
+    yield* Effect.promise(() =>
+      act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      }),
+    );
+    expect(screen.getByRole('link', { name: /SECOND definition/u })).toBeTruthy();
+  }),
+);
+
+effectTest.effect(
+  'back to the first same-route query fetches a fresh answer instead of reusing the loader result',
+  () =>
+    Effect.gen(function* backToInitialQuery() {
+      const backResponse = Deferred.makeUnsafe<ShellSearchResponse>();
+      searchResourcesMock.mockImplementation((payload: ShellSearchPayload) =>
+        payload.query === 'initial'
+          ? Deferred.await(backResponse)
+          : Effect.succeed({
+              partial: false,
+              results: [resourceHit('work.tasks', 'work.tasks.task', plainResourceId, `${payload.query} definition`)],
+            } satisfies ShellSearchResponse),
+      );
+      useLoaderDataMock.mockReturnValue(queryModel('initial', 'Initial definition'));
+      routerState.current = settledRouterState('/en/search?q=initial');
+      const { rerender } = render(<SearchPage />);
+
+      routerState.current = pendingRouterState('/en/search?q=first', '/en/search?q=initial');
+      rerender(<SearchPage />);
+      yield* Effect.promise(() =>
+        act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        }),
+      );
+      expect(screen.getByRole('link', { name: /first definition/u })).toBeTruthy();
+
+      routerState.current = pendingRouterState('/en/search?q=initial', '/en/search?q=first');
+      rerender(<SearchPage />);
+      expect(screen.getByText('Searching…')).toBeTruthy();
+      expect(screen.queryByRole('link', { name: /first definition/u })).toBeNull();
+
+      yield* Deferred.succeed(backResponse, {
+        partial: false,
+        results: [resourceHit('work.tasks', 'work.tasks.task', plainResourceId, 'initial definition')],
+      });
+      yield* Effect.promise(() =>
+        act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        }),
+      );
+      expect(screen.getByRole('link', { name: /initial definition/u })).toBeTruthy();
+      expect(searchResourcesMock).toHaveBeenCalledWith(
+        { compositionRevision: '1'.repeat(64), query: 'initial' },
+        { locale: 'en' },
+      );
+    }),
+);
+
+test('clearing the same-route query shows the prompt instead of the previous answer', () => {
+  useLoaderDataMock.mockReturnValue(queryModel('initial', 'Initial definition'));
+  routerState.current = settledRouterState('/en/search?q=initial');
+  const { rerender } = render(<SearchPage />);
+  expect(screen.getByRole('link', { name: /Initial definition/u })).toBeTruthy();
+
+  routerState.current = settledRouterState('/en/search');
+  rerender(<SearchPage />);
+  expect(screen.getByText('Search clients, tasks, invoices, contracts…')).toBeTruthy();
+  expect(screen.queryByRole('link', { name: /Initial definition/u })).toBeNull();
+  expect(searchResourcesMock).not.toHaveBeenCalled();
+});
+
+effectTest.effect(
+  'returning to a resolved query after another pending query fetches fresh and hides the old answer',
+  () =>
+    Effect.gen(function* returnToResolvedQuery() {
+      const pendingA = Deferred.makeUnsafe<ShellSearchResponse>();
+      const secondB = Deferred.makeUnsafe<ShellSearchResponse>();
+      let bRequests = 0;
+      searchResourcesMock.mockImplementation((payload: ShellSearchPayload) => {
+        if (payload.query === 'B') {
+          bRequests += 1;
+          return bRequests === 1
+            ? Effect.succeed({
+                partial: false,
+                results: [resourceHit('work.tasks', 'work.tasks.task', plainResourceId, 'B old answer')],
+              } satisfies ShellSearchResponse)
+            : Deferred.await(secondB);
+        }
+        return Deferred.await(pendingA);
+      });
+      useLoaderDataMock.mockReturnValue(queryModel('initial', 'Initial definition'));
+      routerState.current = settledRouterState('/en/search?q=initial');
+      const { rerender } = render(<SearchPage />);
+
+      routerState.current = pendingRouterState('/en/search?q=B', '/en/search?q=initial', 'nav-b-first', 'nav-initial');
+      rerender(<SearchPage />);
+      yield* Effect.promise(() =>
+        act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        }),
+      );
+      expect(screen.getByRole('link', { name: /B old answer/u })).toBeTruthy();
+
+      routerState.current = pendingRouterState('/en/search?q=A', '/en/search?q=B', 'nav-a', 'nav-b-first');
+      rerender(<SearchPage />);
+      yield* Effect.promise(() =>
+        act(async () => {
+          await Promise.resolve();
+        }),
+      );
+      expect(screen.getByText('Searching…')).toBeTruthy();
+
+      // Back to B before A resolves: the retained B client answer must not match the new navigation epoch.
+      routerState.current = pendingRouterState('/en/search?q=B', '/en/search?q=A', 'nav-b-back', 'nav-a');
+      rerender(<SearchPage />);
+      expect(screen.getByText('Searching…')).toBeTruthy();
+      expect(screen.queryByRole('link', { name: /B old answer/u })).toBeNull();
+
+      yield* Deferred.succeed(secondB, {
+        partial: false,
+        results: [resourceHit('work.tasks', 'work.tasks.task', plainResourceId, 'B fresh answer')],
+      });
+      yield* Effect.promise(() =>
+        act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        }),
+      );
+      expect(screen.getByRole('link', { name: /B fresh answer/u })).toBeTruthy();
+      expect(screen.queryByRole('link', { name: /B old answer/u })).toBeNull();
+    }),
+);
+
+effectTest.effect('an explicit same-query re-submit invokes a genuinely fresh search', () =>
+  Effect.gen(function* sameQueryResubmit() {
+    const resubmitted = Deferred.makeUnsafe<ShellSearchResponse>();
+    searchResourcesMock.mockReturnValue(Deferred.await(resubmitted));
+    useLoaderDataMock.mockReturnValue(queryModel('initial', 'Initial definition'));
+    routerState.current = settledRouterState('/en/search?q=initial');
+    const { rerender } = render(<SearchPage />);
+    expect(screen.getByRole('link', { name: /Initial definition/u })).toBeTruthy();
+
+    routerState.current = settledRouterState('/en/search?q=initial', '/en/search', 'same-query-resubmit');
+    rerender(<SearchPage />);
+    expect(screen.getByText('Searching…')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /Initial definition/u })).toBeNull();
+
+    yield* Deferred.succeed(resubmitted, {
+      partial: false,
+      results: [resourceHit('work.tasks', 'work.tasks.task', plainResourceId, 'Resubmitted answer')],
+    });
+    yield* Effect.promise(() =>
+      act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      }),
+    );
+    expect(screen.getByRole('link', { name: /Resubmitted answer/u })).toBeTruthy();
+    expect(searchResourcesMock).toHaveBeenCalledWith(
+      { compositionRevision: '1'.repeat(64), query: 'initial' },
+      { locale: 'en' },
+    );
+  }),
+);
+
+test('a matched product variant shows its own name/SKU and opens the product with the opaque variant target', () => {
+  useLoaderDataMock.mockReturnValue({
+    filters: emptyFilters,
+    index: searchIndex,
+    query: 'adapt',
+    response: { partial: false, presentation: presentationInventory, results: [variantProductHit()] },
+    shell: authenticatedShell(),
+    state: 'ready',
+  } satisfies SearchPageModel);
+  routerState.current = settledRouterState('/en/search?q=adapt');
+  render(<SearchPage />);
+
+  const link = screen.getByRole('link', { name: /Product parent/u });
+  expect(link.textContent).toContain('Adaptér 18 mm');
+  expect(link.textContent).toContain('18kop009');
+  const linkProps = localizedLinkMock.mock.calls.map(([props]) => props);
+  const productLink = linkProps.find(({ to }) => to === '/provoz/produkty/$id');
+  expect(productLink).toMatchObject({
+    params: { id: 'product-1' },
+    search: { variantId: 'item-6692' },
+  });
+});
+
+test('full results show the approved generic subtitle and archive badge once with the whole accessible record', () => {
+  const archived = { ...variantProductHit(), archived: true, subtitle: 'PRJ-2026-14' };
+  const plain = {
+    ...resourceHit('inventory.stock', 'inventory.stock.item', plainResourceId, 'Bez archivu'),
+    archived: false,
+  };
+  useLoaderDataMock.mockReturnValue({
+    filters: emptyFilters,
+    index: searchIndex,
+    query: 'product',
+    response: {
+      partial: false,
+      presentation: presentationInventory,
+      results: [archived, plain],
+    },
+    shell: authenticatedShell(),
+    state: 'ready',
+  } satisfies SearchPageModel);
+  routerState.current = settledRouterState('/en/search?q=product');
+  render(<SearchPage />);
+
+  const link = screen.getByRole('link', {
+    name: /Product parent.*Products.*PRJ-2026-14.*Adaptér 18 mm.*18kop009.*Archived/u,
+  });
+  expect(link.getAttribute('aria-label')).toContain('Product parent');
+  expect(link.getAttribute('aria-label')).toContain('PRJ-2026-14');
+  expect(link.getAttribute('aria-label')).toContain('Adaptér 18 mm');
+  expect(link.getAttribute('aria-label')).toContain('18kop009');
+  expect(link.textContent?.match(/PRJ-2026-14/gu)).toHaveLength(1);
+  expect(screen.getByText('Archived')).toBeTruthy();
+
+  const plainLink = screen.getByRole('link', { name: /Bez archivu/u });
+  expect(plainLink.getAttribute('aria-label')).not.toContain('Archived');
 });

@@ -46,6 +46,7 @@ import { useProductLabel } from './product-form-labels.ts';
 import { MovementForm, MovementsTable } from './product-movements.tsx';
 import { EMPTY_MOVEMENT_DRAFT, isMovementDraftDirty } from './product-movement-draft.ts';
 import { AvailabilityBadge, EshopPanel, VariantsPanel, VariantPriceHistory } from './product-eshop.tsx';
+import { resolveProductVariantDestination } from './product-variant-destination.ts';
 import { ProductImageGallery } from './product-image-gallery.tsx';
 import { CatalogContentPanel } from './product-catalog-content.tsx';
 import { MarketsPanel } from './product-markets.tsx';
@@ -70,6 +71,8 @@ export interface ProductDetailViewProps {
   readonly product: ProductRecord;
   readonly revision: number;
   readonly storefrontOrigin?: string;
+  /** The opaque variant target from the URL; resolution happens against the current authorized product. */
+  readonly variantId?: string | undefined;
 }
 
 /** Writable subset of ProductPatch, filled field by field so only changed values are sent. */
@@ -474,6 +477,7 @@ export const ProductDetailView = ({
   product,
   revision,
   storefrontOrigin,
+  variantId,
 }: ProductDetailViewProps) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
@@ -482,7 +486,15 @@ export const ProductDetailView = ({
   // Deriving them preserves unsaved detail fields when the variants tab commits a change.
   const draft = { ...editableDraft, realVariants: (product.variants ?? []).filter(isRealVariant) };
   const [movementDraft, setMovementDraft] = useState(EMPTY_MOVEMENT_DRAFT);
-  const [tab, setTab] = useState('detail');
+  const variantDestination = resolveProductVariantDestination(product, variantId);
+  const [tab, setTab] = useState(() => (variantId === undefined ? 'detail' : 'variants'));
+  const [variantTabKey, setVariantTabKey] = useState(variantId);
+  if (variantTabKey !== variantId) {
+    setVariantTabKey(variantId);
+    if (variantId !== undefined) {
+      setTab('variants');
+    }
+  }
   // The revision the next save must expect: the one the page passed, then the one each save returns.
   // The page's snapshot is the authority after a reload; a save moves it to the revision the server answered with,
   // and a conflict is healed by reloading the product, so the next save never builds on a revision nobody has.
@@ -595,6 +607,7 @@ export const ProductDetailView = ({
               onReload={onReload}
               product={product}
               revision={revision}
+              variantDestination={variantDestination}
             />
           </Tabs.Content>
           <Tabs.Content className="flex flex-col gap-250 py-200" value="eshop">

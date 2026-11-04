@@ -20,7 +20,7 @@ import {
 } from '../../shared/actions/apply-command.ts';
 import { prepareApplyCommandServices } from '../../src/actions/apply-command.action.ts';
 import { workforceRelations } from '../../src/database/schema.ts';
-import { persistenceService } from '../../src/services/persistence.service.ts';
+import { persistenceService, workforceSearchMetadataService } from '../../src/services/persistence.service.ts';
 
 const nativeWorkforceCommands = Effect.scoped(
   Effect.gen(function* nativeWorkforceCommands() {
@@ -131,6 +131,16 @@ const nativeWorkforceCommands = Effect.scoped(
       )
       .pipe(Effect.flip);
     expect(result).toBe('fixture-rollback');
+    // Verify native SQL rollback, not just the failed Effect: neither create nor update may
+    // survive as current source evidence for a later post-commit Search refresh.
+    const afterRollback = yield* database.transaction(
+      Effect.fn('WorkforceCommandsTest.sourceAfterRollback')(function* sourceAfterRollback(tx) {
+        const scoped = yield* installOperationalScope(tx, scope, defineDatabaseIdentityEnrollment([]));
+        const source = yield* workforceSearchMetadataService(scoped, scope);
+        return yield* source.loadSearchMetadata();
+      }),
+    );
+    expect(afterRollback).toEqual([]);
   }),
 );
 

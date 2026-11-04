@@ -230,7 +230,9 @@
           "priceExplanation": "Upravujete cenu bez DPH. Cena s DPH se vypočítá podle zvolené sazby DPH.",
           "variantsExplanation": "Evidenční varianty sdílejí SKU, cenu a sklad produktu.",
           "addVariant": "Přidat variantu",
-          "removeVariant": "Odebrat variantu"
+          "removeVariant": "Odebrat variantu",
+          "variantSelected": "Vybraná varianta",
+          "variantUnavailable": "Vybraná varianta není dostupná. Zkontrolujte odkaz nebo vyberte jinou variantu."
         },
         "gallery": {
           "title_one": "Obrázek ({{count}})",

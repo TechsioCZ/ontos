@@ -4,13 +4,23 @@ import { RequestPeopleSearchRebuildHttpHeadersSchema } from '../../shared/core-a
 import { NodeCrypto } from '@effect/platform-node';
 import { ActionRuntime, ActionPermissionDenied, ContextAccess, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
-import { PeopleSearchResponseSchema } from '@app/core-runtime/people/search';
+import { corePeopleSystemSearchProvider, PeopleSearchResponseSchema } from '@app/core-runtime/people/search';
 import type { PeopleSearchResponse } from '@app/core-runtime/people/search';
-import { Context, DateTime, Effect, Layer, Schema } from 'effect';
+import { interpretCoreSystemSearchPresentation } from '@app/core-runtime/search-contract';
+import { Context, DateTime, Effect, Fiber, Layer, Result, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import { authorizePeopleSearchResults, mergeShellSystemSearch } from '../../api/modules/shell-system-search.ts';
 import { ShellProviderUnavailableError } from '../../api/modules/shell-resources.ts';
-import { ShellAuthenticationApi, ShellSearchResponseSchema } from '../../shared/api.ts';
+import {
+  SHELL_SEARCH_REQUEST_BUDGET_MILLIS,
+  withShellSearchRequestBudget,
+} from '../../api/modules/shell-governed-search.ts';
+import {
+  ShellAuthenticationApi,
+  ShellSearchPresentationInventorySchema,
+  ShellSearchResponseSchema,
+} from '../../shared/api.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -63,6 +73,138 @@ it.effect('merges and deduplicates Core/business hits with stable ordering', () 
     expect(result.results.map(({ title }) => title)).toEqual(['Alena', 'Žofie Nováková']);
   }),
 );
+it.effect('preserves approved relevance across business and People instead of alphabetizing the merge', () =>
+  Effect.gen(function* commonRelevance() {
+    const business = Schema.decodeUnknownSync(ShellSearchResponseSchema)({
+      partial: false,
+      results: businessResponse.results.map((row) => ({ ...row, relevance: { score: 100, version: '1' } })),
+    });
+    const people = Schema.decodeUnknownSync(ShellSearchResponseSchema)({
+      partial: false,
+      results: coreResponse.results.map((row) => ({ ...row, relevance: { score: 900, version: '1' } })),
+    });
+    const result = yield* mergeShellSystemSearch(Effect.succeed(business), Effect.succeed(people));
+    expect(result.results.map(({ title }) => title)).toEqual(['Žofie Nováková', 'Alena']);
+    expect(result.results.map(({ relevance }) => relevance)).toEqual([
+      { score: 900, version: '1' },
+      { score: 100, version: '1' },
+    ]);
+    const reversed = yield* mergeShellSystemSearch(Effect.succeed(people), Effect.succeed(business));
+    expect(reversed.results).toEqual(result.results);
+  }),
+);
+
+it.effect('breaks equal relevance by normalized title and complete ref without boosting optional display fields', () =>
+  Effect.gen(function* deterministicTies() {
+    const business = Schema.decodeUnknownSync(ShellSearchResponseSchema)({
+      partial: false,
+      results: businessResponse.results.map((row) => ({
+        ...row,
+        subtitle: 'An exact-looking identifier never grants relevance',
+        title: 'Žofie',
+      })),
+    });
+    const people = Schema.decodeUnknownSync(ShellSearchResponseSchema)({
+      partial: false,
+      results: coreResponse.results.flatMap((row) => [
+        { ...row, title: 'zofie' },
+        { ...row, ref: { ...row.ref, resourceId: 'another-person' }, title: 'ZOFIE' },
+      ]),
+    });
+    const result = yield* mergeShellSystemSearch(Effect.succeed(business), Effect.succeed(people));
+    expect(result.results.map(({ ref }) => `${ref.moduleId}:${ref.resourceId}`)).toEqual([
+      `core.identity:${person.ref.resourceId}`,
+      'core.identity:another-person',
+      'example.owner:record-1',
+    ]);
+    expect(result.results.every((row) => row.relevance === undefined)).toBe(true);
+    expect(
+      (yield* mergeShellSystemSearch(
+        Effect.succeed({ ...people, results: people.results.toReversed() }),
+        Effect.succeed(business),
+      )).results,
+    ).toEqual(result.results);
+  }),
+);
+
+for (const stalledBranch of ['business', 'People'] as const) {
+  it.effect(`a stalled ${stalledBranch} merge branch expires as unavailable, never complete or partial empty`, () =>
+    Effect.gen(function* boundedMerge() {
+      const pending = yield* mergeShellSystemSearch(
+        stalledBranch === 'business' ? Effect.never : Effect.succeed(businessResponse),
+        stalledBranch === 'People' ? Effect.never : Effect.succeed(coreResponse),
+      ).pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust(SHELL_SEARCH_REQUEST_BUDGET_MILLIS);
+      expect(Schema.is(ShellProviderUnavailableError)(yield* Fiber.join(pending))).toBe(true);
+    }),
+  );
+}
+
+it.effect('a governed business-then-People merge spends one deadline, not a new budget for the system branch', () =>
+  Effect.gen(function* sequentialMergeDeadline() {
+    const stageMillis = SHELL_SEARCH_REQUEST_BUDGET_MILLIS * 0.6;
+    const pending = yield* withShellSearchRequestBudget(
+      Effect.sleep(stageMillis).pipe(
+        Effect.as(businessResponse),
+        Effect.flatMap((business) =>
+          mergeShellSystemSearch(Effect.succeed(business), Effect.sleep(stageMillis).pipe(Effect.as(coreResponse))),
+        ),
+      ),
+      () => new ShellProviderUnavailableError({}),
+    ).pipe(Effect.flip, Effect.forkChild);
+    yield* TestClock.adjust(SHELL_SEARCH_REQUEST_BUDGET_MILLIS);
+    expect(Schema.is(ShellProviderUnavailableError)(yield* Fiber.join(pending))).toBe(true);
+  }),
+);
+
+it.effect('preserves the captured Core-native catalog once across the real merge and keeps the full person ID', () =>
+  Effect.gen(function* capturedSystemTarget() {
+    const presentation = Schema.decodeUnknownSync(ShellSearchPresentationInventorySchema)({
+      business: { compositionRevision: 'a'.repeat(64), entries: [], schemaVersion: '1' },
+      pages: [],
+      system: corePeopleSystemSearchProvider.presentation,
+    });
+    const result = yield* mergeShellSystemSearch(
+      Effect.succeed({ ...businessResponse, presentation }),
+      Effect.succeed(coreResponse),
+      presentation,
+    );
+    expect(result.presentation).toEqual(presentation);
+    expect(result.presentation?.system).not.toHaveProperty('pageKey');
+    const target = interpretCoreSystemSearchPresentation(corePeopleSystemSearchProvider.presentation, {
+      recordId: person.ref.resourceId,
+    });
+    expect(Result.isSuccess(target)).toBe(true);
+    if (Result.isFailure(target)) {
+      throw new Error(target.failure.message);
+    }
+    expect(target.success.navigationPath).toBe(corePeopleSystemSearchProvider.navigationPath);
+    expect(target.success.queryParameters).toEqual([
+      { name: corePeopleSystemSearchProvider.presentation.queryParameterName, value: person.ref.resourceId },
+    ]);
+  }),
+);
+
+it.effect('refuses a catalog from another captured revision during merge', () =>
+  Effect.gen(function* crossRevisionCatalog() {
+    const business = Schema.decodeUnknownSync(ShellSearchPresentationInventorySchema)({
+      business: { compositionRevision: 'a'.repeat(64), entries: [], schemaVersion: '1' },
+      pages: [],
+    });
+    const system = Schema.decodeUnknownSync(ShellSearchPresentationInventorySchema)({
+      business: { compositionRevision: 'b'.repeat(64), entries: [], schemaVersion: '1' },
+      pages: [],
+      system: corePeopleSystemSearchProvider.presentation,
+    });
+    const failure = yield* mergeShellSystemSearch(
+      Effect.succeed({ ...businessResponse, presentation: business }),
+      Effect.succeed(coreResponse),
+      system,
+    ).pipe(Effect.flip);
+    expect(Schema.is(ShellProviderUnavailableError)(failure)).toBe(true);
+  }),
+);
+
 for (const coreFails of [true, false]) {
   it.effect(
     `one ${coreFails ? 'Core' : 'business'} provider failure never exposes the other hits as an incomplete success`,

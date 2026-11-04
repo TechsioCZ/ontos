@@ -62,7 +62,11 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
         {...(model.compositionRevision === undefined ? {} : { compositionRevision: model.compositionRevision })}
         {...(model.selectedLegalEntityId === undefined ? {} : { currentLegalEntityId: model.selectedLegalEntityId })}
         currentTenantId={model.identity.tenantId}
-        identity={{ displayName: model.identity.displayName, email: model.identity.email }}
+        identity={{
+          displayName: model.identity.displayName,
+          email: model.identity.email,
+          principalId: model.identity.principalId,
+        }}
         legalEntityChoices={model.legalEntities.items}
         legalEntityState={model.legalEntities.state}
         legalEntitySwitchFailed={controls.legalEntitySwitchFailed}
@@ -74,7 +78,6 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
         onSearch={controls.handleSearch}
         onTenantChange={controls.handleTenantChange}
         onTenantContextChange={controls.handleTenantContextChange}
-        recordDestinations={model.navigation.state === 'unavailable' ? [] : model.navigation.recordDestinations}
         tenantChoices={model.tenants.items}
         tenantContextActive={model.contextState === 'tenant_authenticated'}
         tenantContextAvailable={

@@ -556,7 +556,7 @@ export const renderActionHttpProblems = (
 // @ontos-action-http-slug ${action}
 import type { ActionCoreError } from '@app/core-runtime';
 import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
-import { Match, Schema } from 'effect';
+import { ${errors.length === 0 ? 'Match' : 'Match, Schema'} } from 'effect';
 import {
   ${type}ActionAlreadyCommittedProblemSchema,
   ${type}ActionAuthenticationProblemSchema,
@@ -572,9 +572,7 @@ ${optionalImports.length === 0 ? '' : `${optionalImports}\n`}  ${type}ActionSche
   ${type}ActionUnavailableProblemSchema,
 } from '../shared/apis/${action}-action.ts';
 import type { ${type}ActionProblem } from '../shared/apis/${action}-action.ts';
-import { ${value} } from '../src/actions/${action}.action.ts';
-
-type DomainError = typeof ${value}.descriptor.domainErrorSchema.Type;
+${errors.length === 0 ? '' : `import { ${value} } from '../src/actions/${action}.action.ts';\n\ntype DomainError = typeof ${value}.descriptor.domainErrorSchema.Type;`}
 type ProblemOf<Tag extends ${type}ActionProblem['_tag']> = Extract<${type}ActionProblem, { readonly _tag: Tag }>;
 ${domainProblemIdentityDefinition}
 
@@ -616,12 +614,16 @@ ${domainMatchers}
   );\n`
 }
 
-const mapDomainProblem = (error: DomainError): ${type}ActionProblem => Match.value(error).pipe(
+${
+  errors.length === 0
+    ? ''
+    : `const mapDomainProblem = (error: DomainError): ${type}ActionProblem => Match.value(error).pipe(
   Match.tags({
 ${domainHandlers}
   }),
   Match.exhaustive,
-);
+);`
+}
 
 const mapCoreProblem = (error: ActionCoreError): ${type}ActionProblem => Match.value(error).pipe(
   Match.tags({
@@ -652,9 +654,13 @@ const mapCoreProblem = (error: ActionCoreError): ${type}ActionProblem => Match.v
   Match.exhaustive,
 );
 
-const isDomainError = Schema.is(${value}.descriptor.domainErrorSchema);
+${
+  errors.length === 0
+    ? `export const map${type}ActionProblem = (error: ActionCoreError): ${type}ActionProblem => mapCoreProblem(error);`
+    : `const isDomainError = Schema.is(${value}.descriptor.domainErrorSchema);
 export const map${type}ActionProblem = (error: ActionCoreError | DomainError): ${type}ActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);`
+}
 
 export const ${toCamelCase(action)}ActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   ${type}ActionSchemaErrorMiddleware,

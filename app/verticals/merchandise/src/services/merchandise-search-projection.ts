@@ -7,6 +7,11 @@ import {
   ResourceContainmentRelationshipMutation,
   ownerResourceModuleContainment,
   ReadHandlerUnavailable,
+  CORE_SEARCH_RELEVANCE_MAX_SCORE,
+  coreSearchRelevance,
+  matchesCoreSearchValues,
+  normalizeCoreSearchText,
+  parseCoreSearchQuery,
 } from '@app/core-runtime';
 import type {
   CoreSearchProjectionDocument,
@@ -15,10 +20,15 @@ import type {
   OperationalScope,
   OutboxWorkerHandlerContext,
 } from '@app/core-runtime';
-import { and, eq, inArray } from 'drizzle-orm';
-import { Array as Arr, Effect, Match, Schema } from 'effect';
+import { compareCoreSearchHits } from '@app/core-runtime/search-ranking';
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import { Array as Arr, Effect, Match, Result, Schema } from 'effect';
 import { catalogHeads, products, productVariants, orders } from '../database/schema.ts';
 import type { MerchandiseCommand } from '../../shared/actions/apply-command.ts';
+import type { ProductVariant } from '../../shared/domain/merchandise-model.ts';
+import { MinorAmountSchema } from '../../shared/domain/merchandise-model.ts';
+import { ProductsProviderMatchedVariantSchema } from '../../shared/apis/products-search.ts';
+import type { ProductsProviderMatchedVariant } from '../../shared/apis/products-search.ts';
 import type { OutboxPayload as RefreshTarget } from '../../shared/outbox/demo-merchandise-search-refresh-requested-v1.ts';
 
 const MODULE = 'demo.merchandise';
@@ -33,54 +43,25 @@ const unavailable = (cause?: unknown) => {
   return error;
 };
 
-/** Only trusted scope can choose the company; stale or foreign Core results fail closed. */
-export const loadMerchandiseSearch = Effect.fn('Merchandise.loadSearch')(function* load<Ref, Encoded>(
-  scope: OperationalScope,
-  resource: 'product' | 'order',
-  query: string,
-  refSchema: Schema.Codec<Ref, Encoded>,
-) {
-  const runtime = yield* CoreSearchQueryRuntime;
-  const { legalEntityId } = scope;
-  if (legalEntityId === undefined) {
-    return yield* unavailable();
+const SearchParameterSchema = Schema.Struct({ label: Schema.String, value: Schema.String });
+const SearchParametersSchema = Schema.Array(SearchParameterSchema);
+type SearchParameter = typeof SearchParameterSchema.Type;
+const parameterTexts = (parameters: readonly SearchParameter[] | undefined): readonly string[] =>
+  (parameters ?? []).flatMap(({ label, value }) => [label.trim(), value.trim()].filter((text) => text.length > 0));
+
+/** Pack whole approved fields, never slice a searchable value or drop evidence to fit Core's document bounds. */
+const withParameterTexts = (base: readonly string[], parameters: readonly SearchParameter[] | undefined): string[] => {
+  const texts = [...base];
+  for (const term of parameterTexts(parameters)) {
+    const index = texts.findIndex((text) => text.length + 1 + term.length <= 300);
+    if (index === -1) {
+      texts.push(term);
+    } else {
+      texts[index] = `${texts[index]} ${term}`;
+    }
   }
-  const hits = yield* runtime
-    .search(
-      {
-        includeArchived: false,
-        moduleId: MODULE,
-        query,
-        resourceType: `${MODULE}.${resource}`,
-        selectedLegalEntityId: legalEntityId,
-        tenantId: scope.tenantId,
-      },
-      scope,
-    )
-    .pipe(Effect.mapError(unavailable));
-  return yield* Effect.forEach(
-    hits,
-    Effect.fn('Merchandise.mapSearchHit')(function* mapHit(hit) {
-      if (
-        hit.ref.tenantId !== scope.tenantId ||
-        hit.selectedLegalEntityId !== legalEntityId ||
-        !hit.ref.resourceId.startsWith(`${legalEntityId}.`) ||
-        hit.ref.resourceId.length === legalEntityId.length + 1 ||
-        hit.ref.moduleId !== MODULE ||
-        hit.ref.resourceType !== `${MODULE}.${resource}` ||
-        hit.archived ||
-        hit.subjectRef !== undefined ||
-        hit.matchedRef !== undefined ||
-        hit.matchedSubjectRef !== undefined
-      ) {
-        return yield* unavailable();
-      }
-      const ref = yield* Schema.decodeUnknownEffect(refSchema)(hit.ref).pipe(Effect.mapError(unavailable));
-      return { ref, selectedLegalEntityId: hit.selectedLegalEntityId, title: hit.title };
-    }),
-    { concurrency: 1 },
-  );
-});
+  return texts;
+};
 
 interface ProductRow {
   readonly active: boolean;
@@ -88,16 +69,19 @@ interface ProductRow {
   readonly id: string;
   readonly legalEntityId: string;
   readonly name: string;
+  readonly parameters?: readonly SearchParameter[];
   readonly sku: string;
   readonly tenantId: string;
 }
-interface VariantRow {
-  readonly active: boolean;
+interface VariantRow extends Pick<ProductVariant, 'active'> {
   readonly legalEntityId: string;
   readonly name: string;
+  readonly parameters?: readonly SearchParameter[];
+  readonly priceMinor?: number | null;
   readonly productId: string;
   readonly sku: string | null;
   readonly tenantId: string;
+  readonly variantId?: string | null;
 }
 interface OrderRow {
   readonly id: string;
@@ -114,27 +98,44 @@ export interface MerchandiseSearchSnapshot {
   readonly variants: readonly VariantRow[];
 }
 
-export const buildMerchandiseSearchDocuments = Effect.fn('Merchandise.buildSearchDocuments')(function* build(
-  snapshot: MerchandiseSearchSnapshot,
-) {
-  const variantTexts = new Map<string, string[]>();
-  for (const variant of snapshot.variants) {
-    if (!variant.active) {
+/** The same allowlisted, active owner evidence feeds publication and current-query rematching. */
+const productSearchEvidence = (productRows: readonly ProductRow[], variants: readonly VariantRow[]) => {
+  const byProduct = new Map<string, { skus: string[]; text: string[]; variants: VariantRow[] }>();
+  for (const variant of variants) {
+    // Match the canonical owner's legacy default (productRowsOf / stock-levels): only explicit false is inactive.
+    if (variant.active === false) {
       continue;
     }
     const key = `${variant.tenantId}:${variant.legalEntityId}:${variant.productId}`;
-    const text = variantTexts.get(key) ?? [];
-    text.push(variant.name);
+    const evidence = byProduct.get(key) ?? { skus: [], text: [], variants: [] };
+    evidence.variants.push(variant);
+    evidence.text.push(
+      ...withParameterTexts([variant.name, ...(variant.sku === null ? [] : [variant.sku])], variant.parameters),
+    );
     if (variant.sku !== null) {
-      text.push(variant.sku);
+      evidence.skus.push(variant.sku);
     }
-    variantTexts.set(key, text);
+    byProduct.set(key, evidence);
   }
+  return productRows.map((row) => {
+    const variant = byProduct.get(`${row.tenantId}:${row.legalEntityId}:${row.id}`);
+    return {
+      row,
+      skus: [row.sku, ...(variant?.skus ?? [])],
+      text: [...withParameterTexts([row.name, row.sku], row.parameters), ...(variant?.text ?? [])],
+      variants: variant?.variants ?? [],
+    };
+  });
+};
+
+export const buildMerchandiseSearchDocuments = Effect.fn('Merchandise.buildSearchDocuments')(function* build(
+  snapshot: MerchandiseSearchSnapshot,
+) {
   const rows = [
-    ...snapshot.products.map((row) => ({
+    ...productSearchEvidence(snapshot.products, snapshot.variants).map(({ row, text }) => ({
       ...row,
       archived: row.archived || !row.active,
-      text: [row.name, row.sku, ...(variantTexts.get(`${row.tenantId}:${row.legalEntityId}:${row.id}`) ?? [])],
+      text,
       title: row.name.trim() || 'Produkt',
       type: 'product',
     })),
@@ -182,11 +183,18 @@ export const buildMerchandiseSearchDocuments = Effect.fn('Merchandise.buildSearc
   );
 });
 
+const decodeParameters = <Row extends { readonly parameters: unknown }>(row: Row) =>
+  Schema.decodeUnknownEffect(SearchParametersSchema)(row.parameters ?? []).pipe(
+    Effect.map((parameters) => ({ ...row, parameters })),
+    Effect.mapError(unavailable),
+  );
+
 const readCompanySearch = Effect.fn('Merchandise.readCompanySearch')(function* readCompany(
   db: CoreSearchSnapshotReadExecutor,
   tenantId: string,
   legalEntityId: string,
   target?: RefreshTarget,
+  publication: 'snapshot' | 'current' = 'snapshot',
 ) {
   const [head] = yield* db
     .select({ bootstrapCheckpoint: catalogHeads.bootstrapCheckpoint })
@@ -198,6 +206,9 @@ const readCompanySearch = Effect.fn('Merchandise.readCompanySearch')(function* r
     (head.bootstrapCheckpoint !== null &&
       !Schema.is(Schema.Struct({ status: Schema.Literal('VERIFIED') }))(head.bootstrapCheckpoint))
   ) {
+    if (publication === 'current') {
+      return yield* unavailable();
+    }
     // Empty replacement snapshots retire any formerly published records without indexing partial import batches.
     return { orders: [], products: [], variants: [] };
   }
@@ -212,6 +223,8 @@ const readCompanySearch = Effect.fn('Merchandise.readCompanySearch')(function* r
             id: products.id,
             legalEntityId: products.legalEntityId,
             name: products.name,
+            // Drizzle cannot select a typed JSON member; project only the approved parameters, never the document.
+            parameters: sql<unknown>`${products.document}->'parameters'`,
             sku: products.sku,
             tenantId: products.tenantId,
           })
@@ -223,18 +236,25 @@ const readCompanySearch = Effect.fn('Merchandise.readCompanySearch')(function* r
               full ? undefined : inArray(products.id, target.productIds),
             ),
           );
+  const variantSelection = {
+    active: productVariants.active,
+    legalEntityId: productVariants.legalEntityId,
+    name: productVariants.name,
+    parameters: sql<unknown>`${productVariants.document}->'parameters'`,
+    productId: productVariants.productId,
+    sku: productVariants.sku,
+    tenantId: productVariants.tenantId,
+  };
   const variants =
     productRows.length === 0
       ? []
       : yield* db
-          .select({
-            active: productVariants.active,
-            legalEntityId: productVariants.legalEntityId,
-            name: productVariants.name,
-            productId: productVariants.productId,
-            sku: productVariants.sku,
-            tenantId: productVariants.tenantId,
-          })
+          .select(
+            // Real-variant proof is needed only for the current staff result, never the persisted Core document.
+            publication === 'current'
+              ? { ...variantSelection, priceMinor: productVariants.priceMinor, variantId: productVariants.variantId }
+              : variantSelection,
+          )
           .from(productVariants)
           .where(
             and(
@@ -265,10 +285,190 @@ const readCompanySearch = Effect.fn('Merchandise.readCompanySearch')(function* r
               full ? undefined : inArray(orders.id, target.orderIds),
             ),
           );
-  if ([...productRows, ...orderRows].some((row) => row.tenantId !== tenantId || row.legalEntityId !== legalEntityId)) {
+  if (
+    [...productRows, ...variants, ...orderRows].some(
+      (row) => row.tenantId !== tenantId || row.legalEntityId !== legalEntityId,
+    )
+  ) {
     return yield* unavailable();
   }
-  return { orders: orderRows, products: productRows, variants };
+  return {
+    orders: orderRows,
+    products: yield* Effect.forEach(productRows, decodeParameters, { concurrency: 1 }),
+    variants: yield* Effect.forEach(variants, decodeParameters, { concurrency: 1 }),
+  };
+});
+
+/** The caller supplies a live Core-governed owner transaction; no executor escapes this read. */
+export const loadCurrentMerchandiseSearch = Effect.fn('Merchandise.loadCurrentSearch')(function* loadCurrent(
+  db: CoreSearchSnapshotReadExecutor,
+  scope: OperationalScope,
+  resource: 'product' | 'order',
+  ids: readonly string[],
+) {
+  if (scope.legalEntityId === undefined) {
+    return yield* unavailable();
+  }
+  return yield* readCompanySearch(
+    db,
+    scope.tenantId,
+    scope.legalEntityId,
+    {
+      legalEntityId: scope.legalEntityId,
+      orderIds: resource === 'order' ? [...ids] : [],
+      productIds: resource === 'product' ? [...ids] : [],
+      rebuild: false,
+    },
+    'current',
+  ).pipe(Effect.mapError(unavailable));
+});
+
+/** Rows are already scoped to one tenant/company/parent. All tokens must belong to one current leaf. */
+const uniqueMatchedVariant = (
+  variants: readonly VariantRow[],
+  tokens: readonly string[],
+): ProductsProviderMatchedVariant | undefined => {
+  let witness: VariantRow | undefined;
+  for (const variant of variants) {
+    if (
+      !matchesCoreSearchValues(
+        [variant.name, ...(variant.sku === null ? [] : [variant.sku]), ...parameterTexts(variant.parameters)],
+        tokens,
+      )
+    ) {
+      continue;
+    }
+    // Count informational matches too: a duplicate exact SKU is ambiguous even if only one row has an identity.
+    if (witness !== undefined) {
+      return undefined;
+    }
+    witness = variant;
+  }
+  if (
+    witness === undefined ||
+    witness.variantId === null ||
+    witness.variantId === undefined ||
+    !Schema.is(MinorAmountSchema)(witness.priceMinor)
+  ) {
+    return undefined;
+  }
+  const id = witness.variantId;
+  if (variants.some((variant) => variant !== witness && variant.variantId === id)) {
+    return undefined;
+  }
+  const name = witness.name.trim();
+  const sku = witness.sku?.trim();
+  // Decode only approved public fields. No price, stock, parent document, guessed name or synthetic identity escapes.
+  const identity = { id };
+  const named = name.length === 0 ? identity : { ...identity, name };
+  const candidate = sku === undefined || sku.length === 0 ? named : { ...named, sku };
+  return Result.getOrUndefined(Schema.decodeResult(ProductsProviderMatchedVariantSchema)(candidate));
+};
+
+interface CurrentSearchEvidence {
+  readonly skus: readonly string[];
+  readonly text: readonly string[];
+  readonly title: string;
+  readonly variants?: readonly VariantRow[];
+}
+
+/** Only trusted scope can choose the company; stale or foreign Core results fail closed. */
+export const loadMerchandiseSearch = Effect.fn('Merchandise.loadSearch')(function* load<Ref, Encoded, CurrentFailure>(
+  scope: OperationalScope,
+  resource: 'product' | 'order',
+  query: string,
+  refSchema: Schema.Codec<Ref, Encoded>,
+  readCurrentOwner: (
+    ids: readonly string[],
+  ) => Effect.Effect<Pick<MerchandiseSearchSnapshot, 'orders' | 'products' | 'variants'>, CurrentFailure>,
+) {
+  const runtime = yield* CoreSearchQueryRuntime;
+  const { legalEntityId } = scope;
+  if (legalEntityId === undefined) {
+    return yield* unavailable();
+  }
+  const hits = yield* runtime
+    .search(
+      {
+        includeArchived: false,
+        moduleId: MODULE,
+        query,
+        resourceType: `${MODULE}.${resource}`,
+        selectedLegalEntityId: legalEntityId,
+        tenantId: scope.tenantId,
+      },
+      scope,
+    )
+    .pipe(Effect.mapError(unavailable));
+  const scopedHits = yield* Effect.forEach(
+    hits,
+    Effect.fn('Merchandise.mapSearchHit')(function* mapHit(hit) {
+      if (
+        hit.ref.tenantId !== scope.tenantId ||
+        hit.selectedLegalEntityId !== legalEntityId ||
+        !hit.ref.resourceId.startsWith(`${legalEntityId}.`) ||
+        hit.ref.resourceId.length === legalEntityId.length + 1 ||
+        hit.ref.moduleId !== MODULE ||
+        hit.ref.resourceType !== `${MODULE}.${resource}` ||
+        hit.archived ||
+        hit.subjectRef !== undefined ||
+        hit.matchedRef !== undefined ||
+        hit.matchedSubjectRef !== undefined
+      ) {
+        return yield* unavailable();
+      }
+      const ref = yield* Schema.decodeUnknownEffect(refSchema)(hit.ref).pipe(Effect.mapError(unavailable));
+      return { hit, ref, selectedLegalEntityId: hit.selectedLegalEntityId, title: hit.title };
+    }),
+    { concurrency: 1 },
+  );
+  const parsed = yield* Effect.fromResult(parseCoreSearchQuery(query)).pipe(Effect.mapError(unavailable));
+  if (scopedHits.length === 0) {
+    return [];
+  }
+  const ids = scopedHits.map(({ hit }) => hit.ref.resourceId.slice(legalEntityId.length + 1));
+  // The reader opens its own short governed transaction only after Core candidate I/O has finished.
+  const current = yield* readCurrentOwner(ids).pipe(Effect.mapError(unavailable));
+  const evidence = new Map<string, CurrentSearchEvidence>(
+    resource === 'product'
+      ? productSearchEvidence(current.products, current.variants).flatMap(({ row, skus, text, variants }) =>
+          row.active && !row.archived
+            ? [[row.id, { skus, text, title: row.name.trim() || 'Produkt', variants }] as const]
+            : [],
+        )
+      : current.orders.flatMap((row) =>
+          row.removed ? [] : [[row.id, { skus: [], text: [row.number], title: `Objednávka ${row.number}` }] as const],
+        ),
+  );
+  return scopedHits
+    .flatMap(({ hit, ref, selectedLegalEntityId }) => {
+      const owner = evidence.get(hit.ref.resourceId.slice(legalEntityId.length + 1));
+      if (owner === undefined || !matchesCoreSearchValues(owner.text, parsed.tokens)) {
+        return [];
+      }
+      const relevance = coreSearchRelevance({ ...hit, title: owner.title }, parsed);
+      const skus = owner.skus.map((sku) => normalizeCoreSearchText(sku).trim().split(/\s+/u).join(' '));
+      // These are bounded wire scores, not Core's lower-is-better rank tiers. Keep its version and fallback ranking.
+      const prefixScore = skus.some((sku) => sku.startsWith(parsed.phrase)) ? CORE_SEARCH_RELEVANCE_MAX_SCORE - 1 : 0;
+      const score = skus.includes(parsed.phrase)
+        ? CORE_SEARCH_RELEVANCE_MAX_SCORE
+        : Math.max(relevance.score, prefixScore);
+      const matchedVariant =
+        resource === 'product' ? uniqueMatchedVariant(owner.variants ?? [], parsed.tokens) : undefined;
+      const result = { ref, relevance: { ...relevance, score }, selectedLegalEntityId, title: owner.title };
+      return [
+        {
+          hit: { ...hit, title: owner.title },
+          result: matchedVariant === undefined ? result : { matchedVariant, ...result },
+        },
+      ];
+    })
+    .toSorted(
+      (left, right) =>
+        right.result.relevance.score - left.result.relevance.score ||
+        compareCoreSearchHits(left.hit, right.hit, parsed),
+    )
+    .map(({ result }) => result);
 });
 
 /** Only explicit tenant/company predicates reach owner tables under the Core-reserved snapshot. */

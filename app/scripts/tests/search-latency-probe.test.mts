@@ -21,7 +21,12 @@ import {
 import type { Attempt, Corpus, SearchCase, WorkEvidence } from '../ops/search-latency-probe.mts';
 
 const corpus = Schema.decodeUnknownSync(CorpusSchema)(fixture);
-const liveCorpus: Corpus = { ...corpus, mode: 'admitted-live' };
+// Scripted authority only: this location and the promoted mode are never evidence of live measurements.
+const liveCorpus: Corpus = {
+  ...corpus,
+  mode: 'admitted-live',
+  pins: { ...corpus.pins, clientLocation: 'in-process scripted test; no network client' },
+};
 const cookie = Redacted.make('opaque-cookie=DO-NOT-LOG-THIS');
 const secret = 'DO-NOT-LOG-THIS';
 const jsonHeaders = { 'cache-control': 'private, no-store', 'content-type': 'application/json' };
@@ -117,6 +122,11 @@ it.effect('offline corpus is honest, complete, scoped and never a fake empty ben
       cases: corpus.cases.map((entry) => ({ ...entry, expected: { partial: false, results: [] } })),
     };
     expect(Exit.isFailure(yield* Effect.exit(validateCorpus(invalid)))).toBe(true);
+    for (const lane of ['comparison', 'expanded'] as const) {
+      // Separate corpora remain subject to the same seven categories, counts, scope and oracle checks.
+      const separate: Corpus = { ...corpus, cases: corpus.cases.map((entry) => ({ ...entry, lane })) };
+      yield* validateCorpus(separate);
+    }
   }),
 );
 
@@ -133,6 +143,7 @@ it.effect('P20 rejects offline fixtures, unpinned, future, expired and excessive
       [liveCorpus, approval, DateTime.makeUnsafe(DateTime.toEpochMillis(now) + 120_000)],
       [liveCorpus, approval, DateTime.makeUnsafe(DateTime.toEpochMillis(now) - 120_000)],
       [liveCorpus, { ...approval, maxAttempts: 1001 }, now],
+      [liveCorpus, { ...approval, maxAttempts: 999 }, now],
     ] as const) {
       expect(Exit.isFailure(yield* Effect.exit(validateWindow(target, grant, instant, 1000)))).toBe(true);
     }
@@ -148,6 +159,68 @@ it.effect('P20 rejects offline fixtures, unpinned, future, expired and excessive
       }).pipe(Effect.provideService(HttpClient.HttpClient, noNetwork)),
     );
     expect(calls).toBe(0);
+    yield* Effect.exit(
+      runProbe(liveCorpus, { ...approval, maxAttempts: 999 }, cookie, () => {
+        // Insufficient authority must fail before even the first of 1000 required dispatches.
+      }).pipe(Effect.provideService(HttpClient.HttpClient, noNetwork)),
+    );
+    expect(calls).toBe(0);
+  }),
+);
+
+it.effect('admitted live corpus requires actual client location; fixture pins cannot silently satisfy admission', () =>
+  Effect.gen(function* requireClientLocation() {
+    expect(Exit.isFailure(yield* Effect.exit(validateCorpus({ ...corpus, mode: 'admitted-live' })))).toBe(true);
+    yield* validateCorpus(liveCorpus);
+    const item = yield* requireFirst(corpus.cases);
+    const result = yield* requireFirst(item.expected.results);
+    const wrongScope = yield* Schema.decodeUnknownEffect(CorpusSchema)({
+      ...corpus,
+      cases: [
+        {
+          ...item,
+          expected: {
+            ...item.expected,
+            results: [{ ...result, selectedLegalEntityId: '55555555-5555-4555-8555-555555555555' }],
+          },
+        },
+        ...corpus.cases.slice(1),
+      ],
+    });
+    expect(Exit.isFailure(yield* Effect.exit(validateCorpus(wrongScope)))).toBe(true);
+    const excessRefs = yield* Schema.decodeUnknownEffect(CorpusSchema)({
+      ...corpus,
+      cases: [
+        {
+          ...item,
+          expected: {
+            ...item.expected,
+            results: [
+              result,
+              { ...result, ref: { ...result.ref, resourceId: '44444444-4444-4444-8444-444444444444' } },
+            ],
+          },
+        },
+        ...corpus.cases.slice(1),
+      ],
+    });
+    expect(Exit.isFailure(yield* Effect.exit(validateCorpus(excessRefs)))).toBe(true);
+  }),
+);
+
+it.effect('workload identity stays fixed across deployment pins but changes with the actual admitted cases', () =>
+  Effect.gen(function* compareWorkloadIdentity() {
+    const offline = yield* summarize([], corpus);
+    const promoted = yield* summarize([], liveCorpus);
+    expect(offline.workloadSha256).toBe(promoted.workloadSha256);
+    expect(offline.corpusSha256).not.toBe(promoted.corpusSha256);
+    const changed = yield* summarize([], {
+      ...corpus,
+      cases: corpus.cases.map((entry) => ({ ...entry, id: `${entry.id}-different-admission` })),
+    });
+    expect(changed.workloadSha256).not.toBe(offline.workloadSha256);
+    expect(promoted.gate).toBe(false);
+    expect(promoted.measurementComplete).toBe(false);
   }),
 );
 
@@ -201,6 +274,7 @@ for (const status of [401, 403, 503]) {
       expect(sample.outcome).toBe('http');
       expect(sample.bytes).toBeGreaterThan(0);
       expect(sample.fullBodyMs).not.toBeNull();
+      expect(sample.cache?.responseNoStore).toBe(true);
       expect(sample.correctnessChecked).toBe(false);
       expect(sample.retry).toBe(0);
       expect(yield* bodyText(sample)).not.toContain(secret);
@@ -306,6 +380,43 @@ it.live('a delayed body times out and preserves the attempt instead of counting 
     expect(sample.outcome).toBe('timeout');
     expect(sample.status).toBe(200);
     expect(sample.correctnessChecked).toBe(false);
+    expect(sample.fullBodyMs).toBeNull();
+    expect(sample.cache?.responseNoStore).toBe(true);
+  }),
+);
+
+it.live('timeout before response headers is recorded once without inventing complete-body timing', () =>
+  Effect.gen(function* timeoutBeforeHeaders() {
+    const item = yield* requireFirst(corpus.cases);
+    const sample = yield* measure(
+      HttpClient.make(() => Effect.never),
+      item,
+      15,
+    );
+    expect(sample.outcome).toBe('timeout');
+    expect(sample.status).toBeNull();
+    expect(sample.headersMs).toBeNull();
+    expect(sample.fullBodyMs).toBeNull();
+    expect(sample.correctnessChecked).toBe(false);
+  }),
+);
+
+it.live('a body timeout retains HTTP error status and cache evidence for independent accounting', () =>
+  Effect.gen(function* timeoutErrorBody() {
+    const item = yield* requireFirst(corpus.cases);
+    const http = HttpClient.make((request) => {
+      const response = HttpClientResponse.fromWeb(
+        request,
+        new Response(secret, { headers: { ...jsonHeaders, 'x-cache': 'HIT' }, status: 503 }),
+      );
+      return Effect.succeed(withArrayBuffer(response, Effect.never));
+    });
+    const sample = yield* measure(http, item, 15);
+    expect(sample.outcome).toBe('timeout');
+    expect(sample.status).toBe(503);
+    expect(sample.cache?.xCache).toBe('HIT');
+    expect(sample.fullBodyMs).toBeNull();
+    expect(yield* bodyText(sample)).not.toContain(secret);
   }),
 );
 
@@ -381,6 +492,11 @@ it.live('unknown cache provenance preserves measurement, while every observed ca
     expect((yield* measure(jsonResponse(item.expected, 200, { ...jsonHeaders, 'x-cache': 'HIT' }), item)).outcome).toBe(
       'cache',
     );
+    for (const status of ['TCP_HIT', 'STALE', 'REVALIDATED', 'UPDATING']) {
+      expect(
+        (yield* measure(jsonResponse(item.expected, 200, { ...jsonHeaders, 'x-cache': status }), item)).outcome,
+      ).toBe('cache');
+    }
   }),
 );
 
@@ -488,9 +604,18 @@ it.live('five C1/C5 rounds execute all 1000 full requests; unverified work canno
         if (matched === undefined) {
           return yield* Effect.die('The scripted transport received an unknown query.');
         }
-        yield* Effect.yieldNow;
-        active -= 1;
-        return HttpClientResponse.fromWeb(request, Response.json(matched.expected, { headers: jsonHeaders }));
+        const response = HttpClientResponse.fromWeb(request, Response.json(matched.expected, { headers: jsonHeaders }));
+        return withArrayBuffer(
+          response,
+          Effect.yieldNow.pipe(
+            Effect.andThen(response.arrayBuffer),
+            Effect.ensuring(
+              Effect.sync(() => {
+                active -= 1;
+              }),
+            ),
+          ),
+        );
       }),
     );
     const approval = yield* approvalFor(liveCorpus);
@@ -502,11 +627,15 @@ it.live('five C1/C5 rounds execute all 1000 full requests; unverified work canno
     expect(new Set(samples.map((sample) => sample.querySha256)).size).toBe(1000);
     expect(samples.every((sample) => sample.outcome === 'ok')).toBe(true);
     expect(maxActive).toBe(5);
+    expect(active).toBe(0);
     const report = yield* summarize(samples, liveCorpus);
     expect(report.gate).toBe(false);
     expect(report.measurementComplete).toBe(true);
     expect(report.uncachedWorkVerification).toBe('unknown');
     expect(report.samples.length).toBe(1000);
+    expect(report.sampleIdentityValid).toBe(true);
+    expect(report.workload.map((item) => item.id)).toEqual(corpus.cases.map((item) => item.id));
+    expect(report.pins.clientLocation).toBe(liveCorpus.pins.clientLocation);
     expect(report.countsByResourceType).toEqual(corpus.countsByResourceType);
     for (const profile of report.profiles) {
       expect(profile.bytes).toBeGreaterThan(0);
@@ -518,6 +647,21 @@ it.live('five C1/C5 rounds execute all 1000 full requests; unverified work canno
       expect(profile.retries).toBe(0);
       expect(profile.rounds.map((round) => round.correct)).toEqual([100, 100, 100, 100, 100]);
       expect(profile.workVerified).toBe(0);
+      expect(profile.workloadCoverageComplete).toBe(true);
+      expect(profile.workload.map((item) => item.category)).toEqual([
+        'selective',
+        'broad',
+        'exact',
+        'multiword',
+        'alias',
+        'temporal',
+        'empty-hit',
+      ]);
+      expect(profile.workload.every((item) => item.correct >= 71 && item.correct <= 72)).toBe(true);
+      expect(profile.completeResponseP95Ms).not.toBeNull();
+      if (profile.completeResponseP95Ms !== null && profile.p95Ms !== null) {
+        expect(profile.p95Ms).toBeGreaterThanOrEqual(profile.completeResponseP95Ms);
+      }
     }
     const evidence: WorkEvidence = {
       corpusSha256: yield* corpusHash(liveCorpus),
@@ -541,9 +685,98 @@ it.live('five C1/C5 rounds execute all 1000 full requests; unverified work canno
     };
     const verified = yield* summarize(samples, liveCorpus, evidence);
     expect(verified.profiles.every((profile) => profile.workVerified === 500)).toBe(true);
-    expect(
-      (yield* summarize(samples, liveCorpus, { ...evidence, observations: evidence.observations.slice(1) })).gate,
-    ).toBe(false);
+    // Synthetic counters exercise the gate mechanics, not live authorization, retrieval or latency proof.
+    expect(verified.gate).toBe(verified.latencyTargetMet);
+    const noStoreMissing = yield* summarize(
+      samples.map((sample) => ({
+        ...sample,
+        cache: { age: null, cacheControl: '', cfCacheStatus: null, responseNoStore: false, xCache: null },
+      })),
+      liveCorpus,
+      evidence,
+    );
+    expect(noStoreMissing.measurementComplete).toBe(true);
+    expect(noStoreMissing.gate).toBe(false);
+    const reusedAnswer = yield* summarize(
+      samples.map((sample) => ({
+        ...sample,
+        cache: {
+          age: null,
+          cacheControl: 'no-store',
+          cfCacheStatus: 'DYNAMIC',
+          responseNoStore: true,
+          xCache: 'TCP_HIT',
+        },
+      })),
+      liveCorpus,
+      evidence,
+    );
+    expect(reusedAnswer.gate).toBe(false);
+    expect(reusedAnswer.profiles.every((profile) => profile.cacheReuseHeaders === 500)).toBe(true);
+    const first = yield* requireFirst(samples);
+    const duplicateIdentity = yield* summarize(
+      samples.map((sample) => ({ ...sample, requestId: first.requestId })),
+      liveCorpus,
+      evidence,
+    );
+    expect(duplicateIdentity.sampleIdentityValid).toBe(false);
+    expect(duplicateIdentity.measurementComplete).toBe(false);
+    const reusedQuery = yield* summarize(
+      samples.map((sample) => ({ ...sample, querySha256: first.querySha256 })),
+      liveCorpus,
+      evidence,
+    );
+    expect(reusedQuery.measurementComplete).toBe(false);
+    const skewedWorkload = yield* summarize(
+      samples.map((sample) => ({ ...sample, caseId: first.caseId })),
+      liveCorpus,
+      evidence,
+    );
+    expect(skewedWorkload.measurementComplete).toBe(false);
+    const extraAttempt = yield* summarize([...samples, { ...first, profile: 99 }], liveCorpus, evidence);
+    expect(extraAttempt.measurementComplete).toBe(false);
+    const missingRun = yield* summarize(
+      samples.filter((sample) => sample.run !== 5),
+      liveCorpus,
+      evidence,
+    );
+    expect(missingRun.measurementComplete).toBe(false);
+    const slowBody = yield* summarize(
+      samples.map((sample) => ({
+        ...sample,
+        fullBodyMs: 250,
+        headersMs: 1,
+        oracleMs: 252,
+        schemaMs: 251,
+        totalMs: 253,
+      })),
+      liveCorpus,
+      evidence,
+    );
+    expect(slowBody.measurementComplete).toBe(true);
+    expect(slowBody.profiles.every((profile) => profile.completeResponseP95Ms === 250)).toBe(true);
+    expect(slowBody.latencyTargetMet).toBe(false);
+    const missingBody = yield* summarize(
+      samples.map((sample) => ({ ...sample, fullBodyMs: null })),
+      liveCorpus,
+      evidence,
+    );
+    expect(missingBody.measurementComplete).toBe(false);
+    for (const outcome of ['timeout', 'cancelled', 'http', 'partial', 'oracle'] as const) {
+      const failed = yield* summarize(
+        samples.map((sample) => (sample.requestId === first.requestId ? { ...sample, outcome } : sample)),
+        liveCorpus,
+        evidence,
+      );
+      expect(failed.measurementComplete).toBe(false);
+      expect(failed.profiles.reduce((total, profile) => total + profile.errors, 0)).toBe(1);
+    }
+    const missingEvidence = yield* summarize(samples, liveCorpus, {
+      ...evidence,
+      observations: evidence.observations.slice(1),
+    });
+    expect(missingEvidence.gate).toBe(false);
+    expect(missingEvidence.profiles.some((profile) => profile.providerRetries === null)).toBe(true);
     expect((yield* summarize(samples, liveCorpus, { ...evidence, corpusSha256: 'f'.repeat(64) })).gate).toBe(false);
     expect(
       (yield* summarize(samples, liveCorpus, {

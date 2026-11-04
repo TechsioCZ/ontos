@@ -8,7 +8,13 @@ import type { McpCatalog, McpCatalogModule, McpCatalogTool } from './catalog.ts'
 import type { ToolAnnotationsSpec } from './types.ts';
 
 export const TYPED_TOOL_CAP = 40;
-export const GENERIC_READ_TOOLS = ['ontos_whoami', 'ontos_capabilities', 'ontos_read', 'ontos_list_proposals'] as const;
+export const GENERIC_READ_TOOLS = [
+  'ontos_whoami',
+  'ontos_capabilities',
+  'ontos_read',
+  'ontos_search',
+  'ontos_list_proposals',
+] as const;
 export const GENERIC_WRITE_TOOLS = ['ontos_execute', 'ontos_propose'] as const;
 export type GenericToolName = (typeof GENERIC_READ_TOOLS)[number] | (typeof GENERIC_WRITE_TOOLS)[number];
 

@@ -21,6 +21,7 @@ import {
   useProductDetail,
 } from '../products-api.ts';
 import { ProductDetailView } from '../product-detail-dialog.tsx';
+import { productVariantIdFromSearch } from '../product-variant-destination.ts';
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
 import csResource from '../../../../../../locales/cs/merchandise.json';
 import enResource from '../../../../../../locales/en/merchandise.json';
@@ -65,6 +66,7 @@ const ProductDetailPageContent = ({ context, legalEntityId, routeParams, search 
   const navigate = useNavigate();
   const toaster = useToast();
   const revisionHint = productRevisionOf(search);
+  const variantId = productVariantIdFromSearch(search);
   const input = detailInput(legalEntityId, routeParams.id, context, revisionHint);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const state = useProductDetail(legalEntityId, routeParams.id, context, revisionHint, refreshVersion);
@@ -126,6 +128,7 @@ const ProductDetailPageContent = ({ context, legalEntityId, routeParams, search 
           onReload={handleReload}
           product={state.product}
           revision={state.response.revision}
+          variantId={variantId}
         />
       ) : (
         <div className="flex flex-col gap-200">

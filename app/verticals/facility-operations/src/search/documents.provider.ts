@@ -2,7 +2,7 @@
 // @ontos-contribution-kind search-provider
 import { Effect } from 'effect';
 import type { CoreSearchQueryRuntime, ReadLoadContext, ReadHandlerUnavailable } from '@app/core-runtime';
-import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineRead, defineReadSearchCollectionAuthorization, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { loadFacilitySearch } from './search-read.ts';
 import { DocumentRefSchema } from '../../shared/resources/document.ts';
 import { DocumentsProviderRequestSchema, DocumentsProviderResponseSchema } from '../../shared/apis/documents-search.ts';
@@ -38,6 +38,12 @@ export const documentsRead = defineRead(
     permissionTarget: 'module',
     policies: [],
     readKey: 'facility.operations.search.documents',
+    resultAuthorization: defineReadSearchCollectionAuthorization({
+      items: (result: DocumentsProviderResponse) => result,
+      resource: (item) => item.ref,
+      resultSchema: DocumentsProviderResponseSchema,
+      withItems: (_result, items) => items,
+    }),
     resultSchema: DocumentsProviderResponseSchema,
     schemaVersion: '1',
   },
@@ -55,5 +61,4 @@ export const documentsRead = defineRead(
       load: (input: DocumentsProviderRequest) => loadFacilitySearch(scope, 'document', input.query, DocumentRefSchema),
     }),
   () => ({ kind: 'module', moduleId: moduleKey }),
-  (result) => result.map(({ ref }) => ref),
 );

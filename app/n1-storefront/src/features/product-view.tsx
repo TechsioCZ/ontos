@@ -43,7 +43,7 @@ export const ProductView = ({
   const { current, images, parameters, selectionRequired, variant } = selection;
   const pathname = `/${locale}/produkt/${encodeURIComponent(product.slug)}`;
   return (
-    <article className="mx-auto max-w-n1-product-content p-4 md:px-0 md:py-6">
+    <article className="mx-auto max-w-n1-product-content p-4 md:py-6">
       <Breadcrumb aria-label={d.catalog} size="md">
         <Breadcrumb.List>
           <Breadcrumb.Item>
@@ -140,7 +140,7 @@ export const ProductView = ({
           )}
           <div className="order-3 md:order-2">
             <AvailabilityStatus
-              label={selectionRequired ? d.selectVariant : d.stock[current.stock]}
+              label={d.stock[selectionRequired ? "unknown" : current.stock]}
               status={selectionRequired ? "unknown" : current.stock}
             />
           </div>

@@ -9,6 +9,7 @@ import {
   DuplicateCandidateListApi,
   DuplicateCandidateListRequestSchema,
 } from '../../verticals/party-registry/shared/apis/duplicate-candidate-list.ts';
+import { SearchLabelsApi } from '../../verticals/party-registry/shared/apis/search-labels.ts';
 import { partyRegistryMcpContribution } from '../../verticals/party-registry/shared/mcp/contribution.ts';
 import { LeaseInvoicesApi } from '../../verticals/finance-billing/shared/apis/lease-invoices.ts';
 import { RecordsApi as FinanceRecordsApi } from '../../verticals/finance-billing/shared/apis/records.ts';
@@ -54,6 +55,28 @@ it('rejects an undeclared lease preload read instead of silently excluding it', 
     }),
   ).toThrow('finance.billing: MCP reads not contributed or hidden: lease-invoices');
 });
+
+it.effect('keeps the Party Registry search label projection out of the MCP tool catalog', () =>
+  Effect.gen(function* partySearchLabelsContribution() {
+    const derived = deriveOntosMcpContribution({
+      actions: [],
+      api: { 'search-labels': SearchLabelsApi },
+      appId: APP_ID,
+      authored: {
+        ...partyRegistryMcpContribution,
+        actions: {},
+        commands: {},
+        reads: { 'search-labels': OntosMcpHidden },
+      },
+      moduleId: MODULE_ID,
+    });
+    expect(partyRegistryMcpContribution.reads['search-labels']).toBe(OntosMcpHidden);
+    if (derived !== undefined) {
+      const catalog = yield* Schema.decodeEffect(OntosMcpToolCatalogJsonSchema)(derived.toolCatalog);
+      expect(catalog.tools).toEqual([]);
+    }
+  }),
+);
 
 it('omits the contribution when the owner authors none', () => {
   const derived = deriveOntosMcpContribution({

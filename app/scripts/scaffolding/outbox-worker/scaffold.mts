@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Match, Option, Predicate, Schema } from 'effect';
+import type { PlatformError } from 'effect';
 import { parseSync } from 'oxc-parser';
 
 import { createCodesmithGenerator } from '../generator-adapter.mts';
@@ -25,7 +26,6 @@ import {
   requireCanonicalSlug,
   requireTopic,
   resolveContainedPath,
-  scaffoldFailure,
   toCamelCase,
   toPascalCase,
   topicToSlug,
@@ -736,10 +736,31 @@ const planOutboxWorkerScaffoldEffect = (
     return { mutations, result: { registryPath, workerPath } };
   });
 
-export default createCodesmithGenerator((workspaceRoot: string, config: OutboxWorkerScaffoldConfig) =>
+/** Every failure the existing worker planner dispatch can surface, including Core metadata reads. */
+type OutboxWorkerScaffoldFailure = OutboxWorkerScaffoldError | PlatformError.PlatformError | ScaffoldFailure;
+
+const planOutboxWorker = (
+  workspaceRoot: string,
+  config: OutboxWorkerScaffoldConfig,
+): Effect.Effect<ScaffoldPlan<OutboxWorkerScaffoldResult>, OutboxWorkerScaffoldFailure, FileSystem.FileSystem> =>
   config.vertical === 'core'
-    ? planCorePeopleSearchWorker(workspaceRoot, config).pipe(
-        Effect.mapError((cause) => scaffoldFailure('Core people worker generation failed', cause)),
-      )
-    : planOutboxWorkerScaffoldEffect(workspaceRoot, config),
-);
+    ? planCorePeopleSearchWorker(workspaceRoot, config)
+    : planOutboxWorkerScaffoldEffect(workspaceRoot, config);
+
+/**
+ * Read-only source planning for the existing Outbox Worker generator, including its exact
+ * reviewed Core-people dispatch (not arbitrary Core workers). Takes OutboxWorkerScaffoldConfig
+ * and returns the existing validated ScaffoldPlan<OutboxWorkerScaffoldResult>. The FileSystem
+ * requirement stays in the returned effect and is satisfied by the caller's composition root:
+ * only metadata reads reach the private planners, while rendered/formatted contents remain in
+ * memory. No file or path is created, formatted on disk, written, removed or applied, and a
+ * returned plan grants no authority to materialize its mutations. The default Codesmith adapter
+ * still materializes that plan with its original outer services.
+ */
+export const planOutboxWorkerScaffold = (
+  workspaceRoot: string,
+  config: OutboxWorkerScaffoldConfig,
+): Effect.Effect<ScaffoldPlan<OutboxWorkerScaffoldResult>, OutboxWorkerScaffoldFailure, FileSystem.FileSystem> =>
+  planOutboxWorker(workspaceRoot, config);
+
+export default createCodesmithGenerator(planOutboxWorkerScaffold);

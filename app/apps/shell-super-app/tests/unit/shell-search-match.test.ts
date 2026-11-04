@@ -3,20 +3,19 @@ import { expect, test } from 'effect-rstest';
 
 import type { ShellSearchResult } from '../../shared/api.ts';
 import { LegalEntityIdSchema, ModuleIdSchema, ResourceIdSchema, TenantIdSchema } from '../../shared/api.ts';
+import type { CoreSearchPresentationEntry } from '@app/core-runtime/search-contract';
+
 import {
   MAXIMUM_SHELL_SEARCH_RESULT_BADGES,
+  planShellSearchFilters,
   shellSearchFamiliesInOrder,
-  shellSearchFamilyKeys,
-  shellSearchFamilyOfGroup,
-  shellSearchGroupsOfFamilies,
-  shellSearchGroupsOfFamily,
   shellSearchResultBadges,
   shellSearchResultKey,
   shellSearchTitleMatchRanges,
   shellSearchTitleSegments,
   toggleShellSearchFamily,
 } from '../../src/routes/shell-search-match.ts';
-import { shellSearchGroupOrder } from '../../src/routes/shell-search-resource-types.ts';
+import { shellSearchFamilies, shellSearchPresentationIndex } from '../../src/routes/shell-search-resource-types.ts';
 
 const tenantId = Schema.decodeUnknownSync(TenantIdSchema)('00000000-0000-4000-8000-000000000101');
 const legalEntityId = Schema.decodeUnknownSync(LegalEntityIdSchema)('00000000-0000-4000-8000-000000000201');
@@ -210,25 +209,118 @@ test('a counterparty keeps its role badges when nothing more urgent competes', (
   ]);
 });
 
-test('every record group belongs to exactly one family, so no group can fall out of the filter', () => {
-  const familiesOfGroups = shellSearchGroupOrder.map((group) => shellSearchFamilyOfGroup(group));
-  expect(new Set(familiesOfGroups).size).toBe(shellSearchFamilyKeys.length);
-  expect(shellSearchFamiliesInOrder([...new Set(familiesOfGroups)])).toEqual(shellSearchFamilyKeys);
-  const allGroups = shellSearchFamilyKeys.flatMap((family) => shellSearchGroupsOfFamily(family));
-  expect(allGroups.toSorted()).toEqual(shellSearchGroupOrder.toSorted());
+const compositionRevision = 'a'.repeat(64);
+const label = (cs: string, en: string) => ({ cs, en });
+const metadata = (key: string, order: number, cs: string, en: string) => ({
+  icon: 'icon-[mdi--file-outline]' as const,
+  key,
+  label: label(cs, en),
+  order,
 });
 
-test('a family collects its groups in the Shell display order', () => {
-  expect(shellSearchGroupsOfFamily('companies')).toEqual(['counterparty', 'crmClient']);
-  expect(shellSearchGroupsOfFamily('work')).toEqual(['task']);
-  expect(shellSearchGroupsOfFamily('other')).toEqual(['resource']);
+const inventoryEntry = (
+  ownerModuleId: string,
+  resourceType: string,
+  family: { readonly key: string; readonly order: number },
+  group: { readonly key: string; readonly order: number },
+): CoreSearchPresentationEntry => ({
+  ownerModuleId,
+  presentation: {
+    family: metadata(family.key, family.order, family.key, family.key),
+    group: metadata(group.key, group.order, group.key, group.key),
+    scope: 'company',
+  },
+  resourceType,
+  searchKey: `${ownerModuleId}.search`,
 });
 
-test('no selected family asks the server for every group instead of a guessed narrowing', () => {
-  expect(shellSearchGroupsOfFamilies([])).toEqual(shellSearchGroupOrder);
-  expect(shellSearchGroupsOfFamilies(['work'])).toEqual(['task']);
-  expect(shellSearchGroupsOfFamilies(['work', 'companies'])).toEqual(['counterparty', 'crmClient', 'task']);
-  expect(shellSearchGroupsOfFamilies(['work', 'work'])).toEqual(['task']);
+const inventory = () => {
+  const index = shellSearchPresentationIndex(
+    {
+      business: {
+        compositionRevision,
+        entries: [
+          inventoryEntry(
+            'party.registry',
+            'party.registry.counterparty',
+            { key: 'companies', order: 10 },
+            {
+              key: 'counterparty',
+              order: 20,
+            },
+          ),
+          inventoryEntry(
+            'demo.crm',
+            'demo.crm.client',
+            { key: 'companies', order: 10 },
+            {
+              key: 'client',
+              order: 10,
+            },
+          ),
+          inventoryEntry(
+            'finance.billing',
+            'finance.billing.invoice',
+            { key: 'finance', order: 30 },
+            {
+              key: 'invoice',
+              order: 30,
+            },
+          ),
+        ],
+        schemaVersion: '1',
+      },
+      pages: [],
+    },
+    compositionRevision,
+  );
+  if (index === undefined) {
+    throw new Error('expected a current validated inventory');
+  }
+  return index;
+};
+
+test('no selected family omits the resourceTypes field and names the declared families in owner order', () => {
+  const plan = planShellSearchFilters({ index: inventory(), partial: false, requestedFamilies: [] });
+  expect(plan.selectedFamilies).toEqual([]);
+  expect(plan.resourceTypes).toBeUndefined();
+  expect(plan.availableFamilies.map(({ key }) => key)).toEqual(['companies', 'finance']);
+  expect(plan.availableFamilies[0]?.family.groups.map(({ key }) => key)).toEqual(['client', 'counterparty']);
+});
+
+test('a selected family asks the server for exactly its declared resource types', () => {
+  const plan = planShellSearchFilters({ index: inventory(), partial: false, requestedFamilies: ['finance'] });
+  expect(plan.selectedFamilies).toEqual(['finance']);
+  expect(plan.resourceTypes).toEqual(['finance.billing.invoice']);
+  const companies = planShellSearchFilters({ index: inventory(), partial: false, requestedFamilies: ['companies'] });
+  expect(companies.resourceTypes).toEqual(['demo.crm.client', 'party.registry.counterparty']);
+});
+
+test('an unknown or unresolved family never broadens the request to every type', () => {
+  expect(planShellSearchFilters({ index: inventory(), partial: false, requestedFamilies: ['missing'] })).toMatchObject({
+    resourceTypes: [],
+    selectedFamilies: [],
+  });
+  expect(
+    planShellSearchFilters({ index: inventory(), partial: false, requestedFamilies: ['finance', 'missing'] }),
+  ).toMatchObject({ resourceTypes: [], selectedFamilies: ['finance'] });
+});
+
+test('without a validated inventory no family filter can be resolved', () => {
+  const noInventory = shellSearchPresentationIndex(undefined, compositionRevision);
+  const plan = planShellSearchFilters({ index: noInventory, partial: false, requestedFamilies: ['companies'] });
+  expect(plan).toEqual({ availableFamilies: [], resourceTypes: [], selectedFamilies: [] });
+});
+
+test('a partial answer offers no filter and never guesses a payload', () => {
+  const plan = planShellSearchFilters({ index: inventory(), partial: true, requestedFamilies: ['finance'] });
+  expect(plan).toEqual({ availableFamilies: [], selectedFamilies: [] });
+});
+
+test('family order comes from the validated inventory, not from the request or a shell taxonomy', () => {
+  const families = shellSearchFamilies(inventory());
+  expect(families.map(({ key }) => key)).toEqual(['companies', 'finance']);
+  expect(shellSearchFamiliesInOrder(['finance', 'companies', 'unknown'], families)).toEqual(['companies', 'finance']);
 });
 
 test('toggling a family adds it once and removes it again', () => {

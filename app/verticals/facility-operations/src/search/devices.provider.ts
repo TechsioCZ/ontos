@@ -2,7 +2,7 @@
 // @ontos-contribution-kind search-provider
 import { Effect } from 'effect';
 import type { CoreSearchQueryRuntime, ReadLoadContext, ReadHandlerUnavailable } from '@app/core-runtime';
-import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineRead, defineReadSearchCollectionAuthorization, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { loadFacilitySearch } from './search-read.ts';
 import { DeviceRefSchema } from '../../shared/resources/device.ts';
 import { DevicesProviderRequestSchema, DevicesProviderResponseSchema } from '../../shared/apis/devices-search.ts';
@@ -38,6 +38,12 @@ export const devicesRead = defineRead(
     permissionTarget: 'module',
     policies: [],
     readKey: 'facility.operations.search.devices',
+    resultAuthorization: defineReadSearchCollectionAuthorization({
+      items: (result: DevicesProviderResponse) => result,
+      resource: (item) => item.ref,
+      resultSchema: DevicesProviderResponseSchema,
+      withItems: (_result, items) => items,
+    }),
     resultSchema: DevicesProviderResponseSchema,
     schemaVersion: '1',
   },
@@ -55,5 +61,4 @@ export const devicesRead = defineRead(
       load: (input: DevicesProviderRequest) => loadFacilitySearch(scope, 'device', input.query, DeviceRefSchema),
     }),
   () => ({ kind: 'module', moduleId: moduleKey }),
-  (result) => result.map(({ ref }) => ref),
 );

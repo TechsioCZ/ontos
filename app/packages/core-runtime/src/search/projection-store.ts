@@ -2,7 +2,6 @@ import { Context } from 'effect';
 import type { Effect, Schema } from 'effect';
 import type { OperationalScope } from '../operations/context.ts';
 import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
-
 import type {
   CoreSearchProjectionDocument,
   CoreSearchProjectionInvalid,
@@ -44,6 +43,9 @@ export interface CoreSearchProjectionStoreService {
     context: OutboxWorkerHandlerContext,
   ) => Effect.Effect<void, CoreSearchProjectionInvalid | CoreSearchProjectionUnavailableInstance>;
 }
+
+export { CoreSearchProjectionRefreshStore } from './projection-refresh-store.ts';
+export type { CoreSearchProjectionRefreshStoreService } from './projection-refresh-store.ts';
 
 /** Production persistence implements this Core-owned port; business modules never own an index. */
 export class CoreSearchProjectionStore extends Context.Service<

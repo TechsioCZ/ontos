@@ -1,3 +1,4 @@
+import { ReadPermissionDenied } from '@app/core-runtime';
 import { moduleReleaseFetch } from '@app/core-runtime/unit-service-fetch';
 import { Effect, Schema } from 'effect';
 
@@ -62,6 +63,14 @@ export const makeModuleSearchProviderGateway = (transport: ModuleReleaseTranspor
         }),
         input.module,
       );
+      // Row-level collection filtering is a successful 200 owned by the provider. An entrypoint 403 is a genuine
+      // refusal, not an empty collection or an outage. Do not read or retain its private response body.
+      if (response.status === 403) {
+        return yield* new ReadPermissionDenied({
+          code: 'read_permission_denied',
+          reason: 'The search provider entrypoint refused this read',
+        });
+      }
       const body = yield* Effect.tryPromise(response.text.bind(response)).pipe(Effect.timeout('10 seconds'));
       // The Shell already admitted the module; an owner refusing the rows means nothing here is readable by this person,
       // which is an empty result, not an outage.
@@ -74,7 +83,9 @@ export const makeModuleSearchProviderGateway = (transport: ModuleReleaseTranspor
       return yield* decodeProviderResults(body);
     },
     Effect.mapError((cause) =>
-      Schema.is(ShellProviderUnavailableError)(cause) ? cause : new ShellProviderUnavailableError({ cause }),
+      Schema.is(ShellProviderUnavailableError)(cause) || Schema.is(ReadPermissionDenied)(cause)
+        ? cause
+        : new ShellProviderUnavailableError({ cause }),
     ),
   ),
 });

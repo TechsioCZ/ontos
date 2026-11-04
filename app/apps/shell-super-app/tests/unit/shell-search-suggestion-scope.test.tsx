@@ -49,7 +49,7 @@ const renderSuggestions = (initialProps: ScopeProps) =>
     ({ language, revision }: ScopeProps) => {
       // The i18n double reads the language the test currently asks for; the hook itself only receives the revision.
       languageState.current = language;
-      return useShellSearchSuggestions(revision);
+      return useShellSearchSuggestions(revision, 'scope-a');
     },
     { initialProps },
   );

@@ -7,32 +7,37 @@ import { Data, Effect, Match, Option, Result, Schema } from 'effect';
 import { failureFeedback } from '../../../../shared/actions/apply-command.ts';
 import type { Feedback } from '../../../../shared/actions/apply-command.ts';
 import type { Contract } from '../../../../shared/apis/records.ts';
-import { ContractRefSchema } from '../../../../shared/resources/contract.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { executeRecords } from '../../../api/records-client.ts';
 import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
+import type { AgreementSelectionFields } from './document-selection.ts';
+import { parseAgreementSelector } from './document-selection.ts';
 import { rentalReferenceAccess } from './rental-reference-access.ts';
 
-/** The agreements a page shows: the person's legal entity and the optional contract opened from the query. */
-export interface AgreementsInput {
+/** The agreements a page shows: the person's legal entity and the optional record opened from the query. */
+export interface AgreementsInput extends AgreementSelectionFields {
   readonly context?: ModulePageContext | undefined;
   readonly legalEntityId: string;
-  readonly resourceId?: string | undefined;
 }
 
-const RecordsSearchSchema = Schema.Struct({ resourceId: Schema.optional(ContractRefSchema.fields.resourceId) });
-
-/** Decodes a raw query string (`?resourceId=…`, the shape the Shell passes as `search`). */
-const searchCodec = Schema.toCodecJson(Schema.fromURLSearchParams(RecordsSearchSchema));
-
+/** The contract selector alone, kept for callers that only select contracts. */
 export const resourceIdOf = (search: string): string | undefined =>
-  Option.getOrUndefined(Schema.decodeOption(searchCodec)(search))?.resourceId;
+  Match.value(parseAgreementSelector(search)).pipe(
+    Match.tag('Contract', ({ resourceId }) => Option.some(resourceId)),
+    Match.orElse(() => Option.none()),
+    Option.getOrUndefined,
+  );
 
-export const agreementsInputOf = (props: Partial<ModulePageProps>, routerSearch: string): AgreementsInput => ({
-  context: props.context,
-  legalEntityId: props.context?.legalEntityId ?? '',
-  resourceId: resourceIdOf(props.search ?? routerSearch),
-});
+export const agreementsInputOf = (props: Partial<ModulePageProps>, routerSearch: string): AgreementsInput => {
+  const base = { context: props.context, legalEntityId: props.context?.legalEntityId ?? '' };
+  return Match.value(parseAgreementSelector(props.search ?? routerSearch)).pipe(
+    Match.tag('Document', ({ documentId }) => ({ ...base, documentId })),
+    Match.tag('Contract', ({ resourceId }) => ({ ...base, resourceId })),
+    Match.tag('Invalid', ({ reason }) => ({ ...base, selectorIssue: reason })),
+    Match.tag('None', () => base),
+    Match.exhaustive,
+  );
+};
 
 export type Properties = Effect.Success<ReturnType<typeof executePropertyRecords>>;
 export type Occupancies = Effect.Success<ReturnType<typeof executeOccupancyRecords>>;
@@ -266,14 +271,16 @@ export const useAgreementDetails = (
   records: { readonly revision: number } | undefined,
 ) => {
   const revision = records?.revision ?? 0;
-  usePrefetchAgreementCustomers(input.context, input.resourceId === undefined ? visible : [], revision);
+  const selectingRecord =
+    input.resourceId !== undefined || input.documentId !== undefined || input.selectorIssue !== undefined;
+  usePrefetchAgreementCustomers(input.context, selectingRecord ? [] : visible, revision);
   return useAgreementCustomer(input.context, contract, revision);
 };
 
 /** Exact cold URL selection is prepared after its authorized base read, without a second records request. */
 export const preloadPage = modulePagePreload((props) => {
   const input = agreementsInputOf(props, props.search);
-  return pageDataScopeKey(input.context, moduleId) === undefined
+  return pageDataScopeKey(input.context, moduleId) === undefined || input.selectorIssue !== undefined
     ? Effect.void
     : agreements.read(input).pipe(
         Effect.catchTag('AgreementsSectionsIncomplete', ({ value }) => Effect.succeedSome(value)),

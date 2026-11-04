@@ -5,12 +5,16 @@ import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { workforceManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
+import { refreshSearchWorker } from './src/workers/refresh-search.worker.ts';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 // </generated-module-registration-imports>
 
 export const workforceRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
     applyCommandAction,
+    requestSearchRebuildAction,
     // </generated-module-registration-actions>
   ],
   entrypoints: {
@@ -34,12 +38,15 @@ export const workforceRegistration = defineVerticalRuntimeRegistration({
     },
     search: {
       // <generated-module-registration-search>
+      employees: () => import('./src/api/employees-search-client.ts'),
       // </generated-module-registration-search>
     },
   },
   manifest: workforceManifest,
   outboxWorkers: [
     // <generated-module-registration-workers>
+    rebuildSearchWorker,
+    refreshSearchWorker,
     // </generated-module-registration-workers>
   ],
 });

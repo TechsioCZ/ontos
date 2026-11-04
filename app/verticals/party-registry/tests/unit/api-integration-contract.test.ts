@@ -37,6 +37,7 @@ const apiNames = [
   'personEngagementMutations',
   'personEngagementProfile',
   'privacyMeasureExecution',
+  'searchLabels',
 ] as const;
 
 type Equal<Left, Right> =

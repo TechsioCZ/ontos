@@ -1,7 +1,11 @@
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { validateShellContributions } from '../../src/modules/shell-contribution.ts';
+import {
+  shellSearchPresentationBindingIssue,
+  validateShellContributions,
+} from '../../src/modules/shell-contribution.ts';
+import type { CoreSearchPresentationDeclaration } from '../../src/search/search-contract.ts';
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Any));
 
@@ -198,6 +202,28 @@ it('rejects a page record destination that does not bind its own route parameter
   }
 });
 
+it('accepts only the explicit optional page legal-entity opt-in and leaves other pages unchanged', () => {
+  const baseline = full();
+  const plain = validateShellContributions(baseline, references);
+  // Absent means required: a page that does not opt in carries no new field, so its serialized identity is unchanged.
+  expect(plain.pages[0]?.legalEntityScope).toBeUndefined();
+  expect(encodeJson(plain)).not.toContain('legalEntityScope');
+
+  const optedIn = {
+    ...baseline,
+    pages: [{ ...first(baseline.pages), legalEntityScope: 'optional' as const }],
+  };
+  const decoded = validateShellContributions(optedIn, references);
+  expect(decoded.pages[0]?.legalEntityScope).toBe('optional');
+  expect(structuredClone(decoded)).toEqual(decoded);
+
+  for (const legalEntityScope of ['required', 'forbidden', 'sometimes', 'OPTIONAL'] as const) {
+    expect(() =>
+      validateShellContributions({ ...baseline, pages: [{ ...first(baseline.pages), legalEntityScope }] }, references),
+    ).toThrow();
+  }
+});
+
 it('rejects two pages of one module that claim the same record destination', () => {
   const candidate = full();
   const firstPage = first(candidate.pages);
@@ -377,3 +403,290 @@ for (const routePath of [
     expect(() => validateShellContributions(candidate, references)).toThrow();
   });
 }
+
+const searchPresentation = (): CoreSearchPresentationDeclaration => ({
+  agendaPageKeys: [`${moduleId}.page.units`],
+  family: {
+    icon: 'icon-[mdi--office-building-outline]',
+    key: 'property',
+    label: { cs: 'Nemovitosti', en: 'Property' },
+    order: 10,
+  },
+  group: {
+    icon: 'icon-[mdi--door-open]',
+    key: 'unit',
+    label: { cs: 'Jednotky', en: 'Units' },
+    order: 20,
+  },
+  record: {
+    pageKey: `${moduleId}.page.dashboard`,
+    selector: {
+      idEncoding: 'native',
+      idFormat: 'uuid',
+      kind: 'path',
+      parameterName: 'unitId',
+    },
+  },
+  scope: 'company',
+});
+
+const presented = () => {
+  const baseline = full();
+  return {
+    ...baseline,
+    pages: [
+      { ...first(baseline.pages), routePath: '/property-dashboard/:unitId' },
+      {
+        componentKey: `${moduleId}.dashboard`,
+        contributionKey: `${moduleId}.page.units`,
+        entrypoint: entrypoint('page'),
+        expose: './Dashboard',
+        routePath: '/property-units',
+      },
+    ],
+    search: [
+      {
+        ...first(baseline.search),
+        presentation: searchPresentation(),
+      },
+    ],
+  };
+};
+
+const presentationReferences = {
+  moduleId,
+  resourceTypeKeys: new Set([`${moduleId}.unit`]),
+  search: [
+    {
+      accessFiltering: 'legal_entity_scope' as const,
+      key: `${moduleId}.unit-search`,
+      owningModuleId: moduleId,
+      resourceType: `${moduleId}.unit`,
+    },
+  ],
+};
+
+it('accepts exact same-owner presentation pages, path selectors and search bindings', () => {
+  const decoded = validateShellContributions(presented(), references);
+  expect(decoded.search[0]?.presentation?.record?.pageKey).toBe(`${moduleId}.page.dashboard`);
+  expect(decoded.search[0]?.presentation?.agendaPageKeys).toEqual([`${moduleId}.page.units`]);
+  expect(structuredClone(decoded)).toEqual(decoded);
+  expect(encodeJson(decoded)).not.toMatch(/handler|loader|sourcePath|remote|import|expression/iu);
+  expect(shellSearchPresentationBindingIssue(decoded, presentationReferences)).toBeUndefined();
+});
+
+it('accepts a concrete query selector and rejects a path selector outside the exact existing parameter', () => {
+  const query = presented();
+  query.pages[0] = { ...first(query.pages), routePath: '/property-dashboard' };
+  const queryPresentation = first(query.search).presentation;
+  query.search[0] = {
+    ...first(query.search),
+    presentation: {
+      ...queryPresentation,
+      record: {
+        pageKey: `${moduleId}.page.dashboard`,
+        selector: { idEncoding: 'native', idFormat: 'opaque', kind: 'query', parameterName: 'resourceId' },
+      },
+    },
+  };
+  expect(validateShellContributions(query, references).search[0]?.presentation?.record?.selector.kind).toBe('query');
+
+  const wrongParameter = presented();
+  const wrongPresentation = first(wrongParameter.search).presentation;
+  if (wrongPresentation.record === undefined) {
+    throw new Error('Expected a record fixture');
+  }
+  wrongParameter.search[0] = {
+    ...first(wrongParameter.search),
+    presentation: {
+      ...wrongPresentation,
+      record: {
+        ...wrongPresentation.record,
+        selector: { ...wrongPresentation.record.selector, parameterName: 'otherId' },
+      },
+    },
+  };
+  expect(() => validateShellContributions(wrongParameter, references)).toThrow(/only existing route parameter/u);
+
+  const unbound = presented();
+  unbound.pages[0] = { ...first(unbound.pages), routePath: '/property-dashboard/:unitId/:tab' };
+  expect(() => validateShellContributions(unbound, references)).toThrow(/only existing route parameter/u);
+
+  const queryWithParameter = presented();
+  const queryWithParameterPresentation = first(queryWithParameter.search).presentation;
+  queryWithParameter.search[0] = {
+    ...first(queryWithParameter.search),
+    presentation: {
+      ...queryWithParameterPresentation,
+      record: {
+        pageKey: `${moduleId}.page.dashboard`,
+        selector: { idEncoding: 'native', idFormat: 'uuid', kind: 'query', parameterName: 'resourceId' },
+      },
+    },
+  };
+  expect(() => validateShellContributions(queryWithParameter, references)).toThrow(/concrete page route/u);
+});
+
+it('rejects unknown, duplicate, foreign and ambiguous presentation page references', () => {
+  const unknownRecord = presented();
+  const recordPresentation = first(unknownRecord.search).presentation;
+  if (recordPresentation.record === undefined) {
+    throw new Error('Expected a record fixture');
+  }
+  unknownRecord.search[0] = {
+    ...first(unknownRecord.search),
+    presentation: {
+      ...recordPresentation,
+      record: { ...recordPresentation.record, pageKey: `${moduleId}.page.missing` },
+    },
+  };
+  expect(() => validateShellContributions(unknownRecord, references)).toThrow(/undeclared page contribution/u);
+
+  const unknownAgenda = presented();
+  const agendaPresentation = first(unknownAgenda.search).presentation;
+  unknownAgenda.search[0] = {
+    ...first(unknownAgenda.search),
+    presentation: { ...agendaPresentation, agendaPageKeys: [`${moduleId}.page.missing`] },
+  };
+  expect(() => validateShellContributions(unknownAgenda, references)).toThrow(/undeclared page contribution/u);
+
+  const duplicateAgenda = presented();
+  const duplicatePresentation = first(duplicateAgenda.search).presentation;
+  duplicateAgenda.search[0] = {
+    ...first(duplicateAgenda.search),
+    presentation: {
+      ...duplicatePresentation,
+      agendaPageKeys: [`${moduleId}.page.units`, `${moduleId}.page.units`],
+    },
+  };
+  expect(() => validateShellContributions(duplicateAgenda, references)).toThrow(/agenda page keys must be unique/u);
+
+  const foreign = presented();
+  const foreignPresentation = first(foreign.search).presentation;
+  if (foreignPresentation.record === undefined) {
+    throw new Error('Expected a record fixture');
+  }
+  foreign.search[0] = {
+    ...first(foreign.search),
+    presentation: {
+      ...foreignPresentation,
+      record: { ...foreignPresentation.record, pageKey: 'billing.core.page.dashboard' },
+    },
+  };
+  expect(() => validateShellContributions(foreign, references)).toThrow(/undeclared page contribution/u);
+
+  const omitted = presented();
+  omitted.pages.pop();
+  expect(() => validateShellContributions(omitted, references)).toThrow(/undeclared page contribution/u);
+});
+
+it('rejects shared group/family metadata disagreements and executable presentation fields', () => {
+  const conflict = presented();
+  const base = first(conflict.search);
+  const secondSearch = {
+    ...base,
+    contributionKey: `${moduleId}.search.unit-two`,
+    entrypoint: { ...entrypoint('search'), entrypointKey: `${moduleId}.search.secondary` },
+    presentation: {
+      ...base.presentation,
+      group: {
+        ...base.presentation.group,
+        label: { cs: 'Jiná skupina', en: 'Other group' },
+      },
+    },
+    searchKey: `${moduleId}.unit-search-two`,
+  };
+  expect(() =>
+    validateShellContributions(
+      { ...conflict, search: [...conflict.search, secondSearch] },
+      {
+        ...references,
+        searchKeys: new Set([...references.searchKeys, `${moduleId}.unit-search-two`]),
+      },
+    ),
+  ).toThrow(/group label\/icon\/order/u);
+
+  const thirdSearch = {
+    ...base,
+    contributionKey: `${moduleId}.search.unit-three`,
+    entrypoint: { ...entrypoint('search'), entrypointKey: `${moduleId}.search.tertiary` },
+    presentation: {
+      ...base.presentation,
+      family: { ...base.presentation.family, order: 11 },
+    },
+    searchKey: `${moduleId}.unit-search-three`,
+  };
+  expect(() =>
+    validateShellContributions(
+      { ...conflict, search: [...conflict.search, thirdSearch] },
+      {
+        ...references,
+        searchKeys: new Set([...references.searchKeys, `${moduleId}.unit-search-three`]),
+      },
+    ),
+  ).toThrow(/family label\/icon\/order/u);
+
+  const executable = presented();
+  expect(() =>
+    validateShellContributions(
+      {
+        ...executable,
+        search: [
+          {
+            ...first(executable.search),
+            presentation: { ...first(executable.search).presentation, render: 'items.map' },
+          },
+        ],
+      },
+      references,
+    ),
+  ).toThrow();
+
+  const systemClaim = presented();
+  expect(() =>
+    validateShellContributions(
+      {
+        ...systemClaim,
+        search: [
+          {
+            ...first(systemClaim.search),
+            presentation: {
+              ...first(systemClaim.search).presentation,
+              kind: 'system',
+              navigationPath: '/sprava/lide-a-role',
+            },
+          },
+        ],
+      },
+      references,
+    ),
+  ).toThrow();
+});
+
+it('binds presentation scope and ownership to the actual declared search descriptor', () => {
+  const decoded = validateShellContributions(presented(), references);
+  expect(
+    shellSearchPresentationBindingIssue(decoded, {
+      ...presentationReferences,
+      search: [{ ...first(presentationReferences.search), accessFiltering: 'tenant_scope' }],
+    }),
+  ).toMatch(/scope/u);
+  expect(
+    shellSearchPresentationBindingIssue(decoded, {
+      ...presentationReferences,
+      search: [{ ...first(presentationReferences.search), owningModuleId: 'billing.core' }],
+    }),
+  ).toMatch(/owner/u);
+  expect(
+    shellSearchPresentationBindingIssue(decoded, {
+      ...presentationReferences,
+      resourceTypeKeys: new Set(),
+    }),
+  ).toMatch(/resource type/u);
+  expect(
+    shellSearchPresentationBindingIssue(decoded, {
+      ...presentationReferences,
+      search: [],
+    }),
+  ).toMatch(/undeclared search descriptor/u);
+});

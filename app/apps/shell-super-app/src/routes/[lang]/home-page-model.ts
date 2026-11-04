@@ -11,7 +11,6 @@ import type {
   ShellDocumentContext,
   ShellHomeComponent,
   ShellNavigationItem,
-  ShellRecordDestination,
   ShellUnavailableDeployment,
 } from '../../../shared/api.ts';
 import {
@@ -87,8 +86,6 @@ export interface AuthenticatedHomePageModel {
         readonly items: readonly ShellNavigationItem[];
         /** Module ids the composition lists for the person here; pinned on the document for remotes' optional reads. */
         readonly moduleIds: readonly string[];
-        /** Record destinations the composed owner pages declare; the search opens only these exact pairs. */
-        readonly recordDestinations: readonly ShellRecordDestination[];
         readonly state: 'available';
         readonly unavailableDeployments: readonly ShellUnavailableDeployment[];
       }
@@ -337,7 +334,6 @@ const emptyNavigation: ComposedNavigation = {
   deniedAppIds: [],
   items: [],
   moduleIds: [],
-  recordDestinations: [],
   state: 'available',
   unavailableDeployments: [],
 };
@@ -350,7 +346,6 @@ const presentedNavigation = (
   deniedAppIds: composition.deniedAppIds,
   items: presentedShellNavigationItems(composition.navigation, canManagePeople),
   moduleIds: [...new Set(composition.navigation.map(({ moduleId }) => String(moduleId)))],
-  recordDestinations: composition.recordDestinations ?? [],
   state: 'available',
   unavailableDeployments: composition.unavailableDeployments,
 });

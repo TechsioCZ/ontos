@@ -28,6 +28,8 @@ import type { ReadPathError } from './read-shaping.ts';
 import { DirectReplayResultSchema, directReplays, requestHash } from './replay.ts';
 import type { DirectReplayResult } from './replay.ts';
 import { matchesTokens, queryTokens } from './search.ts';
+import { RecordSearchInput } from './record-search.ts';
+import type { RecordSearchRefused } from './record-search.ts';
 import { annotationsFor, canPropose, canRead, canWrite, grantAllowsWrite, isOffered, planTools } from './tool-plan.ts';
 import type { GenericToolName } from './tool-plan.ts';
 import {
@@ -92,7 +94,13 @@ export const errorResult = (message: string, meta?: Schema.JsonObject): ToolResu
 };
 
 /** Expected operation failures become tool results; defects belong to the SDK/HTTP boundary. */
-type ToolFailure = InvalidToolArguments | ModuleProblem | ModuleUnavailable | ProposalRefused | ReadPathError;
+type ToolFailure =
+  | InvalidToolArguments
+  | ModuleProblem
+  | ModuleUnavailable
+  | ProposalRefused
+  | ReadPathError
+  | RecordSearchRefused;
 type ToolRun = (args: Schema.JsonObject) => Effect.Effect<ToolResult, ToolFailure>;
 
 /** The pagination envelope is ours; module data stays opaque JSON inside it. */
@@ -278,6 +286,9 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
     if (Predicate.isTagged(error, 'InvalidToolArguments')) {
       return Effect.succeed(errorResult(error.message, { 'ontos/code': 'invalid_arguments' }));
     }
+    if (Predicate.isTagged(error, 'RecordSearchRefused')) {
+      return Effect.succeed(errorResult(error.message, { 'ontos/code': error.code }));
+    }
     if (!Predicate.isTagged(error, 'ModuleProblem')) {
       return Effect.succeed(errorResult(error.message));
     }
@@ -305,6 +316,7 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
     annotations: ToolAnnotationsSpec,
     run: ToolRun,
     outputSchema?: JsonObject,
+    prepareInput?: (input: Schema.JsonObject) => Effect.Effect<Schema.JsonObject, InvalidToolArguments>,
   ): ToolSpec => {
     const spec: ToolSpec = {
       annotations,
@@ -314,6 +326,7 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
           Effect.mapError(
             (cause) => new InvalidToolArguments({ cause, message: 'Argumenty nástroje musí být objekt JSON.' }),
           ),
+          Effect.flatMap((input) => (prepareInput === undefined ? Effect.succeed(input) : prepareInput(input))),
           Effect.flatMap((input) => runValidatedTool({ inputSchema, name, run }, input)),
           Effect.matchEffect({ onFailure: toolError, onSuccess: Effect.succeed }),
           Effect.timed,
@@ -829,6 +842,27 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
           }),
         ),
       READ_OUTPUT,
+    ),
+    ontos_search: instrument(
+      'ontos_search',
+      'Hledat záznamy',
+      'Hledá skutečné záznamy přes governed Shell search, ne popisy nástrojů. Používá aktuálně ověřenou identitu, firmu a oprávnění tohoto připojení. Bez resourceTypes hledá všechny povolené typy; prázdný výběr nehledá nic. Vrací úplné autorizované výsledky v pořadí Shellu, včetně dodané relevance. / Search actual authorized records, not capability descriptions.',
+      toolInputSchema(RecordSearchInput),
+      { openWorldHint: false, readOnlyHint: true },
+      (args) =>
+        decodeToolInput(RecordSearchInput, args).pipe(
+          Effect.flatMap((input) =>
+            backend.searchRecords === undefined
+              ? Effect.fail(
+                  new ModuleUnavailable({ message: 'Ověřená oprávnění pro hledání záznamů teď nejsou dostupná.' }),
+                )
+              : backend.searchRecords(input),
+          ),
+          Effect.flatMap(okResult),
+        ),
+      undefined,
+      // Normalize with the existing Shell decoder before JSON-Schema checks; e.g. padded query200 stays query200.
+      (args) => decodeToolInput(RecordSearchInput, args),
     ),
     ontos_whoami: instrument(
       'ontos_whoami',

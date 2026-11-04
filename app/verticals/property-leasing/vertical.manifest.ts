@@ -33,6 +33,20 @@ const navigationContribution = (value: NavigationContributionInput) =>
 const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
 
+const propertyFamily = {
+  icon: 'icon-[mdi--home-city-outline]',
+  key: 'property',
+  label: { cs: 'Nemovitosti a nájmy', en: 'Real estate and leases' },
+  order: 50,
+} as const;
+
+const leaseGroup = {
+  icon: 'icon-[mdi--key-chain-variant]',
+  key: 'lease',
+  label: { cs: 'Nájmy', en: 'Leases' },
+  order: 170,
+} as const;
+
 export const propertyLeasingManifest = defineOntosModuleManifest({
   activation: {
     defaultState: 'inactive',
@@ -152,6 +166,20 @@ export const propertyLeasingManifest = defineOntosModuleManifest({
             moduleKey: OWNER_MODULE_KEY,
             role: 'search',
             scope: 'tenant',
+          },
+          presentation: {
+            family: propertyFamily,
+            group: leaseGroup,
+            record: {
+              pageKey: RECORDS_PAGE_KEY,
+              selector: {
+                idEncoding: 'native',
+                idFormat: 'opaque',
+                kind: 'query',
+                parameterName: 'resourceId',
+              },
+            },
+            scope: 'company',
           },
           searchKey: 'property.leasing.leases',
         }),

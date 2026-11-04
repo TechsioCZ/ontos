@@ -295,3 +295,31 @@ Kanonické N1 toast tokeny řídí vzhled;
 žádné vzhledové className, inline Tailwind nebo vlastní notifikační komponenty.
 Inline post-add odkaz Košík odstraněn. Nákupní guardy a varování u polí zůstávají;
 uložení výběru neznamená ověřenou cenu, sklad ani vytvořenou objednávku.
+
+## C16 — doložené nákupní stavy produktu
+
+Reference: čerstvé Figma podstromy desktop219:2768, mobile57:2916
+(bez varianty), mobile57:2965 (vyprodáno), numeric61:1377 a QuantityField39:2500.
+Historický `herbatika-shop/apps/n1/src/components/product-detail/` doplňuje
+interakci: `product-info-panel.tsx` vykresluje bez varianty pouze disabled CTA;
+`product-info-panel/add-to-cart-section.tsx` po úspěchu ukazuje toast a resetuje
+množství. Současný reset používá skutečné minimum, nikoli hardcoded1.
+
+Bez varianty: Button primary/solid/md disabled, mobil block, bez NumericInput
+a bez dalšího selection odstavce. AvailabilityStatus zachovává pravdivé unknown,
+netvrdí probíhající síťové ověření. Vyprodaný mobil: stejný disabled Button
+s překladem Vyprodáno, bez QuantityField; desktop quantity zůstává, protože
+mobile state crop nedokládá desktopovou kompozici. Dostupný produkt: dosavadní
+NumericInput/QuantityField a toast, bez default cart/quote disclaimeru v PDP.
+
+Kanonické N1 tokeny a veřejné kit props zůstávají autoritou vzhledu. Žádný nový
+inline Košík odkaz ani automatické otevírání minikošíku: legacy dispatch
+open-cart nemá v referenční aplikaci doložený listener. Storage/scope chyby se
+nezaměňují za sold-out. Celý PDP dosud nemá úplnou vizuální shodu; zejména
+manufacturer, net tax, stock count/ETA a related potřebují skutečné owner údaje.
+
+Desktopový wrapper: metadata31:640/39:1965 dávají při1440px vnější1280,
+boční padding16, vnitřní1248 a sloupce448+32+768. Historický PDP `page.tsx`
+rovněž používá container s p400=16px. Odstraněn pouze md:px-0 na article;
+existující p4 zůstává i na desktopu. Centrování v runtime počítá s reálnou
+šířkou viewportu bez svislého scrollbaru. Mobilní wrapper se nemění.

@@ -17,7 +17,7 @@ import {
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import { NodeCrypto } from '@effect/platform-node';
-import { Context, Crypto, DateTime, Effect, Exit, Layer, Predicate, Schema } from 'effect';
+import { Context, Crypto, DateTime, Effect, Exit, Layer, Schema } from 'effect';
 import { expect, it, rs } from 'effect-rstest';
 
 import { PropertyStateSchema } from '../../shared/apis/records.ts';
@@ -308,7 +308,7 @@ it.effect('serves an actual asset hit through the governed Read with verified Co
   ),
 );
 
-it.effect('checks every asset result resource instead of bypassing legacy resource authorization', () =>
+it.effect('checks every asset result resource and omits denied rows from the admitted collection', () =>
   Effect.scoped(
     Effect.gen(function* scenario() {
       const { snapshot } = yield* fixture;
@@ -341,7 +341,7 @@ it.effect('checks every asset result resource instead of bypassing legacy resour
           })),
         );
       });
-      const failure = yield* harness.runtime
+      const result = yield* harness.runtime
         .runRead({
           input: { query: 'Kolový' },
           principal: scope,
@@ -349,14 +349,27 @@ it.effect('checks every asset result resource instead of bypassing legacy resour
           transport: { correlationId: scope.correlationId },
         })
         .pipe(
-          Effect.asVoid,
-          Effect.flip,
           Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed([hit]) }),
           Effect.ensuring(Effect.sync(() => check.mockRestore())),
         );
-      expect(Predicate.isTagged(failure, 'ReadPermissionDenied')).toBe(true);
-      expect(checked).toHaveLength(1);
-      expect(checked[0]).toMatchObject({ legalEntityId, resources: [asset.ref], tenantId });
+      expect(result).toEqual([]);
+      expect(checked).toEqual([
+        {
+          legalEntityId,
+          permission: 'read',
+          principalId: scope.principalId,
+          resources: [
+            {
+              moduleId: asset.ref.moduleId,
+              resourceId: asset.ref.resourceId,
+              resourceType: asset.ref.resourceType,
+            },
+          ],
+          tenantId,
+        },
+      ]);
+      expect(harness.snapshot().evidenceWrites).toBe(1);
+      expect(harness.snapshot().stages).toContain('evidence_persisted');
       expect(harness.snapshot().ownerQueries).toEqual([]);
     }),
   ),
@@ -376,7 +389,9 @@ it.effect('publishes the complete asset type third after containment and preserv
           ...store,
           replace: (input, claim) =>
             Effect.gen(function* observedReplace() {
-              const replacement = yield* Schema.decodeUnknownEffect(CoreSearchProjectionReplacementSchema)(input);
+              const replacement = yield* Schema.decodeUnknownEffect(CoreSearchProjectionReplacementSchema)(input).pipe(
+                Effect.orDie,
+              );
               yield* store.replace(replacement, claim);
               replacements.push(replacement);
             }),

@@ -3,7 +3,12 @@
 import type { ReadPrepareContext, ReadLoadContext } from '@app/core-runtime';
 import type { PropertiesProviderRequest, PropertiesProviderResponse } from '../../shared/apis/properties-search.ts';
 import { Effect, Schema } from 'effect';
-import { ReadHandlerUnavailable, defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import {
+  ReadHandlerUnavailable,
+  defineRead,
+  defineReadSearchCollectionAuthorization,
+  defineTenantModuleEntrypoint,
+} from '@app/core-runtime';
 import { loadOwnerSearch } from './search-read.ts';
 import {
   PropertiesProviderRequestSchema,
@@ -33,6 +38,12 @@ export const propertiesRead = defineRead(
     permissionTarget: 'module',
     policies: [],
     readKey: 'property.portfolio.search.properties',
+    resultAuthorization: defineReadSearchCollectionAuthorization({
+      items: (result: PropertiesProviderResponse) => result,
+      resource: (item) => item.ref,
+      resultSchema: PropertiesProviderResponseSchema,
+      withItems: (_result, items) => items,
+    }),
     resultSchema: PropertiesProviderResponseSchema,
     schemaVersion: '1',
   },
@@ -60,5 +71,4 @@ export const propertiesRead = defineRead(
   },
   () => Effect.succeed({}),
   () => ({ kind: 'module', moduleId: owningModuleKey }),
-  (result) => result.map(({ ref }) => ref),
 );

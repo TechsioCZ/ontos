@@ -6,12 +6,17 @@ import type { ShellSearchResult } from '../../shared/api.ts';
 import { searchResources } from '../api/auth-client.ts';
 import type { ShellSearchClientError } from '../api/auth-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
-import { shellSearchResultKey } from './shell-search-match.ts';
-import { shellSearchGroupOf, shellSearchGroupOrder, shellSearchResultTarget } from './shell-search-resource-types.ts';
+import { planShellSearchFilters, shellSearchFamiliesInOrder, shellSearchResultKey } from './shell-search-match.ts';
+import type { ShellSearchFilterPlan } from './shell-search-match.ts';
+import {
+  shellSearchGroupOf,
+  shellSearchPresentationIndex,
+  shellSearchResultTarget,
+} from './shell-search-resource-types.ts';
 import type {
-  ShellSearchGroupKey,
+  ShellSearchGroupPresentation,
   ShellSearchLinkTarget,
-  ShellSearchPresentationContext,
+  ShellSearchPresentationIndex,
 } from './shell-search-resource-types.ts';
 
 type PartyRole = Extract<ShellSearchResult, { readonly kind: 'counterparty' }>['currentRoles'][number];
@@ -29,22 +34,31 @@ export interface ShellSearchSuggestion {
 
 export interface ShellSearchResultGroup<Item> {
   readonly items: readonly Item[];
-  readonly key: ShellSearchGroupKey;
+  readonly presentation: ShellSearchGroupPresentation;
 }
 
 export interface ShellSearchSuggestionGroup {
-  readonly key: ShellSearchGroupKey;
+  readonly presentation: ShellSearchGroupPresentation;
   readonly suggestions: readonly ShellSearchSuggestion[];
   /** All matches of the group; the typeahead shows the first few. */
   readonly total: number;
 }
 
+export type ShellSearchSuggestionFilters = Pick<ShellSearchFilterPlan, 'availableFamilies' | 'selectedFamilies'>;
+
 export type ShellSearchSuggestionsState =
   | { readonly status: 'idle' }
-  | { readonly query: string; readonly status: 'loading' }
-  | { readonly failure: ShellSearchClientError; readonly query: string; readonly status: 'unavailable' }
+  | { readonly filters: ShellSearchSuggestionFilters; readonly query: string; readonly status: 'loading' }
   | {
+      readonly failure: ShellSearchClientError;
+      readonly filters: ShellSearchSuggestionFilters;
+      readonly query: string;
+      readonly status: 'unavailable';
+    }
+  | {
+      readonly filters: ShellSearchSuggestionFilters;
       readonly groups: readonly ShellSearchSuggestionGroup[];
+      readonly index?: ShellSearchPresentationIndex;
       readonly partial: boolean;
       readonly query: string;
       readonly status: 'ready';
@@ -56,10 +70,10 @@ const SUGGESTIONS_PER_GROUP = 5;
 
 const toSuggestion = (
   result: ShellSearchResult,
-  context: ShellSearchPresentationContext | undefined,
+  index: ShellSearchPresentationIndex | undefined,
 ): ShellSearchSuggestion => {
   const key = shellSearchResultKey(result);
-  const target = shellSearchResultTarget(result, context);
+  const target = shellSearchResultTarget(result, index);
   if (result.kind === 'counterparty') {
     return {
       archived: result.party.archived,
@@ -87,7 +101,7 @@ const toSuggestion = (
  */
 export const groupShellSearchResults = (
   results: readonly ShellSearchResult[],
-  context?: ShellSearchPresentationContext,
+  index: ShellSearchPresentationIndex | undefined,
 ): readonly ShellSearchResultGroup<ShellSearchResult>[] => {
   const partiesWithRelationship = new Set(
     results.flatMap((result) => (result.kind === 'counterparty' ? [shellSearchResultKey(result.party)] : [])),
@@ -95,25 +109,39 @@ export const groupShellSearchResults = (
   const visible = results.filter(
     (result) => result.kind !== 'party' || !partiesWithRelationship.has(shellSearchResultKey(result)),
   );
-  return shellSearchGroupOrder.flatMap((key) => {
-    const items = visible.filter((result) => shellSearchGroupOf(result, context) === key);
-    return items.length === 0 ? [] : [{ items, key }];
-  });
+  const groups = new Map<
+    string,
+    { readonly items: ShellSearchResult[]; readonly presentation: ShellSearchGroupPresentation }
+  >();
+  for (const result of visible) {
+    const presentation = shellSearchGroupOf(result, index);
+    const current = groups.get(presentation.key);
+    if (current === undefined) {
+      groups.set(presentation.key, { items: [result], presentation });
+    } else {
+      current.items.push(result);
+    }
+  }
+  return [...groups.values()].toSorted(
+    (left, right) =>
+      left.presentation.order - right.presentation.order || left.presentation.key.localeCompare(right.presentation.key),
+  );
 };
 
 /** The typeahead's groups: the first few hits of each. */
 export const groupShellSearchSuggestions = (
   results: readonly ShellSearchResult[],
+  index: ShellSearchPresentationIndex | undefined,
   perGroup = SUGGESTIONS_PER_GROUP,
-  context?: ShellSearchPresentationContext,
 ): readonly ShellSearchSuggestionGroup[] =>
-  groupShellSearchResults(results, context).map(({ items, key }) => ({
-    key,
-    suggestions: items.slice(0, perGroup).map((result) => toSuggestion(result, context)),
+  groupShellSearchResults(results, index).map(({ items, presentation }) => ({
+    presentation,
+    suggestions: items.slice(0, perGroup).map((result) => toSuggestion(result, index)),
     total: items.length,
   }));
 
 const idleSuggestionsState: ShellSearchSuggestionsState = { status: 'idle' };
+const emptyFilters: ShellSearchSuggestionFilters = { availableFamilies: [], selectedFamilies: [] };
 
 interface PendingSuggestionRequest {
   readonly controller: AbortController;
@@ -125,21 +153,23 @@ interface ScopedSuggestionState {
   readonly state: ShellSearchSuggestionsState;
 }
 
-/** Composition revision and language jointly name the search scope an answer belongs to. */
-const suggestionScopeKey = (compositionRevision: string | undefined, language: string | undefined): string =>
-  `${compositionRevision ?? ''}\u0000${language ?? ''}`;
+/** The trusted Shell scope key and the reader's language jointly name the answer an in-flight search belongs to. */
+const suggestionScopeKey = (
+  scopeKey: string,
+  compositionRevision: string | undefined,
+  language: string | undefined,
+): string => `${scopeKey}\u0000${compositionRevision ?? ''}\u0000${language ?? ''}`;
 
 /**
  * Typeahead for the top-bar search. Each change cancels the previous request; the request leaves only after a short
- * pause in typing, so a burst of keystrokes costs one search. A new composition revision or language is a different
- * scope: its answer is dropped before paint, and the request that belonged to the old scope is aborted.
+ * pause in typing, so a burst of keystrokes costs one search. A new trusted scope (tenant, company, principal,
+ * composition or language) is different: its answer is dropped before paint, the old request is aborted, and its
+ * filters are cleared. Selecting a family performs a fresh search with only the exact observed admitted types; it
+ * never filters an answer already received.
  */
-export const useShellSearchSuggestions = (
-  compositionRevision: string | undefined,
-  context?: ShellSearchPresentationContext,
-) => {
+export const useShellSearchSuggestions = (compositionRevision: string | undefined, scopeKey: string | undefined) => {
   const { language } = useModernI18n();
-  const scope = suggestionScopeKey(compositionRevision, language);
+  const scope = suggestionScopeKey(scopeKey ?? 'missing-principal', compositionRevision, language);
   const [scoped, setScoped] = useState<ScopedSuggestionState>(() => ({ scope, state: idleSuggestionsState }));
   const pending = useRef<PendingSuggestionRequest | null>(null);
   // Adjust state while rendering, before an answer from the previous scope can ever paint.
@@ -157,28 +187,76 @@ export const useShellSearchSuggestions = (
     setScoped({ scope, state: next });
   };
 
-  const handleQueryChange = (value: string) => {
+  const runSearch = (query: string, requestedFamilies: readonly string[]) => {
     cancel();
-    const query = value.trim();
-    if (compositionRevision === undefined || query.length < SUGGESTION_MINIMUM_QUERY_LENGTH) {
+    if (compositionRevision === undefined || scopeKey === undefined || query.length < SUGGESTION_MINIMUM_QUERY_LENGTH) {
       apply(idleSuggestionsState);
       return;
     }
     const controller = new AbortController();
     const requestScope = scope;
+    const previous = scoped.scope === scope && scoped.state.status !== 'idle' ? scoped.state : undefined;
+    const previousFilters = previous !== undefined && previous.query === query ? previous.filters : emptyFilters;
+    const selectedFamilies = shellSearchFamiliesInOrder(
+      requestedFamilies,
+      previousFilters.availableFamilies.map(({ family }) => family),
+    );
+    const loadingFilters: ShellSearchSuggestionFilters = {
+      availableFamilies: previousFilters.availableFamilies,
+      selectedFamilies,
+    };
     pending.current = { controller, scope: requestScope };
-    apply({ query, status: 'loading' });
+    apply({ filters: loadingFilters, query, status: 'loading' });
+    // A family filter can only name exact owner types after the admitted inventory arrives, so its first request asks
+    // for the inventory alone (zero owner dispatch); an unknown or malformed selection never widens to an unfiltered
+    // answer. An empty selection keeps the single real unfiltered request.
+    const firstPayload =
+      requestedFamilies.length === 0
+        ? { compositionRevision, query }
+        : { compositionRevision, query, resourceTypes: [] };
     void browserRuntime.runPromiseExit(
-      Effect.sleep('200 millis').pipe(
-        Effect.andThen(searchResources({ compositionRevision, query }, { locale: language ?? '' })),
+      searchResources(firstPayload, { locale: language ?? '' }).pipe(
+        Effect.flatMap((first) => {
+          const index = shellSearchPresentationIndex(first.presentation, compositionRevision);
+          const plan = planShellSearchFilters({ index, partial: first.partial, requestedFamilies });
+          if (requestedFamilies.length === 0) {
+            return Effect.succeed({ index, plan, response: first });
+          }
+          if (plan.resourceTypes === undefined || plan.resourceTypes.length === 0) {
+            const emptyResponse =
+              first.presentation === undefined
+                ? { partial: first.partial, results: [] }
+                : { partial: first.partial, presentation: first.presentation, results: [] };
+            return Effect.succeed({ index, plan, response: emptyResponse });
+          }
+          return searchResources(
+            { compositionRevision, query, resourceTypes: plan.resourceTypes },
+            { locale: language ?? '' },
+          ).pipe(
+            // The canonical inventory index stays authoritative, so a selected-only answer never shrinks the filters.
+            Effect.map((response) => ({ index, plan, response })),
+          );
+        }),
         Effect.match({
-          onFailure: (error): ShellSearchSuggestionsState => ({ failure: error, query, status: 'unavailable' }),
-          onSuccess: (response): ShellSearchSuggestionsState => ({
-            groups: groupShellSearchSuggestions(response.results, SUGGESTIONS_PER_GROUP, context),
-            partial: response.partial,
+          onFailure: (error): ShellSearchSuggestionsState => ({
+            failure: error,
+            filters: loadingFilters,
             query,
-            status: 'ready',
+            status: 'unavailable',
           }),
+          onSuccess: ({ index, plan, response }): ShellSearchSuggestionsState => {
+            const ready = {
+              filters: {
+                availableFamilies: plan.availableFamilies,
+                selectedFamilies: plan.selectedFamilies,
+              },
+              groups: groupShellSearchSuggestions(response.results, index),
+              partial: response.partial,
+              query,
+              status: 'ready' as const,
+            };
+            return index === undefined ? ready : { ...ready, index };
+          },
         }),
         Effect.flatMap((next) =>
           Effect.sync(() => {
@@ -190,6 +268,17 @@ export const useShellSearchSuggestions = (
       ),
       { signal: controller.signal },
     );
+  };
+
+  const handleQueryChange = (value: string) => {
+    runSearch(value.trim(), []);
+  };
+
+  const handleFamiliesChange = (families: readonly string[]) => {
+    const query = state.status === 'idle' ? '' : state.query;
+    if (query.length >= SUGGESTION_MINIMUM_QUERY_LENGTH) {
+      runSearch(query, families);
+    }
   };
 
   const handleDismiss = () => {
@@ -215,5 +304,5 @@ export const useShellSearchSuggestions = (
     [],
   );
 
-  return { handleDismiss, handleQueryChange, state };
+  return { handleDismiss, handleFamiliesChange, handleQueryChange, state };
 };

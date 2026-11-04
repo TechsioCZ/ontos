@@ -32,6 +32,7 @@ import { duplicateCandidateListReadApiLive } from './duplicate-candidate-list-re
 import { executePrivacyMeasureActionApiLive } from './execute-privacy-measure-action-server.ts';
 import { guestPartyResolutionReadApiLive } from './guest-party-resolution-read-server.ts';
 import { privacyMeasureExecutionReadApiLive } from './privacy-measure-execution-read-server.ts';
+import { searchLabelsReadApiLive } from './search-labels-read-server.ts';
 // </generated-governed-http-handler-imports>
 import { engagementProfileApiHandlersLive } from './engagement-profile-server.ts';
 import { organizationEngagementProfileReadApiLive } from './organization-engagement-profile-read-server.ts';
@@ -170,6 +171,7 @@ export const makePartyRegistryApiRuntime = (
     partyRelationshipDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     personEngagementProfileReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     privacyMeasureExecutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    searchLabelsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     // </generated-governed-http-handler-layers>
   ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
   const resolvedApiHandlersLive = apiHandlersLive.pipe(

@@ -22,6 +22,7 @@ import {
   Result,
   Schema,
 } from 'effect';
+import { logUnavailableMapping } from '../observability/unavailable-mapping.ts';
 import type { Scope } from 'effect';
 
 import {
@@ -899,18 +900,18 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
         | 'response_request_mismatch'
         | 'response_unavailable',
       rpcCode?: number,
+      errorClass = 'SpiceDbResponse',
     ) =>
       Clock.currentTimeMillis.pipe(
         Effect.flatMap((now) =>
-          Effect.logWarning('SpiceDB bulk permission check unavailable').pipe(
-            Effect.annotateLogs({
-              elapsedMs: now - startedAt,
-              failureKind,
-              operation: 'CheckBulkPermissions',
-              requestCount: requests.length,
-              rpcCode: rpcStatusCode(rpcCode),
-            }),
-          ),
+          // Error text is withheld here: SpiceDB diagnostics carry only the class, kind and status.
+          logUnavailableMapping('spicedb-permission-check', 'read-permission', errorClass, {
+            elapsedMs: now - startedAt,
+            failureKind,
+            operation: 'CheckBulkPermissions',
+            requestCount: requests.length,
+            rpcCode: rpcStatusCode(rpcCode),
+          }),
         ),
         Effect.as(unavailableAll),
       );
@@ -939,9 +940,14 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
           }
           return Effect.succeed(decisions);
         }),
-        Effect.catchTag('SpiceDbPermissionClientError', (error) =>
-          reportUnavailable(Cause.isTimeoutError(error.cause) ? 'timeout' : 'client_failure', error.rpcCode),
-        ),
+        Effect.catchTag('SpiceDbPermissionClientError', (error) => {
+          const timedOut = Cause.isTimeoutError(error.cause);
+          return reportUnavailable(
+            timedOut ? 'timeout' : 'client_failure',
+            error.rpcCode,
+            timedOut ? 'TimeoutError' : 'ClientError',
+          );
+        }),
       );
   });
 

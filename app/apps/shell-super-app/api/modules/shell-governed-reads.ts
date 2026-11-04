@@ -10,8 +10,10 @@ import {
   defineSystemModuleEntrypoint,
   withRequestPermissionDecisions,
 } from '@app/core-runtime';
-import { corePeopleSystemSearchProvider } from '@app/core-runtime/people/search';
+import { admitPeopleSystemSearch, corePeopleSystemSearchProvider } from '@app/core-runtime/people/search';
+import type { PeopleSystemSearchAccess, PeopleSystemSearchAdmission } from '@app/core-runtime/people/search';
 import type {
+  OperationalScope,
   ReadCoreError,
   ReadFinishContext,
   ReadHandlerResult,
@@ -39,6 +41,7 @@ import type {
   ShellSearchResponse,
 } from '../../shared/api.ts';
 import { capturedShellCatalog } from './captured-shell-catalog.ts';
+import type { ShellInstalledCatalog } from './installed-module-catalog.ts';
 import { ShellCompositionFactory } from './shell-composition.ts';
 import type { ShellModuleTargetResolution, ShellModuleTargetSelector } from './shell-composition.ts';
 import {
@@ -47,11 +50,14 @@ import {
 } from './shell-governed-read-schemas.ts';
 import {
   searchProviderModuleIds,
+  resolveShellOAuthSearchResourceTypes,
   shellSearchAdmittedResourceTypes,
   ShellResourceServicesFactory,
   sortShellSearchResults,
 } from './shell-resources.ts';
 import { ShellSystemSearch, mergeShellSystemSearch } from './shell-system-search.ts';
+import { withShellSearchRequestBudget } from './shell-governed-search.ts';
+import { compileShellSearchPresentation } from './shell-search-presentation.ts';
 import type { ShellProviderAssertionIssuer, ShellResourceGateways } from './shell-resources.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
@@ -248,6 +254,12 @@ const resourceDetailEntrypoint = defineSystemModuleEntrypoint({
   role: 'api',
 });
 
+const searchBudgetUnavailable = () =>
+  new ReadHandlerUnavailable({
+    code: 'read_handler_unavailable',
+    reason: 'Shell search is temporarily unavailable',
+  });
+
 const unavailableBecause = (reason: string) => (cause: unknown) =>
   Object.defineProperty(new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason }), 'cause', {
     configurable: true,
@@ -278,6 +290,96 @@ export const validateShellSearchResourceTypes = (
           reason: 'The requested search resource types are not admitted',
         }),
       );
+
+/** The one Core-owned system search declaration. The governed caller supplies it; raw result bodies never do. */
+const corePeopleSystemSearchPresentation = {
+  authority: {
+    entrypointKey: corePeopleSystemSearchProvider.entrypoint.entrypointKey,
+    navigationPath: corePeopleSystemSearchProvider.navigationPath,
+    ownerModuleId: corePeopleSystemSearchProvider.descriptor.owningModuleId,
+    resourceType: corePeopleSystemSearchProvider.resource.key,
+    searchKey: corePeopleSystemSearchProvider.descriptor.key,
+  },
+  presentation: corePeopleSystemSearchProvider.presentation,
+} as const;
+
+/**
+ * Compile the release-bound inventory from an already-authorized business presentation, adding the Core system branch
+ * when this answer admits it. Compilation grants nothing and calls no provider: the business entries were already
+ * admitted by the orchestrator, and the system declaration is the Core-owned authority.
+ */
+const compileShellSearchInventory = ({
+  businessPresentation,
+  catalog,
+  compositionRevision,
+  system,
+}: {
+  readonly businessPresentation: ShellSearchResponse['presentation'];
+  readonly catalog: ShellInstalledCatalog;
+  readonly compositionRevision: string;
+  readonly system: boolean;
+}) => {
+  const admitted = (businessPresentation?.business.entries ?? []).map(({ ownerModuleId, resourceType, searchKey }) => ({
+    ownerModuleId,
+    resourceType,
+    searchKey,
+  }));
+  const compiled = system
+    ? compileShellSearchPresentation({
+        admitted,
+        catalog,
+        compositionRevision,
+        system: corePeopleSystemSearchPresentation,
+      })
+    : compileShellSearchPresentation({ admitted, catalog, compositionRevision });
+  return Effect.fromResult(compiled).pipe(
+    Effect.mapError(unavailableBecause('Shell search presentation is temporarily unavailable')),
+  );
+};
+
+/** Whether this answer considers the Core people system branch at all, and if so what its own coarse admission decided. */
+type CoreSystemSearchAdmission = PeopleSystemSearchAdmission | 'inapplicable';
+
+/**
+ * The Core people system branch is considered only for a non-OAuth session with a selected company and a real query;
+ * otherwise it is `inapplicable` and simply omitted. When it is considered, the Core people read's own coarse
+ * principal authorization decides: `module.access` and the directory alternative `read_people` are independent gates,
+ * so a definite denial of either is a definite denial. Per-record filtering and the data read stay with the provider.
+ */
+const coreSystemSearchAdmission = Effect.fn('ShellGovernedReads.coreSystemSearchAdmission')(function* admittedCore(
+  scope: OperationalScope,
+  request: ShellSearchPayload,
+  access: PeopleSystemSearchAccess,
+  hasSystemSearch: boolean,
+) {
+  if (
+    !hasSystemSearch ||
+    scope.authMethod === 'oauth_connection' ||
+    scope.legalEntityId === undefined ||
+    request.query.trim().length === 0
+  ) {
+    return 'inapplicable' as const;
+  }
+  return yield* admitPeopleSystemSearch(scope, access);
+});
+
+/**
+ * Resolve a considered branch: a definite denial omits it from a complete answer, while an indeterminate or malformed
+ * admission is not a definite denial and fails the governed read as unavailable instead of silently dropping People.
+ */
+const resolveCoreSystemSearchBranch = (
+  admission: CoreSystemSearchAdmission,
+): Effect.Effect<boolean, ReadHandlerUnavailable> => {
+  if (admission === 'unavailable') {
+    return Effect.fail(
+      new ReadHandlerUnavailable({
+        code: 'read_handler_unavailable',
+        reason: 'Shell search People admission is temporarily unavailable',
+      }),
+    );
+  }
+  return Effect.succeed(admission === 'allowed');
+};
 
 const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(function* makeShellRegistrations(
   ...[gateways, assertionIssuer, scopedModuleStateFactory]: readonly [
@@ -393,36 +495,91 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
         request: ShellSearchPayload,
         context: ReadFinishContext<undefined, readonly TenantModuleStateRecord[]>,
       ) {
-        const { legalEntityId } = context.scope;
-        const requested = request.resourceTypes;
+        const catalog = yield* capturedShellCatalog.pipe(
+          Effect.mapError(unavailableBecause('Shell search is temporarily unavailable')),
+        );
+        let requested = request.resourceTypes;
+        if (context.scope.authMethod === 'oauth_connection') {
+          requested = yield* resolveShellOAuthSearchResourceTypes(context.scope, request, catalog, context.loaded);
+          if (requested === undefined) {
+            return yield* new ReadPermissionDenied({
+              code: 'read_permission_denied',
+              reason: 'OAuth search requires explicit business-provider admission',
+            });
+          }
+        }
         if (requested !== undefined && requested.length > 0) {
-          const catalog = yield* capturedShellCatalog.pipe(
-            Effect.mapError(unavailableBecause('Shell search is temporarily unavailable')),
-          );
           const admitted = new Set(shellSearchAdmittedResourceTypes(catalog, context.loaded));
           // Core people search is one exact system contract outside business-module admission; its own guard
           // still authorizes every person after the owner answers.
-          if (Option.isSome(systemSearch)) {
+          if (context.scope.authMethod !== 'oauth_connection' && Option.isSome(systemSearch)) {
             admitted.add(corePeopleSystemSearchProvider.resource.key);
           }
           yield* validateShellSearchResourceTypes(requested, admitted);
         }
-        // An explicit empty list asks for no type at all: no owner or Core call is needed.
-        if (requested !== undefined && requested.length === 0) {
-          return { evidence: { resultCount: 0 }, result: { partial: false as const, results: [] } };
-        }
         const business = resourceServicesFactory
-          .createSearch({ ...dependencies, moduleStates: committedModuleStates(context.loaded) }, gateways.search)
-          .search(context.scope, request);
+          .createSearch(
+            { ...dependencies, catalog: Effect.succeed(catalog), moduleStates: committedModuleStates(context.loaded) },
+            gateways.search,
+          )
+          .search(context.scope, requested === undefined ? request : { ...request, resourceTypes: requested });
+        // An explicit empty list asks for the admitted inventory alone: the orchestrator evaluates every admitted
+        // provider without dispatching an owner, and the Core system branch contributes its declaration without a
+        // data call. No owner assertion is minted and no result count is fabricated. This is keyed on the caller's
+        // own selector, never on an OAuth resolution that happens to admit no business type.
+        if (request.resourceTypes !== undefined && request.resourceTypes.length === 0) {
+          const admission = yield* coreSystemSearchAdmission(
+            context.scope,
+            request,
+            contextAccess,
+            Option.isSome(systemSearch),
+          );
+          // An indeterminate People admission fails the whole inventory read before any owner work; a definite denial
+          // only omits the branch from the complete inventory.
+          const system = yield* resolveCoreSystemSearchBranch(admission);
+          const inventory = yield* business;
+          const presentation = yield* compileShellSearchInventory({
+            businessPresentation: inventory.presentation,
+            catalog,
+            compositionRevision: request.compositionRevision,
+            system,
+          });
+          return { evidence: { resultCount: 0 }, result: { partial: false as const, presentation, results: [] } };
+        }
         const system = Option.isSome(systemSearch) ? systemSearch.value : undefined;
-        const includeSystem =
-          system !== undefined &&
-          legalEntityId !== undefined &&
-          request.query.trim().length > 0 &&
-          (requested === undefined || requested.includes(corePeopleSystemSearchProvider.resource.key));
+        // A business-only selector does not use the People branch, so its admission is never evaluated and cannot
+        // fail an answer that does not include People. An unfiltered request and one that names the People type do
+        // evaluate it: a definite denial omits the branch, an indeterminate admission fails the read unavailable.
+        const wantsCoreSystem =
+          requested === undefined || requested.includes(corePeopleSystemSearchProvider.resource.key);
+        const admittedCoreSystem = wantsCoreSystem
+          ? yield* resolveCoreSystemSearchBranch(
+              yield* coreSystemSearchAdmission(context.scope, request, contextAccess, Option.isSome(systemSearch)),
+            )
+          : false;
+        const includeSystem = admittedCoreSystem && system !== undefined;
         const combined =
           includeSystem && system !== undefined
-            ? mergeShellSystemSearch(business, system.search(context.scope, request.query))
+            ? business.pipe(
+                // Keep validation/403 failures in their genuine channel. Never start the system branch after a
+                // refused business selection; the merge adapter owns provider-unavailability only.
+                Effect.flatMap((result) =>
+                  compileShellSearchInventory({
+                    businessPresentation: result.presentation,
+                    catalog,
+                    compositionRevision: request.compositionRevision,
+                    system: true,
+                  }).pipe(
+                    Effect.flatMap((presentation) =>
+                      mergeShellSystemSearch(
+                        Effect.succeed(result),
+                        system.search(context.scope, request.query),
+                        presentation,
+                      ),
+                    ),
+                  ),
+                ),
+              )
             : business;
         return yield* combined.pipe(
           Effect.map((result) => ({
@@ -540,74 +697,116 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
     {
       // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
       load: (ref, context) => loadModuleStates(context.services, context.scope.tenantId, [ref.moduleId]),
-      finish: (ref, context) => {
+      finish: Effect.fn('ShellResourceDetail.finish')(function* finishResourceDetail(
+        ref: ResourceRef,
+        context: ReadFinishContext<undefined, readonly TenantModuleStateRecord[]>,
+      ) {
         const { legalEntityId } = context.scope;
         if (legalEntityId === undefined) {
-          return Effect.fail(
-            new ReadHandlerUnavailable({
-              code: 'read_handler_unavailable',
-              reason: 'Shell resource scope is unavailable',
-            }),
-          );
+          return yield* new ReadHandlerUnavailable({
+            code: 'read_handler_unavailable',
+            reason: 'Shell resource scope is unavailable',
+          });
         }
-        return resourceServicesFactory
+        const catalog = yield* capturedShellCatalog.pipe(
+          Effect.mapError(unavailableBecause('Shell resource presentation is temporarily unavailable')),
+        );
+        const resolution = yield* resourceServicesFactory
           .createResourceDetail(
-            { ...dependencies, moduleStates: committedModuleStates(context.loaded) },
+            { ...dependencies, catalog: Effect.succeed(catalog), moduleStates: committedModuleStates(context.loaded) },
             gateways.resource,
           )
-          .resolve({ ...context.scope, legalEntityId }, ref)
-          .pipe(
-            Effect.flatMap(
-              (
-                resolution,
-              ): Effect.Effect<
-                ReadHandlerResult<ShellResourceResponse>,
-                ReadHandlerNotFound | ReadHandlerUnavailable | ReadPermissionDenied
-              > => {
-                if (resolution.outcome === 'not_found') {
-                  return Effect.fail(
-                    new ReadHandlerNotFound({
-                      code: 'read_handler_not_found',
-                      reason: 'The requested Shell resource was not found',
-                    }),
-                  );
-                }
-                if (resolution.outcome === 'forbidden') {
-                  return Effect.fail(
-                    new ReadPermissionDenied({
-                      code: 'read_permission_denied',
-                      reason: 'The requested Shell resource is forbidden',
-                    }),
-                  );
-                }
-                if (resolution.outcome === 'detail_not_supported') {
-                  return Effect.succeed({
-                    evidence: { resultCount: 0 },
-                    result: { outcome: 'detail_not_supported' as const, ref },
-                  });
-                }
-                if (resolution.outcome !== 'resolved') {
-                  return Effect.fail(
-                    new ReadHandlerUnavailable({
-                      code: 'read_handler_unavailable',
-                      reason: 'The Shell resource provider is temporarily unavailable',
-                    }),
-                  );
-                }
-                return Effect.succeed({
-                  evidence: { resultCount: 1 },
-                  result: {
-                    detail: resolution.detail,
-                    media: resolution.media,
-                    projectionLagging: resolution.projectionLagging,
-                    ref,
-                    timeline: resolution.timeline,
-                  },
-                });
-              },
-            ),
-          );
-      },
+          .resolve({ ...context.scope, legalEntityId }, ref);
+        if (resolution.outcome === 'not_found') {
+          return yield* new ReadHandlerNotFound({
+            code: 'read_handler_not_found',
+            reason: 'The requested Shell resource was not found',
+          });
+        }
+        if (resolution.outcome === 'forbidden') {
+          return yield* new ReadPermissionDenied({
+            code: 'read_permission_denied',
+            reason: 'The requested Shell resource is forbidden',
+          });
+        }
+        if (resolution.outcome !== 'resolved' && resolution.outcome !== 'detail_not_supported') {
+          return yield* new ReadHandlerUnavailable({
+            code: 'read_handler_unavailable',
+            reason: 'The Shell resource provider is temporarily unavailable',
+          });
+        }
+        // The real detail gate has admitted this exact owner and record. A tenant search declaration additionally
+        // retains its canonical tenant permission; a selected company does not stand in for that permission.
+        const descriptors = catalog.contracts.flatMap(({ manifest }) =>
+          manifest.module.id === ref.moduleId
+            ? manifest.publicSurface.search.filter(
+                (descriptor) =>
+                  descriptor.owningModuleId === ref.moduleId && descriptor.resourceType === ref.resourceType,
+              )
+            : [],
+        );
+        const admitted = yield* Effect.forEach(
+          descriptors,
+          (descriptor) => {
+            const binding = { ownerModuleId: ref.moduleId, resourceType: ref.resourceType, searchKey: descriptor.key };
+            if (descriptor.accessFiltering !== 'tenant_scope') {
+              return Effect.succeed([binding]);
+            }
+            if (descriptor.tenantPermission === undefined) {
+              return Effect.succeed([]);
+            }
+            return dependencies.contextAccess
+              .tenants({
+                permission: descriptor.tenantPermission,
+                principalId: context.scope.principalId,
+                tenantIds: [context.scope.tenantId],
+              })
+              .pipe(
+                Effect.flatMap((decisions) => {
+                  const [decision] = decisions;
+                  if (
+                    decisions.length !== 1 ||
+                    decision?.key !== context.scope.tenantId ||
+                    decision.decision === 'unavailable'
+                  ) {
+                    return Effect.fail(
+                      new ReadHandlerUnavailable({
+                        code: 'read_handler_unavailable',
+                        reason: 'Shell resource tenant admission is unavailable',
+                      }),
+                    );
+                  }
+                  return Effect.succeed(decision.decision === 'allowed' ? [binding] : []);
+                }),
+              );
+          },
+          { concurrency: 4 },
+        );
+        const presentation = yield* Effect.fromResult(
+          compileShellSearchPresentation({
+            admitted: admitted.flat(),
+            catalog,
+            compositionRevision: catalog.composition.revision,
+          }),
+        ).pipe(Effect.mapError(unavailableBecause('Shell resource presentation is temporarily unavailable')));
+        if (resolution.outcome === 'detail_not_supported') {
+          return {
+            evidence: { resultCount: 0 },
+            result: { outcome: 'detail_not_supported' as const, presentation, ref },
+          };
+        }
+        return {
+          evidence: { resultCount: 1 },
+          result: {
+            detail: resolution.detail,
+            media: resolution.media,
+            presentation,
+            projectionLagging: resolution.projectionLagging,
+            ref,
+            timeline: resolution.timeline,
+          },
+        };
+      }),
       // oxlint-enable perfectionist/sort-objects
     },
     serviceFactory,
@@ -720,30 +919,32 @@ export const createShellGovernedReadsLayer = (
           }),
         search: (request) => {
           const { compositionRevision, includeArchived, query, resourceTypes, role } = request;
-          return runtime.runRead({
-            input: withOptionalProperty(
-              withOptionalProperty(
+          return runtime
+            .runRead({
+              input: withOptionalProperty(
                 withOptionalProperty(
-                  { compositionRevision, query },
-                  includeArchived !== undefined,
-                  'includeArchived',
-                  includeArchived,
+                  withOptionalProperty(
+                    { compositionRevision, query },
+                    includeArchived !== undefined,
+                    'includeArchived',
+                    includeArchived,
+                    {},
+                  ),
+                  resourceTypes !== undefined,
+                  'resourceTypes',
+                  resourceTypes,
                   {},
                 ),
-                resourceTypes !== undefined,
-                'resourceTypes',
-                resourceTypes,
+                role !== undefined,
+                'role',
+                role,
                 {},
               ),
-              role !== undefined,
-              'role',
-              role,
-              {},
-            ),
-            principal: request.principal,
-            registration: registrations.search,
-            transport: { correlationId: request.correlationId },
-          });
+              principal: request.principal,
+              registration: registrations.search,
+              transport: { correlationId: request.correlationId },
+            })
+            .pipe((program) => withShellSearchRequestBudget(program, searchBudgetUnavailable));
         },
         // A verified tenant session without a selected company uses the tenant-only registration, which admits only
         // an explicitly opted-in page and gates its module by a genuine tenant `module.access` permission.

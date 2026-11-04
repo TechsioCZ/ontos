@@ -16,6 +16,7 @@ import { propertyResourceDescriptor } from './shared/resources/property.ts';
 import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/nemovitosti/page.tsx';
 import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
+import { SearchLabelsApi } from './shared/apis/search-labels.ts';
 import { unitResourceDescriptor } from './shared/resources/unit.ts';
 // </generated-module-manifest-imports>
 import { propertyPortfolioMcpContribution } from './shared/mcp/contribution.ts';
@@ -35,6 +36,32 @@ const moduleKey = 'property.portfolio';
 const accessPermission = 'module.access';
 const overviewPageKey = 'property.portfolio.page.overview';
 const recordsPageKey = 'property.portfolio.page.records';
+
+const propertyFamily = {
+  icon: 'icon-[mdi--home-city-outline]',
+  key: 'property',
+  label: { cs: 'Nemovitosti a nájmy', en: 'Real estate and leases' },
+  order: 50,
+} as const;
+
+const propertyGroup = {
+  icon: 'icon-[mdi--office-building-outline]',
+  key: 'property',
+  label: { cs: 'Nemovitosti', en: 'Properties' },
+  order: 150,
+} as const;
+const unitGroup = {
+  icon: 'icon-[mdi--door]',
+  key: 'unit',
+  label: { cs: 'Jednotky', en: 'Units' },
+  order: 160,
+} as const;
+const assetGroup = {
+  icon: 'icon-[mdi--toolbox-outline]',
+  key: 'asset',
+  label: { cs: 'Majetek', en: 'Assets' },
+  order: 180,
+} as const;
 
 export const propertyPortfolioManifest = defineOntosModuleManifest({
   activation: {
@@ -60,6 +87,7 @@ export const propertyPortfolioManifest = defineOntosModuleManifest({
     api: {
       // <generated-module-manifest-apis>
       records: RecordsApi,
+      'search-labels': SearchLabelsApi,
       // </generated-module-manifest-apis>
     },
     businessPermissions: [
@@ -201,6 +229,20 @@ export const propertyPortfolioManifest = defineOntosModuleManifest({
             role: 'search',
             scope: 'tenant',
           },
+          presentation: {
+            family: propertyFamily,
+            group: assetGroup,
+            record: {
+              pageKey: recordsPageKey,
+              selector: {
+                idEncoding: 'native',
+                idFormat: 'opaque',
+                kind: 'query',
+                parameterName: 'resourceId',
+              },
+            },
+            scope: 'company',
+          },
           searchKey: 'property.portfolio.assets',
         }),
         searchContribution({
@@ -213,6 +255,20 @@ export const propertyPortfolioManifest = defineOntosModuleManifest({
             role: 'search',
             scope: 'tenant',
           },
+          presentation: {
+            family: propertyFamily,
+            group: propertyGroup,
+            record: {
+              pageKey: recordsPageKey,
+              selector: {
+                idEncoding: 'native',
+                idFormat: 'opaque',
+                kind: 'query',
+                parameterName: 'resourceId',
+              },
+            },
+            scope: 'company',
+          },
           searchKey: 'property.portfolio.properties',
         }),
         searchContribution({
@@ -224,6 +280,20 @@ export const propertyPortfolioManifest = defineOntosModuleManifest({
             moduleKey,
             role: 'search',
             scope: 'tenant',
+          },
+          presentation: {
+            family: propertyFamily,
+            group: unitGroup,
+            record: {
+              pageKey: recordsPageKey,
+              selector: {
+                idEncoding: 'native',
+                idFormat: 'opaque',
+                kind: 'query',
+                parameterName: 'resourceId',
+              },
+            },
+            scope: 'company',
           },
           searchKey: 'property.portfolio.units',
         }),

@@ -10,6 +10,7 @@ import type { ConnectionDescription } from '@app/shared-contracts/oauth-connecti
 import type { JsonObject, McpCatalog } from './catalog.ts';
 import type { ModuleUnavailable } from './module-unavailable.ts';
 import type { ProposalRefused } from './proposal-refused.ts';
+import type { RecordSearchInput, searchMcpRecords } from './record-search.ts';
 
 export interface ToolAnnotationsSpec {
   readonly destructiveHint?: boolean;
@@ -69,6 +70,13 @@ export interface McpBackend {
     options: { readonly idempotencyKey?: string; readonly referenceAudiences?: readonly string[] },
   ) => Effect.Effect<ModuleAnswer, ModuleUnavailable>;
   readonly listProposals: Effect.Effect<AgentQueueResponse, ModuleUnavailable>;
+  /** Bound by the verified HTTP/SDK boundary only; absent authority fails closed, never a global search fallback. */
+  readonly searchRecords?: (
+    input: typeof RecordSearchInput.Type,
+  ) => Effect.Effect<
+    Effect.Success<ReturnType<typeof searchMcpRecords>>,
+    Effect.Error<ReturnType<typeof searchMcpRecords>>
+  >;
   readonly submitProposals: (
     request: AgentProposalSubmitRequest,
     intent: { readonly idempotencyKey: string },

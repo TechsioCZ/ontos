@@ -6,7 +6,10 @@
  * the digest and keeps them per isolate by digest. The Shell knows no vertical, tool or schema; a module that is not
  * composed contributes nothing.
  */
-import type { ApplicationComposition } from '@app/core-runtime';
+import { decideModuleStateAccess } from '@app/core-runtime';
+import { corePeopleSystemSearchProvider } from '@app/core-runtime/people/search';
+import type { ApplicationComposition, InstalledModuleCatalog, TenantModuleStateRecord } from '@app/core-runtime';
+import type { ConnectionDescription } from '@app/shared-contracts/oauth-connections';
 import { moduleReleaseFetch } from '@app/core-runtime/unit-service-fetch';
 import { OntosMcpContributionSchema, OntosMcpToolCatalogJsonSchema } from '@app/core-runtime/modules/mcp-contribution';
 import type {
@@ -333,3 +336,49 @@ export const findTool = (catalog: McpCatalog, idOrName: string): McpCatalogTool 
 
 export const findModule = (catalog: McpCatalog, moduleId: string): McpCatalogModule | undefined =>
   catalog.modules.find((module) => module.moduleId === moduleId);
+
+/**
+ * Complete record-search admission, independent of MCP tool loading/listing and TYPED_TOOL_CAP. Only published
+ * business search contributions with a live read grant and an admitted tenant state can contribute a selector.
+ * A selected company cannot use tenant-wide providers. Core system providers are not business contributions;
+ * their admission must never be inferred from a business grant. Do not truncate this set to fit a tool budget.
+ *
+ * Selectors fan out by resource type, not module id. If any owner of a type is not admitted, exclude the whole type
+ * rather than letting a granted owner's selector dispatch to an ungranted owner with the same type.
+ */
+export const mcpRecordSearchResourceTypes = (
+  catalog: InstalledModuleCatalog,
+  description: ConnectionDescription,
+  states: readonly TenantModuleStateRecord[],
+): readonly string[] => {
+  const stateByModule = new Map<string, TenantModuleStateRecord['state']>(
+    states.map(({ moduleKey, state }) => [moduleKey, state]),
+  );
+  const readable = new Set<string>(description.modules.flatMap((module) => (module.read ? [module.moduleId] : [])));
+  const admittedByType = new Map<string, boolean>();
+  for (const { manifest } of catalog.contracts) {
+    const moduleId = manifest.module.id;
+    const surface = manifest.publicSurface;
+    for (const contribution of surface.shellContributions.search) {
+      const descriptor = surface.search.find(({ key }) => key === contribution.searchKey);
+      if (descriptor === undefined) {
+        continue;
+      }
+      const resource = surface.resourceTypes.find(({ key }) => key === descriptor.resourceType);
+      const state = stateByModule.get(moduleId);
+      const admitted =
+        readable.has(moduleId) &&
+        descriptor.resourceType !== corePeopleSystemSearchProvider.resource.key &&
+        contribution.entrypoint.scope === 'tenant' &&
+        contribution.entrypoint.moduleKey === moduleId &&
+        descriptor.owningModuleId === moduleId &&
+        resource?.owningModuleId === moduleId &&
+        resource.capabilities.searchable &&
+        descriptor.accessFiltering !== 'tenant_scope' &&
+        state !== undefined &&
+        decideModuleStateAccess(state, contribution.entrypoint.access) === 'allow';
+      admittedByType.set(descriptor.resourceType, admitted && admittedByType.get(descriptor.resourceType) !== false);
+    }
+  }
+  return [...admittedByType].flatMap(([type, admitted]) => (admitted ? [type] : [])).toSorted();
+};

@@ -1,138 +1,267 @@
-import { Schema } from 'effect';
-import { expect, test } from 'effect-rstest';
+import type { CoreSearchPresentationEntry } from '@app/core-runtime/search-contract';
+import { Effect, Schema } from 'effect';
+import { expect, it, rstest, test } from 'effect-rstest';
 
-import type { ShellSearchResult } from '../../../../shared/api.ts';
-import { LegalEntityIdSchema, ModuleIdSchema, ResourceIdSchema, TenantIdSchema } from '../../../../shared/api.ts';
-import { planShellSearchFilters } from '../../../../src/routes/[lang]/search/search-page-model.ts';
-import { shellSearchPresentationContext } from '../../../../src/routes/shell-search-resource-types.ts';
+import { ModuleIdSchema, ResourceIdSchema, TenantIdSchema } from '../../../../shared/api.ts';
+import type {
+  ShellSearchPayload,
+  ShellSearchPresentationInventory,
+  ShellSearchResponse,
+  ShellSearchResult,
+} from '../../../../shared/api.ts';
+import { searchFamiliesFromValue, searchReadyModel } from '../../../../src/routes/[lang]/search/search-page-model.ts';
+import type { ShellAuthenticationClientOptions, ShellSearchClientError } from '../../../../src/api/auth-client.ts';
+import { planShellSearchFilters } from '../../../../src/routes/shell-search-match.ts';
+import { shellSearchPresentationIndex } from '../../../../src/routes/shell-search-resource-types.ts';
+import type { ShellSearchPresentationIndex } from '../../../../src/routes/shell-search-resource-types.ts';
+import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
 
-/** The composed navigation of the answer's document: the destinations these record types open. */
-const context = shellSearchPresentationContext([
-  { groupKey: 'shell.navigation.finance', href: '/finance', moduleId: 'finance.billing' },
-  { groupKey: 'shell.navigation.sales', href: '/crm/klienti', moduleId: 'demo.crm' },
-  { groupKey: 'shell.navigation.sales', href: '/prodej/zakaznici', moduleId: 'party.registry' },
-  { groupKey: 'shell.navigation.team', href: '/ukoly', moduleId: 'work.tasks' },
-]);
+const { searchResourcesMock } = rstest.hoisted(() => ({
+  searchResourcesMock:
+    rstest.fn<
+      (
+        payload: ShellSearchPayload,
+        options?: ShellAuthenticationClientOptions,
+      ) => Effect.Effect<ShellSearchResponse, ShellSearchClientError>
+    >(),
+}));
 
-const tenantId = Schema.decodeUnknownSync(TenantIdSchema)('00000000-0000-4000-8000-000000000101');
-const legalEntityId = Schema.decodeUnknownSync(LegalEntityIdSchema)('00000000-0000-4000-8000-000000000201');
-let sequence = 0;
+rstest.mock('../../../../src/api/auth-client.ts', () => ({ searchResources: searchResourcesMock }));
 
-const hit = (moduleId: string, resourceType: string, title: string): ShellSearchResult => {
-  sequence += 1;
-  return {
-    kind: 'resource',
-    ref: {
-      moduleId: Schema.decodeUnknownSync(ModuleIdSchema)(moduleId),
-      resourceId: Schema.decodeUnknownSync(ResourceIdSchema)(`resource-${sequence}`),
-      resourceType,
-      tenantId,
-    },
-    selectedLegalEntityId: legalEntityId,
-    title,
-  };
+const compositionRevision = 'a'.repeat(64);
+const metadata = (key: string, order: number) => ({
+  icon: 'icon-[mdi--file-outline]' as const,
+  key,
+  label: { cs: key, en: key },
+  order,
+});
+
+const entry = (
+  ownerModuleId: string,
+  resourceType: string,
+  family: string,
+  familyOrder: number,
+  group: string,
+  groupOrder: number,
+): CoreSearchPresentationEntry => ({
+  ownerModuleId,
+  presentation: {
+    family: metadata(family, familyOrder),
+    group: metadata(group, groupOrder),
+    scope: 'company',
+  },
+  resourceType,
+  searchKey: `${ownerModuleId}.search`,
+});
+
+const declaredEntries = (): readonly CoreSearchPresentationEntry[] => [
+  entry('party.registry', 'party.registry.counterparty', 'companies', 10, 'counterparty', 20),
+  entry('demo.crm', 'demo.crm.client', 'companies', 10, 'client', 10),
+  entry('work.tasks', 'work.tasks.task', 'work', 20, 'task', 20),
+];
+
+const inventoryFor = (entries: readonly CoreSearchPresentationEntry[]): ShellSearchPresentationInventory => ({
+  business: { compositionRevision, entries, schemaVersion: '1' },
+  pages: [],
+});
+
+const presentationInventory = (): ShellSearchPresentationInventory => inventoryFor(declaredEntries());
+
+const inventory = (): ShellSearchPresentationIndex => {
+  const index = shellSearchPresentationIndex(presentationInventory(), compositionRevision);
+  if (index === undefined) {
+    throw new Error('expected a validated inventory');
+  }
+  return index;
 };
 
-const invoice = () => hit('finance.billing', 'finance.billing.invoice', 'Faktura');
-const task = () => hit('work.tasks', 'work.tasks.task', 'Úkol');
-const counterparty = () => hit('party.registry', 'party.registry.counterparty', 'Odběratel');
-const crmClient = () => hit('demo.crm', 'demo.crm.client', 'Klient');
-const unknownResource = () => hit('inventory.stock', 'inventory.stock.stock-item', 'Položka');
-
-test('no selected family omits the resourceTypes field and names the observed families', () => {
-  const plan = planShellSearchFilters({
-    context,
-    partial: false,
-    requestedFamilies: [],
-    results: [invoice(), task(), counterparty()],
-  });
+test('no selected family omits resourceTypes and lists the declared families in owner order', () => {
+  const plan = planShellSearchFilters({ index: inventory(), partial: false, requestedFamilies: [] });
   expect(plan.selectedFamilies).toEqual([]);
   expect(plan.resourceTypes).toBeUndefined();
-  expect(plan.availableFamilies.map(({ key }) => key)).toEqual(['companies', 'finance', 'work']);
-  expect(plan.availableFamilies[0]?.groups).toEqual(['counterparty']);
+  expect(plan.availableFamilies.map(({ key }) => key)).toEqual(['companies', 'work']);
+  expect(plan.availableFamilies[0]?.family.groups.map(({ key }) => key)).toEqual(['client', 'counterparty']);
 });
 
-test('a selected family sends only the exact observed admitted types', () => {
-  const plan = planShellSearchFilters({
-    context,
-    partial: false,
-    requestedFamilies: ['companies'],
-    results: [counterparty(), crmClient()],
-  });
-  expect(plan.selectedFamilies).toEqual(['companies']);
-  // The registry also knows crmClient; it is included only because this answer really observed it.
-  expect(plan.resourceTypes).toEqual(['party.registry.counterparty', 'demo.crm.client']);
+test('a selected family sends only the exact resource types its inventory declares', () => {
+  expect(
+    planShellSearchFilters({ index: inventory(), partial: false, requestedFamilies: ['companies'] }).resourceTypes,
+  ).toEqual(['demo.crm.client', 'party.registry.counterparty']);
+  expect(
+    planShellSearchFilters({ index: inventory(), partial: false, requestedFamilies: ['work', 'companies'] })
+      .resourceTypes,
+  ).toEqual(['demo.crm.client', 'party.registry.counterparty', 'work.tasks.task']);
 });
 
-test('a type that is registered but not observed in this answer is not dispatched', () => {
-  const plan = planShellSearchFilters({
-    context,
-    partial: false,
-    requestedFamilies: ['companies'],
-    results: [counterparty()],
+test('an unknown family never widens the payload to an unfiltered answer', () => {
+  expect(planShellSearchFilters({ index: inventory(), partial: false, requestedFamilies: ['missing'] })).toMatchObject({
+    resourceTypes: [],
+    selectedFamilies: [],
   });
-  expect(plan.selectedFamilies).toEqual(['companies']);
-  expect(plan.resourceTypes).toEqual(['party.registry.counterparty']);
-});
-
-test('a new query drops a selection that no longer has an observed family', () => {
-  const plan = planShellSearchFilters({
-    context,
-    partial: false,
-    requestedFamilies: ['work'],
-    results: [invoice()],
-  });
-  expect(plan.availableFamilies.map(({ key }) => key)).toEqual(['finance']);
-  expect(plan.selectedFamilies).toEqual([]);
-  expect(plan.resourceTypes).toBeUndefined();
+  expect(
+    planShellSearchFilters({ index: inventory(), partial: false, requestedFamilies: ['work', 'missing'] }),
+  ).toMatchObject({ resourceTypes: [], selectedFamilies: ['work'] });
 });
 
 test('a partial answer offers no filter and never guesses a payload', () => {
-  const plan = planShellSearchFilters({
-    context,
-    partial: true,
-    requestedFamilies: ['work'],
-    results: [task()],
+  expect(planShellSearchFilters({ index: inventory(), partial: true, requestedFamilies: ['work'] })).toEqual({
+    availableFamilies: [],
+    selectedFamilies: [],
   });
-  expect(plan).toEqual({ availableFamilies: [], selectedFamilies: [] });
 });
 
-test('the catch-all record family is not offered as a narrowing filter', () => {
-  const plan = planShellSearchFilters({
-    context,
-    partial: false,
-    requestedFamilies: ['other'],
-    results: [unknownResource(), task()],
-  });
-  expect(plan.availableFamilies.map(({ key }) => key)).toEqual(['work']);
-  expect(plan.selectedFamilies).toEqual([]);
-  expect(plan.resourceTypes).toBeUndefined();
+test('the URL carries bounded family keys only; a malformed key stays an unresolved selection', () => {
+  expect(searchFamiliesFromValue()).toEqual([]);
+  expect(searchFamiliesFromValue('')).toEqual([]);
+  expect(searchFamiliesFromValue('companies, work')).toEqual(['companies', 'work']);
+  expect(searchFamiliesFromValue(' companies , work ')).toEqual(['companies', 'work']);
+  expect(searchFamiliesFromValue('missing')).toEqual(['missing']);
+  // A present but malformed key is kept, so an invalid nonempty filter never silently becomes unfiltered.
+  expect(searchFamiliesFromValue('Invalid Key')).toEqual(['Invalid Key']);
+  expect(searchFamiliesFromValue('work,Invalid Key')).toEqual(['work', 'Invalid Key']);
 });
 
-test('a selected family with several observed groups keeps the family order and all observed types', () => {
-  const plan = planShellSearchFilters({
-    context,
-    partial: false,
-    requestedFamilies: ['work', 'companies'],
-    results: [task(), counterparty(), crmClient()],
-  });
-  expect(plan.selectedFamilies).toEqual(['companies', 'work']);
-  expect(plan.resourceTypes).toEqual(['party.registry.counterparty', 'demo.crm.client', 'work.tasks.task']);
+/**
+ * Request-sequence evidence for the full-results model. The mock records every `searchResources` payload, so a test
+ * proves exactly which owner reads a flow issues and in which order. No test guesses an owner type: the narrowed
+ * payload is always the inventory's own declared type list, and a filtered flow never issues an unfiltered request.
+ */
+const searchResponse = (
+  results: ShellSearchResponse['results'] = [],
+  presentation: ShellSearchPresentationInventory = presentationInventory(),
+): ShellSearchResponse => ({ partial: false, presentation, results });
+
+const resourceHit = (title: string): ShellSearchResult => ({
+  kind: 'resource',
+  ref: {
+    moduleId: Schema.decodeUnknownSync(ModuleIdSchema)('demo.crm'),
+    resourceId: Schema.decodeUnknownSync(ResourceIdSchema)('client-1'),
+    resourceType: 'demo.crm.client',
+    tenantId: Schema.decodeUnknownSync(TenantIdSchema)('00000000-0000-4000-8000-000000000101'),
+  },
+  title,
 });
 
-test('a forged owner in the answer never joins a family filter or invents a family', () => {
-  const forged = [
-    hit('unknown.owner', 'unknown.owner.product', 'Podvržený produkt'),
-    hit('demo.crm', 'demo.crm.invoice', 'Podvržená faktura'),
-    task(),
-  ];
-  const plan = planShellSearchFilters({
-    context,
-    partial: false,
-    requestedFamilies: ['sales', 'finance', 'work'],
-    results: forged,
-  });
-  expect(plan.availableFamilies).toEqual([{ groups: ['task'], key: 'work' }]);
-  expect(plan.selectedFamilies).toEqual(['work']);
-  expect(plan.resourceTypes).toEqual(['work.tasks.task']);
-});
+const recordedPayloads = (): readonly ShellSearchPayload[] =>
+  searchResourcesMock.mock.calls.map(([payload]) => payload);
+
+const unfilteredHit = () => searchResponse([resourceHit('Unfiltered hit')]);
+const inventoryAnswer = () => searchResponse([]);
+const selectedOnlyInventory = () =>
+  inventoryFor(declaredEntries().filter(({ resourceType }) => resourceType.startsWith('demo.crm')));
+const canonicalResourceTypes = ['party.registry.counterparty', 'demo.crm.client', 'work.tasks.task'];
+
+/** One recorded-request answer: an unfiltered read, an inventory-only read, or the selected types. */
+const answerFor = (payload: ShellSearchPayload): ShellSearchResponse => {
+  if (payload.resourceTypes === undefined) {
+    return unfilteredHit();
+  }
+  if (payload.resourceTypes.length === 0) {
+    return inventoryAnswer();
+  }
+  return searchResponse([resourceHit('Filtered hit')], selectedOnlyInventory());
+};
+
+const runReadySearch = (requestedFamilies: readonly string[]) =>
+  searchReadyModel({
+    compositionRevision,
+    options: {},
+    query: 'novák',
+    requestedFamilies,
+    shell: authenticatedShellFixture(),
+  }).pipe(
+    Effect.flatMap((model) =>
+      model.state === 'ready'
+        ? Effect.succeed(model)
+        : Effect.die(new Error(`expected a ready search model, received ${model.state}`)),
+    ),
+  );
+
+it.effect('an unfiltered full-results search issues exactly one real owner request', () =>
+  Effect.gen(function* unfilteredSearch() {
+    searchResourcesMock.mockReset();
+    searchResourcesMock.mockImplementation(() => Effect.succeed(unfilteredHit()));
+    const model = yield* runReadySearch([]);
+    expect(recordedPayloads()).toEqual([{ compositionRevision, query: 'novák' }]);
+    expect(model.filters.resourceTypes).toBeUndefined();
+    expect(model.filters.availableFamilies.map(({ key }) => key)).toEqual(['companies', 'work']);
+    expect(model.response.results.map(({ title }) => title)).toEqual(['Unfiltered hit']);
+    expect(model.index?.business.map(({ resourceType }) => resourceType)).toEqual(canonicalResourceTypes);
+  }),
+);
+
+it.effect('a filtered full-results search asks the inventory alone first and then only the selected types', () =>
+  Effect.gen(function* filteredSearch() {
+    searchResourcesMock.mockReset();
+    searchResourcesMock.mockImplementation((payload: ShellSearchPayload) => Effect.succeed(answerFor(payload)));
+    const model = yield* runReadySearch(['companies']);
+    // The inventory-only request first, the exact selected types second, and never an unfiltered request.
+    expect(recordedPayloads()).toEqual([
+      { compositionRevision, query: 'novák', resourceTypes: [] },
+      { compositionRevision, query: 'novák', resourceTypes: ['demo.crm.client', 'party.registry.counterparty'] },
+    ]);
+    expect(recordedPayloads().some(({ resourceTypes }) => resourceTypes === undefined)).toBe(false);
+    expect(model.filters.selectedFamilies).toEqual(['companies']);
+    expect(model.filters.resourceTypes).toEqual(['demo.crm.client', 'party.registry.counterparty']);
+    expect(model.response.results.map(({ title }) => title)).toEqual(['Filtered hit']);
+    // The selected-only answer never shrinks the filter row: the canonical inventory index survives.
+    expect(model.filters.availableFamilies.map(({ key }) => key)).toEqual(['companies', 'work']);
+    expect(model.index?.business.map(({ resourceType }) => resourceType)).toEqual(canonicalResourceTypes);
+  }),
+);
+
+it.effect('an unknown-only family asks the inventory alone and never exposes unfiltered results', () =>
+  Effect.gen(function* unknownFamilySearch() {
+    searchResourcesMock.mockReset();
+    searchResourcesMock.mockImplementation((payload: ShellSearchPayload) =>
+      Effect.succeed(payload.resourceTypes === undefined ? unfilteredHit() : inventoryAnswer()),
+    );
+    const model = yield* runReadySearch(['missing']);
+    expect(recordedPayloads()).toEqual([{ compositionRevision, query: 'novák', resourceTypes: [] }]);
+    expect(model.filters).toMatchObject({ resourceTypes: [], selectedFamilies: [] });
+    expect(model.filters.availableFamilies.map(({ key }) => key)).toEqual(['companies', 'work']);
+    expect(model.response.results).toEqual([]);
+    expect(model.response.presentation).toBeDefined();
+    expect(model.index).toBeDefined();
+  }),
+);
+
+it.effect('a known family mixed with an unknown one asks the inventory alone and shows nothing', () =>
+  Effect.gen(function* mixedFamilySearch() {
+    searchResourcesMock.mockReset();
+    searchResourcesMock.mockImplementation((payload: ShellSearchPayload) =>
+      Effect.succeed(payload.resourceTypes === undefined ? unfilteredHit() : inventoryAnswer()),
+    );
+    const model = yield* runReadySearch(['work', 'missing']);
+    expect(recordedPayloads()).toEqual([{ compositionRevision, query: 'novák', resourceTypes: [] }]);
+    expect(model.filters).toMatchObject({ resourceTypes: [], selectedFamilies: ['work'] });
+    expect(model.response.results).toEqual([]);
+    expect(model.filters.availableFamilies.map(({ key }) => key)).toEqual(['companies', 'work']);
+  }),
+);
+
+it.effect('a malformed family filter asks the inventory alone and never widens to the unfiltered answer', () =>
+  Effect.gen(function* malformedFamilySearch() {
+    searchResourcesMock.mockReset();
+    searchResourcesMock.mockImplementation((payload: ShellSearchPayload) =>
+      Effect.succeed(payload.resourceTypes === undefined ? unfilteredHit() : inventoryAnswer()),
+    );
+    const model = yield* runReadySearch(searchFamiliesFromValue('Invalid Key'));
+    expect(recordedPayloads()).toEqual([{ compositionRevision, query: 'novák', resourceTypes: [] }]);
+    expect(model.response.results).toEqual([]);
+    expect(model.filters.availableFamilies.map(({ key }) => key)).toEqual(['companies', 'work']);
+  }),
+);
+
+it.effect('a partial inventory answer issues one request and offers no filter', () =>
+  Effect.gen(function* partialSearch() {
+    searchResourcesMock.mockReset();
+    searchResourcesMock.mockImplementation(() =>
+      Effect.succeed({ partial: true, presentation: presentationInventory(), results: [] }),
+    );
+    const model = yield* runReadySearch(['companies']);
+    expect(recordedPayloads()).toEqual([{ compositionRevision, query: 'novák', resourceTypes: [] }]);
+    expect(model.filters).toEqual({ availableFamilies: [], selectedFamilies: [] });
+    expect(model.response.partial).toBe(true);
+  }),
+);

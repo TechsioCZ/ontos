@@ -1,6 +1,8 @@
+import { Option, Predicate, Schema } from 'effect';
+
 import type { ShellSearchResult } from '../../shared/api.ts';
-import { shellSearchGroupOrder } from './shell-search-resource-types.ts';
-import type { ShellSearchGroupKey } from './shell-search-resource-types.ts';
+import { shellSearchFamilies, shellSearchFamiliesInOrder } from './shell-search-resource-types.ts';
+import type { ShellSearchFamilyPresentation, ShellSearchPresentationIndex } from './shell-search-resource-types.ts';
 
 /**
  * Presentation helpers shared by the header palette and the full results page: a Unicode-exact title highlight, the
@@ -145,72 +147,78 @@ export const shellSearchTitleSegments = (title: string, query: string): readonly
   return segments;
 };
 
-/**
- * The seven families the search can be narrowed by. Each one collects whole record groups, so a family selection is
- * still an owner resource type selection on the server — never a client-side filter over an unfiltered answer.
- */
-export const shellSearchFamilyKeys = ['companies', 'people', 'sales', 'finance', 'property', 'work', 'other'] as const;
-export type ShellSearchFamilyKey = (typeof shellSearchFamilyKeys)[number];
+export interface ShellSearchFamilyAvailability {
+  readonly family: ShellSearchFamilyPresentation;
+  readonly key: string;
+}
+
+export interface ShellSearchFilterPlan {
+  readonly availableFamilies: readonly ShellSearchFamilyAvailability[];
+  /** Absent omits the field; an empty list is the server's explicit "no type". */
+  readonly resourceTypes?: readonly string[];
+  readonly selectedFamilies: readonly string[];
+}
 
 /**
- * Every record group belongs to exactly one family; a new group must be placed here, so it can never silently fall
- * out of the filter. An owner type the Shell does not name yet stays under "other records".
+ * The filter plan for one validated answer inventory. Available families are the families the captured inventory
+ * declares for this answer, and the request types are exactly those families' declared resource types — a selection
+ * is always a fresh server request, never a filter over an answer already received. A family the inventory does not
+ * contain is unresolved: it asks for no type at all instead of broadening the request to every type. A partial answer
+ * offers no filter and never guesses a payload.
  */
-const familyByGroup = {
-  asset: 'property',
-  contract: 'finance',
-  counterparty: 'companies',
-  crmClient: 'companies',
-  crmContact: 'people',
-  device: 'property',
-  facilityDocument: 'property',
-  financeDocument: 'finance',
-  invoice: 'finance',
-  lease: 'property',
-  legalDocument: 'finance',
-  market: 'sales',
-  opportunity: 'sales',
-  order: 'sales',
-  party: 'people',
-  person: 'people',
-  product: 'sales',
-  property: 'property',
-  resource: 'other',
-  sku: 'sales',
-  task: 'work',
-  unit: 'property',
-} as const satisfies Readonly<Record<ShellSearchGroupKey, ShellSearchFamilyKey>>;
-
-export const shellSearchFamilyOfGroup = (group: ShellSearchGroupKey): ShellSearchFamilyKey => familyByGroup[group];
-
-/** The given families in the filter's own order, for a stable row of buttons and a stable request payload. */
-export const shellSearchFamiliesInOrder = (
-  families: readonly ShellSearchFamilyKey[],
-): readonly ShellSearchFamilyKey[] => shellSearchFamilyKeys.filter((family) => families.includes(family));
-
-/** The groups of one family, in the Shell's display order. */
-export const shellSearchGroupsOfFamily = (family: ShellSearchFamilyKey): readonly ShellSearchGroupKey[] =>
-  shellSearchGroupOrder.filter((group) => familyByGroup[group] === family);
-
-/**
- * The groups a family selection asks the server for. No selected family means no narrowing at all: the person sees
- * every authorized hit, and the request carries no type filter rather than a guessed one.
- */
-export const shellSearchGroupsOfFamilies = (
-  families: readonly ShellSearchFamilyKey[],
-): readonly ShellSearchGroupKey[] => {
-  if (families.length === 0) {
-    return shellSearchGroupOrder;
+export const planShellSearchFilters = ({
+  index,
+  partial,
+  requestedFamilies,
+}: {
+  readonly index: ShellSearchPresentationIndex | undefined;
+  readonly partial: boolean;
+  readonly requestedFamilies: readonly string[];
+}): ShellSearchFilterPlan => {
+  const emptyPlan: ShellSearchFilterPlan = { availableFamilies: [], selectedFamilies: [] };
+  if (partial) {
+    return emptyPlan;
   }
-  const selected = new Set(families);
-  return shellSearchGroupOrder.filter((group) => selected.has(familyByGroup[group]));
+  const availableFamilies = shellSearchFamilies(index).map((family): ShellSearchFamilyAvailability => ({
+    family,
+    key: family.key,
+  }));
+  const availableKeys = new Set(availableFamilies.map(({ key }) => key));
+  const selectedFamilies = shellSearchFamiliesInOrder(
+    requestedFamilies,
+    availableFamilies.map(({ family }) => family),
+  );
+  if (requestedFamilies.length === 0 || selectedFamilies.length === 0) {
+    // An unknown-only selection resolves to no owner type; it must not widen to the unfiltered answer.
+    const unresolved = requestedFamilies.some((family) => !availableKeys.has(family));
+    return unresolved
+      ? { availableFamilies, resourceTypes: [], selectedFamilies }
+      : { availableFamilies, selectedFamilies: [] };
+  }
+  if (requestedFamilies.some((family) => !availableKeys.has(family))) {
+    return { availableFamilies, resourceTypes: [], selectedFamilies };
+  }
+  const selected = new Set(selectedFamilies);
+  const resourceTypes: string[] = [];
+  const seen = new Set<string>();
+  for (const { family, key } of availableFamilies) {
+    if (!selected.has(key)) {
+      continue;
+    }
+    for (const resourceType of family.resourceTypes) {
+      if (!seen.has(resourceType)) {
+        seen.add(resourceType);
+        resourceTypes.push(resourceType);
+      }
+    }
+  }
+  return { availableFamilies, resourceTypes, selectedFamilies };
 };
 
-export const toggleShellSearchFamily = (
-  families: readonly ShellSearchFamilyKey[],
-  family: ShellSearchFamilyKey,
-): readonly ShellSearchFamilyKey[] =>
+export const toggleShellSearchFamily = (families: readonly string[], family: string): readonly string[] =>
   families.includes(family) ? families.filter((selected) => selected !== family) : [...families, family];
+
+export { shellSearchFamiliesInOrder } from './shell-search-resource-types.ts';
 
 export const MAXIMUM_SHELL_SEARCH_RESULT_BADGES = 2;
 
@@ -221,6 +229,40 @@ export interface ShellSearchResultBadge {
   readonly labelKey: string;
   readonly tone: 'info' | 'warning';
 }
+
+/** The only two generic resource fields the current owner wire approves showing; no prefix or lifecycle inspection. */
+export interface ShellSearchResourceFields {
+  readonly archived?: boolean;
+  readonly subtitle?: string;
+}
+
+const approvedResourceSubtitle = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+
+interface MutableResourceFields {
+  archived?: boolean;
+  subtitle?: string;
+}
+
+/**
+ * Reads only the two approved optional resource presentation fields. They arrive as owner-public data; the Shell never
+ * derives prefix, lifecycle, module or resource knowledge from them. A malformed value is simply not shown.
+ */
+export const shellSearchResourceFields = (result: ShellSearchResult): ShellSearchResourceFields => {
+  if (result.kind !== 'resource') {
+    return {};
+  }
+  const fields: MutableResourceFields = {};
+  if (Predicate.hasProperty(result, 'archived') && Schema.is(Schema.Boolean)(result.archived)) {
+    fields.archived = result.archived;
+  }
+  if (Predicate.hasProperty(result, 'subtitle')) {
+    const decoded = Schema.decodeUnknownOption(approvedResourceSubtitle)(result.subtitle);
+    if (Option.isSome(decoded)) {
+      fields.subtitle = decoded.value;
+    }
+  }
+  return fields;
+};
 
 interface ResultPartyFlags {
   readonly archived: boolean;
@@ -246,7 +288,8 @@ export const shellSearchResultBadges = (result: ShellSearchResult): readonly She
     badges.push({ key: 'reconciliationRequired', labelKey: 'shell.search.reconciliation_required', tone: 'warning' });
   }
   const party = partyOf(result);
-  if (party?.archived === true) {
+  // One archived badge for both the Party flag and the owner-approved generic resource field, with the same wording.
+  if (party?.archived === true || shellSearchResourceFields(result).archived === true) {
     badges.push({ key: 'archived', labelKey: 'shell.search.archived', tone: 'warning' });
   }
   if (party?.matchedViaAlias === true) {

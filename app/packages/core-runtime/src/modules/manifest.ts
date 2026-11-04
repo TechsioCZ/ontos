@@ -12,7 +12,12 @@ import type { OntosExternalIdentityProviderInput } from '../auth/external-identi
 import { OntosMcpContributionSchema } from './mcp-contribution.ts';
 import type { OntosMcpContributionInput } from './mcp-contribution.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
-import { OntosShellContributionsSchema, validateShellContributions } from './shell-contribution.ts';
+import {
+  OntosShellContributionsSchema,
+  shellSearchPresentationBindingIssue,
+  shellSearchPresentationPageIssue,
+  validateShellContributions,
+} from './shell-contribution.ts';
 import type { OntosShellContributions } from './shell-contribution.ts';
 
 export { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from './manifest-constants.ts';
@@ -223,7 +228,19 @@ export const OntosSerializedModuleManifestSchema = Schema.Struct({
   activation: OntosModuleActivationSchema,
   module: OntosModuleIdentitySchema,
   publicSurface: OntosSerializedPublicSurfaceSchema,
-});
+}).check(
+  Schema.makeFilter(({ module, publicSurface }) => {
+    const pageIssue = shellSearchPresentationPageIssue(publicSurface.shellContributions);
+    return (
+      pageIssue ??
+      shellSearchPresentationBindingIssue(publicSurface.shellContributions, {
+        moduleId: module.id,
+        resourceTypeKeys: new Set(publicSurface.resourceTypes.map(({ key }) => key)),
+        search: publicSurface.search,
+      })
+    );
+  }),
+);
 
 export const OntosDeploymentIdentitySchema = Schema.Struct({
   appId: OntosDeploymentAppIdSchema,
@@ -544,6 +561,14 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     resourceTypeKeys: resourceSet,
     searchKeys: new Set(search.map(({ key }) => key)),
   });
+  const presentationIssue = shellSearchPresentationBindingIssue(shellContributions, {
+    moduleId: input.module.id,
+    resourceTypeKeys: resourceSet,
+    search,
+  });
+  if (presentationIssue !== undefined) {
+    throw invalidManifest(presentationIssue);
+  }
 
   const manifest = {
     ...input,

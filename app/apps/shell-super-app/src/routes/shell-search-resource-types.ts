@@ -1,241 +1,96 @@
+import {
+  interpretCoreSearchPresentationEntry,
+  interpretCoreSystemSearchPresentation,
+} from '@app/core-runtime/search-contract';
+import type {
+  CoreSearchPresentationEntry,
+  CoreShellLabel,
+  CoreSystemSearchPresentation,
+} from '@app/core-runtime/search-contract';
 import type { IconType } from '@techsio/ui-kit/atoms/icon';
-import { Schema } from 'effect';
+import { Result } from 'effect';
 
-import type { ShellSearchResult } from '../../shared/api.ts';
+import type { ShellSearchPresentationInventory, ShellSearchResult } from '../../shared/api.ts';
+import { shellSearchMatchedVariantHasQualifiedRef } from '../../shared/api.ts';
 import { searchHitState } from './search-hit-state.ts';
 
 /**
- * Search groups in display order, translated below `shell.search.groups`. A result joins the group of its owner's
- * resource type; a type the Shell does not know yet stays visible under "other records".
+ * Browser-side reading of the presentation inventory the Shell captured for one authorized answer.
+ *
+ * Nothing here names an owner destination by itself: the only pages a hit may open are the exact pages the
+ * inventory carries for its own owner, and the only record IDs are the ones the owner's finite selector declares.
+ * A missing, foreign, ambiguous, stale or unresolvable inventory yields no owner destination, so the Shell record
+ * page stays the fallback. The inventory never grants access; the owner destination authorizes that record again.
  */
-export const ShellSearchGroupKeySchema = Schema.Literals([
-  'counterparty',
-  'party',
-  'person',
-  'crmClient',
-  'crmContact',
-  'opportunity',
-  'product',
-  'sku',
-  'order',
-  'task',
-  'invoice',
-  'financeDocument',
-  'contract',
-  'legalDocument',
-  'property',
-  'unit',
-  'lease',
-  'asset',
-  'device',
-  'facilityDocument',
-  'market',
-  'resource',
-]);
-export type ShellSearchGroupKey = typeof ShellSearchGroupKeySchema.Type;
 
-export const shellSearchGroupOrder: readonly ShellSearchGroupKey[] = ShellSearchGroupKeySchema.literals;
+/** The key of the catch-all row group for a genuinely unpresented owner type. */
+export const GENERIC_SHELL_SEARCH_GROUP_KEY = 'resource';
 
-export const shellSearchGroupIcon = {
-  asset: 'icon-[mdi--toolbox-outline]',
-  contract: 'icon-[mdi--file-sign]',
-  counterparty: 'icon-[mdi--handshake-outline]',
-  crmClient: 'icon-[mdi--account-tie-outline]',
-  crmContact: 'icon-[mdi--card-account-phone-outline]',
-  device: 'icon-[mdi--gauge]',
-  facilityDocument: 'icon-[mdi--folder-file-outline]',
-  financeDocument: 'icon-[mdi--file-document-multiple-outline]',
-  invoice: 'icon-[mdi--receipt-text-outline]',
-  lease: 'icon-[mdi--key-chain-variant]',
-  legalDocument: 'icon-[mdi--file-document-outline]',
-  market: 'icon-[mdi--earth]',
-  opportunity: 'icon-[mdi--briefcase-outline]',
-  order: 'icon-[mdi--cart-outline]',
-  party: 'icon-[mdi--card-account-details-outline]',
-  person: 'icon-[mdi--account-multiple-outline]',
-  product: 'icon-[mdi--package-variant-closed]',
-  property: 'icon-[mdi--office-building-outline]',
-  resource: 'icon-[mdi--file-outline]',
-  sku: 'icon-[mdi--barcode]',
-  task: 'icon-[mdi--checkbox-marked-circle-outline]',
-  unit: 'icon-[mdi--door]',
-} as const satisfies Readonly<Record<ShellSearchGroupKey, IconType>>;
+/** The exact captured inventory of live owner pages. */
+export type ShellSearchPresentationPage = ShellSearchPresentationInventory['pages'][number];
 
-/**
- * One destination of the composed Shell navigation, as the Shell already receives it: the owner module, the module's
- * navigation section and the destination's canonical path. The Shell names no business module and no record type here.
- */
-export interface ShellSearchNavigationItem {
-  readonly groupKey: string;
-  readonly href?: string | undefined;
-  readonly moduleId: string;
+/** The validated presentation inventory of one answer, bound to the revision that captured it. */
+export interface ShellSearchPresentationIndex {
+  readonly business: readonly CoreSearchPresentationEntry[];
+  readonly compositionRevision: string;
+  readonly pages: readonly ShellSearchPresentationPage[];
+  readonly system: CoreSystemSearchPresentation | undefined;
 }
 
-/**
- * What the composed navigation proves about this document: the destinations every composed module declares and the
- * navigation section it places them in. A record presentation applies only when this evidence names the hit's owner
- * and the destination the presentation opens; anything short of that opens the generic Shell record page. The
- * composition also carries the record destinations its owner pages declare, keyed by the exact owner and type.
- */
-export interface ShellSearchPresentationContext {
-  readonly hrefs: ReadonlyMap<string, readonly string[]>;
-  readonly recordDestinations: ReadonlyMap<string, readonly ShellSearchRecordDestination[]>;
-  readonly sections: ReadonlyMap<string, ReadonlySet<string>>;
+/** A row group as the owner declared it; the generic group carries no owner metadata. */
+export interface ShellSearchGroupPresentation {
+  readonly icon?: IconType;
+  readonly key: string;
+  readonly label?: CoreShellLabel;
+  readonly order: number;
+  readonly resourceTypes: readonly string[];
 }
 
-/**
- * One owner page that opens a record type, as the composition carries it: the route template and the single parameter
- * that selects the record. The Shell never derives a destination from a type name; it looks up this exact pair.
- */
-export interface ShellSearchRecordDestination {
-  readonly idParameter: string;
-  readonly moduleId: string;
-  readonly resourceType: string;
-  readonly routePath: string;
+/** A filterable family as the owner declared it, with the groups and exact resource types observed for it. */
+export interface ShellSearchFamilyPresentation {
+  readonly groups: readonly ShellSearchGroupPresentation[];
+  readonly icon: IconType;
+  readonly key: string;
+  readonly label: CoreShellLabel;
+  readonly order: number;
+  readonly resourceTypes: readonly string[];
 }
 
-/** `shell.navigation.finance` is the navigation section `finance`. */
-const navigationSection = (groupKey: string): string => groupKey.replace(/^shell\.navigation\./u, '');
-
-const recordDestinationKey = (moduleId: string, resourceType: string): string => `${moduleId}\u0000${resourceType}`;
-
-export const shellSearchPresentationContext = (
-  navigation: readonly ShellSearchNavigationItem[],
-  recordDestinations: readonly ShellSearchRecordDestination[] = [],
-): ShellSearchPresentationContext => {
-  const sections = new Map<string, ReadonlySet<string>>();
-  const hrefs = new Map<string, readonly string[]>();
-  for (const { groupKey, href, moduleId } of navigation) {
-    sections.set(moduleId, new Set([...(sections.get(moduleId) ?? []), navigationSection(groupKey)]));
-    if (href !== undefined) {
-      hrefs.set(moduleId, [...(hrefs.get(moduleId) ?? []), href]);
-    }
-  }
-  const destinations = new Map<string, readonly ShellSearchRecordDestination[]>();
-  for (const destination of recordDestinations) {
-    const key = recordDestinationKey(destination.moduleId, destination.resourceType);
-    destinations.set(key, [...(destinations.get(key) ?? []), destination]);
-  }
-  return { hrefs, recordDestinations: destinations, sections };
+const genericGroup: ShellSearchGroupPresentation = {
+  key: GENERIC_SHELL_SEARCH_GROUP_KEY,
+  order: Number.MAX_SAFE_INTEGER,
+  resourceTypes: [],
 };
 
-/**
- * The owner page that opens one record, with the owner's resource ID either as the `$id` path segment or as one
- * query parameter. A query target without `to` opens the owner's own agenda destination, resolved from navigation.
- * An owner target names no Shell path at all: the page comes from the destination the owner page declared.
- */
-type RecordRoute =
-  | { readonly kind: 'path'; readonly to: string }
-  | { readonly kind: 'owner' }
-  | { readonly kind: 'query'; readonly param: string; readonly to?: string | undefined };
-
-type ResolvedRecordRoute =
-  | { readonly kind: 'path'; readonly to: string }
-  | { readonly idParameter: string; readonly kind: 'owner'; readonly to: string }
-  | { readonly kind: 'query'; readonly param: string; readonly to: string };
-
-/**
- * Presentation of one record type name: the last segment of `ref.resourceType`. The name is owner-relative, so it
- * applies only to the module that namespaces the type; a navigation section settles a name that several owners share
- * (a facility document and a finance document are both `document`). The destination it opens must be a destination
- * that module itself declares in the composed navigation, so a name alone never claims another owner's page.
- */
-interface ResourceTypePresentation {
-  readonly agendas?: readonly string[] | undefined;
-  /**
-   * Last segment of the owner navigation destination that lists these records. Its `href` is the agreed agenda page,
-   * so the Shell never repeats an owner route.
-   */
-  readonly agendaSuffix?: string | undefined;
-  readonly group: ShellSearchGroupKey;
-  readonly idFormat?: 'uuid' | undefined;
-  readonly idScope?: 'company' | undefined;
-  /**
-   * The record type of a Shell platform page: the Shell's own page lists these records, so that destination is the
-   * Shell's route and no module declares it. This names the module that publishes the type.
-   */
-  readonly platformOwnerModuleId?: string | undefined;
-  readonly record?: RecordRoute | undefined;
-  /** Navigation section of the owning module, when several modules register the same record type name. */
-  readonly section?: string | undefined;
-}
-
-interface ResolvedPresentation {
-  readonly agendas: readonly string[] | undefined;
-  readonly group: ShellSearchGroupKey;
-  readonly idFormat: 'uuid' | undefined;
-  readonly idScope: 'company' | undefined;
-  readonly record: ResolvedRecordRoute | undefined;
-}
-
-const query = (param: string, to?: string): RecordRoute =>
-  to === undefined ? { kind: 'query', param } : { kind: 'query', param, to };
-const path = (to: string): RecordRoute => ({ kind: 'path', to });
-const financeAgenda = '/finance';
-const propertyAgenda = '/nemovitosti';
-/** A company-qualified record of the owner's own agenda page. */
-const companyAgenda = (to: string, param: string, group: ShellSearchGroupKey): ResourceTypePresentation => ({
-  agendas: [to],
-  group,
-  idScope: 'company',
-  record: query(param, to),
+const groupPresentation = (entry: CoreSearchPresentationEntry): ShellSearchGroupPresentation => ({
+  icon: entry.presentation.group.icon,
+  key: entry.presentation.group.key,
+  label: entry.presentation.group.label,
+  order: entry.presentation.group.order,
+  resourceTypes: [entry.resourceType],
 });
 
 /**
- * Record presentations by the record type name the owner publishes. Adding a searchable type is one entry; leave out
- * `record` until the owner has a page that opens that record, so the hit opens the Shell record page.
+ * Accepts only the inventory captured for this exact composition revision. A stale response (a different captured
+ * release) is not a presentation inventory: its pages and interpretable leaves belong to another revision.
  */
-const resourceTypes = new Map<string, readonly ResourceTypePresentation[]>([
-  [
-    'asset',
-    [
-      { group: 'asset', record: query('resourceId', propertyAgenda), section: 'real-estate' },
-      { ...companyAgenda('/provoz/majetek', 'asset', 'asset'), section: 'facility' },
-    ],
-  ],
-  ['client', [{ agendaSuffix: 'klienti', group: 'crmClient', record: query('klient'), section: 'sales' }]],
-  ['contact', [{ agendaSuffix: 'klienti', group: 'crmContact', record: query('osoba'), section: 'sales' }]],
-  ['contract', [{ group: 'contract', record: query('resourceId', '/smlouvy') }]],
-  ['counterparty', [{ group: 'counterparty', idFormat: 'uuid', record: path('/prodej/zakaznici/$id') }]],
-  ['device', [companyAgenda('/provoz/bezpecnost', 'device', 'device')]],
-  [
-    'document',
-    [
-      {
-        agendas: [financeAgenda],
-        group: 'financeDocument',
-        idFormat: 'uuid',
-        record: query('documentId', financeAgenda),
-        section: 'finance',
-      },
-      { group: 'legalDocument', section: 'sales' },
-      { ...companyAgenda('/provoz/dokumenty', 'doc', 'facilityDocument'), section: 'facility' },
-    ],
-  ],
-  ['invoice', [{ group: 'invoice', record: query('resourceId', financeAgenda) }]],
-  ['market', [{ group: 'market', record: path('/prodej/eshopy/trhy/$id') }]],
-  ['meter', [companyAgenda('/provoz/meridla', 'meter', 'device')]],
-  ['occupancy', [{ group: 'lease', record: query('resourceId', '/najmy') }]],
-  ['opportunity', [{ group: 'opportunity', record: query('opportunityId', '/prodej/prilezitosti') }]],
-  ['order', [{ group: 'order', idScope: 'company', record: query('orderId', '/prodej/objednavky') }]],
-  // The Party identity page is the owner's own record destination; the Shell names no Party path or ID class here.
-  ['party', [{ group: 'party', idFormat: 'uuid', record: { kind: 'owner' } }]],
-  [
-    'person',
-    [
-      {
-        agendas: ['/sprava/lide-a-role'],
-        group: 'person',
-        platformOwnerModuleId: 'core.identity',
-        record: query('person', '/sprava/lide-a-role'),
-      },
-    ],
-  ],
-  ['product', [{ group: 'product', idScope: 'company', record: path('/provoz/produkty/$id') }]],
-  ['property', [{ group: 'property', record: query('resourceId', propertyAgenda) }]],
-  ['task', [{ group: 'task', record: query('resourceId', '/ukoly') }]],
-  ['unit', [{ group: 'unit', record: query('resourceId', propertyAgenda) }]],
-]);
+export const shellSearchPresentationIndex = (
+  inventory: ShellSearchPresentationInventory | undefined,
+  compositionRevision: string | undefined,
+): ShellSearchPresentationIndex | undefined => {
+  if (inventory === undefined || compositionRevision === undefined) {
+    return undefined;
+  }
+  if (inventory.business.compositionRevision !== compositionRevision) {
+    return undefined;
+  }
+  return {
+    business: inventory.business.entries,
+    compositionRevision,
+    pages: inventory.pages,
+    system: inventory.system,
+  };
+};
 
 interface SearchRef {
   readonly moduleId: string;
@@ -243,297 +98,416 @@ interface SearchRef {
   readonly resourceType: string;
 }
 
-/** The parts of a search hit that presentation reads; a full Shell hit is accepted as is. */
-export interface ShellSearchGroupInput {
-  readonly kind: ShellSearchResult['kind'];
-  readonly ref: SearchRef;
+/** One exact owner binding; more than one candidate is ambiguous and never becomes a destination. */
+const entryOf = (index: ShellSearchPresentationIndex, ref: SearchRef): CoreSearchPresentationEntry | undefined => {
+  const entries = index.business.filter(
+    (entry) => entry.ownerModuleId === ref.moduleId && entry.resourceType === ref.resourceType,
+  );
+  return entries.length === 1 ? entries[0] : undefined;
+};
+
+/** The separate explicit Core-system branch, never a business page key. */
+const systemOf = (index: ShellSearchPresentationIndex, ref: SearchRef): CoreSystemSearchPresentation | undefined => {
+  const { system } = index;
+  return system !== undefined && system.ownerModuleId === ref.moduleId && system.resourceType === ref.resourceType
+    ? system
+    : undefined;
+};
+
+/** A page resolves only inside the same owner that declared the presentation, never across owners. */
+const pageOf = (
+  index: ShellSearchPresentationIndex,
+  ownerModuleId: string,
+  pageKey: string,
+): ShellSearchPresentationPage | undefined => {
+  const pages = index.pages.filter((page) => page.ownerModuleId === ownerModuleId && page.pageKey === pageKey);
+  return pages.length === 1 ? pages[0] : undefined;
+};
+
+const routeParameterPattern = /:(?<name>[a-z][A-Za-z0-9]*)/gu;
+
+const routeParameterNames = (routePath: string): readonly string[] =>
+  [...routePath.matchAll(routeParameterPattern)].map((match) => match.groups?.['name'] ?? '');
+
+/** The captured owner template in TanStack form: `:documentId` becomes `$documentId`. */
+const tanstackRoutePath = (routePath: string): string =>
+  routePath.replaceAll(routeParameterPattern, (_match, name: string) => `$${name}`);
+
+export interface ShellSearchNamedTarget {
+  readonly agendas?: readonly string[];
+  readonly params?: Readonly<Record<string, string>>;
+  readonly search?: Readonly<Record<string, string>>;
+  readonly to: string;
 }
 
-/**
- * The one destination of the owner module's own navigation that lists this record type, by the agreed route suffix.
- * No destination, or several of them, proves nothing: an owner navigation that does not answer exactly never picks a
- * page for the hit.
- */
-const agendaHrefOf = (
-  presentation: ResourceTypePresentation,
-  ref: SearchRef,
-  context: ShellSearchPresentationContext,
-): string | undefined => {
-  const suffix = presentation.agendaSuffix;
-  if (suffix === undefined) {
-    return undefined;
-  }
-  const matches = (context.hrefs.get(ref.moduleId) ?? []).filter((href) => href.split('/').at(-1) === suffix);
-  return matches.length === 1 ? matches[0] : undefined;
-};
+/** Statement-built form of the same target; optional members are added only when the owner declares them. */
+interface MutableShellSearchNamedTarget {
+  agendas?: readonly string[];
+  params?: Record<string, string>;
+  search?: Record<string, string>;
+  to: string;
+}
 
-/**
- * The composition proves this destination belongs to the hit's owner: the Shell's own platform page for a platform
- * record type, otherwise a destination the owner module itself declares (the destination, or the page its record page
- * opens under).
- */
-const destinationIsComposed = (
-  presentation: ResourceTypePresentation,
-  ref: SearchRef,
-  context: ShellSearchPresentationContext,
-  destination: string,
-): boolean => {
-  // The Shell's own platform page needs no module to declare it; the Shell owns that route.
-  if (presentation.platformOwnerModuleId !== undefined) {
-    return true;
-  }
-  return (context.hrefs.get(ref.moduleId) ?? []).some(
-    (href) => destination === href || destination.startsWith(`${href}/`),
-  );
-};
-
-/**
- * The owner page's route template with its one declared parameter replaced by the Shell's `$id` segment. A template
- * that does not carry exactly the declared parameter proves nothing, so the hit keeps the generic Shell record page.
- */
-const ownerRecordRoute = (
-  destination: ShellSearchRecordDestination,
-): Extract<ResolvedRecordRoute, { readonly kind: 'owner' }> | undefined => {
-  const segments = destination.routePath.slice(1).split('/');
-  const parameters = segments.flatMap((segment, index) =>
-    segment.startsWith(':') ? [{ index, name: segment.slice(1) }] : [],
-  );
-  const [parameter] = parameters;
-  if (parameters.length !== 1 || parameter === undefined || parameter.name !== destination.idParameter) {
-    return undefined;
-  }
-  return {
-    idParameter: destination.idParameter,
-    kind: 'owner',
-    to: `/${segments.map((segment, index) => (index === parameter.index ? '$id' : segment)).join('/')}`,
-  };
-};
-
-const recordOf = (
-  presentation: ResourceTypePresentation,
-  ref: SearchRef,
-  context: ShellSearchPresentationContext,
-  agenda: string | undefined,
-): ResolvedRecordRoute | undefined => {
-  const route = presentation.record;
-  if (route === undefined) {
-    return undefined;
-  }
-  if (route.kind === 'path') {
-    return destinationIsComposed(presentation, ref, context, route.to) ? route : undefined;
-  }
-  if (route.kind === 'owner') {
-    // Only the exact pair the owner page declared for this hit is evidence; several entries prove nothing.
-    const destinations = context.recordDestinations.get(recordDestinationKey(ref.moduleId, ref.resourceType)) ?? [];
-    const [destination] = destinations;
-    return destinations.length === 1 && destination !== undefined ? ownerRecordRoute(destination) : undefined;
-  }
-  const to = route.to ?? agenda;
-  return to === undefined || !destinationIsComposed(presentation, ref, context, to)
-    ? undefined
-    : { kind: 'query', param: route.param, to };
-};
-
-const agendasOf = (
-  presentation: ResourceTypePresentation,
-  agenda: string | undefined,
-): readonly string[] | undefined => {
-  if (presentation.agendaSuffix === undefined) {
-    return presentation.agendas;
-  }
-  return agenda === undefined ? undefined : [agenda];
-};
-
-/**
- * The presentation of a hit, only while the document's composition proves it. The hit's module must be a module of
- * this document (a Shell platform record type names its publisher explicitly), it must namespace the resource type,
- * a shared record type name must match the module's own navigation section, and the destination the presentation
- * opens must be that module's own composed destination. A hit any of that does not prove stays under "other records"
- * and opens the generic Shell record page.
- */
-const presentationOf = (
-  ref: SearchRef,
-  context: ShellSearchPresentationContext | undefined,
-): ResolvedPresentation | undefined => {
-  if (context === undefined) {
-    return undefined;
-  }
-  const prefix = `${ref.moduleId}.`;
-  if (!ref.resourceType.startsWith(prefix) || ref.resourceType.length === prefix.length) {
-    return undefined;
-  }
-  const candidates = resourceTypes.get(ref.resourceType.slice(prefix.length));
-  const sections = context.sections.get(ref.moduleId);
-  if (candidates === undefined) {
-    return undefined;
-  }
-  const matches = candidates.filter(
-    ({ platformOwnerModuleId, section }) =>
-      (platformOwnerModuleId === undefined || platformOwnerModuleId === ref.moduleId) &&
-      (section === undefined || sections?.has(section) === true),
-  );
-  const [presentation] = matches;
-  if (presentation === undefined || matches.length > 1) {
-    return undefined;
-  }
-  // A business module has to be a module of this document; only the Shell's own platform record type names its
-  // publisher without one.
-  if (presentation.platformOwnerModuleId === undefined && sections === undefined) {
-    return undefined;
-  }
-  const agenda = agendaHrefOf(presentation, ref, context);
-  const record = recordOf(presentation, ref, context, agenda);
-  // A named record page is part of the presentation: when the composition does not prove it, the type is not proven.
-  if (presentation.record !== undefined && record === undefined) {
-    return undefined;
-  }
-  return {
-    agendas: agendasOf(presentation, agenda),
-    group: presentation.group,
-    idFormat: presentation.idFormat,
-    idScope: presentation.idScope,
-    record,
-  };
-};
-
-const shellSearchGroups = new Set<string>(ShellSearchGroupKeySchema.literals);
-
-export const shellSearchGroupOf = (
-  result: ShellSearchGroupInput,
-  context?: ShellSearchPresentationContext,
-): ShellSearchGroupKey => {
-  if (result.kind === 'counterparty' || result.kind === 'party') {
-    return result.kind;
-  }
-  return presentationOf(result.ref, context)?.group ?? 'resource';
-};
-
-/**
- * The exact `resourceTypes` request filter for the Shell groups the caller offers, from the types the answer really
- * contains in registry order. `undefined` means the groups cannot be described by a complete type list: the catch-all
- * `resource` group also covers owner types the Shell does not name, and an unknown group has no list at all. An empty
- * list means the selected groups hold no registered type; the caller omits the request field separately when the
- * whole family is empty.
- */
-export const shellSearchResourceTypesForGroups = (
-  groups: readonly ShellSearchGroupKey[],
-  results: readonly ShellSearchGroupInput[],
-  context?: ShellSearchPresentationContext,
-): readonly string[] | undefined => {
-  if (groups.some((group) => !shellSearchGroups.has(group)) || groups.includes('resource')) {
-    return undefined;
-  }
-  const selected = new Set(groups);
-  const types: string[] = [];
-  const seen = new Set<string>();
-  for (const group of shellSearchGroupOrder) {
-    if (!selected.has(group)) {
-      continue;
-    }
-    for (const { kind, ref } of results) {
-      if (!seen.has(ref.resourceType) && shellSearchGroupOf({ kind, ref }, context) === group) {
-        seen.add(ref.resourceType);
-        types.push(ref.resourceType);
-      }
-    }
-  }
-  return types;
-};
-
-export type ShellOwnerRecordTarget =
-  | {
-      readonly params: { readonly id: string };
-      readonly to: string;
-    }
-  | {
-      readonly search: Readonly<Record<string, string>>;
-      readonly to: string;
-    };
-
-/** Props for the Shell route link that opens a hit: the owner's record page, else the Shell record page. */
+/** Props for the Shell route link that opens a hit. */
 export type ShellSearchLinkTarget =
-  | ShellOwnerRecordTarget
+  | ShellSearchNamedTarget
   | {
       readonly params: { readonly moduleId: string; readonly resourceId: string; readonly resourceType: string };
       readonly state: ReturnType<typeof searchHitState>;
       readonly to: '/resources/$moduleId/$resourceType/$resourceId';
     };
 
-/** Agendas listing this record when the type names them; otherwise the owning module's agendas apply. */
-export const recordAgendaPaths = (
-  ref: SearchRef,
-  context?: ShellSearchPresentationContext,
-): readonly string[] | undefined => presentationOf(ref, context)?.agendas;
+export type ShellOwnerRecordTarget = ShellSearchNamedTarget;
 
-const nativeRecordId = Schema.is(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)));
-const uuidRecordId = Schema.is(Schema.String.check(Schema.isUUID()));
-const validRecordId = (presentation: ResolvedPresentation, id: string): string | undefined =>
-  nativeRecordId(id) && (presentation.idFormat !== 'uuid' || uuidRecordId(id)) ? id : undefined;
-
-/**
- * The ID the owner page selects the record by. A company-qualified ID yields its local part only when it is qualified
- * with the trusted selected company the result carries; any other company, a missing company or an empty local part
- * yields nothing, so the hit never opens a record page of another company.
- */
-const recordIdOf = (
-  presentation: ResolvedPresentation,
-  ref: SearchRef,
-  selectedLegalEntityId: string | undefined,
-): string | undefined => {
-  if (presentation.idScope === undefined) {
-    return validRecordId(presentation, ref.resourceId);
-  }
-  if (selectedLegalEntityId === undefined || selectedLegalEntityId.length === 0) {
+const agendaPaths = (
+  index: ShellSearchPresentationIndex,
+  entry: CoreSearchPresentationEntry,
+): readonly string[] | undefined => {
+  const pageKeys = entry.presentation.agendaPageKeys;
+  if (pageKeys === undefined || pageKeys.length === 0) {
     return undefined;
   }
-  const prefix = `${selectedLegalEntityId}.`;
-  const localId = ref.resourceId.startsWith(prefix) ? ref.resourceId.slice(prefix.length) : '';
-  return validRecordId(presentation, localId);
+  const paths: string[] = [];
+  for (const pageKey of pageKeys) {
+    const page = pageOf(index, entry.ownerModuleId, pageKey);
+    if (page === undefined) {
+      // Declared agendas that do not resolve stay empty instead of broadening to every module agenda.
+      return [];
+    }
+    paths.push(tanstackRoutePath(page.routePath));
+  }
+  return paths;
+};
+
+const recordTarget = (
+  index: ShellSearchPresentationIndex,
+  entry: CoreSearchPresentationEntry,
+  subject: { readonly matchedVariantId?: string; readonly recordId: string; readonly selectedLegalEntityId?: string },
+): ShellSearchNamedTarget | undefined => {
+  const interpreted = interpretCoreSearchPresentationEntry(entry, subject);
+  if (Result.isFailure(interpreted)) {
+    return undefined;
+  }
+  const target = interpreted.success;
+  const page = pageOf(index, entry.ownerModuleId, target.pageKey);
+  if (page === undefined) {
+    return undefined;
+  }
+  const parameterNames = routeParameterNames(page.routePath);
+  if (target.selectorKind === 'path') {
+    const [parameter] = target.pathParameters;
+    if (parameterNames.length !== 1 || parameter === undefined || parameterNames[0] !== parameter.name) {
+      return undefined;
+    }
+  } else if (parameterNames.length !== 0) {
+    return undefined;
+  }
+  const params = Object.fromEntries(target.pathParameters.map(({ name, value }) => [name, value]));
+  const search = Object.fromEntries(target.queryParameters.map(({ name, value }) => [name, value]));
+  const agendas = agendaPaths(index, entry);
+  // The captured template keeps opaque IDs raw; the redirect/link adapter encodes exactly its named values.
+  const finalized: MutableShellSearchNamedTarget = {
+    to: tanstackRoutePath(page.routePath),
+  };
+  if (agendas !== undefined) {
+    finalized.agendas = agendas;
+  }
+  if (Object.keys(params).length > 0) {
+    finalized.params = params;
+  }
+  if (Object.keys(search).length > 0) {
+    finalized.search = search;
+  }
+  return finalized;
+};
+
+const systemTarget = (index: ShellSearchPresentationIndex, ref: SearchRef): ShellSearchNamedTarget | undefined => {
+  const system = systemOf(index, ref);
+  if (system === undefined) {
+    return undefined;
+  }
+  const interpreted = interpretCoreSystemSearchPresentation(system, { recordId: ref.resourceId });
+  if (Result.isFailure(interpreted)) {
+    return undefined;
+  }
+  const [parameter] = interpreted.success.queryParameters;
+  if (parameter === undefined) {
+    return undefined;
+  }
+  // The system branch keeps the full native ID unchanged, including a company-qualified person ID.
+  return { search: { [parameter.name]: parameter.value }, to: interpreted.success.navigationPath };
+};
+
+const selectedCompanyOf = (result: ShellSearchResult): string | undefined => {
+  if (result.kind === 'resource') {
+    return result.selectedLegalEntityId;
+  }
+  return result.kind === 'counterparty' ? result.legalEntity.legalEntityId : undefined;
+};
+
+/** The verified variant refines only a destination whose owner declared that exact refinement. */
+const refinementOf = (result: ShellSearchResult, entry: CoreSearchPresentationEntry): string | undefined =>
+  result.kind === 'resource' &&
+  result.matchedVariant !== undefined &&
+  entry.presentation.refinement !== undefined &&
+  shellSearchMatchedVariantHasQualifiedRef(result)
+    ? result.matchedVariant.id
+    : undefined;
+
+/** The exact owner destination for a ref; a missing, foreign or ambiguous inventory yields nothing. */
+export const ownerRecordTarget = (
+  index: ShellSearchPresentationIndex | undefined,
+  ref: SearchRef,
+  selectedLegalEntityId: string | undefined,
+): ShellOwnerRecordTarget | undefined => {
+  if (index === undefined) {
+    return undefined;
+  }
+  const entry = entryOf(index, ref);
+  if (entry === undefined) {
+    return undefined;
+  }
+  const baseSubject = { recordId: ref.resourceId };
+  const subject = selectedLegalEntityId === undefined ? baseSubject : { ...baseSubject, selectedLegalEntityId };
+  return recordTarget(index, entry, subject);
 };
 
 /**
- * The owner page that opens this record, when the owner has one. `selectedLegalEntityId` is the trusted selected
- * company of the result (or of the current Shell context); company-qualified records need it.
+ * The generic record destination for a ref: the exact business page, the separate Core-system navigation, or no
+ * owner redirect at all. A business entry and a system presentation never both own one ref.
  */
-export const ownerRecordTarget = (
+export const shellSearchRecordTarget = (
+  index: ShellSearchPresentationIndex | undefined,
   ref: SearchRef,
   selectedLegalEntityId: string | undefined,
-  context?: ShellSearchPresentationContext,
-): ShellOwnerRecordTarget | undefined => {
-  const presentation = presentationOf(ref, context);
-  const record = presentation?.record;
-  if (presentation === undefined || record === undefined) {
+): ShellSearchNamedTarget | undefined => {
+  if (index === undefined) {
     return undefined;
   }
-  const id = recordIdOf(presentation, ref, selectedLegalEntityId);
-  if (id === undefined) {
+  const entry = entryOf(index, ref);
+  const system = systemOf(index, ref);
+  if (entry !== undefined && system === undefined) {
+    return ownerRecordTarget(index, ref, selectedLegalEntityId);
+  }
+  return entry === undefined && system !== undefined ? systemTarget(index, ref) : undefined;
+};
+
+/** Agendas listing this record when the owner declared them; otherwise the owning module's agendas apply. */
+export const recordAgendaPaths = (
+  index: ShellSearchPresentationIndex | undefined,
+  ref: SearchRef,
+): readonly string[] | undefined => {
+  if (index === undefined) {
     return undefined;
   }
-  return record.kind === 'query'
-    ? { search: { [record.param]: id }, to: record.to }
-    : { params: { id }, to: record.to };
+  const entry = entryOf(index, ref);
+  return entry === undefined ? undefined : agendaPaths(index, entry);
 };
 
 export const shellSearchLinkTarget = (
+  index: ShellSearchPresentationIndex | undefined,
   ref: SearchRef,
   title: string,
   selectedLegalEntityId: string | undefined,
-  context?: ShellSearchPresentationContext,
 ): ShellSearchLinkTarget =>
-  ownerRecordTarget(ref, selectedLegalEntityId, context) ?? {
+  shellSearchRecordTarget(index, ref, selectedLegalEntityId) ?? {
     params: { moduleId: ref.moduleId, resourceId: ref.resourceId, resourceType: ref.resourceType },
     state: searchHitState(title),
     to: '/resources/$moduleId/$resourceType/$resourceId',
   };
 
-/** Where a search hit opens; a generic owner hit carries its trusted selected company. */
+/** A verified leaf refines only its already-resolved owner destination, never another owner or product. */
 export const shellSearchResultTarget = (
   result: ShellSearchResult,
-  context?: ShellSearchPresentationContext,
-): ShellSearchLinkTarget =>
-  shellSearchLinkTarget(
-    result.ref,
-    result.title,
-    result.kind === 'resource' ? result.selectedLegalEntityId : undefined,
-    context,
-  );
+  index: ShellSearchPresentationIndex | undefined,
+): ShellSearchLinkTarget => {
+  const { ref } = result;
+  if (index !== undefined) {
+    const entry = entryOf(index, ref);
+    const system = systemOf(index, ref);
+    if (entry !== undefined && system === undefined) {
+      const selectedLegalEntityId = selectedCompanyOf(result);
+      const matchedVariantId = refinementOf(result, entry);
+      const baseSubject = { recordId: ref.resourceId };
+      const withCompany = selectedLegalEntityId === undefined ? baseSubject : { ...baseSubject, selectedLegalEntityId };
+      const subject = matchedVariantId === undefined ? withCompany : { ...withCompany, matchedVariantId };
+      const target = recordTarget(index, entry, subject);
+      if (target !== undefined) {
+        return target;
+      }
+    } else if (entry === undefined && system !== undefined) {
+      const target = systemTarget(index, ref);
+      if (target !== undefined) {
+        return target;
+      }
+    }
+  }
+  return {
+    params: { moduleId: ref.moduleId, resourceId: ref.resourceId, resourceType: ref.resourceType },
+    state: searchHitState(result.title),
+    to: '/resources/$moduleId/$resourceType/$resourceId',
+  };
+};
+
+/** The groups the validated inventory declares, ordered by the owner's declared order. */
+export const shellSearchGroups = (
+  index: ShellSearchPresentationIndex | undefined,
+): readonly ShellSearchGroupPresentation[] => {
+  if (index === undefined) {
+    return [];
+  }
+  const groups = new Map<
+    string,
+    { readonly group: ShellSearchGroupPresentation; readonly resourceTypes: Set<string> }
+  >();
+  for (const entry of index.business) {
+    const observed = groupPresentation(entry);
+    const current = groups.get(observed.key);
+    if (current === undefined) {
+      groups.set(observed.key, { group: observed, resourceTypes: new Set(observed.resourceTypes) });
+    } else {
+      current.resourceTypes.add(entry.resourceType);
+    }
+  }
+  return [...groups.values()]
+    .map(({ group, resourceTypes }) => ({ ...group, resourceTypes: [...resourceTypes] }))
+    .toSorted((left, right) => left.order - right.order || left.key.localeCompare(right.key));
+};
+
+/** The one group of a hit; a genuinely unpresented type stays in the generic group. */
+export const shellSearchGroupOf = (
+  result: Pick<ShellSearchResult, 'kind' | 'ref'>,
+  index: ShellSearchPresentationIndex | undefined,
+): ShellSearchGroupPresentation => {
+  if (index === undefined) {
+    return genericGroup;
+  }
+  const entry = entryOf(index, result.ref);
+  if (entry !== undefined) {
+    return groupPresentation(entry);
+  }
+  // The separate Core-system branch carries its own declared family/group metadata; it never becomes a business page.
+  const system = systemOf(index, result.ref);
+  return system === undefined
+    ? genericGroup
+    : {
+        icon: system.group.icon,
+        key: system.group.key,
+        label: system.group.label,
+        order: system.group.order,
+        resourceTypes: [system.resourceType],
+      };
+};
+
+/**
+ * The exact `resourceTypes` request filter for the given groups. An unknown or unresolved group contributes no type;
+ * the caller decides whether that is an explicit empty request rather than broadening the payload.
+ */
+export const shellSearchResourceTypesForGroups = (
+  index: ShellSearchPresentationIndex | undefined,
+  groups: readonly string[],
+): readonly string[] => {
+  if (index === undefined || groups.length === 0) {
+    return [];
+  }
+  const selected = new Set(groups);
+  const resourceTypes: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of index.business) {
+    if (selected.has(entry.presentation.group.key) && !seen.has(entry.resourceType)) {
+      seen.add(entry.resourceType);
+      resourceTypes.push(entry.resourceType);
+    }
+  }
+  if (index.system !== undefined && selected.has(index.system.group.key) && !seen.has(index.system.resourceType)) {
+    resourceTypes.push(index.system.resourceType);
+  }
+  return resourceTypes;
+};
+
+/** The families the validated inventory declares, each with its own groups and exact resource types. */
+export const shellSearchFamilies = (
+  index: ShellSearchPresentationIndex | undefined,
+): readonly ShellSearchFamilyPresentation[] => {
+  if (index === undefined) {
+    return [];
+  }
+  const families = new Map<
+    string,
+    {
+      readonly groups: Map<
+        string,
+        { readonly presentation: ShellSearchGroupPresentation; readonly resourceTypes: Set<string> }
+      >;
+      readonly icon: IconType;
+      readonly key: string;
+      readonly label: CoreShellLabel;
+      readonly order: number;
+    }
+  >();
+  const metadata = [
+    ...index.business.map((entry) => ({ ...entry.presentation, resourceType: entry.resourceType })),
+    ...(index.system === undefined
+      ? []
+      : [{ family: index.system.family, group: index.system.group, resourceType: index.system.resourceType }]),
+  ];
+  for (const { family, group, resourceType } of metadata) {
+    const current = families.get(family.key);
+    const target = current ?? {
+      groups: new Map<
+        string,
+        { readonly presentation: ShellSearchGroupPresentation; readonly resourceTypes: Set<string> }
+      >(),
+      icon: family.icon,
+      key: family.key,
+      label: family.label,
+      order: family.order,
+    };
+    families.set(family.key, target);
+    const observed = target.groups.get(group.key);
+    if (observed === undefined) {
+      target.groups.set(group.key, {
+        presentation: { ...group, resourceTypes: [resourceType] },
+        resourceTypes: new Set([resourceType]),
+      });
+    } else {
+      observed.resourceTypes.add(resourceType);
+    }
+  }
+  return [...families.values()]
+    .map(({ groups, ...family }) => {
+      const orderedGroups = [...groups.values()]
+        .map(({ presentation, resourceTypes: groupTypes }) => ({
+          ...presentation,
+          resourceTypes: [...groupTypes],
+        }))
+        .toSorted((left, right) => left.order - right.order || left.key.localeCompare(right.key));
+      const resourceTypes: string[] = [];
+      const seen = new Set<string>();
+      for (const group of orderedGroups) {
+        for (const resourceType of group.resourceTypes) {
+          if (!seen.has(resourceType)) {
+            seen.add(resourceType);
+            resourceTypes.push(resourceType);
+          }
+        }
+      }
+      return { ...family, groups: orderedGroups, resourceTypes };
+    })
+    .toSorted((left, right) => left.order - right.order || left.key.localeCompare(right.key));
+};
+
+/** The given family keys in the inventory's declared order; unknown keys never become a selection. */
+export const shellSearchFamiliesInOrder = (
+  families: readonly string[],
+  available: readonly ShellSearchFamilyPresentation[],
+): readonly string[] => {
+  const requested = new Set(families);
+  const ordered: string[] = [];
+  for (const { key } of available) {
+    if (requested.has(key)) {
+      ordered.push(key);
+    }
+  }
+  return ordered;
+};

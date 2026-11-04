@@ -44,10 +44,36 @@ const searchContribution = (value: typeof ShellSearchContributionSchema.Encoded)
 
 const moduleKey = 'facility.operations';
 const facilityNavigationGroupKey = 'shell.navigation.facility';
-const pageKey = (agenda: string) => `facility.operations.page.${agenda}`;
+const pageKey = (agenda: string) => `${moduleKey}.page.${agenda}`;
 const moduleAccess = { kind: 'context_permission', permission: 'module.access' } as const;
 /** Restricted agendas (finance values, documents, security) are listed only for principals with read_all. */
 const restrictedAccess = { kind: 'context_permission', permission: 'facility.operations.read_all' } as const;
+
+const propertyFamily = {
+  icon: 'icon-[mdi--home-city-outline]',
+  key: 'property',
+  label: { cs: 'Nemovitosti a nájmy', en: 'Real estate and leases' },
+  order: 50,
+} as const;
+
+const assetGroup = {
+  icon: 'icon-[mdi--toolbox-outline]',
+  key: 'asset',
+  label: { cs: 'Majetek', en: 'Assets' },
+  order: 180,
+} as const;
+const deviceGroup = {
+  icon: 'icon-[mdi--gauge]',
+  key: 'device',
+  label: { cs: 'Zařízení a měřidla', en: 'Devices and meters' },
+  order: 190,
+} as const;
+const facilityDocumentGroup = {
+  icon: 'icon-[mdi--folder-file-outline]',
+  key: 'facilityDocument',
+  label: { cs: 'Provozní dokumenty', en: 'Operations documents' },
+  order: 200,
+} as const;
 
 export const facilityOperationsManifest = defineOntosModuleManifest({
   activation: {
@@ -132,7 +158,7 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
       {
         accessFiltering: 'resource_permission',
         key: 'facility.operations.meters',
-        owningModuleId: moduleKey,
+        owningModuleId: 'facility.operations',
         resourceType: 'facility.operations.meter',
       },
       // </generated-module-manifest-search>
@@ -382,6 +408,20 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
             role: 'search',
             scope: 'tenant',
           },
+          presentation: {
+            family: propertyFamily,
+            group: assetGroup,
+            record: {
+              pageKey: pageKey('assets'),
+              selector: {
+                idEncoding: 'selected_company_dot_prefix',
+                idFormat: 'opaque',
+                kind: 'query',
+                parameterName: 'asset',
+              },
+            },
+            scope: 'company',
+          },
           searchKey: 'facility.operations.assets',
         }),
         searchContribution({
@@ -393,6 +433,20 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
             moduleKey,
             role: 'search',
             scope: 'tenant',
+          },
+          presentation: {
+            family: propertyFamily,
+            group: deviceGroup,
+            record: {
+              pageKey: pageKey('security'),
+              selector: {
+                idEncoding: 'selected_company_dot_prefix',
+                idFormat: 'opaque',
+                kind: 'query',
+                parameterName: 'device',
+              },
+            },
+            scope: 'company',
           },
           searchKey: 'facility.operations.devices',
         }),
@@ -406,6 +460,20 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
             role: 'search',
             scope: 'tenant',
           },
+          presentation: {
+            family: propertyFamily,
+            group: facilityDocumentGroup,
+            record: {
+              pageKey: pageKey('documents'),
+              selector: {
+                idEncoding: 'selected_company_dot_prefix',
+                idFormat: 'opaque',
+                kind: 'query',
+                parameterName: 'doc',
+              },
+            },
+            scope: 'company',
+          },
           searchKey: 'facility.operations.documents',
         }),
         searchContribution({
@@ -417,6 +485,20 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
             moduleKey,
             role: 'search',
             scope: 'tenant',
+          },
+          presentation: {
+            family: propertyFamily,
+            group: deviceGroup,
+            record: {
+              pageKey: pageKey('meters'),
+              selector: {
+                idEncoding: 'selected_company_dot_prefix',
+                idFormat: 'opaque',
+                kind: 'query',
+                parameterName: 'meter',
+              },
+            },
+            scope: 'company',
           },
           searchKey: 'facility.operations.meters',
         }),

@@ -13,7 +13,6 @@ import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime
 import type { ShellNavigationItem } from '../../../../../../../shared/api.ts';
 import { ShellContentLayout } from '../../../../../shell-content-layout.tsx';
 import { buildShellNavigation, ShellRouteLink } from '../../../../../shell-frame.tsx';
-import { recordAgendaPaths, shellSearchPresentationContext } from '../../../../../shell-search-resource-types.ts';
 import { ShellStatusPanel, shellStatusTitleKey } from '../../../../../shell-status-panel.tsx';
 import { SignInRedirect } from '../../../../../sign-in-redirect.tsx';
 import { useShellControls } from '../../../../../use-shell-controls.ts';
@@ -22,13 +21,6 @@ import type { ResourcePageModel } from './resource-page-model.ts';
 const MediaStateSchema = Schema.Literals(['failed', 'idle', 'pending', 'success']);
 type MediaState = typeof MediaStateSchema.Type;
 type ReadyResourceModel = Extract<ResourcePageModel, { state: 'ready' }>;
-type AuthenticatedShell = Extract<ResourcePageModel['shell'], { readonly state: 'authenticated' }>;
-
-/** The document's composed navigation, when it has one; the Shell reads record destinations from it. */
-const composedSearchContextOf = (shell: AuthenticatedShell) => {
-  const navigation = shell.navigation.state === 'available' ? shell.navigation : undefined;
-  return shellSearchPresentationContext(navigation?.items ?? [], navigation?.recordDestinations ?? []);
-};
 
 const ResourceDetails = ({
   mediaState,
@@ -193,9 +185,7 @@ const ResourcePage = () => {
   const model = useLoaderData({
     from: '/$lang/resources/$moduleId/$resourceType/$resourceId',
   });
-  const { moduleId, resourceId, resourceType } = useParams({
-    from: '/$lang/resources/$moduleId/$resourceType/$resourceId',
-  });
+  const { moduleId } = useParams({ from: '/$lang/resources/$moduleId/$resourceType/$resourceId' });
   const [mediaState, setMediaState] = useState<MediaState>('idle');
   const [attachmentReloadRequired, setAttachmentReloadRequired] = useState(false);
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
@@ -255,8 +245,7 @@ const ResourcePage = () => {
       </main>
     );
   }
-  const recordRef = { moduleId, resourceId, resourceType };
-  const agendaPaths = recordAgendaPaths(recordRef, composedSearchContextOf(model.shell));
+  const agendaPaths = model.state === 'ready' ? undefined : model.agendaPaths;
   // Only an admitted, authorized detail response proves the record and may render its title, fields or actions.
   // A search history title is navigation input, never evidence that a failed, missing or unsupported read found a record.
   const detailNotSupported = model.state === 'unavailable' && model.detailSupport === 'not_supported';

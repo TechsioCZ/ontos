@@ -8,9 +8,10 @@ import type { MicroVerticalReadiness, MicroVerticalOperationContext } from '@mod
 import { identity } from 'effect';
 
 // <generated-governed-http-api-imports>
-
 import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
+import { EmployeesSearchApi } from './apis/employees-search.ts';
 import { RecordsApi } from './apis/records.ts';
+import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
 // </generated-governed-http-api-imports>
 
 export type WorkforceReadiness = MicroVerticalReadiness;
@@ -36,7 +37,9 @@ export const workforceApi = HttpApi.make('WorkforceApi')
   .addHttpApi(workforceFoundationApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(ApplyCommandActionApi)
+  .addHttpApi(EmployeesSearchApi)
   .addHttpApi(RecordsApi)
+  .addHttpApi(RequestSearchRebuildActionApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

@@ -6,9 +6,11 @@ import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { Effect } from 'effect';
+import { Effect, Option, Schema } from 'effect';
+import { Url } from 'effect/http';
 import { useState } from 'react';
 import type { WorkforceCommand } from '../../../../../shared/actions/apply-command.ts';
+import { EmployeeIdSchema } from '../../../../../shared/apis/records.ts';
 import type { Employee, EmployeeId, EmployeeRole, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import {
@@ -57,6 +59,244 @@ export type AutosaveCommand = (
   expectedRevision: number,
   shown: ShownEdit,
 ) => Effect.Effect<CommitOutcome | number>;
+
+/** What a copied employees URL names: one exact employee, nothing, or an explicit invalid selection. */
+export type EmployeeSearchTarget =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'invalid' }
+  | { readonly id: EmployeeId; readonly kind: 'id' };
+
+/** One Schema boundary owns the native query-string reading; no route code reads single parameters by hand. */
+const EmployeeSearchQuerySchema = Schema.RecordFromUrlParams.pipe(
+  Schema.decodeTo(
+    Schema.Struct({
+      employeeId: Schema.optionalKey(EmployeeIdSchema),
+    }),
+  ),
+);
+
+/** The native query selection of the page (`?employeeId=`); an invalid value is explicit, never a fallback. */
+export const employeeSearchTargetFromSearchStr = (searchStr: string): EmployeeSearchTarget =>
+  Option.match(
+    Schema.decodeOption(EmployeeSearchQuerySchema)(Url.urlParams(new URL(searchStr, 'https://workforce.invalid/'))),
+    {
+      onNone: (): EmployeeSearchTarget => ({ kind: 'invalid' }),
+      onSome: ({ employeeId }): EmployeeSearchTarget =>
+        employeeId === undefined ? { kind: 'absent' } : { id: employeeId, kind: 'id' },
+    },
+  );
+
+const EmployeeSearchLoadStatusSchema = Schema.Literals(['error', 'forbidden', 'loading', 'ready']);
+export type EmployeeSearchLoadStatus = typeof EmployeeSearchLoadStatusSchema.Type;
+
+export type EmployeeSearchSelection =
+  | { readonly status: 'none' | 'invalid' }
+  | { readonly employeeId: EmployeeId; readonly status: 'loading' | 'forbidden' | 'unavailable' | 'missing' }
+  | { readonly employee: Employee; readonly employeeId: EmployeeId; readonly status: 'ready' };
+
+/**
+ * Resolves the copied target against the one authorized, unfiltered employees read of the current company. A target
+ * that is not in that read is never substituted by the first row: absence means missing or forbidden and stays an
+ * honest, non-disclosing unavailable selection.
+ */
+export const employeeSearchSelection = ({
+  items,
+  load,
+  target,
+}: {
+  readonly items: readonly Employee[];
+  readonly load: EmployeeSearchLoadStatus;
+  readonly target: EmployeeSearchTarget;
+}): EmployeeSearchSelection => {
+  if (target.kind === 'absent') {
+    return { status: 'none' };
+  }
+  if (target.kind === 'invalid') {
+    return { status: 'invalid' };
+  }
+  const { id: employeeId } = target;
+  if (load !== 'ready') {
+    return { employeeId, status: load === 'error' ? 'unavailable' : load };
+  }
+  const employee = items.find(({ id }) => id === employeeId);
+  return employee === undefined ? { employeeId, status: 'missing' } : { employee, employeeId, status: 'ready' };
+};
+
+/** A target panel never replaces a dialog that already holds a draft; only a fresh, undismissed target opens itself. */
+export const shouldOpenEmployeeSearchTarget = ({
+  activeDialogOpened,
+  dismissedEmployeeId,
+  selection,
+}: {
+  readonly activeDialogOpened: boolean;
+  readonly dismissedEmployeeId: string | null;
+  readonly selection: EmployeeSearchSelection;
+}): boolean => selection.status === 'ready' && !activeDialogOpened && selection.employeeId !== dismissedEmployeeId;
+
+/** A reader without write opens the same detail read-only; only a writable reader gets the autosaving edit panel. */
+export const employeeSearchPanelMode = (canWrite: boolean): 'edit' | 'read-only' => (canWrite ? 'edit' : 'read-only');
+
+export interface EmployeeSearchNotice {
+  readonly labelKey: string;
+  readonly retry: boolean;
+  readonly tone: 'error' | 'warning';
+}
+
+/** The honest, non-disclosing notice of a copied target that is not currently available to this reader. */
+export const employeeSearchNotice = (selection: EmployeeSearchSelection): EmployeeSearchNotice | undefined => {
+  if (selection.status === 'forbidden') {
+    return { labelKey: `${key}.empty.forbidden`, retry: false, tone: 'error' };
+  }
+  if (selection.status === 'invalid' || selection.status === 'missing' || selection.status === 'unavailable') {
+    return { labelKey: `${key}.errors.load`, retry: true, tone: 'warning' };
+  }
+  return undefined;
+};
+
+/** The trusted actor/company scope a copied target must be revalidated against. */
+export interface EmployeeTargetScope {
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+}
+
+export interface EmployeeTargetRequest {
+  /** A retry keeps the same target/scope identity but starts a fresh read. */
+  readonly attempt?: number;
+  readonly employeeId: EmployeeId;
+  readonly scope: EmployeeTargetScope;
+}
+
+export const employeeTargetScopeKey = (scope: EmployeeTargetScope): string =>
+  [scope.tenantId, scope.legalEntityId, scope.principalId].join('\u0000');
+
+export const employeeTargetRequestKey = ({ employeeId, scope }: EmployeeTargetRequest): string =>
+  [employeeTargetScopeKey(scope), employeeId].join('\u0000');
+
+/** The current authorized employee plus the revision/capabilities the fresh read itself returned. */
+export interface EmployeeTargetRecord {
+  readonly availablePrincipals: RecordsResponse['availablePrincipals'];
+  readonly canWrite: boolean;
+  readonly employee: Employee;
+  readonly revision: number;
+}
+
+export type EmployeeTargetState =
+  | { readonly status: 'idle' }
+  | { readonly status: 'invalid' }
+  | { readonly employeeId: EmployeeId; readonly status: 'loading' | 'forbidden' | 'unavailable' | 'missing' }
+  | { readonly employeeId: EmployeeId; readonly record: EmployeeTargetRecord; readonly status: 'ready' };
+
+/** Maps the fresh target read onto the same notice language as the list-based selection. */
+export const employeeTargetNotice = (state: EmployeeTargetState): EmployeeSearchNotice | undefined => {
+  if (state.status === 'idle') {
+    return undefined;
+  }
+  if (state.status === 'invalid') {
+    return employeeSearchNotice({ status: 'invalid' });
+  }
+  if (state.status === 'ready') {
+    return employeeSearchNotice({ employee: state.record.employee, employeeId: state.employeeId, status: 'ready' });
+  }
+  return employeeSearchNotice({ employeeId: state.employeeId, status: state.status });
+};
+
+const freshTargetState = (response: RecordsResponse, request: EmployeeTargetRequest): EmployeeTargetState => {
+  const { actorPrincipalRef } = response;
+  if (
+    actorPrincipalRef.principalId !== request.scope.principalId ||
+    actorPrincipalRef.tenantId !== request.scope.tenantId
+  ) {
+    // A response carrying another actor's scope can never become the current panel, even before an epoch check.
+    return { employeeId: request.employeeId, status: 'unavailable' };
+  }
+  const employee = response.items.find(({ id }) => id === request.employeeId);
+  if (employee === undefined) {
+    return { employeeId: request.employeeId, status: 'missing' };
+  }
+  return {
+    employeeId: request.employeeId,
+    record: {
+      availablePrincipals: response.availablePrincipals,
+      canWrite: response.canWrite,
+      employee,
+      revision: response.revision,
+    },
+    status: 'ready',
+  };
+};
+
+type EmployeeTargetApply = (request: EmployeeTargetRequest, state: EmployeeTargetState) => void;
+type EmployeeTargetClassify<Failure> = (failure: Failure) => 'forbidden' | 'unavailable';
+type EmployeeTargetRead<Failure> = (employeeId: EmployeeId) => Effect.Effect<RecordsResponse, Failure>;
+type EmployeeTargetRun = (effect: Effect.Effect<void>) => () => void;
+
+/**
+ * One fresh, cancellable target read: each update interrupts the previous lookup, and only the current epoch may
+ * publish a state. It never reads, refreshes or mutates the page's global employees/tags/AI datasets.
+ */
+export class EmployeeTargetController<Failure> {
+  readonly #apply: EmployeeTargetApply;
+  readonly #classify: EmployeeTargetClassify<Failure>;
+  readonly #read: EmployeeTargetRead<Failure>;
+  readonly #run: EmployeeTargetRun;
+  #epoch = 0;
+  #interrupt: (() => void) | null = null;
+
+  constructor(
+    apply: EmployeeTargetApply,
+    classify: EmployeeTargetClassify<Failure>,
+    read: EmployeeTargetRead<Failure>,
+    run: EmployeeTargetRun,
+  ) {
+    this.#apply = apply;
+    this.#classify = classify;
+    this.#read = read;
+    this.#run = run;
+  }
+
+  readonly cancel = (): void => {
+    this.#epoch += 1;
+    const current = this.#interrupt;
+    this.#interrupt = null;
+    current?.();
+  };
+
+  readonly update = ({
+    enabled,
+    request,
+  }: {
+    readonly enabled: boolean;
+    readonly request: EmployeeTargetRequest;
+  }): void => {
+    this.cancel();
+    if (!enabled) {
+      return;
+    }
+    const currentEpoch = this.#epoch;
+    this.#apply(request, { employeeId: request.employeeId, status: 'loading' });
+    this.#interrupt = this.#run(
+      this.#read(request.employeeId).pipe(
+        Effect.match({
+          onFailure: (failure) => ({ classification: this.#classify(failure) }),
+          onSuccess: (response) => ({ state: freshTargetState(response, request) }),
+        }),
+        Effect.flatMap((outcome) =>
+          Effect.sync(() => {
+            if (currentEpoch !== this.#epoch) {
+              return;
+            }
+            if ('state' in outcome) {
+              this.#apply(request, outcome.state);
+            } else {
+              this.#apply(request, { employeeId: request.employeeId, status: outcome.classification });
+            }
+          }),
+        ),
+      ),
+    );
+  };
+}
 
 const commitErrorKey = (outcome: CommitOutcome): string => {
   if (outcome === 'conflict') {
@@ -158,11 +398,14 @@ const EmployeeFields = ({
         </StatusText>
       )}
       <p className="text-sm text-fg-secondary">{t(`${key}.form.principalHelp`)}</p>
-      <a className="text-sm underline" href={`/${language}/sprava/lide-a-role`}>
-        {t(`${key}.form.managePeople`)}
-      </a>
+      {disabled ? null : (
+        <a className="text-sm underline" href={`/${language}/sprava/lide-a-role`}>
+          {t(`${key}.form.managePeople`)}
+        </a>
+      )}
       <FormInput
         autoComplete="off"
+        disabled={disabled}
         id="employee-full-name"
         label={t(`${key}.form.fullName`)}
         name="fullName"
@@ -174,6 +417,7 @@ const EmployeeFields = ({
       />
       <FormInput
         autoComplete="email"
+        disabled={disabled}
         id="employee-email"
         label={t(`${key}.form.email`)}
         name="email"
@@ -186,6 +430,7 @@ const EmployeeFields = ({
       />
       <FormInput
         autoComplete="tel"
+        disabled={disabled}
         id="employee-phone"
         label={t(`${key}.form.phone`)}
         name="phone"
@@ -196,6 +441,7 @@ const EmployeeFields = ({
         {...fieldStatus('phone')}
       />
       <SelectTemplate
+        disabled={disabled}
         items={roleItems}
         label={t(`${key}.form.role`)}
         labelProps={selectLabelProps}
@@ -211,6 +457,7 @@ const EmployeeFields = ({
       />
       <FormInput
         autoComplete="off"
+        disabled={disabled}
         id="employee-department"
         label={t(`${key}.form.department`)}
         name="department"
@@ -220,7 +467,7 @@ const EmployeeFields = ({
         value={draft.department}
         {...fieldStatus('department')}
       />
-      <Switch checked={draft.active} onCheckedChange={(checked) => onChange({ active: checked })}>
+      <Switch checked={draft.active} disabled={disabled} onCheckedChange={(checked) => onChange({ active: checked })}>
         {t(`${key}.form.active`)}
       </Switch>
     </>
@@ -331,6 +578,10 @@ const EmployeeEditPanel = ({
 
 const noop = () => {
   // Creating saves only on "Vytvořit zaměstnance".
+};
+
+const noopChange = () => {
+  // A read-only detail never changes its draft.
 };
 
 /**
@@ -484,6 +735,54 @@ const EmployeeCreateDialog = ({
   );
 };
 
+/**
+ * One Employee opened from a copied search URL for a reader without write: the same fields, disabled, with no autosave
+ * controller, form submit, mutation action or draft. Closing it only dismisses the panel.
+ */
+const EmployeeReadOnlyPanel = ({
+  availablePrincipals,
+  employee,
+  onClose,
+}: {
+  readonly availablePrincipals: RecordsResponse['availablePrincipals'];
+  readonly employee: Employee;
+  readonly onClose: () => void;
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <SidePanel
+      actions={
+        <Button onClick={onClose} theme="outlined" variant="secondary">
+          {t(`${key}.form.close`)}
+        </Button>
+      }
+      initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('[data-employee-detail]')}
+      onOpenChange={(next) => {
+        if (!next) {
+          onClose();
+        }
+      }}
+      open
+      resizeLabel={t(RESIZE_LABEL_KEY)}
+      size="md"
+      title={employee.fullName}
+    >
+      <div className="flex flex-col gap-200 py-200" data-employee-detail>
+        <EmployeeFields
+          availablePrincipals={availablePrincipals}
+          disabled
+          draft={draftFromEmployee(employee)}
+          emailTaken={false}
+          employee={employee}
+          onBlur={noopChange}
+          onChange={noopChange}
+          showErrors={false}
+        />
+      </div>
+    </SidePanel>
+  );
+};
+
 /** Create (employee is null) or edit one Employee in a right-hand panel. */
 export const EmployeeFormDialog = ({
   autosaveCommit,
@@ -491,6 +790,7 @@ export const EmployeeFormDialog = ({
   commit,
   employee,
   onClose,
+  readOnly = false,
   revision,
 }: {
   readonly autosaveCommit: AutosaveCommand;
@@ -498,11 +798,16 @@ export const EmployeeFormDialog = ({
   readonly commit: CommitCommand;
   readonly employee: Employee | null;
   readonly onClose: () => void;
+  readonly readOnly?: boolean;
   readonly revision: number;
-}) =>
-  employee === null ? (
-    <EmployeeCreateDialog availablePrincipals={availablePrincipals} commit={commit} onClose={onClose} />
-  ) : (
+}) => {
+  if (employee === null) {
+    return <EmployeeCreateDialog availablePrincipals={availablePrincipals} commit={commit} onClose={onClose} />;
+  }
+  if (readOnly) {
+    return <EmployeeReadOnlyPanel availablePrincipals={availablePrincipals} employee={employee} onClose={onClose} />;
+  }
+  return (
     <EmployeeEditPanel
       autosaveCommit={autosaveCommit}
       availablePrincipals={availablePrincipals}
@@ -511,6 +816,7 @@ export const EmployeeFormDialog = ({
       revision={revision}
     />
   );
+};
 
 /** Bulk department change: one text field applied to every selected Employee. */
 export const BulkDepartmentDialog = ({

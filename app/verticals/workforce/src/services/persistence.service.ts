@@ -7,7 +7,7 @@ import {
 } from '@app/core-runtime';
 import type { ContextAccessService, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { loadAssignablePrincipalDirectory } from '@app/core-runtime/auth/assignable-principals';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { DateTime, Effect, Match, Predicate, Schema, Struct } from 'effect';
 
 import {
@@ -22,7 +22,7 @@ import {
   WorkforceScopeMismatch,
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload, WorkforceCommand } from '../../shared/actions/apply-command.ts';
-import { AiActivityEntrySchema, WorkforceStateSchema } from '../../shared/apis/records.ts';
+import { AiActivityEntrySchema, EmployeeSchema, WorkforceStateSchema } from '../../shared/apis/records.ts';
 import type {
   Employee,
   EmployeeRole,
@@ -254,12 +254,9 @@ export const workforceRecordsGrants = Effect.fn('Workforce.recordsGrants')(funct
 });
 export type RecordsGrants = Effect.Success<ReturnType<typeof workforceRecordsGrants>>;
 
-export const visibleEmployees = Effect.fn('Workforce.visibleEmployees')(function* visibleEmployees(
-  employees: readonly Employee[],
-  scope: OperationalScope,
-  tenantId: TenantId,
-  readAll: boolean,
-) {
+export const visibleEmployees = Effect.fn('Workforce.visibleEmployees')(function* visibleEmployees<
+  Row extends Pick<Employee, 'id' | 'principalRef'>,
+>(employees: readonly Row[], scope: OperationalScope, tenantId: TenantId, readAll: boolean) {
   const access = yield* ContextAccess;
   if (readAll) {
     return employees;
@@ -282,6 +279,77 @@ export const visibleEmployees = Effect.fn('Workforce.visibleEmployees')(function
       decisions[index]?.decision === 'allowed' || employee.principalRef?.principalId === scope.principalId,
   );
 });
+
+/** Internal owner evidence: principalRef is used only by canonical self visibility, never as search text/output. */
+export const WorkforceSearchEmployeeSchema = Schema.Struct(
+  Struct.pick(EmployeeSchema.fields, ['active', 'department', 'fullName', 'id', 'principalRef', 'role']),
+);
+export type WorkforceSearchEmployee = typeof WorkforceSearchEmployeeSchema.Type;
+
+/** Search needs only the canonical current read grant, not command/write authorization. */
+export const workforceSearchGrants = (scope: OperationalScope) => contextGrant(scope, 'read_all');
+
+/** Same resource/self finish as records; module.access by itself never grants employee visibility. */
+export const finishWorkforceSearchMetadata = Effect.fn('Workforce.finishSearchMetadata')(function* finishSearchMetadata(
+  employees: readonly WorkforceSearchEmployee[],
+  readAll: boolean,
+  scope: OperationalScope,
+) {
+  const tenantId = yield* Schema.decodeEffect(TenantIdSchema)(scope.tenantId).pipe(Effect.mapError(unavailable));
+  if (
+    employees.some((employee) => employee.principalRef !== undefined && employee.principalRef.tenantId !== tenantId)
+  ) {
+    return yield* referenceUnavailable();
+  }
+  return yield* visibleEmployees(
+    employees.filter((employee) => employee.active),
+    scope,
+    tenantId,
+    readAll,
+  );
+});
+
+/** Safe-field-only read of the actual selected company, without contact data, directory or Core Principal SQL. */
+export const workforceSearchMetadataService = Effect.fn('Workforce.searchMetadataService')(
+  function* searchMetadataService(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
+    const { legalEntityId } = scope;
+    if (
+      legalEntityId === undefined ||
+      transaction.scope.tenantId !== scope.tenantId ||
+      transaction.scope.legalEntityId !== legalEntityId
+    ) {
+      return yield* new OperationContextUnavailable({
+        code: 'operation_context_unavailable',
+        reason: 'A scoped company transaction is required',
+      });
+    }
+    const loadSearchMetadata = Effect.fn('Workforce.loadSearchMetadata')(function* loadSearchMetadata() {
+      const [row] = yield* transaction
+        .select({
+          employees: sql<unknown>`case when jsonb_typeof(${workforceStates.state}->'employees') = 'array' then coalesce((
+            select jsonb_agg(jsonb_build_object(
+              'active', employee->'active',
+              'department', employee->'department',
+              'fullName', employee->'fullName',
+              'id', employee->'id',
+              'role', employee->'role'
+            ) || case when employee ? 'principalRef' then jsonb_build_object('principalRef', jsonb_build_object(
+              'principalId', employee->'principalRef'->'principalId',
+              'tenantId', employee->'principalRef'->'tenantId'
+            )) else '{}'::jsonb end)
+            from jsonb_array_elements(${workforceStates.state}->'employees') as employee
+          ), '[]'::jsonb) else null end`,
+        })
+        .from(workforceStates)
+        .where(and(eq(workforceStates.tenantId, scope.tenantId), eq(workforceStates.legalEntityId, legalEntityId)))
+        .limit(1);
+      return yield* Schema.decodeUnknownEffect(Schema.Array(WorkforceSearchEmployeeSchema))(
+        row === undefined ? [] : row.employees,
+      );
+    }, Effect.mapError(unavailable));
+    return { loadSearchMetadata };
+  },
+);
 
 const roleCounts = (employees: readonly Employee[]) => {
   const counts = { ACCOUNTANT: 0, SALES_HEAD: 0, SALES_REP: 0, SUPPORT: 0, WAREHOUSE: 0 } satisfies Record<

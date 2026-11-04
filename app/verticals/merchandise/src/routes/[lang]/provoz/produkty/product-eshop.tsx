@@ -13,7 +13,7 @@ import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { selectItem } from '../../../../ui/select-item.ts';
 import { formatDateTime, formatMoney, ScrollRegion, SectionCard } from '@app/admin-ui';
 import { DateTime } from 'effect';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type {
@@ -26,6 +26,7 @@ import { grossUnitPriceMinor, isRealVariant } from '../../../../../shared/domain
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import { useCommandFailure } from './product-form-labels.ts';
+import type { ProductVariantDestination } from './product-variant-destination.ts';
 
 const availabilityPresentation = {
   IN_STOCK: { label: 'Skladem', variant: 'success' },
@@ -91,6 +92,7 @@ interface PanelProps {
   readonly product: ProductRecord;
   readonly revision: number;
   readonly storefrontOrigin?: string;
+  readonly variantDestination?: ProductVariantDestination | undefined;
 }
 
 type MovementReason = Exclude<StockMovementReason, 'ORDER'>;
@@ -480,9 +482,33 @@ export const VariantsPanel = (props: PanelProps) => {
     visibleDrafts,
   } = useVariantsPanel(props);
   const placeholders = variantPlaceholders(product);
+  const variantDestination = props.variantDestination ?? { kind: 'none' };
+  const selectedKey = variantDestination.kind === 'selected' ? variantDestination.draftKey : undefined;
+  const [appliedTarget, setAppliedTarget] = useState<string | null>(null);
+  const currentTarget = selectedKey ?? null;
+  if (currentTarget !== appliedTarget) {
+    setAppliedTarget(currentTarget);
+    if (selectedKey !== undefined) {
+      const index = drafts.findIndex((draft) => draft.key === selectedKey);
+      if (index !== -1) {
+        setVariantSearch('');
+        setVariantPage(Math.floor(index / 20));
+      }
+    }
+  }
+  useEffect(() => {
+    if (selectedKey !== undefined) {
+      document.querySelector<HTMLElement>('[data-variant-target="selected"]')?.focus();
+    }
+  }, [selectedKey]);
 
   return (
     <div className="flex flex-col gap-250">
+      {variantDestination.kind === 'unavailable' ? (
+        <StatusText showIcon status="warning">
+          {t('merchandise.pages.products.detail.variantUnavailable')}
+        </StatusText>
+      ) : null}
       <p className="text-fg-secondary text-sm">
         Varianta má vlastní SKU, cenu, sklad a stav. Cena se zadává bez DPH, zákazník v e-shopu vidí cenu s DPH (
         {product.vatRate} %), kterou spočítá server.
@@ -546,7 +572,14 @@ export const VariantsPanel = (props: PanelProps) => {
                   const price = parseCzk(draft.priceText);
                   const error = errors[index];
                   return (
-                    <Table.Row key={draft.key}>
+                    <Table.Row
+                      aria-current={draft.key === selectedKey}
+                      className={draft.key === selectedKey ? 'bg-primary/10' : ''}
+                      data-variant-target={draft.key === selectedKey ? 'selected' : 'none'}
+                      key={draft.key}
+                      selected={draft.key === selectedKey}
+                      tabIndex={-1}
+                    >
                       <Table.Cell>
                         <div className="flex min-w-48 flex-col gap-50">
                           <FormInput
@@ -560,6 +593,11 @@ export const VariantsPanel = (props: PanelProps) => {
                             value={draft.name}
                             {...variantFieldError(submitted, 'Zadejte název', error?.name)}
                           />
+                          {draft.key === selectedKey ? (
+                            <Badge size="sm" variant="info">
+                              {t('merchandise.pages.products.detail.variantSelected')}
+                            </Badge>
+                          ) : null}
                           <FormInput
                             disabled={!canWrite}
                             id={`variant-attrs-${draft.key}`}

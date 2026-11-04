@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -19,7 +20,8 @@ import {
   Layer,
   Schema,
 } from '@modern-js/bff-effect/effect-edge';
-import { Cause, Clock, ConfigProvider, Predicate, Redacted } from 'effect';
+import { Cause, Clock, ConfigProvider, FileSystem, Predicate, Redacted, Sink } from 'effect';
+import type { Program, TSType, TSInterfaceDeclaration } from 'oxc-parser';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SignJWT, exportJWK, generateKeyPair, generateSecret, importJWK } from 'jose';
@@ -62,9 +64,10 @@ import {
   publishedOutboxContractExports,
 } from '../../published-outbox-contracts.mts';
 import { getHelpText, runScaffoldEffect, ScaffoldingError } from '../cli.mts';
-import { customizeOutboxWorkerHostEntry } from '../outbox-worker/scaffold.mts';
+import { customizeOutboxWorkerHostEntry, planOutboxWorkerScaffold } from '../outbox-worker/scaffold.mts';
+import { planOutboxMessageScaffold } from '../outbox-message/scaffold.mts';
 import type { ScaffoldCommand } from '../cli.mts';
-import type { JsonValue } from '../shared.mts';
+import type { JsonValue, ScaffoldPlan } from '../shared.mts';
 import {
   GOVERNED_HTTP_API_ADDITION_SLOT_END,
   GOVERNED_HTTP_API_ADDITION_SLOT_START,
@@ -79,7 +82,17 @@ import {
   createScaffoldErrorTools,
   insertSortedSlot,
   readGeneratedSlotEntries,
+  readCanonicalSearchDescriptor,
+  hasCanonicalMetadataImport,
+  parseScaffoldMetadata,
+  metadataBindings,
+  formatGeneratedMutationContent,
 } from '../shared.mts';
+import {
+  OntosSearchDescriptorSchema,
+  OntosResourceTypeSchema,
+} from '../../../packages/core-runtime/src/modules/manifest.ts';
+import { ShellSearchContributionSchema } from '../../../packages/core-runtime/src/modules/shell-contribution.ts';
 import { snapshotTree, write } from './fixture-files.mts';
 import { linkFixtureDependencies } from './fixture-ownership.mts';
 
@@ -95,6 +108,7 @@ const ASSEMBLED_HANDLER_DECLARATION = 'const apiHandlersLive = Layer.mergeAll(';
 
 const MODULE_CONTRACT_COMMAND = 'module-contract';
 const PERMISSION_FLAG = '--permission';
+const moduleAccessPermission = 'module.access';
 const STRIP_TYPES_FLAG = '--experimental-strip-types';
 const SCAFFOLD_CLI_PATH = 'scripts/scaffolding/cli.mts';
 const MISSING_OWNER = 'missing-owner';
@@ -523,6 +537,7 @@ const scaffoldFlag = {
   requestFilters: '--request-filters',
   resource: '--resource',
   scope: '--scope',
+  tenantPermission: '--tenant-permission',
   vertical: '--vertical',
 } as const;
 const fixtureName = {
@@ -915,7 +930,7 @@ const run = Effect.fn(function* scenario12(
         } else if (command === scaffoldCommand.outboxWorker) {
           flags = [...flags, scaffoldFlag.authorization, 'owner_local_background'];
         } else if (contextPermissionCommands.has(command)) {
-          flags = [...flags, scaffoldFlag.authorization, 'context_permission', PERMISSION_FLAG, 'module.access'];
+          flags = [...flags, scaffoldFlag.authorization, 'context_permission', PERMISSION_FLAG, moduleAccessPermission];
         }
       }
       return flags;
@@ -947,8 +962,8 @@ const addInventoryItemResourceType = (fixture: Fixture): Effect.Effect<void, unk
       writeFile(
         manifestPath,
         manifest.replace(
-          '    resourceTypes: [],',
-          `    resourceTypes: [
+          '      // <generated-module-manifest-resources>',
+          `      // <generated-module-manifest-resources>
       {
         capabilities: {
           graphVisible: false,
@@ -961,13 +976,337 @@ const addInventoryItemResourceType = (fixture: Fixture): Effect.Effect<void, unk
         key: 'inventory.stock.item',
         label: 'Inventory item',
         owningModuleId: 'inventory.stock',
-      },
-    ],`,
+      },`,
         ),
         'utf-8',
       ),
     );
   });
+
+const projectsModuleId = 'projects.core';
+const projectsResourceType = 'projects.project';
+const projectsDescriptorKey = 'projects.core.projects';
+const projectsContributionKey = 'projects.core.search.projects';
+const projectsOwnerLiteral = '"owningModuleId":"projects.core"';
+const projectsOwnerAlias = '"owningModuleId":projectModuleKey';
+const projectsManifestFile = 'verticals/projects/vertical.manifest.ts';
+const projectsProviderFile = 'verticals/projects/src/search/projects.provider.ts';
+const projectsSearchArgs = [
+  scaffoldFlag.vertical,
+  'projects',
+  '--name',
+  'projects',
+  '--resource',
+  'project',
+  '--resource-type',
+  projectsResourceType,
+  '--authorization',
+  'authenticated_principal',
+];
+const projectsAccessArgs = [
+  scaffoldFlag.vertical,
+  'projects',
+  '--name',
+  'projects',
+  '--legal-entity-scope',
+  'optional',
+  '--access-filtering',
+  'tenant_scope',
+  '--request-filters',
+  'includeArchived',
+  scaffoldFlag.tenantPermission,
+  'access',
+];
+const projectsResource = {
+  capabilities: {
+    graphVisible: false,
+    linkable: true,
+    mediaAttachable: false,
+    searchable: false,
+    timelineVisible: false,
+  },
+  description: 'An independently identifiable tenant-owned project.',
+  key: projectsResourceType,
+  label: 'Project',
+  owningModuleId: projectsModuleId,
+};
+
+const prepareProjectsSearchFixture = Effect.fn(function* prepareProjectsSearchFixture(fixture: Fixture) {
+  const projectsVertical = {
+    appId: 'projects',
+    mfBoundaryId: 'verticalProjects',
+    moduleId: projectsModuleId,
+    namespace: 'projects',
+    slug: 'projects',
+  };
+  yield* createVertical(fixture.root, projectsVertical);
+  yield* write(
+    fixture.root,
+    topologyFile,
+    json({
+      schemaVersion: 1,
+      verticals: [inventoryVertical, billingVertical, hrVertical, contactsVertical, projectsVertical].map(
+        (vertical) => ({
+          domain: vertical.namespace,
+          id: vertical.appId,
+          kind: 'vertical',
+          moduleFederation: { name: vertical.mfBoundaryId, role: 'remote' },
+          package: `@app/${vertical.slug}`,
+          path: `verticals/${vertical.slug}`,
+        }),
+      ),
+    }),
+  );
+  yield* run(fixture, MODULE_CONTRACT_COMMAND, [
+    scaffoldFlag.vertical,
+    'projects',
+    scaffoldFlag.module,
+    projectsModuleId,
+  ]);
+  yield* run(fixture, scaffoldCommand.microverticalActionBoundary, [scaffoldFlag.vertical, 'projects']);
+  const generated = yield* readFixtureFile(fixture.root, projectsManifestFile);
+  // Reproduce the older owner manifest: no first-search schema, type, or decoder binding.
+  const legacy = generated
+    .replace('  ShellSearchContributionSchema,\n', '')
+    .replace('type SearchContributionInput = typeof ShellSearchContributionSchema.Encoded;\n', '')
+    .replace(
+      'const searchContribution = (value: SearchContributionInput) =>\n  Result.getOrThrow(Schema.decodeUnknownResult(ShellSearchContributionSchema)(value));\n',
+      '',
+    )
+    .replace(
+      'export const projectsManifest',
+      "const projectModuleKey = 'projects.core';\nexport const projectsManifest",
+    )
+    .replace("id: 'projects.core',", 'id: projectModuleKey,')
+    .replace(
+      '      // <generated-module-manifest-resources>',
+      `      // <generated-module-manifest-resources>\n${JSON.stringify(projectsResource).replace(projectsOwnerLiteral, projectsOwnerAlias)},`,
+    );
+  expect(legacy).not.toContain('ShellSearchContributionSchema');
+  yield* write(fixture.root, projectsManifestFile, legacy);
+});
+
+const customizeProjectsProvider = (provider: string): string =>
+  provider
+    .replace(
+      'Effect.succeed([] satisfies ProjectsProviderResponse);',
+      'Effect.succeed([] satisfies ProjectsProviderResponse).pipe(Effect.tap(() => Effect.void));',
+    )
+    .replace(
+      '  },\n  () => Effect.succeed({ load: loadProjects })',
+      '    finish: (_input, context) => Effect.succeed(context.loaded),\n  },\n  () => Effect.succeed({ load: loadProjects })',
+    )
+    .replace(
+      '() => Effect.succeed({ load: loadProjects })',
+      '() => Effect.succeed({ load: loadProjects, ownerService: true })',
+    );
+
+it.live(
+  'search-tooling5 binds actual Projects identity, first contribution, tenant access and exact eight paths',
+  Effect.fn(function* tooling5Projects() {
+    yield* withFixture(
+      Effect.fn(function* projectsScenario(fixture) {
+        yield* prepareProjectsSearchFixture(fixture);
+        const before = yield* snapshotTree(fixture.root);
+        yield* run(fixture, scaffoldCommand.searchProvider, projectsSearchArgs);
+        const after = yield* snapshotTree(fixture.root);
+        expect(
+          Object.keys(after)
+            .filter((file) => before[file] !== after[file])
+            .toSorted(),
+        ).toEqual(
+          [
+            'verticals/projects/api/index.ts',
+            'verticals/projects/api/projects-search-server.ts',
+            'verticals/projects/shared/api.ts',
+            'verticals/projects/shared/apis/projects-search.ts',
+            'verticals/projects/src/api/projects-search-client.ts',
+            projectsProviderFile,
+            projectsManifestFile,
+            'verticals/projects/vertical.registration.ts',
+          ].toSorted(),
+        );
+        yield* run(fixture, scaffoldCommand.searchProviderAccess, projectsAccessArgs);
+        const provider = yield* readFixtureFile(fixture.root, projectsProviderFile);
+        expect(provider).toContain("legalEntityScope: 'optional'");
+        expect(provider).toContain("permissionTarget: 'tenant'");
+        expect(provider).toContain("() => ({ kind: 'tenant', permission: 'access' })");
+        const manifest = yield* readFixtureFile(fixture.root, projectsManifestFile);
+        expect(manifest).toContain("resourceType: 'projects.project'");
+        expect(manifest).not.toContain("resourceType: 'projects.core.project'");
+        expect(manifest).toContain('const searchContribution =');
+        expect(
+          hasCanonicalMetadataImport(
+            parseScaffoldMetadata(manifest),
+            'ShellSearchContributionSchema',
+            '@app/core-runtime',
+          ),
+        ).toBe(true);
+        expect(manifest).toContain('searchable: false');
+        // Assert the current public Core contracts, without importing or executing owner code.
+        expect(Schema.is(OntosResourceTypeSchema)(projectsResource)).toBe(true);
+        const descriptor = readCanonicalSearchDescriptor(manifest, projectsDescriptorKey, projectsModuleId);
+        expect(Schema.is(OntosSearchDescriptorSchema)(descriptor)).toBe(true);
+        expect(descriptor).toEqual({
+          accessFiltering: 'tenant_scope',
+          key: projectsDescriptorKey,
+          owningModuleId: projectsModuleId,
+          requestFilters: ['includeArchived'],
+          resourceType: projectsResourceType,
+          tenantPermission: 'access',
+        });
+        expect(
+          Schema.is(ShellSearchContributionSchema)({
+            contributionKey: projectsContributionKey,
+            entrypoint: {
+              access: 'read',
+              authorization: { kind: 'authenticated_principal' },
+              entrypointKey: projectsContributionKey,
+              moduleKey: projectsModuleId,
+              role: 'search',
+              scope: 'tenant',
+            },
+            searchKey: projectsDescriptorKey,
+          }),
+        ).toBe(true);
+        const customized = customizeProjectsProvider(provider);
+        expect(customized).toContain('finish: (_input, context) => Effect.succeed(context.loaded)');
+        expect(customized).toContain('Effect.tap(() => Effect.void)');
+        expect(customized).toContain('ownerService: true');
+        expect(customized).not.toBe(provider);
+        yield* write(fixture.root, projectsProviderFile, customized);
+        const owned = yield* snapshotTree(fixture.root);
+        yield* run(fixture, scaffoldCommand.searchProvider, projectsSearchArgs);
+        yield* run(fixture, scaffoldCommand.searchProviderAccess, projectsAccessArgs);
+        expect(yield* snapshotTree(fixture.root)).toEqual(owned);
+        // Omitting the explicit selector cannot silently rewrite the validated non-derived identity.
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.searchProvider,
+          projectsSearchArgs.filter((_value, index) => index !== 6 && index !== 7),
+          /canonical resource declaration/u,
+        );
+        for (const args of [
+          projectsAccessArgs.filter((_value, index) => index !== 10 && index !== 11),
+          projectsAccessArgs.map((value) => (value === 'access' ? 'manage_identity' : value)),
+          projectsAccessArgs.map((value) => (value === 'optional' ? 'required' : value)),
+          projectsAccessArgs.map((value) => (value === 'tenant_scope' ? 'resource_permission' : value)),
+          [...projectsAccessArgs, PERMISSION_FLAG, moduleAccessPermission],
+          projectsAccessArgs.map((value) => (value === 'includeArchived' ? 'includeArchived,includeArchived' : value)),
+        ]) {
+          yield* assertScaffoldRefused(
+            fixture,
+            scaffoldCommand.searchProviderAccess,
+            args,
+            /inconsistent|tenant-permission|unsupported|unknown|not supported/iu,
+          );
+        }
+      }),
+    );
+  }),
+);
+
+it.live(
+  'search-tooling5 reads public resource contracts statically and revalidates access ownership',
+  Effect.fn(function* tooling5PublicContract() {
+    yield* withFixture(
+      Effect.fn(function* publicContractScenario(fixture) {
+        yield* prepareProjectsSearchFixture(fixture);
+        const source = yield* readFixtureFile(fixture.root, projectsManifestFile);
+        const resource = JSON.stringify(projectsResource).replace(projectsOwnerLiteral, projectsOwnerAlias);
+        yield* write(
+          fixture.root,
+          projectsManifestFile,
+          source
+            .replace(`${resource},`, 'projectResourceDescriptor,')
+            .replace(
+              '// <generated-module-manifest-imports>',
+              "import { projectResourceDescriptor } from './shared/resources/project.ts';\n// <generated-module-manifest-imports>",
+            ),
+        );
+        const contractFile = 'verticals/projects/shared/resources/project.ts';
+        const contract = `import type { OntosResourceType } from '@app/core-runtime';\nexport const projectResourceDescriptor = ${JSON.stringify(projectsResource)} as const satisfies OntosResourceType;\nthrow new Error('owner resource code must never execute');\n`;
+        yield* write(fixture.root, contractFile, contract);
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.searchProvider,
+          projectsSearchArgs.map((value) => (value === projectsResourceType ? 'projects.missing' : value)),
+          /canonical resource declaration/u,
+        );
+        yield* run(fixture, scaffoldCommand.searchProvider, projectsSearchArgs);
+        yield* run(fixture, scaffoldCommand.searchProviderAccess, projectsAccessArgs);
+        const before = yield* snapshotTree(fixture.root);
+        yield* run(fixture, scaffoldCommand.searchProvider, projectsSearchArgs);
+        yield* run(fixture, scaffoldCommand.searchProviderAccess, projectsAccessArgs);
+        expect(yield* snapshotTree(fixture.root)).toEqual(before);
+        for (const replacement of [
+          contract.replace(projectsOwnerLiteral, '"owningModuleId":"foreign.core"'),
+          `${contract}\nmutate(projectResourceDescriptor);`,
+          contract.replace('"key":"projects.project"', '"key":"projects.missing"'),
+        ]) {
+          yield* write(fixture.root, contractFile, replacement);
+          yield* assertScaffoldRefused(
+            fixture,
+            scaffoldCommand.searchProviderAccess,
+            projectsAccessArgs,
+            /canonical resource|runtime uses/u,
+          );
+        }
+      }),
+    );
+  }),
+);
+
+for (const variant of [
+  'missing',
+  'foreign',
+  'duplicate',
+  'inconsistent',
+  'unresolved',
+  'ambiguous',
+  'mutable',
+  'conflicting-helper',
+  'conflicting-import',
+  'conflicting-type',
+  'conflicting-destructured-helper',
+  'runtime-assignment',
+] as const) {
+  it.live(
+    `search-tooling5 refuses ${variant} metadata without partial writes`,
+    Effect.fn(function* tooling5Refusal() {
+      yield* withFixture(
+        Effect.fn(function* refusalScenario(fixture) {
+          yield* prepareProjectsSearchFixture(fixture);
+          const source = yield* readFixtureFile(fixture.root, projectsManifestFile);
+          const resource = JSON.stringify(projectsResource).replace(projectsOwnerLiteral, projectsOwnerAlias);
+          const mutableResource = source.replace(`${resource},`, 'projectResource,');
+          const next = {
+            ambiguous: source.replace(projectsOwnerAlias, `${projectsOwnerAlias},${projectsOwnerLiteral}`),
+            'conflicting-destructured-helper': `${source}\nconst { searchContribution } = untrusted;\n`,
+            'conflicting-helper': `${source}\nconst searchContribution = (value: unknown) => value;\n`,
+            'conflicting-import': `${source}\nimport { ShellSearchContributionSchema } from 'untrusted';\n`,
+            'conflicting-type': `${source}\ntype SearchContributionInput = unknown;\n`,
+            duplicate: source.replace(`${resource},`, `${resource},${resource},`),
+            foreign: source.replace(projectsOwnerAlias, '"owningModuleId":"foreign.core"'),
+            inconsistent: source.replace('id: projectModuleKey,', "id: 'projects.other',"),
+            missing: source.replace('"key":"projects.project"', '"key":"projects.other"'),
+            mutable: `${mutableResource}\nconst projectResource = ${resource};\nmutate(projectResource);\n`,
+            'runtime-assignment': `${source}\nprojectsManifest.publicSurface.resourceTypes = [];\n`,
+            unresolved: source.replace(projectsOwnerAlias, '"owningModuleId":resolveOwner()'),
+          }[variant];
+          expect(next).not.toBe(source);
+          yield* write(fixture.root, projectsManifestFile, next);
+          yield* assertScaffoldRefused(
+            fixture,
+            scaffoldCommand.searchProvider,
+            projectsSearchArgs,
+            /canonical|binding conflicts/u,
+          );
+        }),
+      );
+    }),
+  );
+}
 
 it.live(
   'documents every command and treats --help as a write-free operation',
@@ -1019,7 +1358,10 @@ it.live(
     expect(getHelpText(scaffoldCommand.outboxMessage)).toMatch(
       /scaffold:outbox-message -- --scope core --module <core\.module>/u,
     );
-    expect(getHelpText(scaffoldCommand.searchProviderAccess)).toMatch(/--tenant-permission read_party_identity/u);
+    expect(getHelpText(scaffoldCommand.searchProviderAccess)).toMatch(
+      /--tenant-permission <access\|read_party_identity>/u,
+    );
+    expect(getHelpText(scaffoldCommand.searchProvider)).toContain('--resource-type <full-resource-type>');
   }),
 );
 
@@ -1053,7 +1395,7 @@ it.live(
           'tenant_scope',
           scaffoldFlag.requestFilters,
           'includeArchived',
-          '--tenant-permission',
+          scaffoldFlag.tenantPermission,
           'read_party_identity',
         ]);
 
@@ -1100,7 +1442,7 @@ it.live(
           'tenant_scope',
           scaffoldFlag.requestFilters,
           'includeArchived',
-          '--tenant-permission',
+          scaffoldFlag.tenantPermission,
           'read_party_identity',
         ]);
         expect(yield* snapshotTree(fixture.root)).toEqual(beforeIdempotentUpdate);
@@ -1386,6 +1728,123 @@ console.log(JSON.stringify({ calls, documentUnavailable, endpointRequestsAfterGa
 const compactGovernedSource = (source: string): string =>
   source.replaceAll(/\s+/gu, '').replaceAll(/,(?=[)}\]])/gu, '');
 const inventorySharedApiFile = 'verticals/inventory-stock/shared/api.ts';
+const approvedPartyTypeOrigin = '../../shared/apis/search-labels.ts';
+const approvedPartyTypeClient = 'search-labels-client.ts';
+const approvedPartyTypeNames = ['SearchLabel', 'SearchLabelSourceRef', 'SearchLabelsRequest', 'SearchLabelsResponse'];
+
+const primitivePublicType = (type: TSType | undefined): boolean =>
+  type !== undefined && ['TSStringKeyword', 'TSNumberKeyword', 'TSBooleanKeyword', 'TSNullKeyword'].includes(type.type);
+
+const isDirectPublicSchemaType = (type: TSType, contract: Program): boolean => {
+  if (
+    type.type !== 'TSTypeQuery' ||
+    type.exprName.type !== 'TSQualifiedName' ||
+    type.exprName.right.name !== 'Type' ||
+    type.exprName.left.type !== 'Identifier'
+  ) {
+    return false;
+  }
+  const schemaName = type.exprName.left.name;
+  const values = contract.body.flatMap((statement) =>
+    statement.type === 'ExportNamedDeclaration' &&
+    statement.declaration?.type === 'VariableDeclaration' &&
+    statement.declaration.kind === 'const'
+      ? statement.declaration.declarations.filter(
+          (entry) => entry.id.type === 'Identifier' && entry.id.name === schemaName,
+        )
+      : [],
+  );
+  const [value] = values;
+  return (
+    values.length === 1 &&
+    metadataBindings(contract, schemaName).length === 1 &&
+    hasCanonicalMetadataImport(contract, 'Schema', 'effect') &&
+    value?.init?.type === 'CallExpression' &&
+    value.init.callee.type === 'MemberExpression' &&
+    !value.init.callee.computed &&
+    value.init.callee.object.type === 'Identifier' &&
+    value.init.callee.object.name === 'Schema' &&
+    value.init.callee.property.type === 'Identifier' &&
+    ['Struct', 'Union', 'Array'].includes(value.init.callee.property.name)
+  );
+};
+
+const isDirectPublicInterface = (declaration: TSInterfaceDeclaration): boolean =>
+  declaration.extends.length === 0 &&
+  declaration.typeParameters === null &&
+  declaration.body.body.every(
+    (property) =>
+      property.type === 'TSPropertySignature' &&
+      !property.computed &&
+      primitivePublicType(property.typeAnnotation?.typeAnnotation),
+  );
+
+/** Proves direct public declarations, not imported/private aliases relabelled with an approved name. */
+const provenPartyPublicType = (contract: Program, name: string): boolean => {
+  const declarations = contract.body.flatMap((statement) =>
+    statement.type === 'ExportNamedDeclaration' &&
+    (statement.declaration?.type === 'TSTypeAliasDeclaration' ||
+      statement.declaration?.type === 'TSInterfaceDeclaration') &&
+    statement.declaration.id.name === name
+      ? [statement.declaration]
+      : [],
+  );
+  const [declaration] = declarations;
+  if (declarations.length !== 1 || declaration === undefined || metadataBindings(contract, name).length !== 1) {
+    return false;
+  }
+  return declaration.type === 'TSInterfaceDeclaration'
+    ? isDirectPublicInterface(declaration)
+    : primitivePublicType(declaration.typeAnnotation) || isDirectPublicSchemaType(declaration.typeAnnotation, contract);
+};
+
+/** Removes only proven approved type-only re-export AST spans; every other source byte stays comparable. */
+const withoutProvenPartyTypeReexports = (
+  source: string,
+  contractSource: string,
+  clientName: string,
+  origin: string,
+): string => {
+  const program = parseScaffoldMetadata(source);
+  const contract = parseScaffoldMetadata(contractSource);
+  const removals: { readonly end: number; readonly start: number }[] = [];
+  const seen = new Set<string>();
+  for (const statement of program.body) {
+    if (statement.type !== 'ExportNamedDeclaration' || statement.source === null) {
+      continue;
+    }
+    if (
+      clientName !== approvedPartyTypeClient ||
+      origin !== approvedPartyTypeOrigin ||
+      statement.source.value !== origin ||
+      !hasCanonicalMetadataImport(program, 'SearchLabelsApi', origin) ||
+      statement.specifiers.length === 0 ||
+      statement.attributes.length !== 0
+    ) {
+      return expect.unreachable('unapproved public type export origin or missing runtime API binding');
+    }
+    for (const specifier of statement.specifiers) {
+      if (
+        (statement.exportKind !== 'type' && specifier.exportKind !== 'type') ||
+        specifier.local.type !== 'Identifier' ||
+        specifier.exported.type !== 'Identifier' ||
+        specifier.local.name !== specifier.exported.name ||
+        !approvedPartyTypeNames.includes(specifier.local.name) ||
+        seen.has(specifier.local.name) ||
+        !provenPartyPublicType(contract, specifier.local.name)
+      ) {
+        return expect.unreachable('unproven type-only public declaration or alias/value export');
+      }
+      seen.add(specifier.local.name);
+    }
+    removals.push(statement);
+  }
+  let comparable = source;
+  for (const span of removals.toSorted((left, right) => right.start - left.start)) {
+    comparable = `${comparable.slice(0, span.start)}${comparable.slice(span.end)}`;
+  }
+  return comparable;
+};
 
 it.live(
   'all live Party read and search transports match actual scaffold output',
@@ -1466,8 +1925,17 @@ it.live(
                 normalize(yield* Effect.promise(() => readFile(path.join(owner, 'api', serverName), 'utf-8'))),
                 serverName,
               ).toBe(compactGovernedSource(expectedServer));
+              const actualClient = yield* Effect.promise(() =>
+                readFile(path.join(owner, 'src/api', clientName), 'utf-8'),
+              );
+              const publicContractOrigin = `../../shared/apis/${name}${search ? '-search' : ''}.ts`;
+              const publicContract = yield* Effect.promise(() =>
+                readFile(path.resolve(owner, 'src/api', publicContractOrigin), 'utf-8'),
+              );
               expect(
-                normalize(yield* Effect.promise(() => readFile(path.join(owner, 'src/api', clientName), 'utf-8'))),
+                normalize(
+                  withoutProvenPartyTypeReexports(actualClient, publicContract, clientName, publicContractOrigin),
+                ),
                 clientName,
               ).toBe(compactGovernedSource(expectedClient));
             }),
@@ -1476,6 +1944,72 @@ it.live(
         );
         const sharedApi = yield* readFixtureFile(fixture.root, inventorySharedApiFile);
         expect(sharedApi).not.toMatch(/export const governedHttpApi\s*=/u);
+      }),
+    );
+  }),
+);
+
+it.live(
+  'readonly3 Party type normalization retains every runtime and generated signature guarantee',
+  Effect.fn(function* strictPublicTypeControls() {
+    yield* withFixture(
+      Effect.fn(function* publicTypeFixture(fixture) {
+        yield* run(fixture, scaffoldCommand.moduleApi, [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--name',
+          'search-labels',
+        ]);
+        const expected = yield* readFixtureFile(
+          fixture.root,
+          'verticals/inventory-stock/src/api/search-labels-client.ts',
+        );
+        const contract = `import { Schema } from 'effect';
+export const SearchLabelSchema = Schema.Struct({ label: Schema.String });
+export type SearchLabel = typeof SearchLabelSchema.Type;
+export interface SearchLabelSourceRef { readonly resourceId: string }
+export type SearchLabelsRequest = string;
+export type SearchLabelsResponse = string;
+`;
+        const approved = `\nexport type { ${approvedPartyTypeNames.join(', ')} } from '${approvedPartyTypeOrigin}';\n`;
+        const compare = (source: string, publicContract = contract) =>
+          expect(
+            compactGovernedSource(
+              withoutProvenPartyTypeReexports(source, publicContract, approvedPartyTypeClient, approvedPartyTypeOrigin),
+            ),
+          ).toBe(compactGovernedSource(expected));
+        compare(`${expected}${approved}`);
+        compare(`${expected}\nexport { type SearchLabel } from '${approvedPartyTypeOrigin}';\n`);
+        const negatives = [
+          `${expected}\nexport { SearchLabel } from '${approvedPartyTypeOrigin}';\n`,
+          `${expected}\nexport type { SearchLabelsRequest as SearchLabel } from '${approvedPartyTypeOrigin}';\n`,
+          `${expected}\nexport type { Private as SearchLabel } from '${approvedPartyTypeOrigin}';\n`,
+          `${expected}\nexport type { SearchLabel } from '../../src/private/search-labels.ts';\n`,
+          `${expected}\nexport type { Undeclared } from '${approvedPartyTypeOrigin}';\n`,
+          `${expected}${approved}${approved}`,
+          `${expected}${approved}\nvoid fetch('https://unexpected.test');\n`,
+          `${expected}${approved}\nexport const unexpectedRuntime = true;\n`,
+          `${expected}${approved}\nexport type UnexpectedSignature = string;\n`,
+          `${expected}${approved}\nimport type { Private as SearchLabel } from '../../src/private/search-labels.ts';\n`,
+          `${expected.replace("import { SearchLabelsApi } from '../../shared/apis/search-labels.ts';", '')}${approved}`,
+          `${expected.replace('import { SearchLabelsApi }', 'import { PrivateApi as SearchLabelsApi }')}${approved}`,
+          `${expected.replace('readonly baseUrl?: string | URL;', 'readonly baseUrl: string;')}${approved}`,
+        ];
+        for (const source of negatives) {
+          expect(() => compare(source)).toThrow();
+        }
+        for (const privateContract of [
+          "import type { Private as SearchLabel } from '../src/private.ts'; export type { SearchLabel };",
+          "import type { Private } from '../src/private.ts'; export type SearchLabel = Private;",
+          "import { PrivateSchema } from '../src/private.ts'; export const SearchLabelSchema = PrivateSchema; export type SearchLabel = typeof SearchLabelSchema.Type;",
+          'export const SearchLabel = true;',
+          'export interface SearchLabel extends Private {}',
+          'type SearchLabel = string;',
+        ]) {
+          expect(() =>
+            compare(`${expected}\nexport type { SearchLabel } from '${approvedPartyTypeOrigin}';\n`, privateContract),
+          ).toThrow();
+        }
       }),
     );
   }),
@@ -1881,6 +2415,7 @@ console.log(
           cwd: fixture.root,
           encoding: 'utf-8',
           env: {
+            APP_ENV_PATH: '/dev/null',
             DATABASE_ADMIN_URL: 'postgresql://ontos_admin:admin@localhost:5433/ontos',
             DATABASE_URL: 'postgresql://ontos_runtime:runtime@localhost:5433/ontos',
           },
@@ -4093,6 +4628,250 @@ export const outboxProducerModuleKey = 'inventory.stock' as const;
   }),
 );
 
+const planningFixtureSnapshot = Effect.fn(function* planningFixtureSnapshot(fixture: Fixture) {
+  const contents = yield* snapshotTree(fixture.root);
+  const paths = yield* Effect.promise(() => readdir(fixture.root, { recursive: true }));
+  return {
+    contents,
+    hashes: Object.fromEntries(
+      Object.entries(contents).map(([file, content]) => [file, createHash('sha256').update(content).digest('hex')]),
+    ),
+    paths: paths.toSorted(),
+  };
+});
+
+const observedPlanningFileSystem = (fileSystem: FileSystem.FileSystem, attempts: string[]) => {
+  const deny = (operation: string) =>
+    Effect.sync(() => attempts.push(operation)).pipe(
+      Effect.flatMap(() => Effect.die(new Error(`denied planning capability: ${operation}`))),
+    );
+  const reads: string[] = [];
+  const read = <Value, Failure>(operation: string, effect: Effect.Effect<Value, Failure>) =>
+    Effect.sync(() => reads.push(operation)).pipe(Effect.flatMap(() => effect));
+  return {
+    fileSystem: FileSystem.makeNoop({
+      chmod: () => deny('chmod'),
+      chown: () => deny('chown'),
+      copy: () => deny('copy'),
+      copyFile: () => deny('copyFile'),
+      exists: (target) => read('exists', fileSystem.exists(target)),
+      link: () => deny('link'),
+      makeDirectory: () => deny('makeDirectory'),
+      makeTempDirectory: () => deny('makeTempDirectory'),
+      makeTempDirectoryScoped: () => deny('makeTempDirectoryScoped'),
+      makeTempFile: () => deny('makeTempFile'),
+      makeTempFileScoped: () => deny('makeTempFileScoped'),
+      open: () => deny('open'),
+      readDirectory: (target, options) => read('readDirectory', fileSystem.readDirectory(target, options)),
+      readFileString: (target, encoding) => read('readFileString', fileSystem.readFileString(target, encoding)),
+      remove: () => deny('remove'),
+      rename: () => deny('rename'),
+      sink: () => Sink.fromEffect(deny('sink')),
+      symlink: () => deny('symlink'),
+      truncate: () => deny('truncate'),
+      utimes: () => deny('utimes'),
+      writeFile: () => deny('writeFile'),
+      writeFileString: () => deny('writeFileString'),
+    }),
+    reads,
+  };
+};
+
+const observeReadOnlyPlan = <Value, Failure>(
+  fixture: Fixture,
+  program: Effect.Effect<ScaffoldPlan<Value>, Failure, FileSystem.FileSystem>,
+) =>
+  Effect.gen(function* observeReadOnlyPlanProgram() {
+    const before = yield* planningFixtureSnapshot(fixture);
+    const fileSystem = yield* FileSystem.FileSystem;
+    const attempts: string[] = [];
+    const observed = observedPlanningFileSystem(fileSystem, attempts);
+    const plan = yield* program.pipe(
+      Effect.provideService(FileSystem.FileSystem, observed.fileSystem),
+      Effect.ensuring(
+        Effect.gen(function* assertReadOnlyPlanning() {
+          expect(attempts).toEqual([]);
+          expect(yield* planningFixtureSnapshot(fixture)).toEqual(before);
+        }),
+      ),
+    );
+    return { plan, reads: observed.reads };
+  }).pipe(Effect.provide(NodeServices.layer));
+
+const assertPlanMatchesAppliedCLI = Effect.fn(function* assertPlanMatchesAppliedCLI<Value>(
+  fixture: Fixture,
+  plan: ScaffoldPlan<Value>,
+  command: ScaffoldCommand,
+  args: readonly string[],
+) {
+  const before = yield* snapshotTree(fixture.root);
+  const applied = yield* run(fixture, command, args);
+  expect(applied).toEqual({ kind: 'generated', result: plan.result });
+  const after = yield* snapshotTree(fixture.root);
+  const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .filter((file) => before[file] !== after[file])
+    .toSorted();
+  expect(changed).toEqual(plan.mutations.map((mutation) => path.relative(fixture.root, mutation.path)).toSorted());
+  for (const mutation of plan.mutations) {
+    const relative = path.relative(fixture.root, mutation.path);
+    if (mutation.kind === 'delete') {
+      expect(after[relative]).toBeUndefined();
+    } else {
+      expect(mutation.kind).toBe(before[relative] === undefined ? 'create' : 'update');
+      // The existing adapter formats buffered content when applying; this is an in-memory comparison.
+      expect(after[relative]).toBe(yield* formatGeneratedMutationContent(mutation.path, mutation.content));
+    }
+  }
+});
+
+it.live(
+  'readonly3 mutation observer rejects writes and retains full path/content/hash inventory',
+  Effect.fn(function* readonlyObserverControl() {
+    yield* withFixture(
+      Effect.fn(function* observerFixture(fixture) {
+        const before = yield* planningFixtureSnapshot(fixture);
+        const attempts: string[] = [];
+        yield* Effect.gen(function* exerciseDeniedWrite() {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const observed = observedPlanningFileSystem(fileSystem, attempts);
+          expect(yield* observed.fileSystem.exists(fixture.root)).toBe(true);
+          expect(observed.reads).toEqual(['exists']);
+          yield* expectFailure(
+            observed.fileSystem.writeFileString(path.join(fixture.root, 'forbidden-planning-write.ts'), 'forbidden'),
+            (error) => expect(String(error)).toContain('denied planning capability'),
+          );
+          expect(observed.reads).toEqual(['exists']);
+        }).pipe(Effect.provide(NodeServices.layer));
+        expect(attempts).toEqual(['writeFileString']);
+        expect(yield* planningFixtureSnapshot(fixture)).toEqual(before);
+      }),
+    );
+  }),
+);
+
+for (const core of [false, true]) {
+  it.live(
+    `readonly3 ${core ? 'Core' : 'business'} message planning matches CLI without writes and refuses drift`,
+    Effect.fn(function* readonlyMessageParity() {
+      yield* withFixture(
+        Effect.fn(function* messageFixture(fixture) {
+          const config = core
+            ? {
+                action: fixtureName.coreIdentityAction,
+                module: fixtureName.coreIdentityModule,
+                scope: 'core' as const,
+                topic: fixtureName.coreIdentityTopic,
+              }
+            : { action: fixtureName.action, topic: fixtureName.ordersCreated, vertical: inventorySlug };
+          const ownerArgs = core
+            ? [scaffoldFlag.scope, 'core', scaffoldFlag.module, fixtureName.coreIdentityModule]
+            : [scaffoldFlag.vertical, inventorySlug];
+          yield* run(fixture, 'action', [...ownerArgs, '--action', config.action]);
+          if (core) {
+            yield* write(
+              fixture.root,
+              coreRuntimePackageFile,
+              json({ exports: { '.': coreRuntimePackageEntryExport }, name: coreRuntimePackageName }),
+            );
+          }
+          const args = [...ownerArgs, '--action', config.action, '--topic', config.topic];
+          const { plan, reads } = yield* observeReadOnlyPlan(fixture, planOutboxMessageScaffold(fixture.root, config));
+          expect(reads).toContain('readFileString');
+          expect(plan.mutations).toHaveLength(4);
+          yield* assertPlanMatchesAppliedCLI(fixture, plan, scaffoldCommand.outboxMessage, args);
+          expect(
+            (yield* observeReadOnlyPlan(fixture, planOutboxMessageScaffold(fixture.root, config))).plan.mutations,
+          ).toEqual([]);
+          yield* expectFailure(
+            observeReadOnlyPlan(
+              fixture,
+              planOutboxMessageScaffold(fixture.root, { ...config, action: 'missing-action' }),
+            ),
+            (error) => expect(String(error)).toMatch(/requires the generated/u),
+          );
+          yield* write(
+            fixture.root,
+            path.relative(fixture.root, plan.result.contractPath),
+            'export const handwrittenContract = true;\n',
+          );
+          yield* expectFailure(observeReadOnlyPlan(fixture, planOutboxMessageScaffold(fixture.root, config)), (error) =>
+            expect(String(error)).toMatch(/refusing to overwrite/u),
+          );
+          yield* assertScaffoldRefused(fixture, scaffoldCommand.outboxMessage, args, /refusing to overwrite/u);
+        }),
+      );
+    }),
+  );
+}
+
+for (const core of [false, true]) {
+  it.live(
+    `readonly3 ${core ? 'Core' : 'business'} worker planning reuses exact dispatch and CLI mutation set`,
+    Effect.fn(function* readonlyWorkerParity() {
+      yield* withFixture(
+        Effect.fn(function* workerFixture(fixture) {
+          const config = {
+            authorization: 'owner_local_background' as const,
+            producer: core ? 'core' : inventorySlug,
+            topic: core ? 'core.identity.principal-lifecycle-changed.v1' : fixtureName.ordersCreated,
+            vertical: core ? 'core' : 'billing',
+            worker: core ? 'project-people-lifecycle-search' : fixtureName.ordersCreatedLogger,
+          };
+          if (core) {
+            yield* write(
+              fixture.root,
+              'packages/core-runtime/src/outbox/core-identity-principal-lifecycle-changed-v1.ts',
+              "export const outboxTopic = 'core.identity.principal-lifecycle-changed.v1';\n",
+            );
+          } else {
+            yield* run(fixture, 'action', [scaffoldFlag.vertical, inventorySlug, '--action', fixtureName.action]);
+            yield* run(fixture, scaffoldCommand.outboxMessage, [
+              scaffoldFlag.vertical,
+              inventorySlug,
+              '--action',
+              fixtureName.action,
+              '--topic',
+              fixtureName.ordersCreated,
+            ]);
+          }
+          const args = [
+            scaffoldFlag.vertical,
+            config.vertical,
+            '--worker',
+            config.worker,
+            scaffoldFlag.producer,
+            config.producer,
+            '--topic',
+            config.topic,
+          ];
+          const { plan, reads } = yield* observeReadOnlyPlan(fixture, planOutboxWorkerScaffold(fixture.root, config));
+          expect(reads).toContain('readFileString');
+          expect(plan.mutations).toHaveLength(core ? 3 : 9);
+          yield* assertPlanMatchesAppliedCLI(fixture, plan, scaffoldCommand.outboxWorker, args);
+          yield* expectFailure(
+            observeReadOnlyPlan(fixture, planOutboxWorkerScaffold(fixture.root, config)),
+            (error) => {
+              expect(String(error)).toMatch(/refusing to overwrite existing business file:/u);
+              expect(String(error)).toMatch(new RegExp(`${config.worker}\\.worker\\.ts$`, 'u'));
+            },
+          );
+          yield* assertScaffoldRefused(fixture, scaffoldCommand.outboxWorker, args, /refusing to overwrite/u);
+          yield* expectFailure(
+            observeReadOnlyPlan(
+              fixture,
+              planOutboxWorkerScaffold(fixture.root, { ...config, producer: 'core', worker: 'unapproved-worker' }),
+            ),
+            (error) =>
+              expect(String(error)).toMatch(
+                /Core people worker must match an approved identity search worker\/topic|package metadata/u,
+              ),
+          );
+        }),
+      );
+    }),
+  );
+}
+
 it.live(
   'generates Core-owned Outbox Messages from system-scoped Actions and reruns atomically',
   Effect.fn(function* scenario67a() {
@@ -4917,7 +5696,7 @@ const routeMeta = {
   descriptionKey: 'inventory.pages.purchaseOrders.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
-    authorization: { kind: 'context_permission', permission: 'module.access' },
+    authorization: { kind: 'context_permission', permission: '${moduleAccessPermission}' },
     entrypointKey: 'inventory.stock.page.purchase-orders',
     moduleKey: 'inventory.stock',
     role: 'page',
@@ -4959,6 +5738,72 @@ export { routeMeta };
         });
         expect(yield* snapshotTree(path.join(fixture.root, 'apps', shellAppId))).toEqual(shellBefore);
         expect(page).not.toMatch(/fetch\(|useState|useEffect|<style|\.description|\.empty/u);
+      }),
+    );
+  }),
+);
+
+/**
+ * The generated `pageContribution({...})` block of one component key, or '' when absent. The owner manifest is
+ * oxfmt-formatted, so a contribution spans multiple lines: a single-line search would read only its `componentKey`.
+ */
+const generatedPageContribution = (manifest: string, componentKey: string): string => {
+  const marker = `componentKey: '${componentKey}'`;
+  const start = manifest.indexOf(marker);
+  if (start === -1) {
+    return '';
+  }
+  const end = manifest.indexOf('}),', start);
+  return manifest.slice(start, end === -1 ? undefined : end + 3);
+};
+
+it.live(
+  'opts a generated page contribution into tenant-only admission only when asked',
+  Effect.fn(function* scenario79b() {
+    yield* withFixture(
+      Effect.fn(function* scenario79c(fixture) {
+        yield* run(fixture, scaffoldCommand.microverticalPage, [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--page',
+          fixtureName.purchaseOrdersPage,
+        ]);
+        const defaultManifest = yield* readFixtureFile(fixture.root, inventoryManifestFile);
+        const defaultBlock = generatedPageContribution(defaultManifest, 'inventory.stock.page-purchase-orders');
+        expect(defaultBlock).toContain("routePath: '/inventory-stock/purchase-orders'");
+        // Absent means required: the default page contribution carries no opt-in field at all.
+        expect(defaultBlock).not.toContain('legalEntityScope');
+
+        yield* run(fixture, scaffoldCommand.microverticalPage, [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--page',
+          'tenant-notes',
+          scaffoldFlag.legalEntityScope,
+          'optional',
+        ]);
+        const optedInManifest = yield* readFixtureFile(fixture.root, inventoryManifestFile);
+        const optedInBlock = generatedPageContribution(optedInManifest, 'inventory.stock.page-tenant-notes');
+        expect(optedInBlock).toContain("legalEntityScope: 'optional'");
+        expect(optedInBlock).toContain("routePath: '/inventory-stock/tenant-notes'");
+
+        // Re-running the same opt-in is idempotent: the generated wiring already matches.
+        yield* run(fixture, scaffoldCommand.microverticalPage, [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--page',
+          'tenant-notes',
+          scaffoldFlag.legalEntityScope,
+          'optional',
+        ]);
+        expect(yield* readFixtureFile(fixture.root, inventoryManifestFile)).toBe(optedInManifest);
+
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.microverticalPage,
+          [scaffoldFlag.vertical, inventorySlug, '--page', 'bad-scope', scaffoldFlag.legalEntityScope, 'required'],
+          /--legal-entity-scope must be optional/u,
+        );
       }),
     );
   }),
@@ -5076,7 +5921,7 @@ process.stdout.write(renderToStaticMarkup(<Page />));
           spawnSync(process.execPath, [bundlePath], {
             cwd: fixture.root,
             encoding: 'utf-8',
-            env: { PAGE_LANGUAGE: language },
+            env: { APP_ENV_PATH: '/dev/null', PAGE_LANGUAGE: language },
           });
         const english = renderLanguage('en');
         const czech = renderLanguage('cs');
@@ -6127,7 +6972,7 @@ it.live(
               scaffoldFlag.authorization,
               'context_permission',
               PERMISSION_FLAG,
-              'module.access',
+              moduleAccessPermission,
             ],
             {
               routeRefresh: () =>
@@ -6346,6 +7191,14 @@ it.live(
     yield* withFixture(
       Effect.fn(function* mergedScenario91(fixture) {
         yield* runCombinedScenario(fixture);
+        yield* prepareProjectsSearchFixture(fixture);
+        yield* run(fixture, scaffoldCommand.searchProvider, projectsSearchArgs);
+        yield* run(fixture, scaffoldCommand.searchProviderAccess, projectsAccessArgs);
+        yield* write(
+          fixture.root,
+          projectsProviderFile,
+          customizeProjectsProvider(yield* readFixtureFile(fixture.root, projectsProviderFile)),
+        );
         yield* run(fixture, scaffoldCommand.outboxWorker, [
           scaffoldFlag.vertical,
           'billing',
@@ -6495,6 +7348,11 @@ it.live(
                 'packages/core-runtime/src/modules/actions/**/*.ts',
                 'packages/core-runtime/src/policies/**/*.ts',
                 inventoryManifestFile,
+                projectsManifestFile,
+                'verticals/projects/src/search/**/*.ts',
+                'verticals/projects/shared/apis/**/*.ts',
+                'verticals/projects/src/api/**/*.ts',
+                'verticals/projects/api/**/*.ts',
                 'verticals/inventory-stock/src/actions/**/*.ts',
                 'verticals/inventory-stock/src/integrations/**/*.ts',
                 'verticals/inventory-stock/shared/outbox/**/*.ts',

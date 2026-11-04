@@ -64,6 +64,7 @@
 --folder-file-outline
 --gauge
 --history
+--home-city-outline
 --key-variant
 --map-marker-check-outline
 --office-building-outline
@@ -77,6 +78,7 @@
 --send
 --shield-check-outline
 --swap-horizontal
+--toolbox-outline
 --truck-delivery
 --truck-delivery-outline
 --view-dashboard-variant-outline
@@ -171,6 +173,7 @@ icon-[mdi--file-link]
 icon-[mdi--folder-file-outline]
 icon-[mdi--gauge]
 icon-[mdi--history]
+icon-[mdi--home-city-outline]
 icon-[mdi--key-variant]
 icon-[mdi--map-marker-check-outline]
 icon-[mdi--office-building-outline]
@@ -184,6 +187,7 @@ icon-[mdi--scale-balance]
 icon-[mdi--send]
 icon-[mdi--shield-check-outline]
 icon-[mdi--swap-horizontal]
+icon-[mdi--toolbox-outline]
 icon-[mdi--truck-delivery-outline]
 icon-[mdi--truck-delivery]
 icon-[mdi--view-dashboard-variant-outline]

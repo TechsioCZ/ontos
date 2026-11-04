@@ -50,6 +50,39 @@ test('connection reads are limited to granted modules', () => {
   expect(isConnectionWriteAllowed(principal, 'work.tasks')).toBe(false);
 });
 
+test('only the exact Shell search pair admits verified delegated business routing', () => {
+  const principal = connectionPrincipal('read_only', [{ access: 'read', moduleId: 'work.tasks' }]);
+  expect(isConnectionReadAllowed(principal, { owningModuleKey: 'core.shell', readKey: 'core.shell.search' })).toBe(
+    true,
+  );
+  expect(
+    isConnectionReadAllowed(connectionPrincipal('read_only', 'all'), {
+      owningModuleKey: 'core.shell',
+      readKey: 'core.shell.search',
+    }),
+  ).toBe(true);
+  for (const read of [
+    { owningModuleKey: 'core.identity', readKey: 'core.shell.search' },
+    { owningModuleKey: 'work.tasks', readKey: 'core.shell.search' },
+    { owningModuleKey: 'core.shell', readKey: 'core.shell.composition' },
+    { owningModuleKey: 'core.shell', readKey: 'core.shell.resource-detail-timeline' },
+    { owningModuleKey: 'core.identity', readKey: 'core.identity.people-directory' },
+  ]) {
+    expect(isConnectionReadAllowed(principal, read)).toBe(false);
+  }
+  expect(isConnectionWriteAllowed(principal, 'core.shell')).toBe(false);
+});
+
+test('Shell routing never admits absent, empty or malformed OAuth authority', () => {
+  const read = { owningModuleKey: 'core.shell', readKey: 'core.shell.search' };
+  const principal = connectionPrincipal('read_only', [{ access: 'read', moduleId: 'work.tasks' }]);
+  const { connection: _connection, ...missingConnection } = principal;
+  expect(isConnectionReadAllowed(missingConnection, read)).toBe(false);
+  expect(isConnectionReadAllowed(connectionPrincipal('read_only', []), read)).toBe(false);
+  expect(isConnectionReadAllowed({ ...principal, authBindingId: 'not-a-uuid' }, read)).toBe(false);
+  expect(isConnectionReadAllowed({ ...principal, authContextRef: 'oauth-grant:another-grant' }, read)).toBe(false);
+});
+
 test('direct write requires policy direct and module write access', () => {
   const principal = connectionPrincipal('direct', [{ access: 'write', moduleId: 'work.tasks' }]);
   expect(isConnectionWriteAllowed(principal, 'work.tasks')).toBe(true);

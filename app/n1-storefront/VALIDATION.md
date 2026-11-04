@@ -1,5 +1,34 @@
 # Kontrola převodu N1 storefrontu
 
+## C16: nákupní stavy PDP — 2026-11-04
+
+Po aktualizaci na3db193758:335/335N1testů, lint, produkční build a i18n
+boundaries PASS. Regresní testy před opravou prokázaly quantity navíc v no-selection
+a mobile sold-out; po opravě procházejí. Chyba storage/scope zůstává odlišená
+od skutečného stock unavailable. Static review včetně vytaženého purchase predicate
+PASS; žádné vlastní styly kit komponent nebo změna kanonického theme.
+
+Skutečný localhost3071 desktop1440: klik na increment1→2, add→quantity1, toast
+s popisem2×produkt+varianta; bez post-add Košík tlačítka a default quote odstavce.
+Mobil390 bez varianty:0viditelných spinbuttonů, jediný disabled selection CTA
+358×44px, documentWidth390. Screenshoty desktopu a celého mobilu skutečně otevřeny.
+Mobilní sold-out je ověřený SSR regresí; v dosud dokončeném stock prefixu nebyl
+nalezen vhodný skutečně vyprodaný produkt, takže živý sold-out PASS netvrdíme.
+
+Celkový pnpm check není zelený ani kompletně dokončený: prokázal stale generovaný
+Party Registry module manifest a KnipModelError v lokálním netrackovaném
+scripts/figma/generate-business-theme.mts. Typecheck a OntOS API boundaries prošly.
+Po těchto chybách byl zbývající běh šetrně ukončen, aby neblokoval cílené FE ověření;
+log zůstává v .local. Cizí soubory a kontrolní pravidla nebyly měněny.
+
+Finální gutter build PASS. Desktop1440/client1425: article1280, padding16+16,
+heading x88.5; bez horizontálního overflow a bez console error/warn. Finální
+screenshot skutečně otevřený. Mobilní padding se touto změnou nemění.
+
+Nejde o vizuální PASS celého PDP. Čerstvé Figma podstromy a přesné legacy
+interakce jsou mapované v COMPONENT-MAPPING.md; metadata/tax/count/related a
+veřejný selected desktop variant appearance mají dál konkrétní datové/API mezery.
+
 ## C12: native password recovery — 2026-11-04
 
 318/318 testů, lint a produkční build PASS. Testy skutečného generovaného klienta

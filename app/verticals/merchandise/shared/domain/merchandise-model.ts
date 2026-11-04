@@ -3,7 +3,7 @@
 // re-read the current product afterwards (brief requirement 7d).
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { Schema } from 'effect';
-import { currencyOf, OrderMarketSchema } from './market-offers.ts';
+import { currencyOf, MarketCurrencySchema, OrderMarketSchema } from './market-offers.ts';
 import type { MarketCurrency } from './market-offers.ts';
 
 const identifierLengthChecks = [Schema.isMinLength(1), Schema.isMaxLength(300)] as const;
@@ -266,6 +266,38 @@ export const VariantSummarySchema = Schema.Struct({
   units: Schema.Array(Schema.String),
 });
 
+/** One verified leaf's current presentation, never a quote or a new purchase authority. All amounts use currency. */
+export const SearchVariantOfferSchema = Schema.Struct({
+  availability: AvailabilitySchema,
+  currency: MarketCurrencySchema,
+  displayPriceExcludingVatMinor: Schema.optionalKey(MinorAmountSchema),
+  grossPriceMinor: MinorAmountSchema,
+  id: VariantIdSchema,
+  imageSrc: Schema.optionalKey(Schema.String),
+  minimumQuantity: Schema.optionalKey(Schema.Finite),
+  name: Schema.String,
+  packageQuantity: Schema.optionalKey(Schema.Finite),
+  /** Market-converted net display amount, not an unconverted seller/base price. */
+  priceMinor: MinorAmountSchema,
+  sku: Schema.String,
+  sourceUnit: Schema.optionalKey(Schema.String),
+  stockOnHand: Schema.Finite,
+  unit: Schema.String,
+});
+export type SearchVariantOffer = typeof SearchVariantOfferSchema.Type;
+
+/** Attribution is whole-substring leaf matching, separate from catalog all-word inclusion. No variant arrays. */
+export const SearchMatchSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal('single'), variant: SearchVariantOfferSchema }),
+  Schema.Struct({ count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(2)), kind: Schema.Literal('multiple') }),
+  Schema.Struct({
+    kind: Schema.Literals(['product', 'unattributed']),
+    /** Header presentation fallback only: the entire active sellable set has exactly one leaf. */
+    onlyVariant: Schema.optionalKey(SearchVariantOfferSchema),
+  }),
+]);
+export type SearchMatch = typeof SearchMatchSchema.Type;
+
 /** Product plus values derived from the stock ledger and current price at read time. */
 export const ProductRecordSchema = Schema.Struct({
   ...ProductSchema.fields,
@@ -274,6 +306,8 @@ export const ProductRecordSchema = Schema.Struct({
   lowStock: Schema.Boolean,
   stockOnHand: Schema.Finite,
   stockValueMinor: Schema.Int,
+  /** Nonblank storefront search only; verified on current owner rows within the governed read. */
+  searchMatch: Schema.optionalKey(SearchMatchSchema),
   variantRecords: Schema.optionalKey(Schema.Array(VariantRecordSchema)),
   /**
    * Storefront reads: the product's active sellable variants in aggregate (count, lowest gross price, summed stock,

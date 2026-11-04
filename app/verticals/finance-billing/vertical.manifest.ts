@@ -35,6 +35,26 @@ const pageContribution = (value: PageContributionInput) =>
 const searchContribution = (value: typeof ShellSearchContributionSchema.Encoded) =>
   Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
 
+const financeFamily = {
+  icon: 'icon-[mdi--cash-multiple]',
+  key: 'finance',
+  label: { cs: 'Finance', en: 'Finance' },
+  order: 40,
+} as const;
+
+const invoiceGroup = {
+  icon: 'icon-[mdi--receipt-text-outline]',
+  key: 'invoice',
+  label: { cs: 'Faktury', en: 'Invoices' },
+  order: 110,
+} as const;
+const financeDocumentGroup = {
+  icon: 'icon-[mdi--file-document-multiple-outline]',
+  key: 'financeDocument',
+  label: { cs: 'Finanční doklady', en: 'Finance documents' },
+  order: 120,
+} as const;
+
 export const financeBillingManifest = defineOntosModuleManifest({
   activation: {
     defaultState: 'inactive',
@@ -164,6 +184,20 @@ export const financeBillingManifest = defineOntosModuleManifest({
             role: 'search',
             scope: 'tenant',
           },
+          presentation: {
+            family: financeFamily,
+            group: financeDocumentGroup,
+            record: {
+              pageKey: recordsPageKey,
+              selector: {
+                idEncoding: 'native',
+                idFormat: 'uuid',
+                kind: 'query',
+                parameterName: 'documentId',
+              },
+            },
+            scope: 'company',
+          },
           searchKey: 'finance.billing.documents',
         }),
         searchContribution({
@@ -175,6 +209,20 @@ export const financeBillingManifest = defineOntosModuleManifest({
             moduleKey: moduleId,
             role: 'search',
             scope: 'tenant',
+          },
+          presentation: {
+            family: financeFamily,
+            group: invoiceGroup,
+            record: {
+              pageKey: recordsPageKey,
+              selector: {
+                idEncoding: 'native',
+                idFormat: 'opaque',
+                kind: 'query',
+                parameterName: 'resourceId',
+              },
+            },
+            scope: 'company',
           },
           searchKey: 'finance.billing.invoices',
         }),

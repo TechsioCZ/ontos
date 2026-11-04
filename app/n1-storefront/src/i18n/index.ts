@@ -303,6 +303,7 @@ const cs = {
   searchResults: "Výsledky hledání",
   selectedVariant: "Zvolená varianta",
   selectVariant: "Zvolte variantu",
+  selectVariantAction: "Vyberte variantu",
   shipping: "Způsoby dopravy",
   shippingOptions: "Možnosti dopravy",
   shopping: {
@@ -685,6 +686,7 @@ const en: typeof cs = {
   searchResults: "Search results",
   selectedVariant: "Selected variant",
   selectVariant: "Select a variant",
+  selectVariantAction: "Choose a variant",
   shipping: "Shipping methods",
   shippingOptions: "Shipping options",
   shopping: {

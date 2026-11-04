@@ -3,35 +3,25 @@ import { useLoaderData, useNavigate, useRouterState } from '@modern-js/plugin-ta
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Match, Option, Schema } from 'effect';
+import { Effect, Fiber, Match, Option, Schema } from 'effect';
+import { useEffect, useState } from 'react';
 
 import type { ShellSearchResult } from '../../../../shared/api.ts';
-import { buildShellNavigation, ShellRouteLink } from '../../shell-frame.tsx';
-import { shellSearchFamiliesInOrder, shellSearchResultKey } from '../../shell-search-match.ts';
-import type { ShellSearchFamilyKey } from '../../shell-search-match.ts';
-import { ShellSearchFilters } from '../../shell-search-filters.tsx';
+import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { buildShellNavigation, ShellRouteLink, shellSearchScopeKey } from '../../shell-frame.tsx';
+import { shellSearchResultKey } from '../../shell-search-match.ts';
+import { ShellSearchFilters, shellSearchFamilyFilterOptions } from '../../shell-search-filters.tsx';
 import { ShellSearchResultRow } from '../../shell-search-result-row.tsx';
-import {
-  shellSearchGroupOf,
-  shellSearchPresentationContext,
-  shellSearchResultTarget,
-} from '../../shell-search-resource-types.ts';
+import { shellSearchGroupOf } from '../../shell-search-resource-types.ts';
+import type { ShellSearchPresentationIndex } from '../../shell-search-resource-types.ts';
 import { ShellContentLayout } from '../../shell-content-layout.tsx';
 import { SignInRedirect } from '../../sign-in-redirect.tsx';
 import { useShellControls } from '../../use-shell-controls.ts';
-import type { AuthenticatedHomePageModel, HomePageModel } from '../home-page-model.ts';
+import type { AuthenticatedHomePageModel } from '../home-page-model.ts';
+import { searchFailureModel, searchFamiliesFromValue, searchReadyModel } from './search-page-model.ts';
 import type { SearchFilterPlan, SearchPageModel } from './search-page-model.ts';
 
 type ReadySearchPageModel = Extract<SearchPageModel, { readonly state: 'ready' }>;
-
-type ShellSearchContext = ReturnType<typeof shellSearchPresentationContext>;
-
-/** The document's composed navigation, when it has one; the search reads record destinations from it. */
-const composedSearchContextOf = (shell: HomePageModel): ShellSearchContext => {
-  const navigation =
-    shell.state === 'authenticated' && shell.navigation.state === 'available' ? shell.navigation : undefined;
-  return shellSearchPresentationContext(navigation?.items ?? [], navigation?.recordDestinations ?? []);
-};
 
 interface SearchPageSearch {
   families?: string;
@@ -41,25 +31,41 @@ interface SearchPageSearch {
 const cardClassName =
   'ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0';
 
-/** The search state the route accepts; the loader decodes the same shape from its request. */
-const PendingSearch = Schema.Struct({
+/** The current URL search state; the loader decodes the same q/families shape on the server. */
+const RouteSearch = Schema.Struct({
+  families: Schema.optionalKey(Schema.String),
   q: Schema.optionalKey(Schema.String),
 });
 
-/**
- * The query of a refined search whose loader has not answered yet, or `undefined` when this page is settled. The
- * previous answer is then replaced by the searching state, and the scope line names the query that is being searched
- * instead of presenting the previous one as current. A navigation to another page is not a pending search.
- */
-const usePendingSearchQuery = (): string | undefined =>
+interface RouteSearchState {
+  readonly families: string;
+  readonly navigationKey: string;
+  readonly q: string;
+  /** True while the router is still on this search page; a navigation away is never a pending search. */
+  readonly samePage: boolean;
+}
+
+const useRouteSearchState = (): RouteSearchState =>
   useRouterState({
-    select: ({ location, resolvedLocation }) =>
-      resolvedLocation !== undefined &&
-      location.pathname === resolvedLocation.pathname &&
-      location.href !== resolvedLocation.href
-        ? (Option.getOrUndefined(Schema.decodeOption(PendingSearch)(location.search))?.q ?? '').trim()
-        : undefined,
+    select: ({ location, resolvedLocation }) => {
+      const decoded = Option.getOrElse(
+        Schema.decodeOption(RouteSearch)(location.search),
+        (): typeof RouteSearch.Type => ({}),
+      );
+      return {
+        families: searchFamiliesFromValue(decoded.families).join(','),
+        navigationKey:
+          location.state?.__TSR_key ??
+          location.state?.key ??
+          `${location.href}\u0000${location.state?.__TSR_index ?? 0}`,
+        q: (decoded.q ?? '').trim(),
+        samePage: resolvedLocation === undefined || location.pathname === resolvedLocation.pathname,
+      };
+    },
   });
+
+const searchPageKey = (scopeKey: string, epoch: number, query: string, families: string): string =>
+  `${scopeKey}\u0000${epoch}\u0000${query}\u0000${families}`;
 
 /** Three row placeholders; the searching sentence next to them is what assistive technology announces. */
 const SearchResultsPlaceholder = () => (
@@ -101,26 +107,33 @@ const SearchScope = ({ entries }: { readonly entries: readonly SearchScopeEntry[
  * ranked and authorized the complete answer. Rows open the owner record and carry no invented rank, count or reason.
  */
 const SearchResultList = ({
-  context,
+  index,
   query,
   results,
 }: {
-  readonly context: ShellSearchContext;
+  readonly index: ShellSearchPresentationIndex | undefined;
   readonly query: string;
   readonly results: readonly ShellSearchResult[];
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
+  const typeLabelOf = (result: ShellSearchResult): string => {
+    const { label } = shellSearchGroupOf(result, index);
+    if (label === undefined) {
+      return t('shell.search.groups.resource');
+    }
+    return language?.startsWith('en') ? label.en : label.cs;
+  };
   return (
     <ul className="grid max-w-4xl gap-25">
       {results.map((result) => (
         <ShellSearchResultRow
           density="comfortable"
+          index={index}
           key={shellSearchResultKey(result)}
-          presentation={{ typeLabel: t(`shell.search.groups.${shellSearchGroupOf(result, context)}`) }}
+          presentation={{ typeLabel: typeLabelOf(result) }}
           query={query}
           result={result}
           ResultLink={ShellRouteLink}
-          target={shellSearchResultTarget(result, context)}
         />
       ))}
     </ul>
@@ -142,23 +155,18 @@ const SearchResultsSection = ({
   readonly filters: SearchFilterPlan;
   readonly legalEntityName: string | undefined;
   readonly model: ReadySearchPageModel;
-  readonly onFamiliesChange: (families: readonly ShellSearchFamilyKey[]) => void;
+  readonly onFamiliesChange: (families: readonly string[]) => void;
   /** Present only while a refined query is loading; the query the person is waiting for. */
   readonly pendingQuery: string | undefined;
   readonly tenantName: string | undefined;
 }) => {
-  const { t } = useModernI18n();
-  const context = composedSearchContextOf(model.shell);
+  const { language, t } = useModernI18n();
   const { partial, results } = model.response;
   const pending = pendingQuery !== undefined;
   const query = pendingQuery ?? model.query;
   const idle = !pending && query.length === 0;
   const empty = !pending && !idle && results.length === 0;
-  const familyOptions = filters.availableFamilies.map(({ groups, key }) => ({
-    key,
-    // The family's own visible groups name it in the reader's language; nothing is invented or hardcoded.
-    label: groups.map((group) => t(`shell.search.groups.${group}`)).join(' · '),
-  }));
+  const familyOptions = shellSearchFamilyFilterOptions(filters.availableFamilies, language ?? 'cs');
   const entries: readonly SearchScopeEntry[] = [
     ...(query.length === 0 ? [] : [{ key: 'query', label: t('shell.search.label'), value: query }]),
     ...(legalEntityName === undefined
@@ -198,7 +206,7 @@ const SearchResultsSection = ({
         ) : null}
       </div>
       {pending ? <SearchResultsPlaceholder /> : null}
-      {pending || idle || empty ? null : <SearchResultList context={context} query={query} results={results} />}
+      {pending || idle || empty ? null : <SearchResultList index={model.index} query={query} results={results} />}
     </div>
   );
 };
@@ -244,14 +252,239 @@ const SearchAgendaFallback = ({ shell }: { readonly shell: AuthenticatedHomePage
   );
 };
 
-const SearchPage = () => {
+interface ClientSearchState {
+  readonly key: string;
+  readonly model: SearchPageModel;
+}
+
+/**
+ * A same-mounted q/filter change does not necessarily re-run the framework loader (its search schema is empty).
+ * Fetch the new authorized answer here, keyed by the exact URL; a stale response can never become active because the
+ * active answer is selected by key and the previous request is aborted. No loader result or answer is reused.
+ */
+const useSamePageSearch = ({
+  language,
+  loaderKey,
+  loaderModel,
+  navigationEpoch,
+  requestKey,
+  routeSearch,
+  scopeBlocked,
+}: {
+  readonly language: string;
+  readonly loaderKey: string | undefined;
+  readonly loaderModel: SearchPageModel;
+  readonly navigationEpoch: number;
+  readonly requestKey: string;
+  readonly routeSearch: RouteSearchState;
+  readonly scopeBlocked: boolean;
+}): ClientSearchState | null => {
+  const [client, setClient] = useState<ClientSearchState | null>(null);
+  useEffect(() => {
+    const { shell: loaderShell } = loaderModel;
+    const authenticatedShell = loaderShell.state === 'authenticated' ? loaderShell : undefined;
+    const compositionRevision = authenticatedShell?.compositionRevision;
+    const shouldSearch =
+      routeSearch.samePage &&
+      routeSearch.q.length > 0 &&
+      loaderModel.state === 'ready' &&
+      (navigationEpoch > 0 || loaderKey !== requestKey) &&
+      !scopeBlocked &&
+      authenticatedShell !== undefined &&
+      compositionRevision !== undefined;
+    const controller = shouldSearch ? new AbortController() : undefined;
+    let cleanup: (() => void) | undefined;
+    if (controller !== undefined && authenticatedShell !== undefined && compositionRevision !== undefined) {
+      const requestQuery = routeSearch.q;
+      const requestedFamilies = searchFamiliesFromValue(routeSearch.families);
+      const fiber = browserRuntime.runFork(
+        searchReadyModel({
+          compositionRevision,
+          options: { locale: language ?? '' },
+          query: requestQuery,
+          requestedFamilies,
+          shell: authenticatedShell,
+        }).pipe(
+          Effect.match({
+            onFailure: (error) => searchFailureModel(error, authenticatedShell, requestQuery),
+            onSuccess: (answer) => answer,
+          }),
+          Effect.flatMap((next) =>
+            Effect.sync(() => {
+              if (!controller.signal.aborted) {
+                setClient({ key: requestKey, model: next });
+              }
+            }),
+          ),
+        ),
+        { signal: controller.signal },
+      );
+      cleanup = () => {
+        controller.abort();
+        browserRuntime.runFork(Fiber.interrupt(fiber));
+      };
+    }
+    return cleanup;
+  }, [
+    language,
+    loaderKey,
+    loaderModel,
+    navigationEpoch,
+    requestKey,
+    routeSearch.families,
+    routeSearch.q,
+    routeSearch.samePage,
+    scopeBlocked,
+  ]);
+  return client;
+};
+
+const resolveSearchPageState = ({
+  client,
+  loaderKey,
+  loaderModel,
+  navigationEpoch,
+  requestKey,
+  routeSearch,
+}: {
+  readonly client: ClientSearchState | null;
+  readonly loaderKey: string | undefined;
+  readonly loaderModel: SearchPageModel;
+  readonly navigationEpoch: number;
+  readonly requestKey: string;
+  readonly routeSearch: RouteSearchState;
+}) => {
+  const clientModel = client?.key === requestKey ? client.model : undefined;
+  const needsFresh = navigationEpoch > 0 || loaderKey !== requestKey;
+  const emptyRouteModel =
+    routeSearch.samePage && routeSearch.q.length === 0 && needsFresh && loaderModel.state === 'ready'
+      ? ({
+          filters: { availableFamilies: [], selectedFamilies: [] },
+          query: '',
+          response: { partial: false, results: [] },
+          shell: loaderModel.shell,
+          state: 'ready',
+        } satisfies SearchPageModel)
+      : undefined;
+  const activeModel = emptyRouteModel ?? (needsFresh ? (clientModel ?? loaderModel) : loaderModel);
+  const searching =
+    routeSearch.samePage &&
+    routeSearch.q.length > 0 &&
+    loaderKey !== undefined &&
+    needsFresh &&
+    client?.key !== requestKey;
+  return { activeModel, searching };
+};
+
+const familiesSearch = (query: string, families: readonly string[]): SearchPageSearch => {
+  const search: SearchPageSearch = {};
+  if (query.length > 0) {
+    search.q = query;
+  }
+  const ordered = [...new Set(families)];
+  if (ordered.length > 0) {
+    search.families = ordered.join(',');
+  }
+  return search;
+};
+
+const SearchPrincipalRefusal = ({
+  controls,
+  shell,
+}: {
+  readonly controls: ReturnType<typeof useShellControls>;
+  readonly shell: AuthenticatedHomePageModel;
+}) => {
   const { t } = useModernI18n();
-  const model = useLoaderData({ from: '/$lang/search' });
-  const { shell } = model;
+  return (
+    <ShellContentLayout controls={controls} shell={shell} title={t('shell.search.title')}>
+      <StatusText aria-live="polite" showIcon status="error">
+        {t('shell.search.unavailable')}
+      </StatusText>
+    </ShellContentLayout>
+  );
+};
+
+const useSearchPageState = ({
+  language,
+  loaderModel,
+  routeSearch,
+}: {
+  readonly language: string;
+  readonly loaderModel: SearchPageModel;
+  readonly routeSearch: RouteSearchState;
+}) => {
+  const loaderShell = loaderModel.shell;
+  const controls = useShellControls(loaderShell.state === 'authenticated' ? loaderShell : undefined);
+  const trustedScopeKey =
+    loaderShell.state === 'authenticated'
+      ? shellSearchScopeKey({
+          compositionRevision: loaderShell.compositionRevision,
+          currentLegalEntityId: loaderShell.selectedLegalEntityId,
+          currentTenantId: loaderShell.identity.tenantId,
+          identity: loaderShell.identity,
+          language,
+          legalEntitySwitchPending: controls.legalEntitySwitchPending,
+          tenantContextActive: loaderShell.contextState === 'tenant_authenticated',
+          tenantSwitchPending: controls.tenantSwitchPending,
+        })
+      : undefined;
+  const principalMissing = loaderShell.state === 'authenticated' && loaderShell.identity.principalId === undefined;
+  const scopeBlocked =
+    loaderShell.state !== 'authenticated' ||
+    principalMissing ||
+    controls.logoutPending ||
+    controls.tenantSwitchPending ||
+    controls.legalEntitySwitchPending;
+  const scopeKey =
+    trustedScopeKey === undefined
+      ? 'untrusted-principal'
+      : `${trustedScopeKey}\u0000${controls.logoutPending ? 'logout-pending' : 'logout-idle'}`;
+  const [navigationState, setNavigationState] = useState(() => ({
+    epoch: 0,
+    key: routeSearch.navigationKey,
+  }));
+  if (navigationState.key !== routeSearch.navigationKey) {
+    setNavigationState({ epoch: navigationState.epoch + 1, key: routeSearch.navigationKey });
+  }
+  const navigationEpoch = navigationState.epoch;
+  const requestKey = searchPageKey(scopeKey, navigationEpoch, routeSearch.q, routeSearch.families);
+  const loaderKey =
+    loaderModel.state === 'ready'
+      ? searchPageKey(scopeKey, 0, loaderModel.query, loaderModel.filters.selectedFamilies.join(','))
+      : undefined;
+  const client = useSamePageSearch({
+    language,
+    loaderKey,
+    loaderModel,
+    navigationEpoch,
+    requestKey,
+    routeSearch,
+    scopeBlocked,
+  });
+  const { activeModel, searching } = resolveSearchPageState({
+    client,
+    loaderKey,
+    loaderModel,
+    navigationEpoch,
+    requestKey,
+    routeSearch,
+  });
+  return { activeModel, controls, principalMissing, searching };
+};
+
+const SearchPage = () => {
+  const { language, t } = useModernI18n();
+  const loaderModel = useLoaderData({ from: '/$lang/search' });
+  const routeSearch = useRouteSearchState();
   const navigate = useNavigate();
-  const pendingQuery = usePendingSearchQuery();
-  const controls = useShellControls(shell.state === 'authenticated' ? shell : undefined);
-  if (model.state === 'reload_required' || shell.state === 'reload_required' || controls.reloadRequired) {
+  const { activeModel, controls, principalMissing, searching } = useSearchPageState({
+    language: language ?? '',
+    loaderModel,
+    routeSearch,
+  });
+  const { shell } = activeModel;
+  if (activeModel.state === 'reload_required' || shell.state === 'reload_required' || controls.reloadRequired) {
     return (
       <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
         <StatusText aria-live="polite" showIcon status="error">
@@ -272,36 +505,31 @@ const SearchPage = () => {
       </main>
     );
   }
+  if (principalMissing) {
+    return <SearchPrincipalRefusal controls={controls} shell={shell} />;
+  }
   const legalEntityName = shell.legalEntities.items.find(
     ({ legalEntityId }) => legalEntityId === shell.selectedLegalEntityId,
   )?.legalName;
   const tenantName = shell.tenants.items.find(({ tenantId }) => tenantId === shell.identity.tenantId)?.name;
-  const handleFamiliesChange = (families: readonly ShellSearchFamilyKey[]) => {
-    const ordered = shellSearchFamiliesInOrder(families);
-    const search: SearchPageSearch = {};
-    if (model.query.length > 0) {
-      search.q = model.query;
-    }
-    if (ordered.length > 0) {
-      search.families = ordered.join(',');
-    }
-    void navigate({ replace: true, search, to: '.' });
+  const handleFamiliesChange = (families: readonly string[]) => {
+    void navigate({ replace: true, search: familiesSearch(routeSearch.q, families), to: '.' });
   };
-  const content = Match.value(model).pipe(
+  const content = Match.value(activeModel).pipe(
     Match.when({ state: 'ready' }, (ready) => (
       <SearchResultsSection
         filters={ready.filters}
         legalEntityName={legalEntityName}
         model={ready}
         onFamiliesChange={handleFamiliesChange}
-        pendingQuery={pendingQuery}
+        pendingQuery={searching ? routeSearch.q : undefined}
         tenantName={tenantName}
       />
     )),
     Match.when({ state: 'unavailable' }, () => <SearchAgendaFallback shell={shell} />),
     Match.orElse(() => (
       <StatusText aria-live="polite" showIcon status="warning">
-        {t(`shell.search.${model.state}`)}
+        {t(`shell.search.${activeModel.state}`)}
       </StatusText>
     )),
   );
@@ -309,7 +537,7 @@ const SearchPage = () => {
     <ShellContentLayout
       controls={controls}
       shell={shell}
-      title={t(model.state === 'unavailable' ? 'shell.search.agenda_title' : 'shell.search.title')}
+      title={t(activeModel.state === 'unavailable' ? 'shell.search.agenda_title' : 'shell.search.title')}
     >
       {content}
     </ShellContentLayout>

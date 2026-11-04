@@ -17,6 +17,9 @@ import {
   principalAuthBindings,
   principals,
   searchIndexEntries,
+  searchDerivedRepairJobs,
+  searchLabelRefreshJobs,
+  searchLabelSourceRevisions,
   searchProjectionGenerations,
   searchProjectionRebuilds,
   tenantModuleStates,
@@ -277,7 +280,13 @@ const ownerPolicies = (owner: DatabaseOwnerIdentityDescriptor): readonly CoreIde
 
 const workerSearchPolicies = (
   owner: DatabaseOwnerIdentityDescriptor,
-  table: typeof searchIndexEntries | typeof searchProjectionGenerations | typeof searchProjectionRebuilds,
+  table:
+    | typeof searchDerivedRepairJobs
+    | typeof searchIndexEntries
+    | typeof searchLabelRefreshJobs
+    | typeof searchLabelSourceRevisions
+    | typeof searchProjectionGenerations
+    | typeof searchProjectionRebuilds,
   prefix: string,
 ): readonly CoreIdentityPolicyDescriptor[] => {
   const predicate = sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} = ${moduleKeyPolicyLiteral(owner.moduleKey, '')}`;
@@ -312,7 +321,13 @@ const workerSearchPolicies = (
 
 const sharedSearchPolicies = (
   enrollment: DatabaseIdentityEnrollment,
-  table: typeof searchIndexEntries | typeof searchProjectionGenerations | typeof searchProjectionRebuilds,
+  table:
+    | typeof searchDerivedRepairJobs
+    | typeof searchIndexEntries
+    | typeof searchLabelRefreshJobs
+    | typeof searchLabelSourceRevisions
+    | typeof searchProjectionGenerations
+    | typeof searchProjectionRebuilds,
   prefix: string,
   operations: readonly ('select' | 'insert' | 'update' | 'delete')[],
 ): readonly CoreIdentityPolicyDescriptor[] => {
@@ -376,11 +391,29 @@ export const makeCoreIdentityPolicies = (
       'insert',
       'update',
     ]),
+    ...sharedSearchPolicies(validated, searchLabelSourceRevisions, 'core_search_label_source_revisions', [
+      'select',
+      'insert',
+      'update',
+    ]),
+    ...sharedSearchPolicies(validated, searchLabelRefreshJobs, 'core_search_label_refresh_jobs', [
+      'select',
+      'insert',
+      'update',
+    ]),
+    ...sharedSearchPolicies(validated, searchDerivedRepairJobs, 'core_search_derived_repair_jobs', [
+      'select',
+      'insert',
+      'update',
+    ]),
     ...validated.owners.flatMap((owner) => [
       ...ownerPolicies(owner),
       ...workerSearchPolicies(owner, searchIndexEntries, 'core_search_index_entries'),
       ...workerSearchPolicies(owner, searchProjectionGenerations, 'core_search_projection_generations'),
       ...workerSearchPolicies(owner, searchProjectionRebuilds, 'core_search_projection_rebuilds'),
+      ...workerSearchPolicies(owner, searchLabelSourceRevisions, 'core_search_label_source_revisions'),
+      ...workerSearchPolicies(owner, searchLabelRefreshJobs, 'core_search_label_refresh_jobs'),
+      ...workerSearchPolicies(owner, searchDerivedRepairJobs, 'core_search_derived_repair_jobs'),
     ]),
   ];
   if (new Set(descriptors.map(({ policy }) => policy.name)).size !== descriptors.length) {

@@ -38,8 +38,8 @@ export interface SearchSnapshot {
 }
 
 /**
- * Only Finance-owned invoice evidence and public file metadata. counterpartyName is the stored invoice snapshot,
- * not a current Party label. Neither counterparty IČO nor current Party labels exist in this owner state.
+ * Only Finance-owned invoice evidence and public file metadata. counterpartyName and counterpartyCompanyId
+ * are stored invoice snapshots, not current Party labels. Current Party labels require approved publication.
  * Never index bytes, hashes, actors, notes or payment details (including the accounting issuer's IČO as a partner).
  */
 export const buildSearchDocuments = Effect.fn('Finance.buildSearchDocuments')(function* build(
@@ -67,6 +67,7 @@ export const buildSearchDocuments = Effect.fn('Finance.buildSearchDocuments')(fu
                 invoice.number,
                 invoice.documentNumber,
                 invoice.counterpartyName,
+                invoice.counterpartyCompanyId,
                 invoice.issueDate,
                 invoice.dueDate,
                 invoice.sourceOrder?.number,

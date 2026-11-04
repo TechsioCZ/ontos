@@ -52,6 +52,7 @@ import {
   SupportRecoveryPrincipalContextResolverLive,
   TenantModuleStateServiceLive,
   TrustedCompanyPrincipalContextSchema,
+  TrustedPrincipalContextSchema,
   withRequestPermissionDecisions,
 } from '@app/core-runtime';
 import {
@@ -291,7 +292,7 @@ import {
 } from './modules/shell-resources.ts';
 import type {
   ShellMediaAttachmentResolution,
-  ShellResourceContext,
+  ShellProviderAssertionIssuer,
   ShellResourceGateways,
 } from './modules/shell-resources.ts';
 import { moduleSearchProviderGateway } from './modules/shell-search-provider-gateway.ts';
@@ -1717,6 +1718,9 @@ const shellSearchReadProblem = (error: ReadCoreError) =>
 export const shellSearchHandler = (request: RequestWithHeaders, payload: ShellSearchPayload) =>
   Effect.gen(function* searchHandler() {
     const session = yield* requireShellSession(request.headers);
+    if (session.state !== 'authenticated' && session.state !== 'tenant_authenticated') {
+      return yield* failShellProblem(shellSelectionRequiredProblem());
+    }
     const catalog = yield* captureShellRelease(payload.compositionRevision);
     const governedReads = yield* ShellGovernedReads;
     const response = yield* governedReads
@@ -3190,6 +3194,26 @@ const approvedGatewayIssuerLive = GatewayIssuerLive.pipe(
 );
 type ShellGatewayIssuerLayer = Layer.Layer<GatewayIssuer, Layer.Error<typeof approvedGatewayIssuerLive>>;
 
+/** Production provider projection: encode only canonical principal fields, never operational correlation/trace.
+ * The real issuer still strictly decodes, binds the admitted audience/revision, signs and registers every assertion.
+ */
+export const issueShellSearchProviderAssertion = Effect.fn('ShellSearch.issueProviderAssertion')(
+  function* issueProviderAssertion({
+    appId,
+    compositionRevision,
+    context,
+  }: Parameters<ShellProviderAssertionIssuer['issueAssertion']>[0]) {
+    const gatewayIssuer = yield* GatewayIssuer;
+    const principal = yield* Schema.encodeEffect(TrustedPrincipalContextSchema)(context).pipe(
+      Effect.mapError((cause) => new ShellProviderUnavailableError({ cause })),
+    );
+    return yield* gatewayIssuer.issue({ audience: appId, compositionRevision, principal }).pipe(
+      Effect.map(({ token }) => `Bearer ${token}`),
+      Effect.catchTag('GatewayIssuerError', () => Effect.fail(new ShellProviderUnavailableError())),
+    );
+  },
+);
+
 const defaultScopedModuleStateFactory: ShellScopedModuleStateFactory = (transaction) =>
   makeTenantModuleStateService({ executor: transaction });
 
@@ -3299,61 +3323,9 @@ export const makeShellAuthenticationApiRuntime = (
   const shellGovernedReadsLayer = Layer.unwrap(
     GatewayIssuer.pipe(
       Effect.map((gatewayIssuer) => {
-        const providerAssertionIssuer = {
-          issueAssertion: ({
-            appId,
-            compositionRevision,
-            context,
-          }: {
-            readonly appId: string;
-            readonly compositionRevision: string;
-            readonly context: ShellResourceContext;
-          }) =>
-            gatewayIssuer
-              .issue({
-                audience: appId,
-                compositionRevision,
-                principal: withOptionalProperty(
-                  withOptionalProperty(
-                    withOptionalProperty(
-                      withOptionalProperty(
-                        withOptionalProperty(
-                          {
-                            authMethod: context.authMethod,
-                            principalId: context.principalId,
-                            tenantId: context.tenantId,
-                          },
-                          context.legalEntityId !== undefined,
-                          'legalEntityId',
-                          context.legalEntityId,
-                          {},
-                        ),
-                        // The owner checks the binding against its namespace; without it a staff session reads as revoked.
-                        context.authenticationNamespaceId !== undefined,
-                        'authenticationNamespaceId',
-                        context.authenticationNamespaceId,
-                        {},
-                      ),
-                      context.authBindingId !== undefined,
-                      'authBindingId',
-                      context.authBindingId,
-                      {},
-                    ),
-                    context.authContextRef !== undefined,
-                    'authContextRef',
-                    context.authContextRef,
-                    {},
-                  ),
-                  context.impersonatedByPrincipalId !== undefined,
-                  'impersonatedByPrincipalId',
-                  context.impersonatedByPrincipalId,
-                  {},
-                ),
-              })
-              .pipe(
-                Effect.map(({ token }) => `Bearer ${token}`),
-                Effect.catchTag('GatewayIssuerError', () => Effect.fail(new ShellProviderUnavailableError())),
-              ),
+        const providerAssertionIssuer: ShellProviderAssertionIssuer = {
+          issueAssertion: (input) =>
+            issueShellSearchProviderAssertion(input).pipe(Effect.provideService(GatewayIssuer, gatewayIssuer)),
         };
         return createShellGovernedReadsLayer(resourceGateways, providerAssertionIssuer, scopedModuleStateFactory);
       }),

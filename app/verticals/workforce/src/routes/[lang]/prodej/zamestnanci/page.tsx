@@ -12,7 +12,7 @@ import {
   paginationTranslations,
   surfaceTileClassName,
 } from '@app/admin-ui';
-import { modulePagePreload } from '@app/shared-contracts/page-data';
+import { modulePagePreload, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import {
   BulkTagDialog,
@@ -28,19 +28,21 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Accordion } from '@techsio/ui-kit/molecules/accordion';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef, DataTableTranslations, Row } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { Effect, Match, Option, Schema } from 'effect';
-import { createContext, use, useState } from 'react';
+import { Effect, Fiber, Match, Option, Schema } from 'effect';
+import { createContext, use, useEffect, useRef, useState } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
+import { executeFreshRecords } from '../../../../api/records-consumer.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { legalEntityOf, usePageData } from '../../../../runtime/use-page-data.ts';
 import type { WorkforceCommand } from '../../../../../shared/actions/apply-command.ts';
-import type { Employee, EmployeeRole, RecordsResponse } from '../../../../../shared/apis/records.ts';
+import type { Employee, EmployeeId, EmployeeRole, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import csResource from '../../../../../locales/cs/workforce.json';
 import enResource from '../../../../../locales/en/workforce.json';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
@@ -48,8 +50,28 @@ import '../../../index.css';
 import { AiActivityCard } from './ai-activity-card.tsx';
 import { aiActivityData, employeeTagsData, employeesData } from './employees-data.ts';
 import type { EmployeeTags, EmployeesLoadError } from './employees-data.ts';
-import { BulkDepartmentDialog, BulkRoleDialog, EmployeeFormDialog, selectLabelProps } from './employee-dialogs.tsx';
-import type { AutosaveCommand, CommitCommand, ShownEdit } from './employee-dialogs.tsx';
+import {
+  BulkDepartmentDialog,
+  BulkRoleDialog,
+  EmployeeFormDialog,
+  EmployeeTargetController,
+  employeeSearchNotice,
+  employeeSearchPanelMode,
+  employeeSearchTargetFromSearchStr,
+  employeeTargetNotice,
+  employeeTargetRequestKey,
+  employeeTargetScopeKey,
+  selectLabelProps,
+} from './employee-dialogs.tsx';
+import type {
+  AutosaveCommand,
+  CommitCommand,
+  EmployeeSearchNotice,
+  EmployeeTargetRecord,
+  EmployeeTargetScope,
+  EmployeeTargetState,
+  ShownEdit,
+} from './employee-dialogs.tsx';
 import type { CommitOutcome, EmployeeFilters } from './employee-model.ts';
 import {
   allOption,
@@ -514,7 +536,314 @@ const employeeColumns = (t: (key: string) => string, tagsShown: boolean): Column
   },
 ];
 
-const EmployeesPageContent = ({ legalEntityId }: { readonly legalEntityId: string }) => {
+const readEmployeeTargetRecord = (employeeId: EmployeeId) =>
+  newRequestToken.pipe(Effect.flatMap((token) => executeFreshRecords({ employeeId }, `workforce:target:${token}`)));
+
+type EmployeeTargetReadFailure = Effect.Error<ReturnType<typeof readEmployeeTargetRecord>>;
+
+const interruptTargetRead = (effect: Effect.Effect<void>): (() => void) => {
+  const fiber = browserRuntime.runFork(effect);
+  return () => {
+    browserRuntime.runFork(Fiber.interrupt(fiber));
+  };
+};
+
+interface EmployeeTargetApplied {
+  readonly key: string;
+  readonly state: EmployeeTargetState;
+}
+
+/** The open fresh-read panel keeps its own record; it never falls back to the cached list row. */
+interface EmployeeTargetPanel {
+  readonly employeeId: EmployeeId;
+  readonly record: EmployeeTargetRecord;
+  readonly requestKey: string;
+  readonly scopeKey: string;
+}
+
+interface EmployeeTargetDestination {
+  readonly handleClose: () => void;
+  readonly handleRetry: () => void;
+  readonly notice: EmployeeSearchNotice | undefined;
+  readonly panel: EmployeeTargetPanel | undefined;
+}
+
+const noTargetCleanup = () => {
+  // Nothing is pending when no fresh target read is active.
+};
+
+const targetRequestKeyOf = (
+  scope: EmployeeTargetScope | undefined,
+  employeeId: EmployeeId | undefined,
+): string | undefined => {
+  if (scope === undefined || employeeId === undefined) {
+    return undefined;
+  }
+  return `${employeeTargetScopeKey(scope)}\u0000${employeeId}`;
+};
+
+const targetPanelOf = (
+  applied: EmployeeTargetApplied | null,
+  scopeKey: string | undefined,
+): EmployeeTargetPanel | undefined => {
+  if (applied === null || applied.state.status !== 'ready' || scopeKey === undefined) {
+    return undefined;
+  }
+  if (!applied.key.startsWith(`${scopeKey}\u0000`)) {
+    return undefined;
+  }
+  return {
+    employeeId: applied.state.employeeId,
+    record: applied.state.record,
+    requestKey: applied.key,
+    scopeKey,
+  };
+};
+
+const targetNoticeOf = (
+  scope: EmployeeTargetScope | undefined,
+  target: ReturnType<typeof employeeSearchTargetFromSearchStr>,
+  currentState: EmployeeTargetState | undefined,
+): EmployeeSearchNotice | undefined => {
+  if (scope !== undefined && target.kind === 'invalid') {
+    return employeeSearchNotice({ status: 'invalid' });
+  }
+  return currentState === undefined ? undefined : employeeTargetNotice(currentState);
+};
+
+/**
+ * Owns the fresh target lookup for the copied URL: each scope/target change cancels the previous lookup, and only the
+ * current successful authorized read may open a panel. The panel keeps that response's revision/capabilities and never
+ * reads the cached list. A retry starts a new read without changing the target identity.
+ */
+const useEmployeeTargetDestination = ({
+  formOpened,
+  scope,
+  searchStr,
+}: {
+  readonly formOpened: boolean;
+  readonly scope: EmployeeTargetScope | undefined;
+  readonly searchStr: string;
+}): EmployeeTargetDestination => {
+  const [applied, setApplied] = useState<EmployeeTargetApplied | null>(null);
+  const [dismissedKey, setDismissedKey] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  const controllerRef = useRef<EmployeeTargetController<EmployeeTargetReadFailure> | null>(null);
+  useEffect(() => {
+    if (controllerRef.current !== null) {
+      return;
+    }
+    controllerRef.current = new EmployeeTargetController<EmployeeTargetReadFailure>(
+      (request, next) => setApplied({ key: employeeTargetRequestKey(request), state: next }),
+      (failure) =>
+        Match.value(failure).pipe(
+          Match.tag('RecordsForbiddenProblem', () => 'forbidden' as const),
+          Match.orElse(() => 'unavailable' as const),
+        ),
+      readEmployeeTargetRecord,
+      interruptTargetRead,
+    );
+  }, []);
+  const target = employeeSearchTargetFromSearchStr(searchStr);
+  const employeeId = target.kind === 'id' ? target.id : undefined;
+  const scopeKey = scope === undefined ? undefined : employeeTargetScopeKey(scope);
+  const requestKey = targetRequestKeyOf(scope, employeeId);
+  const appliedPanel = targetPanelOf(applied, scopeKey);
+  const panel = formOpened ? undefined : appliedPanel;
+  const enabled = !formOpened && appliedPanel === undefined && requestKey !== undefined && dismissedKey !== requestKey;
+  const legalEntityId = scope?.legalEntityId;
+  const principalId = scope?.principalId;
+  const tenantId = scope?.tenantId;
+  useEffect(() => {
+    const controller = controllerRef.current;
+    if (controller === null) {
+      return noTargetCleanup;
+    }
+    if (
+      !enabled ||
+      employeeId === undefined ||
+      legalEntityId === undefined ||
+      principalId === undefined ||
+      tenantId === undefined
+    ) {
+      controller.cancel();
+      return noTargetCleanup;
+    }
+    controller.update({
+      enabled: true,
+      request: { attempt: retry, employeeId, scope: { legalEntityId, principalId, tenantId } },
+    });
+    return () => controller.cancel();
+  }, [employeeId, enabled, legalEntityId, principalId, retry, tenantId]);
+  const currentState = requestKey !== undefined && applied?.key === requestKey ? applied.state : undefined;
+  const notice = targetNoticeOf(scope, target, currentState);
+  const handleClose = () => {
+    if (appliedPanel !== undefined) {
+      setDismissedKey(appliedPanel.requestKey);
+    }
+    setApplied(null);
+  };
+  const handleRetry = () => {
+    setDismissedKey(null);
+    setApplied(null);
+    setRetry((current) => current + 1);
+  };
+  return { handleClose, handleRetry, notice, panel };
+};
+
+/** The honest notice of a copied target this reader cannot currently open; no record content is revealed. */
+const EmployeeSearchNoticeBanner = ({
+  notice,
+  onRetry,
+}: {
+  readonly notice: EmployeeSearchNotice;
+  readonly onRetry: () => void;
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <div className="flex flex-wrap items-center gap-150">
+      <StatusText showIcon status={notice.tone}>
+        {t(notice.labelKey)}
+      </StatusText>
+      {notice.retry && (
+        <Button onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+          {t(`${key}.errors.retry`)}
+        </Button>
+      )}
+    </div>
+  );
+};
+
+/** Shows the copied-target notice only while no draft dialog owns the screen. */
+const EmployeeSearchNoticeSlot = ({
+  activeDialogOpened,
+  notice,
+  onRetry,
+}: {
+  readonly activeDialogOpened: boolean;
+  readonly notice: EmployeeSearchNotice | undefined;
+  readonly onRetry: () => void;
+}) =>
+  notice === undefined || activeDialogOpened ? null : <EmployeeSearchNoticeBanner notice={notice} onRetry={onRetry} />;
+
+/** The copied-target panel uses only the fresh response's record, revision and write capability. */
+const EmployeeSearchDialog = ({
+  activeDialogOpened,
+  autosaveCommit,
+  commit,
+  onDismiss,
+  panel,
+}: {
+  readonly activeDialogOpened: boolean;
+  readonly autosaveCommit: AutosaveCommand;
+  readonly commit: CommitCommand;
+  readonly onDismiss: () => void;
+  readonly panel: EmployeeTargetPanel | undefined;
+}) => {
+  if (activeDialogOpened || panel === undefined) {
+    return null;
+  }
+  const { record } = panel;
+  return (
+    <EmployeeFormDialog
+      autosaveCommit={autosaveCommit}
+      availablePrincipals={record.availablePrincipals}
+      commit={commit}
+      employee={record.employee}
+      onClose={onDismiss}
+      readOnly={employeeSearchPanelMode(record.canWrite) === 'read-only'}
+      revision={record.revision}
+    />
+  );
+};
+
+/** The row-click edit panel and the fresh copied-target panel never coexist; the page owns both close handlers. */
+const EmployeeRecordPanels = ({
+  autosaveCommit,
+  commit,
+  data,
+  form,
+  items,
+  onCloseForm,
+  onDismissTarget,
+  panel,
+}: {
+  readonly autosaveCommit: AutosaveCommand;
+  readonly commit: CommitCommand;
+  readonly data: RecordsResponse | undefined;
+  readonly form: { readonly employee: Employee | null } | null;
+  readonly items: readonly Employee[];
+  readonly onCloseForm: () => void;
+  readonly onDismissTarget: () => void;
+  readonly panel: EmployeeTargetPanel | undefined;
+}) => (
+  <>
+    {form !== null && (
+      <EmployeeFormDialog
+        autosaveCommit={autosaveCommit}
+        availablePrincipals={data?.availablePrincipals ?? []}
+        commit={commit}
+        employee={currentEmployee(items, form.employee)}
+        onClose={onCloseForm}
+        revision={data?.revision ?? 0}
+      />
+    )}
+    <EmployeeSearchDialog
+      activeDialogOpened={form !== null}
+      autosaveCommit={autosaveCommit}
+      commit={commit}
+      onDismiss={onDismissTarget}
+      panel={panel}
+    />
+  </>
+);
+
+/** The bulk/tag overlays stay one small surface; the page body keeps the table and the single-record panels. */
+const EmployeeBulkOverlays = ({
+  bulk,
+  commit,
+  ids,
+  onBulkClose,
+  onBulkSaved,
+  onTagDone,
+  onTagOpenChange,
+  tagDialogOpen,
+  tagSubjectIds,
+}: {
+  readonly bulk: BulkDialogKind | null;
+  readonly commit: CommitCommand;
+  readonly ids: readonly EmployeeId[];
+  readonly onBulkClose: () => void;
+  readonly onBulkSaved: () => void;
+  readonly onTagDone: () => void;
+  readonly onTagOpenChange: (open: boolean) => void;
+  readonly tagDialogOpen: boolean;
+  readonly tagSubjectIds: readonly SubjectId[];
+}) => (
+  <>
+    <BulkTagDialog
+      kind="employee"
+      onDone={onTagDone}
+      onOpenChange={onTagOpenChange}
+      open={tagDialogOpen}
+      subjectIds={tagSubjectIds}
+    />
+    {bulk === 'department' && (
+      <BulkDepartmentDialog commit={commit} ids={ids} onClose={onBulkClose} onSaved={onBulkSaved} />
+    )}
+    {bulk === 'role' && <BulkRoleDialog commit={commit} ids={ids} onClose={onBulkClose} onSaved={onBulkSaved} />}
+  </>
+);
+
+const EmployeesPageContent = ({
+  legalEntityId,
+  scope,
+  searchStr,
+}: {
+  readonly legalEntityId: string;
+  readonly scope: EmployeeTargetScope | undefined;
+  readonly searchStr: string;
+}) => {
   const { t } = useModernI18n();
   const toaster = useToast();
   const state = loadStateOf(usePageData(employeesData, legalEntityId));
@@ -580,6 +909,12 @@ const EmployeesPageContent = ({ legalEntityId }: { readonly legalEntityId: strin
   const tagFilterFailed = tagFilter !== null && tagStatus === 'error';
   const visible = rowsWithTag(filterEmployees(sortEmployees(items), filters), tagFilter, tagsBySubject);
   const selectedIds = items.flatMap((employee) => (selection[employee.id] === true ? [employee.id] : []));
+  const targetDestination = useEmployeeTargetDestination({
+    formOpened: form !== null,
+    scope,
+    searchStr,
+  });
+  const visibleTargetPanel = targetDestination.panel;
 
   /** Any filter change clears the selection so a bulk action never reaches rows the user cannot see. */
   const updateFilters = (patch: Partial<EmployeeFilters>) => {
@@ -702,6 +1037,12 @@ const EmployeesPageContent = ({ legalEntityId }: { readonly legalEntityId: strin
           title={t(`${key}.title`)}
         />
 
+        <EmployeeSearchNoticeSlot
+          activeDialogOpened={form !== null || visibleTargetPanel !== undefined}
+          notice={targetDestination.notice}
+          onRetry={targetDestination.handleRetry}
+        />
+
         <EmployeeStats data={data} loading={state.status === 'loading'} />
 
         <EmployeeFilterBar
@@ -761,40 +1102,48 @@ const EmployeesPageContent = ({ legalEntityId }: { readonly legalEntityId: strin
         <PermissionsCard />
       </div>
 
-      {form !== null && (
-        <EmployeeFormDialog
-          autosaveCommit={autosaveCommit}
-          availablePrincipals={data?.availablePrincipals ?? []}
-          commit={commit}
-          employee={currentEmployee(items, form.employee)}
-          onClose={() => setForm(null)}
-          revision={data?.revision ?? 0}
-        />
-      )}
-      <BulkTagDialog
-        kind="employee"
-        onDone={() => {
+      <EmployeeRecordPanels
+        autosaveCommit={autosaveCommit}
+        commit={commit}
+        data={data}
+        form={form}
+        items={items}
+        onCloseForm={() => setForm(null)}
+        onDismissTarget={targetDestination.handleClose}
+        panel={visibleTargetPanel}
+      />
+      <EmployeeBulkOverlays
+        bulk={bulk}
+        commit={commit}
+        ids={selectedIds}
+        onBulkClose={() => setBulk(null)}
+        onBulkSaved={afterBulkSave}
+        onTagDone={() => {
           refetchTags();
           // Like the bulk role and department changes, a finished bulk tag change clears the selection.
           setSelection({});
         }}
-        onOpenChange={setTagDialogOpen}
-        open={tagDialogOpen}
-        subjectIds={subjectIdsOf(selectedIds)}
+        onTagOpenChange={setTagDialogOpen}
+        tagDialogOpen={tagDialogOpen}
+        tagSubjectIds={subjectIdsOf(selectedIds)}
       />
-      {bulk === 'department' && (
-        <BulkDepartmentDialog commit={commit} ids={selectedIds} onClose={() => setBulk(null)} onSaved={afterBulkSave} />
-      )}
-      {bulk === 'role' && (
-        <BulkRoleDialog commit={commit} ids={selectedIds} onClose={() => setBulk(null)} onSaved={afterBulkSave} />
-      )}
     </>
   );
 };
 
 /** Rendered by the Shell with the props its `preloadPage` received; the standalone app passes none. */
 const EmployeesPage = (props: Partial<ModulePageProps>) => {
-  const location = useRouterState({ select: (routerState) => routerState.location.href });
+  const location = useRouterState({ select: (routerState) => routerState.location.searchStr });
+  const actorScopeKey = pageDataScopeKey(props.context, 'demo.workforce');
+  const scope =
+    props.context === undefined || actorScopeKey === undefined
+      ? undefined
+      : {
+          legalEntityId: props.context.legalEntityId,
+          principalId: props.context.principalId,
+          tenantId: props.context.tenantId,
+        };
+  const searchStr = location === '' ? (props.search ?? '') : location;
   return (
     <FederatedI18nBoundary
       defaultNamespace="workforce"
@@ -802,7 +1151,12 @@ const EmployeesPage = (props: Partial<ModulePageProps>) => {
       resources={workforceI18nResources}
       supportedLanguages={['en', 'cs']}
     >
-      <EmployeesPageContent key={location} legalEntityId={legalEntityOf(props)} />
+      <EmployeesPageContent
+        key={actorScopeKey ?? 'standalone:demo.workforce'}
+        legalEntityId={legalEntityOf(props)}
+        scope={scope}
+        searchStr={searchStr}
+      />
     </FederatedI18nBoundary>
   );
 };

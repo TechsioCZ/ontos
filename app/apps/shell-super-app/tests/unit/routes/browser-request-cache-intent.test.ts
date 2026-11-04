@@ -25,8 +25,8 @@ rstest.mock('../../../src/routes/route-preload-scheduler.ts', () => {
   );
   return {
     ...actual,
-    // Exercise a full shared background pool here; the scheduler tests cover the serial production default.
-    staffRoutePreloads: actual.makeRoutePreloadScheduler(4),
+    // The production default: one background slot. The single-slot retention tests below depend on this width.
+    staffRoutePreloads: actual.makeRoutePreloadScheduler(1),
   };
 });
 
@@ -92,75 +92,81 @@ beforeEach(async () => {
   await gatewayRequest();
 });
 
-it.live('keeps the shared background slot until both the real owner and its detached dataset settle', () =>
-  Effect.gen(function* retainedPreparationSlot() {
-    const ownerRelease = yield* Deferred.make<boolean>();
-    const datasetRelease = yield* Deferred.make<boolean>();
-    const blockersRelease = yield* Deferred.make<boolean>();
-    const ownerStarted = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
-    let revalidating = false;
-    const data = definePageData({
-      key: (key: string) => key,
-      load: () => Effect.suspend(() => (revalidating ? Deferred.await(datasetRelease) : Effect.succeed(true))),
-      runtime: browserRuntime,
-    });
-    yield* data.preload('prepared');
-    revalidating = true;
-    const dataset = yield* data.refresh('prepared').pipe(Effect.forkChild({ startImmediately: true }));
-    const ownerWork = withoutRecordedPageReads(
-      () => browserRuntime.runPromise(data.preload('prepared').pipe(Effect.andThen(Deferred.await(ownerRelease)))),
-      '/en/prepared',
-    );
-    yield* staffRoutePreloads.invalidate;
-    yield* staffRoutePreloads.resume;
-    yield* Effect.gen(function* checkDetachedDatasetSlot() {
-      const first = yield* staffRoutePreloads
-        .schedule(
-          '/en/prepared',
-          'background',
-          Effect.forkDetach(ownerWork, { startImmediately: true }).pipe(
-            Effect.flatMap((owner) => Deferred.succeed(ownerStarted, owner)),
-            Effect.asVoid,
-          ),
-        )
-        .pipe(Effect.forkChild({ startImmediately: true }));
-      const owner = yield* Deferred.await(ownerStarted);
-      const blockers = yield* Effect.forEach(
-        ['one', 'two', 'three'],
-        (key) =>
-          staffRoutePreloads
-            .schedule(`/en/${key}`, 'background', Deferred.await(blockersRelease).pipe(Effect.asVoid))
-            .pipe(Effect.forkDetach({ startImmediately: true })),
-        { concurrency: 3 },
+for (const firstToSettle of ['owner', 'dataset'] as const) {
+  it.live(`keeps the single background slot until owner and detached dataset settle (${firstToSettle} first)`, () =>
+    Effect.gen(function* retainedPreparationSlot() {
+      const ownerRelease = yield* Deferred.make<boolean>();
+      const datasetRelease = yield* Deferred.make<boolean>();
+      const ownerStarted = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
+      let revalidating = false;
+      const data = definePageData({
+        key: (key: string) => key,
+        load: () => Effect.suspend(() => (revalidating ? Deferred.await(datasetRelease) : Effect.succeed(true))),
+        runtime: browserRuntime,
+      });
+      yield* data.preload('prepared');
+      revalidating = true;
+      const dataset = yield* data.refresh('prepared').pipe(Effect.forkChild({ startImmediately: true }));
+      const ownerWork = withoutRecordedPageReads(
+        () => browserRuntime.runPromise(data.preload('prepared').pipe(Effect.andThen(Deferred.await(ownerRelease)))),
+        '/en/prepared',
       );
-      const fifth = yield* staffRoutePreloads
-        .schedule('/en/fifth', 'background', Effect.void)
-        .pipe(Effect.forkChild({ startImmediately: true }));
-      yield* Deferred.succeed(ownerRelease, true);
-      yield* Fiber.join(owner);
-      expect(fifth.pollUnsafe()).toBeUndefined();
-      expect(first.pollUnsafe()).toBeUndefined();
-      yield* Deferred.succeed(datasetRelease, true);
-      yield* Fiber.join(dataset);
-      yield* Fiber.join(fifth);
-      yield* Fiber.join(first);
-      yield* Deferred.succeed(blockersRelease, true);
-      yield* Effect.all(
-        blockers.map((fiber) => Fiber.join(fiber)),
-        { concurrency: 3, discard: true },
-      );
-    }).pipe(
-      Effect.ensuring(
-        Effect.gen(function* releaseOwnedWork() {
+      yield* staffRoutePreloads.invalidate;
+      yield* staffRoutePreloads.resume;
+      yield* Effect.gen(function* checkDetachedDatasetSlot() {
+        const first = yield* staffRoutePreloads
+          .schedule(
+            '/en/prepared',
+            'background',
+            Effect.forkDetach(ownerWork, { startImmediately: true }).pipe(
+              Effect.flatMap((owner) => Deferred.succeed(ownerStarted, owner)),
+              Effect.asVoid,
+            ),
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        const owner = yield* Deferred.await(ownerStarted);
+        const started: string[] = [];
+        // The retained owner already fills the default single background slot.
+        const next = yield* staffRoutePreloads
+          .schedule(
+            '/en/next',
+            'background',
+            Effect.sync(() => {
+              started.push('next');
+            }),
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        expect(started).toEqual([]);
+        if (firstToSettle === 'owner') {
           yield* Deferred.succeed(ownerRelease, true);
+          yield* Fiber.join(owner);
+        } else {
           yield* Deferred.succeed(datasetRelease, true);
-          yield* Deferred.succeed(blockersRelease, true);
-          yield* staffRoutePreloads.invalidate;
-        }),
-      ),
-    );
-  }),
-);
+          yield* Fiber.join(dataset);
+        }
+        expect(next.pollUnsafe()).toBeUndefined();
+        expect(first.pollUnsafe()).toBeUndefined();
+        expect(started).toEqual([]);
+        yield* Deferred.succeed(ownerRelease, true);
+        yield* Deferred.succeed(datasetRelease, true);
+        yield* Fiber.join(owner);
+        yield* Fiber.join(dataset);
+        yield* Fiber.join(next);
+        yield* Fiber.join(first);
+        expect(started).toEqual(['next']);
+      }).pipe(
+        Effect.ensuring(
+          Effect.gen(function* releaseOwnedWork() {
+            yield* Deferred.succeed(ownerRelease, true);
+            yield* Deferred.succeed(datasetRelease, true);
+            yield* staffRoutePreloads.invalidate;
+            yield* staffRoutePreloads.awaitIdle;
+          }),
+        ),
+      );
+    }),
+  );
+}
 
 it.live('excludes several concurrent destinations without polluting the current visit replay', () =>
   Effect.gen(function* concurrentRecorderIsolation() {

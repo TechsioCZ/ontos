@@ -1,3 +1,6 @@
+import { CoreSearchProjectionHitSchema } from '@app/core-runtime';
+import { coreSearchTokens, matchesCoreSearchValues, normalizeCoreSearchText } from '@app/core-runtime/search-contract';
+import { compareCoreSearchHits } from '@app/core-runtime/search-ranking';
 import { DateTime, Option, Schema } from 'effect';
 
 import type { CounterpartyRef } from '../resources/counterparty.ts';
@@ -62,15 +65,219 @@ export const normalizePartySearchHits = (
         ref: hit.canonicalPartyRef,
         title: hit.title.trim(),
       });
-    } else if (matchedViaAlias && !existing.matchedViaAlias) {
-      byCanonicalParty.set(key, { ...existing, matchedViaAlias: true });
+    } else if (!matchedViaAlias && existing.matchedViaAlias) {
+      byCanonicalParty.set(key, { ...existing, matchedViaAlias: false });
     }
   }
 
   return searchResults([...byCanonicalParty.values()].filter(({ archived }) => scope.includeArchived || !archived));
 };
 
+export const CurrentPartySearchTimeSchema = Schema.DateTimeUtcFromString;
+export const CurrentPartySearchScopeSchema = Schema.Struct({
+  effectiveAt: Schema.DateTimeUtc,
+  includeArchived: Schema.Boolean,
+  query: Schema.String,
+  tenantId: Schema.String,
+});
+export type CurrentPartySearchScope = typeof CurrentPartySearchScopeSchema.Type;
+
+export const CurrentPartySearchValueSchema = Schema.Struct({
+  value: Schema.String,
+  state: Schema.String,
+  isCurrent: Schema.Boolean,
+  validFrom: CurrentPartySearchTimeSchema,
+  validTo: Schema.optionalKey(CurrentPartySearchTimeSchema),
+});
+export type CurrentPartySearchValue = typeof CurrentPartySearchValueSchema.Encoded;
+
+export interface CurrentPartySearchIdentity {
+  readonly ref: PartyRef;
+  readonly displayName: string | null;
+  readonly archived: boolean;
+  readonly identifiers: readonly CurrentPartySearchValue[];
+  readonly contacts: readonly (CurrentPartySearchValue & {
+    readonly type: string;
+    readonly privacy: string;
+  })[];
+}
+
+/** Request-local owner facts, never a replacement projection or a persisted privacy fence. */
+export interface CurrentPartySearchEvidence {
+  readonly identities: readonly CurrentPartySearchIdentity[];
+  readonly aliases: readonly {
+    readonly aliasPartyRef: PartyRef;
+    readonly canonicalPartyRef: PartyRef;
+  }[];
+}
+
 const parseInstant = Schema.decodeUnknownOption(Schema.DateTimeUtcFromString);
+
+const currentSearchValueAt = (value: CurrentPartySearchValue, effectiveAt: DateTime.Utc): boolean => {
+  const from = parseInstant(value.validFrom);
+  const to = value.validTo === undefined ? Option.none() : parseInstant(value.validTo);
+  return (
+    value.state === 'ACTIVE' &&
+    value.isCurrent &&
+    Option.isSome(from) &&
+    (value.validTo === undefined || Option.isSome(to)) &&
+    DateTime.Order(from.value, effectiveAt) <= 0 &&
+    (Option.isNone(to) || DateTime.Order(effectiveAt, to.value) < 0)
+  );
+};
+
+const currentPartyCanonicalIds = (
+  tenantId: string,
+  evidence: CurrentPartySearchEvidence,
+): Option.Option<ReadonlyMap<string, string>> => {
+  const identities = new Map(evidence.identities.map((identity) => [identity.ref.resourceId, identity]));
+  const aliases = new Map(
+    evidence.aliases.map(({ aliasPartyRef, canonicalPartyRef }) => [
+      aliasPartyRef.resourceId,
+      canonicalPartyRef.resourceId,
+    ]),
+  );
+  if (
+    identities.size !== evidence.identities.length ||
+    aliases.size !== evidence.aliases.length ||
+    evidence.identities.some(({ ref }) => ref.tenantId !== tenantId) ||
+    evidence.aliases.some(
+      ({ aliasPartyRef, canonicalPartyRef }) =>
+        aliasPartyRef.tenantId !== tenantId ||
+        canonicalPartyRef.tenantId !== tenantId ||
+        !identities.has(aliasPartyRef.resourceId),
+    )
+  ) {
+    return Option.none();
+  }
+  const canonicalIds = new Map<string, string>();
+  for (const id of identities.keys()) {
+    const seen = new Set<string>();
+    let current = id;
+    while (aliases.has(current)) {
+      if (seen.has(current) || !identities.has(current)) {
+        return Option.none();
+      }
+      seen.add(current);
+      current = aliases.get(current) ?? current;
+    }
+    if (!identities.has(current)) {
+      return Option.none();
+    }
+    canonicalIds.set(id, current);
+  }
+  return Option.some(canonicalIds);
+};
+
+const currentIdentityMatches = (
+  identity: CurrentPartySearchIdentity,
+  effectiveAt: DateTime.Utc,
+  tokens: readonly string[],
+): boolean =>
+  matchesCoreSearchValues(
+    [
+      ...(identity.displayName === null ? [] : [identity.displayName]),
+      ...identity.identifiers.filter((value) => currentSearchValueAt(value, effectiveAt)).map(({ value }) => value),
+      ...identity.contacts
+        .filter(
+          (value) =>
+            value.privacy === 'PUBLIC' &&
+            (value.type === 'EMAIL' || value.type === 'PHONE') &&
+            currentSearchValueAt(value, effectiveAt),
+        )
+        .map(({ value }) => value),
+    ],
+    tokens,
+  );
+
+const rankCurrentPartyHits = (
+  hits: readonly PartySearchProjectionHit[],
+  text: string,
+  tokens: readonly string[],
+): SearchNormalizationResult<PartySearchProjectionHit> => {
+  const query = { phrase: normalizeCoreSearchText(text).trim().split(/\s+/u).join(' '), tokens };
+  const ranked = [];
+  for (const hit of hits) {
+    // Party's public DTO refs are unbranded. Decode the approved Core schema before ranking;
+    // no assertion may promote an owner ref into a Core resource identity.
+    const ranking = Schema.decodeUnknownOption(CoreSearchProjectionHitSchema)({
+      archived: hit.archived,
+      facets: [],
+      metadata: [],
+      ref: hit.canonicalPartyRef,
+      title: hit.title,
+    });
+    if (Option.isNone(ranking)) {
+      return violation('Party Search current evidence contains an invalid ranking identity');
+    }
+    ranked.push({ hit, ranking: ranking.value });
+  }
+  return searchResults(
+    ranked.toSorted((left, right) => compareCoreSearchHits(left.ranking, right.ranking, query)).map(({ hit }) => hit),
+  );
+};
+
+/**
+ * The index supplies candidates only. Rebuild selection, attribution and ordering exclusively
+ * from current, authorized owner facts. In particular, a stale contact cannot contribute even
+ * one token to a mixed name/contact query or improve a surviving name hit's rank/reason.
+ */
+export const rematchCurrentPartySearchHits = (
+  scope: CurrentPartySearchScope,
+  hits: readonly PartySearchProjectionHit[],
+  evidence: CurrentPartySearchEvidence,
+  authorizedPartyIds: ReadonlySet<string>,
+): SearchNormalizationResult<PartySearchProjectionHit> => {
+  const normalized = normalizePartySearchHits({ ...scope, includeArchived: true }, hits);
+  if (Schema.is(SearchProjectionViolationSchema)(normalized)) {
+    return normalized;
+  }
+  const tokens = coreSearchTokens(scope.query);
+  if (!Schema.is(Schema.DateTimeUtc)(scope.effectiveAt) || tokens.length === 0) {
+    return violation('Party Search current evidence requires a valid query and effective time');
+  }
+  const resolved = currentPartyCanonicalIds(scope.tenantId, evidence);
+  if (Option.isNone(resolved)) {
+    return violation('Party Search current evidence contains an invalid identity or alias chain');
+  }
+  const canonicalIds = resolved.value;
+  const identities = new Map(evidence.identities.map((identity) => [identity.ref.resourceId, identity]));
+  const matches = (identity: CurrentPartySearchIdentity): boolean =>
+    authorizedPartyIds.has(identity.ref.resourceId) && currentIdentityMatches(identity, scope.effectiveAt, tokens);
+  const currentHits: PartySearchProjectionHit[] = [];
+  for (const { ref } of normalized.items) {
+    const canonical = identities.get(ref.resourceId);
+    if (
+      canonical === undefined ||
+      canonicalIds.get(ref.resourceId) !== ref.resourceId ||
+      !authorizedPartyIds.has(ref.resourceId) ||
+      (!scope.includeArchived && canonical.archived)
+    ) {
+      continue;
+    }
+    const base = {
+      archived: canonical.archived,
+      canonicalPartyRef: canonical.ref,
+      title: canonical.displayName ?? 'Unnamed Party',
+    };
+    if (matches(canonical)) {
+      currentHits.push(base);
+      continue;
+    }
+    const [alias] = evidence.identities
+      .filter(
+        (identity) =>
+          identity.ref.resourceId !== ref.resourceId &&
+          canonicalIds.get(identity.ref.resourceId) === ref.resourceId &&
+          matches(identity),
+      )
+      .toSorted((left, right) => left.ref.resourceId.localeCompare(right.ref.resourceId));
+    if (alias !== undefined) {
+      currentHits.push({ ...base, matchedPartyRef: alias.ref });
+    }
+  }
+  return rankCurrentPartyHits(currentHits, scope.query, tokens);
+};
 
 const currentRolesAt = (
   periods: CounterpartySearchProjectionHit['rolePeriods'],
@@ -188,10 +395,10 @@ export const normalizeCounterpartySearchHits = (
         },
         ref: hit.counterpartyRef,
       });
-    } else if (isAliasHit(hit.canonicalPartyRef, hit.matchedPartyRef) && !existing.party.matchedViaAlias) {
+    } else if (!isAliasHit(hit.canonicalPartyRef, hit.matchedPartyRef) && existing.party.matchedViaAlias) {
       byCounterparty.set(key, {
         ...existing,
-        party: { ...existing.party, matchedViaAlias: true },
+        party: { ...existing.party, matchedViaAlias: false },
       });
     }
   }

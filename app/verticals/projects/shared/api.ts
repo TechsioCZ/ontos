@@ -12,7 +12,9 @@ import { ArchiveProjectActionApi } from './apis/archive-project-action.ts';
 import { CreateProjectActionApi } from './apis/create-project-action.ts';
 import { MoveProjectActionApi } from './apis/move-project-action.ts';
 import { ProjectOwnerCandidatesApi } from './apis/project-owner-candidates.ts';
+import { ProjectsSearchApi } from './apis/projects-search.ts';
 import { ReadProjectApi } from './apis/read-project.ts';
+import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
 import { UnarchiveProjectActionApi } from './apis/unarchive-project-action.ts';
 import { UpdateProjectActionApi } from './apis/update-project-action.ts';
 // </generated-governed-http-api-imports>
@@ -41,7 +43,9 @@ export const projectsApi = HttpApi.make('ProjectsApi')
   .addHttpApi(CreateProjectActionApi)
   .addHttpApi(MoveProjectActionApi)
   .addHttpApi(ProjectOwnerCandidatesApi)
+  .addHttpApi(ProjectsSearchApi)
   .addHttpApi(ReadProjectApi)
+  .addHttpApi(RequestSearchRebuildActionApi)
   .addHttpApi(UnarchiveProjectActionApi)
   .addHttpApi(UpdateProjectActionApi)
   // </generated-governed-http-api-additions>

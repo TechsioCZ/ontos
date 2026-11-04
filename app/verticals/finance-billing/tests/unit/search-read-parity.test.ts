@@ -307,6 +307,7 @@ it.effect('invoice rematching uses approved current dates, order number and snap
       invoices: [
         {
           ...invoice,
+          counterpartyCompanyId: '87654321',
           counterpartyName: 'Příliš žluťoučká Dvořáková',
           note: 'private-invoice-note',
           number: 'FV-2026-0101',
@@ -324,11 +325,20 @@ it.effect('invoice rematching uses approved current dates, order number and snap
       'FV-2026-0101',
       'FV-2026-101',
       'Příliš žluťoučká Dvořáková',
+      '87654321',
       '2026-11-01',
       '2026-11-10',
       'SO-2026-0088',
     ]);
-    for (const query of ['dvorakova prilis', 'SO-2026 2026-11-10', '2026-11-01', 'FV-2026-0101', 'Dvořáková']) {
+    for (const query of [
+      'dvorakova prilis',
+      'SO-2026 2026-11-10',
+      '2026-11-01',
+      'FV-2026-0101',
+      'Dvořáková',
+      '87654321',
+      '87654321 dvorakova',
+    ]) {
       const hits = yield* loadCurrentSearchHits(scope, 'finance.billing.invoice', { query }, state).pipe(
         Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed(candidates) }),
       );
@@ -351,20 +361,19 @@ it.effect('invoice rematching uses approved current dates, order number and snap
       ...encoded,
       invoices: [{ ...invoice, documentNumber: 'NEW-2026-202', number: 'FV-2026-0202' }],
     });
-    for (const query of ['FV-2026-0101', 'FV-2026-101']) {
+    for (const query of ['FV-2026-0101', 'FV-2026-101', '87654321']) {
       const hits = yield* loadCurrentSearchHits(scope, 'finance.billing.invoice', { query }, renumbered).pipe(
         Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed(candidates) }),
       );
       expect(hits).toEqual([]);
     }
     // File evidence remains its own group: an invoice's name/number must not prove a filename match.
-    const documents = yield* loadCurrentSearchHits(
-      scope,
-      'finance.billing.document',
-      { query: 'Dvořáková' },
-      state,
-    ).pipe(Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed(candidates) }));
-    expect(documents).toEqual([]);
+    for (const query of ['Dvořáková', '87654321']) {
+      const documents = yield* loadCurrentSearchHits(scope, 'finance.billing.document', { query }, state).pipe(
+        Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed(candidates) }),
+      );
+      expect(documents).toEqual([]);
+    }
   }),
 );
 

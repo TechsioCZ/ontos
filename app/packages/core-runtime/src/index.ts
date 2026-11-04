@@ -159,7 +159,7 @@ export type {
   AgentProposalQueueModuleReviewService,
   AgentProposalQueueRow,
 } from './auth/agent-proposal-queue-contract.ts';
-export { isConnectionWriteAllowed } from './auth/oauth-connection-scope.ts';
+export { isConnectionReadAllowed, isConnectionWriteAllowed } from './auth/oauth-connection-scope.ts';
 export { OAuthAuthenticationAudit, OAuthAuthenticationAuditLive } from './auth/oauth-authentication-audit.ts';
 export { OAuthAuthenticationAuditUnavailable } from './auth/oauth-authentication-audit-unavailable.ts';
 export { OAuthConnectionCompanies, OAuthConnectionCompaniesLive } from './auth/oauth-connection-companies.ts';
@@ -682,7 +682,10 @@ export { defineReadSearchCollectionAuthorization } from './reads/search-result-a
 export type { ReadSearchCollectionResultAuthorization } from './reads/search-result-authorization.ts';
 export {
   CoreSearchFacetSchema,
+  CoreSearchLabelDependencySchema,
   CoreSearchMetadataFieldSchema,
+  CoreSearchProjectionBatchSchema,
+  CoreSearchProjectionDependentQuerySchema,
   CoreSearchProjectionDocumentSchema,
   CoreSearchProjectionHitSchema,
   CoreSearchProjectionInvalid,
@@ -701,7 +704,10 @@ export {
 } from './search/projection.ts';
 export type {
   CoreSearchFacet,
+  CoreSearchLabelDependency,
   CoreSearchMetadataField,
+  CoreSearchProjectionBatch,
+  CoreSearchProjectionDependentQuery,
   CoreSearchProjectionDocument,
   CoreSearchProjectionHit,
   CoreSearchProjectionStoreService,
@@ -727,7 +733,66 @@ export {
 } from './search/search-contract.ts';
 export type { CoreSearchRelevance } from './search/search-contract.ts';
 export { coreSearchRelevance } from './search/search-ranking.ts';
+export { CoreSearchProjectionRefreshStore } from './search/projection-store.ts';
+export type { CoreSearchProjectionRefreshStoreService } from './search/projection-store.ts';
 export {
+  CORE_SEARCH_LABEL_REFERENCE_LOOKUP_LIMIT,
+  CORE_SEARCH_LABEL_REFRESH_PAGE_LIMIT,
+  CoreSearchDerivedRepairCommitSchema,
+  CoreSearchDerivedRepairGenerationSchema,
+  CoreSearchDerivedRepairJobSchema,
+  CoreSearchDerivedRepairOpenSchema,
+  CoreSearchDerivedRepairProgressSchema,
+  CoreSearchDerivedRepairRequestSchema,
+  CoreSearchDerivedRepairResourceIdsSchema,
+  CoreSearchDerivedRepairResultSchema,
+  CoreSearchDerivedRepairScanSchema,
+  CoreSearchDerivedRepairStateSchema,
+  CoreSearchLabelRefreshCommitSchema,
+  CoreSearchLabelRefreshJobSchema,
+  CoreSearchLabelRefreshOpenSchema,
+  CoreSearchLabelRefreshPageQuerySchema,
+  CoreSearchLabelRefreshPageSchema,
+  CoreSearchLabelRefreshStateSchema,
+  CoreSearchLabelSourceRevisionSchema,
+  advanceCoreSearchLabelBarrier,
+  compareCoreSearchLabelRefreshCursor,
+  coreSearchDerivedRepairCursor,
+  coreSearchLabelBarrierKey,
+  coreSearchLabelRefreshCursorKey,
+  decodeCoreSearchDerivedRepairCommit,
+  decodeCoreSearchDerivedRepairOpen,
+  decodeCoreSearchDerivedRepairRequest,
+  decodeCoreSearchLabelRefreshCommit,
+  decodeCoreSearchLabelRefreshCursor,
+  decodeCoreSearchLabelRefreshCursorOption,
+  decodeCoreSearchLabelRefreshOpen,
+  decodeCoreSearchLabelRefreshPageQuery,
+  planCoreSearchDerivedRepairReopen,
+  validateCoreSearchLabelBarrier,
+  validateCoreSearchLabelRefreshPageCommit,
+} from './search/projection.ts';
+export type {
+  CoreSearchDerivedRepairCommit,
+  CoreSearchDerivedRepairGeneration,
+  CoreSearchDerivedRepairJob,
+  CoreSearchDerivedRepairOpen,
+  CoreSearchDerivedRepairProgress,
+  CoreSearchDerivedRepairReopenPlan,
+  CoreSearchDerivedRepairRequest,
+  CoreSearchDerivedRepairResult,
+  CoreSearchDerivedRepairScan,
+  CoreSearchDerivedRepairState,
+  CoreSearchLabelRefreshCommit,
+  CoreSearchLabelRefreshJob,
+  CoreSearchLabelRefreshOpen,
+  CoreSearchLabelRefreshPage,
+  CoreSearchLabelRefreshPageQuery,
+  CoreSearchLabelRefreshState,
+  CoreSearchLabelSourceRevision,
+} from './search/projection.ts';
+export {
+  CoreSearchProjectionRefreshStoreLive,
   CoreSearchProjectionStoreLive,
   CoreSearchQueryRuntimeLive,
   makePostgresCoreSearchProjectionStore,

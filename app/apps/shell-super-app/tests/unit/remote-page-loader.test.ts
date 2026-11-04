@@ -387,14 +387,7 @@ const tenantOnlyModel = (
   contextState: 'tenant_authenticated',
   identity,
   legalEntities: { items: [], state: 'available' },
-  navigation: {
-    deniedAppIds: [],
-    items: [],
-    moduleIds: [],
-    recordDestinations: [],
-    state: 'available',
-    unavailableDeployments: [],
-  },
+  navigation: { deniedAppIds: [], items: [], moduleIds: [], state: 'available', unavailableDeployments: [] },
   state: 'authenticated',
   tenants: { items: [], state: 'available' },
 });

@@ -103,20 +103,21 @@ export const skuKeyOf = (sku: string) => sku.trim().toLowerCase();
 const parameterText = (parameters: Product['parameters']) =>
   (parameters ?? []).map(({ label, unit, value }) => `${label} ${value} ${unit}`);
 
-/** Folded search text: name, SKU, short description, parameters and every variant's name, SKU and attributes. */
-export const productSearchText = (product: Product) =>
+/** Folded product text and active variant text; unset activity means active, just like the stored variant rows. */
+export const productSearchText = (
+  product: Pick<Product, 'name' | 'parameters' | 'shortDescription' | 'sku' | 'variants'>,
+) =>
   normalizeSearchText(
     [
       product.name,
       product.sku,
       product.shortDescription ?? '',
       ...parameterText(product.parameters),
-      ...(product.variants ?? []).flatMap((variant) => [
-        variant.name,
-        variant.sku ?? '',
-        variant.attributes,
-        ...parameterText(variant.parameters),
-      ]),
+      ...(product.variants ?? []).flatMap((variant) =>
+        variant.active === false
+          ? []
+          : [variant.name, variant.sku ?? '', variant.attributes, ...parameterText(variant.parameters)],
+      ),
     ].join(' '),
   );
 

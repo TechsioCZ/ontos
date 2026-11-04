@@ -2,21 +2,28 @@
 // @ontos-deployment-app-id projects
 // @ontos-module-id projects.core
 import {
+  ShellSearchContributionSchema,
   defineOntosModuleManifest,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
+// Legacy default-export page import stays outside the generated slot, as in party-registry.
+import CreateProjectPage from './src/routes/[lang]/projects/create-project/page.tsx';
 // <generated-module-manifest-imports>
 import { archiveProjectAction } from './src/actions/archive-project.action.ts';
 import { createProjectAction } from './src/actions/create-project.action.ts';
-import CreateProjectPage from './src/routes/[lang]/projects/create-project/page.tsx';
 import { moveProjectAction } from './src/actions/move-project.action.ts';
 import { ProjectOwnerCandidatesApi } from './shared/apis/project-owner-candidates.ts';
 import { ReadProjectApi } from './shared/apis/read-project.ts';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 import { unarchiveProjectAction } from './src/actions/unarchive-project.action.ts';
 import { updateProjectAction } from './src/actions/update-project.action.ts';
 // </generated-module-manifest-imports>
+
+type SearchContributionInput = typeof ShellSearchContributionSchema.Encoded;
+const searchContribution = (value: SearchContributionInput) =>
+  Result.getOrThrow(Schema.decodeUnknownResult(ShellSearchContributionSchema)(value));
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -28,6 +35,20 @@ const pageContribution = (value: PageContributionInput) =>
 
 const projectModuleKey = 'projects.core';
 const createProjectPageKey = 'projects.core.page.create-project';
+const workFamily = {
+  icon: 'icon-[mdi--account-multiple-check-outline]',
+  key: 'work',
+  label: { cs: 'Lidé a úkoly', en: 'People and tasks' },
+  order: 60,
+} as const;
+
+const projectGroup = {
+  icon: 'icon-[mdi--folder-outline]',
+  key: 'project',
+  label: { cs: 'Projekty', en: 'Projects' },
+  order: 240,
+} as const;
+
 export const projectsManifest = defineOntosModuleManifest({
   activation: {
     defaultState: 'inactive',
@@ -48,6 +69,7 @@ export const projectsManifest = defineOntosModuleManifest({
       archiveProjectAction,
       createProjectAction,
       moveProjectAction,
+      requestSearchRebuildAction,
       unarchiveProjectAction,
       updateProjectAction,
       // </generated-module-manifest-actions>
@@ -91,6 +113,14 @@ export const projectsManifest = defineOntosModuleManifest({
     ],
     search: [
       // <generated-module-manifest-search>
+      {
+        accessFiltering: 'tenant_scope',
+        key: 'projects.core.projects',
+        owningModuleId: projectModuleKey,
+        requestFilters: ['includeArchived'],
+        resourceType: 'projects.project',
+        tenantPermission: 'access',
+      },
       // </generated-module-manifest-search>
     ],
     shellContributions: {
@@ -145,6 +175,27 @@ export const projectsManifest = defineOntosModuleManifest({
       resourceDetails: [],
       search: [
         // <generated-module-shell-search>
+        searchContribution({
+          contributionKey: 'projects.core.search.projects',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'authenticated_principal' },
+            entrypointKey: 'projects.core.search.projects',
+            moduleKey: projectModuleKey,
+            role: 'search',
+            scope: 'tenant',
+          },
+          presentation: {
+            family: workFamily,
+            group: projectGroup,
+            record: {
+              pageKey: createProjectPageKey,
+              selector: { idEncoding: 'native', idFormat: 'uuid', kind: 'query', parameterName: 'projectId' },
+            },
+            scope: 'tenant',
+          },
+          searchKey: 'projects.core.projects',
+        }),
         // </generated-module-shell-search>
       ],
       timelines: [],

@@ -21,6 +21,7 @@ export const propertyPortfolioRegistration = defineVerticalRuntimeRegistration({
     api: {
       // <generated-module-registration-apis>
       records: () => import('./src/api/records-client.ts'),
+      'search-labels': () => import('./src/api/search-labels-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {

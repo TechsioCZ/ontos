@@ -33,6 +33,26 @@ const pageContribution = (value: PageContributionInput) =>
 const searchContribution = (value: typeof ShellSearchContributionSchema.Encoded) =>
   Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
 
+const financeFamily = {
+  icon: 'icon-[mdi--cash-multiple]',
+  key: 'finance',
+  label: { cs: 'Finance', en: 'Finance' },
+  order: 40,
+} as const;
+
+const contractGroup = {
+  icon: 'icon-[mdi--file-sign]',
+  key: 'contract',
+  label: { cs: 'Smlouvy', en: 'Contracts' },
+  order: 130,
+} as const;
+const legalDocumentGroup = {
+  icon: 'icon-[mdi--file-document-outline]',
+  key: 'legalDocument',
+  label: { cs: 'Právní dokumenty', en: 'Legal documents' },
+  order: 140,
+} as const;
+
 export const legalAgreementsManifest = defineOntosModuleManifest({
   activation: {
     defaultState: 'inactive',
@@ -158,6 +178,20 @@ export const legalAgreementsManifest = defineOntosModuleManifest({
             role: 'search',
             scope: 'tenant',
           },
+          presentation: {
+            family: financeFamily,
+            group: contractGroup,
+            record: {
+              pageKey: RECORDS_PAGE_KEY,
+              selector: {
+                idEncoding: 'native',
+                idFormat: 'opaque',
+                kind: 'query',
+                parameterName: 'resourceId',
+              },
+            },
+            scope: 'company',
+          },
           searchKey: 'legal.agreements.contracts',
         }),
         searchContribution({
@@ -169,6 +203,20 @@ export const legalAgreementsManifest = defineOntosModuleManifest({
             moduleKey: OWNER_MODULE_KEY,
             role: 'search',
             scope: 'tenant',
+          },
+          presentation: {
+            family: financeFamily,
+            group: legalDocumentGroup,
+            record: {
+              pageKey: RECORDS_PAGE_KEY,
+              selector: {
+                idEncoding: 'native',
+                idFormat: 'uuid',
+                kind: 'query',
+                parameterName: 'documentId',
+              },
+            },
+            scope: 'company',
           },
           searchKey: 'legal.agreements.documents',
         }),

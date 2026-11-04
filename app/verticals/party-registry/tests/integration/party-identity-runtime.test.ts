@@ -4,6 +4,7 @@ import {
 } from '@app/party-registry-identity-contracts';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import {
+  ContextAccessLive,
   CoreSearchProjectionStoreLive,
   CoreSearchQueryRuntimeLive,
   loadDatabaseIdentityConnections,
@@ -364,23 +365,29 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             PartySearchProjectionGatewayLive.pipe(
               Layer.provide(CoreSearchQueryRuntimeLive),
               Layer.provide(CoreSearchProjectionStoreLive),
+              Layer.merge(ContextAccessLive),
             ),
           ).pipe(
             Effect.provideContext(fixtureContext),
             Effect.provideService(DatabaseIdentityEnrollmentContext, PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT),
           );
-          const hits = yield* Effect.all([ReadRuntime, freshReadTransport]).pipe(
-            Effect.flatMap(([runtime, transport]) =>
-              runtime.runRead({
-                registration: counterpartiesRead,
-                input: { query: sharedIco },
-                principal: legalEntityPrincipal,
-                transport,
-              }),
-            ),
-            Effect.provideContext(searchContext),
-            Effect.provideContext(fixtureContext),
-          );
+          const search = (principal: TrustedPrincipalContext) =>
+            Effect.all([ReadRuntime, freshReadTransport]).pipe(
+              Effect.flatMap(([runtime, transport]) =>
+                runtime.runRead({
+                  registration: counterpartiesRead,
+                  input: { query: sharedIco },
+                  principal,
+                  transport,
+                }),
+              ),
+              Effect.provideContext(searchContext),
+              Effect.provideContext(fixtureContext),
+            );
+          // Company/Counterparty permission alone cannot authorize tenant-owned Party evidence.
+          expect(yield* search(legalEntityPrincipal)).toEqual([]);
+          yield* fixture.grantResourceAccess(own.counterpartyRef, managerReadPrincipal.principalId);
+          const hits = yield* search(managerReadPrincipal);
           const refs = hits.map(({ ref }) => ref);
           expect(refs).toContainEqual(own.counterpartyRef);
           expect(refs).not.toContainEqual(foreign.counterpartyRef);

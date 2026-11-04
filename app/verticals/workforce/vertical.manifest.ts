@@ -5,16 +5,18 @@ import {
   defineOntosModuleManifest,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
+  ShellSearchContributionSchema,
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
-import { RecordsApi } from './shared/apis/records.ts';
-import { RecordsPage } from './src/routes/[lang]/prodej/zamestnanci/page.tsx';
-import { workforceReadAllPermission } from './shared/permissions/workforce-read-all.ts';
-import { workforceWriteAllPermission } from './shared/permissions/workforce-write-all.ts';
 import { employeeCollectionResourceDescriptor } from './shared/resources/employee-collection.ts';
 import { employeeResourceDescriptor } from './shared/resources/employee.ts';
+import { RecordsApi } from './shared/apis/records.ts';
+import { RecordsPage } from './src/routes/[lang]/prodej/zamestnanci/page.tsx';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
+import { workforceReadAllPermission } from './shared/permissions/workforce-read-all.ts';
+import { workforceWriteAllPermission } from './shared/permissions/workforce-write-all.ts';
 // </generated-module-manifest-imports>
 import { workforceMcpContribution } from './shared/mcp/contribution.ts';
 
@@ -26,8 +28,26 @@ const navigationContribution = (value: NavigationContributionInput) =>
 const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
 
-const moduleKey = 'demo.workforce';
+const searchContribution = (value: typeof ShellSearchContributionSchema.Encoded) =>
+  Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
+
+const workforceModuleId = 'demo.workforce';
+const moduleAccessPermission = 'module.access';
 const recordsPageKey = 'demo.workforce.page.records';
+
+const peopleFamily = {
+  icon: 'icon-[mdi--account-group-outline]',
+  key: 'people',
+  label: { cs: 'Lidé', en: 'People' },
+  order: 10,
+} as const;
+
+const employeeGroup = {
+  icon: 'icon-[mdi--badge-account-horizontal-outline]',
+  key: 'employee',
+  label: { cs: 'Zaměstnanci', en: 'Employees' },
+  order: 230,
+} as const;
 
 export const workforceManifest = defineOntosModuleManifest({
   activation: {
@@ -39,7 +59,7 @@ export const workforceManifest = defineOntosModuleManifest({
   module: {
     description: 'Workforce business capability.',
     displayName: 'Workforce',
-    id: moduleKey,
+    id: workforceModuleId,
     implementedAs: 'ultramodern_microvertical',
     kind: 'business_module',
   },
@@ -47,6 +67,7 @@ export const workforceManifest = defineOntosModuleManifest({
     actions: [
       // <generated-module-manifest-actions>
       applyCommandAction,
+      requestSearchRebuildAction,
       // </generated-module-manifest-actions>
     ],
     api: {
@@ -79,6 +100,12 @@ export const workforceManifest = defineOntosModuleManifest({
     ],
     search: [
       // <generated-module-manifest-search>
+      {
+        accessFiltering: 'legal_entity_scope',
+        key: 'demo.workforce.employees',
+        owningModuleId: workforceModuleId,
+        resourceType: employeeResourceDescriptor.key,
+      },
       // </generated-module-manifest-search>
     ],
     shellContributions: {
@@ -89,9 +116,9 @@ export const workforceManifest = defineOntosModuleManifest({
           contributionKey: 'demo.workforce.navigation.records',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
             entrypointKey: recordsPageKey,
-            moduleKey,
+            moduleKey: workforceModuleId,
             role: 'page',
             scope: 'tenant',
           },
@@ -110,9 +137,9 @@ export const workforceManifest = defineOntosModuleManifest({
           contributionKey: recordsPageKey,
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
             entrypointKey: recordsPageKey,
-            moduleKey,
+            moduleKey: workforceModuleId,
             role: 'page',
             scope: 'tenant',
           },
@@ -132,6 +159,27 @@ export const workforceManifest = defineOntosModuleManifest({
       resourceDetails: [],
       search: [
         // <generated-module-shell-search>
+        searchContribution({
+          contributionKey: 'demo.workforce.search.employees',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
+            entrypointKey: 'demo.workforce.search.employees',
+            moduleKey: workforceModuleId,
+            role: 'search',
+            scope: 'tenant',
+          },
+          presentation: {
+            family: peopleFamily,
+            group: employeeGroup,
+            record: {
+              pageKey: recordsPageKey,
+              selector: { idEncoding: 'native', idFormat: 'uuid', kind: 'query', parameterName: 'employeeId' },
+            },
+            scope: 'company',
+          },
+          searchKey: 'demo.workforce.employees',
+        }),
         // </generated-module-shell-search>
       ],
       timelines: [],

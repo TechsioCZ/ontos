@@ -8,8 +8,9 @@ import {
 import type { PeopleSearchResponse, PeopleSearchRequirements } from '@app/core-runtime/people/search';
 import { Context, Effect, Layer, Option, Result, Schema } from 'effect';
 import { ShellSearchResponseSchema } from '../../shared/api.ts';
-import type { ShellSearchResponse } from '../../shared/api.ts';
-import { ShellProviderUnavailableError } from './shell-resources.ts';
+import type { ShellSearchPresentationInventory, ShellSearchResponse } from '../../shared/api.ts';
+import { withShellSearchRequestBudget } from './shell-governed-search.ts';
+import { ShellProviderUnavailableError, sortShellSearchResults } from './shell-resources.ts';
 import type { ShellResourceContext } from './shell-resources.ts';
 import { observeShellSearchProvider } from './shell-search-diagnostics.ts';
 
@@ -87,63 +88,83 @@ export const ShellPeopleSystemSearchLive: Layer.Layer<
   Effect.gen(function* live() {
     const environment = yield* Effect.context<Effect.Services<ReturnType<typeof runPeopleSearch>> | ContextAccess>();
     return {
-      search: Effect.fn('ShellSystemSearch.people')(function* search(scope: ShellResourceContext, query: string) {
-        if (scope.legalEntityId === undefined || query.trim().length === 0) {
-          return { partial: false, results: [] };
-        }
-        const operation = runPeopleSearch({
-          input: { query },
-          principal: scope,
-          transport: { correlationId: scope.correlationId },
-        }).pipe(
-          Effect.mapError(unavailable),
-          Effect.flatMap((values) => authorizePeopleSearchResults(scope, values)),
-          Effect.map((results) => ({ partial: false, results })),
-        );
-        return yield* operation.pipe(Effect.retry({ times: 1 }), Effect.provideContext(environment));
-      }),
+      search: Effect.fn('ShellSystemSearch.people')(
+        function* search(scope: ShellResourceContext, query: string) {
+          if (scope.legalEntityId === undefined || query.trim().length === 0) {
+            return { partial: false, results: [] };
+          }
+          const operation = runPeopleSearch({
+            input: { query },
+            principal: scope,
+            transport: { correlationId: scope.correlationId },
+          }).pipe(
+            Effect.mapError(unavailable),
+            Effect.flatMap((values) => authorizePeopleSearchResults(scope, values)),
+            Effect.map((results) => ({ partial: false, results })),
+          );
+          // Both attempts, owner decoding and the independent result permission check share the request deadline.
+          return yield* operation.pipe(Effect.retry({ times: 1 }), Effect.provideContext(environment));
+        },
+        (program) => withShellSearchRequestBudget(program, unavailable),
+      ),
     };
   }),
 );
 
 const resultKey = (row: ShellSearchResponse['results'][number]) =>
-  `${row.ref.moduleId}:${row.ref.resourceType}:${row.ref.resourceId}`;
-export const mergeShellSystemSearch = Effect.fn('ShellSystemSearch.merge')(function* merge(
-  business: Effect.Effect<ShellSearchResponse, ShellProviderUnavailableError>,
-  system: Effect.Effect<ShellSearchResponse, ShellProviderUnavailableError>,
-) {
-  const outcomes = yield* Effect.all(
-    [
-      Effect.result(
-        business.pipe(
-          observeShellSearchProvider({
-            moduleId: 'shell.super-app',
-            phase: 'owner',
-            searchKey: 'shell.super-app.business-search',
-          }),
+  `${row.ref.tenantId ?? ''}:${row.ref.moduleId}:${row.ref.resourceType}:${row.ref.resourceId}`;
+export const mergeShellSystemSearch = Effect.fn('ShellSystemSearch.merge')(
+  function* merge(
+    business: Effect.Effect<ShellSearchResponse, ShellProviderUnavailableError>,
+    system: Effect.Effect<ShellSearchResponse, ShellProviderUnavailableError>,
+    presentation?: ShellSearchPresentationInventory,
+  ) {
+    const outcomes = yield* Effect.all(
+      [
+        Effect.result(
+          business.pipe(
+            observeShellSearchProvider({
+              moduleId: 'shell.super-app',
+              phase: 'owner',
+              searchKey: 'shell.super-app.business-search',
+            }),
+          ),
         ),
-      ),
-      Effect.result(
-        system.pipe(
-          observeShellSearchProvider({
-            moduleId: 'core.identity',
-            phase: 'owner',
-            searchKey: 'core.identity.people',
-          }),
+        Effect.result(
+          system.pipe(
+            observeShellSearchProvider({
+              moduleId: 'core.identity',
+              phase: 'owner',
+              searchKey: 'core.identity.people',
+            }),
+          ),
         ),
-      ),
-    ],
-    { concurrency: 2 },
-  );
-  const successes = outcomes.flatMap((outcome) => (Result.isSuccess(outcome) ? [outcome.success] : []));
-  if (successes.length !== outcomes.length || successes.some(({ partial }) => partial)) {
-    return yield* unavailable();
-  }
-  const rows = new Map(successes.flatMap(({ results }) => results.map((row) => [resultKey(row), row] as const)));
-  return {
-    partial: false,
-    results: [...rows.values()].toSorted(
-      (left, right) => left.title.localeCompare(right.title) || resultKey(left).localeCompare(resultKey(right)),
-    ),
-  } as const;
-});
+      ],
+      { concurrency: 2 },
+    );
+    const successes = outcomes.flatMap((outcome) => (Result.isSuccess(outcome) ? [outcome.success] : []));
+    if (successes.length !== outcomes.length || successes.some(({ partial }) => partial)) {
+      return yield* unavailable();
+    }
+    const [businessResult] = successes;
+    const businessPresentation = businessResult?.presentation;
+    if (
+      presentation !== undefined &&
+      businessPresentation !== undefined &&
+      presentation.business.compositionRevision !== businessPresentation.business.compositionRevision
+    ) {
+      return yield* unavailable();
+    }
+    // The governed caller supplies the exact Core-owned system declaration; raw result bodies never supply it.
+    const capturedPresentation = presentation ?? businessPresentation;
+    const rows = new Map(successes.flatMap(({ results }) => results.map((row) => [resultKey(row), row] as const)));
+    const response = {
+      partial: false,
+      results: sortShellSearchResults([...rows.values()]),
+    };
+    return yield* Schema.decodeUnknownEffect(ShellSearchResponseSchema)(
+      capturedPresentation === undefined ? response : { ...response, presentation: capturedPresentation },
+    ).pipe(Effect.mapError(unavailable));
+  },
+  (program) => withShellSearchRequestBudget(program, unavailable),
+);

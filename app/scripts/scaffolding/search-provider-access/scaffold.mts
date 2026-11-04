@@ -2,6 +2,9 @@ import { Effect, FileSystem, Schema } from 'effect';
 
 import {
   discoverOntosModuleEffect,
+  resolveDeclaredSearchResourceEffect,
+  readCanonicalSearchDescriptor,
+  SearchTenantPermissionSchema,
   ensureUniqueMutationPaths,
   MODULE_MANIFEST_SEARCH_SLOT_END,
   MODULE_MANIFEST_SEARCH_SLOT_START,
@@ -14,6 +17,7 @@ import {
 } from '../shared.mts';
 import type {
   Mutation,
+  OntosVerticalMetadata,
   ScaffoldFailure,
   ScaffoldPlan,
   SearchProviderAccessScaffoldConfig,
@@ -129,11 +133,13 @@ const patchContract = (
 
 const patchManifest = (
   content: string,
-  moduleId: string,
+  vertical: OntosVerticalMetadata,
   config: SearchProviderAccessScaffoldConfig,
-): Effect.Effect<string, SearchProviderAccessScaffoldError> =>
+): Effect.Effect<string, ScaffoldFailure | SearchProviderAccessScaffoldError, FileSystem.FileSystem> =>
   Effect.gen(function* patchManifestEffect() {
+    const { moduleId } = vertical;
     const key = `${moduleId}.${config.name}`;
+    const descriptor = yield* trySync(() => readCanonicalSearchDescriptor(content, key, moduleId));
     const start = content.indexOf(MODULE_MANIFEST_SEARCH_SLOT_START);
     const end = content.indexOf(MODULE_MANIFEST_SEARCH_SLOT_END);
     if (
@@ -154,9 +160,10 @@ const patchManifest = (
     const matches = [...slot.matchAll(pattern)];
     const [match] = matches;
     const resourceType = match?.[1];
-    if (matches.length !== 1 || resourceType === undefined || !resourceType.startsWith(`${moduleId}.`)) {
+    if (matches.length !== 1 || resourceType === undefined || resourceType !== descriptor.resourceType) {
       return yield* scaffoldError(`expected exactly one generated search descriptor for ${key}`);
     }
+    yield* resolveDeclaredSearchResourceEffect(vertical, resourceType);
     const requestFilterValues = config.requestFilters.map((filter) => `'${filter}'`).join(', ');
     const requestFilters = `[${requestFilterValues}]`;
     const tenantPermission =
@@ -173,7 +180,7 @@ const hasConsistentAccessScope = (config: SearchProviderAccessScaffoldConfig): b
 const hasValidAccessFlags = (config: SearchProviderAccessScaffoldConfig): boolean =>
   ['tenant_scope', 'resource_permission'].includes(config.accessFiltering) &&
   ['optional', 'required'].includes(config.legalEntityScope) &&
-  (config.tenantPermission === undefined || config.tenantPermission === 'read_party_identity') &&
+  (config.tenantPermission === undefined || Schema.is(SearchTenantPermissionSchema)(config.tenantPermission)) &&
   config.requestFilters.every((filter) => ['includeArchived', 'role'].includes(filter)) &&
   new Set(config.requestFilters).size === config.requestFilters.length;
 
@@ -230,7 +237,7 @@ export const planSearchProviderAccessScaffold = (
     const mutations: Mutation[] = [];
     const nextProvider = yield* patchProvider(provider, vertical.moduleId, config);
     const nextContract = yield* patchContract(contract, config);
-    const nextManifest = yield* patchManifest(vertical.manifestContent, vertical.moduleId, config);
+    const nextManifest = yield* patchManifest(vertical.manifestContent, vertical, config);
     for (const mutation of [
       updateMutation(providerPath, provider, nextProvider),
       updateMutation(contractPath, contract, nextContract),

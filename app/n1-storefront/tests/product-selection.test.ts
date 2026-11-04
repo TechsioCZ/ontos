@@ -47,6 +47,24 @@ const {
 );
 
 describe("real product variant presentation", () => {
+  it("requests a variant before showing quantity controls or claiming availability", () => {
+    const d = getDictionary("cs");
+    const html = renderToStaticMarkup(
+      createElement(ProductView, { dictionary: d, locale: "cs", product }),
+    );
+    expect(html).not.toContain('role="spinbutton"');
+    expect(html).toContain("Vyberte variantu");
+    expect(html).toContain(d.stock.unknown);
+    expect(html).not.toContain(d.commerceUnavailable);
+  });
+  it("uses a sold-out mobile action without a second quantity control", () => {
+    const d = getDictionary("cs");
+    const html = renderToStaticMarkup(
+      createElement(ProductView, { dictionary: d, locale: "cs", product, variantId: "variant" }),
+    );
+    expect(html.match(/role="spinbutton"/gu)).toHaveLength(1);
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>Vyprodáno<\/button>/u);
+  });
   it("server renders the selected variant and parameter table with purchase disabled", () => {
     const html = renderToStaticMarkup(
       createElement(ProductView, {

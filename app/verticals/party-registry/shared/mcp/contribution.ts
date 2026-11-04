@@ -1,4 +1,4 @@
-import { defineOntosMcpContribution } from '@app/core-runtime';
+import { defineOntosMcpContribution, OntosMcpHidden } from '@app/core-runtime';
 
 export const partyRegistryMcpContribution = defineOntosMcpContribution({
   actions: {
@@ -144,5 +144,7 @@ export const partyRegistryMcpContribution = defineOntosMcpContribution({
     'privacy-measure-execution': {
       title: { cs: 'Stav opatření ochrany osobních údajů', en: 'Privacy measure execution status' },
     },
+    // Search label projection for the Shell's Search provider, not an independently advertised agent operation.
+    'search-labels': OntosMcpHidden,
   },
 });

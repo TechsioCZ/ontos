@@ -21,15 +21,38 @@ import {
   WorkforceErrorSchema,
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
+import { WorkforceSearchRequestIdSchema } from '../../shared/actions/request-search-rebuild.ts';
 import { withCommandGuard } from '../../shared/actions/command-guard.ts';
 import { persistenceService, prepareWorkforceCommand } from '../services/persistence.service.ts';
+import {
+  OutboxPayloadSchema,
+  outboxProducerModuleKey,
+  outboxTopic,
+} from '../../shared/outbox/demo-workforce-search-refresh-requested-v1.ts';
+import { createApplyCommandDemoWorkforceSearchRefreshRequestedV1OutboxMessage } from './apply-command-demo-workforce-search-refresh-requested-v1.outbox-message.ts';
+
+const domainEvents = { [outboxTopic]: OutboxPayloadSchema } as const;
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
-const handleApplyCommand = (
+const handleApplyCommand = Effect.fn('Workforce.applyAndEnqueueSearch')(function* applyAndEnqueueSearch(
   payload: ApplyCommandPayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
-): Effect.Effect<Effect.Success<ReturnType<Services['apply']>>, Effect.Error<ReturnType<Services['apply']>>> =>
-  context.services.apply(payload.command, payload.expectedRevision);
+  context: ActionHandlerContext<typeof domainEvents, Services>,
+) {
+  const result = yield* context.services.apply(payload.command, payload.expectedRevision);
+  // Core flushes this request with the owner write, never before commit or after the transaction.
+  // Every employee command matters, including bulk deactivation and removal of approved evidence.
+  const refresh = { requestId: WorkforceSearchRequestIdSchema.make(context.actionInvocationId) };
+  const event = yield* context.addDomainEvent({
+    eventType: outboxTopic,
+    payloadJson: refresh,
+    producerModuleKey: outboxProducerModuleKey,
+    subjectModuleKey: 'core.identity',
+    subjectResourceId: context.scope.tenantId,
+    subjectResourceType: 'tenant',
+  });
+  yield* context.addOutboxMessage(event, createApplyCommandDemoWorkforceSearchRefreshRequestedV1OutboxMessage(refresh));
+  return result;
+});
 
 const samePrincipal = Schema.toEquivalence(TrustedPrincipalContextSchema);
 
@@ -77,7 +100,7 @@ export const applyCommandAction = defineAction(
     actionKey: 'demo.workforce.apply-command',
     auditProfile: 'standard',
     domainErrorSchema: WorkforceErrorSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'action_execution', provisioning: 'explicit' },
@@ -99,4 +122,9 @@ export const applyCommandAction = defineAction(
 );
 
 // <generated-outbox-message-exports>
+export { ApplyCommandDemoWorkforceSearchRefreshRequestedV1OutboxPayloadSchema } from './apply-command-demo-workforce-search-refresh-requested-v1.outbox-message.ts';
+export { ApplyCommandDemoWorkforceSearchRefreshRequestedV1OutboxProducerModuleKey } from './apply-command-demo-workforce-search-refresh-requested-v1.outbox-message.ts';
+export { ApplyCommandDemoWorkforceSearchRefreshRequestedV1OutboxTopic } from './apply-command-demo-workforce-search-refresh-requested-v1.outbox-message.ts';
+export { createApplyCommandDemoWorkforceSearchRefreshRequestedV1OutboxMessage } from './apply-command-demo-workforce-search-refresh-requested-v1.outbox-message.ts';
+export type { ApplyCommandDemoWorkforceSearchRefreshRequestedV1OutboxPayload } from './apply-command-demo-workforce-search-refresh-requested-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

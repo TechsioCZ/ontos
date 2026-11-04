@@ -139,7 +139,9 @@ const repositoryEsbuildPath = (): string => {
 };
 
 const sourceOnlyReactPackages = [
-  { entry: 'packages/admin-ui/src/index.ts', name: '@app/admin-ui' },
+  // A directory, not index.ts: esbuild appends a subpath import such as `@app/admin-ui/visible-text` to an
+  // alias target, so a file target resolves to `index.ts/visible-text` and the owner bundle fails to build.
+  { entry: 'packages/admin-ui/src', name: '@app/admin-ui' },
   {
     entry: 'verticals/facility-operations/src/ui/record-discussion.tsx',
     name: '@app/facility-operations/ui/record-discussion',

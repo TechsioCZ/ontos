@@ -230,7 +230,9 @@
           "priceExplanation": "Edit the price excluding VAT. The price including VAT is calculated from the selected VAT rate.",
           "variantsExplanation": "Informational variants share the product SKU, price and stock.",
           "addVariant": "Add variant",
-          "removeVariant": "Remove variant"
+          "removeVariant": "Remove variant",
+          "variantSelected": "Selected variant",
+          "variantUnavailable": "The selected variant is unavailable. Check the link or choose another variant."
         },
         "gallery": {
           "title_one": "Image ({{count}})",

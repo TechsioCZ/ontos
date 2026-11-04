@@ -41,6 +41,12 @@ import {
   createMutationEffect,
   asJsonObject,
   discoverOntosModuleEffect,
+  resolveDeclaredSearchResourceEffect,
+  readCanonicalSearchDescriptors,
+  SearchTenantPermissionSchema,
+  parseScaffoldMetadata,
+  metadataBindings,
+  hasCanonicalMetadataImport,
   ensureUniqueMutationPaths,
   generatedSlotContainsExactEntry,
   insertSortedSlot,
@@ -1021,7 +1027,7 @@ const slotLine = (
   if (resource === undefined) {
     return raiseScaffoldFailure(`--resource is required for ${kind}`);
   }
-  const resourceKey = `${vertical.moduleId}.${resource}`;
+  const resourceKey = resource;
   if (kind === SEARCH_PROVIDER_KIND) {
     return {
       manifest: [
@@ -1123,9 +1129,16 @@ const acceptsAdaptedProviderDescriptor = (start: string, current: string, expect
     return false;
   }
   const accessFiltering = directStringProperty(current, 'accessFiltering');
+  if (start === MODULE_MANIFEST_REPORT_SLOT_START) {
+    return (
+      accessFiltering === 'resource_permission' ||
+      (accessFiltering === 'tenant_scope' && directStringProperty(current, 'tenantPermission') !== undefined)
+    );
+  }
   return (
-    accessFiltering === 'resource_permission' ||
-    (accessFiltering === 'tenant_scope' && directStringProperty(current, 'tenantPermission') !== undefined)
+    (accessFiltering === 'resource_permission' && directStringProperty(current, 'tenantPermission') === undefined) ||
+    (accessFiltering === 'tenant_scope' &&
+      Schema.is(SearchTenantPermissionSchema)(directStringProperty(current, 'tenantPermission')))
   );
 };
 
@@ -1523,6 +1536,97 @@ const patchGovernedManifestImport = Effect.fn('GovernedContributionScaffold.mani
   },
 );
 
+const searchContributionHelper = (decoder: string): string =>
+  `searchContribution = (value: SearchContributionInput) => Result.getOrThrow(Schema.${decoder}(ShellSearchContributionSchema)(value))`;
+
+const searchContributionImportInsertion = (
+  program: ReturnType<typeof parseScaffoldMetadata>,
+  name: string,
+  source: string,
+): number | null | undefined => {
+  if (hasCanonicalMetadataImport(program, name, source)) {
+    return null;
+  }
+  if (metadataBindings(program, name).length !== 0) {
+    return raiseScaffoldFailure(`search contribution import binding conflicts with ${name}`);
+  }
+  const compatibleImport = program.body.find(
+    (statement) =>
+      statement.type === 'ImportDeclaration' &&
+      statement.source.value === source &&
+      statement.importKind !== 'type' &&
+      statement.specifiers.some((specifier) => specifier.type === 'ImportSpecifier'),
+  );
+  return compatibleImport?.type === 'ImportDeclaration'
+    ? compatibleImport.specifiers.find((specifier) => specifier.type === 'ImportSpecifier')?.start
+    : undefined;
+};
+
+const bindSearchContribution = (manifest: string): string => {
+  const program = parseScaffoldMetadata(manifest);
+  const alias = 'type SearchContributionInput = typeof ShellSearchContributionSchema.Encoded;';
+  const additions: string[] = [];
+  const importAdditions = new Map<number, string[]>();
+  for (const [name, source] of [
+    ['ShellSearchContributionSchema', '@app/core-runtime'],
+    ['Result', 'effect'],
+    ['Schema', 'effect'],
+  ] as const) {
+    const insertion = searchContributionImportInsertion(program, name, source);
+    if (insertion === null) {
+      continue;
+    }
+    if (insertion === undefined) {
+      additions.push(`import { ${name} } from '${source}';`);
+    } else {
+      importAdditions.set(insertion, [...(importAdditions.get(insertion) ?? []), name]);
+    }
+  }
+  const aliases = metadataBindings(program, 'SearchContributionInput');
+  const [existingAlias] = aliases;
+  if (
+    aliases.length > 1 ||
+    (existingAlias !== undefined &&
+      !structurallyMatchesGeneratedEntry(manifest.slice(existingAlias.start, existingAlias.end), alias))
+  ) {
+    return raiseScaffoldFailure('search contribution type binding conflicts with SearchContributionInput');
+  }
+  if (aliases.length === 0) {
+    additions.push(alias);
+  }
+  const helpers = metadataBindings(program, 'searchContribution');
+  const [existingHelper] = helpers;
+  if (
+    helpers.length > 1 ||
+    (existingHelper !== undefined &&
+      !['decodeUnknownResult', 'decodeResult'].some((decoder) =>
+        structurallyMatchesGeneratedEntry(
+          manifest.slice(existingHelper.start, existingHelper.end),
+          searchContributionHelper(decoder),
+        ),
+      ))
+  ) {
+    return raiseScaffoldFailure('search contribution helper binding conflicts with searchContribution');
+  }
+  if (helpers.length === 0) {
+    additions.push(`const ${searchContributionHelper('decodeUnknownResult')};`);
+  }
+  if (additions.length === 0 && importAdditions.size === 0) {
+    return manifest;
+  }
+  let next = manifest;
+  for (const [offset, names] of [...importAdditions].toSorted(([left], [right]) => right - left)) {
+    next = `${next.slice(0, offset)}${names.join(', ')}, ${next.slice(offset)}`;
+  }
+  const insertion = next.indexOf(MODULE_MANIFEST_IMPORT_SLOT_START);
+  if (insertion === -1) {
+    return raiseScaffoldFailure('generated manifest import slot is missing');
+  }
+  return additions.length === 0
+    ? next
+    : `${next.slice(0, insertion)}${additions.join('\n')}\n\n${next.slice(insertion)}`;
+};
+
 export const planGovernedContributionScaffold = Effect.fn('GovernedContributionScaffold.plan')(
   function* planGovernedContributionScaffold(
     workspaceRoot: string,
@@ -1539,6 +1643,19 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
             requireCanonicalSlug(config.resource ?? '', 'resource'),
           );
     const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
+    if (config.resourceType !== undefined && kind !== SEARCH_PROVIDER_KIND) {
+      return yield* scaffoldFailure('--resource-type is supported only for search providers');
+    }
+    if (kind === SEARCH_PROVIDER_KIND && resource === undefined) {
+      return yield* scaffoldFailure('--resource is required for search-provider');
+    }
+    let resourceKey = resource === undefined ? undefined : `${vertical.moduleId}.${resource}`;
+    if (kind === SEARCH_PROVIDER_KIND) {
+      yield* tryScaffold('canonical search descriptors are inconsistent', () =>
+        readCanonicalSearchDescriptors(vertical.manifestContent, vertical.moduleId),
+      );
+      resourceKey = yield* resolveDeclaredSearchResourceEffect(vertical, config.resourceType ?? resourceKey ?? '');
+    }
     const isComponent = kind === PUBLIC_COMPONENT_KIND;
     if (
       isComponent &&
@@ -1594,8 +1711,13 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
     const { clientPath, serverPath } = transport;
     mutations.push(...transport.mutations);
     let manifest = yield* patchGovernedManifestImport(vertical.manifestContent, kind, name);
+    if (kind === SEARCH_PROVIDER_KIND) {
+      manifest = yield* tryScaffold('failed to bind canonical search contribution helper', () =>
+        bindSearchContribution(manifest),
+      );
+    }
     const slots = yield* tryScaffold('failed to plan governed contribution owner slots', () =>
-      slotLine(kind, vertical, name, resource, config),
+      slotLine(kind, vertical, name, resourceKey, config),
     );
     const registration = yield* tryScaffold('failed to patch governed contribution slots', () => {
       manifest = patchSlots(manifest, slots.manifest, manifestOwnerSlots);

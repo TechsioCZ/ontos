@@ -138,6 +138,8 @@ export {
   executePartyContactPoints,
 } from './party-contact-points-client.ts';
 export type { PartyContactPointsClientOptions } from './party-contact-points-client.ts';
+export { executeSearchLabelsWithAuthorization, executeSearchLabels } from './search-labels-client.ts';
+export type { SearchLabelsClientOptions } from './search-labels-client.ts';
 export { executePartyCorrectionWithAuthorization, executePartyCorrection } from './party-correction-client.ts';
 export type { PartyCorrectionClientOptions } from './party-correction-client.ts';
 export { executePartyDetailWithAuthorization, executePartyDetail } from './party-detail-client.ts';

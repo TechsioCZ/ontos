@@ -204,7 +204,6 @@ const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): Hom
       },
     ],
     moduleIds: [inventoryModuleId],
-    recordDestinations: [],
     state: 'available',
     unavailableDeployments: [],
   },
@@ -222,6 +221,7 @@ const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): Hom
 beforeEach(() => {
   navigateMock.mockResolvedValue(undefined);
   browserRunPromiseMock.mockImplementation(browserRuntime.runPromise);
+  searchResourcesMock.mockReturnValue(Effect.succeed({ partial: false, results: [] }));
   signOutMock.mockReturnValue(Effect.succeed({ signedOut: true }));
   switchTenantMock.mockReturnValue(Effect.succeed({ selectedTenantId: tenantId2 }));
   switchLegalEntityMock.mockReturnValue(Effect.succeed({ selectedLegalEntityId: legalEntityId2 }));
@@ -383,9 +383,59 @@ it.live('top-bar typeahead shows grouped matches after a pause and moves between
       resourceId: '00000000-0000-4000-8000-000000000302',
       resourceType: 'party.registry.counterparty',
     };
+    const presentation = {
+      business: {
+        compositionRevision,
+        entries: [
+          {
+            ownerModuleId: 'party.registry',
+            presentation: {
+              family: {
+                icon: 'icon-[mdi--account-multiple-outline]',
+                key: 'companies',
+                label: { cs: 'Firmy', en: 'Customers and suppliers' },
+                order: 10,
+              },
+              group: {
+                icon: 'icon-[mdi--account-multiple-outline]',
+                key: 'counterparty',
+                label: { cs: 'Protiúčty', en: 'Customers and suppliers' },
+                order: 10,
+              },
+              scope: 'company',
+            },
+            resourceType: 'party.registry.counterparty',
+            searchKey: 'party.registry.search',
+          },
+          {
+            ownerModuleId: 'party.registry',
+            presentation: {
+              family: {
+                icon: 'icon-[mdi--account-multiple-outline]',
+                key: 'people',
+                label: { cs: 'Lidé', en: 'Contacts' },
+                order: 20,
+              },
+              group: {
+                icon: 'icon-[mdi--account-multiple-outline]',
+                key: 'party',
+                label: { cs: 'Strany', en: 'Contacts' },
+                order: 20,
+              },
+              scope: 'company',
+            },
+            resourceType: 'party.registry.party',
+            searchKey: 'party.registry.search.party',
+          },
+        ],
+        schemaVersion: '1',
+      },
+      pages: [],
+    };
     searchResourcesMock.mockReturnValue(
       Effect.succeed({
         partial: false,
+        presentation,
         results: [
           {
             currentRoles: ['CUSTOMER'],
@@ -416,6 +466,7 @@ it.live('top-bar typeahead shows grouped matches after a pause and moves between
       query: 'dvor',
     });
     const customer = within(customers).getByRole('link', { name: /Jana Dvořáková/u });
+    expect(customer.getAttribute('aria-label')).toBe('Jana Dvořáková Customer');
     expect(customer.textContent).toContain('Customer');
     const contacts = screen.getByRole('list', { name: 'Contacts' });
     expect(
@@ -592,7 +643,6 @@ it('keeps an admitted company selectable with a clear empty state when no role g
           deniedAppIds: [],
           items: [],
           moduleIds: [],
-          recordDestinations: [],
           state: 'available',
           unavailableDeployments: [],
         },

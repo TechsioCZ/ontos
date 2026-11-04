@@ -17,10 +17,13 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
+import { Match } from 'effect';
 import { useRecordsPage } from './use-agreements-records.ts';
 import { agreementsInputOf } from './agreements-data.ts';
 import type { AgreementsInput } from './agreements-data.ts';
 import { ContractLinksCard, ContractTermsCard, ContractTermsForm, contractMonthlyTotal } from './contract-terms.tsx';
+import { AgreementDocumentDetail, AgreementDocumentStatus } from './document-detail.tsx';
+import type { AgreementDocumentState } from './document-selection.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import csResource from '../../../../locales/cs/legal-agreements.json';
 import enResource from '../../../../locales/en/legal-agreements.json';
@@ -57,6 +60,25 @@ const legalAgreementsI18nResources = {
   cs: { 'legal-agreements': csResource },
   en: { 'legal-agreements': enResource },
 } as const;
+const AgreementDocumentPanel = ({
+  language,
+  state,
+}: {
+  readonly language: string;
+  readonly state: AgreementDocumentState;
+}) =>
+  Match.value(state).pipe(
+    Match.tag('Found', (found) => (
+      <AgreementDocumentDetail
+        archived={found.archived}
+        document={found.document}
+        language={language}
+        parent={found.parent}
+      />
+    )),
+    Match.orElse((missing) => <AgreementDocumentStatus language={language} state={missing} />),
+  );
+
 const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useRecordsPage> }) => {
   const {
     busy,
@@ -497,6 +519,17 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
     t,
     visible,
   } = state;
+  if (state.selectorIssue !== undefined || state.linkedDocumentId !== undefined) {
+    return (
+      <>
+        <UltramodernRouteHead />
+        <section className="legalagreements:w-full legalagreements:min-w-0 legalagreements:max-w-none legalagreements:space-y-6 legalagreements:p-0 legalagreements:text-(--color-page-fg)">
+          <AgreementDocumentPanel language={state.language} state={state.documentState} />
+          <AgreementsDraftForm state={state} />
+        </section>
+      </>
+    );
+  }
   return (
     <>
       <UltramodernRouteHead />
