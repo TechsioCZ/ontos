@@ -948,6 +948,13 @@ const startQuantityPublicReceiver = Effect.fn('QuantityProfileAdmissionTests.pub
       Effect.provide(FetchHttpClient.layer),
       Effect.tapError(() => {
         const knownDiagnostics = [
+          'REDEMPTION_CONSUME_BEGIN',
+          'REDEMPTION_CONSUME_OK',
+          'REDEMPTION_CONSUME_FAIL_UNCLASSIFIED',
+          'GatewayAssertionRedemptionUnavailableError',
+          'GatewayAssertionReplayError',
+          'ActionPrincipalConfigurationError',
+          'ActionPrincipalUnavailableError',
           'READ_RUNTIME_BEGIN',
           'READ_RUNTIME_OK',
           'READ_RUNTIME_FAIL_UNCLASSIFIED',

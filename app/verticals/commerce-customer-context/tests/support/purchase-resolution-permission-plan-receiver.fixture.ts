@@ -1,6 +1,7 @@
 import { NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Effect, Layer, Option, Schema } from 'effect';
 import { ContextAccessLive, DatabaseConfigLive, ReadRuntime } from '@app/core-runtime';
+import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
 import {
@@ -25,9 +26,16 @@ const DiagnosticCauseSchema = Schema.Struct({
   code: Schema.optionalKey(Schema.String),
   reason: Schema.optionalKey(Schema.Unknown),
 });
-const observeReadFailure = (error: typeof DiagnosticCauseSchema.Type) =>
+const observeReadFailure = (
+  error: typeof DiagnosticCauseSchema.Type,
+  stage: 'quantity-read-runtime' | 'quantity-redemption' = 'quantity-read-runtime',
+) =>
   Effect.sync(() => {
     const allowed = [
+      'GatewayAssertionRedemptionUnavailableError',
+      'GatewayAssertionReplayError',
+      'ActionPrincipalConfigurationError',
+      'ActionPrincipalUnavailableError',
       'ReadHandlerUnavailable',
       'ReadHandlerExecutionError',
       'ReadScopeResolutionError',
@@ -63,10 +71,17 @@ const observeReadFailure = (error: typeof DiagnosticCauseSchema.Type) =>
       }
       current = current.cause ?? current.reason;
     }
-    process.stderr.write(`${JSON.stringify({ known: [...known], stage: 'quantity-read-runtime' })}\n`);
+    process.stderr.write(`${JSON.stringify({ known: [...known], stage })}\n`);
   });
-const observeReadStage = (stage: 'READ_RUNTIME_BEGIN' | 'READ_RUNTIME_OK' | 'READ_RUNTIME_FAIL_UNCLASSIFIED') =>
-  Effect.sync(() => process.stderr.write(`${stage}\n`));
+const observeReadStage = (
+  stage:
+    | 'READ_RUNTIME_BEGIN'
+    | 'READ_RUNTIME_OK'
+    | 'READ_RUNTIME_FAIL_UNCLASSIFIED'
+    | 'REDEMPTION_CONSUME_BEGIN'
+    | 'REDEMPTION_CONSUME_OK'
+    | 'REDEMPTION_CONSUME_FAIL_UNCLASSIFIED',
+) => Effect.sync(() => process.stderr.write(`${stage}\n`));
 const observedProductionReadRuntime = Layer.effect(
   ReadRuntime,
   Effect.gen(function* observeProductionReadRuntime() {
@@ -84,6 +99,23 @@ const observedProductionReadRuntime = Layer.effect(
   }),
 ).pipe(Layer.provide(productionReadRuntimeLive));
 
+const observedConfiguredRedemption = Layer.effect(
+  GatewayAssertionRedemptionService,
+  Effect.gen(function* observeProductionRedemption() {
+    const base = yield* GatewayAssertionRedemptionService;
+    const consume: typeof base.consume = (input) =>
+      observeReadStage('REDEMPTION_CONSUME_BEGIN').pipe(
+        Effect.andThen(() => base.consume(input)),
+        Effect.tap(() => observeReadStage('REDEMPTION_CONSUME_OK')),
+        Effect.tapError(() => observeReadStage('REDEMPTION_CONSUME_FAIL_UNCLASSIFIED')),
+        Effect.tapError((failure) =>
+          Schema.is(DiagnosticCauseSchema)(failure) ? observeReadFailure(failure, 'quantity-redemption') : Effect.void,
+        ),
+      );
+    return { consume };
+  }),
+).pipe(Layer.provide(configuredGatewayAssertionRedemptionLive));
+
 const describe = Effect.sync(() => process.stdout.write(`${JSON.stringify(ultramodernApiMarker)}\n`));
 const serve = Effect.scoped(
   Effect.gen(function* serveDefaultPurchaseReceiver() {
@@ -96,7 +128,7 @@ const serve = Effect.scoped(
     const apiRuntime = makeCommerceCustomerContextApiRuntime(
       observedProductionReadRuntime,
       productionActionRuntimeLive,
-      configuredGatewayAssertionRedemptionLive,
+      observedConfiguredRedemption,
       commercePortalAuthRealmUnavailableLive([resolveCommerceCustomerContextShellOrigin()]),
       Layer.empty,
       DatabaseConfigLive,
