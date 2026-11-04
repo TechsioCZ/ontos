@@ -33,9 +33,10 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   }),
 }));
 // The portal shell is not the behavior under test; the panel body is.
-rstest.mock('@app/admin-ui/side-panel', () => {
+rstest.mock('@app/admin-ui', () => {
   const react = rstest.requireActual<typeof React>('react');
   return {
+    ...rstest.requireActual('@app/admin-ui'),
     SidePanel: ({
       actions,
       children,

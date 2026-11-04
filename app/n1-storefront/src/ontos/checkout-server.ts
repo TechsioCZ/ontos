@@ -140,7 +140,7 @@ const correctLineEvidence = (request: CheckoutRequest, order: NativeCheckoutOrde
 };
 
 /** A malformed placement reply can conceal a committed order, so it must keep the submission guard. */
-export const confirmCheckoutResult = (request: CheckoutRequest, result: ApplyCommandResult) =>
+const confirmCheckoutResult = (request: CheckoutRequest, result: ApplyCommandResult) =>
   Effect.gen(function* confirmCheckoutResultProgram() {
     const failure = () =>
       new CheckoutFailure({ state: request.mode === "place" ? "uncertain" : "unavailable" });

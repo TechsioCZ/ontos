@@ -31,13 +31,12 @@ export const CheckoutRequestSchema = Schema.Struct({
   shippingMethod: ShippingMethodSchema,
 });
 export type CheckoutRequest = typeof CheckoutRequestSchema.Type;
-export const CheckoutReceiptSchema = Schema.Struct({
+const CheckoutReceiptSchema = Schema.Struct({
   contact: Schema.NullOr(Schema.toEncoded(OrderContactSchema)),
   createdAt: Schema.NullOr(Schema.String),
   deliveryAddress: Schema.NullOr(Schema.toEncoded(OrderAddressSchema)),
   shippingMethod: Schema.NullOr(ShippingMethodSchema),
 });
-export type CheckoutReceipt = typeof CheckoutReceiptSchema.Type;
 
 /** Amounts include the selected shipping method. Never reuse the goods-only CartQuote. */
 export const CheckoutResultSchema = Schema.Struct({
@@ -99,7 +98,7 @@ export const CheckoutRecoveryRequestSchema = Schema.Struct({
   scope: CartScopeSchema,
 });
 export type CheckoutRecoveryRequest = typeof CheckoutRecoveryRequestSchema.Type;
-export const CheckoutRecoverySchema = Schema.Union([
+const CheckoutRecoverySchema = Schema.Union([
   Schema.Struct({ result: CheckoutResultSchema, state: Schema.Literal("confirmed") }),
   Schema.Struct({ state: Schema.Literal("unconfirmed") }),
 ]).check(
@@ -110,7 +109,6 @@ export const CheckoutRecoverySchema = Schema.Union([
       recovery.result.outcome === "REPLAYED",
   ),
 );
-export type CheckoutRecovery = typeof CheckoutRecoverySchema.Type;
 export const CheckoutInvalidProblem = makeProblemDetailsSchema("CheckoutInvalidProblem", 400, {
   state: Schema.Literal("invalid"),
 });

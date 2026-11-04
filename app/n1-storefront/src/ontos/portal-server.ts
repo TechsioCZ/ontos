@@ -171,7 +171,7 @@ export const verifyPortalEmailServer = (token: string) =>
         .pipe(Effect.timeout(writeDeadline));
     }),
   );
-export interface PortalAccountIdentity {
+interface PortalAccountIdentity {
   readonly email: string;
   readonly id: string;
   readonly name: string;
@@ -204,10 +204,6 @@ export const readPortalIdentityWithConfiguration = (
     Effect.catchTag("CommercePortalAuthSessionAuthenticationProblem", () =>
       Effect.succeed<PortalServerIdentity>({ state: "anonymous" }),
     ),
-  );
-export const readPortalIdentityServer = (request: PortalRequestContext) =>
-  configuration.pipe(
-    Effect.flatMap((config) => readPortalIdentityWithConfiguration(config, request)),
   );
 const readAdmission = (config: StorefrontConfiguration, request: PortalRequestContext) =>
   readPortalIdentityWithConfiguration(config, request).pipe(

@@ -20,7 +20,7 @@ export const CustomerProfileUpdateSchema = Schema.Struct({
   phone: Schema.Trim.check(Schema.isPattern(/^(?:|\+?[()\d .-]{3,100})$/u)),
 });
 export type CustomerProfileUpdate = typeof CustomerProfileUpdateSchema.Type;
-export const CustomerProfileReadySchema = Schema.Struct({
+const CustomerProfileReadySchema = Schema.Struct({
   profile: CustomerProfileSchema,
   state: Schema.Literal("ready"),
 });

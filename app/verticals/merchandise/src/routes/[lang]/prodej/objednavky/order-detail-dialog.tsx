@@ -4,8 +4,15 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { DetailList, formatDateTime, formatMoney, SectionCard, StatusBadge, surfaceTileClassName } from '@app/admin-ui';
-import { SidePanel } from '@app/admin-ui/side-panel';
+import {
+  DetailList,
+  formatDateTime,
+  formatMoney,
+  SectionCard,
+  SidePanel,
+  StatusBadge,
+  surfaceTileClassName,
+} from '@app/admin-ui';
 import { DateTime, Effect } from 'effect';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';

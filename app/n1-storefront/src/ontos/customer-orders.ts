@@ -26,7 +26,7 @@ export const CustomerOrdersInputSchema = Schema.Struct({
 }).check(Schema.makeFilter(validSelection));
 export type CustomerOrdersInput = typeof CustomerOrdersInputSchema.Type;
 
-export const CustomerOrdersQuerySchema = Schema.Struct({
+const CustomerOrdersQuerySchema = Schema.Struct({
   locale: CustomerOrdersInputSchema.fields.locale,
   offset: Schema.optionalKey(
     Schema.NumberFromString.check(
@@ -37,7 +37,7 @@ export const CustomerOrdersQuerySchema = Schema.Struct({
   orderId: CustomerOrdersInputSchema.fields.orderId,
 }).check(Schema.makeFilter(validSelection));
 
-export const CustomerOrderDetailSchema = Schema.Struct({
+const CustomerOrderDetailSchema = Schema.Struct({
   billingAddress: Schema.NullOr(Schema.toEncoded(OrderAddressSchema)),
   contact: Schema.NullOr(Schema.toEncoded(OrderContactSchema)),
   deliveryAddress: Schema.NullOr(Schema.toEncoded(OrderAddressSchema)),
