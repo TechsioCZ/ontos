@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off -- Native proof child reads its private config and writes one protocol frame to fd 3 before any Effect layer exists; expires: 2027-03-31.
+// @effect-diagnostics nodeBuiltinImport:off globalJsonInEffect:off -- Native proof child reads its private config and writes one protocol frame to fd 3 before any Effect layer exists; expires: 2027-03-31.
 import { readFileSync, writeSync } from 'node:fs';
 import { NodeRuntime } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';

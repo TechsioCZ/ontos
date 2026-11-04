@@ -1186,7 +1186,7 @@ export default defineConfig({
       },
     },
     {
-      // tsgolint currently loses Rstest mock signatures and several Node adapter overloads even
+      // tsrs lint currently loses Rstest mock signatures and several Node adapter overloads even
       // though the strict TSGo project build is clean. Keep compiler diagnostics active while
       // suppressing only the derived unsafe family inside test-only code.
       files: ['**/tests/**/*.ts', '**/tests/**/*.tsx'],
@@ -1199,22 +1199,9 @@ export default defineConfig({
       },
     },
     {
-      // tsgolint loses Modern.js route-hook generics for these pages while the referenced TSGo
-      // build resolves them. Limit the exception to unsafe derivatives at that framework seam.
-      files: ['verticals/party-registry/src/routes/**/page.tsx'],
-      rules: {
-        'typescript/no-unsafe-argument': 'off',
-        'typescript/no-unsafe-assignment': 'off',
-        'typescript/no-unsafe-call': 'off',
-        'typescript/no-unsafe-member-access': 'off',
-        'typescript/no-unsafe-return': 'off',
-      },
-    },
-    {
-      // tsgolint currently widens values after validated recursive/object boundaries and generic
+      // tsrs lint currently widens values after validated recursive/object boundaries and generic
       // policy descriptors even though the referenced TSGo build preserves their exact types.
       files: [
-        'apps/shell-super-app/api/verticals/installed-verticals.ts',
         'packages/core-runtime/src/actions/definition.ts',
         'packages/core-runtime/src/actions/repository.ts',
         'packages/core-runtime/src/modules/runtime-registration.ts',
@@ -1289,15 +1276,6 @@ export default defineConfig({
       ],
       rules: {
         'unicorn/no-useless-undefined': 'off',
-      },
-    },
-    {
-      // Strict index-signature access requires bracket notation here, while tsgolint's separate
-      // stylistic pass incorrectly requests dot notation and widens decoded recursive JSON.
-      files: ['apps/shell-super-app/module-deployment-allowlist.config.ts'],
-      rules: {
-        'typescript/dot-notation': 'off',
-        'typescript/no-unsafe-argument': 'off',
       },
     },
     {

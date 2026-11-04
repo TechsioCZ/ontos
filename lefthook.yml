@@ -15,7 +15,7 @@ pre-commit:
         - "app/tools/oxlint/effect-native/tests/*.test.mts"
       exclude:
         - "app/tools/oxlint/effect-native/tests/fixtures/*"
-      run: pnpm exec oxlint --fix --no-error-on-unmatched-pattern {staged_files}
+      run: pnpm exec effect-tsgo --tsrs-lint oxlint --fix --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true
 
 pre-push:
