@@ -5,6 +5,7 @@ import { getDictionary } from "../src/i18n";
 import { projectCatalog } from "../src/ontos/catalog-model";
 import { selectProductDetail } from "../src/features/product-selection";
 import { ProductView } from "../src/features/product-view";
+import { priceProps } from "../src/features/price-props";
 
 const {
   details: [product],
@@ -47,6 +48,42 @@ const {
 );
 
 describe("real product variant presentation", () => {
+  it("switches to a non-minimum leaf price and restores the group amount when selection is cleared", () => {
+    const grouped = {
+      ...product,
+      priceFrom: true,
+      variantCount: 2,
+      variants: [
+        ...product.variants,
+        {
+          ...product.variants[0],
+          id: "higher-price",
+          name: "L",
+          priceExcludingVatMinor: 74_380,
+          priceMinor: 90_000,
+        },
+      ],
+    };
+    const selected = selectProductDetail(grouped, "higher-price");
+    expect(selected.selectionRequired).toBe(false);
+    expect(
+      priceProps(
+        selected.current,
+        getDictionary("cs"),
+        "cs",
+        selected.current.priceExcludingVatMinor,
+      ),
+    ).toEqual({
+      amountLabel: "900\u00A0Kč",
+      state: "known",
+      taxLabel: "743,8\u00A0Kč bez DPH",
+    });
+    for (const variantId of [undefined, "removed-variant"]) {
+      const cleared = selectProductDetail(grouped, variantId);
+      expect(cleared.selectionRequired).toBe(true);
+      expect(cleared.current).toMatchObject({ priceExcludingVatMinor: null, priceMinor: 45_000 });
+    }
+  });
   it("requests a variant before showing quantity controls or claiming availability", () => {
     const d = getDictionary("cs");
     const html = renderToStaticMarkup(

@@ -1,5 +1,28 @@
 # Kontrola převodu N1 storefrontu
 
+## C19: cena bez nepodloženého prefixu — 2026-11-04
+
+Aktuální Figma39:2031 používá PriceBlockknown. Historický N1 renderer prefix
+nepřidává, ale používá první variantu a na detailu má chybný přenos její ceny.
+Přebíráme pouze doloženou prezentaci bez „od“; skutečné owner částky, měna,
+variantní výběr a gross/net ochrany se nemění. Počet variant neprokazuje cenové
+rozpětí. Výběr první varianty ani chybné historické přepínání cen se nekopírují.
+
+362/362N1 testů PASS; cílené cenové/selection testy navíc ověřují skutečnou
+dražší variantu90000/net74380 oproti skupině45000 a návrat při zrušeném/neznámém
+výběru. Lint změněných souborů PASS. Nezávislé source i skutečné screenshot
+review potvrzuje jen odstranění prefixu a zachování konkrétních cenových stavů.
+
+Živě na localhost3071 v Next dev režimu (bez produkčního BE buildu): desktop1440
+a mobil390, Northwave skupina879 bez prefixu/quantity; LXL879/net726,45/stock25
+se správným quantity. Homepage deset skutečných cen bez prefixu, mobilní cena
+nad CTA; bez horizontálního overflow a bez console error/warn v kontrolované
+home navigaci. Soukromé screenshoty `n1-c19-*` jsou v .local.
+
+Tato oprava nerozhoduje novou politiku reprezentativní skupinové ceny; zachovává
+dosavadní owner minimum. Celé karty/PDP nejsou přijaté, další regiony a živé
+size-preview ověření zůstávají otevřené. Lokální runtime zatím preview nevrací.
+
 ## C18: omezený náhled variant na kartách — rozpracováno2026-11-04
 
 Uživatelem schválená změna veřejného Merchandise kontraktu přidává nepovinné

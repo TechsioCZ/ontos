@@ -55,8 +55,14 @@ describe("owner price labels", () => {
       state: "on-request",
     });
   });
-  it("preserves the variant minimum prefix and the actual market currency", () => {
+  it("preserves the owner minimum and currency without inventing a prefix from variant count", () => {
     const result = priceProps({ ...product, currency: "EUR", priceFrom: true }, copy, "en");
-    expect(result).toEqual({ amountLabel: "€1,199.00", prefix: "od", state: "from" });
+    expect(result).toEqual({ amountLabel: "€1,199.00", state: "known" });
+  });
+  it("does not present multiple same-priced sizes as a price range", () => {
+    expect(priceProps({ ...product, priceFrom: true, variantCount: 8 }, copy, "cs")).toEqual({
+      amountLabel: "1\u00A0199\u00A0Kč",
+      state: "known",
+    });
   });
 });

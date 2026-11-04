@@ -1,5 +1,11 @@
 # N1 — aktuální komponentové a tokenové mapování
 
+Cena / Figma39:2031 a57:2918: veřejný `PriceBlock state="known"`, explicitní
+owner částka a jen skutečný paired net caption vybrané varianty/leaf produktu.
+Počet velikostí není podklad pro `state="from"` ani lokalizovaný prefix „od“.
+Historický N1 formatter není autorita pro výběr ceny: bral první variantu, nikoli
+minimum. Stávající owner monetary projection se touto prezentační opravou nemění.
+
 Karty / Figma214:3250: skutečné první3velikosti → `LinkButton`
 sm/tertiary/outlined/compact; native wrapper flex/center/gap1(4px), následně
 `+N` dle owner total−3. Native preview dodává stabilní veřejné variant IDs,

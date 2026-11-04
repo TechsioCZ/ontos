@@ -31,10 +31,10 @@ export const formatMarketAmount = (
   currency: ProductCardModel["currency"],
 ) => formatters[locale === "en" ? "en" : "cs"][currency].format(amountMinor / 100);
 
-/** Both card and detail use the same price state and the market's currency. */
+/** Display the owner amount in the Figma price slot; variant count is not proof of a price range. */
 export const priceProps = (
   product: ProductCardModel,
-  d: Pick<Dictionary, "from" | "priceExcludingVat" | "priceUnavailable">,
+  d: Pick<Dictionary, "priceExcludingVat" | "priceUnavailable">,
   locale: string,
   priceExcludingVatMinor: number | null = null,
 ): PriceBlockProps => {
@@ -42,10 +42,7 @@ export const priceProps = (
     return { label: d.priceUnavailable, state: "on-request" };
   }
   const amountLabel = formatMarketAmount(product.priceMinor, locale, product.currency);
-  if (product.priceFrom) {
-    return { amountLabel, prefix: d.from, state: "from" };
-  }
-  if (priceExcludingVatMinor !== null) {
+  if (priceExcludingVatMinor !== null && !product.priceFrom) {
     return {
       amountLabel,
       state: "known",
