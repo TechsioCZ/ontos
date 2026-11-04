@@ -27,6 +27,7 @@ import { CommercePortalAuthAccountLookupLive } from '../portal-auth/persistence/
 import { CommercePortalAuthAccountCreationReconciliationLive } from '../portal-auth/persistence/portal-auth-account-creation-reconciliation.ts';
 import { CommercePortalAuthDatabaseLive } from '../portal-auth/persistence/portal-auth-database.ts';
 import { CommercePortalAuthRecoveryStoreLive } from '../portal-auth/persistence/portal-auth-recovery-store.ts';
+import { profileRetailPermissionReaderFactoryLive } from '../integrations/retail-permission-reader.ts';
 
 import { Context, Effect, Layer } from 'effect';
 import {
@@ -101,6 +102,10 @@ const ownerEffectsLive = CommerceEnrollmentOwnerEffectRegistryLive.pipe(
       portalReconciliationLive,
       coreIdentityLive,
       ownerTransactionsLive,
+      // The Retail binding reconciles only once its Current access is confirmed against SpiceDB.
+      // Without this reader the owner registry sees no reader and reports the baseline as not
+      // Current, so the binding halts in RECONCILIATION_REQUIRED even after the grants finalized.
+      profileRetailPermissionReaderFactoryLive.pipe(Layer.provide(outboxWorkerContextAccessLive)),
     ),
   ),
 );
