@@ -1,4 +1,5 @@
 import { EmptyState, paginationTranslations } from '@app/admin-ui';
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
@@ -198,6 +199,7 @@ export const PeopleToolbar = ({
   readonly onScopeChange: (scope: PeopleAdminScope) => void;
   readonly scope: PeopleAdminScope;
 }) => {
+  const { t } = useModernI18n();
   const roles = [
     { label: 'Všechny role', value: 'all' },
     ...(catalog?.items ?? []).map((role) => ({ label: role.name, value: role.roleKey })),
@@ -205,31 +207,31 @@ export const PeopleToolbar = ({
   return (
     <div className="flex flex-wrap items-end gap-150">
       <Input
-        aria-label="Hledat podle jména, typu nebo role"
+        aria-label={t('shell.people.filters.search')}
         className="w-full sm:w-56"
         onChange={(event) => onFiltersChange({ ...filters, query: event.target.value })}
-        placeholder="Hledat jméno, typ nebo roli"
+        placeholder={t('shell.people.filters.searchPlaceholder')}
         size="sm"
         type="search"
         value={filters.query}
       />
       <FilterSelect
         items={[{ label: 'Všechny typy', value: 'all' }, ...personKindOptions]}
-        label="Typ"
+        label={t('shell.people.filters.kind')}
         name="people-kind"
         onChange={(kind) => onFiltersChange({ ...filters, kind: isKindKey(kind) ? kind : 'all' })}
         value={filters.kind}
       />
       <FilterSelect
         items={roles}
-        label="Role"
+        label={t('shell.people.filters.role')}
         name="people-role"
         onChange={(roleKey) => onFiltersChange({ ...filters, roleKey })}
         value={filters.roleKey}
       />
       <FilterSelect
         items={statusOptions}
-        label="Stav"
+        label={t('shell.people.filters.status')}
         name="people-status"
         onChange={(status) => onFiltersChange({ ...filters, status: isStatusFilter(status) ? status : 'current' })}
         value={filters.status}
@@ -240,7 +242,7 @@ export const PeopleToolbar = ({
             { label: 'Vybraná firma', value: 'company' },
             { label: 'Celá organizace', value: 'tenant' },
           ]}
-          label="Rozsah správy"
+          label={t('shell.people.filters.scope')}
           name="people-scope"
           onChange={(next) => onScopeChange(next === 'tenant' ? 'tenant' : 'company')}
           value={scope}
@@ -248,7 +250,7 @@ export const PeopleToolbar = ({
       ) : null}
       <Tooltip content="Každý člověk i agent má vlastní přihlášení. Role určují, co může ve firmě dělat. Pracovní zařazení samo o sobě přístup nepřiděluje.">
         <Button
-          aria-label="Jak fungují role"
+          aria-label={t('shell.people.filters.rolesHelp')}
           icon="icon-[mdi--information-outline]"
           size="sm"
           theme="borderless"
@@ -308,18 +310,20 @@ const peopleColumns = (catalog: PeopleRoleCatalog | undefined): ColumnDef<Person
 
 const CompactPeopleList = ({
   catalog,
+  listLabel,
   onEdit,
   onOpen,
   people,
   scope,
 }: {
   readonly catalog: PeopleRoleCatalog | undefined;
+  readonly listLabel: string;
   readonly onEdit: (kind: PeopleEditKind, person: Person) => void;
   readonly onOpen: (person: Person) => void;
   readonly people: readonly Person[];
   readonly scope: PeopleAdminScope;
 }) => (
-  <ul aria-label="Lidé a role" className="grid divide-y divide-border-primary border-border-primary border-y">
+  <ul aria-label={listLabel} className="grid divide-y divide-border-primary border-border-primary border-y">
     {people.map((person) => (
       <li className="flex items-start gap-100 py-100" key={person.principalRef.principalId}>
         <Button
@@ -360,6 +364,7 @@ export const PeopleTable = ({
   readonly people: readonly Person[];
   readonly scope: PeopleAdminScope;
 }) => {
+  const { t } = useModernI18n();
   const wide = useWideLayout();
   const visible = filterPeople(people, filters, catalog);
   const empty = () =>
@@ -370,10 +375,10 @@ export const PeopleTable = ({
             Zrušit filtry
           </Button>
         }
-        title="Filtrům nikdo neodpovídá."
+        title={t('shell.people.empty.filtered')}
       />
     ) : (
-      <EmptyState title="V tomto rozsahu nejsou žádná evidovaná členství." />
+      <EmptyState title={t('shell.people.empty.noMemberships')} />
     );
   if (!wide) {
     if (visible.length === 0) {
@@ -386,7 +391,16 @@ export const PeopleTable = ({
         empty()
       );
     }
-    return <CompactPeopleList catalog={catalog} onEdit={onEdit} onOpen={onOpen} people={visible} scope={scope} />;
+    return (
+      <CompactPeopleList
+        catalog={catalog}
+        listLabel={t('shell.people.list.label')}
+        onEdit={onEdit}
+        onOpen={onOpen}
+        people={visible}
+        scope={scope}
+      />
+    );
   }
   return (
     <DataTable

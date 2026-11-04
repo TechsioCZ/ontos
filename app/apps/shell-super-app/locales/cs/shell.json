@@ -690,6 +690,22 @@
       "tabs": "Lidé a agenti",
       "title": "Lidé a role",
       "changeReason": "Důvod změny",
+      "filters": {
+        "search": "Hledat podle jména, typu nebo role",
+        "searchPlaceholder": "Hledat jméno, typ nebo roli",
+        "kind": "Typ",
+        "role": "Role",
+        "status": "Stav",
+        "scope": "Rozsah správy",
+        "rolesHelp": "Jak fungují role"
+      },
+      "list": {
+        "label": "Lidé a role"
+      },
+      "empty": {
+        "filtered": "Filtrům nikdo neodpovídá.",
+        "noMemberships": "V tomto rozsahu nejsou žádná evidovaná členství."
+      },
       "detail": {
         "invalidLink": "Odkaz na osobu není platný. Vyberte osobu ze seznamu.",
         "foreignCompany": "Osoba z odkazu patří jiné firmě. Přepněte na firmu z odkazu; tady ji neotevřeme.",

@@ -1,9 +1,14 @@
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { getI18nInstance as createModernI18n } from '@modern-js/plugin-i18n/i18n';
+import type { I18nInstance } from '@modern-js/plugin-i18n/runtime';
+import { ModernI18nProvider } from '@modern-js/plugin-i18n/runtime/consumer';
+import { cleanup, render as renderView, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect } from 'effect';
-import { afterEach, describe, expect, it, rstest } from 'effect-rstest';
+import { afterEach, beforeAll, describe, expect, it, rstest } from 'effect-rstest';
+import type { PropsWithChildren, ReactElement } from 'react';
 import { useState } from 'react';
 
+import csResource from '../../locales/cs/shell.json';
 import type { PeopleRoleCatalog, Person } from '../../shared/people-api.ts';
 import {
   defaultPeopleFilters,
@@ -20,6 +25,22 @@ import {
   PersonStatusDot,
   RoleChips,
 } from '../../src/routes/people/people-table.tsx';
+
+let i18nInstance: I18nInstance;
+beforeAll(async () => {
+  i18nInstance = await createModernI18n();
+  await i18nInstance.init({
+    defaultNS: 'shell',
+    lng: 'cs',
+    ns: ['shell'],
+    resources: { cs: { shell: csResource } },
+    supportedLngs: ['cs', 'en'],
+  });
+});
+const I18nProvider = ({ children }: PropsWithChildren) => (
+  <ModernI18nProvider value={{ i18nInstance, language: 'cs', languages: ['cs', 'en'] }}>{children}</ModernI18nProvider>
+);
+const render = (ui: ReactElement) => renderView(ui, { wrapper: I18nProvider });
 
 const tenantId = '00000000-0000-4000-8000-000000000001';
 const companyId = '00000000-0000-4000-8000-000000000002';

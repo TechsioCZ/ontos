@@ -682,6 +682,22 @@
       "tabs": "People and agents",
       "title": "People and roles",
       "changeReason": "Reason for change",
+      "filters": {
+        "search": "Search by name, type, or role",
+        "searchPlaceholder": "Search name, type, or role",
+        "kind": "Type",
+        "role": "Role",
+        "status": "Status",
+        "scope": "Management scope",
+        "rolesHelp": "How roles work"
+      },
+      "list": {
+        "label": "People and roles"
+      },
+      "empty": {
+        "filtered": "No one matches the filters.",
+        "noMemberships": "There are no recorded memberships in this scope."
+      },
       "detail": {
         "invalidLink": "The person link is not valid. Select a person from the list.",
         "foreignCompany": "The linked person belongs to another company. Switch to the company from the link; this page will not open the person here.",
