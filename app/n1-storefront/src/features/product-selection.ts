@@ -8,10 +8,12 @@ export const selectProductDetail = (product: ProductDetailModel, variantId: stri
         ...product,
         image: variant.image ?? product.image,
         minimumQuantity: variant.minimumQuantity,
+        priceExcludingVatMinor: variant.priceExcludingVatMinor,
         priceFrom: false,
         priceMinor: variant.priceMinor,
         sku: variant.sku,
         stock: variant.stock,
+        stockQuantity: variant.stockQuantity,
         unit: variant.unit,
       }
     : product;

@@ -27,6 +27,31 @@ const parameterColumns = (d: Dictionary): ColumnDef<Parameter>[] => [
   },
 ];
 
+const productStockLabel = (
+  { current, selectionRequired }: ReturnType<typeof selectProductDetail>,
+  d: Dictionary,
+  locale: string,
+) => {
+  if (selectionRequired) {
+    return d.stock.unknown;
+  }
+  const status = d.stock[current.stock];
+  if (
+    current.stockQuantity === null ||
+    (current.stock !== "available" && current.stock !== "limited")
+  ) {
+    return status;
+  }
+  const quantity = new Intl.NumberFormat(locale === "en" ? "en-GB" : "cs-CZ", {
+    maximumFractionDigits: 20,
+  }).format(current.stockQuantity);
+  return d.stockWithQuantity
+    .replace("{status}", () => status)
+    .replace("{quantity}", () => quantity)
+    .replace("{unit}", () => current.unit)
+    .trim();
+};
+
 /** Actual owner selection adds an unverified draft; only an owner quote confirms prices. */
 export const ProductView = ({
   dictionary: d,
@@ -140,7 +165,7 @@ export const ProductView = ({
           )}
           <div className="order-3 md:order-2">
             <AvailabilityStatus
-              label={d.stock[selectionRequired ? "unknown" : current.stock]}
+              label={productStockLabel(selection, d, locale)}
               status={selectionRequired ? "unknown" : current.stock}
             />
           </div>
@@ -159,7 +184,7 @@ export const ProductView = ({
             </div>
           </div>
           <div className="order-4 md:order-5">
-            <PriceBlock {...priceProps(current, d, locale)} />
+            <PriceBlock {...priceProps(current, d, locale, current.priceExcludingVatMinor)} />
           </div>
           <div className="order-5 md:hidden">
             <Link as={NextLink} href={`/${locale}/doprava`}>
@@ -186,15 +211,20 @@ export const ProductView = ({
               <Tabs.Indicator />
             </Tabs.List>
           </div>
+          <div className="flex flex-col gap-3 py-3">
+            {product.paragraphs.map((paragraph) => (
+              <p className="whitespace-pre-line" key={paragraph}>
+                {paragraph}
+              </p>
+            ))}
+          </div>
           <Tabs.Content value="parameters">
-            <div className="flex flex-col gap-3 py-3">
-              {product.paragraphs.map((paragraph) => (
-                <p className="whitespace-pre-line" key={paragraph}>
-                  {paragraph}
-                </p>
-              ))}
+            <div className="flex flex-col gap-2">
               {parameters.length > 0 && (
                 <>
+                  <h2 className="hidden text-n1-product-section font-bold leading-7 md:block">
+                    {d.productParameters}
+                  </h2>
                   <div className="md:hidden">
                     <DataTable
                       columns={parameterColumns(d)}
@@ -222,7 +252,10 @@ export const ProductView = ({
             </div>
           </Tabs.Content>
           <Tabs.Content value="sizes">
-            <p className="py-3">{d.sizeGuideUnavailable}</p>
+            <div className="flex flex-col gap-6 p-4">
+              <h2 className="text-xl font-semibold leading-9">{d.sizeGuideTitle}</h2>
+              <p className="text-md leading-6">{d.sizeGuideUnavailable}</p>
+            </div>
           </Tabs.Content>
         </Tabs>
       </div>

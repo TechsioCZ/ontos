@@ -6,6 +6,13 @@ const StoreCurrencySchema = Schema.Literals(["CZK", "EUR", "PLN"]);
 const ParametersSchema = Schema.Array(
   Schema.Struct({ label: Schema.String, unit: Schema.String, value: Schema.String }),
 );
+const PriceTiersSchema = Schema.Array(
+  Schema.Struct({
+    minimumQuantity: Schema.Number,
+    priceExcludingVatMinor: optionalNumber,
+    priceMinor: Schema.Number,
+  }),
+);
 export const CatalogResponseSchema = Schema.Struct({
   categories: Schema.optionalKey(
     Schema.Array(
@@ -42,6 +49,7 @@ export const CatalogResponseSchema = Schema.Struct({
       minimumQuantity: optionalNumber,
       name: Schema.String,
       parameters: Schema.optionalKey(ParametersSchema),
+      priceTiers: Schema.optionalKey(PriceTiersSchema),
       published: Schema.optionalKey(Schema.Boolean),
       sku: optionalString,
       slug: Schema.String,
@@ -60,6 +68,8 @@ export const CatalogResponseSchema = Schema.Struct({
             minimumQuantity: optionalNumber,
             name: Schema.String,
             parameters: Schema.optionalKey(ParametersSchema),
+            priceMinor: optionalNumber,
+            priceTiers: Schema.optionalKey(PriceTiersSchema),
             sku: Schema.String,
             stockOnHand: Schema.Number,
             unit: optionalString,
@@ -101,9 +111,11 @@ interface ProductVariantModel {
   readonly minimumQuantity: number;
   readonly name: string;
   readonly parameters: typeof ParametersSchema.Type;
+  readonly priceExcludingVatMinor: number | null;
   readonly priceMinor: number | null;
   readonly sku: string;
   readonly stock: ProductCardModel["stock"];
+  readonly stockQuantity: number | null;
   readonly unit: string;
 }
 
@@ -113,6 +125,8 @@ export interface ProductDetailModel extends ProductCardModel {
   readonly minimumQuantity: number;
   readonly paragraphs: readonly string[];
   readonly parameters: typeof ParametersSchema.Type;
+  readonly priceExcludingVatMinor: number | null;
+  readonly stockQuantity: number | null;
   readonly unit: string;
   readonly variants: readonly ProductVariantModel[];
 }
@@ -167,14 +181,57 @@ const stockStatus = (product: OwnerProduct): ProductCardModel["stock"] => {
   return product.availability === "LOW_STOCK" ? "limited" : "available";
 };
 
-const detailOf = (
+/** A group sum never describes the stock of a yet unselected variant. */
+const stockQuantityOf = (product: OwnerProduct): number | null => {
+  const quantity = product.stockOnHand;
+  if (
+    (product.variantSummary?.count ?? 0) > 0 ||
+    product.variantRecords?.some((variant) => variant.active) === true ||
+    stockStatus(product) === "unknown" ||
+    quantity === undefined ||
+    !Number.isFinite(quantity) ||
+    quantity < 0 ||
+    (product.availability === "OUT_OF_STOCK" && quantity > 0)
+  ) {
+    return null;
+  }
+  return quantity;
+};
+
+/** Preserve an explicit owner gross/net pair; never derive tax or convert currency here. */
+const netPriceOf = (
+  baseNet: number | undefined,
+  tiers: typeof PriceTiersSchema.Type | undefined,
+  gross: number | null,
+): number | null => {
+  if (gross === null) {
+    return null;
+  }
+  const candidates = new Set<number | undefined>();
+  if (tiers !== undefined && tiers.length > 0) {
+    for (const tier of tiers) {
+      if (tier.priceMinor === gross) {
+        candidates.add(tier.priceExcludingVatMinor);
+      }
+    }
+  } else {
+    candidates.add(baseNet);
+  }
+  const [net] = candidates;
+  return candidates.size === 1 &&
+    net !== undefined &&
+    Number.isSafeInteger(net) &&
+    net > 0 &&
+    net <= gross
+    ? net
+    : null;
+};
+
+const variantDetailsOf = (
   product: OwnerProduct,
   card: ProductCardModel,
   hosts: readonly string[],
-): ProductDetailModel => {
-  const gallery =
-    product.gallery ??
-    (product.imageSrc !== undefined && product.imageSrc.length > 0 ? [product.imageSrc] : []);
+): readonly ProductVariantModel[] => {
   const variants: ProductVariantModel[] = [];
   for (const variant of product.variantRecords ?? []) {
     if (!variant.active) {
@@ -197,12 +254,30 @@ const detailOf = (
       minimumQuantity: variant.minimumQuantity ?? product.minimumQuantity ?? 1,
       name: variant.name,
       parameters: variant.parameters ?? [],
+      priceExcludingVatMinor: netPriceOf(
+        variant.priceMinor,
+        variant.priceTiers,
+        priceOf(individual, card.currency),
+      ),
       priceMinor: priceOf(individual, card.currency),
       sku: variant.sku,
       stock: stockStatus(individual),
+      stockQuantity: stockQuantityOf(individual),
       unit: variant.unit ?? product.unit ?? "",
     });
   }
+  return variants;
+};
+
+const detailOf = (
+  product: OwnerProduct,
+  card: ProductCardModel,
+  hosts: readonly string[],
+): ProductDetailModel => {
+  const gallery =
+    product.gallery ??
+    (product.imageSrc !== undefined && product.imageSrc.length > 0 ? [product.imageSrc] : []);
+  const variants = variantDetailsOf(product, card, hosts);
   return {
     ...card,
     imageAlt: product.imageAlt ?? product.name,
@@ -218,6 +293,11 @@ const detailOf = (
     paragraphs:
       product.descriptionParagraphs ?? (card.description.length > 0 ? [card.description] : []),
     parameters: product.parameters ?? [],
+    priceExcludingVatMinor:
+      variants.length > 0 || (product.variantSummary?.count ?? 0) > 0
+        ? null
+        : netPriceOf(product.currentPriceMinor, product.priceTiers, card.priceMinor),
+    stockQuantity: stockQuantityOf(product),
     unit: product.unit ?? "",
     variants,
   };

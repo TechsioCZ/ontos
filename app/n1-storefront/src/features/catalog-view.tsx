@@ -127,7 +127,7 @@ export const CatalogView = ({
                 </ProductCard.Stock>
               )}
             </div>
-            <div className="flex items-center justify-center gap-4">
+            <div className="flex flex-col items-center justify-center gap-0 md:flex-row md:gap-4">
               <PriceBlock {...priceProps(product, d, locale)} />
               {(product.variantCount ?? 0) > 0 ? (
                 <LinkButton

@@ -323,3 +323,35 @@ boční padding16, vnitřní1248 a sloupce448+32+768. Historický PDP `page.tsx`
 rovněž používá container s p400=16px. Odstraněn pouze md:px-0 na article;
 existující p4 zůstává i na desktopu. Centrování v runtime počítá s reálnou
 šířkou viewportu bez svislého scrollbaru. Mobilní wrapper se nemění.
+
+## C17 — skutečná PDP data a doložená kompozice
+
+PDP39:1965/39:2430: veřejný full Merchandise read již obsahuje leaf stock,
+base net a explicitní gross/net price tiers. Lokální decoder je zachovává;
+ProductDetailModel a varianty přenášejí nullable stockQuantity/net. Výběr
+varianty přepíná obě hodnoty, group parent je neukazuje ani při chybějícím
+summary. Unknown/untracked není0. Net se páruje se zobrazeným owner gross;
+nejednoznačné tiers se vynechají, žádné dopočítání21% ani druhý FX převod.
+
+PriceBlock.taxLabel a AvailabilityStatus.label používají tyto skutečné údaje.
+Card/quote/cart amount zůstává owner gross. Popis39:2187/2547 je samostatně
+za Tabs.List a přetrvá při přepnutí panelů. Parametry219:2882 mají pouze na
+desktopu vlastní18/28 bold H2, přes native app text role nad dimension18.
+Missing guide61:1716 má title24/36 semibold, p16/gap24 a pravdivý unavailable
+text. Tabs md content padding se váže na dimension0; účet používá size sm.
+Gallery219:2762/2763 má na desktopu oba gapy4 přes existující globální role;
+mobilní Gallery39:2455 zachovává kit defaults. Žádný crop podle fixture média.
+
+Search63:1548 používá relative48×48 wrapper a Image asNextImage fill/contain
+se sizes48px. Home31:637/171:2227 skládá cenu a CTA pod sebe, desktop ponechává
+řadu. Jde o app layout wrappery a podporované props, nikoli appearance třídy
+na kit komponentách. Kanonický N1 export zůstává beze změny.
+
+Přesný desktop Tabs strip, selectedvariant stockcorner a responsive Availability
+typografie mají nadále veřejný kit kontrakt gap. Výrobce/sizeguide URL/related
+nejsou vytvářené z fixture, jména, SKU ani náhodného katalogového výběru.
+
+C17 striped řádky219:2885/2892 vážou existující DataTable primary/secondary
+role na canonical neutral300/fill-hover. Palette se nemění. Zbývající velikost
+řádku33 vs37 je sdílený Table-sm font-size kontrakt; nepřepisovat globálně
+Table-sm kvůli jediné DataTable a nezaměňovat takové omezení za hotovou shodu.

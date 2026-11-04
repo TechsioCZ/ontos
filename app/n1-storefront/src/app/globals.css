@@ -27,6 +27,7 @@
   --aspect-n1-footer-logo: 322 / 78;
   --container-n1-search: 40vw;
   --text-n1-utility: 0.8125rem;
+  --text-n1-product-section: var(--dimension-18);
   --spacing-n1-utility-height: 2.03125rem;
   --spacing-n1-header-gutter: 1.25rem;
   --spacing-n1-nav-height: 3.75rem;

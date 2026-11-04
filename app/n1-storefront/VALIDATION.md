@@ -1,5 +1,38 @@
 # Kontrola převodu N1 storefrontu
 
+## C17: PDP projekce a kompozice — 2026-11-04
+
+358/358N1testů PASS i po aktualizaci upstream na4e8dc03cd; produkční build,
+kanonický lint, format check,447token theme check a i18n boundaries PASS.
+Nové red/green testy pokrývají skutečný net/tier pár, nejednoznačné nebo chybějící
+částky, foreign currency, unknown/untracked stock a selectedvariant vs aggregate.
+Review našlo missing/zero summary případ; dvě regresní reprodukce a oprava
+nepřipustí parent net/count, pokud produkt obsahuje aktivní varianty.
+
+Actual desktop1440 i mobil390 skutečně otevřeny: LXL25ks → SM14ks, obě varianty
+879Kč + explicitní owner net726,45Kč. Žádný dopočet DPH/FX ani přisouzení skupinového
+skladu konkrétní velikosti. Popis po přepnutí na sizes zůstává viditelný; desktop
+parameters H2 má18/28/700, mobil tento další H2 nemá. Missingguide title24/36/600,
+p16/gap24. Gallery gap desktop4/4 a mobil16. Striped parametry skutečně střídají
+RGB232 a246. Search všech8 actual obrázků48×48/contain; dlouhé návleky řádky
+nerozšiřují. Homepage mobile cena nad CTA/gap0, desktop row/gap16. Bez overflow
+a console error/warn v kontrolovaných stavech. Nezávislý code a bounded visual
+review bez nového blokátoru; PNG jsou v .local/n1-c17-*.png. Žádná objednávka
+nebo zákaznický/inquiry zápis nebyl při tomto ověření vytvořen.
+
+C17 neopravuje přesný desktop Tabs graystrip/indicator/density, selectedvariant
+stockcorner nebo veškerou Availability typografii. Parametrové řádky mají33px
+oproti návrhovým37: DataTable size-sm sdílí Table text14 s účtem, potřebná
+oddělená body typography role dosud není veřejná. Globální přepis Table sm
+kvůli PDP ani per-instance CSS není použitý. Manufacturer/sizeguide URL/related
+a shipping ETA zůstávají bez skutečné native capability; nejde o whole-PDP PASS.
+
+Upstream přešel na effect-tsgo --tsrs-lint a odstranil standalone tsgolint.
+N1 lint script nyní používá stejný workspace řetězec a stávající pravidla;
+závislosti/lockfile se tím nemění. Poslední celkový pnpm check z C16 měl chyby
+mimo N1 a nebyl dokončený; tento cílený výsledek není tvrzení zeleného celé-repo
+gate. Normální commit/push hooky se spouštějí samostatně a neobcházejí se.
+
 ## C16: nákupní stavy PDP — 2026-11-04
 
 Po aktualizaci na3db193758:335/335N1testů, lint, produkční build a i18n

@@ -18,9 +18,17 @@ import { useSearchSuggestions } from "./use-search-suggestions";
 const renderProductResult = (item: ComboboxItem<ProductCardModel>, d: Dictionary, locale: string) =>
   item.data && (
     <div className="flex w-full min-w-0 items-center gap-2">
-      <div className="w-n1-suggestion-image shrink-0">
+      <div className="relative size-n1-suggestion-image shrink-0">
         {item.data.image !== null && (
-          <Image alt="" as={NextImage} height={48} size="full" src={item.data.image} width={48} />
+          <Image
+            alt=""
+            as={NextImage}
+            fill
+            objectFit="contain"
+            size="full"
+            sizes="48px"
+            src={item.data.image}
+          />
         )}
       </div>
       <span className="min-w-0 flex-1">{item.label}</span>

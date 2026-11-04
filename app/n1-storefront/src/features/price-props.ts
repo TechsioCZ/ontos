@@ -34,8 +34,9 @@ export const formatMarketAmount = (
 /** Both card and detail use the same price state and the market's currency. */
 export const priceProps = (
   product: ProductCardModel,
-  d: Pick<Dictionary, "from" | "priceUnavailable">,
+  d: Pick<Dictionary, "from" | "priceExcludingVat" | "priceUnavailable">,
   locale: string,
+  priceExcludingVatMinor: number | null = null,
 ): PriceBlockProps => {
   if (product.priceMinor === null) {
     return { label: d.priceUnavailable, state: "on-request" };
@@ -43,6 +44,15 @@ export const priceProps = (
   const amountLabel = formatMarketAmount(product.priceMinor, locale, product.currency);
   if (product.priceFrom) {
     return { amountLabel, prefix: d.from, state: "from" };
+  }
+  if (priceExcludingVatMinor !== null) {
+    return {
+      amountLabel,
+      state: "known",
+      taxLabel: d.priceExcludingVat.replace("{amount}", () =>
+        formatMarketAmount(priceExcludingVatMinor, locale, product.currency),
+      ),
+    };
   }
   return { amountLabel, state: "known" };
 };

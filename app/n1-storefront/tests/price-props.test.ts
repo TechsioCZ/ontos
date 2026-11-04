@@ -15,9 +15,28 @@ const product: ProductCardModel = {
   stock: "unknown",
 };
 
-const copy = { from: "od", priceUnavailable: "Cena není dostupná" };
+const copy = {
+  from: "od",
+  priceExcludingVat: "{amount} bez DPH",
+  priceUnavailable: "Cena není dostupná",
+};
 
 describe("owner price labels", () => {
+  it("renders an explicit owner net amount in the existing price metadata slot", () => {
+    expect(priceProps(product, copy, "cs", 99_091)).toEqual({
+      amountLabel: "1\u00A0199\u00A0Kč",
+      state: "known",
+      taxLabel: "990,91\u00A0Kč bez DPH",
+    });
+  });
+  it("does not attach a leaf net amount to an unavailable or group-from price", () => {
+    expect(priceProps({ ...product, priceMinor: null }, copy, "cs", 99_091)).not.toHaveProperty(
+      "taxLabel",
+    );
+    expect(priceProps({ ...product, priceFrom: true }, copy, "cs", 99_091)).not.toHaveProperty(
+      "taxLabel",
+    );
+  });
   it("omits unnecessary decimal zeros for whole-crown prices", () => {
     expect(priceProps(product, copy, "cs")).toEqual({
       amountLabel: "1\u00A0199\u00A0Kč",

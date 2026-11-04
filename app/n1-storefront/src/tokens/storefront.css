@@ -4,6 +4,11 @@
  * Source: N1 storefront Header 33:635 / Footer 33:1100.
  */
 [data-theme="n1"] {
+  /* PDP39:2187/2547 owns description and panels; Account uses Tabs sm. */
+  --spacing-tabs-content-padding-md: var(--dimension-0);
+  /* Desktop PDP parameter rows219:2885/2892 use the existing striped roles. */
+  --color-data-table-row-bg-striped-primary: var(--color-neutral-300);
+  --color-data-table-row-bg-striped-secondary: var(--color-fill-hover);
   /* Category navigation214:3169: preserve canonical text/md16/24.
    * A 32px layout row surrounds the native controls; it is not file-picker UI. */
   --color-tree-view-bg: var(--color-fill-hover);
@@ -71,6 +76,14 @@
   --padding-dialog-content: var(--dimension-0);
   --spacing-dialog-content: var(--dimension-0);
   --color-dialog-content-bg: var(--color-fill-hover);
+}
+
+/* PDP desktop219:2762/2763 uses4px Gallery gaps; mobile39:2455 keeps kit defaults. */
+@media (width >= 48rem) {
+  [data-theme="n1"] {
+    --spacing-gallery-root: var(--dimension-4);
+    --spacing-gallery-sm: var(--dimension-4);
+  }
 }
 
 /* Rebind existing semantic kit glyph roles, without custom SVG masks or

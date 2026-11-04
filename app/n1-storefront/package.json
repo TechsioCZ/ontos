@@ -11,7 +11,7 @@
     "start": "next start --hostname 127.0.0.1 --port 3071",
     "typecheck": "tsc --noEmit",
     "test": "rstest --config rstest.config.ts --pool.maxWorkers 1",
-    "lint": "oxlint --react-plugin --jsx-a11y-plugin --nextjs-plugin --vitest-plugin src tests",
+    "lint": "pnpm --dir .. exec effect-tsgo --tsrs-lint oxlint --react-plugin --jsx-a11y-plugin --nextjs-plugin --vitest-plugin n1-storefront/src n1-storefront/tests",
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
