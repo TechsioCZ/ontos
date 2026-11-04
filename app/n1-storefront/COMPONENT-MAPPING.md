@@ -185,3 +185,26 @@ overflow. Vnitřní šířka nadpisu 1120/310px, mobilní x=40px, výška 32px.
 Automatické ověření zahrnuje skutečný market query, měnu, nulovou cenu,
 prázdnou nabídku i odmítnutí neplatného scope/sazeb. Toto jsou informační
 stránky; dokončení objednávky a zprovoznění plateb zůstávají samostatné.
+
+## Guest checkout a potvrzení objednávky — C7
+
+Figma session `29658e25-06ad-415c-a929-b9b88d7db11f`: desktop checkout
+`44:1226`, body `319:1734`; mobil `44:2285`, body `319:1955`. Potvrzení
+desktop `55:1948`/body `372:3125`, mobil `55:2309`/body `372:3356`.
+Checkout používá max1280, padding20, dvě stejné kolony s gap32 od md; na mobilu
+jednu kolonu. Panely mají p16/gap16, párová pole gap12. FormInput md a
+Select lg vycházejí z Code Connect, doprava RadioCard sm/outline, akce Button md,
+stav objednávky Badge info/md. Potvrzení má max768 panely a na mobilu stav pod
+nadpisem. Knihovní komponenty nemají vzhledové className ani inline style.
+
+Neutral shipping choice z Figmy používá veřejné RadioCard tokenové role
+`border-secondary`, `fg-secondary` a `fill-overlay`; nemá vlastní barvy nebo CSS
+třídy. Tyto globální vazby jsou v `src/tokens/storefront.css`.
+
+Schválená odchylka: firma, druhý řádek adresy a kraj nejsou zobrazené, protože je
+nativní adresa neumí uložit. Uživatel 2026-11-04 výslovně zvolil jejich vynechání.
+Dopravci/ceny/země pocházejí z ownera, nikoli z fixture; online platba ani
+potvrzení o odeslání e-mailu se nepředstírají. Souhrn zobrazuje owner celkové DPH;
+řádek ceny bez DPH proto zahrnuje i dopravu. První tlačítko ověří úplný quote,
+až druhé potvrzuje objednávku. Obnova používá stabilní nonce a veřejný read.
+Guest potvrzení neodkazuje na neimplementované zákaznické objednávky.

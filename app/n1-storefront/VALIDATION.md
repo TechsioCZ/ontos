@@ -646,3 +646,47 @@ entries; backend bootstrap/seed changes and private local runtime/data are exclu
   props/purchase-row composition. Outstanding: ProductCard hardcoded shadow and
   image cropping, exact detail NumericInput anatomy, heading/panel details, search
   brands and other missing data-backed sections. No whole-storefront visual PASS.
+
+## C7 — guest checkout a nativní potvrzení (2026-11-04)
+
+Figma session `29658e25-06ad-415c-a929-b9b88d7db11f`:
+checkout desktop `44:1226`/`319:1734`, mobil `44:2285`/`319:1955`;
+potvrzení desktop `55:1948`/`372:3125`, mobil `55:2309`/`372:3356`.
+Snímky i konkrétní Code Connect instance byly skutečně prohlédnuté.
+
+Ověřeno na skutečném odděleném lokálním N1 backendu, nikoli na shared stage:
+
+- Produkt Fox Defend/YS → košík → native quote → PPL129CZK → shipping-inclusive
+  quote → skutečný OBJ-2026-0001, celkem898CZK. Owner vrátil DPH155.85 a cenu
+  bez DPH včetně dopravy742.15CZK.
+- Potvrzení zaměří H1. Detail dohledá skutečný kontakt, adresu, stav a dopravu.
+  Po reloadu i restartu FE stejný nonce vrátí stejnou objednávku pouze čtením.
+  Potvrzený odeslaný košík je odstraněný; odchod domů uvolní pouze původní guard.
+- Prázdný formulář zaměří první povinné pole, vyznačí neplatná pole a nepřenese
+  osobní údaje do URL. Bez JavaScriptu používá pevný POST endpoint, který
+  nepodporovaný form payload odmítne.
+- Finální desktop1440: article1280, vnitřek1240, dvě604pxkolony, gap32, p20,
+  H1 32/48, skutečný thumbnail64×64. Mobil390: obsah350, p20, párová pole
+  po152px/gap12, input44px, Select56px. Bez horizontálního overflow.
+- Opraveno po vizuální kontrole: thumbnail16→64 přes existující dimension-64,
+  nadpis32/48, cena dopravy v pravém sloupci wrapperu, mobilní stav pod titulkem.
+  Kit komponenty nemají vzhledové className/style. Konzole průchodu bez chyb/varování.
+- 246/246 N1 testů PASS; N1 lint, format a samostatná repository Effect
+  discrimination policy pro celý N1 consumer PASS. Produkční Next build PASS.
+  Source review nehlásí zbývající P1/P2. Nejde o pozitivní test zákaznického účtu.
+
+Schválené či skutečným kontraktem vynucené rozdíly od fixture:
+
+- Firma, druhý řádek adresy a kraj vynechané s výslovným souhlasem uživatele.
+- Skuteční dopravci/ceny/země z ownera, bez fixture ParcelShop nebo dodacího slibu.
+- Online platba není dostupná; přijetí netvrdí zaplacení či odeslaný e-mail.
+- Ověření úplného quote předchází potvrzení; ceny nevypočítává frontend.
+- Guest receipt nemá neimplementované „Moje objednávky“. Obnova po reloadu nemá
+  obrázek, pokud owner ani aktuální cart neposkytuje jeho ověřená metadata.
+
+Full pnpm check nebyl zelený: selhaly čtyři repository lint-rule testy
+(native-data-factory-proof, dva proof testy no-service-constructor-imports,
+repository-policy). Všechny reportované N1 manual-tag nálezy byly opravené a
+ověřené samostatnou stejnou policy konfigurací. Zbývající diagnostika zasahuje jiné
+aplikace/tooling a lokální necommitovaný seed mimo N1 scope. Celkové repo nemá
+zelený full gate; pravidla ani hooky se neoslabují.

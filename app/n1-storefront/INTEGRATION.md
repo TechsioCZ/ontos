@@ -92,6 +92,14 @@ Ochrana původních produktů a finální stock audit patří ke stejnému impor
 ## Hranice checkoutu
 
 Současný N1 `/api/cart-quote` pouze ověřuje zboží pomocí `dryRun:true`.
-Není to vytvoření objednávky. Přijetí skutečné objednávky zase není důkaz
+Není to vytvoření objednávky. Guest `/api/checkout` má oddělené ověření s dopravou
+a explicitní odeslání; `/api/checkout/status` čte pouze výsledek původního intentu.
+Přijetí skutečné objednávky zase není důkaz
 zaplacení. Účet, uložené adresy a platební provider vyžadují vlastní ověřené
 owner rozhraní; browserová customer ID ani Figma fixture nejsou autorita.
+
+Uživatel schválil ve formuláři vynechat firmu, druhý řádek adresy a kraj:
+nativní objednávková adresa tato samostatná pole nepodporuje. Nevzniká kvůli
+nim změna BE kontraktu ani ukládání do jiných polí. Souhrn respektuje také
+nativní DPH včetně dopravy: čistá částka je označená jako včetně dopravy a
+doprava jako část již zahrnutá v celku, bez dalšího výpočtu sazby nebo kurzu.

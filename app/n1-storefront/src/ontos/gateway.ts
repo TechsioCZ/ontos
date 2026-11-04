@@ -8,6 +8,15 @@ type OwnerReadQuery =
   | { readonly at: string }
   | {
       readonly view: {
+        readonly includeCategories: false;
+        readonly limit: 0;
+        readonly orderClientRequestId: string;
+        readonly ordersLimit: 1;
+        readonly storefront: true;
+      };
+    }
+  | {
+      readonly view: {
         readonly storefront: true;
         readonly storefrontCatalog:
           | {

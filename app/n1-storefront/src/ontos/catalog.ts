@@ -73,7 +73,7 @@ export const getCatalog = cache(
         Effect.tapError((error) =>
           Effect.logWarning("N1 catalog read unavailable").pipe(
             Effect.annotateLogs(
-              error._tag === "StorefrontReadUnavailable"
+              Schema.is(StorefrontReadUnavailable)(error)
                 ? { failure: error._tag, reason: error.reason, status: error.status ?? 0 }
                 : { failure: error._tag },
             ),

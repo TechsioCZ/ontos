@@ -2,7 +2,7 @@ import { describe, expect, rs } from "@rstest/core";
 import { it } from "effect-rstest";
 import { FetchHttpClient } from "effect/http";
 import { readFulfillment } from "../src/ontos/fulfillment";
-import { Effect, Schema } from "effect";
+import { Effect, Result, Schema } from "effect";
 import { renderToStaticMarkup } from "react-dom/server";
 import { FulfillmentSnapshotSchema, projectFulfillment } from "../src/ontos/fulfillment-model";
 import { FulfillmentView } from "../src/features/fulfillment-view";
@@ -148,7 +148,7 @@ describe("market-scoped fulfillment information", () => {
     (input) =>
       Effect.gen(function* refusesEvidence() {
         const result = yield* Effect.result(project(input));
-        expect(result._tag).toBe("Failure");
+        expect(Result.isFailure(result)).toBe(true);
       }),
   );
   it.effect("keeps a genuine zero shipping charge and an empty offer separate", () =>

@@ -35,8 +35,8 @@ N1 prostředí; účet, košík/checkout a obsahové integrace nejsou touto vlno
 | 08  | Doprava                        | Pouze nedostupný obsah                        | Skutečné market shipping options                                                 |
 | 09  | Platby                         | Pouze nedostupný obsah                        | Skutečné market payment options                                                  |
 | 10  | CMS template                   | Chybí                                         | Potvrzený owner záznam a média                                                   |
-| 11  | Potvrzení objednávky           | Chybí                                         | Reálný výsledek order; nikdy fixture #48                                         |
-| 12  | Pokladna/košík                 | Chybí                                         | Cart, quote, guest context, doprava/platba, order, stavy                         |
+| 11  | Potvrzení objednávky           | Guest nativní PLACED/REPLAYED + obnova        | Skutečné číslo/stav; bez falešného e-mailu nebo platby                           |
+| 12  | Pokladna/košík                 | Guest quote, doprava a vytvoření objednávky   | Schváleno vynechat firmu/line2/kraj; zákaznické adresy chybí                     |
 | 13  | Přihlášení                     | Chybí                                         | Portal auth, validace, pending, unavailable                                      |
 | 14  | Registrace                     | Chybí                                         | Portal registrace, validace a chyby                                              |
 | 15  | Detail objednávky              | Chybí                                         | Autorizovaný owner read                                                          |
@@ -65,49 +65,49 @@ N1 prostředí; účet, košík/checkout a obsahové integrace nejsou touto vlno
 
 ### 03 · Formuláře a pokladna (`42:635`)
 
-| Node       | Návrh                                                 | Stav při zahájení                          |
-| ---------- | ----------------------------------------------------- | ------------------------------------------ |
-| `42:636`   | N1-13 · Přihlášení · desktop                          | Chybí                                      |
-| `42:1088`  | N1-13 · Přihlášení · mobil                            | Chybí                                      |
-| `43:816`   | N1-14 · Registrace · desktop                          | Chybí                                      |
-| `43:1026`  | N1-14 · Registrace · mobil                            | Chybí                                      |
-| `43:1162`  | N1-04 · Kontakty · desktop                            | Základ; přesná kompozice/stavy nedokončené |
-| `43:1595`  | N1-04 · Kontakty · mobil                              | Základ; přesná kompozice/stavy nedokončené |
-| `44:1226`  | N1-12 · Pokladna · guest fixture · desktop            | Chybí                                      |
-| `44:2285`  | N1-12 · Pokladna · guest fixture · mobil              | Chybí                                      |
-| `323:1465` | N1-12 · Pokladna · dokončování · fixture · mobil      | Chybí                                      |
-| `323:1813` | N1-12 · Pokladna · validace po blur · fixture · mobil | Chybí                                      |
+| Node       | Návrh                                                 | Stav při zahájení                                         |
+| ---------- | ----------------------------------------------------- | --------------------------------------------------------- |
+| `42:636`   | N1-13 · Přihlášení · desktop                          | Chybí                                                     |
+| `42:1088`  | N1-13 · Přihlášení · mobil                            | Chybí                                                     |
+| `43:816`   | N1-14 · Registrace · desktop                          | Chybí                                                     |
+| `43:1026`  | N1-14 · Registrace · mobil                            | Chybí                                                     |
+| `43:1162`  | N1-04 · Kontakty · desktop                            | Základ; přesná kompozice/stavy nedokončené                |
+| `43:1595`  | N1-04 · Kontakty · mobil                              | Základ; přesná kompozice/stavy nedokončené                |
+| `44:1226`  | N1-12 · Pokladna · guest fixture · desktop            | C7 guest implementace; aktuální ověření viz VALIDATION.md |
+| `44:2285`  | N1-12 · Pokladna · guest fixture · mobil              | C7 guest implementace; aktuální ověření viz VALIDATION.md |
+| `323:1465` | N1-12 · Pokladna · dokončování · fixture · mobil      | Chybí                                                     |
+| `323:1813` | N1-12 · Pokladna · validace po blur · fixture · mobil | Chybí                                                     |
 
 ### 04 · Účet a obsah (`50:635`)
 
-| Node       | Návrh                                                        | Stav při zahájení           |
-| ---------- | ------------------------------------------------------------ | --------------------------- |
-| `50:636`   | N1-05 · Novinky · desktop                                    | Obsah/kompozice nedokončené |
-| `50:790`   | N1-05 · Novinky · mobil                                      | Obsah/kompozice nedokončené |
-| `50:867`   | N1-06 · Obchodní podmínky · desktop                          | Obsah/kompozice nedokončené |
-| `50:1032`  | N1-06 · Obchodní podmínky · mobil                            | Obsah/kompozice nedokončené |
-| `50:1126`  | N1-07 · Zásady ochrany osobních údajů · desktop              | Obsah/kompozice nedokončené |
-| `50:1288`  | N1-07 · Zásady ochrany osobních údajů · mobil                | Obsah/kompozice nedokončené |
-| `51:1020`  | N1-08 · Způsoby dopravy · desktop                            | Obsah/kompozice nedokončené |
-| `51:1174`  | N1-08 · Způsoby dopravy · mobil                              | Obsah/kompozice nedokončené |
-| `51:1255`  | N1-09 · Způsoby platby · desktop                             | Obsah/kompozice nedokončené |
-| `51:1404`  | N1-09 · Způsoby platby · mobil                               | Obsah/kompozice nedokončené |
-| `51:1482`  | N1-10 · CMS template · promo fixture · desktop               | Chybí                       |
-| `51:1639`  | N1-10 · CMS template · promo fixture · mobil                 | Chybí                       |
-| `54:1417`  | N1-16 · Účet · Osobní údaje · fixture · desktop              | Chybí                       |
-| `54:1629`  | N1-16 · Účet · Osobní údaje · fixture · mobil                | Chybí                       |
-| `54:1759`  | N1-16 · Účet · Adresy · fixture · desktop                    | Chybí                       |
-| `54:1946`  | N1-16 · Účet · Adresy · fixture · mobil                      | Chybí                       |
-| `54:2060`  | N1-16 · Účet · Objednávky · test objednávka #48 · desktop    | Chybí                       |
-| `54:2241`  | N1-16 · Účet · Objednávky · test objednávka #48 · mobil      | Chybí                       |
-| `55:1948`  | N1-11 · Potvrzení objednávky · test objednávka #48 · desktop | Chybí                       |
-| `55:2309`  | N1-11 · Potvrzení objednávky · test objednávka #48 · mobil   | Chybí                       |
-| `55:2509`  | N1-15 · Detail objednávky · test objednávka #48 · desktop    | Chybí                       |
-| `55:2784`  | N1-15 · Detail objednávky · test objednávka #48 · mobil      | Chybí                       |
-| `338:2102` | N1 · Adresy · Přidat adresu · anonymous fixture              | Chybí                       |
-| `338:2251` | N1 · Adresy · Upravit adresu · anonymous fixture             | Chybí                       |
-| `338:2380` | N1 · Profil · Ukládání · anonymous fixture                   | Chybí                       |
-| `338:4541` | N1 · Adresy · Smazat adresu · alertdialog fixture            | Chybí                       |
+| Node       | Návrh                                                        | Stav při zahájení                             |
+| ---------- | ------------------------------------------------------------ | --------------------------------------------- |
+| `50:636`   | N1-05 · Novinky · desktop                                    | Obsah/kompozice nedokončené                   |
+| `50:790`   | N1-05 · Novinky · mobil                                      | Obsah/kompozice nedokončené                   |
+| `50:867`   | N1-06 · Obchodní podmínky · desktop                          | Obsah/kompozice nedokončené                   |
+| `50:1032`  | N1-06 · Obchodní podmínky · mobil                            | Obsah/kompozice nedokončené                   |
+| `50:1126`  | N1-07 · Zásady ochrany osobních údajů · desktop              | Obsah/kompozice nedokončené                   |
+| `50:1288`  | N1-07 · Zásady ochrany osobních údajů · mobil                | Obsah/kompozice nedokončené                   |
+| `51:1020`  | N1-08 · Způsoby dopravy · desktop                            | Obsah/kompozice nedokončené                   |
+| `51:1174`  | N1-08 · Způsoby dopravy · mobil                              | Obsah/kompozice nedokončené                   |
+| `51:1255`  | N1-09 · Způsoby platby · desktop                             | Obsah/kompozice nedokončené                   |
+| `51:1404`  | N1-09 · Způsoby platby · mobil                               | Obsah/kompozice nedokončené                   |
+| `51:1482`  | N1-10 · CMS template · promo fixture · desktop               | Chybí                                         |
+| `51:1639`  | N1-10 · CMS template · promo fixture · mobil                 | Chybí                                         |
+| `54:1417`  | N1-16 · Účet · Osobní údaje · fixture · desktop              | Chybí                                         |
+| `54:1629`  | N1-16 · Účet · Osobní údaje · fixture · mobil                | Chybí                                         |
+| `54:1759`  | N1-16 · Účet · Adresy · fixture · desktop                    | Chybí                                         |
+| `54:1946`  | N1-16 · Účet · Adresy · fixture · mobil                      | Chybí                                         |
+| `54:2060`  | N1-16 · Účet · Objednávky · test objednávka #48 · desktop    | Chybí                                         |
+| `54:2241`  | N1-16 · Účet · Objednávky · test objednávka #48 · mobil      | Chybí                                         |
+| `55:1948`  | N1-11 · Potvrzení objednávky · test objednávka #48 · desktop | C7 skutečný guest výsledek a read-only obnova |
+| `55:2309`  | N1-11 · Potvrzení objednávky · test objednávka #48 · mobil   | C7 skutečný guest výsledek a read-only obnova |
+| `55:2509`  | N1-15 · Detail objednávky · test objednávka #48 · desktop    | Chybí                                         |
+| `55:2784`  | N1-15 · Detail objednávky · test objednávka #48 · mobil      | Chybí                                         |
+| `338:2102` | N1 · Adresy · Přidat adresu · anonymous fixture              | Chybí                                         |
+| `338:2251` | N1 · Adresy · Upravit adresu · anonymous fixture             | Chybí                                         |
+| `338:2380` | N1 · Profil · Ukládání · anonymous fixture                   | Chybí                                         |
+| `338:4541` | N1 · Adresy · Smazat adresu · alertdialog fixture            | Chybí                                         |
 
 ### 05 · Stavy a navigace (`56:635`)
 

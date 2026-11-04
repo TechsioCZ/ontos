@@ -4,7 +4,7 @@
 > ověření cen byly ověřené se skutečným lokálním N1 kontextem. Nejde o hotový
 > převod všech obrazovek Figmy. Detail nyní rozlišuje desktopový NumericInput
 > a mobilní QuantityField; karty používají contain a vypnutý stín přes knihovní API.
-> Checkout, vytvoření objednávky a úplný zákaznický účet nejsou dokončené.
+> Guest checkout a potvrzení mají nativní integraci; úplný zákaznický účet ještě chybí.
 > Portal registrace/přihlášení mají implementaci a testy; celý pozitivní živý
 > průchod ještě není doložený. Lokální data ani přístupové údaje nejsou součástí aplikace.
 
@@ -23,8 +23,9 @@ Neimportuje privátní zdroje jiné aplikace.
 
 Je to rozpracovaný storefront, nikoliv hotový převod všech obrazovek Figmy. Login,
 registrace a ověření e-mailu mají existující Portal integraci; košík a owner dry-run
-ověření jsou popsané níže. Účet/profil, adresy, objednávky a celý checkout nejsou
-dokončené. Doprava a platby čtou skutečné market checkout možnosti; právní
+ověření jsou popsané níže. Guest checkout čte skutečné dopravy, ověřuje celkovou
+cenu a vytváří objednávku s dohledáním výsledku podle stabilního požadavku.
+Účet/profil, uložené adresy a zákaznický seznam/detail objednávek nejsou dokončené. Doprava a platby čtou skutečné market checkout možnosti; právní
 texty a ostatní obsahové stránky kromě kontaktů čekají na skutečný obsah.
 
 Úplný seznam všech aktuálních rámců a stavů je v `FIGMA-INVENTORY.md`. Kategorie nyní

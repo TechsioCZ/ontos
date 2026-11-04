@@ -4,6 +4,13 @@
  * Source: N1 storefront Header 33:635 / Footer 33:1100.
  */
 [data-theme="n1"] {
+  /* Checkout shipping319:1756/319:1977 is a neutral exclusive choice.
+   * RadioCard has no tone prop: bind only its outline role to existing N1
+   * semantics; primary actions and the brand palette keep their own roles. */
+  --color-radio-card-item-border: var(--color-border-secondary);
+  --color-radio-card-item-border-outline-checked: var(--color-fg-secondary);
+  --color-radio-card-item-border-outline-checked-hover: var(--color-fg-secondary);
+  --color-radio-card-item-bg-outline-checked: var(--color-fill-overlay);
   --color-numeric-input-compact-border: var(--color-border-secondary);
   --font-weight-price-block-amount: var(--font-weight-bold);
   /* Homepage31:636/31:637, card33:1018: installed0.57 component

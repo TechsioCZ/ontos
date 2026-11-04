@@ -25,6 +25,12 @@ const formatters = {
   },
 };
 
+export const formatMarketAmount = (
+  amountMinor: number,
+  locale: string,
+  currency: ProductCardModel["currency"],
+) => formatters[locale === "en" ? "en" : "cs"][currency].format(amountMinor / 100);
+
 /** Both card and detail use the same price state and the market's currency. */
 export const priceProps = (
   product: ProductCardModel,
@@ -34,9 +40,7 @@ export const priceProps = (
   if (product.priceMinor === null) {
     return { label: d.priceUnavailable, state: "on-request" };
   }
-  const amountLabel = formatters[locale === "en" ? "en" : "cs"][product.currency].format(
-    product.priceMinor / 100,
-  );
+  const amountLabel = formatMarketAmount(product.priceMinor, locale, product.currency);
   if (product.priceFrom) {
     return { amountLabel, prefix: d.from, state: "from" };
   }
