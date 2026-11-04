@@ -15,8 +15,8 @@ import { categoryTrail, categoryTree } from "@/ontos/catalog-navigation";
 import { CatalogView } from "./catalog-view";
 import { ListingCards } from "./listing-cards";
 import { CatalogPagination } from "./catalog-pagination";
-
-const countFormats = { cs: new Intl.NumberFormat("cs"), en: new Intl.NumberFormat("en") };
+import { CategoryTreeNode } from "./category-tree-node";
+import { CategoryProductCount } from "./category-product-count";
 
 /** Category composition over the current owner page and its real navigation tree. */
 export const CategoryView = ({
@@ -99,12 +99,7 @@ export const CategoryView = ({
                 <TreeView.Label>{treeRoot?.name ?? d.menu}</TreeView.Label>
                 <TreeView.Tree>
                   {browseNodes.map((node, index) => (
-                    <TreeView.Node
-                      indexPath={[index]}
-                      key={node.id}
-                      node={node}
-                      showNodeIcons={false}
-                    />
+                    <CategoryTreeNode indexPath={[index]} key={node.id} node={node} />
                   ))}
                 </TreeView.Tree>
               </TreeView>
@@ -112,9 +107,12 @@ export const CategoryView = ({
           </aside>
         )}
         <div className="w-full min-w-0 flex-1 md:px-3">
-          <div className="mb-6 md:mb-3">
-            <h1 className="text-2xl font-bold md:text-xl">{title}</h1>
-            <div aria-hidden="true" className="hidden h-1 w-24 bg-primary md:block" />
+          <div className="relative mb-6 md:mb-3">
+            <h1 className="text-2xl font-bold md:text-xl md:leading-8">{title}</h1>
+            <div
+              aria-hidden="true"
+              className="absolute bottom-0 hidden h-1 w-24 bg-primary md:block"
+            />
           </div>
           {catalog.configured && nodes.length > 0 && (
             <div className="mb-6 md:hidden">
@@ -150,12 +148,7 @@ export const CategoryView = ({
             </div>
           )}
           {catalog.configured && (
-            <p className="mb-6 text-sm text-fg-secondary md:mb-3 md:border md:border-warning-300 md:bg-warning-100 md:p-4 md:text-fg-primary">
-              {d.productsFound}{" "}
-              <span className="md:font-bold">
-                {(locale === "en" ? countFormats.en : countFormats.cs).format(catalog.total)}
-              </span>
-            </p>
+            <CategoryProductCount dictionary={d} locale={locale} total={catalog.total} />
           )}
           {catalog.configured && catalog.products.length > 0 ? (
             <>

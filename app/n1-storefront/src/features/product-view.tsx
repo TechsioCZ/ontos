@@ -8,6 +8,7 @@ import type { ColumnDef } from "@techsio/ui-kit/organisms/data-table";
 import { Breadcrumb } from "@techsio/ui-kit/molecules/breadcrumb";
 import { Tabs } from "@techsio/ui-kit/molecules/tabs";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
+import { Link } from "@techsio/ui-kit/atoms/link";
 import { AvailabilityStatus } from "@techsio/ui-kit/molecules/availability-status";
 import { PriceBlock } from "@techsio/ui-kit/molecules/price-block";
 import type { Dictionary } from "@/i18n";
@@ -56,12 +57,12 @@ export const ProductView = ({
           </Breadcrumb.Item>
         </Breadcrumb.List>
       </Breadcrumb>
-      <div className="my-8 md:my-6">
-        <h1 className="text-2xl font-bold md:text-xl">
+      <div className="relative my-8 md:my-6">
+        <h1 className="text-2xl font-bold leading-normal md:text-xl md:leading-9">
           {product.name}
-          {variant ? ` – ${variant.name}` : ""}
+          {variant && <span className="hidden md:inline">{` – ${variant.name}`}</span>}
         </h1>
-        <div aria-hidden="true" className="hidden h-1 w-24 bg-primary md:block" />
+        <div aria-hidden="true" className="absolute bottom-0 hidden h-1 w-24 bg-primary md:block" />
       </div>
       <div className="grid gap-8 md:grid-cols-[minmax(0,28rem)_minmax(0,1fr)]">
         <div className="min-w-0">
@@ -144,16 +145,28 @@ export const ProductView = ({
             />
           </div>
           <div aria-hidden="true" className="order-3 hidden h-px bg-border-primary md:block" />
-          {variant && (
-            <p className="order-2 md:order-4">
-              <strong>{d.selectedVariant}: </strong>
-              {variant.name}
-            </p>
-          )}
+          <div className="contents md:order-4 md:flex md:items-center md:justify-between md:gap-4">
+            {variant && (
+              <p className="order-2 md:order-none">
+                <strong>{d.selectedVariant}: </strong>
+                {variant.name}
+              </p>
+            )}
+            <div className="hidden md:ml-auto md:block">
+              <Link as={NextLink} href={`/${locale}/doprava`}>
+                {d.shippingOptions}
+              </Link>
+            </div>
+          </div>
           <div className="order-4 md:order-5">
             <PriceBlock {...priceProps(current, d, locale)} />
           </div>
-          <div className="order-5 md:order-6">
+          <div className="order-5 md:hidden">
+            <Link as={NextLink} href={`/${locale}/doprava`}>
+              {d.shippingOptions}
+            </Link>
+          </div>
+          <div className="order-6">
             <ProductPurchase
               dictionary={d}
               locale={locale}

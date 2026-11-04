@@ -1,5 +1,7 @@
 "use client";
 import { Button } from "@techsio/ui-kit/atoms/button";
+import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
+import NextLink from "next/link";
 import { TotalsSummary } from "@techsio/ui-kit/molecules/totals-summary";
 import type { Dictionary } from "@/i18n";
 import type { CartQuote } from "@/ontos/cart-quote";
@@ -47,10 +49,16 @@ export const CartSummary = ({
             >
               {d.shopping.verify}
             </Button>
-            <Button disabled size="md" theme="solid" variant="primary">
+            <LinkButton
+              as={NextLink}
+              disabled={verified === null || invalid || quote.state !== "ready"}
+              href={`/${locale}/pokladna`}
+              size="md"
+              theme="solid"
+              variant="primary"
+            >
               {d.shopping.checkout}
-            </Button>
-            <p>{d.commerceUnavailable}</p>
+            </LinkButton>
           </div>
         }
         footer={d.shopping.feesNote}

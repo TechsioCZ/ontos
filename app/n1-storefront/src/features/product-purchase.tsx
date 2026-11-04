@@ -14,6 +14,13 @@ import { useCart } from "./cart-provider";
 const validPurchaseQuantity = (quantity: number, minimum: number) =>
   Number.isFinite(quantity) && quantity >= Math.max(0.001, minimum) && quantity <= 1_000_000;
 
+const purchaseGuidance = (d: Dictionary, selectionRequired: boolean, purchasable: boolean) => {
+  if (selectionRequired) {
+    return d.selectVariant;
+  }
+  return purchasable ? d.shopping.unverified : d.commerceUnavailable;
+};
+
 export const ProductPurchase = ({
   dictionary: d,
   locale,
@@ -126,6 +133,10 @@ export const ProductPurchase = ({
           min={current.minimumQuantity}
           onValueChange={({ value }) => setDraft({ key: selectionKey, value })}
           size="md"
+          translations={{
+            decrementLabel: d.shopping.decreaseQuantity,
+            incrementLabel: d.shopping.increaseQuantity,
+          }}
           unitLabel={current.unit}
           value={quantity}
         />
@@ -145,7 +156,7 @@ export const ProductPurchase = ({
         {showQuantityError && <StatusText status="error">{d.shopping.invalidQuantity}</StatusText>}
       </div>
       <p className="mt-2 text-sm text-fg-secondary" id="purchase-unavailable">
-        {purchasable ? d.shopping.unverified : d.commerceUnavailable}
+        {purchaseGuidance(d, selectionRequired, purchasable)}
       </p>
       {notice?.key === selectionKey && (
         <div className="mt-3 flex flex-col items-start gap-2">

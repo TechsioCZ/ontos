@@ -4,6 +4,18 @@
  * Source: N1 storefront Header 33:635 / Footer 33:1100.
  */
 [data-theme="n1"] {
+  /* Category navigation214:3169: preserve canonical text/md16/24.
+   * A 32px layout row surrounds the native controls; it is not file-picker UI. */
+  --color-tree-view-bg: var(--color-fill-hover);
+  --font-weight-tree-view-label: var(--font-weight-bold);
+  --spacing-tree-view-node-padding: var(--dimension-0);
+  /* Checkout shipping319:1756/319:1977 is a neutral exclusive choice.
+   * RadioCard has no tone prop: bind only its outline role to existing N1
+   * semantics; primary actions and the brand palette keep their own roles. */
+  --color-radio-card-item-border: var(--color-border-secondary);
+  --color-radio-card-item-border-outline-checked: var(--color-fg-secondary);
+  --color-radio-card-item-border-outline-checked-hover: var(--color-fg-secondary);
+  --color-radio-card-item-bg-outline-checked: var(--color-fill-overlay);
   --color-numeric-input-compact-border: var(--color-border-secondary);
   --font-weight-price-block-amount: var(--font-weight-bold);
   /* Homepage31:636/31:637, card33:1018: installed0.57 component
@@ -20,6 +32,10 @@
   --text-product-card-featured-stock-size: var(--dimension-18);
   --color-header-bg: var(--color-base-dark);
   --color-header-nav-fg: var(--color-fg-reverse);
+  /* Desktop nav170:2077: resolved text/md16 and bold, independent of
+   * the compact utility/action row and the global Button typography. */
+  --font-weight-header-nav: var(--font-weight-bold);
+  --font-weight-header-nav-active: var(--font-weight-bold);
   --color-header-nav-fg-hover: var(--color-primary);
   --color-header-nav-fg-active: var(--color-primary);
   --color-header-actions-fg: var(--color-fg-reverse);
@@ -48,4 +64,14 @@
   --padding-dialog-content: var(--dimension-0);
   --spacing-dialog-content: var(--dimension-0);
   --color-dialog-content-bg: var(--color-fill-hover);
+}
+
+/* Rebind existing semantic kit glyph roles, without custom SVG masks or
+ * appearance classes on TreeView. Expanded state remains owned by Zag. */
+@utility token-icon-tree-indicator {
+  @apply token-icon-plus;
+}
+
+@utility token-icon-tree-indicator-open {
+  @apply token-icon-minus;
 }

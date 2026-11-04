@@ -23,6 +23,40 @@ Původní 418-tokenový mix komponentových snapshotů a App overrides byl nahra
 
 ## Kompozice
 
+C12 recovery používá aktuálně znovu načtený auth vzor `333:4671`: FormInput md,
+Button primary/solid/sm/compact, Link a StatusText; desktop auth šířka448,
+mobilní vnější gutter16 a gap formuláře4. Samostatný recovery Figma frame není
+předaný, takže jde o rozšíření existující auth kompozice, nikoli tvrzení1:1
+nového návrhu. Žádné nové theme/token/CSS appearance overrides. Token se do
+komponenty nepředává; SSR poskytuje pouze boolean přítomnosti cookie.
+
+Navazující korekce C10:
+
+- Desktop nav `170:2077`: skutečný font16/bold700, veřejné Header.NavItem size=md
+  a vlastní existující header-nav weight role. Utility/action row zůstává sm;
+  nepřepisuje se globální Button typografie.
+- Kategorie `214:3203`: nadpis32, podtržení uvnitř na28; count `214:3240` používá
+  skutečný owner total, CS/EN plurály, desktop14/21/gap4/p16 a mobilní „Nalezeno“.
+  Pevné textové šířky Figma fixture se nekopírují do lokalizované věty.
+- Produkt `219:2758`: desktop nadpis36/podtržení32; mobil32/48 bez připojeného
+  názvu varianty v h1. Skutečná varianta má vlastní text i URL výběr.
+- Produkt shipping `219:2816/39:2497`: veřejný Link/NextLink na lokalizovanou
+  existující dopravu; desktop vpravo od selected-variant, mobil mezi cenou a
+  QuantityField. Mobilní medium/AUTO Figma instance nemá vlastní kit typography
+  prop; neupravuje se appearance className.
+- Podkategorie `214:3208`: veřejný LinkButton md/secondary/outlined je správné CC
+  mapování. Figma instance fill-hover/border-secondary/bold se liší od sdílených
+  outlined/secondary/medium defaultů. Chybí samostatná navigační role; globální
+  změna Button by měnila další ovládání. Tento rozpor zůstává otevřený.
+
+Katalogový strom `214:3169` skládá veřejné TreeView.NodeProvider, Branch,
+BranchTrigger/Control/Text/Indicator, BranchContent a Item/Text. Aplikační wrapper
+zajišťuje32px řádek; kit nadále vlastní výběr, rozbalení a klávesnici. Existující
+role `color-tree-view-bg`, `font-weight-tree-view-label`,
+`spacing-tree-view-node-padding` odkazují na fill-hover, bold a dimension-0.
+Existující `token-icon-tree-indicator[-open]` používají kit plus/minus. Žádné
+vzhledové className/style na komponentách ani nové nečtené knihovní tokeny.
+
 | Oblast / Figma                | Skutečné komponenty                                                                              | Stav / hranice                                                                                |
 | ----------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
 | Header `33:635/34:915`        | Header vertical/sm; Actions/ActionItem; Button current/unstyled; Image/Link s Next adaptéry      | Tmavé role globálně, menu řídí skutečný state; account/cart/favorites disabled                |
@@ -163,3 +197,63 @@ filled desktop/mobil a empty mobil; plus mění quantity a native owner quote
 4ks=3836CZK (DPH665,75), odebrání vrací empty a focus na nadpis.
 Barevnost/typografie zůstává canonicalN1; jiné datové texty a chybějící
 finální checkout nejsou prohlášené za pixelovou paritu celého návrhu.
+
+## Doprava a platby — informace z backendu
+
+Figma desktop 51:1020/51:1255, body 370:3467/370:3758 a mobil
+51:1174/51:1404, načteno 2026-11-04. Kompozice článku používá app layout
+wrapper s paddingem 40px, maximem 1200px a podtržením nadpisu 96×4px.
+Kit Button a Link používají veřejné props a canonical N1 tokeny.
+
+Informace se čtou přes aktuální locale market a merchandise records
+storefrontCheckout. Vyžaduje se configured market se shodným ID; chybějící
+checkout nebo neplatné sazby vedou do unavailable stavu. Částky a měna
+pocházejí z ownera, bez dalšího přepočtu DPH či kurzu. Dotaz nečte produkty.
+Figma ukázkové sazby a ParcelShop nejsou nabídka backendu. Lokální owner
+vrací PPL 129 Kč a Českou poštu 119 Kč; paymentAvailable=false znamená
+pravdivý stav nedostupných plateb, nikoli GoPay/dobírku z návrhu.
+
+Browser kontrola produkčního buildu na /cs/doprava a /cs/platba:
+1440×1000 a 390×844, prohlédnuté screenshoty obou stránek; bez horizontal
+overflow. Vnitřní šířka nadpisu 1120/310px, mobilní x=40px, výška 32px.
+Automatické ověření zahrnuje skutečný market query, měnu, nulovou cenu,
+prázdnou nabídku i odmítnutí neplatného scope/sazeb. Toto jsou informační
+stránky; dokončení objednávky a zprovoznění plateb zůstávají samostatné.
+
+## Guest checkout a potvrzení objednávky — C7
+
+Figma session `29658e25-06ad-415c-a929-b9b88d7db11f`: desktop checkout
+`44:1226`, body `319:1734`; mobil `44:2285`, body `319:1955`. Potvrzení
+desktop `55:1948`/body `372:3125`, mobil `55:2309`/body `372:3356`.
+Checkout používá max1280, padding20, dvě stejné kolony s gap32 od md; na mobilu
+jednu kolonu. Panely mají p16/gap16, párová pole gap12. FormInput md a
+Select lg vycházejí z Code Connect, doprava RadioCard sm/outline, akce Button md,
+stav objednávky Badge info/md. Potvrzení má max768 panely a na mobilu stav pod
+nadpisem. Knihovní komponenty nemají vzhledové className ani inline style.
+
+Neutral shipping choice z Figmy používá veřejné RadioCard tokenové role
+`border-secondary`, `fg-secondary` a `fill-overlay`; nemá vlastní barvy nebo CSS
+třídy. Tyto globální vazby jsou v `src/tokens/storefront.css`.
+
+Schválená odchylka: firma, druhý řádek adresy a kraj nejsou zobrazené, protože je
+nativní adresa neumí uložit. Uživatel 2026-11-04 výslovně zvolil jejich vynechání.
+Dopravci/ceny/země pocházejí z ownera, nikoli z fixture; online platba ani
+potvrzení o odeslání e-mailu se nepředstírají. Souhrn zobrazuje owner celkové DPH;
+řádek ceny bez DPH proto zahrnuje i dopravu. První tlačítko ověří úplný quote,
+až druhé potvrzuje objednávku. Obnova používá stabilní nonce a veřejný read.
+Guest potvrzení neodkazuje na neimplementované zákaznické objednávky.
+
+## C8 — zákaznický účet
+
+Profil54:1417/54:1629: max1024,p16,gap16; desktop navigace vlevo,
+mobil vodorovná. Tabs default/sm řídí skutečné peer panely. FormInput md,
+Button primary/solid/md, logoutsm; celý displayName je jedno pole, kontaktní
+email readonly. Owner nemá strukturované jméno/příjmení.
+
+Own orders54:2060/54:2241: semantic Table desktop, source-composition
+mobile cards p12/gap12, Badge info/md, LinkButton primary/solid/md.
+Detail55:2509: max1024,p16 mobile/p32 desktop, 3-column ProductCard grid
+a 2-column information cards. Ceny jsou native uložené částky/měny.
+Chybějící obrázek, line total nebo celková útrata se nevymýšlí; jednotková
+cena je výslovně tak označená. Zbývající design/owner mezery nejsou
+považované za hotový vizuální přenos všech stavů.

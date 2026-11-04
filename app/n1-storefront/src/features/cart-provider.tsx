@@ -3,8 +3,9 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { Effect, Schema } from "effect";
-import type { CartScope } from "@/ontos/cart-quote";
+import type { CartScope, CartQuoteRequest } from "@/ontos/cart-quote";
 import { clientRuntime } from "@/ontos/client-runtime";
+import { clearSubmittedCart } from "./checkout-guard";
 import {
   addCartEntry,
   cartLineKey,
@@ -28,6 +29,7 @@ interface CartContextValue {
   acceptPrice: (entry: CartEntry, price: number) => boolean;
   add: (entry: CartEntry) => boolean;
   clear: () => void;
+  clearSubmitted: (lines: CartQuoteRequest["lines"]) => boolean;
   entries: readonly CartEntry[];
   error: boolean;
   imageHosts: readonly string[];
@@ -171,6 +173,22 @@ export const useCart = (): CartContextValue | null => {
       ),
     add: (entry) => save(addCartEntry(entries, entry)),
     clear,
+    clearSubmitted: (lines) => {
+      if (!loaded || scope === null || key === null || state.error) {
+        return false;
+      }
+      const success = clientRuntime.runSync(
+        clearSubmittedCart(scope, lines).pipe(
+          Effect.match({ onFailure: () => false, onSuccess: (cleared) => cleared }),
+        ),
+      );
+      if (success) {
+        setState((previous) =>
+          previous.key === key ? { entries: [], error: false, key, loaded: true } : previous,
+        );
+      }
+      return success;
+    },
     entries,
     error: active && state.error,
     imageHosts,

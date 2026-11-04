@@ -1,6 +1,7 @@
 {
   "sales-pipeline": {
     "detail": {
+      "missing": "Požadovaná příležitost není v tomto výběru dostupná.",
       "title": "Obchodní případ",
       "relatedRecords": "Navazující záznamy",
       "tasks": "Úkoly",

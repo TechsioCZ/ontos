@@ -4,9 +4,15 @@
 > ověření cen byly ověřené se skutečným lokálním N1 kontextem. Nejde o hotový
 > převod všech obrazovek Figmy. Detail nyní rozlišuje desktopový NumericInput
 > a mobilní QuantityField; karty používají contain a vypnutý stín přes knihovní API.
-> Checkout, vytvoření objednávky a úplný zákaznický účet nejsou dokončené.
+> Guest checkout, profil a vlastní objednávky mají nativní integraci. Uložené adresy a zákaznický checkout ještě chybí.
 > Portal registrace/přihlášení mají implementaci a testy; celý pozitivní živý
 > průchod ještě není doložený. Lokální data ani přístupové údaje nejsou součástí aplikace.
+
+Obnova hesla používá veřejné Portal Recovery API. Přihlašovací odkaz vede na
+`/{locale}/zapomenute-heslo`; formulář nového hesla je na `/{locale}/obnova-hesla`.
+Token zůstává pouze v krátké HttpOnly cookie a při nejasném výsledku se zápis
+automaticky neopakuje. Skutečné mail→N1 směrování ještě vyžaduje deployment ověření;
+samotná existence formulářů není důkaz doručeného e-mailu nebo změněného hesla.
 
 Samostatná Next.js aplikace v demo workspace. Vychází z Figma souboru
 [N1 Storefront](https://www.figma.com/design/gIHtMwCCl2OXhMAW9s9LIn/N1-Storefront)
@@ -23,8 +29,10 @@ Neimportuje privátní zdroje jiné aplikace.
 
 Je to rozpracovaný storefront, nikoliv hotový převod všech obrazovek Figmy. Login,
 registrace a ověření e-mailu mají existující Portal integraci; košík a owner dry-run
-ověření jsou popsané níže. Účet/profil, adresy, objednávky a celý checkout nejsou
-dokončené. Právní texty a obsahové stránky kromě kontaktů čekají na skutečný obsah.
+ověření jsou popsané níže. Guest checkout čte skutečné dopravy, ověřuje celkovou
+cenu a vytváří objednávku s dohledáním výsledku podle stabilního požadavku.
+Profil a seznam/detail vlastních objednávek mají implementaci a testy; pozitivní živý Portal průchod ještě není doložený. Uložené adresy nejsou zapojené. Doprava a platby čtou skutečné market checkout možnosti; právní
+texty a ostatní obsahové stránky kromě kontaktů čekají na skutečný obsah.
 
 Úplný seznam všech aktuálních rámců a stavů je v `FIGMA-INVENTORY.md`. Kategorie nyní
 obsahuje skutečný strom, breadcrumb, podkategorie, počet a serverové stránkování;
@@ -55,13 +63,13 @@ scope a server nikdy nepoužije Akros identitu nebo market fallback.
 Souhrn zobrazuje jen skutečné owner částky za zboží; doprava/platba nejsou vybrané
 ani doplněné nulou. Změna položek nebo neplatný quantity draft zneplatní quote.
 Vrácení se ke stejnému návrhu neobnoví staré ověření. Změněná cena vyžaduje
-výslovné přijetí a nové ověření. Ovládání checkoutu zůstává neaktivní, dokud není
-implementovaný celý navazující tok. Endpoint žádnou objednávku nevytváří.
+výslovné přijetí a nové ověření. Ovládání checkoutu je dostupné až po platném ověření zboží. Samotný cart-quote
+endpoint žádnou objednávku nevytváří; navazující guest checkout používá vlastní nativní tok.
 
 Čerstvé Figma podklady: empty desktop `56:636`, mobile `56:800` a guest summary
 `319:1778`. Fixture produktu/cen z Figmy ani veřejného referenčního N1 webu se do
 runtime nepřebírá. Lokální přidání varianty a VALID owner quote byly ověřené;
-vytvoření objednávky zatím nemá potvrzené live end-to-end ověření.
+vytvoření i obnova guest objednávky byly ověřené na skutečném izolovaném lokálním BE.
 Hlavička nyní otevírá mini košík podle rámců `59:1042`/`59:1074` a mini login
 podle `59:1709`. Otevřený zůstává jen jeden header panel. Mini košík sdílí
 skutečný návrh/quote se stránkou košíku; chybějící scope neprezentuje jako empty.
@@ -69,7 +77,7 @@ Stránka a hlavička sdílejí jednu paměťovou Portal session v aktuálním sc
 storefrontu, obnovovanou owner GET při mountu. Credentials se nepersistují.
 Mobilní menu skládá Dialog a návrhové kořenové Accordiony (`59:1595`); hlubší
 owner větve používají VerticalNavigation. Názvy ani cíle se nekopírují z fixture.
-Celý checkout ani živý N1 nákup tím nejsou dokončené.
+Guest nákup má skutečné lokální ověření. Přihlášený zákaznický checkout zatím není implementovaný.
 
 ## Figma → code
 
@@ -168,6 +176,9 @@ vrátit právě jeden účinný ACTIVE B2C trh pro danou identitu a locale (`cs`
 Merchandise odpověď musí potvrdit stejné `marketId`. Chybějící, zakázaný, neaktivní či
 nejednoznačný kontext zablokuje čtení; aplikace nikdy neotevře nefiltrovaný katalog.
 
+Pořadí provisioningu, samostatné Action oprávnění, ověření asociací a bezpečný
+import historického skladu popisuje [Napojení N1 storefrontu](INTEGRATION.md).
+
 Použitý veřejný kontrakt: serverové `POST /shell-super-app-api/auth/api-key/gateway-read`
 s `audience`, `legalEntityId`, `readName` a `query`. Trhy používají
 `commerce-market-catalog/current-market-catalog`; produkty `merchandise/records`
@@ -236,3 +247,20 @@ Produkční build je standalone; nasazení a provisioning N1 zatím nejsou zapoj
    dopravní a platební možnosti před implementací jejich konkrétních ovládacích prvků.
 4. Dokončit všechny obrazovky a stavy Figmy, provést vizuální kontrolu s reálnými N1 daty
    a teprve potom připravit cílový deployment. Tato změna nic nenasazuje ani nepushuje.
+
+## Zákaznický účet — C8
+
+`/{locale}/ucet` používá vlastní profil přes veřejné native own-profile GET/POST,
+CAS verzi a čerstvou Portal admission. Kontaktní email není login identita.
+Profil zachovává celé `displayName`; neodhaduje rozdělení na jméno/příjmení.
+`/{locale}/ucet?tab=orders` čte stránkovanou historii přihlášeného zákazníka;
+`/{locale}/ucet/objednavky/{id}` pouze jeho konkrétní detail. Cizí identity
+z browseru se nepřijímají, ceny používají uloženou měnu objednávky. Guest
+objednávky se automaticky nepřiřazují podle emailu.
+
+295 testů, build, N1 lint/format a source review prošly. Živě ověřené jsou
+anonymní stavy, odmítnutí podvrženého customer ID a cross-origin zápisu.
+Pozitivní Portal účet není k dispozici; naplněný účet a jeho vizuální shoda
+proto nemají live PASS. Další mezery: bezpečný adresářový most, agregovaná
+útrata/statistiky a historická média nejsou současným kontraktem dodané.
+Nezastupují je fixture hodnoty nebo odvozené součty jedné stránky historie.

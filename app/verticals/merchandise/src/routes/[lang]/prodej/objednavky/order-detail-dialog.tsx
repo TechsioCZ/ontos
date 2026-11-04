@@ -4,15 +4,8 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import {
-  DetailList,
-  formatDateTime,
-  formatMoney,
-  SectionCard,
-  SidePanel,
-  StatusBadge,
-  surfaceTileClassName,
-} from '@app/admin-ui';
+import { DetailList, formatDateTime, formatMoney, SectionCard, StatusBadge, surfaceTileClassName } from '@app/admin-ui';
+import { SidePanel } from '@app/admin-ui/side-panel';
 import { DateTime, Effect } from 'effect';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
@@ -310,6 +303,52 @@ const orderDetailAffordances = (
 const pickupBrandOf = (products: readonly ProductRecord[], brand: string | undefined) =>
   products.some((product) => product.sourceGroupId !== undefined) ? brand : undefined;
 
+const deliveryAddressValue = (address: NonNullable<Order['deliveryAddress']>): string =>
+  `${address.street}, ${address.postalCode} ${address.city}${
+    address.country === undefined ? '' : `, ${address.country}`
+  }`;
+
+/** Read-only header from the authorized list row, shown until the enriched detail lands. */
+const renderOrderSummary = ({
+  customers,
+  order,
+  t,
+}: {
+  readonly customers: CustomerDirectory;
+  readonly order: Order;
+  readonly t: ReturnType<typeof useModernI18n>['t'];
+}) => (
+  <DetailList
+    items={[
+      {
+        label: t('merchandise.pages.orders.detail.customer'),
+        value: orderCustomerName(order, customers) ?? t('merchandise.pages.orders.customers.unknown'),
+      },
+      ...(order.contact?.email === undefined ? [] : [{ label: t('merchandise.ui.email'), value: order.contact.email }]),
+      ...(order.contact?.phone === undefined ? [] : [{ label: t('merchandise.ui.phone'), value: order.contact.phone }]),
+      ...(order.deliveryAddress === undefined
+        ? []
+        : [{ label: t('merchandise.ui.deliveryAddress'), value: deliveryAddressValue(order.deliveryAddress) }]),
+      ...(order.shipping === undefined
+        ? []
+        : [
+            {
+              label: t('merchandise.ui.shipping'),
+              value: `${order.shipping.label} · ${formatMoney(order.shipping.priceMinor, orderCurrency(order))}`,
+            },
+          ]),
+      {
+        label: t('merchandise.pages.orders.detail.createdAt'),
+        value: formatDateTime(DateTime.formatIso(order.createdAt)),
+      },
+      {
+        label: t('merchandise.pages.orders.detail.grossTotal'),
+        value: <span className="tabular-nums">{formatMoney(order.totalMinor, orderCurrency(order))}</span>,
+      },
+    ]}
+  />
+);
+
 const renderOrderFields = ({
   brand,
   customers,
@@ -346,9 +385,7 @@ const renderOrderFields = ({
         : [
             {
               label: 'Doručovací adresa',
-              value: `${order.deliveryAddress.street}, ${order.deliveryAddress.postalCode} ${order.deliveryAddress.city}${
-                order.deliveryAddress.country === undefined ? '' : `, ${order.deliveryAddress.country}`
-              }`,
+              value: deliveryAddressValue(order.deliveryAddress),
             },
           ]),
       ...(order.shipping === undefined
@@ -393,6 +430,73 @@ const renderOrderFields = ({
   />
 );
 
+type PendingOrderDetail = Extract<OrderDetailState, { readonly status: 'error' | 'loading' | 'not-found' }>;
+
+/** Read-only loading panel: an authorized list row still gives the header while the enriched detail lands. */
+const OrderLoadingPanel = ({
+  customers,
+  detail,
+  onClose,
+  t,
+}: {
+  readonly customers: CustomerDirectory;
+  readonly detail: PendingOrderDetail;
+  readonly onClose: () => void;
+  readonly t: ReturnType<typeof useModernI18n>['t'];
+}) => {
+  const summary = detail.status === 'loading' ? detail.summary : undefined;
+  return (
+    <SidePanel
+      actions={
+        <Button onClick={onClose} size="sm" theme="outlined" variant="secondary">
+          {t('merchandise.pages.orders.detail.close')}
+        </Button>
+      }
+      onOpenChange={(next) => {
+        if (!next) {
+          onClose();
+        }
+      }}
+      open
+      resizeLabel={t('merchandise.sidePanel.resize')}
+      size="xl"
+      title={
+        summary === undefined
+          ? t('merchandise.pages.orders.detail.loadingTitle')
+          : t('merchandise.pages.orders.detail.title', { number: summary.order.number })
+      }
+    >
+      {summary === undefined ? (
+        <div className="py-200">
+          <StatusText showIcon={detail.status !== 'loading'} status={detail.status === 'loading' ? 'default' : 'error'}>
+            {t(pendingDetailKeys[detail.status])}
+          </StatusText>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-200 py-200">
+          <div className="flex flex-wrap items-center gap-100">
+            <StatusBadge kind="order" value={summary.order.status} />
+            {isStorefrontOrder(summary.order) && (
+              <Badge size="sm" variant="info">
+                {t('merchandise.ui.storefrontBadge')}
+              </Badge>
+            )}
+            {summary.order.demo === true && (
+              <Badge size="sm" variant="warning">
+                {t('merchandise.ui.demoBadge')}
+              </Badge>
+            )}
+          </div>
+          {renderOrderSummary({ customers, order: summary.order, t })}
+          <StatusText showIcon status="default">
+            {t(pendingDetailKeys.loading)}
+          </StatusText>
+        </div>
+      )}
+    </SidePanel>
+  );
+};
+
 /** One order: workflow, customer, delivery, lines, totals and audited history; editable until the hand-over. */
 export const OrderDetailDialog = ({
   brand,
@@ -414,30 +518,7 @@ export const OrderDetailDialog = ({
     return null;
   }
   if (detail.status !== 'ready') {
-    return (
-      <SidePanel
-        actions={
-          <Button onClick={onClose} size="sm" theme="outlined" variant="secondary">
-            {t('merchandise.pages.orders.detail.close')}
-          </Button>
-        }
-        onOpenChange={(next) => {
-          if (!next) {
-            onClose();
-          }
-        }}
-        open
-        resizeLabel={t('merchandise.sidePanel.resize')}
-        size="xl"
-        title={t('merchandise.pages.orders.detail.loadingTitle')}
-      >
-        <div className="py-200">
-          <StatusText showIcon={detail.status !== 'loading'} status={detail.status === 'loading' ? 'default' : 'error'}>
-            {t(pendingDetailKeys[detail.status])}
-          </StatusText>
-        </div>
-      </SidePanel>
-    );
+    return <OrderLoadingPanel customers={customers} detail={detail} onClose={onClose} t={t} />;
   }
   const { movesStock: orderMovesStock, order, products } = detail;
   const editing = editingId === order.id;

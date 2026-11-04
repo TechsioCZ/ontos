@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 export const proxy = (request: NextRequest) => {
   const headers = new Headers(request.headers);
   headers.set("x-n1-locale", request.nextUrl.pathname.split("/")[1] === "en" ? "en" : "cs");
+  headers.set("x-n1-request-origin", request.nextUrl.origin);
   return NextResponse.next({ request: { headers } });
 };
 

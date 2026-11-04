@@ -14,7 +14,6 @@ import {
   enrollmentBody,
   loginWithPortalOwner,
   mergePortalCookies,
-  portalAdmission,
   portalCookie,
   portalEnrollmentIdempotencyKey,
   portalEnrollmentProgress,
@@ -26,6 +25,8 @@ import {
 
 /** Public owner API groups, without importing the owner's private handlers or provider implementation. */
 const ownerApi = HttpApi.make("N1PortalOwner")
+  .add(commerceCustomerContextApi.groups.customerOwnProfileRead)
+  .add(commerceCustomerContextApi.groups.customerOwnProfileUpdate)
   .add(commerceCustomerContextApi.groups.portalAuthSession)
   .add(commerceCustomerContextApi.groups.portalAuthEnrollment)
   .add(commerceCustomerContextApi.groups.portalAuthRecovery);
@@ -94,7 +95,7 @@ const makeOwnerClient = (
       defaultApiPrefix: "/commerce-customer-context-api",
       transportHeaders: {
         authorization: `Bearer ${context.token}`,
-        cookie: request?.cookie,
+        cookie: request?.cookie === "" ? undefined : request?.cookie,
         "idempotency-key": idempotencyKey,
         origin: request?.origin,
         "x-correlation-id": randomUUID(),
@@ -112,6 +113,52 @@ const makeOwnerClient = (
 const configuration = readConfiguration(process.env).pipe(
   Effect.mapError(() => new PortalFailure({ reason: "unavailable" })),
 );
+/** Recovery uses only the native public operations; neither staff nor Portal cookies are relayed. */
+export const requestPasswordResetWithOwner = (
+  config: StorefrontConfiguration,
+  email: string,
+  origin: string,
+) =>
+  makeOwnerClient(config, portalRequestContext(origin, "")).pipe(
+    Effect.flatMap((client) =>
+      client.portalAuthRecovery
+        .requestPasswordReset({ payload: { email } })
+        .pipe(Effect.timeout(writeDeadline)),
+    ),
+  );
+export const resetPasswordWithOwner = (
+  config: StorefrontConfiguration,
+  newPassword: Redacted.Redacted,
+  token: Redacted.Redacted,
+  origin: string,
+) =>
+  makeOwnerClient(config, portalRequestContext(origin, "")).pipe(
+    Effect.flatMap((client) =>
+      client.portalAuthRecovery
+        .resetPassword({
+          payload: {
+            newPassword,
+            token,
+          },
+        })
+        .pipe(Effect.timeout(writeDeadline)),
+    ),
+  );
+export const readPasswordResetCallbackWithOwner = (
+  config: StorefrontConfiguration,
+  token: Redacted.Redacted,
+  callbackURL?: string,
+) =>
+  makeOwnerClient(config).pipe(
+    Effect.flatMap((client) =>
+      client.portalAuthRecovery
+        .resetPasswordCallback({
+          params: { token: Redacted.value(token) },
+          query: callbackURL === undefined ? {} : { callbackURL },
+        })
+        .pipe(Effect.timeout(readDeadline)),
+    ),
+  );
 /** Provider mail links target this public path. The token is the only browser authority;
  * do not relay cookies, callback URLs or an Origin, and never retry this consuming GET. */
 export const verifyPortalEmailServer = (token: string) =>
@@ -124,15 +171,74 @@ export const verifyPortalEmailServer = (token: string) =>
         .pipe(Effect.timeout(writeDeadline));
     }),
   );
-const readAdmission = (config: StorefrontConfiguration, request: PortalRequestContext) =>
+export interface PortalAccountIdentity {
+  readonly email: string;
+  readonly id: string;
+  readonly name: string;
+  readonly partyId: string;
+  readonly tenantId: string;
+}
+export type PortalServerIdentity =
+  | { readonly account: PortalAccountIdentity; readonly state: "admitted" }
+  | { readonly state: "anonymous" };
+
+/** The native account subject stays on the server; a browser's claimed IDs are never an input. */
+export const readPortalIdentityWithConfiguration = (
+  config: StorefrontConfiguration,
+  request: PortalRequestContext,
+) =>
   makeOwnerClient(config, request).pipe(
     Effect.flatMap((client) =>
       client.portalAuthSession.getCustomerAccount().pipe(Effect.timeout(readDeadline)),
     ),
     Effect.flatMap(decodePortalAdmission),
-    Effect.flatMap((observation) => portalAdmission(observation, config.tenantId)),
+    Effect.flatMap((observation): Effect.Effect<PortalServerIdentity, PortalFailure> => {
+      if (observation.state === "anonymous") {
+        return Effect.succeed({ state: "anonymous" });
+      }
+      if (observation.account.tenantId !== config.tenantId) {
+        return Effect.fail(new PortalFailure({ reason: "unconfirmed" }));
+      }
+      return Effect.succeed({ account: observation.account, state: "admitted" });
+    }),
     Effect.catchTag("CommercePortalAuthSessionAuthenticationProblem", () =>
-      Effect.succeed<PortalOutcome>({ state: "anonymous" }),
+      Effect.succeed<PortalServerIdentity>({ state: "anonymous" }),
+    ),
+  );
+export const readPortalIdentityServer = (request: PortalRequestContext) =>
+  configuration.pipe(
+    Effect.flatMap((config) => readPortalIdentityWithConfiguration(config, request)),
+  );
+const readAdmission = (config: StorefrontConfiguration, request: PortalRequestContext) =>
+  readPortalIdentityWithConfiguration(config, request).pipe(
+    Effect.map((identity): PortalOutcome =>
+      identity.state === "anonymous"
+        ? { state: "anonymous" }
+        : { email: identity.account.email, name: identity.account.name, state: "admitted" },
+    ),
+  );
+/** Own-profile operations share the Portal transport boundary; consumers never construct a client. */
+export const readPortalOwnProfile = (
+  config: StorefrontConfiguration,
+  request: PortalRequestContext,
+) =>
+  makeOwnerClient(config, request).pipe(
+    Effect.flatMap((client) =>
+      client.customerOwnProfileRead.execute().pipe(Effect.timeout(readDeadline)),
+    ),
+  );
+type PortalOwnerClient = Effect.Success<ReturnType<typeof makeOwnerClient>>;
+type OwnProfileUpdate = Parameters<
+  PortalOwnerClient["customerOwnProfileUpdate"]["execute"]
+>[0]["payload"];
+export const updatePortalOwnProfile = (
+  config: StorefrontConfiguration,
+  payload: OwnProfileUpdate,
+  request: PortalRequestContext,
+) =>
+  makeOwnerClient(config, request).pipe(
+    Effect.flatMap((client) =>
+      client.customerOwnProfileUpdate.execute({ payload }).pipe(Effect.timeout("20 seconds")),
     ),
   );
 const readEnrollment = (

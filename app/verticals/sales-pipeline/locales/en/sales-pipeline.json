@@ -1,6 +1,7 @@
 {
   "sales-pipeline": {
     "detail": {
+      "missing": "The requested opportunity is not available in this selection.",
       "title": "Business case",
       "relatedRecords": "Related records",
       "tasks": "Tasks",

@@ -4,10 +4,12 @@ import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
-import { Crypto, DateTime, Effect, Match, Option, PlatformError } from 'effect';
+import { Crypto, DateTime, Effect, Match, Option, PlatformError, Schema } from 'effect';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { AgreementsCommand, Feedback } from '../../../../shared/actions/apply-command.ts';
-import type { Contract } from '../../../../shared/apis/records.ts';
+import type { Contract, Document } from '../../../../shared/apis/records.ts';
+import { ContractRefSchema } from '../../../../shared/resources/contract.ts';
+import type { ContractRef } from '../../../../shared/resources/contract.ts';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
 import {
   agreements,
@@ -43,6 +45,20 @@ const browserCrypto = Crypto.make({
   randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
 });
 const newUuid = browserCrypto.randomUUIDv4();
+const sameContractRef = Schema.toEquivalence(ContractRefSchema);
+/**
+ * Documents belong to a contract only when every reference part matches. A shared resource id in another tenant,
+ * owner module, or resource type identifies a different record and must not appear in the detail.
+ */
+export const documentsForContract = (
+  documents: readonly Document[],
+  contract?: { readonly contractRef: ContractRef },
+): readonly Document[] =>
+  contract === undefined
+    ? []
+    : documents.filter(
+        (document) => document.contractRef !== null && sameContractRef(document.contractRef, contract.contractRef),
+      );
 /** The optional commercial terms of a contract, carried over when a draft is edited or a contract renewed. */
 export const contractTerms = (record: Contract): CommercialTerms => {
   const terms: MutableCommercialTerms = {};
@@ -475,8 +491,7 @@ export const useRecordsPage = (input: AgreementsInput) => {
       ['DRAFT', 'ACTIVE'].includes(selected.lifecycleState) &&
       ['NOT_SENT', 'DECLINED'].includes(selected.signatureState),
     canRenew: selected?.lifecycleState === 'ACTIVE',
-    documents:
-      snapshot?.documents.filter((record) => record.contractRef?.resourceId === selected?.contractRef.resourceId) ?? [],
+    documents: documentsForContract(snapshot?.documents ?? [], selected),
   };
   return {
     busy,

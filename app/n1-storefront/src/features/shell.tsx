@@ -167,13 +167,13 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
         </div>
         <div className="hidden overflow-x-auto overflow-y-hidden border-t border-highlight px-n1-nav-padding md:flex md:h-n1-nav-height md:items-center">
           <Header.Nav aria-label={d.menu}>
-            <Header.NavItem>
+            <Header.NavItem size="md">
               <Link as={NextLink} href={`/${locale}/novinky`}>
                 {d.news}
               </Link>
             </Header.NavItem>
             {roots.map((category) => (
-              <Header.NavItem key={category.id}>
+              <Header.NavItem key={category.id} size="md">
                 <Link
                   as={NextLink}
                   href={`/${locale}/kategorie/${encodeURIComponent(category.slug)}`}

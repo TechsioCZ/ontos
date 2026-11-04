@@ -471,6 +471,8 @@
       "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku."
     },
     "ui": {
+      "storefrontBadge": "E-shop",
+      "demoBadge": "DEMO",
       "variantStockMovement": "Skladový pohyb varianty",
       "variant": "Varianta",
       "selectVariant": "Vyberte variantu",

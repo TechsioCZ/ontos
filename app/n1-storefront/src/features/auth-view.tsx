@@ -259,7 +259,7 @@ const AuthForm = ({
       </Button>
       {mode === "login" ? (
         <div className="flex justify-between gap-1">
-          <Link aria-disabled="true" title={d.featureUnavailable}>
+          <Link as={NextLink} href={`/${locale}/zapomenute-heslo`} onClick={() => onNavigate?.()}>
             {d.auth.forgotPassword}
           </Link>
           <Link as={NextLink} href={`/${locale}/registrace`} onClick={() => onNavigate?.()}>
@@ -303,6 +303,7 @@ const PortalSessionContext = createContext<ReturnType<typeof usePortalSession> |
 const usePortalSession = (enabled = true) => {
   const [outcome, setOutcome] = useState<PortalOutcome>({ state: "anonymous" });
   const [pending, setPending] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const active = useRef<Fiber.Fiber<PortalOutcome> | null>(null);
   const run = (program: Effect.Effect<PortalOutcome, never, HttpClient.HttpClient>) => {
     if (active.current !== null) {
@@ -317,6 +318,7 @@ const usePortalSession = (enabled = true) => {
       }
       active.current = null;
       setPending(false);
+      setLoaded(true);
       setOutcome(Exit.isSuccess(exit) ? exit.value : { state: "unconfirmed" });
     });
   };
@@ -338,7 +340,7 @@ const usePortalSession = (enabled = true) => {
       setOutcome({ state: "anonymous" });
     }
   };
-  return { edit, outcome, pending, run };
+  return { edit, loaded, outcome, pending, run };
 };
 
 export const PortalSessionProvider = ({ children }: { children: ReactNode }) => {
@@ -357,7 +359,7 @@ export const usePortalAuth = ({
   const shared = useContext(PortalSessionContext);
   const local = usePortalSession(shared === null);
   const session = shared ?? local;
-  const { edit, pending, run } = session;
+  const { edit, loaded, pending, run } = session;
   const outcome =
     session.outcome.state === "anonymous"
       ? portalVerificationOutcome(verification)
@@ -387,7 +389,7 @@ export const usePortalAuth = ({
       ),
     );
   };
-  return { edit, outcome, pending, run, submit };
+  return { edit, loaded, outcome, pending, run, submit };
 };
 
 /** Shared presentation for page and header; only owner admission shows a customer. */
@@ -424,6 +426,9 @@ export const AuthContent = ({
         <div className="mb-4 space-y-2">
           <p>{outcome.name}</p>
           <p className="wrap-break-word">{outcome.email}</p>
+          <Link as={NextLink} href={`/${locale}/ucet`} onClick={() => onNavigate?.()}>
+            {d.accountPage.heading}
+          </Link>
           <Button
             disabled={pending}
             onClick={() => run(logoutPortal())}

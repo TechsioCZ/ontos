@@ -532,10 +532,34 @@ export const useOrders = (legalEntityId: string, query: OrdersQuery, context?: M
   };
 };
 
+/**
+ * The current authorized list row behind the opened order. It is a read-only summary while the enriched detail
+ * (products, variants, stock and revision) is still loading; it never stands in for canonical detail.
+ */
+export interface OrderDetailSummary {
+  readonly order: Order;
+  readonly revision: number;
+}
+
 export type OrderDetailState =
-  | { readonly status: 'idle' | 'loading' | 'not-found' }
+  | { readonly status: 'idle' }
+  | { readonly status: 'not-found' }
+  | { readonly status: 'loading'; readonly summary?: OrderDetailSummary | undefined }
   | { readonly cause: Effect.Error<ReturnType<typeof loadOrderDetail>>; readonly status: 'error' }
   | ({ readonly order: Order; readonly status: 'ready' } & OrderDetailRecords);
+
+/** Only the row of this order from the ready page of the same authenticated scope may summarize it. */
+const listedSummary = (
+  orderId: string | null,
+  scope: string | undefined,
+  list: PageDataSnapshot<RecordsResponse, LoadFailure>,
+): OrderDetailSummary | undefined => {
+  if (orderId === null || scope === undefined || list.state !== 'ready') {
+    return undefined;
+  }
+  const order = list.value.orders.find((candidate) => candidate.id === orderId);
+  return order === undefined ? undefined : { order, revision: list.value.revision };
+};
 
 /**
  * The open order with the product records its detail and edit form need. `version` changes after every change the
@@ -548,13 +572,16 @@ export const useOrderDetail = (
   source?: OrdersPageInput,
 ): OrderDetailState => {
   const scope = pageDataScopeKey(context, ORDERS_MODULE);
-  const list = source === undefined ? pageDataPending : ordersPageData.snapshot(source);
+  // A list row may summarize the open order only while it belongs to the same authenticated scope.
+  const currentSource = source?.scope === scope ? source : undefined;
+  const list = currentSource === undefined ? pageDataPending : ordersPageData.snapshot(currentSource);
   const revision = list.state === 'ready' ? list.value.revision : undefined;
+  const summary = listedSummary(orderId, scope, list);
   const input: OrderDetailInput = {
     orderId: orderId ?? '',
     revision,
     scope: scope ?? '',
-    source,
+    source: currentSource,
   };
   const subscribe = (listener: () => void) =>
     orderDetailData.subscribe(
@@ -606,13 +633,13 @@ export const useOrderDetail = (
         ? { status: 'not-found' }
         : { cause: cached.error, status: 'error' };
     }
-    return { status: 'loading' };
+    return summary === undefined ? { status: 'loading' } : { status: 'loading', summary };
   }
   if (answer?.request === request) {
     return answer.state;
   }
   // A reread after a change keeps showing the same order until the fresh copy lands.
-  return { status: 'loading' };
+  return summary === undefined ? { status: 'loading' } : { status: 'loading', summary };
 };
 
 export const removeDemoOrder = (id: Order['id'], reason: string, revision: number) =>

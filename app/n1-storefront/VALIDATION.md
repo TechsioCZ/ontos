@@ -1,5 +1,89 @@
 # Kontrola převodu N1 storefrontu
 
+## C12: native password recovery — 2026-11-04
+
+318/318 testů, lint a produkční build PASS. Testy skutečného generovaného klienta
+přes Effect Fetch seam pokrývají request/reset body, anti-enumeration, uzavřený
+payload, Origin, duplicitní cookie, native rejection/reconciliation/nejistý write,
+jediné odeslání a terminální odstranění tokenu. UI SSR testy nepřipustí password
+form bez server cookie-presence proof a nikdy nevykreslují token input.
+
+Desktop1440 a mobil390 skutečně prohlédnuty: request CS/EN, reset s testovací
+cookie a missing-token stav. Funkční login odkaz vede do recovery formuláře;
+desktop šířka448, žádný overflow/console error. Kompozice vychází z auth333:4671,
+ne z neexistujícího samostatného reset Figma rámce.
+
+Cross-site navigace z localhost3099 na127.0.0.1:3071 callback reprodukovala Strict
+chybu: po303 chyběla cookie ve SSR a pomohl až reload. S Lax cookie tentýž skutečný
+click po vyčištění test cookie ihned vykreslil2passwordfields bez reloadu. URL byla
+čistá `/cs/obnova-hesla`; syntetický token nebyl v DOM ani flight HTML. Origin+JSON
+guard zůstal zachovaný; platná cookie s cizím Origin vrací403 před native I/O.
+Testovací cookie byla po kontrole odstraněná, neproběhl mail ani password POST.
+
+Skutečný e-mail→N1 callback a pozitivní změna hesla nejsou live ověřené. Owner
+určuje mail origin přes `COMMERCE_PORTAL_AUTH_URL`; integrační hranice a potřebné
+deployment směrování jsou popsané v INTEGRATION.md. Není zavedený runtime mock
+mailu, účtu, token validity nebo přihlášení.
+
+## C11: přístupné ovládání množství — 2026-11-04
+
+Browser odhalil anglické výchozí názvy QuantityField tlačítek na českém produktu
+a košíku. Veřejné zděděné NumericInput `translations` nyní dostávají existující
+dictionary increment/decrement popisky; bez zásahu do kitu nebo jeho vzhledu.
+LineItem.Remove sám doplňuje titul produktu: předáváme jen akční label, takže
+název není dvakrát. Před volbou varianty purchase helper vysvětluje „Zvolte variantu“
+místo obecné nedostupnosti nákupu.
+
+Živý lokální390 browser potvrdil české názvy, quantity1→2→1, přidání vybrané LXL,
+skutečný owner quote dvou položek1728Kč a následné odebrání pouze testem přidané
+položky. Původní položka zůstala zachovaná. Neproběhla další objednávka ani platba.
+Košík bez overflow/console chyb. Produkční build a N1 suite295/295 PASS.
+Mezitím skončený lokální owner proces byl obnoven stejným launcherem nad stávající
+izolovanou DB; žádný reset, import sample ani změna oprávnění nebyly potřeba.
+
+## C10: navigace, katalog a detail — 2026-11-04
+
+Čerstvé Figma čtení ověřilo nav170:2077 skutečně16/bold700, kategorie214:3203
+nadpis32/underline28, count214:3240 výšku55/font14/21/p16/gap4. Produkt219:2758
+má vlastní nadpis36/underline32; mobil39:2453 text32/48 bez varianty v nadpisu.
+Shipping219:2816/39:2497 je skutečný Link do dopravy, nikoli další tlačítko.
+
+Produkční1440 a390 prohlédnuty se skutečným lokálním katalogem. Computed styly
+potvrzují tyto rozměry i nav16/bold. Mobilní produkt zachovává selected variantu
+před dostupností a shipping mezi cenou a QuantityField. Link skutečně naviguje
+na `/cs/doprava`, která z owner nabídky ukazuje PPL129Kč a Českou poštu119Kč.
+Desktop ani mobil nepřetéká; opravené screenshoty byly otevřeny, ne pouze uložené.
+Mobilní počet zůstává „Nalezeno2“, desktop používá skutečné total a český plurál.
+EN počet nelze označit za živě ověřený: lokální EN katalog vrací unavailable;
+anglická větev ani tento datový stav se nenahrazují CS daty.
+
+N1 testy295/295, lint a produkční build PASS. Nezávislé source review nenašlo novou
+P1/P2 chybu. Není to plný vizuální PASS produktu: desktopový selected-variant button,
+podkategorijní instance a některé Link metriky nemají přesný knihovní prop/role;
+související produkty, skladový max/ETA, výrobce a další fixture údaje bez owner
+projekce nejsou doplněné vymyšlenými daty. NumericInput compact104×36 a mobilní
+QuantityField používají platné API instalovaného balíčku; starší příklad ve skillu
+není důvod měnit string value/onValueChange zpět na zastaralé props.
+
+## C9: katalogový strom — 2026-11-04
+
+Figma `214:3169`: skutečně vyhodnocené variables určují text16/24, nadpis700,
+řádky32, padding panelu8 a fill-hover `#f6f6f6`. Generovaný fallback20 není
+skutečná hodnota proměnné. Kategorie používá veřejné compound části TreeView,
+bez folder/file ikon a indent guides; existující sémantické ikony jsou plus/minus.
+Kanonický N1 theme se nekopíruje ani nepřepisuje vlastní paletou.
+
+Produkční browser1440: panel256, text16/24, nadpis700, řádek32, šedé pozadí
+a skutečné SVG masky plus/minus ověřeny přes computed styles. ArrowLeft zavře
+fokusovanou větev, ArrowRight ji otevře; URL se nemění. Kliknutí na text kategorie
+naviguje na skutečný slug. Mobil390: otevření „Procházet kategorie“, strom342,
+řádky32, scrollWidth390 bez horizontálního přetékání. Desktop i mobil zachyceny
+a otevřeny; nejedná se o tvrzení úplné shody celého katalogu. Podkategorijní
+tlačítka mají stále odlišné instance oproti Figmě a budou řešena samostatně.
+
+N1 testy295/295, lint a produkční build prošly. Zdrojové review nepotvrdilo novou
+P1/P2 chybu; nativní Zag collection/selection/focus zůstává zachován.
+
 Nejnovější stav je popsán v závěrečné sekci „Integration checkpoint before the work-in-progress commit“;
 starší části níže zachovávají výsledky svých předchozích běhů.
 
@@ -646,3 +730,75 @@ entries; backend bootstrap/seed changes and private local runtime/data are exclu
   props/purchase-row composition. Outstanding: ProductCard hardcoded shadow and
   image cropping, exact detail NumericInput anatomy, heading/panel details, search
   brands and other missing data-backed sections. No whole-storefront visual PASS.
+
+## C7 — guest checkout a nativní potvrzení (2026-11-04)
+
+Figma session `29658e25-06ad-415c-a929-b9b88d7db11f`:
+checkout desktop `44:1226`/`319:1734`, mobil `44:2285`/`319:1955`;
+potvrzení desktop `55:1948`/`372:3125`, mobil `55:2309`/`372:3356`.
+Snímky i konkrétní Code Connect instance byly skutečně prohlédnuté.
+
+Ověřeno na skutečném odděleném lokálním N1 backendu, nikoli na shared stage:
+
+- Produkt Fox Defend/YS → košík → native quote → PPL129CZK → shipping-inclusive
+  quote → skutečný OBJ-2026-0001, celkem898CZK. Owner vrátil DPH155.85 a cenu
+  bez DPH včetně dopravy742.15CZK.
+- Potvrzení zaměří H1. Detail dohledá skutečný kontakt, adresu, stav a dopravu.
+  Po reloadu i restartu FE stejný nonce vrátí stejnou objednávku pouze čtením.
+  Potvrzený odeslaný košík je odstraněný; odchod domů uvolní pouze původní guard.
+- Prázdný formulář zaměří první povinné pole, vyznačí neplatná pole a nepřenese
+  osobní údaje do URL. Bez JavaScriptu používá pevný POST endpoint, který
+  nepodporovaný form payload odmítne.
+- Finální desktop1440: article1280, vnitřek1240, dvě604pxkolony, gap32, p20,
+  H1 32/48, skutečný thumbnail64×64. Mobil390: obsah350, p20, párová pole
+  po152px/gap12, input44px, Select56px. Bez horizontálního overflow.
+- Opraveno po vizuální kontrole: thumbnail16→64 přes existující dimension-64,
+  nadpis32/48, cena dopravy v pravém sloupci wrapperu, mobilní stav pod titulkem.
+  Kit komponenty nemají vzhledové className/style. Konzole průchodu bez chyb/varování.
+- 246/246 N1 testů PASS; N1 lint, format a samostatná repository Effect
+  discrimination policy pro celý N1 consumer PASS. Produkční Next build PASS.
+  Source review nehlásí zbývající P1/P2. Nejde o pozitivní test zákaznického účtu.
+
+Schválené či skutečným kontraktem vynucené rozdíly od fixture:
+
+- Firma, druhý řádek adresy a kraj vynechané s výslovným souhlasem uživatele.
+- Skuteční dopravci/ceny/země z ownera, bez fixture ParcelShop nebo dodacího slibu.
+- Online platba není dostupná; přijetí netvrdí zaplacení či odeslaný e-mail.
+- Ověření úplného quote předchází potvrzení; ceny nevypočítává frontend.
+- Guest receipt nemá neimplementované „Moje objednávky“. Obnova po reloadu nemá
+  obrázek, pokud owner ani aktuální cart neposkytuje jeho ověřená metadata.
+
+Full pnpm check nebyl zelený: selhaly čtyři repository lint-rule testy
+(native-data-factory-proof, dva proof testy no-service-constructor-imports,
+repository-policy). Všechny reportované N1 manual-tag nálezy byly opravené a
+ověřené samostatnou stejnou policy konfigurací. Zbývající diagnostika zasahuje jiné
+aplikace/tooling a lokální necommitovaný seed mimo N1 scope. Celkové repo nemá
+zelený full gate; pravidla ani hooky se neoslabují.
+
+## C8 — vlastní profil a objednávky (2026-11-04)
+
+Figma profile desktop/mobile54:1417/54:1629, own orders54:2060/54:2241
+a detail55:2509 byly skutečně načtené. Kompozice používá FormInput md,
+Tabs default/sm, Button primary/solid, Badge info/md, semantic Table
+a ProductCard. Nepřibyly vzhledové CSS třídy ani tokenové přepisy.
+
+295/295 testů PASS; Next produkční build, N1 lint/format a samostatná
+Effect repository policy PASS. Source review serveru i klienta bez zbývajících
+P1/P2. Ověřena izolace zákazníků, CAS konflikt, nejistý zápis bez retry,
+uložené měny a bezpečné textové vykreslení.
+
+Živý lokální BE: anonymní profil GET200/anonymous; vlastní objednávky
+GET401/anonymous; query s podvrženým customerAccountId400/invalid;
+cross-origin profile POST403/forbidden. Account na390 bez overflow,
+noindex/nofollow. Chybějící Shell/composition služby byly obnovené přes
+stávající izolované launchery bez resetu dat. Pozitivní přihlášený účet
+není ověřený a naplněné account obrazovky nemají live vizuální PASS.
+
+Native displayName zůstává jedním polem, kontaktní email readonly. API
+nedodává globální statistiky útraty ani historická produktová média;
+partial page se za globální statistiku nevydává. Adresář má explicitní
+unavailable stav. Přihlášený checkout zůstává dalším samostatným celkem.
+
+Full pnpm check byl opět spuštěný a skončil na stejných čtyřech repository
+lint-rule testech mimo N1; nový report neobsahuje žádný N1 nález.
+Pravidla a hooky nejsou vypnuté.
