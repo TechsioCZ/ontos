@@ -881,3 +881,23 @@ LXL je aktivní a přidání do košíku uspělo. Veřejné vyhledávání má23
 homepage je pouze featured výběr. Nový lokální import není doporučený ani
 přiřazený do17 existujících kategorií a jeho sklad zatím není aplikovaný.
 Tyto zbývající datové mezery nejsou vydávané za dokončený katalogový storefront.
+
+## C15 — toast po přidání do košíku
+
+Historická N1 UX reference byla přečtená z herbatika-shop/apps/n1; její role
+a konkrétní soubory jsou uvedené v COMPONENT-MAPPING. Add-to-cart používá
+současný knihovní useToast/Toaster s kanonickým N1 vzhledem. Toast vznikne až
+podle skutečného výsledku uložení; inline post-add output a Košík link zmizely.
+
+333/333 testů PASS včetně reprodukce chybějícího success/error toastu před
+opravou. Testy ověřují skutečný handler s úspěšným/neúspěšným cart.add.
+Lint, format a finální produkční build PASS. Browser ověřil skutečné přidání
+ArmWarmerLXL, title+produkt+množství+variantu v oznámení, lokalizované zavření
+a následně nula otevřených toastů. Desktop1440 i mobile390 mají skutečné
+viditelné screenshoty; mobile toast360×120 leží x6/y700 a nepřetéká viewport.
+Jeden globální renderer zachovává live region a nativní zavírání. Délka10s
+umožňuje přečíst delší název; při hoveru se časovač nativně pozastaví.
+
+Chybová větev má unit důkaz, nikoli úmyslně poškozené živé úložiště.
+Tento review potvrzuje přenos toast UX; nejde o plošný Figma PASS všech
+produktových detailů nebo vyřešení zbývajících skladových/kategoriálních dat.

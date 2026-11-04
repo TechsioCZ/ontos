@@ -9,6 +9,7 @@ import { Image } from "@techsio/ui-kit/atoms/image";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Header } from "@techsio/ui-kit/organisms/header";
+import { Toaster } from "@techsio/ui-kit/molecules/toast";
 import { StorefrontFooter } from "./footer";
 import { StorefrontSearch } from "./search";
 import { MiniCart } from "./mini-cart";
@@ -200,6 +201,11 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
         {children}
       </main>
       <StorefrontFooter dictionary={d} locale={locale} />
+      <Toaster
+        closeLabel={d.notifications.close}
+        label={d.notifications.label}
+        loadingLabel={d.notifications.loading}
+      />
     </div>
   );
 };
