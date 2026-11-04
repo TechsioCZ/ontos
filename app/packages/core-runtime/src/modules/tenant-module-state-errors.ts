@@ -1,3 +1,4 @@
+import type { TenantModuleStateUnsatisfiedDependencyError } from './tenant-module-state-unsatisfied-dependency-error.ts';
 import type { TenantModuleStateConcurrentChangeError } from './tenant-module-state-concurrent-change-error.ts';
 import type { TenantModuleStatePersistenceUnavailableError } from './tenant-module-state-persistence-unavailable-error.ts';
 import type { TenantModuleStateTenantMissingError } from './tenant-module-state-tenant-missing-error.ts';
@@ -17,6 +18,8 @@ export { TenantModuleStateUnsupportedChangeSourceError } from './tenant-module-s
 export { TenantModuleStateUnsupportedStateError } from './tenant-module-state-unsupported-state-error.ts';
 export { TenantModuleStateValidationUnavailableError } from './tenant-module-state-validation-unavailable-error.ts';
 
+export { TenantModuleStateUnsatisfiedDependencyError } from './tenant-module-state-unsatisfied-dependency-error.ts';
+
 export type TenantModuleStateTransitionError =
   | TenantModuleStateConcurrentChangeError
   | TenantModuleStatePersistenceUnavailableError
@@ -25,4 +28,5 @@ export type TenantModuleStateTransitionError =
   | TenantModuleStateUnsupportedChangeSourceError
   | TenantModuleStateUnknownModuleError
   | TenantModuleStateUnsupportedStateError
+  | TenantModuleStateUnsatisfiedDependencyError
   | TenantModuleStateValidationUnavailableError;

@@ -128,6 +128,7 @@ it('accepts the real Pricing factory result after its native return annotation i
       pricingRead,
       `${pricingOwner}/src/integrations/current-pricing-decision-whole-evaluation-adapters.ts`,
       `${pricingOwner}/src/integrations/current-pricing-decision-owner-final-fence.ts`,
+      `${pricingOwner}/src/integrations/pricing-operation-requirements.ts`,
     ].map((file): readonly [string, string] => [
       file,
       readFileSync(new URL(`../../${file}`, import.meta.url), 'utf-8'),
@@ -141,6 +142,16 @@ it('accepts the real Pricing factory result after its native return annotation i
       'currentPricingDecisionReadServiceFactory',
     ),
   ).toBe(true);
+  const missingRequirements = new Map(sources);
+  missingRequirements.delete(`${pricingOwner}/src/integrations/pricing-operation-requirements.ts`);
+  expect(
+    hasOwnerLocalReadServiceFactoryResult(
+      missingRequirements,
+      pricingRead,
+      pricingOwner,
+      'currentPricingDecisionReadServiceFactory',
+    ),
+  ).toBe(false);
 });
 
 it('rejects owner imports whose actual source is absent', () => {

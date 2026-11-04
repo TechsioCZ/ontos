@@ -4627,5 +4627,43 @@
     },
     "requiredNextExecutionStep": "Synchronize the implementation branch/runtime to current main before business code; preserve new recovery/crypto/compiler fixes and rerun affected gates. Current executed tests apply to the retained census branch, not to the newer dependency cohort.",
     "issuerPrerequisite": "Still missing; Shell issuer, source provenance and affected adapter code are byte-unchanged at current main."
-  }
+  },
+  "implementationDeltas": [
+    {
+      "issue": 1284,
+      "source": "b6203518e8c93eb50e442deb3a881b928fc84546",
+      "deliveryPr": "https://github.com/TechsioCZ/ontos/pull/1345",
+      "state": "Implemented and independently reviewed; draft PR, not merged.",
+      "change": "Approved Catalog/CCC server adapters preserve the original actor through the existing bounded Shell relay. Workload authentication remains separate from receiving permissions.",
+      "evidenceLevel": "Executed native, registered-owner, public-provider and database evidence; qualifications in server-client-relay.md.",
+      "limits": "Invoice/Delivery mounted Reads retain their legitimate 403 result. No production enrollment or successful final postal business Read is claimed."
+    },
+    {
+      "issue": 1285,
+      "source": "6b32c593f702a98746279662b31d1b81911dcc93",
+      "currentMain": "72149af1c4308a0b2d748f07a23e0180405f9415",
+      "deliveryPr": "https://github.com/TechsioCZ/ontos/pull/1348",
+      "state": "Implemented and independently reviewed; draft PR, not merged.",
+      "change": "Eight native Market administration Actions use default Core assembly. Association uses public Storefront evidence. Retirement uses actual CCC assessment, reserve and recovery with durable owner admission and original-effect recovery. Four approved Market relay transports preserve P.",
+      "evidenceLevel": "Real canonical native Market, SQL and public receiving under documented Shell/Storefront/CCC fixture deployments; actual downstream Pricing regression and compiled local build.",
+      "history": "Historical UNIMPLEMENTED absence identities are preserved. Future Cart/Order providers remain absent/deferred. Installed CCC suspension blocks retirement under the same Composition.",
+      "limits": "Source, fixture and local build evidence do not establish production activation."
+    },
+    {
+      "issue": 1286,
+      "sourceIncludedIn": "b6203518e8c93eb50e442deb3a881b928fc84546",
+      "state": "Bounded owner-port acceptance implemented and independently reviewed.",
+      "change": "The actual Inventory consumer Action version1 requires qualified trusted Current Commerce context only for a new create intent, after original-effect lookup.",
+      "evidenceLevel": "Registered Action/default factory, owner SQL and worker with qualified provider/Core fixtures; see inventory-context-port.md.",
+      "limits": "No independent port version or public producer operation exists. Production producer remains deferred to #253/29 and #877/34; no production HTTP/E2E claim."
+    },
+    {
+      "issue": 1287,
+      "source": "1955e25d142921d2e3eea0acb2c2b14afa2f08b1",
+      "state": "In progress: schema/generator step2 complete; owner-declaration step3 in progress.",
+      "change": "Existing manifest, private registration and generators validate versioned intrinsic/conditional operation requirements and exact Action/Read version claims. Deployment format and provisional module publicContract remain separate.",
+      "evidenceLevel": "Focused Core20/20, generation25/25, official Core emission, strict lint, 53 rule fixtures and normal commit hooks. No full-issue or runtime-enforcement acceptance yet.",
+      "trustPrerequisite": "CCC→PriceGroup currently uses configured key Principal S instead of original P. Required source LE versus forbidden target LE needs a bounded projection decision. Human approval is pending on the independently reviewed proposal; no enrollment/projection implemented."
+    }
+  ]
 }

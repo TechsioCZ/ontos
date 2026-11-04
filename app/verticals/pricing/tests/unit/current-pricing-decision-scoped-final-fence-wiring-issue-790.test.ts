@@ -45,14 +45,13 @@ describe('Current Pricing Decision scoped final fence wiring (#790)', () => {
       let observedGateway: PricingOwnerMaterialEvidenceFenceGateway | undefined;
       let observedRevision: string | undefined;
       let publishedSource: CurrentPricingDecisionWholeEvaluationPort | undefined;
-      const serviceFactory = makeCurrentPricingDecisionReadServiceFactory(
-        () => Effect.succeed(source),
-        (candidateTransaction, candidateScope) => {
+      const serviceFactory = makeCurrentPricingDecisionReadServiceFactory(() => Effect.succeed(source), {
+        pricingOwnerFinalFenceForScope: (candidateTransaction, candidateScope) => {
           observedTransaction = candidateTransaction;
           observedScope = candidateScope;
           return Effect.succeed(gateway);
         },
-      );
+      });
 
       yield* serviceFactory(transaction, scope, 'revision:790').pipe(
         Effect.provideService(CurrentPricingDecisionEvaluationFactory, {

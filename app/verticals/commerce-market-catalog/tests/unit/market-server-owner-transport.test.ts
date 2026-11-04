@@ -389,69 +389,133 @@ describe('Commerce Market server owner transport', () => {
     }),
   );
 
-  it.effect(
-    'retains captured Customer Context revision and legal entity after input mutation for subject restrictions',
-    () =>
-      Effect.gen(function* subjectOwnerTransport() {
-        const requests: Request[] = [];
-        const fakeFetch: typeof fetch = (input, init) => {
-          const request = new Request(input, init);
-          requests.push(request);
-          return Promise.resolve(
-            Response.json(
-              new URL(request.url).pathname.endsWith('/auth/api-key/gateway-context')
-                ? {
-                    apiBaseUrl: '/module-api/commerce.customer-context',
-                    compositionRevision,
-                    expiresAt: 1_700_000_300,
-                    token: 'customer-context-owner-assertion',
-                  }
-                : Schema.encodeSync(MarketSubjectRestrictionsCurrentResponseSchema)(restrictionsResponse),
-            ),
-          );
-        };
-        const captured = { compositionRevision, legalEntityId };
-        const reader = makeServerMarketSubjectRestrictionsReader(captured);
-        captured.compositionRevision = 'b'.repeat(64);
-        captured.legalEntityId = '55555555-5555-4555-8555-555555555555';
-        const result = yield* reader
-          .current(subject, requestCorrelation)
-          .pipe(
-            Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-            Effect.provide(ConfigProvider.layer(configuration)),
-          );
-
-        expect(result).toMatchObject({
-          allowedChannels: ['B2B'],
-          allowedSellerIds: [legalEntityId],
-          decision: 'ALLOWED',
-          ownerRevision: 'counterparty-profile:7',
-          profileState: 'ACTIVE',
-          subjectIdentityRef: subject.profileRef.resourceId,
-          subjectKind: 'COUNTERPARTY',
-        });
-        expect(DateTime.formatIso(result.observedAt)).toBe('2026-10-01T00:00:00.000Z');
-        expect(requests).toHaveLength(2);
-        const issuerRequest = yield* Effect.fromNullishOr(requests[0]);
-        const ownerRequest = yield* Effect.fromNullishOr(requests[1]);
-        expect(issuerRequest.url).toBe('https://shell.example.test/shell-super-app-api/auth/api-key/gateway-context');
-        expect(issuerRequest.headers.get('x-api-key')).toBe('market-server-api-key');
-        expect(issuerRequest.headers.get('x-correlation-id')).toBe(requestCorrelation);
-        expect(yield* Effect.promise(() => issuerRequest.json())).toEqual({
-          audience: 'commerce-customer-context',
-          compositionRevision,
-          legalEntityId,
-        });
-        expect(ownerRequest.url).toBe(
-          'https://shell.example.test/module-api/commerce.customer-context/reads/market-subject-restrictions-current',
+  it.effect('relays the captured original actor admission and exact revision for subject restrictions', () =>
+    Effect.gen(function* subjectOwnerTransport() {
+      const requests: Request[] = [];
+      const fakeFetch: typeof fetch = (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Promise.resolve(
+          Response.json(
+            new URL(request.url).pathname.endsWith('/auth/relay/gateway-context')
+              ? {
+                  apiBaseUrl: '/module-api/commerce.customer-context',
+                  compositionRevision,
+                  expiresAt: 1_700_000_300,
+                  token: 'customer-context-owner-assertion',
+                }
+              : Schema.encodeSync(MarketSubjectRestrictionsCurrentResponseSchema)(restrictionsResponse),
+          ),
         );
-        expect(ownerRequest.method).toBe('POST');
-        expect(ownerRequest.headers.get('authorization')).toBe('Bearer customer-context-owner-assertion');
-        expect(ownerRequest.headers.get('x-api-key')).toBeNull();
-        expect(ownerRequest.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
-        expect(ownerRequest.headers.get('x-correlation-id')).toBe(requestCorrelation);
-        expect(yield* Effect.promise(() => ownerRequest.json())).toEqual({ subject });
-      }),
+      };
+      const captured = { compositionRevision, crypto, scope };
+      const reader = makeServerMarketSubjectRestrictionsReader(captured);
+      captured.compositionRevision = 'b'.repeat(64);
+      captured.scope = trustVerifiedGatewayPrincipalContext(
+        { ...sourceScope, legalEntityId: '55555555-5555-4555-8555-555555555555' },
+        'b'.repeat(64),
+        { assertion: Redacted.make('later-actor-assertion'), audience: 'commerce-market-catalog' },
+      );
+      const result = yield* reader
+        .current(subject, requestCorrelation)
+        .pipe(
+          Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+          Effect.provide(ConfigProvider.layer(configuration)),
+        );
+
+      expect(result).toMatchObject({
+        allowedChannels: ['B2B'],
+        allowedSellerIds: [legalEntityId],
+        decision: 'ALLOWED',
+        ownerRevision: 'counterparty-profile:7',
+        profileState: 'ACTIVE',
+        subjectIdentityRef: subject.profileRef.resourceId,
+        subjectKind: 'COUNTERPARTY',
+      });
+      expect(DateTime.formatIso(result.observedAt)).toBe('2026-10-01T00:00:00.000Z');
+      expect(requests).toHaveLength(2);
+      const issuerRequest = yield* Effect.fromNullishOr(requests[0]);
+      const ownerRequest = yield* Effect.fromNullishOr(requests[1]);
+      expect(issuerRequest.url).toBe('https://shell.example.test/shell-super-app-api/auth/relay/gateway-context');
+      expect(issuerRequest.headers.get('x-api-key')).toBe('market-source-relay-key');
+      expect(issuerRequest.headers.get('x-correlation-id')).toBe(requestCorrelation);
+      expect(yield* Effect.promise(() => issuerRequest.json())).toEqual({
+        audience: 'commerce-customer-context',
+        compositionRevision,
+        exchangeId: expect.any(String),
+        operationKey: 'commerce.customer-context.api.market-subject-restrictions-current',
+        sourceAssertion,
+      });
+      expect(ownerRequest.url).toBe(
+        'https://shell.example.test/module-api/commerce.customer-context/reads/market-subject-restrictions-current',
+      );
+      expect(ownerRequest.method).toBe('POST');
+      expect(ownerRequest.headers.get('authorization')).toBe('Bearer customer-context-owner-assertion');
+      expect(ownerRequest.headers.get('x-api-key')).toBeNull();
+      expect(ownerRequest.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
+      expect(ownerRequest.headers.get('x-correlation-id')).toBe(requestCorrelation);
+      expect(yield* Effect.promise(() => ownerRequest.json())).toEqual({ subject });
+    }),
+  );
+
+  it.effect('rejects unverified or mismatched subject admissions before relay and provider HTTP', () =>
+    Effect.gen(function* invalidSubjectAdmissions() {
+      let fetchCount = 0;
+      const fakeFetch: typeof fetch = () => {
+        fetchCount += 1;
+        return Promise.reject(new Error('Invalid source admission must never reach HTTP'));
+      };
+      const foreignAudience = trustVerifiedGatewayPrincipalContext(sourceScope, compositionRevision, {
+        assertion: Redacted.make(sourceAssertion),
+        audience: 'catalog',
+      });
+      for (const invalid of [
+        { compositionRevision, scope: sourceScope },
+        { compositionRevision, scope: foreignAudience },
+        { compositionRevision: 'b'.repeat(64), scope },
+      ]) {
+        const failure = yield* makeServerMarketSubjectRestrictionsReader({ ...invalid, crypto })
+          .current(subject, requestCorrelation)
+          .pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
+        expect(Predicate.isTagged(failure, 'MarketSubjectRestrictionsUnavailable')).toBe(true);
+      }
+      const correlationFailure = yield* makeServerMarketSubjectRestrictionsReader({
+        compositionRevision,
+        crypto,
+        scope,
+      })
+        .current(subject, 'another-request')
+        .pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
+      expect(Predicate.isTagged(correlationFailure, 'MarketSubjectRestrictionsUnavailable')).toBe(true);
+      const tenantFailure = yield* makeServerMarketSubjectRestrictionsReader({ compositionRevision, crypto, scope })
+        .current(
+          { ...subject, profileRef: { ...subject.profileRef, tenantId: '99999999-9999-4999-8999-999999999999' } },
+          requestCorrelation,
+        )
+        .pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
+      expect(Predicate.isTagged(tenantFailure, 'MarketSubjectRestrictionsUnavailable')).toBe(true);
+      expect(fetchCount).toBe(0);
+    }),
+  );
+
+  it.effect('preserves subject relay refusal without renewal or ordinary service-key fallback', () =>
+    Effect.gen(function* refusedSubjectRelay() {
+      const requests: Request[] = [];
+      const fakeFetch: typeof fetch = (input, init) => {
+        requests.push(new Request(input, init));
+        return Promise.resolve(new Response(null, { status: 401 }));
+      };
+      const failure = yield* makeServerMarketSubjectRestrictionsReader({ compositionRevision, crypto, scope })
+        .current(subject, requestCorrelation)
+        .pipe(
+          Effect.flip,
+          Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+          Effect.provide(ConfigProvider.layer(configuration)),
+        );
+      expect(Predicate.isTagged(failure, 'MarketSubjectRestrictionsUnavailable')).toBe(true);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.url).toBe('https://shell.example.test/shell-super-app-api/auth/relay/gateway-context');
+    }),
   );
 
   it.effect('rejects credentials for a later composition before either owner operation runs', () =>
@@ -481,7 +545,8 @@ describe('Commerce Market server owner transport', () => {
         );
       const restrictionsFailure = yield* makeServerMarketSubjectRestrictionsReader({
         compositionRevision,
-        legalEntityId,
+        crypto,
+        scope,
       })
         .current(subject, requestCorrelation)
         .pipe(
@@ -495,7 +560,7 @@ describe('Commerce Market server owner transport', () => {
       expect(requests).toHaveLength(2);
       expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
         '/shell-super-app-api/auth/relay/gateway-context',
-        '/shell-super-app-api/auth/api-key/gateway-context',
+        '/shell-super-app-api/auth/relay/gateway-context',
       ]);
     }),
   );
@@ -509,11 +574,16 @@ describe('Commerce Market server owner transport', () => {
       };
       const captured = {
         compositionRevision: Option.getOrUndefined(Option.none<string>()),
-        legalEntityId,
+        crypto,
+        scope,
       };
       const reader = makeServerMarketSubjectRestrictionsReader(captured);
       captured.compositionRevision = 'b'.repeat(64);
-      captured.legalEntityId = '55555555-5555-4555-8555-555555555555';
+      captured.scope = trustVerifiedGatewayPrincipalContext(
+        { ...sourceScope, legalEntityId: '55555555-5555-4555-8555-555555555555' },
+        'b'.repeat(64),
+        { assertion: Redacted.make('later-actor-assertion'), audience: 'commerce-market-catalog' },
+      );
       const failure = yield* reader
         .current(subject, requestCorrelation)
         .pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
@@ -536,10 +606,14 @@ describe('Commerce Market server owner transport', () => {
       };
       const captured = {
         compositionRevision,
-        legalEntityId: Option.getOrUndefined(Option.none<string>()),
+        crypto,
+        scope: { ...sourceScope, legalEntityId: Option.getOrUndefined(Option.none<string>()) },
       };
       const reader = makeServerMarketSubjectRestrictionsReader(captured);
-      captured.legalEntityId = legalEntityId;
+      captured.scope = trustVerifiedGatewayPrincipalContext({ ...sourceScope, legalEntityId }, compositionRevision, {
+        assertion: Redacted.make(sourceAssertion),
+        audience: 'commerce-market-catalog',
+      });
       const failure = yield* reader
         .current(subject, requestCorrelation)
         .pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));

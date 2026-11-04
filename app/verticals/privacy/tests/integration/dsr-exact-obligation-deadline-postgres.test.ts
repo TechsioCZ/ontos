@@ -248,7 +248,9 @@ const makeDsrNative = Effect.fn('DsrExactDeadline.makeNative')(function* makeDsr
       fixture.layer,
       NodeCrypto.layer,
       authorities,
-      Layer.succeed(InstalledModuleCatalogService, { load: Effect.succeed(catalog) }),
+      Layer.succeed(InstalledModuleCatalogService, {
+        loadForRevision: (_compositionRevision) => Effect.succeed(catalog),
+      }),
     ),
   );
   // HTTP runs later under this exported context, independently of setup's ambient services.

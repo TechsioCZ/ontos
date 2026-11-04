@@ -37,6 +37,7 @@ import {
   makeOutboxWorkerComposition,
 } from '../../../../packages/core-runtime/tests/support/outbox-worker-composition.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { priceGroupCatalogRegistration } from '../../vertical.registration.ts';
 import type { CreatePriceGroupDefinitionRevisionPayload } from '../../shared/actions/create-price-group-definition-revision.ts';
 import type { CreatePriceGroupPayload } from '../../shared/actions/create-price-group.ts';
 import type { RetirePriceGroupPayload } from '../../shared/actions/retire-price-group.ts';
@@ -456,6 +457,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
       moduleStateGate,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+      ownerRegistration: priceGroupCatalogRegistration,
       resolveCompositionRevision: makeActionCompositionRevisionResolver(
         { load: Effect.succeed(approvedComposition) },
         ultramodernApiMarker,

@@ -50,6 +50,8 @@ import {
   PrivacyNoticePresentationService,
 } from '../../src/services/privacy-notice-presentation.service.ts';
 
+import { privacyRegistration } from '../../vertical.registration.ts';
+
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const compositionRevision = 'a'.repeat(64);
 const principal = trustVerifiedGatewayPrincipalContext(
@@ -115,6 +117,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, namespaceLive))('Notice read declared 
             executeOwnerQuery: () => Effect.die('Unexpected owner query after authority rejection'),
             operationTime: new Date('2026-10-20T12:00:00.000Z'),
             ownerAuthorizationDecision: 'allowed',
+            ownerRegistration: privacyRegistration,
             permissionDecision: 'allowed',
             scope: { ...principal, correlationId: 'notice-read-contract' },
           });
@@ -213,6 +216,7 @@ it.live('GET decodes exact targets, trusts only the verified Tenant and redeems 
         executeOwnerQuery: () => Effect.die('Unexpected owner SQL after controlled Subject rejection'),
         operationTime: new Date('2026-10-20T12:00:00.000Z'),
         ownerAuthorizationDecision: 'allowed',
+        ownerRegistration: privacyRegistration,
         permissionDecision: 'allowed',
         scope: { ...principal, correlationId: 'notice-get-contract' },
       });

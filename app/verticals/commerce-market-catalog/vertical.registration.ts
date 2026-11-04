@@ -13,6 +13,11 @@ import { retireMarketAction } from './src/actions/retire-market.action.ts';
 import { reviseMarketDefinitionAction } from './src/actions/revise-market-definition.action.ts';
 import { reviseStorefrontAssociationAction } from './src/actions/revise-storefront-association.action.ts';
 import { suspendMarketAction } from './src/actions/suspend-market.action.ts';
+import { currentMarketCatalogRead } from './src/api/current-market-catalog.read.ts';
+import { eligibleMarketTuplesRead } from './src/api/eligible-market-tuples.read.ts';
+import { resolveCommerceMarketRead } from './src/api/resolve-commerce-market.read.ts';
+import { verifyMarketEligibilityV1Read } from './src/api/verify-market-eligibility-v1.read.ts';
+import { pricingCurrentMarketEvidenceRead } from './src/api/pricing-current-market-evidence.read.ts';
 // </generated-module-registration-imports>
 
 export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistration({
@@ -62,6 +67,15 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
   outboxWorkers: [
     // <generated-module-registration-workers>
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    currentMarketCatalogRead,
+    eligibleMarketTuplesRead,
+    resolveCommerceMarketRead,
+    verifyMarketEligibilityV1Read,
+    pricingCurrentMarketEvidenceRead,
+    // </generated-module-registration-reads>
   ],
 });
 

@@ -1,3 +1,4 @@
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
@@ -123,6 +124,7 @@ describe('manufacturer Action contracts', () => {
       };
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: catalogRegistration,
         services: [
           bindActionTestServices(setProductManufacturerAction, services),
           bindActionTestServices(changeProductManufacturerAction, services),

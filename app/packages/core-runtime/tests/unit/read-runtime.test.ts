@@ -1,3 +1,21 @@
+import type { ActiveApplicationCompositionServiceContract } from '../../src/modules/active-application-composition.ts';
+import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
+import { ModuleOperationRequirementError } from '../../src/modules/module-operation-requirement-error.ts';
+import { requireModuleOperation } from '../../src/modules/module-operation-requirement.ts';
+import type { ReadRuntimeOptions } from '../../src/reads/runtime.ts';
+import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
+import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
+import type { VerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
+import {
+  freshOutboxWorkerCompositionSnapshot,
+  makeOutboxWorkerComposition,
+} from '../support/outbox-worker-composition.ts';
+import {
+  legalEntityDetailRead,
+  LegalEntityDetailRequestSchema,
+} from '../../src/generated-reads/legal-entity-detail.ts';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
 /* oxlint-disable sonarjs/use-type-alias, typescript/no-unsafe-type-assertion -- Existing compatibility boundary; expires: 2026-12-31. */
 import { expect, it } from 'effect-rstest';
@@ -83,8 +101,19 @@ const ResourceTargetSchema = Schema.Struct({
   resourceId: ResourceIdSchema,
   resourceType: Schema.String,
 });
+/** These local registrations are synthetic Core infrastructure probes, with no business-provider implementation. */
+const historicalFixtureOwner = (moduleId: string) => {
+  const base = makeModuleContractFixture({ appId: moduleId.replaceAll('.', '-'), moduleId }).manifest;
+  const manifest = defineOntosModuleManifest({
+    ...base,
+    publicSurface: { ...base.publicSurface, actions: [], api: {}, components: {} },
+  });
+  return defineVerticalRuntimeRegistration({ actions: [], manifest, outboxWorkers: [] });
+};
+
 const makeHarness = Effect.fn(function* makeHarness(
   options: {
+    readonly applicationComposition?: ActiveApplicationCompositionServiceContract;
     readonly assortmentPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly assortmentPermissionKey?: string;
     readonly assortmentPermissionResponse?: 'empty';
@@ -95,8 +124,10 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly contextPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly failEvidence?: boolean;
     readonly failTransactionTimestamp?: boolean;
+    readonly legalEntityRows?: readonly { readonly legalName: string; readonly status: string }[];
     readonly modulePermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly omitOwnerAuthorizationOverlay?: boolean;
+    readonly omitOwnerRegistration?: boolean;
     readonly onBusinessPermissionTarget?: (target: BusinessPermissionAccessTarget) => void;
     readonly onContextPermissionTarget?: (target: { readonly moduleId: string; readonly permission: string }) => void;
     readonly onLegalEntityPermission?: (permission: string | undefined) => void;
@@ -118,6 +149,10 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly resourcePermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly resultPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly resultTenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
+    readonly runtimeAdmission?: Pick<
+      ReadRuntimeOptions,
+      'applicationComposition' | 'expectedDeployment' | 'ownerRegistration' | 'shellSystemReads'
+    >;
     readonly sqlEvents?: string[];
     readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly transactionEvents?: string[];
@@ -128,6 +163,7 @@ const makeHarness = Effect.fn(function* makeHarness(
   const assortmentPermissionChecks: unknown[] = [];
   let contextPermissionChecks = 0;
   let evidence = 0;
+  let legalEntityReads = 0;
   let authorityLocks = 0;
   let authorityReads = 0;
   let scopeInstalls = 0;
@@ -136,8 +172,12 @@ const makeHarness = Effect.fn(function* makeHarness(
   let tenantPermissionChecks = 0;
   const evidenceRows: EvidenceRow[] = [];
   const evidenceParameterRows: unknown[][] = [];
-  const query = (text: string, values: readonly unknown[]) =>
-    Effect.gen(function* executeReadQuery() {
+  const query = (text: string, values: readonly unknown[]) => {
+    if (text.includes('legal_entities')) {
+      legalEntityReads += 1;
+      return Effect.succeed(options.legalEntityRows ?? []);
+    }
+    return Effect.gen(function* executeReadQuery() {
       if (/^(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE SAVEPOINT)/u.test(text)) {
         options.sqlEvents?.push(text);
       }
@@ -203,6 +243,7 @@ const makeHarness = Effect.fn(function* makeHarness(
           ]
         : [];
     });
+  };
   const database = {
     executor: yield* makeTestDatabase((text, values) => {
       if (text === 'COMMIT' && options.transactionSettlementFailure !== undefined) {
@@ -231,121 +272,137 @@ const makeHarness = Effect.fn(function* makeHarness(
       : {
           ownerAuthorizationOverlay: options.ownerAuthorizationOverlay ?? allowOwnerAuthorizationOverlay,
         };
-  const runtime = makeReadRuntime(
-    database,
-    openModuleEntrypointGateway,
-    { resolve: () => Effect.succeed(options.resolvedScope ?? scope) },
-    {
-      assortmentPermissions: ({ legalEntityId, principal, targets }) => {
-        assortmentPermissionChecks.push(...targets);
-        return Effect.succeed(
-          options.assortmentPermissionResponse === 'empty'
-            ? []
-            : targets.map(({ target }) => {
-                const expectedKey = toAssortmentPermissionAccessKey(principal.tenantId, legalEntityId, target);
-                if (expectedKey === undefined) {
-                  throw new Error('Test fixture requires a trusted tenant and legal entity scope');
-                }
-                return {
-                  decision:
-                    options.assortmentPermissionDecision ?? options.permissionDecision ?? ('unavailable' as const),
-                  key: options.assortmentPermissionKey ?? expectedKey,
-                };
-              }),
-        );
+  let ownedRuntimeOptions: ReadRuntimeOptions = {
+    onStage: (stage) => stages.push(stage),
+    ...ownerAuthorizationOptions,
+    ...options.runtimeAdmission,
+  };
+  if (options.applicationComposition !== undefined) {
+    ownedRuntimeOptions = { ...ownedRuntimeOptions, applicationComposition: options.applicationComposition };
+  }
+  const constructRuntime = (ownerRegistration?: VerticalRuntimeRegistration) => {
+    const runtimeOptions =
+      ownerRegistration === undefined ? ownedRuntimeOptions : { ...ownedRuntimeOptions, ownerRegistration };
+    return makeReadRuntime(
+      database,
+      openModuleEntrypointGateway,
+      { resolve: () => Effect.succeed(options.resolvedScope ?? scope) },
+      {
+        assortmentPermissions: ({ legalEntityId, principal, targets }) => {
+          assortmentPermissionChecks.push(...targets);
+          return Effect.succeed(
+            options.assortmentPermissionResponse === 'empty'
+              ? []
+              : targets.map(({ target }) => {
+                  const expectedKey = toAssortmentPermissionAccessKey(principal.tenantId, legalEntityId, target);
+                  if (expectedKey === undefined) {
+                    throw new Error('Test fixture requires a trusted tenant and legal entity scope');
+                  }
+                  return {
+                    decision:
+                      options.assortmentPermissionDecision ?? options.permissionDecision ?? ('unavailable' as const),
+                    key: options.assortmentPermissionKey ?? expectedKey,
+                  };
+                }),
+          );
+        },
+        businessPermissions: ({ targets, trustedStorefrontId }) => {
+          businessPermissionChecks += 1;
+          options.onTrustedStorefrontId?.(trustedStorefrontId);
+          const [target] = targets;
+          if (target !== undefined) {
+            options.onBusinessPermissionTarget?.(target);
+          }
+          return Effect.succeed(
+            targets.map((businessTarget) => ({
+              decision: options.businessPermissionDecision ?? options.permissionDecision ?? ('unavailable' as const),
+              key: toBusinessPermissionAccessKey(businessTarget),
+            })),
+          );
+        },
+        contextPermissions: ({ targets }) => {
+          contextPermissionChecks += 1;
+          const [target] = targets;
+          if (target !== undefined) {
+            options.onContextPermissionTarget?.(target);
+          }
+          return Effect.succeed(
+            targets.map(({ moduleId, permission }) => ({
+              decision: options.contextPermissionDecision ?? ('unavailable' as const),
+              key: `${moduleId}:${permission}`,
+            })),
+          );
+        },
+        legalEntities: ({ legalEntityIds, permission, tenantId }) => {
+          options.onLegalEntityPermission?.(permission);
+          for (const legalEntityId of legalEntityIds) {
+            options.onLegalEntityTarget?.(legalEntityId, tenantId);
+          }
+          return Effect.succeed(
+            legalEntityIds.map((key) => ({
+              decision: options.permissionDecision ?? ('unavailable' as const),
+              key,
+            })),
+          );
+        },
+        modules: ({ moduleIds }) =>
+          Effect.succeed(
+            moduleIds.map((key) => ({
+              decision: options.modulePermissionDecision ?? options.permissionDecision ?? ('unavailable' as const),
+              key,
+            })),
+          ),
+        resources: ({ permission, resources }) => {
+          resourcePermissionChecks += 1;
+          options.onResourcePermission?.(permission);
+          const [target] = resources;
+          if (target !== undefined) {
+            options.onResourceTarget?.(target);
+          }
+          return Effect.succeed(
+            resources.map((resource) => ({
+              decision:
+                options.resultPermissionDecision ??
+                options.resourcePermissionDecision ??
+                options.permissionDecision ??
+                ('unavailable' as const),
+              key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
+            })),
+          );
+        },
+        tenants: ({ permission, tenantIds }) => {
+          options.onTenantPermission?.(permission);
+          tenantPermissionChecks += 1;
+          return Effect.succeed(
+            tenantIds.map((key) => ({
+              decision:
+                tenantPermissionChecks > 1
+                  ? (options.resultTenantPermissionDecision ??
+                    options.tenantPermissionDecision ??
+                    options.permissionDecision ??
+                    ('unavailable' as const))
+                  : (options.tenantPermissionDecision ?? options.permissionDecision ?? ('unavailable' as const)),
+              key,
+            })),
+          );
+        },
       },
-      businessPermissions: ({ targets, trustedStorefrontId }) => {
-        businessPermissionChecks += 1;
-        options.onTrustedStorefrontId?.(trustedStorefrontId);
-        const [target] = targets;
-        if (target !== undefined) {
-          options.onBusinessPermissionTarget?.(target);
-        }
-        return Effect.succeed(
-          targets.map((businessTarget) => ({
-            decision: options.businessPermissionDecision ?? options.permissionDecision ?? ('unavailable' as const),
-            key: toBusinessPermissionAccessKey(businessTarget),
-          })),
-        );
-      },
-      contextPermissions: ({ targets }) => {
-        contextPermissionChecks += 1;
-        const [target] = targets;
-        if (target !== undefined) {
-          options.onContextPermissionTarget?.(target);
-        }
-        return Effect.succeed(
-          targets.map(({ moduleId, permission }) => ({
-            decision: options.contextPermissionDecision ?? ('unavailable' as const),
-            key: `${moduleId}:${permission}`,
-          })),
-        );
-      },
-      legalEntities: ({ legalEntityIds, permission, tenantId }) => {
-        options.onLegalEntityPermission?.(permission);
-        for (const legalEntityId of legalEntityIds) {
-          options.onLegalEntityTarget?.(legalEntityId, tenantId);
-        }
-        return Effect.succeed(
-          legalEntityIds.map((key) => ({
-            decision: options.permissionDecision ?? ('unavailable' as const),
-            key,
-          })),
-        );
-      },
-      modules: ({ moduleIds }) =>
-        Effect.succeed(
-          moduleIds.map((key) => ({
-            decision: options.modulePermissionDecision ?? options.permissionDecision ?? ('unavailable' as const),
-            key,
-          })),
-        ),
-      resources: ({ permission, resources }) => {
-        resourcePermissionChecks += 1;
-        options.onResourcePermission?.(permission);
-        const [target] = resources;
-        if (target !== undefined) {
-          options.onResourceTarget?.(target);
-        }
-        return Effect.succeed(
-          resources.map((resource) => ({
-            decision:
-              options.resultPermissionDecision ??
-              options.resourcePermissionDecision ??
-              options.permissionDecision ??
-              ('unavailable' as const),
-            key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-          })),
-        );
-      },
-      tenants: ({ permission, tenantIds }) => {
-        options.onTenantPermission?.(permission);
-        tenantPermissionChecks += 1;
-        return Effect.succeed(
-          tenantIds.map((key) => ({
-            decision:
-              tenantPermissionChecks > 1
-                ? (options.resultTenantPermissionDecision ??
-                  options.tenantPermissionDecision ??
-                  options.permissionDecision ??
-                  ('unavailable' as const))
-                : (options.tenantPermissionDecision ?? options.permissionDecision ?? ('unavailable' as const)),
-            key,
-          })),
-        );
-      },
-    },
-    {
-      onStage: (stage) => stages.push(stage),
-      ...ownerAuthorizationOptions,
-    },
-  );
+      runtimeOptions,
+    );
+  };
+  const baseRuntime = constructRuntime();
+  const runRead: typeof baseRuntime.runRead = (input) =>
+    options.omitOwnerRegistration === true || options.runtimeAdmission !== undefined
+      ? baseRuntime.runRead(input)
+      : constructRuntime(historicalFixtureOwner(input.registration.descriptor.owningModuleKey)).runRead(input);
+  const runtime = { runRead };
   return {
     assortmentPermissionChecks,
     authorityCounts: () => ({ authorityLocks, authorityReads, scopeInstalls }),
     evidence: () => evidence,
     evidenceParameterRows: () => evidenceParameterRows,
     evidenceRows: () => evidenceRows,
+    legalEntityReads: () => legalEntityReads,
     permissionChecks: () => ({
       businessPermissionChecks,
       contextPermissionChecks,
@@ -2909,5 +2966,387 @@ it.effect('keeps exact count and order for a three-position conditional plan', (
         expect(handlerCalls).toBe(0);
       }
     }
+  }),
+);
+
+it.effect('fails a metadata-less synthetic Read closed before permission and handler work', () =>
+  Effect.gen(function* unknownReadOwnerMetadata() {
+    const harness = yield* makeHarness({ omitOwnerRegistration: true, permissionDecision: 'allowed' });
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: registration(),
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
+    expect(harness.permissionChecks().contextPermissionChecks).toBe(0);
+  }),
+);
+
+it.effect('does not turn a partial authority plus inbound revision into a requirement lease', () =>
+  Effect.gen(function* partialReadAuthorityCannotAttest() {
+    let authorityLoads = 0;
+    const applicationComposition: ActiveApplicationCompositionServiceContract = {
+      load: Effect.suspend(() => {
+        authorityLoads += 1;
+        return Effect.fail(
+          new ActiveApplicationCompositionUnavailableError({
+            cause: new Error('Synthetic partial constructor'),
+            reason: 'No receiving build was bound',
+          }),
+        );
+      }),
+    };
+    const harness = yield* makeHarness({ applicationComposition, permissionDecision: 'allowed' });
+    const read = defineRead(
+      { ...registration().descriptor, domainErrorSchema: ModuleOperationRequirementError },
+      () =>
+        requireModuleOperation('core.shell.unqualified-operation').pipe(
+          Effect.as({ evidence: { resultCount: 0 }, result: [] }),
+        ),
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: trustVerifiedGatewayPrincipalContext(scope, approvedCompositionRevision),
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Schema.is(ModuleOperationRequirementError)(failure)).toBe(true);
+    expect(authorityLoads).toBe(0);
+    expect(harness.evidence()).toBe(0);
+  }),
+);
+
+/** Synthetic host metadata; the operation itself is the exact production Core Legal Entity Read. */
+const coreReadHost = (metadata: 'matching' | 'intrinsic' | 'core' | 'required' | 'provided' = 'matching') => {
+  const base = makeModuleContractFixture({ appId: 'core-read-host', moduleId: 'test.core-read-host.module' }).manifest;
+  const moduleId = base.module.id;
+  const ownRead = defineRead(
+    {
+      ...registration().descriptor,
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'read',
+        authorization: { kind: 'authenticated_principal' },
+        entrypointKey: `${moduleId}.api.host-read`,
+        moduleKey: moduleId,
+        role: 'api',
+      }),
+      legalEntityScope: 'required',
+      owningModuleKey: moduleId,
+      readKey: `${moduleId}.api.host-read`,
+    },
+    () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
+    () => Effect.succeed({}),
+    () => ({ kind: 'module', moduleId }),
+  );
+  const manifest = defineOntosModuleManifest({
+    ...base,
+    publicSurface: {
+      ...base.publicSurface,
+      actions: [],
+      api:
+        metadata === 'provided'
+          ? { host: HttpApi.make('Host').add(HttpApiGroup.make('host').add(HttpApiEndpoint.get('detail', '/detail'))) }
+          : {},
+      components: {},
+      operationContracts:
+        metadata === 'provided' ? [{ apiKey: 'host', operationKey: 'host.detail', registration: ownRead }] : [],
+    },
+    requirements: {
+      coreCapabilities: metadata === 'core' ? [{ id: 'ontos.host-unpublished', version: '1' }] : [],
+      intrinsic: metadata === 'intrinsic' ? [{ moduleId: 'test.provider', requiredOperations: [] }] : [],
+      operations:
+        metadata === 'required'
+          ? [
+              {
+                condition: `${moduleId}.condition.provider`,
+                entrypointKey: ownRead.descriptor.entrypoint.entrypointKey,
+                evidence: ['test.provider.fact'],
+                key: `${moduleId}.requires.provider`,
+                provider: { entrypointKey: 'test.provider.api.detail', moduleId: 'test.provider', schemaVersion: '1' },
+              },
+            ]
+          : [],
+      schemaVersion: '1',
+    },
+  });
+  return defineVerticalRuntimeRegistration({ actions: [], manifest, outboxWorkers: [], reads: [ownRead] });
+};
+
+const coreLegalEntityInput = () =>
+  Schema.decodeUnknownSync(LegalEntityDetailRequestSchema)({
+    legalEntityRef: {
+      moduleId: 'core.identity',
+      resourceId: '00000000-0000-4000-8000-000000000004',
+      resourceType: 'core.identity.legal-entity',
+      tenantId: scope.tenantId,
+    },
+  });
+
+it.effect('runs the exact Core Legal Entity Read in a genuine vertical-bound receiver without Party', () =>
+  Effect.gen(function* genuineCoreReadInVerticalReceiver() {
+    const snapshot = yield* freshOutboxWorkerCompositionSnapshot(
+      makeOutboxWorkerComposition([
+        { appId: 'core-read-host', buildMarker: 'actual-host-build', moduleId: 'test.core-read-host.module' },
+      ]),
+    );
+    const harness = yield* makeHarness({
+      compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
+      legalEntityRows: [{ legalName: 'Managed Legal Entity', status: 'active' }],
+      permissionDecision: 'allowed',
+      runtimeAdmission: {
+        applicationComposition: { load: Effect.succeed(snapshot) },
+        expectedDeployment: { appId: 'core-read-host', buildMarker: 'actual-host-build' },
+        ownerRegistration: coreReadHost(),
+      },
+    });
+    const input = coreLegalEntityInput();
+    const result = yield* harness.runtime.runRead({
+      input,
+      principal: scope,
+      registration: legalEntityDetailRead,
+      transport: { correlationId: scope.correlationId },
+    });
+    expect(result).toEqual({ ...input, legalName: 'Managed Legal Entity', status: 'active' });
+    expect(harness.legalEntityReads()).toBe(1);
+    expect(harness.evidence()).toBe(1);
+    expect(harness.authorityCounts().authorityLocks).toBe(1);
+  }),
+);
+
+it.effect('rejects recreated Core Reads, wrong receiver builds and every mismatched host contract block', () =>
+  Effect.gen(function* coreReadHostAdmissionRemainsExact() {
+    const snapshot = yield* freshOutboxWorkerCompositionSnapshot(
+      makeOutboxWorkerComposition([
+        { appId: 'core-read-host', buildMarker: 'actual-host-build', moduleId: 'test.core-read-host.module' },
+      ]),
+    );
+    let recreatedCalls = 0;
+    const recreated = defineRead(
+      { ...legalEntityDetailRead.descriptor },
+      (input) => {
+        recreatedCalls += 1;
+        return Effect.succeed({
+          evidence: { resultCount: 1 },
+          result: { ...input, legalName: 'Forged', status: 'active' as const },
+        });
+      },
+      () => Effect.succeed({}),
+      (input) => ({ kind: 'legal_entity', legalEntityId: input.legalEntityRef.resourceId, permission: 'access' }),
+    );
+    for (const control of [
+      'recreated',
+      'unknown-host',
+      'wrong-build',
+      'intrinsic',
+      'core',
+      'required',
+      'provided',
+      'denied',
+    ] as const) {
+      let runtimeAdmission: Pick<
+        ReadRuntimeOptions,
+        'applicationComposition' | 'expectedDeployment' | 'ownerRegistration'
+      > = {
+        applicationComposition: { load: Effect.succeed(snapshot) },
+        expectedDeployment: {
+          appId: 'core-read-host',
+          buildMarker: control === 'wrong-build' ? 'other-build' : 'actual-host-build',
+        },
+      };
+      if (control !== 'unknown-host') {
+        runtimeAdmission = {
+          ...runtimeAdmission,
+          ownerRegistration: coreReadHost(
+            control === 'recreated' || control === 'wrong-build' || control === 'denied' ? 'matching' : control,
+          ),
+        };
+      }
+      const harness = yield* makeHarness({
+        compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
+        legalEntityRows: [{ legalName: 'Managed Legal Entity', status: 'active' }],
+        permissionDecision: control === 'denied' ? 'denied' : 'allowed',
+        runtimeAdmission,
+      });
+      const readInput = {
+        input: coreLegalEntityInput(),
+        principal: scope,
+        transport: { correlationId: scope.correlationId },
+      };
+      const failure =
+        control === 'recreated'
+          ? yield* Effect.flip(harness.runtime.runRead({ ...readInput, registration: recreated }))
+          : yield* Effect.flip(harness.runtime.runRead({ ...readInput, registration: legalEntityDetailRead }));
+      expect(
+        Predicate.isTagged(failure, control === 'denied' ? 'ReadPermissionDenied' : 'ReadHandlerUnavailable'),
+      ).toBe(true);
+      expect(harness.legalEntityReads()).toBe(0);
+      expect(harness.evidence()).toBe(control === 'denied' ? 1 : 0);
+    }
+    expect(recreatedCalls).toBe(0);
+  }),
+);
+
+/** Controlled constructor definitions; the Shell integration exercises the real production factory. */
+const shellHostDefinitions = (onHandler: () => void, attest = false) => {
+  const make = (key: string, role: 'api' | 'search') =>
+    defineRead(
+      {
+        accessKind: 'detail',
+        domainErrorSchema: ModuleOperationRequirementError,
+        entrypoint: defineSystemModuleEntrypoint({
+          access: 'read',
+          authorization: { kind: 'authenticated_principal' },
+          entrypointKey: key,
+          moduleKey: 'core.shell',
+          role,
+        }),
+        evidencePolicy: { captureMode: 'metadata_only', policyKey: `${key}.evidence.v1` },
+        inputSchema: Schema.Struct({}),
+        legalEntityScope: 'forbidden',
+        owningModuleKey: 'core.shell',
+        permissionTarget: 'tenant',
+        policies: [],
+        readKey: key,
+        resultSchema: Schema.String,
+        schemaVersion: '1',
+      },
+      () => {
+        onHandler();
+        const result = Effect.succeed({ evidence: { resultCount: 1 }, result: 'shell-host-result' });
+        return attest ? requireModuleOperation('core.shell.unpublished-provider').pipe(Effect.andThen(result)) : result;
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'tenant', permission: 'access' }),
+    );
+  return {
+    composition: make('core.shell.composition', 'api'),
+    moduleTarget: make('core.shell.module-target', 'api'),
+    resourceDetail: make('core.shell.resource-detail-timeline', 'api'),
+    search: make('core.shell.search', 'search'),
+  };
+};
+
+it.effect('admits only captured Shell definitions at the actual authoritative Shell build and revision', () =>
+  Effect.gen(function* closedShellHostBinding() {
+    const snapshot = yield* freshOutboxWorkerCompositionSnapshot(makeOutboxWorkerComposition());
+    for (const control of [
+      'allowed',
+      'recreated',
+      'copied',
+      'foreign',
+      'wrong-build',
+      'wrong-revision',
+      'no-authority',
+      'no-receiver',
+      'denied',
+    ] as const) {
+      let handlers = 0;
+      const definitions = shellHostDefinitions(() => {
+        handlers += 1;
+      });
+      const recreated = shellHostDefinitions(() => {
+        handlers += 1;
+      }).composition;
+      const copied = new Proxy(definitions.composition, {});
+      const foreign = defineRead(
+        {
+          ...definitions.composition.descriptor,
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'read',
+            authorization: { kind: 'authenticated_principal' },
+            entrypointKey: 'test.foreign.api.read',
+            moduleKey: 'test.foreign',
+            role: 'api',
+          }),
+          owningModuleKey: 'test.foreign',
+          readKey: 'test.foreign.api.read',
+        },
+        () => Effect.succeed({ evidence: { resultCount: 1 }, result: 'foreign' }),
+        () => Effect.succeed({}),
+        () => ({ kind: 'tenant', permission: 'access' }),
+      );
+      let admission: Pick<
+        ReadRuntimeOptions,
+        'applicationComposition' | 'expectedDeployment' | 'ownerRegistration' | 'shellSystemReads'
+      > = { shellSystemReads: definitions };
+      if (control !== 'no-authority') {
+        admission = { ...admission, applicationComposition: { load: Effect.succeed(snapshot) } };
+      }
+      if (control !== 'no-receiver') {
+        admission = {
+          ...admission,
+          expectedDeployment: {
+            ...snapshot.composition.shell.deployment,
+            buildMarker:
+              control === 'wrong-build' ? 'another-shell-build' : snapshot.composition.shell.deployment.buildMarker,
+          },
+        };
+      }
+      if (control === 'foreign') {
+        admission = { ...admission, shellSystemReads: { ...definitions, composition: foreign } };
+      }
+      const harness = yield* makeHarness({
+        compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
+        permissionDecision: control === 'denied' ? 'denied' : 'allowed',
+        runtimeAdmission: admission,
+      });
+      let selectedRegistration = definitions.composition;
+      if (control === 'recreated') {
+        selectedRegistration = recreated;
+      }
+      if (control === 'copied') {
+        selectedRegistration = copied;
+      }
+      const result = harness.runtime.runRead({
+        input: {},
+        principal: control === 'wrong-revision' ? trustVerifiedGatewayPrincipalContext(scope, 'b'.repeat(64)) : scope,
+        registration: selectedRegistration,
+        transport: { correlationId: scope.correlationId },
+      });
+      if (control === 'allowed') {
+        expect(yield* result).toBe('shell-host-result');
+        expect(handlers).toBe(1);
+        expect(harness.evidence()).toBe(1);
+      } else {
+        const failure = yield* Effect.flip(result);
+        expect(
+          Predicate.isTagged(failure, control === 'denied' ? 'ReadPermissionDenied' : 'ReadHandlerUnavailable'),
+        ).toBe(true);
+        expect(handlers).toBe(0);
+      }
+    }
+  }),
+);
+
+it.effect('gives bound Shell system Reads no provider-operation execution lease', () =>
+  Effect.gen(function* shellSystemReadsCannotAttestProviders() {
+    const snapshot = yield* freshOutboxWorkerCompositionSnapshot(makeOutboxWorkerComposition());
+    const definitions = shellHostDefinitions(() => {}, true);
+    const harness = yield* makeHarness({
+      compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
+      permissionDecision: 'allowed',
+      runtimeAdmission: {
+        applicationComposition: { load: Effect.succeed(snapshot) },
+        expectedDeployment: snapshot.composition.shell.deployment,
+        shellSystemReads: definitions,
+      },
+    });
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: definitions.composition,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Schema.is(ModuleOperationRequirementError)(failure)).toBe(true);
+    expect(harness.evidence()).toBe(0);
   }),
 );

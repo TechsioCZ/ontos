@@ -20,6 +20,8 @@ import { exactPriceResolutionRead } from '../../src/api/exact-price-resolution.r
 import { priceDefinitionRead } from '../../src/api/price-definition.read.ts';
 import { priceScheduleRead } from '../../src/api/price-schedule.read.ts';
 
+import { pricingRegistration } from '../../vertical.registration.ts';
+
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const foreignTenantId = '10000000-0000-4000-8000-000000000002';
 const principalId = '30000000-0000-4000-8000-000000000001';
@@ -137,6 +139,7 @@ const makeHarness = Effect.fn(function* makePricingReadAccessHarness(options: Ha
       onStage: (stage) => {
         stages.push(stage);
       },
+      ownerRegistration: pricingRegistration,
     },
   );
   return { contextPermissions, routineCalls, runtime, stages };

@@ -118,6 +118,7 @@ const governedShared = shared([
 const PARTY_REGISTRY = 'party-registry';
 const PARTY_REMOTE = 'verticalPartyRegistry';
 const CUSTOMER_CONTEXT = 'commerce-customer-context';
+const CUSTOMER_CONTEXT_MODULE = 'commerce.customer-context';
 const OUTBOX_WORKER_HOST_SETUP = 'outbox-worker-host';
 const PRICE_GROUP_CATALOG = 'price-group-catalog';
 const CUSTOMER_CONTEXT_WORKER = 'commerce-customer-context-worker';
@@ -158,7 +159,7 @@ const customerContext: ObservedModuleDeployment = {
     moduleContract({
       appId: CUSTOMER_CONTEXT,
       components: [],
-      moduleId: 'commerce.customer-context',
+      moduleId: CUSTOMER_CONTEXT_MODULE,
       search: [],
     }),
   ),
@@ -190,7 +191,7 @@ it.effect('derives a schema-valid snapshot of the complete browser and server-on
     const { composition } = snapshot;
 
     expect(composition.modules.map(({ federation, moduleId }) => [moduleId, federation.execution])).toEqual([
-      ['commerce.customer-context', 'server'],
+      [CUSTOMER_CONTEXT_MODULE, 'server'],
       [PARTY_MODULE, 'browser'],
     ]);
     expect(composition.shell.contributionAbi).toEqual(ONTOS_SHELL_CONTRIBUTION_ABI);
@@ -627,3 +628,58 @@ it('serves the Shell runtime contract without a locale redirect', () => {
   const ignored = /ignoreRedirectRoutes: \[(?<routes>[^\]]*)\]/u.exec(shellConfig)?.groups?.routes ?? '';
   expect(ignored).toContain("'/.well-known'");
 });
+
+it.effect('publishes exact intrinsic dependencies and capabilities from observed owner requirements', () =>
+  Effect.gen(function* publisherDerivesOwnerRequirements() {
+    const base = moduleContract({
+      appId: CUSTOMER_CONTEXT,
+      components: [],
+      moduleId: CUSTOMER_CONTEXT_MODULE,
+      search: [],
+    });
+    const requiredCapability = { id: 'fixture.intrinsic-compatibility', version: '1' };
+    const declared = {
+      ...customerContext,
+      contract: artifact(customerContext.contract.url, {
+        ...base,
+        manifest: {
+          ...base.manifest,
+          requirements: {
+            coreCapabilities: [requiredCapability],
+            intrinsic: [{ moduleId: PARTY_MODULE, requiredOperations: [] }],
+            operations: [],
+            schemaVersion: '1',
+          },
+        },
+      }),
+    };
+    const input = observation([partyRegistry, declared]);
+    const fixtureRuntime = createShellRuntimeContract('shell-immutable-build');
+    const trustedFixture = {
+      ...input,
+      shell: {
+        ...input.shell,
+        runtimeContract: artifact(input.shell.runtimeContract.url, {
+          ...fixtureRuntime,
+          coreCapabilities: [requiredCapability],
+        }),
+      },
+    };
+    const snapshot = yield* deriveActiveApplicationCompositionSnapshot(trustedFixture);
+    const consumer = snapshot.composition.modules.find(({ moduleId }) => moduleId === CUSTOMER_CONTEXT_MODULE);
+    expect(consumer?.dependencies).toEqual([PARTY_MODULE]);
+    expect(consumer?.requiredCoreCapabilities).toEqual([requiredCapability]);
+    const missing = yield* Effect.flip(
+      deriveActiveApplicationCompositionSnapshot({ ...trustedFixture, modules: [declared] }),
+    );
+    expect(missing.reason).toBe('invalid_observation');
+    const missingCause = yield* Schema.decodeUnknownEffect(Schema.Struct({ reason: Schema.String }))(missing.cause);
+    expect(missingCause.reason).toMatch(/dependency party.registry/u);
+    const missingCapability = yield* Effect.flip(deriveActiveApplicationCompositionSnapshot(input));
+    expect(missingCapability.reason).toBe('invalid_observation');
+    const missingCapabilityCause = yield* Schema.decodeUnknownEffect(Schema.Struct({ reason: Schema.String }))(
+      missingCapability.cause,
+    );
+    expect(missingCapabilityCause.reason).toMatch(/Core capability/u);
+  }),
+);

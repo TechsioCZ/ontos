@@ -45,6 +45,8 @@ import {
 } from '../../src/services/privacy-notice-presentation.service.ts';
 import type { NoticeAcknowledgementRepository } from '../../src/persistence/notice-provision-postgres-repository.ts';
 
+import { privacyRegistration } from '../../vertical.registration.ts';
+
 const now = '2026-10-20T12:00:00.000Z';
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const scope: OperationalScope = {
@@ -486,6 +488,7 @@ it.effect(
       reads.length = 0;
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: privacyRegistration,
         services: [
           bindActionTestServices(recordNoticeProvisionAction, {
             authority: channel,
@@ -562,6 +565,7 @@ it.effect('the real acknowledgement Action commits the actual read metadata with
     const presented = yield* services.present(target);
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
+      ownerRegistration: privacyRegistration,
       services: [bindActionTestServices(acknowledgePrivacyNoticeAction, services)],
     });
     const payload = { acknowledged: true as const, presentationReceipt: Redacted.value(presented.presentationReceipt) };
@@ -636,6 +640,7 @@ it.effect('the real acknowledgement Action commits the actual read metadata with
     expect(JSON.stringify(commits.map(({ evidence }) => evidence.dataAccessEvents))).not.toContain(notice.wording);
     const rejectingHarness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
+      ownerRegistration: privacyRegistration,
       services: [
         bindActionTestServices(acknowledgePrivacyNoticeAction, {
           acknowledge: (received, actionInvocationId) =>

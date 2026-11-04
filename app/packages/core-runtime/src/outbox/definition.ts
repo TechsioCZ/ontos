@@ -131,6 +131,10 @@ export const extractOutboxWorkerSubscriptions = (
       .toSorted((left, right) => left.workerKey.localeCompare(right.workerKey)),
   );
 
+/** Core-private execution validation; not part of the public package surface. */
+export const isOutboxWorkerRegistration = <Value>(value: Value): value is Value & AnyOutboxWorkerRegistration =>
+  Schema.is(Schema.instanceOf(OutboxWorkerRegistrationValue))(value);
+
 export type OutboxWorkerRequirements<Registration extends AnyOutboxWorkerRegistration> =
   Registration extends OutboxWorkerRegistration<
     Schema.ConstraintDecoder<unknown>,

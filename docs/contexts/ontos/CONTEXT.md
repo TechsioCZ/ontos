@@ -110,6 +110,26 @@ invisible forks are forbidden.
 **Build Revision** — Immutable source and artifact identity used for compatibility, canary, audit,
 and rollback. It is not a customer-selectable product version.
 
+**Public Operation Contract** — One owner's declared public operation identity and supported
+version. Its compatibility claim is distinct from the serialized deployment-contract format,
+artifact digest and Build Revision. Equal document formats do not establish operation compatibility;
+a different build alone does not create a new business owner or Permission target.
+
+**Intrinsic Module Requirement** — Required compatible capability that belongs to installation,
+activation and the module's governed execution closure. These requirements form the dependency DAG;
+reciprocal calls made by separate business operations do not themselves form an intrinsic cycle.
+
+**Operation Fact Requirement** — An owner-authored obligation to establish a fact when a particular
+operation or its real business branch needs it. The owner defines the condition, supported public
+contract or accepted owner-issued proof, and required evidence. A condition that does not apply is
+different from an applicable condition whose facts cannot be proved. Neither a caller flag nor a
+provider outage can waive the latter.
+
+**Composition Membership** — Presence in one authoritative Application Composition revision. It is
+separate from source implementation, Tenant module state, entrypoint availability and Permission.
+Absence from that composition alone proves neither absence of code nor extinction of historical
+business obligations.
+
 **OntOS Module Manifest** — Effect Schema-defined public module contract that exposes safe module
 semantics while excluding private tables, migrations, handlers, registrations, routes, fixtures,
 and tests. The exact current and target fields are owned by app-local manifest guidance.

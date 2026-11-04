@@ -7,6 +7,7 @@ import { expect, it } from 'effect-rstest';
 
 import { invoiceRecipientResolutionRead } from '../../src/api/invoice-recipient-resolution.read.ts';
 import { deliveryDestinationResolutionRead } from '../../src/api/delivery-destination-resolution.read.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -164,6 +165,7 @@ it.layer(NodeCrypto.layer)('purchase resolution conditional authority', (suite) 
             executeOwnerQuery: () => Effect.die('Unexpected owner SQL before missing Current evidence'),
             operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-19T10:00:00.000Z')),
             ownerAuthorizationDecision: 'allowed',
+            ownerRegistration: commerceCustomerContextRegistration,
             permissionDecision: 'allowed',
             scope,
           });
@@ -203,6 +205,7 @@ it.layer(NodeCrypto.layer)('purchase resolution conditional authority', (suite) 
               executeOwnerQuery: () => Effect.die('Denied plan must not read owner SQL'),
               operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-19T10:00:00.000Z')),
               ownerAuthorizationDecision: 'allowed',
+              ownerRegistration: commerceCustomerContextRegistration,
               permissionDecision: 'allowed',
               scope,
             });
@@ -232,6 +235,7 @@ it.layer(NodeCrypto.layer)('purchase resolution conditional authority', (suite) 
             executeOwnerQuery: () => Effect.die('Denied business plan must not read owner SQL'),
             operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-19T10:00:00.000Z')),
             ownerAuthorizationDecision: 'allowed',
+            ownerRegistration: commerceCustomerContextRegistration,
             permissionDecision: 'allowed',
             scope,
           });

@@ -1,9 +1,10 @@
+import { taxRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
   makeActionRuntimeLive,
 } from '@app/core-runtime';
@@ -87,20 +88,26 @@ const readRuntimeDependenciesLive = Layer.mergeAll(
   moduleEntrypointGatewayLive,
   operationalScopeResolverLive,
 );
-const readRuntimeLive = ReadRuntimeLive.pipe(
-  Layer.provide(readRuntimeDependenciesLive),
-  Layer.provide(DatabaseConfigLive),
-);
+
 /** Read runtime bound by generated governed HTTP handlers mounted in the slot below. */
-export const governedReadRuntimeLive = readRuntimeLive;
 const compositionHttpClientLive = FetchHttpClient.layer.pipe(
   Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
 );
 const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(compositionHttpClientLive));
-const actionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(compositionSourceLive),
+);
+const readRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, taxRegistration).pipe(
+  Layer.provide(readRuntimeDependenciesLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(activeApplicationCompositionLive),
+);
+
+export const governedReadRuntimeLive = readRuntimeLive;
+const actionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, taxRegistration).pipe(
   Layer.provide(
     Layer.mergeAll(
-      ActiveApplicationCompositionConfigLive.pipe(Layer.provide(compositionSourceLive)),
+      activeApplicationCompositionLive,
       CorePersistenceLive,
       ActionRepositoryLive,
       ActionPermissionLive,

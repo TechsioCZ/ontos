@@ -6,6 +6,7 @@ import type {
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import {
+  requireModuleOperation,
   OperationContextUnavailable,
   ReadHandlerUnavailable,
   ReadPermissionDenied,
@@ -25,7 +26,7 @@ import type {
   PaymentTermDefinitionSnapshot,
   PaymentTermReference,
 } from '../../shared/domain/payment-term-contracts.ts';
-import type { PaymentTermsDependencyUnavailable } from '../../shared/domain/payment-term-errors.ts';
+import { PaymentTermsDependencyUnavailable } from '../../shared/domain/payment-term-errors.ts';
 import { resolveGuestPaymentTerms } from '../../shared/domain/payment-terms.ts';
 import type { PaymentTermsPolicyDecision, PaymentTermsPolicyResolution } from '../../shared/domain/payment-terms.ts';
 import { customerCommercePaymentTermsPolicyResolver } from '../integrations/customer-commerce-payment-terms-policy.ts';
@@ -169,7 +170,26 @@ export const makeGuestPaymentTermsResolutionServices = Effect.fn('GuestPaymentTe
       legalEntityId,
       requestCorrelation: scope.correlationId,
     });
-    // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Deterministic owner-port construction; neither constructor performs the governed read.
+    const requiredCatalog: typeof catalog = {
+      resolveDefinitions: (requests) =>
+        (requests.length === 0
+          ? Effect.void
+          : requireModuleOperation('commerce.customer-context.requirement.guest-payment-terms-resolution-definitions')
+        ).pipe(
+          Effect.mapError((cause) =>
+            Object.defineProperty(
+              new PaymentTermsDependencyUnavailable({
+                code: 'payment_terms_dependency_unavailable',
+                dependency: 'PAYMENT_TERM_CATALOG',
+                reason: 'Required Payment Term Catalog operation is unavailable',
+              }),
+              'cause',
+              { configurable: true, value: cause },
+            ),
+          ),
+          Effect.flatMap(() => catalog.resolveDefinitions(requests)),
+        ),
+    };
     const policyService = yield* customerCommercePolicyAdministrationServiceFactory(
       _transaction,
       scope,
@@ -186,7 +206,7 @@ export const makeGuestPaymentTermsResolutionServices = Effect.fn('GuestPaymentTe
     return {
       currentInstant: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
       resolveDefinitions: (references, at) =>
-        catalog.resolveDefinitions(references.map((paymentTermRef) => ({ at, paymentTermRef }))),
+        requiredCatalog.resolveDefinitions(references.map((paymentTermRef) => ({ at, paymentTermRef }))),
       resolvePolicy: policy.resolve,
     } satisfies GuestPaymentTermsResolutionServices;
   },

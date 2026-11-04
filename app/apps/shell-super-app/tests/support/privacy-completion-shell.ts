@@ -248,7 +248,9 @@ const serve = Effect.scoped(
           },
         }).pipe(
           Effect.provideContext(fixtureContext),
-          Effect.provideService(InstalledModuleCatalogService, { load: Effect.succeed(catalog) }),
+          Effect.provideService(InstalledModuleCatalogService, {
+            loadForRevision: (_compositionRevision) => Effect.succeed(catalog),
+          }),
         );
       });
     const changePartyRead = (operation: 'grant' | 'revoke') =>

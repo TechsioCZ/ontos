@@ -1043,6 +1043,108 @@ const withNodeCryptoImport = (content: string, vertical: OntosVerticalMetadata):
   return content.replace(ASSEMBLER_IMPORT, `${NODE_CRYPTO_IMPORT}\n${ASSEMBLER_IMPORT}`);
 };
 
+const addCanonicalActionRuntime = (content: string, vertical: OntosVerticalMetadata): string => {
+  let nextContent = content;
+  if (!nextContent.includes('const governedActionRuntimeLive =')) {
+    let boundReadRuntime =
+      /GovernedMakeReadRuntimeLive\(\s*governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)\.pipe\(/u.test(
+        nextContent,
+      );
+    if (!boundReadRuntime && nextContent.includes('const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(')) {
+      nextContent = nextContent
+        .replace(
+          '  ReadRuntimeLive as GovernedReadRuntimeLive,',
+          '  makeReadRuntimeLive as GovernedMakeReadRuntimeLive,',
+        )
+        .replace(
+          'const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(',
+          'const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, governedOwnerRegistration).pipe(',
+        );
+      nextContent = `import { ${toCamelCase(vertical.slug)}Registration as governedOwnerRegistration } from '../vertical.registration.ts';\nimport { ultramodernDeliveryUnit as governedActionDeliveryUnit } from '../shared/ultramodern-build.ts';\n${nextContent}`;
+      boundReadRuntime = true;
+    }
+    if (boundReadRuntime && !nextContent.includes('const governedActiveApplicationCompositionLive =')) {
+      const canonicalRead =
+        /^const governedReadRuntimeLive\s*=\s*GovernedMakeReadRuntimeLive\(\s*governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)\.pipe\(\s*GovernedReadLayer\.provide\(governedReadRuntimeDependenciesLive\),?\s*\);/mu;
+      const existingRead = canonicalRead.exec(nextContent);
+      const handlersAnchor = 'export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(';
+      if (existingRead === null || nextContent.split(handlersAnchor).length !== 2) {
+        return raiseScaffoldFailure(`vertical ${vertical.slug} lacks the canonical owner Read authority upgrade seam`);
+      }
+      nextContent = nextContent.replace(existingRead[0], '').replace(
+        handlersAnchor,
+        `const governedActiveApplicationCompositionLive = GovernedApplicationCompositionConfigLive.pipe(
+  GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
+);
+const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, governedOwnerRegistration).pipe(
+  GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
+  GovernedReadLayer.provide(governedActiveApplicationCompositionLive),
+);
+
+${handlersAnchor}`,
+      );
+    }
+    const readRuntimeImport = boundReadRuntime
+      ? '  makeReadRuntimeLive as GovernedMakeReadRuntimeLive,'
+      : '  ReadRuntimeLive as GovernedReadRuntimeLive,';
+    const gatewayImport = '  ModuleEntrypointGatewayLive as GovernedModuleEntrypointGatewayLive,';
+    const compositionSourceImport =
+      "import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';";
+    const handlersDefinition = 'export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(';
+    for (const required of [readRuntimeImport, gatewayImport, compositionSourceImport, handlersDefinition]) {
+      if (nextContent.split(required).length !== 2) {
+        return raiseScaffoldFailure(
+          `vertical ${vertical.slug} API root lacks the canonical Action runtime composition anchor`,
+        );
+      }
+    }
+    const markerImport = "import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';";
+    const deliveryImport =
+      "import { ultramodernDeliveryUnit as governedActionDeliveryUnit } from '../shared/ultramodern-build.ts';";
+    if (boundReadRuntime) {
+      // The canonical owner-bound Read root already imports both deployment and registration.
+    } else if (nextContent.includes(markerImport)) {
+      nextContent = nextContent.replace(
+        markerImport,
+        "import { ultramodernApiMarker, ultramodernDeliveryUnit as governedActionDeliveryUnit } from '../shared/ultramodern-build.ts';",
+      );
+    } else if (nextContent.includes("from '../shared/ultramodern-build.ts'")) {
+      return raiseScaffoldFailure(`vertical ${vertical.slug} API root lacks the canonical deployment identity import`);
+    } else {
+      nextContent = `${deliveryImport}\n${nextContent}`;
+    }
+    nextContent = nextContent
+      .replace(readRuntimeImport, `${readRuntimeImport}\n  makeActionRuntimeLive as GovernedMakeActionRuntimeLive,`)
+      .replace(
+        gatewayImport,
+        `  ActionPermissionLive as GovernedActionPermissionLive,\n  ActionRepositoryLive as GovernedActionRepositoryLive,\n${gatewayImport}`,
+      )
+      .replace(
+        compositionSourceImport,
+        /\bActiveApplicationCompositionConfigLive\s+as\s+GovernedApplicationCompositionConfigLive\b/u.test(nextContent)
+          ? compositionSourceImport
+          : `import { ActiveApplicationCompositionConfigLive as GovernedApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';\n${compositionSourceImport}`,
+      )
+      .replace(
+        handlersDefinition,
+        `const governedActionRuntimeLive = GovernedMakeActionRuntimeLive(governedActionDeliveryUnit${boundReadRuntime ? ', governedOwnerRegistration' : ''}).pipe(
+    GovernedReadLayer.provide(
+      GovernedReadLayer.mergeAll(
+        governedReadRuntimeDependenciesLive,
+        governedModuleStateGateLive,
+        GovernedActionRepositoryLive,
+        GovernedActionPermissionLive,
+        ${boundReadRuntime ? 'governedActiveApplicationCompositionLive' : 'GovernedApplicationCompositionConfigLive'},
+      ),
+    ),
+  );
+
+  ${handlersDefinition}`,
+      );
+  }
+  return nextContent;
+};
+
 const patchCanonicalActionRuntime = (content: string, vertical: OntosVerticalMetadata): string => {
   let nextContent = content;
   // module-contract roots assemble governed Reads directly, rather than exposing the legacy runtime argument tuple.
@@ -1091,61 +1193,7 @@ const patchCanonicalActionRuntime = (content: string, vertical: OntosVerticalMet
     ) {
       return raiseScaffoldFailure(`vertical ${vertical.slug} API root has unsupported Action runtime support content`);
     }
-    if (!nextContent.includes('const governedActionRuntimeLive =')) {
-      const readRuntimeImport = '  ReadRuntimeLive as GovernedReadRuntimeLive,';
-      const gatewayImport = '  ModuleEntrypointGatewayLive as GovernedModuleEntrypointGatewayLive,';
-      const compositionSourceImport =
-        "import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';";
-      const handlersDefinition = 'export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(';
-      for (const required of [readRuntimeImport, gatewayImport, compositionSourceImport, handlersDefinition]) {
-        if (nextContent.split(required).length !== 2) {
-          return raiseScaffoldFailure(
-            `vertical ${vertical.slug} API root lacks the canonical Action runtime composition anchor`,
-          );
-        }
-      }
-      const markerImport = "import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';";
-      const deliveryImport =
-        "import { ultramodernDeliveryUnit as governedActionDeliveryUnit } from '../shared/ultramodern-build.ts';";
-      if (nextContent.includes(markerImport)) {
-        nextContent = nextContent.replace(
-          markerImport,
-          "import { ultramodernApiMarker, ultramodernDeliveryUnit as governedActionDeliveryUnit } from '../shared/ultramodern-build.ts';",
-        );
-      } else if (nextContent.includes("from '../shared/ultramodern-build.ts'")) {
-        return raiseScaffoldFailure(
-          `vertical ${vertical.slug} API root lacks the canonical deployment identity import`,
-        );
-      } else {
-        nextContent = `${deliveryImport}\n${nextContent}`;
-      }
-      nextContent = nextContent
-        .replace(readRuntimeImport, `${readRuntimeImport}\n  makeActionRuntimeLive as GovernedMakeActionRuntimeLive,`)
-        .replace(
-          gatewayImport,
-          `  ActionPermissionLive as GovernedActionPermissionLive,\n  ActionRepositoryLive as GovernedActionRepositoryLive,\n${gatewayImport}`,
-        )
-        .replace(
-          compositionSourceImport,
-          `import { ActiveApplicationCompositionConfigLive as GovernedApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';\n${compositionSourceImport}`,
-        )
-        .replace(
-          handlersDefinition,
-          `const governedActionRuntimeLive = GovernedMakeActionRuntimeLive(governedActionDeliveryUnit).pipe(
-    GovernedReadLayer.provide(
-      GovernedReadLayer.mergeAll(
-        governedReadRuntimeDependenciesLive,
-        governedModuleStateGateLive,
-        GovernedActionRepositoryLive,
-        GovernedActionPermissionLive,
-        GovernedApplicationCompositionConfigLive,
-      ),
-    ),
-  );
-
-  ${handlersDefinition}`,
-        );
-    }
+    nextContent = addCanonicalActionRuntime(nextContent, vertical);
     // The complete parsed slots were validated above; every addition below is a fixed canonical owner entry.
     for (const supportImport of supportImports) {
       if (!recognizedImports.includes(supportImport)) {
