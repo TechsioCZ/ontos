@@ -13,12 +13,19 @@ import { useCart } from "./cart-provider";
 const validPurchaseQuantity = (quantity: number, minimum: number) =>
   Number.isFinite(quantity) && quantity >= Math.max(0.001, minimum) && quantity <= 1_000_000;
 
-const purchaseGuidance = (d: Dictionary, selectionRequired: boolean, purchasable: boolean) => {
-  if (selectionRequired) {
-    return d.selectVariant;
-  }
-  return purchasable ? d.shopping.unverified : d.commerceUnavailable;
-};
+const purchaseGuidance = (d: Dictionary, purchasable: boolean) =>
+  purchasable ? null : d.commerceUnavailable;
+
+const canPurchaseSelection = (
+  { current, selectionRequired }: ReturnType<typeof selectProductDetail>,
+  cart: ReturnType<typeof useCart>,
+) =>
+  !selectionRequired &&
+  current.priceMinor !== null &&
+  (current.stock === "available" || current.stock === "limited") &&
+  cart?.scope?.currency === current.currency &&
+  cart.loaded &&
+  !cart.error;
 
 export const ProductPurchase = ({
   dictionary: d,
@@ -39,15 +46,11 @@ export const ProductPurchase = ({
   const quantity = draft.key === selectionKey ? draft.value : String(current.minimumQuantity);
   const parsedQuantity = Number(quantity);
   const invalidQuantity = !validPurchaseQuantity(parsedQuantity, current.minimumQuantity);
-  const purchasable =
-    !selectionRequired &&
-    current.priceMinor !== null &&
-    (current.stock === "available" || current.stock === "limited") &&
-    cart?.scope?.currency === current.currency &&
-    cart.loaded &&
-    !cart.error;
+  const purchasable = canPurchaseSelection(selection, cart);
   const showQuantityError = purchasable && invalidQuantity;
   const purchaseDisabled = !purchasable || invalidQuantity;
+  const guidance = purchaseGuidance(d, purchasable);
+  const guidanceId = guidance === null ? undefined : "purchase-unavailable";
   const addToCart = () => {
     if (!purchasable || invalidQuantity || current.priceMinor === null || cart === null) {
       return;
@@ -65,6 +68,9 @@ export const ProductPurchase = ({
     };
     const added =
       variant === undefined ? cart.add(entry) : cart.add({ ...entry, variantId: variant.id });
+    if (added) {
+      setDraft({ key: selectionKey, value: String(current.minimumQuantity) });
+    }
     const variantLabel = variant === undefined ? "" : ` – ${variant.name}`;
     toaster.create({
       description: added ? `${parsedQuantity} × ${product.name}${variantLabel}` : undefined,
@@ -73,6 +79,22 @@ export const ProductPurchase = ({
       type: added ? "success" : "error",
     });
   };
+  if (selectionRequired) {
+    return (
+      <>
+        <div className="hidden md:block">
+          <Button disabled size="md" theme="solid" variant="primary">
+            {d.selectVariantAction}
+          </Button>
+        </div>
+        <div className="md:hidden">
+          <Button block disabled size="md" theme="solid" variant="primary">
+            {d.selectVariantAction}
+          </Button>
+        </div>
+      </>
+    );
+  }
   return (
     <div>
       <div className="hidden items-center gap-2 md:flex">
@@ -101,7 +123,11 @@ export const ProductPurchase = ({
             <div className="w-12 shrink-0">
               <NumericInput.Control>
                 <NumericInput.Input
-                  aria-describedby="purchase-unavailable purchase-quantity-error"
+                  aria-describedby={
+                    guidanceId === undefined
+                      ? "purchase-quantity-error"
+                      : `${guidanceId} purchase-quantity-error`
+                  }
                   aria-label={`${d.quantity} (${current.unit})`}
                 />
               </NumericInput.Control>
@@ -116,7 +142,7 @@ export const ProductPurchase = ({
           </NumericInput>
         </div>
         <Button
-          aria-describedby="purchase-unavailable"
+          aria-describedby={guidanceId}
           density="compact"
           disabled={purchaseDisabled}
           onClick={addToCart}
@@ -128,25 +154,27 @@ export const ProductPurchase = ({
         </Button>
       </div>
       <div className="flex flex-col gap-4 md:hidden">
-        <QuantityField
-          disabled={!purchasable}
-          error={showQuantityError ? d.shopping.invalidQuantity : undefined}
-          helperText={`${d.minimumQuantity}: ${current.minimumQuantity} ${current.unit}`}
-          label={d.quantity}
-          locale={locale}
-          max={1_000_000}
-          min={current.minimumQuantity}
-          onValueChange={({ value }) => setDraft({ key: selectionKey, value })}
-          size="md"
-          translations={{
-            decrementLabel: d.shopping.decreaseQuantity,
-            incrementLabel: d.shopping.increaseQuantity,
-          }}
-          unitLabel={current.unit}
-          value={quantity}
-        />
+        {current.stock !== "unavailable" && (
+          <QuantityField
+            disabled={!purchasable}
+            error={showQuantityError ? d.shopping.invalidQuantity : undefined}
+            helperText={`${d.minimumQuantity}: ${current.minimumQuantity} ${current.unit}`}
+            label={d.quantity}
+            locale={locale}
+            max={1_000_000}
+            min={current.minimumQuantity}
+            onValueChange={({ value }) => setDraft({ key: selectionKey, value })}
+            size="md"
+            translations={{
+              decrementLabel: d.shopping.decreaseQuantity,
+              incrementLabel: d.shopping.increaseQuantity,
+            }}
+            unitLabel={current.unit}
+            value={quantity}
+          />
+        )}
         <Button
-          aria-describedby="purchase-unavailable"
+          aria-describedby={guidanceId}
           block
           disabled={purchaseDisabled}
           onClick={addToCart}
@@ -154,15 +182,17 @@ export const ProductPurchase = ({
           theme="solid"
           variant="primary"
         >
-          {d.addToCartDetail}
+          {current.stock === "unavailable" ? d.stock.unavailable : d.addToCartDetail}
         </Button>
       </div>
       <div className="hidden md:block" id="purchase-quantity-error">
         {showQuantityError && <StatusText status="error">{d.shopping.invalidQuantity}</StatusText>}
       </div>
-      <p className="mt-2 text-sm text-fg-secondary" id="purchase-unavailable">
-        {purchaseGuidance(d, selectionRequired, purchasable)}
-      </p>
+      {guidance !== null && (
+        <p className="mt-2 text-sm text-fg-secondary" id="purchase-unavailable">
+          {guidance}
+        </p>
+      )}
     </div>
   );
 };
