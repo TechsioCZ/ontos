@@ -1,4 +1,5 @@
 import { Schema, Struct } from "effect";
+import { isStorefrontMediaPath, productMediaPath } from "./media-path";
 
 const optionalNumber = Schema.optionalKey(Schema.Number);
 const optionalString = Schema.optionalKey(Schema.String);
@@ -149,6 +150,9 @@ export const publicImage = (
   if (source === undefined || source.length === 0) {
     return null;
   }
+  if (isStorefrontMediaPath(source)) {
+    return source;
+  }
   try {
     const url = new URL(source);
     return url.protocol === "https:" && !url.username && !url.password && hosts.includes(url.host)
@@ -157,6 +161,16 @@ export const publicImage = (
   } catch {
     return null;
   }
+};
+
+/** A product photo: an uploaded media reference is served from this storefront, anything else must be public HTTPS. */
+const imageOf = (
+  productId: string,
+  source: string | undefined,
+  hosts: readonly string[],
+): string | null => {
+  const uploaded = source === undefined ? undefined : productMediaPath(productId, source);
+  return uploaded ?? publicImage(source, hosts);
 };
 
 type OwnerProduct = (typeof CatalogResponseSchema.Type.products)[number];
@@ -260,7 +274,7 @@ const variantDetailsOf = (
     variants.push({
       attributes: variant.attributes,
       id: variant.id,
-      image: publicImage(variant.imageSrc, hosts),
+      image: imageOf(product.id, variant.imageSrc, hosts),
       minimumQuantity: variant.minimumQuantity ?? product.minimumQuantity ?? 1,
       name: variant.name,
       parameters: variant.parameters ?? [],
@@ -293,7 +307,9 @@ const detailOf = (
     imageAlt: product.imageAlt ?? product.name,
     images: [
       ...new Set(
-        gallery.map((source) => publicImage(source, hosts)).filter((source) => source !== null),
+        gallery
+          .map((source) => imageOf(product.id, source, hosts))
+          .filter((source) => source !== null),
       ),
     ],
     minimumQuantity:
@@ -327,7 +343,8 @@ export const projectCatalog = (
       currency: body.market.currency,
       description: product.description ?? "",
       id: product.id,
-      image: publicImage(
+      image: imageOf(
+        product.id,
         product.gallery === undefined ? product.imageSrc : product.gallery[0],
         hosts,
       ),

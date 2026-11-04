@@ -31,9 +31,16 @@ const LocaleLayout = async ({
     .split(",")
     .map((host) => host.trim())
     .filter(Boolean);
+  const demoNotice =
+    locale === "en"
+      ? "Sales demo: nothing is paid or delivered. Orders are demo-only."
+      : "Demo prodejní ukázka: nic se neplatí ani nedoručuje. Objednávky jsou pouze ukázkové.";
   return (
     <CartProvider imageHosts={imageHosts} key={JSON.stringify(scope)} scope={scope}>
       <PortalSessionProvider>
+        <p className="bg-black px-4 py-2 text-center text-sm font-medium text-white" role="note">
+          {demoNotice}
+        </p>
         <StorefrontShell
           categories={result.state === "ready" ? result.catalog.categories : []}
           dictionary={dictionary}

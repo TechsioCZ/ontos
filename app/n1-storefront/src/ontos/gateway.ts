@@ -6,6 +6,7 @@ import type { StorefrontConfiguration } from "./config";
 
 type OwnerReadQuery =
   | { readonly at: string }
+  | { readonly image: string; readonly productId: string; readonly rendition: "full" | "thumbnail" }
   | {
       readonly view: {
         readonly storefront: true;
@@ -68,7 +69,7 @@ const GatewayContextSchema = Schema.Struct({
 export const readOwner = <A, I>(
   config: StorefrontConfiguration,
   audience: "merchandise" | "commerce-market-catalog",
-  readName: "records" | "current-market-catalog",
+  readName: "records" | "current-market-catalog" | "media",
   query: OwnerReadQuery,
   schema: Schema.Codec<A, I>,
 ) =>
