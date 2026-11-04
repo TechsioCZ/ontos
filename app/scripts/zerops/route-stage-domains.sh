@@ -23,6 +23,7 @@ z_auth=(-H "Authorization: Bearer $ZEROPS_TOKEN" -H 'content-type: application/j
 ipv6="$(curl -fsS "${z_auth[@]}" "$zerops/project/$ZEROPS_PROJECT_ID" | jq -er '.publicIpV6')"
 routings="$(curl -fsS "${z_auth[@]}" "$zerops/project/$ZEROPS_PROJECT_ID/public-http-routing?limit=100&offset=0")"
 
+routing_created=0
 while (($# >= 3)); do
   host="$1" service="$2" port="$3"
   shift 3
@@ -54,6 +55,7 @@ while (($# >= 3)); do
       curl -sS -o "$work_dir/routing-response" -w '%{http_code}' -X POST "${z_auth[@]}" \
         "$zerops/project/$ZEROPS_PROJECT_ID/public-http-routing" -d @-)"
     if [[ "$status" == 2* ]]; then
+      routing_created=1
       echo "$host routed to Zerops service $service:$port"
     else
       # A 400 here is usually the routing that already exists: re-read the list before failing.
@@ -90,5 +92,11 @@ while (($# >= 3)); do
   echo "$host → A $ZEROPS_SHARED_IPV4, AAAA $ipv6 (DNS only)"
 done
 
-curl -fsS -X PUT "${z_auth[@]}" "$zerops/project/$ZEROPS_PROJECT_ID/sync-public-http-routing" -d '{}' >/dev/null
-echo 'Zerops public HTTP routing synchronized'
+# The project sync publishes new routings to the edge. It is needed only after a routing was created: an unchanged
+# project answers it with 400, which must not fail an idempotent run.
+if [[ "$routing_created" == 1 ]]; then
+  curl -fsS -X PUT "${z_auth[@]}" "$zerops/project/$ZEROPS_PROJECT_ID/sync-public-http-routing" -d '{}' >/dev/null
+  echo 'Zerops public HTTP routing synchronized'
+else
+  echo 'Zerops public HTTP routing unchanged; no sync needed'
+fi
