@@ -155,8 +155,9 @@ const seedFixture = (admin: Client) =>
       );
       yield* query(
         admin,
-        `insert into core.search_index_entries (tenant_id, source_module_key, source_resource_type, source_resource_id, title, body_text)
-         values ($1, 'party.registry', 'party', $2, 'Boundary Org', 'Boundary Org')`,
+        `insert into core.search_index_entries (tenant_id, source_module_key, source_resource_type, source_resource_id, title, body_text, facets_json)
+         values ($1, 'party.registry', 'party', $2, 'Boundary Org', 'boundary org',
+           '{"archived":false,"facets":[],"metadata":[],"schemaVersion":"2","searchableText":[]}'::jsonb)`,
         [tenantId, partyId],
       );
     }

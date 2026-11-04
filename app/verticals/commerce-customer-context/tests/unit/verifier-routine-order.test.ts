@@ -47,9 +47,24 @@ it('accepts the complete SQL-ordered runtime routine set through the verifier co
   expect(source).toContain('array_agg(routine.proname::text order by routine.proname)');
   expect(source).toContain('!sameStrings(row.runtime_routines, EXPECTED_RUNTIME_ROUTINES)');
   expect(source).toContain('row.routine_count !== EXPECTED_RUNTIME_ROUTINES.length');
-  expect(expected).toHaveLength(130);
-  expect(new Set(expected).size).toBe(130);
+  expect(expected).toHaveLength(131);
+  expect(new Set(expected).size).toBe(131);
   expect(compare(sqlOrdered)).toBe(true);
+});
+
+it('includes the exact original enrollment read granted by its migration', () => {
+  const migration = readFileSync(
+    new URL('../../drizzle/20261103120000_original-enrollment-request-read/migration.sql', import.meta.url),
+    'utf-8',
+  );
+  const signature = '"commerce_customer_context"."read_original_portal_enrollment"(uuid, uuid, uuid, text, text)';
+  expect(expected).toContain('read_original_portal_enrollment');
+  expect(migration).toContain('CREATE FUNCTION "commerce_customer_context"."read_original_portal_enrollment"(');
+  expect(migration).toContain(
+    'STABLE\nSECURITY DEFINER\nSET search_path = pg_catalog, commerce_customer_context, pg_temp',
+  );
+  expect(migration).toContain(`REVOKE ALL ON FUNCTION ${signature} FROM PUBLIC;`);
+  expect(migration).toContain(`GRANT EXECUTE ON FUNCTION ${signature} TO "ontos_runtime";`);
 });
 
 it('rejects missing, duplicate, unexpected, and substituted runtime routines', () => {
