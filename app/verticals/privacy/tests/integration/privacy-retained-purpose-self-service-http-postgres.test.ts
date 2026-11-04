@@ -25,7 +25,8 @@ import {
   ReadPrincipalBindingPayloadSchema,
 } from '@app/core-runtime/auth/external-identity-contracts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makeLiveOperationFixture, makeLiveOperationFixtureRuntime } from '@app/core-runtime/testing/actions';
+import { privacyRegistration } from '../../vertical.registration.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { CreatePartyPayloadSchema, partyRegistryApiContract } from '@app/party-registry/api';
@@ -167,11 +168,7 @@ import { NoticeChannelDeliveryAuthorityForAcknowledgementsLive } from '../../src
 import { createEffectBffTestHandler, defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import type { RetainedConsentAccountTransport } from '../support/privacy-retained-purpose-self-service-http.ts';
 
-import {
-  makeDsrObligationNative,
-  privacyDsrOwnerRuntimeLive,
-  readPrivacyFixtureShellObservation,
-} from '../support/dsr-obligation-native.ts';
+import { makeDsrObligationNative, readPrivacyFixtureShellObservation } from '../support/dsr-obligation-native.ts';
 
 // Real public retained-V1 consent lifecycle, using one isolated enrolled account and actual owner services.
 class RetainedAccountNativeError extends Schema.TaggedError<RetainedAccountNativeError>()(
@@ -2224,13 +2221,34 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   yield* Effect.gen(function* actualRetainedPurposeLifecycle() {
     // Select only real runtime services. The fixture's STAFF-only registry must not override
     // the receiving owner's reviewed canonical Commerce+STAFF registry at invocation time.
-    const ownerRuntime = privacyDsrOwnerRuntimeLive(admitted).pipe(
-      Layer.provide(fixture.layer),
+    const privacyOwner = yield* Effect.succeed(admitted.composition.modules).pipe(
+      Effect.map((modules) => modules.find(({ moduleId }) => moduleId === 'privacy.core')),
+      Effect.filterOrFail(
+        (owner) => owner !== undefined,
+        () => failed('privacy-owner-contract'),
+      ),
+    );
+    const privacyFixture = yield* Effect.acquireRelease(
+      makeLiveOperationFixtureRuntime({
+        applicationComposition: { load: Effect.succeed(admitted) },
+        configuration: fixture.runtimeHandoff.configuration,
+        expectedDeployment: privacyOwner.deployment,
+        handoff: fixture.runtimeHandoff,
+        ownerRegistration: privacyRegistration,
+        runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
+      }),
+      (value) => value.close().pipe(Effect.orDie),
+    );
+    const readLayer = Layer.effect(ReadRuntime, ReadRuntime).pipe(
+      Layer.provide(privacyFixture.layer),
       Layer.provide(NodeCrypto.layer),
       Layer.orDie,
     );
-    const readLayer = Layer.effect(ReadRuntime, ReadRuntime).pipe(Layer.provide(ownerRuntime));
-    const actionLayer = Layer.effect(ActionRuntime, ActionRuntime).pipe(Layer.provide(ownerRuntime));
+    const actionLayer = Layer.effect(ActionRuntime, ActionRuntime).pipe(
+      Layer.provide(privacyFixture.layer),
+      Layer.provide(NodeCrypto.layer),
+      Layer.orDie,
+    );
     const privacyRuntime: Parameters<typeof makePrivacyApiRuntime> = [readLayer, actionLayer, yield* makeRedemption()];
     const presentationConfiguration = {
       keyId: `retained-notice:${suffix}`,
@@ -2637,7 +2655,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     expect(yield* noticeFacts()).toEqual(noNoticeFacts);
     yield* Scope.close(unconfigured.scope, Exit.void);
 
-    fixture.faultNextTransaction('rollback');
+    privacyFixture.faultNextTransaction('rollback');
     const failedAck = yield* executeAcknowledgePrivacyNoticeWithAuthorization(
       { acknowledged: true, presentationReceipt: presentation.presentationReceipt },
       ...(yield* privacyTransport('account', `retained-ack-rollback:${suffix}`)),
@@ -2792,7 +2810,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       processingScopeRef: scopeRef,
       providedLanguage: notice.language,
     };
-    fixture.faultNextTransaction('rollback');
+    privacyFixture.faultNextTransaction('rollback');
     const failedProvision = yield* executeRecordNoticeProvisionWithAuthorization(
       provisionPayload,
       ...(yield* privacyTransport('account', `retained-provision-rollback:${suffix}`)),

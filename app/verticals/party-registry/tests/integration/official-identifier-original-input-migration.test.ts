@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { ReadRuntime, runAction, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
@@ -82,6 +83,7 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: snapshot.composition.revision,
+          ownerRegistration: partyRegistryBackendRegistration,
           runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
         }),
         (resource) => resource.close().pipe(Effect.orDie),

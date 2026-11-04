@@ -1831,6 +1831,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                     options.expectedDeployment,
                     input.registration,
                     principal,
+                    options.ownerRegistration,
                   ).pipe(Effect.mapError(unavailableActionComposition))
                 : undefined;
             const revision =

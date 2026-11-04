@@ -1,3 +1,8 @@
+import type { VerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
+import {
+  freshOutboxWorkerCompositionSnapshot,
+  makeOutboxWorkerComposition,
+} from '../support/outbox-worker-composition.ts';
 import type { ActiveApplicationCompositionServiceContract } from '../../src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
 import { requireModuleOperation } from '../../src/modules/module-operation-requirement.ts';
@@ -168,6 +173,7 @@ interface HarnessOptions {
   readonly compositionAuthority?: TestCompositionAuthority | 'missing';
   readonly compositionIsolation?: 'read committed' | 'repeatable read' | 'serializable';
   readonly createRecord?: ActionInvocationRecord;
+  readonly expectedDeployment?: ActionRuntimeOptions['expectedDeployment'];
   readonly failCompositionAuthorityLock?: boolean;
   readonly failTransactionTimestamp?: boolean;
   readonly legalEntityPermissionDecision?: PermissionDecision;
@@ -180,6 +186,7 @@ interface HarnessOptions {
   readonly onBusinessPermissionCheck?: () => void;
   readonly onResourcePermissionCheck?: () => void;
   readonly ownerAuthorizationOverlay?: OwnerAuthorizationOverlayService;
+  readonly ownerRegistration?: VerticalRuntimeRegistration;
   readonly permissionDecision?: ActionPermissionDecision;
   readonly permissionFailure?: boolean;
   readonly policyFinalizationFailure?: boolean;
@@ -591,6 +598,12 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   if (options.applicationComposition !== undefined) {
     runtimeOptions = { ...runtimeOptions, applicationComposition: options.applicationComposition };
   }
+  if (options.expectedDeployment !== undefined) {
+    runtimeOptions = { ...runtimeOptions, expectedDeployment: options.expectedDeployment };
+  }
+  if (options.ownerRegistration !== undefined) {
+    runtimeOptions = { ...runtimeOptions, ownerRegistration: options.ownerRegistration };
+  }
   if (options.omitCompositionRevisionResolver !== true) {
     runtimeOptions = {
       ...runtimeOptions,
@@ -603,7 +616,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   }
   const baseRuntime = makeActionRuntime(database, repository, permission, testOperationalScopeResolver, runtimeOptions);
   const runAction: typeof baseRuntime.runAction = (input) =>
-    options.omitOwnerRegistration === true
+    options.omitOwnerRegistration === true || options.ownerRegistration !== undefined
       ? baseRuntime.runAction(input)
       : makeActionRuntime(database, repository, permission, testOperationalScopeResolver, {
           ...runtimeOptions,
@@ -4946,6 +4959,99 @@ it.layer(NodeCrypto.layer)('Action post-attempt runtime', (suite) => {
       expect(Schema.is(ModuleOperationRequirementError)(failure)).toBe(true);
       expect(authorityLoads).toBe(0);
       expect(harness.flushed).toHaveLength(0);
+    }),
+  );
+});
+
+/** Synthetic registered host; the executed Action remains the exact production Core definition. */
+const registeredCoreActionHost = (moduleId: string, mismatchedProjection = false) => {
+  const base = makeModuleContractFixture({ appId: 'core-action-host', moduleId }).manifest;
+  const manifest = defineOntosModuleManifest({
+    ...base,
+    publicSurface: { ...base.publicSurface, actions: [], api: {}, components: {} },
+    requirements: {
+      coreCapabilities: mismatchedProjection ? [{ id: 'test.host.feature', version: '1' }] : [],
+      intrinsic: [],
+      operations: [],
+      schemaVersion: '1',
+    },
+  });
+  return defineVerticalRuntimeRegistration({ actions: [], manifest, outboxWorkers: [] });
+};
+
+const hostedCoreActionInput = () => ({
+  payload: {
+    checkpoint: 'stopped' as const,
+    originalPrincipalId: principal.principalId,
+    reason: 'Record the genuine Core Action through the registered test host',
+    sessionRef: 'better-auth-session:hosted-core-session',
+    targetPrincipalId: '00000000-0000-4000-8000-000000000099',
+  },
+  principal,
+  registration: recordSupportImpersonationAction,
+  transport: transport('genuine-hosted-core-action'),
+});
+
+it.layer(NodeCrypto.layer)('Core Actions hosted by genuine registered modules', (suite) => {
+  suite.effect('admits the exact Core Action through a genuine registered host and its pinned projection', () =>
+    Effect.gen(function* hostedCoreActionAdmission() {
+      const snapshot = yield* freshOutboxWorkerCompositionSnapshot(
+        makeOutboxWorkerComposition([
+          { appId: 'core-action-host', buildMarker: 'actual-host-build', moduleId: 'test.core-action-host.module' },
+        ]),
+      );
+      const harness = yield* makeHarness({
+        applicationComposition: { load: Effect.succeed(snapshot) },
+        compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
+        expectedDeployment: { appId: 'core-action-host', buildMarker: 'actual-host-build' },
+        ownerRegistration: registeredCoreActionHost('test.core-action-host.module'),
+      });
+      const result = yield* harness.runtime
+        .runAction(hostedCoreActionInput())
+        .pipe(providePrincipalManagementRepository);
+      expect(result).toEqual({ checkpoint: 'stopped', recorded: true });
+      expect(harness.permissionCounts().permissionCheckCount).toBe(1);
+      expect(harness.gateCounts().handlerResolutionCount).toBe(1);
+      expect(harness.flushed).toHaveLength(1);
+      expect(harness.compositionAuthority().lockCount).toBe(1);
+    }),
+  );
+
+  suite.effect('refuses wrong host builds, host projections and recreated Core Action keys', () =>
+    Effect.gen(function* hostedCoreActionRemainsExact() {
+      const snapshot = yield* freshOutboxWorkerCompositionSnapshot(
+        makeOutboxWorkerComposition([
+          { appId: 'core-action-host', buildMarker: 'actual-host-build', moduleId: 'test.core-action-host.module' },
+        ]),
+      );
+      let recreatedCalls = 0;
+      const recreated = defineAction({ ...recordSupportImpersonationAction.descriptor }, () => {
+        recreatedCalls += 1;
+        return Effect.succeed({ checkpoint: 'stopped' as const, recorded: true as const });
+      });
+      for (const control of ['wrong-host', 'wrong-build', 'wrong-projection', 'recreated-key'] as const) {
+        const harness = yield* makeHarness({
+          applicationComposition: { load: Effect.succeed(snapshot) },
+          compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
+          expectedDeployment: {
+            appId: 'core-action-host',
+            buildMarker: control === 'wrong-build' ? 'other-build' : 'actual-host-build',
+          },
+          ownerRegistration: registeredCoreActionHost(
+            control === 'wrong-host' ? 'test.other-host.module' : 'test.core-action-host.module',
+            control === 'wrong-projection',
+          ),
+        });
+        const input = hostedCoreActionInput();
+        const failure =
+          control === 'recreated-key'
+            ? yield* harness.runtime.runAction({ ...input, registration: recreated }).pipe(Effect.flip)
+            : yield* harness.runtime.runAction(input).pipe(Effect.flip);
+        expect(Schema.is(ActionTransactionError)(failure)).toBe(true);
+        expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+        expect(harness.flushed).toHaveLength(0);
+      }
+      expect(recreatedCalls).toBe(0);
     }),
   );
 });
