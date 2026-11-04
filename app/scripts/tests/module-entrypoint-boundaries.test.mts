@@ -1131,6 +1131,11 @@ it.live(
   () =>
     Effect.gen(function* privateEffectSearchHelpers() {
       const root = yield* makeFixture();
+      yield* write(
+        root,
+        `${INVENTORY_OWNER_PATH}/src/services/merchandise-store.ts`,
+        "import { Effect } from 'effect'; export const loadHead = Effect.fn('loadHead')(function* () { return yield* Effect.succeed(undefined); });",
+      );
       for (const [index, file] of [
         'facility-operations/src/search/search-read.ts',
         'merchandise/src/search/catalog-publication.ts',
@@ -1178,6 +1183,9 @@ it.live(
           helper.replace(PRIVATE_HELPER_RUNTIME_LOOKUP, "const runtime = yield* import('./provider.ts');"),
           helper.replace(PRIVATE_HELPER_RUNTIME_LOOKUP, "const runtime = require('./provider.ts');"),
           `${helper}\nconst eager = Schema.Struct({ value: loadProvider() });`,
+          `${helper}\nconst eager = Schema.is(Schema.String.check(Schema.makeFilter(() => { globalThis.executed = true; return true; })))('execute');`,
+          `${helper}\nexport const create = () => { const descriptor = {}; descriptor.entrypoint = native(); return descriptor; };`,
+          `${helper}\nexport const create = () => { const entry = {}; entry['entry' + 'pointKey'] = 'hidden'; return entry; };`,
           `${helper}\nconst eager = Schema.Struct({ [loadProvider()]: Schema.String });`,
           `${helper}\nconst alias = Effect; export const provider = alias.fn('provider')(() => true);`,
           `${helper}\nEffect = otherEffect;`,
@@ -1194,6 +1202,41 @@ it.live(
         GOVERNED_SOURCE_REJECTION,
       );
     }),
+);
+
+it.live('rejects native registration factories hidden behind owner service re-exports', () =>
+  Effect.gen(function* privateServiceProvenance() {
+    const root = yield* makeFixture();
+    yield* write(
+      root,
+      `${INVENTORY_OWNER_PATH}/src/services/native.ts`,
+      "export { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';",
+    );
+    yield* assertRejectedSources(
+      root,
+      PRIVATE_SEARCH_HELPER_FILE,
+      [
+        "import { Effect, Schema } from 'effect';\nexport const helper = Effect.fn('private.helper')(() => Effect.void);\nimport { defineRead, defineTenantModuleEntrypoint } from '../services/native.ts';\nexport const createRead = () => {\n const entry = Object.assign({access: 'read', authorization: {kind: 'context_permission', permission: 'module.access'}, moduleKey: 'inventory.stock', role: 'search'}, JSON.parse('{}'));\n entry.entrypointKey = 'inventory.stock.search.hidden';\n const descriptor = Object.assign({\n  accessKind: 'search', evidencePolicy: {captureMode: 'metadata_only', policyKey: 'inventory.stock.search.hidden.evidence.v1'},\n  inputSchema: Schema.Struct({query: Schema.String}), resultSchema: Schema.Array(Schema.String), legalEntityScope: 'required',\n  owningModuleKey: 'inventory.stock', permissionTarget: 'module', policies: [], readKey: 'inventory.stock.search.hidden',\n  resultAuthorization: {accessFiltering: 'legal_entity_scope', kind: 'owner-legal-entity-scope', requiredModuleAccess: true}, schemaVersion: '1'\n }, JSON.parse('{}'));\n descriptor.entrypoint = defineTenantModuleEntrypoint(entry);\n return defineRead(descriptor, {prepare: () => Effect.succeed({}), load: () => Effect.succeed([]), finish: () => Effect.succeed({result: [], evidence: {resultCount: 0}})}, () => Effect.succeed({}), () => ({kind: 'module', moduleId: 'inventory.stock'}));\n};",
+      ],
+      GOVERNED_SOURCE_REJECTION,
+    );
+    yield* write(
+      root,
+      `${INVENTORY_OWNER_PATH}/src/services/native.ts`,
+      "export { load as loadHead } from './deferred.ts';",
+    );
+    yield* write(
+      root,
+      `${INVENTORY_OWNER_PATH}/src/services/deferred.ts`,
+      "import { Effect } from 'effect'; export const load = Effect.fn('load')(function* () { return yield* Effect.void; });",
+    );
+    yield* write(
+      root,
+      PRIVATE_SEARCH_HELPER_FILE,
+      "import { Effect } from 'effect'; import { loadHead } from '../services/native.ts'; export const helper = Effect.fn('helper')(function* () { return yield* loadHead(); });",
+    );
+    yield* checkModuleEntrypointBoundaries(root);
+  }),
 );
 
 it.live('keeps private search failure factories owner-local and unpublished', () =>
@@ -1220,6 +1263,53 @@ it.live('keeps private search failure factories owner-local and unpublished', ()
     expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toMatch(
       /cross-vertical private imports.*gateway/u,
     );
+  }),
+);
+
+it.live('rejects private search publication through static and dynamic public barrels', () =>
+  Effect.gen(function* transitivePrivateSearchPublication() {
+    const root = yield* makeFixture();
+    yield* write(root, PRIVATE_SEARCH_HELPER_FILE, yield* readPrivateSearchHelper());
+    const publicBarrel = `${INVENTORY_OWNER_PATH}/shared/search.ts`;
+    yield* write(
+      root,
+      `${INVENTORY_OWNER_PATH}/package.json`,
+      JSON.stringify({
+        exports: { './catalog': './shared/search.ts' },
+        name: INVENTORY_PACKAGE_SPECIFIER,
+      }),
+    );
+    for (const source of [
+      "export { searchUnavailable } from '../src/search/search-unavailable.ts';",
+      "export const load = () => import('../src/search/search-unavailable.ts');",
+      "import { searchUnavailable } from '../src/search/search-unavailable.ts'; export const helper = searchUnavailable;",
+    ]) {
+      yield* write(root, publicBarrel, source);
+      expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toMatch(
+        /package exports must not publish private/u,
+      );
+    }
+    yield* write(root, publicBarrel, 'export const publicValue = true;');
+    yield* checkModuleEntrypointBoundaries(root);
+    const hostedWorker = `import { defineOutboxWorkerEntry } from '@app/core-runtime/outbox/worker';
+import { searchUnavailable } from '../src/search/search-unavailable.ts';
+export const worker = defineOutboxWorkerEntry({
+  claimOwnerPrefix: 'inventory-stock', expectedDeployment: {}, layer: searchUnavailable,
+  registrations: [], subscriptions: [],
+});`;
+    yield* write(root, publicBarrel, hostedWorker);
+    yield* checkModuleEntrypointBoundaries(root);
+    for (const source of [
+      `${hostedWorker}\nexport { searchUnavailable } from '../src/search/search-unavailable.ts';`,
+      hostedWorker.replace("'@app/core-runtime/outbox/worker'", "'./fake-worker.ts'"),
+      hostedWorker.replace("claimOwnerPrefix: 'inventory-stock'", 'claimOwnerPrefix: searchUnavailable'),
+      `${hostedWorker}\ndefineOutboxWorkerEntry = counterfeit;`,
+    ]) {
+      yield* write(root, publicBarrel, source);
+      expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toMatch(
+        /package exports must not publish private/u,
+      );
+    }
   }),
 );
 

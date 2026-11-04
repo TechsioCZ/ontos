@@ -21,6 +21,7 @@ import type {
   ArrowFunctionExpression,
   Expression,
   ImportDeclaration,
+  ObjectExpression,
   Program,
   SpreadElement,
   Statement,
@@ -958,6 +959,29 @@ const expressionRoot = (expression: Expression): string | undefined => {
   return expression.type === 'CallExpression' ? expressionRoot(expression.callee) : undefined;
 };
 
+const PRIVATE_HELPER_SCHEMA_CONSTRUCTORS = new Set([
+  'Array',
+  'Literal',
+  'Literals',
+  'NullOr',
+  'Struct',
+  'Union',
+  'check',
+  'isBetween',
+  'isUUID',
+  'optional',
+  'optionalKey',
+]);
+
+const isSchemaConstruction = (expression: Expression, schemaBinding: string): boolean =>
+  expression.type === 'CallExpression' &&
+  expression.callee.type === 'MemberExpression' &&
+  !expression.callee.computed &&
+  expression.callee.property.type === 'Identifier' &&
+  PRIVATE_HELPER_SCHEMA_CONSTRUCTORS.has(expression.callee.property.name) &&
+  expression.callee.object.type !== 'CallExpression' &&
+  expressionRoot(expression.callee.object) === schemaBinding;
+
 const isDeferredEffectFunction = (expression: Expression, effectBinding: string): boolean =>
   expression.type === 'CallExpression' &&
   expression.arguments.length === 1 &&
@@ -1004,7 +1028,7 @@ const isPrivateHelperInitializer = (
       (node) =>
         isDeferredEffectFunction(node, effectBinding) ||
         (schemaBinding !== undefined &&
-          expressionRoot(node) === schemaBinding &&
+          isSchemaConstruction(node, schemaBinding) &&
           accepts(node.callee) &&
           node.arguments.every(accepts)),
     ),
@@ -1029,7 +1053,109 @@ const sourceWithoutTypeAnnotations = (source: string, program: Program): string 
     .join('');
 };
 
-const isPrivateEffectHelperImport = (statement: ImportDeclaration, bindingSource: string): boolean =>
+const nativeHelperBinding = (imports: readonly ImportDeclaration[], exported: string): string | undefined => {
+  const specifiers = imports
+    .filter((statement) => statement.importKind !== 'type' && statement.source.value === 'effect')
+    .flatMap((statement) => statement.specifiers);
+  return specifiers.find(
+    (specifier) =>
+      specifier.type === 'ImportSpecifier' &&
+      specifier.importKind !== 'type' &&
+      specifier.imported.type === 'Identifier' &&
+      specifier.imported.name === exported,
+  )?.local.name;
+};
+
+const localSourceTarget = (
+  sources: ReadonlyMap<string, string>,
+  path: Path.Path,
+  file: string,
+  specifier: string,
+): string | undefined => {
+  if (!specifier.startsWith('.')) {
+    return undefined;
+  }
+  const target = path.join(path.dirname(file), specifier).replaceAll('\\', '/');
+  const owner = /^verticals\/[^/]+\//u.exec(file)?.[0];
+  return owner !== undefined && target.startsWith(owner)
+    ? [target, `${target}.ts`, `${target}.mts`, `${target}/index.ts`].find((candidate) => sources.has(candidate))
+    : undefined;
+};
+
+/** Resolve named service exports to an owner-authored deferred function. A barrel
+ * cannot turn a native registration constructor into a private service helper.
+ */
+const isPrivateServiceExport = (
+  sources: ReadonlyMap<string, string>,
+  path: Path.Path,
+  file: string | undefined,
+  name: string,
+  seen: ReadonlySet<string> = new Set(),
+): boolean => {
+  if (file === undefined || seen.has(`${file}:${name}`) || seen.size >= 128) {
+    return false;
+  }
+  const source = sources.get(file);
+  if (source === undefined) {
+    return false;
+  }
+  const parsed = parseSync(file, source, { astType: 'ts', lang: 'ts', sourceType: 'module' });
+  if (parsed.errors.length > 0) {
+    return false;
+  }
+  const next = new Set([...seen, `${file}:${name}`]);
+  const effect = nativeHelperBinding(
+    parsed.program.body.filter((statement) => statement.type === 'ImportDeclaration'),
+    'Effect',
+  );
+  return parsed.program.body.some((statement) => {
+    if (statement.type !== 'ExportNamedDeclaration' || statement.exportKind === 'type') {
+      return false;
+    }
+    if (statement.source !== null) {
+      return statement.specifiers.some(
+        (specifier) =>
+          specifier.exportKind !== 'type' &&
+          specifier.exported.type === 'Identifier' &&
+          specifier.exported.name === name &&
+          specifier.local.type === 'Identifier' &&
+          isPrivateServiceExport(
+            sources,
+            path,
+            localSourceTarget(sources, path, file, statement.source?.value ?? ''),
+            specifier.local.name,
+            next,
+          ),
+      );
+    }
+    return (
+      effect !== undefined &&
+      hasUnshadowedNativeValueImport(
+        sourceWithoutTypeAnnotations(source, parsed.program),
+        effect,
+        'effect',
+        'Effect',
+      ) &&
+      statement.declaration?.type === 'VariableDeclaration' &&
+      statement.declaration.kind === 'const' &&
+      statement.declaration.declarations.some(
+        (binding) =>
+          binding.id.type === 'Identifier' &&
+          binding.id.name === name &&
+          binding.init !== null &&
+          isDeferredEffectFunction(binding.init, effect),
+      )
+    );
+  });
+};
+
+const isPrivateEffectHelperImport = (
+  statement: ImportDeclaration,
+  bindingSource: string,
+  sources: ReadonlyMap<string, string>,
+  path: Path.Path,
+  file: string,
+): boolean =>
   statement.specifiers.length > 0 &&
   statement.specifiers.every((specifier) => {
     if (statement.importKind === 'type' || (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type')) {
@@ -1045,28 +1171,26 @@ const isPrivateEffectHelperImport = (statement: ImportDeclaration, bindingSource
     }
     return (
       (module === '@app/core-runtime' && PRIVATE_SEARCH_CORE_IMPORTS.has(imported)) ||
-      /^\.{2}\/services\/[^/.][^/]*\.ts$/u.test(module) ||
+      (/^\.{2}\/services\/[^/.][^/]*\.ts$/u.test(module) &&
+        isPrivateServiceExport(sources, path, localSourceTarget(sources, path, file, module), imported)) ||
       (/^\.{2}\/\.{2}\/shared\/(?:apis|domain|resources)\/[^/.][^/]*\.ts$/u.test(module) && imported.endsWith('Schema'))
     );
   });
-
-const nativeHelperBinding = (imports: readonly ImportDeclaration[], exported: string): string | undefined => {
-  const specifiers = imports
-    .filter((statement) => statement.importKind !== 'type' && statement.source.value === 'effect')
-    .flatMap((statement) => statement.specifiers);
-  return specifiers.find(
-    (specifier) =>
-      specifier.type === 'ImportSpecifier' &&
-      specifier.importKind !== 'type' &&
-      specifier.imported.type === 'Identifier' &&
-      specifier.imported.name === exported,
-  )?.local.name;
-};
 
 const hasUnprovenPrivateHelperCode = (program: Program): boolean => {
   // Reject dynamic code and provider descriptors even inside deferred callbacks.
   let unprovenCode = false;
   new Visitor({
+    AssignmentExpression: (node) => {
+      if (
+        node.left.type === 'MemberExpression' &&
+        (node.left.computed ||
+          (node.left.property.type === 'Identifier' &&
+            ['entrypoint', 'entrypointKey'].includes(node.left.property.name)))
+      ) {
+        unprovenCode = true;
+      }
+    },
     Identifier: (node) => {
       if (['require', 'eval', 'Function'].includes(node.name)) {
         unprovenCode = true;
@@ -1136,14 +1260,19 @@ const privateEffectHelperStatement = (
  * imports are a closed helper-only set; owner-local dependencies stay private.
  * Provider filenames, descriptors, publication, and registration stay governed.
  */
-const isPrivateEffectHelperModule = (source: string): boolean => {
+const isPrivateEffectHelperModule = (
+  source: string,
+  sources: ReadonlyMap<string, string>,
+  path: Path.Path,
+  file: string,
+): boolean => {
   const parsed = parseSync('private-effect-helper.ts', source, { astType: 'ts', lang: 'ts', sourceType: 'module' });
   if (parsed.errors.length > 0) {
     return false;
   }
   const bindingSource = sourceWithoutTypeAnnotations(source, parsed.program);
   const imports = parsed.program.body.filter((statement) => statement.type === 'ImportDeclaration');
-  if (!imports.every((statement) => isPrivateEffectHelperImport(statement, bindingSource))) {
+  if (!imports.every((statement) => isPrivateEffectHelperImport(statement, bindingSource, sources, path, file))) {
     return false;
   }
   const effectBinding = nativeHelperBinding(imports, 'Effect');
@@ -1157,14 +1286,15 @@ const isPrivateEffectHelperModule = (source: string): boolean => {
   return statements.every((statement) => statement !== undefined) && statements.includes(true);
 };
 
-const validateGovernedSource = (file: string, source: string) =>
+const validateGovernedSource = (state: BoundaryCheckState, file: string, source: string) =>
   Effect.gen(function* validateGovernedSourceEffect() {
+    const path = yield* Path.Path;
     const category = /\/src\/(?<category>components|search|reports)\//u.exec(`/${file}`)?.groups?.category;
     const expectedHeader = governedSourceHeader(category);
     const privateFailureFactory =
       (category === 'search' || category === 'reports') &&
       !/\.provider\.[^/]+$/u.test(file) &&
-      (isPrivateReadFailureFactory(source) || isPrivateEffectHelperModule(source));
+      (isPrivateReadFailureFactory(source) || isPrivateEffectHelperModule(source, state.sourceMap, path, file));
     const invalidGovernedSource =
       /\/src\/public-components\//u.test(`/${file}`) ||
       (expectedHeader !== undefined && !hasGeneratedSourceHeader(source, expectedHeader) && !privateFailureFactory);
@@ -1450,7 +1580,7 @@ const validateVerticalSource = (
       (verticalPath === undefined ? undefined : state.owners.get(verticalPath)) ?? file.split('/')[1] ?? '',
     );
     yield* validateVerticalApiSource(state, file, source);
-    yield* validateGovernedSource(file, source);
+    yield* validateGovernedSource(state, file, source);
     const path = yield* Path.Path;
     const privateImport = importedModuleSpecifiers.some((specifier) =>
       isPrivateVerticalImport(state, path, file, specifier),
@@ -1481,12 +1611,154 @@ const validatePrivateHandlerAccess = (file: string, source: string) =>
     }
   });
 
-const validatePackageExports = (file: string, source: string) =>
+const runtimeLocalSpecifiers = (source: string, file: string): readonly string[] => {
+  const parsed = parseSync(file, source, { astType: 'ts', lang: file.endsWith('.tsx') ? 'tsx' : 'ts' });
+  const publishesValues = parsed.program.body.some(
+    (statement) =>
+      statement.type === 'ExportDefaultDeclaration' ||
+      (statement.type === 'ExportAllDeclaration' && statement.exportKind !== 'type') ||
+      (statement.type === 'ExportNamedDeclaration' &&
+        statement.exportKind !== 'type' &&
+        (statement.specifiers.some((specifier) => specifier.exportKind !== 'type') ||
+          (statement.declaration !== null &&
+            !['TSInterfaceDeclaration', 'TSTypeAliasDeclaration'].includes(statement.declaration.type)))),
+  );
+  // Executable test/process entries with no value exports do not publish their dependencies.
+  if (!publishesValues) {
+    return [];
+  }
+  const specifiers = new Set<string>();
+  new Visitor({
+    ExportAllDeclaration: (node) => {
+      if (node.exportKind !== 'type') {
+        specifiers.add(node.source.value);
+      }
+    },
+    ExportNamedDeclaration: (node) => {
+      if (
+        node.exportKind !== 'type' &&
+        node.source !== null &&
+        node.specifiers.some((item) => item.exportKind !== 'type')
+      ) {
+        specifiers.add(node.source.value);
+      }
+    },
+    ImportDeclaration: (node) => {
+      if (
+        node.importKind !== 'type' &&
+        (node.specifiers.length === 0 ||
+          node.specifiers.some((item) => item.type !== 'ImportSpecifier' || item.importKind !== 'type'))
+      ) {
+        specifiers.add(node.source.value);
+      }
+    },
+    ImportExpression: (node) => {
+      if (node.source.type === 'Literal' && Predicate.isString(node.source.value)) {
+        specifiers.add(node.source.value);
+      }
+    },
+  }).visit(parsed.program);
+  return [...specifiers].filter((specifier) => specifier.startsWith('.'));
+};
+
+const hasWorkerHostOptions = (options: ObjectExpression): boolean => {
+  const { properties } = options;
+  const keys = properties.map((property) =>
+    property.type === 'Property' && !property.computed && property.kind === 'init' && property.key.type === 'Identifier'
+      ? property.key.name
+      : undefined,
+  );
+  const claim = properties.find(
+    (property) =>
+      property.type === 'Property' && property.key.type === 'Identifier' && property.key.name === 'claimOwnerPrefix',
+  );
+  return (
+    keys.length === 5 &&
+    new Set(keys).size === 5 &&
+    keys.every(
+      (key) =>
+        key !== undefined &&
+        ['claimOwnerPrefix', 'expectedDeployment', 'layer', 'registrations', 'subscriptions'].includes(key),
+    ) &&
+    claim?.type === 'Property' &&
+    claim.value.type === 'Literal' &&
+    Predicate.isString(claim.value.value)
+  );
+};
+
+/** Core closes worker dependencies behind runLoop and exports only a literal
+ * claim owner and registration count. It does not re-export its private services.
+ */
+const isEncapsulatedWorkerHost = (source: string, file: string): boolean => {
+  const parsed = parseSync(file, source, { astType: 'ts', lang: 'ts' });
+  const declarations = parsed.program.body.filter((statement) => statement.type !== 'ImportDeclaration');
+  const [exported] = declarations;
+  if (
+    parsed.errors.length !== 0 ||
+    declarations.length !== 1 ||
+    exported?.type !== 'ExportNamedDeclaration' ||
+    exported.declaration?.type !== 'VariableDeclaration' ||
+    exported.declaration.kind !== 'const' ||
+    exported.declaration.declarations.length !== 1
+  ) {
+    return false;
+  }
+  const [binding] = exported.declaration.declarations;
+  const call = binding?.init;
+  const options = call?.type === 'CallExpression' && call.arguments.length === 1 ? call.arguments[0] : undefined;
+  if (call?.type !== 'CallExpression' || call.callee.type !== 'Identifier' || options?.type !== 'ObjectExpression') {
+    return false;
+  }
+  return (
+    hasWorkerHostOptions(options) &&
+    hasUnshadowedNativeValueImport(
+      source,
+      call.callee.name,
+      '@app/core-runtime/outbox/worker',
+      'defineOutboxWorkerEntry',
+    )
+  );
+};
+
+const publishesPrivateImplementation = (
+  sources: ReadonlyMap<string, string>,
+  path: Path.Path,
+  packageFile: string,
+  target: string,
+): boolean => {
+  const first = localSourceTarget(sources, path, packageFile, target);
+  const pending = first === undefined ? [] : [first];
+  const seen = new Set<string>();
+  while (pending.length > 0) {
+    const file = pending.pop();
+    if (file === undefined || seen.has(file)) {
+      continue;
+    }
+    seen.add(file);
+    if (/\/src\/(?:search|reports)\//u.test(file)) {
+      return true;
+    }
+    const source = sourceOrEmpty(sources, file);
+    const specifiers = isEncapsulatedWorkerHost(source, file) ? [] : runtimeLocalSpecifiers(source, file);
+    for (const specifier of specifiers) {
+      const dependency = localSourceTarget(sources, path, file, specifier);
+      if (dependency !== undefined) {
+        pending.push(dependency);
+      }
+    }
+  }
+  return false;
+};
+
+const validatePackageExports = (state: BoundaryCheckState, file: string, source: string) =>
   Effect.gen(function* validatePackageExportsEffect() {
     if (file.startsWith('verticals/') && file.endsWith('package.json')) {
+      const path = yield* Path.Path;
       const packageJson = yield* decodeVerticalPackageJson(source);
-      const privateExport = Object.values(packageJson.exports ?? {}).some((target) =>
-        /(?:vertical\.registration|\/src\/(?:handlers|workers|routes|search|reports|db))/u.test(target),
+      const privateExport = Object.values(packageJson.exports ?? {}).some(
+        (target) =>
+          /(?:vertical\.registration|\/src\/(?:handlers|workers|routes|search|reports|db))/u.test(target) ||
+          publishesPrivateImplementation(state.sourceMap, path, file, target),
       );
       if (privateExport) {
         yield* fail(file, 'package exports must not publish private entrypoint implementations or registrations');
@@ -1546,7 +1818,12 @@ const hasOnlyExactFederationMetadataCalls = (source: string): boolean => {
   );
 };
 
-const validateGeneralSource = (file: string, source: string, importedModuleSpecifiers: readonly string[]) =>
+const validateGeneralSource = (
+  state: BoundaryCheckState,
+  file: string,
+  source: string,
+  importedModuleSpecifiers: readonly string[],
+) =>
   Effect.gen(function* validateGeneralSourceEffect() {
     const importsFederationRuntime = importedModuleSpecifiers.some(
       (specifier) =>
@@ -1568,7 +1845,7 @@ const validateGeneralSource = (file: string, source: string, importedModuleSpeci
       yield* fail(file, 'eager remote implementation imports are forbidden; pass a lazy thunk to the gateway');
     }
     yield* validatePrivateHandlerAccess(file, source);
-    yield* validatePackageExports(file, source);
+    yield* validatePackageExports(state, file, source);
     yield* validateRegistrationSlots(file, source);
     yield* validateCoreExports(file, source);
   });
@@ -1712,7 +1989,7 @@ const validateProductionSource = (state: BoundaryCheckState, file: string, sourc
     yield* validateRouteSource(state, file, source);
     const importedModuleSpecifiers = readImportedModuleSpecifiers(source);
     yield* validateVerticalSource(state, file, source, importedModuleSpecifiers);
-    yield* validateGeneralSource(file, source, importedModuleSpecifiers);
+    yield* validateGeneralSource(state, file, source, importedModuleSpecifiers);
     yield* appendInventoryEntries(state, file, source);
     yield* appendBusinessPermissionInventoryEntry(state, file, source);
   });
