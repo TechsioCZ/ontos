@@ -84,15 +84,15 @@ const coverageRow = {
   relation: evidence.coverage[0]?.relation,
 };
 
-const selectRows = (rows: readonly unknown[]) => ({
-  from: () => {
-    const where = () => {
-      const result = Effect.succeed(rows);
-      return Object.assign(result, { limit: () => result });
-    };
-    return { innerJoin: () => ({ where }), where };
-  },
-});
+const selectRows = (rows: readonly unknown[]) => {
+  const where = () => {
+    const result = Effect.succeed(rows);
+    return Object.assign(result, { limit: () => result });
+  };
+  return {
+    from: () => ({ innerJoin: () => ({ where }), where }),
+  };
+};
 
 describe('Stock Correction source evidence persistence', () => {
   it.effect('appends trusted owner evidence and its evidence-bound coverage atomically', () =>

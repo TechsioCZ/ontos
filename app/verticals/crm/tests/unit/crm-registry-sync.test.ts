@@ -151,6 +151,9 @@ const rejectedGatewayProtocol = (protocol: string) => {
   return url.href;
 };
 
+const select = (entry: IntakeCrmClient) =>
+  entry.id === 'review' ? Effect.succeed(Option.none<VerifiedParty>()) : identify(entry);
+
 describe('CRM registry-link completion', () => {
   it.effect('persists six verified identities and sees zero unlinked clients after a full reload', () =>
     Effect.gen(function* writesSixIdentities() {
@@ -186,8 +189,6 @@ describe('CRM registry-link completion', () => {
   it.effect('reports partial writes separately from review decisions and unavailable writes', () =>
     Effect.gen(function* keepsPartialResults() {
       const db = persistence([client('linked'), client('review'), client('failed')]);
-      const select = (entry: IntakeCrmClient) =>
-        entry.id === 'review' ? Effect.succeed(Option.none<VerifiedParty>()) : identify(entry);
       const write = (
         id: string,
         verified: VerifiedParty,

@@ -25,7 +25,7 @@ import { staffRoutePreloads } from './route-preload-scheduler.ts';
 import { staffDocumentTheme } from './staff-brand.ts';
 import type { RoutePreloadPriority } from './route-preload-scheduler.ts';
 
-import type { ShellLabel, ShellUnavailableDeployment } from '../../shared/api.ts';
+import type { ShellLabel, ShellRecordDestination, ShellUnavailableDeployment } from '../../shared/api.ts';
 import { DemoGuidePanel, DemoGuideToggleButton, demoGuidePageAttribute } from '../demo-guide/demo-guide-panel.tsx';
 import { demoGuideFor } from '../demo-guide/demo-guide-registry.ts';
 import { guideWidthCss, useDemoGuideOpen, useDemoGuideWidth } from '../demo-guide/demo-guide-store.ts';
@@ -33,6 +33,7 @@ import { navigationHrefFromPath, usePendingNavigationPath } from './use-pending-
 import { StaffRoutePreloadContext, useIdleRoutePreload } from './use-idle-route-preload.ts';
 import { useHydratedMarker } from './use-hydrated.ts';
 import { ShellSearchBar } from './shell-search-bar.tsx';
+import { shellSearchPresentationContext } from './shell-search-resource-types.ts';
 import { useShellSearchSuggestions } from './shell-search-suggestions.ts';
 
 interface DashboardAccount {
@@ -87,6 +88,8 @@ export interface AuthenticatedDashboardLayoutProps {
   readonly onSearch: (query: string) => void;
   readonly onTenantChange: (tenantId: string) => void;
   readonly onTenantContextChange?: (() => void) | undefined;
+  /** Record destinations the composed owner pages declare; the search opens only these exact pairs. */
+  readonly recordDestinations: readonly ShellRecordDestination[];
   readonly tenantChoices: readonly DashboardTenantItem[];
   readonly tenantContextActive?: boolean | undefined;
   readonly tenantContextAvailable?: boolean | undefined;
@@ -705,13 +708,22 @@ const navigationToggleKey = 'shell.dashboard.navigation.toggle';
 interface DashboardHeaderSearchProps {
   readonly compositionRevision: string | undefined;
   readonly hidden: boolean;
+  readonly navigation: readonly DashboardNavigationItem[];
   readonly onSearch: (query: string) => void;
+  readonly recordDestinations: readonly ShellRecordDestination[];
 }
 
 /** The global search, centred between the trail and the account; hidden once sign-out has started. */
-const DashboardHeaderSearch = ({ compositionRevision, hidden, onSearch }: DashboardHeaderSearchProps) => {
+const DashboardHeaderSearch = ({
+  compositionRevision,
+  hidden,
+  navigation,
+  onSearch,
+  recordDestinations,
+}: DashboardHeaderSearchProps) => {
   const [value, setValue] = useState('');
-  const suggestions = useShellSearchSuggestions(compositionRevision);
+  const context = shellSearchPresentationContext(navigation, recordDestinations);
+  const suggestions = useShellSearchSuggestions(compositionRevision, context);
   return hidden ? null : (
     <Header.Container className="flex w-auto min-w-0 flex-1 justify-center lg:flex-[2]" position="center">
       <div className="w-full max-w-xl">
@@ -950,7 +962,9 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
           <DashboardHeaderSearch
             compositionRevision={props.compositionRevision}
             hidden={props.logoutPending}
+            navigation={props.navigation}
             onSearch={props.onSearch}
+            recordDestinations={props.recordDestinations}
           />
           <Header.Container className="flex w-auto shrink-0 justify-end lg:flex-1 lg:basis-0" position="end">
             <Header.Actions>

@@ -194,6 +194,7 @@ const tenantProps = {
   onLegalEntityChange: rstest.fn(),
   onSearch: rstest.fn(),
   onTenantChange: noopTenantChange,
+  recordDestinations: [],
   tenantChoices: [
     { name: 'Alpha tenant', tenantId: 'tenant-1' },
     { name: 'Zeta tenant', tenantId: 'tenant-2' },

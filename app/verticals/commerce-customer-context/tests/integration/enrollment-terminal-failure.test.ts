@@ -29,10 +29,10 @@ it.live('fails only a proven required rejection and tracks original in-flight op
       const actorId = yield* randomId;
       const rollback = new Error('terminal failure acceptance rollback');
       yield* admin
-        .transaction((transaction) =>
-          Effect.gen(function* failureTransaction() {
-            const execute = (statement: Parameters<typeof transaction.execute>[0]) =>
-              transaction.execute(statement, 'objects');
+        .transaction((transaction) => {
+          const execute = (statement: Parameters<typeof transaction.execute>[0]) =>
+            transaction.execute(statement, 'objects');
+          return Effect.gen(function* failureTransaction() {
             // Exercise the migrated database as deployed. Replaying this historical migration
             // would collide with its installed function or replace a newer production body.
             yield* execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`);
@@ -177,8 +177,8 @@ it.live('fails only a proven required rejection and tracks original in-flight op
             yield* execute(sql`rollback to savepoint resurrection`);
             expect(Result.isFailure(resurrection)).toBe(true);
             return yield* Effect.fail(rollback);
-          }),
-        )
+          });
+        })
         .pipe(Effect.catch((error) => (error === rollback ? Effect.void : Effect.fail(error))));
     }),
   ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),

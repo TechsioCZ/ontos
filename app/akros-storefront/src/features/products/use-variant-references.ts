@@ -31,7 +31,12 @@ export function useVariantReferences(storageKey: string) {
         if (event.key === storageKey || event.key === null) callback();
       };
       const onChange = (event: Event) => {
-        if (event instanceof CustomEvent && event.detail === storageKey) callback();
+        if (
+          CustomEvent.prototype.isPrototypeOf(event) &&
+          "detail" in event &&
+          event.detail === storageKey
+        )
+          callback();
       };
       window.addEventListener("storage", onStorage);
       window.addEventListener(changedEvent, onChange);

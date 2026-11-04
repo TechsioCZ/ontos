@@ -19,6 +19,18 @@ import { seedDocumentGatewayAssertions } from '../../../src/routes/document-gate
 import { ShellRouteLink } from '../../../src/routes/shell-frame.tsx';
 import { StaffRoutePreloadContext } from '../../../src/routes/use-idle-route-preload.ts';
 import { staffRoutePreloads } from '../../../src/routes/route-preload-scheduler.ts';
+import type { makeRoutePreloadScheduler } from '../../../src/routes/route-preload-scheduler.ts';
+
+rstest.mock('../../../src/routes/route-preload-scheduler.ts', () => {
+  const actual = rstest.requireActual<{ readonly makeRoutePreloadScheduler: typeof makeRoutePreloadScheduler }>(
+    '../../../src/routes/route-preload-scheduler.ts',
+  );
+  return {
+    ...actual,
+    // Exercise overlapping native preloads here; the scheduler tests cover the serial production default.
+    staffRoutePreloads: actual.makeRoutePreloadScheduler(3),
+  };
+});
 
 const destinations = ['/finance', '/ukoly', '/prodej/prilezitosti'];
 const revision = 'a'.repeat(64);
@@ -51,6 +63,7 @@ it.live(
       globalThis.history.replaceState(null, '', '/en');
       globalThis.localStorage.clear();
       const release = yield* Deferred.make<boolean>();
+      yield* Effect.addFinalizer(() => Deferred.succeed(release, true));
       platformFetch.mockReset();
       platformFetch.mockImplementation(() =>
         browserRuntime.runPromise(Deferred.await(release).pipe(Effect.as(Response.json({ value: 'fresh' })))),
@@ -139,5 +152,5 @@ it.live(
       yield* Effect.promise(() => navigating);
       expect(router.state.location.pathname).toBe('/en/finance');
       expect(platformFetch).toHaveBeenCalledTimes(3);
-    }),
+    }).pipe(Effect.scoped),
 );

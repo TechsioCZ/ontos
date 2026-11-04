@@ -10,6 +10,7 @@ import "server-only";
 // active/granted for this storefront yet), `/cs` serves the Czech CZK catalogue without a market filter; every other
 // locale is unknown. As soon as one market or association exists, only the owners' markets are served.
 // The path locale is only a selector: nothing a browser sends is used before the owners confirmed it.
+import { Match } from "effect";
 import { getConfig } from "./config";
 import { OntosError, readRecords } from "./gateway";
 import { isLocaleSegment } from "./market-locale";
@@ -185,7 +186,10 @@ export const isMarketOwnerNotProvisioned = (error: unknown): boolean =>
   OntosError.is(error) &&
   error.status === 400 &&
   isRaw(error.body) &&
-  error.body._tag === "GatewayAudienceInvalidProblem";
+  Match.value(error.body).pipe(
+    Match.when({ _tag: "GatewayAudienceInvalidProblem" }, () => true),
+    Match.orElse(() => false),
+  );
 
 /** The storefront's only market before any market exists: Czech, CZK, the whole published catalogue. */
 export const UNMARKETED_LOCALE = "cs";

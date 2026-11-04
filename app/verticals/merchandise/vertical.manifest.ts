@@ -10,6 +10,7 @@ import {
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
 import { AgentReviewApi } from './shared/apis/agent-review.ts';
+import { MediaApi } from './shared/apis/media.ts';
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
 import { bootstrapPlaygroundCatalogAction } from './src/actions/bootstrap-playground-catalog.action.ts';
 import { merchandiseReadAllPermission } from './shared/permissions/merchandise-read-all.ts';
@@ -65,6 +66,7 @@ export const merchandiseManifest = defineOntosModuleManifest({
     api: {
       // <generated-module-manifest-apis>
       'agent-review': AgentReviewApi,
+      media: MediaApi,
       records: RecordsApi,
       // </generated-module-manifest-apis>
     },

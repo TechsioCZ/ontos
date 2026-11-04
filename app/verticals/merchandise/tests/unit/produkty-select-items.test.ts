@@ -3,7 +3,7 @@ import csResource from '../../locales/cs/merchandise.json';
 import enResource from '../../locales/en/merchandise.json';
 import { DEFAULT_SORT, SORTS, sortSelectItems } from '../../src/routes/[lang]/provoz/produkty/select-items.ts';
 
-type LocaleResource = typeof csResource;
+type LocaleResource = typeof csResource | typeof enResource;
 
 /** The sort labels of a locale; a missing key fails the test instead of falling back to the raw key. */
 const sortLabelsOf = (resource: LocaleResource) => {

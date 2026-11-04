@@ -11,14 +11,27 @@ import { shellSearchFamiliesInOrder, shellSearchResultKey } from '../../shell-se
 import type { ShellSearchFamilyKey } from '../../shell-search-match.ts';
 import { ShellSearchFilters } from '../../shell-search-filters.tsx';
 import { ShellSearchResultRow } from '../../shell-search-result-row.tsx';
-import { shellSearchGroupOf } from '../../shell-search-resource-types.ts';
+import {
+  shellSearchGroupOf,
+  shellSearchPresentationContext,
+  shellSearchResultTarget,
+} from '../../shell-search-resource-types.ts';
 import { ShellContentLayout } from '../../shell-content-layout.tsx';
 import { SignInRedirect } from '../../sign-in-redirect.tsx';
 import { useShellControls } from '../../use-shell-controls.ts';
-import type { AuthenticatedHomePageModel } from '../home-page-model.ts';
+import type { AuthenticatedHomePageModel, HomePageModel } from '../home-page-model.ts';
 import type { SearchFilterPlan, SearchPageModel } from './search-page-model.ts';
 
 type ReadySearchPageModel = Extract<SearchPageModel, { readonly state: 'ready' }>;
+
+type ShellSearchContext = ReturnType<typeof shellSearchPresentationContext>;
+
+/** The document's composed navigation, when it has one; the search reads record destinations from it. */
+const composedSearchContextOf = (shell: HomePageModel): ShellSearchContext => {
+  const navigation =
+    shell.state === 'authenticated' && shell.navigation.state === 'available' ? shell.navigation : undefined;
+  return shellSearchPresentationContext(navigation?.items ?? [], navigation?.recordDestinations ?? []);
+};
 
 interface SearchPageSearch {
   families?: string;
@@ -88,9 +101,11 @@ const SearchScope = ({ entries }: { readonly entries: readonly SearchScopeEntry[
  * ranked and authorized the complete answer. Rows open the owner record and carry no invented rank, count or reason.
  */
 const SearchResultList = ({
+  context,
   query,
   results,
 }: {
+  readonly context: ShellSearchContext;
   readonly query: string;
   readonly results: readonly ShellSearchResult[];
 }) => {
@@ -101,10 +116,11 @@ const SearchResultList = ({
         <ShellSearchResultRow
           density="comfortable"
           key={shellSearchResultKey(result)}
-          presentation={{ typeLabel: t(`shell.search.groups.${shellSearchGroupOf(result)}`) }}
+          presentation={{ typeLabel: t(`shell.search.groups.${shellSearchGroupOf(result, context)}`) }}
           query={query}
           result={result}
           ResultLink={ShellRouteLink}
+          target={shellSearchResultTarget(result, context)}
         />
       ))}
     </ul>
@@ -132,6 +148,7 @@ const SearchResultsSection = ({
   readonly tenantName: string | undefined;
 }) => {
   const { t } = useModernI18n();
+  const context = composedSearchContextOf(model.shell);
   const { partial, results } = model.response;
   const pending = pendingQuery !== undefined;
   const query = pendingQuery ?? model.query;
@@ -181,7 +198,7 @@ const SearchResultsSection = ({
         ) : null}
       </div>
       {pending ? <SearchResultsPlaceholder /> : null}
-      {pending || idle || empty ? null : <SearchResultList query={query} results={results} />}
+      {pending || idle || empty ? null : <SearchResultList context={context} query={query} results={results} />}
     </div>
   );
 };

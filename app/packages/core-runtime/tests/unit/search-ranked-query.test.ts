@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -358,13 +358,13 @@ it.effect('accepts a bounded multi-type selector while rejecting empty, oversize
       { length: CORE_SEARCH_MAX_RESOURCE_TYPES },
       (_, index) => `party.registry.type-${index}`,
     );
-    expect(Schema.decodeUnknownResult(CoreSearchQuerySchema)({ ...base, resourceTypes: accepted })).toMatchObject({
-      _tag: 'Success',
-    });
+    expect(
+      Result.isSuccess(Schema.decodeUnknownResult(CoreSearchQuerySchema)({ ...base, resourceTypes: accepted })),
+    ).toBe(true);
     for (const resourceTypes of [[], [...accepted, 'party.registry.overflow'], undefined]) {
-      expect(Schema.decodeUnknownResult(CoreSearchQuerySchema)({ ...base, resourceTypes })).toMatchObject({
-        _tag: 'Failure',
-      });
+      expect(Result.isFailure(Schema.decodeUnknownResult(CoreSearchQuerySchema)({ ...base, resourceTypes }))).toBe(
+        true,
+      );
     }
   }),
 );

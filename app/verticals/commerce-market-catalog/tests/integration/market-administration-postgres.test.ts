@@ -560,6 +560,7 @@ it.live('exposes only the governed mutations, retirement-intent routines, and re
           'read_market_eligibility_snapshot(uuid, jsonb)',
           'read_market_history(uuid, uuid, jsonb)',
           'read_market_retirement_intent(uuid, uuid, jsonb)',
+          'read_market_search_snapshot(uuid, uuid, jsonb)',
           'read_pricing_current_market_evidence(uuid, uuid, jsonb)',
           'remove_storefront_association(uuid, uuid, jsonb)',
           'request_market_retirement(uuid, uuid, jsonb)',

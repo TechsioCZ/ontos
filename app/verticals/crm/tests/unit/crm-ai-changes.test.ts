@@ -134,6 +134,26 @@ const approve = (state: CrmState) =>
 const revert = (state: CrmState) =>
   ok(state, { _tag: 'AiRevertBatch', batchId: state.aiChanges?.batches[0]?.id ?? '' });
 
+const twoEdits = () =>
+  ok(
+    base,
+    {
+      _tag: 'AiProposeChanges',
+      changes: [
+        {
+          operation: { _tag: 'UpdateClient', id: 'c1', patch: { phone: '+420 777 888 999' } },
+          reason: 'Ověřeno telefonicky',
+        },
+        {
+          operation: { _tag: 'UpdateClient', id: 'c1', patch: { website: 'https://bistro-kral.demo' } },
+          reason: 'Nový web klienta',
+        },
+      ],
+      instruction: 'Aktualizuj telefon a web Bistra Král',
+    },
+    agent,
+  ).pipe(Effect.map((change) => change.state));
+
 describe('AI level C governed pending batches', () => {
   it.effect('never auto-applies even low-risk contact additions; human applies and whole batch reverts', () =>
     Effect.gen(function* effectGenerator2() {
@@ -196,25 +216,6 @@ describe('AI level C governed pending batches', () => {
       expect((yield* revert(applied)).state.clients.contacts.every((entry) => entry.status === 'archived')).toBe(true);
     }),
   );
-  const twoEdits = () =>
-    ok(
-      base,
-      {
-        _tag: 'AiProposeChanges',
-        changes: [
-          {
-            operation: { _tag: 'UpdateClient', id: 'c1', patch: { phone: '+420 777 888 999' } },
-            reason: 'Ověřeno telefonicky',
-          },
-          {
-            operation: { _tag: 'UpdateClient', id: 'c1', patch: { website: 'https://bistro-kral.demo' } },
-            reason: 'Nový web klienta',
-          },
-        ],
-        instruction: 'Aktualizuj telefon a web Bistra Král',
-      },
-      agent,
-    ).pipe(Effect.map((change) => change.state));
   it.effect('approves two edits to one client atomically and reverts the whole chain', () =>
     Effect.gen(function* effectGenerator4() {
       const pending = yield* twoEdits();

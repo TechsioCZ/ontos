@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Config, ConfigProvider, Console, Effect, Exit, FileSystem, Schema } from 'effect';
+import { Config, ConfigProvider, Console, Effect, Exit, FileSystem, Option, Schema } from 'effect';
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from 'effect/http';
 import { TestConsole } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
@@ -44,7 +44,7 @@ const request = (body = payload, url = `${pseudonymSeedTarget.shellUrl}${ownerAp
 const fixture = Effect.gen(function* checkpointFixture() {
   const fs = yield* FileSystem.FileSystem;
   const root = yield* fs.makeTempDirectoryScoped({
-    directory: yield* Config.String('OWNED_TEMP_DIR'),
+    directory: yield* Config.option(Config.String('OWNED_TEMP_DIR')).pipe(Effect.map(Option.getOrUndefined)),
     prefix: 'p21-checkpoint-',
   });
   const journal = yield* makePseudonymWriteCheckpoint(fs, root);
@@ -443,7 +443,7 @@ it.effect(
     Effect.gen(function* ownedCleanup() {
       const fs = yield* FileSystem.FileSystem;
       const callerRoot = yield* fs.makeTempDirectoryScoped({
-        directory: yield* Config.String('OWNED_TEMP_DIR'),
+        directory: yield* Config.option(Config.String('OWNED_TEMP_DIR')).pipe(Effect.map(Option.getOrUndefined)),
         prefix: 'p21-caller-',
       });
       let operationRoot = '';

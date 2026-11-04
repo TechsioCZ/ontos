@@ -1,6 +1,3 @@
-import { writeFileSync } from 'node:fs';
-import path from 'node:path';
-
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -13,8 +10,8 @@ import {
   stringList,
 } from '../shared/options.ts';
 import { globToRegExp, inScriptScope, scopePath, scriptScope, workspacePath } from '../shared/paths.ts';
-import { runOxlint, testsDirectory } from './oxlint.mts';
-import { withTemporaryWorkspace } from './temporary-workspace.mts';
+import { ruleTester, virtualFile } from './rule-tester.mts';
+import sharedHelpersProbe from './shared-helpers-probe.ts';
 
 it('shared option parsers preserve rejection, sparse arrays and regex flags', () => {
   const fallback = ['default'];
@@ -195,33 +192,18 @@ const cases = [
   })),
 ];
 
-for (const { expected, name, probe, source } of cases) {
-  it(`shared helpers: ${name}`, () => {
-    withTemporaryWorkspace((directory) => {
-      writeFileSync(path.join(directory, 'probe.ts'), source);
-      const config = path.join(directory, '.oxlintrc.json');
-      writeFileSync(
-        config,
-        JSON.stringify({
-          categories: { correctness: 'off' },
-          jsPlugins: [
-            {
-              name: 'shared-helpers-probe',
-              specifier: path.join(testsDirectory, 'shared-helpers-probe.ts'),
-            },
-          ],
-          rules: { 'shared-helpers-probe/inspect': ['error', probe] },
-        }),
-      );
-      const run = runOxlint(config, ['probe.ts'], directory);
-      expect(run.exitCode).toBe(1);
-      expect(run.numberOfFiles).toBe(1);
-      expect(run.diagnostics.map(({ code, message }) => ({ code, message }))).toStrictEqual([
-        {
-          code: 'shared-helpers-probe(inspect)',
-          message: JSON.stringify(expected),
-        },
-      ]);
-    });
-  });
+const probeRule = sharedHelpersProbe.rules.inspect;
+if (probeRule === undefined) {
+  throw new Error('shared-helpers-probe must register inspect');
 }
+// The probe reports its helper results as the message of one Program diagnostic.
+ruleTester.run('shared helpers', probeRule, {
+  invalid: cases.map(({ expected, name, probe, source }) => ({
+    code: source,
+    errors: [{ message: JSON.stringify(expected) }],
+    filename: virtualFile('probe.ts'),
+    name,
+    options: [probe],
+  })),
+  valid: [],
+});

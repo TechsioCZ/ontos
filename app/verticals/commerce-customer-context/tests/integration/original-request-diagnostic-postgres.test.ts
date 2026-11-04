@@ -62,13 +62,28 @@ it.live('recovers only one exact scoped intent on PostgreSQL, without row or pri
         '127.0.0.1::5432',
         '--env',
         'POSTGRES_HOST_AUTH_METHOD=trust',
-        'postgres:18.6-alpine',
+        '--env',
+        'POSTGRES_USER=postgres',
+        '--env',
+        'POSTGRES_DB=postgres',
+        // Match the digest-qualified image cached by docker-compose.yml; --pull=never needs that exact reference.
+        'postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5',
       ]);
       if (started.status !== 0) {
         return yield* fixtureFailure(`Owned PostgreSQL startup failed: ${started.stderr}`);
       }
       yield* Effect.gen(function* waitForPostgres() {
-        const ready = yield* docker(['exec', name, 'pg_isready', '-h', '127.0.0.1', '-U', 'postgres']);
+        const ready = yield* docker([
+          'exec',
+          name,
+          'pg_isready',
+          '-h',
+          '127.0.0.1',
+          '-U',
+          'postgres',
+          '-d',
+          'postgres',
+        ]);
         if (ready.status !== 0) {
           yield* fixtureFailure('Owned PostgreSQL fixture is not ready');
         }
@@ -79,7 +94,7 @@ it.live('recovers only one exact scoped intent on PostgreSQL, without row or pri
         return yield* fixtureFailure('Owned PostgreSQL loopback port is invalid');
       }
       const initialized = yield* docker(
-        ['exec', '-i', name, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'],
+        ['exec', '-i', name, 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1'],
         `CREATE ROLE ontos_runtime LOGIN NOSUPERUSER NOBYPASSRLS;
          CREATE SCHEMA commerce_customer_context;
          GRANT USAGE ON SCHEMA commerce_customer_context TO ontos_runtime;`,
@@ -99,11 +114,15 @@ it.live('recovers only one exact scoped intent on PostgreSQL, without row or pri
         new URL(`../../drizzle/${migration}/migration.sql`, import.meta.url).pathname,
       );
       const applied = yield* collectToolingProcess(
-        ChildProcess.make('docker', ['exec', '-i', ownedContainer, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], {
-          stderr: 'pipe',
-          stdin: Stream.make(new TextEncoder().encode(source)),
-          stdout: 'pipe',
-        }),
+        ChildProcess.make(
+          'docker',
+          ['exec', '-i', ownedContainer, 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1'],
+          {
+            stderr: 'pipe',
+            stdin: Stream.make(new TextEncoder().encode(source)),
+            stdout: 'pipe',
+          },
+        ),
       );
       if (applied.status !== 0) {
         yield* Effect.die(`Owned migration fixture failed: ${applied.stderr}`);

@@ -924,6 +924,15 @@ const preserveFailureCause = <Failure extends object>(failure: Failure, cause: u
     writable: false,
   });
 
+const compositionNoLongerAdmits = (cause: unknown) =>
+  preserveFailureCause(
+    new ReadHandlerUnavailable({
+      code: 'read_handler_unavailable',
+      reason: 'The approved Application Composition no longer admits this Read',
+    }),
+    cause,
+  );
+
 const mapReadTransactionSqlFailure = (failure: SqlError): ReadHandlerExecutionError | ReadHandlerUnavailable =>
   preserveFailureCause(
     Schema.is(ConnectionError)(failure.reason)
@@ -1346,14 +1355,6 @@ const readRuntimeFromDependencies = <
      * and CPU-heavy step (result decoding, evidence fingerprints) outside it: under concurrency a
      * transaction left idle across such work pins one of the few pooled connections every request needs.
      */
-    const compositionNoLongerAdmits = (cause: unknown) =>
-      preserveFailureCause(
-        new ReadHandlerUnavailable({
-          code: 'read_handler_unavailable',
-          reason: 'The approved Application Composition no longer admits this Read',
-        }),
-        cause,
-      );
     const readTransaction = <Value, Failure, Environment>(
       body: (transaction: CoreTransaction) => Effect.Effect<Value, Failure, Environment>,
     ) => {

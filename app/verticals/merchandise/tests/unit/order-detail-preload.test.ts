@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { Deferred, Effect, Fiber, Schema } from 'effect';
+import { Deferred, Effect, Exit, Fiber, Schema } from 'effect';
 import { createElement } from 'react';
 import type ReactRuntime from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -275,7 +275,7 @@ it.effect('authorization change never serves stale order data, and a subsequent 
     rstest.mocked(executeRecords).mockReturnValue(Effect.fail(denied));
     expect(orderDetailData.snapshot(detail)).toBe(pageDataPending);
     const rejected = yield* Effect.exit(orderDetailData.read(detail));
-    expect(rejected._tag).toBe('Failure');
+    expect(Exit.isFailure(rejected)).toBe(true);
     expect(orderDetailData.snapshot(detail).state).toBe('failed');
     rstest.mocked(executeRecords).mockReturnValue(Effect.succeed({ ...base, products: [full] }));
     yield* orderDetailData.read(detail);

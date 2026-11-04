@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import nodePath from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -7,8 +7,7 @@ import { expect, it } from 'effect-rstest';
 
 import plugin from '../index.ts';
 import { listRuleNames } from '../shared/discover-rules.ts';
-import { appRoot, pluginDirectory, runOxlint } from './oxlint.mts';
-import { withTemporaryWorkspace } from './temporary-workspace.mts';
+import { appRoot, pluginDirectory } from './oxlint.mts';
 
 const RuleSetting = Schema.Union([Schema.String, Schema.Array(Schema.Unknown)]);
 // The production config is typed against oxlint's own definitions; only the fields this suite
@@ -60,23 +59,7 @@ it('fixture configs enable only their owned rule without file-ignore shortcuts',
   }
 });
 
-it('production import policy rejects node:test in application tests but not e2e adapters', () => {
-  withTemporaryWorkspace((directory) => {
-    const overrides = config.overrides.filter((override) => 'eslint/no-restricted-imports' in override.rules);
-    expect(overrides.length).toBe(1);
-    const configPath = nodePath.join(directory, '.oxlintrc.json');
-    writeFileSync(configPath, JSON.stringify({ categories: { correctness: 'off' }, overrides }));
-    const paths = ['apps/x/tests/y.test.ts', 'apps/x/tests/e2e/y.test.ts'];
-    for (const file of paths) {
-      const fullPath = nodePath.join(directory, file);
-      mkdirSync(nodePath.dirname(fullPath), { recursive: true });
-      writeFileSync(fullPath, "import { test } from 'node:test';\ntest('example', () => {});\n");
-    }
-    const run = runOxlint(configPath, paths, directory);
-    expect(run.numberOfFiles).toBe(2);
-    expect(run.exitCode).toBe(1);
-    expect(run.diagnostics.map(({ code, filename }) => ({ code, filename }))).toEqual([
-      { code: 'eslint(no-restricted-imports)', filename: paths[0] },
-    ]);
-  });
+it('production test import policy is owned by exactly one override', () => {
+  // production-config.test.mts proves through Oxlint that the override applies to tests but not e2e adapters.
+  expect(config.overrides.filter((override) => 'eslint/no-restricted-imports' in override.rules)).toHaveLength(1);
 });

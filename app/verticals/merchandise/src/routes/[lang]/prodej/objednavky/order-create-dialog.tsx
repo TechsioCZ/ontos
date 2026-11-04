@@ -13,8 +13,9 @@ import type { ProductId } from '../../../../../shared/domain/merchandise-model.t
 import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
 import type { NewOrderLine } from './orders-records.ts';
 import { createOrder, isRevisionConflict } from './orders-records.ts';
-import { OrderLineEditor, activeVariants, lineProduct } from './order-line-editor.tsx';
-import type { DraftLine, DraftLinePatch } from './order-line-editor.tsx';
+import { OrderLineEditor } from './order-line-editor.tsx';
+import { activeVariants, lineProduct } from './order-line-draft.ts';
+import type { DraftLine, DraftLinePatch } from './order-line-draft.ts';
 
 const key = (path: string) => `merchandise.pages.orders.${path}`;
 

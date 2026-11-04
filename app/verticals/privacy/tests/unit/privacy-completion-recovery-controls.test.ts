@@ -1,4 +1,4 @@
-import { expect, rs, test } from 'effect-rstest';
+import { afterAll, expect, rs, test } from 'effect-rstest';
 
 import { makeReportResponseLossControl } from '../support/privacy-completion-http.ts';
 
@@ -39,4 +39,12 @@ test.each([
   expect(control.observe()).toEqual({ armed: true, committedResponseStatus: null, discardedResponses: 0 });
   expect(control.discard('POST', reportPath, 200, close)).toBe(true);
   expect(close).toHaveBeenCalledTimes(1);
+});
+
+// With `isolate: false` one module registry is shared by every file a worker runs, so these
+// replacements outlive this file and would leak into whatever runs next. Remove them and drop the
+// modules they replaced, so the next file evaluates the real implementations.
+afterAll(() => {
+  rs.doUnmock('@effect/platform-node/NodeRuntime');
+  rs.resetModules();
 });

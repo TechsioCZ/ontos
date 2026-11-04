@@ -565,10 +565,9 @@ const restartTransaction =
     readonly rollback: Error;
     readonly tenantId: string;
   }) =>
-  (transaction: TestTransaction) =>
-    Effect.gen(function* nativeRestartTransaction() {
-      const execute = (statement: Parameters<typeof transaction.execute>[0]) =>
-        transaction.execute(statement, 'objects');
+  (transaction: TestTransaction) => {
+    const execute = (statement: Parameters<typeof transaction.execute>[0]) => transaction.execute(statement, 'objects');
+    return Effect.gen(function* nativeRestartTransaction() {
       const schemaRows = yield* execute(sql`select exists(select 1 from information_schema.columns
         where table_schema = 'commerce_customer_context' and table_name = 'portal_enrollment_attempts'
           and column_name = 'continuation_composition_revision') as installed`);
@@ -598,6 +597,7 @@ const restartTransaction =
       }
       return yield* Effect.fail(rollback);
     });
+  };
 
 const restartAcceptance = () =>
   Effect.scoped(

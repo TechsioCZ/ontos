@@ -21,6 +21,7 @@ import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { HttpServer, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
+import type { ChildProcessSpawner } from 'effect/process';
 import {
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
@@ -1105,7 +1106,7 @@ it.live(
             ),
           ),
         ),
-      ) satisfies Effect.Effect<void, unknown, Crypto.Crypto | Scope.Scope>;
+      ) satisfies Effect.Effect<void, unknown, Crypto.Crypto | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner>;
       yield* proof;
       // Exercise the exported CLI composition, without the handcrafted proof's registry/runtime injections.
       const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);

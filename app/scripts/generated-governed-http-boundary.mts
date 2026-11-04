@@ -17,9 +17,13 @@ import {
   hasGeneratedSourceHeader,
   hasGeneratedModuleApiContract,
   hasGeneratedModuleApiReadContract,
+  hasGeneratedProviderReadContract,
+  hasMatchingGeneratedProviderAuthorization,
+  hasUnshadowedNativeValueImport,
   generatedModuleApiEntrypointReference,
   hasGeneratedOperationGatewayContract,
   hasGeneratedOperationPrincipalContract,
+  normalizedModuleIdentitySource,
   tokenizeGovernedClient,
 } from './generated-module-api-boundary.mts';
 import {
@@ -179,6 +183,14 @@ const objectPropertyValue = (source: string, property: string): string | undefin
   }
   const shorthand = topLevelObjectEntries(source)?.filter((entry) => entry === property) ?? [];
   return shorthand.length === 1 ? property : undefined;
+};
+
+const hasUniquePlainObjectKeys = (source: string): boolean => {
+  const entries = topLevelObjectEntries(source);
+  const keys = entries?.map(
+    (entry) => /^(?<key>[A-Za-z_$][\w$]*)(?:\s*:|\s*$)/u.exec(maskComments(entry).trim())?.groups?.key,
+  );
+  return keys !== undefined && keys.every((key) => key !== undefined) && new Set(keys).size === keys.length;
 };
 
 const isWholeCallExpression = (source: string, declaration: RegExp): boolean => {
@@ -1570,7 +1582,7 @@ const generatedHeader = (kind: GovernedReadKind): string =>
 
 const contributionProfiles = {
   'module-api': {
-    accessKinds: new Set(["'detail'", "'list'"]),
+    accessKinds: new Set(["'detail'", "'download'", "'list'"]),
     directory: 'api',
     readSuffix: '.read',
     registrationCategory: 'api',
@@ -2597,6 +2609,67 @@ export const hasOwnerLocalReadFinishFactoryResult = (
   );
 };
 
+const hasWholeSearchProjection = (callback: string | undefined, projection: string): boolean => {
+  const arrow = directArrowExpression(callback);
+  const parameter = arrow?.parameters[0];
+  const name =
+    parameter === undefined || parameter.includes('=')
+      ? undefined
+      : /^(?<name>[A-Za-z_$][\w$]*)(?:\s*:\s*[\s\S]+)?$/u.exec(parameter)?.groups?.name;
+  return (
+    arrow?.parameters.length === 1 &&
+    name !== undefined &&
+    hasExactSourceTokens(tokenizeGovernedClient(arrow.output), `${name}${projection}`)
+  );
+};
+
+const hasOwnerSearchAuthorization = (declaration: string, read: string, entrypoint: string): boolean => {
+  const ownerAuthorization = declaration.replace(/\s+as\s+const$/u, '');
+  const authorization = objectProperty(entrypoint, 'authorization');
+  return (
+    topLevelObjectEntries(ownerAuthorization)?.length === 3 &&
+    hasObjectProperties(ownerAuthorization, {
+      accessFiltering: "'legal_entity_scope'",
+      kind: "'owner-legal-entity-scope'",
+      requiredModuleAccess: 'true',
+    }) &&
+    objectProperty(read, 'legalEntityScope') === "'required'" &&
+    objectProperty(read, 'permissionTarget') === "'module'" &&
+    objectProperty(read, 'resourcePermission') === undefined &&
+    authorization !== undefined &&
+    topLevelObjectEntries(authorization)?.length === 2 &&
+    hasObjectProperties(authorization, { kind: "'context_permission'", permission: "'module.access'" })
+  );
+};
+
+const hasSearchResultAuthorization = (source: string, read: string, entrypoint: string): boolean => {
+  const declaration = objectProperty(read, 'resultAuthorization');
+  if (declaration === undefined) {
+    // The legacy positional result resolver is checked with the other callbacks.
+    return true;
+  }
+  if (objectProperty(entrypoint, 'role') !== "'search'" || objectProperty(read, 'accessKind') !== "'search'") {
+    return false;
+  }
+  const collectionCall = /^defineReadSearchCollectionAuthorization\(/u;
+  const adapter = objectArgument(declaration, collectionCall);
+  if (adapter !== undefined) {
+    return (
+      wholeCallArguments(declaration, collectionCall)?.length === 1 &&
+      hasExactValueImport(source, 'defineReadSearchCollectionAuthorization', CORE_RUNTIME_MODULE, true) &&
+      hasUnshadowedNativeValueImport(source, 'defineReadSearchCollectionAuthorization', CORE_RUNTIME_MODULE) &&
+      hasStableReadFactoryBindings(source, new Map([['defineReadSearchCollectionAuthorization', 0]]), '') &&
+      topLevelObjectEntries(adapter)?.length === 4 &&
+      objectPropertyValue(adapter, 'resultSchema') === objectPropertyValue(read, 'resultSchema') &&
+      hasWholeSearchProjection(objectPropertyValue(adapter, 'items'), '') &&
+      hasWholeSearchProjection(objectPropertyValue(adapter, 'resource'), '.ref') &&
+      isExecutableCallback(objectPropertyValue(adapter, 'withItems'), source) &&
+      /^'(?:legal_entity|module|resource|tenant)'$/u.test(objectProperty(read, 'permissionTarget') ?? '')
+    );
+  }
+  return hasOwnerSearchAuthorization(declaration, read, entrypoint);
+};
+
 const hasReadCallbacks = (
   source: string,
   readExpression: string,
@@ -2607,7 +2680,9 @@ const hasReadCallbacks = (
 ): boolean => {
   const pipeline = callArgument(readExpression, /^defineRead\(/u, 1);
   const callbacks = [2, 3];
-  if (kind === SEARCH_PROVIDER_KIND) {
+  const read = objectArgument(readExpression, /^defineRead\(/u);
+  const descriptorAuthorization = read === undefined ? undefined : objectProperty(read, 'resultAuthorization');
+  if (kind === SEARCH_PROVIDER_KIND && descriptorAuthorization === undefined) {
     callbacks.push(4);
   }
   const isOwnerLocalImportedCallback = (candidate: string | undefined): boolean => {
@@ -2653,6 +2728,9 @@ const hasReadCallbacks = (
     return callback === undefined ? [] : [{ callback, step }];
   });
   return (
+    (kind !== SEARCH_PROVIDER_KIND ||
+      descriptorAuthorization === undefined ||
+      wholeCallArguments(readExpression, /^defineRead\(/u)?.length === 4) &&
     (isReadHandlerCallback(load, source) || isOwnerLocalImportedFactoryResult(load)) &&
     optionalSteps.every(
       ({ callback, step }) =>
@@ -2675,26 +2753,13 @@ const hasReadCallbacks = (
   );
 };
 
-const hasReadEntrypoint = (source: string, entrypoint: string, identity: Readonly<Record<string, string>>): boolean => {
+const matchesExactString = (actual: string | undefined, expected: string): boolean => {
+  const literal = expected.slice(1, -1);
+  return actual === `'${literal}'` || actual === `"${literal}"`;
+};
+
+const hasReadEntrypoint = (entrypoint: string, identity: Readonly<Record<string, string>>): boolean => {
   const access = objectProperty(entrypoint, 'access');
-  const matchesExactString = (actual: string | undefined, expected: string): boolean => {
-    const literal = expected.slice(1, -1);
-    if (actual === `'${literal}'` || actual === `"${literal}"`) {
-      return true;
-    }
-    if (actual === undefined || !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(actual)) {
-      return false;
-    }
-    const declarations = [
-      ...source.matchAll(
-        new RegExp(
-          `^const\\s+${escapeRegExp(actual)}\\s*=\\s*(['"])${escapeRegExp(literal)}\\1(?:\\s+as\\s+const)?;\\s*$`,
-          'gmu',
-        ),
-      ),
-    ];
-    return declarations.length === 1;
-  };
   const result =
     (access === "'read'" || access === '"read"' || access === "'historical_read'" || access === '"historical_read"') &&
     Object.entries(identity).every(([property, value]) => {
@@ -2746,25 +2811,10 @@ const hasReadContract = (
         ['readKey', contributionKey],
       ] as const
     ).every(([property, value]) => {
-      const actual = objectProperty(read, property);
-      if (actual === `'${value}'` || actual === `"${value}"`) {
-        return true;
-      }
-      if (actual === undefined || !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(actual)) {
-        return false;
-      }
-      return (
-        [
-          ...source.matchAll(
-            new RegExp(
-              `^const\\s+${escapeRegExp(actual)}\\s*=\\s*(['"])${escapeRegExp(value)}\\1(?:\\s+as\\s+const)?;\\s*$`,
-              'gmu',
-            ),
-          ),
-        ].length === 1
-      );
+      const actual = objectPropertyValue(read, property);
+      return actual === `'${value}'` || actual === `"${value}"`;
     }),
-    entrypoint: hasReadEntrypoint(source, entrypoint, {
+    entrypoint: hasReadEntrypoint(entrypoint, {
       entrypointKey: `'${contributionKey}'`,
       moduleKey: `'${moduleId}'`,
       role: `'${role}'`,
@@ -2776,6 +2826,8 @@ const hasReadContract = (
     }),
     policy: hasReadDescriptorPolicy(read, allowedAccessKinds),
     readCall: isWholeObjectCall(readExpression, read, /^defineRead\(/u),
+    resultAuthorization:
+      contribution.kind !== SEARCH_PROVIDER_KIND || hasSearchResultAuthorization(source, read, entrypoint),
   };
   for (const [name, valid] of Object.entries(checks)) {
     if (!valid) {
@@ -3203,7 +3255,12 @@ const hasHttpContract = (
   );
 };
 
-const hasManifestContract = (manifest: string, contribution: GovernedReadContribution, moduleId: string): boolean => {
+const hasManifestContract = (source: string, contribution: GovernedReadContribution, moduleId: string): boolean => {
+  const manifest = normalizedModuleIdentitySource(
+    source,
+    `${moduleId}.${contributionRole(contribution.kind)}.${contribution.name}`,
+    new Set(['contributionKey', 'entrypointKey']),
+  );
   const allOwnerManifestEntries = entriesAcrossSlots(manifest, [
     [MANIFEST_API_SLOT_START, MANIFEST_API_SLOT_END],
     ['// <generated-module-manifest-reports>', '// </generated-module-manifest-reports>'],
@@ -3311,6 +3368,40 @@ const publishesSharedApiContribution = (sharedApi: string, apiValue: string, con
   );
 };
 
+/** Only native Layer.provide can extend the generated handler without replacing its output.
+ * Dependencies may themselves be provided layers, but arbitrary factory calls/transforms are not proven.
+ */
+const hasNativeReadLayerProvision = (source: string, candidate: string, depth = 0): boolean => {
+  if (depth >= MAX_OUTPUT_COMPOSITION_DEPTH) {
+    return false;
+  }
+  const binding = /^(?<binding>GovernedReadLayer|Layer)\.provide\(/u.exec(candidate)?.groups?.binding;
+  const imported = binding === undefined ? undefined : namedSourceImport(source, binding);
+  const argumentsList = wholeCallArguments(candidate, /^(?:GovernedReadLayer|Layer)\.provide\(/u);
+  const dependency = argumentsList?.[0];
+  if (
+    binding === undefined ||
+    imported?.imported !== 'Layer' ||
+    !['effect', EFFECT_EDGE_MODULE].includes(imported.modulePath) ||
+    !hasUnshadowedNativeValueImport(source, binding, imported.modulePath, 'Layer') ||
+    !hasStableReadFactoryBindings(source, new Map([[binding, 0]]), '') ||
+    argumentsList?.length !== 1 ||
+    dependency === undefined
+  ) {
+    return false;
+  }
+  if (/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(dependency)) {
+    return true;
+  }
+  const piped = outputPipeExpression(dependency);
+  return (
+    piped !== undefined &&
+    /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(piped.base) &&
+    piped.transforms.length > 0 &&
+    piped.transforms.every((transform) => hasNativeReadLayerProvision(source, transform, depth + 1))
+  );
+};
+
 const hasPublishedContract = (
   sharedApi: string,
   manifest: string,
@@ -3336,7 +3427,10 @@ const hasPublishedContract = (
       return false;
     }
     const first = callArgument(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'));
-    if (first !== 'GovernedReadLayer.provide(governedReadRuntimeLive)') {
+    if (
+      first !== 'GovernedReadLayer.provide(governedReadRuntimeLive)' ||
+      !hasNativeReadLayerProvision(handlerRoot, first)
+    ) {
       return false;
     }
     let index = 1;
@@ -3345,7 +3439,7 @@ const hasPublishedContract = (
       if (argument === '') {
         return callArgument(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'), index + 1) === undefined;
       }
-      if (!/^Layer\.provide\([A-Za-z][A-Za-z0-9]*\)$/u.test(argument)) {
+      if (!hasNativeReadLayerProvision(handlerRoot, argument)) {
         return false;
       }
       index += 1;
@@ -3478,6 +3572,62 @@ export const hasGeneratedActionKeyIdentity = (source: string, expectedKey: strin
       (match) => match.index > declaration.index && isCodePosition(source, match.index),
     );
   });
+};
+
+const hasCoreOnlyActionDescriptor = (action: string, camel: string): boolean => {
+  const expression = constInitializer(action, `${camel}Action`);
+  const descriptor = objectArgument(expression, /^defineAction\(/u);
+  return (
+    descriptor !== undefined &&
+    hasUniquePlainObjectKeys(descriptor) &&
+    objectProperty(descriptor, 'domainErrorSchema') === 'Schema.Never' &&
+    hasExactValueImport(action, 'Schema', 'effect', true) &&
+    hasUnshadowedNativeValueImport(action, 'Schema', 'effect') &&
+    hasStableReadFactoryBindings(
+      action,
+      new Map([
+        ['Schema', 0],
+        ['defineAction', 0],
+      ]),
+      '',
+    ) &&
+    hasExactValueImport(action, 'defineAction', CORE_RUNTIME_MODULE, true) &&
+    hasUnshadowedNativeValueImport(action, 'defineAction', CORE_RUNTIME_MODULE)
+  );
+};
+
+const hasCoreProblemForwarding = (mapper: string, type: string): boolean => {
+  const forwarding = directArrowExpression(mapper);
+  return (
+    hasExactSourceTokens(tokenizeGovernedClient(mapper), 'mapCoreProblem') ||
+    (forwarding?.parameters.length === 1 &&
+      forwarding.parameters[0] === 'error: ActionCoreError' &&
+      forwarding.annotation === `: ${type}ActionProblem` &&
+      hasExactSourceTokens(tokenizeGovernedClient(forwarding.output), 'mapCoreProblem(error)'))
+  );
+};
+
+const hasCoreOnlyActionProblemMapper = (action: string, problems: string, camel: string, type: string): boolean => {
+  const mapper = constInitializer(problems, `map${type}ActionProblem`) ?? '';
+  const coreMapper = directArrowExpression(constInitializer(problems, 'mapCoreProblem') ?? '');
+  const corePipeline = coreMapper === undefined ? undefined : outputPipeExpression(coreMapper.output);
+  return (
+    hasCoreOnlyActionDescriptor(action, camel) &&
+    hasCoreProblemForwarding(mapper, type) &&
+    coreMapper?.parameters.length === 1 &&
+    coreMapper.parameters[0] === 'error: ActionCoreError' &&
+    coreMapper.annotation === `: ${type}ActionProblem` &&
+    corePipeline?.base === 'Match.value(error)' &&
+    corePipeline.transforms.length === 2 &&
+    objectArgument(corePipeline.transforms[0], /^Match\.tags\(/u) !== undefined &&
+    corePipeline.transforms[1] === 'Match.exhaustive' &&
+    tokenizeGovernedClient(problems).filter(
+      (token) => token.kind === SyntaxKind.Identifier && token.value === 'mapCoreProblem',
+    ).length === 2 &&
+    hasExactValueImport(problems, 'Match', 'effect', true) &&
+    hasUnshadowedNativeValueImport(problems, 'Match', 'effect') &&
+    hasStableReadFactoryBindings(problems, new Map([['Match', 0]]), '')
+  );
 };
 
 export const hasGeneratedActionClientPublication = (
@@ -3632,7 +3782,8 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
     const escapedLayerValue = escapeRegExp(layerValue);
     const escapedActionValue = escapeRegExp(`${camel}Action`);
     const checks = [
-      actionSource.startsWith(
+      hasGeneratedSourceHeader(
+        actionSource,
         `// @generated by OntOS Codesmith Action v1\n// @ontos-action-owner ${input.moduleId}\n// @ontos-action-slug ${slug}\n`,
       ),
       hasGeneratedActionRegistrationBinding(actionSource, camel, type, input.moduleId),
@@ -3647,7 +3798,8 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
       ).test(contract),
       new RegExp(`HttpApiGroup\\.make\\(\\s*'${escapeRegExp(camel)}Action',?\\s*\\)`, 'u').test(contract),
       problems.includes(`export const map${type}ActionProblem =`),
-      problems.includes(`from '../src/actions/${slug}.action.ts'`),
+      hasExactValueImport(problems, `${camel}Action`, `../src/actions/${slug}.action.ts`, true) ||
+        hasCoreOnlyActionProblemMapper(actionSource, problems, camel, type),
       server.includes(`const runActionHttp = bindActionHttpRunner({`),
       server.includes(`registration: ${camel}Action`),
       server.includes(`export const ${layerValue} = HttpApiBuilder.group(`),
@@ -4105,16 +4257,38 @@ const hasCompleteContributionRead = (
   readFile: string,
   ownerPath: string,
   diagnostics?: string[],
-): boolean =>
-  hasReadContract(readSource, contribution, moduleId, sources, readFile, ownerPath, diagnostics) &&
-  (contribution.kind !== MODULE_API_KIND ||
-    hasGeneratedModuleApiReadContract(
-      readSource,
-      moduleId,
-      contribution.name,
-      undefined,
-      generatedModuleApiEntrypointReference(readSource, `${toCamelCase(contribution.name)}Read`)?.name,
-    ));
+): boolean => {
+  const identity = normalizedModuleIdentitySource(
+    normalizedModuleIdentitySource(readSource, moduleId, new Set(['moduleId', 'moduleKey', 'owningModuleKey'])),
+    `${moduleId}.${contributionRole(contribution.kind)}.${contribution.name}`,
+    new Set(['entrypointKey', 'readKey']),
+  );
+  const normalized = normalizedModuleIdentitySource(identity, 'module.access', new Set(['permission']));
+  return (
+    hasReadContract(normalized, contribution, moduleId, sources, readFile, ownerPath, diagnostics) &&
+    (contribution.kind === MODULE_API_KIND
+      ? hasGeneratedModuleApiReadContract(
+          normalized,
+          moduleId,
+          contribution.name,
+          undefined,
+          generatedModuleApiEntrypointReference(normalized, `${toCamelCase(contribution.name)}Read`)?.name,
+        )
+      : hasGeneratedProviderReadContract(
+          normalized,
+          moduleId,
+          contribution.name,
+          contribution.kind === REPORT_KIND ? 'report' : 'search',
+        ) &&
+        hasMatchingGeneratedProviderAuthorization(
+          normalized,
+          sources.get(`${ownerPath}/vertical.manifest.ts`) ?? '',
+          moduleId,
+          contribution.name,
+          contribution.kind === REPORT_KIND ? 'report' : 'search',
+        ))
+  );
+};
 
 export const hasPublishedGeneratedContractShim = (
   sources: ReadonlyMap<string, string>,

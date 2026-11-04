@@ -682,21 +682,40 @@
       "tabs": "People and agents",
       "title": "People and roles",
       "changeReason": "Reason for change",
-      "filters": {
-        "search": "Search by name, type, or role",
-        "searchPlaceholder": "Search name, type, or role",
+      "table": {
+        "actions": "Actions",
+        "allKinds": "All types",
+        "allRoles": "All roles",
+        "allStatuses": "All statuses",
+        "clearFilters": "Clear filters",
+        "companyScope": "Selected company",
+        "currentStatus": "Current",
+        "editMembership": "Edit membership",
+        "empty": "No one matches the filters.",
+        "invitation": {
+          "pending": "Invitation waiting to be sent",
+          "sent": "Invitation sent",
+          "undeliverable": "Invitation cannot be delivered",
+          "unknown": "Invitation delivery cannot be verified"
+        },
         "kind": "Type",
-        "role": "Role",
+        "loading": "Loading people and roles…",
+        "manageRoles": "Manage roles",
+        "moreRoles": "and more roles: {{roles}}",
+        "name": "Name",
+        "noMatches": "No one matches the filters.",
+        "noMemberships": "There are no recorded memberships in this scope.",
+        "pageSize": "Per page",
+        "personActions": "Actions: {{name}}",
+        "range": "{{start}}–{{end}} of {{total}}",
+        "roles": "Roles",
+        "rolesHelp": "Each person and agent has their own login. Roles determine what they can do in the company. Work affiliation alone does not grant access.",
+        "rolesHelpLabel": "How roles work",
+        "scope": "Administration scope",
+        "searchLabel": "Search by name, type or role",
+        "searchPlaceholder": "Search name, type or role",
         "status": "Status",
-        "scope": "Management scope",
-        "rolesHelp": "How roles work"
-      },
-      "list": {
-        "label": "People and roles"
-      },
-      "empty": {
-        "filtered": "No one matches the filters.",
-        "noMemberships": "There are no recorded memberships in this scope."
+        "tenantScope": "Whole organisation"
       },
       "detail": {
         "invalidLink": "The person link is not valid. Select a person from the list.",

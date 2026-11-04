@@ -396,8 +396,10 @@ const normalClose = (error: Socket.SocketError | Schema.SchemaError | TemporalFi
   Socket.isSocketError(error) && Schema.is(Socket.SocketCloseError)(error.reason) && error.reason.code === 1000;
 
 /** Owner-local TEST transport; callers retain their own closed command/response schemas. */
-export const openPriceGroupTemporalChannel = <Response, Encoded>(responseSchema: Schema.Codec<Response, Encoded>) =>
-  Effect.gen(function* openPrivateTemporalChannel() {
+export const openPriceGroupTemporalChannel = <Response, Encoded>(responseSchema: Schema.Codec<Response, Encoded>) => {
+  const decodeLine = (line: string) =>
+    Schema.decodeUnknownEffect(Schema.fromJsonString(responseSchema), { onExcessProperty: 'error' })(line);
+  return Effect.gen(function* openPrivateTemporalChannel() {
     const fs = yield* FileSystem.FileSystem;
     const temporary = yield* fs.makeTempDirectoryScoped({ directory: '/tmp', prefix: 'pg1248-' });
     yield* fs.chmod(temporary, 0o700);
@@ -422,8 +424,6 @@ export const openPriceGroupTemporalChannel = <Response, Encoded>(responseSchema:
       Effect.all([Ref.get(closing), Ref.get(stopped)]).pipe(
         Effect.flatMap(([expected, acknowledged]) => (expected && acknowledged ? Effect.void : Effect.fail(error))),
       );
-    const decodeLine = (line: string) =>
-      Schema.decodeUnknownEffect(Schema.fromJsonString(responseSchema), { onExcessProperty: 'error' })(line);
     const receivePeer = (socket: Socket.Socket) =>
       Effect.scoped(
         Effect.gen(function* receivePrivatePeer() {
@@ -461,6 +461,7 @@ export const openPriceGroupTemporalChannel = <Response, Encoded>(responseSchema:
       socketPath,
     });
   });
+};
 
 const temporalContract = Effect.fn('TemporalNative.actualOwnerContract')(function* actualOwnerContract(
   directory: string,

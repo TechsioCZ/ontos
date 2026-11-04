@@ -405,7 +405,7 @@ const sameCommand = Schema.toEquivalence(WorkforceCommandSchema);
 export const persistenceService = Effect.fn('Workforce.persistenceService')(
   function* makePersistence(
     transaction: ScopedTransactionExecutor,
-    options: { readonly prepared?: ApplyCommandPayload; readonly scope: OperationalScope; },
+    options: { readonly prepared?: ApplyCommandPayload; readonly scope: OperationalScope },
   ) {
     const { prepared, scope } = options;
     const { legalEntityId } = scope;

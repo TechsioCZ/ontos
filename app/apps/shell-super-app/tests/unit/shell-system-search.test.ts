@@ -2,9 +2,11 @@ import { requestPeopleSearchRebuild } from '../../api/people-search-rebuild.ts';
 import { actionSuccess, actionCoreFailure, makeActionRuntimeDouble } from '../support/action-runtime-double.ts';
 import { RequestPeopleSearchRebuildHttpHeadersSchema } from '../../shared/core-actions/request-people-search-rebuild.ts';
 import { NodeCrypto } from '@effect/platform-node';
-import { ActionRuntime, ActionPermissionDenied, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { ActionRuntime, ActionPermissionDenied, ContextAccess, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
-import { DateTime, Effect, Layer, Schema } from 'effect';
+import { PeopleSearchResponseSchema } from '@app/core-runtime/people/search';
+import type { PeopleSearchResponse } from '@app/core-runtime/people/search';
+import { Context, DateTime, Effect, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { authorizePeopleSearchResults, mergeShellSystemSearch } from '../../api/modules/shell-system-search.ts';
 import { ShellProviderUnavailableError } from '../../api/modules/shell-resources.ts';
@@ -33,7 +35,8 @@ const person = {
   },
   selectedLegalEntityId: legalEntityId,
   title: 'Žofie Nováková',
-};
+} satisfies PeopleSearchResponse[number];
+const unexpectedCoreFields = { extra: 'untrusted' };
 const coreResponse = Schema.decodeUnknownSync(ShellSearchResponseSchema)({
   partial: false,
   results: [{ ...person, kind: 'resource' }],
@@ -130,12 +133,43 @@ it.layer(NodeCrypto.layer)('Core system row authorization', (suite) => {
         { ...person, ref: { ...person.ref, resourceId: `20000000-0000-4000-8000-000000000002.${principalId}` } },
       ];
       expect(yield* authorizePeopleSearchResults(scope, bad).pipe(Effect.provideContext(environment))).toEqual([]);
-      const failure = yield* authorizePeopleSearchResults(scope, [
+      const failure = yield* Schema.decodeUnknownEffect(PeopleSearchResponseSchema)([
         { ...person, ref: { ...person.ref, resourceType: 'core.identity.other' } },
-      ]).pipe(Effect.provideContext(environment), Effect.flip);
-      expect(Schema.is(ShellProviderUnavailableError)(failure)).toBe(true);
+      ]).pipe(
+        Effect.flatMap((values) => authorizePeopleSearchResults(scope, values)),
+        Effect.provideContext(environment),
+        Effect.flip,
+      );
+      expect(Schema.isSchemaError(failure)).toBe(true);
     }),
   );
+  for (const values of [
+    [{ ...person, title: '' }],
+    [{ ...person, selectedLegalEntityId: 'not-a-uuid' }],
+    [{ ...person, ref: { ...person.ref, resourceId: principalId } }],
+    [{ ...person, ref: { ...person.ref, ...unexpectedCoreFields } }],
+    [{ ...person, ...unexpectedCoreFields }],
+  ] satisfies readonly PeopleSearchResponse[]) {
+    suite.effect(`rejects malformed Core rows before checking resource permissions: ${JSON.stringify(values)}`, () =>
+      Effect.gen(function* malformedCoreRows() {
+        const harness = yield* makeReadTestHarness({
+          executeOwnerQuery: () => Effect.die('No owner SQL'),
+          operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-02T12:00:00.000Z')),
+          permissionDecision: 'allowed',
+          scope,
+        });
+        const environment = yield* Layer.build(harness.layer);
+        const failure = yield* authorizePeopleSearchResults(scope, values).pipe(
+          Effect.provideService(ContextAccess, {
+            ...Context.get(environment, ContextAccess),
+            resources: () => Effect.die('Malformed Core rows must fail before permission checks'),
+          }),
+          Effect.flip,
+        );
+        expect(Schema.is(ShellProviderUnavailableError)(failure)).toBe(true);
+      }),
+    );
+  }
 });
 
 it('publishes the rebuild only on its tenant-session Action endpoint with an idempotency header', () => {

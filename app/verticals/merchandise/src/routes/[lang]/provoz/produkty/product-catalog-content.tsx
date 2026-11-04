@@ -12,7 +12,7 @@ import type { ProductPatch } from '../../../../../shared/actions/apply-command.t
 import type { CategoryTrail, ProductRecord } from '../../../../../shared/apis/records.ts';
 import { CategorySearchCombobox } from './category-search-combobox.tsx';
 import { runCommand } from './products-api.ts';
-import { useCommandFailure } from './product-forms.tsx';
+import { useCommandFailure } from './product-form-labels.ts';
 
 export interface CatalogContentPanelProps {
   readonly canWrite: boolean;

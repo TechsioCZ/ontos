@@ -7,15 +7,15 @@ import csResource from '../../locales/cs/merchandise.json';
 import enResource from '../../locales/en/merchandise.json';
 import { MarketIdSchema } from '../../shared/domain/market-offers.ts';
 import type { ProductMarket } from '../../shared/domain/market-offers.ts';
-import { formatOrderTotal } from '../../src/list-cells.tsx';
+import { formatOrderTotal } from '../../src/list-format.ts';
+import { MarketsPanelView } from '../../src/routes/[lang]/provoz/produkty/product-markets.tsx';
 import {
-  MarketsPanelView,
   marketPriceText,
   marketsLabelsFrom,
-} from '../../src/routes/[lang]/provoz/produkty/product-markets.tsx';
+} from '../../src/routes/[lang]/provoz/produkty/product-market-view-model.ts';
 import type { MarketsPanelViewProps } from '../../src/routes/[lang]/provoz/produkty/product-markets.tsx';
 
-type LocaleResource = typeof csResource;
+type LocaleResource = typeof csResource | typeof enResource;
 
 const SK = Schema.decodeUnknownSync(MarketIdSchema)('6a000000-0000-4000-8000-0000000000a1');
 const PL = Schema.decodeUnknownSync(MarketIdSchema)('6a000000-0000-4000-8000-0000000000a2');

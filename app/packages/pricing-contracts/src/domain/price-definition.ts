@@ -32,14 +32,14 @@ export const PricePositiveDecimalSchema = Schema.String.check(
   Schema.makeFilter((value) => (/^0(?:\.0+)?$/u.test(value) ? 'Price basis quantity must be positive' : undefined)),
 ).pipe(Schema.brand('PricingPricePositiveDecimal'), Schema.decodeTo(Schema.String));
 
-/** Exact numeric equality for already-validated Price decimals; preserves each value's original lexical form. */
-export const priceDecimalValuesEqual = (left: string, right: string): boolean => {
-  const normalized = (value: string): string => {
-    const [integer = '', fraction = ''] = value.split('.');
-    return `${integer}.${fraction.padEnd(PRICE_DECIMAL_SCALE, '0')}`;
-  };
-  return normalized(left) === normalized(right);
+const normalizedPriceDecimal = (value: string): string => {
+  const [integer = '', fraction = ''] = value.split('.');
+  return `${integer}.${fraction.padEnd(PRICE_DECIMAL_SCALE, '0')}`;
 };
+
+/** Exact numeric equality for already-validated Price decimals; preserves each value's original lexical form. */
+export const priceDecimalValuesEqual = (left: string, right: string): boolean =>
+  normalizedPriceDecimal(left) === normalizedPriceDecimal(right);
 
 /** Price facts and runtime decisions share one mandatory exact SLE + Channel + Commerce Market scope. */
 export const PriceCommercialScopeSchema = PricingCommercialScopeSchema;

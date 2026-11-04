@@ -57,7 +57,14 @@ export function ProductShare({
         await navigator.share({ title: shareTitle, url: canonical });
         return false;
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return false;
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          Error.prototype.isPrototypeOf(error) &&
+          "name" in error &&
+          error.name === "AbortError"
+        )
+          return false;
       }
     }
     return true;

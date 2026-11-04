@@ -80,6 +80,14 @@ const transportFailure = (cause: Schema.Defect['Type']) =>
 
 type SmtpReplies = Queue.Queue<string, EmailDeliveryAcceptanceIndeterminate>;
 
+const failRepliesOnError = (replies: SmtpReplies) => (cause: Error) => {
+  Queue.failCauseUnsafe(replies, Cause.fail(transportFailure(cause)));
+};
+
+const failRepliesOnClose = (replies: SmtpReplies) => () => {
+  Queue.failCauseUnsafe(replies, Cause.fail(new EmailDeliveryAcceptanceIndeterminate({ reason: 'transport' })));
+};
+
 const openSocket = (config: SmtpConfiguration, replies: SmtpReplies) =>
   Effect.acquireRelease(
     Effect.try({
@@ -102,12 +110,8 @@ const openSocket = (config: SmtpConfiguration, replies: SmtpReplies) =>
             end = buffer.indexOf('\r\n');
           }
         };
-        const onError = (cause: Error) => {
-          Queue.failCauseUnsafe(replies, Cause.fail(transportFailure(cause)));
-        };
-        const onClose = () => {
-          Queue.failCauseUnsafe(replies, Cause.fail(new EmailDeliveryAcceptanceIndeterminate({ reason: 'transport' })));
-        };
+        const onError = failRepliesOnError(replies);
+        const onClose = failRepliesOnClose(replies);
         socket.setEncoding('utf-8');
         socket.on('data', onData);
         socket.on('error', onError);

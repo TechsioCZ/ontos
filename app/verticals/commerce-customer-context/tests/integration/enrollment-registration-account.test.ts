@@ -126,10 +126,10 @@ it.live('persists immutable credential-free registration and admits only exact l
       });
       const rollback = new Error('registration acceptance rollback');
       yield* admin
-        .transaction((transaction) =>
-          Effect.gen(function* registrationTransaction() {
-            const execute = (statement: Parameters<typeof transaction.execute>[0]) =>
-              transaction.execute(statement, 'objects');
+        .transaction((transaction) => {
+          const execute = (statement: Parameters<typeof transaction.execute>[0]) =>
+            transaction.execute(statement, 'objects');
+          return Effect.gen(function* registrationTransaction() {
             const existing = yield* execute(
               sql`select exists(select 1 from information_schema.columns where table_schema = 'commerce_customer_context' and table_name = 'portal_enrollment_attempts' and column_name = 'retail_registration') as installed`,
             );
@@ -267,8 +267,8 @@ it.live('persists immutable credential-free registration and admits only exact l
             yield* execute(sql`set local role ontos_runtime`);
             expect(yield* account()).toEqual([]);
             return yield* Effect.fail(rollback);
-          }),
-        )
+          });
+        })
         .pipe(
           Effect.catchIf(
             (failure) => failure === rollback,

@@ -52,6 +52,15 @@ const askAssertion = (body: Readonly<Record<string, string>>) =>
     return { body: await response.json(), status: response.status };
   });
 
+const write = (status: number) =>
+  Effect.promise(async () => {
+    platformFetch.mockResolvedValueOnce(new Response(null, { status }));
+    await globalThis.fetch('/shell-super-app-api/module-api/sales/build/sales-api/commands/close-deal', {
+      body: '{}',
+      method: 'POST',
+    });
+  });
+
 const isGatewayUrl = Schema.is(Schema.String.check(Schema.isEndingWith('/auth/gateway-context')));
 const gatewayRequests = () => platformFetch.mock.calls.filter(([input]) => isGatewayUrl(input));
 
@@ -230,14 +239,6 @@ it.live('announces every settled module write to page-data stores, but not a rej
       announced += 1;
     };
     globalThis.addEventListener(moduleWriteEvent, onWrite);
-    const write = (status: number) =>
-      Effect.promise(async () => {
-        platformFetch.mockResolvedValueOnce(new Response(null, { status }));
-        await globalThis.fetch('/shell-super-app-api/module-api/sales/build/sales-api/commands/close-deal', {
-          body: '{}',
-          method: 'POST',
-        });
-      });
     yield* write(204);
     expect(announced).toBe(1);
     yield* write(409);

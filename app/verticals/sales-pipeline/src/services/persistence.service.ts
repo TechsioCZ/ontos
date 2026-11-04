@@ -628,11 +628,11 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
   function* makePersistence(
     transaction: ScopedTransactionExecutor,
     options: {
-      readonly scope: OperationalScope;
       readonly prepared?: { readonly actionInvocationId: string; readonly payload: ApplyCommandPayload };
+      readonly scope: OperationalScope;
     },
   ) {
-    const { scope, prepared } = options;
+    const { prepared, scope } = options;
     const { legalEntityId } = scope;
     if (
       legalEntityId === undefined ||

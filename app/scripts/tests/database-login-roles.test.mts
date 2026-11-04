@@ -60,14 +60,14 @@ type Rows = readonly Row[];
 type Respond = (text: string, values: readonly unknown[]) => Rows | Effect.Effect<Rows, SqlError>;
 
 /** A real Effect SQL facade over an in-memory connection; transaction controls are recorded too. */
-const makeClient = (statements: string[], respond: Respond) =>
-  Effect.gen(function* makeMemoryClient() {
-    const execute = (text: string, values: readonly unknown[]) =>
-      Effect.suspend(() => {
-        statements.push(text);
-        const response = respond(text, values);
-        return Effect.isEffect(response) ? response : Effect.succeed(response);
-      });
+const makeClient = (statements: string[], respond: Respond) => {
+  const execute = (text: string, values: readonly unknown[]) =>
+    Effect.suspend(() => {
+      statements.push(text);
+      const response = respond(text, values);
+      return Effect.isEffect(response) ? response : Effect.succeed(response);
+    });
+  return Effect.gen(function* makeMemoryClient() {
     const connection: SqlConnection.Connection = {
       execute,
       executeRaw: execute,
@@ -91,6 +91,7 @@ const makeClient = (statements: string[], respond: Respond) =>
     });
     return client;
   });
+};
 
 const reconciledRows: Respond = (text, values) => {
   if (text.startsWith(ROLE_EXISTS_QUERY_PREFIX)) {

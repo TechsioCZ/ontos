@@ -224,6 +224,19 @@ const selection = (fields: Record<string, PgColumn>, joins: readonly OneToOneJoi
   ...Object.fromEntries(joins.map(({ key, table }) => [key, getColumns(table)])),
 });
 
+const selectWithJoins = (
+  executor: Executor,
+  target: ModelTable,
+  fields: Record<string, PgColumn>,
+  joins: readonly OneToOneJoin[],
+) => {
+  let query = executor.select(selection(fields, joins)).from(target.table).$dynamic();
+  for (const { condition, table } of joins) {
+    query = query.leftJoin(table, condition);
+  }
+  return query;
+};
+
 /** The adapter's operations as Effects over one executor: the root database or an open transaction. */
 const makeOperations =
   (
@@ -267,13 +280,6 @@ const makeOperations =
       );
       return joins.flat();
     });
-    const selectWithJoins = (target: ModelTable, fields: Record<string, PgColumn>, joins: readonly OneToOneJoin[]) => {
-      let query = executor.select(selection(fields, joins)).from(target.table).$dynamic();
-      for (const { condition, table } of joins) {
-        query = query.leftJoin(table, condition);
-      }
-      return query;
-    };
     const firstMatchingId = Effect.fnUntraced(function* firstMatchingId(target: ModelTable, where: CleanedWhere[]) {
       // Both are pure schema lookups.
       const [id, condition] = yield* Effect.all([target.column('id'), whereCondition(target, where)], {
@@ -342,7 +348,7 @@ const makeOperations =
         const target = yield* resolve(query.model);
         const fields = yield* projection(target, query.select);
         const joins = yield* oneToOneJoins(target, fields, query.join);
-        const rows = selectWithJoins(target, fields, joins)
+        const rows = selectWithJoins(executor, target, fields, joins)
           .where(yield* whereCondition(target, query.where))
           .limit(query.limit)
           .offset(query.offset ?? 0);
@@ -362,7 +368,7 @@ const makeOperations =
         const target = yield* resolve(query.model);
         const fields = yield* projection(target, query.select);
         const joins = yield* oneToOneJoins(target, fields, query.join);
-        const [row] = yield* selectWithJoins(target, fields, joins)
+        const [row] = yield* selectWithJoins(executor, target, fields, joins)
           .where(yield* whereCondition(target, query.where))
           .limit(1);
         return row ?? null;

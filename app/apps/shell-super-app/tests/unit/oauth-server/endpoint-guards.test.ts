@@ -38,6 +38,6 @@ test('the storage key matches Better Auth hashed storage (unpadded base64url SHA
     .digest('base64')
     .replaceAll('+', '-')
     .replaceAll('/', '_')
-    .replace(/=+$/u, '');
+    .replace(/[=]+$/u, '');
   expect(refreshTokenStorageKey('abc')).toBe(expected);
 });

@@ -254,25 +254,26 @@ export const runLiveChanges = Effect.fn('LiveChanges.run')(function* runLiveChan
 });
 
 /** Forwards the document's visibility and network events into the channel for as long as the scope is open. */
-const forwardDocumentSignals = (signals: Queue.Queue<LiveSignal>) =>
-  Effect.acquireRelease(
+const forwardDocumentSignals = (signals: Queue.Queue<LiveSignal>) => {
+  const onVisibility = () => {
+    signal(signals, { kind: globalThis.document.visibilityState === 'visible' ? 'visible' : 'hidden' });
+  };
+  const onOnline = () => {
+    signal(signals, { kind: 'online' });
+  };
+  return Effect.acquireRelease(
     Effect.sync(() => {
-      const onVisibility = () => {
-        signal(signals, { kind: globalThis.document.visibilityState === 'visible' ? 'visible' : 'hidden' });
-      };
-      const onOnline = () => {
-        signal(signals, { kind: 'online' });
-      };
       globalThis.document.addEventListener('visibilitychange', onVisibility);
       globalThis.addEventListener('online', onOnline);
       return { onOnline, onVisibility };
     }),
-    ({ onOnline, onVisibility }) =>
+    (handlers) =>
       Effect.sync(() => {
-        globalThis.document.removeEventListener('visibilitychange', onVisibility);
-        globalThis.removeEventListener('online', onOnline);
+        globalThis.document.removeEventListener('visibilitychange', handlers.onVisibility);
+        globalThis.removeEventListener('online', handlers.onOnline);
       }),
   );
+};
 
 const documentLiveChanges = Effect.gen(function* documentLiveChanges() {
   // Never compete with the login burst: wait for the page's reads and the menu prefetch (bounded).

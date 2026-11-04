@@ -25,7 +25,7 @@ import type {
 import { grossUnitPriceMinor, isRealVariant } from '../../../../../shared/domain/merchandise-model.ts';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
-import { useCommandFailure } from './product-forms.tsx';
+import { useCommandFailure } from './product-form-labels.ts';
 
 const availabilityPresentation = {
   IN_STOCK: { label: 'Skladem', variant: 'success' },

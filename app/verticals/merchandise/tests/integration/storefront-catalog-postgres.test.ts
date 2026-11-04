@@ -59,6 +59,9 @@ const firstVariantSummary = (page: StorefrontProductPage) => page.products[0]?.v
 const catalogPage = ({ db, scope }: MerchandiseFixture, query: StorefrontCatalogQueryInput) =>
   storefrontProducts(db, scope, { query: Schema.decodeSync(StorefrontCatalogQuerySchema)(query) });
 
+const catalogVariantSummary = (target: MerchandiseFixture) =>
+  catalogPage(target, { fields: 'card', productIds: ['p1'] }).pipe(Effect.map(firstVariantSummary));
+
 /** Listing ids (cards: a full page holds at most two products). */
 const idsOf = (fixture: MerchandiseFixture, query: StorefrontCatalogQueryInput) =>
   catalogPage(fixture, { fields: 'card', ...query }).pipe(Effect.map(staffProductIds));
@@ -548,9 +551,9 @@ it.live(
         sku: product.id,
       })),
     });
-    return withMerchandise(state, (fixture) =>
-      Effect.gen(function* catalogReadCase15() {
-        const ids = (query: StorefrontCatalogQueryInput) => idsOf(fixture, query);
+    return withMerchandise(state, (fixture) => {
+      const ids = (query: StorefrontCatalogQueryInput) => idsOf(fixture, query);
+      return Effect.gen(function* catalogReadCase15() {
         expect(yield* ids({ q: 'DIN 933' })).toEqual(['exact', 'photo', 'gallery', 'missing', 'loose']);
         expect(yield* ids({ q: 'DIN 933', sort: 'name' })).toEqual(['exact', 'photo', 'gallery', 'missing', 'loose']);
         expect(yield* ids({ sort: 'name' })).toEqual(['loose', 'exact', 'missing', 'photo', 'gallery']);
@@ -562,8 +565,8 @@ it.live(
           'gallery',
           'loose',
         ]);
-      }),
-    );
+      });
+    });
   },
 );
 
@@ -621,15 +624,13 @@ it.live('never reads another company’s rows', () =>
             yield* storefrontOrderStatus(other.db, other.scope, { clientRequestId: 'secret-request-1', orderId: 'o1' }),
           ).toBeNull();
           // Same product and variant ids in both companies: each summary aggregates only its own variant rows.
-          const summary = (target: MerchandiseFixture) =>
-            catalogPage(target, { fields: 'card', productIds: ['p1'] }).pipe(Effect.map(firstVariantSummary));
-          expect(yield* summary(fixture)).toEqual({
+          expect(yield* catalogVariantSummary(fixture)).toEqual({
             count: 1,
             minGrossPriceMinor: Option.some(121),
             stockOnHand: 5,
             units: ['ks'],
           });
-          expect(yield* summary(other)).toEqual({
+          expect(yield* catalogVariantSummary(other)).toEqual({
             count: 1,
             minGrossPriceMinor: Option.some(121),
             stockOnHand: 2,

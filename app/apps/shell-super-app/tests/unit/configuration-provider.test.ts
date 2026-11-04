@@ -1,5 +1,5 @@
 import { Config, ConfigProvider, Effect } from 'effect';
-import { expect, it, rs } from 'effect-rstest';
+import { afterAll, expect, it, rs } from 'effect-rstest';
 
 import { loadAuthConfig } from '../../api/auth/config.ts';
 import { loadConfigurationProvider } from '../../api/auth/configuration-provider.ts';
@@ -68,3 +68,11 @@ it.effect('file loading failures retain the parser-specific typed error and safe
     expect(gatewayFailure.reason).toBe('Unable to load the Shell gateway signing environment');
   }),
 );
+
+// With `isolate: false` one module registry is shared by every file a worker runs, so these
+// replacements outlive this file and would leak into whatever runs next. Remove them and drop the
+// modules they replaced, so the next file evaluates the real implementations.
+afterAll(() => {
+  rs.doUnmock('../../api/auth/environment-file-provider.ts');
+  rs.resetModules();
+});

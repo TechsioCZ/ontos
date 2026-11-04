@@ -23,6 +23,7 @@ export const merchandiseRegistration = defineVerticalRuntimeRegistration({
     api: {
       // <generated-module-registration-apis>
       'agent-review': () => import('./src/api/agent-review-client.ts'),
+      media: () => import('./src/api/media-client.ts'),
       records: () => import('./src/api/records-client.ts'),
       // </generated-module-registration-apis>
     },

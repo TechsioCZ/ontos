@@ -305,6 +305,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
             scope: 'tenant',
           },
           expose: './PagePartyIdentity',
+          recordTarget: { idParameter: 'partyId', resourceType: 'party.registry.party' },
           routePath: '/prodej/strany/:partyId',
         }),
         // </generated-module-shell-pages>

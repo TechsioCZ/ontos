@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect';
+import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { seedAssetsState } from '../../verticals/facility-operations/scripts/seed/assets.mts';
 import { AssetsStateSchema } from '../../verticals/facility-operations/shared/domain/assets.ts';
@@ -64,11 +64,13 @@ it.effect('fails closed on duplicate, missing, inactive or foreign-company prope
       [{ ...property, legalEntityRef: { ...property.legalEntityRef, resourceId: demoTenantId } }],
       [{ ...property, propertyRef: { ...property.propertyRef, tenantId: rentalDemoLegalEntityId } }],
     ]) {
-      expect((yield* Effect.exit(selectAssetRepair(state.assets, candidates)))._tag).toBe('Failure');
+      expect(Exit.isFailure(yield* Effect.exit(selectAssetRepair(state.assets, candidates)))).toBe(true);
     }
     const selected = yield* selectAssetRepair(state.assets, [property]);
-    expect((yield* Effect.exit(selectAssetRepair([...state.assets, selected.asset], [property])))._tag).toBe('Failure');
-    expect((yield* Effect.exit(selectAssetRepair([], [property])))._tag).toBe('Failure');
+    expect(Exit.isFailure(yield* Effect.exit(selectAssetRepair([...state.assets, selected.asset], [property])))).toBe(
+      true,
+    );
+    expect(Exit.isFailure(yield* Effect.exit(selectAssetRepair([], [property])))).toBe(true);
   }),
 );
 

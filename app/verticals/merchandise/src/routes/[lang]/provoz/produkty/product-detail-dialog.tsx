@@ -41,15 +41,16 @@ import {
   lowStockErrorKey,
   priceErrorKey,
   tooLongMessage,
-  useProductLabel,
-} from './product-forms.tsx';
-import { EMPTY_MOVEMENT_DRAFT, MovementForm, MovementsTable, isMovementDraftDirty } from './product-movements.tsx';
+} from './product-form-validation.ts';
+import { useProductLabel } from './product-form-labels.ts';
+import { MovementForm, MovementsTable } from './product-movements.tsx';
+import { EMPTY_MOVEMENT_DRAFT, isMovementDraftDirty } from './product-movement-draft.ts';
 import { AvailabilityBadge, EshopPanel, VariantsPanel, VariantPriceHistory } from './product-eshop.tsx';
 import { ProductImageGallery } from './product-image-gallery.tsx';
 import { CatalogContentPanel } from './product-catalog-content.tsx';
 import { MarketsPanel } from './product-markets.tsx';
 import type { ProductMarket } from '../../../../../shared/domain/market-offers.ts';
-import type { MovementDraft } from './product-movements.tsx';
+import type { MovementDraft } from './product-movement-draft.ts';
 
 export interface ProductDetailViewProps {
   readonly canMoveStock?: boolean;

@@ -165,7 +165,7 @@ it('rejects a Drizzle name-and-import-presence exemption that cannot bind the ta
             {
               type: 'unsorted',
               useConfigurationIf: {
-                callingFunctionNamePattern: '^schema\\.table(?:\\.withRLS)?$',
+                callingFunctionNamePattern: String.raw`^schema\.table(?:\.withRLS)?$`,
                 matchesAstSelector:
                   'Program:has(ImportDeclaration[source.value="drizzle-orm/pg-core"] > ImportSpecifier[imported.name="pgSchema"]) CallExpression > ObjectExpression.arguments:nth-child(2)',
               },

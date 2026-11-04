@@ -149,7 +149,9 @@ const openFixture = Effect.gen(function* openLegalEntityFixture() {
     yield* query(
       admin,
       `insert into core.search_index_entries (tenant_id, legal_entity_id, source_module_key, source_resource_type,
-      source_resource_id, title, body_text) values ($1, $2, 'party.registry', 'party.registry.fixture', $3, 'Fixture', 'private fixture')`,
+      source_resource_id, title, body_text, facets_json) values ($1, $2, 'party.registry', 'party.registry.fixture', $3,
+        'Fixture', E'fixture\\nprivate fixture',
+        '{"archived":false,"facets":[],"metadata":[],"schemaVersion":"2","searchableText":["private fixture"]}'::jsonb)`,
       [ids.tenant, entity, resource],
     );
   }

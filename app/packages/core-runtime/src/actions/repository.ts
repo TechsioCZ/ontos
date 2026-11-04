@@ -495,6 +495,54 @@ export const recoverSqlTransactionError = <A, E, R>(
     }),
   );
 
+const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executor, input) => {
+  const failureReason = 'Unable to resolve the Action invocation commit state';
+  const hasInvocationId = input.invocationId !== undefined;
+  return executor
+    .transaction((transaction) =>
+      transaction
+        .select({ ...invocationSelection, actionKey: actionInvocations.actionKey })
+        .from(actionInvocations)
+        .where(
+          and(
+            hasInvocationId
+              ? eq(actionInvocations.actionInvocationId, input.invocationId)
+              : and(
+                  eq(actionInvocations.actionKey, input.actionKey),
+                  eq(actionInvocations.idempotencyKey, input.idempotencyKey),
+                ),
+            input.principal.legalEntityId === undefined
+              ? isNull(actionInvocations.legalEntityId)
+              : eq(actionInvocations.legalEntityId, input.principal.legalEntityId),
+            eq(actionInvocations.tenantId, input.principal.tenantId),
+            eq(actionInvocations.principalId, input.principal.principalId),
+          ),
+        )
+        .for('update')
+        .limit(1)
+        .pipe(
+          Effect.mapError((cause) => persistenceFailure(failureReason, cause)),
+          Effect.flatMap(([invocation]) =>
+            invocation === undefined
+              ? Effect.fail(
+                  new ActionInvocationNotFound({
+                    code: 'action_invocation_not_found',
+                    reason: 'The Action invocation does not exist in this principal scope',
+                  }),
+                )
+              : Effect.succeed(invocation),
+          ),
+        ),
+    )
+    .pipe(
+      recoverSqlTransactionError,
+      Effect.catchTags({
+        OperationContextUnavailable: (failure) => Effect.fail(persistenceFailure(failureReason, failure)),
+        SqlError: (failure) => Effect.fail(persistenceFailure(failureReason, failure)),
+      }),
+    );
+};
+
 export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositoryService => {
   const createOrResolveInvocation: ActionRepositoryService['createOrResolveInvocation'] = Effect.fn(
     'makeActionRepository.createOrResolveInvocation',
@@ -630,54 +678,6 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
         ),
       ),
     );
-
-  const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executor, input) => {
-    const failureReason = 'Unable to resolve the Action invocation commit state';
-    const hasInvocationId = input.invocationId !== undefined;
-    return executor
-      .transaction((transaction) =>
-        transaction
-          .select({ ...invocationSelection, actionKey: actionInvocations.actionKey })
-          .from(actionInvocations)
-          .where(
-            and(
-              hasInvocationId
-                ? eq(actionInvocations.actionInvocationId, input.invocationId)
-                : and(
-                    eq(actionInvocations.actionKey, input.actionKey),
-                    eq(actionInvocations.idempotencyKey, input.idempotencyKey),
-                  ),
-              input.principal.legalEntityId === undefined
-                ? isNull(actionInvocations.legalEntityId)
-                : eq(actionInvocations.legalEntityId, input.principal.legalEntityId),
-              eq(actionInvocations.tenantId, input.principal.tenantId),
-              eq(actionInvocations.principalId, input.principal.principalId),
-            ),
-          )
-          .for('update')
-          .limit(1)
-          .pipe(
-            Effect.mapError((cause) => persistenceFailure(failureReason, cause)),
-            Effect.flatMap(([invocation]) =>
-              invocation === undefined
-                ? Effect.fail(
-                    new ActionInvocationNotFound({
-                      code: 'action_invocation_not_found',
-                      reason: 'The Action invocation does not exist in this principal scope',
-                    }),
-                  )
-                : Effect.succeed(invocation),
-            ),
-          ),
-      )
-      .pipe(
-        recoverSqlTransactionError,
-        Effect.catchTags({
-          OperationContextUnavailable: (failure) => Effect.fail(persistenceFailure(failureReason, failure)),
-          SqlError: (failure) => Effect.fail(persistenceFailure(failureReason, failure)),
-        }),
-      );
-  };
 
   const transitionInvocationToRunning: ActionRepositoryService['transitionInvocationToRunning'] = Effect.fn(
     'makeActionRepository.transitionInvocationToRunning',

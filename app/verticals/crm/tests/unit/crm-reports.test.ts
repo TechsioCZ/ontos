@@ -358,11 +358,12 @@ describe('CRM sales report (C05)', () => {
   });
 });
 
+const decided = (decision: OrderDecision['decision']): Partial<ImportedOrderInput> => ({
+  decisions: [{ at, by: 'p-lead', decision, reason: 'ověřeno' }],
+});
+
 describe('CRM sales report — duplicate decisions', () => {
   it('a confirmed duplicate stays out, an order decided "distinct" counts', () => {
-    const decided = (decision: OrderDecision['decision']): Partial<ImportedOrderInput> => ({
-      decisions: [{ at, by: 'p-lead', decision, reason: 'ověřeno' }],
-    });
     const state = base([
       order({ amount: '100.00', clientId: 'x', currency: 'CZK', pairing: 'paired' }),
       order({
@@ -389,6 +390,16 @@ describe('CRM sales report — duplicate decisions', () => {
   });
 });
 
+const plan = (id: string, dueDate: string, status: 'open' | 'done' = 'open', salespersonId = 'a') => ({
+  clientId: 'x',
+  createdAt: at,
+  createdBy: 'p-a',
+  dueDate,
+  id,
+  salespersonId,
+  status,
+});
+
 describe('CRM shell Home summary', () => {
   it('counts only open manual contacts, scoped clients and this-month currency totals', () => {
     const source = base([
@@ -398,15 +409,6 @@ describe('CRM shell Home summary', () => {
       order({ amount: '999.00', clientId: 'y', currency: 'CZK', orderedAt: '2026-10-01', pairing: 'paired' }),
       order({ pairing: 'unpaired' }),
     ]);
-    const plan = (id: string, dueDate: string, status: 'open' | 'done' = 'open', salespersonId = 'a') => ({
-      clientId: 'x',
-      createdAt: at,
-      createdBy: 'p-a',
-      dueDate,
-      id,
-      salespersonId,
-      status,
-    });
     const state = Schema.decodeUnknownSync(CrmStateSchema)({
       ...Schema.encodeSync(CrmStateSchema)(source),
       visits: {

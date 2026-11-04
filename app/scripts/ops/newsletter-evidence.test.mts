@@ -1,5 +1,5 @@
 import { NoticeVersionsResponseSchema, ProcessingPurposesResponseSchema } from '@app/privacy/api';
-import { Effect, Fiber, Layer, Schema } from 'effect';
+import { Effect, Exit, Fiber, Layer, Schema } from 'effect';
 import { HttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -166,7 +166,7 @@ for (const wrong of [
       const result = yield* withNewsletterEvidenceClient(Effect.succeed(client), wrong, PURPOSE, NOTICE).pipe(
         Effect.exit,
       );
-      expect(result._tag).toBe('Failure');
+      expect(Exit.isFailure(result)).toBe(true);
       expect(calls).toEqual([]);
     }).pipe(Effect.provide(noNetwork)),
   );
@@ -180,7 +180,7 @@ it.effect('does not use absent/fake resource IDs or an empty-ref broad query', (
     ]) {
       const { calls, client } = makeClient(data.purposes, data.notices);
       const result = yield* readNewsletterEvidence(client, target, purposeId, noticeId).pipe(Effect.exit);
-      expect(result._tag).toBe('Failure');
+      expect(Exit.isFailure(result)).toBe(true);
       expect(calls).toEqual([]);
     }
   }).pipe(Effect.provide(noNetwork)),
@@ -204,7 +204,7 @@ it.effect('rejects stale, missing, duplicate or cross-controller native data and
       const result = yield* withNewsletterEvidenceClient(Effect.succeed(client), target, PURPOSE, NOTICE).pipe(
         Effect.exit,
       );
-      expect(result._tag).toBe('Failure');
+      expect(Exit.isFailure(result)).toBe(true);
       expect(calls).toEqual([PURPOSE_READ, 'signOut']);
     }
     const wrongNotices = [
@@ -220,7 +220,7 @@ it.effect('rejects stale, missing, duplicate or cross-controller native data and
       const result = yield* withNewsletterEvidenceClient(Effect.succeed(client), target, PURPOSE, NOTICE).pipe(
         Effect.exit,
       );
-      expect(result._tag).toBe('Failure');
+      expect(Exit.isFailure(result)).toBe(true);
       expect(calls.at(-1)).toBe('signOut');
     }
   }).pipe(Effect.provide(noNetwork)),
@@ -237,7 +237,7 @@ it.effect('ends the API session after a governed read failure', () =>
     const result = yield* withNewsletterEvidenceClient(Effect.succeed(client), target, PURPOSE, NOTICE).pipe(
       Effect.exit,
     );
-    expect(result._tag).toBe('Failure');
+    expect(Exit.isFailure(result)).toBe(true);
     expect(calls).toEqual(['signOut']);
   }).pipe(Effect.provide(noNetwork)),
 );

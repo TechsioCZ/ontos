@@ -53,8 +53,10 @@ export const PersonStatusDot = ({ status }: { readonly status: PersonStatusKey }
 };
 
 const VISIBLE_ROLE_CHIPS = 2;
+type PeopleTranslator = ReturnType<typeof useModernI18n>['t'];
 
 export const RoleChips = ({ names }: { readonly names: readonly string[] }) => {
+  const { t } = useModernI18n();
   if (names.length === 0) {
     return <span className="text-fg-secondary">—</span>;
   }
@@ -73,7 +75,7 @@ export const RoleChips = ({ names }: { readonly names: readonly string[] }) => {
             <span aria-hidden="true">
               <Badge size="sm" variant="outline">{`+${rest.length}`}</Badge>
             </span>
-            <span className="sr-only">{`a další role: ${rest.join(', ')}`}</span>
+            <span className="sr-only">{t('shell.people.table.moreRoles', { roles: rest.join(', ') })}</span>
           </span>
         </Tooltip>
       )}
@@ -82,18 +84,18 @@ export const RoleChips = ({ names }: { readonly names: readonly string[] }) => {
 };
 
 const invitationNotes = {
-  pending: 'Pozvánka čeká na odeslání',
-  sent: 'Pozvánka odeslána',
-  undeliverable: 'Pozvánku nelze doručit',
-  unknown: 'Doručení pozvánky nelze ověřit',
+  pending: 'shell.people.table.invitation.pending',
+  sent: 'shell.people.table.invitation.sent',
+  undeliverable: 'shell.people.table.invitation.undeliverable',
+  unknown: 'shell.people.table.invitation.unknown',
 } as const;
 
-const invitationNote = (person: Person): string | undefined => {
+const invitationNote = (person: Person, t: PeopleTranslator): string | undefined => {
   const delivery = person.invitationDelivery;
   if (delivery === null || person.selectedCompanyMembership?.status !== 'invited') {
     return undefined;
   }
-  return invitationNotes[delivery.status];
+  return t(invitationNotes[delivery.status]);
 };
 
 const PersonName = ({ person, secondary }: { readonly person: Person; readonly secondary: string | undefined }) => (
@@ -103,9 +105,11 @@ const PersonName = ({ person, secondary }: { readonly person: Person; readonly s
   </span>
 );
 
-const actionItems = (scope: PeopleAdminScope): MenuItem[] => [
-  ...(scope === 'company' ? [{ label: 'Upravit členství', type: 'action', value: 'membership' } as const] : []),
-  { label: 'Spravovat role', type: 'action', value: 'role' },
+const actionItems = (scope: PeopleAdminScope, t: PeopleTranslator): MenuItem[] => [
+  ...(scope === 'company'
+    ? [{ label: t('shell.people.table.editMembership'), type: 'action', value: 'membership' } as const]
+    : []),
+  { label: t('shell.people.table.manageRoles'), type: 'action', value: 'role' },
 ];
 
 export const PersonActionsMenu = ({
@@ -116,37 +120,41 @@ export const PersonActionsMenu = ({
   readonly onEdit: (kind: PeopleEditKind, person: Person) => void;
   readonly person: Person;
   readonly scope: PeopleAdminScope;
-}) => (
-  // The menu lives inside a clickable row; its clicks must never also open the detail. The wrapper only stops
-  // propagation (see the oxlint.config.ts exemption); the Menu's Button trigger is the keyboard target.
-  <span className="inline-flex" onClick={(event) => event.stopPropagation()}>
-    <Menu
-      aria-label={`Akce: ${person.displayName}`}
-      customTrigger={
-        <Button
-          aria-label={`Akce: ${person.displayName}`}
-          icon="icon-[mdi--dots-horizontal]"
-          size="sm"
-          theme="borderless"
-          variant="secondary"
-        />
-      }
-      items={actionItems(scope)}
-      onSelect={({ value }) => {
-        if (value === 'membership' || value === 'role') {
-          onEdit(value, person);
+}) => {
+  const { t } = useModernI18n();
+  const actionsLabel = t('shell.people.table.personActions', { name: person.displayName });
+  return (
+    // The menu lives inside a clickable row; its clicks must never also open the detail. The wrapper only stops
+    // propagation (see the oxlint.config.ts exemption); the Menu's Button trigger is the keyboard target.
+    <span className="inline-flex" onClick={(event) => event.stopPropagation()}>
+      <Menu
+        aria-label={actionsLabel}
+        customTrigger={
+          <Button
+            aria-label={actionsLabel}
+            icon="icon-[mdi--dots-horizontal]"
+            size="sm"
+            theme="borderless"
+            variant="secondary"
+          />
         }
-      }}
-      size="sm"
-    />
-  </span>
-);
+        items={actionItems(scope, t)}
+        onSelect={({ value }) => {
+          if (value === 'membership' || value === 'role') {
+            onEdit(value, person);
+          }
+        }}
+        size="sm"
+      />
+    </span>
+  );
+};
 
-const statusOptions = [
-  { label: 'Aktuální', value: 'current' },
-  { label: 'Všechny stavy', value: 'all' },
+const statusOptions = (t: PeopleTranslator) => [
+  { label: t('shell.people.table.currentStatus'), value: 'current' },
+  { label: t('shell.people.table.allStatuses'), value: 'all' },
   ...PersonStatusKeySchema.literals.map((value) => ({ label: personStatusPresentation[value].label, value })),
-] as const;
+];
 const isStatusFilter = Schema.is(PeopleStatusFilterSchema);
 const isKindKey = Schema.is(PersonKindKeySchema);
 
@@ -201,37 +209,37 @@ export const PeopleToolbar = ({
 }) => {
   const { t } = useModernI18n();
   const roles = [
-    { label: 'Všechny role', value: 'all' },
+    { label: t('shell.people.table.allRoles'), value: 'all' },
     ...(catalog?.items ?? []).map((role) => ({ label: role.name, value: role.roleKey })),
   ];
   return (
     <div className="flex flex-wrap items-end gap-150">
       <Input
-        aria-label={t('shell.people.filters.search')}
+        aria-label={t('shell.people.table.searchLabel')}
         className="w-full sm:w-56"
         onChange={(event) => onFiltersChange({ ...filters, query: event.target.value })}
-        placeholder={t('shell.people.filters.searchPlaceholder')}
+        placeholder={t('shell.people.table.searchPlaceholder')}
         size="sm"
         type="search"
         value={filters.query}
       />
       <FilterSelect
-        items={[{ label: 'Všechny typy', value: 'all' }, ...personKindOptions]}
-        label={t('shell.people.filters.kind')}
+        items={[{ label: t('shell.people.table.allKinds'), value: 'all' }, ...personKindOptions]}
+        label={t('shell.people.table.kind')}
         name="people-kind"
         onChange={(kind) => onFiltersChange({ ...filters, kind: isKindKey(kind) ? kind : 'all' })}
         value={filters.kind}
       />
       <FilterSelect
         items={roles}
-        label={t('shell.people.filters.role')}
+        label={t('shell.people.table.roles')}
         name="people-role"
         onChange={(roleKey) => onFiltersChange({ ...filters, roleKey })}
         value={filters.roleKey}
       />
       <FilterSelect
-        items={statusOptions}
-        label={t('shell.people.filters.status')}
+        items={statusOptions(t)}
+        label={t('shell.people.table.status')}
         name="people-status"
         onChange={(status) => onFiltersChange({ ...filters, status: isStatusFilter(status) ? status : 'current' })}
         value={filters.status}
@@ -239,18 +247,18 @@ export const PeopleToolbar = ({
       {companyAvailable ? (
         <FilterSelect
           items={[
-            { label: 'Vybraná firma', value: 'company' },
-            { label: 'Celá organizace', value: 'tenant' },
+            { label: t('shell.people.table.companyScope'), value: 'company' },
+            { label: t('shell.people.table.tenantScope'), value: 'tenant' },
           ]}
-          label={t('shell.people.filters.scope')}
+          label={t('shell.people.table.scope')}
           name="people-scope"
           onChange={(next) => onScopeChange(next === 'tenant' ? 'tenant' : 'company')}
           value={scope}
         />
       ) : null}
-      <Tooltip content="Každý člověk i agent má vlastní přihlášení. Role určují, co může ve firmě dělat. Pracovní zařazení samo o sobě přístup nepřiděluje.">
+      <Tooltip content={t('shell.people.table.rolesHelp')}>
         <Button
-          aria-label={t('shell.people.filters.rolesHelp')}
+          aria-label={t('shell.people.table.rolesHelpLabel')}
           icon="icon-[mdi--information-outline]"
           size="sm"
           theme="borderless"
@@ -271,38 +279,38 @@ const subscribeWide = (onChange: () => void) => {
 const isWide = () => globalThis.matchMedia?.(wideQuery).matches ?? true;
 const useWideLayout = () => useSyncExternalStore(subscribeWide, isWide, () => true);
 
-const tableTranslations: DataTableTranslations = {
-  actionsLabel: 'Akce',
-  emptyTitle: 'Nikdo neodpovídá filtrům.',
-  loadingLabel: 'Načítám lidi a role…',
-  pageSizeLabel: 'Na stránku',
-  rangeLabel: ({ end, start, total }) => `${start}–${end} z ${total}`,
-};
+const tableTranslations = (t: PeopleTranslator): DataTableTranslations => ({
+  actionsLabel: t('shell.people.table.actions'),
+  emptyTitle: t('shell.people.table.empty'),
+  loadingLabel: t('shell.people.table.loading'),
+  pageSizeLabel: t('shell.people.table.pageSize'),
+  rangeLabel: ({ end, start, total }) => t('shell.people.table.range', { end, start, total }),
+});
 
-const peopleColumns = (catalog: PeopleRoleCatalog | undefined): ColumnDef<Person>[] => [
+const peopleColumns = (catalog: PeopleRoleCatalog | undefined, t: PeopleTranslator): ColumnDef<Person>[] => [
   {
     accessorKey: 'displayName',
-    cell: (info) => <PersonName person={info.row.original} secondary={invitationNote(info.row.original)} />,
-    header: 'Jméno',
+    cell: (info) => <PersonName person={info.row.original} secondary={invitationNote(info.row.original, t)} />,
+    header: t('shell.people.table.name'),
     meta: { width: 260 },
   },
   {
     accessorFn: personKindLabel,
-    header: 'Typ',
+    header: t('shell.people.table.kind'),
     id: 'kind',
     meta: { width: 140 },
   },
   {
     accessorFn: (person) => roleNames(catalog, person).join(', '),
     cell: (info) => <RoleChips names={roleNames(catalog, info.row.original)} />,
-    header: 'Role',
+    header: t('shell.people.table.roles'),
     id: 'roles',
     meta: { width: 320 },
   },
   {
     accessorFn: (person) => personStatusPresentation[personStatusKey(person)].rank,
     cell: (info) => <PersonStatusDot status={personStatusKey(info.row.original)} />,
-    header: 'Stav',
+    header: t('shell.people.table.status'),
     id: 'status',
     meta: { width: 140 },
   },
@@ -310,40 +318,44 @@ const peopleColumns = (catalog: PeopleRoleCatalog | undefined): ColumnDef<Person
 
 const CompactPeopleList = ({
   catalog,
-  listLabel,
   onEdit,
   onOpen,
   people,
   scope,
 }: {
   readonly catalog: PeopleRoleCatalog | undefined;
-  readonly listLabel: string;
   readonly onEdit: (kind: PeopleEditKind, person: Person) => void;
   readonly onOpen: (person: Person) => void;
   readonly people: readonly Person[];
   readonly scope: PeopleAdminScope;
-}) => (
-  <ul aria-label={listLabel} className="grid divide-y divide-border-primary border-border-primary border-y">
-    {people.map((person) => (
-      <li className="flex items-start gap-100 py-100" key={person.principalRef.principalId}>
-        <Button
-          className="flex min-w-0 flex-1 flex-col items-start justify-start gap-50 text-start"
-          onClick={() => onOpen(person)}
-          size="current"
-          theme="unstyled"
-          variant="secondary"
-        >
-          <PersonName person={person} secondary={personKindLabel(person)} />
-          <span className="flex flex-wrap items-center gap-100 text-sm">
-            <PersonStatusDot status={personStatusKey(person)} />
-            <RoleChips names={roleNames(catalog, person)} />
-          </span>
-        </Button>
-        <PersonActionsMenu onEdit={onEdit} person={person} scope={scope} />
-      </li>
-    ))}
-  </ul>
-);
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <ul
+      aria-label={t('shell.people.title')}
+      className="grid divide-y divide-border-primary border-border-primary border-y"
+    >
+      {people.map((person) => (
+        <li className="flex items-start gap-100 py-100" key={person.principalRef.principalId}>
+          <Button
+            className="flex min-w-0 flex-1 flex-col items-start justify-start gap-50 text-start"
+            onClick={() => onOpen(person)}
+            size="current"
+            theme="unstyled"
+            variant="secondary"
+          >
+            <PersonName person={person} secondary={personKindLabel(person)} />
+            <span className="flex flex-wrap items-center gap-100 text-sm">
+              <PersonStatusDot status={personStatusKey(person)} />
+              <RoleChips names={roleNames(catalog, person)} />
+            </span>
+          </Button>
+          <PersonActionsMenu onEdit={onEdit} person={person} scope={scope} />
+        </li>
+      ))}
+    </ul>
+  );
+};
 
 export const PeopleTable = ({
   catalog,
@@ -365,6 +377,7 @@ export const PeopleTable = ({
   readonly scope: PeopleAdminScope;
 }) => {
   const { t } = useModernI18n();
+  const translations = tableTranslations(t);
   const wide = useWideLayout();
   const visible = filterPeople(people, filters, catalog);
   const empty = () =>
@@ -372,39 +385,30 @@ export const PeopleTable = ({
       <EmptyState
         action={
           <Button onClick={() => onFiltersChange(allPeopleFilters)} size="sm" theme="outlined" variant="secondary">
-            Zrušit filtry
+            {t('shell.people.table.clearFilters')}
           </Button>
         }
-        title={t('shell.people.empty.filtered')}
+        title={t('shell.people.table.noMatches')}
       />
     ) : (
-      <EmptyState title={t('shell.people.empty.noMemberships')} />
+      <EmptyState title={t('shell.people.table.noMemberships')} />
     );
   if (!wide) {
     if (visible.length === 0) {
       // The compact list has no skeleton rows, so a phone would show a blank page until the people arrive.
       return loading ? (
         <output aria-live="polite" className="block py-200 text-fg-secondary text-sm">
-          {tableTranslations.loadingLabel}
+          {translations.loadingLabel}
         </output>
       ) : (
         empty()
       );
     }
-    return (
-      <CompactPeopleList
-        catalog={catalog}
-        listLabel={t('shell.people.list.label')}
-        onEdit={onEdit}
-        onOpen={onOpen}
-        people={visible}
-        scope={scope}
-      />
-    );
+    return <CompactPeopleList catalog={catalog} onEdit={onEdit} onOpen={onOpen} people={visible} scope={scope} />;
   }
   return (
     <DataTable
-      columns={peopleColumns(catalog)}
+      columns={peopleColumns(catalog, t)}
       data={[...visible]}
       enablePagination
       enableSorting
@@ -422,7 +426,7 @@ export const PeopleTable = ({
       size="sm"
       stickyHeader
       tableLayout="fixed"
-      translations={tableTranslations}
+      translations={translations}
     />
   );
 };

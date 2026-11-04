@@ -31,15 +31,6 @@ const leaseInvoicesEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 
-export type LeaseInvoicesPageFailure = ReadHandlerNotFound | ReadHandlerUnavailable | ReadInputValidationError;
-
-/** One exact lease-invoice page; an absent `nextCursor` is the only completeness signal, at `revision`. */
-export interface LeaseInvoicesPage {
-  readonly invoices: readonly Invoice[];
-  readonly nextCursor: string | undefined;
-  readonly revision: number;
-}
-
 interface ResourceRefLike {
   readonly moduleId: string;
   readonly resourceId: string;

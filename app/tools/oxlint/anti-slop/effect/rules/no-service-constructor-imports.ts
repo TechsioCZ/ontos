@@ -6,7 +6,7 @@ import { defineRule } from "@oxlint/plugins";
 
 import type { Context, ESTree, Variable } from "@oxlint/plugins";
 
-import { provesDataFactoryImport } from "./data-factory-proof.ts";
+import { provenDataImportLiteral, provesDataFactoryImport } from "./data-factory-proof.ts";
 import { lookupVariable } from "../../../effect-native/shared/bindings.ts";
 import {
   isInsideNativeServiceFactoryCallback,
@@ -1263,14 +1263,23 @@ function bffImmutable(binding: Syntax, source: ProcessSource, imports: readonly 
   return !bffReferences(binding, source).some((reference) => bffBindingWritten(reference, source)) &&
     (bffConst(binding, source) !== null || imports.some((entry) => entry.binding === binding && !entry.typeOnly));
 }
-function bffKeyValues(node: Syntax, source: ProcessSource, seen = new Set<Syntax>()): readonly (string | number)[] | null {
+function bffKeyValues(node: Syntax, source: ProcessSource, filename: string, seen = new Set<Syntax>()): readonly (string | number)[] | null {
   const value = unwrap(node);
   if (value.type === "Literal" && (typeof value.value === "string" || typeof value.value === "number")) return [value.value];
   const binding = bffBinding(value, source);
   if (binding === null || seen.has(binding)) return null;
   const next = new Set(seen).add(binding);
   const initializer = bffConst(binding, source);
-  if (initializer !== null) return bffKeyValues(initializer, source, next);
+  if (initializer !== null) return bffKeyValues(initializer, source, filename, next);
+  const specifier = source.parents.get(binding);
+  const imported = specifier === undefined ? undefined : source.parents.get(specifier);
+  if (specifier?.type === "ImportSpecifier" && specifier.importKind !== "type" &&
+    imported?.type === "ImportDeclaration" && imported.importKind !== "type" &&
+    !bffReferences(binding, source).some((reference) => bffBindingWritten(reference, source))) {
+    const name = nameOf(asNode(specifier.imported)) ?? stringOf(asNode(specifier.imported));
+    const literal = name === null ? null : provenDataImportLiteral(filename, imported.source.value, name);
+    return literal === null ? null : [literal];
+  }
   // Only an exact, non-default simple parameter with every direct caller closed can acquire finite keys.
   const owner = source.parents.get(binding);
   if (owner === undefined || !isFunction(owner) || owner.async || owner.generator || !owner.params.includes(binding)) return null;
@@ -1292,7 +1301,7 @@ function bffKeyValues(node: Syntax, source: ProcessSource, seen = new Set<Syntax
     for (let parent = source.parents.get(call); parent !== undefined; parent = source.parents.get(parent)) if (parent === owner) return null;
     const argument = asNode(call.arguments[index]);
     if (argument === null) return null;
-    const values = bffKeyValues(argument, source, new Set(next).add(functionBinding));
+    const values = bffKeyValues(argument, source, filename, new Set(next).add(functionBinding));
     if (values === null) return null;
     keys.push(...values);
   }
@@ -1328,7 +1337,7 @@ function bffKnownFunction(node: Syntax, source: ProcessSource, seen = new Set<Sy
   const initializer = bffConst(binding, source);
   return initializer !== null && bffKnownFunction(initializer, source, new Set(seen).add(binding));
 }
-function bffOriginClosed(program: ESTree.Program, source: ProcessSource, capabilities: ProcessCapabilities): boolean {
+function bffOriginClosed(program: ESTree.Program, source: ProcessSource, capabilities: ProcessCapabilities, filename: string): boolean {
   if (!source.valid || !capabilities.valid) return false;
   const inspect = (node: Syntax): boolean => {
     if (ERASED_PROCESS_SYNTAX.has(node.type) || node.declare === true || node.type === "ImportDeclaration" ||
@@ -1346,7 +1355,7 @@ function bffOriginClosed(program: ESTree.Program, source: ProcessSource, capabil
         const property = asNode(node.property);
         const object = asNode(node.object);
         if (node.optional || property === null || object === null) return false;
-        const keys = bffKeyValues(property, source);
+        const keys = bffKeyValues(property, source, filename);
         if (keys !== null) {
           if (keys.some((candidate) => typeof candidate === "string" && REFLECTIVE_MEMBERS.has(candidate))) return false;
         } else if (bffKnownFunction(object, source) || !bffObservedOnly(node, source)) return false;
@@ -1412,12 +1421,16 @@ function bffLayerExpression(node: Syntax, source: ProcessSource, imports: readon
     if (!base.arguments.every((argument: Syntax) => transform(unwrap(argument)))) return false;
     base = unwrap(base.callee.object);
   }
-  if (mode === "transport") {
-    const binding = bffBinding(base, source);
-    const origin = imports.find((entry) => entry.binding === binding && !entry.typeOnly && entry.source.startsWith("."));
-    return origin !== undefined && bffImmutable(origin.binding, source, imports);
-  }
   const callee = asNode(base.callee);
+  if (mode === "transport") {
+    const localImport = (value: Syntax): boolean => {
+      const binding = bffBinding(value, source);
+      const origin = imports.find((entry) => entry.binding === binding && !entry.typeOnly && entry.source.startsWith("."));
+      return origin !== undefined && bffImmutable(origin.binding, source, imports);
+    };
+    return localImport(base) || (base.type === "CallExpression" && !base.optional && callee !== null &&
+      layerMember(callee, "mergeAll") && base.arguments.length > 0 && base.arguments.every(localImport));
+  }
   return base.type === "CallExpression" && !base.optional && callee !== null && layerMember(callee, "mergeAll") &&
     base.arguments.length > 0 && base.arguments.every((argument: Syntax) => immutableArgument(argument));
 }
@@ -1444,7 +1457,7 @@ function ownsGovernedBff(program: ESTree.Program, importedName: string, filename
   const source = processSource(program);
   const capabilities = processCapabilities(program);
   const imports = bffImports(program);
-  if (!bffOriginClosed(program, source, capabilities)) return false;
+  if (!bffOriginClosed(program, source, capabilities, filename)) return false;
   const assemblers = imports.filter((entry) => entry.source === "@modern-js/bff-effect/assembly" && !entry.typeOnly);
   if (assemblers.length === 0 || assemblers.some((entry) => entry.imported !== "assembleEffectBffRuntime") ||
     imports.some((entry) => !entry.typeOnly && entry.source.startsWith("@modern-js/bff-effect/assembly/"))) return false;
@@ -1537,20 +1550,24 @@ function ownsGovernedBff(program: ESTree.Program, importedName: string, filename
   if (transport !== undefined) {
     if (!bffLayerExpression(transport, source, imports, layers, "transport")) return false;
     const inspectTransport = unwrap(transport);
-    const base = inspectTransport.type === "CallExpression" ? unwrap((inspectTransport.callee as Syntax).object) : inspectTransport;
-    const binding = bffBinding(base, source);
-    const origin = imports.find((entry) => entry.binding === binding);
-    const resolved = origin === undefined ? null : resolveModule(filename, origin.source);
-    try {
-      if (resolved === null || nodePath.relative(realpathSync(owner), realpathSync(resolved)).startsWith("..") ||
-        binding === null || bffReferences(binding, source).some((reference) => reference !== base)) return false;
-      for (const candidate of imports.filter((entry) => !entry.typeOnly && entry.source.startsWith("."))) {
-        const alternative = resolveModule(filename, candidate.source);
-        if (alternative === null || realpathSync(alternative) !== realpathSync(resolved)) continue;
-        if (["default", "*"].includes(candidate.imported)) return false;
-        if (candidate.imported === origin!.imported && bffReferences(candidate.binding, source).some((reference) => reference !== base)) return false;
-      }
-    } catch { return false; }
+    const base = inspectTransport.type === "CallExpression" && inspectTransport.callee.type === "MemberExpression" &&
+      inspectTransport.callee.property.name === "pipe" ? unwrap(inspectTransport.callee.object) : inspectTransport;
+    const bases: Syntax[] = base.type === "CallExpression" ? base.arguments : [base];
+    for (const value of bases) {
+      const binding = bffBinding(value, source);
+      const origin = imports.find((entry) => entry.binding === binding);
+      const resolved = origin === undefined ? null : resolveModule(filename, origin.source);
+      try {
+        if (resolved === null || nodePath.relative(realpathSync(owner), realpathSync(resolved)).startsWith("..") ||
+          binding === null || bffReferences(binding, source).some((reference) => reference !== value)) return false;
+        for (const candidate of imports.filter((entry) => !entry.typeOnly && entry.source.startsWith("."))) {
+          const alternative = resolveModule(filename, candidate.source);
+          if (alternative === null || realpathSync(alternative) !== realpathSync(resolved)) continue;
+          if (["default", "*"].includes(candidate.imported)) return false;
+          if (candidate.imported === origin!.imported && bffReferences(candidate.binding, source).some((reference) => reference !== value)) return false;
+        }
+      } catch { return false; }
+    }
   }
   return true;
 }

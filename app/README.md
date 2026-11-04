@@ -91,25 +91,20 @@ Party Registry and the Shell gateway issuer connect with their own PostgreSQL ro
 
 Each owner keeps its own schema, migration journal, and verifier. See [Database Architecture](docs/architecture/DATABASE.md) and [Database Trust Boundaries](docs/architecture/DATABASE_TRUST_BOUNDARIES.md).
 
-## Public URLs and Cloudflare proof
+## Public URLs
 
-| Variable                          | Role                                         |
-| --------------------------------- | -------------------------------------------- |
-| `MODERN_PUBLIC_SITE_URL`          | Canonical origin for public SEO output       |
-| `MODERN_ASSET_PREFIX`             | Preferred JS, CSS, and static-asset prefix   |
-| `ULTRAMODERN_ASSET_PREFIX`        | Compatibility asset prefix                   |
-| `ULTRAMODERN_PUBLIC_URL_<APP_ID>` | Per-app deployment, proof, and remote origin |
+| Variable                          | Role                                       |
+| --------------------------------- | ------------------------------------------ |
+| `MODERN_PUBLIC_SITE_URL`          | Canonical origin for public SEO output     |
+| `MODERN_ASSET_PREFIX`             | Preferred JS, CSS, and static-asset prefix |
+| `ULTRAMODERN_ASSET_PREFIX`        | Compatibility asset prefix                 |
+| `ULTRAMODERN_PUBLIC_URL_<APP_ID>` | Per-app deployment and remote origin       |
 
 Do not bake absolute localhost URLs into production asset configuration. Shell assets resolve `MODERN_ASSET_PREFIX`, then `ULTRAMODERN_ASSET_PREFIX`, then origin-relative `/`. Module Federation remotes use the same prefix precedence, then their configured per-app origin. `MODERN_PUBLIC_SITE_URL` is SEO-only and never an asset-prefix fallback. When it is unset, local and preview output remains non-public. App-specific public URL keys are generated from topology; hyphens become underscores and letters become uppercase.
 
-```sh
-mise exec -- pnpm cloudflare:build
-mise exec -- pnpm cloudflare:deploy
-ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP=https://shell-super-app.example.workers.dev \
-  mise exec -- pnpm cloudflare:proof --require-public-urls
-```
-
-The live proof checks route discovery consistency, preview noindex behavior, unknown-route status, asset headers, byte budgets, and public sourcemap exposure. Local checks do not prove live Worker access. See [Deployment](docs/architecture/DEPLOYMENT.md) for release and rollback gates.
+Stage runs on Zerops through `../.github/workflows/zerops-stage.yml`; the Cloudflare Worker release
+pipeline has been removed. See [Deployment](docs/architecture/DEPLOYMENT.md#stage-on-zerops) for stage
+builds, delivery, live verification, and rollback gates. Local checks do not prove live deployment access.
 
 ## Strict Effect API
 
@@ -180,14 +175,25 @@ mise exec -- pnpm check:local --dry-run
 
 Scopes run existing package scripts; they do not infer impacted packages or replace the full gate.
 No scope means `full`, which runs `pnpm check`; an unknown scope fails rather than silently skipping
-validation. `pnpm check` does not run CI's Repository Tooling gate; `--scope tooling` runs its exact
-commands (`shell:ui-candidates:check`, `test:scripts`, `module-entrypoints:check`, `test:generation`).
-Use existing package-filtered tests for more focused application feedback. `--dry-run` prints the selected commands and the CI gates
+validation. `pnpm check` runs module contract generation first, then the remaining lanes with at most
+four steps running at once by default. It prints each step's output when it finishes. A failed step stops its lane,
+but the other lanes continue, and the summary names each failed step. On a machine with less than 32 GB
+of memory, run `mise exec -- pnpm check --concurrency 2`.
+
+`pnpm check` does not run CI's Repository Tooling gate; `--scope tooling` runs its exact commands
+(`shell:ui-candidates:check`, `test:scripts`, `module-entrypoints:check`, `test:generation`). Use existing
+package-filtered tests for more focused application feedback. `--dry-run` prints the selected commands and the CI gates
 the full scope leaves out without running anything; it is not validation.
 
 Installation bootstraps agent skills but does not format source. Format deliberately with
 `mise exec -- pnpm exec oxfmt <edited-files>` or `mise exec -- pnpm format`; CI and the full gate
 use `format:check`. Do not disable lifecycle scripts globally as a substitute for this separation.
+
+The finance-billing POHODA export tests validate their generated documents against the official
+STORMWARE dataPack 2.0 schemas, which the repository does not redistribute. Provision the pinned copy
+once with `mise exec -- pnpm provision:pohoda-xsd`; the tests read
+`app/node_modules/.cache/pohoda-xsd/version_2` (or `POHODA_XSD_DIR`) and fail, never skip, when it is
+absent.
 
 Run focused tests first. Before completion, run the required task commands and the repository gate:
 

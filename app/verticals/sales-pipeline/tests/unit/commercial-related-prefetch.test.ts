@@ -238,7 +238,7 @@ it.effect('clears warm data on live updates and on a failed settled command', ()
 it.live('preserves a cold URL record and does not return last-authorized rows after a denied refresh', () =>
   Effect.gen(function* test() {
     const initial = initialRecordsInput({ context, routeParams: {}, search: `?opportunityId=${opportunity.id}` });
-    expect(initial._tag).toBe('Some');
+    expect(Option.isSome(initial)).toBe(true);
     if (Option.isNone(initial)) {
       return;
     }

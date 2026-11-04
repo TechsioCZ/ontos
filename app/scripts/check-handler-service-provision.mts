@@ -141,6 +141,15 @@ const describe = (node: Node): string => {
   return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 };
 
+const isPlatformService = (service: Type): boolean => {
+  const symbol = service.getSymbol();
+  return (
+    symbol !== undefined &&
+    PLATFORM_SERVICES.has(symbol.name) &&
+    symbol.declarations.some((declaration) => EFFECT_DECLARATION.test(declaration.path))
+  );
+};
+
 const analyzeApiRoot = (root: string, project: Project, file: string): readonly HandlerServiceGap[] => {
   const { checker } = project;
   const source = project.program.getSourceFile(file);
@@ -168,15 +177,6 @@ const analyzeApiRoot = (root: string, project: Project, file: string): readonly 
       isTypeReference(type) && type.getSymbol()?.name === 'Request' ? checker.getTypeArguments(type) : [];
     return kind !== undefined && checker.typeToString(kind) === '"Requires"' ? service : undefined;
   };
-  const isPlatformService = (service: Type): boolean => {
-    const symbol = service.getSymbol();
-    return (
-      symbol !== undefined &&
-      PLATFORM_SERVICES.has(symbol.name) &&
-      symbol.declarations.some((declaration) => EFFECT_DECLARATION.test(declaration.path))
-    );
-  };
-
   const declarationOf = (identifier: Node): Node | undefined => {
     let symbol = checker.getSymbolAtLocation(identifier);
     if (symbol !== undefined && symbol.flags === SymbolFlags.Alias) {

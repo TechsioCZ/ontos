@@ -11,6 +11,8 @@ import { buildKnipModel, KnipConfigSchema } from '../../quality-audit/knip-model
 import { runQualityAudit } from '../quality-audit.mts';
 import { runPinnedKnip } from './quality-audit-test-support.mts';
 
+const nativeFactoryParserReason = 'Native factory parser';
+
 const nativePlatformModule = '@effect/platform-node';
 const counterfeitModule = './counterfeit.mts';
 const nativeProgramMain = 'NodeRuntime.runMain(program);';
@@ -1920,7 +1922,7 @@ it.live(
   Effect.fn(function* testConsumerExports() {
     const root = yield* fixture();
     const lintDirectory = 'tools/oxlint/effect-native';
-    const policyTest = `${lintDirectory}/tests/repository-policy.test.mts`;
+    const policyScript = `${lintDirectory}/repository-policy.mts`;
     const helperTest = `${lintDirectory}/tests/shared-helpers.test.mts`;
     const loadedFiles = [
       rstestConfigFile,
@@ -1931,7 +1933,7 @@ it.live(
     for (const file of loadedFiles) {
       write(root, file, 'export default {}; export const unusedNeighbor = 1;');
     }
-    write(root, policyTest, "runOxlint(nodePath.join(pluginDirectory, 'repository-policy.config.ts'), []);");
+    write(root, policyScript, "runOxlint(nodePath.join(pluginDirectory, 'repository-policy.config.ts'), []);");
     write(
       root,
       helperTest,
@@ -1944,7 +1946,7 @@ it.live(
     const base = {
       workspaces: {
         '.': {
-          entry: [policyTest, helperTest],
+          entry: [policyScript, helperTest],
           node: false,
           project: [rstestConfigFile, 'src/*.ts', toolsPattern],
           rstest: { config: [] },
@@ -2003,7 +2005,7 @@ it.live(
       '{"name":"consumer-controls","type":"module","scripts":{"test":"rstest --config other.ts"}}',
     );
     write(root, 'tsconfig.json', '{"include":["src"],"exclude":["src/*.type-test.ts"]}');
-    write(root, policyTest, "runOxlint(nodePath.join(pluginDirectory, 'other.config.ts'), []);");
+    write(root, policyScript, "runOxlint(nodePath.join(pluginDirectory, 'other.config.ts'), []);");
     write(
       root,
       helperTest,
@@ -2709,22 +2711,48 @@ it.live(
     }
     write(root, consumer, actualConsumer);
     const actualParser = readFileSync(path.join(root, parser), 'utf-8');
-    for (const invalid of [
-      actualParser.replace("from 'node:fs'", fakeMtsImport),
-      actualParser.replace(
-        'const consumer = proof.load(filename);',
-        'const consumer = null; void "proof.load(filename)";',
-      ),
-      actualParser.replace(
-        'const owner = proof.imported(consumer, source);',
-        'const owner = null; void "proof.imported(consumer, source)";',
-      ),
-      actualParser.replace('owner?.exports.get(importedName)', 'owner?.exports.get("wrong")'),
-      actualParser.replace('path.resolve(path.dirname(model.filename), source)', 'path.resolve("/wrong", source)'),
+    const factoryStart = actualParser.indexOf('export function provesDataFactoryImport(');
+    expect(factoryStart).toBeGreaterThan(0);
+    const parserPrelude = actualParser.slice(0, factoryStart);
+    const factoryFunction = actualParser.slice(factoryStart);
+    const exportLookup = 'owner?.exports.get(importedName)';
+    const wrongExportLookup = 'owner?.exports.get("wrong")';
+    const unrelatedParser = parserPrelude.replace(exportLookup, wrongExportLookup) + factoryFunction;
+    expect(unrelatedParser).not.toBe(actualParser);
+    write(root, parser, unrelatedParser);
+    const unrelated = yield* buildKnipModel(root, base).pipe(Effect.provide(NodeServices.layer));
+    expect(unrelated.evidence.filter((fact) => fact.reason.startsWith(nativeFactoryParserReason))).toEqual(
+      model.evidence.filter((fact) => fact.reason.startsWith(nativeFactoryParserReason)),
+    );
+    for (const [label, invalid] of [
+      ['filesystem import', actualParser.replace("from 'node:fs'", fakeMtsImport)],
+      [
+        'consumer loading',
+        actualParser.replace(
+          'const consumer = proof.load(filename);',
+          'const consumer = null; void "proof.load(filename)";',
+        ),
+      ],
+      [
+        'producer loading',
+        actualParser.replace(
+          'const owner = proof.imported(consumer, source);',
+          'const owner = null; void "proof.imported(consumer, source)";',
+        ),
+      ],
+      ['factory export lookup', parserPrelude + factoryFunction.replace(exportLookup, wrongExportLookup)],
+      [
+        'producer resolution',
+        actualParser.replace('path.resolve(path.dirname(model.filename), source)', 'path.resolve("/wrong", source)'),
+      ],
     ]) {
+      expect(invalid, label).not.toBe(actualParser);
       write(root, parser, invalid);
       const control = yield* buildKnipModel(root, base).pipe(Effect.provide(NodeServices.layer));
-      expect(control.evidence.some((fact) => fact.reason.startsWith('Native factory parser'))).toBe(false);
+      expect(
+        control.evidence.some((fact) => fact.reason.startsWith(nativeFactoryParserReason)),
+        label,
+      ).toBe(false);
     }
   }),
 );

@@ -7,7 +7,7 @@ export const FulfillmentSnapshotSchema = Schema.Struct({
   checkout: RecordsResponseSchema.fields.checkout,
   market: StorefrontMarketSchema,
 });
-export class FulfillmentUnavailable extends Schema.TaggedError<FulfillmentUnavailable>()(
+class FulfillmentUnavailable extends Schema.TaggedError<FulfillmentUnavailable>()(
   "FulfillmentUnavailable",
   {},
 ) {}

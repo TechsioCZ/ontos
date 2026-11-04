@@ -24,10 +24,12 @@ import type {
   GatewayAssertionRedemption,
   OntosModuleDeploymentContract,
   OperationalScopeResolverService,
+  ReadRegistration,
   ReadRuntimeService,
   TrustedPrincipalContext,
   VerticalRuntimeRegistration,
 } from '@app/core-runtime';
+import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { v1 } from '@authzed/authzed-node';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { defineEffectBff, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
@@ -110,11 +112,13 @@ import { ShellCompositionFactoryLive } from '../../api/modules/shell-composition
 import { ShellGovernedReads, createShellGovernedReadsLayer } from '../../api/modules/shell-governed-reads.ts';
 import {
   ResourceRefSchema,
+  ShellSearchProviderResultsSchema,
   ShellProviderUnavailableError,
   ShellResourceServicesFactoryLive,
   makeShellSearch,
 } from '../../api/modules/shell-resources.ts';
 import type { ShellResourceGateways } from '../../api/modules/shell-resources.ts';
+import { LegalEntityIdSchema } from '../../shared/api.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
@@ -165,7 +169,24 @@ const OwnerTimelineSchema = Schema.Struct({
   ),
   projectionLagging: Schema.Boolean,
 });
-const OwnerSearchSchema = Schema.Array(Schema.Struct({ ref: ResourceRefSchema, title: Schema.String }));
+const OwnerSearchSchema = Schema.Array(
+  Schema.Struct({
+    ref: ResourceRefSchema,
+    selectedLegalEntityId: LegalEntityIdSchema,
+    title: Schema.String,
+  }),
+);
+// As with the dynamic Action below, Core checks the generated registration at runtime.
+type GeneratedOwnerSearch = ReadRegistration<
+  Schema.ConstraintDecoder<{ readonly query: string }>,
+  typeof OwnerSearchSchema,
+  string,
+  unknown,
+  unknown
+>;
+const GeneratedOwnerSearchSchema = Schema.declare<GeneratedOwnerSearch>((value): value is GeneratedOwnerSearch =>
+  Predicate.isObjectKeyword(value),
+);
 interface GeneratedOwnerModules {
   // Generated source is imported from a temporary path, so TypeScript cannot retain the private
   // Action-registration symbols across the dynamic module boundary. Runtime checks below prove it.
@@ -560,6 +581,86 @@ it.live(
       listClient: true,
       searchClient: true,
     });
+    const searchContract: unknown = yield* Effect.tryPromise(
+      () => import(pathToFileURL(`${fixture.verticalRoot}/shared/apis/records-search.ts`).href),
+    );
+    const searchExports = yield* Schema.decodeUnknownEffect(DynamicModuleSchema)(searchContract);
+    const responseSchema = yield* Schema.decodeUnknownEffect(
+      Schema.declare<typeof OwnerSearchSchema>((value): value is typeof OwnerSearchSchema =>
+        Schema.is(Schema.declare(Schema.isSchema))(value),
+      ),
+    )(searchExports['RecordsProviderResponseSchema']);
+    const scopedRows = [
+      {
+        ref: {
+          moduleId: GENERATED_OWNER.moduleId,
+          resourceId: '40000000-0000-4000-8000-000000000001',
+          resourceType: GENERATED_OWNER.resourceType,
+          tenantId: '10000000-0000-4000-8000-000000000001',
+        },
+        selectedLegalEntityId: '20000000-0000-4000-8000-000000000001',
+        title: 'Scoped generated record',
+      },
+    ];
+    // The receiving owner's contract must retain scope through HTTP encoding, not silently strip it.
+    const decoded = yield* Schema.decodeUnknownEffect(responseSchema)(scopedRows);
+    const encoded = yield* Schema.encodeEffect(responseSchema)(decoded);
+    expect(encoded).toEqual(scopedRows);
+    expect(
+      yield* Schema.decodeUnknownEffect(ShellSearchProviderResultsSchema, { onExcessProperty: 'error' })(encoded),
+    ).toEqual(scopedRows);
+    const searchModule: unknown = yield* Effect.tryPromise(
+      () => import(pathToFileURL(`${fixture.verticalRoot}/src/search/records.provider.ts`).href),
+    );
+    const searchReadExports = yield* Schema.decodeUnknownEffect(DynamicModuleSchema)(searchModule);
+    const registration = yield* Schema.decodeUnknownEffect(GeneratedOwnerSearchSchema)(
+      searchReadExports['recordsRead'],
+    );
+    const [scopedRow] = scopedRows;
+    if (scopedRow === undefined) {
+      throw new TypeError('The scoped search fixture must contain one record');
+    }
+    const searchScope = {
+      authBindingId: '50000000-0000-4000-8000-000000000001',
+      authContextRef: 'better-auth-session:generated-owner-search-contract',
+      authMethod: 'session' as const,
+      correlationId: 'generated-owner-search-contract',
+      legalEntityId: scopedRow.selectedLegalEntityId,
+      principalId: '30000000-0000-4000-8000-000000000001',
+      tenantId: scopedRow.ref.tenantId,
+    };
+    // Script only the SQL transport. The generated repository, handler and Core Read lifecycle run unchanged.
+    const harness = yield* makeReadTestHarness({
+      executeOwnerQuery: ({ scope, sql }) => {
+        expect(scope).toEqual({ legalEntityId: searchScope.legalEntityId, tenantId: searchScope.tenantId });
+        if (!sql.includes('"entity_records"')) {
+          return Effect.die(new Error('Unexpected SQL in generated-owner search contract proof'));
+        }
+        return Effect.succeed([
+          {
+            legal_entity_id: scopedRow.selectedLegalEntityId,
+            resource_id: scopedRow.ref.resourceId,
+            tenant_id: scopedRow.ref.tenantId,
+            title: scopedRow.title,
+          },
+        ]);
+      },
+      operationTime: new Date('2026-11-04T00:00:00.000Z'),
+      ownerAuthorizationDecision: 'allowed',
+      permissionDecision: 'allowed',
+      scope: searchScope,
+    }).pipe(Effect.provide(NodeCrypto.layer));
+    const loaded = yield* harness.runtime
+      .runRead({
+        input: { query: 'generated' },
+        principal: searchScope,
+        registration,
+        transport: { correlationId: searchScope.correlationId },
+      })
+      .pipe(Effect.provide(NodeCrypto.layer));
+    expect(loaded).toEqual(scopedRows);
+    expect(yield* Schema.encodeEffect(responseSchema)(loaded)).toEqual(scopedRows);
+    expect(harness.snapshot().ownerQueries).toHaveLength(1);
   }),
 );
 it.live(
@@ -972,6 +1073,16 @@ it.live(
         }),
       ),
     );
+    const expectedSearchA = {
+      ref: { ...resourceRef, tenantId: tenantA },
+      selectedLegalEntityId: entityA1,
+      title: 'A1 searchable',
+    };
+    const expectedSearchB = {
+      ref: { ...resourceRef, tenantId: tenantB },
+      selectedLegalEntityId: entityB1,
+      title: 'B1 searchable',
+    };
     const ownerSearchProbe = yield* requestOwner(
       generated.search,
       `/${GENERATED_OWNER.moduleId}/search/records`,
@@ -981,7 +1092,7 @@ it.live(
     );
     const ownerSearchProbeBody = yield* decodeResponse(ownerSearchProbe, OwnerSearchSchema);
     expect(ownerSearchProbe.status, JSON.stringify(ownerSearchProbeBody)).toBe(200);
-    expect(ownerSearchProbeBody.map(({ title }) => title)).toEqual(['A1 searchable']);
+    expect(ownerSearchProbeBody).toEqual([expectedSearchA]);
     const gateway = {
       resource: {
         detail: Effect.fnUntraced(
@@ -1088,12 +1199,7 @@ it.live(
         query: 'searchable',
         searchKey: `${GENERATED_OWNER.moduleId}.records`,
       }),
-    ).toEqual([
-      {
-        ref: resourceRef,
-        title: 'A1 searchable',
-      },
-    ]);
+    ).toEqual([expectedSearchA]);
     const directShellSearch = makeShellSearch(
       {
         catalog: Effect.succeed(catalog),
@@ -1125,7 +1231,7 @@ it.live(
       ),
     ).toEqual({
       partial: false,
-      results: [{ kind: 'resource', ref: resourceRef, title: 'A1 searchable' }],
+      results: [{ ...expectedSearchA, kind: 'resource' }],
     });
     const shellLayer = createShellGovernedReadsLayer(
       gateway,
@@ -1189,10 +1295,13 @@ it.live(
         ref: resourceRef,
       })
       .pipe(Effect.provideService(CapturedShellCompositionCatalog, catalog));
-    expect(searchA.results.map(({ title }) => title)).toEqual(['A1 searchable']);
+    if ('outcome' in detailA || 'outcome' in detailB) {
+      expect.unreachable('The generated owner must support resource detail for both tenants');
+    }
+    expect(searchA).toEqual({ partial: false, results: [{ ...expectedSearchA, kind: 'resource' }] });
     expect(detailA.detail.title).toBe('A1 searchable');
     expect(detailA.timeline.map(({ summary }) => summary)).toEqual(['Tenant A list']);
-    expect(searchB.results.map(({ title }) => title)).toEqual(['B1 searchable']);
+    expect(searchB).toEqual({ partial: false, results: [{ ...expectedSearchB, kind: 'resource' }] });
     expect(detailB.detail.title).toBe('B1 searchable');
     expect(detailB.timeline.map(({ summary }) => summary)).toEqual(['Tenant B list']);
     expect(assertionCount, 'every provider attempt must receive a fresh assertion').toBe(9);

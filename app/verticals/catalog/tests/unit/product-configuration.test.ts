@@ -297,15 +297,16 @@ describe('Product Configuration definition and identity', () => {
   });
 });
 
+const measured = (amount: string): ProductConfiguration => ({
+  ...selected,
+  values: [
+    { choiceKey: 'mount', kind: 'SINGLE_CHOICE', optionKey: 'A' },
+    { amount, choiceKey: 'length', kind: 'MEASURED_VALUE', unitRef },
+  ],
+});
+
 describe('Catalog audit signed configuration identity', () => {
   it('F6 preserves the sign of nonzero fractional configurations', () => {
-    const measured = (amount: string): ProductConfiguration => ({
-      ...selected,
-      values: [
-        { choiceKey: 'mount', kind: 'SINGLE_CHOICE', optionKey: 'A' },
-        { amount, choiceKey: 'length', kind: 'MEASURED_VALUE', unitRef },
-      ],
-    });
     for (const [left, right, same] of [
       ['-0.5', '0.5', false],
       ['-0.01', '0.01', false],

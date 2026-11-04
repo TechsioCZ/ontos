@@ -74,6 +74,7 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
         onSearch={controls.handleSearch}
         onTenantChange={controls.handleTenantChange}
         onTenantContextChange={controls.handleTenantContextChange}
+        recordDestinations={model.navigation.state === 'unavailable' ? [] : model.navigation.recordDestinations}
         tenantChoices={model.tenants.items}
         tenantContextActive={model.contextState === 'tenant_authenticated'}
         tenantContextAvailable={

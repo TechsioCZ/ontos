@@ -162,7 +162,7 @@ const patchManifest = (
     const tenantPermission =
       config.tenantPermission === undefined ? '' : `, tenantPermission: '${config.tenantPermission}'`;
     const replacement = `{ accessFiltering: '${config.accessFiltering}', key: '${key}', owningModuleId: '${moduleId}', requestFilters: ${requestFilters}, resourceType: '${resourceType}'${tenantPermission} },`;
-    return `${content.slice(0, start + MODULE_MANIFEST_SEARCH_SLOT_START.length)}${slot.replace(pattern, replacement)}${content.slice(end)}`;
+    return `${content.slice(0, start + MODULE_MANIFEST_SEARCH_SLOT_START.length)}${slot.replaceAll(pattern, replacement)}${content.slice(end)}`;
   });
 
 const hasConsistentAccessScope = (config: SearchProviderAccessScaffoldConfig): boolean =>

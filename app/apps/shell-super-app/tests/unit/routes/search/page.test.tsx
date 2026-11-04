@@ -12,7 +12,7 @@ import {
   ResourceIdSchema,
   TenantIdSchema,
 } from '../../../../shared/api.ts';
-import type { ShellSearchResult } from '../../../../shared/api.ts';
+import type { ShellNavigationItem, ShellSearchResult } from '../../../../shared/api.ts';
 import type { HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
 import type { SearchFilterPlan, SearchPageModel } from '../../../../src/routes/[lang]/search/search-page-model.ts';
 import SearchPage from '../../../../src/routes/[lang]/search/page.tsx';
@@ -188,6 +188,25 @@ const navigationGroupKey = Schema.decodeUnknownSync(GroupKeySchema)('shell.navig
 const inventoryModuleId = Schema.decodeUnknownSync(ModuleIdSchema)('inventory.stock');
 const plainResourceId = Schema.decodeUnknownSync(ResourceIdSchema)('unit-1');
 const awkwardResourceId = Schema.decodeUnknownSync(ResourceIdSchema)('unit #1/2');
+const financeGroupKey = Schema.decodeUnknownSync(GroupKeySchema)('shell.navigation.finance');
+const salesGroupKey = Schema.decodeUnknownSync(GroupKeySchema)('shell.navigation.sales');
+const teamGroupKey = Schema.decodeUnknownSync(GroupKeySchema)('shell.navigation.team');
+
+/** One destination of the composed navigation: the page a record type of this document opens. */
+const navigationItem = (moduleId: string, groupKey: typeof navigationGroupKey, href: string): ShellNavigationItem => ({
+  appId: Schema.decodeUnknownSync(AppIdSchema)(`${moduleId}-app`),
+  enabled: true,
+  entrypointKey: Schema.decodeUnknownSync(EntrypointKeySchema)(`${moduleId}.page.records`),
+  groupKey,
+  href,
+  icon: 'icon-[mdi--file-outline]',
+  label: { cs: href, en: href },
+  moduleId: Schema.decodeUnknownSync(ModuleIdSchema)(moduleId),
+  order: 20,
+  state: 'active' as const,
+  unavailable: false,
+  writable: true,
+});
 
 const authenticatedShell = (): HomePageModel => ({
   compositionRevision: '1'.repeat(64),
@@ -219,8 +238,17 @@ const authenticatedShell = (): HomePageModel => ({
         unavailable: false,
         writable: false,
       },
+      navigationItem('finance.billing', financeGroupKey, '/finance'),
+      navigationItem('party.registry', salesGroupKey, '/prodej/zakaznici'),
+      navigationItem('work.tasks', teamGroupKey, '/ukoly'),
     ],
-    moduleIds: [inventoryModuleId],
+    moduleIds: [
+      inventoryModuleId,
+      Schema.decodeUnknownSync(ModuleIdSchema)('finance.billing'),
+      Schema.decodeUnknownSync(ModuleIdSchema)('party.registry'),
+      Schema.decodeUnknownSync(ModuleIdSchema)('work.tasks'),
+    ],
+    recordDestinations: [],
     state: 'available',
     unavailableDeployments: [],
   },
@@ -401,8 +429,9 @@ test('results keep the server-wide order across families and name each type', ()
   render(<SearchPage />);
 
   const linkProps = localizedLinkMock.mock.calls.map(([props]) => props);
-  expect(linkProps.find(({ to }) => to === '/finance')).toMatchObject({ search: { resourceId: invoiceId } });
-  expect(linkProps.find(({ to }) => to === '/ukoly')).toMatchObject({ search: { resourceId: taskId } });
+  // The sidebar also links these destinations; the result row is the call carrying the record it opens.
+  expect(linkProps.findLast(({ to }) => to === '/finance')).toMatchObject({ search: { resourceId: invoiceId } });
+  expect(linkProps.findLast(({ to }) => to === '/ukoly')).toMatchObject({ search: { resourceId: taskId } });
   expect(new Set(resourceLinkCalls().map(({ params }) => params?.['resourceType']))).toEqual(new Set(['stock-item']));
   // The type is translated context in the row; the technical owner key is never visible.
   expect(screen.queryByText('finance.billing.invoice')).toBeNull();
@@ -535,6 +564,7 @@ test('an empty result set names the query and exposes no resource affordance', (
   render(<SearchPage />);
 
   expect(screen.getByText('Nothing found for “unit”.')).toBeTruthy();
+  expect(screen.queryByText('No authorized results found.')).toBeNull();
   expect(resourceLinkCalls()).toHaveLength(0);
   expect(renderedRows()).toHaveLength(0);
 });
@@ -550,6 +580,7 @@ test('a page opened without a query invites a search instead of claiming that no
   render(<SearchPage />);
 
   expect(screen.getByText('Search clients, tasks, invoices, contracts…')).toBeTruthy();
+  expect(screen.queryByText('No authorized results found.')).toBeNull();
   expect(screen.queryByText('Nothing found for “”.')).toBeNull();
   // The scope still explains the authorized context; there is no query term to name yet.
   expect(screen.getAllByRole('term').map((term) => [term.textContent, term.nextElementSibling?.textContent])).toEqual([

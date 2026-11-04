@@ -1,6 +1,5 @@
-import { performance } from 'node:perf_hooks';
 import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
-import { Effect, Option, Predicate, flow } from 'effect';
+import { Clock, Duration, Effect, Option, Predicate, flow } from 'effect';
 
 import { SpiceDbConfigError } from './config-error.ts';
 import type { SpiceDbConfigValue } from './config.ts';
@@ -24,7 +23,8 @@ export const newSpiceDbGrpcClient = (
   configuration: Pick<SpiceDbConfigValue, 'caCertificate' | 'endpoint' | 'preSharedKey'>,
   options?: Parameters<typeof v1.NewClientWithCustomCert>[4],
 ): v1.ZedClientInterface => {
-  const started = performance.now();
+  const clock = Clock.Clock.defaultValue();
+  const started = clock.monotonicTimeNanosUnsafe();
   let outcome: 'success' | 'failure' = 'failure';
   try {
     const client = v1.NewClientWithCustomCert(
@@ -38,7 +38,7 @@ export const newSpiceDbGrpcClient = (
     return client;
   } finally {
     globalThis.ontosSpiceDbClientObserver?.({
-      durationMs: performance.now() - started,
+      durationMs: Duration.toMillis(Duration.nanos(clock.monotonicTimeNanosUnsafe() - started)),
       event: 'spicedb.channel-setup',
       method: 'NewClientWithCustomCert',
       outcome,

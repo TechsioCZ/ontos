@@ -1,6 +1,6 @@
 import "server-only";
 import { cache } from "react";
-import { Clock, Effect, Schema } from "effect";
+import { Clock, Effect, Match, Schema } from "effect";
 import { readConfiguration } from "./config";
 import { readOwner, StorefrontReadUnavailable } from "./gateway";
 import { MarketCatalogSchema, selectMarket } from "./market";
@@ -73,9 +73,14 @@ export const getCatalog = cache(
         Effect.tapError((error) =>
           Effect.logWarning("N1 catalog read unavailable").pipe(
             Effect.annotateLogs(
-              Schema.is(StorefrontReadUnavailable)(error)
-                ? { failure: error._tag, reason: error.reason, status: error.status ?? 0 }
-                : { failure: error._tag },
+              Match.value(error).pipe(
+                Match.tag("StorefrontReadUnavailable", (failure) => ({
+                  failure: failure._tag,
+                  reason: failure.reason,
+                  status: failure.status ?? 0,
+                })),
+                Match.orElse(() => ({ failure: error._tag })),
+              ),
             ),
           ),
         ),

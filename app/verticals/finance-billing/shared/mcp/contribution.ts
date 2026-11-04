@@ -1,4 +1,4 @@
-import { defineOntosMcpContribution, OntosMcpHidden } from '@app/core-runtime';
+import { OntosMcpHidden, defineOntosMcpContribution } from '@app/core-runtime';
 
 export const financeBillingMcpContribution = defineOntosMcpContribution({
   actions: {

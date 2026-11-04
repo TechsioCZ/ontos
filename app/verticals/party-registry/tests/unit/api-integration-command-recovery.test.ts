@@ -443,15 +443,16 @@ for (const state of ['RUNNING', 'COMMITTED'] as const) {
   );
 }
 
+const acquireWrongRelease = () =>
+  Effect.succeed({
+    credential: Redacted.make('Bearer wrong-release'),
+    options: { baseUrl: approvedApiBaseUrl, compositionRevision: 'b'.repeat(64) },
+  });
+
 it.effect('rejects a credential for another release before contacting Party', () =>
   Effect.gen(function* wrongRelease() {
     const { requests, fakeFetch } = makeNativeRecoveryFetch(() => Response.json({}));
-    const acquire = () =>
-      Effect.succeed({
-        credential: Redacted.make('Bearer wrong-release'),
-        options: { baseUrl: approvedApiBaseUrl, compositionRevision: 'b'.repeat(64) },
-      });
-    const failure = yield* recoverPartyCreateWithAuthorization({ invocationId }, acquire, {
+    const failure = yield* recoverPartyCreateWithAuthorization({ invocationId }, acquireWrongRelease, {
       compositionRevision,
       correlationId: 'wrong-release',
     }).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));

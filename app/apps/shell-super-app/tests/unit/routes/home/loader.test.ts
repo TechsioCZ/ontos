@@ -140,6 +140,7 @@ it.effect('resolves trusted context before returning one serializable compositio
         deniedAppIds: [],
         items: navigation,
         moduleIds: [...new Set(navigation.map(({ moduleId }) => moduleId))],
+        recordDestinations: [],
         state: 'available',
         unavailableDeployments: [],
       },
@@ -161,6 +162,39 @@ it.effect('resolves trusted context before returning one serializable compositio
         read.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
       );
     }
+  }),
+);
+
+it.effect('carries the composition record destinations into the navigation model', () =>
+  Effect.gen(function* carriesRecordDestinations() {
+    const recordDestinations = [
+      {
+        idParameter: 'partyId',
+        moduleId: 'party.registry',
+        resourceType: 'party.registry.party',
+        routePath: '/prodej/strany/:partyId',
+      },
+    ];
+    shellCompositionMock.mockReturnValueOnce(
+      Effect.succeed({
+        compositionRevision,
+        deniedAppIds: [],
+        gatewayAudiences: [],
+        homeComponents: [],
+        navigation,
+        recordDestinations,
+        state: 'available' as const,
+        unavailableDeployments: [],
+      }),
+    );
+    expect(yield* loadModel({ request: request() })).toMatchObject({ navigation: { recordDestinations } });
+  }),
+);
+
+it.effect('decodes a composition without record destinations as none', () =>
+  Effect.gen(function* decodesAbsentRecordDestinations() {
+    // The default composition fixture predates the optional field; the model still exposes an empty list.
+    expect(yield* loadModel({ request: request() })).toMatchObject({ navigation: { recordDestinations: [] } });
   }),
 );
 
@@ -616,6 +650,7 @@ it.effect('server rendering reads the whole document context in one request', ()
         deniedAppIds: [],
         items: navigation,
         moduleIds: ['future.generated'],
+        recordDestinations: [],
         state: 'available',
         unavailableDeployments: [],
       },

@@ -161,6 +161,8 @@ allowBuilds:
   sharp: true
   workerd: true
 patchedDependencies:
+  # upstream: https://github.com/ultramodernjs/ultramodern.js/blob/ae58cda012e02d73d4c63288cbaaa908120ed98b/packages/toolkit/code-tools/src/strict-effect-runtime.ts
+  # Prove immutable native routes and Effect.fn recovery captures; reject mutated native bindings.
   # Model runtime schema access without rejecting type-only queries; resolve declared Effect routes.
   '@bleedingdev/modern-js-code-tools@3.9.3-ultramodern.17': patches/@bleedingdev__modern-js-code-tools@3.9.3-ultramodern.17.patch
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/core

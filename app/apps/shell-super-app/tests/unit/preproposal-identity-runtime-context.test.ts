@@ -5,7 +5,7 @@ import { ConfigProvider, Context, Effect, Layer, Option, Redacted, Sink, Stream 
   rstest: 'importActual',
 };
 import { FetchHttpClient } from 'effect/http';
-import { expect, it, rs } from 'effect-rstest';
+import { afterAll, expect, it, rs } from 'effect-rstest';
 
 import { NodeCrypto, NodeRuntime, NodeServices } from '@effect/platform-node' with { rstest: 'importActual' };
 import actualNodeFs from 'node:fs' with { rstest: 'importActual' };
@@ -201,3 +201,22 @@ it.effect('retains the supported staff registry in the runtime used by both iden
     ),
   ),
 );
+
+// With `isolate: false` one module registry is shared by every file a worker runs, so these
+// replacements outlive this file and would leak into whatever runs next. Remove them and drop the
+// modules they replaced, so the next file evaluates the real implementations.
+afterAll(() => {
+  rs.doUnmock('@app/core-runtime');
+  rs.doUnmock('@app/core-runtime/actions/runtime-wiring');
+  rs.doUnmock('@app/core-runtime/modules/active-application-composition');
+  rs.doUnmock('@app/core-runtime/modules/active-application-composition-source');
+  rs.doUnmock('@effect/sql-pg');
+  rs.doUnmock('../../api/auth/config.ts');
+  rs.doUnmock('../../api/auth/db/client.ts');
+  rs.doUnmock('../../api/auth/service.ts');
+  rs.doUnmock('../../api/auth/api-key-service.ts');
+  rs.doUnmock('../../api/auth/identity-lifecycle.ts');
+  rs.doUnmock('node:fs');
+  rs.doUnmock('@effect/platform-node');
+  rs.resetModules();
+});

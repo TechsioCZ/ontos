@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { Effect, Schema } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import { createElement } from 'react';
 import type ReactRuntime from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -223,7 +223,7 @@ it.effect('a missing required product cannot be cached as a complete warm order'
     yield* preloadOrderDetails(source, base);
     expect(orderDetailData.snapshot(detail).state).toBe('failed');
     const outcome = yield* Effect.result(orderDetailData.read(detail));
-    expect(outcome._tag).toBe('Failure');
+    expect(Result.isFailure(outcome)).toBe(true);
   }),
 );
 

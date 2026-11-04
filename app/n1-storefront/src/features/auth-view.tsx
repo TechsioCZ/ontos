@@ -46,8 +46,18 @@ const passwordAutoComplete = { login: "current-password", register: "new-passwor
 
 const inputAttributes = {
   email: { autoComplete: "email", maxLength: 320, type: "email" },
-  firstName: { autoComplete: "given-name", maxLength: 100, pattern: ".*\\S.*", type: "text" },
-  lastName: { autoComplete: "family-name", maxLength: 99, pattern: ".*\\S.*", type: "text" },
+  firstName: {
+    autoComplete: "given-name",
+    maxLength: 100,
+    pattern: String.raw`.*\S.*`,
+    type: "text",
+  },
+  lastName: {
+    autoComplete: "family-name",
+    maxLength: 99,
+    pattern: String.raw`.*\S.*`,
+    type: "text",
+  },
   password: { maxLength: 128, minLength: 12, type: "password" },
   passwordConfirmation: {
     autoComplete: "new-password",

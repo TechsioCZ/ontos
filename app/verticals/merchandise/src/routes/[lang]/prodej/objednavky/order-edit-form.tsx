@@ -38,7 +38,7 @@ import { draftOf, parseAmount, parseQuantity, sameOrderDraft } from './order-edi
 import type { Draft, DraftLine } from './order-edit-draft.ts';
 import { saveOrderEdit } from './order-edit-autosave.ts';
 import type { OrderVersion } from './order-edit-autosave.ts';
-import { activeVariants } from './order-line-editor.tsx';
+import { activeVariants } from './order-line-draft.ts';
 import { loadProductRecord } from '../../provoz/produkty/product-reads.ts';
 import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
 import { ProductSearchCombobox } from '../../provoz/produkty/product-search.tsx';

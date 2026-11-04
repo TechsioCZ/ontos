@@ -1,12 +1,12 @@
 import { FinanceCompanyIdSchema } from '../../shared/apis/records.ts';
 import { NodeServices } from '@effect/platform-node';
-import { ChildProcess } from 'effect/process';
-import { Config, DateTime, Effect, FileSystem, Path, Schema, Stream } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import type { Invoice } from '../../shared/apis/records.ts';
 import { buildAccountingExport, exportFileName } from '../../shared/domain/finance-planning.ts';
 import type { ExportMeta, ExportRow } from '../../shared/domain/finance-planning.ts';
 import { POHODA_NO_VAT_BREAKDOWN_NOTE, pohodaVatRate, variableSymbol } from '../../shared/domain/pohoda-xml.ts';
+import { validatePohodaXml } from '../support/pohoda-xsd.ts';
 
 const tenantId = 'a0000000-0000-4000-8000-000000000001';
 const now = DateTime.makeUnsafe('2026-10-20T08:00:00Z');
@@ -96,21 +96,6 @@ const obchodNoIco: ExportMeta = {
   version: 1,
 };
 
-/** Set POHODA_XSD_DIR to the official https://www.stormware.cz/schema/version_2/ schemas, including imports. */
-const validateAgainstXsd = Effect.fn('FinanceTest.validatePohodaXsd')(function* validateAgainstXsd(xml: string) {
-  const directory = yield* Config.NonEmptyString('POHODA_XSD_DIR');
-  const path = yield* Path.Path;
-  const xsd = path.join(directory, 'data.xsd');
-  const fs = yield* FileSystem.FileSystem;
-  expect(yield* fs.exists(xsd), `POHODA_XSD_DIR must contain data.xsd and its imported schemas: ${xsd}`).toBe(true);
-  const validation = yield* ChildProcess.make('xmllint', ['--noout', '--schema', xsd, '-'], {
-    stderr: 'inherit',
-    stdin: Stream.make(new TextEncoder().encode(xml)),
-    stdout: 'ignore',
-  });
-  expect(yield* validation.exitCode).toBe(0);
-});
-
 it.layer(NodeServices.layer)('POHODA XML export (STORMWARE dataPack 2.0)', (test) => {
   test.effect('writes issued invoices with number, VS, dates, partner and issuer identity, lines and VAT summary', () =>
     Effect.gen(function* issuedXml() {
@@ -145,7 +130,7 @@ it.layer(NodeServices.layer)('POHODA XML export (STORMWARE dataPack 2.0)', (test
       ]) {
         expect(xml).toContain(fragment);
       }
-      yield* validateAgainstXsd(xml);
+      yield* validatePohodaXml(xml);
     }),
   );
 
@@ -164,7 +149,7 @@ it.layer(NodeServices.layer)('POHODA XML export (STORMWARE dataPack 2.0)', (test
       expect(xml).toContain(POHODA_NO_VAT_BREAKDOWN_NOTE);
       expect(xml).not.toContain('<inv:number>');
       expect(xml).not.toContain('<inv:invoiceDetail>');
-      yield* validateAgainstXsd(xml);
+      yield* validatePohodaXml(xml);
     }),
   );
 
@@ -174,7 +159,7 @@ it.layer(NodeServices.layer)('POHODA XML export (STORMWARE dataPack 2.0)', (test
       expect(xml).not.toContain(' ico="');
       expect(xml).toContain('<typ:company>Obchodní firma</typ:company>');
       expect(xml).not.toContain('SIMULACE');
-      yield* validateAgainstXsd(xml);
+      yield* validatePohodaXml(xml);
     }),
   );
 

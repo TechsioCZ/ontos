@@ -1,14 +1,12 @@
-import { getI18nInstance as createModernI18n } from '@modern-js/plugin-i18n/i18n';
-import type { I18nInstance } from '@modern-js/plugin-i18n/runtime';
-import { ModernI18nProvider } from '@modern-js/plugin-i18n/runtime/consumer';
 import { Option, Schema } from 'effect';
 import csLocale from '../../locales/cs/merchandise.json';
 import enLocale from '../../locales/en/merchandise.json';
 import { ProductIdSchema } from '../../shared/domain/merchandise-model.ts';
-import { beforeAll, expect, it } from 'effect-rstest';
+import { expect, it, rstest } from 'effect-rstest';
 import { constVoid } from 'effect/Function';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { createInstance } from 'i18next';
 import {
   appendImage,
   mediaAssetIdOf,
@@ -26,20 +24,23 @@ import {
 } from '../../src/routes/[lang]/provoz/produkty/product-image-gallery-model.ts';
 import type { GalleryState } from '../../src/routes/[lang]/provoz/produkty/product-image-gallery-model.ts';
 
-let i18nInstance: I18nInstance;
-beforeAll(async () => {
-  i18nInstance = await createModernI18n();
-  await i18nInstance.init({
-    defaultNS: 'merchandise',
-    fallbackLng: false,
-    lng: 'cs',
-    ns: ['merchandise'],
-    resources: { cs: { merchandise: csLocale }, en: { merchandise: enLocale } },
-    supportedLngs: ['cs', 'en'],
-  });
+const i18n = createInstance({
+  fallbackLng: false,
+  initAsync: false,
+  interpolation: { escapeValue: false },
+  lng: 'cs',
+  resources: { cs: { translation: csLocale }, en: { translation: enLocale } },
 });
-const translate = (key: string, values: Readonly<Record<string, number | string>> = {}): string =>
-  i18nInstance.t(key, values);
+await i18n.init();
+const translate = (key: string, values: Readonly<Record<string, number | string>> = {}): string => i18n.t(key, values);
+
+// Resolved at render time, after this module has initialised `translate`.
+rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
+  useModernI18n: () => ({
+    language: 'cs',
+    t: (key: string, values?: Record<string, number | string>) => translate(key, values),
+  }),
+}));
 
 const first = mediaImageReference('0192f3a0-0000-7000-8000-000000000001');
 const second = mediaImageReference('0192f3a0-0000-7000-8000-000000000002');
@@ -47,52 +48,64 @@ const third = 'https://www.akros.cz/data/product/18kop009.jpg';
 
 const render = (state: GalleryState, overrides: Partial<ProductImageGalleryViewProps> = {}) =>
   renderToStaticMarkup(
-    <ModernI18nProvider value={{ i18nInstance, language: 'cs', languages: ['cs', 'en'] }}>
-      {createElement(ProductImageGalleryView, {
-        canWrite: true,
-        dispatch: constVoid,
-        onFiles: constVoid,
-        onMove: constVoid,
-        onRemove: constVoid,
-        onRetry: constVoid,
-        onUndo: constVoid,
-        productId: Schema.decodeSync(ProductIdSchema)('product-1'),
-        productName: 'Šroub M8',
-        state,
-        ...overrides,
-      })}
-    </ModernI18nProvider>,
+    createElement(ProductImageGalleryView, {
+      canWrite: true,
+      dispatch: constVoid,
+      onFiles: constVoid,
+      onMove: constVoid,
+      onRemove: constVoid,
+      onRetry: constVoid,
+      onUndo: constVoid,
+      productId: Schema.decodeSync(ProductIdSchema)('product-1'),
+      productName: 'Šroub M8',
+      state,
+      ...overrides,
+    }),
   );
-
-it('resolves gallery count messages through the real Czech and English plural rules', () => {
-  for (const [language, catalog] of [
-    ['cs', csLocale],
-    ['en', enLocale],
-  ] as const) {
-    const keys = Object.keys(catalog.merchandise.pages.products.gallery);
-    for (const key of ['title', 'uploadingMany']) {
-      for (const category of new Intl.PluralRules(language).resolvedOptions().pluralCategories) {
-        expect(keys).toContain(`${key}_${category}`);
-      }
-      for (const count of [0, 1, 2, 5, 1.5]) {
-        const message = `merchandise.pages.products.gallery.${key}`;
-        const result = i18nInstance.t(message, { count, lng: language });
-        expect(result).not.toBe(message);
-        expect(result).not.toContain('{{count}}');
-        expect(result).toContain(String(count));
-      }
-    }
-  }
-  expect(i18nInstance.t('merchandise.pages.products.gallery.title', { count: 1, lng: 'en' })).toBe('Image (1)');
-  expect(i18nInstance.t('merchandise.pages.products.gallery.uploadingMany', { count: 2, lng: 'cs' })).toBe(
-    'Nahrávám 2 obrázky…',
-  );
-  expect(i18nInstance.t('merchandise.pages.products.gallery.uploadingMany', { count: 5, lng: 'cs' })).toBe(
-    'Nahrávám 5 obrázků…',
-  );
-});
 
 const visibleText = (markup: string) => markup.replaceAll(/<[^>]+>/gu, ' ');
+
+it('renders the gallery count and upload status with Czech plural forms', () => {
+  for (const [count, title, uploading] of [
+    [1, 'Obrázek (1)', 'Nahrávám 1 obrázek…'],
+    [2, 'Obrázky (2)', 'Nahrávám 2 obrázky…'],
+    [4, 'Obrázky (4)', 'Nahrávám 4 obrázky…'],
+    [5, 'Obrázky (5)', 'Nahrávám 5 obrázků…'],
+    [20, 'Obrázky (20)', 'Nahrávám 20 obrázků…'],
+  ] as const) {
+    const images = Array.from({ length: count }, (_, index) => `https://www.akros.cz/image-${index}.jpg`);
+    const state = galleryReducer(initialGallery(images), {
+      type: 'queued',
+      uploads: images.map((name, index) => ({ key: `u${index}`, name, phase: 'waiting' })),
+    });
+    const text = visibleText(render(state, { canWrite: false }));
+    expect(text).toContain(title);
+    expect(text).toContain(uploading);
+  }
+  const emptyText = visibleText(render(initialGallery([]), { canWrite: false }));
+  expect(emptyText).toContain('Obrázky (0)');
+  expect(emptyText).not.toContain('Nahrávám');
+});
+
+it('resolves gallery translations natively in both locales, including zero and fractional counts', () => {
+  for (const [language, count, title, uploading] of [
+    ['cs', 0, 'Obrázky (0)', 'Nahrávám 0 obrázků…'],
+    ['cs', 1, 'Obrázek (1)', 'Nahrávám 1 obrázek…'],
+    ['cs', 2, 'Obrázky (2)', 'Nahrávám 2 obrázky…'],
+    ['cs', 4, 'Obrázky (4)', 'Nahrávám 4 obrázky…'],
+    ['cs', 5, 'Obrázky (5)', 'Nahrávám 5 obrázků…'],
+    ['cs', 1.5, 'Obrázky (1.5)', 'Nahrávám 1.5 obrázku…'],
+    ['en', 0, 'Images (0)', 'Uploading 0 images…'],
+    ['en', 1, 'Image (1)', 'Uploading 1 image…'],
+    ['en', 2, 'Images (2)', 'Uploading 2 images…'],
+    ['en', 5, 'Images (5)', 'Uploading 5 images…'],
+    ['en', 1.5, 'Images (1.5)', 'Uploading 1.5 images…'],
+  ] as const) {
+    const t = i18n.getFixedT(language);
+    expect(t('merchandise.pages.products.gallery.title', { count })).toBe(title);
+    expect(t('merchandise.pages.products.gallery.uploading', { count })).toBe(uploading);
+  }
+});
 
 it('recognises only uploaded-image references as Core Media Assets', () => {
   expect(Option.getOrUndefined(mediaAssetIdOf(first))).toBe('0192f3a0-0000-7000-8000-000000000001');

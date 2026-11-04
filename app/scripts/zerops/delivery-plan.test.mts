@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect';
+import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -233,7 +233,7 @@ it.effect('includes storefronts if a future workspace dependency actually consum
 it.effect('refuses unresolved dependency graphs instead of inventing unchanged inputs', () =>
   Effect.gen(function* unresolvedWorkspaceDependency() {
     const exit = yield* workspaceClosure('app/missing', packages).pipe(Effect.exit);
-    expect(exit._tag).toBe('Failure');
+    expect(Exit.isFailure(exit)).toBe(true);
   }),
 );
 

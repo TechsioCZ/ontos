@@ -106,6 +106,7 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
   page: '/prodej/objednavky',
   reads: {
     'agent-review': OntosMcpHidden,
+    media: OntosMcpHidden,
     records: {
       description: {
         cs: 'Produkty, sklad a objednávky. view.markets: true vrátí trhy s režimem, měnou, kurzem a počty výjimek; view.marketExceptions { marketId } výjimky produktů trhu; detail produktu (view.productId) vrátí productMarkets s nabídkou a cenou v každém trhu.',

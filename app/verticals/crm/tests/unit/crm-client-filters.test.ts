@@ -66,6 +66,19 @@ const records = Schema.decodeUnknownSync(RecordsResponseSchema)({
   },
 });
 
+const visit = (id: string, clientId: string, occurredAt: string) => ({
+  authorPrincipalId: 'admin',
+  clientId,
+  corrections: [],
+  createdAt: at,
+  id,
+  kind: 'visit',
+  occurredAt,
+  result: 'Done',
+  salespersonId: 'a',
+  updatedAt: at,
+});
+
 describe('client counted filters over governed records', () => {
   it('opens person rows, not clients, for the contacts count', () => {
     const query = metricQuery('contacts');
@@ -112,18 +125,6 @@ describe('client counted filters over governed records', () => {
   });
 
   it('uses the inclusive server-time window and counts a client only once for multiple visits', () => {
-    const visit = (id: string, clientId: string, occurredAt: string) => ({
-      authorPrincipalId: 'admin',
-      clientId,
-      corrections: [],
-      createdAt: at,
-      id,
-      kind: 'visit',
-      occurredAt,
-      result: 'Done',
-      salespersonId: 'a',
-      updatedAt: at,
-    });
     const timed = Schema.decodeUnknownSync(RecordsResponseSchema)({
       ...Schema.encodeSync(RecordsResponseSchema)(records),
       state: {

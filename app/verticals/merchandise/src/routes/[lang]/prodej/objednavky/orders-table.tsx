@@ -4,7 +4,8 @@ import type { ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms
 import { formatDateTime, formatNumber, StatusBadge, dataTableRowLabels } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import type { Order } from '../../../../../shared/apis/records.ts';
-import { TagsCell, formatOrderTotal } from '../../../../list-cells.tsx';
+import { TagsCell } from '../../../../list-cells.tsx';
+import { formatOrderTotal } from '../../../../list-format.ts';
 import { orderCurrency } from '../../../../../shared/domain/merchandise-model.ts';
 import type { TagsOf } from '../../../../tags/subject-tags.ts';
 import type { CustomerDirectory } from './customers-directory.ts';
