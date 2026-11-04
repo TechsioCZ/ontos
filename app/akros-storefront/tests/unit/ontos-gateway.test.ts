@@ -193,6 +193,39 @@ describe("OntOS gateway assertions", () => {
     },
   );
 
+  it("waits out a deploy handoff of several unavailable responses before serving the read", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    try {
+      for (let index = 0; index < 6; index += 1) {
+        vi.mocked(shellFetch).mockResolvedValueOnce(json(503, { code: "backend_unreachable" }));
+      }
+      const pending = read({ slug: "during-deploy" });
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(await pending).toMatchObject({ query: { slug: "during-deploy" } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives up on a read once the unavailable budget is spent", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    try {
+      vi.mocked(shellFetch).mockImplementation(async () =>
+        json(503, { code: "backend_unreachable" }),
+      );
+      const pending = read().catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await pending).toMatchObject({ status: 503 });
+      const readCalls = vi
+        .mocked(shellFetch)
+        .mock.calls.filter(([url]) => url.endsWith("/auth/api-key/gateway-read")).length;
+      expect(readCalls).toBeGreaterThan(3);
+      expect(readCalls).toBeLessThan(20);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not retry forbidden reads or serve an earlier result", async () => {
     await read();
     vi.mocked(shellFetch).mockResolvedValueOnce(json(403, { code: "forbidden" }));

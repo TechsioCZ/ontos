@@ -172,6 +172,14 @@ const parseResponse = async (response: Response, path: string): Promise<unknown>
   return JSON.parse(text) as unknown;
 };
 
+/**
+ * A deploy hands the Shell over one container at a time, and the old one can refuse governed reads for minutes
+ * while the new one publishes its composition. An unavailable backend is retried until this budget runs out,
+ * with capped backoff, so the page waits for the handoff instead of failing whole.
+ */
+const READ_UNAVAILABLE_BUDGET_MS = 30_000;
+const READ_BACKOFF_CAP_MS = 3_000;
+
 /** Governed records read, with a fresh assertion issued and redeemed inside the combined gateway. */
 export const readRecords = async (
   vertical: string,
@@ -179,6 +187,7 @@ export const readRecords = async (
   query: unknown,
 ): Promise<unknown> => {
   // Reads are safe to repeat: ride out a shell/vertical restart (503) or a just-published composition (409).
+  const startedAt = Date.now();
   for (let attempt = 0; ; attempt += 1) {
     try {
       const path = `/reads/${segment(readName)}`;
@@ -218,10 +227,17 @@ export const readRecords = async (
           error.status === 502 ||
           error.status === 401) &&
         error.code !== "storefront_not_configured";
-      if (!retryable || attempt >= 2) throw error;
-      // A rejected assertion is replaced at once; an unavailable backend gets a short pause.
-      if (error.status !== 401)
-        await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
+      if (!retryable) throw error;
+      const unavailable = error.status === 503;
+      const exhausted = unavailable
+        ? Date.now() - startedAt >= READ_UNAVAILABLE_BUDGET_MS
+        : attempt >= 2;
+      if (exhausted) throw error;
+      // A rejected assertion is replaced at once; an unavailable backend waits out the handoff with backoff.
+      const pause = unavailable
+        ? Math.min(READ_BACKOFF_CAP_MS, 400 * 2 ** attempt)
+        : 600 * (attempt + 1);
+      if (error.status !== 401) await new Promise((resolve) => setTimeout(resolve, pause));
     }
   }
 };
