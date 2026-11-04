@@ -802,3 +802,43 @@ unavailable stav. Přihlášený checkout zůstává dalším samostatným celke
 Full pnpm check byl opět spuštěný a skončil na stejných čtyřech repository
 lint-rule testech mimo N1; nový report neobsahuje žádný N1 nález.
 Pravidla a hooky nejsou vypnuté.
+
+## C13 — aktuální ceny a kompozice košíku/checkoutu
+
+328/328 N1 testů, lint a finální produkční build PASS. Nové regresní testy
+nejprve reprodukovaly storage-error admission a nadbytečné ruční potvrzení
+již ověřených cen. Sdílený feedback navíc testuje pending, unavailable,
+scope mismatch, neplatný draft, PRICE_CHANGED a rozporný VALID výsledek.
+Kanonický N1 export zůstává beze změny: theme:check447 PASS.
+
+Aktuální Figma `39:2395/208:2267`, `311:2475/2490` a `319:1756/1977`:
+
+- Header na skutečných390px: actions gap12, skupina152, logo194; desktop1440
+  má skupinu104 a logo256. Bez horizontálního overflow.
+- Naplněný mini košík: panel384, mezera akcí12 a samostatný1px oddělovač
+  border-secondary před celým souhrnem. Ověřená jednotková cena není současně
+  označená jako neověřená; úspěšné oznámení zůstává dostupné přes aria-live.
+- Doprava: nativní RadioCard má padding12, content gap8 a description14.
+  Žádný vzhledový className na knihovních komponentách ani změna primitivní palety.
+
+Živý browser ověřil automatické ceny košíku bez dalšího kliknutí. Při záměrně
+vypnutém spojení a změně množství1→2 se vrátil viditelný unavailable stav,
+draft cena, ruční retry a disabled checkout. Po obnovení spojení a retry
+native quote potvrdil1918Kč; změna zpět na1 automaticky potvrdila959Kč.
+
+Checkout na390/1440 použil skutečné959Kč za zboží +129Kč dopravu =1088Kč.
+Změna adresy A→B→A zneplatnila původní ověření až do nového native quote.
+Konečné odeslání nové objednávky a pozitivní přihlášený Portal účet tento
+průchod zatím nepotvrzuje; úspěšné ověření ceny není doklad o objednávce či platbě.
+
+Celé aktuální checkout screenshoty byly znovu porovnané včetně pending a empty
+referencí. Následující celek má doplnit samostatný divider před checkout totals,
+kompozici skutečně loaded-empty pokladny a disabled zpětný odkaz při pending.
+TotalsSummary0.57 nemá veřejné varianty pro mini total14/semibold a checkout
+total16/bold; společný default20 není obcházen kontextovým CSS. Tyto otevřené
+body znamenají, že C13 není plošný vizuální PASS celého storefrontu.
+
+Aktuální plná repository gate se znovu zastavila na367/371 lint-rule testech:
+stejné4 dříve doložené chyby v native-data-factory-proof,
+no-service-constructor-imports a repository-policy mimo N1. Řetězec následných
+repo kontrol proto není celý PASS; žádné pravidlo ani git hook se nevypíná.

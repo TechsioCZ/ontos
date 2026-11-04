@@ -11,7 +11,8 @@ kompozici a instance, nikoliv náhradní paletu nebo oprávnění přestylovat k
 2. Generovaný `tokens/figma/n1.css` aktivuje pouze kanonických 447 proměnných na
    `html[data-theme="n1"]`. Všechny názvy již kit registruje; není druhá ruční kopie.
 3. `tokens/storefront.css` jednou propojí existující Header/Footer sloty s N1 tmavými
-   rolemi. Tyto organismy nemají tone prop. Nemění paletu, typografii ani velikosti instancí.
+   rolemi. Tyto organismy nemají tone prop. Další doložené komponentové role používají
+   existující N1 aliasy; nepřepisuje se primitivní paleta ani typografická/rozměrová škála.
 4. `globals.css` obsahuje importy, content registration a layout metadata pro wrappery.
    V 0.57.0 je explicitní `@source` nutné: novější referenční skill popisuje už opravený
    balíček, instalovaný CSS entrypoint tuto registraci ještě neobsahuje.
@@ -22,6 +23,27 @@ a oba on-primary foregroundy. Mobile input floor 16 px zůstává knihovní.
 Původní 418-tokenový mix komponentových snapshotů a App overrides byl nahrazen.
 
 ## Kompozice
+
+Hlavička `39:2395`, actions `208:2267`: čtyři nativní ovládací prvky mají
+mezeru12, nikoli výchozích16. Existující role `spacing-header-actions-sm`
+odkazuje na kanonickou `dimension-12`, aby se mobilní logo nemuselo zmenšovat.
+Velikosti ovládacích prvků zůstávají knihovní. Zalamování obchodních podmínek
+a e-mail pod ikonou odpovídají mobilnímu návrhu; neopravují se CSS výjimkou.
+
+Mini košík `311:2490` skládá dvě nativní akce do vlastního layout wrapperu gap12;
+vnější panel si zachovává gap16. Před souhrnem je samostatný1px oddělovač
+`311:2475` v roli border-secondary. Aktuální VALID quote potvrzuje ceny všech
+řádků: draftPrice se skrývá jen pro tento stav, úspěch zůstává oznámený sr-only.
+Při změně výběru, chybě nebo neplatném množství zůstávají skutečné výstrahy.
+Doprava checkoutu `319:1756/1977` používá
+existující RadioCard sm role: control padding12, content gap8 a popis text-sm14.
+Žádné appearance className na knihovních komponentách nebo nové velikostní props.
+
+Celý košík ověřuje aktuální platný výběr automaticky stejnou nativní dry-run cestou
+jako mini košík. Storage error, chybějící scope a neplatné množství request blokují.
+Změnu ceny nadále výslovně přijímá zákazník; unavailable stav zachovává ruční retry.
+Aktuální VALID výsledek zpřístupní checkout bez dalšího potvrzování již ověřených cen.
+Samotné ověření nevytváří objednávku ani skladový pohyb.
 
 C12 recovery používá aktuálně znovu načtený auth vzor `333:4671`: FormInput md,
 Button primary/solid/sm/compact, Link a StatusText; desktop auth šířka448,

@@ -1,4 +1,21 @@
 import { Match } from "effect";
+import type { CartQuote } from "@/ontos/cart-quote";
+
+export interface CartQuoteFeedbackState {
+  readonly result: CartQuote | null;
+  readonly state: "idle" | "pending" | "unavailable" | "scope-mismatch" | "ready";
+}
+
+export const verifiedCartQuote = (
+  quote: CartQuoteFeedbackState,
+  invalid: boolean,
+): CartQuote | null =>
+  !invalid &&
+  quote.state === "ready" &&
+  quote.result?.outcome === "VALID" &&
+  quote.result.issues.length === 0
+    ? quote.result
+    : null;
 
 export interface QuoteSelection {
   generation: number;
