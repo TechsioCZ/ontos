@@ -1,10 +1,19 @@
 import { NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
-import { ContextAccessLive, DatabaseConfigLive, ReadRuntime } from '@app/core-runtime';
+import {
+  ActiveApplicationCompositionService,
+  ContextAccessLive,
+  DatabaseConfigLive,
+  ReadRuntime,
+  validateActiveApplicationCompositionSnapshot,
+} from '@app/core-runtime';
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
-import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
+import {
+  bindGatewayPrincipalVerifier,
+  GatewayPrincipalVerifierConfiguration,
+} from '@app/gateway-principal-verifier/server';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 
 import {
@@ -27,14 +36,37 @@ const DiagnosticCauseSchema = Schema.Struct({
   _tag: Schema.optionalKey(Schema.String),
   cause: Schema.optionalKey(Schema.Unknown),
   code: Schema.optionalKey(Schema.String),
+  issue: Schema.optionalKey(Schema.Unknown),
+  issues: Schema.optionalKey(Schema.Unknown),
+  path: Schema.optionalKey(Schema.Unknown),
   reason: Schema.optionalKey(Schema.Unknown),
 });
 const observeReadFailure = (
   error: typeof DiagnosticCauseSchema.Type,
-  stage: 'quantity-read-runtime' | 'quantity-redemption' | 'quantity-verification' = 'quantity-read-runtime',
+  stage:
+    | 'quantity-read-runtime'
+    | 'quantity-redemption'
+    | 'quantity-verification'
+    | 'quantity-source' = 'quantity-read-runtime',
 ) =>
   Effect.sync(() => {
     const allowed = [
+      'SchemaError',
+      'ApplicationCompositionValidationError',
+      'ActiveApplicationCompositionSourceReadError',
+      'application_composition_invalid',
+      'active_application_composition_unavailable',
+      'Application Composition authority is expired or not yet valid',
+      'The active Application Composition snapshot is unavailable or invalid',
+      'Application Composition snapshot exceeds its byte budget',
+      'The ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL configuration is required',
+      'The active Application Composition source URL is invalid',
+      'The active Application Composition source read-token configuration is invalid',
+      'The active Application Composition source read failed',
+      'The active Application Composition source body read failed',
+      'The active Application Composition snapshot is not UTF-8 text',
+      'The active Application Composition snapshot has no valid authority deadline',
+      'The active Application Composition source read timed out',
       'GatewayAssertionRedemptionUnavailableError',
       'GatewayAssertionReplayError',
       'ActionPrincipalConfigurationError',
@@ -67,6 +99,33 @@ const observeReadFailure = (
       'The receiving owner release is not approved by the active Application Composition',
       'Current Commerce Quantity policy is temporarily unavailable',
     ];
+    const safeFields = new Set([
+      'composition',
+      'observedAt',
+      'validUntil',
+      'modules',
+      'shell',
+      'schemaVersion',
+      'deployment',
+      'appId',
+      'buildMarker',
+      'contractDocument',
+      'manifest',
+      'publicSurface',
+      'operationContracts',
+      'requirements',
+      'intrinsic',
+      'coreCapabilities',
+      'api',
+      'actions',
+      'components',
+      'runtime',
+      'outboxSubscriptions',
+      'exposes',
+      'federation',
+      'sharedSingletons',
+      'contributionAbi',
+    ]);
     const known = new Set<string>();
     let current: unknown = error;
     for (let depth = 0; depth < 8 && Schema.is(DiagnosticCauseSchema)(current); depth += 1) {
@@ -76,7 +135,15 @@ const observeReadFailure = (
           known.add(label);
         }
       }
-      current = current.cause ?? current.reason;
+      if (Schema.is(Schema.Array(Schema.Union([Schema.String, Schema.Number])))(current.path)) {
+        for (const field of current.path) {
+          if (Schema.is(Schema.String)(field) && safeFields.has(field)) {
+            known.add(`schema.field.${field}`);
+          }
+        }
+      }
+      const issues = Schema.is(Schema.Array(Schema.Unknown))(current.issues) ? current.issues : [];
+      current = current.cause ?? current.issue ?? issues[0] ?? current.reason;
     }
     process.stderr.write(`${JSON.stringify({ known: [...known], stage })}\n`);
   });
@@ -91,7 +158,12 @@ const observeReadStage = (
     | 'VERIFY_CREATED'
     | 'VERIFY_BEGIN'
     | 'VERIFY_OK'
-    | 'VERIFY_FAIL_UNCLASSIFIED',
+    | 'VERIFY_FAIL_UNCLASSIFIED'
+    | 'SOURCE_LOAD_BEGIN'
+    | 'SOURCE_LOAD_OK'
+    | 'SOURCE_LOAD_FAIL'
+    | 'CONFIG_LOAD_OK'
+    | 'CONFIG_LOAD_FAIL',
 ) => Effect.sync(() => process.stderr.write(`${stage}\n`));
 const observedProductionReadRuntime = Layer.effect(
   ReadRuntime,
@@ -176,6 +248,25 @@ const serve = Effect.scoped(
         }).pipe(Effect.result);
         // Observe only after the original request failed: never warm verification caches before its gates.
         if (Result.isFailure(response) || response.success.status === 503) {
+          const configuration = yield* GatewayPrincipalVerifierConfiguration.pipe(
+            Effect.flatMap((service) => service.configuration),
+            Effect.asVoid,
+            Effect.provideContext(verificationContext),
+            Effect.result,
+          );
+          yield* observeReadStage(Result.isSuccess(configuration) ? 'CONFIG_LOAD_OK' : 'CONFIG_LOAD_FAIL');
+          yield* observeReadStage('SOURCE_LOAD_BEGIN');
+          const loaded = yield* ActiveApplicationCompositionService.pipe(
+            Effect.flatMap((service) => service.load),
+            Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+            Effect.asVoid,
+            Effect.tapError((error) =>
+              Schema.is(DiagnosticCauseSchema)(error) ? observeReadFailure(error, 'quantity-source') : Effect.void,
+            ),
+            Effect.provideContext(verificationContext),
+            Effect.result,
+          );
+          yield* observeReadStage(Result.isSuccess(loaded) ? 'SOURCE_LOAD_OK' : 'SOURCE_LOAD_FAIL');
           yield* observeReadStage('VERIFY_BEGIN');
           const verified = yield* verification
             .verify(Redacted.make(webRequest.headers.get('authorization') ?? undefined))

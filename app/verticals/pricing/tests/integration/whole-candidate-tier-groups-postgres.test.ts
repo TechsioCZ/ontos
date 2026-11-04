@@ -1545,13 +1545,20 @@ const deriveWholeCandidateSnapshot = Effect.fn('WholeCandidate.deriveSnapshot')(
   );
   const address = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Number }))(server.address);
   const origin = `http://127.0.0.1:${address.port}`;
+  const bridgeInputSchema = Schema.Struct({
+    metadata: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
+    sourceDocuments: Schema.Tuple([Schema.String, Schema.String]),
+  });
+  const [inputDocument, inputPath] = yield* Effect.all([
+    Schema.encodeEffect(Schema.fromJsonString(bridgeInputSchema))({
+      metadata: [...documents.entries()],
+      sourceDocuments: [catalogContractDocument, pricingContractDocument],
+    }),
+    fs.makeTempFileScoped({ prefix: 'ontos-whole-candidate-', suffix: '.json' }),
+  ]);
+  yield* fs.writeFileString(inputPath, inputDocument);
   const literals = yield* Effect.all({
-    catalogContract: Schema.encodeEffect(Schema.fromJsonString(Schema.String))(catalogContractDocument),
-    metadata: Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.Tuple([Schema.String, Schema.String]))))([
-      ...documents.entries(),
-    ]),
     origin: Schema.encodeEffect(Schema.fromJsonString(Schema.String))(origin),
-    pricingContract: Schema.encodeEffect(Schema.fromJsonString(Schema.String))(pricingContractDocument),
     shellFederationUrl: Schema.encodeEffect(Schema.fromJsonString(Schema.String))(
       `${origin}/shell-super-app/source-native-mf-fixture.json`,
     ),
@@ -1575,12 +1582,16 @@ const deriveWholeCandidateSnapshot = Effect.fn('WholeCandidate.deriveSnapshot')(
         generationBuildMarker: topology.shell.deliveryUnit.buildMarker,
         unitId: topology.shell.deliveryUnit.unitId, workspaceRoot: process.cwd()
       }));
-      const sourceDocuments = [${literals.catalogContract}, ${literals.pricingContract}];
+      const input = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Struct({
+        metadata: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
+        sourceDocuments: Schema.Tuple([Schema.String, Schema.String])
+      })), {onExcessProperty: 'error'})(yield* fs.readFileString(process.argv[1]));
+      const sourceDocuments = input.sourceDocuments;
       const contracts = yield* Effect.forEach(sourceDocuments, document => Schema.decodeUnknownEffect(
         Schema.fromJsonString(OntosModuleDeploymentContractSchema))(document));
       const initial = yield* makeApplicationCompositionSnapshotFixture(contracts.map(contract => contract.deployment.appId),
         Object.fromEntries(contracts.map(contract => [contract.deployment.appId, contract.deployment.buildMarker])));
-      const metadata = new Map(${literals.metadata});
+      const metadata = new Map(input.metadata);
       const artifact = (url, document) => ({url, bytes: new TextEncoder().encode(document)});
       const modules = contracts.map((contract, index) => {
         const placement = initial.composition.modules.find(module => module.deployment.appId === contract.deployment.appId);
@@ -1602,7 +1613,7 @@ const deriveWholeCandidateSnapshot = Effect.fn('WholeCandidate.deriveSnapshot')(
     })); process.stdout.write(text); } finally { await runtime.dispose(); }`;
   const child = yield* ChildProcess.make(
     process.execPath,
-    ['--experimental-strip-types', '--input-type=module', '--eval', program],
+    ['--experimental-strip-types', '--input-type=module', '--eval', program, inputPath],
     {
       cwd: appRoot,
       env: {
