@@ -65,8 +65,10 @@ const ResponseSchema = Schema.Union([
     providerUserId: ProviderSubjectIdSchema,
   }),
   Schema.Struct({
+    buyer: Schema.Struct(identity),
     buyerPrincipalId: PrincipalIdSchema,
     cccReader: Schema.Struct(identity),
+    marketRelay: Schema.Struct({ ...identity, providerKeyId: ProviderSubjectIdSchema }),
     operation: Schema.Literal('SERVICE_KEYS_CREATED'),
     pricingIssuer: Schema.Struct(identity),
     protocol: Schema.Literal(protocol),
@@ -299,6 +301,27 @@ export const serve = Effect.scoped(
             return yield* unavailable('actual-operator-context');
           }
           const { principal } = resolved;
+          const buyerKey = yield* lifecycle.issue({
+            correlationId: `${suffix}:buyer:key`,
+            idempotencyKey: `${suffix}:buyer:key`,
+            name: 'Preproposal original buyer',
+            principal,
+            requestHeaders: headers,
+          });
+          if (buyerKey.cleanupPending) {
+            return yield* unavailable('buyer-self-binding');
+          }
+          const verifiedBuyer = yield* keys.verify(Redacted.value(buyerKey.secret));
+          const boundBuyer = yield* Context.get(runtime, PrincipalResolver).resolveBetterAuthApiKey(
+            verifiedBuyer.providerKeyId,
+          );
+          if (
+            boundBuyer.principalId !== principal.principalId ||
+            boundBuyer.tenantId !== principal.tenantId ||
+            boundBuyer.authBindingId !== buyerKey.authBindingId
+          ) {
+            return yield* unavailable('original-buyer-provider-binding');
+          }
           const produceService = Effect.fn('PreproposalIdentity.produceService')(function* produceService(
             name: string,
           ) {
@@ -323,12 +346,20 @@ export const serve = Effect.scoped(
           });
           const cccReader = yield* produceService('ccc-reader');
           const pricingIssuer = yield* produceService('pricing-issuer');
+          const marketRelay = yield* produceService('market-relay');
+          const verifiedRelay = yield* keys.verify(Redacted.value(marketRelay.secret));
           if (cccReader.principalId === pricingIssuer.principalId) {
             return yield* unavailable('distinct-service-identities');
           }
           return yield* send({
+            buyer: {
+              authBindingId: buyerKey.authBindingId,
+              principalId: principal.principalId,
+              secret: buyerKey.secret,
+            },
             buyerPrincipalId: principal.principalId,
             cccReader,
+            marketRelay: { ...marketRelay, providerKeyId: verifiedRelay.providerKeyId },
             operation: 'SERVICE_KEYS_CREATED',
             pricingIssuer,
             protocol,
