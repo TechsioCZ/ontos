@@ -6,6 +6,7 @@ import {
   customerConsentReadOwnPermission,
   customerConsentUpdateOwnPermission,
 } from './shared/permissions/customer-consent-self-service.ts';
+import { customerPasswordChangeOwnPermission } from './shared/permissions/customer-password-self-service.ts';
 import { defineOntosModuleManifest } from '@app/core-runtime';
 import { getCookies } from 'better-auth/cookies';
 import { COMMERCE_PORTAL_AUTH_POLICY } from './api/portal-auth/provider/config.ts';
@@ -368,6 +369,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
           { method: 'POST', path: '/api/portal-auth/customer-profile' },
           { method: 'GET', path: '/api/portal-auth/customer-consent' },
           { method: 'POST', path: '/api/portal-auth/customer-consent' },
+          { method: 'POST', path: '/api/portal-auth/change-password' },
           { method: 'POST', path: '/api/portal-auth/sign-out' },
           { method: 'POST', path: '/api/portal-auth/refresh' },
         ],
@@ -376,6 +378,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
     businessPermissions: [
       customerConsentReadOwnPermission,
       customerConsentUpdateOwnPermission,
+      customerPasswordChangeOwnPermission,
       customerProfileReadOwnPermission,
       customerProfileUpdateOwnPermission,
       // <generated-module-manifest-business-permissions>

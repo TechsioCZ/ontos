@@ -190,6 +190,7 @@ export const sroubshop: Brand = {
   id: "sroubshop",
   name: NAME,
   legalName: LEGAL_NAME,
+  consentWording: `Souhlasím se zasíláním novinek a obchodních nabídek ${NAME} (${LEGAL_NAME}) na svůj kontaktní e-mail. Souhlas je dobrovolný, není podmínkou nákupu a mohu jej kdykoli odvolat v části Můj účet. Odvolání neovlivní zákonnost předchozího zpracování.`,
   logo: null,
   contact: { email: EMAIL, inquiryEmail: "poptavky@sroubarna.demo" },
   production: null,

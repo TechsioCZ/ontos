@@ -8,7 +8,7 @@ import { Button } from "@techsio/ui-kit/atoms/button";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { AccountShell } from "@/components/account-shell";
 import { CustomerNewsletterConsentForm } from "./customer-newsletter-consent";
-import { PasswordChange } from "./password-change";
+import { PasswordChange, requestPasswordChange } from "./password-change";
 import type { CustomerAccount } from "@/ontos/account";
 import { isCustomerProfile } from "@/ontos/profile-model";
 import type { CustomerProfile } from "@/ontos/profile-model";
@@ -170,9 +170,8 @@ export function AccountProfilePage({
         {saved && <output>{copy.saved}</output>}
         {error && <p role="alert">{error}</p>}
       </form>
-      {/* OntOS offers no signed-in password change yet: the form validates but never claims success. */}
       <section className="mt-(--dimension-40) max-w-(--sf-account-field-width)">
-        <PasswordChange />
+        <PasswordChange changePassword={requestPasswordChange} />
       </section>
       <CustomerNewsletterConsentForm />
     </AccountShell>

@@ -5,14 +5,32 @@ import { Button } from "@techsio/ui-kit/atoms/button";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { useDictionary } from "@/ontos/market-context";
 
-export type ChangePassword = (password: string) => Promise<void>;
+export interface PasswordChangeRequest {
+  readonly currentPassword: string;
+  readonly newPassword: string;
+}
 
-/**
- * Password change, validated and submitted separately from the profile. Without a `changePassword` service it
- * never claims success and never stores the input (OntOS has no signed-in password change yet).
- */
-export function PasswordChange({ changePassword }: { changePassword?: ChangePassword }) {
+export type ChangePassword = (request: PasswordChangeRequest) => Promise<void>;
+
+/** A refusal the server explains in the customer's language; any other failure shows the generic message. */
+export class PasswordChangeRefused extends Error {}
+
+/** Submits the signed-in customer's change; the storefront route verifies the current password in OntOS. */
+export async function requestPasswordChange(request: PasswordChangeRequest): Promise<void> {
+  const response = await fetch("/api/ontos/account/password", {
+    body: JSON.stringify(request),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  if (response.ok) return;
+  const result = (await response.json().catch(() => ({}))) as { message?: unknown };
+  throw new PasswordChangeRefused(typeof result.message === "string" ? result.message : "");
+}
+
+/** Password change, validated and submitted separately from the profile. It never stores either password. */
+export function PasswordChange({ changePassword }: { changePassword: ChangePassword }) {
   const cs = useDictionary().account.password;
+  const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [attempted, setAttempted] = useState(false);
@@ -20,6 +38,7 @@ export function PasswordChange({ changePassword }: { changePassword?: ChangePass
   const [message, setMessage] = useState("");
   const busy = useRef(false);
   const root = useRef<HTMLDivElement>(null);
+  const currentError = attempted && !currentPassword ? cs.currentRequired : "";
   const passwordError = attempted && !password.trim() ? cs.required : "";
   const confirmationError = attempted
     ? !confirmation
@@ -32,7 +51,7 @@ export function PasswordChange({ changePassword }: { changePassword?: ChangePass
     if (busy.current) return;
     setAttempted(true);
     setMessage("");
-    if (!password.trim() || !confirmation || password !== confirmation) {
+    if (!currentPassword || !password.trim() || !confirmation || password !== confirmation) {
       const origin = document.activeElement;
       requestAnimationFrame(() => {
         // A later pointer/keyboard action takes precedence over automatic error focus.
@@ -41,20 +60,19 @@ export function PasswordChange({ changePassword }: { changePassword?: ChangePass
       });
       return;
     }
-    if (!changePassword) {
-      setMessage(cs.notConnected);
-      return;
-    }
     busy.current = true;
     setPending(true);
     try {
-      await changePassword(password);
+      await changePassword({ currentPassword, newPassword: password });
+      setCurrentPassword("");
       setPassword("");
       setConfirmation("");
       setAttempted(false);
       setMessage(cs.changed);
-    } catch {
-      setMessage(cs.failed);
+    } catch (cause) {
+      setMessage(
+        cause instanceof PasswordChangeRefused && cause.message ? cause.message : cs.failed,
+      );
     } finally {
       busy.current = false;
       setPending(false);
@@ -69,6 +87,23 @@ export function PasswordChange({ changePassword }: { changePassword?: ChangePass
   return (
     <div id="zmena-hesla" className="sf-password-change" ref={root}>
       <h3>{cs.title}</h3>
+      <FormInput
+        id="account-password-current"
+        label={cs.currentPassword}
+        size="sm"
+        type="password"
+        autoComplete="current-password"
+        onKeyDown={onPasswordKeyDown}
+        value={currentPassword}
+        disabled={pending}
+        validateStatus={currentError ? "error" : "default"}
+        helpText={currentError}
+        showHelpTextIcon={false}
+        onChange={(e) => {
+          setCurrentPassword(e.target.value);
+          setMessage("");
+        }}
+      />
       <FormInput
         id="account-password"
         label={cs.newPassword}
@@ -114,9 +149,7 @@ export function PasswordChange({ changePassword }: { changePassword?: ChangePass
       >
         {cs.submit}
       </Button>
-      <p className="sf-account-notice">
-        {changePassword ? cs.savedSeparately : cs.unavailableNote}
-      </p>
+      <p className="sf-account-notice">{cs.savedSeparately}</p>
       {message && <output aria-live="polite">{message}</output>}
     </div>
   );

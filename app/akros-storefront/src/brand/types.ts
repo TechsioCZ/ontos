@@ -75,6 +75,11 @@ export interface Brand {
   name: string;
   /** Registered company name (legal pages, about page). */
   legalName: string;
+  /**
+   * Newsletter consent text this brand shows instead of the OntOS notice, which is AKROS-worded demo text.
+   * Unset keeps the OntOS wording; the stored consent still names OntOS's notice version.
+   */
+  consentWording?: string;
   /** Raster logo; without one the header and footer show the store name as a text wordmark. */
   logo: { header: string; footer: string } | null;
   contact: {

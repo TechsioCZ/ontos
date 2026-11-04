@@ -137,11 +137,11 @@ describe("password-manager form semantics with the published UI-kit", () => {
       </AppRouterContext.Provider>,
     );
 
-    // OntOS has no signed-in password change: the separate demo block is never part of the profile save.
+    // The password change is its own block: its inputs are never part of the profile save.
     const passwordChange = document.getElementById("zmena-hesla");
     expect(passwordChange?.closest("form")).toBeNull();
     expect(document.querySelector('form input[type="password"]')).toBeNull();
-    expect(passwordChange?.textContent).toContain("heslo zůstává beze změny");
+    expect(passwordChange?.textContent).toContain("Změna hesla se ukládá samostatně.");
     const email = expectInput("account-email", {
       name: "email",
       type: "email",

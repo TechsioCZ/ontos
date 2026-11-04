@@ -1,4 +1,5 @@
 import { customerOwnConsentReadApiLive, customerOwnConsentUpdateApiLive } from './portal-auth/consent/http.ts';
+import { customerOwnPasswordChangeApiLive } from './portal-auth/password-change/http.ts';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import type { HttpServerRequest } from 'effect/http';
 import {
@@ -1106,6 +1107,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     commercePortalAuthVerificationCommerceApiLive.pipe(GovernedReadLayer.provide(verificationRouteServicesLive)),
     customerOwnConsentReadApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
     customerOwnConsentUpdateApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
+    customerOwnPasswordChangeApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
     customerOwnProfileReadApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
     customerOwnProfileUpdateApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
     // <generated-governed-http-handler-layers>

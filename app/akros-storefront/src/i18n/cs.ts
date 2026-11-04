@@ -883,6 +883,8 @@ export const cs = {
     },
     password: {
       title: "Změna hesla",
+      currentPassword: "Současné heslo",
+      currentRequired: "Vyplňte současné heslo.",
       newPassword: "Nové heslo",
       confirmation: "Potvrdit heslo",
       submit: "Změnit heslo",
@@ -890,13 +892,9 @@ export const cs = {
       required: "Vyplňte nové heslo.",
       confirmationRequired: "Potvrďte nové heslo.",
       mismatch: "Hesla se neshodují.",
-      notConnected:
-        "Změna hesla zatím není připojena k účtu. Ostatní údaje můžete uložit samostatně.",
       changed: "Heslo bylo změněno.",
       failed: "Heslo se nepodařilo změnit. Zkontrolujte údaje a zkuste to znovu.",
       savedSeparately: "Změna hesla se ukládá samostatně.",
-      unavailableNote:
-        "Ukázka: OntOS zatím změnu hesla přihlášeného zákazníka nenabízí, heslo zůstává beze změny.",
     },
   },
   auth: {
@@ -1126,6 +1124,14 @@ export const cs = {
       loadFailed: "Souhlas s newsletterem se nepodařilo načíst z OntOS.",
       invalid: "Potvrďte aktuální informace o souhlasu a svou volbu.",
       saveFailed: "Změnu souhlasu nelze potvrdit. Načtěte aktuální stav z OntOS znovu.",
+    },
+    password: {
+      signIn: "Pro změnu hesla se prosím přihlaste.",
+      invalid: "Zkontrolujte údaje. Nové heslo musí mít 12 až 128 znaků.",
+      currentInvalid: "Současné heslo nesouhlasí.",
+      refused: "Změnu hesla z tohoto účtu nelze provést.",
+      rateLimited: "Příliš mnoho pokusů. Zkuste to prosím později.",
+      unavailable: "Heslo se nepodařilo změnit. Zkuste to prosím později.",
     },
     profile: {
       signIn: "Pro úpravu údajů se prosím přihlaste.",

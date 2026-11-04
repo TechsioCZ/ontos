@@ -893,6 +893,8 @@ export const en: Dictionary = {
     },
     password: {
       title: "Change password",
+      currentPassword: "Current password",
+      currentRequired: "Enter your current password.",
       newPassword: "New password",
       confirmation: "Confirm password",
       submit: "Change password",
@@ -900,13 +902,9 @@ export const en: Dictionary = {
       required: "Enter a new password.",
       confirmationRequired: "Confirm the new password.",
       mismatch: "The passwords do not match.",
-      notConnected:
-        "Password change is not connected to the account yet. You can save your other details separately.",
       changed: "Your password has been changed.",
       failed: "The password could not be changed. Check the details and try again.",
       savedSeparately: "Password changes are saved separately.",
-      unavailableNote:
-        "Demo: OntOS does not yet offer a password change for signed-in customers; your password stays unchanged.",
     },
   },
   auth: {
@@ -1142,6 +1140,14 @@ export const en: Dictionary = {
       invalid: "Confirm the current consent information and your choice.",
       saveFailed:
         "The consent change cannot be confirmed. Load the current status from OntOS again.",
+    },
+    password: {
+      signIn: "Please sign in to change your password.",
+      invalid: "Check the details. The new password must have 12 to 128 characters.",
+      currentInvalid: "The current password is not correct.",
+      refused: "This account cannot change its password.",
+      rateLimited: "Too many attempts. Try again later.",
+      unavailable: "The password could not be changed. Please try again later.",
     },
     profile: {
       signIn: "Please sign in to edit your details.",

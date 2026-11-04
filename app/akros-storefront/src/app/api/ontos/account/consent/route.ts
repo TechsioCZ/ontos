@@ -1,4 +1,5 @@
 import "server-only";
+import { getBrand } from "@/brand";
 import { portalRequest } from "@/ontos/account";
 import { customerConsentInput, isCustomerNewsletterConsent } from "@/ontos/consent-model";
 import type { Dictionary } from "@/i18n";
@@ -23,9 +24,15 @@ async function ownerResponse(response: Response, t: Dictionary) {
           : t.server.consent.unconfirmed;
     return Response.json({ message }, { headers: noStore, status });
   }
-  const consent: unknown = await response.json();
-  if (!isCustomerNewsletterConsent(consent))
+  const owner: unknown = await response.json();
+  if (!isCustomerNewsletterConsent(owner))
     throw new Error("Consent owner returned an invalid projection");
+  // OntOS's demo notice is AKROS-worded; a brand with its own consent text shows that text instead.
+  const { consentWording } = getBrand();
+  const consent =
+    consentWording === undefined
+      ? owner
+      : { ...owner, notice: { ...owner.notice, wording: consentWording } };
   return Response.json({ consent }, { headers: noStore });
 }
 export async function GET(request: Request) {

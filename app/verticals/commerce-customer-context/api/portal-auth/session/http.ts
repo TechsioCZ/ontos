@@ -86,7 +86,7 @@ const httpBridgeTimeoutPolicy = Effect.timeoutOrElse({
  * the typed API is exposed: the raw `auth.handler` proxy is no longer part of this transport.
  */
 interface CommercePortalAuthHttpPort {
-  readonly api: Pick<CommercePortalAuth['api'], 'getSession' | 'signOut'>;
+  readonly api: Pick<CommercePortalAuth['api'], 'changePassword' | 'getSession' | 'signOut'>;
 }
 
 export class CommercePortalAuthService extends Context.Service<CommercePortalAuthService, CommercePortalAuthHttpPort>()(

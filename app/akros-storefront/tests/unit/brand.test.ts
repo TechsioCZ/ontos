@@ -13,6 +13,15 @@ describe("storefront brand resolution", () => {
     expect(getBrand().id).toBe("akros");
   });
 
+  it("words the newsletter consent with the running shop's name, leaving AKROS on the OntOS notice", () => {
+    vi.stubEnv("STOREFRONT_BRAND", "sroubshop");
+    const consent = getBrand().consentWording ?? "";
+    expect(consent).toContain("novinek a obchodních nabídek ŠroubShop (Šroubárna Vysočina s.r.o.)");
+    expect(consent).not.toMatch(/akros/i);
+    vi.stubEnv("STOREFRONT_BRAND", undefined);
+    expect(getBrand().consentWording).toBeUndefined();
+  });
+
   it("reads the brand at request time", () => {
     vi.stubEnv("STOREFRONT_BRAND", "sroubshop");
     expect(getBrand()).toMatchObject({ id: "sroubshop", name: "ŠroubShop", logo: null });

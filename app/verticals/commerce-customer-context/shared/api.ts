@@ -1,4 +1,5 @@
 import { CustomerOwnConsentReadApi, CustomerOwnConsentUpdateApi } from './portal-auth/consent-api.ts';
+import { CustomerOwnPasswordChangeApi } from './portal-auth/password-change-api.ts';
 import { identity } from 'effect';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -343,6 +344,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(CommercePortalAuthVerificationApi)
   .addHttpApi(CustomerOwnConsentReadApi)
   .addHttpApi(CustomerOwnConsentUpdateApi)
+  .addHttpApi(CustomerOwnPasswordChangeApi)
   .addHttpApi(CustomerOwnProfileReadApi)
   .addHttpApi(CustomerOwnProfileUpdateApi)
   // <generated-governed-http-api-additions>

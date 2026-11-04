@@ -886,6 +886,8 @@ export const sk: Dictionary = {
     },
     password: {
       title: "Zmena hesla",
+      currentPassword: "Súčasné heslo",
+      currentRequired: "Zadajte súčasné heslo.",
       newPassword: "Nové heslo",
       confirmation: "Potvrdenie hesla",
       submit: "Zmeniť heslo",
@@ -893,13 +895,9 @@ export const sk: Dictionary = {
       required: "Vyplňte nové heslo.",
       confirmationRequired: "Potvrďte nové heslo.",
       mismatch: "Heslá sa nezhodujú.",
-      notConnected:
-        "Zmena hesla zatiaľ nie je pripojená k účtu. Ostatné údaje môžete uložiť samostatne.",
       changed: "Heslo bolo zmenené.",
       failed: "Heslo sa nepodarilo zmeniť. Skontrolujte údaje a skúste to znova.",
       savedSeparately: "Zmena hesla sa ukladá samostatne.",
-      unavailableNote:
-        "Ukážka: OntOS zatiaľ zmenu hesla prihláseného zákazníka neponúka, heslo zostáva bez zmeny.",
     },
   },
   auth: {
@@ -1130,6 +1128,14 @@ export const sk: Dictionary = {
       loadFailed: "Súhlas s newsletterom sa nepodarilo načítať z OntOS.",
       invalid: "Potvrďte aktuálne informácie o súhlase a svoju voľbu.",
       saveFailed: "Zmenu súhlasu nemožno potvrdiť. Načítajte aktuálny stav z OntOS znova.",
+    },
+    password: {
+      signIn: "Pre zmenu hesla sa prosím prihláste.",
+      invalid: "Skontrolujte údaje. Nové heslo musí mať 12 až 128 znakov.",
+      currentInvalid: "Súčasné heslo nesedí.",
+      refused: "Zmenu hesla z tohto účtu nie je možné vykonať.",
+      rateLimited: "Príliš veľa pokusov. Skúste to neskôr.",
+      unavailable: "Heslo sa nepodarilo zmeniť. Skúste to prosím neskôr.",
     },
     profile: {
       signIn: "Na úpravu údajov sa prosím prihláste.",

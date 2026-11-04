@@ -1,4 +1,8 @@
-import { getSession as betterAuthGetSession, signOut as betterAuthSignOut } from 'better-auth/api';
+import {
+  changePassword as betterAuthChangePassword,
+  getSession as betterAuthGetSession,
+  signOut as betterAuthSignOut,
+} from 'better-auth/api';
 import { Effect, Layer, Redacted } from 'effect';
 
 import { CommercePortalAuthAudit } from '../../src/portal-auth/audit/audit.ts';
@@ -148,6 +152,10 @@ const refuseProviderCall = (operation: string): never => {
 };
 
 const unavailableProviderApi: CommercePortalAuthService['Service']['api'] = {
+  changePassword: Object.assign(() => refuseProviderCall('change-password'), {
+    options: betterAuthChangePassword.options,
+    path: betterAuthChangePassword.path,
+  }),
   getSession: Object.assign(() => refuseProviderCall('get-session'), {
     options: providerGetSessionRoute.options,
     path: providerGetSessionRoute.path,

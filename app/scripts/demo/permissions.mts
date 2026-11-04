@@ -759,6 +759,7 @@ export const eshopDemoRoles = {
         'customer.profile.update_own',
         'customer.consent.read_own',
         'customer.consent.update_own',
+        'customer.password.change_own',
       ],
     },
     label: 'AKROS storefront (API)',
