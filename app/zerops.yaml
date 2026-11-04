@@ -206,8 +206,10 @@ zerops:
         # Private, container-local directory where composition publication retains its legacy completion evidence.
         ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY: /tmp/ontos-legacy-completion-evidence
         # Every owner in a process shares one pool per database configuration and role. Small pools
-        # keep the old and new containers inside db18's 150 slots during deployment.
-        ONTOS_DATABASE_POOL_IDLE_TIMEOUT_MILLIS: '10000'
+        # keep the old and new containers inside db18's 150 slots during deployment. A minute of idle
+        # keeps connections warm between a demo user's searches; a 10 s idle reopened TLS connections
+        # for every owner on the first search after a short pause (about +1 s on stage).
+        ONTOS_DATABASE_POOL_IDLE_TIMEOUT_MILLIS: '60000'
         ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '6'
         ONTOS_DATABASE_POOL_SHARED: 'true'
         ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
