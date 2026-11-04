@@ -1,4 +1,4 @@
-// @effect-diagnostics asyncFunction:off nestedEffectGenYield:off nodeBuiltinImport:off preferSchemaOverJson:off strictEffectProvide:off -- Native proof producer child is a process entrypoint that reads private config and writes protocol frames on inherited file descriptors; expires: 2027-03-31.
+// @effect-diagnostics asyncFunction:off nestedEffectGenYield:off nodeBuiltinImport:off globalJsonInEffect:off strictEffectProvide:off -- Native proof producer child is a process entrypoint that reads private config and writes protocol frames on inherited file descriptors; expires: 2027-03-31.
 import { readFileSync, writeSync } from 'node:fs';
 import { inspect } from 'node:util';
 import { DatabaseConfig, TrustedPrincipalContextSchema, parseDatabaseConfig } from '@app/core-runtime';
