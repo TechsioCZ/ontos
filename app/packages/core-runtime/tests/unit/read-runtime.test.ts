@@ -3892,3 +3892,94 @@ it.effect('keeps exact count and order for a three-position conditional plan', (
     }
   }),
 );
+
+it.effect('real ReadRuntime admits only the exact delegated Shell business-search routing pair', () =>
+  Effect.gen(function* delegatedShellRouting() {
+    const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+      authBindingId: '00000000-0000-4000-8000-000000000005',
+      authContextRef: 'oauth-grant:00000000-0000-4000-8000-000000000009',
+      authMethod: 'oauth_connection',
+      connection: {
+        clientId: 'runtime-search-client',
+        clientName: 'Runtime search fixture',
+        grantId: '00000000-0000-4000-8000-000000000009',
+        modules: [{ access: 'read', moduleId: 'fixture.business' }],
+        writePolicy: 'read_only',
+      },
+      legalEntityId: '00000000-0000-4000-8000-000000000006',
+      principalId: scope.principalId,
+      tenantId: scope.tenantId,
+    });
+    const { connection: _connection, ...missingConnection } = principal;
+    const grantedConnection = yield* Effect.fromNullishOr(principal.connection);
+    for (const control of [
+      { allowed: true, moduleKey: 'core.shell', principal, readKey: 'core.shell.search' },
+      { allowed: false, moduleKey: 'core.other', principal, readKey: 'core.shell.search' },
+      { allowed: false, moduleKey: 'fixture.business', principal, readKey: 'core.shell.search' },
+      { allowed: false, moduleKey: 'core.shell', principal, readKey: 'core.shell.composition' },
+      { allowed: false, moduleKey: 'core.shell', principal: missingConnection, readKey: 'core.shell.search' },
+      {
+        allowed: false,
+        moduleKey: 'core.shell',
+        principal: { ...principal, connection: { ...grantedConnection, modules: [] } },
+        readKey: 'core.shell.search',
+      },
+    ]) {
+      let handlers = 0;
+      const read = defineRead(
+        {
+          accessKind: 'search',
+          entrypoint: (control.moduleKey === 'fixture.business'
+            ? defineTenantModuleEntrypoint
+            : defineSystemModuleEntrypoint)({
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
+            entrypointKey: control.readKey,
+            moduleKey: control.moduleKey,
+            role: 'search',
+          }),
+          evidencePolicy: { captureMode: 'metadata_only', policyKey: 'core.shell.search.routing.evidence.v1' },
+          inputSchema: Schema.Struct({}),
+          legalEntityScope: 'required',
+          owningModuleKey: control.moduleKey,
+          permissionTarget: 'tenant',
+          policies: [],
+          readKey: control.readKey,
+          resultSchema: Schema.Array(Schema.String),
+          schemaVersion: '1',
+        },
+        () => {
+          handlers += 1;
+          return Effect.succeed({ evidence: { resultCount: 1 }, result: ['routed'] });
+        },
+        () => Effect.succeed({}),
+        () => ({ kind: 'tenant', permission: 'access' }),
+        () => [],
+      );
+      const harness = yield* makeHarness({
+        contextPermissionDecision: 'allowed',
+        permissionDecision: 'allowed',
+        resolvedScope: { ...control.principal, correlationId: scope.correlationId },
+      });
+      const result = harness.runtime.runRead({
+        input: {},
+        principal: control.principal,
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      });
+      if (control.allowed) {
+        expect(yield* result).toEqual(['routed']);
+        expect(handlers).toBe(1);
+        expect(harness.evidence()).toBe(1);
+      } else {
+        const invalidIdentity = !Schema.is(TrustedPrincipalContextSchema)(control.principal);
+        const failure = yield* Effect.flip(result);
+        expect(Predicate.isTagged(failure, invalidIdentity ? 'ReadInputValidationError' : 'ReadPermissionDenied')).toBe(
+          true,
+        );
+        expect(handlers).toBe(0);
+        expect(harness.evidence()).toBe(invalidIdentity ? 0 : 1);
+      }
+    }
+  }),
+);

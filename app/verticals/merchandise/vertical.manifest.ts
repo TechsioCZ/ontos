@@ -41,6 +41,28 @@ const recordsPageKey = 'demo.merchandise.page.products';
 const ordersPageKey = 'demo.merchandise.page.orders';
 const moduleAccess = { kind: 'context_permission', permission: 'module.access' } as const;
 
+const productDetailPageKey = 'demo.merchandise.page.product-detail';
+
+const salesFamily = {
+  icon: 'icon-[mdi--handshake-outline]',
+  key: 'sales',
+  label: { cs: 'Obchod a CRM', en: 'Sales and CRM' },
+  order: 30,
+} as const;
+
+const productGroup = {
+  icon: 'icon-[mdi--package-variant-closed]',
+  key: 'product',
+  label: { cs: 'Produkty', en: 'Products' },
+  order: 70,
+} as const;
+const orderGroup = {
+  icon: 'icon-[mdi--cart-outline]',
+  key: 'order',
+  label: { cs: 'Objednávky', en: 'Orders' },
+  order: 90,
+} as const;
+
 export const merchandiseManifest = defineOntosModuleManifest({
   activation: {
     defaultState: 'inactive',
@@ -169,11 +191,11 @@ export const merchandiseManifest = defineOntosModuleManifest({
         }),
         pageContribution({
           componentKey: 'demo.merchandise.page-product-detail',
-          contributionKey: 'demo.merchandise.page.product-detail',
+          contributionKey: productDetailPageKey,
           entrypoint: {
             access: 'read',
             authorization: { kind: 'context_permission', permission: 'demo.merchandise.read_all' },
-            entrypointKey: 'demo.merchandise.page.product-detail',
+            entrypointKey: productDetailPageKey,
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -218,6 +240,20 @@ export const merchandiseManifest = defineOntosModuleManifest({
             role: 'search',
             scope: 'tenant',
           },
+          presentation: {
+            family: salesFamily,
+            group: orderGroup,
+            record: {
+              pageKey: 'demo.merchandise.page.orders',
+              selector: {
+                idEncoding: 'selected_company_dot_prefix',
+                idFormat: 'opaque',
+                kind: 'query',
+                parameterName: 'orderId',
+              },
+            },
+            scope: 'company',
+          },
           searchKey: 'demo.merchandise.orders',
         }),
         searchContribution({
@@ -229,6 +265,21 @@ export const merchandiseManifest = defineOntosModuleManifest({
             moduleKey,
             role: 'search',
             scope: 'tenant',
+          },
+          presentation: {
+            family: salesFamily,
+            group: productGroup,
+            record: {
+              pageKey: productDetailPageKey,
+              selector: {
+                idEncoding: 'selected_company_dot_prefix',
+                idFormat: 'opaque',
+                kind: 'path',
+                parameterName: 'id',
+              },
+            },
+            refinement: { kind: 'matched_variant', parameterName: 'variantId' },
+            scope: 'company',
           },
           searchKey: 'demo.merchandise.products',
         }),

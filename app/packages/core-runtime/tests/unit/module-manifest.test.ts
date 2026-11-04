@@ -11,6 +11,7 @@ import {
   validateOntosModuleManifestFields,
 } from '../../src/modules/manifest.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { OntosShellContributionsSchema } from '../../src/modules/shell-contribution.ts';
 import {
   defineVerticalRuntimeRegistration,
   extractVerticalRuntimeSafeDescriptors,
@@ -407,4 +408,391 @@ it('accepts exact isolated API cookies and rejects reserved, foreign or ambiguou
     expect(() => defineOntosModuleManifest(withPolicy([invalidPolicy]))).toThrow();
   }
   expect(() => defineOntosModuleManifest(withPolicy([policy, policy]))).toThrow();
+});
+
+const firstValue = <Value>(values: readonly Value[]): Value => {
+  const [value] = values;
+  if (value === undefined) {
+    throw new Error('Expected a fixture item');
+  }
+  return value;
+};
+
+const presentationPageEntrypoint = defineTenantModuleEntrypoint({
+  access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
+  entrypointKey: 'property.registry.page.units',
+  moduleKey: 'property.registry',
+  role: 'page',
+});
+
+const presentationArchivePageEntrypoint = defineTenantModuleEntrypoint({
+  access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
+  entrypointKey: 'property.registry.page.unit-archive',
+  moduleKey: 'property.registry',
+  role: 'page',
+});
+
+const presentationSearchEntrypoint = defineTenantModuleEntrypoint({
+  access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
+  entrypointKey: 'property.registry.search.units',
+  moduleKey: 'property.registry',
+  role: 'search',
+});
+
+const presentedShellContributions = () =>
+  Schema.decodeUnknownSync(OntosShellContributionsSchema)({
+    mediaAttachments: [],
+    navigation: [],
+    pages: [
+      {
+        componentKey: 'property.registry.dashboard',
+        contributionKey: 'property.registry.page.units',
+        entrypoint: presentationPageEntrypoint,
+        expose: './Units',
+        routePath: '/property-units/:unitId',
+      },
+      {
+        componentKey: 'property.registry.dashboard',
+        contributionKey: 'property.registry.page.unit-archive',
+        entrypoint: presentationArchivePageEntrypoint,
+        expose: './Units',
+        routePath: '/property-unit-archive',
+      },
+    ],
+    publicComponents: [],
+    reports: [],
+    resourceDetails: [],
+    search: [
+      {
+        contributionKey: 'property.registry.search.units',
+        entrypoint: presentationSearchEntrypoint,
+        presentation: {
+          agendaPageKeys: ['property.registry.page.unit-archive'],
+          family: {
+            icon: 'icon-[mdi--office-building-outline]',
+            key: 'property',
+            label: { cs: 'Nemovitosti', en: 'Property' },
+            order: 10,
+          },
+          group: {
+            icon: 'icon-[mdi--door-open]',
+            key: 'unit',
+            label: { cs: 'Jednotky', en: 'Units' },
+            order: 20,
+          },
+          record: {
+            pageKey: 'property.registry.page.units',
+            selector: {
+              idEncoding: 'native',
+              idFormat: 'uuid',
+              kind: 'path',
+              parameterName: 'unitId',
+            },
+          },
+          refinement: { kind: 'matched_variant', parameterName: 'variantId' },
+          scope: 'company',
+        },
+        searchKey: 'property.unit-search',
+      },
+    ],
+    timelines: [],
+  });
+
+const presentedManifestInput = () => ({
+  ...emptyManifestInput(),
+  publicSurface: {
+    ...emptyManifestInput().publicSurface,
+    components: { dashboard: componentValue },
+    resourceTypes: [
+      {
+        capabilities: {
+          graphVisible: true,
+          linkable: true,
+          mediaAttachable: false,
+          searchable: true,
+          timelineVisible: false,
+        },
+        description: 'A physical unit',
+        key: 'property.unit',
+        label: 'Unit',
+        owningModuleId: 'property.registry',
+      },
+    ],
+    search: [
+      {
+        accessFiltering: 'legal_entity_scope' as const,
+        key: 'property.unit-search',
+        owningModuleId: 'property.registry',
+        resourceType: 'property.unit',
+      },
+    ],
+    shellContributions: presentedShellContributions(),
+  },
+});
+
+const presentedDeploymentContract = () => {
+  const manifest = defineOntosModuleManifest(presentedManifestInput());
+  return {
+    deployment: { appId: 'property-registry', buildMarker: 'build-presentation' },
+    manifest: {
+      activation: manifest.activation,
+      module: manifest.module,
+      publicSurface: {
+        actions: [],
+        api: [],
+        components: [],
+        events: [],
+        reports: [],
+        resourceTypes: manifest.publicSurface.resourceTypes,
+        search: manifest.publicSurface.search,
+        shellContributions: manifest.publicSurface.shellContributions,
+      },
+    },
+    runtime: { outboxSubscriptions: [] },
+    schemaVersion: ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
+  };
+};
+
+const tenantPresentation = () => {
+  const { presentation } = firstValue(presentedShellContributions().search);
+  if (presentation === undefined || presentation.agendaPageKeys === undefined || presentation.record === undefined) {
+    throw new Error('Expected a complete presentation fixture');
+  }
+  return {
+    agendaPageKeys: presentation.agendaPageKeys,
+    family: presentation.family,
+    group: presentation.group,
+    record: presentation.record,
+    scope: 'tenant' as const,
+  };
+};
+
+const withPresentation = <Presentation>(presentation: Presentation) => {
+  const input = presentedManifestInput();
+  const [baseContribution] = input.publicSurface.shellContributions.search;
+  if (baseContribution === undefined) {
+    throw new Error('Expected a search contribution fixture');
+  }
+  const candidate = {
+    ...input,
+    publicSurface: {
+      ...input.publicSurface,
+      shellContributions: {
+        ...input.publicSurface.shellContributions,
+        search: [{ ...baseContribution }],
+      },
+    },
+  };
+  const [target] = candidate.publicSurface.shellContributions.search;
+  if (target === undefined) {
+    throw new Error('Expected a search contribution candidate');
+  }
+  // The manifest schema, not the compiler, must judge intentionally malformed presentation values.
+  Object.defineProperty(target, 'presentation', { value: presentation });
+  return candidate;
+};
+
+it('defines, freezes and serializes exact same-owner search presentation data', () => {
+  const manifest = defineOntosModuleManifest(presentedManifestInput());
+  const { presentation } = firstValue(manifest.publicSurface.shellContributions.search);
+  expect(presentation?.record?.pageKey).toBe('property.registry.page.units');
+  expect(presentation?.scope).toBe('company');
+  expect(Object.isFrozen(presentation)).toBe(true);
+  expect(Object.isFrozen(presentation?.group)).toBe(true);
+  expect(Object.isFrozen(presentation?.agendaPageKeys)).toBe(true);
+
+  const contract = presentedDeploymentContract();
+  expect(decodeOntosModuleDeploymentContract(contract)).toEqual(contract);
+  expect(structuredClone(contract)).toEqual(contract);
+
+  const tampered = presentedDeploymentContract();
+  expect(() =>
+    decodeOntosModuleDeploymentContract({
+      ...tampered,
+      manifest: {
+        ...tampered.manifest,
+        publicSurface: {
+          ...tampered.manifest.publicSurface,
+          shellContributions: {
+            ...tampered.manifest.publicSurface.shellContributions,
+            search: [
+              {
+                ...firstValue(tampered.manifest.publicSurface.shellContributions.search),
+                presentation: tenantPresentation(),
+              },
+            ],
+          },
+        },
+      },
+    }),
+  ).toThrow(/scope/u);
+});
+
+it('accepts a tenant-scoped presentation with native IDs and no fabricated company', () => {
+  const input = presentedManifestInput();
+  const candidate = {
+    ...input,
+    publicSurface: {
+      ...input.publicSurface,
+      search: [
+        {
+          ...firstValue(input.publicSurface.search),
+          accessFiltering: 'tenant_scope' as const,
+          tenantPermission: 'access' as const,
+        },
+      ],
+      shellContributions: {
+        ...input.publicSurface.shellContributions,
+        search: [
+          {
+            ...firstValue(input.publicSurface.shellContributions.search),
+            presentation: tenantPresentation(),
+          },
+        ],
+      },
+    },
+  };
+  const manifest = defineOntosModuleManifest(candidate);
+  const { presentation } = firstValue(manifest.publicSurface.shellContributions.search);
+  expect(presentation?.scope).toBe('tenant');
+  expect(presentation?.record?.selector.idEncoding).toBe('native');
+  expect(presentation !== undefined && 'refinement' in presentation).toBe(false);
+});
+
+it('rejects presentation that is not bound to the exact declared search descriptor and owner resource', () => {
+  expect(() => defineOntosModuleManifest(withPresentation(tenantPresentation()))).toThrow(/scope/u);
+
+  const tenant = presentedManifestInput();
+  expect(() =>
+    defineOntosModuleManifest({
+      ...tenant,
+      publicSurface: {
+        ...tenant.publicSurface,
+        search: [
+          {
+            ...firstValue(tenant.publicSurface.search),
+            accessFiltering: 'tenant_scope',
+            tenantPermission: 'access',
+          },
+        ],
+      },
+    }),
+  ).toThrow(/scope/u);
+
+  const foreignOwner = presentedManifestInput();
+  expect(() =>
+    defineOntosModuleManifest({
+      ...foreignOwner,
+      publicSurface: {
+        ...foreignOwner.publicSurface,
+        search: [{ ...firstValue(foreignOwner.publicSurface.search), owningModuleId: 'billing.core' }],
+      },
+    }),
+  ).toThrow(/owned/u);
+
+  const missingResource = presentedManifestInput();
+  expect(() =>
+    defineOntosModuleManifest({
+      ...missingResource,
+      publicSurface: {
+        ...missingResource.publicSurface,
+        search: [{ ...firstValue(missingResource.publicSurface.search), resourceType: 'property.missing' }],
+      },
+    }),
+  ).toThrow(/undeclared resource type/u);
+
+  const missingPage = presentedManifestInput();
+  const missingSearch = firstValue(missingPage.publicSurface.shellContributions.search);
+  const { presentation: missingPresentation } = missingSearch;
+  if (missingPresentation === undefined) {
+    throw new Error('Expected a presentation fixture');
+  }
+  const missingPageCandidate = {
+    ...missingPage,
+    publicSurface: {
+      ...missingPage.publicSurface,
+      shellContributions: {
+        ...missingPage.publicSurface.shellContributions,
+        search: [
+          {
+            ...missingSearch,
+            presentation: {
+              ...missingPresentation,
+              record: {
+                pageKey: 'property.registry.page.missing',
+                selector: {
+                  idEncoding: 'native' as const,
+                  idFormat: 'uuid' as const,
+                  kind: 'path' as const,
+                  parameterName: 'unitId',
+                },
+              },
+            },
+          },
+        ],
+      },
+    },
+  };
+  expect(() => defineOntosModuleManifest(missingPageCandidate)).toThrow(/undeclared page contribution/u);
+
+  const wrongParameter = presentedManifestInput();
+  const wrongSearch = firstValue(wrongParameter.publicSurface.shellContributions.search);
+  const { presentation: wrongPresentation } = wrongSearch;
+  if (wrongPresentation === undefined || wrongPresentation.record === undefined) {
+    throw new Error('Expected a record fixture');
+  }
+  const wrongParameterCandidate = {
+    ...wrongParameter,
+    publicSurface: {
+      ...wrongParameter.publicSurface,
+      shellContributions: {
+        ...wrongParameter.publicSurface.shellContributions,
+        search: [
+          {
+            ...wrongSearch,
+            presentation: {
+              ...wrongPresentation,
+              record: {
+                ...wrongPresentation.record,
+                selector: { ...wrongPresentation.record.selector, parameterName: 'otherId' },
+              },
+            },
+          },
+        ],
+      },
+    },
+  };
+  expect(() => defineOntosModuleManifest(wrongParameterCandidate)).toThrow(/only existing route parameter/u);
+
+  const { presentation: basePresentation } = firstValue(
+    presentedManifestInput().publicSurface.shellContributions.search,
+  );
+  if (basePresentation === undefined || basePresentation.agendaPageKeys === undefined) {
+    throw new Error('Expected a complete presentation fixture');
+  }
+  expect(() =>
+    defineOntosModuleManifest(
+      withPresentation({
+        agendaPageKeys: basePresentation.agendaPageKeys,
+        family: basePresentation.family,
+        group: basePresentation.group,
+        refinement: { kind: 'matched_variant', parameterName: 'variantId' },
+        scope: basePresentation.scope,
+      }),
+    ),
+  ).toThrow();
+  expect(() =>
+    defineOntosModuleManifest(
+      withPresentation({
+        family: basePresentation.family,
+        group: basePresentation.group,
+        kind: 'system',
+        navigationPath: '/sprava/lide-a-role',
+        scope: basePresentation.scope,
+      }),
+    ),
+  ).toThrow();
 });

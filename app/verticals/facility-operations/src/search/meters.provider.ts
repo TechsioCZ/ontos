@@ -2,7 +2,7 @@
 // @ontos-contribution-kind search-provider
 import { Effect } from 'effect';
 import type { CoreSearchQueryRuntime, ReadLoadContext, ReadHandlerUnavailable } from '@app/core-runtime';
-import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineRead, defineReadSearchCollectionAuthorization, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { MetersProviderRequestSchema, MetersProviderResponseSchema } from '../../shared/apis/meters-search.ts';
 import type { MetersProviderRequest, MetersProviderResponse } from '../../shared/apis/meters-search.ts';
 import { MeterRefSchema } from '../../shared/resources/meter.ts';
@@ -38,6 +38,12 @@ export const metersRead = defineRead(
     permissionTarget: 'module',
     policies: [],
     readKey: 'facility.operations.search.meters',
+    resultAuthorization: defineReadSearchCollectionAuthorization({
+      items: (result: MetersProviderResponse) => result,
+      resource: (item) => item.ref,
+      resultSchema: MetersProviderResponseSchema,
+      withItems: (_result, items) => items,
+    }),
     resultSchema: MetersProviderResponseSchema,
     schemaVersion: '1',
   },
@@ -56,5 +62,4 @@ export const metersRead = defineRead(
         loadFacilitySearch(scope, 'meter', input.query, MeterRefSchema, input.includeArchived ?? false),
     }),
   () => ({ kind: 'module', moduleId: moduleKey }),
-  (result) => result.map(({ ref }) => ref),
 );

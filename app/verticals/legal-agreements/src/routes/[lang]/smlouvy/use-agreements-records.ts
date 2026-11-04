@@ -21,6 +21,7 @@ import {
 } from './agreements-data.ts';
 import type { AgreementsInput, RentalReferences } from './agreements-data.ts';
 import { contractTitle } from './contract-title.ts';
+import { agreementDocumentState, selectorOfFields } from './document-selection.ts';
 import { termsAutosaveResult } from './contract-terms-draft.ts';
 import type { ContractTermsCommand } from './contract-terms-draft.ts';
 import { executeRecords } from '../../../api/records-client.ts';
@@ -137,7 +138,7 @@ export const useRecordsPage = (input: AgreementsInput) => {
     () => data.snapshot(input),
     () => pageDataPending,
   );
-  const { resourceId: linkedResourceId } = input;
+  const { documentId: linkedDocumentId, resourceId: linkedResourceId, selectorIssue } = input;
   useEffect(
     () => () => {
       cancellation.current?.abort();
@@ -168,6 +169,12 @@ export const useRecordsPage = (input: AgreementsInput) => {
     rental,
     rentalFeedback,
   } = view;
+  const documentState = agreementDocumentState({
+    feedback,
+    records: snapshot,
+    selector: selectorOfFields(input),
+    tenantId: input.context?.tenantId,
+  });
   const [formOpen, setFormOpen] = useState(false);
   const [customerId, setCustomerId] = useState('');
   const [signedReference, setSignedReference] = useState('');
@@ -503,6 +510,7 @@ export const useRecordsPage = (input: AgreementsInput) => {
     customerNameFeedback,
     customers,
     detailView,
+    documentState,
     editDraft,
     editingDraft,
     endDate,
@@ -511,6 +519,7 @@ export const useRecordsPage = (input: AgreementsInput) => {
     formOpen,
     formView,
     language,
+    linkedDocumentId,
     linkedResourceId,
     occupancies,
     occupancyId,
@@ -525,6 +534,7 @@ export const useRecordsPage = (input: AgreementsInput) => {
     saveDraft,
     selectContractKind,
     selected,
+    selectorIssue,
     setCustomerId,
 
     setEndDate,

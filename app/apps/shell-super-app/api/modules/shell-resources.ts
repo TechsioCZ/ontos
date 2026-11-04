@@ -8,17 +8,30 @@ import type {
   TenantModuleStateServiceContract,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
-import { decideModuleStateAccess, normalizeCoreSearchText } from '@app/core-runtime';
+import {
+  decideModuleStateAccess,
+  isConnectionReadAllowed,
+  normalizeCoreSearchText,
+  ReadInputValidationError,
+  ReadPermissionDenied,
+  TenantModuleStateRecordSchema,
+} from '@app/core-runtime';
+import { corePeopleSystemSearchProvider } from '@app/core-runtime/people/search';
 import { Context, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
 
 import {
   ResourceRefSchema as SharedResourceRefSchema,
+  SHELL_SEARCH_MAX_RESOURCE_TYPES,
+  shellSearchMatchedVariantHasQualifiedRef,
+  ShellSearchMatchedVariantSchema,
   ShellSearchRelevanceSchema,
   ShellTimelineEntrySchema as SharedShellTimelineEntrySchema,
 } from '../../shared/api.ts';
 import type { ShellSearchResult as SharedShellSearchResult } from '../../shared/api.ts';
 import type { InstalledModuleCatalogError, ShellInstalledCatalog } from './installed-module-catalog.ts';
+import { withShellSearchRequestBudget } from './shell-governed-search.ts';
 import { observeShellSearchProvider } from './shell-search-diagnostics.ts';
+import { compileShellSearchPresentation } from './shell-search-presentation.ts';
 
 const stableKey = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const PartyRoleSchema = Schema.Literals(['CUSTOMER', 'SUPPLIER']);
@@ -30,15 +43,24 @@ export const ResourceRefSchema = SharedResourceRefSchema;
 export type ResourceRef = Schema.Schema.Type<typeof ResourceRefSchema>;
 
 const ScopedShellSearchResultSchema = Schema.Struct({
+  archived: Schema.optionalKey(Schema.Boolean),
+  matchedVariant: Schema.optionalKey(ShellSearchMatchedVariantSchema),
   ref: ResourceRefSchema.pipe(
     Schema.check(
       Schema.makeFilter((ref) => (ref.tenantId === undefined ? 'Search result requires Tenant identity' : undefined)),
     ),
   ),
   relevance: Schema.optionalKey(ShellSearchRelevanceSchema),
-  selectedLegalEntityId: LegalEntityIdSchema,
+  selectedLegalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+  subtitle: Schema.optionalKey(stableKey),
   title: stableKey,
-});
+}).check(
+  Schema.makeFilter((result) =>
+    result.matchedVariant === undefined || shellSearchMatchedVariantHasQualifiedRef(result)
+      ? undefined
+      : 'Variant metadata requires a qualified parent ref in the selected company',
+  ),
+);
 const PartyShellSearchResultSchema = Schema.Struct({
   archived: Schema.Boolean,
   matchedViaAlias: Schema.Boolean,
@@ -86,16 +108,18 @@ const RawShellSearchResultSchema = Schema.Union([
 ]);
 export type ShellSearchResult = SharedShellSearchResult;
 
-/** A provider's response as it crosses the wire, before the Shell decodes and authorizes each result. */
-export const ShellSearchProviderResultsSchema = Schema.Array(Schema.toEncoded(RawShellSearchResultSchema));
+/** Decode the provider wire contract, including leaf/scope checks, before authorizing each current owner result. */
+export const ShellSearchProviderResultsSchema = Schema.Array(RawShellSearchResultSchema);
 
 export interface ShellSearchRequest {
+  /** When supplied by a governed request it must still name the captured release. */
+  readonly compositionRevision?: string;
   readonly includeArchived?: boolean;
   readonly query: string;
   /**
-   * The searchable types to ask. Absent asks every eligible admitted type; an empty list asks none. The governed read
-   * rejects unknown or unadmitted names, and this selection only narrows the fan-out: it never grants module or
-   * record permission.
+   * The searchable types to ask. Absent asks every eligible admitted type; an empty list asks for the admitted
+   * inventory with no owner dispatch. The governed read rejects unknown or unadmitted names, and this selection only
+   * narrows the fan-out: it never grants module or record permission.
    */
   readonly resourceTypes?: readonly string[];
   readonly role?: PartyRole;
@@ -149,7 +173,7 @@ export interface ShellSearchProviderRequest<Authorization extends string = strin
 export interface ShellSearchProviderHandler {
   readonly search: (
     input: ShellSearchProviderRequest,
-  ) => Effect.Effect<readonly unknown[], ShellProviderUnavailableError>;
+  ) => Effect.Effect<readonly unknown[], ShellProviderUnavailableError | ReadPermissionDenied>;
 }
 
 interface ShellResourceProviderRequest<ApiKey extends string = string, Authorization extends string = string> {
@@ -210,6 +234,28 @@ const capture = <Success, Failure, Requirements>(
       Exit.isSuccess(exit) ? ({ ok: true, value: exit.value } as const) : ({ ok: false } as const),
     ),
   );
+/** Search entrypoint denial must survive fan-out; generic detail/timeline capture remains unchanged. */
+const captureSearch = <A, E, R>(program: Effect.Effect<A, E, R>) =>
+  Effect.exit(program).pipe(
+    Effect.flatMap(
+      (
+        exit,
+      ): Effect.Effect<{ readonly ok: false } | { readonly ok: true; readonly value: A }, ReadPermissionDenied> => {
+        if (Exit.isSuccess(exit)) {
+          return Effect.succeed({ ok: true, value: exit.value });
+        }
+        const failure = Exit.findErrorOption(exit);
+        return Option.isSome(failure) && Schema.is(ReadPermissionDenied)(failure.value)
+          ? Effect.fail(
+              new ReadPermissionDenied({
+                code: 'read_permission_denied',
+                reason: 'The search provider entrypoint refused this read',
+              }),
+            )
+          : Effect.succeed({ ok: false });
+      },
+    ),
+  );
 const resourceKey = ({ moduleId, resourceId, resourceType }: ResourceRef): string =>
   `${moduleId}:${resourceType}:${resourceId}`;
 
@@ -249,10 +295,7 @@ const resourceDecision = (...[dependencies, context, ref]: ResourceDecisionArgum
         tenantId: context.tenantId,
       });
 
-interface SearchProviderIdentity {
-  readonly descriptor: { readonly resourceType: string };
-  readonly moduleId: string;
-}
+type SearchProviderIdentity = Pick<SearchProvider, 'contribution' | 'descriptor' | 'moduleId'>;
 
 const collisionBelongsToProvider = (
   context: ShellResourceContext,
@@ -289,14 +332,24 @@ const resultBelongsToProvider = (
     return false;
   }
   if (result.kind === 'party') {
-    return result.ref.tenantId === context.tenantId;
+    return (
+      provider.descriptor.accessFiltering === 'tenant_scope' &&
+      provider.descriptor.tenantPermission !== undefined &&
+      result.ref.tenantId === context.tenantId
+    );
   }
   if (result.kind === 'resource') {
-    return (
-      result.ref.tenantId === context.tenantId &&
-      context.legalEntityId !== undefined &&
-      result.selectedLegalEntityId === context.legalEntityId
-    );
+    if (
+      result.ref.tenantId !== context.tenantId ||
+      (result.matchedVariant !== undefined &&
+        provider.contribution.presentation?.refinement?.kind !== 'matched_variant')
+    ) {
+      return false;
+    }
+    if (provider.descriptor.accessFiltering === 'tenant_scope') {
+      return provider.descriptor.tenantPermission !== undefined && result.selectedLegalEntityId === undefined;
+    }
+    return context.legalEntityId !== undefined && result.selectedLegalEntityId === context.legalEntityId;
   }
   return counterpartyBelongsToContext(context, result) && collisionBelongsToProvider(context, provider, result);
 };
@@ -320,11 +373,33 @@ const normalizeProviderResult = (value: Schema.Schema.Type<typeof RawShellSearch
 
 const decodeProviderResults = (
   values: readonly unknown[],
+  provider: SearchProviderIdentity,
 ): Effect.Effect<readonly ShellSearchResult[], ShellProviderUnavailableError> =>
+  // Project the owner's public DTO onto the shared hit contract. Additional owner fields are never returned;
+  // every known identity, scope, variant and value constraint still decodes and is rechecked below.
   Schema.decodeUnknownEffect(Schema.Array(RawShellSearchResultSchema), {
-    onExcessProperty: 'error',
+    onExcessProperty: 'ignore',
   })(values).pipe(
     Effect.map((decoded) => decoded.map(normalizeProviderResult)),
+    Effect.flatMap((decoded) =>
+      decoded.some((value) => {
+        if (value.kind === 'party') {
+          return provider.descriptor.accessFiltering !== 'tenant_scope';
+        }
+        if (value.kind === 'counterparty') {
+          return provider.descriptor.accessFiltering === 'tenant_scope';
+        }
+        return (
+          (provider.descriptor.accessFiltering === 'tenant_scope'
+            ? value.selectedLegalEntityId !== undefined
+            : value.selectedLegalEntityId === undefined) ||
+          (value.matchedVariant !== undefined &&
+            provider.contribution.presentation?.refinement?.kind !== 'matched_variant')
+        );
+      })
+        ? Effect.fail(unavailable())
+        : Effect.succeed(decoded),
+    ),
     Effect.mapError(unavailable),
   );
 
@@ -347,6 +422,20 @@ const searchProviders = (catalog: InstalledModuleCatalog) =>
 
 type SearchProvider = ReturnType<typeof searchProviders>[number];
 
+/** Modules whose state a Shell search consults: every module that contributes a search provider. */
+export const searchProviderModuleIds = (catalog: InstalledModuleCatalog): readonly string[] =>
+  [...new Set(searchProviders(catalog).map(({ moduleId }) => moduleId))].toSorted();
+
+const validSearchStates = (states: readonly TenantModuleStateRecord[], moduleIds: readonly string[]): boolean => {
+  const keys = states.map(({ moduleKey }) => moduleKey);
+  const moduleIdSet = new Set(moduleIds);
+  return (
+    Schema.is(Schema.Array(TenantModuleStateRecordSchema))(states) &&
+    new Set(keys).size === keys.length &&
+    keys.every((key) => moduleIdSet.has(key))
+  );
+};
+
 /**
  * The searchable types the captured catalog and the tenant module states admit. A type is admitted while its
  * contributing module state allows the search entrypoint; hidden, inactive or unknown modules are not. The Core
@@ -368,6 +457,99 @@ export const shellSearchAdmittedResourceTypes = (
     ),
   ].toSorted();
 };
+
+/** OAuth selectors name business owners only; never infer authority from a type prefix or a requested selector. */
+const oauthSearchTypeAdmission = (
+  catalog: ShellInstalledCatalog,
+  context: ShellResourceContext,
+  states: readonly TenantModuleStateRecord[],
+): ReadonlyMap<string, boolean> => {
+  const stateByModule = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
+  const grants = context.connection?.modules;
+  const allowed = new Map<string, boolean>();
+  for (const { appId, contribution, descriptor, moduleId } of searchProviders(catalog)) {
+    const release = catalog.composition.modules.find(
+      (module) => module.moduleId === moduleId && module.deployment.appId === appId,
+    );
+    const resource = catalog
+      .getByModuleId(moduleId)
+      ?.manifest.publicSurface.resourceTypes.find(({ key }) => key === descriptor.resourceType);
+    const state = stateByModule.get(moduleId);
+    const admitted =
+      (grants === 'all' || grants?.some((grant) => grant.moduleId === moduleId) === true) &&
+      release?.allowedContributions.includes(contribution.contributionKey) === true &&
+      contribution.entrypoint.scope === 'tenant' &&
+      contribution.entrypoint.moduleKey === moduleId &&
+      descriptor.owningModuleId === moduleId &&
+      resource?.owningModuleId === moduleId &&
+      resource.capabilities.searchable &&
+      descriptor.resourceType !== corePeopleSystemSearchProvider.resource.key &&
+      (descriptor.accessFiltering !== 'tenant_scope' || context.legalEntityId === undefined) &&
+      state !== undefined &&
+      decideModuleStateAccess(state, contribution.entrypoint.access) === 'allow';
+    // A selector fans out by type. Every owner of a colliding type must be admitted, not merely the first one.
+    allowed.set(descriptor.resourceType, admitted && allowed.get(descriptor.resourceType) !== false);
+  }
+  return allowed;
+};
+
+/**
+ * Mandatory host admission for both direct governed searches and MCP. Context is Core's verified OperationalScope,
+ * catalog ownership is from the captured release, and states are the read's committed snapshot. Canonical module,
+ * tenant and resource gates still run in the orchestrator before releasing owner results. No OAuth system grant
+ * exists here: `all` means admitted business providers only, and omission always becomes an explicit selector.
+ */
+export const resolveShellOAuthSearchResourceTypes = Effect.fn('ShellSearch.resolveOAuthResourceTypes')(
+  function* resolveOAuthResourceTypes(
+    context: ShellResourceContext,
+    request: ShellSearchRequest,
+    catalog: ShellInstalledCatalog,
+    states: readonly TenantModuleStateRecord[],
+  ) {
+    if (context.authMethod !== 'oauth_connection') {
+      return request.resourceTypes;
+    }
+    if (!isConnectionReadAllowed(context, { owningModuleKey: 'core.shell', readKey: 'core.shell.search' })) {
+      return yield* new ReadPermissionDenied({
+        code: 'read_permission_denied',
+        reason: 'The OAuth connection has no business-search admission',
+      });
+    }
+    if (request.compositionRevision !== undefined && request.compositionRevision !== catalog.composition.revision) {
+      return yield* new ReadInputValidationError({
+        code: 'read_input_invalid',
+        reason: 'The search composition is no longer current',
+      });
+    }
+    if (!validSearchStates(states, searchProviderModuleIds(catalog))) {
+      return yield* unavailable();
+    }
+    const admission = oauthSearchTypeAdmission(catalog, context, states);
+    const selected =
+      request.resourceTypes === undefined
+        ? [...admission].flatMap(([type, admitted]) => (admitted ? [type] : [])).toSorted()
+        : [...new Set(request.resourceTypes)];
+    if (selected.some((type) => !admission.has(type))) {
+      return yield* new ReadInputValidationError({
+        code: 'read_input_invalid',
+        reason: 'The requested search resource types are not admitted business types',
+      });
+    }
+    if (selected.some((type) => admission.get(type) !== true)) {
+      return yield* new ReadPermissionDenied({
+        code: 'read_permission_denied',
+        reason: 'The OAuth connection may not search the requested business types',
+      });
+    }
+    if (selected.length > SHELL_SEARCH_MAX_RESOURCE_TYPES) {
+      return yield* new ReadInputValidationError({
+        code: 'read_input_invalid',
+        reason: 'Choose an explicit business-search subset within the resource-type limit',
+      });
+    }
+    return selected;
+  },
+);
 
 const compareSearchText = (left: string, right: string): number => {
   if (left === right) {
@@ -442,240 +624,343 @@ const authorizeSearchCandidates = Effect.fn('ShellSearch.authorizeCandidates')(f
   return allowedKeys;
 });
 
-/** Modules whose state a Shell search consults: every module that contributes a search provider. */
-export const searchProviderModuleIds = (catalog: InstalledModuleCatalog): readonly string[] =>
-  [...new Set(searchProviders(catalog).map(({ moduleId }) => moduleId))].toSorted();
+/** The same request without a caller selector; used only to read the connection's granted inventory. */
+const withoutResourceTypes = ({ resourceTypes: _resourceTypes, ...request }: ShellSearchRequest): ShellSearchRequest =>
+  request;
+
+/**
+ * The provider selection for one answer. An explicit empty selector asks for the inventory of every admitted provider
+ * (an OAuth connection is still narrowed to its granted types); any other selector narrows to exactly the requested
+ * types. The selection only narrows the fan-out: it never grants a module or a record.
+ */
+const resolveSearchProviderSelection = Effect.fn('ShellSearch.resolveProviderSelection')(
+  function* resolveProviderSelection(
+    ...[dependencies, context, request, catalog, providers]: SearchSelectionArguments
+  ) {
+    // OAuth grants are enforced here too, not only in the MCP adapter or the governed system-search branch.
+    const committedStates =
+      context.authMethod === 'oauth_connection'
+        ? yield* dependencies.moduleStates
+            .getTenantModuleStates(context.tenantId, searchProviderModuleIds(catalog))
+            .pipe(Effect.mapError(unavailable))
+        : undefined;
+    // The requested types only narrow which admitted owners are asked; they never replace a permission decision.
+    const requested = request.resourceTypes === undefined ? undefined : new Set(request.resourceTypes);
+    // An explicit empty selector asks for the admitted inventory alone: it evaluates every admitted provider (an
+    // OAuth connection is still narrowed to its granted types) but dispatches no owner and mints no assertion.
+    const inventoryOnly = requested !== undefined && requested.size === 0;
+    // OAuth resolves the selector against its grants; a session keeps the wire selector unchanged.
+    const oauthSelection =
+      committedStates === undefined
+        ? undefined
+        : new Set(
+            yield* resolveShellOAuthSearchResourceTypes(
+              context,
+              inventoryOnly ? withoutResourceTypes(request) : request,
+              catalog,
+              committedStates,
+            ),
+          );
+    const selection = oauthSelection ?? (inventoryOnly ? undefined : requested);
+    const selectedProviders =
+      selection === undefined
+        ? providers
+        : providers.filter(({ descriptor }) => selection.has(descriptor.resourceType));
+    const moduleIds = [...new Set(selectedProviders.map(({ moduleId }) => moduleId))].toSorted();
+    return { committedStates, inventoryOnly, moduleIds, selectedProviders };
+  },
+);
+
+/**
+ * The admitted providers of one answer and its release-bound presentation. Module, company, tenant and committed-state
+ * admission still run here; the selection only narrowed which providers were considered. An inventory-only answer
+ * keeps the admitted presentation but dispatches no owner, so no assertion is minted and no hit is fabricated.
+ */
+const admitSearchProviders = Effect.fn('ShellSearch.admitProviders')(function* admitSearchProviders(
+  ...[
+    dependencies,
+    context,
+    catalog,
+    committedStates,
+    moduleIds,
+    selectedProviders,
+    inventoryOnly,
+  ]: SearchAdmissionArguments
+) {
+  const moduleIdSet = new Set(moduleIds);
+  const states =
+    committedStates === undefined
+      ? yield* dependencies.moduleStates
+          .getTenantModuleStates(context.tenantId, moduleIds)
+          .pipe(Effect.mapError(unavailable))
+      : committedStates.filter(({ moduleKey }) => moduleIdSet.has(moduleKey));
+  if (!validSearchStates(states, moduleIds)) {
+    return yield* unavailable();
+  }
+  const stateByModule = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
+  const stateEligible = selectedProviders.filter(({ contribution, moduleId }) => {
+    const state = stateByModule.get(moduleId);
+    // A selected company does not remove canonical tenant access; tenant rows retain tenant ownership only.
+    return state !== undefined && decideModuleStateAccess(state, contribution.entrypoint.access) === 'allow';
+  });
+  const companyModuleIds = [
+    ...new Set(
+      stateEligible.flatMap(({ descriptor, moduleId }) =>
+        descriptor.accessFiltering === 'tenant_scope' ? [] : [moduleId],
+      ),
+    ),
+  ].toSorted();
+  const companyPermissions =
+    context.legalEntityId === undefined || companyModuleIds.length === 0
+      ? []
+      : yield* dependencies.contextAccess.modules({
+          legalEntityId: context.legalEntityId,
+          moduleIds: companyModuleIds,
+          principalId: context.principalId,
+          tenantId: context.tenantId,
+        });
+  const companyPermissionByModule = new Map(companyPermissions.map(({ decision, key }) => [key, decision]));
+  if (
+    context.legalEntityId !== undefined &&
+    (companyPermissions.length !== companyModuleIds.length ||
+      companyPermissionByModule.size !== companyModuleIds.length ||
+      companyModuleIds.some(
+        (moduleId) =>
+          !companyPermissionByModule.has(moduleId) || companyPermissionByModule.get(moduleId) === 'unavailable',
+      ))
+  ) {
+    return yield* unavailable();
+  }
+  const permissionOutcomes = yield* Effect.forEach(
+    stateEligible,
+    (provider) => {
+      if (provider.descriptor.accessFiltering === 'tenant_scope') {
+        const permission = provider.descriptor.tenantPermission;
+        if (permission === undefined) {
+          return Effect.succeed({
+            decision: 'unavailable' as const,
+            provider,
+          });
+        }
+        return dependencies.contextAccess
+          .tenants({
+            permission,
+            principalId: context.principalId,
+            tenantIds: [context.tenantId],
+          })
+          .pipe(
+            Effect.map((decisions) => ({
+              decision:
+                decisions.length === 1 && decisions[0]?.key === context.tenantId
+                  ? decisions[0].decision
+                  : ('unavailable' as const),
+              provider,
+            })),
+          );
+      }
+      if (context.legalEntityId === undefined) {
+        return Effect.succeed({ decision: 'denied' as const, provider });
+      }
+      return Effect.succeed({
+        decision: companyPermissionByModule.get(provider.moduleId) ?? ('unavailable' as const),
+        provider,
+      });
+    },
+    { concurrency: 4 },
+  );
+  if (permissionOutcomes.some(({ decision }) => decision === 'unavailable')) {
+    return yield* unavailable();
+  }
+  const eligible = permissionOutcomes.flatMap(({ decision, provider }) => (decision === 'allowed' ? [provider] : []));
+  const presentation = yield* Effect.fromResult(
+    compileShellSearchPresentation({
+      admitted: eligible.map(({ contribution, descriptor, moduleId }) => ({
+        ownerModuleId: moduleId,
+        resourceType: descriptor.resourceType,
+        searchKey: contribution.searchKey,
+      })),
+      catalog,
+      compositionRevision: catalog.composition.revision,
+    }),
+  ).pipe(Effect.mapError(unavailable));
+  return { dispatchable: inventoryOnly ? [] : eligible, presentation };
+});
+
+type SearchSelectionArguments = readonly [
+  dependencies: ShellResourceDependencies,
+  context: ShellResourceContext,
+  request: ShellSearchRequest,
+  catalog: ShellInstalledCatalog,
+  providers: readonly SearchProvider[],
+];
+
+type SearchAdmissionArguments = readonly [
+  dependencies: ShellResourceDependencies,
+  context: ShellResourceContext,
+  catalog: ShellInstalledCatalog,
+  committedStates: readonly TenantModuleStateRecord[] | undefined,
+  moduleIds: readonly string[],
+  selectedProviders: readonly SearchProvider[],
+  inventoryOnly: boolean,
+];
 
 type ShellSearchArguments = readonly [dependencies: ShellResourceDependencies, gateway: ShellSearchProviderHandler];
 
 export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments) => ({
-  search: Effect.fn('ShellSearch.search')(function* shellSearch(
-    context: ShellResourceContext,
-    request: ShellSearchRequest | string,
-  ) {
-    const searchRequest = Schema.is(Schema.String)(request) ? { query: request } : request;
-    const normalizedQuery = searchRequest.query.trim();
-    if (normalizedQuery.length === 0) {
-      return { partial: false, results: [] } as const;
-    }
-    const catalog = yield* dependencies.catalog.pipe(Effect.mapError(unavailable));
-    const providers = searchProviders(catalog);
-    // The requested types only narrow which admitted owners are asked; they never replace a permission decision.
-    const requested = searchRequest.resourceTypes === undefined ? undefined : new Set(searchRequest.resourceTypes);
-    const selectedProviders =
-      requested === undefined
-        ? providers
-        : providers.filter(({ descriptor }) => requested.has(descriptor.resourceType));
-    const moduleIds = [...new Set(selectedProviders.map(({ moduleId }) => moduleId))].toSorted();
-    if (moduleIds.length === 0) {
-      return { partial: false, results: [] } as const;
-    }
-    const states = yield* dependencies.moduleStates
-      .getTenantModuleStates(context.tenantId, moduleIds)
-      .pipe(Effect.mapError(unavailable));
-    const stateKeys = states.map(({ moduleKey }) => moduleKey);
-    const moduleIdSet = new Set(moduleIds);
-    if (new Set(stateKeys).size !== stateKeys.length || stateKeys.some((moduleId) => !moduleIdSet.has(moduleId))) {
-      return yield* unavailable();
-    }
-    const stateByModule = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
-    const stateEligible = selectedProviders.filter(({ contribution, descriptor, moduleId }) => {
-      const state = stateByModule.get(moduleId);
-      // With a company selected, results stay inside it: tenant-wide providers answer only in tenant context.
-      return (
-        state !== undefined &&
-        decideModuleStateAccess(state, contribution.entrypoint.access) === 'allow' &&
-        (descriptor.accessFiltering !== 'tenant_scope' || context.legalEntityId === undefined)
+  search: Effect.fn('ShellSearch.search')(
+    function* shellSearch(context: ShellResourceContext, request: ShellSearchRequest | string) {
+      const searchRequest = Schema.is(Schema.String)(request) ? { query: request } : request;
+      const normalizedQuery = searchRequest.query.trim();
+      if (normalizedQuery.length === 0) {
+        return { partial: false, results: [] } as const;
+      }
+      const catalog = yield* dependencies.catalog.pipe(Effect.mapError(unavailable));
+      const providers = searchProviders(catalog);
+      const { committedStates, inventoryOnly, moduleIds, selectedProviders } = yield* resolveSearchProviderSelection(
+        dependencies,
+        context,
+        searchRequest,
+        catalog,
+        providers,
       );
-    });
-    const companyModuleIds = [
-      ...new Set(
-        stateEligible.flatMap(({ descriptor, moduleId }) =>
-          descriptor.accessFiltering === 'tenant_scope' ? [] : [moduleId],
-        ),
-      ),
-    ].toSorted();
-    const companyPermissions =
-      context.legalEntityId === undefined || companyModuleIds.length === 0
-        ? []
-        : yield* dependencies.contextAccess.modules({
-            legalEntityId: context.legalEntityId,
-            moduleIds: companyModuleIds,
-            principalId: context.principalId,
-            tenantId: context.tenantId,
-          });
-    const companyPermissionByModule = new Map(companyPermissions.map(({ decision, key }) => [key, decision]));
-    if (
-      context.legalEntityId !== undefined &&
-      (companyPermissions.length !== companyModuleIds.length ||
-        companyPermissionByModule.size !== companyModuleIds.length ||
-        companyModuleIds.some(
-          (moduleId) =>
-            !companyPermissionByModule.has(moduleId) || companyPermissionByModule.get(moduleId) === 'unavailable',
-        ))
-    ) {
-      return yield* unavailable();
-    }
-    const permissionOutcomes = yield* Effect.forEach(
-      stateEligible,
-      (provider) => {
-        if (provider.descriptor.accessFiltering === 'tenant_scope') {
-          const permission = provider.descriptor.tenantPermission;
-          if (permission === undefined) {
-            return Effect.succeed({
-              decision: 'unavailable' as const,
-              provider,
-            });
+      if (moduleIds.length === 0) {
+        return { partial: false, results: [] } as const;
+      }
+      const { dispatchable, presentation } = yield* admitSearchProviders(
+        dependencies,
+        context,
+        catalog,
+        committedStates,
+        moduleIds,
+        selectedProviders,
+        inventoryOnly,
+      );
+      if (dispatchable.length === 0) {
+        return { partial: false, presentation, results: [] } as const;
+      }
+      const attempts = yield* Effect.forEach(
+        dispatchable,
+        (provider) => {
+          const module = catalog.composition.modules.find(({ deployment }) => deployment.appId === provider.appId);
+          if (module === undefined) {
+            return captureSearch(Effect.fail(unavailable())).pipe(Effect.map((result) => ({ provider, result })));
           }
-          return dependencies.contextAccess
-            .tenants({
-              permission,
-              principalId: context.principalId,
-              tenantIds: [context.tenantId],
-            })
-            .pipe(
-              Effect.map((decisions) => ({
-                decision:
-                  decisions.length === 1 && decisions[0]?.key === context.tenantId
-                    ? decisions[0].decision
-                    : ('unavailable' as const),
-                provider,
-              })),
-            );
-        }
-        if (context.legalEntityId === undefined) {
-          return Effect.succeed({ decision: 'denied' as const, provider });
-        }
-        return Effect.succeed({
-          decision: companyPermissionByModule.get(provider.moduleId) ?? ('unavailable' as const),
-          provider,
-        });
-      },
-      { concurrency: 4 },
-    );
-    if (permissionOutcomes.some(({ decision }) => decision === 'unavailable')) {
-      return yield* unavailable();
-    }
-    const eligible = permissionOutcomes.flatMap(({ decision, provider }) => (decision === 'allowed' ? [provider] : []));
-    if (eligible.length === 0) {
-      return { partial: false, results: [] } as const;
-    }
-    const attempts = yield* Effect.forEach(
-      eligible,
-      (provider) => {
-        const module = catalog.composition.modules.find(({ deployment }) => deployment.appId === provider.appId);
-        if (module === undefined) {
-          return capture(Effect.fail(unavailable())).pipe(Effect.map((result) => ({ provider, result })));
-        }
-        return Effect.suspend(() =>
-          dependencies.issueAssertion({
-            appId: provider.appId,
-            compositionRevision: catalog.composition.revision,
-            context,
-          }),
-        ).pipe(
-          observeShellSearchProvider({
-            moduleId: provider.moduleId,
-            phase: 'assertion',
-            searchKey: provider.contribution.searchKey,
-          }),
-          Effect.flatMap((authorization) => {
-            const requestFilters = new Set(provider.descriptor.requestFilters);
-            const providerRequest: ShellSearchProviderRequest = {
+          return Effect.suspend(() =>
+            dependencies.issueAssertion({
               appId: provider.appId,
-              authorization,
-              correlationId: context.correlationId,
-              module,
-              query: normalizedQuery,
+              compositionRevision: catalog.composition.revision,
+              context,
+            }),
+          ).pipe(
+            observeShellSearchProvider({
+              moduleId: provider.moduleId,
+              phase: 'assertion',
               searchKey: provider.contribution.searchKey,
-            };
-            const archiveFiltered =
-              requestFilters.has('includeArchived') && searchRequest.includeArchived !== undefined
-                ? {
-                    ...providerRequest,
-                    includeArchived: searchRequest.includeArchived,
-                  }
-                : providerRequest;
-            const roleFiltered =
-              requestFilters.has('role') && searchRequest.role !== undefined
-                ? { ...archiveFiltered, role: searchRequest.role }
-                : archiveFiltered;
-            return gateway.search(roleFiltered).pipe(
-              observeShellSearchProvider({
-                moduleId: provider.moduleId,
-                phase: 'owner',
+            }),
+            Effect.flatMap((authorization) => {
+              const requestFilters = new Set(provider.descriptor.requestFilters);
+              const providerRequest: ShellSearchProviderRequest = {
+                appId: provider.appId,
+                authorization,
+                correlationId: context.correlationId,
+                module,
+                query: normalizedQuery,
                 searchKey: provider.contribution.searchKey,
-              }),
-            );
-          }),
-          Effect.flatMap((result) =>
-            decodeProviderResults(result).pipe(
-              observeShellSearchProvider({
-                moduleId: provider.moduleId,
-                phase: 'decode',
-                searchKey: provider.contribution.searchKey,
-              }),
+              };
+              const archiveFiltered =
+                requestFilters.has('includeArchived') && searchRequest.includeArchived !== undefined
+                  ? {
+                      ...providerRequest,
+                      includeArchived: searchRequest.includeArchived,
+                    }
+                  : providerRequest;
+              const roleFiltered =
+                requestFilters.has('role') && searchRequest.role !== undefined
+                  ? { ...archiveFiltered, role: searchRequest.role }
+                  : archiveFiltered;
+              return gateway.search(roleFiltered).pipe(
+                observeShellSearchProvider({
+                  moduleId: provider.moduleId,
+                  phase: 'owner',
+                  searchKey: provider.contribution.searchKey,
+                }),
+              );
+            }),
+            Effect.flatMap((result) =>
+              decodeProviderResults(result, provider).pipe(
+                observeShellSearchProvider({
+                  moduleId: provider.moduleId,
+                  phase: 'decode',
+                  searchKey: provider.contribution.searchKey,
+                }),
+              ),
             ),
-          ),
-          // Retry only this read, starting with a fresh single-use assertion, never the whole fan-out.
-          Effect.retry({ times: 1 }),
-          capture,
-          Effect.map((result) => ({ provider, result })),
-        );
-      },
-      { concurrency: 4 },
-    );
-    const succeeded = attempts.filter(({ result }) => result.ok);
-    if (succeeded.length !== attempts.length) {
-      return yield* unavailable();
-    }
-    const candidates = succeeded.flatMap(({ provider, result }) =>
-      result.ok
-        ? result.value.flatMap((value) =>
-            resultBelongsToProvider(context, provider, value) ? [{ provider, value }] : [],
-          )
-        : [],
-    );
-    const uniqueCandidates = [
-      ...new Map(
-        candidates.map(({ provider, value }) => [
-          `${value.ref.tenantId ?? context.tenantId}:${resourceKey(value.ref)}`,
-          { provider, value },
-        ]),
-      ).values(),
-    ];
-    if (uniqueCandidates.length === 0) {
+            // Retry only this read with a fresh single-use assertion, inside the unchanged request deadline.
+            Effect.retry({ times: 1, while: (failure) => !Schema.is(ReadPermissionDenied)(failure) }),
+            captureSearch,
+            Effect.map((result) => ({ provider, result })),
+          );
+        },
+        { concurrency: 4 },
+      );
+      const succeeded = attempts.filter(({ result }) => result.ok);
+      if (succeeded.length !== attempts.length) {
+        return yield* unavailable();
+      }
+      const candidates = succeeded.flatMap(({ provider, result }) =>
+        result.ok
+          ? result.value.flatMap((value) =>
+              resultBelongsToProvider(context, provider, value) ? [{ provider, value }] : [],
+            )
+          : [],
+      );
+      const uniqueCandidates = [
+        ...new Map(
+          candidates.map(({ provider, value }) => [
+            `${value.ref.tenantId ?? context.tenantId}:${resourceKey(value.ref)}`,
+            { provider, value },
+          ]),
+        ).values(),
+      ];
+      if (uniqueCandidates.length === 0) {
+        return {
+          partial: false,
+          presentation,
+          results: [],
+        } as const;
+      }
+      const allowedKeys = yield* authorizeSearchCandidates(dependencies, context, uniqueCandidates);
+      const results = sortShellSearchResults(
+        uniqueCandidates.flatMap<ShellSearchResult>(({ provider, value }) => {
+          if (
+            provider.descriptor.accessFiltering === 'resource_permission' &&
+            !allowedKeys.has(resourceKey(value.ref))
+          ) {
+            return [];
+          }
+          if (value.kind !== 'counterparty' || value.collision === undefined) {
+            return [value];
+          }
+          const { collision, ...visible } = value;
+          const counterpartyRefs = collision.counterpartyRefs.filter((ref) => allowedKeys.has(resourceKey(ref)));
+          return [
+            counterpartyRefs.length < 2
+              ? visible
+              : {
+                  ...visible,
+                  collision: { ...collision, counterpartyRefs },
+                },
+          ];
+        }),
+      );
       return {
         partial: false,
-        results: [],
+        presentation,
+        results,
       } as const;
-    }
-    const allowedKeys = yield* authorizeSearchCandidates(dependencies, context, uniqueCandidates);
-    const results = sortShellSearchResults(
-      uniqueCandidates.flatMap<ShellSearchResult>(({ provider, value }) => {
-        if (provider.descriptor.accessFiltering === 'resource_permission' && !allowedKeys.has(resourceKey(value.ref))) {
-          return [];
-        }
-        if (value.kind !== 'counterparty' || value.collision === undefined) {
-          return [value];
-        }
-        const { collision, ...visible } = value;
-        const counterpartyRefs = collision.counterpartyRefs.filter((ref) => allowedKeys.has(resourceKey(ref)));
-        return [
-          counterpartyRefs.length < 2
-            ? visible
-            : {
-                ...visible,
-                collision: { ...collision, counterpartyRefs },
-              },
-        ];
-      }),
-    );
-    return {
-      partial: false,
-      results,
-    } as const;
-  }),
+    },
+    (program) => withShellSearchRequestBudget(program, unavailable),
+  ),
 });
 
 export type MediaAffordance =

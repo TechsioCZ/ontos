@@ -13,7 +13,10 @@ import type { CoreIdentityPolicyDescriptor } from '../../src/db/identity-policie
 import {
   applicationCompositionAuthority,
   coreDatabaseSchema,
+  searchDerivedRepairJobs,
   searchIndexEntries,
+  searchLabelRefreshJobs,
+  searchLabelSourceRevisions,
   searchProjectionGenerations,
   searchProjectionRebuilds,
 } from '../../src/db/schema.ts';
@@ -21,7 +24,14 @@ import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identi
 
 const dialect = new PgDialect();
 const fixturePolicies = makeCoreIdentityPolicies(FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
-const searchTables = [searchIndexEntries, searchProjectionGenerations, searchProjectionRebuilds];
+const searchTables = [
+  searchIndexEntries,
+  searchProjectionGenerations,
+  searchProjectionRebuilds,
+  searchLabelSourceRevisions,
+  searchLabelRefreshJobs,
+  searchDerivedRepairJobs,
+];
 const renderPredicate = (predicate: SQL | undefined): string | null =>
   predicate === undefined ? null : dialect.sqlToQuery(predicate).sql;
 
@@ -117,8 +127,8 @@ it.layer(NodeServices.layer)((suite) => {
             .toSorted((left, right) => left.name.localeCompare(right.name));
         });
         const preExtraction = yield* corePolicies('20261024223832_gateway-identity-attestation');
-        // Later Core migrations add policies (the Outbox delivery resolution read); the latest snapshot is the schema of record.
-        const current = yield* corePolicies('20261030130000_core-main-merge-convergence');
+        // Later Core migrations add policies (the Outbox delivery resolution read, then the search refresh queues); the latest snapshot is the schema of record.
+        const current = yield* corePolicies('20261104101838_colorful_quentin_quire');
         const actual = [
           ...Object.values(coreDatabaseSchema).flatMap((table) =>
             getTableConfig(table).policies.map((policy) => renderPolicy({ policy, table })),
@@ -128,7 +138,7 @@ it.layer(NodeServices.layer)((suite) => {
 
         expect(preExtraction).toHaveLength(59);
         expect(actual).toEqual(expect.arrayContaining(preExtraction));
-        expect(current).toHaveLength(60);
+        expect(current).toHaveLength(78);
         expect(actual).toEqual(current);
       }),
   );
@@ -172,7 +182,7 @@ it('excludes every enrolled owner from every shared-runtime search operation', (
   const sharedPolicies = descriptors.filter(
     ({ policy, table }) => searchTables.some((candidate) => candidate === table) && policy.to === 'ontos_runtime',
   );
-  expect(sharedPolicies).toHaveLength(10);
+  expect(sharedPolicies).toHaveLength(19);
   for (const { policy } of sharedPolicies) {
     for (const predicate of [policy.using, policy.withCheck]) {
       if (predicate === undefined) {
@@ -197,7 +207,7 @@ it('excludes every enrolled owner from every shared-runtime search operation', (
 
 it('supports an explicitly empty enrollment without inventing owner policies', () => {
   const descriptors = makeCoreIdentityPolicies(defineDatabaseIdentityEnrollment([]));
-  expect(descriptors).toHaveLength(11);
+  expect(descriptors).toHaveLength(20);
   expect(descriptors.find(({ table }) => table === applicationCompositionAuthority)?.policy.to).toEqual([
     'ontos_runtime',
   ]);

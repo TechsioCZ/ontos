@@ -152,7 +152,9 @@ it.effect('publishes complete types once after containment and refreshes parent 
           ...store,
           replace: (input, claim) =>
             Effect.gen(function* observedReplace() {
-              const replacement = yield* Schema.decodeUnknownEffect(CoreSearchProjectionReplacementSchema)(input);
+              const replacement = yield* Schema.decodeUnknownEffect(CoreSearchProjectionReplacementSchema)(input).pipe(
+                Effect.orDie,
+              );
               yield* store.replace(replacement, claim);
               order.push('replace');
               replacements.push(replacement);

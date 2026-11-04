@@ -25,7 +25,7 @@ import { staffRoutePreloads } from './route-preload-scheduler.ts';
 import { staffDocumentTheme } from './staff-brand.ts';
 import type { RoutePreloadPriority } from './route-preload-scheduler.ts';
 
-import type { ShellLabel, ShellRecordDestination, ShellUnavailableDeployment } from '../../shared/api.ts';
+import type { ShellLabel, ShellUnavailableDeployment } from '../../shared/api.ts';
 import { DemoGuidePanel, DemoGuideToggleButton, demoGuidePageAttribute } from '../demo-guide/demo-guide-panel.tsx';
 import { demoGuideFor } from '../demo-guide/demo-guide-registry.ts';
 import { guideWidthCss, useDemoGuideOpen, useDemoGuideWidth } from '../demo-guide/demo-guide-store.ts';
@@ -33,13 +33,14 @@ import { navigationHrefFromPath, usePendingNavigationPath } from './use-pending-
 import { StaffRoutePreloadContext, useIdleRoutePreload } from './use-idle-route-preload.ts';
 import { useHydratedMarker } from './use-hydrated.ts';
 import { ShellSearchBar } from './shell-search-bar.tsx';
-import { shellSearchPresentationContext } from './shell-search-resource-types.ts';
 import { useShellSearchSuggestions } from './shell-search-suggestions.ts';
 
 interface DashboardAccount {
   readonly displayName: string;
   /** Sign-in e-mail; the demo guide marks steps whose persona is already signed in. */
   readonly email?: string;
+  /** Trusted principal identity; absent only when the composition could not attest it. */
+  readonly principalId?: string;
 }
 
 interface DashboardNavigationItem {
@@ -88,8 +89,6 @@ export interface AuthenticatedDashboardLayoutProps {
   readonly onSearch: (query: string) => void;
   readonly onTenantChange: (tenantId: string) => void;
   readonly onTenantContextChange?: (() => void) | undefined;
-  /** Record destinations the composed owner pages declare; the search opens only these exact pairs. */
-  readonly recordDestinations: readonly ShellRecordDestination[];
   readonly tenantChoices: readonly DashboardTenantItem[];
   readonly tenantContextActive?: boolean | undefined;
   readonly tenantContextAvailable?: boolean | undefined;
@@ -705,30 +704,68 @@ const DashboardNavigationLink = ({
 
 const navigationToggleKey = 'shell.dashboard.navigation.toggle';
 
+/**
+ * The trusted frame identity an in-flight header search belongs to. Tenant, selected company, the signed-in account,
+ * the pinned composition, language and an in-progress switch all invalidate the previous answer before it can paint;
+ * pending switch flags also abort a response that started against the half-switched scope.
+ */
+export const shellSearchScopeKey = ({
+  compositionRevision,
+  currentLegalEntityId,
+  currentTenantId,
+  identity,
+  language,
+  legalEntitySwitchPending,
+  tenantContextActive,
+  tenantSwitchPending,
+}: {
+  readonly compositionRevision?: string | undefined;
+  readonly currentLegalEntityId?: string | undefined;
+  readonly currentTenantId: string;
+  readonly identity: {
+    readonly displayName: string;
+    readonly email?: string | undefined;
+    /** The only trusted principal handle this scope may use; never fall back to a display label. */
+    readonly principalId?: string | undefined;
+  };
+  readonly language: string;
+  readonly legalEntitySwitchPending: boolean;
+  readonly tenantContextActive?: boolean | undefined;
+  readonly tenantSwitchPending: boolean;
+}): string | undefined => {
+  const { principalId } = identity;
+  if (principalId === undefined || principalId.length === 0) {
+    return undefined;
+  }
+  return [
+    currentTenantId,
+    currentLegalEntityId ?? '',
+    principalId,
+    compositionRevision ?? '',
+    language,
+    tenantContextActive === true ? 'tenant' : 'company',
+    tenantSwitchPending ? 'tenant-pending' : 'tenant-stable',
+    legalEntitySwitchPending ? 'company-pending' : 'company-stable',
+  ].join('\n');
+};
+
 interface DashboardHeaderSearchProps {
   readonly compositionRevision: string | undefined;
   readonly hidden: boolean;
-  readonly navigation: readonly DashboardNavigationItem[];
   readonly onSearch: (query: string) => void;
-  readonly recordDestinations: readonly ShellRecordDestination[];
+  readonly scopeKey: string | undefined;
 }
 
 /** The global search, centred between the trail and the account; hidden once sign-out has started. */
-const DashboardHeaderSearch = ({
-  compositionRevision,
-  hidden,
-  navigation,
-  onSearch,
-  recordDestinations,
-}: DashboardHeaderSearchProps) => {
+const DashboardHeaderSearch = ({ compositionRevision, hidden, onSearch, scopeKey }: DashboardHeaderSearchProps) => {
   const [value, setValue] = useState('');
-  const context = shellSearchPresentationContext(navigation, recordDestinations);
-  const suggestions = useShellSearchSuggestions(compositionRevision, context);
+  const suggestions = useShellSearchSuggestions(compositionRevision, scopeKey);
   return hidden ? null : (
     <Header.Container className="flex w-auto min-w-0 flex-1 justify-center lg:flex-[2]" position="center">
       <div className="w-full max-w-xl">
         <ShellSearchBar
           onDismissSuggestions={suggestions.handleDismiss}
+          onFamiliesChange={suggestions.handleFamiliesChange}
           onSearch={onSearch}
           onValueChange={(next) => {
             setValue(next);
@@ -872,6 +909,16 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
   const { language, t } = useModernI18n();
   const { tenantSwitchFailed } = props;
   const pageLanguage = language ?? '';
+  const searchScopeKey = shellSearchScopeKey({
+    compositionRevision: props.compositionRevision,
+    currentLegalEntityId: props.currentLegalEntityId,
+    currentTenantId: props.currentTenantId,
+    identity: props.identity,
+    language: pageLanguage,
+    legalEntitySwitchPending: props.legalEntitySwitchPending,
+    tenantContextActive: props.tenantContextActive,
+    tenantSwitchPending: props.tenantSwitchPending,
+  });
   const pendingHref = usePendingNavigationHref(pageLanguage);
   const model = buildShellNavigation({ ...props, language: pageLanguage, pendingHref }, t);
   const preload = useDashboardRoutePreload(props);
@@ -962,9 +1009,8 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
           <DashboardHeaderSearch
             compositionRevision={props.compositionRevision}
             hidden={props.logoutPending}
-            navigation={props.navigation}
             onSearch={props.onSearch}
-            recordDestinations={props.recordDestinations}
+            scopeKey={searchScopeKey}
           />
           <Header.Container className="flex w-auto shrink-0 justify-end lg:flex-1 lg:basis-0" position="end">
             <Header.Actions>

@@ -6,20 +6,24 @@
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/projects-client.ts",
     "./locales/cs": "./locales/cs/projects.json",
-    "./locales/en": "./locales/en/projects.json"
+    "./locales/en": "./locales/en/projects.json",
+    "./outbox/projects-core-search-rebuild-requested-v1": "./shared/outbox/projects-core-search-rebuild-requested-v1.ts",
+    "./outbox/projects-core-search-refresh-requested-v1": "./shared/outbox/projects-core-search-refresh-requested-v1.ts",
+    "./outbox-worker-host": "./src/worker-host/entry.ts"
   },
   "scripts": {
-    "dev": "node ../../scripts/prepare-dev-module-contract.mts projects && modern dev",
     "build": "pnpm --dir ../.. exec ultramodern-create ultramodern routes-generate --app projects --manifest-only && modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical projects --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app projects --target dist && modern deploy --skip-build --deploy-target node",
-    "serve": "modern serve",
-    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
+    "db:test": "pnpm test:unit && pnpm test:integration",
     "db:verify": "node scripts/verify-db-schema.mts",
-    "test:unit": "rstest --project unit",
+    "dev": "node ../../scripts/prepare-dev-module-contract.mts projects && modern dev",
+    "serve": "modern serve",
     "test:integration": "rstest --project integration",
-    "db:test": "pnpm test:unit && pnpm test:integration"
+    "test:unit": "rstest --project unit",
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
+    "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {
     "@app/core-runtime": "workspace:*",

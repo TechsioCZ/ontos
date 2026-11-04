@@ -1,5 +1,6 @@
 import { Effect, Schema } from 'effect';
 
+import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import { defineGlobalPolicy, denyPolicy } from '../actions/policy.ts';
 import { AgentProposalCommandPayloadSchema } from './agent-proposal-command-contract.ts';
@@ -25,9 +26,13 @@ const PROPOSAL_ACTION_KEY = 'core.identity.mutate-agent-proposals';
 export const isApprovalConnection = (principal: Partial<ScopedPrincipal>): boolean =>
   principal.authMethod === 'oauth_connection' && principal.connection?.writePolicy === 'approval';
 
-/** Non-connection principals are unaffected; a connection may read only its granted modules and its proposals. */
+/**
+ * Only the exact Shell search aggregator admits delegated business-search routing. This is not a Core/module
+ * grant: its host must narrow every provider using the verified scope, current catalog, states and permissions.
+ * Other reads retain their existing module/proposal rules. A reserved search key cannot be claimed by another owner.
+ */
 export const isConnectionReadAllowed = (
-  principal: ScopedPrincipal,
+  principal: TrustedPrincipalContext,
   read: { readonly owningModuleKey: string; readonly readKey: string },
 ): boolean => {
   if (principal.authMethod !== 'oauth_connection') {
@@ -36,6 +41,14 @@ export const isConnectionReadAllowed = (
   const { connection } = principal;
   if (connection === undefined) {
     return false;
+  }
+  if (read.readKey === 'core.shell.search') {
+    return (
+      read.owningModuleKey === 'core.shell' &&
+      Schema.is(Schema.toEncoded(TrustedPrincipalContextSchema))(principal) &&
+      Schema.is(TrustedPrincipalContextSchema)(principal) &&
+      (connection.modules === 'all' || connection.modules.length > 0)
+    );
   }
   return (
     connection.modules === 'all' ||

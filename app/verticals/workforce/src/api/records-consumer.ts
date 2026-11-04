@@ -1,5 +1,6 @@
 // Owner and consumer calls over the generated governed records client. Callers pass the encoded request, which is
 // decoded here before the generated client sends it.
+import type { EffectBffClientOptions } from '@app/shared-contracts/client-runtime';
 import { Effect, Random, Schema } from 'effect';
 import { RecordsRequestSchema } from '../../shared/apis/records.ts';
 import type { RecordsRequestEncoded } from '../../shared/apis/records.ts';
@@ -28,6 +29,14 @@ export const executeRecords = (
   Schema.decodeEffect(RecordsRequestSchema)(payload).pipe(
     Effect.flatMap((decoded) => executeDecodedRecords(decoded, ...invocation)),
   );
+
+/** Exact-target reads opt out explicitly; the generated client forwards these canonical transport options. */
+export const executeFreshRecords = (payload: RecordsRequestEncoded, requestCorrelation: string) => {
+  const options: Pick<EffectBffClientOptions, 'baseUrl' | 'compositionRevision' | 'requestCache'> = {
+    requestCache: 'no-store',
+  };
+  return executeRecords(payload, requestCorrelation, options);
+};
 
 /** Every Employee the caller may read. Other verticals import this for assignee pickers. */
 export const listEmployees = Effect.fn('Workforce.listEmployees')(function* listEmployees() {

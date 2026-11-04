@@ -355,7 +355,6 @@ it('offers the owning module agendas when the Shell cannot show the record itsel
         deniedAppIds: [],
         items: withAgendas,
         moduleIds: [],
-        recordDestinations: [],
         state: 'available',
         unavailableDeployments: [],
       },
@@ -392,7 +391,6 @@ it.each([
             navigationItem('finance.billing', 'Faktury', '/finance'),
           ]),
           moduleIds: [],
-          recordDestinations: [],
           state: 'available',
           unavailableDeployments: [],
         },
@@ -422,7 +420,6 @@ const shellWithNavigation = (items: readonly ReturnType<typeof navigationItem>[]
     deniedAppIds: [],
     items: Schema.decodeUnknownSync(Schema.Array(ShellNavigationItemSchema))(items),
     moduleIds: [],
-    recordDestinations: [],
     state: 'available' as const,
     unavailableDeployments: [],
   },
@@ -463,6 +460,7 @@ it('links a person only to people administration, without treating the search ti
   });
   try {
     const { unmount } = renderResourcePage({
+      agendaPaths: ['/sprava/lide-a-role'],
       shell: shellWithNavigation([
         navigationItem('shell-super-app', 'People and roles', '/sprava/lide-a-role'),
         navigationItem('billing.invoices', 'Invoices', '/finance'),

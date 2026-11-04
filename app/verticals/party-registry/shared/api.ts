@@ -31,6 +31,7 @@ import { PartyOfficialIdentifierHistoryApi } from './apis/party-official-identif
 import { PartyRelationshipDetailApi } from './apis/party-relationship-detail.ts';
 import { PersonEngagementProfileApi } from './apis/person-engagement-profile.ts';
 import { PrivacyMeasureExecutionApi } from './apis/privacy-measure-execution.ts';
+import { SearchLabelsApi } from './apis/search-labels.ts';
 // </generated-governed-http-api-imports>
 import { partyRegistryCommandRecoveryApi, partyRegistryCommandsApi } from './command-api.ts';
 import { organizationEngagementMutationApi, personEngagementMutationApi } from './engagement-profile-api.ts';
@@ -574,6 +575,7 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(PartyRelationshipDetailApi)
   .addHttpApi(PersonEngagementProfileApi)
   .addHttpApi(PrivacyMeasureExecutionApi)
+  .addHttpApi(SearchLabelsApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

@@ -45,6 +45,7 @@ const categories = ['selective', 'broad', 'exact', 'multiword', 'alias', 'tempor
 const resultKinds = ['http', 'transport', 'body', 'decode', 'schema', 'oracle', 'partial', 'cache', 'timeout'] as const;
 
 const PinsSchema = Schema.Struct({
+  clientLocation: Schema.optionalKey(nonempty),
   compositionRevision,
   dataFingerprint: digest,
   grantProfile: nonempty,
@@ -77,6 +78,12 @@ export const CorpusSchema = Schema.Struct({
 export type Corpus = typeof CorpusSchema.Type;
 export type SearchCase = Corpus['cases'][number];
 
+const WorkloadSchema = Schema.Struct({
+  cases: CorpusSchema.fields.cases,
+  countsByResourceType: CorpusSchema.fields.countsByResourceType,
+  variantPolicy: CorpusSchema.fields.variantPolicy,
+  version: CorpusSchema.fields.version,
+});
 export const ApprovalSchema = Schema.Struct({
   approvedBy: Schema.Literal('root'),
   corpusSha256: digest,
@@ -145,6 +152,14 @@ export type WorkEvidence = typeof WorkEvidenceSchema.Type;
 
 export const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 
+const workloadHash = (corpus: Corpus) =>
+  Schema.encodeEffect(Schema.fromJsonString(WorkloadSchema))({
+    cases: corpus.cases,
+    countsByResourceType: corpus.countsByResourceType,
+    variantPolicy: corpus.variantPolicy,
+    version: corpus.version,
+  }).pipe(Effect.map(hash));
+
 /**
  * Hashes the Schema-owned corpus encoding, not a hand-written canonical JSON serializer. The same
  * codec feeds the ready output, the approval check and the per-sample report.
@@ -182,6 +197,61 @@ export const buildSearchProbeSchedule = (corpus: Corpus) =>
     return schedule;
   });
 
+const validateCase = (corpus: Corpus, item: SearchCase, expectedRefs: Map<string, Set<string>>) =>
+  Effect.gen(function* validateSearchCase() {
+    yield* check(
+      item.queries.length > 0 && !item.expected.partial,
+      'Every case needs admitted variants and a complete oracle.',
+    );
+    yield* check(
+      item.category === 'empty-hit' ? item.expected.results.length === 0 : item.expected.results.length > 0,
+      'Only the explicit empty-hit lane may have an empty oracle.',
+    );
+    for (const query of item.queries) {
+      yield* check(
+        query.length <= 160 && query.trim().length >= 2,
+        'Admitted queries must leave space for fresh variants within the 200-character contract.',
+      );
+      const fields = {
+        compositionRevision: corpus.pins.compositionRevision,
+        includeArchived: item.includeArchived,
+        query,
+      };
+      const payload = item.role === undefined ? fields : { ...fields, role: item.role };
+      yield* Schema.decodeUnknownEffect(ShellSearchPayloadSchema)(payload).pipe(
+        Effect.mapError(() => new ProbeFailure({ reason: 'An admitted query violates the public payload contract.' })),
+      );
+    }
+    for (const result of item.expected.results) {
+      yield* check(
+        result.ref.tenantId === corpus.pins.tenantId,
+        'Every expected reference must pin the selected tenant.',
+      );
+      yield* check(
+        (corpus.countsByResourceType[result.ref.resourceType] ?? 0) > 0,
+        'Every oracle resource type needs an actual count.',
+      );
+      const refs = expectedRefs.get(result.ref.resourceType) ?? new Set<string>();
+      refs.add(`${result.ref.moduleId}:${result.ref.resourceId}`);
+      expectedRefs.set(result.ref.resourceType, refs);
+      if (result.kind === 'resource') {
+        yield* check(
+          result.selectedLegalEntityId === undefined || result.selectedLegalEntityId === corpus.pins.legalEntityId,
+          'Resource oracle has the wrong company; tenant-scoped resources must still pin the tenant.',
+        );
+      }
+      if (result.kind === 'counterparty') {
+        yield* check(
+          result.legalEntity.tenantId === corpus.pins.tenantId &&
+            result.legalEntity.legalEntityId === corpus.pins.legalEntityId &&
+            result.party.ref.tenantId === corpus.pins.tenantId &&
+            (result.collision?.counterpartyRefs.every((ref) => ref.tenantId === corpus.pins.tenantId) ?? true),
+          'Counterparty oracle has the wrong tenant or selected company.',
+        );
+      }
+    }
+  });
+
 export const validateCorpus = (corpus: Corpus) =>
   Effect.gen(function* validateSearchCorpus() {
     const origin = URL.parse(corpus.origin);
@@ -199,10 +269,8 @@ export const validateCorpus = (corpus: Corpus) =>
         new Set(corpus.cases.map((item) => item.id)).size === corpus.cases.length,
       'The fixed corpus requires unique case IDs and all seven categories.',
     );
-    yield* check(
-      corpus.cases.some((item) => item.lane === 'comparison') && corpus.cases.some((item) => item.lane === 'expanded'),
-      'The fixed and expanded comparison lanes must both be present.',
-    );
+    // Comparison-only and expanded-only corpora are admitted separately. Requiring both here
+    // would force unimplemented baseline features into the regression/latency comparison.
     for (const category of categories) {
       yield* check(
         corpus.cases.some((item) => item.category === category),
@@ -214,37 +282,19 @@ export const validateCorpus = (corpus: Corpus) =>
         Object.values(corpus.countsByResourceType).some((value) => value > 0),
       'Record actual per-type corpus counts.',
     );
+    yield* check(
+      corpus.mode !== ADMITTED_LIVE || (corpus.pins.clientLocation?.trim().length ?? 0) > 0,
+      'Admitted live measurements must record the actual client location as well as the network path.',
+    );
+    const expectedRefs = new Map<string, Set<string>>();
     for (const item of corpus.cases) {
+      yield* validateCase(corpus, item, expectedRefs);
+    }
+    for (const [resourceType, refs] of expectedRefs) {
       yield* check(
-        item.queries.length > 0 && !item.expected.partial,
-        'Every case needs admitted variants and a complete oracle.',
+        refs.size <= (corpus.countsByResourceType[resourceType] ?? 0),
+        'Distinct expected references exceed the declared actual per-type count.',
       );
-      yield* check(
-        item.category === 'empty-hit' ? item.expected.results.length === 0 : item.expected.results.length > 0,
-        'Only the explicit empty-hit lane may have an empty oracle.',
-      );
-      for (const query of item.queries) {
-        yield* check(
-          query.length <= 160 && query.trim().length >= 2,
-          'Admitted queries must leave space for fresh variants within the 200-character contract.',
-        );
-      }
-      for (const result of item.expected.results) {
-        yield* check(
-          result.ref.tenantId === corpus.pins.tenantId,
-          'Every expected reference must pin the selected tenant.',
-        );
-        yield* check(
-          (corpus.countsByResourceType[result.ref.resourceType] ?? 0) > 0,
-          'Every oracle resource type needs an actual count.',
-        );
-        if (result.kind === 'resource') {
-          yield* check(
-            result.selectedLegalEntityId === corpus.pins.legalEntityId,
-            'Resource oracle has the wrong company.',
-          );
-        }
-      }
     }
     yield* buildSearchProbeSchedule(corpus);
   });
@@ -263,8 +313,8 @@ const validateDispatchWindow = (approval: Approval, now: DateTime.Utc, attempts:
       'No current bounded measurement window.',
     );
     yield* check(
-      attempts <= approval.maxAttempts && approval.maxAttempts <= SAMPLES_PER_PROFILE * PROFILES.length,
-      'Window request budget exceeded; automatic replacement runs/retries are forbidden.',
+      attempts <= approval.maxAttempts && approval.maxAttempts === SAMPLES_PER_PROFILE * PROFILES.length,
+      'A complete C1/C5 window requires exactly 1000 attempts; limited authority cannot pass, and replacement runs/retries are forbidden.',
     );
   });
 
@@ -308,6 +358,13 @@ export const freshQuery = (item: SearchCase, used: Set<string>) =>
   });
 
 const attemptFailure = (kind: (typeof resultKinds)[number]) => new ProbeFailure({ kind });
+
+const cacheWasReused = (cache: Attempt['cache']) =>
+  cache !== undefined &&
+  ((cache.age !== null && /^\s*\d+\s*$/u.test(cache.age) && Number(cache.age) > 0) ||
+    [cache.cfCacheStatus, cache.xCache].some((status) =>
+      /(?:^|[^a-z])(?:HIT|STALE|REVALIDATED|UPDATING)(?:[^a-z]|$)/iu.test(status ?? ''),
+    ));
 
 /** Clock starts immediately before dispatch; full-body, schema and exact safe oracle checks are all inside totalMs. */
 export const probeAttempt = (options: {
@@ -371,6 +428,19 @@ export const probeAttempt = (options: {
       const response = yield* client.execute(request).pipe(Effect.mapError(() => attemptFailure('transport')));
       sample.status = response.status;
       sample.headersMs = yield* elapsed;
+      const {
+        age,
+        'cache-control': cacheControl = '',
+        'cf-cache-status': cfCacheStatus,
+        'x-cache': fallbackCacheStatus,
+      } = response.headers;
+      sample.cache = {
+        age: age ?? null,
+        cacheControl,
+        cfCacheStatus: cfCacheStatus ?? null,
+        responseNoStore: /(?:^|,)\s*no-store\s*(?:,|$)/iu.test(cacheControl),
+        xCache: fallbackCacheStatus ?? null,
+      };
       const buffer = yield* response.arrayBuffer.pipe(Effect.mapError(() => attemptFailure('body')));
       sample.bytes = buffer.byteLength;
       sample.fullBodyMs = yield* elapsed;
@@ -398,25 +468,10 @@ export const probeAttempt = (options: {
       }
       sample.correctnessChecked = true;
       sample.oracleMs = yield* elapsed;
-      const {
-        age,
-        'cache-control': cacheControl = '',
-        'cf-cache-status': cfCacheStatus,
-        'x-cache': fallbackCacheStatus,
-      } = response.headers;
-      sample.cache = {
-        age: age ?? null,
-        cacheControl,
-        cfCacheStatus: cfCacheStatus ?? null,
-        responseNoStore: /(?:^|,)\s*no-store\s*(?:,|$)/iu.test(cacheControl),
-        xCache: fallbackCacheStatus ?? null,
-      };
-      // Missing no-store is unknown provenance, not evidence that a response was reused.
+      // Missing no-store preserves timing, but blocks the final uncached gate below.
+      // Header evidence is retained even when body/oracle/timeout checks fail.
       // Check every cache layer independently; DYNAMIC must never conceal another layer's HIT.
-      if (
-        (age !== undefined && /^\d+$/u.test(age) && Number(age) > 0) ||
-        [cfCacheStatus, fallbackCacheStatus].some((status) => /\b(?:HIT|STALE|REVALIDATED)\b/iu.test(status ?? ''))
-      ) {
+      if (cacheWasReused(sample.cache)) {
         return yield* attemptFailure('cache');
       }
       sample.outcome = 'ok';
@@ -467,6 +522,10 @@ const roundsFor = (attempts: readonly Attempt[]) =>
     return {
       attempts: round.length,
       correct: countMatching(round, isCorrect),
+      p95Ms: percentile(
+        round.filter(isCorrect).map((sample) => sample.totalMs),
+        0.95,
+      ),
       run: index + 1,
     };
   });
@@ -485,9 +544,74 @@ const statusCountsFor = (attempts: readonly Attempt[]) =>
     ]),
   );
 
+const roundMatchesSchedule = (
+  run: number,
+  attempts: readonly Attempt[],
+  schedule: readonly SearchCase[],
+  cases: readonly SearchCase[],
+) => {
+  const expected = schedule.slice((run - 1) * SAMPLES_PER_RUN, run * SAMPLES_PER_RUN);
+  const actual = attempts.filter((sample) => sample.run === run);
+  return cases.every(
+    (item) =>
+      actual.filter((sample) => sample.caseId === item.id).length ===
+      expected.filter((scheduled) => scheduled.id === item.id).length,
+  );
+};
+
+const isCompleteMeasurement = (sample: Attempt, casesById: ReadonlyMap<string, SearchCase>) =>
+  sample.status === 200 &&
+  sample.bytes > 0 &&
+  sample.results === casesById.get(sample.caseId)?.expected.results.length &&
+  sample.partial === false &&
+  sample.retry === 0 &&
+  [sample.headersMs, sample.fullBodyMs, sample.schemaMs, sample.oracleMs, sample.totalMs].every(
+    (value) => value !== null && Number.isFinite(value) && value >= 0,
+  ) &&
+  sample.headersMs !== null &&
+  sample.fullBodyMs !== null &&
+  sample.schemaMs !== null &&
+  sample.oracleMs !== null &&
+  sample.headersMs <= sample.fullBodyMs &&
+  sample.fullBodyMs <= sample.schemaMs &&
+  sample.schemaMs <= sample.oracleMs &&
+  sample.oracleMs <= sample.totalMs;
+
+const summarizeCategory = (
+  category: SearchCase['category'],
+  attempts: readonly Attempt[],
+  casesById: ReadonlyMap<string, SearchCase>,
+) => {
+  const categoryAttempts = attempts.filter((sample) => casesById.get(sample.caseId)?.category === category);
+  return {
+    attempts: categoryAttempts.length,
+    category,
+    correct: countMatching(categoryAttempts, isCorrect),
+    counts: countsFor(categoryAttempts),
+    p95Ms: percentile(
+      categoryAttempts.filter(isCorrect).map((sample) => sample.totalMs),
+      0.95,
+    ),
+  };
+};
+
 export const summarize = (samples: readonly Attempt[], corpus: Corpus, evidence: WorkEvidence | null = null) =>
   Effect.gen(function* summarizeAttempts() {
+    yield* validateCorpus(corpus);
     const corpusSha = yield* corpusHash(corpus);
+    const schedule = yield* buildSearchProbeSchedule(corpus);
+    const casesById = new Map(corpus.cases.map((item) => [item.id, item]));
+    const sampleIdentityValid =
+      new Set(samples.map((sample) => sample.requestId)).size === samples.length &&
+      new Set(samples.map((sample) => sample.querySha256)).size === samples.length &&
+      samples.every(
+        (sample) =>
+          PROFILES.some((profile) => profile === sample.profile) &&
+          Number.isInteger(sample.run) &&
+          sample.run >= 1 &&
+          sample.run <= RUNS &&
+          casesById.has(sample.caseId),
+      );
     const evidencePinned =
       evidence !== null && evidence.corpusSha256 === corpusSha && Equal.equals(evidence.pins, corpus.pins);
     const observed = new Map<string, typeof WorkSchema.Type>();
@@ -520,18 +644,34 @@ export const summarize = (samples: readonly Attempt[], corpus: Corpus, evidence:
       const attempts = samples.filter((sample) => sample.profile === profile);
       const correct = attempts.filter(isCorrect);
       const timings = correct.map((sample) => sample.totalMs);
+      const completeResponseTimings = correct.flatMap((sample) =>
+        sample.fullBodyMs === null ? [] : [sample.fullBodyMs],
+      );
       const rounds = roundsFor(attempts);
+      const measuredCases = new Set(attempts.map((sample) => sample.caseId));
+      const workloadCoverageComplete =
+        corpus.cases.every((item) => measuredCases.has(item.id)) &&
+        rounds.every((round) => roundMatchesSchedule(round.run, attempts, schedule, corpus.cases));
       const p95 = percentile(timings, 0.95);
       const measurementComplete =
+        sampleIdentityValid &&
+        workloadCoverageComplete &&
         attempts.length === SAMPLES_PER_PROFILE &&
         correct.length === SAMPLES_PER_PROFILE &&
+        correct.every((sample) => isCompleteMeasurement(sample, casesById)) &&
         rounds.every((round) => round.attempts === SAMPLES_PER_RUN && round.correct === SAMPLES_PER_RUN);
       const latencyTargetMet = measurementComplete && p95 !== null && p95 < 200;
-      const gate = latencyTargetMet && attempts.every(workVerified);
+      const gate =
+        latencyTargetMet &&
+        attempts.every(
+          (sample) => sample.cache?.responseNoStore === true && !cacheWasReused(sample.cache) && workVerified(sample),
+        );
       return {
         attempts: attempts.length,
         bytes: sumBy(attempts, (sample) => sample.bytes),
         cacheNoStoreHeaders: countMatching(attempts, (sample) => sample.cache?.responseNoStore === true),
+        cacheReuseHeaders: countMatching(attempts, (sample) => cacheWasReused(sample.cache)),
+        completeResponseP95Ms: percentile(completeResponseTimings, 0.95),
         concurrency: profile,
         correct: correct.length,
         counts: countsFor(attempts),
@@ -540,27 +680,35 @@ export const summarize = (samples: readonly Attempt[], corpus: Corpus, evidence:
         latencyTargetMet,
         maxMs: timings.length === 0 ? null : Math.max(...timings),
         measurementComplete,
-        oracleChecked: correct.length,
+        oracleChecked: countMatching(attempts, (sample) => sample.correctnessChecked),
         p50Ms: percentile(timings, 0.5),
         p95Ms: p95,
         p99Ms: percentile(timings, 0.99),
         partial: countMatching(attempts, (sample) => sample.partial === true),
-        providerRetries: evidencePinned
-          ? sumBy(attempts, (sample) => observed.get(sample.requestId)?.providerRetries ?? 0)
-          : null,
+        providerRetries:
+          evidencePinned &&
+          attempts.every((sample) => observed.has(sample.requestId) && !duplicates.has(sample.requestId))
+            ? sumBy(attempts, (sample) => observed.get(sample.requestId)?.providerRetries ?? 0)
+            : null,
         results: sumBy(attempts, (sample) => sample.results ?? 0),
-        retries: 0,
+        retries: sumBy(attempts, (sample) => sample.retry),
         revision: corpus.pins.compositionRevision,
         rounds,
         statusCounts: statusCountsFor(attempts),
+        workload: categories.map((category) => summarizeCategory(category, attempts, casesById)),
+        workloadCoverageComplete,
         workVerified: countMatching(attempts, workVerified),
       };
     });
     return {
+      attempts: samples.length,
       corpusSha256: corpusSha,
+      counts: countsFor(samples),
       countsByResourceType: corpus.countsByResourceType,
       endpoint: `${corpus.origin}${SEARCH_ROUTE}`,
+      errors: samples.length - countMatching(samples, isCorrect),
       gate: corpus.mode === ADMITTED_LIVE && profiles.every((profile) => profile.gate),
+      lanes: [...new Set(corpus.cases.map((item) => item.lane))],
       latencyTargetMet: corpus.mode === ADMITTED_LIVE && profiles.every((profile) => profile.latencyTargetMet),
       liveMeasurement: corpus.mode === ADMITTED_LIVE && samples.length > 0,
       measurement: 'dispatch through full body, schema decode and exact oracle; no debounce or browser paint claim',
@@ -568,11 +716,29 @@ export const summarize = (samples: readonly Attempt[], corpus: Corpus, evidence:
       mode: corpus.mode,
       pins: corpus.pins,
       profiles,
+      provenance: corpus.provenance,
+      sampleIdentityValid,
       samples,
+      statusCounts: statusCountsFor(samples),
+      timingFields: {
+        completeResponseP95Ms: 'p95 of dispatch-to-complete-body for successful correctness-checked requests',
+        p95Ms: 'p95 of dispatch-through-schema/oracle/finalization; this conservative total is the latency gate',
+        stages: 'headersMs, fullBodyMs, schemaMs and oracleMs are cumulative from dispatch, not additive durations',
+      },
       uncachedWorkVerification: evidencePinned
         ? 'external-correlated-counters-require-independent-source-review'
         : 'unknown',
       workEvidence: evidencePinned && evidence !== null ? { source: evidence.source } : null,
+      workload: corpus.cases.map((item) => ({
+        category: item.category,
+        id: item.id,
+        includeArchived: item.includeArchived,
+        lane: item.lane,
+        queryVariantCount: item.queries.length,
+        role: item.role ?? null,
+      })),
+      // Excludes deployment/scope pins; compare those independently. Never use this digest as run authority.
+      workloadSha256: yield* workloadHash(corpus),
     };
   });
 
@@ -656,14 +822,16 @@ const probe = (ready: boolean, run: boolean) =>
         profiles: PROFILES,
         ready: true,
         requiredLiveInputs: [
-          'admitted-live corpus',
+          'admitted-live corpus with actual clientLocation and networkPath pins',
           'root approval window',
           'SEARCH_PROBE_COOKIE via injected environment',
           'OWNED_TEMP_DIR',
         ],
         runs: RUNS,
         samplesPerProfile: SAMPLES_PER_PROFILE,
+        samplesPerRun: SAMPLES_PER_RUN,
         uncachedProofNeeds: ['genuine request-correlated backend work/cache evidence, independently verified'],
+        workloadSha256: yield* workloadHash(corpus),
       };
       return yield* Console.log(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(readyReport));
     }
@@ -731,8 +899,9 @@ const probe = (ready: boolean, run: boolean) =>
     }
     if (!report.gate) {
       yield* Console.log(
-        'Latency/correctness measured; uncached-work verification remains unknown. This is not an uncached SLO PASS.',
+        'Latency/correctness measured; no-store headers or uncached-work verification are missing. This is not an uncached SLO PASS.',
       );
+      return yield* invalid('The uncached SLO gate is unverified; inspect the preserved report.');
     }
     return yield* Effect.void;
   });

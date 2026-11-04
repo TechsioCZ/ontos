@@ -3,18 +3,12 @@
 import { Effect } from 'effect';
 import { defineRead, defineReadSearchCollectionAuthorization, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { OrderRefSchema } from '../../shared/resources/order.ts';
-import { loadMerchandiseSearch } from '../services/merchandise-search-projection.ts';
+import { loadCurrentMerchandiseSearch, loadMerchandiseSearch } from '../services/merchandise-search-projection.ts';
 import { assertMerchandiseSearchPublished } from './catalog-publication.ts';
 import { OrdersProviderRequestSchema, OrdersProviderResponseSchema } from '../../shared/apis/orders-search.ts';
 
-import type { OrdersProviderRequest, OrdersProviderResponse } from '../../shared/apis/orders-search.ts';
-import type { ReadLoadContext, ReadHandlerUnavailable, CoreSearchQueryRuntime } from '@app/core-runtime';
-
-interface OrdersServices {
-  readonly load: (
-    input: OrdersProviderRequest,
-  ) => Effect.Effect<OrdersProviderResponse, ReadHandlerUnavailable, CoreSearchQueryRuntime>;
-}
+import type { OrdersProviderResponse } from '../../shared/apis/orders-search.ts';
+import type { ReadFinishContext } from '@app/core-runtime';
 
 const MODULE = 'demo.merchandise';
 
@@ -50,19 +44,17 @@ export const ordersRead = defineRead(
     schemaVersion: '1',
   },
   {
-    load: (input, context: ReadLoadContext<OrdersServices>) =>
-      context.services.load(input).pipe(
+    finish: (input, context: ReadFinishContext<undefined, void>) =>
+      loadMerchandiseSearch(context.scope, 'order', input.query, OrderRefSchema, (ids) =>
+        context.transaction((transaction) => loadCurrentMerchandiseSearch(transaction, context.scope, 'order', ids)),
+      ).pipe(
         Effect.map((result) => ({
           evidence: { resultCount: result.length },
           result,
         })),
       ),
+    load: () => Effect.void,
   },
-  (transaction, scope) =>
-    assertMerchandiseSearchPublished(transaction, scope).pipe(
-      Effect.as({
-        load: (input: { readonly query: string }) => loadMerchandiseSearch(scope, 'order', input.query, OrderRefSchema),
-      }),
-    ),
+  (transaction, scope) => assertMerchandiseSearchPublished(transaction, scope),
   () => ({ kind: 'module', moduleId: MODULE }),
 );

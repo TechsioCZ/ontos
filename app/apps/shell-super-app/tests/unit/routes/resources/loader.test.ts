@@ -1,17 +1,11 @@
+import type { CoreSearchPresentationEntry } from '@app/core-runtime/search-contract';
 import { isRedirect } from '@modern-js/plugin-tanstack/runtime';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { beforeEach, expect, it, rstest } from 'effect-rstest';
 
 import { loader } from '../../../../src/routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/resource-page-model.ts';
 import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
-import {
-  AppIdSchema,
-  EntrypointKeySchema,
-  GroupKeySchema,
-  ModuleIdSchema,
-  ShellResourceResponseSchema,
-} from '../../../../shared/api.ts';
-import type { ShellNavigationItem, ShellRecordDestination } from '../../../../shared/api.ts';
+import { ModuleIdSchema, ShellResourceResponseSchema } from '../../../../shared/api.ts';
 
 const { loadHomePageModelMock, resourceDetailMock } = rstest.hoisted(() => ({
   loadHomePageModelMock: rstest.fn(),
@@ -28,58 +22,124 @@ const evaId = 'ea2200ab-4308-491e-8e33-ca3871a8fa55';
 const counterparty = { moduleId: 'party.registry', resourceId: evaId, resourceType: 'party.registry.counterparty' };
 const company = authenticatedShellFixture().selectedLegalEntityId;
 const otherCompany = '20000000-0000-4000-8000-000000000002';
-
-const navigationItem = (moduleId: string, groupKey: string, href: string): ShellNavigationItem => ({
-  appId: AppIdSchema.make('shell-super-app'),
-  enabled: true,
-  entrypointKey: EntrypointKeySchema.make(`${moduleId}.page.agenda`),
-  groupKey: GroupKeySchema.make(groupKey),
-  href,
-  icon: 'icon-[mdi--file-outline]',
-  label: { cs: href, en: href },
-  moduleId: ModuleIdSchema.make(moduleId),
-  order: 0,
-  state: 'active',
-  unavailable: false,
-  writable: true,
-});
-
-/** The Party identity page the party owner declares for its own record type. */
-const partyRecordDestination: ShellRecordDestination = {
-  idParameter: 'partyId',
-  moduleId: ModuleIdSchema.make('party.registry'),
-  resourceType: 'party.registry.party',
-  routePath: '/prodej/strany/:partyId',
-};
-
-/** The composed navigation a loaded Shell document has; the record targets are resolved from it, never repeated. */
-const shell = (recordDestinations: readonly ShellRecordDestination[] = []) => {
-  const fixture = authenticatedShellFixture();
-  const items = [
-    navigationItem('demo.crm', 'shell.navigation.sales', '/crm/klienti'),
-    navigationItem('finance.billing', 'shell.navigation.finance', '/finance'),
-    navigationItem('party.registry', 'shell.navigation.sales', '/prodej/zakaznici'),
-    navigationItem('demo.merchandise', 'shell.navigation.commerce', '/prodej/objednavky'),
-    navigationItem('demo.merchandise', 'shell.navigation.commerce', '/provoz/produkty'),
-    navigationItem('facility.operations', 'shell.navigation.facility', '/provoz/majetek'),
-    navigationItem('property.portfolio', 'shell.navigation.real-estate', '/nemovitosti'),
-    navigationItem('legal.agreements', 'shell.navigation.sales', '/smlouvy'),
-    navigationItem('work.tasks', 'shell.navigation.team', '/ukoly'),
-  ];
-  return {
-    ...fixture,
-    navigation: { ...fixture.navigation, items, moduleIds: items.map(({ moduleId }) => moduleId), recordDestinations },
-  };
-};
-
 const requestFor = (params: typeof counterparty, prefix = 'generic') =>
   new Request(
     `https://shell.example.test/${prefix}/resources/${params.moduleId}/${params.resourceType}/${encodeURIComponent(params.resourceId)}?resourceId=attacker&redirect=https://attacker.test`,
   );
 
+const compositionRevision = authenticatedShellFixture().compositionRevision ?? 'a'.repeat(64);
+const metadata = (key: string, order: number) => ({
+  icon: 'icon-[mdi--file-outline]' as const,
+  key,
+  label: { cs: key, en: key },
+  order,
+});
+
+interface RouteSpec {
+  readonly idEncoding: 'native' | 'selected_company_dot_prefix';
+  readonly idFormat: 'opaque' | 'uuid';
+  readonly kind: 'path' | 'query';
+  readonly ownerModuleId: string;
+  readonly pageKey: string;
+  readonly parameterName: string;
+  readonly resourceType: string;
+  readonly routePath: string;
+}
+
+const routeSpecs: readonly RouteSpec[] = [
+  {
+    idEncoding: 'native',
+    idFormat: 'uuid',
+    kind: 'path',
+    ownerModuleId: 'party.registry',
+    pageKey: 'customers',
+    parameterName: 'id',
+    resourceType: 'party.registry.counterparty',
+    routePath: '/prodej/zakaznici/:id',
+  },
+  {
+    idEncoding: 'selected_company_dot_prefix',
+    idFormat: 'opaque',
+    kind: 'path',
+    ownerModuleId: 'demo.merchandise',
+    pageKey: 'products',
+    parameterName: 'id',
+    resourceType: 'demo.merchandise.product',
+    routePath: '/provoz/produkty/:id',
+  },
+  {
+    idEncoding: 'selected_company_dot_prefix',
+    idFormat: 'opaque',
+    kind: 'query',
+    ownerModuleId: 'demo.merchandise',
+    pageKey: 'orders',
+    parameterName: 'orderId',
+    resourceType: 'demo.merchandise.order',
+    routePath: '/prodej/objednavky',
+  },
+  {
+    idEncoding: 'selected_company_dot_prefix',
+    idFormat: 'opaque',
+    kind: 'query',
+    ownerModuleId: 'facility.operations',
+    pageKey: 'assets',
+    parameterName: 'asset',
+    resourceType: 'facility.operations.asset',
+    routePath: '/provoz/majetek',
+  },
+  {
+    idEncoding: 'native',
+    idFormat: 'opaque',
+    kind: 'query',
+    ownerModuleId: 'work.tasks',
+    pageKey: 'tasks',
+    parameterName: 'resourceId',
+    resourceType: 'work.tasks.task',
+    routePath: '/ukoly',
+  },
+];
+
+/** The Host will attach one detail inventory; the browser reads it structurally and validates every binding. */
+const detailPresentation = (ref: { readonly moduleId: string; readonly resourceType: string }) => {
+  const spec = routeSpecs.find(
+    (candidate) => candidate.ownerModuleId === ref.moduleId && candidate.resourceType === ref.resourceType,
+  );
+  if (spec === undefined) {
+    return null;
+  }
+  const ownerModuleId = Schema.decodeUnknownSync(ModuleIdSchema)(spec.ownerModuleId);
+  const entry: CoreSearchPresentationEntry = {
+    ownerModuleId,
+    presentation: {
+      family: metadata('records', 10),
+      group: metadata('record', 10),
+      record: {
+        pageKey: spec.pageKey,
+        selector: {
+          idEncoding: spec.idEncoding,
+          idFormat: spec.idFormat,
+          kind: spec.kind,
+          parameterName: spec.parameterName,
+        },
+      },
+      scope: 'company',
+    },
+    resourceType: spec.resourceType,
+    searchKey: `${spec.ownerModuleId}.search`,
+  };
+  return {
+    business: { compositionRevision, entries: [entry], schemaVersion: '1' as const },
+    pages: [{ ownerModuleId, pageKey: spec.pageKey, routePath: spec.routePath }],
+  };
+};
+
 beforeEach(() => {
-  loadHomePageModelMock.mockReturnValue(Effect.succeed(shell()));
-  resourceDetailMock.mockImplementation((ref) => Effect.succeed({ outcome: 'detail_not_supported', ref }));
+  loadHomePageModelMock.mockReturnValue(Effect.succeed(authenticatedShellFixture()));
+  resourceDetailMock.mockImplementation((ref) => {
+    const presentation = detailPresentation(ref);
+    const response = { outcome: 'detail_not_supported' as const, ref };
+    return Effect.succeed(presentation === null ? response : { ...response, presentation });
+  });
 });
 
 const rejected = (params: typeof counterparty, prefix = 'generic') =>
@@ -89,15 +149,6 @@ const rejected = (params: typeof counterparty, prefix = 'generic') =>
 
 it.effect.each([
   [counterparty, `/cs/prodej/zakaznici/${evaId}`],
-  [{ moduleId: 'demo.crm', resourceId: evaId, resourceType: 'demo.crm.contact' }, `/cs/crm/klienti?osoba=${evaId}`],
-  [
-    { moduleId: 'finance.billing', resourceId: evaId, resourceType: 'finance.billing.document' },
-    `/cs/finance?documentId=${evaId}`,
-  ],
-  [
-    { moduleId: 'core.identity', resourceId: `${company}.${evaId}`, resourceType: 'core.identity.person' },
-    `/cs/sprava/lide-a-role?person=${company}.${evaId}`,
-  ],
   [
     { moduleId: 'demo.merchandise', resourceId: `${company}.${evaId}`, resourceType: 'demo.merchandise.product' },
     `/cs/provoz/produkty/${evaId}`,
@@ -135,29 +186,6 @@ it.effect('retains the language prefix and never trusts an unrelated legacy quer
   }),
 );
 
-it.effect('opens the Party identity page only when the owner declared that record destination', () =>
-  Effect.gen(function* partyIdentityRedirectsOnlyOnceDeclared() {
-    // The owner page declares the record destination, so the Shell opens the exact identity page.
-    const params = { moduleId: 'party.registry', resourceId: evaId, resourceType: 'party.registry.party' };
-    loadHomePageModelMock.mockReturnValueOnce(Effect.succeed(shell([partyRecordDestination])));
-    const result = yield* rejected(params);
-    expect(isRedirect(result)).toBe(true);
-    expect(result).toMatchObject({ options: { to: `/cs/prodej/strany/${evaId}` } });
-    // Without that declaration the admitted record keeps the Shell record page: no route is guessed from the type.
-    expect(yield* Effect.promise(() => loader({ params, request: requestFor(params) }))).toMatchObject({
-      detailSupport: 'not_supported',
-      state: 'unavailable',
-    });
-    // A namespace-consistent ref of a composed module that does not declare the destination is not an owner record.
-    const forged = { moduleId: 'demo.crm', resourceId: evaId, resourceType: 'demo.crm.product' };
-    resourceDetailMock.mockReturnValueOnce(Effect.succeed({ outcome: 'detail_not_supported', ref: forged }));
-    expect(yield* Effect.promise(() => loader({ params: forged, request: requestFor(forged) }))).toMatchObject({
-      detailSupport: 'not_supported',
-      state: 'unavailable',
-    });
-  }),
-);
-
 it.effect('keeps an admitted English owner link in English', () =>
   Effect.gen(function* englishOwnerRedirect() {
     const result = yield* rejected(counterparty, 'en');
@@ -169,13 +197,11 @@ it('the unsupported wire response carries no guessed name or private detail fiel
   const response = { outcome: 'detail_not_supported', ref: counterparty };
   expect(Schema.decodeUnknownSync(ShellResourceResponseSchema)(response)).toEqual(response);
   expect(
-    Option.isNone(
-      Schema.decodeUnknownOption(ShellResourceResponseSchema, { onExcessProperty: 'error' })({
-        ...response,
-        detail: { fields: [{ label: 'E-mail', value: 'private@example.test' }], title: 'Eva Bílá' },
-      }),
-    ),
-  ).toBe(true);
+    Schema.decodeUnknownOption(ShellResourceResponseSchema, { onExcessProperty: 'error' })({
+      ...response,
+      detail: { fields: [{ label: 'E-mail', value: 'private@example.test' }], title: 'Eva Bílá' },
+    })._tag,
+  ).toBe('None');
 });
 
 it.live.each([
@@ -196,7 +222,7 @@ it.live.each([
 );
 
 it.live.each([
-  { moduleId: 'legal.agreements', resourceId: evaId, resourceType: 'legal.agreements.document' },
+  { ...counterparty, resourceType: 'party.registry.party' },
   { ...counterparty, moduleId: 'demo.crm' },
   { ...counterparty, resourceId: 'malformed' },
   { moduleId: 'future.owner', resourceId: evaId, resourceType: 'future.owner.record' },

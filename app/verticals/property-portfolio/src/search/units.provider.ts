@@ -3,7 +3,12 @@
 import type { ReadPrepareContext, ReadLoadContext } from '@app/core-runtime';
 import type { UnitsProviderRequest, UnitsProviderResponse } from '../../shared/apis/units-search.ts';
 import { Effect, Schema } from 'effect';
-import { ReadHandlerUnavailable, defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import {
+  ReadHandlerUnavailable,
+  defineRead,
+  defineReadSearchCollectionAuthorization,
+  defineTenantModuleEntrypoint,
+} from '@app/core-runtime';
 import { loadOwnerSearch } from './search-read.ts';
 import { UnitsProviderRequestSchema, UnitsProviderResponseSchema } from '../../shared/apis/units-search.ts';
 
@@ -30,6 +35,12 @@ export const unitsRead = defineRead(
     permissionTarget: 'module',
     policies: [],
     readKey: 'property.portfolio.search.units',
+    resultAuthorization: defineReadSearchCollectionAuthorization({
+      items: (result: UnitsProviderResponse) => result,
+      resource: (item) => item.ref,
+      resultSchema: UnitsProviderResponseSchema,
+      withItems: (_result, items) => items,
+    }),
     resultSchema: UnitsProviderResponseSchema,
     schemaVersion: '1',
   },
@@ -57,5 +68,4 @@ export const unitsRead = defineRead(
   },
   () => Effect.succeed({}),
   () => ({ kind: 'module', moduleId: owningModuleKey }),
-  (result) => result.map(({ ref }) => ref),
 );

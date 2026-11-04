@@ -2,6 +2,7 @@
 --arrow-left
 --bank-check
 --cancel
+--cash-multiple
 --cash-plus
 --check-circle-outline
 --clipboard-check-multiple-outline
@@ -19,6 +20,7 @@
 --download
 --email-alert-outline
 --eye-outline
+--file-document-multiple-outline
 --file-download-outline
 --file-image-outline
 --file-multiple-outline
@@ -81,6 +83,7 @@ hidden
 icon-[mdi--arrow-left]
 icon-[mdi--bank-check]
 icon-[mdi--cancel]
+icon-[mdi--cash-multiple]
 icon-[mdi--cash-plus]
 icon-[mdi--check-circle-outline]
 icon-[mdi--clipboard-check-multiple-outline]
@@ -92,6 +95,7 @@ icon-[mdi--dots-vertical]
 icon-[mdi--download]
 icon-[mdi--email-alert-outline]
 icon-[mdi--eye-outline]
+icon-[mdi--file-document-multiple-outline]
 icon-[mdi--file-download-outline]
 icon-[mdi--file-image-outline]
 icon-[mdi--file-multiple-outline]

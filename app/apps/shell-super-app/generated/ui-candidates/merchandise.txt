@@ -5,6 +5,7 @@
 --close
 --delete-outline
 --file-tree-outline
+--handshake-outline
 --image-plus-outline
 --package-down
 --package-variant-closed
@@ -23,6 +24,7 @@ bg-bg-primary-base
 bg-bg-success
 bg-fg-secondary/10
 bg-overlay
+bg-primary/10
 block
 blur
 border
@@ -67,6 +69,7 @@ icon-[mdi--cart-outline]
 icon-[mdi--close]
 icon-[mdi--delete-outline]
 icon-[mdi--file-tree-outline]
+icon-[mdi--handshake-outline]
 icon-[mdi--image-plus-outline]
 icon-[mdi--package-down]
 icon-[mdi--package-variant-closed]

@@ -9,6 +9,9 @@
     "./clients/records": "./src/api/records-consumer.ts",
     "./contracts/apply-command": "./shared/actions/apply-command.ts",
     "./contracts/records": "./shared/apis/records.ts",
+    "./outbox-worker-host": "./src/worker-host/entry.ts",
+    "./outbox/demo-workforce-search-rebuild-requested-v1": "./shared/outbox/demo-workforce-search-rebuild-requested-v1.ts",
+    "./outbox/demo-workforce-search-refresh-requested-v1": "./shared/outbox/demo-workforce-search-refresh-requested-v1.ts",
     "./permissions/demo.workforce.read_all": "./shared/permissions/workforce-read-all.ts",
     "./permissions/demo.workforce.write_all": "./shared/permissions/workforce-write-all.ts",
     "./resources/employee": "./shared/resources/employee.ts",
@@ -16,15 +19,16 @@
     "./Route": "./src/federation-entry.tsx"
   },
   "scripts": {
-    "dev": "node ../../scripts/prepare-dev-module-contract.mts workforce && modern dev",
     "build": "pnpm --dir ../.. exec ultramodern-create ultramodern routes-generate --app workforce --manifest-only && modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical workforce --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app workforce --target dist && modern deploy --skip-build --deploy-target node",
-    "serve": "modern serve",
-    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
-    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
+    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
+    "db:verify": "node scripts/verify-db-schema.mts",
+    "dev": "node ../../scripts/prepare-dev-module-contract.mts workforce && modern dev",
+    "serve": "modern serve",
     "test:unit": "rstest --project unit",
-    "db:verify": "node scripts/verify-db-schema.mts"
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
+    "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {
     "@app/admin-ui": "workspace:*",
@@ -34,6 +38,9 @@
     "@app/shared-design-tokens": "workspace:*",
     "@app/tagging": "workspace:*",
     "@effect/opentelemetry": "4.0.7",
+    "@effect/platform-node": "4.0.7",
+    "@effect/sql-pg": "4.0.7",
+    "@modern-js/backend-federation-contracts": "catalog:ultramodern",
     "@modern-js/bff-effect": "catalog:ultramodern",
     "@modern-js/federation-runtime": "catalog:ultramodern",
     "@modern-js/i18n-integration": "catalog:ultramodern",
@@ -47,15 +54,12 @@
     "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.4",
     "@module-federation/runtime": "npm:@bleedingdev/mf-runtime@2.9.3",
     "@tanstack/react-router": "1.170.39",
+    "@techsio/ui-kit": "catalog:",
+    "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.7",
     "i18next": "26.4.2",
     "react": "19.3.1",
-    "react-dom": "19.3.1",
-    "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "@techsio/ui-kit": "catalog:",
-    "@effect/sql-pg": "4.0.7",
-    "@effect/platform-node": "4.0.7",
-    "@modern-js/backend-federation-contracts": "catalog:ultramodern"
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
     "@effect/tsgo": "0.63.0",

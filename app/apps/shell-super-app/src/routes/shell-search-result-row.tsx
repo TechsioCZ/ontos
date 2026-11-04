@@ -4,8 +4,14 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import type { ComponentProps, ComponentType } from 'react';
 
 import type { ShellSearchResult } from '../../shared/api.ts';
-import { shellSearchResultBadges, shellSearchResultKey, shellSearchTitleSegments } from './shell-search-match.ts';
-import type { ShellSearchLinkTarget } from './shell-search-resource-types.ts';
+import {
+  shellSearchResourceFields,
+  shellSearchResultBadges,
+  shellSearchResultKey,
+  shellSearchTitleSegments,
+} from './shell-search-match.ts';
+import { shellSearchResultTarget } from './shell-search-resource-types.ts';
+import type { ShellSearchPresentationIndex } from './shell-search-resource-types.ts';
 
 type ResultLinkProps = ComponentProps<typeof LocalizedLink>;
 
@@ -33,6 +39,7 @@ export interface ShellSearchResultRowProps {
    * Extra attributes for the record link, such as the palette's keyboard and focus handling. The row owns the link
    * target and the visual classes.
    */
+  readonly index?: ShellSearchPresentationIndex | undefined;
   readonly linkProps?: ShellSearchResultLinkProps;
   readonly presentation?: ShellSearchResultPresentation;
   /** The query the person typed; only the title is highlighted, and only where it really matches. */
@@ -40,11 +47,6 @@ export interface ShellSearchResultRowProps {
   readonly result: ShellSearchResult;
   /** The Shell route link component, passed in so a row never imports a router itself. */
   readonly ResultLink: ShellSearchResultLinkComponent;
-  /**
-   * Where this hit opens, resolved by the caller from the document's composition. The row never guesses a target: an
-   * unresolved hit is the generic Shell record page its caller computed.
-   */
-  readonly target: ShellSearchLinkTarget;
 }
 
 const linkClassName =
@@ -78,54 +80,66 @@ const Title = ({ query, title }: { readonly query: string; readonly title: strin
 );
 
 /**
- * One name for the whole row, in the order the row shows its parts. The title is split into `<mark>` runs for the
- * highlight, and an engine may insert a pause at an element boundary inside a word ("Jana Dvoř áková"); authoring the
- * name from the same parts keeps it exactly the visible record title whatever the match highlights.
- */
-const shellSearchResultAccessibleName = (parts: readonly string[]): string =>
-  parts.filter((part) => part.length > 0).join(' ');
-
-/**
  * One authorized search hit as an ordinary link inside the caller's list: the title with the query highlighted, at
- * most two badges from the owner's own fields, and an optional approved context line. Rows keep the order they are
- * given — the provider decides relevance — and carry no fabricated rank, count or match reason. The link's accessible
- * name is that same title, context line and badges, so a highlight can never change what the row is called.
+ * most two badges from the owner's own fields, an optional approved context line, and the verified matched variant's
+ * own name/SKU when the owner supplied it. Rows keep the order they are given — the provider decides relevance — and
+ * carry no fabricated rank, count, label or match reason.
  */
 export const ShellSearchResultRow = ({
   density = 'comfortable',
+  index,
   linkProps,
   presentation,
   query,
   result,
   ResultLink,
-  target,
 }: ShellSearchResultRowProps) => {
   const { t } = useModernI18n();
-  const badges = shellSearchResultBadges(result).map((badge) => ({ ...badge, label: t(badge.labelKey) }));
-  const context = [presentation?.typeLabel, presentation?.subtitle].filter(
-    (part): part is string => part !== undefined && part.length > 0,
+  const badges = shellSearchResultBadges(result);
+  // The owner-approved resource subtitle appears in this one context line; equal parts are never repeated.
+  const context = [presentation?.typeLabel, presentation?.subtitle, shellSearchResourceFields(result).subtitle].filter(
+    (part, position, all): part is string => part !== undefined && part.length > 0 && all.indexOf(part) === position,
   );
+  const matchedVariant = result.kind === 'resource' ? result.matchedVariant : undefined;
+  const variantName = matchedVariant?.name;
+  const variantSku = matchedVariant?.sku;
+  // A highlight can split a word across DOM nodes. Keep the link name intact while retaining every visible detail.
+  const accessibleLabel = [
+    result.title,
+    ...context,
+    variantName,
+    variantSku,
+    ...badges.map((badge) => t(badge.labelKey)),
+  ]
+    .filter((part): part is string => part !== undefined && part.length > 0)
+    .join(' ');
   return (
     <li data-shell-search-result={shellSearchResultKey(result)}>
       <ResultLink
-        {...target}
+        {...shellSearchResultTarget(result, index)}
         {...linkProps}
-        aria-label={shellSearchResultAccessibleName([result.title, ...context, ...badges.map(({ label }) => label)])}
+        aria-label={accessibleLabel}
         className={`${linkClassName} ${linkPaddingClassName[density]}`}
       >
         <span className="grid min-w-0 gap-50">
           <span className={titleClassName[density]}>
             <Title query={query} title={result.title} />
           </span>
-          {context.length === 0 ? null : (
-            <span className="truncate text-fg-secondary text-xs">{context.join(' · ')}</span>
+          {context.length === 0 && variantName === undefined && variantSku === undefined ? null : (
+            <span className="truncate text-fg-secondary text-xs">
+              {context.join(' · ')}
+              {context.length > 0 && (variantName !== undefined || variantSku !== undefined) ? ' · ' : null}
+              {variantName === undefined ? null : <Title query={query} title={variantName} />}
+              {variantName !== undefined && variantSku !== undefined ? ' · ' : null}
+              {variantSku === undefined ? null : <Title query={query} title={variantSku} />}
+            </span>
           )}
         </span>
         {badges.length === 0 ? null : (
           <span className="flex flex-wrap gap-100 sm:justify-end">
             {badges.map((badge) => (
               <Badge key={badge.key} size="sm" variant={badge.tone}>
-                {badge.label}
+                {t(badge.labelKey)}
               </Badge>
             ))}
           </span>

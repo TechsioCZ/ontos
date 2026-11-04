@@ -207,6 +207,10 @@ export const makePostgresCoreSearchSnapshotBackend = (
         install: (legalEntityId?: string) => Effect.Effect<void, CoreSearchProjectionUnavailableError>,
       ) => Effect.Effect<Value, Error>,
     ) {
+      // A foreign-source label event still refreshes the consuming owner's projection. Its
+      // generation must never advance the producer's namespace. Legacy self-consuming contexts
+      // may omit consumerModuleKey; verified refresh calls may not.
+      const snapshotModuleKey = context.consumerModuleKey ?? context.producerModuleKey;
       const transactionProgram = Effect.fn('CoreSearchSnapshotBackend.transaction')(
         function* runCoreSearchSnapshotTransaction(transaction: CoreTransaction) {
           const installScope = Effect.fn('CoreSearchSnapshotBackend.installScope')(
@@ -242,7 +246,7 @@ export const makePostgresCoreSearchSnapshotBackend = (
             .where(
               and(
                 eq(searchProjectionGenerations.tenantId, context.tenantId),
-                eq(searchProjectionGenerations.sourceModuleKey, context.producerModuleKey),
+                eq(searchProjectionGenerations.sourceModuleKey, snapshotModuleKey),
               ),
             )
             .pipe(Effect.mapError(snapshotDriverError));
@@ -305,7 +309,7 @@ export const makePostgresCoreSearchSnapshotBackend = (
             );
             yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${context.tenantId}, true)`, 'objects');
             // The advisory lock also serializes the first generation, before a row exists.
-            const key = `ontos.search-generation:${context.tenantId}:${context.producerModuleKey}`;
+            const key = `ontos.search-generation:${context.tenantId}:${snapshotModuleKey}`;
             yield* transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`, 'objects');
             const [current] = yield* transaction
               .select({ version: searchProjectionGenerations.generation })
@@ -313,7 +317,7 @@ export const makePostgresCoreSearchSnapshotBackend = (
               .where(
                 and(
                   eq(searchProjectionGenerations.tenantId, context.tenantId),
-                  eq(searchProjectionGenerations.sourceModuleKey, context.producerModuleKey),
+                  eq(searchProjectionGenerations.sourceModuleKey, snapshotModuleKey),
                 ),
               )
               .for('update');
@@ -325,7 +329,7 @@ export const makePostgresCoreSearchSnapshotBackend = (
               .values({
                 eventWatermark: observed.watermark,
                 generation: observed.observedGeneration + 1n,
-                sourceModuleKey: context.producerModuleKey,
+                sourceModuleKey: snapshotModuleKey,
                 tenantId: context.tenantId,
               })
               .onConflictDoUpdate({

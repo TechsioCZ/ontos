@@ -6,8 +6,10 @@
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/party-registry-client.ts",
+    "./api/search-labels-client": "./src/api/search-labels-client.ts",
     "./locales/cs": "./locales/cs/party-registry.json",
     "./locales/en": "./locales/en/party-registry.json",
+    "./outbox-worker-host": "./src/worker-host/entry.ts",
     "./outbox/party-registry-contact-point-added-v1": "./shared/outbox/party-registry-contact-point-added-v1.ts",
     "./outbox/party-registry-contact-point-ended-v1": "./shared/outbox/party-registry-contact-point-ended-v1.ts",
     "./outbox/party-registry-contact-point-updated-v1": "./shared/outbox/party-registry-contact-point-updated-v1.ts",
@@ -31,9 +33,8 @@
     "./resources/party": "./shared/resources/party.ts",
     "./resources/party-contact-point": "./shared/resources/party-contact-point.ts",
     "./resources/party-official-identifier": "./shared/resources/party-official-identifier.ts",
-    "./outbox-worker-host": "./src/worker-host/entry.ts",
-    "./testing/tenant-party-http": "./tests/support/tenant-party-http.ts",
-    "./testing/current-owner-schema": "./tests/support/current-owner-schema.fixture.ts"
+    "./testing/current-owner-schema": "./tests/support/current-owner-schema.fixture.ts",
+    "./testing/tenant-party-http": "./tests/support/tenant-party-http.ts"
   },
   "scripts": {
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical party-registry --target dist && ultramodern-create ultramodern public-surface --app party-registry --target dist && modern deploy --skip-build --deploy-target node",

@@ -4,8 +4,8 @@ import type {
   ContextAccessService,
   TenantModuleState,
 } from '@app/core-runtime';
-import { TenantModuleStateReadUnavailableError } from '@app/core-runtime';
-import { DateTime, Duration, Effect, Schema } from 'effect';
+import { ReadPermissionDenied, TenantModuleStateReadUnavailableError } from '@app/core-runtime';
+import { DateTime, Duration, Effect, Fiber, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -21,6 +21,7 @@ import {
 } from '../../api/modules/shell-resources.ts';
 import type { ShellProviderAssertionIssuer } from '../../api/modules/shell-resources.ts';
 import { makeModuleSearchProviderGateway } from '../../api/modules/shell-search-provider-gateway.ts';
+import { SHELL_SEARCH_REQUEST_BUDGET_MILLIS } from '../../api/modules/shell-governed-search.ts';
 
 const moduleId = 'property.registry';
 const resourceType = 'property.registry.unit';
@@ -173,6 +174,10 @@ const propertyContract = {
 };
 
 const catalog = () => makeInstalledModuleCatalogLoader(makeCompositionSnapshot([propertyContract]));
+const emptyPresentation = {
+  business: { compositionRevision: expect.stringMatching(/^[\da-f]{64}$/u), entries: [], schemaVersion: '1' },
+  pages: [],
+};
 
 const access = (
   moduleDecision: ContextAccessDecision = 'allowed',
@@ -289,7 +294,7 @@ it.effect('search keeps an eligible provider with zero candidates as a successfu
       },
       { search: () => Effect.succeed([]) },
     ).search(context, 'unit');
-    expect(result).toEqual({ partial: false, results: [] });
+    expect(result).toEqual({ partial: false, presentation: emptyPresentation, results: [] });
   }),
 );
 
@@ -298,7 +303,7 @@ it.effect('search filters resource denials and fails closed when an eligible own
     const result = yield* makeShellSearch(dependencies('active', 'allowed', 'denied'), {
       search: () => Effect.succeed([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]),
     }).search(context, ' unit ');
-    expect(result).toEqual({ partial: false, results: [] });
+    expect(result).toEqual({ partial: false, presentation: emptyPresentation, results: [] });
 
     const catalogWithBackupSearch = yield* catalogWithBackup;
     const moduleChecks: (readonly string[])[] = [];
@@ -329,6 +334,92 @@ it.effect('search filters resource denials and fails closed when an eligible own
   }),
 );
 
+for (const phase of ['catalog', 'state', 'module', 'assertion', 'owner', 'resource'] as const) {
+  it.effect(`the request budget includes stalled ${phase} work and never returns successful empty hits`, () =>
+    Effect.gen(function* stalledSearchPhase() {
+      const baseline = dependencies();
+      const installed = yield* baseline.catalog;
+      let entered = false;
+      const stalled = Effect.sync(() => {
+        entered = true;
+      }).pipe(Effect.andThen(Effect.never));
+      let completed = false;
+      const pending = yield* makeShellSearch(
+        {
+          ...baseline,
+          catalog: phase === 'catalog' ? stalled : Effect.succeed(installed),
+          contextAccess: {
+            ...baseline.contextAccess,
+            modules: (input) => (phase === 'module' ? stalled : baseline.contextAccess.modules(input)),
+            resources: (input) => (phase === 'resource' ? stalled : baseline.contextAccess.resources(input)),
+          },
+          issueAssertion: () => (phase === 'assertion' ? stalled : baseline.issueAssertion()),
+          moduleStates: {
+            getTenantModuleStates: (tenant, modules) =>
+              phase === 'state' ? stalled : baseline.moduleStates.getTenantModuleStates(tenant, modules),
+          },
+        },
+        {
+          search: () =>
+            phase === 'owner'
+              ? stalled
+              : Effect.succeed([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]),
+        },
+      )
+        .search(context, 'unit')
+        .pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              completed = true;
+            }),
+          ),
+          Effect.flip,
+          Effect.forkChild,
+        );
+      yield* TestClock.adjust(SHELL_SEARCH_REQUEST_BUDGET_MILLIS);
+      expect(Schema.is(ShellProviderUnavailableError)(yield* Fiber.join(pending))).toBe(true);
+      expect(entered).toBe(true);
+      expect(completed).toBe(false);
+    }),
+  );
+}
+
+it.effect('fresh-assertion retries consume the original request budget instead of extending it', () =>
+  Effect.gen(function* boundedRetry() {
+    const baseline = dependencies();
+    const installed = yield* baseline.catalog;
+    const assertions: string[] = [];
+    let completed = false;
+    const pending = yield* makeShellSearch(
+      { ...baseline, catalog: Effect.succeed(installed) },
+      {
+        search: ({ authorization }) => {
+          assertions.push(authorization);
+          const first = assertions.length === 1;
+          return Effect.sleep(SHELL_SEARCH_REQUEST_BUDGET_MILLIS * 0.6).pipe(
+            Effect.flatMap(() =>
+              first
+                ? Effect.fail(new ShellProviderUnavailableError({}))
+                : Effect.sync(() => {
+                    completed = true;
+                    return [{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }];
+                  }),
+            ),
+          );
+        },
+      },
+    )
+      .search(context, 'unit')
+      .pipe(Effect.flip, Effect.forkChild);
+    yield* TestClock.adjust(SHELL_SEARCH_REQUEST_BUDGET_MILLIS);
+    expect(Schema.is(ShellProviderUnavailableError)(yield* Fiber.join(pending))).toBe(true);
+    expect(assertions).toHaveLength(2);
+    expect(new Set(assertions).size).toBe(2);
+    yield* TestClock.adjust(SHELL_SEARCH_REQUEST_BUDGET_MILLIS);
+    expect(completed).toBe(false);
+  }),
+);
+
 for (const query of ['2026', '90000101', '001', '1']) {
   it.effect(
     `numeric query ${query} retries only the failed owner with a fresh assertion and returns complete hits`,
@@ -352,6 +443,7 @@ for (const query of ['2026', '90000101', '001', '1']) {
         );
         expect(yield* search.search(context, query)).toEqual({
           partial: false,
+          presentation: emptyPresentation,
           results: [{ kind: 'resource', ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }],
         });
         expect(calls.get(backupSearchKey)).toHaveLength(2);
@@ -484,6 +576,7 @@ it.effect(
       expect(calls[1]).not.toHaveProperty('role');
       expect(result).toEqual({
         partial: false,
+        presentation: emptyPresentation,
         results: [
           {
             archived: true,
@@ -500,7 +593,7 @@ it.effect(
         ],
       });
 
-      // With a company selected the tenant-wide provider is not asked: results never come from another company.
+      // A selected company retains canonical tenant access; tenant providers still return no company identity.
       const callsBeforeCompanySearch = calls.length;
       const inCompany = yield* makeShellSearch(
         { ...baseline, catalog: Effect.succeed(partyCatalog) },
@@ -511,8 +604,8 @@ it.effect(
           },
         },
       ).search(context, 'party');
-      expect(inCompany).toEqual({ partial: false, results: [] });
-      expect(calls).toHaveLength(callsBeforeCompanySearch);
+      expect(inCompany).toEqual({ partial: false, presentation: emptyPresentation, results: [] });
+      expect(calls).toHaveLength(callsBeforeCompanySearch + 1);
     }),
 );
 
@@ -560,6 +653,7 @@ it.effect('search discards foreign company and tenant results before checking re
     ).search(context, 'unit');
     expect(result).toEqual({
       partial: false,
+      presentation: emptyPresentation,
       results: [{ kind: 'resource', ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }],
     });
     expect(checked).toEqual(['unit-1']);
@@ -666,10 +760,12 @@ it.effect('Counterparty search preserves both identities, selected scope, roles 
     });
     expect(result).toEqual({
       partial: false,
+      presentation: emptyPresentation,
       results: [{ ...value, kind: 'counterparty', title: 'Canonical Party' }],
     });
     expect(yield* search.search(tenantContext, 'canonical')).toEqual({
       partial: false,
+      presentation: emptyPresentation,
       results: [],
     });
     expect(calls).toHaveLength(1);
@@ -710,7 +806,7 @@ it.effect('treats a missing tenant module-state record as hidden rather than aut
           return Effect.succeed([{ ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }]);
         },
       }).search(context, 'unit'),
-    ).toEqual({ partial: false, results: [] });
+    ).toEqual({ partial: false, presentation: emptyPresentation, results: [] });
     const gateway = {
       detail: () => {
         calls += 1;
@@ -1104,6 +1200,7 @@ it.effect('search issues assertions for the release captured by its single catal
     ).search(context, 'unit');
     expect(result).toEqual({
       partial: false,
+      presentation: emptyPresentation,
       results: [{ kind: 'resource', ref, selectedLegalEntityId: legalEntityId, title: 'Unit 1' }],
     });
     expect(catalogLoads).toBe(1);
@@ -1159,22 +1256,80 @@ it.effect("the search gateway posts to the provider's own BFF route on the appro
   }),
 );
 
-it.effect('the search gateway reads an owner refusal as no readable results and an outage as unavailable', () =>
-  Effect.gen(function* searchGatewayFailsClosed() {
-    const request = yield* providerRequest;
-    let calls = 0;
-    const respondWith = (status: number) =>
-      makeModuleSearchProviderGateway(() =>
+it.effect(
+  'the search gateway preserves owner entrypoint403, successful filtered200 and unavailable failures distinctly',
+  () =>
+    Effect.gen(function* searchGatewayFailsClosed() {
+      const request = yield* providerRequest;
+      let calls = 0;
+      const respondWith = (status: number) =>
+        makeModuleSearchProviderGateway(() =>
+          Effect.sync(() => {
+            calls += 1;
+            return Response.json({ _tag: 'UnitSearchProviderProblem' }, { status });
+          }),
+        );
+      const denied = yield* Effect.flip(respondWith(403).search(request));
+      expect(Schema.is(ReadPermissionDenied)(denied)).toBe(true);
+      expect(JSON.stringify(denied)).not.toContain('UnitSearchProviderProblem');
+      expect(yield* makeModuleSearchProviderGateway(() => Effect.succeed(Response.json([]))).search(request)).toEqual(
+        [],
+      );
+      const outage = yield* Effect.flip(respondWith(503).search(request));
+      expect(Schema.is(ShellProviderUnavailableError)(outage)).toBe(true);
+      const foreign = yield* Effect.flip(respondWith(200).search({ ...request, searchKey: 'party.registry.parties' }));
+      expect(Schema.is(ShellProviderUnavailableError)(foreign)).toBe(true);
+      expect(calls).toBe(2);
+    }),
+);
+
+it.effect(
+  'an admitted search owner entrypoint403 is one attempt and a sanitized overall permission denial, never retried or empty',
+  () =>
+    Effect.gen(function* entrypointRefusalIsForbidden() {
+      let assertions = 0;
+      let ownerCalls = 0;
+      const base = dependencies();
+      const gateway = makeModuleSearchProviderGateway(() =>
         Effect.sync(() => {
-          calls += 1;
-          return Response.json({ _tag: 'UnitSearchProviderProblem' }, { status });
+          ownerCalls += 1;
+          return Response.json({ credential: 'PRIVATE-JWT', privateOwnerDiagnostic: 'DO-NOT-EXPOSE' }, { status: 403 });
         }),
       );
-    expect(yield* respondWith(403).search(request)).toEqual([]);
-    const outage = yield* Effect.flip(respondWith(503).search(request));
-    expect(Schema.is(ShellProviderUnavailableError)(outage)).toBe(true);
-    const foreign = yield* Effect.flip(respondWith(200).search({ ...request, searchKey: 'party.registry.parties' }));
-    expect(Schema.is(ShellProviderUnavailableError)(foreign)).toBe(true);
-    expect(calls).toBe(2);
+      const failure = yield* Effect.flip(
+        makeShellSearch(
+          {
+            ...base,
+            issueAssertion: () => {
+              assertions += 1;
+              return Effect.succeed('Bearer owner-test-assertion');
+            },
+          },
+          gateway,
+        ).search(context, 'Unit'),
+      );
+      expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
+      expect(assertions).toBe(1);
+      expect(ownerCalls).toBe(1);
+      expect(JSON.stringify(failure)).not.toContain('DO-NOT-EXPOSE');
+      expect(JSON.stringify(failure)).not.toContain('PRIVATE-JWT');
+    }),
+);
+
+it.effect('an owner-filtered200 collection remains successful and is not confused with entrypoint403', () =>
+  Effect.gen(function* filteredCollectionIsEmptySuccess() {
+    let ownerCalls = 0;
+    const gateway = makeModuleSearchProviderGateway(() =>
+      Effect.sync(() => {
+        ownerCalls += 1;
+        return Response.json([]);
+      }),
+    );
+    expect(yield* makeShellSearch(dependencies(), gateway).search(context, 'Unit')).toEqual({
+      partial: false,
+      presentation: emptyPresentation,
+      results: [],
+    });
+    expect(ownerCalls).toBe(1);
   }),
 );

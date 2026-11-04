@@ -6,6 +6,7 @@
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/property-portfolio-client.ts",
     "./clients/records": "./src/api/records-client.ts",
+    "./clients/search-labels": "./src/api/search-labels-client.ts",
     "./contracts/apply-command": "./shared/actions/apply-command.ts",
     "./contracts/records": "./shared/apis/records.ts",
     "./outbox/property-portfolio-search-rebuild-requested-v1": "./shared/outbox/property-portfolio-search-rebuild-requested-v1.ts",

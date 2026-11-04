@@ -1,4 +1,6 @@
 import {
+  CoreSearchProjectionStoreLive,
+  CoreSearchQueryRuntimeLive,
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
@@ -37,7 +39,9 @@ import { archiveProjectActionApiLive } from './archive-project-action-server.ts'
 import { createProjectActionApiLive } from './create-project-action-server.ts';
 import { moveProjectActionApiLive } from './move-project-action-server.ts';
 import { projectOwnerCandidatesReadApiLive } from './project-owner-candidates-read-server.ts';
+import { projectsReadApiLive } from './projects-search-server.ts';
 import { readProjectReadApiLive } from './read-project-read-server.ts';
+import { requestSearchRebuildActionApiLive } from './request-search-rebuild-action-server.ts';
 import { unarchiveProjectActionApiLive } from './unarchive-project-action-server.ts';
 import { updateProjectActionApiLive } from './update-project-action-server.ts';
 // </generated-governed-http-handler-imports>
@@ -97,7 +101,14 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   createProjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   moveProjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   projectOwnerCandidatesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  projectsReadApiLive.pipe(
+    GovernedReadLayer.provide(governedReadRuntimeLive),
+    GovernedReadLayer.provide(
+      CoreSearchQueryRuntimeLive.pipe(GovernedReadLayer.provide(CoreSearchProjectionStoreLive)),
+    ),
+  ),
   readProjectReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  requestSearchRebuildActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   unarchiveProjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   updateProjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   // </generated-governed-http-handler-layers>
@@ -110,7 +121,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
     ),
   ),
   // </generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provide(GovernedContextAccessLive),
+  GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
 );
 
 const operationAttributes = (operationContext: OperationContext) => {

@@ -58,6 +58,32 @@ const aiPageKey = 'demo.crm.page.ai';
 
 const moduleKey = 'demo.crm';
 
+const companiesFamily = {
+  icon: 'icon-[mdi--handshake-outline]',
+  key: 'companies',
+  label: { cs: 'Zákazníci a dodavatelé', en: 'Customers and suppliers' },
+  order: 20,
+} as const;
+const peopleFamily = {
+  icon: 'icon-[mdi--account-group-outline]',
+  key: 'people',
+  label: { cs: 'Lidé', en: 'People' },
+  order: 10,
+} as const;
+
+const crmClientGroup = {
+  icon: 'icon-[mdi--account-tie-outline]',
+  key: 'crmClient',
+  label: { cs: 'Klienti', en: 'Clients' },
+  order: 40,
+} as const;
+const crmContactGroup = {
+  icon: 'icon-[mdi--card-account-phone-outline]',
+  key: 'crmContact',
+  label: { cs: 'Kontaktní osoby', en: 'Contact people' },
+  order: 50,
+} as const;
+
 export const crmManifest = defineOntosModuleManifest({
   activation: {
     defaultState: 'inactive',
@@ -391,6 +417,20 @@ export const crmManifest = defineOntosModuleManifest({
             role: 'search',
             scope: 'tenant',
           },
+          presentation: {
+            family: companiesFamily,
+            group: crmClientGroup,
+            record: {
+              pageKey: clientsPageKey,
+              selector: {
+                idEncoding: 'native',
+                idFormat: 'opaque',
+                kind: 'query',
+                parameterName: 'klient',
+              },
+            },
+            scope: 'company',
+          },
           searchKey: 'demo.crm.clients',
         }),
         searchContribution({
@@ -402,6 +442,20 @@ export const crmManifest = defineOntosModuleManifest({
             moduleKey: 'demo.crm',
             role: 'search',
             scope: 'tenant',
+          },
+          presentation: {
+            family: peopleFamily,
+            group: crmContactGroup,
+            record: {
+              pageKey: clientsPageKey,
+              selector: {
+                idEncoding: 'native',
+                idFormat: 'opaque',
+                kind: 'query',
+                parameterName: 'osoba',
+              },
+            },
+            scope: 'company',
           },
           searchKey: 'demo.crm.contacts',
         }),

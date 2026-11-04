@@ -1,6 +1,6 @@
 // Bounded reads over the normalized merchandise tables. Every list is paged and filtered in PostgreSQL; the
 // largest unit a read ever materializes is one page of products (with variants only for detail reads).
-import { and, asc, desc, eq, inArray, like, mapColumnsInSQLToAlias, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, like, mapColumnsInSQLToAlias, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
@@ -22,9 +22,18 @@ import {
   CatalogCategoryIdSchema,
   ProductIdReferenceSchema,
   CategoryNodeSchema,
+  CatalogParameterSchema,
+  ProductVariantSchema,
+  VariantIdSchema,
   VariantSummarySchema,
 } from '../../shared/domain/merchandise-model.ts';
-import type { Order, OrderStatus, ProductRecord, StockMovement } from '../../shared/domain/merchandise-model.ts';
+import type {
+  Order,
+  OrderStatus,
+  ProductRecord,
+  SearchMatch,
+  StockMovement,
+} from '../../shared/domain/merchandise-model.ts';
 import {
   catalogHeads,
   categories,
@@ -38,7 +47,9 @@ import {
   decodeMovementRow,
   decodeOrderDocument,
   hydrateProducts,
+  loadHead,
   MerchandiseStoreFailure,
+  productSearchText,
   query,
   whereScope,
 } from './merchandise-store.ts';
@@ -47,7 +58,7 @@ import { toProductRecord } from './stock-levels.ts';
 import { czkBoundsForMarket } from '../../shared/domain/market-offers.ts';
 import { NO_CATALOG_MARKET } from './market-store.ts';
 import type { CatalogMarketScope, StoredMarket } from './market-store.ts';
-import { productInMarketCurrency } from './market-pricing.ts';
+import { productInMarketCurrency, searchVariantOffer } from './market-pricing.ts';
 import {
   DEFAULT_STOREFRONT_PAGE_SIZE,
   normalizeSearchText,
@@ -446,7 +457,6 @@ const storefrontFilters = (
   catalog: StorefrontCatalogQuery,
   featuredIds: SQL,
   categoryId: ReturnType<typeof categoryIdBySlug> | undefined,
-  words: readonly string[],
 ) => [
   eq(products.archived, false),
   eq(products.active, true),
@@ -460,7 +470,6 @@ const storefrontFilters = (
     ? undefined
     : or(eq(products.categoryId, categoryId), sql`${products.categoryPathIds} @> array[${categoryId}]::text[]`),
   catalog.label === undefined ? undefined : labelFilter(catalog.label),
-  ...containsAll(products.searchText, words),
   catalog.minMinor === undefined ? undefined : sql`coalesce(${products.grossPriceMinor}, 0) >= ${catalog.minMinor}`,
   catalog.maxMinor === undefined ? undefined : sql`coalesce(${products.grossPriceMinor}, 0) <= ${catalog.maxMinor}`,
   catalog.availability === 'in-stock' ? inArray(products.availability, IN_STOCK) : undefined,
@@ -473,6 +482,556 @@ const catalogInCzk = (catalog: StorefrontCatalogQuery, pricing: Option.Option<St
     onNone: () => catalog,
     onSome: (market) => ({ ...catalog, ...czkBoundsForMarket(catalog, market) }),
   });
+
+const SearchVariantRowSchema = Schema.Struct({
+  id: VariantIdSchema,
+  /** Historical inline leaf row; its presentation scalars live in the product document, not in variant rows. */
+  inline: Schema.Boolean,
+  name: Schema.String,
+  parameters: Schema.Array(CatalogParameterSchema),
+  position: Schema.Int,
+  productId: ProductIdReferenceSchema,
+  sku: Schema.OptionFromNullOr(Schema.String),
+});
+type SearchVariantRow = typeof SearchVariantRowSchema.Type;
+
+const parametersText = (parameters: ProductRecord['parameters']) =>
+  (parameters ?? []).map(({ label, unit, value }) => `${label} ${value} ${unit}`).join(' ');
+
+/** Preserve existing storefront substring attribution, independently of catalog all-word inclusion. */
+const searchPlanOf = (product: ProductRecord, rows: readonly SearchVariantRow[], needle: string) => {
+  const exact: SearchVariantRow[] = [];
+  const matching: SearchVariantRow[] = [];
+  for (const row of rows) {
+    const sku = Option.getOrElse(row.sku, () => `${product.sku}-${row.id}`);
+    if (normalizeSearchText(sku) === needle) {
+      exact.push(row);
+    }
+    if (normalizeSearchText(`${sku} ${row.name} ${parametersText(row.parameters)}`).includes(needle)) {
+      matching.push(row);
+    }
+  }
+  const description = (product.description ?? '')
+    .split(/\n\s*\n/u)
+    .find((paragraph) => paragraph.trim() !== '')
+    ?.trim();
+  const productMatches = normalizeSearchText(
+    `${product.name} ${product.sku} ${description ?? product.shortDescription ?? ''} ${parametersText(product.parameters)}`,
+  ).includes(needle);
+  let attributed = matching;
+  if (exact.length > 0) {
+    attributed = exact;
+  } else if (productMatches) {
+    attributed = [];
+  }
+  let kind: SearchMatch['kind'] = 'unattributed';
+  let selected: SearchVariantRow | undefined;
+  if (attributed.length === 1) {
+    kind = 'single';
+    [selected] = attributed;
+  } else if (attributed.length > 1) {
+    kind = 'multiple';
+  } else {
+    if (productMatches) {
+      kind = 'product';
+    }
+    selected = rows.length === 1 ? rows[0] : undefined;
+  }
+  return { count: attributed.length, kind, product, selected };
+};
+type SearchPlan = ReturnType<typeof searchPlanOf>;
+
+// ProductMetadataSchema's canonical maximum; overflow fails closed, never truncates evidence.
+const MAX_PRODUCT_VARIANTS = 1000;
+const VARIANT_SET_OVERFLOW_REASON = 'Stored variant set exceeds the catalog bound';
+const CURRENT_SEARCH_BATCH = 128;
+const CurrentSearchProductSchema = Schema.Struct({
+  id: ProductIdReferenceSchema,
+  legacyVariants: Schema.Array(ProductVariantSchema).check(Schema.isMaxLength(MAX_PRODUCT_VARIANTS)),
+  name: Schema.String,
+  ordinal: Schema.Int,
+  parameters: Schema.Array(CatalogParameterSchema),
+  shortDescription: Schema.String,
+  sku: Schema.String,
+});
+const CurrentSearchVariantSchema = Schema.Struct({
+  attributes: Schema.String,
+  name: Schema.String,
+  parameters: Schema.Array(CatalogParameterSchema),
+  productId: ProductIdReferenceSchema,
+  sku: Schema.OptionFromNullOr(Schema.String),
+});
+
+/**
+ * Exact current inclusion uses the SAME JS normalizer as writes. A finite SQL accent translation or a different
+ * ICU/Unicode casing version is not that contract. Stream only text scalars in bounded candidate batches,
+ * exhaust them BEFORE SQL count/public pagination, and hydrate only the eventual public page.
+ */
+const currentSearchBatch = Effect.fn('MerchandiseQueries.currentSearchBatch')(function* currentSearchBatch(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  filters: readonly (SQL | undefined)[],
+  words: readonly string[],
+  after: Option.Option<number>,
+) {
+  const rows = yield* query(
+    db
+      .select({
+        id: products.id,
+        // Historical inline fallback: project only searchable fields, NEVER full inline variants/history/tier blobs.
+        legacyVariants: sql<unknown>`case when exists(select 1 from ${productVariants} existing
+      where existing.tenant_id = ${scope.tenantId}::uuid and existing.legal_entity_id = ${scope.legalEntityId}::uuid
+        and existing.product_id = ${outerProductId}) then '[]'::jsonb else (
+      select coalesce(jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
+        'active', legacy.value->'active', 'attributes', legacy.value->'attributes',
+        'name', legacy.value->'name', 'parameters', legacy.value->'parameters', 'sku', legacy.value->'sku'))
+        order by legacy.position), '[]'::jsonb)
+      from jsonb_array_elements(coalesce(${products.document}->'variants', '[]'::jsonb))
+        with ordinality legacy(value, position) where legacy.position <= ${MAX_PRODUCT_VARIANTS + 1}) end`,
+        name: products.name,
+        ordinal: products.ordinal,
+        parameters: sql<unknown>`coalesce(${products.document}->'parameters', '[]'::jsonb)`,
+        shortDescription: sql<string>`coalesce(${products.document}->>'shortDescription', '')`,
+        sku: products.sku,
+      })
+      .from(products)
+      .where(
+        and(
+          whereScope(products, scope),
+          ...filters,
+          Option.getOrUndefined(after.pipe(Option.map((ordinal) => gt(products.ordinal, ordinal)))),
+        ),
+      )
+      .orderBy(asc(products.ordinal))
+      .limit(CURRENT_SEARCH_BATCH),
+  );
+  const candidates = yield* Schema.decodeUnknownEffect(Schema.Array(CurrentSearchProductSchema))(rows).pipe(
+    Effect.mapError(storedRowsFailure),
+  );
+  if (candidates.length === 0) {
+    return { after, done: true, ids: [] };
+  }
+  const variantRows = yield* query(
+    db
+      .select({
+        attributes: sql<string>`coalesce(${productVariants.document}->>'attributes', '')`,
+        name: productVariants.name,
+        parameters: sql<unknown>`coalesce(${productVariants.document}->'parameters', '[]'::jsonb)`,
+        productId: productVariants.productId,
+        sku: productVariants.sku,
+      })
+      .from(productVariants)
+      .where(
+        and(
+          whereScope(productVariants, scope),
+          idsFilter(
+            productVariants.productId,
+            candidates.map((product) => product.id),
+          ),
+          eq(productVariants.active, true),
+        ),
+      )
+      .orderBy(asc(productVariants.position))
+      .limit(candidates.length * MAX_PRODUCT_VARIANTS + 1),
+  );
+  const variants = yield* Schema.decodeUnknownEffect(Schema.Array(CurrentSearchVariantSchema))(variantRows).pipe(
+    Effect.mapError(storedRowsFailure),
+  );
+  const grouped = new Map<string, (typeof variants)[number][]>();
+  for (const variant of variants) {
+    const group = grouped.get(variant.productId) ?? [];
+    group.push(variant);
+    grouped.set(variant.productId, group);
+  }
+  if ([...grouped.values()].some((group) => group.length > MAX_PRODUCT_VARIANTS)) {
+    return yield* new MerchandiseStoreFailure({ reason: VARIANT_SET_OVERFLOW_REASON });
+  }
+  const ids = candidates.flatMap((product) => {
+    const normalized = grouped.get(product.id);
+    const text = productSearchText({
+      ...product,
+      variants:
+        normalized === undefined
+          ? product.legacyVariants
+          : normalized.map((variant) => ({
+              attributes: variant.attributes,
+              name: variant.name,
+              parameters: variant.parameters,
+              sku: Option.getOrElse(variant.sku, () => ''),
+            })),
+    });
+    return words.every((word) => text.includes(word)) ? [product.id] : [];
+  });
+  return {
+    after: Option.fromUndefinedOr(candidates.at(-1)?.ordinal),
+    done: candidates.length < CURRENT_SEARCH_BATCH,
+    ids,
+  };
+});
+
+const currentProductInclusion = Effect.fn('MerchandiseQueries.currentProductInclusion')(
+  function* currentProductInclusion(
+    db: MerchandiseDb,
+    scope: StoreScope,
+    filters: readonly (SQL | undefined)[],
+    words: readonly string[],
+  ) {
+    const [head] = yield* query(
+      db
+        .select({ revision: catalogHeads.revision })
+        .from(catalogHeads)
+        .where(
+          and(
+            whereScope(catalogHeads, scope),
+            or(
+              sql`${catalogHeads.bootstrapCheckpoint} is null`,
+              sql`${catalogHeads.bootstrapCheckpoint}->>'status' = 'VERIFIED'`,
+            ),
+          ),
+        )
+        .limit(1),
+    );
+    if (head === undefined) {
+      return yield* new MerchandiseStoreFailure({ reason: 'The storefront catalog is not initialized' });
+    }
+    let after = Option.none<number>();
+    let done = false;
+    const ids: ProductRecord['id'][] = [];
+    yield* Effect.whileLoop({
+      body: () => currentSearchBatch(db, scope, filters, words, after),
+      step: (batch) => {
+        ({ after, done } = batch);
+        ids.push(...batch.ids);
+      },
+      while: () => !done,
+    });
+    // One schema-encoded bound value avoids a parameter ceiling for broad searches, without a result cache.
+    const encodedIds = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(ProductIdReferenceSchema)))(
+      ids,
+    ).pipe(Effect.mapError(storedRowsFailure));
+    const filter =
+      ids.length === 0 ? sql`false` : sql`${products.id} in (select jsonb_array_elements_text(${encodedIds}::jsonb))`;
+    return { filter, revision: head.revision };
+  },
+);
+
+/** Only searchable scalars, not variant documents, stock, prices, histories or tiers of whole groups. */
+const searchVariantRows = Effect.fn('MerchandiseQueries.searchVariantRows')(function* searchVariantRows(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  page: readonly ProductRecord[],
+) {
+  const rows = yield* query(
+    db
+      .select({
+        id: productVariants.variantId,
+        inline: sql<boolean>`false`.as('inline'),
+        name: productVariants.name,
+        parameters: sql<unknown>`coalesce(${productVariants.document}->'parameters', '[]'::jsonb)`,
+        position: productVariants.position,
+        productId: productVariants.productId,
+        sku: productVariants.sku,
+      })
+      .from(productVariants)
+      .where(
+        and(
+          whereScope(productVariants, scope),
+          idsFilter(
+            productVariants.productId,
+            page.map((product) => product.id),
+          ),
+          eq(productVariants.active, true),
+          sql`${productVariants.variantId} is not null`,
+          sql`${productVariants.priceMinor} is not null`,
+        ),
+      )
+      .orderBy(asc(productVariants.position))
+      .limit(page.length * MAX_PRODUCT_VARIANTS + 1),
+  );
+  const decoded = yield* Schema.decodeUnknownEffect(Schema.Array(SearchVariantRowSchema))(rows).pipe(
+    Effect.mapError(storedRowsFailure),
+  );
+  const grouped = new Map<string, SearchVariantRow[]>();
+  for (const row of decoded) {
+    const group = grouped.get(row.productId) ?? [];
+    group.push(row);
+    grouped.set(row.productId, group);
+  }
+  if ([...grouped.values()].some((group) => group.length > MAX_PRODUCT_VARIANTS)) {
+    return yield* new MerchandiseStoreFailure({ reason: VARIANT_SET_OVERFLOW_REASON });
+  }
+  // A product without any normalized variant rows still exposes its historical inline leaf set; the owner hydrator
+  // keeps those inline variants only under the same zero-row condition. Project searchable/leaf scalars only.
+  const legacyRows = yield* query(
+    db
+      .select({
+        productId: products.id,
+        variants: sql<unknown>`case when exists(select 1 from ${productVariants} existing
+      where existing.tenant_id = ${scope.tenantId}::uuid and existing.legal_entity_id = ${scope.legalEntityId}::uuid
+        and existing.product_id = ${outerProductId}) then '[]'::jsonb else (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'id', legacy.value->'id', 'inline', true, 'name', legacy.value->'name',
+        'parameters', case when jsonb_typeof(legacy.value->'parameters') = 'array'
+          then legacy.value->'parameters' else '[]'::jsonb end,
+        'position', (legacy.position - 1)::int, 'productId', ${outerProductId}, 'sku', legacy.value->'sku')
+        order by legacy.position), '[]'::jsonb)
+      from jsonb_array_elements(coalesce(${products.document}->'variants', '[]'::jsonb))
+        with ordinality legacy(value, position)
+      where legacy.position <= ${MAX_PRODUCT_VARIANTS + 1}
+        and jsonb_typeof(legacy.value->'id') = 'string'
+        and jsonb_typeof(legacy.value->'priceMinor') = 'number'
+        and coalesce((legacy.value->>'active')::boolean, true)) end`,
+      })
+      .from(products)
+      .where(
+        and(
+          whereScope(products, scope),
+          idsFilter(
+            products.id,
+            page.map((product) => product.id),
+          ),
+        ),
+      ),
+  );
+  const legacy = yield* Schema.decodeUnknownEffect(
+    Schema.Array(
+      Schema.Struct({
+        productId: ProductIdReferenceSchema,
+        variants: Schema.Array(SearchVariantRowSchema),
+      }),
+    ),
+  )(legacyRows).pipe(Effect.mapError(storedRowsFailure));
+  for (const candidate of legacy) {
+    if (candidate.variants.length > MAX_PRODUCT_VARIANTS) {
+      return yield* new MerchandiseStoreFailure({ reason: VARIANT_SET_OVERFLOW_REASON });
+    }
+    if (candidate.variants.length > 0 && !grouped.has(candidate.productId)) {
+      grouped.set(candidate.productId, [...candidate.variants]);
+    }
+  }
+  return grouped;
+});
+
+const selectedSearchRows = Effect.fn('MerchandiseQueries.selectedSearchRows')(function* selectedSearchRows(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  plans: readonly SearchPlan[],
+) {
+  const pairs = plans.flatMap((plan) => (plan.selected === undefined ? [] : [plan.selected]));
+  if (pairs.length === 0) {
+    return { inlineVariants: [], tiers: [], variants: [] };
+  }
+  const normalizedPairs = pairs.filter((pair) => !pair.inline);
+  const inlinePairs = pairs.filter((pair) => pair.inline);
+  // A variant id is NOT globally unique. Every predicate is a product+position pair, not two independent IN lists.
+  const variants: { readonly document: unknown; readonly productId: string; readonly stockOnHand: number }[] =
+    normalizedPairs.length === 0
+      ? []
+      : yield* query(
+          db
+            .select({
+              document: sql<unknown>`jsonb_strip_nulls(jsonb_build_object(
+      'active', ${productVariants.active}, 'attributes', '', 'id', ${productVariants.variantId},
+      'name', ${productVariants.name}, 'priceMinor', ${productVariants.priceMinor}, 'sku', ${productVariants.sku},
+      'unit', ${productVariants.document}->'unit', 'sourceUnit', ${productVariants.document}->'sourceUnit',
+      'imageSrc', ${productVariants.document}->'imageSrc',
+      'minimumQuantity', ${productVariants.document}->'minimumQuantity',
+      'packageQuantity', ${productVariants.document}->'packageQuantity'))`,
+              productId: productVariants.productId,
+              stockOnHand: productVariants.stockOnHand,
+            })
+            .from(productVariants)
+            .where(
+              and(
+                whereScope(productVariants, scope),
+                eq(productVariants.active, true),
+                sql`${productVariants.variantId} is not null`,
+                sql`${productVariants.priceMinor} is not null`,
+                or(
+                  ...normalizedPairs.map((pair) =>
+                    and(eq(productVariants.productId, pair.productId), eq(productVariants.position, pair.position)),
+                  ),
+                ),
+              ),
+            )
+            .limit(normalizedPairs.length + 1),
+        );
+  if (variants.length !== normalizedPairs.length) {
+    return yield* new MerchandiseStoreFailure({ reason: 'The selected search variants changed during the read' });
+  }
+  const tiers =
+    normalizedPairs.length === 0
+      ? []
+      : yield* query(
+          db
+            .select({
+              minimumQuantity: priceTiers.minimumQuantity,
+              position: priceTiers.position,
+              priceExcludingVatMinor: priceTiers.priceExcludingVatMinor,
+              priceMinor: priceTiers.priceMinor,
+              productId: priceTiers.productId,
+            })
+            .from(priceTiers)
+            .where(
+              and(
+                whereScope(priceTiers, scope),
+                or(
+                  ...normalizedPairs.map((pair) =>
+                    and(eq(priceTiers.productId, pair.productId), eq(priceTiers.variantPosition, pair.position)),
+                  ),
+                ),
+              ),
+            )
+            .orderBy(asc(priceTiers.position)),
+        );
+  // Historical inline leaves are selected by the same product+document-position pair. Only the selected variant's
+  // approved owner scalars and its own tiers are projected; histories, informational siblings and other groups stay out.
+  const encodedPairs =
+    inlinePairs.length === 0
+      ? undefined
+      : yield* Schema.encodeEffect(
+          Schema.fromJsonString(
+            Schema.Array(Schema.Struct({ position: Schema.Int, product_id: ProductIdReferenceSchema })),
+          ),
+        )(inlinePairs.map((pair) => ({ position: pair.position, product_id: pair.productId }))).pipe(
+          Effect.mapError(storedRowsFailure),
+        );
+  const inlineVariants =
+    encodedPairs === undefined
+      ? []
+      : yield* query(
+          db
+            .select({
+              document: sql<unknown>`jsonb_strip_nulls(jsonb_build_object(
+      'active', true, 'attributes', '', 'id', legacy.value->'id',
+      'imageSrc', legacy.value->'imageSrc',
+      'minimumQuantity', legacy.value->'minimumQuantity',
+      'name', legacy.value->'name',
+      'packageQuantity', legacy.value->'packageQuantity',
+      'priceMinor', legacy.value->'priceMinor',
+      'priceTiers', case when jsonb_typeof(legacy.value->'priceTiers') = 'array' then (
+        select coalesce(jsonb_agg(jsonb_build_object(
+          'minimumQuantity', tier.value->'minimumQuantity',
+          'priceExcludingVatMinor', tier.value->'priceExcludingVatMinor',
+          'priceMinor', tier.value->'priceMinor') order by tier.position), '[]'::jsonb)
+        from jsonb_array_elements(legacy.value->'priceTiers') with ordinality tier(value, position)
+      ) end,
+      'sku', legacy.value->'sku',
+      'sourceUnit', legacy.value->'sourceUnit',
+      'unit', legacy.value->'unit'))`,
+              productId: products.id,
+            })
+            .from(sql`jsonb_to_recordset(${encodedPairs}::jsonb) as pair(product_id text, position int)`)
+            .innerJoin(products, sql`${products.id} = pair.product_id`)
+            .crossJoin(
+              sql`jsonb_array_elements(coalesce(${products.document}->'variants', '[]'::jsonb))
+                with ordinality as legacy(value, position)`,
+            )
+            .where(and(whereScope(products, scope), sql`(legacy.position - 1)::int = pair.position`))
+            .limit(inlinePairs.length + 1),
+        );
+  if (inlineVariants.length !== inlinePairs.length) {
+    return yield* new MerchandiseStoreFailure({ reason: 'The selected search variants changed during the read' });
+  }
+  return { inlineVariants, tiers, variants };
+});
+
+const searchMatchOf = Effect.fn('MerchandiseQueries.searchMatchOf')(function* searchMatchOf(
+  plan: SearchPlan,
+  selected: Effect.Success<ReturnType<typeof selectedSearchRows>>,
+  pricing: Option.Option<StoredMarket>,
+): Effect.fn.Return<SearchMatch, MerchandiseStoreFailure> {
+  if (plan.kind === 'multiple') {
+    return { count: plan.count, kind: 'multiple' };
+  }
+  if (plan.selected === undefined) {
+    return { kind: plan.kind === 'product' ? 'product' : 'unattributed' };
+  }
+  const normalized = plan.selected.inline
+    ? undefined
+    : selected.variants.find((variant) => variant.productId === plan.product.id);
+  const inline = plan.selected.inline
+    ? selected.inlineVariants.find((variant) => variant.productId === plan.product.id)
+    : undefined;
+  const document = normalized?.document ?? inline?.document;
+  if (document === undefined) {
+    return yield* new MerchandiseStoreFailure({ reason: 'A selected search variant is missing' });
+  }
+  const decoded = yield* Schema.decodeUnknownEffect(ProductVariantSchema)(document).pipe(
+    Effect.mapError(storedRowsFailure),
+  );
+  const tiers = plan.selected.inline
+    ? []
+    : selected.tiers.flatMap((tier) =>
+        tier.productId === plan.product.id
+          ? [
+              {
+                minimumQuantity: tier.minimumQuantity,
+                priceExcludingVatMinor: tier.priceExcludingVatMinor,
+                priceMinor: tier.priceMinor,
+              },
+            ]
+          : [],
+      );
+  const variant = tiers.length === 0 ? decoded : { ...decoded, priceTiers: tiers };
+  const record = toProductRecord(
+    { ...plan.product, variants: [variant] },
+    {
+      total: plan.product.stockOnHand,
+      // No normalized variant row exists for a historical inline leaf, so the owner hydrator has no stock entry for
+      // it either; let `toProductRecord` derive the same value instead of fabricating a number here.
+      variants:
+        normalized === undefined ? new Map<string, number>() : new Map([[plan.selected.id, normalized.stockOnHand]]),
+    },
+  );
+  const leaf = record.variantRecords?.[0];
+  if (leaf === undefined || leaf.id !== plan.selected.id || !leaf.active) {
+    return yield* new MerchandiseStoreFailure({ reason: 'A selected search variant is no longer sellable' });
+  }
+  const offer = searchVariantOffer(leaf, pricing);
+  return plan.kind === 'single'
+    ? { kind: 'single', variant: offer }
+    : { kind: plan.kind === 'product' ? 'product' : 'unattributed', onlyVariant: offer };
+});
+
+const currentSearchMatches = Effect.fn('MerchandiseQueries.currentSearchMatches')(function* currentSearchMatches(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  page: readonly ProductRecord[],
+  needle: string,
+  pricing: Option.Option<StoredMarket>,
+) {
+  if (needle === '' || page.length === 0) {
+    return new Map<string, SearchMatch>();
+  }
+  const grouped = yield* searchVariantRows(db, scope, page);
+  const plans = page.map((product) => searchPlanOf(product, grouped.get(product.id) ?? [], needle));
+  const selected = yield* selectedSearchRows(db, scope, plans);
+  const matches = yield* Effect.forEach(
+    plans,
+    (plan) => searchMatchOf(plan, selected, pricing).pipe(Effect.map((match) => [plan.product.id, match] as const)),
+    { concurrency: 1 },
+  );
+  return new Map(matches);
+});
+
+const verifySearchRevision = Effect.fn('MerchandiseQueries.verifySearchRevision')(function* verifySearchRevision(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  head: StorefrontHead,
+  needle: string,
+  productCount: number,
+) {
+  if (needle === '' || productCount === 0) {
+    return yield* Effect.void;
+  }
+  // Additional bounded reads must not release evidence mixed across canonical writer revisions.
+  const currentHead = yield* loadHead(db, scope);
+  if (currentHead?.revision !== head.revision) {
+    return yield* new MerchandiseStoreFailure({ reason: 'The catalog changed during the search read' });
+  }
+  return yield* Effect.void;
+});
 
 /**
  * Storefront catalog page: visible products (active, published, not archived), filters AND-ed, relevance or price
@@ -492,7 +1051,9 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
   const categoryId = catalog.categorySlug === undefined ? undefined : categoryIdBySlug(db, scope, catalog.categorySlug);
   const words = wordsOf(catalog.q);
   const needle = normalizeSearchText(catalog.q ?? '');
-  const filters = [...storefrontFilters(catalog, featuredIds, categoryId, words), Option.getOrUndefined(offer)];
+  const baseFilters = [...storefrontFilters(catalog, featuredIds, categoryId), Option.getOrUndefined(offer)];
+  const inclusion = words.length === 0 ? undefined : yield* currentProductInclusion(db, scope, baseFilters, words);
+  const filters = inclusion === undefined ? baseFilters : [...baseFilters, inclusion.filter];
   const nameSku = sql`${products.nameKey} || ' ' || ${products.skuKey}`;
   const relevance =
     words.length === 0
@@ -529,6 +1090,11 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
   if (result.head === null) {
     return yield* new MerchandiseStoreFailure({ reason: 'The storefront catalog is not initialized' });
   }
+  if (inclusion !== undefined && inclusion.revision !== result.head.revision) {
+    return yield* new MerchandiseStoreFailure({ reason: 'The catalog changed during the search read' });
+  }
+  const matches = yield* currentSearchMatches(db, scope, result.products, needle, pricing);
+  yield* verifySearchRevision(db, scope, result.head, needle, result.products.length);
   return {
     head: result.head,
     page,
@@ -540,10 +1106,13 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
           : { ...record, variantRecords: record.variantRecords.filter((variant) => variantIds.has(variant.id)) },
         fields,
       );
-      return Option.match(pricing, {
+      const converted = Option.match(pricing, {
         onNone: () => product,
         onSome: (market) => productInMarketCurrency(product, market),
       });
+      const match = matches.get(record.id);
+      // The singleton was converted separately from its canonical source exactly once; attach AFTER product conversion.
+      return match === undefined ? converted : { ...converted, searchMatch: match };
     }),
     total: result.total,
   };

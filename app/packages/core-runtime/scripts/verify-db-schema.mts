@@ -35,6 +35,9 @@ import {
   principalAuthBindings,
   principals,
   searchIndexEntries,
+  searchDerivedRepairJobs,
+  searchLabelRefreshJobs,
+  searchLabelSourceRevisions,
   searchProjectionGenerations,
   searchProjectionRebuilds,
   tenantModuleStateChanges,
@@ -199,7 +202,14 @@ const verifyRuntimeRole = Effect.gen(function* verifyRuntimeRoleEffect() {
 const verifySearchIsolation = (expectedCorePolicies: ExpectedCorePolicies) =>
   Effect.gen(function* verifySearchIsolationEffect() {
     const database = yield* CoreDatabase;
-    for (const tableName of ['search_index_entries', 'search_projection_generations', 'search_projection_rebuilds']) {
+    for (const tableName of [
+      'search_index_entries',
+      'search_projection_generations',
+      'search_projection_rebuilds',
+      'search_label_source_revisions',
+      'search_label_refresh_jobs',
+      'search_derived_repair_jobs',
+    ]) {
       const searchIsolation = yield* database.executor
         .execute<{
           policy_names: string[];
@@ -746,6 +756,8 @@ const EXPECTED_COMPOSITE_CONSTRAINTS = [
   'core_module_state_changes_tenant_principal_fk',
   'core_outbox_messages_tenant_domain_event_fk',
   'core_search_index_entries_tenant_legal_entity_fk',
+  'core_search_label_refresh_jobs_tenant_legal_entity_fk',
+  'core_search_label_source_revisions_tenant_legal_entity_fk',
 ].toSorted();
 
 const EXPECTED_AUTH_CONSTRAINTS = [
@@ -1021,6 +1033,9 @@ export const verifyCoreDatabaseSchema = (enrollment: DatabaseIdentityEnrollment)
       mediaLinks,
       evidenceReferences,
       searchIndexEntries,
+      searchDerivedRepairJobs,
+      searchLabelRefreshJobs,
+      searchLabelSourceRevisions,
       searchProjectionGenerations,
       searchProjectionRebuilds,
       workerCheckpoints,

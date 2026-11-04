@@ -5,6 +5,7 @@ import {
 import { PgClient } from '@effect/sql-pg';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import {
+  ContextAccessLive,
   CoreSearchProjectionStoreLive,
   CoreSearchQueryRuntimeLive,
   loadDatabaseIdentityConnections,
@@ -459,6 +460,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const searchLayer = PartySearchProjectionGatewayLive.pipe(
             Layer.provide(CoreSearchQueryRuntimeLive),
             Layer.provide(CoreSearchProjectionStoreLive),
+            Layer.merge(ContextAccessLive),
           );
           const searchContext = yield* Layer.build(searchLayer).pipe(
             Effect.provideContext(fixtureContext),

@@ -182,7 +182,7 @@ it.effect('requires tenant and selected company in all three wire schemas', () =
 );
 
 it.effect(
-  'Core checks every result resource after owner loading and denies rows even when the module gate allows',
+  'Core checks every result resource after owner loading and filters denied rows only after agenda admission',
   () =>
     Effect.scoped(
       Effect.gen(function* resourceGate() {
@@ -252,9 +252,24 @@ it.effect(
                 }),
               ),
           );
-          expect(Exit.isSuccess(result)).toBe(decision === 'allowed' && agendaPermission === 'allowed');
+          expect(Exit.isSuccess(result)).toBe(agendaPermission === 'allowed');
+          if (Exit.isSuccess(result)) {
+            expect(result.value.map(({ ref }) => ref.resourceId)).toEqual(
+              decision === 'allowed' ? [hit.ref.resourceId] : [],
+            );
+          }
           expect(loaded).toBe(agendaPermission === 'allowed');
-          expect(resources).toEqual(agendaPermission === 'allowed' ? [hit.ref] : []);
+          expect(resources).toEqual(
+            agendaPermission === 'allowed'
+              ? [
+                  {
+                    moduleId: hit.ref.moduleId,
+                    resourceId: hit.ref.resourceId,
+                    resourceType: hit.ref.resourceType,
+                  },
+                ]
+              : [],
+          );
         }
         return yield* Effect.void;
       }),

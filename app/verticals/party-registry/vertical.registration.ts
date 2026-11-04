@@ -117,6 +117,7 @@ export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
       'party-relationship-detail': () => import('./src/api/party-relationship-detail-client.ts'),
       'person-engagement-profile': () => import('./src/api/person-engagement-profile-client.ts'),
       'privacy-measure-execution': () => import('./src/api/privacy-measure-execution-client.ts'),
+      'search-labels': () => import('./src/api/search-labels-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {

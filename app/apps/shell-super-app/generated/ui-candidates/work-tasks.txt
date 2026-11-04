@@ -1,4 +1,6 @@
+--account-multiple-check-outline
 --check-circle-outline
+--checkbox-marked-circle-outline
 --clipboard-check-outline
 --color-popup-bg
 --pencil-outline
@@ -27,7 +29,9 @@ gap-250
 gap-50
 grow
 hidden
+icon-[mdi--account-multiple-check-outline]
 icon-[mdi--check-circle-outline]
+icon-[mdi--checkbox-marked-circle-outline]
 icon-[mdi--clipboard-check-outline]
 icon-[mdi--pencil-outline]
 icon-[mdi--play-outline]

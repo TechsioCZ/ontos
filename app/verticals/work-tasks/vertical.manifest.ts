@@ -37,6 +37,20 @@ const moduleKey = 'work.tasks';
 const searchEntrypointKey = 'work.tasks.search.tasks';
 const recordsPageKey = 'work.tasks.page.records';
 
+const workFamily = {
+  icon: 'icon-[mdi--account-multiple-check-outline]',
+  key: 'work',
+  label: { cs: 'Lidé a úkoly', en: 'People and tasks' },
+  order: 60,
+} as const;
+
+const taskGroup = {
+  icon: 'icon-[mdi--checkbox-marked-circle-outline]',
+  key: 'task',
+  label: { cs: 'Úkoly', en: 'Tasks' },
+  order: 100,
+} as const;
+
 export const workTasksManifest = defineOntosModuleManifest({
   activation: {
     defaultState: 'inactive',
@@ -158,6 +172,20 @@ export const workTasksManifest = defineOntosModuleManifest({
             moduleKey,
             role: 'search',
             scope: 'tenant',
+          },
+          presentation: {
+            family: workFamily,
+            group: taskGroup,
+            record: {
+              pageKey: recordsPageKey,
+              selector: {
+                idEncoding: 'native',
+                idFormat: 'opaque',
+                kind: 'query',
+                parameterName: 'resourceId',
+              },
+            },
+            scope: 'company',
           },
           searchKey: 'work.tasks.tasks',
         }),

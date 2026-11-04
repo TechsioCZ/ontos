@@ -7,6 +7,9 @@ import { projectsManifest } from './vertical.manifest.ts';
 import { archiveProjectAction } from './src/actions/archive-project.action.ts';
 import { createProjectAction } from './src/actions/create-project.action.ts';
 import { moveProjectAction } from './src/actions/move-project.action.ts';
+import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
+import { refreshSearchWorker } from './src/workers/refresh-search.worker.ts';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 import { unarchiveProjectAction } from './src/actions/unarchive-project.action.ts';
 import { updateProjectAction } from './src/actions/update-project.action.ts';
 // </generated-module-registration-imports>
@@ -17,6 +20,7 @@ export const projectsRegistration = defineVerticalRuntimeRegistration({
     archiveProjectAction,
     createProjectAction,
     moveProjectAction,
+    requestSearchRebuildAction,
     unarchiveProjectAction,
     updateProjectAction,
     // </generated-module-registration-actions>
@@ -43,12 +47,15 @@ export const projectsRegistration = defineVerticalRuntimeRegistration({
     },
     search: {
       // <generated-module-registration-search>
+      projects: () => import('./src/api/projects-search-client.ts'),
       // </generated-module-registration-search>
     },
   },
   manifest: projectsManifest,
   outboxWorkers: [
     // <generated-module-registration-workers>
+    rebuildSearchWorker,
+    refreshSearchWorker,
     // </generated-module-registration-workers>
   ],
 });

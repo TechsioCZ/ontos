@@ -4,6 +4,16 @@ import {
   RequestPeopleSearchRebuildHttpHeadersSchema,
   peopleSearchRebuildHttpPath,
 } from './core-actions/request-people-search-rebuild.ts';
+import {
+  CORE_SEARCH_PRESENTATION_MAX_AGENDA_PAGES,
+  CORE_SEARCH_PRESENTATION_MAX_ENTRIES,
+  coreShellRouteParameterNames,
+  CoreSearchPresentationCatalogSchema,
+  CoreSearchQueryTextSchema,
+  CoreShellPageRoutePathSchema,
+  CoreShellStableKeySchema,
+  CoreSystemSearchPresentationSchema,
+} from '@app/core-runtime/search-contract';
 import { GatewayContextApiGroup } from '@app/shared-contracts';
 import { EmailReceiptsApi } from '@app/email-delivery/receipt-api';
 import { ExternalIdentityApiGroup } from '@app/shared-contracts/external-identity';
@@ -683,15 +693,48 @@ export const ShellSearchRelevanceSchema = Schema.Struct({
   version: Schema.Literal('1'),
 });
 
+/** Local identity and current approved labels, meaningful only under the owner's qualified product ref. */
+export const ShellSearchMatchedVariantSchema = Schema.Struct({
+  id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  name: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(100))),
+  sku: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(64))),
+});
+
+/** Shape/scope check only; the current owner remains responsible for authorizing and verifying the leaf. */
+export const shellSearchMatchedVariantHasQualifiedRef = (value: {
+  readonly ref: typeof ResourceRefSchema.Type;
+  readonly selectedLegalEntityId?: string;
+}): boolean => {
+  if (value.selectedLegalEntityId === undefined) {
+    return false;
+  }
+  const prefix = `${value.selectedLegalEntityId}.`;
+  return (
+    value.ref.tenantId !== undefined &&
+    value.ref.resourceId.startsWith(prefix) &&
+    value.ref.resourceId.length > prefix.length
+  );
+};
+
 const PartyRoleSchema = Schema.Literals(['CUSTOMER', 'SUPPLIER']);
 const ShellSearchResultSchema = Schema.Union([
   Schema.Struct({
+    archived: Schema.optionalKey(Schema.Boolean),
     kind: Schema.Literal('resource'),
+    matchedVariant: Schema.optionalKey(ShellSearchMatchedVariantSchema),
     ref: ResourceRefSchema,
     relevance: Schema.optionalKey(ShellSearchRelevanceSchema),
-    selectedLegalEntityId: LegalEntityIdSchema,
+    selectedLegalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+    /** Owner-approved identifying context only; never raw match terms or private owner fields. */
+    subtitle: Schema.optionalKey(searchTitle),
     title: searchTitle,
-  }),
+  }).check(
+    Schema.makeFilter((result) =>
+      result.matchedVariant === undefined || shellSearchMatchedVariantHasQualifiedRef(result)
+        ? undefined
+        : 'Variant metadata requires a qualified parent ref in the selected company',
+    ),
+  ),
   Schema.Struct({
     archived: Schema.Boolean,
     kind: Schema.Literal('party'),
@@ -728,8 +771,11 @@ const ShellSearchResultSchema = Schema.Union([
 export const ShellSearchPayloadSchema = Schema.Struct({
   compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
   includeArchived: Schema.optionalKey(Schema.Boolean),
-  query: Schema.String.check(Schema.isMaxLength(300)),
-  /** Absent asks every eligible admitted type; an empty list asks none; unknown or unadmitted names are rejected. */
+  query: CoreSearchQueryTextSchema,
+  /**
+   * Absent asks every eligible admitted type; an empty list asks for the release-bound admitted presentation inventory
+   * with no owner dispatch; unknown or unadmitted names are rejected.
+   */
   resourceTypes: Schema.optionalKey(
     Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))).check(
       Schema.isMaxLength(SHELL_SEARCH_MAX_RESOURCE_TYPES),
@@ -738,10 +784,111 @@ export const ShellSearchPayloadSchema = Schema.Struct({
   role: Schema.optionalKey(PartyRoleSchema),
 });
 
+/** Exact captured owner pages, not executable navigation supplied by a result or a browser caller. */
+export const ShellSearchPresentationPageSchema = Schema.Struct({
+  ownerModuleId: ModuleIdSchema,
+  pageKey: CoreShellStableKeySchema,
+  routePath: CoreShellPageRoutePathSchema,
+});
+
+const systemSearchMetadataConflicts = (
+  business: typeof CoreSearchPresentationCatalogSchema.Type,
+  system: typeof CoreSystemSearchPresentationSchema.Type | undefined,
+): boolean => {
+  if (system === undefined) {
+    return false;
+  }
+  return business.entries.some((entry) =>
+    ['family', 'group'].some((key) => {
+      const systemMetadata = key === 'family' ? system.family : system.group;
+      const businessMetadata = key === 'family' ? entry.presentation.family : entry.presentation.group;
+      return (
+        systemMetadata.key === businessMetadata.key &&
+        (systemMetadata.icon !== businessMetadata.icon ||
+          systemMetadata.order !== businessMetadata.order ||
+          systemMetadata.label.cs !== businessMetadata.label.cs ||
+          systemMetadata.label.en !== businessMetadata.label.en)
+      );
+    }),
+  );
+};
+
+/** Shared once per response; record interpreters resolve page keys only inside this captured inventory. */
+export const ShellSearchPresentationInventorySchema = Schema.Struct({
+  business: CoreSearchPresentationCatalogSchema,
+  pages: Schema.Array(ShellSearchPresentationPageSchema).check(
+    Schema.isMaxLength(CORE_SEARCH_PRESENTATION_MAX_ENTRIES * (CORE_SEARCH_PRESENTATION_MAX_AGENDA_PAGES + 1)),
+  ),
+  system: Schema.optionalKey(CoreSystemSearchPresentationSchema),
+})
+  .check(
+    Schema.makeFilter((inventory) => {
+      const pages = new Map(inventory.pages.map((page) => [`${page.ownerModuleId}:${page.pageKey}`, page]));
+      if (pages.size !== inventory.pages.length) {
+        return 'Search presentation pages must have unique owner/page bindings';
+      }
+      if (systemSearchMetadataConflicts(inventory.business, inventory.system)) {
+        return 'Business and system presentation metadata conflicts for a shared key';
+      }
+      const referenced = new Set<string>();
+      for (const entry of inventory.business.entries) {
+        const { record } = entry.presentation;
+        const agendaKeys = entry.presentation.agendaPageKeys ?? [];
+        for (const pageKey of [...agendaKeys, ...(record === undefined ? [] : [record.pageKey])]) {
+          const key = `${entry.ownerModuleId}:${pageKey}`;
+          const page = pages.get(key);
+          if (page === undefined) {
+            return 'Search presentation references an unresolved same-owner page';
+          }
+          referenced.add(key);
+          const parameters = coreShellRouteParameterNames(page.routePath);
+          if (agendaKeys.includes(pageKey) && parameters.length !== 0) {
+            return 'Search agendas must not require record parameters';
+          }
+          if (
+            record?.pageKey === pageKey &&
+            (record.selector.kind === 'path'
+              ? parameters.length !== 1 || parameters[0] !== record.selector.parameterName
+              : parameters.length !== 0)
+          ) {
+            return 'Search selector must match its exact captured page parameters';
+          }
+        }
+      }
+      return referenced.size === pages.size ? undefined : 'Search presentation inventory contains unbound pages';
+    }),
+  )
+  .annotate({ parseOptions: { onExcessProperty: 'error' } });
+export type ShellSearchPresentationInventory = typeof ShellSearchPresentationInventorySchema.Type;
+
 export const ShellSearchResponseSchema = Schema.Struct({
   partial: Schema.Boolean,
+  presentation: Schema.optionalKey(ShellSearchPresentationInventorySchema),
   results: Schema.Array(ShellSearchResultSchema),
-});
+}).check(
+  Schema.makeFilter((response) => {
+    const invalidScope = response.results.some((row) => {
+      if (row.kind !== 'resource') {
+        return false;
+      }
+      const entries =
+        response.presentation?.business.entries.filter(
+          (entry) => entry.ownerModuleId === row.ref.moduleId && entry.resourceType === row.ref.resourceType,
+        ) ?? [];
+      const invalidTenant =
+        row.selectedLegalEntityId === undefined
+          ? row.ref.tenantId === undefined ||
+            entries.length === 0 ||
+            entries.some((entry) => entry.presentation.scope !== 'tenant')
+          : entries.some((entry) => entry.presentation.scope === 'tenant');
+      const invalidRefinement =
+        row.matchedVariant !== undefined &&
+        !entries.some((entry) => entry.presentation.refinement?.kind === 'matched_variant');
+      return invalidTenant || invalidRefinement;
+    });
+    return invalidScope ? 'Resource scope or refinement is not declared by the exact captured provider' : undefined;
+  }),
+);
 
 export const ShellResourceDetailFieldSchema = Schema.Struct({
   label: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
@@ -763,6 +910,7 @@ export const ShellResourceDetailResponseSchema = Schema.Struct({
     enabled: Schema.Boolean,
     reason: Schema.Literals(['absent', 'available', 'forbidden', 'read_only', 'unavailable']),
   }),
+  presentation: Schema.optionalKey(ShellSearchPresentationInventorySchema),
   projectionLagging: Schema.Boolean,
   ref: ResourceRefSchema,
   timeline: Schema.Array(ShellTimelineEntrySchema),
@@ -773,6 +921,7 @@ export const ShellResourceResponseSchema = Schema.Union([
   ShellResourceDetailResponseSchema,
   Schema.Struct({
     outcome: Schema.Literal('detail_not_supported'),
+    presentation: Schema.optionalKey(ShellSearchPresentationInventorySchema),
     ref: ResourceRefSchema,
   }),
 ]);

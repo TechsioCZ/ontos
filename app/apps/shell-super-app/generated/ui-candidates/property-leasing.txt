@@ -10,6 +10,8 @@
 --file-document-outline
 --file-sign
 --home-account
+--home-city-outline
+--key-chain-variant
 --office-building-outline
 --receipt-text-outline
 bg-base
@@ -24,6 +26,8 @@ icon-[mdi--door]
 icon-[mdi--file-document-outline]
 icon-[mdi--file-sign]
 icon-[mdi--home-account]
+icon-[mdi--home-city-outline]
+icon-[mdi--key-chain-variant]
 icon-[mdi--office-building-outline]
 icon-[mdi--receipt-text-outline]
 inline

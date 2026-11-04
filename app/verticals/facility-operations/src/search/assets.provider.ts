@@ -2,7 +2,7 @@
 // @ontos-contribution-kind search-provider
 import { Effect } from 'effect';
 import type { CoreSearchQueryRuntime, ReadLoadContext, ReadHandlerUnavailable } from '@app/core-runtime';
-import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineRead, defineReadSearchCollectionAuthorization, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { loadFacilitySearch } from './search-read.ts';
 import { AssetRefSchema } from '../../shared/resources/asset.ts';
 import { AssetsProviderRequestSchema, AssetsProviderResponseSchema } from '../../shared/apis/assets-search.ts';
@@ -38,6 +38,12 @@ export const assetsRead = defineRead(
     permissionTarget: 'module',
     policies: [],
     readKey: 'facility.operations.search.assets',
+    resultAuthorization: defineReadSearchCollectionAuthorization({
+      items: (result: AssetsProviderResponse) => result,
+      resource: (item) => item.ref,
+      resultSchema: AssetsProviderResponseSchema,
+      withItems: (_result, items) => items,
+    }),
     resultSchema: AssetsProviderResponseSchema,
     schemaVersion: '1',
   },
@@ -55,5 +61,4 @@ export const assetsRead = defineRead(
       load: (input: AssetsProviderRequest) => loadFacilitySearch(scope, 'asset', input.query, AssetRefSchema),
     }),
   () => ({ kind: 'module', moduleId: moduleKey }),
-  (result) => result.map(({ ref }) => ref),
 );

@@ -13,6 +13,7 @@ import { AssetsSearchApi } from './apis/assets-search.ts';
 import { PropertiesSearchApi } from './apis/properties-search.ts';
 import { RecordsApi } from './apis/records.ts';
 import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
+import { SearchLabelsApi } from './apis/search-labels.ts';
 import { UnitsSearchApi } from './apis/units-search.ts';
 // </generated-governed-http-api-imports>
 
@@ -40,6 +41,7 @@ export const propertyPortfolioApi = HttpApi.make('PropertyPortfolioApi')
   .addHttpApi(PropertiesSearchApi)
   .addHttpApi(RecordsApi)
   .addHttpApi(RequestSearchRebuildActionApi)
+  .addHttpApi(SearchLabelsApi)
   .addHttpApi(UnitsSearchApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })

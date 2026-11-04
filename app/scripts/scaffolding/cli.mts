@@ -12,6 +12,7 @@ import actionHttpGenerator from './action-http/scaffold.mts';
 import actionServiceGenerator from './action-service/scaffold.mts';
 import actionGenerator from './action/scaffold.mts';
 import externalHttpAdapterGenerator from './external-http-adapter/scaffold.mts';
+import labelHeadGenerator from './label-head/scaffold.mts';
 import actionBoundaryGenerator from './microvertical-action-boundary/scaffold.mts';
 import microverticalPageGenerator from './microvertical-page/scaffold.mts';
 import moduleApiGenerator from './module-api/scaffold.mts';
@@ -26,6 +27,7 @@ import resourceGenerator from './resource/scaffold.mts';
 import retireContributionGenerator from './retire-contribution/scaffold.mts';
 import searchProviderAccessGenerator from './search-provider-access/generator.mts';
 import searchProviderGenerator from './search-provider/scaffold.mts';
+import { SearchTenantPermissionSchema } from './shared.mts';
 import type {
   ActionScaffoldConfig,
   ActionScaffoldResult,
@@ -56,6 +58,8 @@ import type {
   GovernedContributionScaffoldConfig,
   CoreReadScaffoldConfig,
   GovernedContributionScaffoldResult,
+  LabelHeadScaffoldConfig,
+  LabelHeadScaffoldResult,
   SearchProviderAccessScaffoldConfig,
   SearchProviderAccessScaffoldResult,
 } from './shared.mts';
@@ -65,6 +69,7 @@ const scaffoldCommandValues = [
   'action-http',
   'action-service',
   'external-http-adapter',
+  'label-head',
   'microvertical-action-boundary',
   'microvertical-page',
   'module-contract',
@@ -85,6 +90,7 @@ const ACCESS_FILTERING_FLAG = 'access-filtering';
 const LEGAL_ENTITY_SCOPE_FLAG = 'legal-entity-scope';
 const REQUEST_FILTERS_FLAG = 'request-filters';
 const TENANT_PERMISSION_FLAG = 'tenant-permission';
+const RESOURCE_TYPE_FLAG = 'resource-type';
 
 export const ScaffoldCommandSchema = Schema.Literals(scaffoldCommandValues);
 export type ScaffoldCommand = typeof ScaffoldCommandSchema.Type;
@@ -102,6 +108,7 @@ type GeneratorResult =
   | ExternalHttpAdapterScaffoldResult
   | ModuleContractScaffoldResult
   | GovernedContributionScaffoldResult
+  | LabelHeadScaffoldResult
   | OutboxScaffoldResult
   | OutboxWorkerScaffoldResult
   | PageScaffoldResult
@@ -120,6 +127,7 @@ type GeneratorConfig =
   | ModuleContractScaffoldConfig
   | GovernedContributionScaffoldConfig
   | CoreReadScaffoldConfig
+  | LabelHeadScaffoldConfig
   | OutboxScaffoldConfig
   | OutboxWorkerScaffoldConfig
   | PageScaffoldConfig
@@ -168,6 +176,7 @@ interface ParsedScaffoldFlags {
   readonly provisioning: string | undefined;
   readonly requestFilters: string | undefined;
   readonly resource: string | undefined;
+  readonly resourceType: string | undefined;
   readonly scope: string | undefined;
   readonly service: string | undefined;
   readonly tenantPermission: string | undefined;
@@ -306,6 +315,13 @@ const defaultRouteRefresh = ({ appId, workspaceRoot }: RouteRefreshInput) =>
     }
     return yield* Effect.void;
   });
+
+const refreshRoutes = (options: RunScaffoldOptions, input: RouteRefreshInput) => {
+  if (options.routeRefresh === undefined) {
+    return defaultRouteRefresh(input);
+  }
+  return options.routeRefresh(input);
+};
 
 const LegalEntityScope = Schema.Literals(['required', 'optional', 'forbidden']);
 const isLegalEntityScope = Schema.is(LegalEntityScope);
@@ -475,6 +491,29 @@ Example:
         vertical: flags.vertical ?? '',
       }),
   }),
+  'label-head': defineCommand({
+    flags: ['name', 'vertical'],
+    generator: labelHeadGenerator,
+    help: `Usage: pnpm scaffold:label-head -- --vertical <vertical> --name <name>
+
+Generate owner-local retained label-head persistence: a canonical-reference, publication-revision
+and available/withdrawn contract, a schema starting point, a least-privilege migration declaration,
+an owner-local service starting point and a database verifier.
+
+Required flags:
+  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
+  --name <name>          Label-head name (lower-kebab-case)
+
+Options:
+  --help                 Show this help without writing
+`,
+    requiredFlags: ['name', 'vertical'],
+    toConfig: (flags) =>
+      Effect.succeed({
+        name: flags.name ?? '',
+        vertical: flags.vertical ?? '',
+      }),
+  }),
   'microvertical-action-boundary': defineCommand({
     flags: ['vertical'],
     generator: actionBoundaryGenerator,
@@ -492,21 +531,14 @@ Options:
     toConfig: (flags) => Effect.succeed({ vertical: flags.vertical ?? '' }),
   }),
   'microvertical-page': defineCommand({
-    afterGenerate: (result, options, workspaceRoot) => {
-      const refresh = (input: RouteRefreshInput) => {
-        if (options.routeRefresh === undefined) {
-          return defaultRouteRefresh(input);
-        }
-        return options.routeRefresh(input);
-      };
-      return Effect.gen(function* refreshGeneratedPagesEffect() {
+    afterGenerate: (result, options, workspaceRoot) =>
+      Effect.gen(function* refreshGeneratedPagesEffect() {
         if (!('appId' in result) || !Predicate.isString(result.appId)) {
           return yield* failScaffolding('microvertical-page generator returned an invalid result');
         }
-        yield* refresh({ appId: result.appId, workspaceRoot });
+        yield* refreshRoutes(options, { appId: result.appId, workspaceRoot });
         return yield* Effect.void;
-      });
-    },
+      }),
     flags: ['authorization', LEGAL_ENTITY_SCOPE_FLAG, 'page', 'permission', 'url', 'vertical'],
     generator: microverticalPageGenerator,
     help: `Usage: pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page> --authorization <public|authenticated_principal|context_permission> [--permission <permission>] [--url <url>] [--legal-entity-scope optional]
@@ -858,11 +890,12 @@ Options:
       }),
   }),
   'search-provider': defineCommand({
-    flags: ['authorization', 'name', 'permission', 'resource', 'vertical'],
+    flags: ['authorization', 'name', 'permission', 'resource', RESOURCE_TYPE_FLAG, 'vertical'],
     generator: searchProviderGenerator,
-    help: `Usage: pnpm scaffold:search-provider -- --vertical <vertical> --name <name> --resource <resource> --authorization <authenticated_principal|context_permission> [--permission <permission>]
+    help: `Usage: pnpm scaffold:search-provider -- --vertical <vertical> --name <name> --resource <resource> --authorization <authenticated_principal|context_permission> [--permission <permission>] [--resource-type <full-resource-type>]
 
 Generate one owner-local search provider with a generated Effect adapter and safe Shell binding.
+Optional --resource-type <full-resource-type> selects the exact declared key; the default <moduleId>.<resource> must also be declared.
 
 Required flags:
   --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
@@ -878,12 +911,13 @@ Options:
     toConfig: (flags) =>
       Effect.gen(function* searchProviderConfigEffect() {
         const authorization = yield* requireReadAuthorization(flags);
-        return {
+        const config: GovernedContributionScaffoldConfig = {
           ...authorization,
           name: flags.name ?? '',
           resource: flags.resource ?? '',
           vertical: flags.vertical ?? '',
         };
+        return flags.resourceType === undefined ? config : { ...config, resourceType: flags.resourceType };
       }),
   }),
   'search-provider-access': defineCommand({
@@ -896,7 +930,7 @@ Options:
       'vertical',
     ],
     generator: searchProviderAccessGenerator,
-    help: `Usage: pnpm scaffold:search-provider-access -- --vertical <vertical> --name <name> --legal-entity-scope <required|optional> --access-filtering <resource_permission|tenant_scope> --request-filters <includeArchived[,role]> [--tenant-permission read_party_identity]
+    help: `Usage: pnpm scaffold:search-provider-access -- --vertical <vertical> --name <name> --legal-entity-scope <required|optional> --access-filtering <resource_permission|tenant_scope> --request-filters <includeArchived[,role]> [--tenant-permission <access|read_party_identity>]
 
 Safely update only Codesmith-owned access metadata and request filters for an existing search provider.
 
@@ -908,7 +942,7 @@ Required flags:
   --request-filters <filters>    Comma-separated includeArchived and role allowlist
 
 Options:
-  --tenant-permission read_party_identity  Required exactly for tenant_scope
+  --tenant-permission <access|read_party_identity>  Required exactly for tenant_scope (optional legal-entity scope)
   --help                                  Show this help without writing
 `,
     requiredFlags: [ACCESS_FILTERING_FLAG, LEGAL_ENTITY_SCOPE_FLAG, 'name', REQUEST_FILTERS_FLAG, 'vertical'],
@@ -925,8 +959,8 @@ Options:
         if (!filters.every(isRequestFilter)) {
           return yield* failScaffolding('--request-filters may contain only includeArchived and role');
         }
-        if (tenantPermission !== undefined && tenantPermission !== 'read_party_identity') {
-          return yield* failScaffolding('--tenant-permission must be read_party_identity');
+        if (tenantPermission !== undefined && !Schema.is(SearchTenantPermissionSchema)(tenantPermission)) {
+          return yield* failScaffolding('--tenant-permission must be access or read_party_identity');
         }
         const validatedFilters = filters.filter(isRequestFilter);
         const config: SearchProviderAccessScaffoldConfig = {
@@ -936,7 +970,7 @@ Options:
           requestFilters: validatedFilters,
           vertical: flags.vertical ?? '',
         };
-        if (tenantPermission !== undefined) {
+        if (Schema.is(SearchTenantPermissionSchema)(tenantPermission)) {
           return { ...config, tenantPermission };
         }
         return config;
@@ -1024,6 +1058,7 @@ const parseFlags = (
       provisioning: parsed.get('provisioning'),
       requestFilters: parsed.get(REQUEST_FILTERS_FLAG),
       resource: parsed.get('resource'),
+      resourceType: parsed.get(RESOURCE_TYPE_FLAG),
       scope: parsed.get('scope'),
       service: parsed.get('service'),
       tenantPermission: parsed.get(TENANT_PERMISSION_FLAG),
@@ -1073,6 +1108,7 @@ const cliFlags = {
   provisioning: optionalTextFlag('provisioning'),
   requestFilters: optionalTextFlag(REQUEST_FILTERS_FLAG),
   resource: optionalTextFlag('resource'),
+  resourceType: optionalTextFlag(RESOURCE_TYPE_FLAG),
   scope: optionalTextFlag('scope'),
   service: optionalTextFlag('service'),
   tenantPermission: optionalTextFlag(TENANT_PERMISSION_FLAG),

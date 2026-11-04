@@ -3,7 +3,7 @@
 import { Option } from 'effect';
 import type { MarketId, MarketPricing, OrderMarket, StorefrontMarket } from '../../shared/domain/market-offers.ts';
 import { convertGrossMinor } from '../../shared/domain/market-offers.ts';
-import type { ProductRecord, VariantRecord } from '../../shared/domain/merchandise-model.ts';
+import type { ProductRecord, SearchVariantOffer, VariantRecord } from '../../shared/domain/merchandise-model.ts';
 
 type PriceTiers = NonNullable<ProductRecord['priceTiers']>;
 
@@ -23,6 +23,62 @@ const variantIn = (variant: VariantRecord, pricing: MarketPricing): VariantRecor
   return variant.priceTiers === undefined
     ? converted
     : { ...converted, priceTiers: tiersIn(variant.priceTiers, pricing) };
+};
+
+/** Match the storefront's minimum-key deduplication and displayed-gross tier lookup AFTER conversion. */
+const displayNetOf = (variant: VariantRecord) => {
+  if (variant.grossPriceMinor <= 0 || variant.priceMinor <= 0) {
+    return Option.none<number>();
+  }
+  const tiers = [
+    {
+      minimumQuantity: variant.minimumQuantity ?? 1,
+      priceExcludingVatMinor: variant.priceMinor,
+      priceMinor: variant.grossPriceMinor,
+    },
+    ...(variant.priceTiers ?? []).filter((tier) => tier.priceMinor > 0),
+  ];
+  return Option.fromUndefinedOr(
+    [...new Map(tiers.map((tier) => [tier.minimumQuantity, tier] as const)).values()]
+      .toSorted((left, right) => left.minimumQuantity - right.minimumQuantity)
+      .find((tier) => tier.priceMinor === variant.grossPriceMinor)?.priceExcludingVatMinor,
+  );
+};
+
+/** Canonical CZK singleton -> one market-priced offer. Call once, before attaching it to the public product. */
+export const searchVariantOffer = (
+  source: VariantRecord,
+  pricing: Option.Option<MarketPricing>,
+): SearchVariantOffer => {
+  const variant = Option.match(pricing, { onNone: () => source, onSome: (market) => variantIn(source, market) });
+  let offer: SearchVariantOffer = {
+    availability: variant.availability,
+    currency: Option.match(pricing, { onNone: () => 'CZK', onSome: (market) => market.currency }),
+    grossPriceMinor: variant.grossPriceMinor,
+    id: variant.id,
+    name: variant.name,
+    priceMinor: variant.priceMinor,
+    sku: variant.sku,
+    stockOnHand: variant.stockOnHand,
+    unit: variant.unit ?? variant.sourceUnit ?? 'ks',
+  };
+  const displayPriceExcludingVatMinor = displayNetOf(variant);
+  if (Option.isSome(displayPriceExcludingVatMinor)) {
+    offer = { ...offer, displayPriceExcludingVatMinor: displayPriceExcludingVatMinor.value };
+  }
+  if (variant.imageSrc !== undefined) {
+    offer = { ...offer, imageSrc: variant.imageSrc };
+  }
+  if (variant.minimumQuantity !== undefined) {
+    offer = { ...offer, minimumQuantity: variant.minimumQuantity };
+  }
+  if (variant.packageQuantity !== undefined) {
+    offer = { ...offer, packageQuantity: variant.packageQuantity };
+  }
+  if (variant.sourceUnit !== undefined) {
+    offer = { ...offer, sourceUnit: variant.sourceUnit };
+  }
+  return offer;
 };
 
 /**

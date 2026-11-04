@@ -150,7 +150,6 @@ const record: CustomerDetailPageRecord = {
   identity: { status: 'ready', value: identity },
   now: DateTime.makeUnsafe(instant),
 };
-
 const endedIdentifier = {
   identifierType: 'ICO' as const,
   namespace: 'CZ:ICO',

@@ -2,10 +2,16 @@
 // a fresh company scope, then the bounded SQL reads are asserted.
 import { randomUUID } from 'node:crypto';
 
+import { loadDatabaseConnectionPair } from '@app/core-runtime';
+import { and, eq, sql } from 'drizzle-orm';
 import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabase,
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 
 import {
   MerchandiseCommandSchema,
@@ -28,6 +34,13 @@ import {
   storefrontCustomerOrders,
   storefrontProducts,
 } from '../../src/services/merchandise-queries.ts';
+import {
+  catalogHeads,
+  merchandiseRelations,
+  priceTiers,
+  productVariants,
+  products,
+} from '../../src/database/schema.ts';
 import { resetToAkrosBaseline } from '../../src/services/akros-demo-reset.ts';
 import { applyMarketCommand } from '../../src/services/market-commands.ts';
 import {
@@ -38,10 +51,23 @@ import {
   marketExceptionPage,
   productMarketRows,
 } from '../../src/services/market-store.ts';
-import { loadHead, loadWorkingSet, persistChange } from '../../src/services/merchandise-store.ts';
+import {
+  loadHead,
+  loadWorkingSet,
+  persistChange,
+  productSearchText,
+  whereScope,
+} from '../../src/services/merchandise-store.ts';
+import type { MerchandiseDb, StoreScope } from '../../src/services/merchandise-store.ts';
 import { evolveMerchandiseState, workingSetRequestOf } from '../../src/services/persistence.service.ts';
 import type { MerchandiseFixture } from './support/merchandise-database.ts';
-import { catalogInput, catalogState, decodeState, withMerchandise } from './support/merchandise-database.ts';
+import {
+  catalogInput,
+  catalogState,
+  decodeState,
+  encodeState,
+  withMerchandise,
+} from './support/merchandise-database.ts';
 
 type RecordsViewInput = typeof RecordsViewSchema.Encoded;
 type StorefrontCatalogQueryInput = typeof StorefrontCatalogQuerySchema.Encoded;
@@ -296,6 +322,256 @@ it.live('ignores diacritics and word order and searches parameters', () =>
     }),
   ),
 );
+
+const searchVariant = (key: string, activity: Option.Option<boolean> = Option.none()) => {
+  const variant = {
+    attributes: `attribute-${key}`,
+    id: `variant-${key}`,
+    name: `name-${key}`,
+    parameters: [{ label: `label-${key}`, unit: `unit-${key}`, value: `value-${key}` }],
+    priceMinor: 100,
+    sku: `SKU-${key}`,
+  };
+  return Option.match(activity, { onNone: () => variant, onSome: (active) => ({ ...variant, active }) });
+};
+
+const variantSearchState = decodeState({
+  ...catalogInput,
+  products: [
+    {
+      ...catalogInput.products[0],
+      variants: [
+        searchVariant('enabled', Option.some(true)),
+        searchVariant('legacy'),
+        searchVariant('disabled', Option.some(false)),
+        // Active informational text remains searchable; activity is not a new price/identity requirement.
+        { attributes: 'informational-legacy', name: 'Informational' },
+      ],
+    },
+  ],
+});
+
+it.live('search excludes inactive-only variant SKU, name, attributes and parameter text in card and full reads', () =>
+  withMerchandise(variantSearchState, (fixture) =>
+    Effect.gen(function* inactiveVariantSearch() {
+      for (const q of [
+        'SKU-disabled',
+        'name-disabled',
+        'attribute-disabled',
+        'label-disabled',
+        'value-disabled',
+        'unit-disabled',
+      ]) {
+        for (const fields of ['card', 'full'] as const) {
+          const page = yield* catalogPage(fixture, { fields, q });
+          expect([page.total, staffProductIds(page)]).toEqual([0, []]);
+        }
+        const staff = yield* staffProducts(fixture.db, fixture.scope, { search: q, summary: true }, false);
+        expect(staffProductPageSummary(staff)).toEqual([0, []]);
+      }
+      // A product-level word cannot rescue an inactive-only word in an AND search.
+      expect(yield* idsOf(fixture, { q: 'ŠROUB SKU-disabled' })).toEqual([]);
+      // Inactive variants still exist for owner detail/history; search must not delete them.
+      const detail = yield* catalogPage(fixture, { productIds: ['p1'] });
+      expect(detail.products[0]?.variantRecords?.map((variant) => [variant.id, variant.active])).toEqual([
+        ['variant-enabled', true],
+        ['variant-legacy', true],
+        ['variant-disabled', false],
+      ]);
+    }),
+  ),
+);
+
+it.live(
+  'search treats explicit active and unset variants alike without changing informational or product matches',
+  () =>
+    withMerchandise(variantSearchState, (fixture) =>
+      Effect.gen(function* activeAndUnsetVariantSearch() {
+        for (const key of ['enabled', 'legacy']) {
+          for (const q of [
+            `SKU-${key}`,
+            `name-${key}`,
+            `attribute-${key}`,
+            `label-${key}`,
+            `value-${key}`,
+            `unit-${key}`,
+            `value-${key} ŠROUB`,
+          ]) {
+            for (const fields of ['card', 'full'] as const) {
+              const page = yield* catalogPage(fixture, { fields, q });
+              expect([page.total, staffProductIds(page)]).toEqual([1, ['p1']]);
+            }
+          }
+        }
+        expect(yield* idsOf(fixture, { q: 'informational-legacy' })).toEqual(['p1']);
+        expect(yield* idsOf(fixture, { q: 'nerez a2' })).toEqual(['p1']);
+        expect(yield* idsOf(fixture, { q: 'p1' })).toEqual(['p1']);
+        const page = yield* catalogPage(fixture, { fields: 'card', q: 'SKU-legacy' });
+        expect(page.products[0]?.variantRecords).toBeUndefined();
+        expect(page.products[0]?.variantSummary?.count).toBe(2);
+      }),
+    ),
+);
+
+const searchStateWithActivity = (state: MerchandiseState, activity: Option.Option<boolean>): MerchandiseState => ({
+  ...state,
+  products: state.products.map((product) => ({
+    ...product,
+    variants: (product.variants ?? []).map((variant) => {
+      if (variant.id !== 'variant-legacy') {
+        return variant;
+      }
+      const { active: _active, ...rest } = variant;
+      void _active;
+      return Option.match(activity, { onNone: () => rest, onSome: (active) => ({ ...rest, active }) });
+    }),
+  })),
+});
+
+const changeSearchVariantActivity = (fixture: MerchandiseFixture, activity: Option.Option<boolean>) =>
+  fixture.db.transaction((transaction) =>
+    Effect.gen(function* changeVariantActivity() {
+      const head = yield* loadHead(transaction, fixture.scope, { lock: true });
+      if (head === undefined) {
+        return yield* Effect.die('The search fixture must have a catalog head');
+      }
+      const working = yield* loadWorkingSet(transaction, fixture.scope, head, { productIds: ['p1'] });
+      const changed = searchStateWithActivity(working.state, activity);
+      const revision = yield* persistChange(
+        transaction,
+        fixture.scope,
+        working,
+        changed,
+        DateTime.makeUnsafe(catalogInput.products[0].updatedAt),
+      );
+      expect(revision).toBe(head.revision + 1);
+      return revision;
+    }),
+  );
+
+it.live('rewrites variant search text on activity changes through the owner persistence path', () =>
+  withMerchandise(variantSearchState, (fixture) =>
+    Effect.gen(function* variantSearchActivityChanges() {
+      for (const activity of [Option.some(false), Option.some(true), Option.none<boolean>()]) {
+        yield* changeSearchVariantActivity(fixture, activity);
+        for (const q of ['SKU-legacy', 'value-legacy']) {
+          expect(yield* idsOf(fixture, { q })).toEqual(Option.contains(activity, false) ? [] : ['p1']);
+        }
+        expect(yield* idsOf(fixture, { q: 'SKU-disabled' })).toEqual([]);
+      }
+    }),
+  ),
+);
+
+/** Test-only runtime transaction: exercise the existing session-setting RLS policy, not the admin fixture. */
+const scopedSearchRead = <A, E>(
+  db: MerchandiseFixture['db'],
+  scope: StoreScope,
+  run: (transaction: MerchandiseDb) => Effect.Effect<A, E>,
+) =>
+  db.transaction((transaction) =>
+    Effect.gen(function* scopedVariantSearch() {
+      yield* transaction.execute(
+        sql`select set_config('ontos.tenant_id', ${scope.tenantId}, true),
+          set_config('ontos.legal_entity_id', ${scope.legalEntityId}, true)`,
+        'objects',
+      );
+      return yield* run(transaction);
+    }),
+  );
+
+const runtimeSearch = (db: MerchandiseDb, scope: StoreScope, q: string) =>
+  storefrontProducts(db, scope, { query: { fields: 'card', q } });
+
+const assertOwnSearchScope = (db: MerchandiseFixture['db'], scope: StoreScope, otherScope: StoreScope) =>
+  scopedSearchRead(db, scope, (transaction) =>
+    Effect.gen(function* ownSearchScope() {
+      expect(yield* transaction.select({ id: products.id }).from(products)).toEqual([{ id: 'p1' }]);
+      expect(staffProductIds(yield* runtimeSearch(transaction, scope, 'SKU-legacy'))).toEqual(['p1']);
+      expect((yield* runtimeSearch(transaction, scope, 'SKU-disabled')).total).toBe(0);
+      const foreign = yield* runtimeSearch(transaction, otherScope, 'SKU-legacy').pipe(Effect.flip);
+      expect(foreign.reason).toBe('The storefront catalog is not initialized');
+    }),
+  );
+
+const runtimeSearchChecks = (fixture: MerchandiseFixture, otherScope: StoreScope) =>
+  Effect.scoped(
+    Effect.gen(function* runtimeVariantSearch() {
+      const connections = yield* loadDatabaseConnectionPair();
+      const client = yield* makeTestPgClient(connections.runtime.connectionString);
+      const runtime = yield* makeTestDatabaseFromClient(client, merchandiseRelations);
+      // No scope sees no rows, even without an application WHERE predicate.
+      expect(yield* runtime.select({ id: products.id }).from(products)).toEqual([]);
+      yield* assertOwnSearchScope(runtime, fixture.scope, otherScope);
+      for (const scope of [
+        { ...fixture.scope, tenantId: randomUUID() },
+        { ...fixture.scope, legalEntityId: randomUUID() },
+      ]) {
+        expect(
+          yield* scopedSearchRead(runtime, scope, (transaction) =>
+            transaction.select({ id: products.id }).from(products),
+          ),
+        ).toEqual([]);
+      }
+      yield* fixture.db
+        .update(catalogHeads)
+        .set({ bootstrapCheckpoint: { status: 'RUNNING' } })
+        .where(whereScope(catalogHeads, fixture.scope));
+      const unverified = yield* scopedSearchRead(runtime, fixture.scope, (transaction) =>
+        runtimeSearch(transaction, fixture.scope, 'SKU-legacy'),
+      ).pipe(Effect.flip);
+      expect(unverified).toMatchObject({ reason: 'The storefront catalog is not initialized' });
+    }),
+  );
+
+it.live('keeps variant search scoped under the runtime role and fails closed on an unverified catalog', () =>
+  withMerchandise(variantSearchState, (fixture) =>
+    withMerchandise(variantSearchState, (other) => runtimeSearchChecks(fixture, other.scope)),
+  ),
+);
+
+it.live('applies publication, activity, archive and pagination gates to active variant search matches', () => {
+  const state = decodeState({
+    ...catalogInput,
+    products: [
+      { id: 'visible-a', published: true },
+      { id: 'visible-b' },
+      { active: false, id: 'inactive' },
+      { id: 'unpublished', published: false },
+      {
+        demoArchive: {
+          actor: {
+            principalId: '20000000-0000-4000-8000-000000000002',
+            tenantId: '20000000-0000-4000-8000-000000000001',
+          },
+          at: catalogInput.products[0].updatedAt,
+          reason: 'Archived test product',
+        },
+        id: 'archived',
+      },
+    ].map((product) => ({
+      ...catalogInput.products[0],
+      ...product,
+      name: product.id,
+      sku: product.id,
+      variants: [searchVariant('visible')],
+    })),
+  });
+  return withMerchandise(state, (fixture) =>
+    Effect.gen(function* visibleVariantSearchPages() {
+      for (const [page, ids] of [
+        [1, ['visible-a']],
+        [2, ['visible-b']],
+        [3, []],
+      ] as const) {
+        const result = yield* catalogPage(fixture, { fields: 'card', page, pageSize: 1, q: 'SKU-visible' });
+        expect([result.total, result.page, result.pageSize, staffProductIds(result)]).toEqual([2, page, 1, ids]);
+      }
+      const full = yield* catalogPage(fixture, { pageSize: 24, q: 'SKU-visible' });
+      expect([full.total, full.pageSize, staffProductIds(full)]).toEqual([2, 2, ['visible-a', 'visible-b']]);
+    }),
+  );
+});
 
 it.live('sends heading and long description only for the requested category', () =>
   onCatalog((fixture) =>
@@ -961,6 +1237,28 @@ it.live('lists only the products a market offers, with every price in the market
   ),
 );
 
+it.live('keeps variant search behind the existing market offer and currency price gates', () =>
+  withMerchandise(variantSearchState, (fixture) =>
+    Effect.gen(function* marketVariantSearch() {
+      yield* runMarketCommand(fixture, halfPriceMarket);
+      for (const q of ['SKU-enabled', 'SKU-legacy']) {
+        expect(yield* marketIds(fixture, MARKET_ID, { maxMinor: 61, minMinor: 61, q })).toEqual(['p1']);
+        expect(yield* marketIds(fixture, MARKET_ID, { minMinor: 62, q })).toEqual([]);
+        expect(yield* marketIds(fixture, MARKET_ID, { maxMinor: 60, q })).toEqual([]);
+        expect(yield* marketIds(fixture, UNKNOWN_MARKET_ID, { q })).toEqual([]);
+      }
+      expect(yield* marketIds(fixture, MARKET_ID, { q: 'SKU-disabled' })).toEqual([]);
+      yield* runMarketCommand(fixture, {
+        _tag: 'SetProductMarketOffer',
+        marketId: MARKET_ID,
+        offered: false,
+        productId: 'p1',
+      });
+      expect(yield* marketIds(fixture, MARKET_ID, { q: 'SKU-enabled' })).toEqual([]);
+    }),
+  ),
+);
+
 it.live('switches a market to selected products, guards its revision and removes it with its exceptions', () =>
   onCatalog((fixture) =>
     Effect.gen(function* marketLifecycle() {
@@ -1121,6 +1419,613 @@ it.live('PlaceStorefrontOrder in a market reprices, rejects what the market does
       expect(
         (yield* orderPage(fixture.db, fixture.scope, Schema.decodeSync(RecordsViewSchema)({ ordersLimit: 10 }))).orders,
       ).toHaveLength(page.orders.length);
+    }),
+  ),
+);
+
+// ------------------------------------------------------------------------------------------------ current search inclusion and compact leaf evidence
+
+it.live(
+  'rejects poisoned inactive parent search_text before counting/paging and finds current text missing from the index',
+  () => {
+    const state = decodeState({
+      ...catalogInput,
+      products: ['bad-a', 'bad-b', 'good-a', 'good-b'].map((id) => ({
+        ...catalogInput.products[0],
+        id,
+        name: id,
+        sku: id,
+        variants: [{ ...searchVariant(id), active: !id.startsWith('bad'), sku: 'CURRENT-NEEDLE' }],
+      })),
+    });
+    return withMerchandise(state, (fixture) =>
+      Effect.gen(function* poisonedCatalogText() {
+        yield* fixture.db
+          .update(products)
+          .set({ searchText: 'current-needle poisoned inactive parent text' })
+          .where(whereScope(products, fixture.scope));
+        for (const [page, ids] of [
+          [1, ['good-a']],
+          [2, ['good-b']],
+          [3, []],
+        ] as const) {
+          const result = yield* catalogPage(fixture, { fields: 'card', page, pageSize: 1, q: 'CURRENT-NEEDLE' });
+          expect([result.total, staffProductIds(result)]).toEqual([2, ids]);
+          expect(result.products.every((product) => product.searchMatch?.kind === 'single')).toBe(true);
+        }
+        yield* fixture.db
+          .update(products)
+          .set({ searchText: 'old index missing every current term' })
+          .where(whereScope(products, fixture.scope));
+        const current = yield* catalogPage(fixture, { fields: 'card', q: 'CURRENT-NEEDLE' });
+        expect([current.total, staffProductIds(current)]).toEqual([2, ['good-a', 'good-b']]);
+      }),
+    );
+  },
+);
+
+it.live('exhausts multiple current-text batches before publishing a complete count and page', () => {
+  const state = decodeState({
+    ...catalogInput,
+    products: Array.from({ length: 130 }, (_, index) => ({
+      ...catalogInput.products[0],
+      id: `candidate-${index}`,
+      name: `Candidate ${index}`,
+      sku: `CANDIDATE-${index}`,
+      variants: [{ ...searchVariant(`batch-${index}`), active: index === 129, sku: 'BATCH-NEEDLE' }],
+    })),
+  });
+  return withMerchandise(state, (fixture) =>
+    Effect.gen(function* completeCurrentTextStream() {
+      yield* fixture.db
+        .update(products)
+        .set({ searchText: 'batch-needle old inactive matches' })
+        .where(whereScope(products, fixture.scope));
+      const first = yield* catalogPage(fixture, { fields: 'card', pageSize: 1, q: 'BATCH-NEEDLE' });
+      expect([first.total, staffProductIds(first)]).toEqual([1, ['candidate-129']]);
+      const beyond = yield* catalogPage(fixture, { fields: 'card', page: 2, pageSize: 1, q: 'BATCH-NEEDLE' });
+      expect([beyond.total, staffProductIds(beyond)]).toEqual([1, []]);
+    }),
+  );
+});
+
+it.live(
+  'uses the owner normalizer for current Unicode inclusion, not a finite accent translation approximation',
+  () => {
+    const state = decodeState({
+      ...catalogInput,
+      products: ['ŠROUB', 'S\u030CROUB', 'İSTANBUL', 'ΟΣ', 'ẞ', 'Ångström', 'ÅNGSTRÖM', 'Žluťoučký'].map(
+        (name, index) => ({
+          ...catalogInput.products[1],
+          id: `unicode-${index}`,
+          name,
+          sku: `plain-${index}`,
+        }),
+      ),
+    });
+    return withMerchandise(state, (fixture) =>
+      Effect.gen(function* unicodeCurrentInclusion() {
+        yield* fixture.db
+          .update(products)
+          .set({ searchText: 'stale unrelated text' })
+          .where(whereScope(products, fixture.scope));
+        for (const q of ['sroub', 'istanbul', 'ος', 'ß', 'angstrom', 'zlutoucky']) {
+          const expected = state.products
+            .filter((product) => productSearchText(product).includes(q))
+            .map((product) => product.id);
+          const result = yield* catalogPage(fixture, { fields: 'card', q });
+          expect(result.total).toBe(expected.length);
+          expect(new Set(staffProductIds(result))).toEqual(new Set(expected));
+        }
+      }),
+    );
+  },
+);
+
+const attributionState = decodeState({
+  ...catalogInput,
+  products: [
+    {
+      ...catalogInput.products[0],
+      name: 'Family',
+      parameters: [],
+      sku: 'BASE',
+      variants: [
+        { ...searchVariant('exact'), name: 'Steel needle', sku: 'EXACT' },
+        {
+          ...searchVariant('long'),
+          name: 'Long needle',
+          parameters: [{ label: 'Size', unit: '', value: 'M8' }],
+          sku: 'EXACT-LONG',
+        },
+        { ...searchVariant('dup-a'), sku: 'DUP' },
+        { ...searchVariant('dup-b'), sku: 'DUP' },
+        { ...searchVariant('zero'), priceMinor: 0, sku: 'FREE' },
+        { ...searchVariant('inactive', Option.some(false)), sku: 'EXACT' },
+        { attributes: 'info-only', name: 'Informational' },
+      ],
+    },
+  ],
+});
+
+it.live(
+  'keeps substring leaf attribution separate from all-word inclusion, exact SKU priority and duplicate SKU multiplicity',
+  () =>
+    withMerchandise(attributionState, (fixture) =>
+      Effect.gen(function* compactAttribution() {
+        const exact = yield* catalogPage(fixture, { fields: 'card', q: 'EXACT' });
+        expect(exact.products[0]?.searchMatch).toMatchObject({
+          kind: 'single',
+          variant: { id: 'variant-exact', sku: 'EXACT' },
+        });
+        const duplicate = yield* catalogPage(fixture, { fields: 'card', q: 'DUP' });
+        expect(duplicate.products[0]?.searchMatch).toEqual({ count: 2, kind: 'multiple' });
+        const multiple = yield* catalogPage(fixture, { fields: 'card', q: 'needle' });
+        expect(multiple.products[0]?.searchMatch).toEqual({ count: 2, kind: 'multiple' });
+        expect((yield* catalogPage(fixture, { fields: 'card', q: 'Family' })).products[0]?.searchMatch).toEqual({
+          kind: 'product',
+        });
+        for (const q of ['Family EXACT', 'needle M8', 'info-only']) {
+          const page = yield* catalogPage(fixture, { fields: 'card', q });
+          expect(page.total).toBe(1);
+          expect(page.products[0]?.searchMatch).toEqual({ kind: 'unattributed' });
+        }
+        expect((yield* catalogPage(fixture, { fields: 'card', q: 'FREE' })).products[0]?.searchMatch).toMatchObject({
+          kind: 'single',
+          variant: { grossPriceMinor: 0, id: 'variant-zero', priceMinor: 0 },
+        });
+        expect((yield* catalogPage(fixture, { fields: 'card', q: '  ' })).products[0]?.searchMatch).toBeUndefined();
+      }),
+    ),
+);
+
+it.live('returns onlyVariant only for the whole active sellable singleton set and never fabricates attribution', () => {
+  const state = decodeState({
+    ...catalogInput,
+    products: [
+      {
+        ...catalogInput.products[0],
+        name: 'Family',
+        variants: [
+          searchVariant('only'),
+          searchVariant('inactive', Option.some(false)),
+          { attributes: 'info-only', name: 'Informational' },
+          { attributes: '', id: 'no-price', name: 'No price' },
+        ],
+      },
+    ],
+  });
+  return withMerchandise(state, (fixture) =>
+    Effect.gen(function* onlyVariantEvidence() {
+      expect((yield* catalogPage(fixture, { fields: 'card', q: 'Family' })).products[0]?.searchMatch).toMatchObject({
+        kind: 'product',
+        onlyVariant: { id: 'variant-only' },
+      });
+      expect((yield* catalogPage(fixture, { fields: 'card', q: 'info-only' })).products[0]?.searchMatch).toMatchObject({
+        kind: 'unattributed',
+        onlyVariant: { id: 'variant-only' },
+      });
+    }),
+  );
+});
+
+it.live('produces exact evidence for every page group beyond eight without reading any group history blobs', () => {
+  const state = decodeState({
+    ...catalogInput,
+    products: Array.from({ length: 10 }, (_, index) => ({
+      ...catalogInput.products[0],
+      id: `group-${index}`,
+      name: `Group ${index}`,
+      sku: `GROUP-${index}`,
+      variants: [{ ...searchVariant(`chosen-${index}`), sku: 'NEEDLE' }, searchVariant(`other-${index}`)],
+    })),
+  });
+  return withMerchandise(state, (fixture) =>
+    Effect.gen(function* allPageGroupsCompact() {
+      // Public leaf presentation must not hydrate either selected or unselected private history arrays.
+      yield* fixture.db
+        .update(productVariants)
+        .set({
+          document: sql`jsonb_set(${productVariants.document}, '{priceHistory}', '"must not hydrate private history"'::jsonb)`,
+        })
+        .where(whereScope(productVariants, fixture.scope));
+      const page = yield* catalogPage(fixture, { fields: 'card', pageSize: 10, q: 'NEEDLE' });
+      expect([page.total, page.products.length]).toEqual([10, 10]);
+      for (const product of page.products) {
+        expect(product.searchMatch).toMatchObject({ kind: 'single', variant: { sku: 'NEEDLE' } });
+        expect(product.variantRecords).toBeUndefined();
+        const wire = JSON.stringify(product.searchMatch);
+        for (const key of ['priceHistory', 'priceTiers', 'parameters', 'attributes', 'variants']) {
+          expect(wire.includes(`"${key}"`)).toBe(false);
+        }
+      }
+    }),
+  );
+});
+
+const compactTier = (priceMinor: number) => [
+  { minimumQuantity: 1, priceExcludingVatMinor: priceMinor - 10, priceMinor },
+];
+
+it.live('selects singleton documents and tiers by product-position pairs, never a cross-product variant id set', () => {
+  const state = decodeState({
+    ...catalogInput,
+    movements: [],
+    products: [
+      {
+        ...catalogInput.products[0],
+        id: 'pair-a',
+        name: 'Pair A',
+        sku: 'PAIR-A',
+        variants: [
+          { ...searchVariant('a'), id: 'reused-id', priceTiers: compactTier(111), sku: 'NEEDLE' },
+          { ...searchVariant('a-other'), priceTiers: compactTier(999) },
+        ],
+      },
+      {
+        ...catalogInput.products[0],
+        id: 'pair-b',
+        name: 'Pair B',
+        sku: 'PAIR-B',
+        variants: [
+          { ...searchVariant('b-other'), priceTiers: compactTier(888) },
+          { ...searchVariant('b'), id: 'reused-id', priceTiers: compactTier(222), sku: 'NEEDLE' },
+        ],
+      },
+    ],
+  });
+  return withMerchandise(state, (fixture) =>
+    Effect.gen(function* selectedSearchPairs() {
+      const page = yield* catalogPage(fixture, { fields: 'card', q: 'NEEDLE' });
+      expect(page.products.map((product) => product.searchMatch)).toMatchObject([
+        { kind: 'single', variant: { displayPriceExcludingVatMinor: 101, grossPriceMinor: 111, id: 'reused-id' } },
+        { kind: 'single', variant: { displayPriceExcludingVatMinor: 212, grossPriceMinor: 222, id: 'reused-id' } },
+      ]);
+    }),
+  );
+});
+
+it.live(
+  'keeps compact singleton offers in the resolved market with post-conversion display-net and fresh leaf fields',
+  () => {
+    const state = decodeState({
+      ...catalogInput,
+      movements: [{ ...catalogInput.movements[0], variantId: 'variant-leaf' }],
+      products: [
+        {
+          ...catalogInput.products[0],
+          variants: [
+            {
+              ...searchVariant('leaf'),
+              imageSrc: 'media:leaf-image',
+              minimumQuantity: 3,
+              packageQuantity: 2,
+              priceTiers: [
+                { minimumQuantity: 1, priceExcludingVatMinor: 91, priceMinor: 121 },
+                { minimumQuantity: 1, priceExcludingVatMinor: 70, priceMinor: 122 },
+                { minimumQuantity: 2, priceExcludingVatMinor: 50, priceMinor: 124 },
+              ],
+              sku: 'LEAF',
+              sourceUnit: 'm',
+            },
+            searchVariant('other'),
+          ],
+        },
+      ],
+    });
+    return withMerchandise(state, (fixture) =>
+      Effect.gen(function* compactMarketOffer() {
+        yield* runMarketCommand(fixture, { ...halfPriceMarket, roundingMinor: 10 });
+        const page = yield* marketPage(fixture, MARKET_ID, { q: 'LEAF' });
+        expect(page.products[0]?.searchMatch).toMatchObject({
+          kind: 'single',
+          variant: {
+            currency: 'EUR',
+            displayPriceExcludingVatMinor: 40,
+            grossPriceMinor: 60,
+            id: 'variant-leaf',
+            imageSrc: 'media:leaf-image',
+            minimumQuantity: 3,
+            packageQuantity: 2,
+            priceMinor: 50,
+            sourceUnit: 'm',
+            stockOnHand: 5,
+          },
+        });
+        const full = yield* marketPage(fixture, MARKET_ID, {
+          fields: 'full',
+          productIds: ['p1'],
+          variantIds: ['variant-leaf'],
+        });
+        expect(full.products[0]?.variantRecords?.[0]).toMatchObject({
+          grossPriceMinor: 60,
+          priceMinor: 50,
+          stockOnHand: 5,
+        });
+        expect((yield* marketPage(fixture, UNKNOWN_MARKET_ID, { q: 'LEAF' })).products).toEqual([]);
+        yield* runMarketCommand(fixture, {
+          _tag: 'SetProductMarketOffer',
+          marketId: MARKET_ID,
+          offered: false,
+          productId: 'p1',
+        });
+        expect((yield* marketPage(fixture, MARKET_ID, { q: 'LEAF' })).products).toEqual([]);
+      }),
+    );
+  },
+);
+
+// ------------------------------------------------------------------------------------------------ historical inline-only public offering parity
+
+const historicalInlineState = decodeState({
+  ...catalogInput,
+  movements: [{ ...catalogInput.movements[0], delta: 9, variantId: 'legacy-exact' }],
+  orders: [],
+  products: [
+    {
+      ...catalogInput.products[0],
+      name: 'Legacy family',
+      sku: 'LEGACY-PARENT',
+      variants: [
+        {
+          attributes: 'small',
+          id: 'legacy-exact',
+          imageSrc: 'media:legacy-image',
+          minimumQuantity: 3,
+          name: 'Needle small',
+          packageQuantity: 2,
+          priceMinor: 100,
+          priceTiers: [
+            { minimumQuantity: 1, priceExcludingVatMinor: 91, priceMinor: 121 },
+            { minimumQuantity: 1, priceExcludingVatMinor: 70, priceMinor: 122 },
+            { minimumQuantity: 2, priceExcludingVatMinor: 50, priceMinor: 124 },
+          ],
+          sku: 'INLINE',
+          sourceUnit: 'm',
+        },
+        { attributes: 'large', id: 'legacy-long', name: 'Needle large', priceMinor: 200, sku: 'INLINE-LONG' },
+        { attributes: '', id: 'legacy-dup-a', name: 'Duplicate A', priceMinor: 300, sku: 'DUP' },
+        { attributes: '', id: 'legacy-dup-b', name: 'Duplicate B', priceMinor: 400, sku: 'DUP' },
+        { attributes: '', id: 'legacy-zero', name: 'Zero leaf', priceMinor: 0, sku: 'FREEINLINE' },
+        { active: false, attributes: '', id: 'legacy-inactive', name: 'Inactive leaf', priceMinor: 500, sku: 'INLINE' },
+        { attributes: 'informational-only', name: 'No identity or price' },
+        { attributes: '', id: 'legacy-no-price', name: 'No price', sku: 'UNPRICED' },
+        { attributes: '', name: 'No identity', priceMinor: 600, sku: 'NOIDENTITY' },
+      ],
+    },
+  ],
+});
+
+/** Seed the historical canonical representation in this disposable fixture, not a live migration/write path. */
+const installInlineOnly = (fixture: MerchandiseFixture, state: MerchandiseState) =>
+  Effect.gen(function* installHistoricalInlineFixture() {
+    const encoded = encodeState(state);
+    yield* Effect.forEach(
+      encoded.products,
+      (product) =>
+        fixture.db
+          .update(products)
+          .set({ document: product })
+          .where(and(whereScope(products, fixture.scope), eq(products.id, product.id))),
+      { concurrency: 1, discard: true },
+    );
+    yield* fixture.db
+      .delete(priceTiers)
+      .where(and(whereScope(priceTiers, fixture.scope), sql`${priceTiers.variantPosition} >= 0`));
+    yield* fixture.db.delete(productVariants).where(whereScope(productVariants, fixture.scope));
+    expect(
+      yield* fixture.db
+        .select({ id: productVariants.variantId })
+        .from(productVariants)
+        .where(whereScope(productVariants, fixture.scope)),
+    ).toEqual([]);
+  });
+
+const withInlineOnly = <A, E>(state: MerchandiseState, run: (fixture: MerchandiseFixture) => Effect.Effect<A, E>) =>
+  withMerchandise(state, (fixture) => installInlineOnly(fixture, state).pipe(Effect.andThen(() => run(fixture))));
+
+const approvedInlineLeaf = (page: StorefrontProductPage, id: string) => {
+  const leaf = page.products[0]?.variantRecords?.find((variant) => variant.id === id);
+  if (leaf === undefined) {
+    expect.unreachable('The unchanged explicit full owner contract must expose this real fixture leaf');
+  }
+  return leaf;
+};
+
+it.live(
+  'historical inline-only full and cart contracts expose actual identified priced leaves without normalized rows',
+  () =>
+    withInlineOnly(historicalInlineState, (fixture) =>
+      Effect.gen(function* canonicalInlineFullOffer() {
+        const full = yield* catalogPage(fixture, { fields: 'full', productIds: ['p1'] });
+        const leaf = approvedInlineLeaf(full, 'legacy-exact');
+        expect(leaf).toMatchObject({
+          active: true,
+          grossPriceMinor: 121,
+          id: 'legacy-exact',
+          imageSrc: 'media:legacy-image',
+          minimumQuantity: 3,
+          name: 'Needle small',
+          packageQuantity: 2,
+          priceMinor: 100,
+          sku: 'INLINE',
+          sourceUnit: 'm',
+          unit: 'm',
+        });
+        // Observe the approved hydrator's actual source behavior, not a new compact stock fallback:
+        // the product ledger has 9, but without normalized variant stock the full leaf is unavailable.
+        expect(full.products[0]?.stockOnHand).toBe(9);
+        expect([leaf.stockOnHand, leaf.availability]).toEqual([0, 'OUT_OF_STOCK']);
+        expect(full.products[0]?.variantRecords?.filter((variant) => variant.active)).toHaveLength(5);
+        const cart = yield* catalogPage(fixture, { fields: 'full', productIds: ['p1'], variantIds: ['legacy-exact'] });
+        expect(cart.products[0]?.variantRecords).toEqual([leaf]);
+      }),
+    ),
+);
+
+it.live('historical inline-only compact exact leaf preserves the unchanged full public offer', () =>
+  withInlineOnly(historicalInlineState, (fixture) =>
+    Effect.gen(function* compactInlineExactOffer() {
+      const full = yield* catalogPage(fixture, { fields: 'full', productIds: ['p1'] });
+      const leaf = approvedInlineLeaf(full, 'legacy-exact');
+      const compact = yield* catalogPage(fixture, { fields: 'card', q: 'INLINE' });
+      expect(compact.total).toBe(1);
+      expect(compact.products[0]?.variantRecords).toBeUndefined();
+      expect(compact.products[0]?.searchMatch).toMatchObject({
+        kind: 'single',
+        variant: {
+          availability: leaf.availability,
+          currency: 'CZK',
+          grossPriceMinor: leaf.grossPriceMinor,
+          id: leaf.id,
+          imageSrc: leaf.imageSrc,
+          minimumQuantity: leaf.minimumQuantity,
+          name: leaf.name,
+          packageQuantity: leaf.packageQuantity,
+          priceMinor: leaf.priceMinor,
+          sku: leaf.sku,
+          sourceUnit: leaf.sourceUnit,
+          stockOnHand: leaf.stockOnHand,
+          unit: leaf.unit,
+        },
+      });
+      const wire = JSON.stringify(compact.products[0]?.searchMatch);
+      for (const key of ['priceHistory', 'priceTiers', 'parameters', 'attributes', 'variants']) {
+        expect(wire.includes(`"${key}"`)).toBe(false);
+      }
+    }),
+  ),
+);
+
+it.live(
+  'historical inline-only ambiguity, duplicate SKUs, zero price and whole-set fallback follow the full contract',
+  () =>
+    withInlineOnly(historicalInlineState, (fixture) =>
+      Effect.gen(function* compactInlineMultiplicity() {
+        const full = yield* catalogPage(fixture, { fields: 'full', productIds: ['p1'] });
+        const duplicateCount = full.products[0]?.variantRecords?.filter(
+          (variant) => variant.active && variant.sku === 'DUP',
+        ).length;
+        expect(duplicateCount).toBe(2);
+        expect((yield* catalogPage(fixture, { fields: 'card', q: 'DUP' })).products[0]?.searchMatch).toEqual({
+          count: duplicateCount,
+          kind: 'multiple',
+        });
+        expect((yield* catalogPage(fixture, { fields: 'card', q: 'needle' })).products[0]?.searchMatch).toEqual({
+          count: 2,
+          kind: 'multiple',
+        });
+        expect((yield* catalogPage(fixture, { fields: 'card', q: 'Legacy family' })).products[0]?.searchMatch).toEqual({
+          kind: 'product',
+        });
+        const zero = approvedInlineLeaf(full, 'legacy-zero');
+        expect(
+          (yield* catalogPage(fixture, { fields: 'card', q: 'FREEINLINE' })).products[0]?.searchMatch,
+        ).toMatchObject({
+          kind: 'single',
+          variant: {
+            grossPriceMinor: zero.grossPriceMinor,
+            id: zero.id,
+            priceMinor: zero.priceMinor,
+            stockOnHand: zero.stockOnHand,
+          },
+        });
+      }),
+    ),
+);
+
+const historicalOnlyState: MerchandiseState = {
+  ...historicalInlineState,
+  products: historicalInlineState.products.map((product) => ({
+    ...product,
+    variants: (product.variants ?? []).filter(
+      (variant) =>
+        variant.id === 'legacy-exact' ||
+        variant.active === false ||
+        variant.id === undefined ||
+        variant.priceMinor === undefined,
+    ),
+  })),
+};
+
+it.live('historical inline-only onlyVariant comes from the entire genuine active full-detail set', () =>
+  withInlineOnly(historicalOnlyState, (fixture) =>
+    Effect.gen(function* compactInlineOnlyFallback() {
+      const full = yield* catalogPage(fixture, { fields: 'full', productIds: ['p1'] });
+      const active = full.products[0]?.variantRecords?.filter((variant) => variant.active);
+      expect(active).toHaveLength(1);
+      const leaf = approvedInlineLeaf(full, 'legacy-exact');
+      for (const q of ['Legacy family', 'informational-only']) {
+        const expectedKind = q === 'Legacy family' ? 'product' : 'unattributed';
+        expect((yield* catalogPage(fixture, { fields: 'card', q })).products[0]?.searchMatch).toMatchObject({
+          kind: expectedKind,
+          onlyVariant: {
+            grossPriceMinor: leaf.grossPriceMinor,
+            id: leaf.id,
+            priceMinor: leaf.priceMinor,
+            stockOnHand: leaf.stockOnHand,
+          },
+        });
+      }
+    }),
+  ),
+);
+
+const historicalUnavailableState: MerchandiseState = {
+  ...historicalInlineState,
+  products: historicalInlineState.products.map((product) => ({
+    ...product,
+    variants: (product.variants ?? []).filter(
+      (variant) => variant.id === undefined || variant.priceMinor === undefined,
+    ),
+  })),
+};
+
+it.live('historical inline-only missing identity or price has exact full-detail unavailability parity', () =>
+  withInlineOnly(historicalUnavailableState, (fixture) =>
+    Effect.gen(function* unavailableInlineIdentityOrPrice() {
+      const full = yield* catalogPage(fixture, { fields: 'full', productIds: ['p1'] });
+      expect(full.products[0]?.variantRecords).toBeUndefined();
+      for (const q of ['UNPRICED', 'NOIDENTITY', 'informational-only']) {
+        const compact = yield* catalogPage(fixture, { fields: 'card', q });
+        expect(compact.total).toBe(1);
+        expect(compact.products[0]?.searchMatch).toEqual({ kind: 'unattributed' });
+      }
+    }),
+  ),
+);
+
+it.live('historical inline-only compact market offer equals full/cart conversion with post-rounding display net', () =>
+  withInlineOnly(historicalInlineState, (fixture) =>
+    Effect.gen(function* compactInlineMarketOffer() {
+      yield* runMarketCommand(fixture, { ...halfPriceMarket, roundingMinor: 10 });
+      const full = yield* marketPage(fixture, MARKET_ID, {
+        fields: 'full',
+        productIds: ['p1'],
+        variantIds: ['legacy-exact'],
+      });
+      const leaf = approvedInlineLeaf(full, 'legacy-exact');
+      expect([leaf.grossPriceMinor, leaf.priceMinor]).toEqual([60, 50]);
+      expect((yield* marketPage(fixture, MARKET_ID, { q: 'INLINE' })).products[0]?.searchMatch).toMatchObject({
+        kind: 'single',
+        variant: {
+          availability: leaf.availability,
+          currency: 'EUR',
+          displayPriceExcludingVatMinor: 40,
+          grossPriceMinor: leaf.grossPriceMinor,
+          id: leaf.id,
+          priceMinor: leaf.priceMinor,
+          stockOnHand: leaf.stockOnHand,
+        },
+      });
+      expect((yield* marketPage(fixture, UNKNOWN_MARKET_ID, { q: 'INLINE' })).products).toEqual([]);
+      yield* runMarketCommand(fixture, {
+        _tag: 'SetProductMarketOffer',
+        marketId: MARKET_ID,
+        offered: false,
+        productId: 'p1',
+      });
+      expect((yield* marketPage(fixture, MARKET_ID, { q: 'INLINE' })).products).toEqual([]);
     }),
   ),
 );

@@ -73,6 +73,7 @@ import { PrivacyMeasureExecutionApi } from './shared/apis/privacy-measure-execut
 import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 import { resolveDuplicateCandidateCreateAction } from './src/actions/resolve-duplicate-candidate-create.action.ts';
 import { resolveDuplicateCandidateMatchAction } from './src/actions/resolve-duplicate-candidate-match.action.ts';
+import { SearchLabelsApi } from './shared/apis/search-labels.ts';
 import { unarchiveOrganizationEngagementAction } from './src/actions/unarchive-organization-engagement.action.ts';
 import { unarchivePartyAction } from './src/actions/unarchive-party.action.ts';
 import { unarchivePersonEngagementAction } from './src/actions/unarchive-person-engagement.action.ts';
@@ -97,6 +98,35 @@ const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
 const searchContribution = (value: SearchContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
+
+const customerDetailPageKey = 'party.registry.page.customer-detail';
+const partyIdentityPageKey = 'party.registry.page.party-identity';
+
+const companiesFamily = {
+  icon: 'icon-[mdi--handshake-outline]',
+  key: 'companies',
+  label: { cs: 'Zákazníci a dodavatelé', en: 'Customers and suppliers' },
+  order: 20,
+} as const;
+const peopleFamily = {
+  icon: 'icon-[mdi--account-group-outline]',
+  key: 'people',
+  label: { cs: 'Lidé', en: 'People' },
+  order: 10,
+} as const;
+
+const counterpartyGroup = {
+  icon: 'icon-[mdi--handshake-outline]',
+  key: 'counterparty',
+  label: { cs: 'Zákazníci a dodavatelé', en: 'Customers and suppliers' },
+  order: 10,
+} as const;
+const partyGroup = {
+  icon: 'icon-[mdi--card-account-details-outline]',
+  key: 'party',
+  label: { cs: 'Kontakty', en: 'Contacts' },
+  order: 20,
+} as const;
 
 export const partyRegistryManifest = defineOntosModuleManifest({
   activation: {
@@ -172,6 +202,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       'party-relationship-detail': PartyRelationshipDetailApi,
       'person-engagement-profile': PersonEngagementProfileApi,
       'privacy-measure-execution': PrivacyMeasureExecutionApi,
+      'search-labels': SearchLabelsApi,
       // </generated-module-manifest-apis>
     },
     components: {
@@ -267,11 +298,11 @@ export const partyRegistryManifest = defineOntosModuleManifest({
         }),
         pageContribution({
           componentKey: 'party.registry.page-customer-detail',
-          contributionKey: 'party.registry.page.customer-detail',
+          contributionKey: customerDetailPageKey,
           entrypoint: {
             access: 'read',
             authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'party.registry.page.customer-detail',
+            entrypointKey: customerDetailPageKey,
             moduleKey: 'party.registry',
             role: 'page',
             scope: 'tenant',
@@ -295,11 +326,11 @@ export const partyRegistryManifest = defineOntosModuleManifest({
         }),
         pageContribution({
           componentKey: 'party.registry.page-party-identity',
-          contributionKey: 'party.registry.page.party-identity',
+          contributionKey: partyIdentityPageKey,
           entrypoint: {
             access: 'read',
             authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'party.registry.page.party-identity',
+            entrypointKey: partyIdentityPageKey,
             moduleKey: 'party.registry',
             role: 'page',
             scope: 'tenant',
@@ -334,6 +365,20 @@ export const partyRegistryManifest = defineOntosModuleManifest({
             role: 'search',
             scope: 'tenant',
           },
+          presentation: {
+            family: companiesFamily,
+            group: counterpartyGroup,
+            record: {
+              pageKey: customerDetailPageKey,
+              selector: {
+                idEncoding: 'native',
+                idFormat: 'uuid',
+                kind: 'path',
+                parameterName: 'id',
+              },
+            },
+            scope: 'company',
+          },
           searchKey: 'party.registry.counterparties',
         }),
         searchContribution({
@@ -347,6 +392,20 @@ export const partyRegistryManifest = defineOntosModuleManifest({
             entrypointKey: 'party.registry.search.parties',
             moduleKey: PARTY_REGISTRY_MODULE_ID,
             role: 'search',
+            scope: 'tenant',
+          },
+          presentation: {
+            family: peopleFamily,
+            group: partyGroup,
+            record: {
+              pageKey: partyIdentityPageKey,
+              selector: {
+                idEncoding: 'native',
+                idFormat: 'uuid',
+                kind: 'path',
+                parameterName: 'partyId',
+              },
+            },
             scope: 'tenant',
           },
           searchKey: 'party.registry.parties',

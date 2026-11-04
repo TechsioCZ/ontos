@@ -53,6 +53,9 @@ export const CORE_TABLE_INVENTORY = [
   'search_index_entries',
   'search_projection_generations',
   'search_projection_rebuilds',
+  'search_label_source_revisions',
+  'search_label_refresh_jobs',
+  'search_derived_repair_jobs',
   'worker_checkpoints',
   'agent_proposals',
   'legal_entity_navigation_exclusions',
@@ -1147,6 +1150,133 @@ export const searchIndexEntries = enableCoreGovernedRls(
   ),
 );
 
+/**
+ * Retained source-label revision barrier. Keyed by the exact canonical owner reference, the observing
+ * consumer module and the selected company; it is never deleted when the dependent document or its
+ * edge is removed, so a late older observation cannot roll an observed revision back.
+ */
+export const searchLabelSourceRevisions = enableCoreGovernedRls(
+  coreSchema.table(
+    'search_label_source_revisions',
+    {
+      tenantId: tenantId(),
+      sourceModuleKey: text('source_module_key').notNull(),
+      labelSourceModuleKey: text('label_source_module_key').notNull(),
+      labelSourceResourceType: text('label_source_resource_type').notNull(),
+      labelSourceResourceId: text('label_source_resource_id').notNull(),
+      legalEntityId: uuid('legal_entity_id').notNull(),
+      sourceRevision: bigint('source_revision', { mode: 'bigint' }).notNull(),
+      createdAt: createdAt(),
+      updatedAt: updatedAt(),
+    },
+    (table) => [
+      primaryKey({
+        name: 'core_search_label_source_revisions_pk',
+        columns: [
+          table.tenantId,
+          table.sourceModuleKey,
+          table.labelSourceModuleKey,
+          table.labelSourceResourceType,
+          table.labelSourceResourceId,
+          table.legalEntityId,
+        ],
+      }),
+      check('core_search_label_source_revisions_revision_ck', sql`${table.sourceRevision} >= 0`),
+      index('core_search_label_source_revisions_lookup_idx').on(
+        table.tenantId,
+        table.sourceModuleKey,
+        table.legalEntityId,
+      ),
+      foreignKey({
+        columns: [table.tenantId, table.legalEntityId],
+        foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+        name: 'core_search_label_source_revisions_tenant_legal_entity_fk',
+      }).onDelete('restrict'),
+    ],
+  ),
+);
+
+/**
+ * Durable label-refresh continuation: job epoch, optimistic CAS version and keyset cursors. A newer
+ * source revision advances the retained barrier and opens a strictly greater epoch; a stale token is
+ * rejected. Cursors are canonical `[resourceType, resourceId]` tuples, never row ordinals.
+ */
+export const searchLabelRefreshJobs = enableCoreGovernedRls(
+  coreSchema.table(
+    'search_label_refresh_jobs',
+    {
+      tenantId: tenantId(),
+      sourceModuleKey: text('source_module_key').notNull(),
+      labelSourceModuleKey: text('label_source_module_key').notNull(),
+      labelSourceResourceType: text('label_source_resource_type').notNull(),
+      labelSourceResourceId: text('label_source_resource_id').notNull(),
+      legalEntityId: uuid('legal_entity_id').notNull(),
+      sourceRevision: bigint('source_revision', { mode: 'bigint' }).notNull(),
+      epoch: bigint('epoch', { mode: 'bigint' }).notNull(),
+      casVersion: bigint('cas_version', { mode: 'bigint' }).notNull(),
+      cursor: text('cursor'),
+      sweepCursor: text('sweep_cursor'),
+      state: text('state').notNull(),
+      createdAt: createdAt(),
+      updatedAt: updatedAt(),
+    },
+    (table) => [
+      primaryKey({
+        name: 'core_search_label_refresh_jobs_pk',
+        columns: [
+          table.tenantId,
+          table.sourceModuleKey,
+          table.labelSourceModuleKey,
+          table.labelSourceResourceType,
+          table.labelSourceResourceId,
+          table.legalEntityId,
+        ],
+      }),
+      check('core_search_label_refresh_jobs_revision_ck', sql`${table.sourceRevision} >= 0`),
+      check('core_search_label_refresh_jobs_epoch_ck', sql`${table.epoch} > 0`),
+      check('core_search_label_refresh_jobs_cas_ck', sql`${table.casVersion} > 0`),
+      check('core_search_label_refresh_jobs_state_ck', sql`${table.state} in ('sweeping', 'resweep', 'complete')`),
+      foreignKey({
+        columns: [table.tenantId, table.legalEntityId],
+        foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+        name: 'core_search_label_refresh_jobs_tenant_legal_entity_fk',
+      }).onDelete('restrict'),
+    ],
+  ),
+);
+
+/**
+ * Durable stamp-repair continuation: epoch, optimistic CAS version and keyset cursors for the
+ * derived-representation repair of one projection unit. It is deliberately separate from the owner
+ * label-refresh job so a stamp repair can never be mistaken for an owner label revision.
+ */
+export const searchDerivedRepairJobs = enableCoreGovernedRls(
+  coreSchema.table(
+    'search_derived_repair_jobs',
+    {
+      tenantId: tenantId(),
+      sourceModuleKey: text('source_module_key').notNull(),
+      sourceResourceType: text('source_resource_type').notNull(),
+      epoch: bigint('epoch', { mode: 'bigint' }).notNull(),
+      casVersion: bigint('cas_version', { mode: 'bigint' }).notNull(),
+      cursor: text('cursor'),
+      sweepCursor: text('sweep_cursor'),
+      state: text('state').notNull(),
+      createdAt: createdAt(),
+      updatedAt: updatedAt(),
+    },
+    (table) => [
+      primaryKey({
+        name: 'core_search_derived_repair_jobs_pk',
+        columns: [table.tenantId, table.sourceModuleKey, table.sourceResourceType],
+      }),
+      check('core_search_derived_repair_jobs_epoch_ck', sql`${table.epoch} > 0`),
+      check('core_search_derived_repair_jobs_cas_ck', sql`${table.casVersion} > 0`),
+      check('core_search_derived_repair_jobs_state_ck', sql`${table.state} in ('sweeping', 'resweep', 'complete')`),
+    ],
+  ),
+);
+
 /** Core-only snapshot ordering; event sequence allocation is not commit ordering. */
 export const searchProjectionGenerations = enableCoreGovernedRls(
   coreSchema.table(
@@ -1373,6 +1503,9 @@ export const coreDatabaseSchema = {
   principalCompanyMemberships,
   principals,
   searchIndexEntries,
+  searchDerivedRepairJobs,
+  searchLabelRefreshJobs,
+  searchLabelSourceRevisions,
   searchProjectionGenerations,
   searchProjectionRebuilds,
   tenantModuleStateChanges,
@@ -1405,6 +1538,9 @@ export const CORE_TABLES = [
   mediaLinks,
   evidenceReferences,
   searchIndexEntries,
+  searchDerivedRepairJobs,
+  searchLabelRefreshJobs,
+  searchLabelSourceRevisions,
   searchProjectionGenerations,
   searchProjectionRebuilds,
   workerCheckpoints,

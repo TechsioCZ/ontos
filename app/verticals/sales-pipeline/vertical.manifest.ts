@@ -47,6 +47,20 @@ const aiEntrypoint = {
   scope: 'tenant',
 } as const;
 
+const salesFamily = {
+  icon: 'icon-[mdi--handshake-outline]',
+  key: 'sales',
+  label: { cs: 'Obchod a CRM', en: 'Sales and CRM' },
+  order: 30,
+} as const;
+
+const opportunityGroup = {
+  icon: 'icon-[mdi--briefcase-outline]',
+  key: 'opportunity',
+  label: { cs: 'Obchodní příležitosti', en: 'Opportunities' },
+  order: 60,
+} as const;
+
 export const salesPipelineManifest = defineOntosModuleManifest({
   activation: {
     defaultState: 'inactive',
@@ -184,6 +198,20 @@ export const salesPipelineManifest = defineOntosModuleManifest({
             moduleKey,
             role: 'search',
             scope: 'tenant',
+          },
+          presentation: {
+            family: salesFamily,
+            group: opportunityGroup,
+            record: {
+              pageKey: recordsPageKey,
+              selector: {
+                idEncoding: 'native',
+                idFormat: 'opaque',
+                kind: 'query',
+                parameterName: 'opportunityId',
+              },
+            },
+            scope: 'company',
           },
           searchKey: 'demo.sales-pipeline.opportunities',
         }),

@@ -18,13 +18,24 @@ import type {
   CounterpartiesProviderRequest,
   CounterpartiesProviderResponse,
 } from '../../shared/apis/counterparties-search.ts';
-import type { PartySearchProjectionUnavailable } from '../../shared/domain/search-projection-error.ts';
+import { PartySearchProjectionUnavailable } from '../../shared/domain/search-projection-error.ts';
 import type { CounterpartySearchResult } from '../../shared/domain/search-result.ts';
 import { CounterpartyRefSchema } from '../../shared/resources/counterparty.ts';
 import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';
 import { PartySearchProjectionGateway } from '../../shared/domain/search-projection-gateway.ts';
-import type { PartySearchProjectionGatewayService as PartySearchProjectionGatewayPort } from '../../shared/domain/search-projection-gateway.ts';
-import { normalizeCounterpartySearchHits } from '../../shared/domain/search-semantics.ts';
+import type {
+  CounterpartySearchProjectionHit,
+  PartySearchProjectionGatewayService as PartySearchProjectionGatewayPort,
+  PartySearchProjectionHit,
+} from '../../shared/domain/search-projection-gateway.ts';
+import {
+  CurrentPartySearchTimeSchema,
+  normalizeCounterpartySearchHits,
+  rematchCurrentPartySearchHits,
+} from '../../shared/domain/search-semantics.ts';
+import type { CurrentPartySearchEvidence, CurrentPartySearchScope } from '../../shared/domain/search-semantics.ts';
+import { authorizeCurrentPartySearchEvidence, loadCurrentPartySearchEvidence } from './parties.provider.ts';
+import type { CurrentPartySearchEvidenceLoader } from './parties.provider.ts';
 import { resolveSearchNormalization } from '../search-normalization.ts';
 
 const counterpartiesEntrypoint = defineTenantModuleEntrypoint({
@@ -38,8 +49,28 @@ const counterpartiesEntrypoint = defineTenantModuleEntrypoint({
 interface CounterpartiesSearchServices {
   readonly load: (
     input: CounterpartiesProviderRequest,
-  ) => Effect.Effect<CounterpartiesProviderResponse, PartySearchProjectionUnavailable>;
+  ) => Effect.Effect<CurrentCounterpartySearchCandidates, PartySearchProjectionUnavailable>;
 }
+
+interface CurrentCounterpartySearchCandidates {
+  readonly effectiveAt: CurrentPartySearchScope['effectiveAt'];
+  readonly evidence: CurrentPartySearchEvidence;
+  readonly hits: readonly CounterpartySearchProjectionHit[];
+}
+
+const partyCandidate = (hit: CounterpartySearchProjectionHit): PartySearchProjectionHit => {
+  const base = { archived: hit.partyArchived, canonicalPartyRef: hit.canonicalPartyRef, title: hit.partyTitle };
+  return hit.matchedPartyRef === undefined ? base : { ...base, matchedPartyRef: hit.matchedPartyRef };
+};
+
+const invalidEffectiveTime = (cause: unknown) => {
+  const error = new PartySearchProjectionUnavailable({
+    code: 'party_search_projection_unavailable',
+    reason: 'Counterparty Search effective time is invalid',
+  });
+  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
+  return error;
+};
 
 const readHandlerUnavailable = (cause: PartySearchProjectionUnavailable) => {
   const error = new ReadHandlerUnavailable({
@@ -55,7 +86,8 @@ export const loadCounterpartySearch = (
   scope: OperationalScope,
   legalEntityId: string,
   input: CounterpartiesProviderRequest,
-  effectiveAt: string,
+  effectiveAt: typeof CurrentPartySearchTimeSchema.Encoded,
+  loadCurrentEvidence: CurrentPartySearchEvidenceLoader,
 ) => {
   const baseQuery = {
     effectiveAt,
@@ -65,10 +97,72 @@ export const loadCounterpartySearch = (
     tenantId: scope.tenantId,
   };
   const query = input.role === undefined ? baseQuery : { ...baseQuery, role: input.role };
-  return gateway
-    .searchCounterparties(query, scope)
-    .pipe(Effect.flatMap((hits) => resolveSearchNormalization(normalizeCounterpartySearchHits(query, hits))));
+  return gateway.searchCounterparties(query, scope).pipe(
+    Effect.flatMap((hits) =>
+      resolveSearchNormalization(normalizeCounterpartySearchHits(query, hits)).pipe(
+        Effect.flatMap(() =>
+          Schema.decodeEffect(CurrentPartySearchTimeSchema)(effectiveAt).pipe(Effect.mapError(invalidEffectiveTime)),
+        ),
+        Effect.flatMap((currentTime) =>
+          loadCurrentEvidence(hits.map(partyCandidate)).pipe(
+            Effect.map((evidence) => ({ effectiveAt: currentTime, evidence, hits })),
+          ),
+        ),
+      ),
+    ),
+  );
 };
+
+export const finishCounterpartySearch = Effect.fn('CounterpartiesProvider.finishCounterpartySearch')(
+  function* finishCurrentCounterpartySearch(
+    input: CounterpartiesProviderRequest,
+    scope: OperationalScope,
+    legalEntityId: string,
+    loaded: CurrentCounterpartySearchCandidates,
+  ) {
+    const authorized = yield* authorizeCurrentPartySearchEvidence(scope, loaded.evidence);
+    const current = yield* resolveSearchNormalization(
+      rematchCurrentPartySearchHits(
+        {
+          effectiveAt: loaded.effectiveAt,
+          includeArchived: input.includeArchived ?? false,
+          query: input.query,
+          tenantId: scope.tenantId,
+        },
+        loaded.hits.map(partyCandidate),
+        loaded.evidence,
+        authorized,
+      ),
+    );
+    const byParty = new Map(current.map((hit) => [hit.canonicalPartyRef.resourceId, hit]));
+    const order = new Map(current.map((hit, index) => [hit.canonicalPartyRef.resourceId, index]));
+    const hits = loaded.hits
+      .flatMap((hit): CounterpartySearchProjectionHit[] => {
+        const party = byParty.get(hit.canonicalPartyRef.resourceId);
+        if (party === undefined) {
+          return [];
+        }
+        const { matchedPartyRef: _projectedMatch, ...base } = hit;
+        const currentHit = { ...base, partyArchived: party.archived, partyTitle: party.title };
+        return [
+          party.matchedPartyRef === undefined ? currentHit : { ...currentHit, matchedPartyRef: party.matchedPartyRef },
+        ];
+      })
+      .toSorted(
+        (left, right) =>
+          (order.get(left.canonicalPartyRef.resourceId) ?? 0) - (order.get(right.canonicalPartyRef.resourceId) ?? 0) ||
+          left.counterpartyRef.resourceId.localeCompare(right.counterpartyRef.resourceId),
+      );
+    const baseQuery = {
+      effectiveAt: DateTime.formatIso(loaded.effectiveAt),
+      includeArchived: input.includeArchived ?? false,
+      legalEntityId,
+      tenantId: scope.tenantId,
+    };
+    const query = input.role === undefined ? baseQuery : { ...baseQuery, role: input.role };
+    return yield* resolveSearchNormalization(normalizeCounterpartySearchHits(query, hits));
+  },
+);
 
 const counterpartyRefKey = (ref: CounterpartyRef): string => `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}`;
 
@@ -120,15 +214,14 @@ export const counterpartiesRead = defineRead(
   },
   {
     load: (input, context: ReadLoadContext<CounterpartiesSearchServices>) =>
-      context.services.load(input).pipe(
+      context.services.load(input).pipe(Effect.mapError(readHandlerUnavailable)),
+    finish: (input, context) =>
+      finishCounterpartySearch(input, context.scope, context.scope.legalEntityId ?? '', context.loaded).pipe(
         Effect.mapError(readHandlerUnavailable),
-        Effect.map((result) => ({
-          evidence: { resultCount: result.length },
-          result,
-        })),
+        Effect.map((result) => ({ evidence: { resultCount: result.length }, result })),
       ),
   },
-  Effect.fn('CounterpartiesProvider.counterpartiesRead')(function* makeCounterpartySearchServices(_transaction, scope) {
+  Effect.fn('CounterpartiesProvider.counterpartiesRead')(function* makeCounterpartySearchServices(transaction, scope) {
     const gateway = yield* PartySearchProjectionGateway;
     const { legalEntityId } = scope;
     if (legalEntityId === undefined) {
@@ -141,7 +234,11 @@ export const counterpartiesRead = defineRead(
       load: (input: CounterpartiesProviderRequest) =>
         DateTime.now.pipe(
           Effect.map(DateTime.formatIso),
-          Effect.flatMap((effectiveAt) => loadCounterpartySearch(gateway, scope, legalEntityId, input, effectiveAt)),
+          Effect.flatMap((effectiveAt) =>
+            loadCounterpartySearch(gateway, scope, legalEntityId, input, effectiveAt, (hits) =>
+              loadCurrentPartySearchEvidence(transaction, scope, hits),
+            ),
+          ),
         ),
     };
   }),

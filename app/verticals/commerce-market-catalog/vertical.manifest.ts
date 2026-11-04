@@ -61,6 +61,20 @@ const eshopsEntrypoint: PageContributionInput['entrypoint'] = {
   scope: 'tenant',
 };
 
+const salesFamily = {
+  icon: 'icon-[mdi--handshake-outline]',
+  key: 'sales',
+  label: { cs: 'Obchod a CRM', en: 'Sales and CRM' },
+  order: 30,
+} as const;
+
+const marketGroup = {
+  icon: 'icon-[mdi--earth]',
+  key: 'market',
+  label: { cs: 'Trhy', en: 'Markets' },
+  order: 210,
+} as const;
+
 export const commerceMarketCatalogManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
     defaultState: 'inactive',
@@ -195,6 +209,20 @@ export const commerceMarketCatalogManifest: OntosModuleManifestInput = defineOnt
             moduleKey,
             role: 'search',
             scope: 'tenant',
+          },
+          presentation: {
+            family: salesFamily,
+            group: marketGroup,
+            record: {
+              pageKey: marketDetailPageKey,
+              selector: {
+                idEncoding: 'native',
+                idFormat: 'uuid',
+                kind: 'path',
+                parameterName: 'marketId',
+              },
+            },
+            scope: 'company',
           },
           searchKey: 'commerce.market-catalog.markets',
         }),

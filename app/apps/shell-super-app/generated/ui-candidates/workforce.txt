@@ -1,3 +1,4 @@
+--account-group-outline
 --badge-account-horizontal-outline
 --plus
 --spacing-100
@@ -24,6 +25,7 @@ gap-250
 h-22
 h-40
 hidden
+icon-[mdi--account-group-outline]
 icon-[mdi--badge-account-horizontal-outline]
 icon-[mdi--plus]
 inline

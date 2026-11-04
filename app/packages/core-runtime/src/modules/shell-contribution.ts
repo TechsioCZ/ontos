@@ -1,12 +1,18 @@
 import { Result, Schema } from 'effect';
 
+import {
+  CoreSearchPresentationDeclarationSchema,
+  CoreSearchPresentationMetadataSchema,
+  CoreShellIconSchema,
+  CoreShellLabelSchema,
+  CoreShellPageRoutePathSchema,
+  CoreShellStableKeySchema,
+  coreShellRouteParameterNames,
+} from '../search/search-contract.ts';
+import type { CoreSearchPresentationMetadata } from '../search/search-contract.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 
-const stableKey = Schema.String.check(
-  Schema.isMinLength(3),
-  Schema.isMaxLength(200),
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
-);
+const stableKey = CoreShellStableKeySchema;
 const actionKey = stableKey.pipe(Schema.brand('ActionKey'));
 const apiKey = stableKey.pipe(Schema.brand('ApiKey'));
 const componentKey = stableKey.pipe(Schema.brand('ComponentKey'));
@@ -22,33 +28,7 @@ const expose = Schema.String.check(
 );
 const routeParameterPattern = /^:(?<name>[a-z][A-Za-z0-9]*)$/u;
 const routeParameterName = Schema.String.check(Schema.isPattern(/^[a-z][A-Za-z0-9]*$/u));
-const routeLocalePrefixPattern = /^[a-z]{2}(?:-[a-z]{2})?$/u;
-const routePath = Schema.String.check(
-  Schema.isMinLength(2),
-  Schema.isMaxLength(200),
-  Schema.isPattern(
-    /^\/(?:[a-z][a-z0-9]*(?:-[a-z0-9]+)*|:[a-z][A-Za-z0-9]*)(?:\/(?:[a-z][a-z0-9]*(?:-[a-z0-9]+)*|:[a-z][A-Za-z0-9]*))*$/u,
-  ),
-).pipe(
-  Schema.check(
-    Schema.makeFilter((value) => {
-      const segments = value.slice(1).split('/');
-      if (routeLocalePrefixPattern.test(segments[0] ?? '')) {
-        return 'page contribution routePath must not include a locale prefix';
-      }
-      const parameterNames = segments.flatMap((segment) => {
-        const name = routeParameterPattern.exec(segment)?.groups?.['name'];
-        return name === undefined ? [] : [name];
-      });
-      if (parameterNames.some((name) => name === 'constructor' || name === 'prototype')) {
-        return 'page contribution routePath must not use reserved parameter names';
-      }
-      return new Set(parameterNames).size === parameterNames.length
-        ? undefined
-        : 'page contribution routePath must not repeat a parameter name';
-    }),
-  ),
-);
+const routePath = CoreShellPageRoutePathSchema;
 
 /** The parameter names one already-validated page route template declares, in route order. */
 const pageRouteParameters = (path: string): readonly string[] =>
@@ -165,16 +145,11 @@ const writableApiEntrypoint = ModuleEntrypointSchema.pipe(
   ),
 );
 
-const navigationText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(80), Schema.isTrimmed());
-
 /** Czech and English text the Shell shows for a contribution; the Shell never names a module's destinations. */
-export const ShellContributionLabelSchema = Schema.Struct({ cs: navigationText, en: navigationText });
+export const ShellContributionLabelSchema = CoreShellLabelSchema;
 
 /** Iconify utility class of the destination, e.g. `icon-[mdi--home-outline]`. */
-export const ShellContributionIconSchema = Schema.TemplateLiteral(['icon-[', Schema.String, ']']).check(
-  Schema.isMaxLength(120),
-  Schema.isPattern(/^icon-\[[a-z0-9]+--[a-z0-9-]+\]$/u),
-);
+export const ShellContributionIconSchema = CoreShellIconSchema;
 
 /** Platform capabilities the Shell decides per person; a destination needing one is listed only with it. */
 export const SHELL_NAVIGATION_CAPABILITIES = ['people_administration'] as const;
@@ -245,6 +220,8 @@ export const ShellPublicComponentContributionSchema = Schema.Struct({
 export const ShellSearchContributionSchema = Schema.Struct({
   contributionKey,
   entrypoint: searchEntrypoint,
+  /** Optional bounded presentation; absent keeps the existing search result usable without a declared destination. */
+  presentation: Schema.optionalKey(CoreSearchPresentationDeclarationSchema),
   searchKey,
 });
 
@@ -297,6 +274,20 @@ export interface ShellContributionReferenceSets {
   readonly reportKeys: ReadonlySet<string>;
   readonly resourceTypeKeys: ReadonlySet<string>;
   readonly searchKeys: ReadonlySet<string>;
+}
+
+/** Structural view of the manifest's declared search descriptor used by presentation binding validation. */
+export interface ShellSearchPresentationDescriptor {
+  readonly accessFiltering: 'legal_entity_scope' | 'resource_permission' | 'tenant_scope';
+  readonly key: string;
+  readonly owningModuleId: string;
+  readonly resourceType: string;
+}
+
+export interface ShellSearchPresentationReferences {
+  readonly moduleId: string;
+  readonly resourceTypeKeys: ReadonlySet<string>;
+  readonly search: readonly ShellSearchPresentationDescriptor[];
 }
 
 const referenceIssue = (set: ReadonlySet<string>, key: string, label: string): string | undefined =>
@@ -374,6 +365,102 @@ const validateDiscoveryReferences = (
   return undefined;
 };
 
+const encodePresentationMetadata = Schema.encodeResult(Schema.fromJsonString(CoreSearchPresentationMetadataSchema));
+const searchMetadataIdentity = (metadata: CoreSearchPresentationMetadata): string => {
+  const encoded = encodePresentationMetadata(metadata);
+  return Result.isSuccess(encoded) ? encoded.success : `invalid-presentation-metadata:${metadata.key}`;
+};
+
+const searchMetadataIssue = (
+  claimed: Map<string, string>,
+  metadata: CoreSearchPresentationMetadata,
+  kind: 'family' | 'group',
+): string | undefined => {
+  const identity = searchMetadataIdentity(metadata);
+  const previous = claimed.get(metadata.key);
+  if (previous !== undefined && previous !== identity) {
+    return `search presentation ${kind} label/icon/order must agree across contributions for key ${metadata.key}`;
+  }
+  claimed.set(metadata.key, identity);
+  return undefined;
+};
+
+/**
+ * Page and metadata references that need no search descriptor: exact same-owner page contribution,
+ * exact existing `:parameter` (and no other placeholder) for a path selector, or a concrete page
+ * route for a query selector.
+ */
+export const shellSearchPresentationPageIssue = (contributions: OntosShellContributions): string | undefined => {
+  const pages = new Map(contributions.pages.map((page) => [String(page.contributionKey), page] as const));
+  const claimedFamilies = new Map<string, string>();
+  const claimedGroups = new Map<string, string>();
+  for (const { presentation } of contributions.search) {
+    if (presentation !== undefined) {
+      const familyIssue = searchMetadataIssue(claimedFamilies, presentation.family, 'family');
+      if (familyIssue !== undefined) {
+        return familyIssue;
+      }
+      const groupIssue = searchMetadataIssue(claimedGroups, presentation.group, 'group');
+      if (groupIssue !== undefined) {
+        return groupIssue;
+      }
+      for (const agendaPageKey of presentation.agendaPageKeys ?? []) {
+        if (!pages.has(agendaPageKey)) {
+          return `search presentation agenda references undeclared page contribution ${agendaPageKey}`;
+        }
+      }
+      const { record } = presentation;
+      if (record !== undefined) {
+        const page = pages.get(record.pageKey);
+        if (page === undefined) {
+          return `search presentation record references undeclared page contribution ${record.pageKey}`;
+        }
+        const parameterNames = coreShellRouteParameterNames(page.routePath);
+        if (record.selector.kind === 'path') {
+          if (parameterNames.length !== 1 || parameterNames[0] !== record.selector.parameterName) {
+            return `search presentation path selector must bind the only existing route parameter of ${page.routePath}`;
+          }
+        } else if (parameterNames.length > 0) {
+          return `search presentation query selector requires a concrete page route ${page.routePath}`;
+        }
+      }
+    }
+  }
+  return undefined;
+};
+
+export const shellSearchPresentationBindingIssue = (
+  contributions: OntosShellContributions,
+  references: ShellSearchPresentationReferences,
+): string | undefined => {
+  const descriptors = new Map<string, ShellSearchPresentationDescriptor>();
+  for (const descriptor of references.search) {
+    if (descriptors.has(descriptor.key)) {
+      return `duplicate search descriptor key ${descriptor.key}`;
+    }
+    descriptors.set(descriptor.key, descriptor);
+  }
+  for (const { presentation, searchKey: contributionSearchKey } of contributions.search) {
+    if (presentation !== undefined) {
+      const descriptor = descriptors.get(contributionSearchKey);
+      if (descriptor === undefined) {
+        return `search presentation references undeclared search descriptor ${contributionSearchKey}`;
+      }
+      if (descriptor.owningModuleId !== references.moduleId) {
+        return 'search presentation search descriptor owner must match the manifest module';
+      }
+      if (!references.resourceTypeKeys.has(descriptor.resourceType)) {
+        return `search presentation references undeclared resource type ${descriptor.resourceType}`;
+      }
+      const expectedScope = descriptor.accessFiltering === 'tenant_scope' ? 'tenant' : 'company';
+      if (presentation.scope !== expectedScope) {
+        return `search presentation scope must match ${descriptor.accessFiltering} search access`;
+      }
+    }
+  }
+  return undefined;
+};
+
 const validateResourceReferences = (
   contributions: OntosShellContributions,
   references: ShellContributionReferenceSets,
@@ -448,7 +535,8 @@ const validateReferences = (
     validatePageReferences(contributions, references) ??
     validateDiscoveryReferences(contributions, references) ??
     validateResourceReferences(contributions, references) ??
-    validateMediaReferences(contributions, references)
+    validateMediaReferences(contributions, references) ??
+    shellSearchPresentationPageIssue(contributions)
   );
 };
 

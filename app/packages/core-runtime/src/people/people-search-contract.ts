@@ -2,6 +2,7 @@
 import { Schema } from 'effect';
 import type { OntosSearchDescriptor } from '../modules/manifest.ts';
 import { PersonRefSchema } from '../resources/person.ts';
+import { CoreSearchQueryTextSchema } from '../search/search-contract.ts';
 
 const SelectedLegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('PeopleSearchSelectedLegalEntityId'),
@@ -9,7 +10,7 @@ const SelectedLegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(
 );
 
 export const PeopleSearchRequestSchema = Schema.Struct({
-  query: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  query: CoreSearchQueryTextSchema,
 });
 export const PeopleSearchResponseSchema = Schema.Array(
   Schema.Struct({

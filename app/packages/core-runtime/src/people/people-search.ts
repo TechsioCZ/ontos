@@ -9,6 +9,7 @@ import { ContextAccess } from '../permissions/context-access.ts';
 import type { ReadLoadContext, ReadPrepareContext, ReadFinishContext } from '../reads/context.ts';
 import { defineRead } from '../reads/definition.ts';
 import { CoreSearchQueryRuntime } from '../search/query-runtime.ts';
+import { coreSearchTokens, matchesCoreSearchValues } from '../search/search-contract.ts';
 import { PeopleSearchRequestSchema, PeopleSearchResponseSchema } from './people-search-contract.ts';
 import { personIdentity, personRef } from './person-identity.ts';
 import { PeopleSearchVisibility, peopleSearchUnavailable } from './people-search-visibility.ts';
@@ -95,7 +96,7 @@ type Loaded = Effect.Success<ReturnType<Services['current']>>;
 const load = (_input: Input, context: ReadLoadContext<Services, Prepared>) =>
   context.services.current(context.prepared);
 const finish = Effect.fn('PeopleSearch.finish')(function* finish(
-  _input: Input,
+  input: Input,
   context: ReadFinishContext<Prepared, Loaded>,
 ) {
   const { scope } = context;
@@ -137,8 +138,10 @@ const finish = Effect.fn('PeopleSearch.finish')(function* finish(
   ) {
     return yield* peopleSearchUnavailable();
   }
+  const tokens = coreSearchTokens(input.query);
+  // Projection hits discover candidates only; current authorized names must still prove the match.
   const allowed = result
-    .filter((_row, index) => decisions[index]?.decision === 'allowed')
+    .filter((row, index) => decisions[index]?.decision === 'allowed' && matchesCoreSearchValues([row.title], tokens))
     .toSorted(
       (left, right) => left.title.localeCompare(right.title) || left.ref.resourceId.localeCompare(right.ref.resourceId),
     );

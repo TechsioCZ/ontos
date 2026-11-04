@@ -78,6 +78,10 @@ it('accepts Schema.Never as an Action with no domain errors without accepting un
   expect(problems).toMatch(/Match\.exhaustive/u);
   expect(problems).toContain('mapCoreProblem');
   expect(problems).not.toContain('Match.tag(');
+  expect(problems).not.toContain('ActionCoreError | DomainError');
+  expect(problems).not.toContain('type DomainError');
+  expect(problems).not.toContain('const mapDomainProblem');
+  expect(problems).toContain('mapChangeRateActionProblem = (error: ActionCoreError)');
 });
 
 it('accepts callable Effect union domain schemas and rejects malformed schema descriptors', () => {
@@ -172,6 +176,8 @@ it('renders one exact typed Action endpoint and exhaustive domain mapping', () =
   expect(problems).not.toContain('jscpd:ignore-start');
   expect(problems).not.toContain('jscpd:ignore-end');
   expect(problems).toContain('Match.tags({');
+  expect(problems).toContain('ActionCoreError | DomainError');
+  expect(problems).toContain('isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error)');
   expect(problems).toContain("ManualRateConflict: () => changeRateActionProblem.conflict('manual_rate_conflict')");
   expect(problems).toContain('Match.exhaustive');
 });

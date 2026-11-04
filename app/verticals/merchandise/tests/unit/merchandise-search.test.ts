@@ -10,7 +10,11 @@ import {
   CoreSearchProjectionHitSchema,
   toModuleAccessObjectId,
 } from '@app/core-runtime';
-import type { CoreSearchQueryRuntimeService, ResourceContainmentRelationshipMutationInput } from '@app/core-runtime';
+import type {
+  CoreSearchQueryRuntimeService,
+  OperationalScope,
+  ResourceContainmentRelationshipMutationInput,
+} from '@app/core-runtime';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -25,12 +29,9 @@ import type { MerchandiseSearchSnapshot } from '../../src/services/merchandise-s
 import { merchandiseSearchIngestionRegistrations } from '../../src/worker-host/search-ingestion-registrations.ts';
 import { ProductRefSchema } from '../../shared/resources/product.ts';
 import { OrderRefSchema } from '../../shared/resources/order.ts';
-import { ProductsProviderResponseSchema } from '../../shared/apis/products-search.ts';
-import { OrdersProviderResponseSchema } from '../../shared/apis/orders-search.ts';
+import { ProductsProviderRequestSchema, ProductsProviderResponseSchema } from '../../shared/apis/products-search.ts';
+import { OrdersProviderRequestSchema, OrdersProviderResponseSchema } from '../../shared/apis/orders-search.ts';
 import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
-
-const loadMerchandiseSearch = (runtime: CoreSearchQueryRuntimeService, ...args: Parameters<typeof loadSearch>) =>
-  loadSearch(...args).pipe(Effect.provideService(CoreSearchQueryRuntime, runtime));
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const company = '20000000-0000-4000-8000-000000000002';
@@ -87,6 +88,18 @@ const snapshot: MerchandiseSearchSnapshot = {
   ],
 };
 
+const loadMerchandiseSearch = <Ref, Encoded>(
+  runtime: CoreSearchQueryRuntimeService,
+  searchScope: OperationalScope,
+  resource: 'product' | 'order',
+  query: string,
+  refSchema: Schema.Codec<Ref, Encoded>,
+  current: MerchandiseSearchSnapshot = snapshot,
+) =>
+  loadSearch(searchScope, resource, query, refSchema, () => Effect.succeed(current)).pipe(
+    Effect.provideService(CoreSearchQueryRuntime, runtime),
+  );
+
 it.effect('indexes human product/order labels and active SKU text, never another company variant', () =>
   Effect.gen(function* test() {
     const docs = yield* buildMerchandiseSearchDocuments(snapshot);
@@ -97,6 +110,196 @@ it.effect('indexes human product/order labels and active SKU text, never another
     expect(docs[0]?.searchableText).toEqual(['Čerstvá káva', 'KAVA-01', 'Půl kila', 'KAVA-500']);
     expect(docs[1]?.searchableText).toEqual(['OBJ-2026-001']);
     expect(docs.every((d) => d.ref.tenantId === tenantId)).toBe(true);
+  }),
+);
+
+it.effect('indexes only approved product/active-variant parameter labels and values, without publishing objects', () =>
+  Effect.gen(function* test() {
+    const docs = yield* buildMerchandiseSearchDocuments({
+      ...snapshot,
+      products: snapshot.products.map((row) => ({
+        ...row,
+        parameters: [
+          { label: 'Povrchová úprava', value: 'zinek' },
+          { label: ' ', value: '' },
+        ],
+      })),
+      variants: snapshot.variants.map((row) => ({
+        ...row,
+        parameters: [
+          { label: 'Průměr', value: row.active !== false && row.legalEntityId === company ? 'Ø 180 mm' : 'HIDDEN' },
+        ],
+      })),
+    });
+    expect(docs[0]?.searchableText).toEqual([
+      'Čerstvá káva Povrchová úprava zinek',
+      'KAVA-01',
+      'Půl kila Průměr Ø 180 mm',
+      'KAVA-500',
+    ]);
+    expect(docs[0]?.metadata).toEqual([]);
+    expect(docs[0]?.aliases).toEqual([]);
+    expect(docs[0]?.facets).toEqual([]);
+    expect(JSON.stringify(docs)).not.toContain('HIDDEN');
+    const store = makeInMemoryCoreSearchProjectionStore();
+    const parameterSnapshot = {
+      ...snapshot,
+      products: snapshot.products.map((row) => ({ ...row, parameters: [{ label: 'Materiál', value: 'zinek' }] })),
+      variants: snapshot.variants.map((row) => ({ ...row, parameters: [{ label: 'Průměr', value: 'Ø 180 mm' }] })),
+    };
+    yield* publishMerchandiseSearch(context('rebuild'), parameterSnapshot).pipe(
+      Effect.provideService(CoreSearchProjectionStore, store),
+      Effect.provideService(
+        CoreSearchIngestion,
+        makeCoreSearchIngestion(store, merchandiseSearchIngestionRegistrations),
+      ),
+      Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.void }),
+    );
+    const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
+    for (const query of ['material zinek', 'prumer 180', 'ＫＡＶＡ-５００']) {
+      expect(
+        yield* loadMerchandiseSearch(runtime, scope, 'product', query, ProductRefSchema, parameterSnapshot),
+      ).toHaveLength(1);
+    }
+    expect(yield* loadMerchandiseSearch(runtime, scope, 'product', 'WITHDRAWN', ProductRefSchema)).toEqual([]);
+  }),
+);
+
+it.effect('canonical legacy unset-active variants retain evidence while explicit false never matches', () =>
+  Effect.gen(function* test() {
+    const documents = yield* buildMerchandiseSearchDocuments({
+      ...snapshot,
+      variants: [
+        {
+          legalEntityId: company,
+          name: 'Legacy',
+          parameters: [{ label: 'Materiál', value: 'zinek' }],
+          productId: 'product-1',
+          sku: 'LEGACY',
+          tenantId,
+        },
+        {
+          active: false,
+          legalEntityId: company,
+          name: 'Hidden',
+          parameters: [{ label: 'Tajné', value: 'HIDDEN' }],
+          productId: 'product-1',
+          sku: 'HIDDEN',
+          tenantId,
+        },
+      ],
+    });
+    const text = documents[0]?.searchableText.join(' ');
+    expect(text).toContain('Legacy Materiál zinek');
+    expect(text).toContain('LEGACY');
+    expect(text).not.toContain('HIDDEN');
+  }),
+);
+
+it.effect('retains Core evidence bounds rather than silently truncating unsupported parameter text', () =>
+  Effect.gen(function* test() {
+    const tooLong = yield* Effect.exit(
+      buildMerchandiseSearchDocuments({
+        ...snapshot,
+        products: snapshot.products.map((row) => ({
+          ...row,
+          parameters: [{ label: 'Materiál', value: 'x'.repeat(301) }],
+        })),
+      }),
+    );
+    expect(Exit.isFailure(tooLong)).toBe(true);
+  }),
+);
+
+it.effect('request and optional relevance codecs use Core query/version/range contracts', () =>
+  Effect.gen(function* test() {
+    for (const schema of [ProductsProviderRequestSchema, OrdersProviderRequestSchema]) {
+      for (const query of ['', ' ', '\u0301', 'x'.repeat(201)]) {
+        expect(Exit.isFailure(yield* Effect.exit(Schema.decodeUnknownEffect(schema)({ query })))).toBe(true);
+      }
+    }
+    const [document] = yield* buildMerchandiseSearchDocuments(snapshot);
+    if (document === undefined) {
+      yield* Effect.die('missing fixture');
+      return;
+    }
+    const response = { ref: document.ref, selectedLegalEntityId: company, title: document.title };
+    expect(yield* Schema.decodeUnknownEffect(ProductsProviderResponseSchema)([response])).toEqual([response]);
+    for (const relevance of [
+      { score: -1, version: '1' },
+      { score: 1001, version: '1' },
+      { score: 1, version: '2' },
+    ]) {
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(Schema.decodeUnknownEffect(ProductsProviderResponseSchema)([{ ...response, relevance }])),
+        ),
+      ).toBe(true);
+    }
+    expect(
+      yield* Schema.decodeUnknownEffect(ProductsProviderResponseSchema)([
+        { ...response, relevance: { score: 1000, version: '1' } },
+      ]),
+    ).toHaveLength(1);
+  }),
+);
+
+it.effect('staff variant wire evidence is optional, local, bounded and rejects private fields or order metadata', () =>
+  Effect.gen(function* test() {
+    const product = {
+      ref: {
+        moduleId: 'demo.merchandise',
+        resourceId: `${company}.product-1`,
+        resourceType: 'demo.merchandise.product',
+        tenantId,
+      },
+      selectedLegalEntityId: company,
+      title: 'Adaptér',
+    };
+    for (const matchedVariant of [
+      { id: 'local-1' },
+      { id: 'local-1', name: 'Malý adaptér' },
+      { id: 'local-1', name: 'Malý adaptér', sku: 'SKU-01' },
+    ]) {
+      expect(
+        yield* Schema.decodeUnknownEffect(ProductsProviderResponseSchema, { onExcessProperty: 'error' })([
+          { ...product, matchedVariant },
+        ]),
+      ).toEqual([{ ...product, matchedVariant }]);
+    }
+    for (const matchedVariant of [
+      { name: 'Malý adaptér' },
+      { id: '' },
+      { id: 'x'.repeat(301) },
+      { id: 'local-1', name: ' ' },
+      { id: 'local-1', sku: ' ' },
+      { id: 'local-1', priceMinor: 0 },
+      { id: 'local-1', stockOnHand: 10 },
+      { document: { name: 'Private document' }, id: 'local-1' },
+    ]) {
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(
+            Schema.decodeUnknownEffect(ProductsProviderResponseSchema, { onExcessProperty: 'error' })([
+              { ...product, matchedVariant },
+            ]),
+          ),
+        ),
+      ).toBe(true);
+    }
+    expect(
+      Exit.isFailure(
+        yield* Effect.exit(
+          Schema.decodeUnknownEffect(OrdersProviderResponseSchema, { onExcessProperty: 'error' })([
+            {
+              ...product,
+              matchedVariant: { id: 'local-1' },
+              ref: { ...product.ref, resourceId: `${company}.order-1`, resourceType: 'demo.merchandise.order' },
+            },
+          ]),
+        ),
+      ),
+    ).toBe(true);
   }),
 );
 
@@ -317,6 +520,16 @@ it.effect('projects every SKU in the supported 1,000-variant merchandise model w
     expect(documents[0]?.searchableText.length).toBe(2002);
     expect(documents[0]?.searchableText).toContain('SKU-999'.padEnd(64, 'S'));
     expect(documents[0]?.searchableText.join(' ').length).toBeGreaterThan(40_000);
+    const withParameters = yield* buildMerchandiseSearchDocuments({
+      ...maximum,
+      variants: maximum.variants.map((variant, index) => ({
+        ...variant,
+        parameters: [{ label: 'Materiál', value: `zinek-${index}` }],
+      })),
+    });
+    expect(withParameters[0]?.searchableText.length).toBe(2002);
+    expect(withParameters[0]?.searchableText.join(' ')).toContain('zinek-999');
+    expect(withParameters[0]?.searchableText.every((term) => term.length <= 300)).toBe(true);
   }),
 );
 

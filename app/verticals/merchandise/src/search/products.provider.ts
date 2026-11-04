@@ -3,18 +3,12 @@
 import { Effect } from 'effect';
 import { defineRead, defineReadSearchCollectionAuthorization, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { ProductRefSchema } from '../../shared/resources/product.ts';
-import { loadMerchandiseSearch } from '../services/merchandise-search-projection.ts';
+import { loadCurrentMerchandiseSearch, loadMerchandiseSearch } from '../services/merchandise-search-projection.ts';
 import { assertMerchandiseSearchPublished } from './catalog-publication.ts';
 import { ProductsProviderRequestSchema, ProductsProviderResponseSchema } from '../../shared/apis/products-search.ts';
 
-import type { ProductsProviderRequest, ProductsProviderResponse } from '../../shared/apis/products-search.ts';
-import type { ReadLoadContext, ReadHandlerUnavailable, CoreSearchQueryRuntime } from '@app/core-runtime';
-
-interface ProductsServices {
-  readonly load: (
-    input: ProductsProviderRequest,
-  ) => Effect.Effect<ProductsProviderResponse, ReadHandlerUnavailable, CoreSearchQueryRuntime>;
-}
+import type { ProductsProviderResponse } from '../../shared/apis/products-search.ts';
+import type { ReadFinishContext } from '@app/core-runtime';
 
 const MODULE = 'demo.merchandise';
 
@@ -50,20 +44,17 @@ export const productsRead = defineRead(
     schemaVersion: '1',
   },
   {
-    load: (input, context: ReadLoadContext<ProductsServices>) =>
-      context.services.load(input).pipe(
+    finish: (input, context: ReadFinishContext<undefined, void>) =>
+      loadMerchandiseSearch(context.scope, 'product', input.query, ProductRefSchema, (ids) =>
+        context.transaction((transaction) => loadCurrentMerchandiseSearch(transaction, context.scope, 'product', ids)),
+      ).pipe(
         Effect.map((result) => ({
           evidence: { resultCount: result.length },
           result,
         })),
       ),
+    load: () => Effect.void,
   },
-  (transaction, scope) =>
-    assertMerchandiseSearchPublished(transaction, scope).pipe(
-      Effect.as({
-        load: (input: { readonly query: string }) =>
-          loadMerchandiseSearch(scope, 'product', input.query, ProductRefSchema),
-      }),
-    ),
+  (transaction, scope) => assertMerchandiseSearchPublished(transaction, scope),
   () => ({ kind: 'module', moduleId: MODULE }),
 );

@@ -1,4 +1,10 @@
+--account-multiple-check-outline
 --color-fg-secondary
 --color-page-fg
+--folder-outline
 --folder-plus-outline
+filter
+icon-[mdi--account-multiple-check-outline]
+icon-[mdi--folder-outline]
 icon-[mdi--folder-plus-outline]
+visible

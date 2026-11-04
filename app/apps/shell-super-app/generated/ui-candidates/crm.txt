@@ -13,6 +13,7 @@
 --calendar-clock
 --calendar-plus
 --card-account-details-outline
+--card-account-phone-outline
 --cash-multiple
 --chart-areaspline
 --check
@@ -134,6 +135,7 @@ icon-[mdi--calendar-check-outline]
 icon-[mdi--calendar-clock]
 icon-[mdi--calendar-plus]
 icon-[mdi--card-account-details-outline]
+icon-[mdi--card-account-phone-outline]
 icon-[mdi--cash-multiple]
 icon-[mdi--chart-areaspline]
 icon-[mdi--check-circle]

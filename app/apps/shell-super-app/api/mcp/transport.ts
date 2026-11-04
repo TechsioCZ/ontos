@@ -13,6 +13,7 @@ import { listOwnAgentBatches, submitAgentProposals } from '../agent-platform/ser
 import { AgentActionRequestIdentity } from '../auth/agent-action-request-identity.ts';
 import { AgentReadRequestIdentity } from '../auth/agent-request-identity.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
+import { CapturedShellCompositionCatalog } from '../modules/captured-shell-catalog.ts';
 import { loadOAuthServerConfig } from '../oauth-connections/server-config.ts';
 import { loadMcpCatalog } from './catalog.ts';
 import { authenticateMcpRequest, connectionPrincipalContext } from './connection.ts';
@@ -22,18 +23,20 @@ import { buildConnectionTools } from './tools.ts';
 import type { McpBackend } from './types.ts';
 import { ModuleUnavailable } from './module-unavailable.ts';
 import { ProposalRefused } from './proposal-refused.ts';
+import { searchMcpRecords } from './record-search.ts';
 
 const describeConnection = Effect.fn('Mcp.describeConnection')(function* describeConnection(token: string) {
   const live = yield* authenticateMcpRequest(token);
   const installed = yield* (yield* ShellInstalledModuleCatalog).load;
-  return { catalog: yield* loadMcpCatalog(installed.composition), live };
+  return { catalog: yield* loadMcpCatalog(installed.composition), installed, live };
 });
 
 /** SDK callbacks borrow the admitted request's services; each mutation binds its own explicit caller intent. */
 type McpBackendServices = Exclude<
   | Effect.Services<ReturnType<typeof callModuleAs>>
   | Effect.Services<ReturnType<typeof listOwnAgentBatches>>
-  | Effect.Services<ReturnType<typeof submitAgentProposals>>,
+  | Effect.Services<ReturnType<typeof submitAgentProposals>>
+  | Effect.Services<ReturnType<typeof searchMcpRecords>>,
   AgentActionRequestIdentity | AgentReadRequestIdentity
 >;
 
@@ -112,16 +115,16 @@ const authenticate = Effect.fn('Mcp.authenticateRequest')(function* authenticate
   if (!Predicate.isTagged(outcome, 'ok')) {
     return { kind: outcome._tag } satisfies McpAuthentication;
   }
-  const { catalog, live } = outcome;
+  const { catalog, installed, live } = outcome;
   const principal = connectionPrincipalContext(live);
   const caller: AgentPlatformCaller = { legalName: live.description.legalName, principal };
   const endpoint = yield* endpointConfig;
   const crypto = yield* Crypto.Crypto;
   // Capture at the HTTP/SDK boundary, not in a native service implementation. Nothing survives this request.
   const services = Context.add(
-    yield* Effect.context<McpBackendServices>(),
-    AgentReadRequestIdentity,
-    readIdentity.value,
+    Context.add(yield* Effect.context<McpBackendServices>(), AgentReadRequestIdentity, readIdentity.value),
+    CapturedShellCompositionCatalog,
+    installed,
   );
   const backend: McpBackend = {
     callModule: (appId, path, body, options) =>
@@ -143,6 +146,9 @@ const authenticate = Effect.fn('Mcp.authenticateRequest')(function* authenticate
       Effect.mapError((cause) => new ModuleUnavailable({ cause, message: `${QUEUE_UNAVAILABLE} (${cause._tag})` })),
       Effect.provideContext(services),
     ),
+    // This closure and its native services belong only to this verified SDK request. The adapter re-verifies the
+    // original credential and current grant/composition on every call; no authority survives another request.
+    searchRecords: (input) => searchMcpRecords(live.description, input).pipe(Effect.provideContext(services)),
     submitProposals: (request, intent) =>
       withMcpActionIntent(
         submitAgentProposals(caller, request).pipe(

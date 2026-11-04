@@ -1,11 +1,13 @@
 import type { ContextAccessService, TenantModuleState } from '@app/core-runtime';
 import { ReadInputValidationError } from '@app/core-runtime';
+import { corePeopleSystemSearchProvider } from '@app/core-runtime/people/search';
 import { Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { validateShellSearchResourceTypes } from '../../api/modules/shell-governed-reads.ts';
+import { compileShellSearchPresentation } from '../../api/modules/shell-search-presentation.ts';
 import {
   makeShellSearch,
   shellSearchAdmittedResourceTypes,
@@ -22,10 +24,10 @@ import {
 } from '../../shared/api.ts';
 import type { ShellSearchResult } from '../../shared/api.ts';
 import {
-  shellSearchPresentationContext,
+  shellSearchFamilies,
+  shellSearchPresentationIndex,
   shellSearchResourceTypesForGroups,
 } from '../../src/routes/shell-search-resource-types.ts';
-import type { ShellSearchGroupInput } from '../../src/routes/shell-search-resource-types.ts';
 
 const alphaModule = 'alpha.registry';
 const alphaType = 'alpha.registry.record';
@@ -219,7 +221,7 @@ it.effect('a legacy request without resourceTypes asks every admitted owner and 
   }),
 );
 
-it.effect('an explicit empty resourceTypes list asks no owner and returns no hit', () =>
+it.effect('an explicit empty resourceTypes list returns the admitted inventory and asks no owner', () =>
   Effect.gen(function* emptyTypes() {
     const catalog = yield* catalogEffect;
     let ownerCalls = 0;
@@ -242,9 +244,14 @@ it.effect('an explicit empty resourceTypes list asks no owner and returns no hit
         },
       },
     ).search(context, { query: 'record', resourceTypes: [] });
-    expect(result).toEqual({ partial: false, results: [] });
+    // The inventory request still evaluates every admitted provider's committed state, but it dispatches no owner
+    // assertion and returns no fabricated hit. The inventory itself is the release-bound admitted one.
+    expect(result.partial).toBe(false);
+    expect(result.results).toEqual([]);
+    expect(result.presentation?.business.compositionRevision).toBe(catalog.composition.revision);
+    expect(result.presentation?.business.entries).toEqual([]);
     expect(ownerCalls).toBe(0);
-    expect(stateCalls).toBe(0);
+    expect(stateCalls).toBe(1);
   }),
 );
 
@@ -496,7 +503,14 @@ it.effect('an unadmitted type never reaches its owner and cannot widen a search'
       },
     ).search(context, { query: 'record', resourceTypes: [betaType] });
     // Selection narrows an authorized fan-out; a denied module simply yields no hit instead of a grant.
-    expect(result).toEqual({ partial: false, results: [] });
+    expect(result).toEqual({
+      partial: false,
+      presentation: {
+        business: { compositionRevision: catalog.composition.revision, entries: [], schemaVersion: '1' },
+        pages: [],
+      },
+      results: [],
+    });
     expect(betaCalls).toBe(0);
   }),
 );
@@ -564,125 +578,76 @@ it('preserves the existing resource detail wire union, including detail_not_supp
   ).toBe(true);
 });
 
-/** The composed navigation of the demo document: the destinations those record types open, and their sections. */
-const searchNavigation = [
-  { groupKey: 'shell.navigation.finance', href: '/finance', moduleId: 'finance.billing' },
-  { groupKey: 'shell.navigation.sales', href: '/crm/klienti', moduleId: 'demo.crm' },
-  { groupKey: 'shell.navigation.sales', href: '/prodej/zakaznici', moduleId: 'party.registry' },
-  { groupKey: 'shell.navigation.sales', href: '/prodej/prilezitosti', moduleId: 'demo.sales-pipeline' },
-  { groupKey: 'shell.navigation.sales', href: '/smlouvy', moduleId: 'legal.agreements' },
-  { groupKey: 'shell.navigation.commerce', href: '/prodej/objednavky', moduleId: 'demo.merchandise' },
-  { groupKey: 'shell.navigation.commerce', href: '/provoz/produkty', moduleId: 'demo.merchandise' },
-  { groupKey: 'shell.navigation.commerce', href: '/prodej/eshopy', moduleId: 'commerce.market-catalog' },
-  { groupKey: 'shell.navigation.team', href: '/ukoly', moduleId: 'work.tasks' },
-  { groupKey: 'shell.navigation.real-estate', href: '/nemovitosti', moduleId: 'property.portfolio' },
-  { groupKey: 'shell.navigation.real-estate', href: '/najmy', moduleId: 'property.leasing' },
-  { groupKey: 'shell.navigation.facility', href: '/provoz/majetek', moduleId: 'facility.operations' },
-  { groupKey: 'shell.navigation.facility', href: '/provoz/bezpecnost', moduleId: 'facility.operations' },
-  { groupKey: 'shell.navigation.facility', href: '/provoz/meridla', moduleId: 'facility.operations' },
-  { groupKey: 'shell.navigation.facility', href: '/provoz/dokumenty', moduleId: 'facility.operations' },
-] as const;
-const presentation = shellSearchPresentationContext(searchNavigation);
-
-/** One observed hit per registered searchable type, in the order the demo composition lists them. */
-const observedSearchTypes = [
-  ['core.identity', 'core.identity.person'],
-  ['party.registry', 'party.registry.counterparty'],
-  ['party.registry', 'party.registry.party'],
-  ['demo.crm', 'demo.crm.client'],
-  ['demo.crm', 'demo.crm.contact'],
-  ['demo.sales-pipeline', 'demo.sales-pipeline.opportunity'],
-  ['demo.merchandise', 'demo.merchandise.product'],
-  ['demo.merchandise', 'demo.merchandise.order'],
-  ['work.tasks', 'work.tasks.task'],
-  ['finance.billing', 'finance.billing.invoice'],
-  ['finance.billing', 'finance.billing.document'],
-  ['legal.agreements', 'legal.agreements.contract'],
-  ['legal.agreements', 'legal.agreements.document'],
-  ['property.portfolio', 'property.portfolio.property'],
-  ['property.portfolio', 'property.portfolio.unit'],
-  ['property.portfolio', 'property.portfolio.asset'],
-  ['facility.operations', 'facility.operations.asset'],
-  ['facility.operations', 'facility.operations.device'],
-  ['facility.operations', 'facility.operations.meter'],
-  ['facility.operations', 'facility.operations.document'],
-  ['property.leasing', 'property.leasing.occupancy'],
-  ['commerce.market-catalog', 'commerce.market-catalog.market'],
-] as const;
-/** One hit of a searchable type, with the result kind its owner publishes; only the kind and the ref drive grouping. */
-const observedHit = (moduleId: string, resourceType: string): ShellSearchGroupInput => {
-  const ref = { moduleId, resourceId: resourceType, resourceType };
-  if (resourceType.endsWith('.party')) {
-    return { kind: 'party', ref };
-  }
-  if (resourceType.endsWith('.counterparty')) {
-    return { kind: 'counterparty', ref };
-  }
-  return { kind: 'resource', ref };
-};
-
-const observed = observedSearchTypes.map(([moduleId, resourceType]) => observedHit(moduleId, resourceType));
-
-it('maps Shell groups to the exact observed resourceTypes request filter, or undefined when incomplete', () => {
-  expect(shellSearchResourceTypesForGroups(['task'], observed, presentation)).toEqual(['work.tasks.task']);
-  expect(shellSearchResourceTypesForGroups(['invoice', 'financeDocument'], observed, presentation)).toEqual([
-    'finance.billing.invoice',
-    'finance.billing.document',
-  ]);
-  expect(shellSearchResourceTypesForGroups(['person'], observed, presentation)).toEqual(['core.identity.person']);
-  expect(shellSearchResourceTypesForGroups(['asset'], observed, presentation)).toEqual([
-    'property.portfolio.asset',
-    'facility.operations.asset',
-  ]);
-  expect(shellSearchResourceTypesForGroups([], observed, presentation)).toEqual([]);
-  // A declared group without a registered type is a complete, empty filter, not an incomplete one.
-  expect(shellSearchResourceTypesForGroups(['sku'], observed, presentation)).toEqual([]);
-  expect(shellSearchResourceTypesForGroups(['task', 'resource'], observed, presentation)).toBeUndefined();
-  expect(shellSearchResourceTypesForGroups(['resource'], observed, presentation)).toBeUndefined();
-  const everyGroup = shellSearchResourceTypesForGroups(
-    [
-      'counterparty',
-      'party',
-      'person',
-      'crmClient',
-      'crmContact',
-      'opportunity',
-      'product',
-      'sku',
-      'order',
-      'task',
-      'invoice',
-      'financeDocument',
-      'contract',
-      'legalDocument',
-      'property',
-      'unit',
-      'lease',
-      'asset',
-      'device',
-      'facilityDocument',
-      'market',
-    ],
-    observed,
-    presentation,
-  );
-  // 20 named groups hold 22 observed types after the facility meter registration; `resource` stays excluded.
-  expect(everyGroup).toHaveLength(22);
-  expect(new Set(everyGroup).size).toBe(22);
-});
-
-it('dispatches only observed admitted types and never a forged owner in a family filter', () => {
-  const forged = [
-    ...observed,
-    observedHit('unknown.owner', 'unknown.owner.product'),
-    observedHit('demo.crm', 'demo.crm.invoice'),
-    observedHit('finance.billing', 'finance.billing.client'),
-  ];
-  expect(shellSearchResourceTypesForGroups(['product'], forged, presentation)).toEqual(['demo.merchandise.product']);
-  expect(shellSearchResourceTypesForGroups(['invoice'], forged, presentation)).toEqual(['finance.billing.invoice']);
-  expect(shellSearchResourceTypesForGroups(['crmClient'], forged, presentation)).toEqual(['demo.crm.client']);
-  expect(shellSearchResourceTypesForGroups(['resource'], forged, presentation)).toBeUndefined();
-  // A family list is only as complete as the observed answer: an unobserved admitted type is never invented.
-  const withoutTasks = forged.filter(({ ref }) => ref.resourceType !== 'work.tasks.task');
-  expect(shellSearchResourceTypesForGroups(['task'], withoutTasks, presentation)).toEqual([]);
-});
+it.effect(
+  'maps only the captured admitted owner and Core system groups to exact request types, without broadening unresolved selections',
+  () =>
+    Effect.gen(function* declaredGroupFilters() {
+      const inputs = [
+        moduleContract(alphaModule, 'alpha-registry', alphaType),
+        moduleContract(betaModule, 'beta-registry', betaType),
+      ].map((contract) => ({
+        ...contract,
+        manifest: {
+          ...contract.manifest,
+          publicSurface: {
+            ...contract.manifest.publicSurface,
+            shellContributions: {
+              ...contract.manifest.publicSurface.shellContributions,
+              search: contract.manifest.publicSurface.shellContributions.search.map((contribution) => ({
+                ...contribution,
+                presentation: {
+                  family: {
+                    icon: 'icon-[mdi--folder]',
+                    key: 'records',
+                    label: { cs: 'Záznamy', en: 'Records' },
+                    order: 1,
+                  },
+                  group: { icon: 'icon-[mdi--file]', key: 'record', label: { cs: 'Záznamy', en: 'Records' }, order: 1 },
+                  scope: 'company',
+                },
+              })),
+            },
+          },
+        },
+      }));
+      const catalog = yield* makeInstalledModuleCatalogLoader(makeCompositionSnapshot(inputs));
+      const provider = corePeopleSystemSearchProvider;
+      const compiled = compileShellSearchPresentation({
+        admitted: catalog.contracts.flatMap(({ manifest }) =>
+          manifest.publicSurface.search.map((descriptor) => ({
+            ownerModuleId: descriptor.owningModuleId,
+            resourceType: descriptor.resourceType,
+            searchKey: descriptor.key,
+          })),
+        ),
+        catalog,
+        compositionRevision: catalog.composition.revision,
+        system: {
+          authority: {
+            entrypointKey: provider.entrypoint.entrypointKey,
+            navigationPath: provider.navigationPath,
+            ownerModuleId: provider.descriptor.owningModuleId,
+            resourceType: provider.resource.key,
+            searchKey: provider.descriptor.key,
+          },
+          presentation: provider.presentation,
+        },
+      });
+      if (Result.isFailure(compiled)) {
+        throw new Error(compiled.failure.message);
+      }
+      const index = shellSearchPresentationIndex(compiled.success, catalog.composition.revision);
+      expect(shellSearchResourceTypesForGroups(index, ['record'])).toEqual([alphaType, betaType]);
+      expect(shellSearchResourceTypesForGroups(index, [provider.presentation.group.key])).toEqual([
+        provider.resource.key,
+      ]);
+      expect(shellSearchResourceTypesForGroups(index, [])).toEqual([]);
+      expect(shellSearchResourceTypesForGroups(index, ['unknown'])).toEqual([]);
+      expect(shellSearchResourceTypesForGroups(undefined, ['record'])).toEqual([]);
+      const stale = shellSearchPresentationIndex(compiled.success, 'f'.repeat(64));
+      expect(shellSearchResourceTypesForGroups(stale, ['record'])).toEqual([]);
+      expect(
+        shellSearchFamilies(index).find((family) => family.key === provider.presentation.family.key)?.resourceTypes,
+      ).toContain(provider.resource.key);
+    }),
+);

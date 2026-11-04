@@ -14,7 +14,7 @@ import type { ComponentProps, ReactNode } from 'react';
 import { AppIdSchema } from '../../shared/api';
 import { ultramodernUiMarker } from '../../shared/ultramodern-build.ts';
 import Layout from '../../src/routes/layout';
-import { AuthenticatedDashboardLayout, buildShellNavigation } from '../../src/routes/shell-frame';
+import { AuthenticatedDashboardLayout, buildShellNavigation, shellSearchScopeKey } from '../../src/routes/shell-frame';
 import { staffThemeFor } from '../../src/routes/staff-brand';
 
 type HtmlAttributes = NonNullable<HelmetProps['htmlAttributes']>;
@@ -928,4 +928,28 @@ test('keeps the page visible when only search parameters or loader data refresh'
   expect(screen.queryByRole('progressbar')).toBeNull();
   expect(screen.getByText('Employee list').closest('.hidden')).toBeNull();
   expect(currentLinkNames()).toEqual(['Employees']);
+});
+
+test('the header search scope key follows tenant, company, principal, composition, language and pending switches', () => {
+  const base = {
+    compositionRevision: 'a'.repeat(64),
+    currentLegalEntityId: 'legal-entity-1',
+    currentTenantId: 'tenant-1',
+    identity,
+    language: 'en',
+    legalEntitySwitchPending: false,
+    tenantContextActive: true,
+    tenantSwitchPending: false,
+  } as const;
+  const key = shellSearchScopeKey(base);
+  expect(shellSearchScopeKey({ ...base, currentTenantId: 'tenant-2' })).not.toBe(key);
+  expect(shellSearchScopeKey({ ...base, currentLegalEntityId: 'legal-entity-2' })).not.toBe(key);
+  expect(shellSearchScopeKey({ ...base, identity: { ...identity, principalId: 'principal-2' } })).not.toBe(key);
+  expect(shellSearchScopeKey({ ...base, compositionRevision: 'b'.repeat(64) })).not.toBe(key);
+  expect(shellSearchScopeKey({ ...base, language: 'cs' })).not.toBe(key);
+  expect(shellSearchScopeKey({ ...base, tenantSwitchPending: true })).not.toBe(key);
+  expect(shellSearchScopeKey({ ...base, legalEntitySwitchPending: true })).not.toBe(key);
+  expect(
+    shellSearchScopeKey({ ...base, identity: { displayName: 'Ada Lovelace', email: 'ada@example.test' } }),
+  ).toBeUndefined();
 });

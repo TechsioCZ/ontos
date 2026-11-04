@@ -29,7 +29,11 @@ export const ShellContentLayout = ({
       {...pageProps}
       currentTenantId={shell.identity.tenantId}
       homeCurrent={false}
-      identity={{ displayName: shell.identity.displayName, email: shell.identity.email }}
+      identity={{
+        displayName: shell.identity.displayName,
+        email: shell.identity.email,
+        principalId: shell.identity.principalId,
+      }}
       legalEntityChoices={shell.legalEntities.items}
       legalEntityState={shell.legalEntities.state}
       legalEntitySwitchFailed={controls.legalEntitySwitchFailed}
@@ -41,7 +45,6 @@ export const ShellContentLayout = ({
       onSearch={controls.handleSearch}
       onTenantChange={controls.handleTenantChange}
       onTenantContextChange={controls.handleTenantContextChange}
-      recordDestinations={shell.navigation.state === 'available' ? shell.navigation.recordDestinations : []}
       tenantChoices={shell.tenants.items}
       tenantContextActive={shell.contextState === 'tenant_authenticated'}
       tenantContextAvailable={

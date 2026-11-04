@@ -21,12 +21,18 @@ import {
   normalizeExchangeRate,
 } from '../../shared/domain/market-offers.ts';
 import type { MarketPricing, OrderMarket } from '../../shared/domain/market-offers.ts';
-import { orderCurrency } from '../../shared/domain/merchandise-model.ts';
+import {
+  orderCurrency,
+  SearchMatchSchema,
+  SearchVariantOfferSchema,
+  VariantRecordSchema,
+} from '../../shared/domain/merchandise-model.ts';
 import { blockedReasonOf } from '../../src/api/agent-review.ts';
 import { isMarketCommand, planConfigureMarket } from '../../src/services/market-commands.ts';
 import {
   productGrossCzk,
   productInMarketCurrency,
+  searchVariantOffer,
   unconfiguredStorefrontMarket,
 } from '../../src/services/market-pricing.ts';
 import type { StoredMarket } from '../../src/services/market-store.ts';
@@ -356,6 +362,88 @@ it.effect('converts every storefront price of a product into the market currency
     expect(productInMarketCurrency(record, czk)).toEqual(record);
   }),
 );
+
+const searchLeaf = Schema.decodeUnknownSync(VariantRecordSchema)({
+  active: true,
+  attributes: 'Private attributes',
+  availability: 'UNKNOWN',
+  grossPriceMinor: 121,
+  id: 'search-leaf',
+  imageSrc: 'media:leaf-photo',
+  minimumQuantity: 3,
+  name: 'Selected leaf',
+  packageQuantity: 2,
+  parameters: [{ label: 'Private label', unit: '', value: 'Private value' }],
+  priceHistory: [{ effectiveFrom: '2026-11-01T00:00:00Z', priceMinor: 90 }],
+  priceMinor: 100,
+  priceTiers: [
+    { minimumQuantity: 1, priceExcludingVatMinor: 91, priceMinor: 121 },
+    { minimumQuantity: 1, priceExcludingVatMinor: 70, priceMinor: 122 },
+    { minimumQuantity: 2, priceExcludingVatMinor: 50, priceMinor: 124 },
+  ],
+  sku: 'SEARCH-LEAF',
+  sourceUnit: 'm',
+  stockOnHand: 47,
+  unit: 'm',
+});
+
+it('projects only compact current singleton presentation, preserving unknown stock and raw quantity constraints', () => {
+  const offer = searchVariantOffer(searchLeaf, Option.none());
+  expect(offer).toEqual({
+    availability: 'UNKNOWN',
+    currency: 'CZK',
+    displayPriceExcludingVatMinor: 100,
+    grossPriceMinor: 121,
+    id: 'search-leaf',
+    imageSrc: 'media:leaf-photo',
+    minimumQuantity: 3,
+    name: 'Selected leaf',
+    packageQuantity: 2,
+    priceMinor: 100,
+    sku: 'SEARCH-LEAF',
+    sourceUnit: 'm',
+    stockOnHand: 47,
+    unit: 'm',
+  });
+  expect(Schema.is(SearchVariantOfferSchema)(offer)).toBe(true);
+  for (const field of ['priceTiers', 'priceHistory', 'parameters', 'attributes', 'variants']) {
+    expect(field in offer).toBe(false);
+  }
+});
+
+it('converts singleton prices exactly once and selects the display net after rounding and minimum-key dedup', () => {
+  const pricing: MarketPricing = { currency: 'EUR', exchangeRate: '0.5', roundingMinor: 10 };
+  const offer = searchVariantOffer(searchLeaf, Option.some(pricing));
+  expect(offer).toMatchObject({
+    currency: 'EUR',
+    displayPriceExcludingVatMinor: 40,
+    grossPriceMinor: 60,
+    priceMinor: 50,
+  });
+  // Before conversion the synthetic minimum-3 tier supplies net 100 at gross 121. Afterwards
+  // 122 and 124 also round to 60: minimum-1 (net 70 -> 40) wins, not preselected net 100 -> 50.
+  expect(searchVariantOffer(searchLeaf, Option.none()).displayPriceExcludingVatMinor).toBe(100);
+  expect(offer.grossPriceMinor).toBe(convertGrossMinor(searchLeaf.grossPriceMinor, pricing));
+  expect(offer.priceMinor).toBe(convertGrossMinor(searchLeaf.priceMinor, pricing));
+});
+
+it('keeps zero-priced leaves identifiable without inventing a sellable price or display net', () => {
+  const offer = searchVariantOffer({ ...searchLeaf, grossPriceMinor: 0, priceMinor: 0 }, Option.some(eur));
+  expect(offer).toMatchObject({ currency: 'EUR', grossPriceMinor: 0, id: 'search-leaf', priceMinor: 0 });
+  expect(offer.displayPriceExcludingVatMinor).toBeUndefined();
+});
+
+it('validates compact single/multiple/known-empty branches and never uses count one for multiple matches', () => {
+  const variant = searchVariantOffer(searchLeaf, Option.none());
+  const valid = Schema.is(SearchMatchSchema);
+  expect(valid({ kind: 'single', variant })).toBe(true);
+  expect(valid({ count: 2, kind: 'multiple' })).toBe(true);
+  expect(valid({ kind: 'product', onlyVariant: variant })).toBe(true);
+  expect(valid({ kind: 'unattributed' })).toBe(true);
+  expect(valid({ count: 1, kind: 'multiple' })).toBe(false);
+  expect(valid({ kind: 'single' })).toBe(false);
+  expect(valid({ kind: 'single', variant: { ...variant, currency: 'USD' } })).toBe(false);
+});
 
 it.effect('PlaceStorefrontOrder reprices, totals and stores the order in the market currency', () =>
   Effect.gen(function* placedInMarket() {
