@@ -233,7 +233,10 @@
           "removeVariant": "Odebrat variantu"
         },
         "gallery": {
-          "title": "Obrázky ({{count}})",
+          "title_one": "Obrázek ({{count}})",
+          "title_few": "Obrázky ({{count}})",
+          "title_many": "Obrázky ({{count}})",
+          "title_other": "Obrázky ({{count}})",
           "intro": "První obrázek je hlavní a e-shop ho ukáže jako první. Pořadí změníte přetažením. Každá změna se ukládá hned.",
           "introReadOnly": "První obrázek je hlavní a e-shop ho ukáže jako první.",
           "main": "Hlavní",
@@ -263,7 +266,10 @@
           "removed": "Obrázek byl odebrán.",
           "undo": "Vrátit zpět",
           "uploadingOne": "Nahrávám 1 obrázek…",
-          "uploadingMany": "Nahrávám obrázky ({{count}})…",
+          "uploadingMany_one": "Nahrávám {{count}} obrázek…",
+          "uploadingMany_few": "Nahrávám {{count}} obrázky…",
+          "uploadingMany_many": "Nahrávám {{count}} obrázku…",
+          "uploadingMany_other": "Nahrávám {{count}} obrázků…",
           "saving": "Ukládám…",
           "saved": "Uloženo. E-shop ukazuje obrázky v tomto pořadí.",
           "forbidden": "Na změnu obrázků nemáte oprávnění.",

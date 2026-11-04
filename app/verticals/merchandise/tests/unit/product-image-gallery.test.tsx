@@ -1,7 +1,11 @@
+import { getI18nInstance as createModernI18n } from '@modern-js/plugin-i18n/i18n';
+import type { I18nInstance } from '@modern-js/plugin-i18n/runtime';
+import { ModernI18nProvider } from '@modern-js/plugin-i18n/runtime/consumer';
 import { Option, Schema } from 'effect';
 import csLocale from '../../locales/cs/merchandise.json';
+import enLocale from '../../locales/en/merchandise.json';
 import { ProductIdSchema } from '../../shared/domain/merchandise-model.ts';
-import { expect, it, rstest } from 'effect-rstest';
+import { beforeAll, expect, it } from 'effect-rstest';
 import { constVoid } from 'effect/Function';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -22,25 +26,20 @@ import {
 } from '../../src/routes/[lang]/provoz/produkty/product-image-gallery-model.ts';
 import type { GalleryState } from '../../src/routes/[lang]/provoz/produkty/product-image-gallery-model.ts';
 
-const GALLERY_KEY_PREFIX = 'merchandise.pages.products.gallery.';
-const galleryCopy = new Map(Object.entries(csLocale.merchandise.pages.products.gallery));
-
-/** The gallery's Czech copy straight from the locale resource, with `{{value}}` interpolation. */
-const translate = (key: string, values: Readonly<Record<string, number | string>> = {}): string => {
-  const copy = key.startsWith(GALLERY_KEY_PREFIX) ? galleryCopy.get(key.slice(GALLERY_KEY_PREFIX.length)) : undefined;
-  if (copy === undefined) {
-    throw new Error(`Missing Czech copy for ${key}`);
-  }
-  return copy.replaceAll(/\{\{(?<name>\w+)\}\}/gu, (_match, name: string) => String(values[name]));
-};
-
-// Resolved at render time, after this module has initialised `translate`.
-rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({
-    language: 'cs',
-    t: (key: string, values?: Record<string, number | string>) => translate(key, values),
-  }),
-}));
+let i18nInstance: I18nInstance;
+beforeAll(async () => {
+  i18nInstance = await createModernI18n();
+  await i18nInstance.init({
+    defaultNS: 'merchandise',
+    fallbackLng: false,
+    lng: 'cs',
+    ns: ['merchandise'],
+    resources: { cs: { merchandise: csLocale }, en: { merchandise: enLocale } },
+    supportedLngs: ['cs', 'en'],
+  });
+});
+const translate = (key: string, values: Readonly<Record<string, number | string>> = {}): string =>
+  i18nInstance.t(key, values);
 
 const first = mediaImageReference('0192f3a0-0000-7000-8000-000000000001');
 const second = mediaImageReference('0192f3a0-0000-7000-8000-000000000002');
@@ -48,20 +47,50 @@ const third = 'https://www.akros.cz/data/product/18kop009.jpg';
 
 const render = (state: GalleryState, overrides: Partial<ProductImageGalleryViewProps> = {}) =>
   renderToStaticMarkup(
-    createElement(ProductImageGalleryView, {
-      canWrite: true,
-      dispatch: constVoid,
-      onFiles: constVoid,
-      onMove: constVoid,
-      onRemove: constVoid,
-      onRetry: constVoid,
-      onUndo: constVoid,
-      productId: Schema.decodeSync(ProductIdSchema)('product-1'),
-      productName: 'Šroub M8',
-      state,
-      ...overrides,
-    }),
+    <ModernI18nProvider value={{ i18nInstance, language: 'cs', languages: ['cs', 'en'] }}>
+      {createElement(ProductImageGalleryView, {
+        canWrite: true,
+        dispatch: constVoid,
+        onFiles: constVoid,
+        onMove: constVoid,
+        onRemove: constVoid,
+        onRetry: constVoid,
+        onUndo: constVoid,
+        productId: Schema.decodeSync(ProductIdSchema)('product-1'),
+        productName: 'Šroub M8',
+        state,
+        ...overrides,
+      })}
+    </ModernI18nProvider>,
   );
+
+it('resolves gallery count messages through the real Czech and English plural rules', () => {
+  for (const [language, catalog] of [
+    ['cs', csLocale],
+    ['en', enLocale],
+  ] as const) {
+    const keys = Object.keys(catalog.merchandise.pages.products.gallery);
+    for (const key of ['title', 'uploadingMany']) {
+      for (const category of new Intl.PluralRules(language).resolvedOptions().pluralCategories) {
+        expect(keys).toContain(`${key}_${category}`);
+      }
+      for (const count of [0, 1, 2, 5, 1.5]) {
+        const message = `merchandise.pages.products.gallery.${key}`;
+        const result = i18nInstance.t(message, { count, lng: language });
+        expect(result).not.toBe(message);
+        expect(result).not.toContain('{{count}}');
+        expect(result).toContain(String(count));
+      }
+    }
+  }
+  expect(i18nInstance.t('merchandise.pages.products.gallery.title', { count: 1, lng: 'en' })).toBe('Image (1)');
+  expect(i18nInstance.t('merchandise.pages.products.gallery.uploadingMany', { count: 2, lng: 'cs' })).toBe(
+    'Nahrávám 2 obrázky…',
+  );
+  expect(i18nInstance.t('merchandise.pages.products.gallery.uploadingMany', { count: 5, lng: 'cs' })).toBe(
+    'Nahrávám 5 obrázků…',
+  );
+});
 
 const visibleText = (markup: string) => markup.replaceAll(/<[^>]+>/gu, ' ');
 
@@ -120,7 +149,7 @@ it('shows progress while uploading and a Czech error with retry when an upload f
   const uploadingText = visibleText(render(uploading));
   expect(uploadingText).toContain('Nahrávám…');
   expect(uploadingText).toContain('Čeká…');
-  expect(uploadingText).toContain('Nahrávám obrázky (2)…');
+  expect(uploadingText).toContain('Nahrávám 2 obrázky…');
   expect(render(uploading)).toContain('<progress');
 
   const failed = galleryReducer(uploading, {
