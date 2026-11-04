@@ -1,4 +1,4 @@
-import { defineOntosMcpContribution } from '@app/core-runtime';
+import { defineOntosMcpContribution, OntosMcpHidden } from '@app/core-runtime';
 
 export const propertyPortfolioMcpContribution = defineOntosMcpContribution({
   actions: { 'request-search-rebuild': 'hidden' },
@@ -37,6 +37,8 @@ export const propertyPortfolioMcpContribution = defineOntosMcpContribution({
     records: {
       title: { cs: 'Přehled nemovitostí, jednotek a vybavení', en: 'Properties, units and equipment overview' },
     },
+    // The Shell Search provider's label projection, not an agent operation.
+    'search-labels': OntosMcpHidden,
   },
   revision: { read: 'records' },
 });

@@ -2,6 +2,7 @@
 import { defineOntosMcpContribution } from '@app/core-runtime';
 
 export const workforceMcpContribution = defineOntosMcpContribution({
+  actions: { 'request-search-rebuild': 'hidden' },
   approvals: true,
   commandFieldLabels: {
     email: 'E-mail',
