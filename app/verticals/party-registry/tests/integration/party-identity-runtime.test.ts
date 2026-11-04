@@ -31,11 +31,7 @@ import { assert, expect, it } from 'effect-rstest';
 import type { Row } from 'effect/sql/SqlConnection';
 
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
-import {
-  testCoreDatabase,
-  deleteTestCoreOutbox,
-  publishTestApplicationCompositionAuthority,
-} from '@app/core-runtime/testing/owner-evidence';
+import { testCoreDatabase, deleteTestCoreOutbox } from '@app/core-runtime/testing/owner-evidence';
 import { makeTestPgClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
 import { outboxTopic as partyCreatedTopic } from '../../shared/outbox/party-registry-party-created-v1.ts';
@@ -163,14 +159,6 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const query = (client: PgClient.PgClient, statement: string, parameters: readonly unknown[] = []) =>
   client.unsafe<Row>(statement, parameters);
 
-/** Re-publish this same complete fixture through Core's supported owning publication API. */
-const publishPartyWorkerComposition = (admin: PgClient.PgClient) =>
-  Effect.gen(function* publishPartyWorkerCompositionEffect() {
-    const executor = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, admin));
-    const snapshot = yield* partyCompositionSnapshot;
-    yield* publishTestApplicationCompositionAuthority(executor, snapshot);
-  });
-
 /** Removes every row a worker-cycle fixture tenant owns, deliveries and attempts first. */
 const purgeWorkerTenant = (admin: PgClient.PgClient, tenantId: string) =>
   Effect.forEach(
@@ -227,7 +215,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const other = yield* openFixture;
           const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
           const coreAdmin = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, adminClient));
-          yield* publishPartyWorkerComposition(adminClient);
           yield* addTestGatewayScopeGrantCleanup(adminClient, [fixture.tenantId, other.tenantId]);
           // Release only these disposable tenants' dispatch queues; retain append-only Core evidence.
           yield* Effect.addFinalizer(() =>
@@ -353,7 +340,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           // The worker projects both tenants' counterparties; Search returns only the caller's tenant.
           // Owning a Counterparty does not grant resource permission; Search filters results by it.
           yield* fixture.grantResourceAccess(own.counterpartyRef, legalEntityPrincipal.principalId);
-          yield* publishPartyWorkerComposition(adminClient);
           yield* runPartyWorkerCycle(compositionRevision);
           const searchContext = yield* Layer.build(
             PartySearchProjectionGatewayLive.pipe(
@@ -392,7 +378,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const compositionRevision = (yield* partyCompositionSnapshot).composition.revision;
           const [tenantId, partyId] = yield* Effect.all([nextUuid, nextUuid]);
           yield* Effect.addFinalizer(() => purgeWorkerTenant(admin, tenantId).pipe(Effect.orDie));
-          yield* publishPartyWorkerComposition(admin);
 
           yield* query(
             admin,
