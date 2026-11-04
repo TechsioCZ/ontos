@@ -20,7 +20,7 @@ import {
 import {
   invalidateLeaseRelated,
   invoicesForLease,
-  leaseInvoices,
+  leaseInvoicesExact,
   leaseRelatedView,
   leaseTaskKey,
   leaseTasks,
@@ -40,6 +40,7 @@ const { reads } = rstest.hoisted(() => ({
     directory: rstest.fn(),
     finance: rstest.fn(),
     guest: rstest.fn(),
+    leaseInvoices: rstest.fn(),
     properties: rstest.fn(),
     records: rstest.fn(),
     work: rstest.fn(),
@@ -54,6 +55,10 @@ rstest.mock('@app/property-portfolio/clients/records', () => ({ executeRecords: 
 rstest.mock('@app/legal-agreements/clients/records', () => ({ executeRecords: reads.agreements }));
 rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: reads.records }));
 rstest.mock('@app/finance-billing/clients/records', () => ({ executeRecords: reads.finance }));
+rstest.mock('@app/finance-billing/clients/lease-invoices', () => ({
+  executeLeaseInvoices: reads.leaseInvoices,
+  LEASE_INVOICES_PAGE_LIMIT_MAX: 200,
+}));
 rstest.mock('@app/work-tasks/clients/records', () => ({ executeRecords: reads.work }));
 const tenantId = '70000000-0000-4000-8000-000000000020';
 const id = (index: number) => `76000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
@@ -168,12 +173,13 @@ beforeEach(() => {
   reads.records.mockReturnValue(Effect.succeed(records));
   reads.work.mockReturnValue(Effect.succeed(workResponse));
   reads.finance.mockReturnValue(Effect.succeed(financeResponse));
+  reads.leaseInvoices.mockReturnValue(Effect.succeed({ invoices: [], revision: 23 }));
   globalThis.dispatchEvent(new Event(moduleChangeEvent));
 });
 const warm = (rows = records.occupancies) => preloadLeaseOccupants(input, rows, 7, preloadLeaseRelated);
 const seed = leaseRecords.read(input).pipe(Effect.asVoid);
 
-it.live('warms only final rendered rows, with no speculative Finance read or company-wide task query', () =>
+it.live('warms only final rendered rows with exact per-row reads and no company-wide ledger query', () =>
   Effect.gen(function* finalRows() {
     yield* seed;
     const visible = [detail(3).record, detail(1).record];
@@ -184,7 +190,8 @@ it.live('warms only final rendered rows, with no speculative Finance read or com
     ]);
     expect(reads.counterparty).toHaveBeenCalledTimes(2);
     expect(leaseTasks.snapshot(detail(2))).toBe(pageDataPending);
-    expect(leaseInvoices.snapshot(input)).toBe(pageDataPending);
+    expect(leaseInvoicesExact.snapshot(detail(2))).toBe(pageDataPending);
+    expect(reads.leaseInvoices).toHaveBeenCalledTimes(2);
     expect(reads.finance).not.toHaveBeenCalled();
   }),
 );
@@ -208,19 +215,24 @@ it.live('a warm opening consumes task details synchronously without another read
     expect(renderToStaticMarkup(createElement(Probe))).toBe('<output>Unit task 1</output>');
     expect((yield* leaseTasks.read(detail(1))).revision).toBe(17);
     expect(reads.work).not.toHaveBeenCalled();
+    expect(reads.leaseInvoices).toHaveBeenCalledTimes(1);
     expect(reads.finance).not.toHaveBeenCalled();
   }),
 );
 
-it.live('a cold direct URL prepares only the selected authorized row and leaves invoices foreground-only', () =>
+it.live('a cold direct URL prepares only the selected authorized row with its exact invoice read', () =>
   Effect.gen(function* coldLink() {
     yield* prepareLeasePage({ context, routeParams: {}, search: `?resourceId=${id(2)}` }, preloadLeaseRelated);
     expect(leaseTasks.snapshot(detail(2)).state).toBe('ready');
     expect(leaseTasks.snapshot(detail(1))).toBe(pageDataPending);
     expect(reads.work).toHaveBeenCalledWith({ contextResourceId: row(2).unitRef.resourceId }, expect.any(String));
+    expect(reads.leaseInvoices).toHaveBeenCalledTimes(1);
+    expect(leaseInvoicesExact.snapshot(detail(2)).state).toBe('ready');
+    expect(leaseInvoicesExact.snapshot(detail(1))).toBe(pageDataPending);
     expect(reads.finance).not.toHaveBeenCalled();
     yield* prepareLeasePage({ context, routeParams: {}, search: `?resourceId=${id(99)}` }, preloadLeaseRelated);
     expect(reads.work).toHaveBeenCalledTimes(1);
+    expect(reads.leaseInvoices).toHaveBeenCalledTimes(1);
   }),
 );
 
@@ -234,6 +246,7 @@ it.live('hidden tables, stale revisions and rows outside the canonical page cann
     leaseRecords.invalidate();
     yield* preloadLeaseRelated(detail(1));
     expect(reads.work).not.toHaveBeenCalled();
+    expect(reads.leaseInvoices).not.toHaveBeenCalled();
     expect(reads.finance).not.toHaveBeenCalled();
   }),
 );
@@ -250,6 +263,7 @@ it.live('missing identity and foreign-tenant units never enter the background ta
     yield* preloadLeaseRelated(foreign);
     expect(Result.isFailure(yield* Effect.result(leaseTasks.read(foreign)))).toBe(true);
     expect(reads.work).not.toHaveBeenCalled();
+    expect(reads.leaseInvoices).not.toHaveBeenCalled();
   }),
 );
 
@@ -261,14 +275,14 @@ it.live(
       for (const field of ['tenantId', 'principalId', 'legalEntityId'] as const) {
         const changed = leaseInputOf({ ...context, [field]: id(99) });
         expect(leaseTaskKey({ ...detail(1), ...changed })).not.toBe(original);
-        expect(leaseInvoices.key(changed)).not.toBe(leaseInvoices.key(input));
+        expect(leaseInvoicesExact.key({ ...detail(1), ...changed })).not.toBe(leaseInvoicesExact.key(detail(1)));
       }
       expect(leaseTaskKey(detail(2))).not.toBe(original);
       expect(leaseTaskKey(detail(1, 8))).not.toBe(original);
       yield* seed;
       yield* warm([detail(1).record]);
       expect((yield* leaseTasks.read(detail(1))).revision).toBe(17);
-      expect((yield* leaseInvoices.read(input)).revision).toBe(23);
+      expect((yield* leaseInvoicesExact.read(detail(1))).revision).toBe(23);
       expect(detail(1).revision).toBe(7);
     }),
 );
@@ -386,27 +400,27 @@ it.live('page cancellation stops both active task reads and every queued row', (
 it.live('live and settled-write refusals clear both related decisions and retry independently', () =>
   Effect.gen(function* invalidation() {
     yield* leaseTasks.read(detail(1));
-    yield* leaseInvoices.read(input);
+    yield* leaseInvoicesExact.read(detail(1));
     for (const event of [moduleChangeEvent, moduleWriteEvent]) {
       globalThis.dispatchEvent(new Event(event));
       expect(leaseTasks.snapshot(detail(1))).toBe(pageDataPending);
-      expect(leaseInvoices.snapshot(input)).toBe(pageDataPending);
+      expect(leaseInvoicesExact.snapshot(detail(1))).toBe(pageDataPending);
       reads.work.mockReturnValue(Effect.fail({ _tag: 'RecordsForbiddenProblem', status: 403 }));
-      reads.finance.mockReturnValue(Effect.fail({ _tag: 'RecordsForbiddenProblem', status: 403 }));
+      reads.leaseInvoices.mockReturnValue(Effect.fail({ _tag: 'LeaseInvoicesForbiddenProblem', status: 403 }));
       yield* Effect.result(leaseTasks.read(detail(1)));
-      yield* Effect.result(leaseInvoices.read(input));
-      const view = leaseRelatedView(detail(1), leaseTasks.snapshot(detail(1)), leaseInvoices.snapshot(input));
+      yield* Effect.result(leaseInvoicesExact.read(detail(1)));
+      const view = leaseRelatedView(detail(1), leaseTasks.snapshot(detail(1)), leaseInvoicesExact.snapshot(detail(1)));
       expect(view).toEqual({ invoices: Option.some('unavailable'), tasks: Option.some('unavailable') });
       expect(leaseTasks.snapshot(detail(1))).not.toHaveProperty('value');
-      expect(leaseInvoices.snapshot(input)).not.toHaveProperty('value');
+      expect(leaseInvoicesExact.snapshot(detail(1))).not.toHaveProperty('value');
       reads.work.mockReturnValue(Effect.succeed(workResponse));
-      reads.finance.mockReturnValue(Effect.succeed(financeResponse));
+      reads.leaseInvoices.mockReturnValue(Effect.succeed({ invoices: [], revision: 23 }));
       yield* leaseTasks.read(detail(1));
-      yield* leaseInvoices.read(input);
+      yield* leaseInvoicesExact.read(detail(1));
     }
     invalidateLeaseRelated();
     expect(leaseTasks.snapshot(detail(1))).toBe(pageDataPending);
-    expect(leaseInvoices.snapshot(input)).toBe(pageDataPending);
+    expect(leaseInvoicesExact.snapshot(detail(1))).toBe(pageDataPending);
   }),
 );
 
@@ -414,12 +428,16 @@ it.live('a Finance denial does not erase the separately admitted warmed task sec
   Effect.gen(function* independentOwners() {
     yield* seed;
     yield* warm([detail(1).record]);
-    reads.finance.mockReturnValue(Effect.fail({ _tag: 'RecordsForbiddenProblem', status: 403 }));
-    yield* Effect.result(leaseInvoices.read(input));
-    expect(leaseRelatedView(detail(1), leaseTasks.snapshot(detail(1)), leaseInvoices.snapshot(input))).toEqual({
-      invoices: Option.some('unavailable'),
-      tasks: Option.some([tasks[0]]),
-    });
+    expect(leaseInvoicesExact.snapshot(detail(1)).state).toBe('ready');
+    leaseInvoicesExact.invalidate();
+    reads.leaseInvoices.mockReturnValue(Effect.fail({ _tag: 'LeaseInvoicesForbiddenProblem', status: 403 }));
+    yield* Effect.result(leaseInvoicesExact.read(detail(1)));
+    expect(leaseRelatedView(detail(1), leaseTasks.snapshot(detail(1)), leaseInvoicesExact.snapshot(detail(1)))).toEqual(
+      {
+        invoices: Option.some('unavailable'),
+        tasks: Option.some([tasks[0]]),
+      },
+    );
   }),
 );
 
@@ -469,28 +487,34 @@ it.live('leases of the same unit join one task query without sharing occupant id
 it.live('a changed scope or cleared selection cannot render the previous related data', () =>
   Effect.gen(function* scopeSwitch() {
     yield* leaseTasks.read(detail(1));
-    yield* leaseInvoices.read(input);
+    yield* leaseInvoicesExact.read(detail(1));
     const other = { ...detail(1), ...leaseInputOf({ ...context, principalId: id(99) }) };
-    expect(leaseRelatedView(other, leaseTasks.snapshot(other), leaseInvoices.snapshot(other))).toEqual({
+    expect(leaseRelatedView(other, leaseTasks.snapshot(other), leaseInvoicesExact.snapshot(other))).toEqual({
       invoices: Option.none(),
       tasks: Option.none(),
     });
-    expect(leaseRelatedView(undefined, leaseTasks.snapshot(detail(1)), leaseInvoices.snapshot(input))).toEqual({
-      invoices: Option.none(),
-      tasks: Option.none(),
-    });
+    expect(leaseRelatedView(undefined, leaseTasks.snapshot(detail(1)), leaseInvoicesExact.snapshot(detail(1)))).toEqual(
+      {
+        invoices: Option.none(),
+        tasks: Option.none(),
+      },
+    );
   }),
 );
 
-it.live('foreground invoice reads are shared per scope rather than repeated per lease row', () =>
-  Effect.gen(function* foregroundFinanceOnly() {
+it.live('the exact lease read is shared for one lease and kept separate per lease row', () =>
+  Effect.gen(function* exactSharing() {
+    reads.leaseInvoices.mockReturnValue(Effect.succeed({ invoices: [invoice], revision: 23 }));
     yield* seed;
-    yield* warm();
-    expect(reads.finance).not.toHaveBeenCalled();
-    const first = yield* leaseInvoices.read(input);
-    const second = yield* leaseInvoices.read({ ...input });
+    yield* warm([detail(1).record]);
+    expect(reads.leaseInvoices).toHaveBeenCalledTimes(1);
+    const first = yield* leaseInvoicesExact.read(detail(1));
+    const second = yield* leaseInvoicesExact.read({ ...detail(1) });
     expect(second).toBe(first);
-    expect(reads.finance).toHaveBeenCalledTimes(1);
+    expect(reads.leaseInvoices).toHaveBeenCalledTimes(1);
+    yield* preloadLeaseRelated(detail(2));
+    expect(reads.leaseInvoices).toHaveBeenCalledTimes(2);
+    expect(reads.finance).not.toHaveBeenCalled();
     expect(invoicesForLease(detail(1).record, first.invoices)).toEqual([invoice]);
     expect(invoicesForLease(detail(2).record, second.invoices)).toEqual([]);
   }),
@@ -519,6 +543,7 @@ it.live('caps the combined speculative batch at 200 canonical visible rows', () 
     yield* warm(many.occupancies);
     expect(reads.counterparty).toHaveBeenCalledTimes(200);
     expect(reads.work).toHaveBeenCalledTimes(200);
+    expect(reads.leaseInvoices).toHaveBeenCalledTimes(200);
     expect(reads.finance).not.toHaveBeenCalled();
   }),
 );

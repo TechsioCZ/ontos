@@ -14,7 +14,6 @@
 --receipt-text-outline
 bg-base
 blur
-filter
 hidden
 hover:bg-surface
 icon-[mdi--account-box-outline]

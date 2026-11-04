@@ -1,4 +1,4 @@
-import { defineOntosMcpContribution } from '@app/core-runtime';
+import { OntosMcpHidden, defineOntosMcpContribution } from '@app/core-runtime';
 
 export const financeBillingMcpContribution = defineOntosMcpContribution({
   actions: {
@@ -76,6 +76,7 @@ export const financeBillingMcpContribution = defineOntosMcpContribution({
   label: { cs: 'Finance a fakturace', en: 'Finance and billing' },
   page: '/finance',
   reads: {
+    'lease-invoices': OntosMcpHidden,
     records: { title: { cs: 'Přehled financí a fakturace', en: 'Finance and billing overview' } },
   },
   revision: { read: 'records' },

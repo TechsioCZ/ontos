@@ -1,4 +1,4 @@
-import { executeRecords as executeFinanceRecords } from '@app/finance-billing/clients/records';
+import { LEASE_INVOICES_PAGE_LIMIT_MAX, executeLeaseInvoices } from '@app/finance-billing/clients/lease-invoices';
 import { executeRecords as executeWorkRecords } from '@app/work-tasks/clients/records';
 import { definePageData, pageDataPending } from '@app/shared-contracts/page-data';
 import type { PageDataSnapshot } from '@app/shared-contracts/page-data';
@@ -7,7 +7,7 @@ import { useEffect, useEffectEvent, useSyncExternalStore } from 'react';
 import type { Occupancy } from '../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { leaseRecords } from './lease-occupant.ts';
-import type { LeaseDetailInput, LeaseInput } from './lease-occupant.ts';
+import type { LeaseDetailInput } from './lease-occupant.ts';
 import type { LeaseInvoice, LeaseRelated, LeaseTask } from './lease-story.tsx';
 
 const KeySchema = Schema.fromJsonString(Schema.Array(Schema.String));
@@ -32,7 +32,11 @@ export interface LeaseTaskRecords {
   readonly revision: number;
 }
 
-class LeaseRelatedScopeMismatch extends Data.TaggedError('LeaseRelatedScopeMismatch') {}
+/** One typed failure family for the related reads: foreign scope, revision drift and a stalled page cursor. */
+class LeaseRelatedFailure extends Data.TaggedError('LeaseRelatedFailure')<{
+  readonly kind: 'cursor-stalled' | 'revision-changed' | 'scope-mismatch';
+  readonly reason: string;
+}> {}
 const sameTenant = (input: LeaseDetailInput): boolean =>
   input.record.occupancyRef.tenantId === input.tenantId && input.record.unitRef.tenantId === input.tenantId;
 
@@ -50,7 +54,10 @@ export const leaseTaskKey = (input: LeaseDetailInput): string =>
 
 const loadLeaseTasks = Effect.fn('LeaseRelated.loadTasks')(function* loadLeaseTasks(input: LeaseDetailInput) {
   if (input.reusable && !sameTenant(input)) {
-    return yield* new LeaseRelatedScopeMismatch();
+    return yield* new LeaseRelatedFailure({
+      kind: 'scope-mismatch',
+      reason: 'The lease references are outside the selected tenant',
+    });
   }
   const response = yield* executeWorkRecords(
     { contextResourceId: input.record.unitRef.resourceId },
@@ -75,22 +82,98 @@ export interface LeaseInvoiceRecords {
   readonly revision: number;
 }
 
+const leaseInvoiceCorrelation = 'property-leasing.lease-invoices';
+
+/** Key: full scope, exact occupancy/unit/Counterparty refs, and the lease revision that seeded the prewarm. */
+export const leaseInvoiceExactKey = (input: LeaseDetailInput): string =>
+  keyOf([
+    input.scope,
+    'finance.billing.lease-invoices',
+    input.record.occupancyRef.moduleId,
+    input.record.occupancyRef.resourceType,
+    input.record.occupancyRef.tenantId,
+    input.record.occupancyRef.resourceId,
+    input.record.unitRef.moduleId,
+    input.record.unitRef.resourceType,
+    input.record.unitRef.tenantId,
+    input.record.unitRef.resourceId,
+    input.record.customerCounterpartyRef?.tenantId ?? '',
+    input.record.customerCounterpartyRef?.resourceId ?? '',
+    String(input.revision),
+  ]);
+
+const leaseInvoiceRequest = (input: LeaseDetailInput) => {
+  const { customerCounterpartyRef } = input.record;
+  const request = {
+    limit: LEASE_INVOICES_PAGE_LIMIT_MAX,
+    occupancyRef: input.record.occupancyRef,
+    unitRef: input.record.unitRef,
+  };
+  return customerCounterpartyRef === null ? request : { ...request, counterpartyRef: customerCounterpartyRef };
+};
+
+type LeaseInvoicePageFailure = LeaseRelatedFailure | Effect.Error<ReturnType<typeof executeLeaseInvoices>>;
+
 /**
- * The public Finance read cannot filter by occupancy/unit or page invoices. Preserve the existing foreground
- * capability, sharing that broad read once per full scope, never once per speculative row. Neither visible-row
- * warming nor the Shell preload calls this store. Bounded lease-invoice prewarming remains an owner API gap.
+ * Consumes every page of the exact lease read. Each page must keep the first page's Finance revision, the cursor
+ * must advance to a never-seen position, and only an absent `nextCursor` completes the collection — a revision
+ * change or a stalled cursor fails honestly instead of retrying or claiming completeness. Interruption (page
+ * close, selection change) cancels the in-flight page and leaves no settled value.
  */
-export const leaseInvoices = definePageData({
+const loadLeaseInvoicesExact = Effect.fn('LeaseRelated.loadInvoicesExact')(function* loadLeaseInvoicesExact(
+  input: LeaseDetailInput,
+) {
+  if (input.reusable && !sameTenant(input)) {
+    return yield* new LeaseRelatedFailure({
+      kind: 'scope-mismatch',
+      reason: 'The lease references are outside the selected tenant',
+    });
+  }
+  const request = leaseInvoiceRequest(input);
+  const first = yield* executeLeaseInvoices(request, leaseInvoiceCorrelation);
+  const loadPage: (
+    invoices: readonly LeaseInvoice[],
+    revision: number,
+    cursor: string,
+    seenCursors: ReadonlySet<string>,
+  ) => Effect.Effect<LeaseInvoiceRecords, LeaseInvoicePageFailure> = Effect.fn('LeaseRelated.loadInvoicePage')(
+    function* loadLeaseInvoicePage(invoices, revision, cursor, seenCursors) {
+      if (seenCursors.has(cursor)) {
+        return yield* new LeaseRelatedFailure({
+          kind: 'cursor-stalled',
+          reason: 'The Finance lease-invoice page cursor did not advance',
+        });
+      }
+      const page = yield* executeLeaseInvoices({ ...request, cursor }, leaseInvoiceCorrelation);
+      if (page.revision !== revision) {
+        return yield* new LeaseRelatedFailure({
+          kind: 'revision-changed',
+          reason: 'The Finance revision changed between lease-invoice pages',
+        });
+      }
+      if (page.nextCursor !== undefined && (page.nextCursor === cursor || seenCursors.has(page.nextCursor))) {
+        return yield* new LeaseRelatedFailure({
+          kind: 'cursor-stalled',
+          reason: 'The Finance lease-invoice page cursor did not advance',
+        });
+      }
+      const collected = [...invoices, ...page.invoices];
+      return page.nextCursor === undefined
+        ? { invoices: collected, revision }
+        : yield* loadPage(collected, revision, page.nextCursor, new Set([...seenCursors, cursor]));
+    },
+  );
+  return first.nextCursor === undefined
+    ? { invoices: first.invoices, revision: first.revision }
+    : yield* loadPage(first.invoices, first.revision, first.nextCursor, new Set());
+});
+
+/** Bounded exact lease-invoice prewarm: complete pages of one exact request, cancellable, never a partial claim. */
+export const leaseInvoicesExact = definePageData({
   cancelWhenUnused: true,
-  key: (input: LeaseInput) => keyOf([input.scope, 'finance.billing']),
-  load: () =>
-    executeFinanceRecords({}, 'property-leasing.lease-invoices').pipe(
-      Effect.map((response): LeaseInvoiceRecords => ({
-        invoices: response.state.invoices,
-        revision: response.revision,
-      })),
-    ),
-  maxEntries: 8,
+  key: leaseInvoiceExactKey,
+  load: loadLeaseInvoicesExact,
+  maxEntries: 256,
   retainStale: false,
   runtime: browserRuntime,
 });
@@ -105,7 +188,10 @@ export const invoicesForLease = (record: Occupancy, invoices: readonly LeaseInvo
         sameRef(invoice.counterpartyRef, record.customerCounterpartyRef)),
   );
 
-/** Called serially after each occupant read inside the existing two-row, cancellable background batch. */
+/**
+ * Called serially after each occupant read inside the existing two-row, cancellable background batch: the unit
+ * task read first, then the exact paginated lease-invoice read for the same validated row.
+ */
 export const preloadLeaseRelated = (input: LeaseDetailInput): Effect.Effect<void> =>
   Effect.suspend(() => {
     const source = leaseRecords.snapshot(input);
@@ -115,13 +201,13 @@ export const preloadLeaseRelated = (input: LeaseDetailInput): Effect.Effect<void
       !source.refreshing &&
       source.value.records.revision === input.revision &&
       source.value.records.occupancies.includes(input.record)
-      ? leaseTasks.read(input).pipe(Effect.ignore)
+      ? leaseTasks.read(input).pipe(Effect.ignore, Effect.andThen(leaseInvoicesExact.read(input)), Effect.ignore)
       : Effect.void;
   });
 
 export const invalidateLeaseRelated = (): void => {
   leaseTasks.invalidate();
-  leaseInvoices.invalidate();
+  leaseInvoicesExact.invalidate();
 };
 
 const section = <Value, Failure>(snapshot: PageDataSnapshot<Value, Failure>): Option.Option<Value | 'unavailable'> => {
@@ -139,13 +225,18 @@ export const leaseRelatedView = (
   input === undefined
     ? { invoices: Option.none(), tasks: Option.none() }
     : {
+        // The exact paginated lease read is the only invoice source: pending renders loading, a denial or an
+        // incomplete/drifted collection renders `unavailable`, and a ready snapshot is the settled exact rows.
         invoices: Option.map(section(invoices), (value) =>
           value === 'unavailable' ? value : invoicesForLease(input.record, value.invoices),
         ),
         tasks: Option.map(section(tasks), (value) => (value === 'unavailable' ? value : value.items)),
       };
 
-/** Warm task data is consumed in render. Foreground reads join inflight work and bypass unrelated row slots. */
+/**
+ * Warm related data is consumed in render. The exact lease read is the only invoice source; the broad company
+ * ledger read is never started here. Foreground reads join inflight work and bypass unrelated row slots.
+ */
 export const useLeaseRelated = (input: LeaseDetailInput | undefined): LeaseRelated => {
   const tasks = useSyncExternalStore(
     (listener) => leaseTasks.subscribe(listener, input),
@@ -153,17 +244,17 @@ export const useLeaseRelated = (input: LeaseDetailInput | undefined): LeaseRelat
     () => pageDataPending,
   );
   const invoices = useSyncExternalStore(
-    (listener) => leaseInvoices.subscribe(listener, input),
-    () => (input === undefined ? pageDataPending : leaseInvoices.snapshot(input)),
+    (listener) => leaseInvoicesExact.subscribe(listener, input),
+    () => (input === undefined ? pageDataPending : leaseInvoicesExact.snapshot(input)),
     () => pageDataPending,
   );
   const taskRequest = input === undefined ? '' : leaseTaskKey(input);
-  const invoiceRequest = input === undefined ? '' : leaseInvoices.key(input);
+  const invoiceRequest = input === undefined ? '' : leaseInvoiceExactKey(input);
   const readTasks = useEffectEvent(() =>
     input === undefined ? Effect.void : leaseTasks.read(input).pipe(Effect.ignore),
   );
   const readInvoices = useEffectEvent(() =>
-    input === undefined ? Effect.void : leaseInvoices.read(input).pipe(Effect.ignore),
+    input === undefined ? Effect.void : leaseInvoicesExact.read(input).pipe(Effect.ignore),
   );
   useEffect(() => {
     const fiber = taskRequest === '' ? undefined : browserRuntime.runFork(readTasks());

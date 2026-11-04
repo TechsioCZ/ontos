@@ -21,6 +21,7 @@ export const financeBillingRegistration = defineVerticalRuntimeRegistration({
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'lease-invoices': () => import('./src/api/lease-invoices-client.ts'),
       records: () => import('./src/api/records-client.ts'),
       // </generated-module-registration-apis>
     },

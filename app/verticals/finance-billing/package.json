@@ -6,6 +6,7 @@
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/finance-billing-client.ts",
     "./clients/apply-command": "./src/api/apply-command-action-client.ts",
+    "./clients/lease-invoices": "./src/api/lease-invoices-consumer.ts",
     "./clients/records": "./src/api/records-consumer.ts",
     "./contracts/apply-command": "./shared/actions/apply-command.ts",
     "./contracts/records": "./shared/apis/records.ts",

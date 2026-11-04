@@ -1,1 +1,1 @@
-export { FinanceRedemptionClientLive, GatewayAssertionRedemptionLive } from '../../src/services/gateway-redemption.ts';
+export { GatewayAssertionRedemptionLive } from '../../src/services/gateway-redemption.ts';

@@ -89,8 +89,7 @@ import {
   Tracer,
 } from 'effect';
 import type { Types } from 'effect';
-import { FetchHttpClient, HttpRouter, UrlParams } from 'effect/http';
-import type { HttpServerRequest } from 'effect/http';
+import { FetchHttpClient, HttpRouter, HttpServerRequest, UrlParams } from 'effect/http';
 import { authenticationQueryRedactions } from '@app/shared-contracts/credential-url';
 import { Reactivity } from 'effect/reactivity';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from './database-identity-enrollment.ts';
@@ -400,6 +399,21 @@ const apiKeyChallenge = HttpEffect.appendPreResponseHandler((_request, response)
 export const noStoreResponse = (response: Parameters<typeof HttpServerResponse.setHeader>[0]) =>
   HttpServerResponse.setHeader(response, 'cache-control', 'no-store');
 const noStore = HttpEffect.appendPreResponseHandler((_request, response) => Effect.succeed(noStoreResponse(response)));
+
+/** Register on the live HTTP request before API decoding and captured handler services, including problem responses. */
+const shellSearchResponseCacheControl = Effect.fn('Shell.searchResponseCacheControl')(
+  function* searchResponseCacheControl(
+    response: Effect.Effect<HttpServerResponse.HttpServerResponse, Types.unhandled>,
+  ) {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    if (request.method === 'POST' && new URL(request.url, 'http://localhost').pathname === '/shell/search') {
+      yield* noStore;
+    }
+    return yield* response;
+  },
+);
+export const makeShellSearchNoStoreLayer = () =>
+  HttpRouter.middleware(shellSearchResponseCacheControl, { global: true });
 
 const failGatewayProblem = <Failure extends GatewayContextProblem>(gatewayProblem: Failure) =>
   (Predicate.isTagged(gatewayProblem, 'GatewayAuthenticationRequiredProblem') ? bearerChallenge : Effect.void).pipe(
@@ -3459,6 +3473,8 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provide(mcpRequestIdentityMiddleware.layer),
     Layer.provide(shellTransportServicesLive),
   );
+  // The governed handler Layer provides the route middleware as an immutable Layer value, not a constructor call.
+  const shellSearchNoStoreLayer = makeShellSearchNoStoreLayer();
   const apiHandlersLive = Layer.mergeAll(
     ShellEmailReceiptHandlersLive,
     authenticationGroupLive,
@@ -3480,7 +3496,7 @@ export const makeShellAuthenticationApiRuntime = (
     oauthConnectionsAdminGroupLive,
     peopleAdministrationGroupLive,
     agentPlatformGroupLive,
-  ).pipe(Layer.provide(apiServicesLive));
+  ).pipe(Layer.provide(apiServicesLive), Layer.provide(shellSearchNoStoreLayer));
 
   return assembleEffectBffRuntime({
     api: ShellAuthenticationApi,
