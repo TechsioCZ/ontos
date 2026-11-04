@@ -1,13 +1,19 @@
-import { Effect, Option } from 'effect';
-import type { Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 
 import {
   ExternalIdentityError,
+  AuthenticationNamespaceIdSchema,
+  AuthBindingIdSchema,
+  ExternalAuthenticationSubjectSchema,
+  ResolveExternalSubjectResultSchema,
   ReadPrincipalBindingPayloadSchema,
   ReadPrincipalBindingResultSchema,
 } from '../external-identity-contracts.ts';
-import { externalIdentityRepositoryFromTransaction } from './repository.ts';
-import type { ExternalIdentityRepositoryService } from './repository.ts';
+import { externalIdentityRepositoryFromTransaction, externalIdentitySubjectForBinding } from './repository.ts';
+import { ExternalIdentityAdmission, resolveExternalSubjectFromTransaction } from './resolve.ts';
+import type { ExternalAuthenticationSubject } from '../external-identity-contracts.ts';
+import type { ExternalIdentityFailure } from './errors.ts';
+import type { ExternalIdentityAdmissionContext, ExternalIdentityRepositoryService } from './repository.ts';
 import { AuthenticationNamespaceRegistry } from './verifier.ts';
 import { externalIdentityFailure } from './errors.ts';
 import { ContextAccess } from '../../permissions/context-access.ts';
@@ -16,6 +22,9 @@ import { defineRead } from '../../reads/definition.ts';
 import type { ReadPermissionTargetResolver } from '../../reads/definition.ts';
 import type { ReadHandlerContext } from '../../reads/context.ts';
 import type { OperationalScope } from '../../operations/context.ts';
+
+const CORE_IDENTITY_MODULE_KEY = 'core.identity';
+const MODULE_ACCESS_PERMISSION = 'module.access';
 
 export type ReadPrincipalBindingPayload = Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>;
 
@@ -116,9 +125,9 @@ export const readPrincipalBinding = defineRead<
     domainErrorSchema: ExternalIdentityError,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
+      authorization: { kind: 'context_permission', permission: MODULE_ACCESS_PERMISSION },
       entrypointKey: 'core.identity.read-principal-binding',
-      moduleKey: 'core.identity',
+      moduleKey: CORE_IDENTITY_MODULE_KEY,
       role: 'api',
     }),
     evidencePolicy: {
@@ -127,7 +136,7 @@ export const readPrincipalBinding = defineRead<
     },
     inputSchema: ReadPrincipalBindingPayloadSchema,
     legalEntityScope: 'forbidden',
-    owningModuleKey: 'core.identity',
+    owningModuleKey: CORE_IDENTITY_MODULE_KEY,
     permissionTarget: 'tenant',
     policies: [],
     readKey: 'core.identity.read-principal-binding',
@@ -149,4 +158,133 @@ export const readPrincipalBinding = defineRead<
     return { read: repository.read };
   }),
   permissionTargetResolver,
+);
+
+const BindingSubjectLookupInputSchema = Schema.Struct({
+  authBindingId: AuthBindingIdSchema,
+  authenticationNamespaceId: AuthenticationNamespaceIdSchema,
+});
+
+type BindingSubjectReadServices = Readonly<{
+  readonly lookup: (input: {
+    readonly authBindingId: Schema.Schema.Type<typeof AuthBindingIdSchema>;
+    readonly authenticationNamespaceId: Schema.Schema.Type<typeof AuthenticationNamespaceIdSchema>;
+    readonly tenantId: string;
+  }) => Effect.Effect<ExternalAuthenticationSubject, ExternalIdentityFailure>;
+}>;
+
+type ResolveExternalSubjectReadResult = Schema.Schema.Type<typeof ResolveExternalSubjectResultSchema>;
+interface ResolveExternalSubjectReadInput {
+  readonly admission: ExternalIdentityAdmissionContext;
+  readonly subject: ExternalAuthenticationSubject;
+  readonly tenantId: string;
+}
+type ResolveExternalSubjectReadServices = Readonly<{
+  readonly resolve: (
+    input: ResolveExternalSubjectReadInput,
+  ) => Effect.Effect<ResolveExternalSubjectReadResult, ExternalIdentityFailure>;
+}>;
+
+export const bindingSubjectRead = defineRead<
+  typeof BindingSubjectLookupInputSchema,
+  typeof ExternalAuthenticationSubjectSchema,
+  'core.identity',
+  BindingSubjectReadServices,
+  ExternalIdentityError,
+  never,
+  typeof ExternalIdentityError
+>(
+  {
+    accessKind: 'detail',
+    domainErrorSchema: ExternalIdentityError,
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'read',
+      authorization: { kind: 'context_permission', permission: MODULE_ACCESS_PERMISSION },
+      entrypointKey: 'core.identity.read-binding-subject',
+      moduleKey: CORE_IDENTITY_MODULE_KEY,
+      role: 'api',
+    }),
+    evidencePolicy: {
+      captureMode: 'metadata_only',
+      policyKey: 'core.identity.read-binding-subject.access.v1',
+    },
+    inputSchema: BindingSubjectLookupInputSchema,
+    legalEntityScope: 'forbidden',
+    owningModuleKey: CORE_IDENTITY_MODULE_KEY,
+    permissionTarget: 'tenant',
+    policies: [],
+    readKey: 'core.identity.read-binding-subject',
+    resultSchema: ExternalAuthenticationSubjectSchema,
+    schemaVersion: '1',
+  },
+  (input, context) =>
+    context.services
+      .lookup({
+        ...input,
+        tenantId: context.scope.tenantId,
+      })
+      .pipe(
+        Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })),
+        Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+      ),
+  (transaction) =>
+    Effect.succeed({
+      lookup: (input: {
+        readonly authBindingId: Schema.Schema.Type<typeof AuthBindingIdSchema>;
+        readonly authenticationNamespaceId: Schema.Schema.Type<typeof AuthenticationNamespaceIdSchema>;
+        readonly tenantId: string;
+      }) => externalIdentitySubjectForBinding(transaction, input),
+    }),
+  () => ({ kind: 'tenant', permission: 'access' }),
+);
+
+export const resolveExternalSubjectRead = defineRead<
+  typeof ExternalAuthenticationSubjectSchema,
+  typeof ResolveExternalSubjectResultSchema,
+  'core.identity',
+  ResolveExternalSubjectReadServices,
+  ExternalIdentityError,
+  ExternalIdentityAdmission,
+  typeof ExternalIdentityError
+>(
+  {
+    accessKind: 'detail',
+    domainErrorSchema: ExternalIdentityError,
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'read',
+      authorization: { kind: 'context_permission', permission: MODULE_ACCESS_PERMISSION },
+      entrypointKey: 'core.identity.resolve-external-subject',
+      moduleKey: CORE_IDENTITY_MODULE_KEY,
+      role: 'api',
+    }),
+    evidencePolicy: {
+      captureMode: 'metadata_only',
+      policyKey: 'core.identity.resolve-external-subject.access.v1',
+    },
+    inputSchema: ExternalAuthenticationSubjectSchema,
+    legalEntityScope: 'forbidden',
+    owningModuleKey: CORE_IDENTITY_MODULE_KEY,
+    permissionTarget: 'tenant',
+    policies: [],
+    readKey: 'core.identity.resolve-external-subject',
+    resultSchema: ResolveExternalSubjectResultSchema,
+    schemaVersion: '1',
+  },
+  (subject, context) =>
+    Effect.serviceOption(ExternalIdentityAdmission).pipe(
+      Effect.flatMap((admission) =>
+        Option.isNone(admission)
+          ? Effect.fail(new ExternalIdentityError({ code: 'identity_unavailable' }))
+          : context.services
+              .resolve({
+                admission: admission.value,
+                subject,
+                tenantId: context.scope.tenantId,
+              })
+              .pipe(Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code }))),
+      ),
+      Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+    ),
+  (transaction) => Effect.succeed({ resolve: resolveExternalSubjectFromTransaction(transaction) }),
+  () => ({ kind: 'tenant', permission: 'access' }),
 );

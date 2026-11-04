@@ -445,7 +445,7 @@ const program = Effect.gen(function* priceGroupCurrentChild() {
   yield* Stream.fromPull(Effect.succeed(pull)).pipe(
     Stream.mapEffect((chunk) => {
       bytes += chunk.byteLength;
-      return demand(bytes <= 131_072, 'private-input-limit').pipe(Effect.as(chunk));
+      return demand(bytes <= 262_144, 'private-input-limit').pipe(Effect.as(chunk));
     }),
     Stream.decodeText(),
     Stream.splitLines,

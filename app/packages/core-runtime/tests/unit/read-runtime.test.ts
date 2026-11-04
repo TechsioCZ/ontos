@@ -1,4 +1,6 @@
 import type { ActiveApplicationCompositionServiceContract } from '../../src/modules/active-application-composition.ts';
+import { bindingSubjectRead, resolveExternalSubjectRead } from '../../src/auth/external-identity/read.ts';
+import { ExternalIdentityError } from '../../src/auth/external-identity-contracts.ts';
 import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
 import { ModuleOperationRequirementError } from '../../src/modules/module-operation-requirement-error.ts';
 import { requireModuleOperation } from '../../src/modules/module-operation-requirement.ts';
@@ -3347,6 +3349,96 @@ it.effect('gives bound Shell system Reads no provider-operation execution lease'
       }),
     );
     expect(Schema.is(ModuleOperationRequirementError)(failure)).toBe(true);
+    expect(harness.evidence()).toBe(0);
+  }),
+);
+
+it.effect(
+  'runs the genuine Core binding-subject Read through scoped repository lookup without a host registration',
+  () =>
+    Effect.gen(function* genuineCoreBindingSubjectRead() {
+      const harness = yield* makeHarness({
+        contextPermissionDecision: 'allowed',
+        omitOwnerRegistration: true,
+        permissionDecision: 'allowed',
+      });
+      const failure = yield* Effect.flip(
+        harness.runtime.runRead({
+          input: {
+            authBindingId: '00000000-0000-4000-8000-000000000005',
+            authenticationNamespaceId: 'test.identity.realm',
+          },
+          principal: scope,
+          registration: bindingSubjectRead,
+          transport: { correlationId: scope.correlationId },
+        }),
+      );
+      // The ordinary empty repository reaches the domain not-found result, rather than rejecting owner admission.
+      expect(failure).toEqual(new ExternalIdentityError({ code: 'identity_not_found' }));
+      expect(harness.stages).toContain('scope_installed');
+      expect(harness.authorityCounts().scopeInstalls).toBeGreaterThan(0);
+    }),
+);
+
+it.effect('rejects a recreated Core binding-subject Read before its handler runs', () =>
+  Effect.gen(function* recreatedCoreBindingSubjectRead() {
+    let handlerCalls = 0;
+    const recreated = defineRead(
+      bindingSubjectRead.descriptor,
+      () => {
+        handlerCalls += 1;
+        return Effect.fail(new ExternalIdentityError({ code: 'identity_not_found' }));
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'tenant', permission: 'access' }),
+    );
+    const harness = yield* makeHarness({ omitOwnerRegistration: true, permissionDecision: 'allowed' });
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {
+          authBindingId: '00000000-0000-4000-8000-000000000005',
+          authenticationNamespaceId: 'test.identity.realm',
+        },
+        principal: scope,
+        registration: recreated,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ReadHandlerUnavailable')).toBe(true);
+    expect(harness.stages).toEqual(['input_decoded', 'scope_validated']);
+    expect(handlerCalls).toBe(0);
+    expect(harness.evidence()).toBe(0);
+  }),
+);
+
+it.effect('rejects a recreated Core external-subject resolution Read before its handler runs', () =>
+  Effect.gen(function* recreatedCoreExternalSubjectRead() {
+    let handlerCalls = 0;
+    const recreated = defineRead(
+      resolveExternalSubjectRead.descriptor,
+      () => {
+        handlerCalls += 1;
+        return Effect.fail(new ExternalIdentityError({ code: 'identity_unavailable' }));
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'tenant', permission: 'access' }),
+    );
+    const harness = yield* makeHarness({ omitOwnerRegistration: true, permissionDecision: 'allowed' });
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {
+          authenticationNamespaceId: 'test.identity.realm',
+          providerSubjectId: 'test-external-subject',
+          subjectType: 'user',
+        },
+        principal: scope,
+        registration: recreated,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ReadHandlerUnavailable')).toBe(true);
+    expect(harness.stages).toEqual(['input_decoded', 'scope_validated']);
+    expect(handlerCalls).toBe(0);
     expect(harness.evidence()).toBe(0);
   }),
 );

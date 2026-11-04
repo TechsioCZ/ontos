@@ -870,7 +870,7 @@ export { coreActionCatalog } from './modules/actions/catalog.ts';
 export type { CoreActionDescriptor } from './modules/actions/catalog.ts';
 export { ONTOS_SPICEDB_SCHEMA } from './permissions/schema.ts';
 
-export { readPrincipalBinding } from './auth/external-identity/read.ts';
+export { bindingSubjectRead, readPrincipalBinding, resolveExternalSubjectRead } from './auth/external-identity/read.ts';
 export {
   ExternalIdentityAdmission,
   resolveExternalSubject,

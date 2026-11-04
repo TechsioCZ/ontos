@@ -32,7 +32,7 @@ import { makeAuthenticationService } from '../../api/auth/service.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
-import { createShellRuntimeContract } from '../../../../scripts/generate-ontos-shell-runtime-contract.mts';
+import { createShellRuntimeContract } from '../../../../scripts/ontos-shell-runtime-contract.ts';
 import {
   loadPrivacyCompletionResponseSocket,
   PrivacyCompletionReadySchema,

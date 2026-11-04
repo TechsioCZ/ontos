@@ -114,6 +114,12 @@ import {
 } from '../../shared/domain/price-group-contracts.ts';
 
 const ChildDiagnosticStageSchema = Schema.Literals([
+  'BOOTSTRAP_OWNED_DATABASE',
+  'BOOTSTRAP_CONFIGURATION',
+  'BOOTSTRAP_MIGRATION',
+  'BOOTSTRAP_RUNTIME',
+  'BOOTSTRAP_OTHER',
+
   'C_SOCKET_CONNECTED',
   'C_BOOTSTRAP_VALID',
   'C_CCC_MIGRATION_BEGIN',
@@ -197,7 +203,21 @@ it.effect('forwards only exact fixed Price Group child diagnostic stages', () =>
     expect(Option.getOrUndefined(decodeChildDiagnosticStage('C_CATALOG_BOOTSTRAP_SEND_DONE'))).toBe(
       'C_CATALOG_BOOTSTRAP_SEND_DONE',
     );
+    for (const stage of [
+      'BOOTSTRAP_OWNED_DATABASE',
+      'BOOTSTRAP_CONFIGURATION',
+      'BOOTSTRAP_MIGRATION',
+      'BOOTSTRAP_RUNTIME',
+      'BOOTSTRAP_OTHER',
+    ]) {
+      expect(Option.getOrUndefined(decodeChildDiagnosticStage(stage))).toBe(stage);
+    }
     for (const line of [
+      'BOOTSTRAP_RUNTIME extra',
+      ' BOOTSTRAP_RUNTIME',
+      'BOOTSTRAP_RUNTIME\r',
+      'BOOTSTRAP_UNREVIEWED',
+      '{"stage":"BOOTSTRAP_RUNTIME"}',
       'C_PARTY_HTTP_READY extra',
       'C_CATALOG_SPAWNED:at_ms=123',
       ' C_PARTY_HTTP_READY',
@@ -2407,9 +2427,90 @@ const executorDeniedScenario = Effect.fn('TemporalNative.executorDenied')(functi
   expect(stopped.type).toBe('STOPPED');
 });
 
+const bootstrapByteBudgetScenario = Effect.fn('TemporalNative.bootstrapByteBudget')(
+  function* bootstrapByteBudgetScenario() {
+    const { native } = yield* TemporalCaseInfrastructure;
+    const { catalog } = yield* PreparedTemporalArtifacts;
+    yield* guardPriceGroupOwnedDatabase(native.owned.certificate);
+    yield* guardPriceGroupPreparedArtifact(catalog.prepared, 'price-group-catalog');
+    const encodedBootstrap = yield* Schema.encodeEffect(PriceGroupTemporalBootstrapSchema)(native.bootstrap);
+    const { legalEntityId: _selectedLegalEntity, ...tenantActor } = encodedBootstrap.actor;
+    const bootstrapLine = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))({
+      actor: tenantActor,
+      composition: encodedBootstrap.composition,
+      database: projectPriceGroupCatalogDatabaseCertificate(encodedBootstrap.database),
+      issuer: encodedBootstrap.issuer,
+      jwks: encodedBootstrap.jwks,
+      spiceDb: encodedBootstrap.spiceDb,
+      type: 'bootstrap',
+      version: 'ontos.price-group-current.fixture.v1',
+    });
+    const bootstrapByteLength = new TextEncoder().encode(`${bootstrapLine}\n`).byteLength;
+    yield* Effect.logInfo('Actual owned PriceGroup bootstrap byte count', { byteLength: bootstrapByteLength });
+    expect(bootstrapByteLength).toBeGreaterThan(131_072);
+    expect(bootstrapByteLength).toBeLessThan(262_144);
+    const readySchema = Schema.Struct({
+      buildMarker: Schema.Literal(catalog.marker.buildMarker),
+      compositionRevision: Schema.Literal(native.snapshot.composition.revision),
+      port: Schema.Int.check(Schema.isGreaterThan(0)),
+      type: Schema.Literal('BOOTED'),
+      version: Schema.Literal('ontos.price-group-current.fixture.v1'),
+    });
+    for (const wireByteLength of [262_144, 262_145]) {
+      yield* Effect.scoped(
+        Effect.gen(function* checkActualReceiverBoundary() {
+          const channel = yield* openPriceGroupTemporalChannel(readySchema);
+          const child = yield* ChildProcess.make(process.execPath, [catalog.artifact], {
+            cwd: catalog.directory,
+            env: {
+              ...priceGroupTemporalClosedEnvironment(native.bootstrap),
+              [priceGroupTemporalSocketEnvironment]: channel.socketPath,
+            },
+            extendEnv: true,
+            stderr: 'pipe',
+            stdin: 'ignore',
+            stdout: 'pipe',
+          });
+          yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
+          yield* Stream.runDrain(child.stdout).pipe(Effect.forkScoped);
+          // JSON whitespace preserves every actual authority, owner contract and credential byte.
+          // channel.send appends the one newline included in the receiver's cumulative byte budget.
+          const paddedLine = `${' '.repeat(wireByteLength - bootstrapByteLength)}${bootstrapLine}`;
+          expect(new TextEncoder().encode(`${paddedLine}\n`).byteLength).toBe(wireByteLength);
+          if (wireByteLength === 262_144) {
+            yield* channel.send(paddedLine);
+            const ready = yield* channel.next;
+            expect(ready.compositionRevision).toBe(native.snapshot.composition.revision);
+            expect(ready.buildMarker).toBe(catalog.marker.buildMarker);
+          } else {
+            yield* channel.send(paddedLine).pipe(Effect.ignore);
+            const result = yield* channel.next.pipe(Effect.exit);
+            expect(Exit.isFailure(result)).toBe(true);
+            expect(Number(yield* child.exitCode)).not.toBe(0);
+          }
+        }),
+      );
+    }
+  },
+);
+
 const temporalArtifactMemoMap = Layer.makeMemoMapUnsafe();
 it.layer(temporalArtifactsLayer, { excludeTestServices: true, memoMap: temporalArtifactMemoMap, timeout: 120_000 })(
   () => {
+    it.layer(temporalCaseLayer('current').pipe(Layer.provideMerge(temporalArtifactsLayer)), {
+      excludeTestServices: true,
+      memoMap: temporalArtifactMemoMap,
+      timeout: 120_000,
+    })((caseIt) => {
+      // The native runner's AbortSignal interrupts the Effect Scope and cleans up both real children.
+      // This is one 20-second case budget, distinct from the owned fixture's setup-hook budget.
+      caseIt.effect(
+        'accepts the exact actual Price Group bootstrap byte budget and rejects the next byte',
+        () => Effect.scoped(bootstrapByteBudgetScenario()),
+        20_000,
+      );
+    });
+
     it.layer(temporalCaseLayer('before').pipe(Layer.provideMerge(temporalArtifactsLayer)), {
       excludeTestServices: true,
       memoMap: temporalArtifactMemoMap,

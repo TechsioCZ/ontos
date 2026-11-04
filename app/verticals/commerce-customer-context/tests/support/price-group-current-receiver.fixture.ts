@@ -811,20 +811,21 @@ const startCatalog = Effect.fn('PriceGroupTemporal.startCatalog')(function* star
     Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(command).pipe(Effect.flatMap(channel.send));
   const { legalEntityId: _selectedLegalEntity, ...tenantActor } = bootstrap.actor;
   const encodedBootstrap = yield* Schema.encodeEffect(PriceGroupTemporalBootstrapSchema)(bootstrap);
+  const bootstrapLine = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))({
+    actor: tenantActor,
+    composition: encodedBootstrap.composition,
+    database: projectPriceGroupCatalogDatabaseCertificate(encodedBootstrap.database),
+    issuer: authority.issuer,
+    jwks: authority.jwks,
+    spiceDb: encodedBootstrap.spiceDb,
+    type: 'bootstrap',
+    version: catalogProtocol,
+  });
+  const bootstrapByteLength = new TextEncoder().encode(`${bootstrapLine}\n`).byteLength;
+  yield* Effect.logInfo('PriceGroup catalog bootstrap byte count', { byteLength: bootstrapByteLength });
+  yield* requireCondition(bootstrapByteLength <= 262_144, 'catalog-bootstrap-byte-budget');
   yield* diagnosticStage('C_CATALOG_BOOTSTRAP_SEND_BEGIN');
-  yield* Effect.raceFirst(
-    send({
-      actor: tenantActor,
-      composition: encodedBootstrap.composition,
-      database: projectPriceGroupCatalogDatabaseCertificate(encodedBootstrap.database),
-      issuer: authority.issuer,
-      jwks: authority.jwks,
-      spiceDb: encodedBootstrap.spiceDb,
-      type: 'bootstrap',
-      version: catalogProtocol,
-    }),
-    exited,
-  );
+  yield* Effect.raceFirst(channel.send(bootstrapLine), exited);
   yield* diagnosticStage('C_CATALOG_BOOTSTRAP_SEND_DONE');
   const ready = yield* receive;
   if (ready.type === 'FAILED') {

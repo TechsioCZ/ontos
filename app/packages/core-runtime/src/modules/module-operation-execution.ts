@@ -1,5 +1,9 @@
 import { selfApiKeyBindingsRead, managedPrincipalsRead } from '../auth/principal-administration-reads.ts';
-import { readPrincipalBinding } from '../auth/external-identity/read.ts';
+import {
+  bindingSubjectRead,
+  readPrincipalBinding,
+  resolveExternalSubjectRead,
+} from '../auth/external-identity/read.ts';
 import { legalEntityDetailRead } from '../generated-reads/legal-entity-detail.ts';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
 import { readVerifiedGatewayCompositionRevision } from '../auth/system-principal-context-provenance.ts';
@@ -202,6 +206,8 @@ const coreReads = Object.freeze([
   managedPrincipalsRead,
   legalEntityDetailRead,
   readPrincipalBinding,
+  bindingSubjectRead,
+  resolveExternalSubjectRead,
 ]);
 /** Exact existing Core registration identities, independent of caller-chosen strings. */
 export const isGenuineCoreOperation = (registration: ModuleOperationRegistration): boolean =>
