@@ -2,6 +2,11 @@ import { v1 } from '@authzed/authzed-node';
 import { Option } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { coreActionCatalog } from '../../packages/core-runtime/src/modules/actions/catalog.ts';
+import {
+  toLegalEntityAccessObjectId,
+  toModuleAccessObjectId,
+} from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { fromScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import {
   akrosPlaygroundAccounts,
@@ -77,6 +82,26 @@ it('limits the administrator to company roles without changing its own module or
   });
   expect(companyAdmin).toBeDefined();
   expect(rows.some((row) => row.resource?.objectType === 'tenant' && row.relation === 'superadmin')).toBe(false);
+});
+
+it('connects every Core module to the AKROS company so its administrator reaches people administration', () => {
+  const rows = akrosPlaygroundRelationships(actions);
+  const legalObjectId = toLegalEntityAccessObjectId(akrosPlaygroundTenantId, akrosPlaygroundLegalEntityId);
+  const coreModuleKeys = [...new Set(coreActionCatalog.map(({ owningModuleKey }) => owningModuleKey))];
+  const unconnected = coreModuleKeys.filter(
+    (moduleId) =>
+      !rows.some(
+        (row) =>
+          row.resource?.objectType === 'module_access' &&
+          row.resource.objectId ===
+            toModuleAccessObjectId(akrosPlaygroundTenantId, akrosPlaygroundLegalEntityId, moduleId) &&
+          row.relation === 'legal_entity' &&
+          row.subject?.object?.objectType === 'legal_entity' &&
+          row.subject.object.objectId === legalObjectId,
+      ),
+  );
+  expect(coreModuleKeys).toContain('core.identity');
+  expect(unconnected).toEqual([]);
 });
 
 it('keeps company membership admission explicit and never stores account passwords in a plan definition', () => {
