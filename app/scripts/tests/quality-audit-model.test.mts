@@ -1842,7 +1842,7 @@ it.live(
     const consumerPath = path.join(root, auditConsumersFile);
     const prepare = 'ultramodern-create ultramodern compiler-prepare';
     const typecheck = 'ultramodern-create ultramodern typecheck --project tsconfig.json';
-    const compilerDependencies = { '@effect/tsgo': '0.63.0', tsrs: '0.20.1-ts7.1.0-beta', yaml: '2.9.1' };
+    const compilerDependencies = { '@effect/tsgo': '0.67.0', tsrs: '0.21.0-ts7.1.0-beta', yaml: '2.9.1' };
     const manifests = (rootCommand: string, childCommand: string, withProvider = true) =>
       Effect.gen(function* writeCompilerManifests() {
         const devDependencies = withProvider

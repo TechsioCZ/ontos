@@ -624,8 +624,8 @@ it.live(
       const root = yield* Schema.decodeUnknownEffect(GeneratedRootPackageSchema)(
         generator.createRootPackageJson('fixture', packageSource),
       );
-      expect(root.devDependencies['@effect/tsgo'], moduleFormat).toBe('0.63.0');
-      expect(root.devDependencies.tsrs, moduleFormat).toBe('0.20.1-ts7.1.0-beta');
+      expect(root.devDependencies['@effect/tsgo'], moduleFormat).toBe('0.67.0');
+      expect(root.devDependencies.tsrs, moduleFormat).toBe('0.21.0-ts7.1.0-beta');
       expect(root.devDependencies.typescript, moduleFormat).toBe('7.0.2');
       expect(root.devDependencies['@typescript/native'], moduleFormat).toBe('npm:typescript@7.0.2');
       expect(root.devDependencies.effect, moduleFormat).toBe('4.0.7');
@@ -642,8 +642,8 @@ it.live(
         cwd: workspaceRoot,
       }),
     );
-    expect(preparationOutput).toContain('Validating Effect-enabled tsrs 0.20.1-ts7.1.0-beta');
-    expect(preparationOutput).toContain('7.1.0-beta+effect-tsgo.0.63.0');
+    expect(preparationOutput).toContain('Validating Effect-enabled tsrs 0.21.0-ts7.1.0-beta');
+    expect(preparationOutput).toContain('7.1.0-beta+effect-tsgo.0.67.0');
   }),
 );
 
