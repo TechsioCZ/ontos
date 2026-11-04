@@ -70,7 +70,7 @@ it.layer(services, { excludeTestServices: true })((suite) =>
     'Pricing consumes actual Catalog allowance reassessment and its DefinePrice guard refuses the revoked selection',
     () =>
       Effect.gen(function* catalogAllowanceConsumer() {
-        const directory = fileURLToPath(new URL('../../../catalog/node_modules/.cache/ontos-1253/', import.meta.url));
+        const directory = fileURLToPath(new URL('../../../catalog/.cache/ontos-1253/', import.meta.url));
         const artifact = `${directory}${yield* nextId}.mjs`;
         const fs = yield* FileSystem.FileSystem;
         yield* fs.makeDirectory(directory, { recursive: true });

@@ -165,6 +165,7 @@ type IsolatedNativeDatabaseInput = (
   | {
       readonly mode: 'empty';
       readonly purpose:
+        | 'stabilization-1287-core-operation-fence'
         | 'stabilization-1229-payment-entitlement'
         | 'stabilization-1234-outbox-clock'
         | 'stabilization-1235-inventory-release'
@@ -229,6 +230,7 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
       ].includes(input.purpose)
     : input.mode === 'empty' &&
       [
+        'stabilization-1287-core-operation-fence',
         'stabilization-1229-payment-entitlement',
         'stabilization-1234-outbox-clock',
         'stabilization-1235-inventory-release',

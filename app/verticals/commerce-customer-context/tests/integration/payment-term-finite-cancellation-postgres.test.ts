@@ -55,6 +55,7 @@ import { customerPaymentTermEntitlementReadRead } from '../../src/api/customer-p
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
 import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { enrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
 
 const services = NodeChildProcessSpawner.layer.pipe(
@@ -442,6 +443,7 @@ const scenario = Effect.fn('FiniteEntitlement.nativeScenario')(function* nativeS
       authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
       moduleKeys: ['commerce.customer-context'],
+      ownerRegistration: commerceCustomerContextRegistration,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (resource) => resource.close().pipe(Effect.orDie),
@@ -1287,6 +1289,7 @@ const scenario = Effect.fn('FiniteEntitlement.nativeScenario')(function* nativeS
         authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
         compositionRevision: snapshot.composition.revision,
         moduleKeys: ['commerce.customer-context'],
+        ownerRegistration: commerceCustomerContextRegistration,
         runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
       }),
       (resource) => resource.close().pipe(Effect.orDie),

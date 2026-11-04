@@ -1,3 +1,4 @@
+import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { resolveCurrentSupportedCurrencies } from '../../src/api/current-supported-currencies.read.ts';
 import { CurrentSupportedCurrenciesSuccessSchema } from '@app/pricing-contracts/current-supported-currencies';
 import { SetSupportedCurrenciesV2PayloadSchema } from '@app/pricing-contracts/domain/currency-support';
@@ -9,9 +10,11 @@ import { QuantityTierSelectionSuccessSchema } from '@app/pricing-contracts/domai
 import { PricingUnitPriceCalculationSuccessSchema } from '@app/pricing-contracts/domain/unit-price-calculation';
 import type { PricingExactPriceOwnerReadReceipt } from '@app/pricing-contracts/domain/material-evidence';
 import { PricingPurchaseContextVerificationEvidenceSchema } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
-import { makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
+import { makeNativeReadTestContext, NativeReadTestOwnerRegistration } from '@app/core-runtime/testing/native-reads';
 import {
   defineRead,
+  defineOntosModuleManifest,
+  defineVerticalRuntimeRegistration,
   defineTenantModuleEntrypoint,
   ReadHandlerUnavailable,
   findPostgresFailure,
@@ -914,6 +917,21 @@ const nativeFeeRead = defineRead(
   () => ({ kind: 'module', moduleId: 'commerce.pricing' }),
 );
 
+// This owner registers the exact local native test Read; it claims no production Pricing API.
+const nativeFeeReadOwnerBase = makeModuleContractFixture({
+  appId: 'pricing-commercial-fee-native-test',
+  moduleId: nativeFeeRead.descriptor.owningModuleKey,
+}).manifest;
+const nativeFeeReadOwner = defineVerticalRuntimeRegistration({
+  actions: [],
+  manifest: defineOntosModuleManifest({
+    ...nativeFeeReadOwnerBase,
+    publicSurface: { ...nativeFeeReadOwnerBase.publicSurface, actions: [], api: {}, components: {} },
+  }),
+  outboxWorkers: [],
+  reads: [nativeFeeRead],
+});
+
 it.live('settles real Core Fee evidence and rolls back a SQL-aborted pseudo-success (#1242)', () =>
   Effect.scoped(
     Effect.gen(function* governedNativeFee() {
@@ -921,7 +939,7 @@ it.live('settles real Core Fee evidence and rolls back a SQL-aborted pseudo-succ
         contextPermissions: ['pricing.commercial_fee.native_test.read'],
         moduleId: 'commerce.pricing',
         ownerFixtureRetention: 'retain-complete-context',
-      });
+      }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, nativeFeeReadOwner));
       const context = yield* Layer.build(fixture.layer);
       const scenario = yield* fixture
         .prepareOwner(
@@ -1004,7 +1022,7 @@ it.live('settles real Core Fee evidence and rolls back a SQL-aborted pseudo-succ
         contextPermissions: [],
         moduleId: 'commerce.pricing',
         ownerFixtureRetention: 'retain-complete-context',
-      });
+      }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, nativeFeeReadOwner));
       const deniedContext = yield* Layer.build(denied.layer);
       expect(
         yield* denied.runtime

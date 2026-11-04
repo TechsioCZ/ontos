@@ -1,19 +1,6 @@
-import { NodeCrypto } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { and, eq, sql } from 'drizzle-orm';
-import {
-  Cause,
-  Context,
-  Crypto,
-  DateTime,
-  Deferred,
-  Effect,
-  Layer,
-  Exit,
-  Fiber,
-  Option,
-  Schema,
-  Predicate,
-} from 'effect';
+import { Cause, Context, Crypto, Deferred, Effect, Layer, Exit, Fiber, Option, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError, UnknownError } from 'effect/sql/SqlError';
 import { commitActionThenReject } from '../../src/actions/context.ts';
@@ -39,7 +26,7 @@ import {
   AuthenticationNamespaceRegistry,
   makeAuthenticationNamespaceRegistry,
 } from '../../src/auth/external-identity/verifier.ts';
-import { loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import {
   actionInvocations,
@@ -73,8 +60,13 @@ import {
   makeTenantModuleStateService,
 } from '../../src/modules/tenant-module-state-service.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
+import { makeIsolatedNativeDatabaseFixture } from '../../src/testing/isolated-native-database.ts';
 import { testOperationalScopeResolver as baseTestOperationalScopeResolver } from '../fixtures/operational-scope.ts';
-import { allowTenantPermissions, openActionRuntimeOptions } from '../support/action-runtime-options.ts';
+import {
+  allowTenantPermissions,
+  openActionRuntimeOptions,
+  makeTestOperationOwner,
+} from '../support/action-runtime-options.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { injectStatementFaults } from '../support/database-faults.ts';
 import type { OperationalScopeResolverService } from '../../src/operations/context.ts';
@@ -104,6 +96,29 @@ const ActionPolicyDeniedFailureSchema = Schema.TaggedStruct('ActionPolicyDenied'
 const decodeActionPolicyDeniedFailure = Schema.decodeUnknownOption(ActionPolicyDeniedFailureSchema);
 
 const staffAuthenticationNamespaceId = Schema.decodeSync(AuthenticationNamespaceIdSchema)('test.staff.better-auth.v1');
+
+/** Bind the exact late-created TEST definition; original controlled options and native bindings stay explicit. */
+const makeRegisteredTestActionRuntime = (
+  ...parameters: Parameters<typeof makeActionRuntime>
+): ReturnType<typeof makeActionRuntime> => {
+  const [database, repository, permission, scope, options] = parameters;
+  const runtime = makeActionRuntime(database, repository, permission, scope, options);
+  return {
+    ...runtime,
+    runAction: (input) => {
+      const ownerRegistration =
+        options.ownerRegistration ??
+        makeTestOperationOwner({
+          actions: [input.registration],
+          moduleId: input.registration.descriptor.owningModuleKey,
+        }).ownerRegistration;
+      return makeActionRuntime(database, repository, permission, scope, { ...options, ownerRegistration }).runAction(
+        input,
+      );
+    },
+  };
+};
+
 const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
   Schema.decodeSync(AuthenticationNamespaceRegistrationSchema)({
     allowedAudiences: ['core-runtime-test'],
@@ -360,48 +375,47 @@ const liveModuleStateOptions = (database: ContextServiceContract) => {
   };
 };
 
-const prepare = withDatabase(
-  Effect.fn(function* integrationProgram1(database) {
-    const { authBindingId, legalEntityId, principalId, tenantId } = yield* ActionRuntimeSuite;
-    yield* database.executor.insert(tenants).values({
-      defaultLocale: 'en',
-      name: 'Action Runtime Integration',
-      slug: `action-runtime-${tenantId}`,
-      status: 'active',
-      tenantId,
-    });
-    yield* database.executor.insert(legalEntities).values({
-      legalEntityId,
-      legalName: 'Action Runtime Integration',
-      registrationCountry: 'CZ',
-      registrationNumber: tenantId,
-      status: 'active',
-      tenantId,
-    });
-    yield* database.executor.insert(principals).values({
-      displayName: 'Action Runtime Integration',
-      kind: 'human',
-      principalId,
-      status: 'active',
-      tenantId,
-    });
-    yield* database.executor.insert(principalAuthBindings).values({
-      authenticationNamespaceId: staffAuthenticationNamespaceId,
-      principalAuthBindingId: authBindingId,
-      principalId,
-      provider: 'better_auth',
-      providerSubjectId: `action-runtime-${principalId}`,
-      status: 'active',
-      subjectType: 'user',
-      tenantId,
-    });
-    yield* database.executor.insert(tenantModuleStates).values({
-      moduleKey: 'inventory.stock',
-      state: 'active',
-      tenantId,
-    });
-  }),
-);
+const prepareTestOwnerRows = Effect.fn(function* integrationProgram1(database: ContextServiceContract) {
+  const { authBindingId, legalEntityId, principalId, tenantId } = yield* ActionRuntimeSuite;
+  yield* database.executor.insert(tenants).values({
+    defaultLocale: 'en',
+    name: 'Action Runtime Integration',
+    slug: `action-runtime-${tenantId}`,
+    status: 'active',
+    tenantId,
+  });
+  yield* database.executor.insert(legalEntities).values({
+    legalEntityId,
+    legalName: 'Action Runtime Integration',
+    registrationCountry: 'CZ',
+    registrationNumber: tenantId,
+    status: 'active',
+    tenantId,
+  });
+  yield* database.executor.insert(principals).values({
+    displayName: 'Action Runtime Integration',
+    kind: 'human',
+    principalId,
+    status: 'active',
+    tenantId,
+  });
+  yield* database.executor.insert(principalAuthBindings).values({
+    authenticationNamespaceId: staffAuthenticationNamespaceId,
+    principalAuthBindingId: authBindingId,
+    principalId,
+    provider: 'better_auth',
+    providerSubjectId: `action-runtime-${principalId}`,
+    status: 'active',
+    subjectType: 'user',
+    tenantId,
+  });
+  yield* database.executor.insert(tenantModuleStates).values({
+    moduleKey: 'inventory.stock',
+    state: 'active',
+    tenantId,
+  });
+});
+const prepare = withDatabase(prepareTestOwnerRows);
 
 const cleanup = withDatabase(
   Effect.fn(function* integrationProgram2(database) {
@@ -618,7 +632,7 @@ const testProgram1 = () =>
             handlerExecutions += 1;
           }),
       );
-      const runtime = makeActionRuntime(
+      const runtime = makeRegisteredTestActionRuntime(
         database,
         makeActionRepository(crypto),
         allowedPermission,
@@ -709,7 +723,7 @@ const testProgram2 = Effect.fn(function* integrationProgram4() {
 
   yield* withDatabase(
     Effect.fn(function* integrationProgram5(database) {
-      const runtime = makeActionRuntime(
+      const runtime = makeRegisteredTestActionRuntime(
         database,
         makeActionRepository(crypto),
         allowedPermission,
@@ -760,7 +774,7 @@ const testProgram3 = Effect.fn(function* integrationProgram6() {
 
   yield* withDatabase(
     Effect.fn(function* integrationProgram7(database) {
-      const runtime = makeActionRuntime(
+      const runtime = makeRegisteredTestActionRuntime(
         database,
         makeActionRepository(crypto),
         allowedPermission,
@@ -803,7 +817,7 @@ const testCommittedDomainRejection = Effect.fn(function* committedDomainRejectio
 
   yield* withDatabase(
     Effect.fn(function* verifyCommittedDomainRejection(database) {
-      const runtime = makeActionRuntime(
+      const runtime = makeRegisteredTestActionRuntime(
         database,
         makeActionRepository(crypto),
         allowedPermission,
@@ -923,7 +937,7 @@ const testProgram4 = Effect.fn(function* integrationProgram8() {
 
   yield* withDatabase(
     Effect.fn(function* integrationProgram9(database) {
-      const runtime = makeActionRuntime(
+      const runtime = makeRegisteredTestActionRuntime(
         database,
         makeActionRepository(crypto),
         allowedPermission,
@@ -1024,7 +1038,7 @@ const testProgram5 = Effect.fn(function* integrationProgram11() {
         Effect.fn(function* integrationProgram13(stage) {
           const key = `policy-finalization-${stage}`;
           let handlerExecutions = 0;
-          const runtime = makeActionRuntime(
+          const runtime = makeRegisteredTestActionRuntime(
             withEvidencePersistenceFailure(database, stage),
             makeActionRepository(crypto),
             allowedPermission,
@@ -1091,7 +1105,7 @@ const testProgram6 = Effect.fn(function* integrationProgram14() {
       scenarios,
       Effect.fn(function* integrationProgram15(scenario) {
         const moduleStateKey = `test.${scenario.key}.${tenantId}`;
-        const runtime = makeActionRuntime(
+        const runtime = makeRegisteredTestActionRuntime(
           scenario.key === 'evidence-failure' ? withEvidencePersistenceFailure(database, 'audit') : database,
           makeActionRepository(crypto),
           allowedPermission,
@@ -1179,7 +1193,7 @@ const testProgram7 = Effect.fn(function* integrationProgram16() {
           .select()
           .from(outboxMessages)
           .where(eq(outboxMessages.tenantId, tenantId));
-        const runtime = makeActionRuntime(
+        const runtime = makeRegisteredTestActionRuntime(
           withEvidencePersistenceFailure(database, stage),
           makeActionRepository(crypto),
           allowedPermission,
@@ -1237,7 +1251,7 @@ const testProgram8 = () =>
   withDatabase(
     Effect.fn(function* integrationProgram18(database) {
       const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
-      const runtime = makeActionRuntime(
+      const runtime = makeRegisteredTestActionRuntime(
         database,
         makeActionRepository(crypto),
         allowedPermission,
@@ -1339,14 +1353,14 @@ const testProgram9 = () =>
     Effect.fn(function* integrationProgram19(database) {
       const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
       const repository = makeActionRepository(crypto);
-      const allowedRuntime = makeActionRuntime(
+      const allowedRuntime = makeRegisteredTestActionRuntime(
         database,
         repository,
         allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
       );
-      const deniedRuntime = makeActionRuntime(
+      const deniedRuntime = makeRegisteredTestActionRuntime(
         database,
         repository,
         allowedPermission,
@@ -1416,7 +1430,7 @@ const testProgram10 = () =>
           return 'allowed' as const;
         }),
       };
-      const runtime = makeActionRuntime(
+      const runtime = makeRegisteredTestActionRuntime(
         database,
         makeActionRepository(crypto),
         concurrentAllowedPermission,
@@ -1531,14 +1545,14 @@ const testProgram11 = () =>
         delayedTransaction,
       );
       const repository = makeActionRepository(crypto);
-      const firstRuntime = makeActionRuntime(
+      const firstRuntime = makeRegisteredTestActionRuntime(
         { executor: delayedExecutor },
         repository,
         allowedPermission,
         testOperationalScopeResolver,
         commitTracker.options,
       );
-      const secondRuntime = makeActionRuntime(
+      const secondRuntime = makeRegisteredTestActionRuntime(
         database,
         repository,
         allowedPermission,
@@ -1625,7 +1639,7 @@ const testProgram12 = () =>
       const commitTracker = makeCommitTransactionTracker();
       const uncertainTransaction = loseCommitAcknowledgement(database, commitTracker, acknowledgementLost, 'committed');
 
-      const uncertainRuntime = makeActionRuntime(
+      const uncertainRuntime = makeRegisteredTestActionRuntime(
         withTransactionOverride(database, uncertainTransaction),
         repository,
         allowedPermission,
@@ -1642,7 +1656,7 @@ const testProgram12 = () =>
       );
       expect(hasFailure(first, 'ActionCommitIndeterminate')).toBe(true);
 
-      const resolvingRuntime = makeActionRuntime(
+      const resolvingRuntime = makeRegisteredTestActionRuntime(
         database,
         repository,
         allowedPermission,
@@ -1664,7 +1678,7 @@ const testProgram12 = () =>
           },
         }),
       );
-      const unavailableRuntime = makeActionRuntime(
+      const unavailableRuntime = makeRegisteredTestActionRuntime(
         database,
         {
           ...repository,
@@ -1726,7 +1740,7 @@ const testProgram12 = () =>
         'rolled_back',
       );
 
-      const uncertainOpenRuntime = makeActionRuntime(
+      const uncertainOpenRuntime = makeRegisteredTestActionRuntime(
         withTransactionOverride(database, uncertainRollbackTransaction),
         repository,
         allowedPermission,
@@ -1813,7 +1827,7 @@ const testProgram13 = () =>
             handlerExecutions += 1;
           }),
       );
-      const runtime = makeActionRuntime(
+      const runtime = makeRegisteredTestActionRuntime(
         database,
         makeActionRepository(crypto),
         allowedPermission,
@@ -1881,57 +1895,17 @@ const fixtureOwnerConnectionFailure = (cause: unknown) =>
   );
 
 const testCompositionTransactionFence = () =>
-  withDatabase(
-    Effect.fn(function* nativeCompositionTransactionFence(database) {
+  Effect.scoped(
+    Effect.gen(function* nativeCompositionTransactionFence() {
       const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
-      const configuration = yield* loadDatabaseConnectionPair();
-      const adminDatabase = yield* makeCoreDatabase({ ...configuration.admin, maxConnections: 3 });
-      const revision = 'a'.repeat(64);
-      const [clock] = yield* adminDatabase.executor.execute<{ readonly now: Date }>(
-        sql`select clock_timestamp() as now`,
-        'objects',
-      );
-      const now = DateTime.makeUnsafe(Option.getOrThrow(Option.fromNullishOr(clock)).now);
-      yield* Effect.acquireRelease(
-        adminDatabase.executor.transaction(
-          Effect.fn(function* seedFixtureComposition(transaction) {
-            yield* lockApplicationCompositionPublication(transaction);
-            const [previous] = yield* transaction
-              .select()
-              .from(applicationCompositionAuthority)
-              .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
-            const values = {
-              authorityKey: 'active',
-              phase: 'active' as const,
-              revision,
-              subscriptionsJson: [],
-              updatedAt: DateTime.toDateUtc(now),
-              validUntil: DateTime.toDateUtc(DateTime.add(now, { hours: 1 })),
-            };
-            yield* transaction.insert(applicationCompositionAuthority).values(values).onConflictDoUpdate({
-              set: values,
-              target: applicationCompositionAuthority.authorityKey,
-            });
-            return previous;
-          }),
-        ),
-        (previous) =>
-          adminDatabase.executor
-            .transaction(
-              Effect.fn(function* restoreFixtureComposition(transaction) {
-                yield* lockApplicationCompositionPublication(transaction);
-                yield* previous === undefined
-                  ? transaction
-                      .delete(applicationCompositionAuthority)
-                      .where(eq(applicationCompositionAuthority.authorityKey, 'active'))
-                  : transaction.insert(applicationCompositionAuthority).values(previous).onConflictDoUpdate({
-                      set: previous,
-                      target: applicationCompositionAuthority.authorityKey,
-                    });
-              }),
-            )
-            .pipe(Effect.orDie),
-      );
+      const isolated = yield* makeIsolatedNativeDatabaseFixture({
+        mode: 'empty',
+        purpose: 'stabilization-1287-core-operation-fence',
+      });
+      yield* isolated.migrateCoreSchema();
+      const database = yield* makeCoreDatabase({ ...isolated.connections.runtime, maxConnections: 3 });
+      const adminDatabase = yield* makeCoreDatabase({ ...isolated.connections.admin, maxConnections: 3 });
+      yield* prepareTestOwnerRows(adminDatabase);
 
       const handlerStarted = yield* Deferred.make<null>();
       const handlerRelease = yield* Deferred.make<null>();
@@ -1940,7 +1914,28 @@ const testCompositionTransactionFence = () =>
       const repository = makeActionRepository(crypto);
       let handlerExecutions = 0;
       let invocationLocks = 0;
-      const runtime = makeActionRuntime(
+      const key = `composition-owner-${yield* crypto.randomUUIDv4()}`;
+      const moduleStateKey = `core.composition-owner-${yield* crypto.randomUUIDv4()}`;
+      const admittedRevision = { current: Option.none<string>() };
+      const registration = makeRegistration({
+        actionKey: 'shell.test.composition-write',
+        completionGate: handlerRelease,
+        moduleStateKey,
+        onExecute: (context) => {
+          expect(context.compositionRevision).toBe(Option.getOrThrow(admittedRevision.current));
+          handlerExecutions += 1;
+        },
+        onExecuteEffect: Deferred.succeed(handlerStarted, null),
+      });
+
+      const fixtureOwner = makeTestOperationOwner({
+        actions: [registration],
+        moduleId: registration.descriptor.owningModuleKey,
+      });
+      const { revision } = fixtureOwner.composition;
+      admittedRevision.current = Option.some(revision);
+      yield* isolated.publishInitialComposition(yield* fixtureOwner.snapshot);
+      const runtime = makeRegisteredTestActionRuntime(
         database,
         {
           ...repository,
@@ -1958,22 +1953,12 @@ const testCompositionTransactionFence = () =>
         testOperationalScopeResolver,
         {
           ...openActionRuntimeOptions,
+          applicationComposition: fixtureOwner.applicationComposition,
+          expectedDeployment: fixtureOwner.expectedDeployment,
           lockCompositionAuthority: lockApplicationCompositionAuthority,
-          resolveCompositionRevision: () => Effect.succeed(revision),
+          ownerRegistration: fixtureOwner.ownerRegistration,
         },
       );
-      const key = `composition-owner-${yield* crypto.randomUUIDv4()}`;
-      const moduleStateKey = `core.composition-owner-${yield* crypto.randomUUIDv4()}`;
-      const registration = makeRegistration({
-        actionKey: 'shell.test.composition-write',
-        completionGate: handlerRelease,
-        moduleStateKey,
-        onExecute: (context) => {
-          expect(context.compositionRevision).toBe(revision);
-          handlerExecutions += 1;
-        },
-        onExecuteEffect: Deferred.succeed(handlerStarted, null),
-      });
 
       yield* Effect.gen(function* verifyNativeFence() {
         const owner = yield* runtime
@@ -2029,14 +2014,19 @@ const testCompositionTransactionFence = () =>
         );
         expect(Schema.is(ActionTransactionError)(drainingFailure)).toBe(true);
 
-        // Seed the authority identity of a later approved release to test stale admissions.
-        // Publication's complete-bundle and queued-work checks have their own native suite.
+        // Inject a different genuine TEST composition identity only into this owned database.
+        // The original receiving source remains pinned, proving stale native admissions fail closed.
+        const replacement = makeTestOperationOwner({
+          actions: [registration],
+          compositionLabel: 'replacement',
+          moduleId: registration.descriptor.owningModuleKey,
+        });
         yield* adminDatabase.executor.transaction(
           Effect.fn(function* seedLaterFixtureRelease(transaction) {
             yield* lockApplicationCompositionPublication(transaction);
             yield* transaction
               .update(applicationCompositionAuthority)
-              .set({ phase: 'active', revision: 'b'.repeat(64) })
+              .set({ phase: 'active', revision: replacement.composition.revision })
               .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
           }),
         );
@@ -2056,7 +2046,8 @@ const testCompositionTransactionFence = () =>
   );
 
 it.layer(
-  Layer.merge(
+  Layer.mergeAll(
+    NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)),
     Layer.effectDiscard(Effect.acquireRelease(prepare, () => cleanup.pipe(Effect.orDie))).pipe(
       Layer.provideMerge(Layer.effect(ActionRuntimeSuite, makeActionRuntimeSuite)),
       Layer.provideMerge(NodeCrypto.layer),

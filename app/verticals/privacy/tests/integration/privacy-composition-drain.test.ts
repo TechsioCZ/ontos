@@ -1342,6 +1342,38 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
       })),
     });
   });
+  const observeSealFailure = Effect.gen(function* observeSealFailure() {
+    const facts = yield* Effect.all({
+      deliveries: coreEvidenceExecutor.query.outboxDeliveries.findMany({
+        columns: { consumerModuleKey: true, status: true, workerKey: true },
+      }),
+      messages: coreEvidenceExecutor.query.outboxMessages.findMany({
+        columns: {
+          completionConsumerModuleKey: true,
+          matchedAt: true,
+          producerModuleKey: true,
+          topic: true,
+        },
+      }),
+    });
+    const outstandingDeliveries = facts.deliveries.filter(
+      (delivery) => delivery.status !== 'done' && delivery.status !== 'released',
+    );
+    const unmatchedMessages = facts.messages
+      .filter((message) => message.matchedAt === null)
+      .map((message) => ({
+        consumer: message.completionConsumerModuleKey,
+        producer: message.producerModuleKey,
+        topic: message.topic,
+      }));
+    yield* Effect.logInfo('Privacy seal failure Outbox metadata', {
+      outstandingDeliveries,
+      outstandingDeliveryCount: outstandingDeliveries.length,
+      unmatchedMessageCount: unmatchedMessages.length,
+      unmatchedMessages,
+    });
+  }).pipe(Effect.catch(() => Effect.logInfo('Privacy seal failure Outbox metadata unavailable')));
+  const seal = isolated.composition.seal().pipe(Effect.tapError(() => observeSealFailure));
   const token = (
     audience: 'party-registry' | 'privacy',
     revision = snapshot.composition.revision,
@@ -1559,6 +1591,7 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
     receipt,
     retrySession,
     revision: snapshot.composition.revision,
+    seal,
     secondaryLegalEntityId,
     snapshot,
     storedHandoffs,
@@ -2454,7 +2487,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
             (yield* f.evidence()).outbox.filter((message) => message.topic === 'privacy.measure.dispatched'),
           ).toEqual(originalMessages);
           yield* f.isolated.composition.drain();
-          yield* f.isolated.composition.seal();
+          yield* f.seal;
           const sealed = yield* f.isolated.composition.observe();
           expect(sealed.phase).toBe('sealed');
           expect(sealed.revision).toBe(f.revision);
@@ -2507,7 +2540,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
             const completed = yield* coreDebtSettled(f);
             expect(Option.getOrUndefined(original)).toEqual(completed);
             yield* f.isolated.composition.drain();
-            yield* f.isolated.composition.seal();
+            yield* f.seal;
           }),
         120_000,
       );
@@ -2788,7 +2821,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           expect(yield* f.outcomes()).toEqual([original.value.outcome]);
           expect(yield* f.control('privacy', 'report-response/discard-next')).toBe(409);
           yield* f.isolated.composition.drain();
-          yield* f.isolated.composition.seal();
+          yield* f.seal;
           return yield* Effect.void;
         }),
       120_000,
@@ -2801,7 +2834,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
         const before = yield* f.evidence();
         yield* f.isolated.composition.closeAdmission();
         yield* f.isolated.composition.drain();
-        yield* f.isolated.composition.seal();
+        yield* f.seal;
         const result = yield* Effect.result(f.dispatch(f.suffix, f.handoff, credential));
         expect(Result.isFailure(result)).toBe(true);
         if (Result.isFailure(result)) {
@@ -2963,7 +2996,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           expect(yield* f.cycle(31_000)).toMatchObject({ claimed: 1, failed: 0, succeeded: 1 });
           expect(yield* coreDebtSettled(f)).toEqual(original.value);
           yield* f.isolated.composition.drain();
-          yield* f.isolated.composition.seal();
+          yield* f.seal;
           return yield* Effect.void;
         }),
     );

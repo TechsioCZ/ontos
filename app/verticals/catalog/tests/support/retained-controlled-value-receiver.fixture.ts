@@ -15,7 +15,7 @@ import { HttpServerRequest, HttpServerResponse, FetchHttpClient } from 'effect/h
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import { deriveActualCatalogCompositionSnapshot } from './actual-catalog-composition.fixture.ts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
 import {
@@ -62,7 +62,8 @@ import type { ProductTypeRef } from '../../shared/resources/product-type.ts';
 import type { AttributeDefinitionRef } from '../../shared/resources/attribute-definition.ts';
 import { ProductUnitRefSchema } from '../../shared/resources/product-unit.ts';
 import { VariantRefSchema } from '../../shared/resources/variant.ts';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { attributeApplicabilityPersistenceForScope } from '../../src/persistence/attribute-applicability-persistence.ts';
 import { attributePersistenceForScope } from '../../src/persistence/attribute-persistence.ts';
 import { attributeValuesPersistenceForScope } from '../../src/persistence/attribute-values-persistence.ts';
@@ -523,7 +524,7 @@ const produceCatalogSelection = Effect.fn('RetainedControlledValue.produceSelect
 /** Narrow Catalog-owned native receiver; no production provider is activated. */
 export const makeRetainedControlledValueFixture = Effect.fn('RetainedControlledValue.makeFixture')(
   function* makeFixture(verification?: { readonly issuer: string; readonly jwks: string }) {
-    const composition = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+    const composition = yield* deriveActualCatalogCompositionSnapshot();
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: composition,
       mode: 'schema-only',
@@ -539,9 +540,12 @@ export const makeRetainedControlledValueFixture = Effect.fn('RetainedControlledV
         ],
         adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
         allowedAudiences: ['catalog'],
+        applicationComposition: { load: Effect.succeed(composition) },
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         compositionRevision: composition.composition.revision,
+        expectedDeployment: ultramodernDeliveryUnit,
         moduleKeys: ['commerce.catalog'],
+        ownerRegistration: catalogRegistration,
         runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
       }),
       (value) => value.close().pipe(Effect.orDie),

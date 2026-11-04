@@ -48,7 +48,7 @@ import {
   toSpiceDbActionObjectId,
 } from '../../src/permissions/service.ts';
 import { testOperationalScopeResolver as baseTestOperationalScopeResolver } from '../fixtures/operational-scope.ts';
-import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
+import { openActionRuntimeOptions, makeTestOperationOwner } from '../support/action-runtime-options.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { injectStatementFaults } from '../support/database-faults.ts';
 import { TestWriteError } from '../support/permission-write-error.ts';
@@ -58,6 +58,28 @@ import {
   staffAuthenticationNamespaceId,
 } from '../support/action-permission-suite.ts';
 import type { PermissionSuiteFixture } from '../support/action-permission-suite.ts';
+
+/** Bind the exact late-created TEST definition; original controlled options and native bindings stay explicit. */
+const makeRegisteredTestActionRuntime = (
+  ...parameters: Parameters<typeof makeActionRuntime>
+): ReturnType<typeof makeActionRuntime> => {
+  const [database, repository, permission, scope, options] = parameters;
+  const runtime = makeActionRuntime(database, repository, permission, scope, options);
+  return {
+    ...runtime,
+    runAction: (input) => {
+      const ownerRegistration =
+        options.ownerRegistration ??
+        makeTestOperationOwner({
+          actions: [input.registration],
+          moduleId: input.registration.descriptor.owningModuleKey,
+        }).ownerRegistration;
+      return makeActionRuntime(database, repository, permission, scope, { ...options, ownerRegistration }).runAction(
+        input,
+      );
+    },
+  };
+};
 
 class PermissionAdmin extends Context.Service<PermissionAdmin, ReturnType<typeof v1.NewClient>>()(
   '@app/core-runtime/tests/integration/action-permission.test/PermissionAdmin',
@@ -467,7 +489,7 @@ const runWithLivePermission = <Value, Error>(
       Effect.sync(() => createPermissionCheckClient(config, SPICEDB_CHECK_TIMEOUT_MS)),
       (client) =>
         operation(
-          makeActionRuntime(
+          makeRegisteredTestActionRuntime(
             database,
             makeActionRepository(crypto),
             makeActionPermissionService(client),

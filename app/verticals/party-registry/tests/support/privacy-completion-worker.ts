@@ -432,9 +432,13 @@ const program = process.argv.includes('--describe')
       Effect.matchEffect({
         onFailure: (cause) =>
           writeWorkerMessage({
-            code: Schema.is(ApplicationCompositionAuthorityError)(cause)
-              ? 'composition-unavailable'
-              : 'worker-unavailable',
+            code:
+              Schema.is(ApplicationCompositionAuthorityError)(cause) ||
+              (Schema.is(OutboxWorkerDescriptorError)(cause) &&
+                cause.code === 'outbox_worker_descriptor_invalid' &&
+                cause.reason === 'The admitted worker revision differs from the exact test session')
+                ? 'composition-unavailable'
+                : 'worker-unavailable',
             reasonCode: failureReasonCode(cause),
             diagnostic: failureDiagnostic(cause),
             type: 'failed',

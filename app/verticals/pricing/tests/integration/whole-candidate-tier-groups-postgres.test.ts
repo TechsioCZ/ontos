@@ -69,7 +69,10 @@ import {
   CorePersistenceLive,
   DatabaseConfig,
   ReadRuntime,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
+  defineOntosModuleManifest,
+  defineVerticalRuntimeRegistration,
+  OntosModuleDeploymentContractSchema,
   TenantModuleStateServiceLive,
   TrustedPrincipalContextSchema,
   ReadHandlerUnavailable,
@@ -91,7 +94,7 @@ import {
 } from '@app/core-runtime/modules/active-application-composition';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import {
   STAFF_AUTHENTICATION_NAMESPACE_ID,
   staffAuthenticationNamespaceRegistryLayer,
@@ -125,10 +128,11 @@ import {
   QuantityTierSelectionResultSchema,
 } from '@app/pricing-contracts/domain/quantity-tier';
 import { sumQuantityTierNormalizedQuantities } from '@app/pricing-contracts/domain/quantity-tier-aggregation';
-import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
+import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import {
   Clock,
   Context,
+  Config,
   Crypto,
   DateTime,
   Deferred,
@@ -143,10 +147,10 @@ import {
 } from 'effect';
 import type { Cause } from 'effect';
 import { ChildProcess } from 'effect/process';
-import { FetchHttpClient } from 'effect/http';
+import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { assert, expect, it } from 'effect-rstest';
 
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { pricePersistenceForScope } from '../../src/services/price-persistence.service.ts';
 import type { DefinePricePersistenceCommand } from '../../src/services/price-persistence.service.ts';
 import { quantityTierPersistenceForScope } from '../../src/services/quantity-tier-persistence.service.ts';
@@ -229,6 +233,7 @@ const WholeCandidateCatalogDescriptionSchema = Schema.Struct({
   actionKeys: Schema.Array(ActionKeySchema),
   appId: Schema.Literal('catalog'),
   buildMarker: Schema.String,
+  contractDocument: Schema.String,
   type: Schema.Literal('description'),
   version: Schema.Literal(protocolVersion),
 }).annotate({ parseOptions: { onExcessProperty: 'error' } });
@@ -729,6 +734,22 @@ const componentRead = defineRead(
   () => ({ kind: 'module', moduleId: 'commerce.pricing' }),
 );
 
+// The native runtime executes only this local test Read; this is not a production Pricing API declaration.
+const componentReadContract = makeModuleContractFixture({
+  appId: ultramodernDeliveryUnit.appId,
+  buildMarker: ultramodernDeliveryUnit.buildMarker,
+  moduleId: componentRead.descriptor.owningModuleKey,
+});
+const componentReadOwner = defineVerticalRuntimeRegistration({
+  actions: [],
+  manifest: defineOntosModuleManifest({
+    ...componentReadContract.manifest,
+    publicSurface: { ...componentReadContract.manifest.publicSurface, actions: [], api: {}, components: {} },
+  }),
+  outboxWorkers: [],
+  reads: [componentRead],
+});
+
 const nativeReadRuntime = (
   runtimeConnectionString: string,
   composition: typeof ActiveApplicationCompositionSnapshotSchema.Type,
@@ -748,7 +769,10 @@ const nativeReadRuntime = (
     staffAuthenticationNamespaceRegistryLayer(['pricing']),
     makeActiveApplicationCompositionLayer(Effect.succeed(composition)),
   );
-  return ReadRuntimeLive.pipe(Layer.provide(common), Layer.provide(NodeCrypto.layer));
+  return makeReadRuntimeLive(ultramodernDeliveryUnit, componentReadOwner).pipe(
+    Layer.provide(common),
+    Layer.provide(NodeCrypto.layer),
+  );
 };
 
 const produceNativeComponents = (
@@ -1418,6 +1442,160 @@ const declaredMarketPrerequisite1225 = (payload: PricingCurrentMarketEvidenceReq
     return yield* Schema.encodeEffect(PricingCurrentMarketEvidenceResponseSchema)(response);
   }).pipe(Effect.orDie, Effect.provideService(Clock.Clock, nativeClock));
 
+const catalogBuildIdentitySchema = Schema.Struct({ buildMarker: Schema.String, sourceRevision: Schema.String });
+const currentCatalogBuildIdentity = Effect.fn('WholeCandidate.currentCatalogBuildIdentity')(
+  function* currentIdentity() {
+    // Resolve independently from the actual workspace and generation metadata, never from the description being checked.
+    const program = `import { Effect, FileSystem, ManagedRuntime, Schema } from 'effect';
+    import { NodeServices } from '@effect/platform-node';
+    import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
+    const runtime = ManagedRuntime.make(NodeServices.layer);
+    try { const text = await runtime.runPromise(Effect.gen(function* resolveCurrentCatalogIdentity() {
+      const fs = yield* FileSystem.FileSystem;
+      const unit = Schema.Struct({id: Schema.String,
+        deliveryUnit: Schema.Struct({buildMarker: Schema.String, unitId: Schema.String})});
+      const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Struct({verticals: Schema.Array(unit)})))(
+        yield* fs.readFileString('./topology/reference-topology.json'));
+      const catalog = yield* Schema.decodeUnknownEffect(unit)(topology.verticals.find(entry => entry.id === 'catalog'));
+      const identity = yield* Effect.try(() => resolveUltramodernReleaseIdentity({
+        generationBuildMarker: catalog.deliveryUnit.buildMarker,
+        unitId: catalog.deliveryUnit.unitId, workspaceRoot: process.cwd()
+      }));
+      return JSON.stringify({buildMarker: identity.buildMarker, sourceRevision: identity.sourceRevision});
+    })); process.stdout.write(text); } finally { await runtime.dispose(); }`;
+    const child = yield* ChildProcess.make(
+      process.execPath,
+      ['--experimental-strip-types', '--input-type=module', '--eval', program],
+      { cwd: appRoot, stderr: 'pipe', stdin: 'ignore', stdout: 'pipe' },
+    );
+    const [code, output] = yield* Effect.all(
+      [child.exitCode, child.stdout.pipe(Stream.decodeText(), Stream.mkString), Stream.runDrain(child.stderr)],
+      { concurrency: 3 },
+    );
+    expect(code).toBe(0);
+    return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(catalogBuildIdentitySchema))(output);
+  },
+);
+
+const deriveWholeCandidateSnapshot = Effect.fn('WholeCandidate.deriveSnapshot')(function* deriveSnapshot(
+  catalogContractDocument: string,
+) {
+  const pricingContract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema, {
+    onExcessProperty: 'error',
+  })(componentReadContract);
+  const pricingContractDocument = yield* Schema.encodeEffect(
+    Schema.fromJsonString(OntosModuleDeploymentContractSchema),
+  )(pricingContract);
+  const fs = yield* FileSystem.FileSystem;
+  const documents = new Map<string, string>();
+  for (const appId of ['catalog', 'pricing', 'shell-super-app']) {
+    const directory = appId === 'shell-super-app' ? 'apps' : 'verticals';
+    const document = yield* fs.readFileString(`${appRoot}${directory}/${appId}/.output/mf-manifest.json`);
+    documents.set(`/${appId}/mf-manifest.json`, document);
+  }
+  const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
+  yield* server.serve(
+    Effect.gen(function* serveActualOwnerMetadata() {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const document = documents.get(request.url);
+      return document === undefined
+        ? HttpServerResponse.empty({ status: 404 })
+        : HttpServerResponse.text(document, { contentType: 'application/json' });
+    }),
+  );
+  const address = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Number }))(server.address);
+  const origin = `http://127.0.0.1:${address.port}`;
+  const literals = yield* Effect.all({
+    catalogContract: Schema.encodeEffect(Schema.fromJsonString(Schema.String))(catalogContractDocument),
+    metadata: Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.Tuple([Schema.String, Schema.String]))))([
+      ...documents.entries(),
+    ]),
+    origin: Schema.encodeEffect(Schema.fromJsonString(Schema.String))(origin),
+    pricingContract: Schema.encodeEffect(Schema.fromJsonString(Schema.String))(pricingContractDocument),
+    shellFederationUrl: Schema.encodeEffect(Schema.fromJsonString(Schema.String))(
+      `${origin}/shell-super-app/mf-manifest.json`,
+    ),
+  });
+  // The existing publisher derives the two actual contracts, observed MF bytes and canonical revision together.
+  const program = `import { DateTime, Duration, Effect, FileSystem, ManagedRuntime, Schema } from 'effect';
+    import { NodeServices } from '@effect/platform-node';
+    import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
+    import { createShellRuntimeContract } from './scripts/generate-ontos-shell-runtime-contract.mts';
+    import { deriveActiveApplicationCompositionSnapshot } from './scripts/active-application-composition.mts';
+    import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+    import { ActiveApplicationCompositionSnapshotSchema, OntosModuleDeploymentContractSchema, OntosShellRuntimeContractSchema } from '@app/core-runtime';
+    const runtime = ManagedRuntime.make(NodeServices.layer);
+    try { const text = await runtime.runPromise(Effect.gen(function* deriveWholeCandidateOwners() {
+      const fs = yield* FileSystem.FileSystem;
+      const unit = Schema.Struct({id: Schema.String,
+        deliveryUnit: Schema.Struct({buildMarker: Schema.String, unitId: Schema.String})});
+      const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Struct({shell: unit})))(
+        yield* fs.readFileString('./topology/reference-topology.json'));
+      const shellIdentity = yield* Effect.try(() => resolveUltramodernReleaseIdentity({
+        generationBuildMarker: topology.shell.deliveryUnit.buildMarker,
+        unitId: topology.shell.deliveryUnit.unitId, workspaceRoot: process.cwd()
+      }));
+      const sourceDocuments = [${literals.catalogContract}, ${literals.pricingContract}];
+      const contracts = yield* Effect.forEach(sourceDocuments, document => Schema.decodeUnknownEffect(
+        Schema.fromJsonString(OntosModuleDeploymentContractSchema))(document));
+      const initial = yield* makeApplicationCompositionSnapshotFixture(contracts.map(contract => contract.deployment.appId),
+        Object.fromEntries(contracts.map(contract => [contract.deployment.appId, contract.deployment.buildMarker])));
+      const metadata = new Map(${literals.metadata});
+      const artifact = (url, document) => ({url, bytes: new TextEncoder().encode(document)});
+      const modules = contracts.map((contract, index) => {
+        const placement = initial.composition.modules.find(module => module.deployment.appId === contract.deployment.appId);
+        const path = '/' + contract.deployment.appId + '/mf-manifest.json';
+        if (placement === undefined || !metadata.has(path)) { throw new Error('Actual owner placement is missing'); }
+        return {appId: contract.deployment.appId, backend: placement.backend,
+          contract: artifact(placement.contract.url, sourceDocuments[index]),
+          federationManifest: artifact(${literals.origin} + path, metadata.get(path))};
+      });
+      const shellDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+        createShellRuntimeContract(shellIdentity.buildMarker));
+      const composition = yield* deriveActiveApplicationCompositionSnapshot({environment: 'development', modules,
+        observedAt: initial.observedAt,
+        shell: {runtimeContract: artifact(initial.composition.shell.runtimeContract.url, shellDocument),
+          federationManifest: artifact(${literals.shellFederationUrl}, metadata.get('/shell-super-app/mf-manifest.json'))},
+        validity: Duration.millis(DateTime.toEpochMillis(initial.validUntil) - DateTime.toEpochMillis(initial.observedAt))});
+      return yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(composition);
+    })); process.stdout.write(text); } finally { await runtime.dispose(); }`;
+  const child = yield* ChildProcess.make(
+    process.execPath,
+    ['--experimental-strip-types', '--input-type=module', '--eval', program],
+    {
+      cwd: appRoot,
+      env: {
+        APP_ENV_PATH: '/dev/null',
+        HOME: yield* Config.String('HOME'),
+        PATH: yield* Config.String('PATH'),
+        TMPDIR: yield* Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
+      },
+      extendEnv: false,
+      stderr: 'pipe',
+      stdin: 'ignore',
+      stdout: 'pipe',
+    },
+  );
+  const [code, output] = yield* Effect.all(
+    [child.exitCode, child.stdout.pipe(Stream.decodeText(), Stream.mkString), Stream.runDrain(child.stderr)],
+    { concurrency: 3 },
+  );
+  expect(code).toBe(0);
+  const snapshot = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(
+    output,
+  );
+  const pricing = snapshot.composition.modules.find(({ moduleId }) => moduleId === componentReadOwner.moduleId);
+  expect(pricing?.deployment).toMatchObject({
+    appId: ultramodernDeliveryUnit.appId,
+    buildMarker: ultramodernDeliveryUnit.buildMarker,
+  });
+  expect(pricing?.contractDocument).toBe(pricingContractDocument);
+  expect(snapshot.composition.modules.find(({ deployment }) => deployment.appId === 'catalog')?.contractDocument).toBe(
+    catalogContractDocument,
+  );
+  return snapshot;
+});
+
 const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
   Effect.gen(function* actualCatalogWholeCandidateReceiver() {
     const fs = yield* FileSystem.FileSystem;
@@ -1425,6 +1603,11 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
     yield* fs.makeDirectory(directory, { recursive: true });
     const artifact = `${directory}${yield* nextId}.mjs`;
     yield* Effect.addFinalizer(() => fs.remove(artifact, { force: true }).pipe(Effect.orDie));
+    const buildIdentity = yield* currentCatalogBuildIdentity();
+    const buildLiterals = yield* Effect.all({
+      buildMarker: Schema.encodeEffect(Schema.fromJsonString(Schema.String))(buildIdentity.buildMarker),
+      sourceRevision: Schema.encodeEffect(Schema.fromJsonString(Schema.String))(buildIdentity.sourceRevision),
+    });
     const build = yield* ChildProcess.make(
       'mise',
       [
@@ -1438,6 +1621,8 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
         '--platform=node',
         '--format=esm',
         '--packages=external',
+        `--define:ULTRAMODERN_BUILD_MARKER=${buildLiterals.buildMarker}`,
+        `--define:ULTRAMODERN_SOURCE_REVISION=${buildLiterals.sourceRevision}`,
         `--outfile=${artifact}`,
       ],
       { cwd: appRoot, stderr: 'pipe', stdout: 'pipe' },
@@ -1461,10 +1646,8 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
       Schema.fromJsonString(WholeCandidateCatalogDescriptionSchema),
     )(descriptionJson.trim());
     expect(description.actionKeys).toEqual(catalogActionKeys);
-    const composition = yield* makeApplicationCompositionSnapshotFixture(['catalog', 'pricing'], {
-      catalog: description.buildMarker,
-      pricing: ultramodernApiMarker.buildMarker,
-    });
+    expect(description.buildMarker).toBe(buildIdentity.buildMarker);
+    const composition = yield* deriveWholeCandidateSnapshot(description.contractDocument);
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: composition,
       mode: 'schema-only',
