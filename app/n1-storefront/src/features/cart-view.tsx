@@ -137,12 +137,16 @@ const CartRow = ({
               }}
               size="md"
               step={1}
+              translations={{
+                decrementLabel: d.shopping.decreaseQuantity,
+                incrementLabel: d.shopping.increaseQuantity,
+              }}
               unitLabel={entry.unit}
               value={value}
             />
           </LineItem.Quantity>
           <LineItem.Actions>
-            <LineItem.Remove label={`${d.shopping.remove}: ${entry.name}`} onClick={onRemove} />
+            <LineItem.Remove label={d.shopping.remove} onClick={onRemove} />
           </LineItem.Actions>
         </LineItem.Controls>
         {uniqueIssues.map((issue) => (

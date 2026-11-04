@@ -1,5 +1,21 @@
 # Kontrola převodu N1 storefrontu
 
+## C11: přístupné ovládání množství — 2026-11-04
+
+Browser odhalil anglické výchozí názvy QuantityField tlačítek na českém produktu
+a košíku. Veřejné zděděné NumericInput `translations` nyní dostávají existující
+dictionary increment/decrement popisky; bez zásahu do kitu nebo jeho vzhledu.
+LineItem.Remove sám doplňuje titul produktu: předáváme jen akční label, takže
+název není dvakrát. Před volbou varianty purchase helper vysvětluje „Zvolte variantu“
+místo obecné nedostupnosti nákupu.
+
+Živý lokální390 browser potvrdil české názvy, quantity1→2→1, přidání vybrané LXL,
+skutečný owner quote dvou položek1728Kč a následné odebrání pouze testem přidané
+položky. Původní položka zůstala zachovaná. Neproběhla další objednávka ani platba.
+Košík bez overflow/console chyb. Produkční build a N1 suite295/295 PASS.
+Mezitím skončený lokální owner proces byl obnoven stejným launcherem nad stávající
+izolovanou DB; žádný reset, import sample ani změna oprávnění nebyly potřeba.
+
 ## C10: navigace, katalog a detail — 2026-11-04
 
 Čerstvé Figma čtení ověřilo nav170:2077 skutečně16/bold700, kategorie214:3203
