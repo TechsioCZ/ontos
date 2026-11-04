@@ -253,6 +253,12 @@ explicit assignment must not be silently treated as absence. `ASSIGNED`, `NONE`,
 `INCONSISTENT` cardinality claims require owner-verifiable completeness of the relevant Current
 assignment set; individual returned assignments alone do not prove that set complete.
 
+From that complete relevant Current assignment set, zero assignments can establish `NONE`, one
+requires the Pricing owner's Current compatibility evidence, and multiple assignments are
+inconsistent. An unavailable provider or incomplete assignment evidence cannot establish `NONE`.
+This requirement belongs to the applicable resolution branch and does not make every local Commerce
+operation depend on the Price Group Catalog.
+
 **Customer Currency Preference** — Optional `0..1` long-lived preferred purchase currency on one
 Commerce Customer Profile. It is a preference, not transaction currency, Price, or FX rule.
 

@@ -1,3 +1,4 @@
+import { assortmentRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
   ActionAuthorizationPreflightDatabaseLive,
@@ -5,7 +6,7 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import type { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
@@ -90,6 +91,10 @@ const compositionHttpClientLive = FetchHttpClient.layer.pipe(
   Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
 );
 const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(compositionHttpClientLive));
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(compositionSourceLive),
+);
+
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
@@ -105,11 +110,14 @@ const readRuntimeDependenciesLive = Layer.mergeAll(
 
 /** Installs owner Current checks without replacing Core's separate exact Permission checks. */
 export const withAssortmentOwnerAuthorizationOverlay = Layer.provide(assortmentOwnerAuthorizationOverlayLive);
-
-const productionReadRuntimeLive = withAssortmentOwnerAuthorizationOverlay(ReadRuntimeLive).pipe(
+const productionReadRuntimeLive = withAssortmentOwnerAuthorizationOverlay(
+  makeReadRuntimeLive(ultramodernDeliveryUnit, assortmentRegistration),
+).pipe(
   Layer.provide(readRuntimeDependenciesLive),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(activeApplicationCompositionLive),
 );
+
 const actionAuthorizationPreflightDatabaseLive = ActionAuthorizationPreflightDatabaseLive.pipe(
   Layer.provideMerge(CorePersistenceLive),
 );
@@ -123,13 +131,13 @@ const actionRuntimeDependenciesLive = Layer.mergeAll(
   operationalScopeResolverLive,
 );
 const actionRuntimeCoreLive = withAssortmentOwnerAuthorizationOverlay(
-  makeActionRuntimeLive(ultramodernDeliveryUnit),
+  makeActionRuntimeLive(ultramodernDeliveryUnit, assortmentRegistration),
 ).pipe(
   Layer.provide(
     Layer.mergeAll(
       actionAuthorizationPreflightDatabaseLive,
       actionRuntimeDependenciesLive,
-      ActiveApplicationCompositionConfigLive.pipe(Layer.provide(compositionSourceLive)),
+      activeApplicationCompositionLive,
     ),
   ),
 );

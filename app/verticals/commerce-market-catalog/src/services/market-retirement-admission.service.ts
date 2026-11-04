@@ -1,6 +1,7 @@
 import { MarketRetirementImpactAssessmentRejected } from '../actions/market-retirement-impact-assessment-rejected.ts';
 import { MarketRetirementImpactAssessmentStale } from '../actions/market-retirement-impact-assessment-stale.ts';
 import type { ActionServiceFactory } from '@app/core-runtime';
+import { requireModuleOperation } from '@app/core-runtime';
 import { RetireMarketPayloadSchema } from '../../shared/action-contracts.ts';
 import type { ManageMarketRetirementAdmissionPayload } from '../../shared/market-retirement-admission.ts';
 import { marketRetirementAdmissionPersistence } from '../persistence/market-retirement-admission-persistence.ts';
@@ -54,12 +55,26 @@ const createMarketRetirementAdmissionServices = Effect.fn('MarketRetirementAdmis
           }),
         );
         const basis = yield* Effect.result(
-          authority.prepareBasis({
-            compositionRevision,
-            retirement,
-            scope,
-            sourceActionInvocationId: input.sourceActionInvocationId,
-          }),
+          requireModuleOperation('commerce.market-catalog.requirement.retirement-affected-use').pipe(
+            Effect.mapError((cause) =>
+              Object.defineProperty(
+                new MarketRetirementImpactAssessmentUnavailable({
+                  code: 'market_retirement_impact_assessment_unavailable',
+                  reason: 'Current retirement affected-use contract is unavailable',
+                }),
+                'cause',
+                { configurable: true, value: cause },
+              ),
+            ),
+            Effect.andThen(
+              authority.prepareBasis({
+                compositionRevision,
+                retirement,
+                scope,
+                sourceActionInvocationId: input.sourceActionInvocationId,
+              }),
+            ),
+          ),
         );
         if (Result.isFailure(basis)) {
           return {

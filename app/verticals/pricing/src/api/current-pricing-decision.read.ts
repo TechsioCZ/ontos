@@ -26,6 +26,11 @@ import type { CurrentPricingDecisionRequest } from '../../shared/apis/current-pr
 import { currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironment } from '../integrations/customer-context-subject-authority.ts';
 import { pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope } from '../integrations/current-pricing-decision-owner-final-fence.ts';
 import { currentPricingDecisionWholeEvaluationForScope } from '../integrations/current-pricing-decision-whole-evaluation-adapters.ts';
+import {
+  currentPricingDecisionRequirements,
+  requirePricingSubjectOperation,
+} from '../integrations/pricing-operation-requirements.ts';
+import type { PricingWholeEvaluationRequirements } from '../integrations/pricing-operation-requirements.ts';
 import { CurrentPricingDecisionEvaluationFactory } from '../services/current-pricing-decision-evaluation.service.ts';
 import type { CurrentPricingDecisionEvaluationService } from '../services/current-pricing-decision-evaluation.service.ts';
 import { CurrentPricingDecisionSubjectAuthority } from '../services/current-pricing-decision-subject-authority.service.ts';
@@ -215,7 +220,10 @@ export const resolveCurrentPricingDecisionTrustedScope = (
 
 export const makeCurrentPricingDecisionReadServiceFactory = (
   wholeEvaluationForScope: typeof currentPricingDecisionWholeEvaluationForScope,
-  pricingOwnerFinalFenceForScope: typeof pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope = pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope,
+  options: {
+    readonly pricingOwnerFinalFenceForScope?: typeof pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope;
+    readonly requirements?: PricingWholeEvaluationRequirements;
+  } = {},
 ): ReadServiceFactory<
   CurrentPricingDecisionReadServices,
   CurrentPricingDecisionEvaluationFactory | PricingExternalOwnerEvidenceValidation
@@ -231,11 +239,14 @@ export const makeCurrentPricingDecisionReadServiceFactory = (
         reason: 'Current Pricing Decision requires a captured composition revision',
       });
     }
+    const { requirements } = options;
+    const pricingOwnerFinalFenceForScope =
+      options.pricingOwnerFinalFenceForScope ?? pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope;
     const trustedScope = yield* resolveCurrentPricingDecisionTrustedScope(scope);
     const verifiedScope = { ...scope, legalEntityId: trustedScope.legalEntityId };
     const [source, pricingOwnerFinalFence, evaluationFactory, subjectAuthorityOption] = yield* Effect.all(
       [
-        wholeEvaluationForScope(transaction, verifiedScope, compositionRevision),
+        wholeEvaluationForScope(transaction, verifiedScope, compositionRevision, requirements),
         pricingOwnerFinalFenceForScope(transaction, verifiedScope, compositionRevision),
         CurrentPricingDecisionEvaluationFactory,
         Effect.serviceOption(CurrentPricingDecisionSubjectAuthority),
@@ -247,16 +258,23 @@ export const makeCurrentPricingDecisionReadServiceFactory = (
         currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironment(scope.correlationId, compositionRevision),
       onSome: Effect.succeed,
     });
-    const evaluation = evaluationFactory.make(source, pricingOwnerFinalFence, compositionRevision);
+    const evaluation = evaluationFactory.make(source, pricingOwnerFinalFence, compositionRevision, requirements);
     return {
       evaluate: evaluation.evaluate,
       trustedScope,
-      verifySubjectAuthority: subjectAuthority.verify,
+      verifySubjectAuthority:
+        requirements === undefined
+          ? subjectAuthority.verify
+          : (input: Parameters<typeof subjectAuthority.verify>[0]) =>
+              requirePricingSubjectOperation(requirements.purchaseContext).pipe(
+                Effect.andThen(() => subjectAuthority.verify(input)),
+              ),
     };
   });
 
 export const currentPricingDecisionReadServiceFactory = makeCurrentPricingDecisionReadServiceFactory(
   currentPricingDecisionWholeEvaluationForScope,
+  { requirements: currentPricingDecisionRequirements },
 );
 
 export const currentPricingDecisionRead = defineRead(

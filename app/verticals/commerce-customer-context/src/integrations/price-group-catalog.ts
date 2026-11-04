@@ -1,3 +1,4 @@
+import type { OperationalScope } from '@app/core-runtime';
 import type { PriceGroupCompatibilityDecision } from '@app/price-group-catalog-contracts';
 import { ValidatePriceGroupCompatibilityRequestSchema } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import type { ValidatePriceGroupCompatibilityRequest } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
@@ -196,20 +197,29 @@ export const priceGroupCatalogPort = (
 const authorizedExecutor =
   (
     issuer: PriceGroupCatalogGatewayCredentialIssuer,
-    compositionRevision: string,
+    context: { readonly compositionRevision: string; readonly scope: OperationalScope },
     execute: AuthorizedPriceGroupCompatibilityExecutor,
   ): PriceGroupCompatibilityExecutor =>
   (payload, correlation) =>
     issuer
-      .issue({ audience: 'price-group-catalog', compositionRevision, requestCorrelation: correlation })
+      .issue({
+        audience: 'price-group-catalog',
+        compositionRevision: context.compositionRevision,
+        requestCorrelation: correlation,
+        scope: context.scope,
+      })
       .pipe(
         Effect.flatMap(({ baseUrl, credential }) =>
-          execute(payload, credential, correlation, { baseUrl, compositionRevision }),
+          execute(payload, credential, correlation, { baseUrl, compositionRevision: context.compositionRevision }),
         ),
       );
 
 export const priceGroupCatalogPortFromEnvironment = (
-  context: { readonly compositionRevision: string; readonly requestCorrelation: string },
+  context: {
+    readonly compositionRevision: string;
+    readonly requestCorrelation: string;
+    readonly scope: OperationalScope;
+  },
   execute: AuthorizedPriceGroupCompatibilityExecutor = executeAuthorizedCompatibility,
 ): Effect.Effect<PriceGroupCatalogPort> =>
   Effect.serviceOption(PriceGroupCatalogGatewayCredentialService).pipe(
@@ -218,7 +228,7 @@ export const priceGroupCatalogPortFromEnvironment = (
         context.requestCorrelation,
         authorizedExecutor(
           Option.isSome(issuerOption) ? issuerOption.value : unavailablePriceGroupCatalogGatewayCredentialIssuer,
-          context.compositionRevision,
+          context,
           execute,
         ),
       ),

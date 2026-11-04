@@ -1,9 +1,10 @@
+import { partyRegistryBackendRegistration } from '../vertical.runtime-declaration.ts';
 import {
   ContextAccessLive,
   CorePersistenceLive,
   CoreSearchProjectionStoreLive,
   CoreSearchQueryRuntimeLive,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
   makeActionRuntimeLive,
 } from '@app/core-runtime';
@@ -31,7 +32,6 @@ const readRuntimeDependenciesLive = Layer.mergeAll(
   ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive)),
   OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive))),
 );
-export const partyRegistryReadRuntimeLive = ReadRuntimeLive.pipe(Layer.provide(readRuntimeDependenciesLive));
 
 const nativeCompositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(
   Layer.provide(
@@ -43,6 +43,11 @@ const nativeCompositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(
 const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
   Layer.provide(nativeCompositionSourceLive),
 );
+export const partyRegistryReadRuntimeLive = makeReadRuntimeLive(
+  ultramodernDeliveryUnit,
+  partyRegistryBackendRegistration,
+).pipe(Layer.provide(readRuntimeDependenciesLive), Layer.provide(activeApplicationCompositionLive));
+
 const actionRuntimeDependenciesLive = Layer.mergeAll(
   CorePersistenceLive,
   activeApplicationCompositionLive,
@@ -53,9 +58,10 @@ const actionRuntimeDependenciesLive = Layer.mergeAll(
   ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive)),
   OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive))),
 );
-export const partyRegistryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
-  Layer.provide(actionRuntimeDependenciesLive),
-);
+export const partyRegistryActionRuntimeLive = makeActionRuntimeLive(
+  ultramodernDeliveryUnit,
+  partyRegistryBackendRegistration,
+).pipe(Layer.provide(actionRuntimeDependenciesLive));
 
 export const partyRegistryAresSubjectServiceLive = AresSubjectServiceLive.pipe(Layer.provide(FetchHttpClient.layer));
 

@@ -17,7 +17,11 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import { GatewayIssuer } from './gateway-issuer.ts';
 import { GatewayRelayExchangeLedger } from './gateway-relay-exchanges.service.ts';
-import { loadGatewayRelaySourceBindings, permitsGatewayRelay } from './gateway-relay-policy.ts';
+import {
+  isCustomerContextPriceGroupCompatibilityRelay,
+  loadGatewayRelaySourceBindings,
+  permitsGatewayRelay,
+} from './gateway-relay-policy.ts';
 
 import {
   GatewayRelayError,
@@ -57,6 +61,10 @@ export const issueRelayedGatewayContextAssertion = Effect.fn('GatewayRelay.issue
     source.exp <= now ||
     !permitsGatewayRelay(input.verifiedProviderKeyId, binding, source, payload)
   ) {
+    return yield* forbidden();
+  }
+  const tenantOnlyTarget = isCustomerContextPriceGroupCompatibilityRelay(source, payload);
+  if (tenantOnlyTarget && source.principal.legalEntityId === undefined) {
     return yield* forbidden();
   }
   const catalog = yield* ShellInstalledModuleCatalog;
@@ -135,10 +143,11 @@ export const issueRelayedGatewayContextAssertion = Effect.fn('GatewayRelay.issue
       ),
     );
   const issuer = yield* GatewayIssuer;
+  const { legalEntityId, ...tenantPrincipal } = source.principal;
   return yield* issuer.issue({
     audience: payload.audience,
     compositionRevision: payload.compositionRevision,
-    principal: source.principal,
+    principal: tenantOnlyTarget && legalEntityId !== undefined ? tenantPrincipal : source.principal,
     sourceValidity: { expiresAt: source.exp, issuedAt: source.iat },
   });
 });

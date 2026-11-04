@@ -1,3 +1,4 @@
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -150,6 +151,7 @@ it.effect('Unarchive review outcome commits once and replays without an unarchiv
       reasonCode: 'EXACT_CLAIM_CONFLICT' as const,
     };
     const harness = yield* makeActionTestHarness({
+      ownerRegistration: partyRegistryBackendRegistration,
       actionPermission: 'allowed',
       services: [
         bindActionTestServices(unarchivePartyAction, {

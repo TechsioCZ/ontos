@@ -1,3 +1,4 @@
+import { priceGroupCatalogRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
@@ -6,7 +7,7 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import type {
@@ -100,6 +101,10 @@ const compositionHttpClientLive = FetchHttpClient.layer.pipe(
   Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
 );
 const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(compositionHttpClientLive));
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(compositionSourceLive),
+);
+
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
@@ -180,11 +185,30 @@ export const priceGroupCatalogOwnerAuthorizationOverlayLive = Layer.succeed(Owne
   authorize: (transaction, input) =>
     Effect.succeed(priceGroupCatalogOwnerAuthorizationDecision(transaction.scope, input)),
 });
-
-const priceGroupCatalogActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+const priceGroupCatalogReadRuntimeLive = makeReadRuntimeLive(
+  ultramodernDeliveryUnit,
+  priceGroupCatalogRegistration,
+).pipe(
   Layer.provide(
     Layer.mergeAll(
-      ActiveApplicationCompositionConfigLive.pipe(Layer.provide(compositionSourceLive)),
+      CorePersistenceLive,
+      ContextAccessLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+      priceGroupCatalogOwnerAuthorizationOverlayLive,
+    ),
+  ),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(activeApplicationCompositionLive),
+);
+
+const priceGroupCatalogActionRuntimeLive = makeActionRuntimeLive(
+  ultramodernDeliveryUnit,
+  priceGroupCatalogRegistration,
+).pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      activeApplicationCompositionLive,
       CorePersistenceLive,
       ActionRepositoryLive,
       ActionPermissionLive,
@@ -197,18 +221,7 @@ const priceGroupCatalogActionRuntimeLive = makeActionRuntimeLive(ultramodernDeli
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
 );
-const priceGroupCatalogReadRuntimeLive = ReadRuntimeLive.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      CorePersistenceLive,
-      ContextAccessLive,
-      moduleEntrypointGatewayLive,
-      operationalScopeResolverLive,
-      priceGroupCatalogOwnerAuthorizationOverlayLive,
-    ),
-  ),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
-);
+
 const priceGroupCatalogGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
   Layer.provide(GovernedGatewayAssertionRedemptionDatabaseLive),
   Layer.provide(DatabaseConfigLive),

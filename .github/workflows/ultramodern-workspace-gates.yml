@@ -551,19 +551,43 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      # The root/package shard starts the genuine packaged Shell and owner applications.
+      # Native receiving fixtures and Inventory workers use genuine published owner metadata.
       # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
       - name: Download the same-run Node artifacts for native owner fixtures
-        if: matrix.root-suite == true
+        if: matrix.root-suite == true || contains(matrix.package-filters, '--filter ./verticals/inventory') || matrix.native-preproposal == true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: node-units-*
           path: ${{ runner.temp }}/native-composition-units
 
       - name: Unpack the Node artifacts for native owner fixtures
-        if: matrix.root-suite == true
+        if: matrix.root-suite == true || contains(matrix.package-filters, '--filter ./verticals/inventory') || matrix.native-preproposal == true
         working-directory: app
         run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
+
+      - name: Derive the Inventory native worker composition from same-run public artifacts
+        if: contains(matrix.package-filters, '--filter ./verticals/inventory')
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+        run: |
+          mise exec -- node --input-type=module <<'NODE'
+          import { appendFile, writeFile } from 'node:fs/promises';
+          import { resolve } from 'node:path';
+          import { NodeServices } from '@effect/platform-node';
+          import { DateTime, Effect } from 'effect';
+          import { deriveBuiltSnapshot } from './scripts/publish-active-application-composition.mts';
+          import { decodeActiveApplicationCompositionSnapshot, encodeActiveApplicationCompositionSnapshot } from './scripts/active-application-composition.mts';
+          const encoded = await Effect.runPromise(Effect.gen(function* () {
+            const snapshot = yield* deriveBuiltSnapshot(yield* DateTime.now);
+            const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
+            yield* decodeActiveApplicationCompositionSnapshot(encoded);
+            return encoded;
+          }).pipe(Effect.provide(NodeServices.layer)));
+          const snapshotPath = resolve(process.env.RUNNER_TEMP, 'inventory-native-composition.json');
+          await writeFile(snapshotPath, encoded, 'utf8');
+          await appendFile(process.env.GITHUB_ENV, `NATIVE_1290_COMPOSITION_SNAPSHOT_PATH=${snapshotPath}\n`);
+          NODE
 
       - name: Materialize the native Customer Context worker artifact
         if: matrix.root-suite == true

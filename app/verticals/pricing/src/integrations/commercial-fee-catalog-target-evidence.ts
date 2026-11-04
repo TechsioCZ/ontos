@@ -91,7 +91,7 @@ const makePort = (dependencies: {
       .issue({
         audience: 'catalog',
         compositionRevision: dependencies.context.compositionRevision,
-        legalEntityId: dependencies.context.legalEntityId,
+        // Catalog's Product/Variant snapshot is tenant-scoped and forbids Legal Entity context.
         requestCorrelation: dependencies.context.requestCorrelation,
       })
       .pipe(

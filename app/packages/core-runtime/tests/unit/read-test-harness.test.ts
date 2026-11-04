@@ -7,6 +7,9 @@ import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { tenants } from '../../src/db/schema.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
+import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import type { ReadServiceFactory } from '../../src/reads/definition.ts';
 import type { ReadHandlerContext } from '../../src/reads/context.ts';
@@ -46,17 +49,17 @@ const registration = defineRead(
     entrypoint: defineTenantModuleEntrypoint({
       access: 'read',
       authorization: { kind: 'authenticated_principal' },
-      entrypointKey: 'commerce.inventory.read-harness',
-      moduleKey: 'commerce.inventory',
+      entrypointKey: 'test.read-harness.read-harness',
+      moduleKey: 'test.read-harness',
       role: 'api',
     }),
-    evidencePolicy: { captureMode: 'metadata_only', policyKey: 'commerce.inventory.read-harness.evidence' },
+    evidencePolicy: { captureMode: 'metadata_only', policyKey: 'test.read-harness.read-harness.evidence' },
     inputSchema: Schema.Struct({}),
     legalEntityScope: 'forbidden',
-    owningModuleKey: 'commerce.inventory',
+    owningModuleKey: 'test.read-harness',
     permissionTarget: 'tenant',
     policies: [],
-    readKey: 'commerce.inventory.read-harness',
+    readKey: 'test.read-harness.read-harness',
     resultSchema: Schema.Array(Schema.String),
     schemaVersion: '1',
   },
@@ -65,6 +68,17 @@ const registration = defineRead(
   makeServices,
   () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );
+/** This scripted SQL probe is a synthetic owner, not the production Inventory module. */
+const ownerBase = makeModuleContractFixture({ appId: 'read-harness-test', moduleId: 'test.read-harness' }).manifest;
+const ownerRegistration = defineVerticalRuntimeRegistration({
+  actions: [],
+  manifest: defineOntosModuleManifest({
+    ...ownerBase,
+    publicSurface: { ...ownerBase.publicSurface, actions: [], api: {}, components: {} },
+  }),
+  outboxWorkers: [],
+  reads: [registration],
+});
 const invocation = { input: {}, principal: scope, registration, transport: { correlationId: scope.correlationId } };
 
 it.layer(NodeCrypto.layer)('read test harness', (suite) => {
@@ -73,6 +87,7 @@ it.layer(NodeCrypto.layer)('read test harness', (suite) => {
       const harness = yield* makeReadTestHarness({
         executeOwnerQuery: () => Effect.die('Owner SQL must not run'),
         operationTime,
+        ownerRegistration,
         scope,
       });
       const failure = yield* harness.runtime.runRead(invocation).pipe(Effect.flip);
@@ -88,6 +103,7 @@ it.layer(NodeCrypto.layer)('read test harness', (suite) => {
       const harness = yield* makeReadTestHarness({
         executeOwnerQuery: () => Effect.die('Owner SQL must not run'),
         operationTime,
+        ownerRegistration,
         permissionDecision: 'allowed',
         scope,
       });
@@ -109,6 +125,7 @@ it.layer(NodeCrypto.layer)('read test harness', (suite) => {
         },
         operationTime,
         ownerAuthorizationDecision: 'allowed',
+        ownerRegistration,
         permissionDecision: 'allowed',
         scope,
       });
@@ -128,6 +145,7 @@ it.layer(NodeCrypto.layer)('read test harness', (suite) => {
           Effect.fail(new SqlError({ reason: new ConnectionError({ cause: 'controlled outage' }) })),
         operationTime,
         ownerAuthorizationDecision: 'allowed',
+        ownerRegistration,
         permissionDecision: 'allowed',
         scope,
       });

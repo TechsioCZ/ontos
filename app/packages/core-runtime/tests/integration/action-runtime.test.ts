@@ -650,7 +650,7 @@ const testProgram1 = () =>
         })
         .pipe(
           Effect.provideService(InstalledModuleCatalogService, {
-            load: Effect.succeed(inventoryInstalledCatalog),
+            loadForRevision: (_compositionRevision) => Effect.succeed(inventoryInstalledCatalog),
           }),
           Effect.provideService(TenantModuleStateService, makeTenantModuleStateService(database)),
         );
@@ -688,7 +688,7 @@ const testProgram1 = () =>
         })
         .pipe(
           Effect.provideService(InstalledModuleCatalogService, {
-            load: Effect.succeed(inventoryInstalledCatalog),
+            loadForRevision: (_compositionRevision) => Effect.succeed(inventoryInstalledCatalog),
           }),
           Effect.provideService(TenantModuleStateService, makeTenantModuleStateService(database)),
         );

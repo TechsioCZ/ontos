@@ -454,6 +454,35 @@ export const createPricingPolicyClient = options => makeEffectHttpApiClient(pric
     expect(runtime).toContain(') satisfies EffectRuntimeLayer;');
     expect(runtime).toContain('governedReadApiHandlersLive');
     expect(runtime).toContain('GovernedReadLayer.provide(governedReadApiHandlersLive)');
+    const legacyRuntime = runtime
+      .replace(
+        /import\s*\{\s*pricingPolicyRegistration\s+as\s+governedOwnerRegistration,?\s*\}\s*from '\.\.\/vertical\.registration\.ts';\s*/u,
+        '',
+      )
+      .replace(
+        /import\s*\{\s*ultramodernDeliveryUnit\s+as\s+governedActionDeliveryUnit,?\s*\}\s*from '\.\.\/shared\/ultramodern-build\.ts';\s*/u,
+        '',
+      )
+      .replace('makeReadRuntimeLive as GovernedMakeReadRuntimeLive', 'ReadRuntimeLive as GovernedReadRuntimeLive')
+      .replace(
+        /const governedActiveApplicationCompositionLive\s*=\s*GovernedApplicationCompositionConfigLive\.pipe\(\s*GovernedReadLayer\.provide\(governedApplicationCompositionSourceLive\),?\s*\);\s*/u,
+        '',
+      )
+      .replace(
+        /GovernedMakeReadRuntimeLive\(\s*governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)/u,
+        'GovernedReadRuntimeLive',
+      )
+      .replace('  GovernedReadLayer.provide(governedActiveApplicationCompositionLive),', '');
+    expect(legacyRuntime).toContain('const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(');
+    const upgradedRuntime = patchRuntimeRoot(legacyRuntime, vertical, 'changeRateActionApiLive');
+    expect(upgradedRuntime).toMatch(
+      /GovernedMakeReadRuntimeLive\(\s*governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)/u,
+    );
+    expect(upgradedRuntime).toContain('GovernedReadLayer.provide(governedActiveApplicationCompositionLive)');
+    expect(upgradedRuntime.match(/const governedApplicationCompositionSourceLive =/gu)).toHaveLength(1);
+    expect(upgradedRuntime.match(/const governedActiveApplicationCompositionLive =/gu)).toHaveLength(1);
+    expect(patchRuntimeRoot(upgradedRuntime, vertical, 'changeRateActionApiLive')).toBe(upgradedRuntime);
+
     yield* scaffoldFixture(root, 'action', [
       VERTICAL_FLAG,
       OWNER_SLUG,
@@ -535,6 +564,21 @@ it.live(
         expect(yield* Effect.promise(() => readFile(path.join(root, PRIVATE_ACTION_PATH), 'utf-8'))).toBe(
           adoptedPrivate,
         );
+        const boundRuntime = yield* Effect.promise(() =>
+          readFile(path.join(root, OWNER_DIRECTORY, 'api/index.ts'), 'utf-8'),
+        );
+        expect(boundRuntime).toMatch(
+          /GovernedMakeActionRuntimeLive\(\s*governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)/u,
+        );
+        expect(boundRuntime).toMatch(
+          /GovernedMakeReadRuntimeLive\(\s*governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)/u,
+        );
+        expect(boundRuntime).toContain('GovernedReadLayer.provide(governedActiveApplicationCompositionLive)');
+        expect(boundRuntime.match(/const governedApplicationCompositionSourceLive =/gu)).toHaveLength(1);
+        expect(boundRuntime.match(/const governedActiveApplicationCompositionLive =/gu)).toHaveLength(1);
+        expect(
+          boundRuntime.match(/ActiveApplicationCompositionConfigLive as GovernedApplicationCompositionConfigLive/gu),
+        ).toHaveLength(1);
         const first = yield* snapshotTree(root, ['node_modules']);
         yield* scaffoldFixture(root, ACTION_HTTP_COMMAND, args);
         expect(yield* snapshotTree(root, ['node_modules'])).toEqual(first);
@@ -640,8 +684,8 @@ it.live(
           expect(loaded.signal).toBeNull();
           expect(loaded.status, loaded.stderr).toBe(0);
           expect(loaded.stdout).toContain('complete-module-imported');
-          expect(runtime).toContain(
-            'const governedActionRuntimeLive = GovernedMakeActionRuntimeLive(governedActionDeliveryUnit).pipe(',
+          expect(runtime).toMatch(
+            /const governedActionRuntimeLive = GovernedMakeActionRuntimeLive\(\s*governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)\.pipe\(/u,
           );
           expect(runtime).toContain(
             'GovernedActionPrincipalVerifierLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive))',

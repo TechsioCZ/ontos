@@ -1,3 +1,4 @@
+import { projectsRegistration } from '../../vertical.registration.ts';
 import { ContextAccess } from '@app/core-runtime';
 import type { ContextAccessService } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
@@ -30,6 +31,7 @@ it.layer(Layer.succeed(ContextAccess, unusedContextAccess))('Projects Action lif
       let writes = 0;
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: projectsRegistration,
         services: [
           bindActionTestServices(createProjectAction, {
             create: (_payload, createdByPrincipalId) => {
@@ -67,6 +69,7 @@ it.layer(Layer.succeed(ContextAccess, unusedContextAccess))('Projects Action lif
       let ownerCalls = 0;
       const harness = yield* makeActionTestHarness({
         actionPermission: 'denied',
+        ownerRegistration: projectsRegistration,
         services: [
           bindActionTestServices(updateProjectAction, {
             findForLifecycleGuard: () => {

@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import nodePath from 'node:path';
+import { parseSync } from 'oxc-parser';
+import type { Expression } from 'oxc-parser';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
 import {
@@ -55,7 +57,12 @@ import {
   hasGeneratedProviderRegistration,
   hasGeneratedSourceHeader,
 } from './generated-module-api-boundary.mts';
-import { maskNonCode } from './scaffolding/shared.mts';
+import {
+  maskNonCode,
+  MODULE_CONTRACT_GENERATOR_HEADER,
+  toCamelCase,
+  validRuntimeDeclarationViews,
+} from './scaffolding/shared.mts';
 
 const SOURCE_EXTENSIONS = new Set(['.js', '.jsx', '.mjs', '.mts', '.ts', '.tsx']);
 const ACTION_EXTENSION = '.action.ts';
@@ -1003,6 +1010,96 @@ const generatedProviderLocation = (file: string, source: string): GeneratedProvi
 const providerModuleId = (manifest: string): string =>
   /@ontos-module-id (?<moduleId>[a-z0-9-]+(?:\.[a-z0-9-]+)*)(?![a-z0-9-])/u.exec(manifest)?.groups?.moduleId ?? '';
 
+const providerObjectProperty = (object: Expression | undefined, key: string): Expression | undefined => {
+  if (object?.type !== 'ObjectExpression') {
+    return undefined;
+  }
+  const properties = object.properties.filter(
+    (property) =>
+      property.type === 'Property' &&
+      !property.computed &&
+      !property.method &&
+      property.kind === 'init' &&
+      property.key.type === 'Identifier' &&
+      property.key.name === key,
+  );
+  const [property] = properties;
+  return properties.length === 1 && property?.type === 'Property' ? property.value : undefined;
+};
+
+const providerOwnerInitializer = (source: string, name: string): Expression | undefined => {
+  const parsed = parseSync('provider-owner.ts', source, { astType: 'ts', lang: 'ts', sourceType: 'module' });
+  if (parsed.errors.length !== 0) {
+    return undefined;
+  }
+  const bindings = parsed.program.body.flatMap((statement) => {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    return declaration?.type === 'VariableDeclaration'
+      ? declaration.declarations.filter((binding) => binding.id.type === 'Identifier' && binding.id.name === name)
+      : [];
+  });
+  return bindings.length === 1 ? (bindings[0]?.init ?? undefined) : undefined;
+};
+
+const providerOwnerSources = (sourceMap: ReadonlyMap<string, string>, vertical: string, deploymentAppId: string) =>
+  Effect.gen(function* providerOwnerSourcesEffect() {
+    const manifest = sourceOrEmpty(sourceMap, `${vertical}/vertical.manifest.ts`);
+    const registration = sourceOrEmpty(sourceMap, `${vertical}/vertical.registration.ts`);
+    const moduleId = providerModuleId(manifest);
+    const declaration = sourceMap.get(`${vertical}/vertical.runtime-declaration.ts`);
+    if (declaration === undefined) {
+      if ([manifest, registration].some((source) => /vertical\.runtime-declaration/u.test(source))) {
+        return yield* fail(vertical, 'generated providers require their resolved same-owner runtime declaration');
+      }
+      return { manifest, moduleId, registration };
+    }
+    const prefix = toCamelCase(vertical.split('/')[1] ?? '');
+    const sameHeader = [manifest, registration, declaration].every(
+      (source) =>
+        source.startsWith(`${MODULE_CONTRACT_GENERATOR_HEADER}\n`) &&
+        [
+          ['deployment-app-id', deploymentAppId],
+          ['module-id', moduleId],
+        ].every(([key, expected]) => {
+          const markers = [...source.matchAll(new RegExp(`^// @ontos-${key} ([^\\s]+)$`, 'gmu'))];
+          return markers.length === 1 && markers[0]?.[1] === expected && expected !== '';
+        }),
+    );
+    const validDeclaration = yield* Effect.try({
+      catch: () =>
+        new ModuleEntrypointBoundaryError({
+          message: `${vertical}: generated providers require their canonical same-owner runtime declaration`,
+        }),
+      try: () => sameHeader && validRuntimeDeclarationViews(declaration, manifest, registration, prefix, moduleId),
+    });
+    if (!validDeclaration) {
+      return yield* fail(vertical, 'generated providers require their canonical same-owner runtime declaration');
+    }
+    const fullManifest = providerOwnerInitializer(manifest, `${prefix}Manifest`);
+    const manifestArgument = fullManifest?.type === 'CallExpression' ? fullManifest.arguments[0] : undefined;
+    const surface =
+      manifestArgument?.type === 'SpreadElement'
+        ? undefined
+        : providerObjectProperty(manifestArgument, 'publicSurface');
+    const backendSurface = providerObjectProperty(
+      providerOwnerInitializer(declaration, `${prefix}RuntimeManifest`),
+      'publicSurface',
+    );
+    const shell = providerObjectProperty(backendSurface, 'shellContributions');
+    if (surface?.type !== 'ObjectExpression' || shell?.type !== 'ObjectExpression') {
+      return yield* fail(
+        vertical,
+        'generated providers require their authored descriptor and shell contribution objects',
+      );
+    }
+    // Inspect original owning expressions only: unused or displaced marker pairs cannot supply contributions.
+    return {
+      manifest: `${manifest.slice(surface.start, surface.end)}\n${declaration.slice(shell.start, shell.end)}`,
+      moduleId,
+      registration,
+    };
+  });
+
 const validateGeneratedProviderClient = (
   sourceMap: ReadonlyMap<string, string>,
   file: string,
@@ -1038,10 +1135,8 @@ const validateGeneratedProviderClient = (
     const providerSource = sourceOrEmpty(sourceMap, providerPath);
     const serverPath = `${vertical}/api/${name}-${kind}-server.ts`;
     const serverSource = sourceOrEmpty(sourceMap, serverPath);
-    const manifest = sourceOrEmpty(sourceMap, `${vertical}/vertical.manifest.ts`);
-    const registration = sourceOrEmpty(sourceMap, `${vertical}/vertical.registration.ts`);
+    const { manifest, moduleId, registration } = yield* providerOwnerSources(sourceMap, vertical, deploymentAppId);
     const gateway = sourceOrEmpty(sourceMap, `${vertical}/src/api/action-gateway.ts`);
-    const moduleId = providerModuleId(manifest);
     const type = toPascalCase(name);
     const camel = `${type.slice(0, 1).toLowerCase()}${type.slice(1)}`;
     const ownerApiValue = `${type}${kindDetails.apiSuffix}Api`;
@@ -1095,14 +1190,18 @@ const validatePublishedProviderIdentities = (
   Effect.gen(function* validatePublishedProviderIdentitiesEffect() {
     if (
       verticalPath === undefined ||
-      (file !== `${verticalPath}/vertical.manifest.ts` && file !== `${verticalPath}/vertical.registration.ts`)
+      (file !== `${verticalPath}/vertical.manifest.ts` &&
+        file !== `${verticalPath}/vertical.registration.ts` &&
+        file !== `${verticalPath}/vertical.runtime-declaration.ts`)
     ) {
       return;
     }
-    const manifest = sourceOrEmpty(state.sourceMap, `${verticalPath}/vertical.manifest.ts`);
-    const registration = sourceOrEmpty(state.sourceMap, `${verticalPath}/vertical.registration.ts`);
-    const moduleId = providerModuleId(manifest);
     const deploymentAppId = state.owners.get(verticalPath) ?? file.split('/')[1] ?? '';
+    const { manifest, moduleId, registration } = yield* providerOwnerSources(
+      state.sourceMap,
+      verticalPath,
+      deploymentAppId,
+    );
     if (!hasExactGeneratedProviderIdentityTopology(manifest, registration, moduleId)) {
       yield* fail(
         file,

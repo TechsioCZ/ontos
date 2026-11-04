@@ -77,6 +77,16 @@ The database did not acknowledge whether the business transaction committed. Thi
 
 This increment resolves uncertain commits through an explicit server-side commit-resolution operation. It accepts the invocation identifier and trusted principal context, waits for any transaction lock to clear, and reports `succeeded` as already committed or an unlocked `received`, `running`, or `indeterminate` invocation as open. Database unavailability remains `ActionCommitIndeterminate`. General scanning, alerting, permanent failure finalization, and retention of open invocations remain deferred. Never roll back an already committed business transaction.
 
+## Owner post-attempt completion
+
+`defineAction` may retain an optional owner-authored post-attempt hook in its existing opaque registration, after the handler, service factory and optional in-transaction decoded-success hook. It is the fifth overall argument. It is not a caller-supplied `runAction` callback, public operation claim or durable continuation registry. The hook's requirements are retained together with the handler/service requirements.
+
+Core invokes this hook after the transaction outcome is known, under its genuine attempt scope and admitted Composition revision. The readonly input contains the decoded payload, original invocation identity, trusted scope and a closed outcome: `Committed`, `CommittedRejection`, `AlreadyCommitted`, `DefinitelyUncommitted`, `Indeterminate` or `Interrupted`. A decoded domain rejection is supplied only when known. No expired transaction, handler services, collector, raw Effect Cause or context-minting capability crosses this boundary. A hook can return `Settled`, or a schema-validated `Recovered` result for an actual already-committed or indeterminate attempt only after Core verifies the same original immutable invocation/hash is succeeded.
+
+A committed result or committed domain rejection cannot be rewritten into a rollback or failed invocation. A declared settlement failure after commit can report pending owner work without changing committed storage. Abort/release requires the existing validated terminal business rejection and original owner receipt/proof; uncertainty or `NOT_FOUND` does not authorize cleanup. Early `AlreadyCommitted` recovery follows the original trusted scope, input hash and invocation checks and preserves its governed recovery authorization; it does not acquire a new executor grant, consume a fresh mutation permit or replay the mutation merely to create a context. Fresh permission success precedes revision admission and genuine preflight permit consumption.
+
+The hook does not make external effects exactly-once or crash-safe. Owners retain idempotent original-effect reconciliation and durable pending work. Reads remain reads; owner writes must not move into a recovery Read or the in-transaction decoded-success hook to obtain an execution context.
+
 ## Events and Transactions
 
 - Persist a successful result Audit Event for every committed Action. Generate any additional successful audit checkpoints required by the Action's evidence profile.

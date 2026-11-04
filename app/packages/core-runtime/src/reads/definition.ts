@@ -48,6 +48,10 @@ class ReadPrivateStorage<Value> {
   static getValue<Value>(storage: ReadPrivateStorage<Value>): Value {
     return storage.#value;
   }
+
+  static ownsValue(storage: ReadPrivateStorage<unknown>): boolean {
+    return #value in storage;
+  }
 }
 
 export const READ_ACCESS_KINDS = ['detail', 'download', 'export', 'list', 'report', 'search'] as const;
@@ -467,6 +471,32 @@ export type ReadRegistration<
   readonly descriptor: Readonly<ReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema>>;
   readonly [registrationMarker]: true;
 };
+
+/** Existential descriptor-only view; no handler, service factory, or private storage crosses this seam. */
+export interface AnyReadRegistration {
+  readonly descriptor: Readonly<
+    Pick<
+      ReadDescriptor<Schema.ConstraintDecoder<unknown>, Schema.ConstraintDecoder<unknown>, string>,
+      'entrypoint' | 'owningModuleKey' | 'readKey' | 'schemaVersion'
+    >
+  >;
+  readonly [registrationMarker]: true;
+}
+
+const AnyReadRegistrationSchema = Schema.instanceOf(ReadPrivateStorage).check(
+  Schema.makeFilter((registration) =>
+    ReadPrivateStorage.ownsValue(registration) &&
+    registration[registrationMarker] === true &&
+    registration.descriptor !== undefined &&
+    Object.isFrozen(registration)
+      ? undefined
+      : 'Expected an immutable Read registration',
+  ),
+);
+
+/** Runtime guard for the opaque private-storage-backed value created by defineRead. */
+export const isReadRegistration = <Value>(value: Value): value is Value & AnyReadRegistration =>
+  Schema.is(AnyReadRegistrationSchema)(value);
 
 const hasClosedReadVocabulary = (descriptor: {
   readonly accessKind: string;

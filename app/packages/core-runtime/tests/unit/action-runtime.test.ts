@@ -1,5 +1,27 @@
+import type { ActiveApplicationCompositionServiceContract } from '../../src/modules/active-application-composition.ts';
+import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
+import { requireModuleOperation } from '../../src/modules/module-operation-requirement.ts';
+import { withModuleOperationExecution } from '../../src/modules/module-operation-execution.ts';
+import { ModuleOperationRequirementError } from '../../src/modules/module-operation-requirement-error.ts';
+import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
+import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { NodeCrypto } from '@effect/platform-node';
-import { Cause, Crypto, DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema, Struct } from 'effect';
+import {
+  Cause,
+  Context,
+  Crypto,
+  DateTime,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Match,
+  Option,
+  Predicate,
+  Schema,
+  Struct,
+} from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
 import {
@@ -136,6 +158,7 @@ interface TestCompositionAuthority {
 }
 
 interface HarnessOptions {
+  readonly applicationComposition?: ActiveApplicationCompositionServiceContract;
   readonly assortmentPermissionDecision?: PermissionDecision;
   readonly assortmentPermissionDecisions?: readonly PermissionDecision[];
   readonly authorizationPreflight?: ActionAuthorizationPreflightService;
@@ -152,6 +175,7 @@ interface HarnessOptions {
   readonly moduleState?: TenantModuleState | 'missing' | 'unavailable';
   readonly omitCompositionRevisionResolver?: boolean;
   readonly omitOwnerAuthorizationOverlay?: boolean;
+  readonly omitOwnerRegistration?: boolean;
   readonly onAssortmentPermissionCheck?: (targets: readonly unknown[]) => void;
   readonly onBusinessPermissionCheck?: () => void;
   readonly onResourcePermissionCheck?: () => void;
@@ -163,11 +187,22 @@ interface HarnessOptions {
   readonly recordedByConcurrentRequest?: ActionRecordedRejection;
   readonly rejectionFailure?: boolean;
   readonly resolutionUnavailable?: boolean;
+  readonly resolveCommitted?: boolean;
   readonly resolveCompositionRevision?: Effect.Effect<string, ActionTransactionError>;
   readonly resourcePermissionDecision?: PermissionDecision;
   readonly tenantPermissionDecision?: PermissionDecision;
   readonly transactionMode?: 'commit-definite' | 'definite-failure' | 'normal' | 'uncertain';
 }
+
+/** These local registrations are synthetic Core infrastructure probes, with no business-provider implementation. */
+const historicalFixtureOwner = (moduleId: string) => {
+  const base = makeModuleContractFixture({ appId: moduleId.replaceAll('.', '-'), moduleId }).manifest;
+  const manifest = defineOntosModuleManifest({
+    ...base,
+    publicSurface: { ...base.publicSurface, actions: [], api: {}, components: {} },
+  });
+  return defineVerticalRuntimeRegistration({ actions: [], manifest, outboxWorkers: [] });
+};
 
 const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}) {
   const finalized: FinalizeActionPolicyDenialInput[] = [];
@@ -280,7 +315,11 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
               reason: 'test database unavailable',
             }),
           )
-        : Effect.succeed(currentInvocation),
+        : Effect.succeed({
+            ...currentInvocation,
+            requestHash: currentInvocation.requestHash || preparedHash,
+            status: options.resolveCommitted === true ? 'succeeded' : currentInvocation.status,
+          }),
     transitionInvocationToRunning: () => {
       transitionCount += 1;
       if (
@@ -549,6 +588,9 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       return getActionHandler(action);
     },
   };
+  if (options.applicationComposition !== undefined) {
+    runtimeOptions = { ...runtimeOptions, applicationComposition: options.applicationComposition };
+  }
   if (options.omitCompositionRevisionResolver !== true) {
     runtimeOptions = {
       ...runtimeOptions,
@@ -559,7 +601,15 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   if (options.authorizationPreflight !== undefined) {
     runtimeOptions = { ...runtimeOptions, authorizationPreflight: options.authorizationPreflight };
   }
-  const runtime = makeActionRuntime(database, repository, permission, testOperationalScopeResolver, runtimeOptions);
+  const baseRuntime = makeActionRuntime(database, repository, permission, testOperationalScopeResolver, runtimeOptions);
+  const runAction: typeof baseRuntime.runAction = (input) =>
+    options.omitOwnerRegistration === true
+      ? baseRuntime.runAction(input)
+      : makeActionRuntime(database, repository, permission, testOperationalScopeResolver, {
+          ...runtimeOptions,
+          ownerRegistration: historicalFixtureOwner(input.registration.descriptor.owningModuleKey),
+        }).runAction(input);
+  const runtime = { resolveActionCommit: baseRuntime.resolveActionCommit, runAction };
 
   return {
     assortmentPermissionChecks,
@@ -4487,4 +4537,415 @@ it.effect(
 
 it('the Core database service identity remains server-only', () => {
   expect(Predicate.isFunction(CoreDatabase)).toBe(true);
+});
+
+class TestPostAttemptDependency extends Context.Service<
+  TestPostAttemptDependency,
+  { readonly record: (outcome: string) => void }
+>()('@app/core-runtime/tests/unit/action-runtime.test/TestPostAttemptDependency') {}
+
+const checkNestedRuntimeBoundaries = Effect.fn('ActionRuntimeTest.nestedConcurrentBoundaries')(
+  function* nestedConcurrentRuntimeBoundaries() {
+    const first = yield* Deferred.make<boolean>();
+    const second = yield* Deferred.make<boolean>();
+    const frameKey = '@app/core-runtime/modules/module-operation-execution/ModuleOperationExecution';
+    const decodeFrameStatus = Schema.decodeUnknownEffect(Schema.Option(Schema.Struct({ active: Schema.Boolean })));
+    const frameStatus = (context: Context.Context<never>) =>
+      decodeFrameStatus(context.mapUnsafe.get(frameKey)).pipe(Effect.orDie);
+    const preparePreflight = Effect.fn('ActionRuntimeTest.prepareWithoutAncestor')(function* prepareWithoutAncestor(
+      own: Deferred.Deferred<boolean>,
+      other: Deferred.Deferred<boolean>,
+    ) {
+      yield* Deferred.succeed(own, true);
+      yield* Deferred.await(other);
+      const context = yield* Effect.context();
+      expect(Option.isNone(yield* frameStatus(context))).toBe(true);
+      return { outcome: 'not_applicable' as const };
+    });
+    const captured: Context.Context<never>[] = [];
+    const run = (own: Deferred.Deferred<boolean>, other: Deferred.Deferred<boolean>, suffix: string) => {
+      const parent = registration();
+      return withModuleOperationExecution(
+        {
+          loadCatalog: Effect.fail(
+            new ModuleOperationRequirementError({
+              code: 'module_operation_requirement_unavailable',
+              reason: 'Synthetic parent has no provider catalog',
+            }),
+          ),
+          ownerRegistration: historicalFixtureOwner('core.shell'),
+          phase: 'execution',
+          registration: parent,
+          revision: approvedCompositionRevision,
+          scope: principal,
+        },
+        Effect.gen(function* parentRuntimeScope() {
+          const parentContext = yield* Effect.context();
+          const parentFrame = parentContext.mapUnsafe.get(frameKey);
+          const probeOwnedChild = Effect.gen(function* childFrameProbe() {
+            const context = yield* Effect.context();
+            const selected = yield* frameStatus(context);
+            expect(Option.isSome(selected) && selected.value.active).toBe(true);
+            expect(context.mapUnsafe.get(frameKey)).not.toBe(parentFrame);
+            captured.push(context);
+          });
+          const policy = defineGlobalPolicy<{ readonly amount: number }>({
+            evaluate: () => probeOwnedChild,
+            policyKey: `global.child-frame-${suffix}.v1`,
+          });
+          const child = defineAction(
+            { ...registration().descriptor, policies: [policy] },
+            (payload) => probeOwnedChild.pipe(Effect.as({ total: payload.amount })),
+            () => Effect.succeed({}),
+            undefined,
+            () => probeOwnedChild.pipe(Effect.as({ _tag: 'Settled' as const })),
+          );
+          const harness = yield* makeHarness({
+            authorizationPreflight: {
+              prepare: () => preparePreflight(own, other),
+            },
+          });
+          expect(
+            yield* harness.runtime.runAction({
+              payload: { amount: 3 },
+              principal,
+              registration: child,
+              transport: transport(`nested-runtime-${suffix}`),
+            }),
+          ).toEqual({ total: 3 });
+          const restored = yield* Effect.context();
+          expect(restored.mapUnsafe.get(frameKey)).toBe(parentFrame);
+          const active = yield* frameStatus(restored);
+          expect(Option.isSome(active) && active.value.active).toBe(true);
+          captured.push(parentContext);
+        }),
+      );
+    };
+    yield* Effect.all([run(first, second, 'first'), run(second, first, 'second')], { concurrency: 2 });
+    expect(captured).toHaveLength(8);
+    yield* Effect.forEach(
+      captured,
+      (context) =>
+        frameStatus(context).pipe(
+          Effect.tap((status) => Effect.sync(() => expect(Option.isSome(status) && !status.value.active).toBe(true))),
+        ),
+      { concurrency: 1, discard: true },
+    );
+  },
+);
+
+it.layer(NodeCrypto.layer)('Action post-attempt runtime', (suite) => {
+  suite.effect(
+    'runs the genuine post-attempt hook after commit with independent factory and callback dependencies',
+    () =>
+      Effect.gen(function* distinctPostAttemptRequirements() {
+        const harness = yield* makeHarness();
+        const seen: string[] = [];
+        const base = registration();
+        const action = defineAction(
+          base.descriptor,
+          (payload, context) => Effect.succeed({ total: payload.amount + context.services.offset }),
+          () =>
+            Effect.gen(function* factoryWithCrypto() {
+              yield* Crypto.Crypto;
+              return { offset: 1 };
+            }),
+          undefined,
+          Effect.fn(function* privateSettlement(context) {
+            const dependency = yield* TestPostAttemptDependency;
+            expect(harness.transactionOutcomes().committedTransactionCount).toBe(1);
+            expect(harness.flushed).toHaveLength(1);
+            expect(Object.isFrozen(context)).toBe(true);
+            expect(Object.isFrozen(context.payload)).toBe(true);
+            expect('services' in context).toBe(false);
+            expect('transaction' in context).toBe(false);
+            dependency.record(context.outcome._tag);
+            return { _tag: 'Settled' as const };
+          }),
+        );
+        const result = yield* harness.runtime
+          .runAction({
+            payload: { amount: 3 },
+            principal,
+            registration: action,
+            transport: transport('post-attempt-independent'),
+          })
+          .pipe(
+            Effect.provideService(TestPostAttemptDependency, {
+              record: (outcome) => {
+                seen.push(outcome);
+              },
+            }),
+          );
+        expect(result).toEqual({ total: 4 });
+        expect(seen).toEqual(['Committed']);
+      }),
+  );
+
+  suite.effect('recovers an original AlreadyCommitted invocation without new permission or preflight consume', () =>
+    Effect.gen(function* originalCommittedRecovery() {
+      const harness = yield* makeHarness({
+        createRecord: {
+          actionInvocationId: 'invocation-1',
+          completedAt: transactionOperationAt,
+          requestHash: '',
+          status: 'succeeded',
+        },
+      });
+      const seen: string[] = [];
+      const action = defineAction(
+        registration().descriptor,
+        () => Effect.succeed({ total: 1 }),
+        () => Effect.succeed({}),
+        undefined,
+        (context) =>
+          Effect.sync(() => {
+            seen.push(context.outcome._tag);
+            return { _tag: 'Recovered' as const, result: { total: 9 } };
+          }),
+      );
+      const result = yield* harness.runtime.runAction({
+        payload: { amount: 3 },
+        principal,
+        registration: action,
+        transport: transport('post-attempt-original'),
+      });
+      expect(result).toEqual({ total: 9 });
+      expect(seen).toEqual(['AlreadyCommitted']);
+      expect(harness.permissionCounts().permissionCheckCount).toBe(0);
+      expect(harness.counts().transactionCount).toBe(0);
+    }),
+  );
+
+  suite.effect('accepts commit-loss recovery only when the same original invocation is confirmed succeeded', () =>
+    Effect.gen(function* commitLossRecovery() {
+      for (const confirmed of [false, true]) {
+        const harness = yield* makeHarness({ resolveCommitted: confirmed, transactionMode: 'uncertain' });
+        const seen: string[] = [];
+        const action = defineAction(
+          registration().descriptor,
+          () => Effect.succeed({ total: 1 }),
+          () => Effect.succeed({}),
+          undefined,
+          (context) =>
+            Effect.sync(() => {
+              seen.push(context.outcome._tag);
+              return { _tag: 'Recovered' as const, result: { total: 9 } };
+            }),
+        );
+        const exit = yield* Effect.exit(
+          harness.runtime.runAction({
+            payload: { amount: 3 },
+            principal,
+            registration: action,
+            transport: transport(`post-attempt-loss-${confirmed}`),
+          }),
+        );
+        expect(seen).toEqual(['Indeterminate']);
+        expect(Exit.isSuccess(exit)).toBe(confirmed);
+        if (Exit.isSuccess(exit)) {
+          expect(exit.value).toEqual({ total: 9 });
+        } else {
+          expect(
+            exit.cause.reasons.some(
+              (reason) => Cause.isFailReason(reason) && Predicate.isTagged(reason.error, 'ActionCommitIndeterminate'),
+            ),
+          ).toBe(true);
+        }
+        expect(harness.permissionCounts().permissionCheckCount).toBe(1);
+      }
+    }),
+  );
+
+  suite.effect('preserves committed storage when a declared post-attempt settlement debt fails the response', () =>
+    Effect.gen(function* committedSettlementDebt() {
+      const harness = yield* makeHarness();
+      const debt = Schema.TaggedStruct('TestSettlementDebt', { reason: Schema.String });
+      const action = defineAction(
+        { ...registration().descriptor, domainErrorSchema: debt },
+        () => Effect.succeed({ total: 1 }),
+        () => Effect.succeed({}),
+        undefined,
+        () => Effect.fail({ _tag: 'TestSettlementDebt' as const, reason: 'receipt confirmation pending' }),
+      );
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 3 },
+          principal,
+          registration: action,
+          transport: transport('post-attempt-debt'),
+        }),
+      );
+      expect(Schema.is(debt)(failure)).toBe(true);
+      expect(harness.transactionOutcomes()).toEqual({ committedTransactionCount: 1, rolledBackTransactionCount: 0 });
+      expect(harness.flushed).toHaveLength(1);
+    }),
+  );
+  suite.effect('round-trips transformed committed and recovered results without changing their domain shape', () =>
+    Effect.gen(function* transformedPostAttemptResults() {
+      const occurredAt = DateTime.makeUnsafe(Date.parse('2026-10-30T10:00:00.000Z'));
+      for (const replay of [false, true]) {
+        const harness = yield* makeHarness(
+          replay
+            ? {
+                createRecord: {
+                  actionInvocationId: 'invocation-1',
+                  completedAt: transactionOperationAt,
+                  requestHash: '',
+                  status: 'succeeded',
+                },
+              }
+            : {},
+        );
+        const action = defineAction(
+          { ...registration().descriptor, resultSchema: Schema.Struct({ occurredAt: Schema.DateTimeUtcFromString }) },
+          () => Effect.succeed({ occurredAt }),
+          () => Effect.succeed({}),
+          undefined,
+          (context) =>
+            Effect.succeed(
+              Match.value(context.outcome).pipe(
+                Match.tag('Committed', ({ result }) => {
+                  expect(DateTime.formatIso(result.occurredAt)).toBe('2026-10-30T10:00:00.000Z');
+                  expect(Object.isFrozen(result)).toBe(true);
+                  return { _tag: 'Settled' as const };
+                }),
+                Match.orElse(() => ({ _tag: 'Recovered' as const, result: { occurredAt } })),
+              ),
+            ),
+        );
+        const result = yield* harness.runtime.runAction({
+          payload: { amount: 3 },
+          principal,
+          registration: action,
+          transport: transport(`post-attempt-transformed-${replay}`),
+        });
+        expect(DateTime.formatIso(result.occurredAt)).toBe('2026-10-30T10:00:00.000Z');
+        expect(harness.permissionCounts().permissionCheckCount).toBe(replay ? 0 : 1);
+      }
+    }),
+  );
+  suite.effect('fails unknown owner metadata closed before permission or factory work', () =>
+    Effect.gen(function* unknownOwnerMetadata() {
+      const harness = yield* makeHarness({ omitOwnerRegistration: true });
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 3 },
+          principal,
+          registration: registration(),
+          transport: transport('unknown-owner-metadata'),
+        }),
+      );
+      expect(Schema.is(ActionTransactionError)(failure)).toBe(true);
+      expect(harness.permissionCounts().permissionCheckCount).toBe(0);
+      expect(harness.counts().transactionCount).toBe(0);
+    }),
+  );
+  suite.effect(
+    'shadows ancestor frames through actual nested concurrent admission and restores only live parents',
+    checkNestedRuntimeBoundaries,
+  );
+  suite.effect('distinguishes definite rollback from committed rejection without changing either stored outcome', () =>
+    Effect.gen(function* closedRejectionOutcomes() {
+      const rejectionSchema = Schema.TaggedStruct('TestPostAttemptRejection', { reason: Schema.String });
+      const rejection = { _tag: 'TestPostAttemptRejection' as const, reason: 'known terminal business rule' };
+      for (const committed of [false, true]) {
+        const harness = yield* makeHarness();
+        const outcomes: string[] = [];
+        const action = defineAction(
+          { ...registration().descriptor, domainErrorSchema: rejectionSchema },
+          () => (committed ? Effect.succeed(commitActionThenReject(rejection)) : Effect.fail(rejection)),
+          () => Effect.succeed({}),
+          undefined,
+          (context) =>
+            Effect.sync(() => {
+              outcomes.push(context.outcome._tag);
+              return { _tag: 'Settled' as const };
+            }),
+        );
+        const failure = yield* Effect.flip(
+          harness.runtime.runAction({
+            payload: { amount: 3 },
+            principal,
+            registration: action,
+            transport: transport(`closed-rejection-${committed}`),
+          }),
+        );
+        expect(Schema.is(rejectionSchema)(failure)).toBe(true);
+        expect(outcomes).toEqual([committed ? 'CommittedRejection' : 'DefinitelyUncommitted']);
+        expect(harness.transactionOutcomes()).toEqual({
+          committedTransactionCount: committed ? 1 : 0,
+          rolledBackTransactionCount: committed ? 0 : 1,
+        });
+        expect(harness.flushed).toHaveLength(committed ? 1 : 0);
+      }
+    }),
+  );
+  suite.effect('reports Interrupted after rollback and cannot turn interruption into recovered success', () =>
+    Effect.scoped(
+      Effect.gen(function* interruptedPostAttempt() {
+        const entered = yield* Deferred.make<boolean>();
+        const harness = yield* makeHarness();
+        const outcomes: string[] = [];
+        const action = defineAction(
+          registration().descriptor,
+          () => Deferred.succeed(entered, true).pipe(Effect.andThen(Effect.never)),
+          () => Effect.succeed({}),
+          undefined,
+          (context) =>
+            Effect.sync(() => {
+              outcomes.push(context.outcome._tag);
+              return { _tag: 'Recovered' as const, result: { total: 99 } };
+            }),
+        );
+        const fiber = yield* Effect.forkChild(
+          harness.runtime.runAction({
+            payload: { amount: 3 },
+            principal,
+            registration: action,
+            transport: transport('interrupted-post-attempt'),
+          }),
+        );
+        yield* Deferred.await(entered);
+        yield* Fiber.interrupt(fiber);
+        const exit = yield* Fiber.await(fiber);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(outcomes).toEqual(['Interrupted']);
+        expect(harness.flushed).toHaveLength(0);
+        expect(harness.transactionOutcomes()).toEqual({ committedTransactionCount: 0, rolledBackTransactionCount: 1 });
+      }),
+    ),
+  );
+  suite.effect('does not turn a partial authority plus legacy revision resolver into a requirement lease', () =>
+    Effect.gen(function* partialActionAuthorityCannotAttest() {
+      let authorityLoads = 0;
+      const applicationComposition: ActiveApplicationCompositionServiceContract = {
+        load: Effect.suspend(() => {
+          authorityLoads += 1;
+          return Effect.fail(
+            new ActiveApplicationCompositionUnavailableError({
+              cause: new Error('Synthetic partial constructor'),
+              reason: 'No receiving build was bound',
+            }),
+          );
+        }),
+      };
+      const harness = yield* makeHarness({ applicationComposition });
+      const action = defineAction(
+        { ...registration().descriptor, domainErrorSchema: ModuleOperationRequirementError },
+        () => requireModuleOperation('core.shell.unqualified-operation').pipe(Effect.as({ total: 1 })),
+      );
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 3 },
+          principal,
+          registration: action,
+          transport: transport('partial-action-authority'),
+        }),
+      );
+      expect(Schema.is(ModuleOperationRequirementError)(failure)).toBe(true);
+      expect(authorityLoads).toBe(0);
+      expect(harness.flushed).toHaveLength(0);
+    }),
+  );
 });

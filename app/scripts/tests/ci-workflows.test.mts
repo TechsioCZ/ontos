@@ -1942,7 +1942,7 @@ const IntegrationShardsWorkflowSchema = Schema.Struct({
 const shardFilters = (shard: { readonly 'package-filters'?: string | undefined }) =>
   [...(shard['package-filters'] ?? '').matchAll(/--filter (?<filter>\S+)/gu)].map(({ groups }) => groups?.filter ?? '');
 
-it('restores same-run Node artifacts only for the root native integration shard before its tests', () => {
+it('restores same-run Node artifacts for root receiving and Inventory native worker tests', () => {
   const source: unknown = parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'));
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(source);
   const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs['service-integration'];
@@ -1972,10 +1972,39 @@ it('restores same-run Node artifacts only for the root native integration shard 
     'mise exec -- pnpm zerops:materialize --app commerce-customer-context --package @app/commerce-customer-context --package-dir verticals/commerce-customer-context --worker',
   );
   expect(steps[worker]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
-  for (const index of [download, unpack, worker]) {
-    expect(steps[index]?.if).toBe('matrix.root-suite == true');
+  for (const index of [download, unpack]) {
+    expect(steps[index]?.if).toBe(
+      "matrix.root-suite == true || contains(matrix.package-filters, '--filter ./verticals/inventory') || matrix.native-preproposal == true",
+    );
   }
-  expect(steps.filter(({ if: condition }) => condition === 'matrix.root-suite == true')).toHaveLength(3);
+  expect(steps[worker]?.if).toBe('matrix.root-suite == true');
+  const preproposal = integration.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
+  expect(preproposal).toHaveLength(1);
+  expect(preproposal[0]?.suite).toBe('integration');
+});
+
+it('derives validated public metadata for only the Inventory native worker shard', () => {
+  const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(
+    parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')),
+  ).jobs['service-integration'];
+  const { steps } = integration;
+  const unpack = steps.findIndex(({ name }) => name === 'Unpack the Node artifacts for native owner fixtures');
+  const tests = steps.findIndex(({ env }) => env?.PACKAGE_FILTERS !== undefined);
+  const inventory = integration.strategy.matrix.include.filter((shard) =>
+    shardFilters(shard).includes('./verticals/inventory'),
+  );
+  expect(inventory).toHaveLength(1);
+  expect(inventory[0]?.suite).toBe('integration');
+  const derive = steps.findIndex(({ run }) => run?.includes('const snapshot = yield* deriveBuiltSnapshot') === true);
+  expect(unpack < derive && derive < tests).toBe(true);
+  expect(steps[derive]?.if).toBe("contains(matrix.package-filters, '--filter ./verticals/inventory')");
+  expect(steps[derive]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
+  expect(steps[derive]?.run).toContain('yield* decodeActiveApplicationCompositionSnapshot(encoded)');
+  expect(steps[derive]?.run).toContain('await writeFile(snapshotPath, encoded');
+  expect(steps[derive]?.run).toMatch(
+    /await appendFile\(process\.env\.GITHUB_ENV, `NATIVE_1290_COMPOSITION_SNAPSHOT_PATH=\$\{snapshotPath\}\\n`\)/u,
+  );
+  expect(steps[derive]?.run).not.toContain('--snapshot-output');
 });
 
 it('refuses root native integration when the same-run build archives are missing', () => {

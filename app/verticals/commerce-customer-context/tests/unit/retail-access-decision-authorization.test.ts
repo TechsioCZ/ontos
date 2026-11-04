@@ -14,6 +14,7 @@ import {
 } from '../../src/integrations/profile-reactivation-eligibility.ts';
 import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import { profileCounterpartyRoleEligibilityResolverFactoryLive } from '../../src/profile-counterparty-role-eligibility.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -78,6 +79,7 @@ it.layer(NodeCrypto.layer)('retail access decision runtime authorization', (suit
             },
             operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-22T10:00:00.000Z')),
             ownerAuthorizationDecision: 'allowed',
+            ownerRegistration: commerceCustomerContextRegistration,
             permissionDecision: 'allowed',
             scope,
           });
@@ -116,6 +118,7 @@ it.layer(NodeCrypto.layer)('retail access decision runtime authorization', (suit
           executeOwnerQuery: () => Effect.die('Denied authority must not reach owner SQL'),
           operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-22T10:00:00.000Z')),
           ownerAuthorizationDecision: 'allowed',
+          ownerRegistration: commerceCustomerContextRegistration,
           permissionDecision: 'allowed',
           scope,
         });

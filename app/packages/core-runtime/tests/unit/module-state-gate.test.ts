@@ -1,4 +1,4 @@
-import { Effect, Predicate, Schema, Tracer } from 'effect';
+import { Effect, Exit, Predicate, Schema, Tracer } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { TrustedPrincipalContext } from '../../src/actions/context.ts';
@@ -612,5 +612,42 @@ it.effect('a missing row is a definite denial rather than an unavailable read', 
     const snapshot = makeModuleStateSnapshot('tenant-1', [descriptor], []);
     const failure = yield* Effect.flip(checkModuleEntrypoint(snapshot, descriptor));
     expect(Predicate.isTagged(failure, 'ModuleStateDeniedError')).toBe(true);
+  }),
+);
+
+it.effect('shares one exact owner/intrinsic state batch and excludes conditional providers', () =>
+  Effect.gen(function* intrinsicStateBatch() {
+    const entrypoint = defineTenantModuleEntrypoint({
+      access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
+      entrypointKey: 'consumer.owner.resolve',
+      moduleKey: 'consumer.owner',
+      role: 'api',
+    });
+    for (const providerState of ['active', 'suspended', 'missing'] as const) {
+      const observed: string[][] = [];
+      const service: TenantModuleStateServiceContract = {
+        getTenantModuleStates: (_tenantId, keys) =>
+          Effect.sync(() => {
+            observed.push([...keys]);
+            return [
+              { moduleKey: 'consumer.owner', state: 'active' as const },
+              ...(providerState === 'missing' ? [] : [{ moduleKey: 'intrinsic.provider', state: providerState }]),
+            ];
+          }),
+        listActiveTenantModules: () => Effect.succeed([]),
+        listTenantModuleStates: () => Effect.succeed([]),
+      };
+      const snapshot = yield* prepareModuleStateSnapshot(
+        service,
+        'tenant-1',
+        [entrypoint],
+        new Map([['consumer.owner', ['intrinsic.provider']]]),
+      );
+      const decision = yield* Effect.exit(checkModuleEntrypoint(snapshot, entrypoint));
+      expect(Exit.isSuccess(decision)).toBe(providerState === 'active');
+      expect(observed).toEqual([['consumer.owner', 'intrinsic.provider']]);
+      expect(snapshot.moduleKeys).not.toContain('conditional.provider');
+    }
   }),
 );

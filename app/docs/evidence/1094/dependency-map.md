@@ -101,3 +101,18 @@ A final fetch observed main `e934cb32861877da450f0de2b14a0af84794daf9`, 18 commi
 The delta upgrades UltraModern/Effect/compiler and security dependencies, separates crypto-only owner imports from Node HTTP initialization, and repairs mapped SQL transaction recovery/tagged Outbox finalizer failures. Preserve those fixes during the next implementation rebaseline. The exact Shell issuer, source-proof provenance, gateway and affected Catalog/CCC adapter files are byte-unchanged, so the missing actor-preserving exchange prerequisite remains. No new deployed owner identity was introduced.
 
 PR #1325 remains open/unmerged; its latest observed head is `4ae2c34f5a6aa91da28108c70b80d1a4144208e3`. Its claims remain unshipped evidence. Before business changes, synchronize branch/runtime to current main and rerun affected gates. Executed checks on this map branch cover the retained census baseline, not the newer dependency cohort.
+
+## Implementation deltas — 31 October 2026
+
+The original census above and its source counts remain pinned historical evidence. The JSON's
+`implementationDeltas` records the following later delivered or in-progress slices without
+relabeling the original anchors, observed membership, grants or availability as current facts.
+
+- #1284 at `b6203518e`, draft [PR #1345](https://github.com/TechsioCZ/ontos/pull/1345): the approved Catalog/CCC server transports now preserve original P through the existing bounded issuer. Source workload authentication remains distinct from independent receiving permissions. The executed proof and remaining postal-Read qualifications are in [server-client-relay.md](server-client-relay.md).
+- #1285 at `6b32c593f`, draft [PR #1348](https://github.com/TechsioCZ/ontos/pull/1348), with main integrated by normal merges from `72149af1c`: all eight native Market business Actions and default retirement assembly are implemented and independently reviewed. Actual public Storefront validation and CCC assessment/reserve/recovery preserve actor, revision, audit and original-effect identity. Installed CCC suspension blocks retirement; never-used absent future owners remain absent. Shell/Storefront/CCC are explicitly qualified native fixture deployments. Pricing is an actual downstream regression. Full local checks/build pass; no production activation or merged-PR claim is made.
+- #1286: the registered Inventory consumer Action, existing qualified proof port, typed unavailable default and original-effect recovery have bounded executed owner-level acceptance. Neither a separately versioned port nor a production producer operation exists. See [inventory-context-port.md](inventory-context-port.md); the #253/29 → #877/34 handoff remains.
+- #1287 at schema checkpoint `1955e25d1` is in progress. Exact Action/Read operation-version claims and owner-authored requirements now have validated declaration/projection support. Actual owner declarations and lifecycle/entrypoint enforcement are not yet accepted. A concrete CCC→PriceGroup configured-key Principal substitution and source/target LE-scope conflict has a separately reviewed proposal pending human approval; no new enrollment or projection is implemented.
+
+The current main was refetched as `72149af1c` before #1287. These deltas do not recompute the old
+22-direction/210-occurrence census, claim a current owner/member count, or turn fixture execution
+into production availability. #1297 still reconciles the final actual map and measured composition.

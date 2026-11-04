@@ -40,6 +40,22 @@ Sanitized operator logs are retained under `.codex/plans/ontos-1094/evidence/128
 
 ## Deferred production producer
 
+### Dependency declaration boundary
+
+The consuming registered Action is `commerce.inventory.create-inventory-reservation`, whose
+descriptor has schema version `1`. That version belongs to the Action; the existing
+`InventoryReservationCommerceContextAuthorityPort` has no separately versioned public producer
+operation. Its `TrustedCurrentCommercePurchasingContextSchema` and `CURRENT_OWNER_VERIFIED` literal
+remain qualified evidence shape, not proof of provenance.
+
+The Current-context requirement applies to a new create intent after original-effect lookup.
+Original-effect recovery retains its existing branch before acquiring a new Current-context fact.
+The public-operation dependency declarations added for #1287 therefore must not invent a provider
+module, endpoint or port version to represent this unresolved production producer. The existing
+owner-local port, typed unavailable default, executed bounded acceptance above and producer handoff
+below remain the truthful declaration boundary. This clarification records no new test execution or
+production integration.
+
 The existing [#253 step-29 handoff comment](https://github.com/TechsioCZ/ontos/issues/253#issuecomment-5661414584) requires the proper Commerce/Cart owner to deliver and identify the real production producer when that step is activated. It must establish qualified Current context from its actual owners and integrate through Inventory's existing port without importing private cross-owner code or treating caller assertions as owner evidence.
 
 At step 34, [#877](https://github.com/TechsioCZ/ontos/issues/877) must prove the public producer → governed Inventory Action → exactly selected Reservation Authority path with real provenance, permissions, scope/currentness, exact Quantity/Unit and original-effect recovery. Step 29 does not itself introduce Reservations. Completing bounded #1286 does not complete that production journey or remove its prerequisites.

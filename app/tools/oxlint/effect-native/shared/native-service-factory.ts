@@ -98,7 +98,7 @@ const nativeDefinitionArgument = (context: Context, node: ESTree.Node, parent: S
     return false;
   }
   const minimum = definition === 'defineRead' ? 4 : 3;
-  const maximum = definition === 'defineRead' ? 6 : 4;
+  const maximum = definition === 'defineRead' ? 6 : 5;
   return parent.arguments.length >= minimum && parent.arguments.length <= maximum;
 };
 
@@ -151,13 +151,34 @@ export const isNativeServiceFactoryCallback = (context: Context, node: ESTree.No
   return variable !== null && !variable.references.some((reference) => reference.isWrite() && !reference.init);
 };
 
+const isNativeAcquisitionPipeReference = (node: ESTree.Node, acquired: ESTree.Node | null | undefined): boolean => {
+  if (
+    acquired?.type !== 'CallExpression' ||
+    acquired.callee.type !== 'MemberExpression' ||
+    memberName(acquired.callee) !== 'pipe' ||
+    acquired.callee.object.type !== 'Identifier'
+  ) {
+    return false;
+  }
+  const provision = node.parent;
+  if (
+    acquired.callee.object !== node &&
+    !(provision?.type === 'CallExpression' && provision.callee === node && acquired.arguments.includes(provision))
+  ) {
+    return false;
+  }
+  return true;
+};
+
 /** A const service acquisition in the native transaction factory is owner composition.
  * Only the directly yielded pipeline qualifies; nested handlers and escaped effects do not.
  */
 export const isNativeServiceFactoryAcquisition = (context: Context, node: ESTree.Node): boolean => {
   let ancestor: ESTree.Node | null = parentOf(node);
   while (ancestor !== null && ancestor.type !== 'YieldExpression') {
-    if (['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration'].includes(ancestor.type)) return false;
+    if (['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration'].includes(ancestor.type)) {
+      return false;
+    }
     ancestor = parentOf(ancestor);
   }
   if (
@@ -166,22 +187,12 @@ export const isNativeServiceFactoryAcquisition = (context: Context, node: ESTree
     ancestor.parent?.type !== 'VariableDeclarator' ||
     ancestor.parent.parent?.type !== 'VariableDeclaration' ||
     ancestor.parent.parent.kind !== 'const'
-  )
+  ) {
     return false;
-  const acquired = ancestor.argument;
-  if (
-    acquired?.type !== 'CallExpression' ||
-    acquired.callee.type !== 'MemberExpression' ||
-    memberName(acquired.callee) !== 'pipe' ||
-    acquired.callee.object.type !== 'Identifier'
-  )
+  }
+  if (!isNativeAcquisitionPipeReference(node, ancestor.argument)) {
     return false;
-  const provision = node.parent;
-  if (
-    acquired.callee.object !== node &&
-    !(provision?.type === 'CallExpression' && provision.callee === node && acquired.arguments.includes(provision))
-  )
-    return false;
+  }
   let owner: ESTree.Node | null = parentOf(ancestor.parent.parent);
   while (owner !== null) {
     if (['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration'].includes(owner.type)) {
