@@ -35,6 +35,12 @@ export const coreSearchRank = (
   return matchesCoreSearchValues([title], query.tokens) ? 4 : 5;
 };
 
+/** The wire relevance of an already computed `coreSearchRank` tier. */
+export const coreSearchRelevanceForRank = (rank: number): CoreSearchRelevance => ({
+  score: CORE_SEARCH_RELEVANCE_SCORES[rank] ?? 0,
+  version: CORE_SEARCH_RELEVANCE_VERSION,
+});
+
 /**
  * Explicit adapter from the internal lower-is-better tier to the optional wire relevance.
  * Call it only for a hit whose canonical/current evidence was verified after the SQL shortlist.
@@ -42,10 +48,7 @@ export const coreSearchRank = (
 export const coreSearchRelevance = (
   hit: CoreSearchProjectionHit,
   query: Readonly<{ phrase: string; tokens: readonly string[] }>,
-): CoreSearchRelevance => ({
-  score: CORE_SEARCH_RELEVANCE_SCORES[coreSearchRank(hit, query)] ?? 0,
-  version: CORE_SEARCH_RELEVANCE_VERSION,
-});
+): CoreSearchRelevance => coreSearchRelevanceForRank(coreSearchRank(hit, query));
 
 const compareIdentity = (left: string, right: string): number => {
   if (left < right) {
@@ -57,15 +60,16 @@ const compareIdentity = (left: string, right: string): number => {
   return 0;
 };
 
-/** Stable full typed-reference tie-break; never rely on shortlist order or host locale. */
-export const compareCoreSearchHits = (
-  left: CoreSearchProjectionHit,
-  right: CoreSearchProjectionHit,
-  query: Readonly<{ phrase: string; tokens: readonly string[] }>,
-): number =>
-  coreSearchRank(left, query) - coreSearchRank(right, query) ||
+/** Stable full typed-reference tie-break after the rank; never rely on shortlist order or host locale. */
+export const compareCoreSearchHitIdentity = (left: CoreSearchProjectionHit, right: CoreSearchProjectionHit): number =>
   compareIdentity(left.title, right.title) ||
   compareIdentity(left.ref.tenantId, right.ref.tenantId) ||
   compareIdentity(left.ref.moduleId, right.ref.moduleId) ||
   compareIdentity(left.ref.resourceType, right.ref.resourceType) ||
   compareIdentity(left.ref.resourceId, right.ref.resourceId);
+
+export const compareCoreSearchHits = (
+  left: CoreSearchProjectionHit,
+  right: CoreSearchProjectionHit,
+  query: Readonly<{ phrase: string; tokens: readonly string[] }>,
+): number => coreSearchRank(left, query) - coreSearchRank(right, query) || compareCoreSearchHitIdentity(left, right);

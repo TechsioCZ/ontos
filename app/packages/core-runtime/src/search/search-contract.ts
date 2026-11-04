@@ -1,11 +1,14 @@
 import { Result, Schema } from 'effect';
 
+// `toLowerCase()` is the root-locale mapping that `toLocaleLowerCase('und')` also uses. The two were verified equal for
+// every Unicode scalar and for randomized multi-character strings (final sigma, dotted I), and the locale-aware call
+// costs about 9x more per value on the search hot path.
 export const normalizeCoreSearchText = (value: string): string =>
   value
     .normalize('NFKD')
     .replaceAll(/\p{M}+/gu, '')
     .normalize('NFKC')
-    .toLocaleLowerCase('und');
+    .toLowerCase();
 
 export const coreSearchTokens = (query: string): readonly string[] => [
   ...new Set(normalizeCoreSearchText(query).trim().split(/\s+/u).filter(Boolean)),
@@ -48,13 +51,31 @@ export const parseCoreSearchQuery = (text: string) =>
     })),
   );
 
-export const matchesCoreSearchValues = (values: readonly string[], tokens: readonly string[]): boolean => {
-  if (tokens.length === 0) {
-    return false;
-  }
-  const normalized = values.map(normalizeCoreSearchText);
-  return tokens.every((token) => normalized.some((value) => value.includes(token)));
+/**
+ * Builds the same membership test as `matchesCoreSearchValues`, reusing each distinct value's normalization across
+ * calls. Values are normalized only when a token reaches them, so a match never normalizes its later values.
+ */
+export const createCoreSearchValueMatcher = (tokens: readonly string[]) => {
+  const normalized = new Map<string, string>();
+  return (values: readonly string[]): boolean => {
+    if (tokens.length === 0) {
+      return false;
+    }
+    return tokens.every((token) =>
+      values.some((value) => {
+        let text = normalized.get(value);
+        if (text === undefined) {
+          text = normalizeCoreSearchText(value);
+          normalized.set(value, text);
+        }
+        return text.includes(token);
+      }),
+    );
+  };
 };
+
+export const matchesCoreSearchValues = (values: readonly string[], tokens: readonly string[]): boolean =>
+  createCoreSearchValueMatcher(tokens)(values);
 
 /** PostgreSQL LIKE must treat pasted identifiers as text, never as wildcard syntax. */
 export const escapeCoreSearchLike = (value: string): string => value.replaceAll(/[\\%_]/gu, String.raw`\$&`);

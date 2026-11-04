@@ -56,10 +56,10 @@ import {
   CoreSearchRelevanceSchema,
   CORE_SEARCH_MAX_RESOURCE_TYPES,
   coreSearchResourceTypes,
-  matchesCoreSearchValues,
+  createCoreSearchValueMatcher,
   parseCoreSearchQuery,
 } from './search-contract.ts';
-import { compareCoreSearchHits, coreSearchRelevance } from './search-ranking.ts';
+import { compareCoreSearchHitIdentity, coreSearchRank, coreSearchRelevanceForRank } from './search-ranking.ts';
 
 export { CoreSearchProjectionRefreshStore, CoreSearchProjectionStore } from './projection-store.ts';
 export { CoreSearchQueryRuntime } from './query-runtime.ts';
@@ -1404,7 +1404,7 @@ const matchDocument = (
   effectiveAt: number,
 ): CoreSearchProjectionHit | undefined => {
   const hit = toHit(document);
-  const matches = (values: readonly string[]) => matchesCoreSearchValues(values, tokens);
+  const matches = createCoreSearchValueMatcher(tokens);
   const activeValues = (
     values: readonly (typeof CoreSearchTemporalSearchableTextSchema.Type)[] = [],
   ): readonly string[] => {
@@ -1453,7 +1453,7 @@ export const createCoreSearchQueryRuntime: Effect.Effect<
       const resourceTypes = coreSearchResourceTypes(query);
       const effectiveAt =
         query.effectiveAt === undefined ? yield* Clock.currentTimeMillis : DateTime.toEpochMillis(query.effectiveAt);
-      const hits: CoreSearchProjectionHit[] = [];
+      const ranked: { readonly hit: CoreSearchProjectionHit; readonly rank: number }[] = [];
       for (const document of documents) {
         if (
           document.ref.tenantId === query.tenantId &&
@@ -1466,11 +1466,16 @@ export const createCoreSearchQueryRuntime: Effect.Effect<
           // Exact decoded evidence has already proven the match; a flat SQL shortlist never ranks.
           const hit = matchDocument(document, parsed.tokens, effectiveAt);
           if (hit !== undefined) {
-            hits.push(query.includeRelevance === true ? { ...hit, relevance: coreSearchRelevance(hit, parsed) } : hit);
+            ranked.push({ hit, rank: coreSearchRank(hit, parsed) });
           }
         }
       }
-      return hits.toSorted((left, right) => compareCoreSearchHits(left, right, parsed));
+      // The tier is a pure function of the hit and query: compute it once per hit, not once per comparison.
+      return ranked
+        .toSorted((left, right) => left.rank - right.rank || compareCoreSearchHitIdentity(left.hit, right.hit))
+        .map(({ hit, rank }) =>
+          query.includeRelevance === true ? { ...hit, relevance: coreSearchRelevanceForRank(rank) } : hit,
+        );
     },
   );
   return Object.freeze({ search });
