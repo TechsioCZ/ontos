@@ -23,7 +23,6 @@ import type {
   ServiceRecord,
 } from '../../../../../shared/domain/assets.ts';
 import { assetStatusOf, currentServiceRecords, isActiveAsset } from '../../../../../shared/domain/assets.ts';
-import { assetCardDraftOf } from './asset-card-draft.ts';
 import type { AssetCardDraft } from './asset-card-draft.ts';
 import { useAssetCardAutosave } from './asset-card-autosave.ts';
 import {
@@ -512,7 +511,10 @@ interface AssetDetailProps {
   readonly onOpenAsset: (asset: Asset) => void;
   /** Runs the command; returns true when it was saved (the page reloads data and toasts). */
   readonly onSubmit: (command: OpsCommand, successKey: string) => Effect.Effect<boolean>;
-  /** The agenda's own runner: the card edit autosaves through it, so a revision conflict reaches the status line. */
+  /**
+   * The agenda's own runner: the card edit autosaves through the runner of the read its draft was built on, so a
+   * revision conflict reaches the status line.
+   */
   readonly run: (command: OpsCommand) => Effect.Effect<CommandOutcome>;
   readonly state: AssetsState;
 }
@@ -535,16 +537,13 @@ const AssetDetailContent = ({
   const k = useK();
   const [mode, setMode] = useState<DetailMode>({ kind: 'view' });
   const [tab, setTab] = useState('card');
-  // The card draft lives here, so the panel footer can autosave an edit and show its status.
-  const [draft, setDraft] = useState<AssetCardDraft>(() => assetCardDraftOf(asset));
+  // The card draft lives in the autosave hook, so the panel footer can save it and show its status.
+  const { draft, flush, reloadLatest, retry, setDraft, status } = useAssetCardAutosave({ asset, run });
   const changeDraft = (patch: Partial<AssetCardDraft>) => setDraft((current) => ({ ...current, ...patch }));
-  const autosave = useAssetCardAutosave({ applyStored: setDraft, asset, draft, run });
   const closePanel = () => {
-    autosave.flush();
+    flush();
     onClose();
   };
-  const handleReloadLatest = autosave.reloadLatest;
-  const handleRetry = autosave.retry;
   const active = isActiveAsset(asset);
   const submit = (successKey: string, nextTab?: string) => (command: OpsCommand) => {
     void browserRuntime.runPromise(
@@ -747,7 +746,7 @@ const AssetDetailContent = ({
     if (mode.kind === 'edit') {
       return (
         <>
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <AutosaveStatus onReloadLatest={reloadLatest} onRetry={retry} status={status} />
           <Button onClick={() => setMode({ kind: 'view' })} theme="outlined" variant="secondary">
             {k('actions.back')}
           </Button>
