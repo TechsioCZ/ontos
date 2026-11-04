@@ -6,7 +6,7 @@ import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/ap
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto } from '@effect/platform-node';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { Arbitrary, ConfigProvider, Context, Crypto, Effect, Layer, Schema } from 'effect';
+import { Arbitrary, Clock, ConfigProvider, Context, Crypto, Effect, Layer, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
@@ -61,6 +61,7 @@ const makeAssertion = () =>
       use: 'sig',
     };
     const jti = yield* nextUuid;
+    const issuedAt = Math.floor((yield* Clock.currentTimeMillis) / 1000);
     const token = yield* Effect.promise(() =>
       new SignJWT({
         compositionRevision: compositionSnapshot.composition.revision,
@@ -76,8 +77,8 @@ const makeAssertion = () =>
         .setIssuer(issuer)
         .setAudience('party-registry')
         .setSubject(principal.principalId)
-        .setIssuedAt()
-        .setExpirationTime('5m')
+        .setIssuedAt(issuedAt)
+        .setExpirationTime(issuedAt + 300)
         .setJti(jti)
         .sign(privateKey),
     );
