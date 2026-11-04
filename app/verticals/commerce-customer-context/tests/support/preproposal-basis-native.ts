@@ -4,6 +4,7 @@ import {
   ApplicationCompositionSchema,
   BusinessPermissionRelationshipMutation,
   BusinessPermissionRelationshipMutationLive,
+  ContextAccess,
   ContextAccessLive,
   CoreSearchResourceRefSchema,
   DATABASE_IDENTITIES,
@@ -11,6 +12,7 @@ import {
   OntosModuleDeploymentContractSchema,
   OntosShellRuntimeContractSchema,
   OutboxRepositoryLive,
+  bindSelfApiKeyAction,
   canonicalizeApplicationComposition,
   extractOutboxWorkerSubscriptions,
   makeContextPermissionRelationshipMutationLive,
@@ -152,6 +154,7 @@ const catalogAudience = 'catalog' as const;
 const catalogModule = 'commerce.catalog' as const;
 const partyAudience = 'party-registry' as const;
 const registryAudience = 'storefront-registry' as const;
+const registryModule = 'commerce.storefront-registry' as const;
 const marketAudience = 'commerce-market-catalog' as const;
 const finalizationReceiver = 'order-finalization-receiver.fixture.ts' as const;
 const describePreproposal = '--describe-preproposal-basis' as const;
@@ -563,7 +566,7 @@ const ownerDefinitions = [
   {
     appId: registryAudience,
     describe: describeOwner,
-    moduleId: 'commerce.storefront-registry',
+    moduleId: registryModule,
     owner: 'verticals/storefront-registry',
     receiver: finalizationReceiver,
     serve: serveOwner,
@@ -1013,8 +1016,10 @@ const IdentityCreatedSchema = Schema.Struct({
   providerUserId: ProviderSubjectIdSchema,
 });
 const IdentityKeysSchema = Schema.Struct({
+  buyer: identityService,
   buyerPrincipalId: PrincipalIdSchema,
   cccReader: identityService,
+  marketRelay: Schema.Struct({ ...identityService.fields, providerKeyId: ProviderSubjectIdSchema }),
   operation: Schema.Literal('SERVICE_KEYS_CREATED'),
   pricingIssuer: identityService,
   protocol: Schema.Literal(identityProtocol),
@@ -1022,6 +1027,13 @@ const IdentityKeysSchema = Schema.Struct({
 });
 const distinctManagedIdentities = (identities: typeof IdentityKeysSchema.Type, buyer: string, tenant: string) =>
   identities.buyerPrincipalId === buyer &&
+  identities.buyer.principalId === buyer &&
+  new Set([
+    buyer,
+    identities.cccReader.principalId,
+    identities.pricingIssuer.principalId,
+    identities.marketRelay.principalId,
+  ]).size === 4 &&
   identities.tenantId === tenant &&
   identities.cccReader.principalId !== identities.pricingIssuer.principalId &&
   identities.cccReader.principalId !== buyer &&
@@ -1079,7 +1091,11 @@ const nativeActionKeys = [
   'commerce.customer-context.submit-purchase-approval-request',
   'commerce.customer-context.decide-purchase-approval-request',
 ];
-const identitySetupActionKeys = ['core.identity.create-non-human-principal', 'core.identity.bind-managed-api-key'];
+const identitySetupActionKeys = [
+  'core.identity.create-non-human-principal',
+  'core.identity.bind-managed-api-key',
+  bindSelfApiKeyAction.descriptor.actionKey,
+];
 
 const partySetupActionKeys = ['party.registry.resolve-duplicate-candidate-create'];
 
@@ -1470,6 +1486,13 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       principalId: identities.cccReader.principalId,
       tenantId: core.tenantId,
     };
+    const ownerFor = (audience: string) => {
+      const owner = owners.find((candidate) => candidate.appId === audience);
+      if (owner === undefined) {
+        throw safeFailure('fixed-owner-audience');
+      }
+      return owner;
+    };
     const environment = {
       ...baseEnvironment,
       ...permissionEnvironment,
@@ -1491,8 +1514,16 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       ]),
       ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: Redacted.value(identities.cccReader.secret),
       ONTOS_PREPROPOSAL_FAILURE_SPAN: 'service.resolveSubmission',
-      // Setup-only: Market validates the Storefront through the same granted service identity.
-      ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY: Redacted.value(identities.cccReader.secret),
+      // Dedicated workload authentication; relay retains the actual incoming buyer as the provider actor.
+      ONTOS_GATEWAY_RELAY_API_KEY: Redacted.value(identities.marketRelay.secret),
+      ONTOS_GATEWAY_RELAY_SOURCE_BINDINGS: JSON.stringify([
+        {
+          compositionRevision,
+          providerKeyId: identities.marketRelay.providerKeyId,
+          sourceAppId: marketAudience,
+          sourceBuildMarker: ownerFor(marketAudience).marker.buildMarker,
+        },
+      ]),
       // Run-local signing material for Pricing immutable owner proofs; never a deployed secret.
       ONTOS_PRICING_CONFIRMATION_KEY_LINEAGE_REF: 'preproposal-native-lineage',
       ONTOS_PRICING_CONFIRMATION_KEY_REF: 'preproposal-native-key',
@@ -1518,13 +1549,6 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
     }
     const storefrontId = `native-preproposal-${randomUUID()}`;
     const intent = `native-preproposal:${randomUUID()}`;
-    const ownerFor = (audience: string) => {
-      const owner = owners.find((candidate) => candidate.appId === audience);
-      if (owner === undefined) {
-        throw safeFailure('fixed-owner-audience');
-      }
-      return owner;
-    };
     const scopeGrantArtifact = yield* buildOwnerExecutable(
       'packages/core-runtime',
       'preproposal-scope-grant.fixture.ts',
@@ -1929,7 +1953,9 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
           environment,
           stage: `registered-config:${owner}:${operation}`,
         });
-        const authorization = yield* signBuyer(owner, true, false);
+        const authorization = yield* owner === marketAudience
+          ? serviceCredential(identities.buyer, owner, true)
+          : signBuyer(owner, true, false);
         yield* child.send(
           JSON.stringify({
             authorization: Redacted.value(authorization),
@@ -1955,7 +1981,7 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
     // Each owner Action declares a write permission on its own target resource; seed exactly those relations.
     yield* core.grantResourceAccess(
       {
-        moduleId: 'commerce.storefront-registry',
+        moduleId: registryModule,
         resourceId: storefrontId,
         resourceType: 'commerce.storefront-registry.storefront-application',
       },
@@ -2004,6 +2030,26 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       }),
     );
     yield* core.grantResourceAccess(market.marketRef, core.manager.principalId, 'writer');
+    yield* Effect.gen(function* verifyIndependentStorefrontReadAuthority() {
+      const access = yield* ContextAccess;
+      const target = {
+        legalEntityId: core.legalEntityId,
+        moduleIds: [registryModule],
+        tenantId: core.tenantId,
+      };
+      const actor = yield* access.modules({ ...target, principalId: core.manager.principalId });
+      const workload = yield* access.modules({ ...target, principalId: identities.marketRelay.principalId });
+      yield* requireProtocol(
+        actor[0]?.key === registryModule &&
+          actor[0].decision === 'allowed' &&
+          workload[0]?.key === registryModule &&
+          workload[0].decision === 'denied',
+        'original-actor-independent-storefront-read',
+      );
+    }).pipe(
+      Effect.provide(ContextAccessLive),
+      Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
+    );
     const association = yield* invokeOwnerConfiguration(
       marketAudience,
       'ASSOCIATE_STOREFRONT',
