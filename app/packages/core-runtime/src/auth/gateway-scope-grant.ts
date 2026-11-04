@@ -37,7 +37,9 @@ export class GatewayScopeGrantRegistrar extends Context.Service<
 >()('@app/core-runtime/auth/gateway-scope-grant/GatewayScopeGrantRegistrar') {}
 
 const REGISTRATION_TIMEOUT = Duration.seconds(5);
-const REGISTRAR_MAX_CONNECTIONS = 2;
+// One search starts every owner at once, and each owner call registers its own single-use assertion. Four connections
+// halve the queueing for a full fan-out while adding at most two connections per Shell process to the database budget.
+const REGISTRAR_MAX_CONNECTIONS = 4;
 
 const unavailableError = (cause?: unknown): GatewayScopeGrantUnavailableError => {
   const error = new GatewayScopeGrantUnavailableError({
