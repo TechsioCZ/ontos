@@ -2486,6 +2486,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           expect(
             (yield* f.evidence()).outbox.filter((message) => message.topic === 'privacy.measure.dispatched'),
           ).toEqual(originalMessages);
+          expect(yield* f.control('privacy', 'dispatch-watchdog/complete')).toBe(204);
           yield* f.isolated.composition.drain();
           yield* f.seal;
           const sealed = yield* f.isolated.composition.observe();
@@ -2539,6 +2540,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
             expect(yield* f.cycle(31_000)).toMatchObject({ claimed: 1, failed: 0, succeeded: 1 });
             const completed = yield* coreDebtSettled(f);
             expect(Option.getOrUndefined(original)).toEqual(completed);
+            expect(yield* f.control('privacy', 'dispatch-watchdog/complete')).toBe(204);
             yield* f.isolated.composition.drain();
             yield* f.seal;
           }),
@@ -2820,6 +2822,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           expect(yield* f.storedHandoffs()).toEqual([f.handoff]);
           expect(yield* f.outcomes()).toEqual([original.value.outcome]);
           expect(yield* f.control('privacy', 'report-response/discard-next')).toBe(409);
+          expect(yield* f.control('privacy', 'dispatch-watchdog/complete')).toBe(204);
           yield* f.isolated.composition.drain();
           yield* f.seal;
           return yield* Effect.void;
@@ -2995,6 +2998,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           // Recover the real claim through the existing test-clock lease control, then report and ACK in A.
           expect(yield* f.cycle(31_000)).toMatchObject({ claimed: 1, failed: 0, succeeded: 1 });
           expect(yield* coreDebtSettled(f)).toEqual(original.value);
+          expect(yield* f.control('privacy', 'dispatch-watchdog/complete')).toBe(204);
           yield* f.isolated.composition.drain();
           yield* f.seal;
           return yield* Effect.void;

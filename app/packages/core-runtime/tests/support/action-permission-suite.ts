@@ -19,7 +19,7 @@ export const makePermissionSuite = Effect.gen(function* makePermissionSuite() {
   const otherTenantId = yield* nextUuid;
   const otherTenantPrincipalId = yield* nextUuid;
   const otherTenantAuthBindingId = yield* nextUuid;
-  const actionPrefix = `test.permission.${suiteId}`;
+  const actionPrefix = `core.shell.test.permission.${suiteId}`;
   const actionKeys = {
     allowed: `${actionPrefix}.allowed`,
     concurrentDenied: `${actionPrefix}.concurrent-denied`,

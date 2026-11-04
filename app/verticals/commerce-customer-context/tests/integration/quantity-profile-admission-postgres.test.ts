@@ -27,7 +27,7 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Reactivity } from 'effect/reactivity';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
-import { Context, DateTime, Deferred, Effect, Fiber, Layer, Option, Redacted, Schema, Stream } from 'effect';
+import { Context, DateTime, Deferred, Effect, Fiber, Layer, Redacted, Result, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { FetchHttpClient, HttpServer, HttpServerResponse } from 'effect/http';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
@@ -776,6 +776,8 @@ it.live(
         expect(after.outbox).toHaveLength(evidence.outbox.length);
       }),
     ).pipe(Effect.provide(nativeServices)),
+  // Native owner/source setup and disposal completed 30 assertions in 30.3s; retain the existing native case budget.
+  120_000,
 );
 
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -871,10 +873,36 @@ const startQuantityPublicReceiver = Effect.fn('QuantityProfileAdmissionTests.pub
     stderr: 'pipe',
     stdout: 'pipe',
   });
-  yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
-  const line = yield* child.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runHead);
-  assert.isOk(Option.isSome(line));
-  const ready = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(QuantityReceiverReadySchema))(line.value);
+  // Private bounded buffers retain diagnostics from either NodeRuntime output stream. Raw output is never logged.
+  const output = { stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  const retain = (stream: keyof typeof output, chunk: Uint8Array) => {
+    output[stream] = Buffer.concat([output[stream], chunk.subarray(0, Math.max(0, 65_536 - output[stream].length))]);
+  };
+  yield* child.stderr.pipe(
+    Stream.runForEach((chunk) => Effect.sync(() => retain('stderr', chunk))),
+    Effect.forkScoped,
+  );
+  const receiverReady = yield* Deferred.make<typeof QuantityReceiverReadySchema.Type>();
+  yield* child.stdout.pipe(
+    Stream.mapEffect((chunk) =>
+      Effect.sync(() => {
+        retain('stdout', chunk);
+        return chunk;
+      }),
+    ),
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.runForEach((line) =>
+      Schema.decodeUnknownEffect(Schema.fromJsonString(QuantityReceiverReadySchema))(line).pipe(
+        Effect.result,
+        Effect.flatMap((result) =>
+          Result.isSuccess(result) ? Deferred.succeed(receiverReady, result.success) : Effect.void,
+        ),
+      ),
+    ),
+    Effect.forkScoped,
+  );
+  const ready = yield* Deferred.await(receiverReady).pipe(Effect.timeout('10 seconds'));
   expect(ready.marker).toEqual(prepared.marker);
   const baseUrl = `http://127.0.0.1:${ready.port}`;
   const clockClient = yield* PgClient.make({
@@ -908,13 +936,37 @@ const startQuantityPublicReceiver = Effect.fn('QuantityProfileAdmissionTests.pub
         .sign(pair.privateKey),
     );
   });
+  const retainedIncludes = (diagnostic: string) =>
+    output.stdout.toString('utf-8').includes(diagnostic) || output.stderr.toString('utf-8').includes(diagnostic);
   const read = (at: string, assertion: string) =>
     executeCommerceQuantityPolicyCurrentWithAuthorization(
       Schema.decodeUnknownSync(CommerceQuantityPolicyCurrentRequestSchema)({ at }),
       `Bearer ${assertion}`,
       randomUUID(),
       { baseUrl, compositionRevision: owner.snapshot.composition.revision },
-    ).pipe(Effect.provide(FetchHttpClient.layer));
+    ).pipe(
+      Effect.provide(FetchHttpClient.layer),
+      Effect.tapError(() => {
+        const knownDiagnostics = [
+          'ReadHandlerUnavailable',
+          'ReadScopeResolutionError',
+          'ReadPermissionDenied',
+          'ModuleOperationRequirementError',
+          'ActiveApplicationCompositionUnavailableError',
+          'OperationContextUnavailable',
+          'SqlError',
+          'ConnectionError',
+          'receiving-owner-release-not-approved',
+          'permission denied for',
+          'The receiving owner release is not approved by the active Application Composition',
+          'Current Commerce Quantity policy is temporarily unavailable',
+        ];
+        return Effect.logError('Quantity receiver diagnostic', {
+          known: knownDiagnostics.filter(retainedIncludes),
+          stage: 'public-read',
+        });
+      }),
+    );
   return { freshAssertion, read };
 });
 

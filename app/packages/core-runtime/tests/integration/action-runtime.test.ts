@@ -734,7 +734,7 @@ const testProgram2 = Effect.fn(function* integrationProgram4() {
         payload: { value: 'committed' },
         principal,
         registration: makeRegistration({
-          actionKey: 'shell.test.atomic-success',
+          actionKey: 'core.shell.test.atomic-success',
           moduleStateKey,
         }),
         transport: transport(key, moduleStateKey),
@@ -785,7 +785,7 @@ const testProgram3 = Effect.fn(function* integrationProgram6() {
         payload: { value: 'committed' },
         principal,
         registration: makeRegistration({
-          actionKey: 'shell.test.policy-allowed',
+          actionKey: 'core.shell.test.policy-allowed',
           moduleStateKey,
           onExecute: () => observed.push('handler'),
           policies: [policy],
@@ -829,7 +829,7 @@ const testCommittedDomainRejection = Effect.fn(function* committedDomainRejectio
           payload: { value: 'durable-rejection-evidence' },
           principal,
           registration: makeRegistration({
-            actionKey: 'shell.test.committed-domain-rejection',
+            actionKey: 'core.shell.test.committed-domain-rejection',
             mode: 'commit-reject',
             moduleStateKey,
           }),
@@ -861,7 +861,7 @@ const testProgram4 = Effect.fn(function* integrationProgram8() {
   const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
   const scenarios = [
     {
-      actionKey: 'shell.test.policy-denied-global',
+      actionKey: 'core.shell.test.policy-denied-global',
       key: 'policy-denied-global',
       makeRegistration(handler: () => void) {
         const policy = defineGlobalPolicy<{ readonly value: string }>({
@@ -1050,7 +1050,7 @@ const testProgram5 = Effect.fn(function* integrationProgram11() {
               payload: { value: 'must-not-persist' },
               principal,
               registration: makeRegistration({
-                actionKey: `shell.test.${key}`,
+                actionKey: `core.shell.test.${key}`,
                 moduleStateKey: `test.${key}.${tenantId}`,
                 onExecute: () => {
                   handlerExecutions += 1;
@@ -1081,19 +1081,19 @@ const testProgram6 = Effect.fn(function* integrationProgram14() {
   const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
   const scenarios = [
     {
-      actionKey: 'shell.test.domain-rejection',
+      actionKey: 'core.shell.test.domain-rejection',
       expectedTag: 'TestDomainRejected',
       key: 'domain-rejection',
       mode: 'reject',
     },
     {
-      actionKey: 'shell.test.evidence-failure',
+      actionKey: 'core.shell.test.evidence-failure',
       expectedTag: 'ActionTransactionError',
       key: 'evidence-failure',
       mode: 'success',
     },
     {
-      actionKey: 'shell.test.orphan-outbox',
+      actionKey: 'core.shell.test.orphan-outbox',
       expectedTag: 'ActionCollectorError',
       key: 'orphan-outbox',
       mode: 'orphan-outbox',
@@ -1205,7 +1205,7 @@ const testProgram7 = Effect.fn(function* integrationProgram16() {
             payload: { value: stage },
             principal,
             registration: makeRegistration({
-              actionKey: `shell.test.${key}`,
+              actionKey: `core.shell.test.${key}`,
               moduleStateKey,
               policies: stage === 'audit' ? [allowedPolicy] : [],
             }),
@@ -1269,7 +1269,7 @@ const testProgram8 = () =>
       });
       const key = 'policy-terminal-retry';
       const action = makeRegistration({
-        actionKey: 'shell.test.policy-terminal-retry',
+        actionKey: 'core.shell.test.policy-terminal-retry',
         moduleStateKey: `test.${key}.${tenantId}`,
         onExecute: () => {
           handlerExecutions += 1;
@@ -1311,7 +1311,7 @@ const testProgram8 = () =>
         payload: { value: 'same' },
         principal,
         registration: makeRegistration({
-          actionKey: 'shell.test.policy-terminal-concurrent',
+          actionKey: 'core.shell.test.policy-terminal-concurrent',
           moduleStateKey: `test.${concurrentKey}.${tenantId}`,
           onExecute: () => {
             handlerExecutions += 1;
@@ -1371,7 +1371,7 @@ const testProgram9 = () =>
       const denialEvaluated = yield* Deferred.make<null>();
       const key = 'policy-loses-to-success';
       const moduleStateKey = `test.${key}.${tenantId}`;
-      const actionKey = 'shell.test.policy-loses-to-success';
+      const actionKey = 'core.shell.test.policy-loses-to-success';
       const allowed = makeRegistration({
         actionKey,
         completionGate: denialEvaluated,
@@ -1444,7 +1444,7 @@ const testProgram10 = () =>
         payload: { value: 'same' },
         principal,
         registration: makeRegistration({
-          actionKey: 'shell.test.concurrent',
+          actionKey: 'core.shell.test.concurrent',
           completionGate: handlerRelease,
           moduleStateKey: concurrentModule,
           onExecute: () => {
@@ -1497,7 +1497,7 @@ const testProgram10 = () =>
           payload: { value: 'retryable' },
           principal,
           registration: makeRegistration({
-            actionKey: 'shell.test.open-retry',
+            actionKey: 'core.shell.test.open-retry',
             mode: 'reject',
             moduleStateKey: openModule,
           }),
@@ -1510,7 +1510,7 @@ const testProgram10 = () =>
         payload: { value: 'retryable' },
         principal,
         registration: makeRegistration({
-          actionKey: 'shell.test.open-retry',
+          actionKey: 'core.shell.test.open-retry',
           moduleStateKey: openModule,
         }),
         transport: transport(openKey, openModule),
@@ -1567,7 +1567,7 @@ const testProgram11 = () =>
           payload: { value: 'first' },
           principal,
           registration: makeRegistration({
-            actionKey: 'shell.test.sequence-first',
+            actionKey: 'core.shell.test.sequence-first',
             moduleStateKey: firstModule,
           }),
           transport: transport('sequence-first', firstModule),
@@ -1582,7 +1582,7 @@ const testProgram11 = () =>
             payload: { value: 'second' },
             principal,
             registration: makeRegistration({
-              actionKey: 'shell.test.sequence-second',
+              actionKey: 'core.shell.test.sequence-second',
               moduleStateKey: secondModule,
             }),
             transport: transport('sequence-second', secondModule),
@@ -1629,7 +1629,7 @@ const testProgram12 = () =>
       const key = 'lost-acknowledgement';
       const moduleStateKey = `test.lost-ack.${tenantId}`;
       const actionRegistration = makeRegistration({
-        actionKey: 'shell.test.lost-ack',
+        actionKey: 'core.shell.test.lost-ack',
         moduleStateKey,
       });
 
@@ -1729,7 +1729,7 @@ const testProgram12 = () =>
       const openKey = 'lost-acknowledgement-open';
       const openModuleStateKey = `test.lost-ack-open.${tenantId}`;
       const openRegistration = makeRegistration({
-        actionKey: 'shell.test.lost-ack-open',
+        actionKey: 'core.shell.test.lost-ack-open',
         moduleStateKey: openModuleStateKey,
       });
       const openCommitTracker = makeCommitTransactionTracker();
@@ -1918,7 +1918,7 @@ const testCompositionTransactionFence = () =>
       const moduleStateKey = `core.composition-owner-${yield* crypto.randomUUIDv4()}`;
       const admittedRevision = { current: Option.none<string>() };
       const registration = makeRegistration({
-        actionKey: 'shell.test.composition-write',
+        actionKey: 'core.shell.test.composition-write',
         completionGate: handlerRelease,
         moduleStateKey,
         onExecute: (context) => {

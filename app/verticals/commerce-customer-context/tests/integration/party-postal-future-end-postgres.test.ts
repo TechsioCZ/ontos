@@ -1,6 +1,6 @@
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
   ActionPayloadValidationError,
@@ -14,15 +14,12 @@ import {
   BusinessPermissionRelationshipMutationLive,
   ContextAccessLive,
   OntosModuleDeploymentContractSchema,
-  canonicalizeApplicationComposition,
   defineScopedRoutine,
-  validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeGatewayScopeGrantRegistrar, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import {
   createPartyWithAuthorization,
   addContactPointWithAuthorization,
@@ -84,11 +81,13 @@ import {
 } from '../../src/integrations/party-registry-retail-party-resolver.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
 import { addressReadServicesForTransaction } from '../../src/persistence/address-persistence.ts';
-import { deriveModuleIntrinsicRequirements } from '../../../../packages/core-runtime/src/modules/module-dependency-contracts.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
-import { describePriceGroupTemporalOwner } from '../support/price-group-temporal-protocol.ts';
+import {
+  describePriceGroupTemporalOwner,
+  makePriceGroupTemporalComposition,
+} from '../support/price-group-temporal-protocol.ts';
 
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 const services = NodeChildProcessSpawner.layer.pipe(
@@ -98,7 +97,6 @@ const services = NodeChildProcessSpawner.layer.pipe(
 const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const MarkerSchema = Schema.Struct({ appId: Schema.Literal('party-registry'), buildMarker: Schema.String });
 const ReadySchema = Schema.Struct({ marker: MarkerSchema, port: Schema.Number, type: Schema.Literal('ready') });
-const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
 const bindProfile = defineScopedRoutine({
   name: 'mutate_retail_portal_binding',
@@ -214,34 +212,14 @@ const preparePostalFutureEnd = Effect.fn('PostalFutureEnd.prepare')(function* pr
   // Existing public metadata extraction and TEST entry share the same canonical compiled owner identity.
   const { artifact, contract, marker } = yield* describePriceGroupTemporalOwner('party-registry');
   const base = yield* makeEnrollmentApplicationCompositionSnapshot(ultramodernDeliveryUnit.buildMarker, []);
-  const partyPlacement = yield* makeApplicationCompositionSnapshotFixture([marker.appId], marker.buildMarker);
-  const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-    contract,
+  const ownContract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+    base.composition.modules.find(({ deployment }) => deployment.appId === ultramodernDeliveryUnit.appId)
+      ?.contractDocument,
   );
-  const composition = {
-    ...base.composition,
-    modules: [
-      ...base.composition.modules,
-      ...partyPlacement.composition.modules.map((module) => ({
-        ...module,
-        ...deriveModuleIntrinsicRequirements(contract.manifest.requirements),
-        contract: { ...module.contract, sha256: hash(contractDocument) },
-        contractDocument,
-        deployment: contract.deployment,
-        moduleId: contract.manifest.module.id,
-        publicContract: {
-          id: contract.manifest.module.id,
-          sha256: hash(contractDocument),
-          version: contract.schemaVersion,
-        },
-      })),
-    ],
-    revision: '0'.repeat(64),
-  };
-  const snapshot = yield* validateActiveApplicationCompositionSnapshot({
-    ...base,
-    composition: { ...composition, revision: hash(canonicalizeApplicationComposition(composition)) },
-  });
+  const snapshot = yield* makePriceGroupTemporalComposition([
+    { contract: ownContract, marker: ultramodernDeliveryUnit },
+    { contract, marker },
+  ]);
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
     mode: 'schema-only',
