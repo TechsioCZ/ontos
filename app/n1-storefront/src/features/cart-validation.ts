@@ -8,8 +8,8 @@ export interface QuantityDraft {
   value: string;
 }
 export type QuantityDrafts = Readonly<Record<string, QuantityDraft>>;
-export const validCartQuantity = (quantity: number) =>
-  Number.isFinite(quantity) && quantity >= 0.001 && quantity <= 1_000_000;
+export const validCartQuantity = (quantity: number, minimum = 0.001) =>
+  Number.isFinite(quantity) && quantity >= Math.max(0.001, minimum) && quantity <= 1_000_000;
 export const quantityDraftForEntry = (drafts: QuantityDrafts, entry: CartEntry) => {
   const draft = drafts[cartLineKey(entry)];
   return draft?.quantity === entry.quantity ? draft : undefined;
@@ -17,7 +17,10 @@ export const quantityDraftForEntry = (drafts: QuantityDrafts, entry: CartEntry) 
 export const hasInvalidCartDraft = (drafts: QuantityDrafts, entries: readonly CartEntry[]) =>
   entries.some((entry) => {
     const draft = quantityDraftForEntry(drafts, entry);
-    return draft !== undefined && (draft.saveError || !validCartQuantity(Number(draft.value)));
+    return (
+      draft !== undefined &&
+      (draft.saveError || !validCartQuantity(Number(draft.value), entry.minimumQuantity))
+    );
   });
 export const removeQuantityDraft = (drafts: QuantityDrafts, entry: CartEntry): QuantityDrafts => {
   const key = cartLineKey(entry);

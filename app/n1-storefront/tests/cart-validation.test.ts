@@ -7,6 +7,7 @@ import {
   quantityDraftForEntry,
   reconcileQuantityDrafts,
   removeQuantityDraft,
+  validCartQuantity,
 } from "../src/features/cart-validation";
 import type { QuantityDrafts } from "../src/features/cart-validation";
 import { cartLineKey } from "../src/features/cart-state";
@@ -28,6 +29,17 @@ const blankDraft = (): QuantityDrafts => ({
 });
 
 describe("cart quantity draft lifecycle", () => {
+  it("gates quantities below the selected minimum without forcing whole units", () => {
+    expect(validCartQuantity(0.001, 1)).toBe(false);
+    expect(validCartQuantity(1, 1)).toBe(true);
+    expect(validCartQuantity(0.25, 0.25)).toBe(true);
+    expect(validCartQuantity(0.375, 0.25)).toBe(true);
+    expect(validCartQuantity(0.001)).toBe(true);
+    const drafts = { [cartLineKey(entry)]: { quantity: 2, saveError: false, value: "0.5" } };
+    expect(hasInvalidCartDraft(drafts, [{ ...entry, minimumQuantity: 1 }])).toBe(true);
+    expect(hasInvalidCartDraft(drafts, [{ ...entry, minimumQuantity: 0.25 }])).toBe(false);
+    expect(hasInvalidCartDraft(drafts, [entry])).toBe(false);
+  });
   it("discards an invalid input and its gate together after an external quantity change", () => {
     const drafts = blankDraft();
     expect(hasInvalidCartDraft(drafts, [entry])).toBe(true);

@@ -58,6 +58,7 @@ export const ProductPurchase = ({
     const entry = {
       expectedUnitPriceMinor: current.priceMinor,
       image: images[0] ?? null,
+      minimumQuantity: current.minimumQuantity,
       name: product.name,
       productId: product.id,
       quantity: parsedQuantity,
