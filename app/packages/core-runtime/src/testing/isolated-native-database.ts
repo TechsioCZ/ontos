@@ -116,6 +116,7 @@ const readFingerprint = Effect.fn('IsolatedNativeDatabase.readFingerprint')(func
 const schemaOnly = 'schema-only' as const;
 const exactDeadlinePurpose = 'stabilization-1271-exact-obligation-deadline';
 const shellAuthPurpose = 'stabilization-1287-shell-auth';
+const assortmentAuthorizationPurpose = 'implementation-1290-assortment-authorization';
 const retainedPrivacyPurpose = 'stabilization-1258-privacy-drain';
 type IsolatedNativeDatabaseInput = (
   | {
@@ -133,6 +134,7 @@ type IsolatedNativeDatabaseInput = (
         | 'stabilization-1230-preference-period'
         | 'stabilization-1267-party-gateway'
         | typeof shellAuthPurpose
+        | typeof assortmentAuthorizationPurpose
         | 'stabilization-1268-address-plan'
         | 'stabilization-1261-retained-purpose-withdrawal'
         | 'stabilization-1247-set-component-current-closure'
@@ -198,6 +200,7 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
         'stabilization-1230-preference-period',
         'stabilization-1267-party-gateway',
         shellAuthPurpose,
+        assortmentAuthorizationPurpose,
         'stabilization-1268-address-plan',
         'stabilization-1261-retained-purpose-withdrawal',
         'stabilization-1247-set-component-current-closure',
@@ -452,6 +455,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       yield* assertClonedSchema();
     }
     const retainedOriginalEnabled = input.mode === 'empty' && input.purpose === retainedPrivacyPurpose;
+    const assortmentRuntimeEnabled = input.mode === schemaOnly && input.purpose === assortmentAuthorizationPurpose;
     const replacementEnabled = supportsOwnedReplacement(input);
     const retainedReplacementRevision = yield* Ref.make<string | null>(null);
     const replacementState = yield* Ref.make<'unused' | 'pending' | 'published' | 'failed'>('unused');
@@ -878,6 +882,73 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
         Effect.onExit((exit) => (Exit.isFailure(exit) ? Ref.set(replacementState, 'failed') : Effect.void)),
       );
     });
+    /** #1290's disposable clone only; reproduces the exact SQL privileges needed by its real owner routines. */
+    const prepareAssortmentAuthorizationRuntime = Effect.fn(
+      'IsolatedNativeDatabase.prepareAssortmentAuthorizationRuntime',
+    )(function* prepareAssortmentAuthorizationRuntime() {
+      if (
+        !assortmentRuntimeEnabled ||
+        (yield* Ref.get(controllerClosed)) ||
+        nativeOwnedIdentity === undefined ||
+        !databaseName.startsWith(prefix) ||
+        databaseName === source.admin.database ||
+        databaseName === source.runtime.database ||
+        connections.admin.database !== databaseName ||
+        connections.runtime.database !== databaseName
+      ) {
+        return yield* unavailable('Assortment test privileges require this scope’s fresh #1290 schema-only clone');
+      }
+      // Prove faithful source schema/RLS/ACL cloning before this deliberately narrow, clone-local test setup.
+      yield* assertClonedSchema();
+      const roleIdentifier = sql.identifier(ownedBoundary.runtimeUser);
+      return yield* clone.executor
+        .transaction(
+          Effect.fn('IsolatedNativeDatabase.provisionAssortmentAuthorizationRuntime')(
+            function* provisionAssortmentAuthorizationRuntime(transaction) {
+              const [identity] = yield* transaction.execute<{ readonly owned: boolean }>(
+                sql`select
+              current_database()=${ownedBoundary.database} and current_user=${ownedBoundary.adminUser}
+              and d.oid::text=${nativeOwnedIdentity.databaseOid} and r.oid::text=${nativeOwnedIdentity.runtimeRoleOid}
+              and not r.rolsuper and not r.rolbypassrls
+              and inet_server_addr()::text is not distinct from ${nativeOwnedIdentity.serverAddress}
+              and inet_server_port() is not distinct from ${nativeOwnedIdentity.serverPort} as owned
+              from pg_database d cross join pg_roles r
+              where d.datname=current_database() and r.rolname=${ownedBoundary.runtimeUser}`,
+                'objects',
+              );
+              if (identity?.owned !== true) {
+                return yield* unavailable(
+                  'Assortment test privileges cannot target a foreign database, role or endpoint',
+                );
+              }
+              yield* transaction.execute(
+                sql`grant select,insert on table
+              assortment.assortment_stable_rules,
+              assortment.assortment_rule_revisions,
+              assortment.assortment_rule_retirement_facts,
+              assortment.assortment_applicability_bindings to ${roleIdentifier}`,
+                'objects',
+              );
+              yield* transaction.execute(
+                sql`grant select on table assortment.assortment_applicability_binding_end_facts to ${roleIdentifier}`,
+                'objects',
+              );
+              // PostgreSQL SELECT FOR UPDATE needs an UPDATE privilege; existing immutable triggers still prohibit owner-row mutation.
+              return yield* transaction
+                .execute(
+                  sql`grant update(stable_rule_id) on table assortment.assortment_stable_rules to ${roleIdentifier}`,
+                  'objects',
+                )
+                .pipe(Effect.asVoid);
+            },
+          ),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            unavailable('Unable to establish exact isolated Assortment test privileges', cause),
+          ),
+        );
+    });
     const composition = Object.freeze({
       closeAdmission: () => runCompositionOperation(closeApplicationCompositionDurableAdmission),
       drain: () => runCompositionOperation(drainApplicationCompositionAuthority),
@@ -892,6 +963,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       composition,
       connections: connections satisfies DatabaseConnectionPair,
       migrateCoreSchema,
+      prepareAssortmentAuthorizationRuntime,
       publishInitialComposition,
     };
   },

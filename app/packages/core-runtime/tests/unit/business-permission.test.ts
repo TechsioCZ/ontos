@@ -24,10 +24,8 @@ const readPermission = defineBusinessPermission({
 it('builds an immutable, reciprocal and versioned permission catalog', () => {
   expect(Schema.decodeSync(BusinessPermissionCodeSchema)('retail.repeat_order')).toBe('retail.repeat_order');
   expect(Schema.decodeSync(BusinessPermissionCodeSchema)('pricing.price_group.read')).toBe('pricing.price_group.read');
-  expect(Schema.decodeSync(BusinessPermissionCodeSchema)('assortment.configuration.read')).toBe(
-    'assortment.configuration.read',
-  );
-  expect(Schema.decodeSync(BusinessPermissionScopeKindSchema)('assortment_boundary')).toBe('assortment_boundary');
+  expect(Schema.decodeSync(BusinessPermissionCodeSchema)('fixture.read')).toBe('fixture.read');
+  expect(Schema.decodeSync(BusinessPermissionScopeKindSchema)('fixture_target')).toBe('fixture_target');
   expect(Schema.decodeSync(BusinessPermissionCodeSchema)('pricing.currency_support.read')).toBe(
     'pricing.currency_support.read',
   );
@@ -46,7 +44,7 @@ it('builds an immutable, reciprocal and versioned permission catalog', () => {
 
 it('rejects invalid codes, duplicate catalog entries, and one-sided group membership', () => {
   expect(() => defineBusinessPermission({ ...readPermission, key: 'generic.manage' })).toThrow();
-  for (const permission of ['assortment.manage', 'assortment.boundary.replace', 'assortment.rules.create']) {
+  for (const permission of ['invalid permission', 'UPPERCASE.code', 'invalid..code']) {
     expect(() => Schema.decodeSync(BusinessPermissionCodeSchema)(permission)).toThrow();
   }
   expect(() =>

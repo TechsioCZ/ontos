@@ -1,3 +1,4 @@
+import { fixtureOwnerModule, ownerPermissionTarget } from '../support/owner-permission-target.ts';
 import { DateTime } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -7,8 +8,8 @@ import { failClosedOwnerAuthorizationDecision } from '../../src/permissions/owne
 const input = (target: OwnerAuthorizationInput['targets'][number]): OwnerAuthorizationInput => ({
   operation: 'action',
   operationAt: DateTime.makeUnsafe(0),
-  operationKey: 'commerce.assortment.create-closed-assortment-boundary',
-  owningModuleKey: 'commerce.assortment',
+  operationKey: 'commerce.fixture.create',
+  owningModuleKey: fixtureOwnerModule,
   scope: {
     authContextRef: 'owner-overlay-test',
     authMethod: 'session',
@@ -20,41 +21,13 @@ const input = (target: OwnerAuthorizationInput['targets'][number]): OwnerAuthori
   targets: [target],
 });
 
-it('fails closed for Assortment owner targets while keeping owner-neutral targets available', () => {
-  const assortmentDecision = failClosedOwnerAuthorizationDecision(
-    input({
-      kind: 'assortment_permission',
-      target: {
-        admissionSet: { contentHash: 'a'.repeat(64), entries: [{ kind: 'ALL' }], memberCount: 1, setKind: 'ENTRIES' },
-        commercialScope: {
-          channel: {
-            moduleId: 'commerce.channel',
-            resourceId: 'web',
-            resourceType: 'commerce.channel',
-          },
-        },
-        effectiveFrom: '2026-09-28T00:00:00.000Z',
-        kind: 'assortment_boundary',
-        mode: 'create',
-        permission: 'assortment.boundary.create',
-        purpose: 'PURCHASE',
-        subject: {
-          kind: 'COUNTERPARTY',
-          ref: {
-            moduleId: 'party.registry',
-            resourceId: 'counterparty-1',
-            resourceType: 'party.registry.counterparty',
-          },
-        },
-      },
-    }),
+it('fails closed for owner targets while keeping owner-neutral targets available', () => {
+  const { scope } = input({ kind: 'module', moduleId: fixtureOwnerModule });
+  const ownerDecision = failClosedOwnerAuthorizationDecision(
+    input({ kind: 'owner_permission', target: ownerPermissionTarget(scope) }),
   );
-
-  const neutralDecision = failClosedOwnerAuthorizationDecision(
-    input({ kind: 'module', moduleId: 'commerce.assortment' }),
-  );
-
-  expect(assortmentDecision).toBe('unavailable');
+  const neutralDecision = failClosedOwnerAuthorizationDecision(input({ kind: 'module', moduleId: fixtureOwnerModule }));
+  expect(ownerDecision).toBe('unavailable');
   expect(neutralDecision).toBe('allowed');
 });
 

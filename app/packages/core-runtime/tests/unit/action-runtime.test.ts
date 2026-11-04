@@ -1,3 +1,10 @@
+import {
+  fixtureOwnerContract,
+  fixtureOwnerCreatePermission,
+  fixtureOwnerEndPermission,
+  fixtureOwnerReadPermission,
+  ownerPermissionTarget,
+} from '../support/owner-permission-target.ts';
 import type { ActiveApplicationCompositionServiceContract } from '../../src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
 import { requireModuleOperation } from '../../src/modules/module-operation-requirement.ts';
@@ -26,7 +33,7 @@ import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
 import {
   defineAction,
-  defineActionAssortmentPermissions,
+  defineActionOwnerPermissions,
   defineActionBusinessPermission,
   defineActionResourcePermission,
   getActionHandler,
@@ -84,10 +91,7 @@ import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../../src/module
 import type { TenantModuleState } from '../../src/modules/tenant-module-state-service.ts';
 import type { ActionPermissionDecision, CheckActionPermissionInput } from '../../src/permissions/service.ts';
 import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
-import {
-  toAssortmentPermissionAccessKey,
-  toBusinessPermissionAccessKey,
-} from '../../src/permissions/context-access.ts';
+import { toBusinessPermissionAccessKey } from '../../src/permissions/context-access.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestDatabase } from '../support/database.ts';
 
@@ -159,8 +163,6 @@ interface TestCompositionAuthority {
 
 interface HarnessOptions {
   readonly applicationComposition?: ActiveApplicationCompositionServiceContract;
-  readonly assortmentPermissionDecision?: PermissionDecision;
-  readonly assortmentPermissionDecisions?: readonly PermissionDecision[];
   readonly authorizationPreflight?: ActionAuthorizationPreflightService;
   readonly businessPermissionDecision?: PermissionDecision;
   readonly commit?: Effect.Effect<readonly object[], SqlError>;
@@ -176,10 +178,12 @@ interface HarnessOptions {
   readonly omitCompositionRevisionResolver?: boolean;
   readonly omitOwnerAuthorizationOverlay?: boolean;
   readonly omitOwnerRegistration?: boolean;
-  readonly onAssortmentPermissionCheck?: (targets: readonly unknown[]) => void;
   readonly onBusinessPermissionCheck?: () => void;
+  readonly onOwnerPermissionCheck?: (targets: readonly unknown[]) => void;
   readonly onResourcePermissionCheck?: () => void;
   readonly ownerAuthorizationOverlay?: OwnerAuthorizationOverlayService;
+  readonly ownerPermissionDecision?: PermissionDecision;
+  readonly ownerPermissionDecisions?: readonly PermissionDecision[];
   readonly permissionDecision?: ActionPermissionDecision;
   readonly permissionFailure?: boolean;
   readonly policyFinalizationFailure?: boolean;
@@ -208,7 +212,8 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   const finalized: FinalizeActionPolicyDenialInput[] = [];
   const flushed: FlushActionSuccessInput[] = [];
   const businessPermissionChecks: unknown[] = [];
-  const assortmentPermissionChecks: unknown[] = [];
+  const ownerPermissionChecks: unknown[] = [];
+  const ownerPermissionInputs: unknown[] = [];
   const legalEntityChecks: unknown[] = [];
   const permissionChecks: CheckActionPermissionInput[] = [];
   const rejections: RejectPermissionDeniedInput[] = [];
@@ -524,19 +529,6 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         };
   let runtimeOptions: ActionRuntimeOptions = {
     contextAccess: {
-      assortmentPermissions: (input) => {
-        assortmentPermissionChecks.push(...input.targets);
-        options.onAssortmentPermissionCheck?.(input.targets);
-        return Effect.succeed(
-          input.targets.map((target, index) => ({
-            decision:
-              options.assortmentPermissionDecisions?.[index] ??
-              options.assortmentPermissionDecision ??
-              ('allowed' as const),
-            key: toAssortmentPermissionAccessKey(principal.tenantId, principal.legalEntityId, target.target) ?? '',
-          })),
-        );
-      },
       businessPermissions: (input) => {
         options.onBusinessPermissionCheck?.();
         businessPermissionChecks.push(input);
@@ -557,6 +549,18 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         );
       },
       modules: () => Effect.succeed([]),
+      ownerPermissions: (input) => {
+        ownerPermissionChecks.push(...input.targets);
+        ownerPermissionInputs.push(input);
+        options.onOwnerPermissionCheck?.(input.targets);
+        return Effect.succeed(
+          input.targets.map((target, index) => ({
+            decision:
+              options.ownerPermissionDecisions?.[index] ?? options.ownerPermissionDecision ?? ('allowed' as const),
+            key: target.target.key,
+          })),
+        );
+      },
       resources: (input) => {
         options.onResourcePermissionCheck?.();
         resourceChecks.push(input);
@@ -612,7 +616,6 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   const runtime = { resolveActionCommit: baseRuntime.resolveActionCommit, runAction };
 
   return {
-    assortmentPermissionChecks,
     businessPermissionChecks,
     compositionAuthority: () => ({
       lockCount: compositionAuthorityLockCount,
@@ -633,6 +636,8 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     }),
     invocationState: () => currentInvocation,
     legalEntityChecks,
+    ownerPermissionChecks,
+    ownerPermissionInputs,
     permissionChecks,
     permissionCounts: () => ({ permissionCheckCount, rejectionCount }),
     rejections,
@@ -2688,58 +2693,37 @@ it.effect(
   }),
 );
 
-it.effect('checks every plural Assortment target conjunctively before the handler', () =>
-  Effect.gen(function* checksPluralAssortmentTargets() {
+it.effect('checks every plural Owner target conjunctively before the handler', () =>
+  Effect.gen(function* checksPluralOwnerTargets() {
     let handlerCalls = 0;
     let serviceFactoryCalls = 0;
     const action = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'assortment.replace.v1' },
-        actionKey: 'commerce.assortment.replace-binding',
-        assortmentPermissions: defineActionAssortmentPermissions(() => [
-          {
-            binding: {
-              moduleId: 'commerce.assortment',
-              resourceId: 'binding-1',
-              resourceType: 'commerce.assortment.applicability-binding',
-            },
-            kind: 'assortment_binding',
-            mode: 'end',
-            permission: 'assortment.binding.end',
-          },
-          {
-            audience: { kind: 'SHARED' },
-            commercialScope: {
-              channel: {
-                moduleId: 'commerce.channel',
-                resourceId: 'web',
-                resourceType: 'commerce.channel',
-              },
-            },
-            effectiveFrom: '2026-09-22T00:00:00.000Z',
-            kind: 'assortment_binding',
-            mode: 'create',
-            permission: 'assortment.binding.create',
-            ruleRevision: {
-              moduleId: 'commerce.assortment',
-              resourceId: 'rule-revision-2',
-              resourceType: 'commerce.assortment.rule-revision',
-            },
-          },
-        ]),
+        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'owner.replace.v1' },
+        actionKey: 'commerce.fixture.replace-binding',
         auditProfile: 'standard',
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',
           authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
-          entrypointKey: 'commerce.assortment.replace-binding',
-          moduleKey: 'commerce.assortment',
+          entrypointKey: 'commerce.fixture.replace-binding',
+          moduleKey: 'commerce.fixture',
           role: 'action',
         }),
         idempotency: 'required',
         legalEntityScope: 'required',
-        owningModuleKey: 'commerce.assortment',
+        ownerPermissions: defineActionOwnerPermissions(fixtureOwnerContract, () => [
+          ownerPermissionTarget(principal, 'existing', {
+            definition: fixtureOwnerEndPermission,
+            transportObjectId: 'owner-conjunction',
+          }),
+          ownerPermissionTarget(principal, 'proposed', {
+            definition: fixtureOwnerCreatePermission,
+            transportObjectId: 'owner-conjunction',
+          }),
+        ]),
+        owningModuleKey: 'commerce.fixture',
         payloadSchema: Schema.Struct({ value: Schema.String }),
         policies: [],
         resultSchema: Schema.Void,
@@ -2754,80 +2738,289 @@ it.effect('checks every plural Assortment target conjunctively before the handle
         return Effect.succeed({});
       },
     );
-    const allowed = yield* makeHarness();
+    const allowed = yield* makeHarness({
+      createRecord: {
+        actionInvocationId: 'owner-plural-allowed',
+        completedAt: null,
+        requestHash: '',
+        status: 'received',
+      },
+    });
     yield* allowed.runtime.runAction({
       payload: { value: 'replace' },
       principal,
       registration: action,
-      transport: transport('assortment-plural-allowed'),
+      transport: transport('owner-plural-allowed'),
     });
-    expect(allowed.assortmentPermissionChecks).toHaveLength(2);
+    expect(allowed.ownerPermissionChecks).toHaveLength(2);
     expect(handlerCalls).toBe(1);
     expect(serviceFactoryCalls).toBe(1);
 
-    const denied = yield* makeHarness({ assortmentPermissionDecisions: ['allowed', 'denied'] });
+    const denied = yield* makeHarness({
+      createRecord: {
+        actionInvocationId: 'owner-plural-denied',
+        completedAt: null,
+        requestHash: '',
+        status: 'received',
+      },
+      ownerPermissionDecisions: ['allowed', 'denied'],
+    });
     const failure = yield* Effect.flip(
       denied.runtime.runAction({
         payload: { value: 'replace' },
         principal,
         registration: action,
-        transport: transport('assortment-plural-denied'),
+        transport: transport('owner-plural-denied'),
       }),
     );
     expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
-    expect(denied.assortmentPermissionChecks).toHaveLength(2);
+    expect(denied.ownerPermissionChecks).toHaveLength(2);
     expect(denied.gateCounts().handlerResolutionCount).toBe(0);
     expect(serviceFactoryCalls).toBe(1);
 
-    const unavailable = yield* makeHarness({ assortmentPermissionDecisions: ['allowed', 'unavailable'] });
+    const unavailableOptions = { ownerPermissionDecisions: ['allowed', 'unavailable'] } satisfies HarnessOptions;
+    const unavailable = yield* makeHarness(unavailableOptions);
     const unavailableFailure = yield* Effect.flip(
       unavailable.runtime.runAction({
         payload: { value: 'replace' },
         principal,
         registration: action,
-        transport: transport('assortment-plural-unavailable'),
+        transport: transport('owner-plural-unavailable'),
       }),
     );
     expect(Predicate.isTagged(unavailableFailure, 'ActionPermissionCheckError')).toBe(true);
-    expect(unavailable.assortmentPermissionChecks).toHaveLength(2);
+    expect(unavailable.ownerPermissionChecks).toHaveLength(2);
     expect(unavailable.gateCounts().handlerResolutionCount).toBe(0);
     expect(serviceFactoryCalls).toBe(1);
     expect(handlerCalls).toBe(1);
+    expect(unavailable.rejections).toHaveLength(0);
+    expect(unavailable.invocationState().status).toBe('received');
+    unavailableOptions.ownerPermissionDecisions = ['allowed', 'allowed'];
+    yield* unavailable.runtime.runAction({
+      payload: { value: 'replace' },
+      principal,
+      registration: action,
+      transport: transport('owner-plural-unavailable'),
+    });
+    expect(unavailable.ownerPermissionChecks).toHaveLength(4);
+    expect(handlerCalls).toBe(2);
+    expect(serviceFactoryCalls).toBe(2);
   }),
 );
 
-it.effect('fails closed for an unknown Assortment configuration resource type', () =>
-  Effect.gen(function* rejectsUnknownConfigurationType() {
+it.effect(
+  'checks Current grants for each fresh owner invocation and independently preserves executor, module and Resource gates',
+  () =>
+    Effect.gen(function* rechecksFreshOwnerAuthority() {
+      let handlerCalls = 0;
+      const action = defineAction(
+        {
+          accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'fixture.current.v1' },
+          actionKey: 'commerce.fixture.current',
+          auditProfile: 'standard',
+          domainErrorSchema: Schema.Never,
+          domainEvents: {},
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'write',
+            authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+            entrypointKey: 'commerce.fixture.current',
+            moduleKey: 'commerce.fixture',
+            role: 'action',
+          }),
+          idempotency: 'required',
+          legalEntityScope: 'required',
+          ownerPermissions: defineActionOwnerPermissions(fixtureOwnerContract, (_payload, scope) => [
+            ownerPermissionTarget(scope),
+          ]),
+          owningModuleKey: 'commerce.fixture',
+          payloadSchema: Schema.Void,
+          policies: [],
+          resourcePermission: defineActionResourcePermission(() => ({
+            permission: 'write',
+            resource: { moduleId: 'commerce.fixture', resourceId: 'existing', resourceType: 'fixture' },
+          })),
+          resultSchema: Schema.Void,
+          schemaVersion: '1',
+        },
+        () => {
+          handlerCalls += 1;
+          return Effect.void;
+        },
+        () => Effect.succeed({}),
+      );
+      const scenarios = [
+        { failure: null, key: 'initial', options: { ownerPermissionDecision: 'allowed' }, principal },
+        {
+          failure: 'ActionPermissionDenied',
+          key: 'revoked',
+          options: { ownerPermissionDecision: 'denied' },
+          principal,
+        },
+        {
+          failure: 'ActionPermissionDenied',
+          key: 'other-principal',
+          options: { ownerPermissionDecision: 'denied' },
+          principal: { ...principal, principalId: '00000000-0000-4000-8000-000000000099' },
+        },
+        {
+          failure: 'ActionPermissionDenied',
+          key: 'other-tenant',
+          options: { ownerPermissionDecision: 'denied' },
+          principal: { ...principal, tenantId: '00000000-0000-4000-8000-000000000098' },
+        },
+        {
+          failure: 'ActionPermissionDenied',
+          key: 'executor-denied',
+          options: { ownerPermissionDecision: 'allowed', permissionDecision: 'denied' },
+          principal,
+        },
+        {
+          failure: 'ModuleStateDeniedError',
+          key: 'module-inactive',
+          options: { moduleState: 'inactive', ownerPermissionDecision: 'allowed' },
+          principal,
+        },
+        {
+          failure: 'ActionPermissionDenied',
+          key: 'resource-denied',
+          options: { ownerPermissionDecision: 'allowed', resourcePermissionDecision: 'denied' },
+          principal,
+        },
+      ] as const;
+      for (const scenario of scenarios) {
+        const harness = yield* makeHarness({
+          ...scenario.options,
+          createRecord: { actionInvocationId: scenario.key, completedAt: null, requestHash: '', status: 'received' },
+        });
+        const invocation = harness.runtime.runAction({
+          payload: undefined,
+          principal: scenario.principal,
+          registration: action,
+          transport: transport(scenario.key),
+        });
+        if (scenario.failure === null) {
+          yield* invocation;
+        } else {
+          expect(Predicate.isTagged(yield* Effect.flip(invocation), scenario.failure)).toBe(true);
+        }
+        expect(handlerCalls).toBe(1);
+        if (
+          scenario.key === 'initial' ||
+          scenario.key === 'revoked' ||
+          scenario.key === 'other-principal' ||
+          scenario.key === 'other-tenant'
+        ) {
+          expect(harness.ownerPermissionInputs).toEqual([
+            expect.objectContaining({
+              principal: { principalId: scenario.principal.principalId, tenantId: scenario.principal.tenantId },
+              targets: [
+                expect.objectContaining({
+                  target: expect.objectContaining({
+                    scope: {
+                      kind: 'legal_entity',
+                      legalEntityId: scenario.principal.legalEntityId,
+                      tenantId: scenario.principal.tenantId,
+                    },
+                  }),
+                }),
+              ],
+            }),
+          ]);
+        }
+      }
+    }),
+);
+
+it.effect('rejects resolver-selected owner contracts and copied definitions before any permissive Current check', () =>
+  Effect.gen(function* rejectsOwnerDefinitionSubstitution() {
     let handlerCalls = 0;
-    let serviceFactoryCalls = 0;
+    const foreignContract = Object.freeze({ ...fixtureOwnerContract });
+    const copiedDefinition = Object.freeze({ ...fixtureOwnerReadPermission });
+    const SubstitutionModeSchema = Schema.Literals(['contract', 'definition']);
+    const PayloadSchema = Schema.Struct({ mode: SubstitutionModeSchema });
     const action = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'assortment.configuration.v1' },
-        actionKey: 'commerce.assortment.configuration-check',
-        assortmentPermissions: defineActionAssortmentPermissions(() => [
-          {
-            kind: 'assortment_configuration',
-            permission: 'assortment.configuration.read',
-            resource: {
-              moduleId: 'commerce.assortment',
-              resourceId: 'configuration-1',
-              resourceType: 'commerce.assortment.configuration',
-            },
-          },
-        ]),
+        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'fixture.bound.v1' },
+        actionKey: 'commerce.fixture.bound',
         auditProfile: 'standard',
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',
           authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
-          entrypointKey: 'commerce.assortment.configuration-check',
-          moduleKey: 'commerce.assortment',
+          entrypointKey: 'commerce.fixture.bound',
+          moduleKey: 'commerce.fixture',
+          role: 'action',
+        }),
+        idempotency: 'required',
+        legalEntityScope: 'required',
+        ownerPermissions: defineActionOwnerPermissions<typeof PayloadSchema.Type>(
+          fixtureOwnerContract,
+          (payload, scope) => {
+            const target = ownerPermissionTarget(scope);
+            return [
+              Object.freeze(
+                payload.mode === 'contract'
+                  ? { ...target, contract: foreignContract }
+                  : { ...target, definition: copiedDefinition },
+              ),
+            ];
+          },
+        ),
+        owningModuleKey: 'commerce.fixture',
+        payloadSchema: PayloadSchema,
+        policies: [],
+        resultSchema: Schema.Void,
+        schemaVersion: '1',
+      },
+      () => {
+        handlerCalls += 1;
+        return Effect.void;
+      },
+      () => Effect.succeed({}),
+    );
+    for (const mode of SubstitutionModeSchema.literals) {
+      const harness = yield* makeHarness({ ownerPermissionDecision: 'allowed' });
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { mode },
+          principal,
+          registration: action,
+          transport: transport(`owner-substitution-${mode}`),
+        }),
+      );
+      expect(Predicate.isTagged(failure, 'ActionPermissionCheckError')).toBe(true);
+      expect(harness.ownerPermissionInputs).toHaveLength(0);
+      expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+      expect(handlerCalls).toBe(0);
+    }
+  }),
+);
+
+it.effect('fails closed for an owner target outside the declared scope kinds', () =>
+  Effect.gen(function* rejectsUnknownConfigurationType() {
+    let handlerCalls = 0;
+    let serviceFactoryCalls = 0;
+    const action = defineAction(
+      {
+        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'owner.configuration.v1' },
+        actionKey: 'commerce.fixture.configuration-check',
+        auditProfile: 'standard',
+        domainErrorSchema: Schema.Never,
+        domainEvents: {},
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          entrypointKey: 'commerce.fixture.configuration-check',
+          moduleKey: 'commerce.fixture',
           role: 'action',
         }),
         idempotency: 'required',
         legalEntityScope: 'optional',
-        owningModuleKey: 'commerce.assortment',
+        ownerPermissions: defineActionOwnerPermissions(fixtureOwnerContract, () => [
+          ownerPermissionTarget(principal, 'invalid', { scopeKind: 'unknown_scope' }),
+        ]),
+        owningModuleKey: 'commerce.fixture',
         payloadSchema: Schema.Void,
         policies: [],
         resultSchema: Schema.Void,
@@ -2848,11 +3041,11 @@ it.effect('fails closed for an unknown Assortment configuration resource type', 
         payload: undefined,
         principal,
         registration: action,
-        transport: transport('assortment-unknown-configuration'),
+        transport: transport('owner-unknown-configuration'),
       }),
     );
     expect(Predicate.isTagged(failure, 'ActionPermissionCheckError')).toBe(true);
-    expect(harness.assortmentPermissionChecks).toHaveLength(0);
+    expect(harness.ownerPermissionChecks).toHaveLength(0);
     expect(handlerCalls).toBe(0);
     expect(serviceFactoryCalls).toBe(0);
   }),

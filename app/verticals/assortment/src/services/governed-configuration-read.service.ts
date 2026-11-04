@@ -1,4 +1,5 @@
-import type { AssortmentPermissionAccessTarget, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import type { AssortmentPermissionAccessTarget } from '../permissions/authorization-targets.ts';
+import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { DateTime, Effect, Match, Schema } from 'effect';
 import { and, eq } from 'drizzle-orm';
 import { AssortmentConfigurationResponseSchema } from '../../shared/domain/governed-read-contracts.ts';

@@ -1,7 +1,6 @@
 import { Predicate, Result, Schema } from 'effect';
 
-const dottedPermissionPattern =
-  /^(?:(?!assortment\.)[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+|assortment\.(?:binding\.(?:create|end)|boundary\.(?:create|end)|configuration\.read|decision\.explain|rule\.(?:create|revision\.create|retire)))$/u;
+const dottedPermissionPattern = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/u;
 const dottedEntrypointPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9_-]*)+$/u;
 const schemaVersionPattern = /^[1-9][0-9]*$/u;
 const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
@@ -11,12 +10,7 @@ export const BusinessPermissionCodeSchema = Schema.String.check(Schema.isPattern
   Schema.decodeTo(Schema.String),
 );
 
-export const BusinessPermissionScopeKindSchema = Schema.Literals([
-  'assortment_binding',
-  'assortment_boundary',
-  'assortment_configuration',
-  'assortment_decision',
-  'assortment_rule',
+const LegacyBusinessPermissionScopeKindSchema = Schema.Literals([
   'counterparty',
   'counterparty_storefront',
   'inventory_resource',
@@ -26,6 +20,7 @@ export const BusinessPermissionScopeKindSchema = Schema.Literals([
   'retail_profile',
   'tax_selling_legal_entity',
 ]);
+export const BusinessPermissionScopeKindSchema = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9_]*$/u));
 export const BusinessPermissionAuditSensitivitySchema = Schema.Literals(['sensitive', 'standard']);
 
 export type BusinessPermissionCode = typeof BusinessPermissionCodeSchema.Type;
@@ -85,20 +80,19 @@ const usesIncompatibleTaxScope = (descriptor: BusinessPermissionDescriptor): boo
     ? descriptor.allowedScopeKinds.some((scope) => scope !== 'tax_selling_legal_entity')
     : descriptor.allowedScopeKinds.includes('tax_selling_legal_entity');
 
+const legacyTargetPermissionPrefixes = ['pricing.price_group.', 'inventory.', 'retail.', 'counterparty.'];
+const usesLegacyPermissionTargets = (permission: string): boolean =>
+  legacyTargetPermissionPrefixes.some((prefix) => permission.startsWith(prefix)) ||
+  isTaxSellingLegalEntityPermission(permission);
+
 const usesIncompatibleTargetScope = (descriptor: BusinessPermissionDescriptor): boolean => {
   const pricingPermission = descriptor.key.startsWith('pricing.price_group.');
   const inventoryPermission = descriptor.key.startsWith('inventory.');
-  const retailPermission = descriptor.key.startsWith('retail.');
-  const counterpartyPermission = descriptor.key.startsWith('counterparty.');
-  const assortmentPermission = descriptor.key.startsWith('assortment.');
-  const taxPermission = isTaxSellingLegalEntityPermission(descriptor.key);
-  const modulePermission =
-    !pricingPermission &&
-    !inventoryPermission &&
-    !retailPermission &&
-    !counterpartyPermission &&
-    !assortmentPermission &&
-    !taxPermission;
+  const ownerScopes = descriptor.allowedScopeKinds.filter(
+    (scope) => !Schema.is(LegacyBusinessPermissionScopeKindSchema)(scope),
+  );
+  const ownerPermission = ownerScopes.length === descriptor.allowedScopeKinds.length;
+  const modulePermission = !ownerPermission && !usesLegacyPermissionTargets(descriptor.key);
   const moduleScope = descriptor.allowedScopeKinds.includes('module');
   const hasPricingScope = descriptor.allowedScopeKinds.some(
     (scope) => scope === 'pricing_catalog' || scope === 'price_group',
@@ -106,6 +100,8 @@ const usesIncompatibleTargetScope = (descriptor: BusinessPermissionDescriptor): 
   const hasInventoryScope = descriptor.allowedScopeKinds.includes('inventory_resource');
 
   return (
+    (ownerScopes.length > 0 && !ownerPermission) ||
+    (ownerPermission && usesLegacyPermissionTargets(descriptor.key)) ||
     (pricingPermission &&
       descriptor.allowedScopeKinds.some((scope) => scope !== 'pricing_catalog' && scope !== 'price_group')) ||
     (!pricingPermission && hasPricingScope) ||

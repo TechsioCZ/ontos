@@ -1,12 +1,14 @@
+import { fixtureOwnerContract, fixtureOwnerModule, ownerPermissionTarget } from '../support/owner-permission-target.ts';
 import { fileURLToPath } from 'node:url';
 
 import { NodeFileSystem } from '@effect/platform-node';
 import { Effect, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { defineTenantModuleEntrypoint, defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import {
   defineRead,
+  defineReadOwnerPermission,
   defineReadConditionalPermission,
   defineReadResourcePermission,
   validateReadDescriptorInput,
@@ -48,45 +50,62 @@ it('defines immutable read metadata while keeping handler and service factory pr
   expect(Object.isFrozen(registration.descriptor)).toBe(true);
   expect(Object.isFrozen(registration.descriptor.policies)).toBe(true);
 });
-it('retains an exact Assortment permission resolver as an immutable read declaration', () => {
+it('retains an exact owner permission resolver as an immutable read declaration', () => {
   const registration = defineRead(
     {
       accessKind: 'detail',
-      entrypoint: defineSystemModuleEntrypoint({
+      entrypoint: defineTenantModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'assortment.configuration.read' },
-        entrypointKey: 'core.assortment.configuration',
-        moduleKey: 'core.assortment',
+        authorization: { kind: 'context_permission', permission: 'fixture.read' },
+        entrypointKey: 'commerce.fixture.configuration',
+        moduleKey: fixtureOwnerModule,
         role: 'api',
       }),
-      evidencePolicy: { captureMode: 'metadata_only', policyKey: 'core.assortment.configuration.v1' },
+      evidencePolicy: { captureMode: 'metadata_only', policyKey: 'commerce.fixture.configuration.v1' },
       inputSchema: Schema.Struct({}),
       legalEntityScope: 'required',
-      owningModuleKey: 'core.assortment',
-      permissionTarget: 'assortment_permission',
+      owningModuleKey: fixtureOwnerModule,
+      permissionTarget: 'owner_permission',
       policies: [],
-      readKey: 'core.assortment.configuration',
+      readKey: 'commerce.fixture.configuration',
       resultSchema: Schema.String,
       schemaVersion: '1',
     },
     () => Effect.succeed({ evidence: { resultCount: 1 }, result: 'ok' }),
     () => Effect.succeed({}),
-    () => ({
-      assortmentPermission: {
-        kind: 'assortment_configuration' as const,
-        permission: 'assortment.configuration.read' as const,
-        resource: {
-          moduleId: 'commerce.assortment',
-          resourceId: 'configuration-1',
-          resourceType: 'commerce.assortment.configuration',
-        },
-      },
-      kind: 'assortment_permission' as const,
-    }),
+    defineReadOwnerPermission(fixtureOwnerContract, (_input, scope) => ownerPermissionTarget(scope)),
   );
   expect(Object.keys(registration)).toEqual(['descriptor']);
-  expect(registration.descriptor.permissionTarget).toBe('assortment_permission');
+  expect(registration.descriptor.permissionTarget).toBe('owner_permission');
   expect(Object.isFrozen(registration.descriptor)).toBe(true);
+  const foreignEntrypoint = defineTenantModuleEntrypoint({
+    access: 'read',
+    authorization: { kind: 'context_permission', permission: 'fixture.read' },
+    entrypointKey: 'commerce.foreign.configuration',
+    moduleKey: 'commerce.foreign',
+    role: 'api',
+  });
+  expect(() =>
+    defineRead(
+      {
+        ...registration.descriptor,
+        entrypoint: foreignEntrypoint,
+        owningModuleKey: 'commerce.foreign',
+        readKey: 'commerce.foreign.configuration',
+      },
+      () => Effect.succeed({ evidence: { resultCount: 1 }, result: 'ok' }),
+      () => Effect.succeed({}),
+      defineReadOwnerPermission(fixtureOwnerContract, (_input, scope) => ownerPermissionTarget(scope)),
+    ),
+  ).toThrow();
+  expect(() =>
+    defineRead(
+      registration.descriptor,
+      () => Effect.succeed({ evidence: { resultCount: 1 }, result: 'ok' }),
+      () => Effect.succeed({}),
+      (_input, scope) => ({ kind: 'owner_permission', ownerPermission: ownerPermissionTarget(scope) }),
+    ),
+  ).toThrow();
 });
 it('requires an explicit valid owner-scoped read entrypoint', () => {
   expect(() =>

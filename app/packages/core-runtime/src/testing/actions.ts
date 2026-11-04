@@ -35,7 +35,11 @@ import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/modul
 import type { TenantModuleState } from '../modules/tenant-module-state-service.ts';
 import { makeOperationalScopeResolver } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
-import type { ContextAccessDecision, ContextAccessService } from '../permissions/context-access.ts';
+import type {
+  ContextAccessDecision,
+  ContextAccessService,
+  OwnerPermissionAccessTarget,
+} from '../permissions/context-access.ts';
 import { scriptedPgClientLayer } from './scripted-pg-client.ts';
 
 /** Test-only: bind the existing issuer registrar to an explicitly scoped fixture pool. */
@@ -122,6 +126,8 @@ export interface ActionTestHarnessOptions extends Pick<
   readonly legalEntityAccess?: ContextAccessDecision;
   readonly legalEntityPermission?: ContextAccessDecision;
   readonly moduleState?: TenantModuleState;
+  /** Scripted Current decisions in exact target order; omitted positions remain unavailable. */
+  readonly ownerPermissionDecisions?: readonly ContextAccessDecision[];
   readonly resourcePermission?: ContextAccessDecision;
   readonly scope?: 'active' | 'denied' | 'unavailable';
   readonly services?: readonly ActionTestServiceBinding[];
@@ -138,6 +144,7 @@ export interface ActionTestInvocation extends ActionInvocationRecord {
 export interface ActionTestSnapshot {
   readonly committed: readonly FlushActionSuccessInput[];
   readonly invocations: readonly ActionTestInvocation[];
+  readonly ownerPermissionTargets: readonly OwnerPermissionAccessTarget[];
   readonly permissionDenials: readonly RejectPermissionDeniedInput[];
   readonly policyDenials: readonly FinalizeActionPolicyDenialInput[];
   readonly stages: readonly ActionRuntimeStage[];
@@ -165,6 +172,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
     const idempotency = new Map<string, string>();
     const committed: FlushActionSuccessInput[] = [];
     const permissionDenials: RejectPermissionDeniedInput[] = [];
+    const ownerPermissionTargets: OwnerPermissionAccessTarget[] = [];
     const policyDenials: FinalizeActionPolicyDenialInput[] = [];
     const stages: ActionRuntimeStage[] = [];
     let transactionCount = 0;
@@ -390,6 +398,15 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
           })),
         ),
       modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+      ownerPermissions: ({ targets }) => {
+        ownerPermissionTargets.push(...targets.map(({ target }) => target));
+        return Effect.succeed(
+          targets.map(({ target }, index) => ({
+            decision: options.ownerPermissionDecisions?.[index] ?? 'unavailable',
+            key: target.key,
+          })),
+        );
+      },
       resources: ({ resources }) =>
         Effect.succeed(
           resources.map((resource) => ({
@@ -535,6 +552,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         Object.freeze({
           committed: Object.freeze([...committed]),
           invocations: Object.freeze([...invocations.values()].map((value) => Object.freeze({ ...value }))),
+          ownerPermissionTargets: Object.freeze([...ownerPermissionTargets]),
           permissionDenials: Object.freeze([...permissionDenials]),
           policyDenials: Object.freeze([...policyDenials]),
           stages: Object.freeze([...stages]),

@@ -1,4 +1,5 @@
-import type { AssortmentPermissionAccessTarget, OperationalScope } from '@app/core-runtime';
+import type { AssortmentPermissionAccessTarget } from '../permissions/authorization-targets.ts';
+import type { OperationalScope } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 import type {
   AssortmentDecisionEvidence,

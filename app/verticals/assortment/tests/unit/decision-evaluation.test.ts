@@ -1,4 +1,7 @@
 import { expect, it } from 'effect-rstest';
+import { NodeCrypto } from '@effect/platform-node';
+import { ActionPermissionDenied } from '@app/core-runtime';
+import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Array as EffectArray, DateTime, Effect, Schema } from 'effect';
 
 import {
@@ -29,6 +32,11 @@ import type {
 } from '../../shared/domain/ports/decision-evaluation.ts';
 import { AssortmentConsumerDecisionEvidenceReferenceSchema } from '../../shared/domain/consumer-evidence.ts';
 import { assortmentDecisionRequestFingerprint } from '../../src/services/decision-evidence.repository.ts';
+import { RetireRulePayloadSchema } from '../../shared/actions/policy-administration.ts';
+import { CreateClosedAssortmentBoundaryPayloadSchema } from '../../shared/actions/boundary-administration.ts';
+import { createClosedAssortmentBoundaryAction } from '../../src/actions/create-closed-assortment-boundary.action.ts';
+import { retireRuleAction } from '../../src/actions/retire-rule.action.ts';
+import { assortmentRegistration } from '../../vertical.registration.ts';
 
 const tenantId = '018f8b4e-35a2-7b51-8d56-91a4f37d6a11';
 const principalId = '018f8b4e-35a2-7b51-8d56-91a4f37d6a12';
@@ -303,6 +311,126 @@ it.effect('redacts injected Visibility outcomes and preserves trusted source ide
       safeReasonCode: 'MISSING_CONFIGURATION',
     });
   }),
+);
+
+it.effect(
+  'never treats an actual ELIGIBLE decision as permission to execute the registered Rule retirement Action',
+  () =>
+    Effect.gen(function* eligibilityDoesNotGrantAdministration() {
+      const evaluation = makeAssortmentDecisionEvaluation(
+        dependenciesFor(visibilitySource(decisionFor(canonicalVisibilityRequest, 'ELIGIBLE'))),
+      );
+      const eligible = yield* evaluation.evaluateVisibility(visibilityRequest, scope);
+      expect(eligible).toEqual({ outcome: 'ELIGIBLE', retryable: false });
+
+      const payload = yield* Schema.decodeUnknownEffect(Schema.toEncoded(RetireRulePayloadSchema))({
+        effectiveAt: '2026-09-23T10:00:00.000Z',
+        expectedBasisFingerprint: 'a'.repeat(64),
+        provenanceRef: 'test:eligible-does-not-grant-retirement',
+        reason: 'Retire the eligible product rule',
+        stableRuleRef: ref('commerce.assortment', 'commerce.assortment.stable-rule', 'stable-rule-1'),
+      });
+      const harness = yield* makeActionTestHarness({
+        actionPermission: 'allowed',
+        ownerPermissionDecisions: ['denied'],
+        ownerRegistration: assortmentRegistration,
+      });
+      const failure = yield* harness.runtime
+        .runAction({
+          payload,
+          principal: {
+            authBindingId: '018f8b4e-35a2-7b51-8d56-91a4f37d6a14',
+            authContextRef: 'better-auth-session:eligible-does-not-grant-retirement',
+            authMethod: 'session',
+            principalId,
+            tenantId,
+          },
+          registration: retireRuleAction,
+          transport: {
+            correlationId: scope.correlationId,
+            idempotencyKey: 'eligible-does-not-grant-retirement',
+          },
+        })
+        .pipe(Effect.flip);
+      const snapshot = harness.snapshot();
+      expect(Schema.is(ActionPermissionDenied)(failure)).toBe(true);
+      expect(snapshot.ownerPermissionTargets).toHaveLength(1);
+      expect(snapshot.permissionDenials).toHaveLength(1);
+      expect(snapshot.stages).not.toContain('handler_executed');
+      expect(snapshot.committed).toHaveLength(0);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+);
+
+it.effect('never treats an actual ELIGIBLE decision as permission to execute registered Boundary administration', () =>
+  Effect.gen(function* eligibilityDoesNotGrantBoundaryAdministration() {
+    const legalEntityId = '018f8b4e-35a2-7b51-8d56-91a4f37d6a15';
+    const sellingLegalEntityRef = ref('party.registry', 'party.registry.legal-entity', legalEntityId);
+    const boundaryScope = { ...scope, legalEntityId };
+    const subject = {
+      kind: 'RETAIL_CUSTOMER_PROFILE' as const,
+      profileRef: ref(
+        'commerce.customer-context',
+        'commerce.customer-context.retail-customer-profile',
+        'profile-eligible',
+      ),
+    };
+    const boundaryVisibilityRequest = Schema.decodeUnknownSync(AssortmentVisibilityEvaluationRequestSchema)({
+      ...visibilityRequest,
+      subject: { kind: 'IDENTIFIED', subject },
+    });
+    const eligibleRequest = Schema.decodeUnknownSync(Schema.toType(AssortmentVisibilityRequestSchema))({
+      ...canonicalVisibilityRequest,
+      subject: boundaryVisibilityRequest.subject,
+      trustedContext: { ...canonicalVisibilityRequest.trustedContext, sellingLegalEntityRef },
+    });
+    const evaluation = makeAssortmentDecisionEvaluation(
+      dependenciesFor({
+        resolvePurchase: () => Effect.fail(dependencyFailure()),
+        resolveVisibility: () =>
+          Effect.succeed({ decision: decisionFor(eligibleRequest, 'ELIGIBLE'), request: eligibleRequest }),
+      }),
+    );
+    expect(yield* evaluation.evaluateVisibility(boundaryVisibilityRequest, boundaryScope)).toEqual({
+      outcome: 'ELIGIBLE',
+      retryable: false,
+    });
+    const payload = yield* Schema.decodeUnknownEffect(Schema.toEncoded(CreateClosedAssortmentBoundaryPayloadSchema))({
+      admissionSet: { entries: [] },
+      commercialScope: { channelRef: trustedContext.channelRef, sellingLegalEntityRef },
+      decisionPurpose: 'VISIBILITY',
+      effectiveFrom: trustedContext.operationTime,
+      provenanceRef: 'test:eligible-does-not-grant-boundary',
+      reason: 'Administer the eligible context Boundary',
+      subject,
+    });
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      ownerPermissionDecisions: ['denied'],
+      ownerRegistration: assortmentRegistration,
+    });
+    const failure = yield* harness.runtime
+      .runAction({
+        payload,
+        principal: {
+          authBindingId: '018f8b4e-35a2-7b51-8d56-91a4f37d6a14',
+          authContextRef: 'better-auth-session:eligible-does-not-grant-boundary',
+          authMethod: 'session',
+          legalEntityId,
+          principalId,
+          tenantId,
+        },
+        registration: createClosedAssortmentBoundaryAction,
+        transport: { correlationId: scope.correlationId, idempotencyKey: 'eligible-does-not-grant-boundary' },
+      })
+      .pipe(Effect.flip);
+    const snapshot = harness.snapshot();
+    expect(Schema.is(ActionPermissionDenied)(failure)).toBe(true);
+    expect(snapshot.ownerPermissionTargets).toHaveLength(1);
+    expect(snapshot.ownerPermissionTargets[0]).toMatchObject({ definition: { key: 'assortment.boundary.create' } });
+    expect(snapshot.permissionDenials).toHaveLength(1);
+    expect(snapshot.stages).not.toContain('handler_executed');
+    expect(snapshot.committed).toHaveLength(0);
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );
 
 it.effect('fails closed when injected Visibility ownership or evidence targets drift from the wire request', () =>

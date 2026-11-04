@@ -1,3 +1,10 @@
+import {
+  fixtureOwnerContract,
+  fixtureOwnerModule,
+  fixtureOwnerEndPermission,
+  fixtureOwnerCreatePermission,
+  ownerPermissionTarget,
+} from '../support/owner-permission-target.ts';
 import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -5,7 +12,7 @@ import {
   decodeActionPayload,
   decodeActionResult,
   defineAction,
-  defineActionAssortmentPermissions,
+  defineActionOwnerPermissions,
   defineActionBusinessPermission,
   defineActionResourcePermission,
   validateActionDescriptorInput,
@@ -124,47 +131,51 @@ it('accepts conjunctive business and Resource permission declarations', () => {
   ).not.toThrow();
 });
 
-it('keeps plural Assortment permission declarations typed and immutable', () => {
-  const declaration = defineActionAssortmentPermissions((_payload, _scope) => [
-    {
-      binding: {
-        moduleId: 'commerce.assortment',
-        resourceId: 'binding-1',
-        resourceType: 'commerce.assortment.applicability-binding',
-      },
-      kind: 'assortment_binding',
-      mode: 'end',
-      permission: 'assortment.binding.end',
-    },
-    {
-      boundary: {
-        moduleId: 'commerce.assortment',
-        resourceId: 'boundary-1',
-        resourceType: 'commerce.assortment.closed-assortment-boundary',
-      },
-      kind: 'assortment_boundary',
-      mode: 'end',
-      permission: 'assortment.boundary.end',
-    },
+it('keeps plural owner permission declarations typed, immutable and bound to the Action owner', () => {
+  const scope = { legalEntityId: 'entity-1', tenantId: 'tenant-1' };
+  const declaration = defineActionOwnerPermissions(fixtureOwnerContract, () => [
+    ownerPermissionTarget(scope, 'existing', {
+      definition: fixtureOwnerEndPermission,
+      transportObjectId: 'owner-conjunction',
+    }),
+    ownerPermissionTarget(scope, 'proposed', {
+      definition: fixtureOwnerCreatePermission,
+      transportObjectId: 'owner-conjunction',
+    }),
   ]);
   const entrypoint = defineTenantModuleEntrypoint({
     access: 'write',
     authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
-    entrypointKey: 'commerce.assortment.replace',
-    moduleKey: 'commerce.assortment',
+    entrypointKey: 'commerce.fixture.replace',
+    moduleKey: fixtureOwnerModule,
     role: 'action',
   });
-
   expect(Object.isFrozen(declaration)).toBe(true);
   expect(() =>
     validateActionDescriptorInput({
-      assortmentPermissions: declaration,
       entrypoint,
       legalEntityScope: 'required',
-      owningModuleKey: 'commerce.assortment',
+      ownerPermissions: declaration,
+      owningModuleKey: fixtureOwnerModule,
       policies: [],
     }),
   ).not.toThrow();
+  const foreignEntrypoint = defineTenantModuleEntrypoint({
+    access: 'write',
+    authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+    entrypointKey: 'commerce.other.replace',
+    moduleKey: 'commerce.other',
+    role: 'action',
+  });
+  expect(() =>
+    validateActionDescriptorInput({
+      entrypoint: foreignEntrypoint,
+      legalEntityScope: 'required',
+      ownerPermissions: declaration,
+      owningModuleKey: 'commerce.other',
+      policies: [],
+    }),
+  ).toThrow();
 });
 
 it('requires trusted Legal Entity scope for a Counterparty permission declaration', () => {

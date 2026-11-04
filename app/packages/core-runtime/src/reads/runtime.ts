@@ -38,10 +38,7 @@ import {
   hasCanonicalInventoryAuthorizationTarget,
   hasCanonicalPricingAuthorizationTargetIds,
   isBusinessPermissionTargetCompatible,
-  isAssortmentPermissionTargetValid,
-  toAssortmentPermissionAccessKey,
-  toAssortmentPermissionAccessObjectId,
-  assortmentPermissionTargetRequiresLegalEntity,
+  isOwnerPermissionAccessTargetValid,
   toBusinessPermissionAccessKey,
   toContextPermissionAccessKey,
 } from '../permissions/context-access.ts';
@@ -51,11 +48,6 @@ import {
   failClosedOwnerAuthorizationOverlay,
 } from '../permissions/owner-authorization-overlay.ts';
 import type { OwnerAuthorizationTarget } from '../permissions/owner-authorization-overlay.ts';
-import type {
-  AssortmentPermissionAccessTarget,
-  AssortmentPermissionCommercialScope,
-  AssortmentPermissionSubject,
-} from '../permissions/context-access.ts';
 import { validateReadEvidenceMetadata } from './context.ts';
 import type {
   AtomicResolvedReadPermissionTarget,
@@ -148,165 +140,6 @@ const targetLegalEntityIdIsValid = Schema.is(Schema.String.check(Schema.isUUID()
 const PermissionDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
 type PermissionDecision = typeof PermissionDecisionSchema.Type;
 
-const assortmentResourceIsValid = (resource: {
-  readonly moduleId: string;
-  readonly resourceId: string;
-  readonly resourceType: string;
-}): boolean =>
-  stableTargetKey(resource.moduleId) && stableTargetKey(resource.resourceId) && stableTargetKey(resource.resourceType);
-
-const assortmentSelectorIsValid = (
-  selector: {
-    readonly kind: string;
-    readonly target?: { readonly moduleId: string; readonly resourceId: string; readonly resourceType: string };
-  },
-  purpose?: 'VISIBILITY' | 'PURCHASE',
-): boolean =>
-  (selector.kind === 'ALL'
-    ? selector.target === undefined
-    : selector.target !== undefined && assortmentResourceIsValid(selector.target)) &&
-  (purpose !== 'VISIBILITY' || !['VARIANT', 'PACKAGE_OPTION'].includes(selector.kind));
-
-const assortmentScopeIsValid = (scope: {
-  readonly channel: { readonly moduleId: string; readonly resourceId: string; readonly resourceType: string };
-  readonly market?: { readonly moduleId: string; readonly resourceId: string; readonly resourceType: string };
-  readonly storefront?: { readonly moduleId: string; readonly resourceId: string; readonly resourceType: string };
-}): boolean =>
-  assortmentResourceIsValid(scope.channel) &&
-  (scope.market === undefined || assortmentResourceIsValid(scope.market)) &&
-  (scope.storefront === undefined || assortmentResourceIsValid(scope.storefront));
-
-const AssortmentSubjectKindSchema = Schema.Literals(['RETAIL_CUSTOMER_PROFILE', 'COUNTERPARTY']);
-const assortmentSubjectIsValid = (subject: AssortmentPermissionSubject): boolean =>
-  subject.kind === 'GUEST' ||
-  (Schema.is(AssortmentSubjectKindSchema)(subject.kind) && assortmentResourceIsValid(subject.ref));
-
-const storefrontScopeIsValid = (
-  commercialScope: AssortmentPermissionCommercialScope,
-  scope: OperationalScope,
-): boolean =>
-  commercialScope.storefront === undefined || scope.trustedStorefrontId === commercialScope.storefront.resourceId;
-
-const assortmentConfigurationTargetIsValid = (
-  target: Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_configuration' }>,
-): boolean =>
-  target.permission === 'assortment.configuration.read' &&
-  isAssortmentPermissionTargetValid(target) &&
-  assortmentResourceIsValid(target.resource);
-
-const assortmentDecisionTargetIsValid = (
-  target: Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_decision' }>,
-  scope: OperationalScope,
-): boolean =>
-  target.permission === 'assortment.decision.explain' &&
-  assortmentResourceIsValid(target.catalogSelection) &&
-  assortmentScopeIsValid(target.commercialScope) &&
-  assortmentSubjectIsValid(target.subject) &&
-  storefrontScopeIsValid(target.commercialScope, scope);
-
-const assortmentRuleTargetIsValid = (
-  target: Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_rule' }>,
-): boolean => {
-  if (target.mode === 'retire') {
-    return target.permission === 'assortment.rule.retire' && assortmentResourceIsValid(target.stableRule);
-  }
-  const expectedPermission = target.mode === 'create' ? 'assortment.rule.create' : 'assortment.rule.revision.create';
-  const lineageValid =
-    target.mode === 'create' ? stableTargetKey(target.stableCode) : assortmentResourceIsValid(target.stableRule);
-  return (
-    target.permission === expectedPermission &&
-    assortmentSelectorIsValid(target.selector, target.purpose) &&
-    lineageValid
-  );
-};
-
-const assortmentBindingTargetIsValid = (
-  target: Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_binding' }>,
-  scope: OperationalScope,
-): boolean => {
-  if (target.mode === 'end') {
-    return target.permission === 'assortment.binding.end' && assortmentResourceIsValid(target.binding);
-  }
-  let audienceValid = false;
-  if (target.audience.kind === 'SHARED') {
-    audienceValid = true;
-  } else if (target.audience.kind === 'COMMERCE_CUSTOMER_GROUP') {
-    audienceValid = assortmentResourceIsValid(target.audience.group);
-  } else {
-    audienceValid = assortmentSubjectIsValid(target.audience.subject);
-  }
-  return (
-    target.permission === 'assortment.binding.create' &&
-    assortmentResourceIsValid(target.ruleRevision) &&
-    audienceValid &&
-    assortmentScopeIsValid(target.commercialScope) &&
-    stableTargetKey(target.effectiveFrom) &&
-    storefrontScopeIsValid(target.commercialScope, scope)
-  );
-};
-
-const assortmentBoundaryTargetIsValid = (
-  target: Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_boundary' }>,
-  scope: OperationalScope,
-): boolean => {
-  if (target.mode === 'end') {
-    return target.permission === 'assortment.boundary.end' && assortmentResourceIsValid(target.boundary);
-  }
-  const admissionSetValid =
-    ((target.admissionSet.setKind === 'EMPTY' && target.admissionSet.memberCount === 0) ||
-      (target.admissionSet.setKind === 'ENTRIES' && target.admissionSet.memberCount > 0)) &&
-    target.admissionSet.memberCount === target.admissionSet.entries.length &&
-    target.admissionSet.contentHash.length === 64 &&
-    /^[0-9a-f]{64}$/u.test(target.admissionSet.contentHash) &&
-    target.admissionSet.entries.every((entry) => assortmentSelectorIsValid(entry, target.purpose));
-  return (
-    target.permission === 'assortment.boundary.create' &&
-    assortmentSubjectIsValid(target.subject) &&
-    assortmentScopeIsValid(target.commercialScope) &&
-    stableTargetKey(target.effectiveFrom) &&
-    storefrontScopeIsValid(target.commercialScope, scope) &&
-    admissionSetValid
-  );
-};
-
-const assortmentPermissionTargetIsValid = (
-  target: AssortmentPermissionAccessTarget,
-  scope: OperationalScope,
-): boolean => {
-  if (target.kind === 'assortment_configuration') {
-    return assortmentConfigurationTargetIsValid(target);
-  }
-  if (target.kind === 'assortment_decision') {
-    return assortmentDecisionTargetIsValid(target, scope);
-  }
-  if (target.kind === 'assortment_rule') {
-    return assortmentRuleTargetIsValid(target);
-  }
-  if (target.kind === 'assortment_binding') {
-    return assortmentBindingTargetIsValid(target, scope);
-  }
-  return assortmentBoundaryTargetIsValid(target, scope);
-};
-
-const assortmentPermissionTargetHasTrustedStorefrontMismatch = (
-  target: AssortmentPermissionAccessTarget,
-  scope: OperationalScope,
-): boolean => {
-  const storefront =
-    target.kind === 'assortment_decision' ||
-    (target.kind === 'assortment_binding' && target.mode === 'create') ||
-    (target.kind === 'assortment_boundary' && target.mode === 'create')
-      ? target.commercialScope.storefront
-      : undefined;
-  if (storefront === undefined) {
-    return false;
-  }
-  return (
-    scope.trustedStorefrontId !== storefront.resourceId &&
-    assortmentPermissionTargetIsValid(target, { ...scope, trustedStorefrontId: storefront.resourceId })
-  );
-};
-
 const businessPermissionTargetIsValid = (
   target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'business_permission' }>,
   scope?: OperationalScope,
@@ -348,8 +181,8 @@ const legalEntityTargetIsValid = (
     LEGAL_ENTITY_PERMISSION_KEYS.some((permission) => permission === target.permission));
 
 const atomicTargetIsValid = (target: AtomicResolvedReadPermissionTarget, scope?: OperationalScope): boolean => {
-  if (target.kind === 'assortment_permission') {
-    return scope === undefined ? false : assortmentPermissionTargetIsValid(target.assortmentPermission, scope);
+  if (target.kind === 'owner_permission') {
+    return scope === undefined ? false : isOwnerPermissionAccessTargetValid(target.ownerPermission, scope);
   }
   if (target.kind === 'business_permission') {
     return businessPermissionTargetIsValid(target, scope);
@@ -377,7 +210,7 @@ const canonicalPermissionTarget = (target: ResolvedReadPermissionTarget): Atomic
   target.kind === 'any_of' ? target.targets[0] : target;
 
 const targetIsValid = (
-  declared: 'assortment_permission' | 'business_permission' | 'legal_entity' | 'module' | 'resource' | 'tenant',
+  declared: 'owner_permission' | 'business_permission' | 'legal_entity' | 'module' | 'resource' | 'tenant',
   target: ResolvedReadPermissionTarget,
   scope: OperationalScope,
 ): boolean => {
@@ -413,10 +246,6 @@ const toOwnerAuthorizationTarget = (
 ): OwnerAuthorizationTarget =>
   Match.value(target).pipe(
     Match.discriminatorsExhaustive('kind')({
-      assortment_permission: (assortmentTarget) => ({
-        kind: 'assortment_permission' as const,
-        target: assortmentTarget.assortmentPermission,
-      }),
       business_permission: (businessTarget) =>
         withOptionalProperty(
           {
@@ -451,6 +280,10 @@ const toOwnerAuthorizationTarget = (
           scope.legalEntityId,
           {},
         ),
+      owner_permission: (ownerTarget) => ({
+        kind: 'owner_permission' as const,
+        target: ownerTarget.ownerPermission,
+      }),
       resource: (resourceTarget) => ({
         kind: 'resource' as const,
         permission: 'read' as const,
@@ -540,7 +373,7 @@ const readBusinessTargetResourceId = (
   return target.resource.resourceId;
 };
 
-const targetMetadata = (target: ResolvedReadPermissionTarget, scope: OperationalScope) => {
+const targetMetadata = (target: ResolvedReadPermissionTarget, _scope: OperationalScope) => {
   const canonical = canonicalPermissionTarget(target);
   if (canonical.kind === 'business_permission') {
     const business = canonical.businessPermission.target;
@@ -562,16 +395,11 @@ const targetMetadata = (target: ResolvedReadPermissionTarget, scope: Operational
       ? {}
       : { targetResourceId: canonical.legalEntityId, targetResourceType: 'core.identity.legal-entity' };
   }
-  if (canonical.kind === 'assortment_permission') {
+  if (canonical.kind === 'owner_permission') {
     return {
-      targetModuleKey: canonical.assortmentPermission.kind,
-      targetResourceId:
-        toAssortmentPermissionAccessObjectId(
-          scope.tenantId,
-          scope.legalEntityId ?? '',
-          canonical.assortmentPermission,
-        ) ?? 'assortment-unavailable',
-      targetResourceType: 'assortment_permission',
+      targetModuleKey: canonical.ownerPermission.transportModuleKey,
+      targetResourceId: canonical.ownerPermission.objectId,
+      targetResourceType: canonical.ownerPermission.contract.targetResourceType,
     };
   }
   if (canonical.kind === 'tenant') {
@@ -645,37 +473,28 @@ const checkBusinessPermissionTarget = <AccessValue extends (typeof ContextAccess
     .pipe(Effect.map((decisions) => decisionFor(decisions, toBusinessPermissionAccessKey(target.businessPermission))));
 };
 
-const checkAssortmentPermissionTarget = <AccessValue extends (typeof ContextAccess)['Service']>(
+const checkOwnerPermissionTarget = <AccessValue extends (typeof ContextAccess)['Service']>(
   contextAccess: AccessValue,
   scope: OperationalScope,
-  target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'assortment_permission' }>,
+  target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'owner_permission' }>,
 ): Effect.Effect<PermissionDecision> => {
   if (
-    contextAccess.assortmentPermissions === undefined ||
-    (scope.legalEntityId === undefined && assortmentPermissionTargetRequiresLegalEntity(target.assortmentPermission))
+    contextAccess.ownerPermissions === undefined ||
+    !isOwnerPermissionAccessTargetValid(target.ownerPermission, scope)
   ) {
     return Effect.succeed('unavailable');
   }
-  const { legalEntityId } = scope;
-  const targetEntry = {
-    target: target.assortmentPermission,
-  };
   const principal = { principalId: scope.principalId, tenantId: scope.tenantId };
-  const requestWithoutLegalEntity =
-    scope.trustedStorefrontId === undefined
-      ? { principal, targets: [targetEntry] }
-      : { principal, targets: [targetEntry], trustedStorefrontId: scope.trustedStorefrontId };
+  const requestBase = { principal, targets: [{ target: target.ownerPermission }] };
+  const requestWithEntity =
+    scope.legalEntityId === undefined ? requestBase : { ...requestBase, legalEntityId: scope.legalEntityId };
   const request =
-    legalEntityId === undefined ? requestWithoutLegalEntity : { ...requestWithoutLegalEntity, legalEntityId };
-  return contextAccess.assortmentPermissions(request).pipe(
-    Effect.map((decisions) => {
-      const expectedKey = toAssortmentPermissionAccessKey(scope.tenantId, legalEntityId, targetEntry.target);
-      if (expectedKey === undefined) {
-        return 'unavailable';
-      }
-      return decisionFor(decisions, expectedKey);
-    }),
-  );
+    scope.trustedStorefrontId === undefined
+      ? requestWithEntity
+      : { ...requestWithEntity, trustedStorefrontId: scope.trustedStorefrontId };
+  return contextAccess
+    .ownerPermissions(request)
+    .pipe(Effect.map((decisions) => decisionFor(decisions, target.ownerPermission.key)));
 };
 
 const checkAtomicPermissionTarget = <AccessValue extends (typeof ContextAccess)['Service']>(
@@ -684,8 +503,8 @@ const checkAtomicPermissionTarget = <AccessValue extends (typeof ContextAccess)[
   target: AtomicResolvedReadPermissionTarget,
   allowMissingLegalEntity: boolean,
 ): Effect.Effect<PermissionDecision> => {
-  if (target.kind === 'assortment_permission') {
-    return checkAssortmentPermissionTarget(contextAccess, scope, target);
+  if (target.kind === 'owner_permission') {
+    return checkOwnerPermissionTarget(contextAccess, scope, target);
   }
   if (target.kind === 'business_permission') {
     return checkBusinessPermissionTarget(contextAccess, scope, target);
@@ -792,8 +611,8 @@ const checkEntrypointContextPermission = <AccessValue extends (typeof ContextAcc
       permissionTarget.moduleId === entrypoint.moduleKey) ||
     (permissionTarget.kind === 'business_permission' &&
       permissionTarget.businessPermission.permission === authorization.permission) ||
-    (permissionTarget.kind === 'assortment_permission' &&
-      permissionTarget.assortmentPermission.permission === authorization.permission)
+    (permissionTarget.kind === 'owner_permission' &&
+      permissionTarget.ownerPermission.definition.key === authorization.permission)
   ) {
     return Effect.succeed(primaryDecision);
   }
@@ -1006,13 +825,15 @@ const resolveReadPermissionTarget = Effect.fn('Runtime.resolveReadPermissionTarg
       }
       permissionTarget = yield* Effect.try({
         catch: (resolverDefect) =>
-          preserveFailureCause(
-            new ReadHandlerExecutionError({
-              code: 'read_handler_execution_failed',
-              reason: 'The declared read permission target could not be resolved',
-            }),
-            resolverDefect,
-          ),
+          Schema.is(ReadPermissionUnavailable)(resolverDefect)
+            ? resolverDefect
+            : preserveFailureCause(
+                new ReadHandlerExecutionError({
+                  code: 'read_handler_execution_failed',
+                  reason: 'The declared read permission target could not be resolved',
+                }),
+                resolverDefect,
+              ),
         try: () => permissionResolver(decodedInput, scope),
       });
       if (
@@ -1020,12 +841,13 @@ const resolveReadPermissionTarget = Effect.fn('Runtime.resolveReadPermissionTarg
         (getReadResultPermissionTargetResolver(registration) !== undefined && permissionTarget.kind === 'any_of')
       ) {
         if (
-          permissionTarget.kind === 'assortment_permission' &&
-          assortmentPermissionTargetHasTrustedStorefrontMismatch(permissionTarget.assortmentPermission, scope)
+          permissionTarget.kind === 'owner_permission' &&
+          permissionTarget.ownerPermission.requiredStorefrontId !== undefined &&
+          permissionTarget.ownerPermission.requiredStorefrontId !== scope.trustedStorefrontId
         ) {
           return yield* new ReadPermissionUnavailable({
             code: 'read_permission_unavailable',
-            reason: 'The trusted storefront scope does not match the requested Assortment target',
+            reason: 'The trusted storefront scope does not match the requested owner permission target',
           });
         }
         return yield* new ReadHandlerExecutionError({
@@ -1155,7 +977,7 @@ const checkResultPermissions = Effect.fn('ReadRuntime.checkResultPermissions')(f
   if (permissionTarget.kind === 'tenant') {
     return yield* checkTenantResultPermission(contextAccess, scope, permissionTarget);
   }
-  if (permissionTarget.kind === 'business_permission' || permissionTarget.kind === 'assortment_permission') {
+  if (permissionTarget.kind === 'business_permission' || permissionTarget.kind === 'owner_permission') {
     return yield* new ReadHandlerExecutionError({
       code: 'read_handler_execution_failed',
       reason: 'Policy-permission reads must not use generic result resource filtering',
