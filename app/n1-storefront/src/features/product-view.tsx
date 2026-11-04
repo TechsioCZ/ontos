@@ -204,7 +204,7 @@ export const ProductView = ({
       </div>
       <div className="mt-8 md:mt-1">
         <Tabs defaultValue="parameters" size="md" variant="line">
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto md:n1-product-tabs">
             <Tabs.List>
               <Tabs.Trigger value="parameters">{d.productParameters}</Tabs.Trigger>
               <Tabs.Trigger value="sizes">{d.sizeGuide}</Tabs.Trigger>
@@ -236,7 +236,7 @@ export const ProductView = ({
                       variant="line"
                     />
                   </div>
-                  <div className="hidden md:block">
+                  <div className="n1-product-parameters hidden md:block">
                     <DataTable
                       columns={parameterColumns(d)}
                       data={[...parameters]}

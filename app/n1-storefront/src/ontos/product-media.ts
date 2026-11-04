@@ -45,13 +45,12 @@ export const readProductImage = async (
   if (!PRODUCT_ID.test(productId) || !ASSET_ID.test(assetId)) {
     return undefined;
   }
-  return await storefrontRuntime.runPromise(
+  const image = await storefrontRuntime.runPromise(
     readProductImageProgram(productId, assetId, size).pipe(
       Effect.catchTag("StorefrontReadUnavailable", (failure) =>
-        failure.status === 403 || failure.status === 404
-          ? Effect.succeed(undefined)
-          : Effect.fail(failure),
+        failure.status === 403 || failure.status === 404 ? Effect.void : Effect.fail(failure),
       ),
     ),
   );
+  return image ?? undefined;
 };

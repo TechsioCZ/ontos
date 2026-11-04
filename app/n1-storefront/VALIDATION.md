@@ -1013,3 +1013,26 @@ umožňuje přečíst delší název; při hoveru se časovač nativně pozastav
 Chybová větev má unit důkaz, nikoli úmyslně poškozené živé úložiště.
 Tento review potvrzuje přenos toast UX; nejde o plošný Figma PASS všech
 produktových detailů nebo vyřešení zbývajících skladových/kategoriálních dat.
+
+## C20: desktopové záložky a typografie parametrů
+
+Aktuální Figma39:1965 a řádek219:2885 znovu načteny přes design context
+se screenshotem. Instalovaný kit0.57 byl ověřen před úpravou. Dvě Tailwind
+utility mění jen existující tokenové vazby na nativních wrapperech; canonical
+N1 theme, komponenty knihovny a ostatní instance Tabs/Table se neupravují.
+
+Skutečný Chrome po změně: desktopový seznam i triggery36px, padding6/10,
+šedý pruh a tmavý indikátor. Buňky parametrů mají16px/24px, řádky36px.
+Mobile390: bez horizontálního přetečení; Tabs zůstávají bílé a mobilní tabulka
+má původní14px. Oba screenshoty byly skutečně prohlédnuté. Nezávislý reviewer
+otevřel desktopový screenshot i Figma referenci a potvrdil pouze tento scope.
+
+Nejde o PASS celé PDP: výška tabulky36 vs37, výrobce, úplná hierarchie,
+další produktové akce a související produkty zůstávají samostatné body.
+
+Po integraci upstream fotografií5a47963d6:366/366 testů PASS, N1 lint a format
+PASS, typová kontrola přes `effect-tsgo tsrs --noEmit -p n1-storefront/tsconfig.json`
+PASS. Nutné opravy nových media souborů zachovávají route200/404/503 i cache
+kontrakt: pojmenované regex skupiny, optional výsledek a bezpečný pevný Effect
+log bez SDK error dumpu. Nezávislý source reviewer nenašel blocker; existující
+testy ověřují media paths, nikoli přímo všechny živé error response obrázků.

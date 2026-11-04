@@ -95,3 +95,20 @@
 @utility token-icon-tree-indicator-open {
   @apply token-icon-minus;
 }
+
+/* Desktop PDP219:2876/223:2174 uses a neutral strip and dark indicator.
+ * Bind existing Tabs roles on its native wrapper; account/mobile keep theirs. */
+@utility n1-product-tabs {
+  --color-tabs-list-bg: var(--color-neutral-200);
+  --color-tabs-indicator-bg: var(--color-base-dark);
+  /* Kit0.57 Tabs uses the shared height role inside this list only. */
+  --height-form-control-md: var(--dimension-36);
+  --padding-tabs-trigger-md: var(--padding-tabs-trigger-sm);
+  --border-width-tabs: var(--dimension-0);
+}
+
+/* Desktop PDP219:2885 uses text/md with compact Table cell spacing.
+ * DataTable delegates cell typography to Table in installed kit0.57. */
+@utility n1-product-parameters {
+  --text-table-sm: var(--text-md);
+}

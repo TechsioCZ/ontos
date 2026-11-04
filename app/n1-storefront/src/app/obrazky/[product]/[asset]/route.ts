@@ -1,20 +1,22 @@
 import "server-only";
+import { Effect } from "effect";
 import { readProductImage } from "@/ontos/product-media";
+import { storefrontRuntime } from "@/ontos/runtime";
 
 // An asset's bytes never change (a new photo is a new asset), so browsers and proxies may keep a copy for a year.
 const immutable = "public, max-age=31536000, immutable";
 
-export async function GET(
+export const GET = async (
   request: Request,
   { params }: { params: Promise<{ asset: string; product: string }> },
-) {
+) => {
   const { asset, product } = await params;
   const size =
     new URL(request.url).searchParams.get("velikost") === "nahled" ? "thumbnail" : "full";
   try {
     const image = await readProductImage(decodeURIComponent(product), asset, size);
     if (!image) {
-      return new Response(null, { status: 404, headers: { "cache-control": "no-store" } });
+      return new Response(null, { headers: { "cache-control": "no-store" }, status: 404 });
     }
     return new Response(image.bytes, {
       headers: {
@@ -23,11 +25,11 @@ export async function GET(
         "x-content-type-options": "nosniff",
       },
     });
-  } catch (error) {
-    console.error("[n1] product image unavailable", error);
+  } catch {
+    await storefrontRuntime.runPromise(Effect.logWarning("N1 product image unavailable"));
     return new Response(null, {
-      status: 503,
       headers: { "cache-control": "no-store", "retry-after": "5" },
+      status: 503,
     });
   }
-}
+};

@@ -361,11 +361,21 @@ se sizes48px. Home31:637/171:2227 skládá cenu a CTA pod sebe, desktop ponechá
 řadu. Jde o app layout wrappery a podporované props, nikoli appearance třídy
 na kit komponentách. Kanonický N1 export zůstává beze změny.
 
-Přesný desktop Tabs strip, selectedvariant stockcorner a responsive Availability
-typografie mají nadále veřejný kit kontrakt gap. Výrobce/sizeguide URL/related
+Selectedvariant stockcorner a responsive Availability typografie mají nadále
+veřejný kit kontrakt gap. Výrobce/sizeguide URL/related
 nejsou vytvářené z fixture, jména, SKU ani náhodného katalogového výběru.
 
 C17 striped řádky219:2885/2892 vážou existující DataTable primary/secondary
-role na canonical neutral300/fill-hover. Palette se nemění. Zbývající velikost
-řádku33 vs37 je sdílený Table-sm font-size kontrakt; nepřepisovat globálně
-Table-sm kvůli jediné DataTable a nezaměňovat takové omezení za hotovou shodu.
+role na canonical neutral300/fill-hover. Palette se nemění.
+
+C20 řeší desktop Tabs219:2876/223:2174 přes token-only Tailwind utilitu
+`md:n1-product-tabs` na existujícím wrapperu `Tabs.List`: neutral200, base-dark,
+dimension36, padding trigger-sm a nulová základní linka. Sdílený height role
+kit0.57 je přesměrovaný pouze uvnitř tohoto seznamu, nikoli v N1 theme nebo
+na nákupním NumericInput. Account ani mobil tento scope nemají.
+
+Desktopový wrapper parametrů219:2885 používá `n1-product-parameters`, který
+váže skutečný Table token `--text-table-sm` na canonical `--text-md`.
+DataTable předává velikost do Table; mobilní tabulka je mimo tento wrapper.
+Pozorovaná výška řádku je nyní36 vs cílových37; přesnou geometrickou shodu
+nepotvrzujeme a nedoplňujeme ji nahodilou pevnou výškou.
