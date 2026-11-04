@@ -1,6 +1,6 @@
 import { NodeFileSystem, NodePath } from '@effect/platform-node';
 import { v1 } from '@authzed/authzed-node';
-import { Config, Effect, FileSystem, Layer, Path, Predicate, Schema } from 'effect';
+import { Effect, FileSystem, Layer, Path, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ActionPermissionCheckError } from '../../src/actions/errors.ts';
@@ -56,15 +56,10 @@ it.effect('loads a root-anchored SpiceDB file fixture independently of the invoc
         const nodePath = yield* Path.Path;
         const originalDirectory = process.cwd();
         const workspaceRoot = resolveAppWorkspaceRoot(originalDirectory);
-        const explicitEnvironmentPath = yield* Config.String('APP_ENV_PATH').pipe(Config.withDefault(''));
-        const expectedEnvironmentPath = nodePath.resolve(
-          workspaceRoot ?? originalDirectory,
-          explicitEnvironmentPath.length === 0 ? '.env' : explicitEnvironmentPath,
+        expect(SPICEDB_ROOT_ENV_PATH).toBe(
+          workspaceRoot === undefined ? undefined : nodePath.join(workspaceRoot, '.env'),
         );
-        expect(SPICEDB_ROOT_ENV_PATH).toBe(expectedEnvironmentPath);
-        if (explicitEnvironmentPath.length === 0) {
-          expect(SPICEDB_ROOT_ENV_PATH.endsWith('/app/.env')).toBe(true);
-        }
+        expect(SPICEDB_ROOT_ENV_PATH.endsWith('/app/.env')).toBe(true);
 
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
@@ -72,7 +67,7 @@ it.effect('loads a root-anchored SpiceDB file fixture independently of the invoc
           }),
         );
         const fixtureDirectory = yield* fileSystem.makeTempDirectoryScoped({
-          directory: workspaceRoot ?? originalDirectory,
+          directory: nodePath.dirname(SPICEDB_ROOT_ENV_PATH),
           prefix: '.unit-spicedb-',
         });
         const fixturePath = nodePath.join(fixtureDirectory, 'spicedb.fixture');
@@ -82,7 +77,9 @@ it.effect('loads a root-anchored SpiceDB file fixture independently of the invoc
           { mode: 0o600 },
         );
         process.chdir('/');
-        expect(SPICEDB_ROOT_ENV_PATH).toBe(expectedEnvironmentPath);
+        expect(SPICEDB_ROOT_ENV_PATH).toBe(
+          workspaceRoot === undefined ? undefined : nodePath.join(workspaceRoot, '.env'),
+        );
         const configuration = yield* loadSpiceDbConfig({
           environment: {},
           envPath: fixturePath,

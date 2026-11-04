@@ -1,6 +1,6 @@
 import { OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
-import { Crypto, Effect } from 'effect';
+import { Effect } from 'effect';
 
 import { ProfileReactivationEligibilityEvaluatorFactory } from './integrations/profile-reactivation-eligibility.ts';
 import {
@@ -26,7 +26,6 @@ export const profileServicesForVerifiedScope = (
 ): Effect.Effect<
   ProfilePersistenceServices,
   OperationContextUnavailable,
-  | Crypto.Crypto
   | ProfileCounterpartyRoleEligibilityResolverFactory
   | ProfileReactivationEligibilityEvaluatorFactory
   | ProfileRetailPermissionReaderFactory
@@ -55,7 +54,6 @@ export const profileServicesForVerifiedScope = (
     const reactivationEvaluatorFactory = yield* ProfileReactivationEligibilityEvaluatorFactory;
     const retailPermissionReaderFactory = yield* ProfileRetailPermissionReaderFactory;
     const guestResolverFactory = yield* PartyRegistryGuestResolverFactory;
-    const crypto = yield* Crypto.Crypto;
     const retailPartyResolverFactory = yield* PartyRegistryRetailPartyResolverFactory;
     const resolveCounterpartyRole = roleResolverFactory.make({
       legalEntityId: verifiedScope.legalEntityId,
@@ -72,8 +70,15 @@ export const profileServicesForVerifiedScope = (
       principalId: verifiedScope.principalId,
       tenantId: verifiedScope.tenantId,
     });
-    const resolveGuestParty = guestResolverFactory.make({ crypto, scope });
-    const resolveRetailParty = retailPartyResolverFactory.make({ crypto, scope });
+    const resolveGuestParty = guestResolverFactory.make({
+      legalEntityId: verifiedScope.legalEntityId,
+      requestCorrelation: scope.correlationId,
+      tenantId: verifiedScope.tenantId,
+    });
+    const resolveRetailParty = retailPartyResolverFactory.make({
+      requestCorrelation: scope.correlationId,
+      tenantId: verifiedScope.tenantId,
+    });
     const profileOwnerVerifier = profileReconciliationOwnerVerifierForTransaction(transaction, verifiedScope);
     const paymentTermsOwnerVerifier = paymentTermsReconciliationOwnerEvidenceVerifierForTransaction(transaction);
     const addressBookOwnerVerifier = addressBookReconciliationOwnerVerifierForTransaction(transaction, scope);

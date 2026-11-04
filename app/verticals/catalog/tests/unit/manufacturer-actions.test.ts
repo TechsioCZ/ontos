@@ -1,4 +1,3 @@
-import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import type { ActionHandlerContext } from '@app/core-runtime';
@@ -170,7 +169,7 @@ describe('manufacturer Action contracts', () => {
       }
       expect(captured).toHaveLength(3);
       expect(harness.snapshot().committed).toHaveLength(0);
-    }).pipe(Effect.provide(nodeCryptoLayer)),
+    }),
   );
   it('requires typed identity, exact subject, reason and evidence', () => {
     const decode = Schema.decodeUnknownSync(SetProductManufacturerPayloadSchema);

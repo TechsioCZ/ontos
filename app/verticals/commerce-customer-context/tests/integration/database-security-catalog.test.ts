@@ -138,7 +138,6 @@ const grantedRoutines = [
   'record_privacy_measure_execution',
   'record_profile_reconciliation_owner_outcome',
   'recover_buyer_approval_revalidation',
-  'recover_market_retirement_reservation',
   'redeem_invitation_claim_secret',
   'register_invitation_claim_proof',
   'remove_customer_group_membership',

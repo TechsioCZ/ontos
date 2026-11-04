@@ -465,7 +465,6 @@ it.layer(
           existing.officialIdentifierRef,
         ]);
       }),
-    120_000,
   );
   suite.effect(
     'public Add and Correction serialize in both native lock orders without duplicate canonical assertions',

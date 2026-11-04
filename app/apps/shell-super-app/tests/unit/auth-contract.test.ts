@@ -53,7 +53,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
   const externalIdentityEndpoints = Object.keys(ShellAuthenticationApi.groups.externalIdentity.endpoints).toSorted();
 
   expect(authenticationEndpoints).toEqual(['currentSession', 'signIn', 'signOut']);
-  expect(gatewayEndpoints).toEqual(['issueGatewayContext', 'issueApiKeyGatewayContext', 'issueRelayedGatewayContext']);
+  expect(gatewayEndpoints).toEqual(['issueGatewayContext', 'issueApiKeyGatewayContext']);
   expect(identityEndpoints).toEqual([
     'changePrincipalStatus',
     'createNonHumanPrincipal',
@@ -99,7 +99,6 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     issueExternalGatewayContext: '/auth/identity/external/gateway-context',
     issueGatewayContext: '/auth/gateway-context',
     issueManagedApiKey: '/auth/identity/api-keys/managed',
-    issueRelayedGatewayContext: '/auth/relay/gateway-context',
     issueSelfApiKey: '/auth/identity/api-keys/self',
     listManagedApiKeys: '/auth/identity/api-keys/managed/list',
     listSelfApiKeys: '/auth/identity/api-keys/self/list',

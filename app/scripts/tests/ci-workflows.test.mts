@@ -1531,11 +1531,10 @@ it('hands the edge deployment planner the Outbox Worker mode it requires', () =>
 
 const QUEUE_PROOF_JOB = 'queue-proof';
 const NODE_ARTIFACT_BUILD_JOB = 'node-artifact-build';
-const NODE_BUILD_ARTIFACT_PATTERN = 'node-units-*';
 const CLOUDFLARE_ARTIFACT_BUILD_JOB = 'cloudflare-artifact-build';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 const FORMAT_AND_LINT_JOB = 'format-and-lint';
-/** Gate jobs rooted at the merge queue proof. */
+/** The gates that start once the merge queue proof is checked. */
 const ROOT_GATE_JOBS = [
   WORKSPACE_GATE_JOB,
   'static-contracts',
@@ -1581,9 +1580,7 @@ it('skips the gates on main only for a commit the merge queue already proved', (
   expect(lookup).toContain('actions/runs/$GITHUB_RUN_ID');
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
   for (const gate of ROOT_GATE_JOBS) {
-    expect(jobs[gate]?.needs).toEqual(
-      gate === 'service-integration' ? [QUEUE_PROOF_JOB, NODE_ARTIFACT_BUILD_JOB] : [QUEUE_PROOF_JOB],
-    );
+    expect(jobs[gate]?.needs).toEqual([QUEUE_PROOF_JOB]);
     expect(jobs[gate]?.if).toBe(expression("!cancelled() && needs.queue-proof.outputs.proven != 'true'"));
   }
 });
@@ -1715,7 +1712,7 @@ const readArtifactBuildJobs = () =>
 it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
   const jobs = readArtifactBuildJobs();
   for (const [job, proofs, artifacts] of [
-    [NODE_ARTIFACT_BUILD_JOB, ['node'], NODE_BUILD_ARTIFACT_PATTERN],
+    [NODE_ARTIFACT_BUILD_JOB, ['node'], 'node-units-*'],
     [CLOUDFLARE_ARTIFACT_BUILD_JOB, ['outputs', 'topology'], 'cloudflare-units-*'],
   ] as const) {
     const { name, permissions, steps, strategy } = jobs[job];
@@ -1913,14 +1910,7 @@ it('runs the root unit and component tests of every workspace package in exactly
 const IntegrationShardsWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
     'service-integration': Schema.Struct({
-      needs: Schema.Array(Schema.String),
-      steps: Schema.Array(
-        Schema.Struct({
-          ...WorkflowStepSchema.fields,
-          uses: Schema.optional(Schema.String),
-          with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-        }),
-      ),
+      steps: Schema.Array(WorkflowStepSchema),
       strategy: Schema.Struct({
         matrix: Schema.Struct({
           include: Schema.Array(
@@ -1941,70 +1931,6 @@ const IntegrationShardsWorkflowSchema = Schema.Struct({
 
 const shardFilters = (shard: { readonly 'package-filters'?: string | undefined }) =>
   [...(shard['package-filters'] ?? '').matchAll(/--filter (?<filter>\S+)/gu)].map(({ groups }) => groups?.filter ?? '');
-
-it('restores same-run Node artifacts only for the root native integration shard before its tests', () => {
-  const source: unknown = parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'));
-  const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(source);
-  const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs['service-integration'];
-  expect(integration.needs).toEqual([QUEUE_PROOF_JOB, NODE_ARTIFACT_BUILD_JOB]);
-  // The producer depends only on queue proof, so waiting for its complete matrix cannot create a cycle.
-  expect(jobs[NODE_ARTIFACT_BUILD_JOB]?.needs).toEqual([QUEUE_PROOF_JOB]);
-  const roots = integration.strategy.matrix.include.filter((shard) => shard['root-suite'] === true);
-  expect(roots).toHaveLength(1);
-  expect(roots[0]?.suite).toBe('integration');
-  const { steps } = integration;
-  const download = steps.findIndex(({ with: inputs }) => inputs?.pattern === NODE_BUILD_ARTIFACT_PATTERN);
-  const unpack = steps.findIndex(({ run }) => run?.startsWith('bash scripts/unpack-unit-build-outputs.sh') === true);
-  const worker = steps.findIndex(({ run }) => run?.includes('zerops:materialize') === true);
-  const tests = steps.findIndex(({ env }) => env?.PACKAGE_FILTERS !== undefined);
-  expect(download).toBeGreaterThan(-1);
-  expect(download < unpack && unpack < worker && worker < tests).toBe(true);
-  expect(steps[download]?.uses).toMatch(/^actions\/download-artifact@[a-f0-9]{40}$/u);
-  // No run-id, repository or token override: the artifacts must belong to this workflow run.
-  expect(steps[download]?.with).toEqual({
-    path: `${expression('runner.temp')}/native-composition-units`,
-    pattern: NODE_BUILD_ARTIFACT_PATTERN,
-  });
-  expect(steps[unpack]?.run).toBe(
-    'bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output',
-  );
-  expect(steps[worker]?.run).toBe(
-    'mise exec -- pnpm zerops:materialize --app commerce-customer-context --package @app/commerce-customer-context --package-dir verticals/commerce-customer-context --worker',
-  );
-  expect(steps[worker]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
-  for (const index of [download, unpack, worker]) {
-    expect(steps[index]?.if).toBe('matrix.root-suite == true');
-  }
-  expect(steps.filter(({ if: condition }) => condition === 'matrix.root-suite == true')).toHaveLength(3);
-});
-
-it('refuses root native integration when the same-run build archives are missing', () => {
-  const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(
-    parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')),
-  ).jobs['service-integration'];
-  const unpack = integration.steps.find(
-    ({ run }) => run?.startsWith('bash scripts/unpack-unit-build-outputs.sh') === true,
-  );
-  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-native-artifact-step-'));
-  try {
-    const scripts = path.join(directory, 'scripts');
-    mkdirSync(scripts);
-    // Execute the actual workflow command and unpack helper in an isolated workspace with no archives.
-    writeFileSync(
-      path.join(scripts, 'unpack-unit-build-outputs.sh'),
-      readFileSync(new URL('../unpack-unit-build-outputs.sh', import.meta.url), 'utf-8'),
-    );
-    expect(() =>
-      execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', unpack?.run ?? 'exit 0'], {
-        cwd: directory,
-        env: { PATH: STEP_PATH, RUNNER_TEMP: directory },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }),
-    ).toThrow(/No shard build outputs/u);
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
-  }
-});
 
 it('runs the root integration suite once and every package integration suite in exactly one shard', () => {
   const { scripts } = readRootScripts();

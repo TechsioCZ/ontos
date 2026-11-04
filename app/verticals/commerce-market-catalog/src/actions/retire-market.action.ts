@@ -2,14 +2,8 @@
 // @ontos-action-owner commerce.market-catalog
 // @ontos-action-slug retire-market
 import type { ActionHandlerContext, ActionServiceFactory } from '@app/core-runtime';
-import {
-  OperationContextUnavailable,
-  defineAction,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
-import type { Crypto } from 'effect';
-import { DateTime, Effect, Match, Option, Schema } from 'effect';
+import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { DateTime, Effect, Match, Schema } from 'effect';
 import {
   MarketCommandRejected,
   MarketLifecycleResultSchema as RetireMarketResultSchema,
@@ -19,7 +13,6 @@ import type { RetireMarketPayload } from '../../shared/action-contracts.ts';
 import type {
   MarketRetirementImpactAssessment,
   MarketRetirementProviderAssessment,
-  ReservedMarketRetirementImpactAssessment,
 } from '../../shared/domain/market-retirement-impact.ts';
 import { OutboxPayloadSchema as MarketRetiredOutboxPayloadSchema } from '../../shared/outbox/commerce-market-catalog-market-retired-v1.ts';
 import type { MarketAdministrationService } from '../services/market-administration.service.ts';
@@ -27,12 +20,8 @@ import {
   MarketAdministrationPersistenceUnavailable,
   marketAdministrationService,
 } from '../services/market-administration.service.ts';
-import {
-  PreparedMarketRetirementImpact,
-  marketRetirementRecoveryService,
-} from '../services/market-retirement-admission.service.ts';
-import type { MarketRetirementAdmissionPersistence } from '../services/market-retirement-admission.service.ts';
-import { MarketRetirementSettlementPending } from '../../shared/market-retirement-admission.ts';
+import type { MarketRetirementImpactAuthority } from '../services/market-retirement-impact-authority.ts';
+import { MarketRetirementImpactAuthorityService } from '../services/market-retirement-impact-authority.ts';
 import { createRetireMarketCommerceMarketCatalogMarketRetiredV1OutboxMessage as createOutboxMessage } from './retire-market-commerce-market-catalog-market-retired-v1.outbox-message.ts';
 import {
   MODULE_KEY,
@@ -49,6 +38,7 @@ import { MarketRetirementImpactAssessmentUnavailable } from './market-retirement
 export { RetireMarketPayloadSchema } from '../../shared/action-contracts.ts';
 export type { RetireMarketPayload } from '../../shared/action-contracts.ts';
 
+export { MarketRetirementImpactAssessmentRejected } from './market-retirement-impact-assessment-rejected.ts';
 export { MarketRetirementImpactAssessmentUnavailable } from './market-retirement-impact-assessment-unavailable.ts';
 
 const ErrorSchema = Schema.Union([
@@ -57,36 +47,38 @@ const ErrorSchema = Schema.Union([
   MarketRetirementImpactAssessmentRejected,
   MarketRetirementImpactAssessmentStale,
   MarketRetirementImpactAssessmentUnavailable,
-  MarketRetirementSettlementPending,
 ]);
 const domainEvents = { 'commerce.market-catalog.market-retired.v1': MarketRetiredOutboxPayloadSchema } as const;
 
 export type RetireMarketServices = MarketAdministrationService &
-  Pick<MarketRetirementAdmissionPersistence, 'lockPending' | 'commit'> & {
-    readonly preparedRetirement: Effect.Effect<
-      { readonly actionInvocationId: string; readonly assessment: ReservedMarketRetirementImpactAssessment },
-      MarketRetirementImpactAssessmentUnavailable
-    >;
-  };
-const makeRetireMarketServices: ActionServiceFactory<RetireMarketServices, Crypto.Crypto> = Effect.fn(
+  MarketRetirementImpactAuthority<MarketRetirementImpactAuthorityService>;
+
+const makeRetireMarketServices: ActionServiceFactory<RetireMarketServices> = Effect.fn(
   'RetireMarketAction.makeServices',
 )(function* makeServices(transaction, scope, compositionRevision) {
-  const prepared = yield* Effect.serviceOption(PreparedMarketRetirementImpact);
-  if (Option.isNone(prepared)) {
-    return yield* new OperationContextUnavailable({
-      code: 'operation_context_unavailable',
-      reason: 'Market retirement requires a request-scoped prepared admission',
-    });
-  }
-  const preparedRetirement = prepared.value.take;
-  const [catalog, admission] = yield* Effect.all(
-    [
-      marketAdministrationService(transaction, scope, compositionRevision),
-      marketRetirementRecoveryService(transaction, scope, compositionRevision),
-    ],
-    { concurrency: 1 },
-  );
-  return { ...catalog, ...admission, preparedRetirement };
+  const catalog = yield* marketAdministrationService(transaction, scope, compositionRevision);
+  const retirementImpact: MarketRetirementImpactAuthority<MarketRetirementImpactAuthorityService> = {
+    assessRetirementImpact: (input) =>
+      MarketRetirementImpactAuthorityService.pipe(
+        Effect.flatMap((authority) => authority.assessRetirementImpact(input)),
+      ),
+    commitRetirementImpact: (input) =>
+      MarketRetirementImpactAuthorityService.pipe(
+        Effect.flatMap((authority) => authority.commitRetirementImpact(input)),
+      ),
+    releaseRetirementImpact: (input) =>
+      MarketRetirementImpactAuthorityService.pipe(
+        Effect.flatMap((authority) => authority.releaseRetirementImpact(input)),
+      ),
+    reserveRetirementImpact: (input) =>
+      MarketRetirementImpactAuthorityService.pipe(
+        Effect.flatMap((authority) => authority.reserveRetirementImpact(input)),
+      ),
+  };
+  return {
+    ...catalog,
+    ...retirementImpact,
+  } satisfies RetireMarketServices;
 });
 
 const refsMatch = (left: RetireMarketPayload['marketRef'], right: RetireMarketPayload['marketRef']) =>
@@ -175,63 +167,85 @@ const handleRetireMarket = Effect.fn('RetireMarketAction.handle')(function* reti
   if (context.scope.legalEntityId === undefined) {
     return yield* unavailableAssessment('The trusted Legal Entity is required for Market retirement impact');
   }
+  const { legalEntityId } = context.scope;
   const changedAt = DateTime.formatIso(payload.effectiveAt);
-  const prepared = yield* context.services.preparedRetirement;
-  if (prepared.actionInvocationId !== context.actionInvocationId) {
-    return yield* unavailableAssessment('Prepared retirement belongs to another Action invocation');
-  }
-  const retirement = yield* Schema.encodeEffect(RetireMarketPayloadSchema)(payload).pipe(
-    Effect.mapError((cause) => {
-      const failure = unavailableAssessment('The retirement payload could not be retained');
-      Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
-      return failure;
-    }),
-  );
-  yield* context.services.lockPending({
-    retirement,
-    sourceActionInvocationId: context.actionInvocationId,
+  const authoritativeImpact = yield* context.services.assessRetirementImpact({
+    actionInvocationId: context.actionInvocationId,
+    compositionRevision: context.compositionRevision,
+    effectiveAt: changedAt,
+    expectedMarketRevision: payload.expectedRevision,
+    legalEntityId,
+    marketRef: payload.marketRef,
   });
-  yield* context.recordDataAccess(
-    marketDataAccessEvidence({
-      operation: 'retire-admission',
-      resourceId: payload.marketRef.resourceId,
-      resourceType: payload.marketRef.resourceType,
-    }),
-  );
-  const transitionImpact = yield* validateAssessment(payload, prepared.assessment);
-  if (
-    transitionImpact.reservation === undefined ||
-    transitionImpact.providers.some(({ liveBlockingReferences }) => liveBlockingReferences.count > 0)
-  ) {
+  yield* validateAssessment(payload, authoritativeImpact);
+  const verifiedImpact = authoritativeImpact;
+  if (verifiedImpact.providers.some(({ liveBlockingReferences }) => liveBlockingReferences.count > 0)) {
     return yield* rejectMarketCommand(
       'replacement_impact_unresolved',
-      'Retirement requires exact complete reserved owner evidence without live references',
+      'Retirement is blocked while a material live owner reference still depends on this Market',
     );
   }
-  const recordedAt = yield* marketRecordedAt;
-  const outcome = yield* context.services.transitionLifecycle({
+  const reservedImpact = yield* context.services.reserveRetirementImpact({
     actionInvocationId: context.actionInvocationId,
+    compositionRevision: context.compositionRevision,
     effectiveAt: changedAt,
-    expectedCurrentDefinitionRevisionId: payload.expectedCurrentDefinitionRevisionRef.resourceId,
-    expectedRevision: payload.expectedRevision,
-    lifecycle: 'RETIRED',
-    marketId: payload.marketRef.resourceId,
-    principalId: context.scope.principalId,
+    expectedMarketRevision: payload.expectedRevision,
+    legalEntityId,
+    marketRef: payload.marketRef,
     reason: payload.reason,
-    recordedAt,
-    retirementImpactAssessment: transitionImpact,
-    tenantId: context.scope.tenantId,
   });
-  const success = yield* Match.value(outcome).pipe(
-    Match.tag('transitioned', (value) => Effect.succeed(value)),
-    Match.tag('revision_conflict', () =>
-      rejectMarketCommand('revision_conflict', 'The observed Market revision is stale'),
-    ),
-    Match.tag('invalid_lifecycle_transition', () =>
-      rejectMarketCommand('invalid_lifecycle_transition', 'The requested Market retirement is invalid'),
-    ),
-    Match.orElse(() => rejectMarketCommand('cross_tenant_reference', 'The Market lifecycle scope is inconsistent')),
-  );
+  const releaseReservation = () =>
+    context.services
+      .releaseRetirementImpact({
+        actionInvocationId: context.actionInvocationId,
+        assessment: reservedImpact,
+        compositionRevision: context.compositionRevision,
+        legalEntityId,
+        reason: payload.reason,
+      })
+      .pipe(Effect.ignore);
+  yield* validateAssessment(payload, reservedImpact).pipe(Effect.tapError(releaseReservation));
+  const transitionImpact = reservedImpact;
+  if (transitionImpact.providers.some(({ liveBlockingReferences }) => liveBlockingReferences.count > 0)) {
+    yield* releaseReservation();
+    return yield* rejectMarketCommand(
+      'replacement_impact_unresolved',
+      'Retirement is blocked because authoritative affected use changed during transition revalidation',
+    );
+  }
+  const success = yield* Effect.gen(function* transitionReservedMarket() {
+    const recordedAt = yield* marketRecordedAt;
+    const outcome = yield* context.services.transitionLifecycle({
+      actionInvocationId: context.actionInvocationId,
+      effectiveAt: changedAt,
+      expectedCurrentDefinitionRevisionId: payload.expectedCurrentDefinitionRevisionRef.resourceId,
+      expectedRevision: payload.expectedRevision,
+      lifecycle: 'RETIRED',
+      marketId: payload.marketRef.resourceId,
+      principalId: context.scope.principalId,
+      reason: payload.reason,
+      recordedAt,
+      retirementImpactAssessment: transitionImpact,
+      tenantId: context.scope.tenantId,
+    });
+    return yield* Match.value(outcome).pipe(
+      Match.tag('transitioned', (value) => Effect.succeed(value)),
+      Match.tag('revision_conflict', () =>
+        rejectMarketCommand('revision_conflict', 'The observed Market revision is stale'),
+      ),
+      Match.tag('invalid_lifecycle_transition', () =>
+        rejectMarketCommand('invalid_lifecycle_transition', 'The requested Market retirement is invalid'),
+      ),
+      Match.orElse(() => rejectMarketCommand('cross_tenant_reference', 'The Market lifecycle scope is inconsistent')),
+    );
+  }).pipe(Effect.tapError(releaseReservation));
+  yield* context.services.commitRetirementImpact({
+    actionInvocationId: context.actionInvocationId,
+    assessment: transitionImpact,
+    compositionRevision: context.compositionRevision,
+    legalEntityId,
+    reason: payload.reason,
+  });
   const result = {
     changed: success.changed,
     definitionRevisionRef: definitionRevisionRef(context.scope.tenantId, success.definitionRevisionId),
@@ -239,11 +253,6 @@ const handleRetireMarket = Effect.fn('RetireMarketAction.handle')(function* reti
     marketRef: payload.marketRef,
     revision: success.revision,
   };
-  yield* context.services.commit({
-    assessment: { ...transitionImpact, reservation: transitionImpact.reservation },
-    result,
-    sourceActionInvocationId: context.actionInvocationId,
-  });
   yield* context.recordAuditEvidence({
     changed: success.changed,
     completenessGeneration: success.generation,

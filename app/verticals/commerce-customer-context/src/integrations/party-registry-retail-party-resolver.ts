@@ -1,22 +1,11 @@
-import type { OperationalScope } from '@app/core-runtime';
-import type { Crypto } from 'effect';
-import type { executePartyDetail } from '@app/party-registry/api/client';
-import type { GatewayRelaySourceError } from '@app/shared-contracts/gateway-context-server';
-import { acquireOwnerGatewayContext } from './server-owner-gateway.ts';
-import { PartyDetailResponseSchema, executePartyDetailWithAuthorization } from '@app/party-registry/api/client';
-import { Redacted, Effect, Layer, Option, Schema, Context } from 'effect';
+import { PartyDetailResponseSchema, executePartyDetail } from '@app/party-registry/api/client';
+import { Effect, Layer, Option, Schema, Context } from 'effect';
 
 import type { ProfilePersistenceDependencies } from '../persistence/profile-persistence.ts';
 import { ProfilePersistenceDependencyFailure } from '../persistence/profile-persistence.ts';
 
 type RetailPartyResolver = NonNullable<ProfilePersistenceDependencies['resolveRetailParty']>;
-type RetailPartyResolutionExecutor = (
-  payload: Parameters<typeof executePartyDetail>[0],
-  correlation: string,
-) => Effect.Effect<
-  Effect.Success<ReturnType<typeof executePartyDetail>>,
-  Effect.Error<ReturnType<typeof executePartyDetail>> | GatewayRelaySourceError
->;
+type RetailPartyResolutionExecutor = typeof executePartyDetail;
 
 type RetailPartyResolution =
   | {
@@ -32,7 +21,10 @@ export interface PartyRegistryRetailPartyResolverFactoryInput {
 }
 
 export interface PartyRegistryRetailPartyResolverFactoryService {
-  readonly make: (input: { readonly crypto: Crypto.Crypto; readonly scope: OperationalScope }) => RetailPartyResolver;
+  readonly make: (
+    input: PartyRegistryRetailPartyResolverFactoryInput,
+    execute?: RetailPartyResolutionExecutor,
+  ) => RetailPartyResolver;
 }
 
 export class PartyRegistryRetailPartyResolverFactory extends Context.Service<
@@ -76,7 +68,10 @@ const samePartyRef = (
  * owner evidence; transport/owner failures remain retryable dependency failures.
  */
 export const makePartyRegistryRetailPartyResolver =
-  (input: PartyRegistryRetailPartyResolverFactoryInput, execute: RetailPartyResolutionExecutor): RetailPartyResolver =>
+  (
+    input: PartyRegistryRetailPartyResolverFactoryInput,
+    execute: RetailPartyResolutionExecutor = executePartyDetail,
+  ): RetailPartyResolver =>
   (request): ReturnType<RetailPartyResolver> => {
     if (
       request.tenantId !== input.tenantId ||
@@ -124,22 +119,5 @@ export const makePartyRegistryRetailPartyResolver =
 
 export const partyRegistryRetailPartyResolverFactoryLive = Layer.succeed(
   PartyRegistryRetailPartyResolverFactory,
-  Object.freeze({
-    make: ({ crypto, scope }: { readonly crypto: Crypto.Crypto; readonly scope: OperationalScope }) =>
-      makePartyRegistryRetailPartyResolver(
-        { requestCorrelation: scope.correlationId, tenantId: scope.tenantId },
-        (payload) =>
-          acquireOwnerGatewayContext(scope, crypto, {
-            audience: 'party-registry',
-            operationKey: 'party.registry.api.party-detail',
-          }).pipe(
-            Effect.flatMap((issued) =>
-              executePartyDetailWithAuthorization(payload, Redacted.value(issued.authorization), scope.correlationId, {
-                baseUrl: issued.apiUrl,
-                compositionRevision: issued.compositionRevision,
-              }),
-            ),
-          ),
-      ),
-  }),
+  Object.freeze({ make: makePartyRegistryRetailPartyResolver }),
 );

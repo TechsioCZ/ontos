@@ -216,6 +216,3 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
     }),
   };
 });
-
-/** Test-owned access to the original registration factory. */
-export { getReadServiceFactory } from '../reads/definition.ts';

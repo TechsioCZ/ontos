@@ -215,7 +215,6 @@ import { invoiceRecipientResolutionReadApiLive } from './invoice-recipient-resol
 import { marketAffectedUseAssessmentReadApiLive } from './market-affected-use-assessment-read-server.ts';
 import { marketBootstrapPolicyCurrentReadApiLive } from './market-bootstrap-policy-current-read-server.ts';
 import { marketBootstrapResolutionReadApiLive } from './market-bootstrap-resolution-read-server.ts';
-import { marketRetirementReservationRecoveryReadApiLive } from './market-retirement-reservation-recovery-read-server.ts';
 import { marketSubjectRestrictionsCurrentReadApiLive } from './market-subject-restrictions-current-read-server.ts';
 import { migrateCounterpartyPriceGroupActionApiLive } from './migrate-counterparty-price-group-action-server.ts';
 import { migrateCustomerPriceGroupActionApiLive } from './migrate-customer-price-group-action-server.ts';
@@ -1055,7 +1054,6 @@ export const makeCommerceCustomerContextApiRuntime = (
     marketAffectedUseAssessmentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     marketBootstrapPolicyCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     marketBootstrapResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    marketRetirementReservationRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     marketSubjectRestrictionsCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     migrateCounterpartyPriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     migrateCustomerPriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -1136,14 +1134,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     ),
   );
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        runtimeObservabilityLive,
-        RequestSchemaProblemLive,
-        compositionSourceLive,
-        commercePortalAuthPlatformCryptoLive,
-      ),
-    ),
+    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive)),
     // The deployment configuration belongs to the whole assembly: source HTTP, admission and
     // gateway verification capture the same configuration and transport references.
     Layer.provide(gatewayVerification),

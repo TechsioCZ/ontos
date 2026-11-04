@@ -521,7 +521,7 @@ it.live('enforces CAS, idempotency, temporal associations, terminal retirement, 
   ),
 );
 
-it.live('limits forced Tenant RLS tables to governed routines and exact admission settlement grants', () =>
+it.live('exposes only the six governed mutations and four governed reads over forced Tenant RLS', () =>
   Effect.scoped(
     Effect.gen(function* marketSecurityCatalog() {
       const { admin: adminClient } = yield* testDatabaseClients;
@@ -563,15 +563,12 @@ it.live('limits forced Tenant RLS tables to governed routines and exact admissio
           'revise_storefront_association(uuid, uuid, jsonb)',
           'transition_market_lifecycle(uuid, uuid, jsonb)',
         ],
-        forced_tables: 7,
+        forced_tables: 6,
         private_routines_executable: false,
         runtime_table_grants: [
           'gateway_assertion_redemptions:DELETE',
           'gateway_assertion_redemptions:INSERT',
           'gateway_assertion_redemptions:SELECT',
-          'market_retirement_admissions:INSERT',
-          'market_retirement_admissions:SELECT',
-          'market_retirement_admissions:UPDATE',
         ],
       });
     }),

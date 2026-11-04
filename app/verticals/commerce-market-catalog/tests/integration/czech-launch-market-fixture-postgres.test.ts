@@ -1,5 +1,4 @@
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
-import { NodeCrypto } from '@effect/platform-node';
 import { CurrentStorefrontApplicationResponseSchema } from '@app/storefront-registry-contracts';
 import { sql } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
@@ -205,7 +204,7 @@ it.live('persists and reads the Czech Launch Market fixture through owner Action
               services,
             });
             return yield* Schema.decodeUnknownEffect(associateStorefrontAction.descriptor.resultSchema)(result);
-          }).pipe(Effect.provide(NodeCrypto.layer)),
+          }),
         );
 
       const associated = yield* associate();

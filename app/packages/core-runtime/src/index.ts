@@ -628,7 +628,6 @@ export {
   ActionTrustedContextValidationError,
 } from './actions/errors.ts';
 export type { ActionCoreError } from './actions/errors.ts';
-export { ActionCoreErrorSchema } from './actions/core-error-schema.ts';
 export {
   TenantModuleStateConcurrentChangeError,
   TenantModuleStatePersistenceUnavailableError,

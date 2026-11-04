@@ -1,5 +1,4 @@
-import { NodeFileSystem, NodePath } from '@effect/platform-node';
-import { Config, Effect, FileSystem, Layer, Path, Predicate } from 'effect';
+import { Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -17,7 +16,6 @@ import {
   SHARED_RUNTIME_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
 } from '../../src/db/database-identities.ts';
-import { resolveAppWorkspaceRoot } from '../../src/environment/workspace-environment.ts';
 
 /** No dotenv file, so each test sees only the environment it passes. */
 const missingEnvPath = '/nonexistent/ontos-config-test/.env';
@@ -35,49 +33,26 @@ const identityFailure = (overrides: DatabaseEnvironment) =>
     loadDatabaseIdentityConnections({ environment: { ...identityEnvironment, ...overrides }, envPath: missingEnvPath }),
   ).pipe(Effect.map((error) => error.reason));
 
-it.effect('loads a root-anchored database file fixture independently of the invocation directory', () =>
-  Layer.build(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)).pipe(
-    Effect.flatMap((services) =>
-      Effect.gen(function* loadsRootDatabaseFixture() {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const nodePath = yield* Path.Path;
-        const originalDirectory = process.cwd();
-        const workspaceRoot = resolveAppWorkspaceRoot(originalDirectory);
-        const explicitEnvironmentPath = yield* Config.String('APP_ENV_PATH').pipe(Config.withDefault(''));
-        const expectedEnvironmentPath = nodePath.resolve(
-          workspaceRoot ?? originalDirectory,
-          explicitEnvironmentPath.length === 0 ? '.env' : explicitEnvironmentPath,
-        );
-        expect(ROOT_ENV_PATH).toBe(expectedEnvironmentPath);
-        if (explicitEnvironmentPath.length === 0) {
-          expect(ROOT_ENV_PATH.endsWith('/app/.env')).toBe(true);
-        }
+it.effect('loads the root environment independently of the invocation directory', () =>
+  Effect.gen(function* migratedTest() {
+    const originalDirectory = process.cwd();
+    const rootExamplePath = ROOT_ENV_PATH.replace(/\.env$/u, '.env.example');
 
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            process.chdir(originalDirectory);
-          }),
-        );
-        const fixtureDirectory = yield* fileSystem.makeTempDirectoryScoped({
-          directory: workspaceRoot ?? originalDirectory,
-          prefix: '.unit-database-',
-        });
-        const fixturePath = nodePath.join(fixtureDirectory, 'database.fixture');
-        yield* fileSystem.writeFileString(fixturePath, `DATABASE_URL=${identityEnvironment.DATABASE_URL}\n`, {
-          mode: 0o600,
-        });
-        process.chdir('/');
-        expect(ROOT_ENV_PATH).toBe(expectedEnvironmentPath);
-        const configuration = yield* loadDatabaseConfig({
-          environment: {},
-          envPath: fixturePath,
-          identity: SHARED_RUNTIME_IDENTITY,
-        });
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        process.chdir(originalDirectory);
+      }),
+    );
+    process.chdir('/');
+    const configuration = yield* loadDatabaseConfig({
+      environment: {},
+      envPath: rootExamplePath,
+      identity: SHARED_RUNTIME_IDENTITY,
+    });
 
-        expect(configuration.connectionString).toBe(identityEnvironment.DATABASE_URL);
-      }).pipe(Effect.provide(services)),
-    ),
-  ),
+    expect(ROOT_ENV_PATH.endsWith('/app/.env')).toBe(true);
+    expect(configuration.connectionString).toBe('postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos');
+  }),
 );
 
 it.effect('parses valid local PostgreSQL connection settings', () =>

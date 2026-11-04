@@ -36,10 +36,9 @@ const MARKET_AFFECTED_USE_MODULE_KEY = 'commerce.customer-context';
 
 export interface MarketReferenceOwnerDeploymentStateAuthority {
   /**
-   * Returns evidence of absence from the approved Application Composition for reference owners
-   * not read through this deployment. A present owner remains required when suspended or
-   * unreachable; those states cannot produce an empty proof. Retained UNIMPLEMENTED identities
-   * describe Composition absence, not code availability or the end of historical obligations.
+   * Returns Application Composition evidence for every Market-reference owner that is not read
+   * through this deployment. Disabled/unimplemented and enabled-unreachable are distinct: the
+   * latter must fail instead of returning an empty proof.
    */
   readonly proveReferenceOwnerStates: (
     input: MarketAffectedUseAssessmentRequest,

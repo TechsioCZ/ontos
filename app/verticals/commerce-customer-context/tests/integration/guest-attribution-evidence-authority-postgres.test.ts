@@ -526,27 +526,21 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
     });
     const authorizationContext = yield* Effect.context<Crypto.Crypto>();
     const guestFactory = Layer.succeed(PartyRegistryGuestResolverFactory, {
-      make: ({ scope }) =>
-        makePartyRegistryGuestResolver(
-          {
-            legalEntityId: scope.legalEntityId ?? '',
-            requestCorrelation: scope.correlationId,
-            tenantId: scope.tenantId,
-          },
-          (request, correlation) =>
-            Effect.gen(function* actualPartyGuestRead() {
-              const actor = actors.get(`${scope.tenantId}:${scope.legalEntityId}`);
-              assert.isOk(actor !== undefined);
-              return yield* executeGuestPartyResolutionWithAuthorization(
-                request,
-                yield* authorization(actor).pipe(Effect.provideContext(authorizationContext), Effect.orDie),
-                correlation,
-                {
-                  baseUrl,
-                  compositionRevision: snapshot.composition.revision,
-                },
-              );
-            }),
+      make: (scope) =>
+        makePartyRegistryGuestResolver(scope, (request, correlation) =>
+          Effect.gen(function* actualPartyGuestRead() {
+            const actor = actors.get(`${scope.tenantId}:${scope.legalEntityId}`);
+            assert.isOk(actor !== undefined);
+            return yield* executeGuestPartyResolutionWithAuthorization(
+              request,
+              yield* authorization(actor).pipe(Effect.provideContext(authorizationContext), Effect.orDie),
+              correlation,
+              {
+                baseUrl,
+                compositionRevision: snapshot.composition.revision,
+              },
+            );
+          }),
         ),
     });
     const owners = Layer.mergeAll(

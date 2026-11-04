@@ -7,7 +7,7 @@ import type {
   ResolveCommerceMarketRequest,
   ResolveCommerceMarketResponse,
 } from '@app/commerce-market-catalog/api/client';
-import { Crypto, DateTime, Effect, Result } from 'effect';
+import { DateTime, Effect, Result } from 'effect';
 
 import {
   MarketBootstrapResolutionRequestSchema,
@@ -262,20 +262,17 @@ export const marketBootstrapResolutionRead = defineRead(
   Effect.fn('MarketBootstrapResolutionRead.serviceFactory')(
     function* marketBootstrapResolutionServiceFactory(transaction, scope) {
       const repository = yield* customerCommercePolicyRepositoryForScope(transaction, scope);
-      const crypto = yield* Crypto.Crypto;
-      return marketBootstrapResolutionServices(
-        marketBootstrapMarketPortFromPublishedClient(scope, crypto),
-        (sellerIds, at) =>
-          repository.loadCurrentMarketBootstrapPolicyCandidates(sellerIds, at).pipe(
-            Effect.mapError((cause) => {
-              const failure = new MarketBootstrapDependencyUnavailable({
-                dependency: 'POLICY',
-                reason: 'The Current Market bootstrap policy owner is unavailable',
-                retryable: true,
-              });
-              return Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
-            }),
-          ),
+      return marketBootstrapResolutionServices(marketBootstrapMarketPortFromPublishedClient, (sellerIds, at) =>
+        repository.loadCurrentMarketBootstrapPolicyCandidates(sellerIds, at).pipe(
+          Effect.mapError((cause) => {
+            const failure = new MarketBootstrapDependencyUnavailable({
+              dependency: 'POLICY',
+              reason: 'The Current Market bootstrap policy owner is unavailable',
+              retryable: true,
+            });
+            return Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+          }),
+        ),
       );
     },
   ),

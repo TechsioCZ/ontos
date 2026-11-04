@@ -9,7 +9,7 @@ import {
   defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { Crypto, DateTime, Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
 import {
   ManufacturerRelationCurrentRequestSchema,
   ManufacturerRelationCurrentResponseSchema,
@@ -132,9 +132,8 @@ export const manufacturerRelationCurrentRead = defineRead(
   }),
   Effect.fn('ManufacturerRelationCurrentRead.services')(function* services(transaction, scope) {
     const readRuntime = yield* ReadRuntime;
-    const crypto = yield* Crypto.Crypto;
     return manufacturerCurrentReadsForScope(transaction, scope, {
-      targetResolver: manufacturerTargetResolverForCoreRead(readRuntime, scope, crypto),
+      targetResolver: manufacturerTargetResolverForCoreRead(readRuntime, scope),
     });
   }),
   () => ({ kind: 'module', moduleId: moduleKey }),

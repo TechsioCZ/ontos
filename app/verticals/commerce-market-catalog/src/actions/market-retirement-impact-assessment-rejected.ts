@@ -1,1 +1,9 @@
-export { MarketRetirementImpactAssessmentRejected } from '../../shared/domain/market-retirement-impact-assessment-rejected.ts';
+import { Schema } from 'effect';
+
+export class MarketRetirementImpactAssessmentRejected extends Schema.TaggedError<MarketRetirementImpactAssessmentRejected>()(
+  'MarketRetirementImpactAssessmentRejected',
+  {
+    code: Schema.Literal('market_retirement_impact_assessment_rejected'),
+    reason: Schema.String,
+  },
+) {}

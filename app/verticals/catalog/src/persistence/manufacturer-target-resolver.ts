@@ -1,12 +1,10 @@
-import { PartyDetailResponseSchema, executePartyDetailWithAuthorization } from '@app/party-registry/api/client';
+import { PartyDetailResponseSchema, executePartyDetail } from '@app/party-registry/api/client';
 import type { PartyDetailResponse } from '@app/party-registry/api/client';
 import { LegalEntityRefSchema } from '@app/core-runtime/resources/legal-entity';
 import type { LegalEntityRef } from '@app/core-runtime/resources/legal-entity';
 import { legalEntityDetailRead } from '@app/core-runtime';
 import type { OperationalScope, ReadRuntimeService } from '@app/core-runtime';
-import { Redacted, Effect, Option, Predicate, Schema } from 'effect';
-import type { Crypto } from 'effect';
-import { acquireOwnerGatewayContext } from '../integrations/server-owner-gateway.ts';
+import { Effect, Option, Predicate, Schema } from 'effect';
 
 import type { ManufacturerTarget } from '../../shared/domain/manufacturer-relation.ts';
 import { ManufacturerTargetAbsent } from './manufacturer-target-absent.ts';
@@ -56,7 +54,7 @@ export interface ManufacturerTargetResolverPorts {
     readonly legalEntityRef: LegalEntityRef;
   }) => Effect.Effect<ManagedLegalEntityDetail, PartyReadFailure>;
   readonly readPartyDetail: (
-    payload: Parameters<typeof executePartyDetailWithAuthorization>[0],
+    payload: Parameters<typeof executePartyDetail>[0],
     requestId: string,
   ) => Effect.Effect<PartyDetailResponse, PartyReadFailure>;
 }
@@ -128,9 +126,7 @@ const managedState = (status: ManagedLegalEntityDetail['status']): 'CURRENT' | '
 
 /** Read-only owner evidence; it never creates an identity or changes the Catalog relation. */
 export const makeManufacturerTargetResolver = (configuredPorts?: ManufacturerTargetResolverPorts) => {
-  const ports: ManufacturerTargetResolverPorts = configuredPorts ?? {
-    readPartyDetail: () => Effect.fail(new ManufacturerTargetUnavailable()),
-  };
+  const ports: ManufacturerTargetResolverPorts = configuredPorts ?? { readPartyDetail: executePartyDetail };
   return {
     resolve: (
       target: ManufacturerTarget,
@@ -193,12 +189,8 @@ export const makeManufacturerTargetResolver = (configuredPorts?: ManufacturerTar
 export const manufacturerTargetResolver = makeManufacturerTargetResolver();
 
 /** Carry the original, provenance-bearing principal into Core's governed Read lifecycle. */
-export const manufacturerTargetResolverForCoreRead = (
-  // oxlint-disable-next-line effect-native/no-dependency-parameters -- Action factory resolves ReadRuntime from Context and binds it here to the target resolver's owner-read port.
-  readRuntime: ReadRuntimeService,
-  scope: OperationalScope,
-  crypto: Crypto.Crypto,
-) =>
+// oxlint-disable-next-line effect-native/no-dependency-parameters -- Action factory resolves ReadRuntime from Context and binds it here to the target resolver's owner-read port.
+export const manufacturerTargetResolverForCoreRead = (readRuntime: ReadRuntimeService, scope: OperationalScope) =>
   makeManufacturerTargetResolver({
     readManagedLegalEntity: ({ legalEntityRef }) =>
       readRuntime.runRead({
@@ -207,16 +199,5 @@ export const manufacturerTargetResolverForCoreRead = (
         registration: legalEntityDetailRead,
         transport: { correlationId: scope.correlationId },
       }),
-    readPartyDetail: (payload) =>
-      acquireOwnerGatewayContext(scope, crypto, {
-        audience: 'party-registry',
-        operationKey: 'party.registry.api.party-detail',
-      }).pipe(
-        Effect.flatMap((issued) =>
-          executePartyDetailWithAuthorization(payload, Redacted.value(issued.authorization), scope.correlationId, {
-            baseUrl: issued.apiUrl,
-            compositionRevision: issued.compositionRevision,
-          }),
-        ),
-      ),
+    readPartyDetail: executePartyDetail,
   });
