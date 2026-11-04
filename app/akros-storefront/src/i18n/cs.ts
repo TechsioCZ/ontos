@@ -914,6 +914,26 @@ export const cs = {
     accountUnavailable: "Účet je dočasně nedostupný.",
     loginNotConfirmed: "Přihlášení nebylo potvrzeno.",
     loginFailed: "Přihlášení se nepodařilo.",
+    forgotPassword: "Zapomněli jste heslo?",
+    passwordRequestTitle: "Zapomenuté heslo",
+    passwordRequestHeading: "Obnova hesla",
+    passwordRequestIntro:
+      "Zadejte e-mail, se kterým jste se registrovali. Pošleme vám odkaz pro nastavení nového hesla.",
+    passwordRequestSent:
+      "Pokud je e-mail u nás zaregistrovaný, odeslali jsme na něj odkaz pro nastavení nového hesla. Odkaz je platný omezenou dobu.",
+    sendResetLink: "Odeslat odkaz",
+    sendingResetLink: "Odesílám…",
+    backToLogin: "Zpět na přihlášení",
+    passwordResetTitle: "Nové heslo",
+    passwordResetHeading: "Nastavení nového hesla",
+    passwordResetIntro: "Zadejte nové heslo. Musí mít alespoň 12 znaků.",
+    savePassword: "Uložit nové heslo",
+    savingPassword: "Ukládám…",
+    passwordResetDone: "Nové heslo je nastaveno. Nyní se můžete přihlásit.",
+    passwordResetLinkMissing:
+      "Odkaz pro nastavení hesla vypršel nebo už byl použit. Požádejte prosím o nový.",
+    passwordResetFailed: "Heslo se nepodařilo nastavit. Zkuste to prosím znovu.",
+    requestNewResetLink: "Požádat o nový odkaz",
     registrationTitle: "Registrace",
     registrationHeading: "Registrace nového zákazníka",
     registrationIntro:
@@ -1093,6 +1113,8 @@ export const cs = {
       missingRegistrationId: "Chybí identifikátor registrace.",
       missingCredentials: "Zadejte e-mail a heslo.",
       invalidEmail: "Zadejte platnou e-mailovou adresu.",
+      resetLinkInvalid:
+        "Odkaz pro nastavení hesla vypršel nebo už byl použit. Požádejte prosím o nový.",
       twoFactorRequired: "Účet vyžaduje dvoufázové ověření v zákaznickém portálu.",
       enrollmentNotFound: "Pro tento účet není dostupná registrace v tomto obchodě.",
       enrollmentSignIn: "Pro zobrazení registrace se přihlaste ověřeným účtem.",

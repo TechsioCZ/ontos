@@ -80,6 +80,25 @@ export const portalRequest = async (
   }
 };
 
+/** Holds the one-time reset credential between the mail link and the new-password form. Scripts cannot read it. */
+export const passwordResetCookieName = "akros-password-reset";
+const passwordResetMaxAge = 600;
+
+export const passwordResetCookie = (origin: string, token: string | null): string =>
+  `${passwordResetCookieName}=${token ?? ""}; Max-Age=${token === null ? 0 : passwordResetMaxAge}; Path=/; HttpOnly; SameSite=Lax${new URL(origin).protocol === "https:" ? "; Secure" : ""}`;
+
+export const passwordResetToken = (cookie: string | null): string | null => {
+  const pairs = (cookie ?? "")
+    .split(";")
+    .map((part) => part.trim())
+    .filter((part) => part.startsWith(`${passwordResetCookieName}=`));
+  // Two copies may come from different hosts or paths. Never choose between them.
+  const [pair] = pairs;
+  if (pairs.length !== 1 || pair === undefined) return null;
+  const token = pair.slice(passwordResetCookieName.length + 1);
+  return token.length <= 2048 && /^[\w.~-]+$/u.test(token) ? token : null;
+};
+
 /** The account message for an owner status, in the request's language (`t`: `requestDictionary`). */
 export const accountMessage = (t: Dictionary, status: number, code?: string): string => {
   const messages = t.server.account;

@@ -924,6 +924,26 @@ export const en: Dictionary = {
     accountUnavailable: "Your account is temporarily unavailable.",
     loginNotConfirmed: "Sign-in was not confirmed.",
     loginFailed: "Sign-in failed.",
+    forgotPassword: "Forgot your password?",
+    passwordRequestTitle: "Forgotten password",
+    passwordRequestHeading: "Reset your password",
+    passwordRequestIntro:
+      "Enter the e-mail address you registered with. We will send you a link to set a new password.",
+    passwordRequestSent:
+      "If this e-mail address is registered with us, we have sent a link to set a new password. The link is valid for a limited time.",
+    sendResetLink: "Send link",
+    sendingResetLink: "Sending…",
+    backToLogin: "Back to sign in",
+    passwordResetTitle: "New password",
+    passwordResetHeading: "Set a new password",
+    passwordResetIntro: "Enter your new password. It must be at least 12 characters long.",
+    savePassword: "Save new password",
+    savingPassword: "Saving…",
+    passwordResetDone: "Your new password is set. You can sign in now.",
+    passwordResetLinkMissing:
+      "This password link has expired or was already used. Please request a new one.",
+    passwordResetFailed: "The password could not be set. Please try again.",
+    requestNewResetLink: "Request a new link",
     registrationTitle: "Registration",
     registrationHeading: "New customer registration",
     registrationIntro:
@@ -1107,6 +1127,8 @@ export const en: Dictionary = {
       missingRegistrationId: "The registration identifier is missing.",
       missingCredentials: "Enter your e-mail and password.",
       invalidEmail: "Enter a valid e-mail address.",
+      resetLinkInvalid:
+        "This password link has expired or was already used. Please request a new one.",
       twoFactorRequired: "This account requires two-factor authentication in the customer portal.",
       enrollmentNotFound: "No registration in this shop is available for this account.",
       enrollmentSignIn: "Sign in with a verified account to view the registration.",

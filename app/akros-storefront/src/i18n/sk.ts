@@ -917,6 +917,26 @@ export const sk: Dictionary = {
     accountUnavailable: "Účet je dočasne nedostupný.",
     loginNotConfirmed: "Prihlásenie nebolo potvrdené.",
     loginFailed: "Prihlásenie sa nepodarilo.",
+    forgotPassword: "Zabudli ste heslo?",
+    passwordRequestTitle: "Zabudnuté heslo",
+    passwordRequestHeading: "Obnova hesla",
+    passwordRequestIntro:
+      "Zadajte e-mail, s ktorým ste sa registrovali. Pošleme vám odkaz na nastavenie nového hesla.",
+    passwordRequestSent:
+      "Ak je e-mail u nás zaregistrovaný, odoslali sme naň odkaz na nastavenie nového hesla. Odkaz je platný obmedzený čas.",
+    sendResetLink: "Odoslať odkaz",
+    sendingResetLink: "Odosielam…",
+    backToLogin: "Späť na prihlásenie",
+    passwordResetTitle: "Nové heslo",
+    passwordResetHeading: "Nastavenie nového hesla",
+    passwordResetIntro: "Zadajte nové heslo. Musí mať aspoň 12 znakov.",
+    savePassword: "Uložiť nové heslo",
+    savingPassword: "Ukladám…",
+    passwordResetDone: "Nové heslo je nastavené. Teraz sa môžete prihlásiť.",
+    passwordResetLinkMissing:
+      "Odkaz na nastavenie hesla vypršal alebo už bol použitý. Požiadajte prosím o nový.",
+    passwordResetFailed: "Heslo sa nepodarilo nastaviť. Skúste to prosím znova.",
+    requestNewResetLink: "Požiadať o nový odkaz",
     registrationTitle: "Registrácia",
     registrationHeading: "Registrácia nového zákazníka",
     registrationIntro:
@@ -1097,6 +1117,8 @@ export const sk: Dictionary = {
       missingRegistrationId: "Chýba identifikátor registrácie.",
       missingCredentials: "Zadajte e-mail a heslo.",
       invalidEmail: "Zadajte platnú e-mailovú adresu.",
+      resetLinkInvalid:
+        "Odkaz na nastavenie hesla vypršal alebo už bol použitý. Požiadajte prosím o nový.",
       twoFactorRequired: "Účet vyžaduje dvojfaktorové overenie v zákazníckom portáli.",
       enrollmentNotFound: "Pre tento účet nie je dostupná registrácia v tomto obchode.",
       enrollmentSignIn: "Na zobrazenie registrácie sa prihláste overeným účtom.",

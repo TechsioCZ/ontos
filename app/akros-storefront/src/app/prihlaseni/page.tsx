@@ -20,6 +20,9 @@ export default async function LoginPage() {
             <p>{copy.welcomeBack(getBrand().name)}</p>
           </header>
           <LoginForm />
+          <p>
+            <AuthPageLink href="/zapomenute-heslo">{copy.forgotPassword}</AuthPageLink>
+          </p>
           <div className="sf-auth-divider">
             <span>{copy.or}</span>
           </div>

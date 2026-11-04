@@ -1,12 +1,15 @@
 import "server-only";
 import {
   accountMessage,
+  passwordResetCookie,
+  passwordResetToken,
   portalCookie,
   portalRequest,
   readAccount,
   registrationInput,
 } from "@/ontos/account";
 import type { AccountSubmissionResponse } from "@/ontos/account";
+import type { Dictionary } from "@/i18n";
 import {
   guard,
   jsonBody,
@@ -17,6 +20,73 @@ import {
 } from "@/ontos/http";
 
 const noStore = { "cache-control": "no-store" };
+
+/**
+ * Recovery carries no browser session and is never replayed: a lost response is reported, not retried.
+ * The reset credential stays in its HttpOnly cookie and is only forwarded to the owner from here.
+ */
+async function passwordResetSubmission(
+  data: Record<string, unknown>,
+  origin: string,
+  cookie: string | null,
+  t: Dictionary,
+): Promise<Response> {
+  if (data.operation === "request-password-reset") {
+    if (
+      Object.keys(data).some((key) => key !== "operation" && key !== "email") ||
+      typeof data.email !== "string" ||
+      data.email.trim().length > 320 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email.trim())
+    )
+      throw new RequestError(400, t.server.account.invalidEmail);
+    const response = await portalRequest("/request-password-reset", origin, null, {
+      email: data.email.trim().toLowerCase(),
+    });
+    if (!response.ok)
+      return Response.json(
+        { message: accountMessage(t, response.status) } satisfies AccountSubmissionResponse,
+        { status: response.status, headers: noStore },
+      );
+    const result = (await response.json()) as { outcome?: string };
+    if (result.outcome !== "ACCOUNT_RECOVERY_STARTED")
+      throw new Error("Password reset request was not acknowledged");
+    return Response.json({ outcome: "ACCOUNT_RECOVERY_STARTED" }, { headers: noStore });
+  }
+  const { newPassword, passwordConfirmation } = data;
+  if (
+    Object.keys(data).some(
+      (key) => key !== "operation" && key !== "newPassword" && key !== "passwordConfirmation",
+    ) ||
+    typeof newPassword !== "string" ||
+    typeof passwordConfirmation !== "string" ||
+    newPassword.length < 12 ||
+    newPassword.length > 128 ||
+    newPassword !== passwordConfirmation
+  )
+    throw new RequestError(400, t.server.account.invalidInput);
+  const clearCookie = { ...noStore, "set-cookie": passwordResetCookie(origin, null) };
+  const token = passwordResetToken(cookie);
+  if (token === null)
+    return Response.json(
+      { message: t.server.account.resetLinkInvalid } satisfies AccountSubmissionResponse,
+      { status: 400, headers: clearCookie },
+    );
+  const response = await portalRequest("/reset-password", origin, null, { newPassword, token });
+  if (response.status === 400)
+    return Response.json(
+      { message: t.server.account.resetLinkInvalid } satisfies AccountSubmissionResponse,
+      { status: 400, headers: clearCookie },
+    );
+  if (!response.ok)
+    return Response.json(
+      { message: accountMessage(t, response.status) } satisfies AccountSubmissionResponse,
+      { status: response.status, headers: noStore },
+    );
+  const result = (await response.json()) as { outcome?: string };
+  if (result.outcome !== "ACCOUNT_RECOVERY_COMPLETED_SAME_SUBJECT")
+    throw new Error("Password reset was not acknowledged");
+  return Response.json({ outcome: "PASSWORD_RESET_COMPLETED" }, { headers: clearCookie });
+}
 
 export async function GET(request: Request) {
   try {
@@ -52,6 +122,8 @@ export async function POST(request: Request) {
     if (!input || typeof input !== "object" || Array.isArray(input))
       throw new RequestError(400, t.server.request.invalid);
     const data = input as Record<string, unknown>;
+    if (data.operation === "request-password-reset" || data.operation === "reset-password")
+      return await passwordResetSubmission(data, origin, request.headers.get("cookie"), t);
     let path: string;
     let body: unknown;
     let idempotencyKey: string | undefined;
