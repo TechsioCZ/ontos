@@ -178,15 +178,19 @@ const exchange = (
   token: Redacted.Redacted,
   body: string,
   timeout: Duration.Input,
-) =>
-  Effect.tryPromise({
+) => {
+  // Interrupting the request (the timeout below) aborts the fetch, so a stalled submission is cancelled too.
+  const controller = new AbortController();
+  return Effect.tryPromise({
     catch: (cause) => transportFailure(cause),
     try: fetchImpl.bind(globalThis, url, {
       body,
       headers: { authorization: `Bearer ${Redacted.value(token)}`, 'content-type': 'application/json' },
       method: 'POST',
+      signal: controller.signal,
     }),
   }).pipe(
+    Effect.onInterrupt(() => Effect.sync(() => controller.abort())),
     Effect.flatMap((response) =>
       response.ok
         ? Effect.tryPromise({ catch: (cause) => transportFailure(cause), try: response.json.bind(response) }).pipe(
@@ -201,6 +205,7 @@ const exchange = (
       orElse: () => Effect.fail(timedOut()),
     }),
   );
+};
 
 const sendWithCloudflare = (
   fetchImpl: typeof globalThis.fetch,

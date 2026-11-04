@@ -203,15 +203,23 @@ it.layer(cloudflareTestLayer(malformed.fetch), { excludeTestServices: true })(
   },
 );
 
-const neverAnswers: Fixture = { fetch: () => Promise.withResolvers<Response>().promise, requests: [] };
+const hangingRequests: Request[] = [];
+const hangingFetch: Fixture = {
+  fetch: (input, init) => {
+    hangingRequests.push(new Request(input, init));
+    return Promise.withResolvers<Response>().promise;
+  },
+  requests: hangingRequests,
+};
 
-it.layer(cloudflareTestLayer(neverAnswers.fetch), { excludeTestServices: true })('Cloudflare API timeout', (test) => {
-  test.effect('reports a timed-out submission as an indeterminate timeout', () =>
+it.layer(cloudflareTestLayer(hangingFetch.fetch), { excludeTestServices: true })('Cloudflare API timeout', (test) => {
+  test.effect('reports a timed-out submission as an indeterminate timeout and aborts the stalled request', () =>
     Effect.gen(function* timeout() {
       const service = yield* EmailDeliveryService;
       const error = yield* Effect.flip(service.send(message));
       expect(error).toBeInstanceOf(EmailDeliveryAcceptanceIndeterminate);
       expect(error).toMatchObject({ reason: 'timeout' });
+      expect(hangingFetch.requests.at(0)?.signal.aborted).toBe(true);
     }),
   );
 });
