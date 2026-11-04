@@ -1,5 +1,5 @@
 import { Effect, Schema, Predicate } from 'effect';
-// @effect-diagnostics preferSchemaOverJson:off -- Verifies native JSON serialization of errors and schema AST metadata; expires: 2026-12-31.
+// @effect-diagnostics globalJsonInEffect:off -- Verifies native JSON serialization of errors and schema AST metadata; expires: 2026-12-31.
 import { expect, it } from 'effect-rstest';
 
 import type { OntosModuleDeploymentContract } from '../../src/index.ts';

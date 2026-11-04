@@ -3264,13 +3264,14 @@ const functionConstants = (fn: AstFunction): Map<string, Node> => {
   }
   return result;
 };
-const nativeOxlintExecutable = (facts: SourceFacts): Node | undefined => {
-  const entry = facts.variables.get('oxlintEntryPoint');
+// The harness launches Oxlint through `effect-tsgo --tsrs-lint`, the production lint launcher.
+const nativeLintExecutable = (facts: SourceFacts): Node | undefined => {
+  const entry = facts.variables.get('effectTsgoEntryPoint');
   if (
-    !immutableModelBinding(facts, 'oxlintEntryPoint') ||
+    !immutableModelBinding(facts, 'effectTsgoEntryPoint') ||
     entry?.type !== 'CallExpression' ||
     !isConsumerFunction(facts, entry.callee, 'node:path', 'join', entry.start) ||
-    staticString(entry.arguments[1], new Map()) !== 'bin/oxlint'
+    staticString(entry.arguments[1], new Map()) !== 'dist/effect-tsgo.cjs'
   ) {
     return undefined;
   }
@@ -3292,7 +3293,7 @@ const nativeOxlintExecutable = (facts: SourceFacts): Node | undefined => {
   return requireCall.type === 'CallExpression' &&
     isConsumerFunction(facts, requireCall.callee, 'node:module', 'createRequire', requireCall.start) &&
     importedUrlBase(requireCall.arguments[0]) &&
-    staticString(resolver.arguments[0], new Map()) === 'oxlint/package.json'
+    staticString(resolver.arguments[0], new Map()) === '@effect/tsgo/package.json'
     ? entry
     : undefined;
 };
@@ -3303,22 +3304,24 @@ const nativeOxlintArgv = (
   cwd: string,
 ): boolean => {
   const [, argv, options] = call.arguments;
-  if (argv?.type !== 'ArrayExpression' || argv.elements.length !== 7 || options?.type !== 'ObjectExpression') {
+  if (argv?.type !== 'ArrayExpression' || argv.elements.length !== 9 || options?.type !== 'ObjectExpression') {
     return false;
   }
   return (
-    identifierName(argv.elements[0] ?? undefined) === 'oxlintEntryPoint' &&
-    staticString(argv.elements[2] ?? undefined, new Map()) === '-c' &&
-    identifierName(argv.elements[3] ?? undefined) === config &&
-    argv.elements[6]?.type === 'SpreadElement' &&
-    identifierName(argv.elements[6].argument) === files &&
+    identifierName(argv.elements[0] ?? undefined) === 'effectTsgoEntryPoint' &&
+    staticString(argv.elements[1] ?? undefined, new Map()) === '--tsrs-lint' &&
+    staticString(argv.elements[2] ?? undefined, new Map()) === 'oxlint' &&
+    staticString(argv.elements[4] ?? undefined, new Map()) === '-c' &&
+    identifierName(argv.elements[5] ?? undefined) === config &&
+    argv.elements[8]?.type === 'SpreadElement' &&
+    identifierName(argv.elements[8].argument) === files &&
     options.properties.every((property) => property.type === 'Property' && !property.computed) &&
     identifierName(objectValue(options, 'cwd')) === cwd
   );
 };
 const nativeLintHarness = (facts: SourceFacts): boolean => {
   const fn = exportedModelFunction(facts, 'runOxlint');
-  const entry = nativeOxlintExecutable(facts);
+  const entry = nativeLintExecutable(facts);
   if (fn === undefined || entry === undefined) {
     return false;
   }
@@ -3330,7 +3333,7 @@ const nativeLintHarness = (facts: SourceFacts): boolean => {
   return sourceCalls(facts).some(
     (call) =>
       initializers.has(call) &&
-      scopedVariables(facts, call.start).get('oxlintEntryPoint') === entry &&
+      scopedVariables(facts, call.start).get('effectTsgoEntryPoint') === entry &&
       [config, files, cwd].every((name) => immutableModelBinding(facts, name)) &&
       isConsumerFunction(facts, call.callee, 'node:child_process', 'spawnSync', call.start) &&
       consumerIdentity(facts, call.arguments[0], call.start) === 'global#process.execPath' &&

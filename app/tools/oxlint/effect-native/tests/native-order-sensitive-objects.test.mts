@@ -8,7 +8,7 @@ import { rules as nativeRules } from 'eslint-plugin-perfectionist';
 import { expect, it } from 'effect-rstest';
 
 import orderSensitiveObjects from '../../order-sensitive-objects.ts';
-import { appRoot, oxlintEntryPoint, parseOxlintOutput, runOxlint } from './oxlint.mts';
+import { appRoot, effectTsgoEntryPoint, oxlintEntryPoint, parseOxlintOutput, runOxlint } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
 const applicationRequire = createRequire(path.join(appRoot, 'package.json'));
@@ -421,7 +421,17 @@ sort_objects_default.create = context => {
     );
     const result = spawnSync(
       process.execPath,
-      [oxlintEntryPoint, '--threads=2', '-c', productionConfig, '--format=json', ...approvedReadFiles, control],
+      [
+        effectTsgoEntryPoint,
+        '--tsrs-lint',
+        'oxlint',
+        '--threads=2',
+        '-c',
+        productionConfig,
+        '--format=json',
+        ...approvedReadFiles,
+        control,
+      ],
       {
         cwd: appRoot,
         encoding: 'utf-8',

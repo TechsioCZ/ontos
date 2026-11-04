@@ -13,7 +13,7 @@ rstest.mock('node:child_process', () => {
   return { ...original, spawnSync: rstest.fn(original.spawnSync) };
 });
 
-it('Oxlint launches its JavaScript entry point through Node without a platform shim', () => {
+it('Oxlint launches through the effect-tsgo JavaScript entry point on Node without a platform shim', () => {
   withTemporaryWorkspace((directory) => {
     const config = nodePath.join(directory, 'lint config.json');
     const input = 'source with spaces.ts';
@@ -33,9 +33,14 @@ it('Oxlint launches its JavaScript entry point through Node without a platform s
       if (!Array.isArray(args[1])) {
         throw new TypeError('Expected spawn arguments array');
       }
-      expect(args[1][0]).toBe(
-        nodePath.join(nodePath.dirname(createRequire(import.meta.url).resolve('oxlint/package.json')), 'bin/oxlint'),
-      );
+      expect(args[1].slice(0, 3)).toEqual([
+        nodePath.join(
+          nodePath.dirname(createRequire(import.meta.url).resolve('@effect/tsgo/package.json')),
+          'dist/effect-tsgo.cjs',
+        ),
+        '--tsrs-lint',
+        'oxlint',
+      ]);
       expect(args[1].includes(input)).toBe(true);
       expect(args[1].includes(config)).toBe(true);
       expect(args[1].includes('--threads=2')).toBe(true);

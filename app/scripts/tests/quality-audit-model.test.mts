@@ -1842,7 +1842,7 @@ it.live(
     const consumerPath = path.join(root, auditConsumersFile);
     const prepare = 'ultramodern-create ultramodern compiler-prepare';
     const typecheck = 'ultramodern-create ultramodern typecheck --project tsconfig.json';
-    const compilerDependencies = { '@effect/tsgo': '0.63.0', tsrs: '0.20.1-ts7.1.0-beta', yaml: '2.9.1' };
+    const compilerDependencies = { '@effect/tsgo': '0.67.0', tsrs: '0.21.0-ts7.1.0-beta', yaml: '2.9.1' };
     const manifests = (rootCommand: string, childCommand: string, withProvider = true) =>
       Effect.gen(function* writeCompilerManifests() {
         const devDependencies = withProvider
@@ -2686,9 +2686,14 @@ it.live(
     for (const invalid of [
       actualHarness.replace('node:child_process', counterfeitModule),
       actualHarness.replace('process.execPath,', "'printf',"),
-      actualHarness.replace("'-c', configPath", "'--unused', configPath"),
+      actualHarness.replace("'-c',\n      configPath", "'--unused',\n      configPath"),
+      actualHarness.replace("'--tsrs-lint',", "'--tsgolint',"),
+      actualHarness.replace("'dist/effect-tsgo.cjs'", "'dist/counterfeit.cjs'"),
       actualHarness.replace('  const result = spawnSync(', '  const result = () => spawnSync('),
-      actualHarness.replace('export function runOxlint', 'oxlintEntryPoint = replacement;\nexport function runOxlint'),
+      actualHarness.replace(
+        'export function runOxlint',
+        'effectTsgoEntryPoint = replacement;\nexport function runOxlint',
+      ),
     ]) {
       write(root, harness, invalid);
       const control = yield* buildKnipModel(root, base).pipe(Effect.provide(NodeServices.layer));
