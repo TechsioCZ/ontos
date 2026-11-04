@@ -178,7 +178,7 @@ const bundleReceiver = Effect.fn('MediaOrderingNative.bundleReceiver')(function*
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const directory = path.join(appRoot, 'verticals/catalog');
-  const cache = path.join(directory, 'node_modules/.cache/ontos-1274');
+  const cache = path.join(directory, '.cache/ontos-1274');
   yield* fs.makeDirectory(cache, { recursive: true });
   const artifact = path.join(cache, `${yield* nextId}.mjs`);
   yield* Effect.addFinalizer(() => fs.remove(artifact, { force: true }).pipe(Effect.orDie));
