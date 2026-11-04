@@ -1,3 +1,6 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -250,9 +253,12 @@ const nativePurchasePermissionPlans = Effect.gen(function* nativePurchasePermiss
       actionKeys: [addSavedAddressAction.descriptor.actionKey],
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: ['commerce-customer-context'],
+      applicationComposition: { load: Effect.succeed(snapshot) },
       authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
+      expectedDeployment: { ...ultramodernApiMarker, buildMarker: marker.buildMarker },
       moduleKeys: ['commerce.customer-context'],
+      ownerRegistration: commerceCustomerContextRegistration,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (resource) => resource.close().pipe(Effect.orDie),
@@ -390,13 +396,17 @@ const nativePurchasePermissionPlans = Effect.gen(function* nativePurchasePermiss
               profileId,
               state: 'PENDING_GRANT',
             });
-            yield* business.mutate({ ...grant, operation: 'grant' });
+            yield* business.mutate({ ...grant, operation: 'grant', target: customerOwnerPermissionTarget(grant) });
             yield* transaction.invoke(finalizeBindingIntent, [intent.mutationId, 'grant', 'ACTIVE']);
           }),
         'required',
       )
       .pipe(Effect.provideContext(context));
-    yield* Effect.addFinalizer(() => business.mutate({ ...grant, operation: 'revoke' }).pipe(Effect.orDie));
+    yield* Effect.addFinalizer(() =>
+      business
+        .mutate({ ...grant, operation: 'revoke', target: customerOwnerPermissionTarget(grant) })
+        .pipe(Effect.orDie),
+    );
   }
   yield* fixture
     .prepareOwner(
@@ -436,8 +446,12 @@ const nativePurchasePermissionPlans = Effect.gen(function* nativePurchasePermiss
           tenantId: fixture.tenantId,
         },
       };
-      yield* business.mutate({ ...grant, operation: 'grant' });
-      yield* Effect.addFinalizer(() => business.mutate({ ...grant, operation: 'revoke' }).pipe(Effect.orDie));
+      yield* business.mutate({ ...grant, operation: 'grant', target: customerOwnerPermissionTarget(grant) });
+      yield* Effect.addFinalizer(() =>
+        business
+          .mutate({ ...grant, operation: 'revoke', target: customerOwnerPermissionTarget(grant) })
+          .pipe(Effect.orDie),
+      );
     }
   }
   yield* fixture.grantResourceAccess(profile.profileRef, fixture.manager.principalId);

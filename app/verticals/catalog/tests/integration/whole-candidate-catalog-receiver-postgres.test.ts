@@ -4,9 +4,9 @@ import type { Cause } from 'effect';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { makeContextPermissionRelationshipMutationLive } from '@app/core-runtime';
+import { makeContextPermissionRelationshipMutationLive, OntosModuleDeploymentContractSchema } from '@app/core-runtime';
 import {
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_TTL_SECONDS,
@@ -49,7 +49,7 @@ import {
 } from '../../shared/apis/pricing-purpose-equivalence.ts';
 import { QuantityBasisCompatibilityForbiddenProblemSchema } from '../../shared/apis/quantity-basis-compatibility.ts';
 import { CatalogMediaCurrentForbiddenProblemSchema } from '../../shared/apis/catalog-media-current.ts';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { deriveActualCatalogCompositionSnapshot } from '../support/actual-catalog-composition.fixture.ts';
 import {
   WholeCandidateCatalogCommandSchema,
   WholeCandidateCatalogDescriptionSchema,
@@ -111,16 +111,17 @@ const launchReceiver = Effect.fn('CatalogTargetAgreement.launchReceiver')(functi
     Effect.raceFirst(
       Queue.take(responses),
       child.exitCode.pipe(Effect.flatMap(() => Effect.fail(unavailable('child-exited-before-response')))),
+    ).pipe(
+      Effect.flatMap((response) =>
+        response.type === 'failed' ? Effect.fail(unavailable(response.stage)) : Effect.succeed(response),
+      ),
     );
   return { child, commands, receive, send };
 });
 
 const runCatalogReceiver = (mode: 'strict-whole-candidate' | 'target-agreement') =>
   Effect.gen(function* actualCatalogWholeCandidateReceiver() {
-    const composition = yield* makeApplicationCompositionSnapshotFixture(
-      ['catalog', 'pricing'],
-      ultramodernApiMarker.buildMarker,
-    );
+    const composition = yield* deriveActualCatalogCompositionSnapshot(appRoot);
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: composition,
       mode: 'schema-only',
@@ -764,10 +765,15 @@ it.layer(services, { excludeTestServices: true })((suite) => {
 });
 
 it('keeps the whole-candidate process protocol closed and describes only the fixed setup Actions', () => {
+  // Codec-only metadata; this fixture is never treated as an observed owner build or publication.
+  const contract = Schema.decodeUnknownSync(OntosModuleDeploymentContractSchema)(
+    makeModuleContractFixture({ appId: 'catalog', buildMarker: 'TEST-build', moduleId: 'commerce.catalog' }),
+  );
   const description = {
     actionKeys: wholeCandidateCatalogActionKeys,
     appId: 'catalog',
-    buildMarker: 'TEST-build',
+    buildMarker: contract.deployment.buildMarker,
+    contractDocument: Schema.encodeSync(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(contract),
     type: 'description',
     version,
   };

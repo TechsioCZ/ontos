@@ -124,7 +124,45 @@ const provisionContactsAccess = Effect.fn('provisionContactsAccess')(function* p
     );
   // Register first so even an indeterminate write acknowledgement is cleaned up.
   yield* Effect.addFinalizer(() => update(v1.RelationshipUpdate_Operation.DELETE).pipe(Effect.orDie));
-  return yield* update(v1.RelationshipUpdate_Operation.TOUCH).pipe(Effect.uninterruptible);
+  yield* update(v1.RelationshipUpdate_Operation.TOUCH).pipe(Effect.uninterruptible);
+  const firstModuleObject = toModuleAccessObjectId(
+    e2eTenants.first.tenantId,
+    e2eTenants.first.legalEntityId,
+    contactsModuleId,
+  );
+  const firstContactsAccessor = relationships
+    .flat()
+    .find(
+      (relationship) =>
+        relationship.resource?.objectType === 'module_access' &&
+        relationship.resource.objectId === firstModuleObject &&
+        relationship.relation === 'accessor' &&
+        relationship.subject?.object?.objectType === 'principal' &&
+        relationship.subject.object.objectId === e2eTenants.first.principalId,
+    );
+  if (firstModuleObject === undefined || firstContactsAccessor === undefined) {
+    return yield* new E2eAuthorizationFixtureError({
+      reason: 'The first Tenant Contacts accessor was not provisioned',
+    });
+  }
+  // No arbitrary target or grant can be supplied: this is exactly one relationship
+  // already provisioned above for this worker's own first Tenant/Principal.
+  const updateFirstContactsAccessor = (operation: v1.RelationshipUpdate_Operation) =>
+    Effect.tryPromise(
+      async () =>
+        await client.promises.writeRelationships(
+          v1.WriteRelationshipsRequest.create({ updates: [{ operation, relationship: firstContactsAccessor }] }),
+        ),
+    );
+  const acquireFirstTenantContactsAccessRevocation = () =>
+    Effect.gen(function* revokeOwnedFirstTenantContactsAccess() {
+      // Restore even when DELETE's acknowledgment is indeterminate or the browser test fails.
+      yield* Effect.addFinalizer(() =>
+        updateFirstContactsAccessor(v1.RelationshipUpdate_Operation.TOUCH).pipe(Effect.orDie),
+      );
+      yield* updateFirstContactsAccessor(v1.RelationshipUpdate_Operation.DELETE);
+    });
+  return { acquireFirstTenantContactsAccessRevocation };
 });
 
 export const createAuthenticationFixture = Effect.fn('createAuthenticationFixture')(
@@ -312,8 +350,8 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
         tenantId: e2eTenants.second.tenantId,
       },
     ]);
-    yield* provisionContactsAccess(e2eTenants);
-    return { credentials: e2eCredentials, tenants: e2eTenants };
+    const contactsAccess = yield* provisionContactsAccess(e2eTenants);
+    return { ...contactsAccess, credentials: e2eCredentials, tenants: e2eTenants };
   },
   Effect.provide(NodeCrypto.layer),
 );

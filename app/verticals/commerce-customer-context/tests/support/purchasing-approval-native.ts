@@ -1,3 +1,5 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { consumePurchaseApprovalAction } from '../../src/actions/consume-purchase-approval.action.ts';
 import { revokeCounterpartyCommerceAccessAction } from '../../src/actions/revoke-counterparty-commerce-access.action.ts';
 import { suspendCustomerProfileAction } from '../../src/actions/suspend-customer-profile.action.ts';
@@ -199,11 +201,14 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
         ].map((action) => action.descriptor.actionKey),
         adminConnectionString: Redacted.make(input.connections.admin.connectionString),
         allowedAudiences: [audience],
+        applicationComposition: { load: Effect.succeed(input.snapshot) },
         authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
         authenticationSubjectTypes: input.finalProofTest === true ? ['user', 'api_key'] : ['user'],
         compositionRevision: input.snapshot.composition.revision,
+        expectedDeployment: ultramodernApiMarker,
         managerAuthenticationMethod: input.apiKeyManager === true ? 'api_key' : 'session',
         moduleKeys: [ownerModuleKey],
+        ownerRegistration: commerceCustomerContextRegistration,
         runtimeConnectionString: Redacted.make(input.connections.runtime.connectionString),
       }),
       (resource) => resource.close().pipe(Effect.orDie),
@@ -388,9 +393,11 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
       Effect.gen(function* settleActualBuyerRevocation() {
         yield* Context.get(runtimeContext, BusinessPermissionRelationshipMutation).mutate({
           operation: 'revoke',
-          permission: buyerSubmitPermission,
           principal,
-          target: { counterpartyId: counterpartyRef.resourceId, kind: 'counterparty', legalEntityId, tenantId },
+          target: customerOwnerPermissionTarget({
+            permission: buyerSubmitPermission,
+            target: { counterpartyId: counterpartyRef.resourceId, kind: 'counterparty', legalEntityId, tenantId },
+          }),
         });
         return yield* fixture
           .prepareOwner(
@@ -471,8 +478,12 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
             tenantId,
           },
         };
-        yield* mutation.mutate({ ...relation, operation: 'grant' });
-        yield* Effect.addFinalizer(() => mutation.mutate({ ...relation, operation: 'revoke' }).pipe(Effect.orDie));
+        yield* mutation.mutate({ ...relation, operation: 'grant', target: customerOwnerPermissionTarget(relation) });
+        yield* Effect.addFinalizer(() =>
+          mutation
+            .mutate({ ...relation, operation: 'revoke', target: customerOwnerPermissionTarget(relation) })
+            .pipe(Effect.orDie),
+        );
         yield* fixture
           .prepareOwner(
             (transaction) => transaction.invoke(settleGrant, [grant.grant_id, grant.mutation_id, 'grant', 'ACTIVE']),
@@ -760,8 +771,12 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
               tenantId,
             },
           };
-          yield* mutation.mutate({ ...relation, operation: 'grant' });
-          yield* Effect.addFinalizer(() => mutation.mutate({ ...relation, operation: 'revoke' }).pipe(Effect.orDie));
+          yield* mutation.mutate({ ...relation, operation: 'grant', target: customerOwnerPermissionTarget(relation) });
+          yield* Effect.addFinalizer(() =>
+            mutation
+              .mutate({ ...relation, operation: 'revoke', target: customerOwnerPermissionTarget(relation) })
+              .pipe(Effect.orDie),
+          );
           yield* fixture
             .prepareOwner(
               (transaction) => transaction.invoke(settleGrant, [grant.grant_id, grant.mutation_id, 'grant', 'ACTIVE']),

@@ -16,6 +16,7 @@ import {
   TenantModuleStateUnsupportedChangeSourceError,
   TenantModuleStateUnknownModuleError,
   TenantModuleStateUnsupportedStateError,
+  TenantModuleStateUnsatisfiedDependencyError,
   TenantModuleStateValidationUnavailableError,
 } from '../tenant-module-state-errors.ts';
 import type { TenantModuleStateTransitionError } from '../tenant-module-state-errors.ts';
@@ -62,6 +63,7 @@ const ChangeTenantModuleStateError = Schema.Union([
   TenantModuleStateUnsupportedChangeSourceError,
   TenantModuleStateUnknownModuleError,
   TenantModuleStateUnsupportedStateError,
+  TenantModuleStateUnsatisfiedDependencyError,
   TenantModuleStateValidationUnavailableError,
 ]);
 
@@ -79,7 +81,7 @@ const handleChangeTenantModuleState = Effect.fn('ChangeTenantModuleStateAction.h
     context: ActionHandlerContext<ChangeTenantModuleStateDomainEvents, ChangeTenantModuleStateServices>,
   ) {
     const installedCatalog = yield* InstalledModuleCatalogService;
-    const catalog = yield* installedCatalog.load;
+    const catalog = yield* installedCatalog.loadForRevision(context.compositionRevision);
     yield* validateTenantModuleStateTransition(catalog, payload.moduleKey, payload.newState);
     const result = yield* context.services.persist(
       withOptionalProperty(
@@ -87,6 +89,7 @@ const handleChangeTenantModuleState = Effect.fn('ChangeTenantModuleStateAction.h
           {
             actionInvocationId: context.actionInvocationId,
             authMethod: context.scope.authMethod,
+            catalog,
           },
           payload.expectedState !== undefined,
           'expectedState',

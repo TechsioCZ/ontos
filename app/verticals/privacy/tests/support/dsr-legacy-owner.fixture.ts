@@ -1,3 +1,5 @@
+import { privacyRegistration } from '../../vertical.registration.ts';
+import { derivePrivacyDsrOwnerContract } from './dsr-obligation-native.ts';
 // Explicit TEST entry, compiled independently into genuine old/current owner trees.
 import {
   ActionAuthorizationPreflightDatabaseLive,
@@ -7,7 +9,7 @@ import {
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
   GatewayAssertionRedemptionUnavailableError,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
   TrustedPrincipalContextSchema,
   makeActionRuntimeLive,
@@ -259,13 +261,13 @@ const serve = Effect.scoped(
       ActionAuthorizationPreflightDatabaseLive.pipe(Layer.provideMerge(CorePersistenceLive)),
       ActiveApplicationCompositionConfigLive.pipe(Layer.provide(source)),
     );
-    const action = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+    const action = makeActionRuntimeLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
       Layer.provideMerge(authorities),
       Layer.provide(infrastructure),
       Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
     );
-    const read = ReadRuntimeLive.pipe(
-      Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, entrypoint, scope)),
+    const read = makeReadRuntimeLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
+      Layer.provide(infrastructure),
       Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
     );
     const api = makePrivacyApiRuntime(read, action, redemption);
@@ -353,11 +355,22 @@ const serve = Effect.scoped(
   }),
 );
 
-const main = process.argv.includes('--describe')
-  ? Schema.encodeEffect(Schema.fromJsonString(wireReplySchema))({ type: 'description', ...description() }).pipe(
-      Effect.flatMap(Console.log),
-    )
-  : serve;
+const describeOwner = Effect.gen(function* describeOwner() {
+  const projection = yield* derivePrivacyDsrOwnerContract(process.cwd());
+  const text = yield* Schema.encodeEffect(Schema.fromJsonString(wireReplySchema))({
+    type: 'description',
+    ...description(),
+    value: { contractDocument: projection.contractDocument, federation: projection.federation },
+  });
+  yield* Console.log(text);
+});
+const main = Effect.gen(function* legacyOwnerEntry() {
+  if (process.argv.includes('--describe')) {
+    return yield* describeOwner;
+  }
+  return yield* serve;
+});
+
 NodeRuntime.runMain(
   main.pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpServer.layerTest))),
 );

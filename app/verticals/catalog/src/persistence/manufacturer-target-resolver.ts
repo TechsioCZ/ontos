@@ -2,7 +2,7 @@ import { PartyDetailResponseSchema, executePartyDetailWithAuthorization } from '
 import type { PartyDetailResponse } from '@app/party-registry/api/client';
 import { LegalEntityRefSchema } from '@app/core-runtime/resources/legal-entity';
 import type { LegalEntityRef } from '@app/core-runtime/resources/legal-entity';
-import { legalEntityDetailRead } from '@app/core-runtime';
+import { requireModuleOperation, legalEntityDetailRead } from '@app/core-runtime';
 import type { OperationalScope, ReadRuntimeService } from '@app/core-runtime';
 import { Redacted, Effect, Option, Predicate, Schema } from 'effect';
 import type { Crypto } from 'effect';
@@ -198,6 +198,10 @@ export const manufacturerTargetResolverForCoreRead = (
   readRuntime: ReadRuntimeService,
   scope: OperationalScope,
   crypto: Crypto.Crypto,
+  requirementKey?:
+    | 'commerce.catalog.requirement.set-product-manufacturer-party'
+    | 'commerce.catalog.requirement.change-product-manufacturer-party'
+    | 'commerce.catalog.requirement.manufacturer-current-party',
 ) =>
   makeManufacturerTargetResolver({
     readManagedLegalEntity: ({ legalEntityRef }) =>
@@ -208,10 +212,16 @@ export const manufacturerTargetResolverForCoreRead = (
         transport: { correlationId: scope.correlationId },
       }),
     readPartyDetail: (payload) =>
-      acquireOwnerGatewayContext(scope, crypto, {
-        audience: 'party-registry',
-        operationKey: 'party.registry.api.party-detail',
-      }).pipe(
+      (requirementKey === undefined ? Effect.void : requireModuleOperation(requirementKey)).pipe(
+        Effect.mapError((cause) =>
+          Object.defineProperty(new ManufacturerTargetUnavailable(), 'cause', { configurable: true, value: cause }),
+        ),
+        Effect.flatMap(() =>
+          acquireOwnerGatewayContext(scope, crypto, {
+            audience: 'party-registry',
+            operationKey: 'party.registry.api.party-detail',
+          }),
+        ),
         Effect.flatMap((issued) =>
           executePartyDetailWithAuthorization(payload, Redacted.value(issued.authorization), scope.correlationId, {
             baseUrl: issued.apiUrl,

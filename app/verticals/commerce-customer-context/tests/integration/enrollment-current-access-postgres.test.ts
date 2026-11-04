@@ -1,3 +1,4 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { isAPIError } from 'better-auth/api';
 import { getTableName, sql } from 'drizzle-orm';
 import { PgClient } from '@effect/sql-pg';
@@ -748,14 +749,16 @@ const pendingRetail = Effect.gen(function* pendingRetailEffect() {
   const relationships = Context.get(native.context, BusinessPermissionRelationshipMutation);
   yield* relationships.mutate({
     operation: 'revoke',
-    permission: 'retail.profile.read',
     principal: { principalId: native.principal.principalId, tenantId: native.fixture.tenantId },
-    target: {
-      kind: 'retail_profile',
-      legalEntityId: native.fixture.legalEntityId,
-      profileId: native.bindingInput.profileRef.resourceId,
-      tenantId: native.fixture.tenantId,
-    },
+    target: customerOwnerPermissionTarget({
+      permission: 'retail.profile.read',
+      target: {
+        kind: 'retail_profile',
+        legalEntityId: native.fixture.legalEntityId,
+        profileId: native.bindingInput.profileRef.resourceId,
+        tenantId: native.fixture.tenantId,
+      },
+    }),
   });
   expect(yield* native.currentAccess()).toBe(false);
   expect(Schema.is(ReadPermissionDenied)(yield* read().pipe(Effect.flip))).toBe(true);
@@ -770,9 +773,9 @@ const pendingInvitation = Effect.gen(function* pendingInvitationEffect() {
   const owned = yield* makeOwnedEnrollmentCurrentAccessDatabase(baseSnapshot);
   const recipientRealm = yield* makeEnrollmentRecipientRealm(owned);
   const preparedNative = yield* makeEnrollmentCurrentAccessFixture({
-    compositionRevision: owned.snapshot.composition.revision,
     connections: owned.connections,
     managerProviderSubjectId: recipientRealm.providerSubjectId,
+    snapshot: owned.snapshot,
   }).pipe(Effect.provide(capture.live));
   const native = { ...preparedNative, snapshot: owned.snapshot };
   const coreEvidenceContext = yield* Layer.build(
@@ -995,8 +998,8 @@ const pendingInvitation = Effect.gen(function* pendingInvitationEffect() {
   );
   expect(wrongLegalEntity.status).toBe(404);
   const foreign = yield* makeEnrollmentCurrentAccessFixture({
-    compositionRevision: owned.snapshot.composition.revision,
     connections: owned.connections,
+    snapshot: owned.snapshot,
   }).pipe(Effect.provide(capture.live));
   const foreignTenant = yield* receiver(claimPath, replayPayload, foreign.principal, recipientRealm.cookie);
   expect(foreignTenant.status).toBe(404);
@@ -1016,7 +1019,11 @@ const pendingInvitation = Effect.gen(function* pendingInvitationEffect() {
       tenantId: native.fixture.tenantId,
     },
   };
-  yield* relationships.mutate({ ...claimPermission, operation: 'revoke' });
+  yield* relationships.mutate({
+    ...claimPermission,
+    operation: 'revoke',
+    target: customerOwnerPermissionTarget(claimPermission),
+  });
   expect(
     (yield* store.read(
       yield* Schema.decodeEffect(ReadEnrollmentAttemptInputSchema)({
@@ -1096,7 +1103,11 @@ const pendingInvitation = Effect.gen(function* pendingInvitationEffect() {
     }),
   );
   // Restore only the exact legitimate relationship that the real claim worker just acknowledged.
-  yield* relationships.mutate({ ...claimPermission, operation: 'grant' });
+  yield* relationships.mutate({
+    ...claimPermission,
+    operation: 'grant',
+    target: customerOwnerPermissionTarget(claimPermission),
+  });
   const settled = yield* reconcile({ ...transition, observedRevision: 1, ownerOperationRevision: 1 });
   expect(settled.status).toBe('SUCCEEDED');
   expect(settled.resultReference).toBe(outcome.resultReference);
@@ -1210,14 +1221,16 @@ const pendingInvitation = Effect.gen(function* pendingInvitationEffect() {
   ).toHaveLength(1);
   yield* relationships.mutate({
     operation: 'revoke',
-    permission: 'counterparty.profile.read',
     principal: { principalId: native.principal.principalId, tenantId: native.fixture.tenantId },
-    target: {
-      counterpartyId: invitation.counterpartyRef.resourceId,
-      kind: 'counterparty',
-      legalEntityId: native.fixture.legalEntityId,
-      tenantId: native.fixture.tenantId,
-    },
+    target: customerOwnerPermissionTarget({
+      permission: 'counterparty.profile.read',
+      target: {
+        counterpartyId: invitation.counterpartyRef.resourceId,
+        kind: 'counterparty',
+        legalEntityId: native.fixture.legalEntityId,
+        tenantId: native.fixture.tenantId,
+      },
+    }),
   });
   expect((yield* check()).decision).toBe('DENIED');
   expect(

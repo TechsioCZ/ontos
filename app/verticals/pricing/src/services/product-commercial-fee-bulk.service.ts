@@ -34,6 +34,7 @@ import type {
   ReviseCommercialFeeRejected,
 } from '../actions/revise-commercial-fee.action.ts';
 import { commercialFeeCatalogTargetAssessmentPortFromEnvironment } from '../integrations/commercial-fee-catalog-target-evidence.ts';
+import { requirePricingCatalogOperation } from '../integrations/pricing-operation-requirements.ts';
 import { productCommercialFeeBulkCatalogSnapshotPortFromEnvironment } from '../integrations/product-commercial-fee-bulk-catalog-snapshot.ts';
 import type { ProductCommercialFeeBulkCatalogSnapshotPort } from '../integrations/product-commercial-fee-bulk-catalog-snapshot.ts';
 import { currencySupportPersistenceForScope } from '../persistence/currency-support-persistence.ts';
@@ -593,23 +594,33 @@ export const productCommercialFeeBulkServiceForScope: ActionServiceFactory<Produ
         },
         { concurrency: 4 },
       );
+      const catalogRequirement = 'commerce.pricing.requirement.manage-product-commercial-fees-bulk-catalog';
       const commandOptions: ProductCommercialFeeBulkCommandOptions = {
         defineServices: {
           define: persistence.define,
           loadCurrencySupport: currencySupport.loadCurrent,
-          validateCatalogTarget: catalogTarget.validate,
+          validateCatalogTarget: (input) =>
+            requirePricingCatalogOperation(catalogRequirement).pipe(
+              Effect.andThen(() => catalogTarget.validate(input)),
+            ),
         },
         persistence,
         reviseServices: {
           loadCurrencySupport: currencySupport.loadForCanonicalAdmission,
           revise: persistence.revise,
-          validateCatalogTarget: catalogTarget.validate,
+          validateCatalogTarget: (input) =>
+            requirePricingCatalogOperation(catalogRequirement).pipe(
+              Effect.andThen(() => catalogTarget.validate(input)),
+            ),
         },
       };
       const { execute } = makeProductCommercialFeeBulkService(makeProductCommercialFeeBulkCommandPort(commandOptions));
       return {
         execute,
-        validateCurrentCatalogSnapshot: catalogSnapshot.validateCurrent,
+        validateCurrentCatalogSnapshot: (input) =>
+          requirePricingCatalogOperation(catalogRequirement).pipe(
+            Effect.andThen(() => catalogSnapshot.validateCurrent(input)),
+          ),
       } satisfies ProductCommercialFeeBulkActionServices;
     },
   );

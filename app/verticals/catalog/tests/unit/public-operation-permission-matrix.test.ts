@@ -1,3 +1,4 @@
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { NodeCrypto } from '@effect/platform-node';
 import {
   ContextAccess,
@@ -602,6 +603,7 @@ it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suit
           },
           operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
           ownerAuthorizationDecision: 'allowed',
+          ownerRegistration: catalogRegistration,
           permissionDecision: 'allowed',
           scope: targetScope,
         });
@@ -622,6 +624,7 @@ it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suit
             executeOwnerQuery: () => Effect.die('No owner SQL is authorized'),
             operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
             ownerAuthorizationDecision: 'allowed',
+            ownerRegistration: catalogRegistration,
             permissionDecision: 'allowed',
             scope: targetScope,
           });
@@ -657,6 +660,7 @@ it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suit
           executeOwnerQuery: () => Effect.die('No owner SQL is authorized'),
           operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
           ownerAuthorizationDecision: 'allowed',
+          ownerRegistration: catalogRegistration,
           permissionDecision: 'allowed',
           scope: targetScope,
         });
@@ -674,6 +678,7 @@ it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suit
           executeOwnerQuery: () => Effect.die('No owner SQL is authorized'),
           operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
           ownerAuthorizationDecision: 'allowed',
+          ownerRegistration: catalogRegistration,
           permissionDecision: 'allowed',
           scope: targetScope,
         });
@@ -696,6 +701,7 @@ it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suit
           executeOwnerQuery: () => Effect.die('No owner SQL is authorized'),
           operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
           ownerAuthorizationDecision: 'allowed',
+          ownerRegistration: catalogRegistration,
           permissionDecision: 'allowed',
           scope: targetScope,
         });
@@ -734,6 +740,7 @@ it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suit
         },
         operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
         ownerAuthorizationDecision: 'allowed',
+        ownerRegistration: catalogRegistration,
         permissionDecision: 'allowed',
         scope: targetScope,
       });
@@ -776,6 +783,7 @@ it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suit
         executeOwnerQuery: () => Effect.die('No owner SQL is authorized'),
         operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
         ownerAuthorizationDecision: 'allowed',
+        ownerRegistration: catalogRegistration,
         permissionDecision: 'allowed',
         scope: targetScope,
       });

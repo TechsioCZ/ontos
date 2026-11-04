@@ -1,16 +1,17 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
+import { randomUUID } from 'node:crypto';
 import { cp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 import {
   BusinessPermissionRelationshipMutation,
   BusinessPermissionRelationshipMutationLive,
+  ActiveApplicationCompositionService,
+  OutboxRuntime,
+  getVerticalRuntimeOutboxWorkers,
   ContextAccessLive,
-  canonicalizeApplicationComposition,
   extractOutboxWorkerSubscriptions,
-  OntosModuleDeploymentContractSchema,
   OutboxRepositoryLive,
-  runOutboxCycle,
   matchOutboxMessages,
   validateActiveApplicationCompositionSnapshot,
   PrincipalEligibilityLive,
@@ -18,10 +19,18 @@ import {
   loadDatabaseConnectionPair,
   runAction,
 } from '@app/core-runtime';
-import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { defineOutboxWorkerEntry } from '@app/core-runtime/outbox/worker';
+import type {
+  ActiveApplicationCompositionSnapshot,
+  AnyOutboxWorkerRegistration,
+  RunOutboxCycleInput,
+  OutboxCycleResult,
+  OutboxCycleError,
+  OutboxRuntimeService,
+  OutboxWorkerRequirements,
+} from '@app/core-runtime';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { ChildProcess } from 'effect/process';
 import {
   Config,
@@ -29,6 +38,7 @@ import {
   Context,
   Crypto,
   DateTime,
+  Deferred,
   Effect,
   Exit,
   Scope,
@@ -41,6 +51,8 @@ import {
 } from 'effect';
 import { outboxWorkerLayer } from '../../src/worker-host/layer.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { enrollmentApplicationCompositionSnapshot } from './enrollment-application-composition.ts';
 import { sql } from 'drizzle-orm';
 
@@ -77,6 +89,52 @@ import {
 } from '../../shared/domain/profile-contracts.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 
+const makeAdmittedCurrentAccessOutbox = (
+  outbox: OutboxRuntimeService,
+  snapshot: ActiveApplicationCompositionSnapshot,
+  expectedDeployment: Parameters<typeof defineOutboxWorkerEntry>[0]['expectedDeployment'],
+) => ({
+  ...outbox,
+  runCycle: <Registration extends AnyOutboxWorkerRegistration>(input: RunOutboxCycleInput<Registration>) =>
+    Effect.gen(function* runAdmittedCurrentAccessCycle() {
+      const services = yield* Effect.context<OutboxWorkerRequirements<Registration>>();
+      const completed = yield* Deferred.make<OutboxCycleResult, OutboxCycleError>();
+      const preserveCycleExit = (exit: Exit.Exit<OutboxCycleResult, OutboxCycleError>) =>
+        Deferred.done(completed, exit);
+      const entry = defineOutboxWorkerEntry({
+        claimOwnerPrefix: 'ccc-native-current-access',
+        expectedDeployment,
+        layer: Layer.mergeAll(
+          Layer.succeedContext(services),
+          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+          Layer.succeed(OutboxRuntime, {
+            ...outbox,
+            // Delegate the exact original native cycle; the public entry supplies receiving admission.
+            runCycle: () =>
+              outbox.runCycle(input).pipe(Effect.provideContext(services), Effect.onExit(preserveCycleExit)),
+          }),
+        ),
+        ownerRegistration: commerceCustomerContextRegistration,
+        registrations: input.registrations,
+        subscriptions: extractOutboxWorkerSubscriptions(
+          getVerticalRuntimeOutboxWorkers(commerceCustomerContextRegistration),
+        ),
+      });
+      return yield* Effect.raceFirst(
+        Deferred.await(completed),
+        entry
+          .runLoop({
+            config: {
+              claimOwner: input.claimOwner,
+              maxDeliveries: input.maxDeliveries ?? 1,
+              pollIntervalMs: 1000,
+            },
+          })
+          .pipe(Effect.andThen(Effect.never)),
+      );
+    }).pipe(Effect.scoped),
+});
+
 const ownerModuleKey = 'commerce.customer-context';
 
 const ensureProfile = defineScopedRoutine({
@@ -102,16 +160,17 @@ const ensureProfile = defineScopedRoutine({
 });
 
 interface NativeEnrollmentFixtureConfiguration {
-  readonly compositionRevision: string;
   readonly connections: Effect.Success<ReturnType<typeof loadDatabaseConnectionPair>>;
   readonly managerProviderSubjectId?: string;
+  readonly snapshot: ActiveApplicationCompositionSnapshot;
 }
 
 /** Native Core identity preparation is a public fixture capability; the binding Action is real. */
 export const makeEnrollmentCurrentAccessFixture = Effect.fn('EnrollmentCurrentAccessFixture.make')(
   function* makeEnrollmentCurrentAccessFixtureEffect(configuration?: NativeEnrollmentFixtureConfiguration) {
     const connections = configuration?.connections ?? (yield* loadDatabaseConnectionPair());
-    const compositionRevision = configuration?.compositionRevision ?? 'a'.repeat(64);
+    const snapshot = configuration?.snapshot ?? (yield* enrollmentApplicationCompositionSnapshot);
+    const compositionRevision = snapshot.composition.revision;
     const fixtureConfiguration = {
       actionKeys: [
         startPortalEnrollmentAction.descriptor.actionKey,
@@ -121,9 +180,12 @@ export const makeEnrollmentCurrentAccessFixture = Effect.fn('EnrollmentCurrentAc
       ],
       adminConnectionString: Redacted.make(connections.admin.connectionString),
       allowedAudiences: ['commerce-customer-context'],
+      applicationComposition: { load: Effect.succeed(snapshot) },
       authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision,
+      expectedDeployment: ultramodernApiMarker,
       moduleKeys: [ownerModuleKey],
+      ownerRegistration: commerceCustomerContextRegistration,
       runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
     };
     if (configuration?.managerProviderSubjectId !== undefined) {
@@ -200,14 +262,16 @@ export const makeEnrollmentCurrentAccessFixture = Effect.fn('EnrollmentCurrentAc
         (permission) =>
           mutation.mutate({
             operation: 'revoke',
-            permission,
             principal: { principalId: fixture.manager.principalId, tenantId: fixture.tenantId },
-            target: {
-              kind: 'retail_profile',
-              legalEntityId: fixture.legalEntityId,
-              profileId: prepared.profileRef.resourceId,
-              tenantId: fixture.tenantId,
-            },
+            target: customerOwnerPermissionTarget({
+              permission,
+              target: {
+                kind: 'retail_profile',
+                legalEntityId: fixture.legalEntityId,
+                profileId: prepared.profileRef.resourceId,
+                tenantId: fixture.tenantId,
+              },
+            }),
           }),
         { concurrency: 1 },
       ).pipe(Effect.orDie, Effect.asVoid),
@@ -350,7 +414,12 @@ export const makeEnrollmentCurrentAccessFixture = Effect.fn('EnrollmentCurrentAc
             )
             .pipe(Effect.provideContext(context));
           const clock = yield* Schema.decodeUnknownEffect(Schema.Struct({ at: Schema.DateTimeUtcFromString }))(row);
-          const cycle = yield* runOutboxCycle({
+          const admittedOutbox = makeAdmittedCurrentAccessOutbox(
+            Context.get(workerContext, OutboxRuntime),
+            snapshot,
+            ultramodernApiMarker,
+          );
+          const cycle = yield* admittedOutbox.runCycle({
             claimOwner: `enrollment-current-${fixture.tenantId}`,
             compositionRevision,
             maxDeliveries: 100,
@@ -521,8 +590,12 @@ export const prepareEnrollmentCurrentAccessInvitation = Effect.fn('EnrollmentCur
         tenantId: native.fixture.tenantId,
       },
     };
-    yield* mutation.mutate({ ...management, operation: 'grant' });
-    yield* Effect.addFinalizer(() => mutation.mutate({ ...management, operation: 'revoke' }).pipe(Effect.orDie));
+    yield* mutation.mutate({ ...management, operation: 'grant', target: customerOwnerPermissionTarget(management) });
+    yield* Effect.addFinalizer(() =>
+      mutation
+        .mutate({ ...management, operation: 'revoke', target: customerOwnerPermissionTarget(management) })
+        .pipe(Effect.orDie),
+    );
     yield* native.fixture
       .prepareOwner(
         (transaction) =>
@@ -551,8 +624,12 @@ export const prepareEnrollmentCurrentAccessInvitation = Effect.fn('EnrollmentCur
       return yield* Effect.die('Native observer grant unavailable');
     }
     const observer = { ...management, permission: 'counterparty.access.read' as const };
-    yield* mutation.mutate({ ...observer, operation: 'grant' });
-    yield* Effect.addFinalizer(() => mutation.mutate({ ...observer, operation: 'revoke' }).pipe(Effect.orDie));
+    yield* mutation.mutate({ ...observer, operation: 'grant', target: customerOwnerPermissionTarget(observer) });
+    yield* Effect.addFinalizer(() =>
+      mutation
+        .mutate({ ...observer, operation: 'revoke', target: customerOwnerPermissionTarget(observer) })
+        .pipe(Effect.orDie),
+    );
     yield* native.fixture
       .prepareOwner(
         (transaction) =>
@@ -569,14 +646,16 @@ export const prepareEnrollmentCurrentAccessInvitation = Effect.fn('EnrollmentCur
       mutation
         .mutate({
           operation: 'revoke',
-          permission: 'counterparty.profile.read',
           principal: { principalId: managerId, tenantId: native.fixture.tenantId },
-          target: {
-            counterpartyId: counterpartyRef.resourceId,
-            kind: 'counterparty',
-            legalEntityId: native.fixture.legalEntityId,
-            tenantId: native.fixture.tenantId,
-          },
+          target: customerOwnerPermissionTarget({
+            permission: 'counterparty.profile.read',
+            target: {
+              counterpartyId: counterpartyRef.resourceId,
+              kind: 'counterparty',
+              legalEntityId: native.fixture.legalEntityId,
+              tenantId: native.fixture.tenantId,
+            },
+          }),
         })
         .pipe(Effect.orDie),
     );
@@ -608,7 +687,6 @@ const databaseArgument = '--dbname';
 const migrationBoundary = '20261019151239_enrollment_current_claim_read';
 const packageRoot = fileURLToPath(new URL('../../', import.meta.url));
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
-const digest = (document: string) => createHash('sha256').update(document, 'utf-8').digest('hex');
 const MigrationOwnerSchema = Schema.Literals(['commerce_customer_context', 'commerce_portal_auth']);
 type MigrationOwner = typeof MigrationOwnerSchema.Type;
 
@@ -813,35 +891,7 @@ const migrateOwnedCurrentAccessBoundary = Effect.fn('EnrollmentCurrentAccessFixt
 export const makeOwnedEnrollmentCurrentAccessDatabase = Effect.fn('EnrollmentCurrentAccessFixture.ownedDatabase')(
   function* makeOwnedEnrollmentCurrentAccessDatabaseEffect(baseSnapshot?: ActiveApplicationCompositionSnapshot) {
     const base = baseSnapshot ?? (yield* enrollmentApplicationCompositionSnapshot);
-    const deployment = base.composition.modules.find((module) => module.moduleId === ownerModuleKey)?.deployment;
-    if (deployment === undefined) {
-      return yield* Effect.die('The enrollment owner deployment is absent');
-    }
-    const contractSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
-    const contract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(
-      makeModuleContractFixture({
-        appId: deployment.appId,
-        buildMarker: deployment.buildMarker,
-        moduleId: ownerModuleKey,
-        outboxSubscriptions: extractOutboxWorkerSubscriptions(outboxWorkers),
-      }),
-    );
-    const contractDocument = yield* Schema.encodeEffect(contractSchema)(contract);
-    const hash = digest(contractDocument);
-    const composition = {
-      ...base.composition,
-      modules: base.composition.modules.map((module) => ({
-        ...module,
-        contract: { ...module.contract, sha256: hash },
-        contractDocument,
-        publicContract: { ...module.publicContract, sha256: hash },
-      })),
-      revision: '0'.repeat(64),
-    };
-    const snapshot = yield* validateActiveApplicationCompositionSnapshot({
-      ...base,
-      composition: { ...composition, revision: digest(canonicalizeApplicationComposition(composition)) },
-    });
+    const snapshot = yield* validateActiveApplicationCompositionSnapshot(base);
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: snapshot,
       mode: 'schema-only',
@@ -859,8 +909,8 @@ export const makeOwnedEnrollmentCurrentAccessFixture = Effect.fn('EnrollmentCurr
   function* makeOwnedEnrollmentCurrentAccessFixtureEffect(baseSnapshot?: ActiveApplicationCompositionSnapshot) {
     const owned = yield* makeOwnedEnrollmentCurrentAccessDatabase(baseSnapshot);
     const native = yield* makeEnrollmentCurrentAccessFixture({
-      compositionRevision: owned.snapshot.composition.revision,
       connections: owned.connections,
+      snapshot: owned.snapshot,
     });
     return { ...native, snapshot: owned.snapshot };
   },

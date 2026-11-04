@@ -1,3 +1,4 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { Writable } from 'node:stream';
@@ -196,8 +197,12 @@ it.live('serves an authorized owner Read through the unchanged default API and r
           tenantId: realm.tenantId,
         },
       };
-      yield* mutation.mutate({ ...permission, operation: 'grant' });
-      yield* Effect.addFinalizer(() => mutation.mutate({ ...permission, operation: 'revoke' }).pipe(Effect.orDie));
+      yield* mutation.mutate({ ...permission, operation: 'grant', target: customerOwnerPermissionTarget(permission) });
+      yield* Effect.addFinalizer(() =>
+        mutation
+          .mutate({ ...permission, operation: 'revoke', target: customerOwnerPermissionTarget(permission) })
+          .pipe(Effect.orDie),
+      );
       yield* fixture.admin.execute(
         sql`insert into commerce_customer_context.counterparty_commerce_access_grants
       (tenant_id, legal_entity_id, counterparty_purchasing_profile_id, lifecycle, permission_code, principal_id, revision, action_invocation_id, actor_principal_id)

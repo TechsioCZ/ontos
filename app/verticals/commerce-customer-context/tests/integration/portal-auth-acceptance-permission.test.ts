@@ -1,3 +1,4 @@
+import { customerPermissionObjectId } from '../../src/permissions/authorization.ts';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -60,10 +61,7 @@ import { makeModuleStateGate } from '../../../../packages/core-runtime/src/modul
 import { makeTenantModuleStateService } from '../../../../packages/core-runtime/src/modules/tenant-module-state-service.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { acquireOutlivingCleanup, makeTestPgClient } from '../../../../packages/core-runtime/tests/support/database.ts';
-import {
-  toBusinessPermissionAccessObjectId,
-  toLegalEntityAccessObjectId,
-} from '../../../../packages/core-runtime/src/permissions/context-access.ts';
+import { toLegalEntityAccessObjectId } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { makeCommerceCustomerContextApiRuntime } from '../../api/index.ts';
 import { commercePortalAuthRealmUnavailableLive } from '../../api/portal-auth/realm-unavailable.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
@@ -72,6 +70,7 @@ import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
 import { enrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import {
   issueAcceptanceGatewayAssertion,
   makeAcceptanceGatewayIssuer,
@@ -320,11 +319,14 @@ const seedSpiceDbContext = Effect.fnUntraced(function* seedSpiceDbContext(subjec
   return (counterpartyId: string) => {
     const businessPermissionObject = v1.ObjectReference.create({
       objectId: requiredObjectId(
-        toBusinessPermissionAccessObjectId('counterparty.address_book.use', {
-          counterpartyId,
-          kind: 'counterparty',
-          legalEntityId: subject.legalEntityId,
-          tenantId: subject.tenantId,
+        customerPermissionObjectId({
+          permission: 'counterparty.address_book.use',
+          target: {
+            counterpartyId,
+            kind: 'counterparty',
+            legalEntityId: subject.legalEntityId,
+            tenantId: subject.tenantId,
+          },
         }),
         'The Counterparty address-book permission object',
       ),
@@ -377,9 +379,12 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
   );
   const ownerAuthorizationOverlay = Context.get(ownerServices, OwnerAuthorizationOverlay);
   const readRuntime = makeReadRuntime(database, moduleGateway, scopeResolver, contextAccess, {
+    applicationComposition: { load: Effect.succeed(snapshot) },
+    expectedDeployment: ultramodernApiMarker,
     ownerAuthorizationOverlay,
+    ownerRegistration: commerceCustomerContextRegistration,
   });
-  const actionRuntime = makeActionRuntimeLive(ultramodernApiMarker).pipe(
+  const actionRuntime = makeActionRuntimeLive(ultramodernApiMarker, commerceCustomerContextRegistration).pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(ActionRepository, makeActionRepository(crypto)),

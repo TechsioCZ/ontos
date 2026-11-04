@@ -25,7 +25,8 @@ import {
   ReadPrincipalBindingPayloadSchema,
 } from '@app/core-runtime/auth/external-identity-contracts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makeLiveOperationFixture, makeLiveOperationFixtureRuntime } from '@app/core-runtime/testing/actions';
+import { privacyRegistration } from '../../vertical.registration.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { CreatePartyPayloadSchema, partyRegistryApiContract } from '@app/party-registry/api';
@@ -167,7 +168,7 @@ import { NoticeChannelDeliveryAuthorityForAcknowledgementsLive } from '../../src
 import { createEffectBffTestHandler, defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import type { RetainedConsentAccountTransport } from '../support/privacy-retained-purpose-self-service-http.ts';
 
-import { makeDsrObligationNative } from '../support/dsr-obligation-native.ts';
+import { makeDsrObligationNative, readPrivacyFixtureShellObservation } from '../support/dsr-obligation-native.ts';
 
 // Real public retained-V1 consent lifecycle, using one isolated enrolled account and actual owner services.
 class RetainedAccountNativeError extends Schema.TaggedError<RetainedAccountNativeError>()(
@@ -628,12 +629,11 @@ const makeSnapshot = Effect.fn('RetainedAccount.makeSnapshot')(function* makeSna
   origins: Readonly<Record<string, string>>,
 ) {
   const base = yield* makeApplicationCompositionSnapshotFixture(ownerIds);
-  const shellContract = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))({
-    contributionAbi: base.composition.shell.contributionAbi,
-    coreCapabilities: [],
-    deployment: shell,
-    schemaVersion: '2',
-  });
+  const { sharedSingletons, shellFederationDocument, shellRuntime, shellRuntimeDocument } =
+    yield* readPrivacyFixtureShellObservation();
+  if (shellRuntime.deployment.appId !== shell.appId || shellRuntime.deployment.buildMarker !== shell.buildMarker) {
+    return yield* failed('published-shell-running-identity');
+  }
   const modules = yield* Effect.forEach(
     base.composition.modules,
     Effect.fn('RetainedAccount.module')(function* module(entry) {
@@ -645,6 +645,10 @@ const makeSnapshot = Effect.fn('RetainedAccount.makeSnapshot')(function* makeSna
         owner,
       );
       const hash = digest(contractDocument);
+      const { requirements } = owner.manifest;
+      if (requirements === undefined) {
+        return yield* failed('owner-requirements');
+      }
       const baseUrl = new URL(origins[entry.deployment.appId] ?? 'http://127.0.0.1:1/').href;
       const { components } = owner.manifest.publicSurface;
       const [component] = components;
@@ -660,6 +664,7 @@ const makeSnapshot = Effect.fn('RetainedAccount.makeSnapshot')(function* makeSna
         },
         contract: { ...entry.contract, sha256: hash },
         contractDocument,
+        dependencies: requirements.intrinsic.map(({ moduleId }) => moduleId),
         deployment: owner.deployment,
         federation:
           component === undefined
@@ -675,6 +680,8 @@ const makeSnapshot = Effect.fn('RetainedAccount.makeSnapshot')(function* makeSna
               },
         moduleId: owner.manifest.module.id,
         publicContract: { id: owner.manifest.module.id, sha256: hash, version: owner.schemaVersion },
+        requiredCoreCapabilities: requirements.coreCapabilities,
+        requiredShellAbi: shellRuntime.contributionAbi,
       };
     }),
     { concurrency: 1 },
@@ -684,8 +691,12 @@ const makeSnapshot = Effect.fn('RetainedAccount.makeSnapshot')(function* makeSna
     modules,
     shell: {
       ...base.composition.shell,
-      deployment: shell,
-      runtimeContract: { ...base.composition.shell.runtimeContract, sha256: digest(shellContract) },
+      contributionAbi: shellRuntime.contributionAbi,
+      coreCapabilities: shellRuntime.coreCapabilities,
+      deployment: shellRuntime.deployment,
+      federationManifest: { ...base.composition.shell.federationManifest, sha256: digest(shellFederationDocument) },
+      runtimeContract: { ...base.composition.shell.runtimeContract, sha256: digest(shellRuntimeDocument) },
+      sharedSingletons,
     },
   };
   return yield* validateActiveApplicationCompositionSnapshot({
@@ -1262,6 +1273,14 @@ const retainedNativeInfrastructure = Layer.effect(
   acquireRetainedInfrastructure().pipe(Effect.provideService(Clock.Clock, defaultNativeClock)),
 ).pipe(Layer.provideMerge(retainedPublicArtifacts), Layer.provide(nativeServices));
 
+const knownAuditCodes = Schema.Literals([
+  'action_executed',
+  'spicedb_permission_denied',
+  'action_transaction_failed',
+  'identity_unavailable',
+  'action_permission_check_failed',
+]);
+
 const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(function* actualAccountPrerequisite(
   terminalMode: 'revoked' | 'owner-outage',
 ) {
@@ -1746,13 +1765,6 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
             row.idempotencyKey === `retained-reserve:${suffix}`,
         );
         const invocationIds = new Set(invocations.map((row) => row.actionInvocationId));
-        const knownAuditCodes = Schema.Literals([
-          'action_executed',
-          'spicedb_permission_denied',
-          'action_transaction_failed',
-          'identity_unavailable',
-          'action_permission_check_failed',
-        ]);
         yield* Effect.logInfo('Retained reserve invocation evidence', {
           audits: evidence.audits
             .filter((row) => row.actionInvocationId !== null && invocationIds.has(row.actionInvocationId))
@@ -1795,6 +1807,50 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     },
     { ...identityOptions, idempotencyKey: `retained-activate:${suffix}` },
   ).pipe(
+    Effect.tapError((failure) =>
+      Effect.gen(function* observeActivationFailure() {
+        const published = Schema.decodeUnknownResult(Schema.Union(externalIdentityProblems))(failure);
+        if (Result.isSuccess(published)) {
+          const problem = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Union(externalIdentityProblems)))(
+            published.success,
+          );
+          yield* Effect.logInfo('Retained activation published problem', problem);
+        }
+        const evidence = yield* fixture.evidence(coreEvidenceExecutor);
+        const invocations = evidence.invocations.filter(
+          (row) =>
+            row.actionKey === activatePrincipalBindingAction.descriptor.actionKey &&
+            row.idempotencyKey === `retained-activate:${suffix}`,
+        );
+        const invocationIds = new Set(invocations.map((row) => row.actionInvocationId));
+        yield* Effect.logInfo('Retained activation invocation evidence', {
+          audits: evidence.audits
+            .filter((row) => row.actionInvocationId !== null && invocationIds.has(row.actionInvocationId))
+            .map((row) => {
+              const code = Schema.decodeUnknownResult(knownAuditCodes)(row.outcomeCode);
+              return Result.isSuccess(code) ? code.success : 'OTHER_AUDIT_CODE';
+            }),
+          operationIds: invocations.map((row) => row.actionInvocationId),
+          statuses: invocations.map((row) => row.status),
+        });
+        const observation = yield* privateExchange(
+          accountReplySchema,
+          nativeClock,
+          account,
+          yield* Schema.decodeUnknownEffect(Schema.toType(ownerControlCommandSchema))({
+            _tag: 'observe-enrollment',
+            attemptId: enrolled.attemptId,
+            authorization: Redacted.make(`Bearer ${credential.token}`),
+          }),
+        );
+        if (Schema.is(enrollmentObservationSchema)(observation)) {
+          yield* Effect.logInfo(
+            'Retained activation provider verification transport',
+            observation.providerVerification,
+          );
+        }
+      }).pipe(Effect.catch(() => Effect.logInfo('Retained activation observation unavailable'))),
+    ),
     Effect.mapError((error) =>
       failed(
         Schema.is(Schema.Union(externalIdentityProblems))(error)
@@ -2165,13 +2221,31 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   yield* Effect.gen(function* actualRetainedPurposeLifecycle() {
     // Select only real runtime services. The fixture's STAFF-only registry must not override
     // the receiving owner's reviewed canonical Commerce+STAFF registry at invocation time.
+    const privacyOwner = yield* Effect.succeed(admitted.composition.modules).pipe(
+      Effect.map((modules) => modules.find(({ moduleId }) => moduleId === 'privacy.core')),
+      Effect.filterOrFail(
+        (owner) => owner !== undefined,
+        () => failed('privacy-owner-contract'),
+      ),
+    );
+    const privacyFixture = yield* Effect.acquireRelease(
+      makeLiveOperationFixtureRuntime({
+        applicationComposition: { load: Effect.succeed(admitted) },
+        configuration: fixture.runtimeHandoff.configuration,
+        expectedDeployment: privacyOwner.deployment,
+        handoff: fixture.runtimeHandoff,
+        ownerRegistration: privacyRegistration,
+        runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
+      }),
+      (value) => value.close().pipe(Effect.orDie),
+    );
     const readLayer = Layer.effect(ReadRuntime, ReadRuntime).pipe(
-      Layer.provide(fixture.layer),
+      Layer.provide(privacyFixture.layer),
       Layer.provide(NodeCrypto.layer),
       Layer.orDie,
     );
     const actionLayer = Layer.effect(ActionRuntime, ActionRuntime).pipe(
-      Layer.provide(fixture.layer),
+      Layer.provide(privacyFixture.layer),
       Layer.provide(NodeCrypto.layer),
       Layer.orDie,
     );
@@ -2581,7 +2655,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     expect(yield* noticeFacts()).toEqual(noNoticeFacts);
     yield* Scope.close(unconfigured.scope, Exit.void);
 
-    fixture.faultNextTransaction('rollback');
+    privacyFixture.faultNextTransaction('rollback');
     const failedAck = yield* executeAcknowledgePrivacyNoticeWithAuthorization(
       { acknowledged: true, presentationReceipt: presentation.presentationReceipt },
       ...(yield* privacyTransport('account', `retained-ack-rollback:${suffix}`)),
@@ -2736,7 +2810,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       processingScopeRef: scopeRef,
       providedLanguage: notice.language,
     };
-    fixture.faultNextTransaction('rollback');
+    privacyFixture.faultNextTransaction('rollback');
     const failedProvision = yield* executeRecordNoticeProvisionWithAuthorization(
       provisionPayload,
       ...(yield* privacyTransport('account', `retained-provision-rollback:${suffix}`)),

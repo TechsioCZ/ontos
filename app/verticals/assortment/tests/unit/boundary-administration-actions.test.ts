@@ -1,3 +1,10 @@
+import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { assortmentRegistration } from '../../vertical.registration.ts';
+import {
+  toAssortmentPermissionAccessKey,
+  toAssortmentPermissionAccessObjectId,
+  toAssortmentPermissionAccessObjectIdForTargets,
+} from '../../src/permissions/authorization-targets.ts';
 import type {
   DomainEvent,
   DomainEventReference,
@@ -6,7 +13,7 @@ import type {
   ScopedRoutineDefinition,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   CreateClosedAssortmentBoundaryPayloadSchema,
@@ -27,7 +34,10 @@ import {
 } from '../../src/actions/boundary-administration-support.ts';
 import { handleCreateClosedAssortmentBoundary } from '../../src/actions/create-closed-assortment-boundary.action.ts';
 import { handleEndClosedAssortmentBoundary } from '../../src/actions/end-closed-assortment-boundary.action.ts';
-import { handleReplaceClosedAssortmentBoundary } from '../../src/actions/replace-closed-assortment-boundary.action.ts';
+import {
+  replaceClosedAssortmentBoundaryAction,
+  handleReplaceClosedAssortmentBoundary,
+} from '../../src/actions/replace-closed-assortment-boundary.action.ts';
 import type { BoundaryAdministrationService } from '../../src/services/boundary-administration.service.ts';
 import {
   boundaryIntervalsOverlap,
@@ -305,6 +315,71 @@ it('emits ordered end then create targets for replacement', () => {
   const targets = replaceBoundaryPermissionTargets(replacement, scope);
   expect(targets[0]?.permission).toStrictEqual('assortment.boundary.end');
   expect(targets[1]?.permission).toStrictEqual('assortment.boundary.create');
+  expect({
+    conjunction: toAssortmentPermissionAccessObjectIdForTargets(scope.tenantId, scope.legalEntityId, targets),
+    reversed: toAssortmentPermissionAccessObjectIdForTargets(scope.tenantId, scope.legalEntityId, [
+      targets[1],
+      targets[0],
+    ]),
+    targets: targets.map((target) => ({
+      key: toAssortmentPermissionAccessKey(scope.tenantId, scope.legalEntityId, target),
+      objectId: toAssortmentPermissionAccessObjectId(scope.tenantId, scope.legalEntityId, target),
+      target,
+    })),
+  }).toMatchInlineSnapshot(`
+    {
+      "conjunction": "asp_a07a475709ca09b2febea45793a233ddb250f37d6c22a8c38c824a8d291c0427",
+      "reversed": "asp_2a9916cd05993744f1719366b15d317b173ea98a9ebec64c61d64a189cd33eb3",
+      "targets": [
+        {
+          "key": "10000000-0000-4000-8000-000000000001:legal_entity:30000000-0000-4000-8000-000000000001:assortment.boundary.end:assortment_boundary:end:commerce.assortment:commerce.assortment.closed-assortment-boundary:boundary-1",
+          "objectId": "asp_2c84b492526bc9c49e0457bbfa7200b44c6925c4d5f5ed19ae43e95d370ca070",
+          "target": {
+            "boundary": {
+              "moduleId": "commerce.assortment",
+              "resourceId": "boundary-1",
+              "resourceType": "commerce.assortment.closed-assortment-boundary",
+            },
+            "kind": "assortment_boundary",
+            "mode": "end",
+            "permission": "assortment.boundary.end",
+          },
+        },
+        {
+          "key": "10000000-0000-4000-8000-000000000001:legal_entity:30000000-0000-4000-8000-000000000001:assortment.boundary.create:assortment_boundary:create:PURCHASE:RETAIL_CUSTOMER_PROFILE:commerce.customer-context:commerce.customer-context.retail-customer-profile:profile-1:channel:commerce.channel:commerce.channel.channel:channel-1:market:none:storefront:none:2026-09-22T10:00:00.000Z:EMPTY:0:d801aa1fb7ddcc330a5e3173372ea6af4a3d08ec58074478e85aa5603e926658",
+          "objectId": "asp_62393326e4eb64a56cbe18ed637d09a6c04f40ac5c34ad63bf22333d1559e502",
+          "target": {
+            "admissionSet": {
+              "contentHash": "d801aa1fb7ddcc330a5e3173372ea6af4a3d08ec58074478e85aa5603e926658",
+              "entries": [],
+              "memberCount": 0,
+              "setKind": "EMPTY",
+            },
+            "commercialScope": {
+              "channel": {
+                "moduleId": "commerce.channel",
+                "resourceId": "channel-1",
+                "resourceType": "commerce.channel.channel",
+              },
+            },
+            "effectiveFrom": "2026-09-22T10:00:00.000Z",
+            "kind": "assortment_boundary",
+            "mode": "create",
+            "permission": "assortment.boundary.create",
+            "purpose": "PURCHASE",
+            "subject": {
+              "kind": "RETAIL_CUSTOMER_PROFILE",
+              "ref": {
+                "moduleId": "commerce.customer-context",
+                "resourceId": "profile-1",
+                "resourceType": "commerce.customer-context.retail-customer-profile",
+              },
+            },
+          },
+        },
+      ],
+    }
+  `);
   expect(() =>
     Schema.decodeUnknownSync(ReplaceClosedAssortmentBoundaryPayloadSchema)({
       ...Schema.encodeSync(ReplaceClosedAssortmentBoundaryPayloadSchema)(replacement),
@@ -771,5 +846,55 @@ it.effect('replaces the covering Boundary against the combined resulting state b
       yield* service.replace({ ...replaceInput, effectiveAt: at, proposedCommercialScope, proposedEffectiveFrom: at }),
     ).toEqual({ createdBoundaryId: 'new-cover', replaced: true });
     expect(events.indexOf('insert:1')).toBeGreaterThan(events.indexOf('select:5'));
+  }),
+);
+
+it.effect('denies the actual boundary Replace before owner effects when proposed Create lacks Current permission', () =>
+  Effect.gen(function* checksActualReplaceConjunction() {
+    const encodedPayload = yield* Schema.encodeEffect(ReplaceClosedAssortmentBoundaryPayloadSchema)({
+      ...replacePayload,
+      existingBoundaryRef: { ...replacePayload.existingBoundaryRef, resourceId: 'boundary-1' },
+    });
+    let ownerEffects = 0;
+    const service = boundaryServices({
+      replace: () => {
+        ownerEffects += 1;
+        return Effect.die('Denied replacement reached owner effects');
+      },
+    });
+    for (const proposed of ['denied', 'unavailable', 'absent'] as const) {
+      const options = {
+        actionPermission: 'allowed' as const,
+        ownerRegistration: assortmentRegistration,
+        services: [bindActionTestServices(replaceClosedAssortmentBoundaryAction, service)],
+      };
+      const harness = yield* makeActionTestHarness(
+        proposed === 'absent' ? options : { ...options, ownerPermissionDecisions: ['allowed', proposed] },
+      );
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: encodedPayload,
+          principal: { ...scope, authBindingId: '40000000-0000-4000-8000-000000000001' },
+          registration: replaceClosedAssortmentBoundaryAction,
+          transport: { correlationId: 'assortment-boundary-conjunction', idempotencyKey: `replace-${proposed}` },
+        }),
+      );
+      expect(
+        Predicate.isTagged(failure, proposed === 'denied' ? 'ActionPermissionDenied' : 'ActionPermissionCheckError'),
+      ).toBe(true);
+      const snapshot = harness.snapshot();
+      expect(snapshot.ownerPermissionTargets.map((target) => target.definition.key)).toEqual([
+        'assortment.boundary.end',
+        'assortment.boundary.create',
+      ]);
+      expect(snapshot.ownerPermissionTargets.map((target) => target.transportObjectId)).toEqual([
+        'asp_a07a475709ca09b2febea45793a233ddb250f37d6c22a8c38c824a8d291c0427',
+        'asp_a07a475709ca09b2febea45793a233ddb250f37d6c22a8c38c824a8d291c0427',
+      ]);
+      expect(snapshot.stages.includes('handler_executed')).toBe(false);
+      expect(snapshot.committed).toEqual([]);
+      expect(snapshot.permissionDenials).toHaveLength(proposed === 'denied' ? 1 : 0);
+      expect(ownerEffects).toBe(0);
+    }
   }),
 );

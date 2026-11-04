@@ -1,3 +1,4 @@
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { ActionTransactionError, TrustedPrincipalContextSchema } from '@app/core-runtime';
@@ -125,6 +126,7 @@ describe('Brand governed Actions', () => {
       };
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: catalogRegistration,
         services: [
           bindActionTestServices(createBrandAction, services),
           bindActionTestServices(renameBrandAction, services),

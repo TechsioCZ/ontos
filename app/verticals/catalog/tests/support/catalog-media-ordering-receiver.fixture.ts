@@ -4,12 +4,17 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfig,
-  ReadRuntimeLive,
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
   TenantModuleStateServiceLive,
   TrustedPrincipalContextSchema,
   makeActionRuntimeLive,
+  makeReadRuntimeLive,
+  extractVerticalRuntimeSafeDescriptors,
+  OntosDeploymentIdentitySchema,
+  OntosModuleIdSchema,
+  OntosModuleRequirementsSchema,
+  OntosOperationContractSchema,
   parseDatabaseConnectionPair,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
@@ -62,8 +67,15 @@ import { reorderCatalogMediaRecoveryReadApiLive } from '../../api/reorder-catalo
 import { catalogApi } from '../../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { CATALOG_TABLES, catalogRelations, gatewayAssertionRedemptions } from '../../src/database/schema.ts';
+import { catalogRegistration } from '../../vertical.registration.ts';
 
 export const mediaOrderingProtocol = 'ontos.catalog.media-ordering.fixture.v1' as const;
+export const MediaOrderingDescriptionSchema = Schema.Struct({
+  deployment: OntosDeploymentIdentitySchema,
+  moduleId: OntosModuleIdSchema,
+  operationContracts: Schema.Array(OntosOperationContractSchema),
+  requirements: OntosModuleRequirementsSchema,
+});
 const bounded = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000));
 const positive = Schema.Int.check(Schema.isGreaterThan(0));
 const secret = Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16_384)));
@@ -369,11 +381,14 @@ const serveCatalog = Effect.fn('MediaOrdering.serveCatalog')(function* serveCata
   const namespace = staffAuthenticationNamespaceRegistryLayer(['catalog']);
   const composition = makeActiveApplicationCompositionLayer(Effect.succeed(bootstrap.composition));
   const common = Layer.mergeAll(persistence, ContextAccessLive, stateGate, gateway, resolver, namespace, composition);
-  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
     Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
     Layer.provide(NodeCrypto.layer),
   );
-  const reads = ReadRuntimeLive.pipe(Layer.provide(common), Layer.provide(NodeCrypto.layer));
+  const reads = makeReadRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
+    Layer.provide(common),
+    Layer.provide(NodeCrypto.layer),
+  );
   const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(
     bootstrap.composition,
   );
@@ -536,7 +551,7 @@ const receiveCommands = Effect.fn('MediaOrdering.receiveCommands')(function* rec
   }).pipe(
     Stream.mapEffect((chunk) => {
       bytes += chunk.byteLength;
-      return requireCondition(bytes <= 65_536, 'private-input-cap').pipe(Effect.as(chunk));
+      return requireCondition(bytes <= 262_144, 'private-input-cap').pipe(Effect.as(chunk));
     }),
     Stream.decodeText(),
     Stream.splitLines,
@@ -605,7 +620,27 @@ const runReceiver = Effect.gen(function* runMediaOrderingReceiver() {
   stage = 'stopped-response';
   return yield* sendParent({ type: 'STOPPED', version: mediaOrderingProtocol });
 });
-if (process.argv.includes('--serve-media-ordering')) {
+if (process.argv.includes('--describe-media-ordering')) {
+  NodeRuntime.runMain(
+    Effect.gen(function* describeMediaOrderingOwner() {
+      const owner = yield* Effect.try({
+        catch: () => failure('receiver-description'),
+        try: () => extractVerticalRuntimeSafeDescriptors(catalogRegistration),
+      });
+      if (owner.requirements === undefined) {
+        return yield* failure('receiver-description-requirements');
+      }
+      const description = yield* Schema.encodeEffect(Schema.fromJsonString(MediaOrderingDescriptionSchema))({
+        deployment: ultramodernDeliveryUnit,
+        moduleId: owner.moduleId,
+        operationContracts: owner.operationContracts,
+        requirements: owner.requirements,
+      });
+      yield* Effect.sync(() => process.stdout.write(`${description}\n`));
+      return yield* Effect.void;
+    }),
+  );
+} else if (process.argv.includes('--serve-media-ordering')) {
   NodeRuntime.runMain(
     Effect.scoped(runReceiver).pipe(
       Effect.mapError(() => failure('fixture-unavailable')),

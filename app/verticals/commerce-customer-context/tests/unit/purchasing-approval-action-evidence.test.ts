@@ -9,14 +9,13 @@ import {
   trustVerifiedGatewayPrincipalContext,
   isVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime';
-import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { makeActionTestHarness, getActionHandler } from '@app/core-runtime/testing/actions';
 import {
   purchasingApprovalCurrentnessServicesForScope,
   purchasingApprovalPermissionTarget,
 } from '../../src/actions/purchasing-approval-action-support.ts';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import type { ActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import type { DomainEventContractMap } from '../../../../packages/core-runtime/src/actions/events.ts';
 import type {
   CreatePurchaseProposalRevisionPayload,
@@ -80,6 +79,7 @@ import { consumePurchaseApprovalAction } from '../../src/actions/consume-purchas
 import type { PurchaseApprovalTriggerEvidenceSource } from '../../src/actions/trigger-purchase-approval.action.ts';
 import { PurchaseApprovalTriggerEvidenceSourceFactory } from '../../src/actions/trigger-purchase-approval.action.ts';
 import { purchasingApprovalCommercialFixture } from './purchasing-approval-fixtures.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const buyerId = '10000000-0000-4000-8000-000000000002';
@@ -1207,7 +1207,7 @@ it.effect(
             trusted === undefined ? withoutStorefront : { ...withoutStorefront, trustedStorefrontId: trusted },
             compositionRevision,
           );
-          const harness = yield* makeActionTestHarness();
+          const harness = yield* makeActionTestHarness({ ownerRegistration: commerceCustomerContextRegistration });
           const outcome = yield* candidate(harness.runtime, authenticated);
           expect(Result.isFailure(outcome)).toBe(true);
           if (Result.isFailure(outcome)) {
@@ -1218,7 +1218,7 @@ it.effect(
               expect(outcome.failure.reason).toBe(
                 trusted === storefrontId
                   ? 'The authorization service could not determine permission safely'
-                  : 'The declared business permission target does not match trusted scope',
+                  : 'The declared owner permission targets do not match trusted scope',
               );
             }
           }
@@ -1226,7 +1226,7 @@ it.effect(
         }
       }
       for (const trusted of [storefrontId, undefined]) {
-        const harness = yield* makeActionTestHarness();
+        const harness = yield* makeActionTestHarness({ ownerRegistration: commerceCustomerContextRegistration });
         const authenticated = trustVerifiedGatewayPrincipalContext(
           trusted === undefined ? withoutStorefront : { ...withoutStorefront, trustedStorefrontId: trusted },
           compositionRevision,

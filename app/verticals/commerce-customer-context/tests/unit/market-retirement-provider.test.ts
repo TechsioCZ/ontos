@@ -630,6 +630,7 @@ it.effect('maps reassessment failures to governed Action conflict and unavailabl
       };
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: commerceCustomerContextRegistration,
         services: [bindActionTestServices(reserveMarketRetirementAction, service)],
       });
       const failure = yield* harness.runtime
@@ -712,6 +713,7 @@ it.effect('runs RESERVE, COMMIT, and RELEASE through the governed owner Action r
     };
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
+      ownerRegistration: commerceCustomerContextRegistration,
       services: [bindActionTestServices(reserveMarketRetirementAction, service)],
     });
     const actionPrincipal = {
@@ -759,6 +761,7 @@ it.effect('rejects a cross-Tenant reservation before invoking owner persistence'
     };
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
+      ownerRegistration: commerceCustomerContextRegistration,
       services: [bindActionTestServices(reserveMarketRetirementAction, service)],
     });
     const failure = yield* harness.runtime

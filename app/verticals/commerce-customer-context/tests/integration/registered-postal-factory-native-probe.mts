@@ -1,6 +1,6 @@
-/** Owner-local native probe. It executes registered factory ports, never final business resolution. */
+/** Real redemption and scope admission do not authorize factory-only provider access without Core execution. */
 import { staffAuthenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { GatewayAssertionRedemptionService } from '@app/core-runtime';
+import { ModuleOperationRequirementError, GatewayAssertionRedemptionService } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -9,10 +9,11 @@ import { getReadServiceFactory } from '@app/core-runtime/testing/reads';
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import { NodeHttpClient, NodeRuntime, NodeServices, NodeSink, NodeStream } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Config, Context, Effect, Layer, Logger, Schema, Stream } from 'effect';
+import { Config, Context, Effect, Layer, Logger, Result, Schema, Stream } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { FetchHttpClient } from 'effect/http';
 
+import { AddressBookUnavailable } from '../../shared/domain/address-errors.ts';
 import { SavedAddressSchema } from '../../shared/domain/address-book.ts';
 import { deliveryDestinationResolutionRead } from '../../src/api/delivery-destination-resolution.read.ts';
 import { invoiceRecipientResolutionRead } from '../../src/api/invoice-recipient-resolution.read.ts';
@@ -57,7 +58,7 @@ const PostalFactoryPhaseSchema = Schema.Literals([
   'scope_admission_started',
   'scope_admitted',
   'factory_ready',
-  'postal_resolved',
+  'requirement_rejected',
   'scope_completed',
 ]);
 
@@ -112,19 +113,38 @@ const probe = Effect.fn('RegisteredPostalFactoryProbe.run')(function* runProbe(i
       scope: OperationalScope,
       revision: string,
     ) {
-      if (revision !== input.compositionRevision || scope.trustedStorefrontId !== undefined) {
+      if (
+        revision !== input.compositionRevision ||
+        scope.trustedStorefrontId !== undefined ||
+        scope.principalId !== principal.principalId ||
+        scope.tenantId !== principal.tenantId ||
+        scope.legalEntityId !== principal.legalEntityId
+      ) {
         return yield* new PostalFactoryProbeFailure({ stage: 'admitted_factory' });
       }
       yield* reportPhase('scope_admitted');
       // The exact production-resolved carrier reaches the original registered factory unchanged.
       const services = yield* factory(transaction, scope, revision);
       yield* reportPhase('factory_ready');
-      const result = yield* services.resolvePostalAddress(input.savedAddress);
-      if (result.kind !== 'FOUND' || result.value.kind !== 'PARTY_BACKED') {
+      const result = yield* Effect.result(services.resolvePostalAddress(input.savedAddress));
+      // This is a specific product rejection, not permission/catalog/network failure or a
+      // successful postal read. The original typed Core cause stays inside this process.
+      const requirementFailure = Schema.Struct({ cause: ModuleOperationRequirementError });
+      if (
+        Result.isSuccess(result) ||
+        !Schema.is(AddressBookUnavailable)(result.failure) ||
+        !Schema.is(requirementFailure)(result.failure) ||
+        result.failure.cause.code !== 'module_operation_requirement_unavailable'
+      ) {
         return yield* new PostalFactoryProbeFailure({ stage: 'admitted_factory' });
       }
-      yield* reportPhase('postal_resolved');
-      return { compositionRevision: revision, factory: input.factory, postal: result.value };
+      yield* reportPhase('requirement_rejected');
+      return {
+        compositionRevision: revision,
+        factory: input.factory,
+        outcome: 'FACTORY_ONLY_EXECUTION_REJECTED' as const,
+        requirementCode: result.failure.cause.code,
+      };
     }),
   ).pipe(Effect.catchCause(() => Effect.fail(new PostalFactoryProbeFailure({ stage: 'admitted_factory' }))));
   yield* reportPhase('scope_completed');

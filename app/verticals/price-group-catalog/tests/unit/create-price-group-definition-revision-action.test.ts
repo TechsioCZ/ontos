@@ -2,7 +2,9 @@ import { expect, it } from 'effect-rstest';
 import { DateTime, Effect, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
+import type { OwnerPermissionAccessTarget } from '@app/core-runtime';
+
 import { mapCreatePriceGroupDefinitionRevisionActionProblem } from '../../api/create-price-group-definition-revision-action-problems.ts';
 import { CreatePriceGroupDefinitionRevisionPayloadSchema } from '../../shared/actions/create-price-group-definition-revision.ts';
 import {
@@ -16,6 +18,11 @@ import {
   handleCreatePriceGroupDefinitionRevision,
 } from '../../src/actions/create-price-group-definition-revision.action.ts';
 import type { PriceGroupCatalogPersistence } from '../../src/persistence/price-group-catalog-persistence.ts';
+
+const permissionRequest = (targets: readonly OwnerPermissionAccessTarget[] | undefined) => {
+  const first = targets?.[0];
+  return first === undefined ? undefined : { permission: first.definition.key, target: first.target };
+};
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const compositionRevision = 'b'.repeat(64);
@@ -99,17 +106,19 @@ const services = (
 
 it('requires the exact revision permission on the payload Price Group and forbids Legal Entity scope', () => {
   expect(createPriceGroupDefinitionRevisionAction.descriptor.legalEntityScope).toBe('forbidden');
-  expect(getActionBusinessPermissionTargetResolver(createPriceGroupDefinitionRevisionAction)?.(payload, scope)).toEqual(
-    {
-      permission: 'pricing.price_group.revision.create',
-      target: {
-        kind: 'price_group',
-        priceGroupId: priceGroupRef.resourceId,
-        pricingCatalogId: tenantId,
-        tenantId,
-      },
+  expect(
+    permissionRequest(
+      getActionOwnerPermissionTargetResolver(createPriceGroupDefinitionRevisionAction)?.(payload, scope),
+    ),
+  ).toEqual({
+    permission: 'pricing.price_group.revision.create',
+    target: {
+      kind: 'price_group',
+      priceGroupId: priceGroupRef.resourceId,
+      pricingCatalogId: tenantId,
+      tenantId,
     },
-  );
+  });
 
   const crossTenantPayload = {
     ...payload,
@@ -119,7 +128,9 @@ it('requires the exact revision permission on the payload Price Group and forbid
     },
   };
   expect(
-    getActionBusinessPermissionTargetResolver(createPriceGroupDefinitionRevisionAction)?.(crossTenantPayload, scope),
+    permissionRequest(
+      getActionOwnerPermissionTargetResolver(createPriceGroupDefinitionRevisionAction)?.(crossTenantPayload, scope),
+    ),
   ).toMatchObject({
     target: {
       pricingCatalogId: '77777777-7777-4777-8777-777777777777',

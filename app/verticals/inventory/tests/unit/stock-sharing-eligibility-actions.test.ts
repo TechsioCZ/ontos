@@ -4,9 +4,9 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import {
-  getActionBusinessPermissionTargetResolver,
+  getActionOwnerPermissionTargetResolver,
   getActionResourcePermissionTargetResolver,
-} from '../../../../packages/core-runtime/src/actions/definition.ts';
+} from '@app/core-runtime/testing/actions';
 import { ChangeStockSharingEligibilityPayloadSchema } from '../../shared/actions/change-stock-sharing-eligibility.ts';
 import { EndStockSharingEligibilityPayloadSchema } from '../../shared/actions/end-stock-sharing-eligibility.ts';
 import { EstablishStockSharingEligibilityPayloadSchema } from '../../shared/actions/establish-stock-sharing-eligibility.ts';
@@ -173,12 +173,20 @@ describe('Stock Sharing Eligibility lifecycle Actions', () => {
       expect(action.descriptor.auditProfile).toBe('sensitive');
     }
     expect(
-      getActionBusinessPermissionTargetResolver(establishStockSharingEligibilityAction)?.(establishPayload, scope),
+      getActionOwnerPermissionTargetResolver(establishStockSharingEligibilityAction)?.(establishPayload, scope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
     ).toEqual({ permission: 'inventory.stock_sharing_eligibility.manage', target: expectedTarget });
     expect(
-      getActionBusinessPermissionTargetResolver(changeStockSharingEligibilityAction)?.(changePayload, scope),
+      getActionOwnerPermissionTargetResolver(changeStockSharingEligibilityAction)?.(changePayload, scope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
     ).toEqual({ permission: 'inventory.stock_sharing_eligibility.manage', target: expectedTarget });
-    expect(getActionBusinessPermissionTargetResolver(endStockSharingEligibilityAction)?.(endPayload, scope)).toEqual({
+    expect(
+      getActionOwnerPermissionTargetResolver(endStockSharingEligibilityAction)?.(endPayload, scope)?.map(
+        ({ definition, target }) => ({ permission: definition.key, target }),
+      )[0],
+    ).toEqual({
       permission: 'inventory.stock_sharing_eligibility.manage',
       target: expectedTarget,
     });

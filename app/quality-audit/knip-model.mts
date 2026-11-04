@@ -1346,12 +1346,19 @@ const esbuildSubprocessInput = (
   }
   const flags = elements.slice(6);
   const allowedFlags = new Set(['--bundle', '--platform=node', '--format=esm', '--packages=external']);
+  const defineOption =
+    /^--define:[$_\p{ID_Start}][$\u200C\u200D_\p{ID_Continue}]*(?:\.[$_\p{ID_Start}][$\u200C\u200D_\p{ID_Continue}]*)*=/u;
   const isFlag = (raw: Node | null): boolean => {
     const value = immutableValue(raw ?? undefined);
     const literal = staticString(value, new Map());
     return (
-      (literal !== undefined && (allowedFlags.has(literal) || literal.startsWith('--outfile='))) ||
-      (value?.type === 'TemplateLiteral' && value.quasis[0]?.value.cooked?.startsWith('--outfile=') === true)
+      (literal !== undefined &&
+        (allowedFlags.has(literal) ||
+          literal.startsWith('--outfile=') ||
+          (defineOption.test(literal) && literal.indexOf('=') < literal.length - 1))) ||
+      (value?.type === 'TemplateLiteral' &&
+        (value.quasis[0]?.value.cooked?.startsWith('--outfile=') === true ||
+          (value.expressions.length > 0 && defineOption.test(value.quasis[0]?.value.cooked ?? ''))))
     );
   };
   if (

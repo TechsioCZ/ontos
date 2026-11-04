@@ -1,3 +1,4 @@
+import type { OwnerPermissionAccessTarget } from '@app/core-runtime';
 import { ReadHandlerNotFound } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -19,6 +20,11 @@ import {
   readPriceGroupDefinition,
 } from '../../src/api/price-group-definition.read.ts';
 import type { PriceGroupCatalogPersistence } from '../../src/persistence/price-group-catalog-persistence.ts';
+
+const permissionRequest = (target: OwnerPermissionAccessTarget) => ({
+  businessPermission: { permission: target.definition.key, target: target.target },
+  kind: 'business_permission',
+});
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const otherTenantId = '22222222-2222-4222-8222-222222222222';
@@ -487,16 +493,18 @@ describe('Price Group Definition governed Read', () => {
 
   it('declares forbidden legal-entity scope and the exact Price Group permission target', () => {
     expect(priceGroupDefinitionRead.descriptor.legalEntityScope).toBe('forbidden');
-    expect(priceGroupDefinitionRead.descriptor.permissionTarget).toBe('business_permission');
+    expect(priceGroupDefinitionRead.descriptor.permissionTarget).toBe('owner_permission');
     expect(pricingPriceGroupReadPermission.allowedScopeKinds).toEqual(['pricing_catalog', 'price_group']);
     expect(
-      priceGroupDefinitionPermissionTarget(request, {
-        authContextRef: 'job:price-group-read:run-1',
-        authMethod: 'system',
-        correlationId: 'price-group-definition-read',
-        principalId: '88888888-8888-4888-8888-888888888888',
-        tenantId,
-      }),
+      permissionRequest(
+        priceGroupDefinitionPermissionTarget(request, {
+          authContextRef: 'job:price-group-read:run-1',
+          authMethod: 'system',
+          correlationId: 'price-group-definition-read',
+          principalId: '88888888-8888-4888-8888-888888888888',
+          tenantId,
+        }),
+      ),
     ).toEqual({
       businessPermission: {
         permission: 'pricing.price_group.read',

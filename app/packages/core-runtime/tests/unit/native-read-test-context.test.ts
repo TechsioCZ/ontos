@@ -1,3 +1,9 @@
+import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
+import {
+  failClosedOwnerAuthorizationOverlay,
+  OwnerAuthorizationOverlay,
+} from '../../src/permissions/owner-authorization-overlay.ts';
 import { Effect, Layer, Redacted, Schema } from 'effect';
 import { NodeCrypto } from '@effect/platform-node';
 import { expect, it } from 'effect-rstest';
@@ -165,4 +171,44 @@ it.effect(
         expect(callbackCalls).toBe(0);
       }),
     ),
+);
+
+it.effect('requires exact owner registration and an installed overlay before native owner fixture I/O', () =>
+  Effect.scoped(
+    Effect.gen(function* rejectsUnboundNativeOwner() {
+      const context = yield* Layer.build(NodeCrypto.layer);
+      // Synthetic metadata is confined to this infrastructure rejection probe; it is never published or run natively.
+      const fixture = makeModuleContractFixture({
+        appId: 'native-owner-guard',
+        moduleId: 'fixture.native-owner-guard',
+      });
+      const ownerRuntime = {
+        expectedDeployment: fixture.deployment,
+        ownerRegistration: defineVerticalRuntimeRegistration({
+          actions: [],
+          manifest: { ...fixture.manifest, publicSurface: { ...fixture.manifest.publicSurface, api: {} } },
+          outboxWorkers: [],
+        }),
+      };
+      const request = {
+        contextPermissions: [],
+        expectedDeployment: ownerRuntime.expectedDeployment,
+        moduleId: ownerRuntime.ownerRegistration.moduleId,
+        ownerFixtureRetention: 'retain-complete-context' as const,
+      };
+      const missingOverlay = yield* Effect.flip(
+        makeNativeReadTestContext(request, ownerRuntime.ownerRegistration).pipe(Effect.provideContext(context)),
+      );
+      expect(missingOverlay.reason).toBe(
+        'Native owner runtime requires its exact owner registration, installed Composition and authorization overlay',
+      );
+      const wrongOwner = yield* Effect.flip(
+        makeNativeReadTestContext({ ...request, moduleId: 'fixture.foreign' }, ownerRuntime.ownerRegistration).pipe(
+          Effect.provideService(OwnerAuthorizationOverlay, failClosedOwnerAuthorizationOverlay),
+          Effect.provideContext(context),
+        ),
+      );
+      expect(wrongOwner.reason).toBe(missingOverlay.reason);
+    }),
+  ),
 );

@@ -1,6 +1,6 @@
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
-import { getReadConditionalPermissionPlan } from '../../../../packages/core-runtime/src/reads/definition.ts';
+import { getReadConditionalPermissionPlan } from '@app/core-runtime/testing/reads';
 
 import {
   PurchaseCurrencyResolutionDomainConflictProblemSchema,
@@ -618,7 +618,7 @@ it('declares finite Guest and Profile authorization branches for Launch resoluti
   expect(purchaseCurrencyResolutionPermission.branchTags).toEqual(['GUEST', 'PROFILE']);
   expect(purchaseCurrencyGuestPermissionTargets()).toEqual([{ kind: 'module', moduleId: 'commerce.customer-context' }]);
   expect(plan.branches.GUEST.requiredKinds).toEqual(['module']);
-  expect(plan.branches.PROFILE.requiredKinds).toEqual(['business_permission', 'resource_read']);
+  expect(plan.branches.PROFILE.requiredKinds).toEqual(['owner_permission', 'resource_read']);
   expect(
     purchaseCurrencyProfilePermissionTargets(
       baseResolution().request,
@@ -627,11 +627,11 @@ it('declares finite Guest and Profile authorization branches for Launch resoluti
     ),
   ).toMatchObject([
     {
-      businessPermission: {
-        permission: 'retail.profile.read',
+      kind: 'owner_permission',
+      ownerPermission: {
+        definition: { key: 'retail.profile.read' },
         target: { kind: 'retail_profile', profileId: profileRef.resourceId },
       },
-      kind: 'business_permission',
     },
     { kind: 'resource_read', permission: 'read', resource: { resourceId: profileRef.resourceId } },
   ]);
@@ -654,11 +654,11 @@ it('declares finite Guest and Profile authorization branches for Launch resoluti
     ),
   ).toMatchObject([
     {
-      businessPermission: {
-        permission: 'counterparty.profile.read',
+      kind: 'owner_permission',
+      ownerPermission: {
+        definition: { key: 'counterparty.profile.read' },
         target: { counterpartyId: counterpartyRef.resourceId, kind: 'counterparty' },
       },
-      kind: 'business_permission',
     },
     {
       kind: 'resource_read',

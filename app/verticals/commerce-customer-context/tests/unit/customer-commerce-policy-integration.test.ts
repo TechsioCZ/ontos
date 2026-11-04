@@ -117,10 +117,6 @@ const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAut
     }),
   };
   const contextAccess: ContextAccessService = {
-    businessPermissions: () => {
-      businessPermissionCalls += 1;
-      return Effect.die('Policy Current reads must not call the business-permission adapter');
-    },
     contextPermissions: ({ targets }) =>
       Effect.succeed(
         targets.map((target) => {
@@ -137,6 +133,10 @@ const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAut
       moduleIds.push(...requestedModuleIds);
       return Effect.succeed(requestedModuleIds.map((key) => ({ decision: options.modulePermissionDecision, key })));
     },
+    ownerPermissions: () => {
+      businessPermissionCalls += 1;
+      return Effect.die('Policy Current reads must not call the business-permission adapter');
+    },
     resources: ({ resources }) =>
       Effect.succeed(
         resources.map((resource) => ({
@@ -151,6 +151,7 @@ const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAut
     openModuleEntrypointGateway,
     { resolve: () => Effect.succeed(scope) },
     contextAccess,
+    { ownerRegistration: commerceCustomerContextRegistration },
   );
   return {
     businessPermissionCalls: () => businessPermissionCalls,
@@ -741,6 +742,7 @@ describe('Customer Commerce Policy integration', () => {
       } satisfies CustomerCommercePolicyAdministrationService;
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: commerceCustomerContextRegistration,
         services: [
           bindActionTestServices(administerMarketBootstrapPolicyAction, service),
           bindActionTestServices(administerPurchaseCurrencyPolicyAction, service),
@@ -853,6 +855,7 @@ describe('Customer Commerce Policy integration', () => {
       } satisfies CustomerCommercePolicyAdministrationService;
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: commerceCustomerContextRegistration,
         services: [
           bindActionTestServices(administerMarketBootstrapPolicyAction, service),
           bindActionTestServices(administerPurchaseCurrencyPolicyAction, service),
@@ -963,6 +966,7 @@ describe('Customer Commerce Policy integration', () => {
       } satisfies CustomerCommercePolicyAdministrationService;
       const harness = yield* makeActionTestHarness({
         actionPermission: 'denied',
+        ownerRegistration: commerceCustomerContextRegistration,
         services: [bindActionTestServices(administerPurchaseCurrencyPolicyAction, service)],
       });
       const failure = yield* harness.runtime
@@ -1100,7 +1104,7 @@ describe('Customer Commerce Policy integration', () => {
         kind: 'action_execution',
         provisioning: 'explicit',
       });
-      expect(action.descriptor.businessPermission).toBeUndefined();
+      expect(action.descriptor.ownerPermissions).toBeUndefined();
       expect(action.descriptor.idempotency).toBe('required');
       expect(action.descriptor.legalEntityScope).toBe('required');
       expect(Object.keys(action.descriptor.domainEvents)).toHaveLength(1);

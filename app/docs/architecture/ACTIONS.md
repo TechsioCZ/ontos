@@ -27,6 +27,53 @@ Provider cleanup is not an Action retry disguised as a new mutation. Shell compa
 
 Support start creates an Auth-owned non-secret recovery record after the provider session is initialized and before the started checkpoint commits; support stop therefore always has durable recovery state before Better Auth deletes or expires the impersonated session. The record carries only safe correlation, OntOS principal/binding IDs, reason, tenant, and safe session reference—not a token or cookie. Stopped evidence is idempotent; post-restore evidence or recovery cleanup failure still forwards the restored cookie and a repeated stop resumes the checkpoint. The recovery context is accepted only for the exact generated Action and a decoded `stopped` payload; it still performs the Action's normal SpiceDB permission check. Mechanical session termination therefore remains independent of evidence availability, while a denied or unavailable checkpoint remains pending instead of fabricating authorization.
 
+## Owner business permission targets
+
+A module publishes versioned Business Permission Definitions through its existing public contract.
+The definition identifies the permission meaning and permitted targets; it grants no Principal a
+permission. The owner binds target resolution to its private Action or Read registration. Decoded
+business input cannot select another definition or a broader permission variant.
+
+The contract's `owningModuleKey` identifies its publishing runtime module and must match the genuine
+registered operation. Each member definition retains its canonical `owningCapability`; a publisher
+may host definitions for several business capabilities. Exact definition membership is required.
+Publishing a future capability's descriptor neither activates that capability nor creates a grant.
+
+Owner-specific validation and canonical target construction stay with that owner. Core receives exact
+permission requests, verifies their trusted Tenant, Legal Entity and Storefront constraints, and
+performs the normal Current permission checks for the original Principal. Multiple required targets
+remain an ordered conjunction with exact response correlation. Publishing a descriptor, receiving a
+positive business outcome, or succeeding on an earlier invocation never substitutes for these checks.
+
+Finite inherited grant alternatives belong inside one resolved target. Core checks the primary
+object first, followed by its owner-declared alternatives, using the existing positive-grant union.
+These alternatives do not replace the ordered conjunction between independently required targets.
+An incomplete response remains unavailable unless another verified alternative allows the request.
+
+Grant identity and transport/history identity are separate. The context permission families preserve
+their existing `ctx_` encoding, ordered keys and relationship payloads. Owners resolve `transportModuleKey`,
+`transportObjectId` and any per-target `transportResourceType` for each Action or Read. The two
+operation kinds may have different historical projections. Core uses those projections for evidence,
+not to choose a grant or relax trusted scope. They must not be normalized to the grant object ID.
+
+Owner-state verification is independent of the Principal's Current grant. `ownerStateRequired`
+defaults to true. An owner may declare false only where its accepted scope has no additional
+owner-held record to verify; Tax's exact trusted Tenant/Legal Entity scope is such a case. This does
+not make a permission optional or disable executor, trusted context, module or resource gates.
+
+Grant/revoke preparation uses a genuine owner-qualified target and only its primary grant object;
+inherited alternatives are not additional grants. Journal reconciliation keeps the existing durable
+business target and intent, with an owner construction callback validating that target before Core
+compares the exact permission, Principal, Tenant, key and object ID. PriceGroup containment likewise
+uses owner-validated catalog/group endpoints through the existing bounded atomic writer. Neither
+path accepts a caller-supplied preparation callback or arbitrary relationships.
+
+Assortment owns selector, purpose, audience and admission-set meaning. Its canonical permission keys
+and `asp_` object identities remain stable when this implementation moves. Replace requires the old
+target's End permission followed by the proposed target's Create permission; combining or reordering
+these targets changes the authorization meaning. Core retains independent executor, context, module
+state and atomic admission gates.
+
 ## Invocation Lifecycle
 
 Process every Action request in this order:
@@ -76,6 +123,16 @@ The database did not acknowledge whether the business transaction committed. Thi
 ### Reconciliation
 
 This increment resolves uncertain commits through an explicit server-side commit-resolution operation. It accepts the invocation identifier and trusted principal context, waits for any transaction lock to clear, and reports `succeeded` as already committed or an unlocked `received`, `running`, or `indeterminate` invocation as open. Database unavailability remains `ActionCommitIndeterminate`. General scanning, alerting, permanent failure finalization, and retention of open invocations remain deferred. Never roll back an already committed business transaction.
+
+## Owner post-attempt completion
+
+`defineAction` may retain an optional owner-authored post-attempt hook in its existing opaque registration, after the handler, service factory and optional in-transaction decoded-success hook. It is the fifth overall argument. It is not a caller-supplied `runAction` callback, public operation claim or durable continuation registry. The hook's requirements are retained together with the handler/service requirements.
+
+Core invokes this hook after the transaction outcome is known, under its genuine attempt scope and admitted Composition revision. The readonly input contains the decoded payload, original invocation identity, trusted scope and a closed outcome: `Committed`, `CommittedRejection`, `AlreadyCommitted`, `DefinitelyUncommitted`, `Indeterminate` or `Interrupted`. A decoded domain rejection is supplied only when known. No expired transaction, handler services, collector, raw Effect Cause or context-minting capability crosses this boundary. A hook can return `Settled`, or a schema-validated `Recovered` result for an actual already-committed or indeterminate attempt only after Core verifies the same original immutable invocation/hash is succeeded.
+
+A committed result or committed domain rejection cannot be rewritten into a rollback or failed invocation. A declared settlement failure after commit can report pending owner work without changing committed storage. Abort/release requires the existing validated terminal business rejection and original owner receipt/proof; uncertainty or `NOT_FOUND` does not authorize cleanup. Early `AlreadyCommitted` recovery follows the original trusted scope, input hash and invocation checks and preserves its governed recovery authorization; it does not acquire a new executor grant, consume a fresh mutation permit or replay the mutation merely to create a context. Fresh permission success precedes revision admission and genuine preflight permit consumption.
+
+The hook does not make external effects exactly-once or crash-safe. Owners retain idempotent original-effect reconciliation and durable pending work. Reads remain reads; owner writes must not move into a recovery Read or the in-transaction decoded-success hook to obtain an execution context.
 
 ## Events and Transactions
 

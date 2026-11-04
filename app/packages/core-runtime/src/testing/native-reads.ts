@@ -1,7 +1,20 @@
+import { decodeActionPayload, getActionOwnerPermissionTargetResolver } from '../actions/definition.ts';
+import type { ActionRegistration, AnyActionRegistration } from '../actions/definition.ts';
+import type { DomainEventContractMap } from '../actions/events.ts';
+import { makeActionRepository } from '../actions/repository.ts';
+import { ActionRuntime, makeActionRuntime } from '../actions/runtime.ts';
+import { ActiveApplicationCompositionService } from '../modules/active-application-composition.ts';
+import { OntosDeploymentIdentitySchema } from '../modules/manifest.ts';
+import { getVerticalRuntimeActions, getVerticalRuntimeReads } from '../modules/runtime-registration.ts';
+import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
+import { OwnerAuthorizationOverlay } from '../permissions/owner-authorization-overlay.ts';
+import { makeActionPermissionLive, toSpiceDbActionObjectId } from '../permissions/service.ts';
+import { getReadPermissionTargetResolver } from '../reads/definition.ts';
+import type { ReadRegistration } from '../reads/definition.ts';
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, sql } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
-import { Crypto, Effect, Layer, Option, Redacted, Schema, Scope } from 'effect';
+import { Crypto, Effect, Layer, Option, Predicate, Redacted, Schema, Scope, Struct } from 'effect';
 import type { SqlError } from 'effect/sql/SqlError';
 
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
@@ -18,11 +31,13 @@ import {
 } from '../auth/staff-authentication-namespace.ts';
 import { AuthenticationNamespaceRegistry } from '../auth/external-identity/verifier.ts';
 import { makeCoreDatabase } from '../db/client.ts';
+import { NativeReadTestOwnerRegistration } from './native-read-owner-registration.ts';
 import { SHARED_RUNTIME_IDENTITY } from '../db/database-identities.ts';
 import { loadDatabaseConfig, loadDatabaseConnectionPair, parseDatabaseConnectionPair } from '../db/config.ts';
 import {
   dataAccessEvents,
   legalEntities,
+  outboxMessages,
   principalAuthBindings,
   principals,
   tenantModuleStates,
@@ -44,13 +59,14 @@ import type { OperationalScope, OperationalScopeRequest } from '../operations/co
 import type { OperationContextError } from '../operations/errors.ts';
 import {
   ContextAccess,
+  isOwnerPermissionAccessTargetValid,
   makeContextAccessLive,
   toContextPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
   toResourceAccessObjectId,
 } from '../permissions/context-access.ts';
-import type { ResourceAccessTarget } from '../permissions/context-access.ts';
+import type { OwnerPermissionAccessTarget, ResourceAccessTarget } from '../permissions/context-access.ts';
 import { loadSpiceDbConfig } from '../permissions/config.ts';
 import { openSpiceDbGrpcRpc } from '../permissions/spicedb-grpc-rpc.ts';
 import { ReadRuntime, makeReadRuntime } from '../reads/runtime.ts';
@@ -70,6 +86,8 @@ const unavailable = (cause?: unknown, reason = 'The isolated native Read test fi
 const requiredObjectId = (id: string | undefined) =>
   id === undefined ? Effect.fail(unavailable()) : Effect.succeed(id);
 
+export { NativeReadTestOwnerRegistration } from './native-read-owner-registration.ts';
+
 export interface NativeReadTestContextOptions {
   /** Only the disposable localhost database created by the isolated-native-database fixture. */
   readonly connections?: {
@@ -77,10 +95,53 @@ export interface NativeReadTestContextOptions {
     readonly runtime: { readonly connectionString: Redacted.Redacted };
   };
   readonly contextPermissions: readonly string[];
+  /** Serialized fixture metadata; the canonical Core deployment schema validates it before use. */
+  readonly expectedDeployment?: { readonly appId: string; readonly buildMarker: string };
   readonly moduleId: string;
   /** Dedicated disposable sandbox only: owner append-only history and its complete Core context stay together. */
   readonly ownerFixtureRetention: 'retain-complete-context';
 }
+
+const loadNativeOwnerRuntimeOptions = Effect.fn('NativeReadTestContext.ownerRuntimeOptions')(
+  function* loadNativeOwnerRuntimeOptions(
+    deploymentInput: NativeReadTestContextOptions['expectedDeployment'],
+    ownerRegistration: VerticalRuntimeRegistration | undefined,
+    moduleId: string,
+  ) {
+    if (ownerRegistration === undefined && deploymentInput === undefined) {
+      return Option.none();
+    }
+    if (ownerRegistration === undefined || deploymentInput === undefined) {
+      return yield* unavailable(undefined, 'Native owner runtime requires both its deployment and owner registration');
+    }
+    const expectedDeployment = yield* Schema.decodeUnknownEffect(OntosDeploymentIdentitySchema)(deploymentInput).pipe(
+      Effect.mapError(unavailable),
+    );
+    const [composition, overlay] = yield* Effect.try({
+      catch: unavailable,
+      try: () => getVerticalRuntimeActions(ownerRegistration),
+    }).pipe(
+      Effect.andThen(
+        Effect.all(
+          [Effect.serviceOption(ActiveApplicationCompositionService), Effect.serviceOption(OwnerAuthorizationOverlay)],
+          { concurrency: 2 },
+        ),
+      ),
+    );
+    if (ownerRegistration.moduleId !== moduleId || Option.isNone(composition) || Option.isNone(overlay)) {
+      return yield* unavailable(
+        undefined,
+        'Native owner runtime requires its exact owner registration, installed Composition and authorization overlay',
+      );
+    }
+    return Option.some({
+      applicationComposition: composition.value,
+      expectedDeployment,
+      ownerAuthorizationOverlay: overlay.value,
+      ownerRegistration,
+    });
+  },
+);
 
 type NativeReadTestResource = ResourceAccessTarget & { readonly tenantId: string };
 
@@ -101,6 +162,7 @@ const relation = (resourceType: string, resourceId: string, name: string, subjec
  */
 export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')(function* makeNativeReadTestContext(
   options: NativeReadTestContextOptions,
+  ownerRegistration?: VerticalRuntimeRegistration,
 ) {
   // pg accepts query parameters that override URL authority or read SSL files. The
   // optional disposable fixture seam accepts no query configuration; defaults stay unchanged.
@@ -134,6 +196,10 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
       return yield* unavailable(undefined, 'Native Read fixture overrides require one isolated localhost database');
     }
   }
+  const owner = Option.getOrUndefined(
+    yield* loadNativeOwnerRuntimeOptions(options.expectedDeployment, ownerRegistration, options.moduleId),
+  );
+  const ownedRuntimeOptions = owner;
   const { configuration, spiceConfiguration } = yield* Effect.all(
     {
       configuration: (suppliedConfiguration === undefined
@@ -172,6 +238,14 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
     principalId,
     tenantId,
   }).pipe(Effect.mapError(unavailable));
+  const secondaryPrincipal =
+    owner === undefined
+      ? undefined
+      : yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
+          ...principal,
+          authBindingId: yield* nextId(),
+          principalId: yield* nextId(),
+        }).pipe(Effect.mapError(unavailable));
   // The native pools must remain open while outer-scope cleanup runs.
   const resourcesScope = yield* Scope.make();
   yield* Effect.addFinalizer((exit) => Scope.close(resourcesScope, exit));
@@ -202,7 +276,7 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
     (connection) => Effect.sync(() => connection.close()),
   );
   const relationships = new Map<string, v1.Relationship>();
-  let ownerProducerStarted = false;
+  let ownerProducerStarted = owner !== undefined;
   const remember = (values: readonly v1.Relationship[]) => {
     for (const value of values) {
       const key = `${value.resource?.objectType}:${value.resource?.objectId}:${value.relation}:${value.subject?.object?.objectType}:${value.subject?.object?.objectId}`;
@@ -272,6 +346,25 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
           subjectType: 'user',
           tenantId,
         });
+        if (secondaryPrincipal !== undefined) {
+          yield* transaction.insert(principals).values({
+            displayName: 'Unprivileged native owner test principal',
+            kind: 'human',
+            principalId: secondaryPrincipal.principalId,
+            status: 'active',
+            tenantId,
+          });
+          yield* transaction.insert(principalAuthBindings).values({
+            authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+            principalAuthBindingId: secondaryPrincipal.authBindingId,
+            principalId: secondaryPrincipal.principalId,
+            provider: 'better_auth',
+            providerSubjectId: secondaryPrincipal.principalId,
+            status: 'active',
+            subjectType: 'user',
+            tenantId,
+          });
+        }
         yield* transaction
           .insert(tenantModuleStates)
           .values({ moduleKey: options.moduleId, state: 'active', tenantId });
@@ -287,6 +380,13 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
     relation('module_access', moduleObjectId, 'legal_entity', 'legal_entity', legalEntityObjectId),
     relation('module_access', moduleObjectId, 'accessor', 'principal', principalId),
   ]);
+  if (secondaryPrincipal !== undefined) {
+    remember([
+      relation('tenant', tenantId, 'member', 'principal', secondaryPrincipal.principalId),
+      relation('legal_entity', legalEntityObjectId, 'member', 'principal', secondaryPrincipal.principalId),
+      relation('module_access', moduleObjectId, 'accessor', 'principal', secondaryPrincipal.principalId),
+    ]);
+  }
   yield* Effect.forEach(
     options.contextPermissions,
     Effect.fn('NativeReadTestContext.permission')(function* permissionRelations(permission) {
@@ -303,14 +403,51 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
   yield* write([...relationships.values()], v1.RelationshipUpdate_Operation.TOUCH);
   const contextAccess = yield* makeContextAccessLive();
   const scopeResolver = yield* makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess);
-  const gateway = makeModuleEntrypointGateway(makeModuleStateGate(makeTenantModuleStateService(database)));
-  const runtime = makeReadRuntime(database, gateway, scopeResolver, contextAccess);
-  const registry = staffAuthenticationNamespaceRegistryLayer(['catalog']);
+  const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService(database));
+  const gateway = makeModuleEntrypointGateway(moduleStateGate);
+  const optionalOwnerRegistration = yield* Effect.serviceOption(NativeReadTestOwnerRegistration);
+  const runtimeOptions =
+    ownedRuntimeOptions ??
+    Option.match(optionalOwnerRegistration, {
+      onNone: () => ({}),
+      onSome: (registration) => ({ ownerRegistration: registration }),
+    });
+  const runtime = makeReadRuntime(database, gateway, scopeResolver, contextAccess, runtimeOptions);
+  const actionRuntime =
+    ownedRuntimeOptions === undefined
+      ? undefined
+      : makeActionRuntime(database, makeActionRepository(crypto), yield* makeActionPermissionLive(), scopeResolver, {
+          ...ownedRuntimeOptions,
+          contextAccess,
+          moduleEntrypointGateway: gateway,
+          moduleStateGate,
+        });
+  const registry = staffAuthenticationNamespaceRegistryLayer(
+    owner === undefined ? ['catalog'] : [owner.expectedDeployment.appId],
+  );
   const layer = Layer.mergeAll(
     registry,
     Layer.succeed(ReadRuntime, runtime),
     Layer.succeed(ContextAccess, contextAccess),
+    actionRuntime === undefined ? Layer.empty : Layer.succeed(ActionRuntime, actionRuntime),
   );
+  const fixtureScope = (legalEntityScope: 'forbidden' | 'optional' | 'required' = 'required') => {
+    const operationPrincipal = legalEntityScope === 'forbidden' ? Struct.omit(principal, ['legalEntityId']) : principal;
+    return scopeResolver.resolve(
+      owner === undefined
+        ? {
+            correlationId: `native-read-producer-${principalId}`,
+            legalEntityScope,
+            principal: operationPrincipal,
+          }
+        : {
+            audience: owner.expectedDeployment.appId,
+            correlationId: `native-owner-test-${principalId}`,
+            legalEntityScope,
+            principal: operationPrincipal,
+          },
+    );
+  };
   const prepareOwner = Effect.fn('NativeReadTestContext.prepareOwner')(function* prepareOwner<
     Value,
     Failure,
@@ -321,11 +458,7 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
       scope: OperationalScope,
     ) => Effect.Effect<Value, Failure, Requirements>,
   ): Effect.fn.Return<Value, Failure | OperationContextError | SqlError, Requirements> {
-    const scope = yield* scopeResolver.resolve({
-      correlationId: `native-read-producer-${principalId}`,
-      legalEntityScope: 'required',
-      principal,
-    });
+    const scope = yield* fixtureScope();
     const produce = Effect.fn('NativeReadTestContext.produce')(function* produce(
       transaction: CoreTransaction,
     ): Effect.fn.Return<Value, Failure | OperationContextError, Requirements> {
@@ -358,6 +491,146 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
     resourceRelations(resource).pipe(
       Effect.flatMap((values) => write(values.slice(1), v1.RelationshipUpdate_Operation.DELETE)),
     );
+  const mutateOwnerTarget = Effect.fn('NativeReadTestContext.mutateOwnerTarget')(function* mutateExactOwnerTarget(
+    target: OwnerPermissionAccessTarget,
+    scope: OperationalScope,
+    operation: v1.RelationshipUpdate_Operation,
+  ) {
+    if (
+      owner === undefined ||
+      !isOwnerPermissionAccessTargetValid(target, scope, options.moduleId) ||
+      scope.principalId !== principalId ||
+      scope.tenantId !== tenantId ||
+      (scope.legalEntityId !== legalEntityId && !(target.scope.kind === 'tenant' && scope.legalEntityId === undefined))
+    ) {
+      return yield* unavailable(
+        undefined,
+        'Native owner grants require the exact fixture actor, scope and bound owner target',
+      );
+    }
+    const scopeRelation =
+      target.scope.kind === 'tenant'
+        ? relation('business_permission', target.objectId, 'tenant', 'tenant', tenantId)
+        : relation('business_permission', target.objectId, 'legal_entity', 'legal_entity', legalEntityObjectId);
+    const grantee = relation('business_permission', target.objectId, 'grantee', 'principal', principalId);
+    const values = [scopeRelation, grantee];
+    remember(values);
+    return yield* write(operation === v1.RelationshipUpdate_Operation.DELETE ? [grantee] : values, operation);
+  });
+  const mutateActionExecution = (operation: v1.RelationshipUpdate_Operation) =>
+    Effect.fn('NativeReadTestContext.actionExecution')(function* mutateExactActionExecution(
+      registration: AnyActionRegistration,
+    ) {
+      if (
+        owner === undefined ||
+        !getVerticalRuntimeActions(owner.ownerRegistration).includes(registration) ||
+        registration.descriptor.owningModuleKey !== options.moduleId
+      ) {
+        return yield* unavailable(undefined, 'Native executor grants require an exact registered owner Action');
+      }
+      const values = [
+        relation(
+          'action',
+          toSpiceDbActionObjectId(registration.descriptor.actionKey),
+          'executor',
+          'principal',
+          principalId,
+        ),
+      ];
+      remember(values);
+      return yield* write(values, operation);
+    });
+  const mutateActionOwnerPermission = (operation: v1.RelationshipUpdate_Operation) =>
+    Effect.fn('NativeReadTestContext.actionOwnerPermission')(function* mutateExactActionOwnerPermission<
+      PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+      ResultSchema extends Schema.ConstraintDecoder<unknown>,
+      DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+      DomainEvents extends DomainEventContractMap,
+      Owner extends string,
+      Services,
+      Requirements,
+    >(
+      registration: ActionRegistration<
+        PayloadSchema,
+        ResultSchema,
+        DomainErrorSchema,
+        DomainEvents,
+        Owner,
+        Services,
+        Requirements
+      >,
+      payload: Schema.Codec.Encoded<PayloadSchema>,
+      targetIndex = 0,
+    ) {
+      if (owner === undefined || !getVerticalRuntimeActions(owner.ownerRegistration).includes(registration)) {
+        return yield* unavailable(undefined, 'Native owner grants require an exact registered owner Action');
+      }
+      const { decoded, scope } = yield* Effect.all(
+        {
+          decoded: decodeActionPayload(registration.descriptor.payloadSchema, payload),
+          scope: fixtureScope(registration.descriptor.legalEntityScope),
+        },
+        { concurrency: 2 },
+      );
+      const targets = yield* Effect.try({
+        catch: unavailable,
+        try: () => getActionOwnerPermissionTargetResolver(registration)?.(decoded, scope),
+      });
+      const target = targets?.[targetIndex];
+      if (target === undefined) {
+        return yield* unavailable(undefined, 'Native owner grant target is not declared by the Action');
+      }
+      return yield* mutateOwnerTarget(target, scope, operation);
+    });
+  const mutateReadOwnerPermission = (operation: v1.RelationshipUpdate_Operation) =>
+    Effect.fn('NativeReadTestContext.readOwnerPermission')(function* mutateExactReadOwnerPermission<
+      InputSchema extends Schema.ConstraintDecoder<unknown>,
+      ResultSchema extends Schema.ConstraintDecoder<unknown>,
+      Owner extends string,
+      Services,
+      Failure,
+      Requirements,
+      DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+    >(
+      registration: ReadRegistration<
+        InputSchema,
+        ResultSchema,
+        Owner,
+        Services,
+        Failure,
+        Requirements,
+        DomainErrorSchema
+      >,
+      input: Schema.Codec.Encoded<InputSchema>,
+    ) {
+      if (owner === undefined || !getVerticalRuntimeReads(owner.ownerRegistration).includes(registration)) {
+        return yield* unavailable(undefined, 'Native owner grants require an exact registered owner Read');
+      }
+      const scope = yield* fixtureScope(registration.descriptor.legalEntityScope);
+      const decoded = yield* Schema.decodeUnknownEffect(registration.descriptor.inputSchema, {
+        onExcessProperty: 'error',
+      })(input).pipe(Effect.mapError(unavailable));
+      const resolver = getReadPermissionTargetResolver(registration);
+      if (!Predicate.isFunction(resolver)) {
+        return yield* unavailable(undefined, 'Native owner Read grant requires its exact owner target declaration');
+      }
+      const target = yield* Effect.try({ catch: unavailable, try: () => resolver(decoded, scope) });
+      if (target.kind !== 'owner_permission') {
+        return yield* unavailable(undefined, 'Native owner Read grant requires its exact owner target declaration');
+      }
+      return yield* mutateOwnerTarget(target.ownerPermission, scope, operation);
+    });
+  const ownerOutboxCount = () =>
+    database.executor.transaction(
+      Effect.fn('NativeReadTestContext.ownerOutboxCount')(function* countOwnerOutbox(transaction: CoreTransaction) {
+        yield* installOperationalScope(transaction, yield* fixtureScope());
+        const rows = yield* transaction
+          .select({ id: outboxMessages.outboxMessageId })
+          .from(outboxMessages)
+          .where(and(eq(outboxMessages.tenantId, tenantId), eq(outboxMessages.producerModuleKey, options.moduleId)));
+        return rows.length;
+      }),
+    );
   const evidenceCount = () =>
     database.executor.transaction(
       Effect.fn('NativeReadTestContext.evidence')(function* nativeEvidenceCount(transaction: CoreTransaction) {
@@ -372,7 +645,25 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
         return rows.length;
       }),
     );
-  return { contextAccess, evidenceCount, grantResource, layer, prepareOwner, principal, revokeResource, runtime };
+  return {
+    actionRuntime,
+    contextAccess,
+    evidenceCount,
+    grantActionExecution: mutateActionExecution(v1.RelationshipUpdate_Operation.TOUCH),
+    grantActionOwnerPermission: mutateActionOwnerPermission(v1.RelationshipUpdate_Operation.TOUCH),
+    grantReadOwnerPermission: mutateReadOwnerPermission(v1.RelationshipUpdate_Operation.TOUCH),
+    grantResource,
+    layer,
+    ownerOutboxCount,
+    prepareOwner,
+    principal,
+    revokeActionExecution: mutateActionExecution(v1.RelationshipUpdate_Operation.DELETE),
+    revokeActionOwnerPermission: mutateActionOwnerPermission(v1.RelationshipUpdate_Operation.DELETE),
+    revokeReadOwnerPermission: mutateReadOwnerPermission(v1.RelationshipUpdate_Operation.DELETE),
+    revokeResource,
+    runtime,
+    secondaryPrincipal,
+  };
 });
 
 export interface VerifiedNativeReadScopeInput extends Pick<OperationalScopeRequest, 'correlationId'> {

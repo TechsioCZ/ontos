@@ -1,11 +1,9 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
-import {
-  getActionBusinessPermissionTargetResolver,
-  getActionHandler,
-} from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionOwnerPermissionTargetResolver, getActionHandler } from '@app/core-runtime/testing/actions';
 import {
   TriggerPurchaseApprovalPayloadSchema,
   TriggerPurchaseApprovalResultSchema,
@@ -140,28 +138,37 @@ const proposalEvidence = Schema.decodeUnknownSync(PurchaseApprovalProposalEviden
 });
 
 it('declares exact submit authorization without promoting an untrusted Storefront', () => {
-  const resolver = getActionBusinessPermissionTargetResolver(triggerPurchaseApprovalAction);
+  const resolver = getActionOwnerPermissionTargetResolver(triggerPurchaseApprovalAction);
   if (resolver === undefined) {
     throw new Error('Trigger Purchase Approval must declare business authorization');
   }
-  expect(resolver(payload, scopeWithoutTrustedStorefront)).toEqual({
-    permission: 'counterparty.purchase.submit',
-    target: {
-      counterpartyId: counterpartyRef.resourceId,
-      kind: 'counterparty_storefront',
-      legalEntityId,
-      storefrontId,
-      tenantId,
+  expect(resolver(payload, scopeWithoutTrustedStorefront)).toEqual([
+    customerOwnerPermissionTarget(
+      {
+        permission: 'counterparty.purchase.submit',
+        target: {
+          counterpartyId: counterpartyRef.resourceId,
+          kind: 'counterparty_storefront',
+          legalEntityId,
+          storefrontId,
+          tenantId,
+        },
+      },
+      'action',
+    ),
+  ]);
+  expect(resolver(payload, { ...scope, trustedStorefrontId: 'storefront:other' })).toMatchObject([
+    {
+      requiredStorefrontId: storefrontId,
+      target: { storefrontId },
     },
-  });
-  expect(resolver(payload, { ...scope, trustedStorefrontId: 'storefront:other' })).toMatchObject({
-    target: { storefrontId },
-    trustedStorefrontId: 'storefront:other',
-  });
-  expect(resolver(payload, scope)).toMatchObject({
-    target: { storefrontId },
-    trustedStorefrontId: storefrontId,
-  });
+  ]);
+  expect(resolver(payload, scope)).toMatchObject([
+    {
+      requiredStorefrontId: storefrontId,
+      target: { storefrontId },
+    },
+  ]);
 });
 
 it.effect('collects audit/read evidence and publishes the owner-returned approval request ref', () =>

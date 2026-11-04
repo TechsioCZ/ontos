@@ -1,3 +1,5 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
+import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import {
   ActionRuntime,
   ActiveApplicationCompositionService,
@@ -6,20 +8,27 @@ import {
   BusinessPermissionRelationshipMutationLive,
   ContextAccess,
   ContextAccessLive,
+  CorePersistenceLive,
+  DatabaseConfig,
   CoreSearchResourceRefSchema,
   DATABASE_IDENTITIES,
   GatewayAssertionRedemptionService,
   OntosModuleDeploymentContractSchema,
   OntosShellRuntimeContractSchema,
   OutboxRepositoryLive,
+  OutboxRuntime,
+  TenantModuleStateServiceLive,
+  getVerticalRuntimeOutboxWorkers,
+  makeActionRuntimeLive,
+  makeReadRuntimeLive,
+  parseDatabaseConfig,
   bindSelfApiKeyAction,
   canonicalizeApplicationComposition,
-  extractOutboxWorkerSubscriptions,
   makeContextPermissionRelationshipMutationLive,
   matchOutboxMessages,
+  extractOutboxWorkerSubscriptions,
   loadDatabaseConfig,
   parseDatabaseConnectionPair,
-  runOutboxCycle,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
 import { ChangeCounterpartyPurchaseLimitPayloadSchema } from '../../shared/actions/change-counterparty-purchase-limit.ts';
@@ -38,10 +47,7 @@ import { executePreapprovalCartObservationWithAuthorization } from '@app/commerc
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import {
-  makeApplicationCompositionSnapshotFixture,
-  makeModuleContractFixture,
-} from '@app/core-runtime/testing/module-contract';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 
 import { CatalogSelectionSchema } from '@app/catalog-selection-contracts';
 import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
@@ -55,7 +61,10 @@ import {
 } from '@app/party-registry/api';
 import { CatalogQuantityHandoffSchema } from '@app/catalog/domain/catalog-quantity-handoff';
 import type { CreatePartyResultSchema } from '@app/party-registry/api';
-import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
+import {
+  STAFF_AUTHENTICATION_NAMESPACE_ID,
+  staffAuthenticationNamespaceRegistryLayer,
+} from '@app/core-runtime/auth/staff-authentication-namespace';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import type { GatewayContextRequest } from '@app/shared-contracts';
@@ -69,16 +78,19 @@ import {
 import { executeManageQuotationWithAuthorization } from '@app/pricing-contracts/manage-quotation/client';
 import { pricingQuotationMatchesCurrentDecision } from '@app/pricing-contracts/quotation-verification';
 import {
+  Array as EffectArray,
   Cause,
   Config,
   ConfigProvider,
   Context,
   DateTime,
+  Deferred,
   Effect,
   Exit,
   Fiber,
   Layer,
   Option,
+  Order,
   Queue,
   Redacted,
   Schema,
@@ -104,7 +116,23 @@ import {
 } from '../../api/auth/gateway-assertion-redemption.ts';
 import { outboxWorkerLayer } from '../../src/worker-host/layer.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
+import type {
+  AnyOutboxWorkerRegistration,
+  OutboxCycleError,
+  OutboxCycleResult,
+  OutboxRuntimeService,
+  OutboxWorkerRequirements,
+  RunOutboxCycleInput,
+} from '@app/core-runtime';
+import { defineOutboxWorkerEntry } from '@app/core-runtime/outbox/worker';
+import {
+  ActionPermissionLive,
+  ActionRepositoryLive,
+  ModuleEntrypointGatewayLive,
+  ModuleStateGateLive,
+  OperationalScopeResolverLive,
+} from '@app/core-runtime/actions/runtime-wiring';
 import { readCurrentPurchaseProposalRoutine } from '../../src/persistence/purchase-limit-persistence.ts';
 
 import { executeCreateCounterpartyPurchasingProfileWithAuthorization } from '../../src/api/create-counterparty-purchasing-profile-action-client.ts';
@@ -774,6 +802,35 @@ export const openNativeChild = Effect.fn('PreproposalNative.openChild')(function
   };
 });
 
+const resolveNativeOwnerIdentity = Effect.fn('PreproposalNative.ownerIdentity')(function* resolveNativeOwnerIdentity(
+  owner: string,
+) {
+  const generated = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        deliveryUnit: Schema.Struct({
+          buildMarker: Schema.String,
+          unitId: Schema.String.pipe(Schema.brand('PreproposalNativeUnitId')),
+        }),
+      }),
+    ),
+  )(
+    yield* io(
+      'owner-source-identity',
+      async () => await readFile(`${applicationRoot}${owner}/shared/ultramodern-build.json`, 'utf-8'),
+    ),
+  );
+  return yield* Effect.try({
+    catch: () => safeFailure('owner-release-identity'),
+    try: () =>
+      resolveUltramodernReleaseIdentity({
+        generationBuildMarker: generated.deliveryUnit.buildMarker,
+        unitId: generated.deliveryUnit.unitId,
+        workspaceRoot: applicationRoot,
+      }),
+  });
+});
+
 const buildOwnerExecutable = Effect.fn('PreproposalNative.buildOwnerExecutable')(function* buildOwnerExecutable(
   owner: string,
   filename: string,
@@ -803,6 +860,14 @@ const buildOwnerExecutable = Effect.fn('PreproposalNative.buildOwnerExecutable')
       ? [`--alias:${packageMetadata.name}${key.slice(1)}=${applicationRoot}${owner}/${target.replace(/^\.\//u, '')}`]
       : [],
   );
+  const identityDefines: string[] = [];
+  if (!owner.startsWith('packages/')) {
+    const identity = yield* resolveNativeOwnerIdentity(owner);
+    identityDefines.push(
+      `--define:ULTRAMODERN_BUILD_MARKER=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.buildMarker)}`,
+      `--define:ULTRAMODERN_SOURCE_REVISION=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.sourceRevision)}`,
+    );
+  }
   const builder = yield* openNativeChild({
     args: [
       'exec',
@@ -816,6 +881,7 @@ const buildOwnerExecutable = Effect.fn('PreproposalNative.buildOwnerExecutable')
       '--format=esm',
       '--packages=external',
       ...aliases,
+      ...identityDefines,
       `--outfile=${artifact}`,
       `--metafile=${directory}/inputs.json`,
     ],
@@ -865,12 +931,134 @@ const loadAllocatedPermissionEnvironment = Effect.fn('PreproposalNative.allocate
 );
 
 const digestDocument = (value: string) => createHash('sha256').update(value).digest('hex');
+export const NativeGovernedSingletonPolicySchema = Schema.Array(Schema.NonEmptyString).check(
+  Schema.isMinLength(1),
+  Schema.makeFilter(
+    (names) => new Set(names).size === names.length || 'Governed singleton policy has duplicate packages',
+  ),
+);
+
+export const selectNativeFederationSingletons = Effect.fn('PreproposalNative.governedSingletons')(
+  function* selectNativeFederationSingletons(input: {
+    readonly governedPackages: readonly string[];
+    readonly role: 'host' | 'remote';
+    readonly shared: readonly {
+      readonly name: string;
+      readonly requiredVersion?: string;
+      readonly singleton?: boolean;
+    }[];
+  }) {
+    const policy = yield* Schema.decodeUnknownEffect(NativeGovernedSingletonPolicySchema)(input.governedPackages);
+    const selected = yield* Effect.forEach((packageName: string) => {
+      const entries = input.shared.filter(({ name }) => name === packageName);
+      const [entry] = entries;
+      if (entries.length === 0 && input.role === 'remote') {
+        return Effect.succeed(Option.none());
+      }
+      return entries.length === 1 &&
+        entry !== undefined &&
+        entry.singleton === true &&
+        entry.requiredVersion !== undefined &&
+        entry.requiredVersion !== ''
+        ? Effect.succeed(Option.some({ packageName, version: entry.requiredVersion }))
+        : Effect.fail(safeFailure('actual-mf-governed-singleton'));
+    })(policy);
+    return EffectArray.sort(EffectArray.getSomes(selected), Order.Struct({ packageName: Order.String }));
+  },
+);
+
+const readNativeFederation = Effect.fn('PreproposalNative.federation')(function* readNativeFederation(
+  owner: string,
+  role: 'host' | 'remote',
+) {
+  const document = yield* io(
+    'actual-mf-document',
+    async () => await readFile(`${applicationRoot}${owner}/dist/mf-manifest.json`, 'utf-8'),
+  );
+  const manifest = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        exposes: Schema.Array(Schema.Struct({ path: Schema.NonEmptyString })),
+        name: Schema.NonEmptyString,
+        shared: Schema.Array(
+          Schema.Struct({
+            name: Schema.NonEmptyString,
+            requiredVersion: Schema.optionalKey(Schema.String),
+            singleton: Schema.optionalKey(Schema.Boolean),
+          }),
+        ),
+      }),
+    ),
+  )(document);
+  const governedPackages = yield* Config.schema(
+    Schema.fromJsonString(NativeGovernedSingletonPolicySchema),
+    'ONTOS_PREPROPOSAL_GOVERNED_SINGLETON_PACKAGES',
+  );
+  const sharedSingletons = yield* selectNativeFederationSingletons({ governedPackages, role, shared: manifest.shared });
+  return {
+    exposes: EffectArray.sort(
+      manifest.exposes.map(({ path }) => path),
+      Order.String,
+    ),
+    name: manifest.name,
+    sha256: digestDocument(document),
+    sharedSingletons: EffectArray.sort(sharedSingletons, Order.Struct({ packageName: Order.String })),
+  };
+});
+
+const makeAdmittedPreproposalOutbox = (
+  outbox: OutboxRuntimeService,
+  snapshot: typeof ActiveApplicationCompositionSnapshotSchema.Type,
+  expectedDeployment: Parameters<typeof defineOutboxWorkerEntry>[0]['expectedDeployment'],
+) => ({
+  ...outbox,
+  runCycle: <Registration extends AnyOutboxWorkerRegistration>(input: RunOutboxCycleInput<Registration>) =>
+    Effect.gen(function* runAdmittedPreproposalCycle() {
+      const services = yield* Effect.context<OutboxWorkerRequirements<Registration>>();
+      const completed = yield* Deferred.make<OutboxCycleResult, OutboxCycleError>();
+      const preserveCycleExit = (exit: Exit.Exit<OutboxCycleResult, OutboxCycleError>) =>
+        Deferred.done(completed, exit);
+      const entry = defineOutboxWorkerEntry({
+        claimOwnerPrefix: 'ccc-native-preproposal',
+        expectedDeployment,
+        layer: Layer.mergeAll(
+          Layer.succeedContext(services),
+          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+          Layer.succeed(OutboxRuntime, {
+            ...outbox,
+            // Delegate the exact original native cycle; the public entry supplies receiving admission.
+            runCycle: () =>
+              outbox.runCycle(input).pipe(Effect.provideContext(services), Effect.onExit(preserveCycleExit)),
+          }),
+        ),
+        ownerRegistration: commerceCustomerContextRegistration,
+        registrations: input.registrations,
+        subscriptions: extractOutboxWorkerSubscriptions(
+          getVerticalRuntimeOutboxWorkers(commerceCustomerContextRegistration),
+        ),
+      });
+      return yield* Effect.raceFirst(
+        Deferred.await(completed),
+        entry
+          .runLoop({
+            config: {
+              claimOwner: input.claimOwner,
+              maxDeliveries: input.maxDeliveries ?? 1,
+              pollIntervalMs: 1000,
+            },
+          })
+          .pipe(Effect.andThen(Effect.never)),
+      );
+    }).pipe(Effect.scoped),
+});
+
 const makeNativeComposition = Effect.fn('PreproposalNative.composition')(function* makeNativeComposition(
   owners: readonly {
     readonly appId: string;
     readonly marker: typeof MarkerSchema.Type;
     readonly moduleId: string;
     readonly origin: string;
+    readonly owner: string;
   }[],
 ) {
   const modules = owners.filter((owner) => owner.appId !== shellAudience);
@@ -882,16 +1070,34 @@ const makeNativeComposition = Effect.fn('PreproposalNative.composition')(functio
   const replacements = yield* Effect.all(
     modules.map((owner) =>
       Effect.gen(function* nativeContract() {
-        const contract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(
-          makeModuleContractFixture({
-            appId: owner.appId,
-            buildMarker: owner.marker.buildMarker,
-            moduleId: owner.moduleId,
-            outboxSubscriptions: owner.appId === contextAudience ? extractOutboxWorkerSubscriptions(outboxWorkers) : [],
-          }),
+        const generator = yield* openNativeChild({
+          args: ['scripts/generate-ontos-module-contract.mts', '--vertical', owner.appId, '--target', 'dist'],
+          environment: { APP_ENV_PATH: '/dev/null' },
+          stage: `module-contract:${owner.appId}`,
+        });
+        yield* generator.exit;
+        const contract = yield* Schema.decodeUnknownEffect(contractJson)(
+          yield* io(
+            'actual-owner-contract',
+            async () =>
+              await readFile(
+                `${applicationRoot}${owner.owner}/dist/public/.well-known/ontos-module-manifest.json`,
+                'utf-8',
+              ),
+          ),
+        );
+        yield* requireProtocol(
+          contract.deployment.appId === owner.appId &&
+            contract.deployment.buildMarker === owner.marker.buildMarker &&
+            contract.manifest.module.id === owner.moduleId,
+          'actual-owner-contract-identity',
         );
         const contractDocument = yield* Schema.encodeEffect(contractJson)(contract);
-        return { ...owner, contractDocument, hash: digestDocument(contractDocument) };
+        const federation =
+          contract.manifest.publicSurface.components.length === 0
+            ? Option.none()
+            : Option.some(yield* readNativeFederation(owner.owner, 'remote'));
+        return { ...owner, contract, contractDocument, federation, hash: digestDocument(contractDocument) };
       }),
     ),
   );
@@ -904,11 +1110,34 @@ const makeNativeComposition = Effect.fn('PreproposalNative.composition')(functio
       }
       return {
         ...module,
+        allowedContributions: EffectArray.sort(
+          Object.values(owner.contract.manifest.publicSurface.shellContributions).flatMap((entries) =>
+            entries.map(({ contributionKey }) => contributionKey),
+          ),
+          Order.String,
+        ),
         backend: { baseUrl: `${owner.origin}/`, transport: 'node-http' as const },
         contract: { ...module.contract, sha256: owner.hash },
         contractDocument: owner.contractDocument,
+        dependencies: EffectArray.sort(
+          (owner.contract.manifest.requirements?.intrinsic ?? []).map(({ moduleId }) => moduleId),
+          Order.String,
+        ),
+        federation: Option.isSome(owner.federation)
+          ? {
+              execution: 'browser' as const,
+              exposes: owner.federation.value.exposes,
+              manifest: { sha256: owner.federation.value.sha256, url: new URL('/mf-manifest.json', owner.origin).href },
+              remoteName: owner.federation.value.name,
+            }
+          : module.federation,
         moduleId: owner.moduleId,
-        publicContract: { id: owner.moduleId, sha256: owner.hash, version: module.publicContract.version },
+        publicContract: { id: owner.moduleId, sha256: owner.hash, version: owner.contract.schemaVersion },
+        requiredCoreCapabilities: EffectArray.sort(
+          (owner.contract.manifest.requirements?.coreCapabilities ?? []).map(({ id, version }) => ({ id, version })),
+          Order.Struct({ id: Order.String }),
+        ),
+        sharedSingletons: Option.isSome(owner.federation) ? owner.federation.value.sharedSingletons : [],
       };
     }),
     revision: '0'.repeat(64),
@@ -917,18 +1146,44 @@ const makeNativeComposition = Effect.fn('PreproposalNative.composition')(functio
   if (shell === undefined) {
     return yield* safeFailure('shell-composition-marker');
   }
-  const shellDocument = yield* Schema.encodeUnknownEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))({
-    contributionAbi: composition.shell.contributionAbi,
-    coreCapabilities: [],
-    deployment: shell.marker,
-    schemaVersion: '2',
+  const shellGenerator = yield* openNativeChild({
+    args: [
+      'scripts/generate-ontos-shell-runtime-contract.mts',
+      '--shell-directory',
+      `${applicationRoot}${shell.owner}`,
+      '--target',
+      'dist',
+    ],
+    environment: { APP_ENV_PATH: '/dev/null' },
+    stage: 'shell-runtime-contract',
   });
+  yield* shellGenerator.exit;
+  const shellRuntime = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+    yield* io(
+      'actual-shell-contract',
+      async () =>
+        await readFile(`${applicationRoot}${shell.owner}/dist/public/.well-known/ontos-shell-runtime.json`, 'utf-8'),
+    ),
+  );
+  yield* requireProtocol(
+    shellRuntime.deployment.appId === shell.marker.appId &&
+      shellRuntime.deployment.buildMarker === shell.marker.buildMarker,
+    'actual-shell-contract-identity',
+  );
+  const shellDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+    shellRuntime,
+  );
+  const shellFederation = yield* readNativeFederation(shell.owner, 'host');
   const completeInput = {
     ...composition,
     shell: {
       ...composition.shell,
+      contributionAbi: shellRuntime.contributionAbi,
+      coreCapabilities: shellRuntime.coreCapabilities,
       deployment: shell.marker,
+      federationManifest: { sha256: shellFederation.sha256, url: new URL('/mf-manifest.json', shell.origin).href },
       runtimeContract: { ...composition.shell.runtimeContract, sha256: digestDocument(shellDocument) },
+      sharedSingletons: shellFederation.sharedSingletons,
     },
   };
   const complete = yield* Schema.decodeUnknownEffect(ApplicationCompositionSchema)(completeInput);
@@ -1316,7 +1571,9 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
               Schema.Struct({ deliveryUnit: MarkerSchema, surfaces: Schema.Struct({ api: MarkerSchema }) }),
             ),
           )(document);
-          const marker = definition.appId === shellAudience ? metadata.deliveryUnit : metadata.surfaces.api;
+          const generatedMarker = definition.appId === shellAudience ? metadata.deliveryUnit : metadata.surfaces.api;
+          const identity = yield* resolveNativeOwnerIdentity(definition.owner);
+          const marker = { ...generatedMarker, buildMarker: identity.buildMarker };
           yield* requireProtocol(marker.appId === definition.appId, `owner-marker:${definition.appId}`);
           const placement = yield* makeOwnerPlacement(definition.appId);
           return { ...definition, artifact, marker, ...placement };
@@ -1745,15 +2002,41 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       Layer.provide(profileRetailPermissionReaderFactoryLive),
       Layer.provide(ContextAccessLive),
     );
-    const coreLayer = core.layer.pipe(Layer.provide(overlay));
-    const runtimeContext = yield* Layer.build(coreLayer);
     const ownerConfiguration = ConfigProvider.layer(ConfigProvider.fromUnknown(environment));
+    const ownIdentity = yield* resolveNativeOwnerIdentity('verticals/commerce-customer-context');
+    const ownDeployment = { appId: contextAudience, buildMarker: ownIdentity.buildMarker };
+    const database = Layer.succeed(
+      DatabaseConfig,
+      yield* parseDatabaseConfig({ DATABASE_URL: owned.connections.runtime.connectionString }),
+    );
+    const persistence = CorePersistenceLive.pipe(Layer.provide(database));
+    const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
+    const gate = ModuleStateGateLive.pipe(Layer.provide(states));
+    const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(gate));
+    const resolver = OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(persistence, ContextAccessLive)));
+    const common = Layer.mergeAll(
+      persistence,
+      ActionRepositoryLive.pipe(Layer.provide(persistence)),
+      ActionPermissionLive,
+      ContextAccessLive,
+      gate,
+      gateway,
+      resolver,
+      staffAuthenticationNamespaceRegistryLayer([contextAudience]),
+      Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      overlay,
+    );
+    const ownerRuntimeLayer = Layer.mergeAll(
+      makeActionRuntimeLive(ownDeployment, commerceCustomerContextRegistration),
+      makeReadRuntimeLive(ownDeployment, commerceCustomerContextRegistration),
+    ).pipe(Layer.provideMerge(common), Layer.provide(ownerConfiguration));
+    const runtimeContext = yield* Layer.build(ownerRuntimeLayer);
     const redemptionLayer = GatewayAssertionRedemptionLive.pipe(
       Layer.provide(GatewayAssertionRedemptionDatabaseLive),
       Layer.provide(nativeDatabase),
     );
     const redemption = Context.get(yield* Layer.build(redemptionLayer), GatewayAssertionRedemptionService);
-    const authenticatedOperator = yield* bindGatewayPrincipalVerifier(contextAudience, ultramodernApiMarker)
+    const authenticatedOperator = yield* bindGatewayPrincipalVerifier(contextAudience, ownDeployment)
       .verifyAndRedeem(yield* signBuyer(contextAudience, true, false), { environment, redemption })
       .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
     const administerCurrencyPolicy = (
@@ -1801,14 +2084,19 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       Layer.provide(OutboxRepositoryLive),
       Layer.provide(ContextAccessLive),
       Layer.provide(BusinessPermissionRelationshipMutationLive),
-      Layer.provideMerge(coreLayer),
+      Layer.provideMerge(ownerRuntimeLayer),
       Layer.provide(ownerConfiguration),
     );
     const workerContext = yield* Layer.build(workerLayer);
+    const admittedOutbox = makeAdmittedPreproposalOutbox(
+      Context.get(workerContext, OutboxRuntime),
+      snapshot,
+      ownDeployment,
+    );
     const cycle = () =>
       Effect.gen(function* settleActualAuthorizationMutation() {
         yield* matchOutboxMessages({ compositionRevision });
-        return yield* runOutboxCycle({
+        return yield* admittedOutbox.runCycle({
           claimOwner: `${intent}:authorization`,
           compositionRevision,
           maxDeliveries: 100,
@@ -1858,9 +2146,19 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
           yield* Layer.build(BusinessPermissionRelationshipMutationLive.pipe(Layer.provide(ownerConfiguration))),
           BusinessPermissionRelationshipMutation,
         );
-        yield* permissionMutation.mutate({ ...permissionRelation, operation: 'grant' });
+        yield* permissionMutation.mutate({
+          ...permissionRelation,
+          operation: 'grant',
+          target: customerOwnerPermissionTarget(permissionRelation),
+        });
         yield* Effect.addFinalizer(() =>
-          permissionMutation.mutate({ ...permissionRelation, operation: 'revoke' }).pipe(Effect.orDie),
+          permissionMutation
+            .mutate({
+              ...permissionRelation,
+              operation: 'revoke',
+              target: customerOwnerPermissionTarget(permissionRelation),
+            })
+            .pipe(Effect.orDie),
         );
         yield* core
           .prepareOwner(

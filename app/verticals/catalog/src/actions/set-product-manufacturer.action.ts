@@ -115,7 +115,12 @@ export const setProductManufacturerAction = defineAction(
     const readRuntime = yield* ReadRuntime;
     const crypto = yield* Crypto.Crypto;
     const services = manufacturerPersistenceForScope(transaction, scope, {
-      targetResolver: manufacturerTargetResolverForCoreRead(readRuntime, scope, crypto),
+      targetResolver: manufacturerTargetResolverForCoreRead(
+        readRuntime,
+        scope,
+        crypto,
+        'commerce.catalog.requirement.set-product-manufacturer-party',
+      ),
     });
     const capturingServices: CapturingManufacturerPersistence = {
       ...services,

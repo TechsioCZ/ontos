@@ -1,4 +1,14 @@
+import { commerceMarketCatalogRegistration } from '../../vertical.registration.ts';
+import { commerceMarketCatalogManifest } from '../../vertical.manifest.ts';
+import { HttpApi } from 'effect/http-api';
+import { createHash } from 'node:crypto';
 import {
+  ActiveApplicationCompositionUnavailableError,
+  validateActiveApplicationCompositionSnapshot,
+  OntosShellRuntimeContractSchema,
+  canonicalOntosPublicApiKey,
+  extractVerticalRuntimeSafeDescriptors,
+  OntosModuleDeploymentContractSchema,
   DatabaseConfig,
   GatewayAssertionRedemptionService,
   parseDatabaseConfig,
@@ -16,15 +26,12 @@ import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import {
-  makeModuleContractFixture,
-  makeApplicationCompositionSnapshotFixture,
-} from '@app/core-runtime/testing/module-contract';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { eq, sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import {
+  Array as EffectArray,
   ConfigProvider,
   Context,
   Crypto,
@@ -58,7 +65,7 @@ import {
   GatewayAssertionRedemptionLive,
 } from '../../api/auth/gateway-assertion-redemption.ts';
 import { StorefrontApplicationValidationUnavailable } from '../../src/integrations/current-storefront-application.ts';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 
 import type { MarketDefinitionRevisionRef } from '../../shared/resources/market-definition-revision.ts';
 import type { PricingMarketSourceReceipt } from '../../shared/apis/pricing-current-market-evidence.ts';
@@ -101,6 +108,88 @@ const actionKeys = [
   associateStorefrontAction,
   suspendMarketAction,
 ].map((registration) => registration.descriptor.actionKey);
+
+const sourceContractUnavailable = () =>
+  new ActiveApplicationCompositionUnavailableError({
+    reason: 'The source-qualified Market fixture contract is unavailable',
+  });
+
+const compareFixtureApiKeys = (left: string, right: string): -1 | 0 | 1 => {
+  const compared = left.localeCompare(right);
+  if (compared < 0) {
+    return -1;
+  }
+  if (compared > 0) {
+    return 1;
+  }
+  return 0;
+};
+const fixtureDigest = (document: string): string => createHash('sha256').update(document, 'utf-8').digest('hex');
+/** Controlled SOURCE fixture DTO from the actual owner; this is not a published receiver claim. */
+const makeMarketSourceContract = Effect.fn('MarketRevisionNative.sourceContract')(function* sourceContract() {
+  const owner = yield* Effect.try({
+    catch: sourceContractUnavailable,
+    try: () => extractVerticalRuntimeSafeDescriptors(commerceMarketCatalogRegistration),
+  });
+  const manifest = commerceMarketCatalogManifest;
+  const events = yield* Effect.all(
+    manifest.publicSurface.events.map((event) =>
+      Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(
+        Schema.toJsonSchemaDocument(event.payloadSchema),
+      ).pipe(
+        Effect.map((document) => ({
+          key: event.key,
+          owningModuleId: event.owningModuleId,
+          payloadContract: fixtureDigest(`${document}\n`),
+          referencesResourceTypes: event.referencesResourceTypes,
+          tense: event.tense,
+          visibility: event.visibility,
+        })),
+      ),
+    ),
+  );
+  const apis = yield* Effect.forEach(Object.entries(manifest.publicSurface.api), ([key, api]) => {
+    if (!HttpApi.isHttpApi(api)) {
+      return Effect.fail(sourceContractUnavailable());
+    }
+    return Effect.succeed({
+      key: canonicalOntosPublicApiKey(owner.moduleId, key),
+      operationKeys: EffectArray.sort(
+        Object.values(api.groups).flatMap((group) =>
+          Object.values(group.endpoints).map((endpoint) =>
+            group.topLevel ? endpoint.identifier : `${group.identifier}.${endpoint.identifier}`,
+          ),
+        ),
+        compareFixtureApiKeys,
+      ),
+    });
+  });
+  const authoredManifest = {
+    activation: manifest.activation,
+    module: manifest.module,
+    publicSurface: {
+      actions: owner.actions,
+      api: apis,
+      businessPermissions: manifest.publicSurface.businessPermissions ?? [],
+      components: Object.values(manifest.publicSurface.components),
+      events,
+      operationContracts: owner.operationContracts,
+      reports: manifest.publicSurface.reports,
+      resourceTypes: manifest.publicSurface.resourceTypes,
+      search: manifest.publicSurface.search,
+      shellContributions: owner.shellContributions,
+    },
+  };
+  if (owner.requirements !== undefined) {
+    Object.assign(authoredManifest, { requirements: owner.requirements });
+  }
+  return yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema, { onExcessProperty: 'error' })({
+    deployment: { appId: ultramodernApiMarker.appId, buildMarker: ultramodernApiMarker.buildMarker },
+    manifest: authoredManifest,
+    runtime: { outboxSubscriptions: owner.outboxSubscriptions },
+    schemaVersion: '2',
+  });
+});
 
 const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* makeScenario(withRegistry: boolean) {
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
@@ -197,25 +286,20 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   );
   expect(replayPrivileges).toEqual({ canDelete: true, canInsert: true, canSelect: true, canUpdate: false });
   const registry = withRegistry ? yield* makeCurrentStorefrontNativeReceiver() : undefined;
-  const baseSnapshot =
-    registry === undefined
-      ? yield* makeApplicationCompositionSnapshotFixture(['commerce-market-catalog'], 'market-effective-revision')
-      : yield* makeApiKeyGatewayNativeComposition(
-          [
-            makeModuleContractFixture({
-              appId: 'commerce-market-catalog',
-              buildMarker: ultramodernApiMarker.buildMarker,
-              moduleId: moduleKey,
-            }),
-            makeModuleContractFixture({
-              appId: registry.deployment.appId,
-              buildMarker: registry.deployment.buildMarker,
-              moduleId: 'commerce.storefront-registry',
-            }),
-          ],
-          3_600_000,
-        );
-  const snapshot =
+  const marketContract = yield* makeMarketSourceContract();
+  const shellRuntimeDocument = yield* filesystem.readFileString(
+    new URL('../../../../apps/shell-super-app/dist/public/.well-known/ontos-shell-runtime.json', import.meta.url)
+      .pathname,
+  );
+  const shellRuntime = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+    shellRuntimeDocument,
+  );
+  const baseSnapshot = yield* makeApiKeyGatewayNativeComposition(
+    registry === undefined ? [marketContract] : [marketContract, registry.contract],
+    3_600_000,
+    { document: shellRuntimeDocument, receiverDeployment: shellRuntime.deployment },
+  );
+  const snapshot = yield* validateActiveApplicationCompositionSnapshot(
     registry === undefined
       ? baseSnapshot
       : {
@@ -231,7 +315,8 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
                 : module,
             ),
           }),
-        };
+        },
+  );
   yield* isolated.publishInitialComposition(snapshot);
   const shell =
     registry === undefined
@@ -258,9 +343,12 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     ],
     adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
     allowedAudiences: ['commerce-market-catalog', 'storefront-registry'],
+    applicationComposition: { load: Effect.succeed(snapshot) },
     authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
     compositionRevision: snapshot.composition.revision,
+    expectedDeployment: ultramodernDeliveryUnit,
     moduleKeys: [moduleKey, 'commerce.storefront-registry'],
+    ownerRegistration: commerceMarketCatalogRegistration,
     runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
   };
   const fixture = yield* Effect.acquireRelease(

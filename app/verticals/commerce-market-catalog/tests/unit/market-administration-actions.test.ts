@@ -21,6 +21,8 @@ import type { MarketRetirementImpactAssessment } from '../../shared/domain/marke
 import { reviseMarketDefinitionAction } from '../../src/actions/revise-market-definition.action.ts';
 import { reviseStorefrontAssociationAction } from '../../src/actions/revise-storefront-association.action.ts';
 import { suspendMarketAction } from '../../src/actions/suspend-market.action.ts';
+import { MarketRetirementPostAttempt } from '../../src/services/market-retirement-post-attempt.ts';
+import { commerceMarketCatalogRegistration } from '../../vertical.registration.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const marketId = '22222222-2222-4222-8222-222222222222';
@@ -116,6 +118,26 @@ const reservedRetirementImpactAssessment = () => ({
 });
 
 const unexpected = () => Effect.die('unexpected Market administration service call');
+// Direct handler units must never run Core's post-attempt settlement protocol.
+const directHandlerPostAttempt: typeof MarketRetirementPostAttempt.Service = {
+  abort: unexpected,
+  authorityFor: () => ({
+    assessRetirementImpact: unexpected,
+    cleanupOriginal: unexpected,
+    commitRetirementImpact: unexpected,
+    releaseRetirementImpact: unexpected,
+    reserveRetirementImpact: unexpected,
+  }),
+  decodeFailure: Effect.fail,
+  readState: unexpected(),
+  recover: unexpected,
+  resolveOriginalSource: unexpected,
+  unavailable: () =>
+    new MarketRetirementImpactAssessmentUnavailable({
+      code: 'market_retirement_impact_assessment_unavailable',
+      reason: 'Post-attempt settlement is outside the direct handler unit',
+    }),
+};
 const unavailableServices: RetireMarketServices = {
   associateStorefront: unexpected,
   commit: unexpected,
@@ -278,7 +300,7 @@ describe('Market administration Actions', () => {
             } as const);
           },
         },
-      });
+      }).pipe(Effect.provideService(MarketRetirementPostAttempt, directHandlerPostAttempt));
       expect(calls).toEqual(['lock', 'transition', 'receipt']);
       expect(result).toMatchObject({ lifecycle: 'RETIRED', revision: 4 });
       expect(collector.snapshot().domainEvents).toHaveLength(1);
@@ -358,7 +380,7 @@ describe('Market administration Actions', () => {
               return unexpected();
             },
           },
-        }).pipe(Effect.flip);
+        }).pipe(Effect.provideService(MarketRetirementPostAttempt, directHandlerPostAttempt), Effect.flip);
         expect(Predicate.isTagged(failure, expectedRejection[scenario])).toBe(true);
         expect(writes).toBe(0);
         expect(collector.snapshot().domainEvents).toHaveLength(0);
@@ -385,7 +407,11 @@ describe('Market administration Actions', () => {
           transport: { correlationId: 'market-permission-gate', idempotencyKey: 'create-market-cz-main' },
         } as const;
         for (const resourcePermission of ['denied', 'unavailable'] as const) {
-          const harness = yield* makeActionTestHarness({ actionPermission: 'allowed', resourcePermission });
+          const harness = yield* makeActionTestHarness({
+            actionPermission: 'allowed',
+            ownerRegistration: commerceMarketCatalogRegistration,
+            resourcePermission,
+          });
           const failure = yield* harness.runtime.runAction(request).pipe(Effect.flip);
           expect(
             resourcePermission === 'denied'

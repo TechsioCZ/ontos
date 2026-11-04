@@ -1,3 +1,8 @@
+import {
+  historicalOwnerTarget,
+  historicalPermissionKey as toBusinessPermissionAccessKey,
+  historicalPermissionObjectId as toBusinessPermissionAccessObjectId,
+} from '../support/historical-owner-targets.ts';
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { Crypto, Effect, FileSystem, Schema } from 'effect';
@@ -8,8 +13,6 @@ import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import {
   makeContextAccess,
-  toBusinessPermissionAccessKey,
-  toBusinessPermissionAccessObjectId,
   toContextPermissionAccessKey,
   toContextPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
@@ -41,14 +44,22 @@ const relationship = (
     }),
   });
 
-const requireBusinessPermissions = (
-  access: ReturnType<typeof makeContextAccess>,
-): NonNullable<ReturnType<typeof makeContextAccess>['businessPermissions']> => {
-  const check = access.businessPermissions;
+const requireBusinessPermissions = (access: ReturnType<typeof makeContextAccess>, selectedLegalEntityId: string) => {
+  const check = access.ownerPermissions;
   if (check === undefined) {
-    throw new Error('Expected business permission access');
+    throw new Error('Expected owner permission access');
   }
-  return check;
+  return (input: {
+    readonly legalEntityId?: string;
+    readonly principal: { readonly principalId: string; readonly tenantId: string };
+    readonly targets: readonly { readonly permission: string; readonly target: object }[];
+    readonly trustedStorefrontId?: string;
+  }) =>
+    check({
+      ...input,
+      legalEntityId: input.legalEntityId ?? selectedLegalEntityId,
+      targets: input.targets.map(({ permission, target }) => ({ target: historicalOwnerTarget(permission, target) })),
+    });
 };
 
 const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
@@ -61,6 +72,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     legalEntityId,
     otherLegalEntityId,
     principalId,
+    otherPrincipalId,
     resourceId,
     pricingCatalogId,
     priceGroupId,
@@ -68,6 +80,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     crossTenantPriceGroupId,
   ] = yield* Effect.all(
     [
+      crypto.randomUUIDv4(),
       crypto.randomUUIDv4(),
       crypto.randomUUIDv4(),
       crypto.randomUUIDv4(),
@@ -116,6 +129,31 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
       tenantId,
     },
   };
+  // Neutral Core inputs only; owner-factory identities have separate literal fixtures.
+  const additionalOwnerTargets = [
+    {
+      permission: 'retail.profile.read',
+      target: { kind: 'retail_profile', legalEntityId, profileId: 'retail-live', tenantId },
+    },
+    {
+      permission: 'inventory.stock.correct',
+      target: {
+        kind: 'inventory_resource',
+        resource: { moduleId: 'commerce.inventory', resourceId, resourceType: 'commerce.inventory.stock-position' },
+        tenantId,
+      },
+    },
+    { permission: 'tax.rule.manage', target: { kind: 'tax_selling_legal_entity', legalEntityId, tenantId } },
+  ].map(({ permission, target }) => ({ target: historicalOwnerTarget(permission, target) }));
+  const directOwnerTargets = [
+    { target: historicalOwnerTarget(businessPermission, businessTarget.target) },
+    { target: historicalOwnerTarget(pricingPermission, pricingCatalogTarget.target) },
+    ...additionalOwnerTargets,
+  ];
+  const currentOwnerTargets = [
+    ...directOwnerTargets,
+    { target: historicalOwnerTarget(pricingPermission, priceGroupTarget.target) },
+  ];
   const crossTenantPriceGroupTarget = {
     permission: pricingPermission,
     target: {
@@ -170,6 +208,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
   );
   const relationships = [
     relationship('tenant', tenantId, 'member', 'principal', principalId),
+    relationship('tenant', tenantId, 'member', 'principal', otherPrincipalId),
     relationship('tenant', tenantId, 'identity_admin', 'principal', principalId),
     relationship('tenant', tenantId, 'party_identity_manager', 'principal', principalId),
     relationship('tenant', tenantId, 'party_identity_merger', 'principal', principalId),
@@ -179,6 +218,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     relationship('tenant', tenantId, 'support', 'principal', principalId),
     relationship('legal_entity', legalObjectId, 'tenant', 'tenant', tenantId),
     relationship('legal_entity', legalObjectId, 'member', 'principal', principalId),
+    relationship('legal_entity', legalObjectId, 'member', 'principal', otherPrincipalId),
     relationship('legal_entity', legalObjectId, 'counterparty_manager', 'principal', principalId),
     relationship('legal_entity', legalObjectId, 'counterparty_reader', 'principal', principalId),
     relationship('module_access', moduleObjectId, 'legal_entity', 'legal_entity', legalObjectId),
@@ -205,6 +245,19 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
       'business_permission',
       pricingCatalogObjectId,
     ),
+    ...additionalOwnerTargets.flatMap(({ target }) => {
+      const scopeType = target.scope.kind;
+      return [
+        relationship(
+          'business_permission',
+          target.objectId,
+          scopeType,
+          scopeType,
+          scopeType === 'tenant' ? tenantId : legalObjectId,
+        ),
+        relationship('business_permission', target.objectId, 'grantee', 'principal', principalId),
+      ];
+    }),
     relationship('context_permission', tenantModuleObjectId, 'tenant', 'tenant', tenantId),
     relationship('context_permission', tenantModuleObjectId, 'grantee', 'principal', principalId),
     relationship('context_permission', contextPermissionObjectId, 'tenant', 'tenant', tenantId),
@@ -287,7 +340,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
       expect(yield* access.resources({ legalEntityId, principalId, resources: [resource], tenantId })).toEqual([
         { decision: 'allowed', key: `${moduleId}:property.unit:${resource.resourceId}` },
       ]);
-      const checkBusinessPermissions = requireBusinessPermissions(access);
+      const checkBusinessPermissions = requireBusinessPermissions(access, legalEntityId);
       expect(
         yield* checkBusinessPermissions({
           principal: { principalId, tenantId },
@@ -323,6 +376,40 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
           targets: [crossTenantPriceGroupTarget],
         }),
       ).toEqual([{ decision: 'denied', key: toBusinessPermissionAccessKey(crossTenantPriceGroupTarget) }]);
+      const checkOwnerPermissions = access.ownerPermissions;
+      if (checkOwnerPermissions === undefined) {
+        throw new Error('Expected owner permission access');
+      }
+      // Reuse these same frozen target descriptors across independent Current checks.
+      const ownerRequest = {
+        legalEntityId,
+        principal: { principalId, tenantId },
+        targets: currentOwnerTargets,
+        trustedStorefrontId: 'storefront-live',
+      };
+      expect(yield* checkOwnerPermissions(ownerRequest)).toEqual(
+        currentOwnerTargets.map(({ target }) => ({ decision: 'allowed', key: target.key })),
+      );
+      // Q has the same coarse Tenant/Legal Entity membership, but no exact owner grant.
+      expect(
+        yield* checkOwnerPermissions({ ...ownerRequest, principal: { principalId: otherPrincipalId, tenantId } }),
+      ).toEqual(currentOwnerTargets.map(({ target }) => ({ decision: 'denied', key: target.key })));
+      yield* spiceDbEffect(
+        client.promises.writeRelationships(
+          v1.WriteRelationshipsRequest.create({
+            updates: directOwnerTargets.map(({ target }) =>
+              v1.RelationshipUpdate.create({
+                operation: v1.RelationshipUpdate_Operation.DELETE,
+                relationship: relationship('business_permission', target.objectId, 'grantee', 'principal', principalId),
+              }),
+            ),
+          }),
+        ),
+      );
+      // The inherited group loses authority when its catalog grant is revoked too.
+      expect(yield* checkOwnerPermissions(ownerRequest)).toEqual(
+        currentOwnerTargets.map(({ target }) => ({ decision: 'denied', key: target.key })),
+      );
       const checkContextPermissions = access.contextPermissions;
       if (checkContextPermissions === undefined) {
         throw new Error('Expected context permission access');
@@ -364,6 +451,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
         [
           ['context_permission', tenantModuleObjectId],
           ['context_permission', contextPermissionObjectId],
+          ...additionalOwnerTargets.map(({ target }) => ['business_permission', target.objectId] as const),
           ['business_permission', crossTenantPriceGroupObjectId],
           ['business_permission', priceGroupObjectId],
           ['business_permission', pricingCatalogObjectId],
@@ -392,7 +480,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
 
 it.layer(NodeServices.layer, { excludeTestServices: true })('context-access', (suite) => {
   suite.effect(
-    'isolates live legal-entity, module, and resource batches by tenant and entity',
+    'isolates live scope batches and owner grants by Tenant, Principal, and exact revocation',
     () => contextAccessProgram,
   );
 });

@@ -2,9 +2,7 @@ import { Reactivity } from 'effect/reactivity';
 import { PgClient } from '@effect/sql-pg';
 import type { DatabaseConnectionPair } from '@app/core-runtime';
 import { CreatePartyPayloadSchema } from '@app/party-registry/api';
-import { createHash } from 'node:crypto';
 import { makeLiveOperationFixture, makeGatewayScopeGrantRegistrar } from '@app/core-runtime/testing/actions';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import {
@@ -13,9 +11,6 @@ import {
   SHELL_GATEWAY_ISSUER_IDENTITY,
   PARTY_REGISTRY_REQUEST_IDENTITY,
   ActiveApplicationCompositionSnapshotSchema,
-  canonicalizeApplicationComposition,
-  OntosModuleDeploymentContractSchema,
-  validateActiveApplicationCompositionSnapshot,
   makeContextPermissionRelationshipMutationLive,
   ReadRuntime,
   runAction,
@@ -48,7 +43,8 @@ import {
 import { ChildProcess } from 'effect/process';
 import { HttpServer, HttpServerResponse } from 'effect/http';
 
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { privacyRegistration } from '../../vertical.registration.ts';
+import { describeControllerContracts, makePrivacyPartyCompositionSnapshot } from '../support/dsr-obligation-native.ts';
 import {
   PrivacySubjectPartyCredentials,
   PrivacySubjectPartyOwner,
@@ -61,7 +57,7 @@ import { eq } from 'drizzle-orm';
 
 import { PrivacyPartyRefSchema } from '../../shared/domain/party-reference.ts';
 import { PrivacySubjectRecordSchema } from '../../shared/domain/privacy-subject.ts';
-import { makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
+import { makeNativeReadTestContext, NativeReadTestOwnerRegistration } from '@app/core-runtime/testing/native-reads';
 import { expect, it } from 'effect-rstest';
 
 import { privacyOperationRepositoryForScope } from '../../src/persistence/privacy-operation-postgres-repository.ts';
@@ -72,7 +68,7 @@ it.live('rejects resolved person admission without authoritative Party proof in 
       contextPermissions: ['privacy.subjects.read'],
       moduleId: 'privacy.core',
       ownerFixtureRetention: 'retain-complete-context',
-    });
+    }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, privacyRegistration));
     const crypto = yield* Crypto.Crypto;
     const subjectId = yield* crypto.randomUUIDv4();
     const partyId = yield* crypto.randomUUIDv4();
@@ -126,7 +122,7 @@ it.live('foreign-only Subject references cannot select all trusted-Tenant record
       contextPermissions: ['privacy.subjects.read'],
       moduleId: 'privacy.core',
       ownerFixtureRetention: 'retain-complete-context',
-    });
+    }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, privacyRegistration));
     const crypto = yield* Crypto.Crypto;
     const created = yield* native
       .prepareOwner(
@@ -315,7 +311,6 @@ const preparePartyNativeIdentities = Effect.fn('PrivacyPartyNative.prepareIdenti
     return { PARTY_REGISTRY_DATABASE_URL: requestUrl, SHELL_GATEWAY_ISSUER_DATABASE_URL: issuerUrl };
   },
 );
-const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const ownerMarkerSchema = Schema.Struct({ appId: Schema.Literal('party-registry'), buildMarker: Schema.String });
 const ownerReadySchema = Schema.Struct({ marker: ownerMarkerSchema, port: Schema.Number });
 const publicProofServices = NodeChildProcessSpawner.layer.pipe(
@@ -328,6 +323,9 @@ it.layer(publicProofServices, { excludeTestServices: true })('actual Party owner
     Effect.gen(function* personOwnerHttpAcceptance() {
       const crypto = yield* Crypto.Crypto;
       const nextId = () => crypto.randomUUIDv4();
+      const description = yield* describeControllerContracts();
+      const partyIdentity = description.buildIdentities['party-registry'];
+      const encodeIdentity = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
       const suffix = yield* nextId();
       const fs = yield* FileSystem.FileSystem;
       const artifact = `${appRoot}verticals/party-registry/node_modules/.cache/ontos-1280/${suffix}.mjs`;
@@ -345,6 +343,8 @@ it.layer(publicProofServices, { excludeTestServices: true })('actual Party owner
           '--platform=node',
           '--format=esm',
           '--packages=external',
+          `--define:ULTRAMODERN_BUILD_MARKER=${yield* encodeIdentity(partyIdentity.buildMarker)}`,
+          `--define:ULTRAMODERN_SOURCE_REVISION=${yield* encodeIdentity(partyIdentity.sourceRevision)}`,
           `--outfile=${artifact}`,
         ],
         { cwd: appRoot, stderr: 'pipe', stdout: 'pipe' },
@@ -370,50 +370,8 @@ it.layer(publicProofServices, { excludeTestServices: true })('actual Party owner
       expect(describeExit).toBe(0);
       const marker = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ownerMarkerSchema))(markerLines[0]);
       expect(marker.appId).toBe('party-registry');
-      const base = yield* makeApplicationCompositionSnapshotFixture(
-        [marker.appId, ultramodernApiMarker.appId],
-        marker.buildMarker,
-      );
-      const modules = yield* Effect.forEach(
-        base.composition.modules,
-        Effect.fn('PersonOwnerTest.moduleContract')(function* moduleContract(module) {
-          const ownerId = module.deployment.appId === 'party-registry' ? 'party.registry' : 'privacy.core';
-          const deployment =
-            module.deployment.appId === 'party-registry'
-              ? marker
-              : { appId: ultramodernApiMarker.appId, buildMarker: ultramodernApiMarker.buildMarker };
-          const old = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-            module.contractDocument,
-          );
-          const document = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))({
-            ...old,
-            deployment,
-            manifest: { ...old.manifest, module: { ...old.manifest.module, id: ownerId } },
-          });
-          const hash = digest(document);
-          return {
-            ...module,
-            backend: {
-              baseUrl: `https://${module.deployment.appId}.fixture.example.test/`,
-              transport: 'node-http' as const,
-            },
-            contract: { ...module.contract, sha256: hash },
-            contractDocument: document,
-            deployment,
-            moduleId: ownerId,
-            publicContract: { ...module.publicContract, id: ownerId, sha256: hash },
-          };
-        }),
-        { concurrency: 2 },
-      );
-      const composition = { ...base.composition, modules };
-      const snapshot = yield* validateActiveApplicationCompositionSnapshot({
-        ...base,
-        composition: {
-          ...composition,
-          revision: digest(canonicalizeApplicationComposition({ ...composition, revision: '0'.repeat(64) })),
-        },
-      });
+      expect(marker).toEqual(description.partyContract.deployment);
+      const snapshot = yield* makePrivacyPartyCompositionSnapshot(description);
       const isolated = yield* makeIsolatedNativeDatabaseFixture({
         compositionSnapshot: snapshot,
         mode: 'schema-only',
@@ -440,9 +398,12 @@ it.layer(publicProofServices, { excludeTestServices: true })('actual Party owner
           ],
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           allowedAudiences: ['party-registry', 'privacy'],
+          applicationComposition: { load: Effect.succeed(snapshot) },
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: snapshot.composition.revision,
+          expectedDeployment: description.privacyContract.deployment,
           moduleKeys: ['party.registry', 'privacy.core'],
+          ownerRegistration: privacyRegistration,
           runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
         }),
         (resource) => resource.close().pipe(Effect.orDie),

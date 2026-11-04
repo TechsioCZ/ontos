@@ -1,4 +1,5 @@
-import { ReadPermissionDenied, allowOwnerAuthorizationOverlay, toBusinessPermissionAccessKey } from '@app/core-runtime';
+import { inventoryRegistration } from '../../vertical.registration.ts';
+import { ReadPermissionDenied, allowOwnerAuthorizationOverlay } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 import { Effect, Match, Option, Predicate, Schema } from 'effect';
 
@@ -79,16 +80,17 @@ it('defines the existing owner evidence lookups plus repository-backed privacy o
 });
 
 it('binds inventory.audit.read to the exact requested owner Resource', () => {
-  expect(inventoryReconciliationEvidenceRead.descriptor.permissionTarget).toBe('business_permission');
+  expect(inventoryReconciliationEvidenceRead.descriptor.permissionTarget).toBe('owner_permission');
   expect(inventoryReconciliationEvidenceRead.descriptor.legalEntityScope).toBe('required');
   expect(getReadResourcePermissionTargetResolver(inventoryReconciliationEvidenceRead)).toBeUndefined();
 
   const resolver = getReadPermissionTargetResolver(inventoryReconciliationEvidenceRead);
   expect(Predicate.isFunction(resolver)).toBe(true);
   if (Predicate.isFunction(resolver)) {
-    expect(resolver(input, scope)).toEqual({
-      businessPermission: {
-        permission: 'inventory.audit.read',
+    expect(resolver(input, scope)).toMatchObject({
+      kind: 'owner_permission',
+      ownerPermission: {
+        definition: { key: 'inventory.audit.read' },
         target: {
           kind: 'inventory_resource',
           resource: {
@@ -100,7 +102,6 @@ it('binds inventory.audit.read to the exact requested owner Resource', () => {
           tenantId,
         },
       },
-      kind: 'business_permission',
     });
   }
 });
@@ -124,15 +125,13 @@ it.effect('denies the exact owner Resource before resolving transaction-scoped e
       openModuleEntrypointGateway,
       { resolve: () => Effect.succeed(scope) },
       {
-        businessPermissions: ({ targets }) => {
-          businessChecks += 1;
-          return Effect.succeed(
-            targets.map((target) => ({ decision: 'denied' as const, key: toBusinessPermissionAccessKey(target) })),
-          );
-        },
         legalEntities: ({ legalEntityIds }) =>
           Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
         modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+        ownerPermissions: ({ targets }) => {
+          businessChecks += 1;
+          return Effect.succeed(targets.map((target) => ({ decision: 'denied' as const, key: target.target.key })));
+        },
         resources: ({ resources }) => {
           resourceChecks += 1;
           return Effect.succeed(
@@ -149,6 +148,7 @@ it.effect('denies the exact owner Resource before resolving transaction-scoped e
           stages.push(stage);
         },
         ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+        ownerRegistration: inventoryRegistration,
       },
     );
 

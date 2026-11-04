@@ -5,6 +5,7 @@ import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-
 import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
@@ -95,6 +96,7 @@ it.layer(
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: composition.composition.revision,
             adminConnectionString: Redacted.make(connections.admin.connectionString),
+            ownerRegistration: partyRegistryBackendRegistration,
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
           }),
           (value) => value.close().pipe(Effect.orDie),
@@ -298,6 +300,7 @@ it.layer(
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: composition.composition.revision,
             adminConnectionString: Redacted.make(connections.admin.connectionString),
+            ownerRegistration: partyRegistryBackendRegistration,
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
           }),
           (value) => value.close().pipe(Effect.orDie),

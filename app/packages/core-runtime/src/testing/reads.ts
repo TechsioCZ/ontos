@@ -11,14 +11,15 @@ import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gatewa
 import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/module-state-gate.ts';
 import { makeOperationalScopeResolver } from '../operations/context.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import { ContextAccess, toBusinessPermissionAccessKey } from '../permissions/context-access.ts';
+import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
+import { ContextAccess } from '../permissions/context-access.ts';
 import type {
-  BusinessPermissionAccessTarget,
+  OwnerPermissionAccessTarget,
   ContextAccessDecision,
   ContextAccessService,
 } from '../permissions/context-access.ts';
 import { ReadRuntime, makeReadRuntime } from '../reads/runtime.ts';
-import type { ReadRuntimeStage } from '../reads/runtime.ts';
+import type { ReadRuntimeOptions, ReadRuntimeStage } from '../reads/runtime.ts';
 import { scriptedPgClientLayer } from './scripted-pg-client.ts';
 
 export interface ReadTestOwnerQuery {
@@ -28,12 +29,13 @@ export interface ReadTestOwnerQuery {
 }
 
 export interface ReadTestHarnessOptions {
-  readonly businessPermissionDecision?: (target: BusinessPermissionAccessTarget) => ContextAccessDecision;
   readonly compositionRevision?: string;
   /** Explicit driver rows for owner SQL; unexpected statements must fail rather than supply empty. */
   readonly executeOwnerQuery: (query: ReadTestOwnerQuery) => Effect.Effect<readonly object[], SqlError>;
   readonly operationTime: Date;
   readonly ownerAuthorizationDecision?: ContextAccessDecision;
+  readonly ownerPermissionDecision?: (target: OwnerPermissionAccessTarget) => ContextAccessDecision;
+  readonly ownerRegistration?: VerticalRuntimeRegistration;
   readonly permissionDecision?: ContextAccessDecision;
   readonly scope: OperationalScope;
 }
@@ -145,15 +147,15 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
   );
   const decision = options.permissionDecision ?? 'denied';
   const contextAccess: ContextAccessService = {
-    businessPermissions: ({ targets }) =>
-      Effect.succeed(
-        targets.map((target) => ({
-          decision: options.businessPermissionDecision?.(target) ?? decision,
-          key: toBusinessPermissionAccessKey(target),
-        })),
-      ),
     legalEntities: ({ legalEntityIds }) => Effect.succeed(legalEntityIds.map((key) => ({ decision, key }))),
     modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision, key }))),
+    ownerPermissions: ({ targets }) =>
+      Effect.succeed(
+        targets.map(({ target }) => ({
+          decision: options.ownerPermissionDecision?.(target) ?? decision,
+          key: target.key,
+        })),
+      ),
     resources: ({ resources }) =>
       Effect.succeed(
         resources.map((resource) => ({
@@ -199,12 +201,21 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       ),
     recheckWrite: () => Effect.void,
   });
-  const runtime = makeReadRuntime({ executor }, gateway, scopeResolver, contextAccess, {
+  const runtimeOptions: ReadRuntimeOptions = {
     onStage: (stage) => {
       stages.push(stage);
     },
     ownerAuthorizationOverlay: { authorize: () => Effect.succeed(options.ownerAuthorizationDecision ?? 'denied') },
-  });
+  };
+  const runtime = makeReadRuntime(
+    { executor },
+    gateway,
+    scopeResolver,
+    contextAccess,
+    options.ownerRegistration === undefined
+      ? runtimeOptions
+      : { ...runtimeOptions, ownerRegistration: options.ownerRegistration },
+  );
   return {
     layer: Layer.mergeAll(Layer.succeed(ReadRuntime, runtime), Layer.succeed(ContextAccess, contextAccess)),
     runtime,
@@ -219,3 +230,11 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
 
 /** Test-owned access to the original registration factory. */
 export { getReadServiceFactory } from '../reads/definition.ts';
+
+export {
+  getReadPermissionTargetResolver,
+  getReadResourcePermissionTargetResolver,
+  getReadResultPermissionTargetResolver,
+  getReadConditionalPermissionPlan,
+  getReadHandler,
+} from '../reads/definition.ts';

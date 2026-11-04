@@ -5,6 +5,7 @@ import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { pricingCurrentMarketEvidenceRead } from '../../src/api/pricing-current-market-evidence.read.ts';
+import { commerceMarketCatalogRegistration } from '../../vertical.registration.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const sellerId = '22222222-2222-4222-8222-222222222222';
@@ -75,6 +76,7 @@ const readWire = Effect.fn('MarketWireTest.read')(function* readWire(payload: Ma
     },
     operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(at)),
     ownerAuthorizationDecision: 'allowed',
+    ownerRegistration: commerceMarketCatalogRegistration,
     permissionDecision: 'allowed',
     scope: { ...principal, correlationId: 'market-wire' },
   });

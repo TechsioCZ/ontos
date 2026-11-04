@@ -21,6 +21,7 @@ import type {
 } from '../../src/modules/application-composition.ts';
 import { ONTOS_MODULE_CONTRACT_MAX_BYTES, OntosModuleDeploymentContractSchema } from '../../src/modules/manifest.ts';
 import type { OntosModuleDeploymentContract, OntosOutboxSubscriptionContract } from '../../src/modules/manifest.ts';
+import { deriveModuleIntrinsicRequirements } from '../../src/modules/module-dependency-contracts.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 
 const digest = (document: string): string => Hex.encode(sha256(utf8ToBytes(document)));
@@ -48,7 +49,7 @@ const moduleFromContract = (
     url: `https://${document.deployment.appId}.example/.well-known/ontos-module-manifest.json`,
   },
   contractDocument,
-  dependencies: [],
+  dependencies: deriveModuleIntrinsicRequirements(document.manifest.requirements).dependencies,
   deployment: document.deployment,
   federation: { execution: 'server' },
   moduleId: document.manifest.module.id,
@@ -57,7 +58,7 @@ const moduleFromContract = (
     sha256: digest(contractDocument),
     version: document.schemaVersion,
   },
-  requiredCoreCapabilities: [],
+  requiredCoreCapabilities: deriveModuleIntrinsicRequirements(document.manifest.requirements).requiredCoreCapabilities,
   requiredShellAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
   sharedSingletons: [],
 });
@@ -800,3 +801,134 @@ it.effect('rejects an oversized individual contract before catalog admission', (
     /complete contract byte budget/u,
   );
 });
+
+const intrinsicContract = (moduleId: string, dependencies: readonly string[] = [], version = 'owner-v1') => {
+  const base = contract(moduleId.replaceAll('.', '-'), moduleId);
+  return decodeContract({
+    ...base,
+    manifest: {
+      ...base.manifest,
+      publicSurface: {
+        ...base.manifest.publicSurface,
+        api: [{ key: `${moduleId}.public`, operationKeys: ['resolve'] }],
+        operationContracts: [
+          {
+            apiKey: `${moduleId}.public`,
+            entrypoint: {
+              access: 'read',
+              authorization: { kind: 'authenticated_principal' },
+              entrypointKey: `${moduleId}.resolve`,
+              moduleKey: moduleId,
+              role: 'api',
+              scope: 'tenant',
+            },
+            operationKey: 'resolve',
+            schemaVersion: version,
+          },
+        ],
+      },
+      requirements: {
+        coreCapabilities: [],
+        intrinsic: dependencies.map((dependency) => ({
+          moduleId: dependency,
+          requiredOperations: [{ entrypointKey: `${dependency}.resolve`, schemaVersion: 'owner-v1' }],
+        })),
+        operations: [],
+        schemaVersion: '1',
+      },
+    },
+  });
+};
+
+it.effect(
+  'validates transitive intrinsic operation contracts from exact owner bytes despite equal deployment format',
+  () =>
+    Effect.gen(function* exactIntrinsicVersions() {
+      const a = moduleFromContract(intrinsicContract('consumer.alpha', ['provider.beta']));
+      const b = moduleFromContract(intrinsicContract('provider.beta', ['provider.gamma']));
+      const c = moduleFromContract(intrinsicContract('provider.gamma'));
+      expect((yield* buildApplicationCompositionCatalog(composition([a, b, c]))).moduleIds).toHaveLength(3);
+      yield* assertInvalid(composition([a, b]), /dependency provider.gamma/u);
+      const incompatible = moduleFromContract(intrinsicContract('provider.gamma', [], 'owner-v2'));
+      expect(incompatible.publicContract.version).toBe(a.publicContract.version);
+      yield* assertInvalid(composition([a, b, incompatible]), /unsupported operation contract/u);
+      yield* assertInvalid(composition([{ ...a, dependencies: [] }, b, c]), /observed deployment contract/u);
+      const legacy = moduleFromContract(contract('legacy-owner', 'legacy.owner'));
+      yield* assertInvalid(
+        composition([{ ...legacy, dependencies: ['provider.gamma'] }, c]),
+        /observed deployment contract/u,
+      );
+    }),
+);
+
+it.effect('rejects true intrinsic cycles while keeping reciprocal conditional calls out of the install DAG', () =>
+  Effect.gen(function* preciseDependencyGraphs() {
+    const a = intrinsicContract('consumer.alpha', ['provider.beta']);
+    const b = intrinsicContract('provider.beta', ['consumer.alpha']);
+    yield* assertInvalid(composition([moduleFromContract(a), moduleFromContract(b)]), /dependency cycle/u);
+    const conditional = (own: string, foreign: string) => {
+      const base = intrinsicContract(own);
+      return decodeContract({
+        ...base,
+        manifest: {
+          ...base.manifest,
+          requirements: {
+            coreCapabilities: [],
+            intrinsic: [],
+            operations: [
+              {
+                condition: `${own}.provider-branch`,
+                entrypointKey: `${own}.resolve`,
+                evidence: [`${foreign}.authoritative-facts`],
+                key: `${own}.require-provider`,
+                provider: { entrypointKey: `${foreign}.resolve`, moduleId: foreign, schemaVersion: 'owner-v1' },
+              },
+            ],
+            schemaVersion: '1',
+          },
+        },
+      });
+    };
+    const first = moduleFromContract(conditional('consumer.alpha', 'provider.beta'));
+    const second = moduleFromContract(conditional('provider.beta', 'consumer.alpha'));
+    expect((yield* buildApplicationCompositionCatalog(composition([first, second]))).moduleIds).toHaveLength(2);
+    expect((yield* buildApplicationCompositionCatalog(composition([first]))).moduleIds).toEqual(['consumer.alpha']);
+  }),
+);
+
+it.effect('requires the exact declared Core capability and rejects omitted or fabricated requirement fields', () =>
+  Effect.gen(function* exactCoreCapabilities() {
+    const base = contract('capability-consumer', 'capability.consumer');
+    const declared = decodeContract({
+      ...base,
+      manifest: {
+        ...base.manifest,
+        requirements: {
+          coreCapabilities: [{ id: 'ontos.module-dependency-contracts', version: '1' }],
+          intrinsic: [],
+          operations: [],
+          schemaVersion: '1',
+        },
+      },
+    });
+    const module = moduleFromContract(declared);
+    yield* assertInvalid(composition([module]), /Core capability/u);
+    const fixtureComposition = composition([module]);
+    const withCapability = (version: string) => {
+      const supported = {
+        ...fixtureComposition,
+        shell: {
+          ...fixtureComposition.shell,
+          coreCapabilities: [{ id: 'ontos.module-dependency-contracts', version }],
+        },
+      };
+      return {
+        ...supported,
+        revision: digest(canonicalizeApplicationComposition({ ...supported, revision: '0'.repeat(64) })),
+      };
+    };
+    yield* assertInvalid(withCapability('2'), /Core capability/u);
+    expect((yield* buildApplicationCompositionCatalog(withCapability('1'))).moduleIds).toEqual(['capability.consumer']);
+    yield* assertInvalid(composition([{ ...module, requiredCoreCapabilities: [] }]), /observed deployment contract/u);
+  }),
+);

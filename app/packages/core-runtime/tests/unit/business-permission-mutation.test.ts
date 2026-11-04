@@ -1,3 +1,7 @@
+import { historicalOwnerTarget } from '../support/historical-owner-targets.ts';
+import type { BusinessPermissionRelationshipMutationInput } from '../../src/permissions/business-permission-mutation.ts';
+import { makeResourceContainmentRelationshipMutation } from '../../src/permissions/resource-containment-mutation.ts';
+import { remainingPermissionBaselines, remainingPriceGroupContainmentBaselines } from './owner-permission-baseline.ts';
 import { v1 } from '@authzed/authzed-node';
 import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -7,6 +11,15 @@ import {
   BusinessPermissionMutationUnavailable,
   makeBusinessPermissionRelationshipMutation,
 } from '../../src/permissions/business-permission-mutation.ts';
+
+const mutationInput = ({
+  permission,
+  target,
+  ...input
+}: Omit<BusinessPermissionRelationshipMutationInput, 'target'> & {
+  readonly permission: string;
+  readonly target: object;
+}): BusinessPermissionRelationshipMutationInput => ({ ...input, target: historicalOwnerTarget(permission, target) });
 
 const permission = Schema.decodeSync(BusinessPermissionCodeSchema)('counterparty.access.manage');
 const tenantId = '20000000-0000-4000-8000-000000000001';
@@ -26,17 +39,19 @@ it.effect('writes the exact legal-entity and grantee relationships idempotently 
           return v1.WriteRelationshipsResponse.create({});
         }),
     });
-    yield* service.mutate({
-      operation: 'grant',
-      permission,
-      principal: { principalId, tenantId },
-      target: {
-        counterpartyId: 'counterparty-one',
-        kind: 'counterparty',
-        legalEntityId,
-        tenantId,
-      },
-    });
+    yield* service.mutate(
+      mutationInput({
+        operation: 'grant',
+        permission,
+        principal: { principalId, tenantId },
+        target: {
+          counterpartyId: 'counterparty-one',
+          kind: 'counterparty',
+          legalEntityId,
+          tenantId,
+        },
+      }),
+    );
     expect(requests).toHaveLength(1);
     expect(
       requests[0]?.updates.map(({ operation, relationship }) => ({
@@ -72,17 +87,19 @@ it.effect('uses an idempotent delete and retains the scope relationship for revo
           return v1.WriteRelationshipsResponse.create({});
         }),
     });
-    yield* service.mutate({
-      operation: 'revoke',
-      permission,
-      principal: { principalId, tenantId },
-      target: {
-        counterpartyId: 'counterparty-one',
-        kind: 'counterparty',
-        legalEntityId,
-        tenantId,
-      },
-    });
+    yield* service.mutate(
+      mutationInput({
+        operation: 'revoke',
+        permission,
+        principal: { principalId, tenantId },
+        target: {
+          counterpartyId: 'counterparty-one',
+          kind: 'counterparty',
+          legalEntityId,
+          tenantId,
+        },
+      }),
+    );
     expect(requests[0]?.updates).toHaveLength(1);
     expect(requests[0]?.updates[0]?.operation).toBe(v1.RelationshipUpdate_Operation.DELETE);
     expect(requests[0]?.updates[0]?.relationship?.relation).toBe('grantee');
@@ -106,12 +123,14 @@ it.effect('writes only tenant and grantee relationships for an exact Price Group
       pricingCatalogId,
       tenantId,
     };
-    yield* service.mutate({
-      operation: 'grant',
-      permission: pricingPermission,
-      principal: { principalId, tenantId },
-      target,
-    });
+    yield* service.mutate(
+      mutationInput({
+        operation: 'grant',
+        permission: pricingPermission,
+        principal: { principalId, tenantId },
+        target,
+      }),
+    );
 
     expect(requests[0]?.updates.map(({ relationship }) => relationship?.relation)).toEqual(['tenant', 'grantee']);
   }),
@@ -127,16 +146,18 @@ it.effect('writes only the tenant scope and grantee for an exact Pricing Catalog
           return v1.WriteRelationshipsResponse.create({});
         }),
     });
-    yield* service.mutate({
-      operation: 'grant',
-      permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.create'),
-      principal: { principalId, tenantId },
-      target: {
-        kind: 'pricing_catalog',
-        pricingCatalogId,
-        tenantId,
-      },
-    });
+    yield* service.mutate(
+      mutationInput({
+        operation: 'grant',
+        permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.create'),
+        principal: { principalId, tenantId },
+        target: {
+          kind: 'pricing_catalog',
+          pricingCatalogId,
+          tenantId,
+        },
+      }),
+    );
 
     expect(requests[0]?.updates.map(({ relationship }) => relationship?.relation)).toEqual(['tenant', 'grantee']);
   }),
@@ -152,20 +173,22 @@ it.effect('writes tenant and grantee relationships for one exact Inventory Resou
           return v1.WriteRelationshipsResponse.create({});
         }),
     });
-    yield* service.mutate({
-      operation: 'grant',
-      permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('inventory.stock.correct'),
-      principal: { principalId, tenantId },
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: 'commerce.inventory',
-          resourceId: inventoryResourceId,
-          resourceType: 'commerce.inventory.stock-position',
+    yield* service.mutate(
+      mutationInput({
+        operation: 'grant',
+        permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('inventory.stock.correct'),
+        principal: { principalId, tenantId },
+        target: {
+          kind: 'inventory_resource',
+          resource: {
+            moduleId: 'commerce.inventory',
+            resourceId: inventoryResourceId,
+            resourceType: 'commerce.inventory.stock-position',
+          },
+          tenantId,
         },
-        tenantId,
-      },
-    });
+      }),
+    );
 
     expect(requests[0]?.updates.map(({ relationship }) => relationship?.relation)).toEqual(['tenant', 'grantee']);
   }),
@@ -181,31 +204,35 @@ it.effect('fails closed before transport for cross-tenant or untrusted storefron
       },
     });
     const crossTenant = yield* Effect.flip(
-      service.mutate({
-        operation: 'grant',
-        permission,
-        principal: { principalId, tenantId: '50000000-0000-4000-8000-000000000001' },
-        target: {
-          counterpartyId: 'counterparty-one',
-          kind: 'counterparty',
-          legalEntityId,
-          tenantId,
-        },
-      }),
+      service.mutate(
+        mutationInput({
+          operation: 'grant',
+          permission,
+          principal: { principalId, tenantId: '50000000-0000-4000-8000-000000000001' },
+          target: {
+            counterpartyId: 'counterparty-one',
+            kind: 'counterparty',
+            legalEntityId,
+            tenantId,
+          },
+        }),
+      ),
     );
     const untrustedStorefront = yield* Effect.flip(
-      service.mutate({
-        operation: 'grant',
-        permission,
-        principal: { principalId, tenantId },
-        target: {
-          counterpartyId: 'counterparty-one',
-          kind: 'counterparty_storefront',
-          legalEntityId,
-          storefrontId: 'store-one',
-          tenantId,
-        },
-      }),
+      service.mutate(
+        mutationInput({
+          operation: 'grant',
+          permission,
+          principal: { principalId, tenantId },
+          target: {
+            counterpartyId: 'counterparty-one',
+            kind: 'counterparty_storefront',
+            legalEntityId,
+            storefrontId: 'store-one',
+            tenantId,
+          },
+        }),
+      ),
     );
     expect(crossTenant).toBeInstanceOf(BusinessPermissionMutationUnavailable);
     expect(untrustedStorefront).toBeInstanceOf(BusinessPermissionMutationUnavailable);
@@ -223,12 +250,14 @@ it.effect('writes legal-entity and grantee relationships for one exact TAX Selli
           return v1.WriteRelationshipsResponse.create({});
         }),
     });
-    yield* service.mutate({
-      operation: 'grant',
-      permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('tax.rule.manage'),
-      principal: { principalId, tenantId },
-      target: { kind: 'tax_selling_legal_entity', legalEntityId, tenantId },
-    });
+    yield* service.mutate(
+      mutationInput({
+        operation: 'grant',
+        permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('tax.rule.manage'),
+        principal: { principalId, tenantId },
+        target: { kind: 'tax_selling_legal_entity', legalEntityId, tenantId },
+      }),
+    );
 
     expect(requests[0]?.updates.map(({ relationship }) => relationship?.relation)).toEqual(['legal_entity', 'grantee']);
   }),
@@ -299,7 +328,7 @@ it.effect('rejects incompatible permission targets and noncanonical Pricing iden
 
     const failures: BusinessPermissionMutationUnavailable[] = [];
     for (const input of invalidInputs) {
-      failures.push(yield* Effect.flip(service.mutate(input)));
+      failures.push(yield* Effect.flip(service.mutate(mutationInput(input))));
     }
     expect(failures.every((failure) => Predicate.isTagged(failure, 'BusinessPermissionMutationUnavailable'))).toBe(
       true,
@@ -323,19 +352,96 @@ it.effect('sanitizes relationship client diagnostics', () =>
         ),
     });
     const failure = yield* Effect.flip(
-      service.mutate({
-        operation: 'grant',
-        permission,
-        principal: { principalId, tenantId },
-        target: {
-          counterpartyId: 'counterparty-one',
-          kind: 'counterparty',
-          legalEntityId,
-          tenantId,
-        },
-      }),
+      service.mutate(
+        mutationInput({
+          operation: 'grant',
+          permission,
+          principal: { principalId, tenantId },
+          target: {
+            counterpartyId: 'counterparty-one',
+            kind: 'counterparty',
+            legalEntityId,
+            tenantId,
+          },
+        }),
+      ),
     );
     expect(`${failure._tag}:${failure.reason}`).not.toContain('secret-spicedb-key');
     expect(failure.reason).toBe('The business permission relationship mutation could not be completed safely');
+  }),
+);
+
+it.effect('freezes exact grant and revoke relationship bytes for all remaining scope kinds', () =>
+  Effect.gen(function* familyMutationBaselines() {
+    for (const row of remainingPermissionBaselines) {
+      const requests: v1.WriteRelationshipsRequest[] = [];
+      const service = makeBusinessPermissionRelationshipMutation({
+        writeRelationships: (request) =>
+          Effect.sync(() => {
+            requests.push(request);
+            return v1.WriteRelationshipsResponse.create({});
+          }),
+      });
+      const input = {
+        permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(row.permission),
+        principal: { principalId, tenantId: row.target.tenantId },
+        target: row.target,
+        trustedStorefrontId: 'storefront-a',
+      };
+      yield* service.mutate(mutationInput({ ...input, operation: 'grant' }));
+      yield* service.mutate(mutationInput({ ...input, operation: 'revoke' }));
+      const actual = requests.map((request) =>
+        request.updates.map(({ operation, relationship }) => ({
+          operation,
+          relation: relationship?.relation,
+          resourceId: relationship?.resource?.objectId,
+          resourceType: relationship?.resource?.objectType,
+          subjectId: relationship?.subject?.object?.objectId,
+          subjectType: relationship?.subject?.object?.objectType,
+        })),
+      );
+      expect(actual).toEqual([row.grantRelationships, row.revokeRelationships]);
+    }
+  }),
+);
+
+it.effect('freezes read, revision and retirement containing-catalog inheritance relationships', () =>
+  Effect.gen(function* freezesPricingInheritance() {
+    for (const row of remainingPriceGroupContainmentBaselines) {
+      const requests: v1.WriteRelationshipsRequest[] = [];
+      const groupBaseline = remainingPermissionBaselines.find((candidate) => candidate.target.kind === 'price_group');
+      if (groupBaseline?.target.kind !== 'price_group') {
+        throw new Error('Expected the frozen Price Group baseline');
+      }
+      const groupTarget = groupBaseline.target;
+      const qualified = [
+        historicalOwnerTarget(`pricing.price_group.${row.operation}`, groupTarget),
+        historicalOwnerTarget(`pricing.price_group.${row.operation}`, {
+          kind: 'pricing_catalog',
+          pricingCatalogId: groupTarget.pricingCatalogId,
+          tenantId: groupTarget.tenantId,
+        }),
+      ];
+      const service = makeResourceContainmentRelationshipMutation(
+        {
+          writeRelationships: (request) =>
+            Effect.sync(() => {
+              requests.push(request);
+              return v1.WriteRelationshipsResponse.create({});
+            }),
+        },
+        () => qualified,
+      );
+      yield* service.touch({ relationships: row.relationships });
+      expect(requests).toHaveLength(1);
+      expect(
+        requests[0]?.updates.map(({ operation, relationship }) => ({
+          container: relationship?.subject?.object,
+          operation,
+          relation: relationship?.relation,
+          resource: relationship?.resource,
+        })),
+      ).toEqual(row.relationships.map((item) => ({ ...item, operation: 2 })));
+    }
   }),
 );

@@ -20,6 +20,15 @@ permission holder without resolving the Principal.
 governed read against a Resource and scope. A Party Relationship, Counterparty Role, selected
 context, profile membership, account session, or Business Policy result is not a Permission.
 
+**Business Permission Definition** — Owner-published meaning of a business Permission and its
+permitted authorization targets and scopes. Publishing a definition grants no Principal a Permission.
+One publishing Module may host definitions for several canonical business capabilities; its runtime
+or deployment identity does not reassign their business ownership or activate a dormant capability.
+
+**Authorization Target** — The exact object or scope against which an operation requires Current
+Permission, including an ordered conjunction when several targets are independently required.
+Deployment and build identity do not replace this target.
+
 **Business Policy** — Module-owned condition or decision evaluated from trusted context and business
 facts after authentication and authorization boundaries. It may allow, deny, require approval, or
 select a typed business outcome; it never creates identity, authentication, or Permission.
@@ -109,6 +118,26 @@ invisible forks are forbidden.
 
 **Build Revision** — Immutable source and artifact identity used for compatibility, canary, audit,
 and rollback. It is not a customer-selectable product version.
+
+**Public Operation Contract** — One owner's declared public operation identity and supported
+version. Its compatibility claim is distinct from the serialized deployment-contract format,
+artifact digest and Build Revision. Equal document formats do not establish operation compatibility;
+a different build alone does not create a new business owner or Permission target.
+
+**Intrinsic Module Requirement** — Required compatible capability that belongs to installation,
+activation and the module's governed execution closure. These requirements form the dependency DAG;
+reciprocal calls made by separate business operations do not themselves form an intrinsic cycle.
+
+**Operation Fact Requirement** — An owner-authored obligation to establish a fact when a particular
+operation or its real business branch needs it. The owner defines the condition, supported public
+contract or accepted owner-issued proof, and required evidence. A condition that does not apply is
+different from an applicable condition whose facts cannot be proved. Neither a caller flag nor a
+provider outage can waive the latter.
+
+**Composition Membership** — Presence in one authoritative Application Composition revision. It is
+separate from source implementation, Tenant module state, entrypoint availability and Permission.
+Absence from that composition alone proves neither absence of code nor extinction of historical
+business obligations.
 
 **OntOS Module Manifest** — Effect Schema-defined public module contract that exposes safe module
 semantics while excluding private tables, migrations, handlers, registrations, routes, fixtures,

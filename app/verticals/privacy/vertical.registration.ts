@@ -44,6 +44,7 @@ import { updateDsrCaseAction } from './src/actions/update-dsr-case.action.ts';
 import { upsertDsrOwnerTaskAction } from './src/actions/upsert-dsr-owner-task.action.ts';
 import { upsertRetentionRuleAction } from './src/actions/upsert-retention-rule.action.ts';
 import { upsertTemporaryDsrExportAction } from './src/actions/upsert-temporary-dsr-export.action.ts';
+
 // </generated-module-registration-imports>
 
 export const privacyRegistration = defineVerticalRuntimeRegistration({
@@ -131,6 +132,10 @@ export const privacyRegistration = defineVerticalRuntimeRegistration({
     privacyMeasureDispatchWorker,
     retentionEvaluationWorker,
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    // </generated-module-registration-reads>
   ],
 });
 

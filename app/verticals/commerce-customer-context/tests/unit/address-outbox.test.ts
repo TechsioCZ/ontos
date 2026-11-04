@@ -1,4 +1,11 @@
-import { defineRead, defineTenantModuleEntrypoint, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
+import {
+  defineRead,
+  defineTenantModuleEntrypoint,
+  TrustedPrincipalContextSchema,
+  defineOntosModuleManifest,
+  defineVerticalRuntimeRegistration,
+} from '@app/core-runtime';
 import { getReadServiceFactory, makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { expect, it } from 'effect-rstest';
@@ -29,6 +36,8 @@ import { savedAddressDefaultsRead } from '../../src/api/saved-address-defaults.r
 import { savedAddressDetailRead } from '../../src/api/saved-address-detail.read.ts';
 import { savedAddressListRead } from '../../src/api/saved-address-list.read.ts';
 
+const factoryProbeModuleId = 'test.ccc-address-factories';
+const factoryProbeReadKey = 'test.ccc-address-factories.api.factory-probe';
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const profile = {
   kind: 'RETAIL',
@@ -179,24 +188,7 @@ it.effect('executes the registered address factories against their scoped owner 
       { name: 'read_saved_address', row: rawAddress },
     ];
     let nextQuery = 0;
-    const harness = yield* makeReadTestHarness({
-      compositionRevision: 'a'.repeat(64),
-      executeOwnerQuery: (query) => {
-        const expected = script[nextQuery];
-        nextQuery += 1;
-        if (expected === undefined) {
-          return Effect.die('Unexpected owner routine invocation');
-        }
-        expect(query.sql).toContain(`"commerce_customer_context"."${expected.name}"`);
-        expect(query.scope).toEqual({ legalEntityId: scope.legalEntityId, tenantId });
-        expect(query.params.slice(0, 2)).toEqual([tenantId, scope.legalEntityId]);
-        return Effect.succeed([expected.row]);
-      },
-      operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(1_800_000_000_000)),
-      ownerAuthorizationDecision: 'allowed',
-      permissionDecision: 'allowed',
-      scope,
-    });
+
     // This test-only Read composition obtains Core's scoped transaction for the actual factory contracts.
     // Invoking their ports proves wiring; it does not claim a native Action commit or provider HTTP proof.
     const factoryProbe = defineRead(
@@ -205,17 +197,17 @@ it.effect('executes the registered address factories against their scoped owner 
         entrypoint: defineTenantModuleEntrypoint({
           access: 'read',
           authorization: { kind: 'context_permission', permission: 'module.access' },
-          entrypointKey: 'commerce.customer-context.api.saved-address-list',
-          moduleKey: 'commerce.customer-context',
+          entrypointKey: factoryProbeReadKey,
+          moduleKey: factoryProbeModuleId,
           role: 'api',
         }),
         evidencePolicy: savedAddressListRead.descriptor.evidencePolicy,
         inputSchema: Schema.Struct({}),
         legalEntityScope: 'required',
-        owningModuleKey: 'commerce.customer-context',
+        owningModuleKey: factoryProbeModuleId,
         permissionTarget: 'module',
         policies: [],
-        readKey: 'commerce.customer-context.api.saved-address-list',
+        readKey: factoryProbeReadKey,
         resultSchema: Schema.Struct({}),
         schemaVersion: '1',
       },
@@ -320,8 +312,41 @@ it.effect('executes the registered address factories against their scoped owner 
           );
         },
       ),
-      () => ({ kind: 'module', moduleId: 'commerce.customer-context' }),
+      () => ({ kind: 'module', moduleId: factoryProbeModuleId }),
     );
+    const probeBase = makeModuleContractFixture({
+      appId: 'ccc-address-factories-test',
+      moduleId: factoryProbeModuleId,
+    }).manifest;
+    const probeManifest = defineOntosModuleManifest({
+      ...probeBase,
+      publicSurface: { ...probeBase.publicSurface, actions: [], api: {}, components: {} },
+    });
+    const ownerRegistration = defineVerticalRuntimeRegistration({
+      actions: [],
+      manifest: probeManifest,
+      outboxWorkers: [],
+      reads: [factoryProbe],
+    });
+    const harness = yield* makeReadTestHarness({
+      compositionRevision: 'a'.repeat(64),
+      executeOwnerQuery: (query) => {
+        const expected = script[nextQuery];
+        nextQuery += 1;
+        if (expected === undefined) {
+          return Effect.die('Unexpected owner routine invocation');
+        }
+        expect(query.sql).toContain(`"commerce_customer_context"."${expected.name}"`);
+        expect(query.scope).toEqual({ legalEntityId: scope.legalEntityId, tenantId });
+        expect(query.params.slice(0, 2)).toEqual([tenantId, scope.legalEntityId]);
+        return Effect.succeed([expected.row]);
+      },
+      operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(1_800_000_000_000)),
+      ownerAuthorizationDecision: 'allowed',
+      ownerRegistration,
+      permissionDecision: 'allowed',
+      scope,
+    });
     yield* harness.runtime.runRead({
       input: {},
       principal: scope,

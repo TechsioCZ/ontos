@@ -218,7 +218,7 @@ export const deployImmutableShellRelease = Effect.fn('ImmutableShellRelease.depl
     return { artifacts, assetsVersionId, plan: input.plan } satisfies ImmutableShellArtifactReceipt;
   },
   Effect.scoped,
-  withApplicationCompositionPublicationLock,
+  (effect) => withApplicationCompositionPublicationLock(effect),
 );
 
 /** The one public Shell ingress is deployed separately from its retained frontend artifact release. */
@@ -334,7 +334,7 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
     return yield* Effect.void;
   },
   Effect.scoped,
-  withApplicationCompositionPublicationLock,
+  (effect) => withApplicationCompositionPublicationLock(effect),
 );
 
 const planCommand = Command.make(

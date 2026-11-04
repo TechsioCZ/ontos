@@ -66,8 +66,10 @@ import {
   LEGACY_DISPATCH_SHA256,
 } from './support/privacy-public-completion-session.mts';
 import {
+  ApplicationCompositionAuthorityError,
   closeApplicationCompositionDurableAdmission,
   drainApplicationCompositionAuthority,
+  lockApplicationCompositionAuthority,
   sealApplicationCompositionAuthority,
 } from '../../packages/core-runtime/src/modules/application-composition-authority.ts';
 
@@ -658,63 +660,65 @@ it.live('preserves committed drain and seal when actual provider or migration se
   }).pipe(Effect.provide(services)),
 );
 
-it.live('holds owner proof through actual Core commit', () =>
-  Effect.gen(function* nativeCommitFence() {
-    const fixture = yield* makeFixture();
-    const client = fixture.database.executor.$client;
-    const blocker = yield* client.reserve;
-    const key = '12580061023';
-    yield* blocker.executeValues('select pg_advisory_lock($1::bigint)', [key]);
-    yield* Effect.addFinalizer(() =>
-      blocker.executeValues('select pg_advisory_unlock($1::bigint)', [key]).pipe(Effect.orDie),
-    );
-    // Root/Core-owned native test trigger: COMMIT is parked after the provider callback
-    // returns, so a pre-COMMIT owner-lock release cannot pass this test accidentally.
-    yield* fixture.database.executor.execute(
-      sql`create function core.privacy_publication_test_commit_barrier() returns trigger language plpgsql as $$ begin perform pg_advisory_xact_lock(12580061023); return new; end $$`,
-      'objects',
-    );
-    yield* fixture.database.executor.execute(
-      sql`create constraint trigger privacy_publication_test_commit_barrier after insert on core.application_composition_authority deferrable initially deferred for each row execute function core.privacy_publication_test_commit_barrier()`,
-      'objects',
-    );
-    const [barrier] = yield* blocker.executeValues(
-      'select pg_backend_pid(), (select oid::text from pg_database where datname=current_database())',
-      [],
-    );
-    const barrierPid = yield* Schema.decodeUnknownEffect(Schema.Int)(barrier?.[0]);
-    expect(barrier?.[1]).toBe(fixture.capability.databaseOid);
-    const writerReady = yield* Deferred.make<
-      {
-        readonly owner: NativeTransaction;
-        readonly publication: NativeTransaction;
-        readonly writer: Effect.Success<ReturnType<typeof fixture.startWriter>>;
-      },
-      OperatorPublicationTestFailure
-    >();
-    const relations = yield* fixture.database.executor.execute<{ readonly oid: string }>(
-      sql`select c.oid::text as oid from pg_class c join pg_namespace n on n.oid=c.relnamespace
+it.live(
+  'holds owner proof through actual Core commit and recovers the exact pointer after deferred commit failure',
+  () =>
+    Effect.gen(function* nativeCommitFence() {
+      const fixture = yield* makeFixture();
+      const client = fixture.database.executor.$client;
+      const blocker = yield* client.reserve;
+      const key = '12580061023';
+      yield* blocker.executeValues('select pg_advisory_lock($1::bigint)', [key]);
+      yield* Effect.addFinalizer(() =>
+        blocker.executeValues('select pg_advisory_unlock($1::bigint)', [key]).pipe(Effect.orDie),
+      );
+      // Root/Core-owned native test trigger: COMMIT is parked after the provider callback
+      // returns, so a pre-COMMIT owner-lock release cannot pass this test accidentally.
+      yield* fixture.database.executor.execute(
+        sql`create function core.privacy_publication_test_commit_barrier() returns trigger language plpgsql as $$ begin perform pg_advisory_xact_lock(12580061023); return new; end $$`,
+        'objects',
+      );
+      yield* fixture.database.executor.execute(
+        sql`create constraint trigger privacy_publication_test_commit_barrier after insert on core.application_composition_authority deferrable initially deferred for each row execute function core.privacy_publication_test_commit_barrier()`,
+        'objects',
+      );
+      const [barrier] = yield* blocker.executeValues(
+        'select pg_backend_pid(), (select oid::text from pg_database where datname=current_database())',
+        [],
+      );
+      const barrierPid = yield* Schema.decodeUnknownEffect(Schema.Int)(barrier?.[0]);
+      expect(barrier?.[1]).toBe(fixture.capability.databaseOid);
+      const writerReady = yield* Deferred.make<
+        {
+          readonly owner: NativeTransaction;
+          readonly publication: NativeTransaction;
+          readonly writer: Effect.Success<ReturnType<typeof fixture.startWriter>>;
+        },
+        OperatorPublicationTestFailure
+      >();
+      const relations = yield* fixture.database.executor.execute<{ readonly oid: string }>(
+        sql`select c.oid::text as oid from pg_class c join pg_namespace n on n.oid=c.relnamespace
         where n.nspname='privacy' and c.relname in ('privacy_measure_dispatches','owner_execution_outcomes') order by c.oid`,
-      'objects',
-    );
-    expect(relations.length).toBe(2);
-    const dispatchOrOutcome = yield* requireObservation(relations[0], 'First owner relation identity unavailable');
-    const otherRelation = yield* requireObservation(relations[1], 'Second owner relation identity unavailable');
-    // Match both owner SHARE relations, their retained owner transaction, and the
-    // exact writer's actual blocker. Never accept another relation or another holder.
-    const observeWriter = (writer: NativeTransaction, owner: NativeTransaction) =>
-      fixture.database.executor.execute<{
-        readonly blockerPids: readonly number[];
-        readonly databaseOid: string;
-        readonly ownerPid: number;
-        readonly ownerVirtualTransaction: string;
-        readonly ownerXid: string;
-        readonly relationOid: string;
-        readonly writerPid: number;
-        readonly writerVirtualTransaction: string;
-        readonly writerXid: string;
-      }>(
-        sql`select w.pid as "writerPid",w.database::text as "databaseOid",w.relation::text as "relationOid",
+        'objects',
+      );
+      expect(relations.length).toBe(2);
+      const dispatchOrOutcome = yield* requireObservation(relations[0], 'First owner relation identity unavailable');
+      const otherRelation = yield* requireObservation(relations[1], 'Second owner relation identity unavailable');
+      // Match both owner SHARE relations, their retained owner transaction, and the
+      // exact writer's actual blocker. Never accept another relation or another holder.
+      const observeWriter = (writer: NativeTransaction, owner: NativeTransaction) =>
+        fixture.database.executor.execute<{
+          readonly blockerPids: readonly number[];
+          readonly databaseOid: string;
+          readonly ownerPid: number;
+          readonly ownerVirtualTransaction: string;
+          readonly ownerXid: string;
+          readonly relationOid: string;
+          readonly writerPid: number;
+          readonly writerVirtualTransaction: string;
+          readonly writerXid: string;
+        }>(
+          sql`select w.pid as "writerPid",w.database::text as "databaseOid",w.relation::text as "relationOid",
           w.virtualtransaction as "writerVirtualTransaction",writer_tx.transactionid::text as "writerXid",
           h.pid as "ownerPid",h.virtualtransaction as "ownerVirtualTransaction",tx.transactionid::text as "ownerXid",
           pg_blocking_pids(w.pid) as "blockerPids" from pg_locks w join pg_locks h
@@ -732,68 +736,68 @@ it.live('holds owner proof through actual Core commit', () =>
             and held.locktype='relation' and held.mode='ShareLock' and held.granted
             and held.virtualtransaction=${owner.virtualTransaction}
             and held.relation in (${dispatchOrOutcome.oid}::oid,${otherRelation.oid}::oid))=2`,
-        'objects',
-      );
-    yield* Ref.set(
-      fixture.onPut,
-      Effect.gen(function* beginContendingWriter() {
-        // Same PgClient transactionService as Drizzle: this query runs in the real
-        // ambient Core transaction, not a newly reserved observer connection.
-        const publicationRows = yield* fixture.database.executor.execute<
-          NativeTransaction & { readonly transactionId: string }
-        >(
-          sql`select pg_backend_pid() as pid, d.oid::text as "databaseOid", pg_current_xact_id()::text as "transactionId",
+          'objects',
+        );
+      yield* Ref.set(
+        fixture.onPut,
+        Effect.gen(function* beginContendingWriter() {
+          // Same PgClient transactionService as Drizzle: this query runs in the real
+          // ambient Core transaction, not a newly reserved observer connection.
+          const publicationRows = yield* fixture.database.executor.execute<
+            NativeTransaction & { readonly transactionId: string }
+          >(
+            sql`select pg_backend_pid() as pid, d.oid::text as "databaseOid", pg_current_xact_id()::text as "transactionId",
             (pg_current_xact_id()::text::bigint % 4294967296)::text as "backendXid", l.virtualtransaction as "virtualTransaction"
             from pg_database d join pg_locks l on l.pid=pg_backend_pid() and l.locktype='transactionid' and l.granted
               and l.mode='ExclusiveLock' and l.transactionid::text=(pg_current_xact_id()::text::bigint % 4294967296)::text
             where d.datname=current_database()`,
-          'objects',
-        );
-        const publication = yield* requireObservation(
-          publicationRows[0],
-          'Ambient publication transaction identity unavailable',
-        );
-        const retainedNames = yield* fixture.fs.readDirectory(fixture.evidenceDirectory);
-        expect(retainedNames.length).toBe(1);
-        const retained = yield* Schema.decodeUnknownEffect(
-          Schema.fromJsonString(Schema.toCodecJson(LegacyCompletionRetainedObservationSchema)),
-        )(yield* fixture.fs.readFileString(`${fixture.evidenceDirectory}/${retainedNames[0]}`));
-        expect(publication.databaseOid).toBe(fixture.capability.databaseOid);
-        expect(publication.transactionId).toBe(retained.binding.transactionId);
-        expect(retained.ownerBinding.databaseOid).toBe(fixture.capability.databaseOid);
-        yield* Effect.logInfo('Operator COMMIT fence retained native bindings', retained);
-        const ownerXid = String(BigInt(retained.ownerBinding.transactionId) % 4_294_967_296n);
-        const owners = yield* fixture.database.executor.execute<NativeTransaction>(
-          sql`select a.pid, a.datid::text as "databaseOid", l.transactionid::text as "backendXid", l.virtualtransaction as "virtualTransaction"
+            'objects',
+          );
+          const publication = yield* requireObservation(
+            publicationRows[0],
+            'Ambient publication transaction identity unavailable',
+          );
+          const retainedNames = yield* fixture.fs.readDirectory(fixture.evidenceDirectory);
+          expect(retainedNames.length).toBe(1);
+          const retained = yield* Schema.decodeUnknownEffect(
+            Schema.fromJsonString(Schema.toCodecJson(LegacyCompletionRetainedObservationSchema)),
+          )(yield* fixture.fs.readFileString(`${fixture.evidenceDirectory}/${retainedNames[0]}`));
+          expect(publication.databaseOid).toBe(fixture.capability.databaseOid);
+          expect(publication.transactionId).toBe(retained.binding.transactionId);
+          expect(retained.ownerBinding.databaseOid).toBe(fixture.capability.databaseOid);
+          yield* Effect.logInfo('Operator COMMIT fence retained native bindings', retained);
+          const ownerXid = String(BigInt(retained.ownerBinding.transactionId) % 4_294_967_296n);
+          const owners = yield* fixture.database.executor.execute<NativeTransaction>(
+            sql`select a.pid, a.datid::text as "databaseOid", l.transactionid::text as "backendXid", l.virtualtransaction as "virtualTransaction"
             from pg_stat_activity a join pg_locks l on l.pid=a.pid and l.locktype='transactionid' and l.granted and l.mode='ExclusiveLock'
             where a.datid=${retained.ownerBinding.databaseOid}::oid and a.usename=${retained.ownerBinding.databaseUser}
               and l.transactionid::text=${ownerXid}`,
-          'objects',
-        );
-        expect(owners.length).toBe(1);
-        const owner = yield* requireObservation(owners[0], 'Retained owner transaction backend unavailable');
-        const writer = yield* fixture.startWriter();
-        yield* observeWriter(writer.native, owner).pipe(
-          Effect.repeat({ until: (rows) => rows.length === 1 }),
-          Effect.timeout('5 seconds'),
-        );
-        yield* Deferred.succeed(writerReady, { owner, publication, writer });
-      }).pipe(Effect.orDie),
-    );
-    const first = yield* snapshot('commit-fence', 0);
-    const publisher = yield* publishSnapshot(first, Option.none(), fixture.proof).pipe(
-      Effect.provide(fixture.publication),
-      Effect.onExit((exit) =>
-        Exit.isFailure(exit)
-          ? Deferred.fail(writerReady, failure('Publication failed before the commit fence')).pipe(Effect.asVoid)
-          : Effect.void,
-      ),
-      Effect.forkChild,
-    );
-    const { owner, publication, writer } = yield* Deferred.await(writerReady);
-    const committing = yield* fixture.database.executor
-      .execute<NativeTransaction & { readonly committing: boolean }>(
-        sql`select a.pid, a.datid::text as "databaseOid", tx.transactionid::text as "backendXid", tx.virtualtransaction as "virtualTransaction",
+            'objects',
+          );
+          expect(owners.length).toBe(1);
+          const owner = yield* requireObservation(owners[0], 'Retained owner transaction backend unavailable');
+          const writer = yield* fixture.startWriter();
+          yield* observeWriter(writer.native, owner).pipe(
+            Effect.repeat({ until: (rows) => rows.length === 1 }),
+            Effect.timeout('5 seconds'),
+          );
+          yield* Deferred.succeed(writerReady, { owner, publication, writer });
+        }).pipe(Effect.orDie),
+      );
+      const first = yield* snapshot('commit-fence', 0);
+      const publisher = yield* publishSnapshot(first, Option.none(), fixture.proof).pipe(
+        Effect.provide(fixture.publication),
+        Effect.onExit((exit) =>
+          Exit.isFailure(exit)
+            ? Deferred.fail(writerReady, failure('Publication failed before the commit fence')).pipe(Effect.asVoid)
+            : Effect.void,
+        ),
+        Effect.forkChild,
+      );
+      const { owner, publication, writer } = yield* Deferred.await(writerReady);
+      const committing = yield* fixture.database.executor
+        .execute<NativeTransaction & { readonly committing: boolean }>(
+          sql`select a.pid, a.datid::text as "databaseOid", tx.transactionid::text as "backendXid", tx.virtualtransaction as "virtualTransaction",
         exists(select 1 from pg_locks w join pg_locks h on h.database=w.database and h.classid=w.classid and h.objid=w.objid and h.objsubid=w.objsubid
           where w.pid=a.pid and w.database=${fixture.capability.databaseOid}::oid and w.locktype='advisory' and w.mode='ExclusiveLock' and not w.granted
           and w.classid::text=(12580061023::bigint / 4294967296)::text and w.objid::text=(12580061023::bigint % 4294967296)::text and w.objsubid=1
@@ -802,129 +806,247 @@ it.live('holds owner proof through actual Core commit', () =>
           and ${barrierPid}=any(pg_blocking_pids(a.pid))) as committing
         from pg_stat_activity a join pg_locks tx on tx.pid=a.pid and tx.locktype='transactionid' and tx.mode='ExclusiveLock' and tx.granted
         where a.pid=${publication.pid} and a.datid=${publication.databaseOid}::oid`,
+          'objects',
+        )
+        .pipe(
+          Effect.repeat({ until: (rows) => rows.length === 1 && rows[0]?.committing }),
+          Effect.timeout('5 seconds'),
+        );
+      const committedTransaction = yield* requireObservation(
+        committing[0],
+        'Exact publication COMMIT waiter unavailable',
+      );
+      expect(sameNativeTransaction(committedTransaction, publication)).toBe(true);
+      const writerWaiting = yield* observeWriter(writer.native, owner);
+      expect(writerWaiting.length).toBe(1);
+      yield* Effect.logInfo('Operator attributed COMMIT fence', {
+        advisoryKey: key,
+        barrierPid,
+        committing,
+        owner,
+        publication,
+        relations,
+        writer: writer.native,
+        writerWaiting,
+      });
+      expect(yield* fixture.observeAuthority).toEqual([]);
+      yield* blocker.executeValues('select pg_advisory_unlock($1::bigint)', [key]);
+      yield* Fiber.join(publisher);
+      expect(yield* writer.next).toMatchObject({ pid: writer.pid, type: 'writer-held' });
+      expect(yield* fixture.observeAuthority).toMatchObject([
+        { phase: 'active', revision: first.composition.revision },
+      ]);
+      yield* writer.release;
+      expect(yield* writer.next).toMatchObject({ type: 'released' });
+      expect(yield* writer.child.exitCode).toBe(0);
+      expect(yield* fixture.observeOwner).toEqual(fixture.initialOwner);
+
+      yield* Ref.set(fixture.onPut, Effect.void);
+      const target = yield* snapshot('commit-rollback-target', 60_000);
+      const baseline = {
+        retainedModuleAppIds: [],
+        revision: first.composition.revision,
+        shellMode: 'fresh',
+      } satisfies NonNullable<Parameters<typeof publishSnapshot>[3]>;
+      const removeCommitFault = fixture.database.executor
+        .execute(
+          sql`drop trigger if exists privacy_publication_test_promotion_commit_failure on core.application_composition_authority`,
+          'objects',
+        )
+        .pipe(
+          Effect.andThen(
+            fixture.database.executor.execute(
+              sql`drop function if exists core.privacy_publication_test_promotion_commit_failure()`,
+              'objects',
+            ),
+          ),
+          Effect.asVoid,
+        );
+      yield* Effect.addFinalizer(() => removeCommitFault.pipe(Effect.orDie));
+      yield* fixture.database.executor.execute(
+        sql`create function core.privacy_publication_test_promotion_commit_failure() returns trigger language plpgsql as $$
+      begin
+        if new.phase = 'active' and new.revision is distinct from old.revision then
+          raise exception 'Owned publication promotion COMMIT fault' using errcode = '23514';
+        end if;
+        return new;
+      end $$`,
         'objects',
-      )
-      .pipe(Effect.repeat({ until: (rows) => rows.length === 1 && rows[0]?.committing }), Effect.timeout('5 seconds'));
-    const committedTransaction = yield* requireObservation(
-      committing[0],
-      'Exact publication COMMIT waiter unavailable',
-    );
-    expect(sameNativeTransaction(committedTransaction, publication)).toBe(true);
-    const writerWaiting = yield* observeWriter(writer.native, owner);
-    expect(writerWaiting.length).toBe(1);
-    yield* Effect.logInfo('Operator attributed COMMIT fence', {
-      advisoryKey: key,
-      barrierPid,
-      committing,
-      owner,
-      publication,
-      relations,
-      writer: writer.native,
-      writerWaiting,
-    });
-    expect(yield* fixture.observeAuthority).toEqual([]);
-    yield* blocker.executeValues('select pg_advisory_unlock($1::bigint)', [key]);
-    yield* Fiber.join(publisher);
-    expect(yield* writer.next).toMatchObject({ pid: writer.pid, type: 'writer-held' });
-    expect(yield* fixture.observeAuthority).toMatchObject([{ phase: 'active', revision: first.composition.revision }]);
-    yield* writer.release;
-    expect(yield* writer.next).toMatchObject({ type: 'released' });
-    expect(yield* writer.child.exitCode).toBe(0);
-    expect(yield* fixture.observeOwner).toEqual(fixture.initialOwner);
-  }).pipe(Effect.provide(services)),
+      );
+      yield* fixture.database.executor.execute(
+        sql`create constraint trigger privacy_publication_test_promotion_commit_failure
+      after update on core.application_composition_authority deferrable initially deferred
+      for each row execute function core.privacy_publication_test_promotion_commit_failure()`,
+        'objects',
+      );
+      const requestsBeforeFault = (yield* Ref.get(fixture.requests)).length;
+      yield* publishSnapshot(target, Option.none(), fixture.proof, baseline).pipe(
+        Effect.provide(fixture.publication),
+        Effect.flip,
+      );
+      const encodedTarget = yield* encodeActiveApplicationCompositionSnapshot(target);
+      expect(yield* Ref.get(fixture.pointer)).toEqual(Option.some(encodedTarget));
+      expect(
+        (yield* Ref.get(fixture.requests))
+          .slice(requestsBeforeFault)
+          .filter((request) => request === `GET ${pointerPath}` || request === `PUT ${pointerPath}`),
+      ).toEqual([`GET ${pointerPath}`, `PUT ${pointerPath}`, `GET ${pointerPath}`]);
+      expect(yield* fixture.observeAuthority).toMatchObject([
+        { durableWorkAdmission: 'closed', phase: 'draining', revision: first.composition.revision },
+      ]);
+      expect(yield* fixture.observeOwner).toEqual(fixture.initialOwner);
+      const runtime = yield* makeCoreDatabase({ ...fixture.owned.connections.runtime, maxConnections: 1 });
+      const runtimeRejected = yield* runtime.executor
+        .transaction((transaction) =>
+          lockApplicationCompositionAuthority(transaction, target.composition.revision, 'write'),
+        )
+        .pipe(Effect.flip);
+      expect(Schema.is(ApplicationCompositionAuthorityError)(runtimeRejected)).toBe(true);
+      expect(runtimeRejected).toMatchObject({
+        reason: 'The requested Application Composition is missing, expired, or no longer active',
+      });
+
+      const retainedAfterFault = yield* fixture.fs.readDirectory(fixture.evidenceDirectory);
+      yield* removeCommitFault;
+      const recovered = yield* publishSnapshot(target, Option.none(), fixture.proof, baseline).pipe(
+        Effect.provide(fixture.publication),
+      );
+      expect(recovered).toEqual(target);
+      expect(yield* fixture.observeAuthority).toMatchObject([
+        { durableWorkAdmission: 'open', phase: 'active', revision: target.composition.revision },
+      ]);
+      expect(yield* Ref.get(fixture.pointer)).toEqual(Option.some(encodedTarget));
+      const puts = yield* Ref.get(fixture.puts);
+      expect(puts).toHaveLength(3);
+      expect(puts.slice(1)).toMatchObject([
+        { body: encodedTarget, rejected: false, responseBody: { success: true }, responseStatus: 200 },
+        { body: encodedTarget, rejected: false, responseBody: { success: true }, responseStatus: 200 },
+      ]);
+      expect(yield* fixture.observeOwner).toEqual(fixture.initialOwner);
+      const retainedAfterRecovery = yield* fixture.fs.readDirectory(fixture.evidenceDirectory);
+      expect(retainedAfterRecovery).toHaveLength(retainedAfterFault.length + 1);
+      expect(retainedAfterRecovery).toEqual(expect.arrayContaining(retainedAfterFault));
+    }).pipe(Effect.provide(services)),
 );
 
-it.live('retains committed authority when the real owner connection fails after Core commit', () =>
-  Effect.gen(function* ownerConnectionFailureAfterCommit() {
-    const fixture = yield* makeFixture();
-    const first = yield* snapshot('owner-settlement', 0);
-    const saved = yield* Ref.make(Option.none<LegacyCompletionOwnerLease>());
-    const committed = yield* Ref.make(false);
-    const original = yield* LegacyCompletionPublication.pipe(Effect.provide(fixture.publication));
-    const terminateExactOwnerAfterCommit = (lease: LegacyCompletionOwnerLease) =>
-      Effect.gen(function* terminateObservedOwner() {
-        // The real nested Core transaction has returned. Observe its committed row
-        // before interrupting only the still-live owner transaction on this clone.
-        expect(yield* fixture.observeAuthority).toMatchObject([
-          { phase: 'active', revision: first.composition.revision },
-        ]);
-        expect(lease.binding.databaseOid).toBe(fixture.capability.databaseOid);
-        expect(lease.binding.systemIdentifier).toBe(fixture.capability.systemIdentifier);
-        const xid = String(BigInt(lease.binding.transactionId) % 4_294_967_296n);
-        const owners = yield* fixture.database.executor.execute<{ readonly pid: number }>(
-          sql`select a.pid from pg_stat_activity a join pg_locks l on l.pid=a.pid
+it.live(
+  'retains committed authority and retries the original target when the real owner connection fails after Core commit',
+  () =>
+    Effect.gen(function* ownerConnectionFailureAfterCommit() {
+      const fixture = yield* makeFixture();
+      const first = yield* snapshot('owner-settlement', 0);
+      const baseline = {
+        retainedModuleAppIds: [],
+        revision: null,
+        shellMode: 'fresh',
+      } satisfies NonNullable<Parameters<typeof publishSnapshot>[3]>;
+      const saved = yield* Ref.make(Option.none<LegacyCompletionOwnerLease>());
+      const committed = yield* Ref.make(false);
+      const original = yield* LegacyCompletionPublication.pipe(Effect.provide(fixture.publication));
+      const terminateExactOwnerAfterCommit = (lease: LegacyCompletionOwnerLease) =>
+        Effect.gen(function* terminateObservedOwner() {
+          // The real nested Core transaction has returned. Observe its committed row
+          // before interrupting only the still-live owner transaction on this clone.
+          expect(yield* fixture.observeAuthority).toMatchObject([
+            { phase: 'active', revision: first.composition.revision },
+          ]);
+          expect(lease.binding.databaseOid).toBe(fixture.capability.databaseOid);
+          expect(lease.binding.systemIdentifier).toBe(fixture.capability.systemIdentifier);
+          const xid = String(BigInt(lease.binding.transactionId) % 4_294_967_296n);
+          const owners = yield* fixture.database.executor.execute<{ readonly pid: number }>(
+            sql`select a.pid from pg_stat_activity a join pg_locks l on l.pid=a.pid
                     where a.datid=${fixture.capability.databaseOid}::oid
                       and a.usename=${lease.binding.databaseUser} and a.pid<>pg_backend_pid()
                       and l.locktype='transactionid' and l.granted and l.mode='ExclusiveLock'
                       and l.transactionid::text=${xid}`,
-          'objects',
-        );
-        expect(owners.length).toBe(1);
-        const [observedOwner] = owners;
-        const owner = yield* requireObservation(observedOwner, 'Owner settlement transaction was not observed');
-        yield* Ref.set(committed, true);
-        const terminated = yield* fixture.database.executor.execute<{ readonly terminated: boolean }>(
-          sql`select pg_terminate_backend(a.pid) as terminated from pg_stat_activity a
+            'objects',
+          );
+          expect(owners.length).toBe(1);
+          const [observedOwner] = owners;
+          const owner = yield* requireObservation(observedOwner, 'Owner settlement transaction was not observed');
+          yield* Ref.set(committed, true);
+          const terminated = yield* fixture.database.executor.execute<{ readonly terminated: boolean }>(
+            sql`select pg_terminate_backend(a.pid) as terminated from pg_stat_activity a
                     join pg_locks l on l.pid=a.pid
                     where a.pid=${owner.pid} and a.datid=${fixture.capability.databaseOid}::oid
                       and a.usename=${lease.binding.databaseUser} and a.pid<>pg_backend_pid()
                       and l.locktype='transactionid' and l.granted and l.mode='ExclusiveLock'
                       and l.transactionid::text=${xid}`,
-          'objects',
-        );
-        expect(terminated).toEqual([{ terminated: true }]);
-      }).pipe(
-        Effect.mapError(
-          (cause) => new LegacyCompletionPublicationError({ cause, reason: 'Native owner settlement probe failed' }),
-        ),
-      );
-    const interruptedOwner: LegacyCompletionOwnerVerifier = {
-      ...privacyLegacyCompletionOwner,
-      withLease: <Value, Failure, Requirements>(
-        use: (lease: LegacyCompletionOwnerLease) => Effect.Effect<Value, Failure, Requirements>,
-      ) =>
-        privacyLegacyCompletionOwner.withLease((lease) =>
-          use(lease).pipe(
-            Effect.tap(() => Ref.set(saved, Option.some(lease))),
-            Effect.tap(() => terminateExactOwnerAfterCommit(lease)),
+            'objects',
+          );
+          expect(terminated).toEqual([{ terminated: true }]);
+        }).pipe(
+          Effect.mapError(
+            (cause) => new LegacyCompletionPublicationError({ cause, reason: 'Native owner settlement probe failed' }),
           ),
-        ),
-    };
-    const error = yield* publishSnapshot(first, Option.none(), fixture.proof).pipe(
-      Effect.provide(Layer.succeed(LegacyCompletionPublication, { ...original, owners: [interruptedOwner] })),
-      Effect.provide(fixture.publication),
-      Effect.flip,
-    );
-    expect(Schema.is(LegacyCompletionPublicationError)(error)).toBe(true);
-    expect(error).toMatchObject({ reason: 'Privacy legacy completion evidence is unavailable' });
-    expect(yield* Ref.get(committed)).toBe(true);
-    expect(yield* fixture.observeAuthority).toMatchObject([{ phase: 'active', revision: first.composition.revision }]);
-    const encoded = yield* encodeActiveApplicationCompositionSnapshot(first);
-    expect(yield* Ref.get(fixture.pointer)).toEqual(Option.some(encoded));
-    expect(yield* fixture.observeOwner).toEqual(fixture.initialOwner);
-    const retainedNames = yield* fixture.fs.readDirectory(fixture.evidenceDirectory);
-    expect(retainedNames.length).toBe(1);
-    const retained = yield* Schema.decodeUnknownEffect(
-      Schema.fromJsonString(Schema.toCodecJson(LegacyCompletionRetainedObservationSchema)),
-    )(yield* fixture.fs.readFileString(`${fixture.evidenceDirectory}/${retainedNames[0]}`));
-    expect(retained).toMatchObject({
-      ownerBinding: { databaseOid: fixture.capability.databaseOid },
-      status: 'VERIFIED_ABSENT',
-    });
-    const lease = yield* Option.match(yield* Ref.get(saved), {
-      onNone: () => Effect.fail(failure('Owner settlement probe did not retain its lease')),
-      onSome: Effect.succeed,
-    });
-    const expired = yield* lease
-      .verify({
-        binding: retained.binding,
-        complete: true,
-        evidenceReference: retained.evidenceReference,
-        messages: [],
-      })
-      .pipe(Effect.flip);
-    expect(Schema.is(LegacyCompletionPublicationError)(expired)).toBe(true);
-  }).pipe(Effect.provide(services)),
+        );
+      const interruptedOwner: LegacyCompletionOwnerVerifier = {
+        ...privacyLegacyCompletionOwner,
+        withLease: <Value, Failure, Requirements>(
+          use: (lease: LegacyCompletionOwnerLease) => Effect.Effect<Value, Failure, Requirements>,
+        ) =>
+          privacyLegacyCompletionOwner.withLease((lease) =>
+            use(lease).pipe(
+              Effect.tap(() => Ref.set(saved, Option.some(lease))),
+              Effect.tap(() => terminateExactOwnerAfterCommit(lease)),
+            ),
+          ),
+      };
+      const error = yield* publishSnapshot(first, Option.none(), fixture.proof, baseline).pipe(
+        Effect.provide(Layer.succeed(LegacyCompletionPublication, { ...original, owners: [interruptedOwner] })),
+        Effect.provide(fixture.publication),
+        Effect.flip,
+      );
+      expect(Schema.is(LegacyCompletionPublicationError)(error)).toBe(true);
+      expect(error).toMatchObject({ reason: 'Privacy legacy completion evidence is unavailable' });
+      expect(yield* Ref.get(committed)).toBe(true);
+      expect(yield* fixture.observeAuthority).toMatchObject([
+        { phase: 'active', revision: first.composition.revision },
+      ]);
+      const encoded = yield* encodeActiveApplicationCompositionSnapshot(first);
+      expect(yield* Ref.get(fixture.pointer)).toEqual(Option.some(encoded));
+      expect(yield* fixture.observeOwner).toEqual(fixture.initialOwner);
+      const retainedNames = yield* fixture.fs.readDirectory(fixture.evidenceDirectory);
+      expect(retainedNames.length).toBe(1);
+      const retainedSource = yield* fixture.fs.readFileString(`${fixture.evidenceDirectory}/${retainedNames[0]}`);
+      const retained = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(Schema.toCodecJson(LegacyCompletionRetainedObservationSchema)),
+      )(retainedSource);
+      expect(retained).toMatchObject({
+        ownerBinding: { databaseOid: fixture.capability.databaseOid },
+        status: 'VERIFIED_ABSENT',
+      });
+      const lease = yield* Option.match(yield* Ref.get(saved), {
+        onNone: () => Effect.fail(failure('Owner settlement probe did not retain its lease')),
+        onSome: Effect.succeed,
+      });
+      const expired = yield* lease
+        .verify({
+          binding: retained.binding,
+          complete: true,
+          evidenceReference: retained.evidenceReference,
+          messages: [],
+        })
+        .pipe(Effect.flip);
+      expect(Schema.is(LegacyCompletionPublicationError)(expired)).toBe(true);
+      const recovered = yield* publishSnapshot(first, Option.none(), fixture.proof, baseline).pipe(
+        Effect.provide(fixture.publication),
+      );
+      expect(recovered).toEqual(first);
+      expect(yield* fixture.observeAuthority).toMatchObject([
+        { durableWorkAdmission: 'open', phase: 'active', revision: first.composition.revision },
+      ]);
+      expect(yield* Ref.get(fixture.pointer)).toEqual(Option.some(encoded));
+      expect(yield* Ref.get(fixture.puts)).toMatchObject([
+        { body: encoded, rejected: false, responseBody: { success: true }, responseStatus: 200 },
+        { body: encoded, rejected: false, responseBody: { success: true }, responseStatus: 200 },
+      ]);
+      expect(yield* fixture.observeOwner).toEqual(fixture.initialOwner);
+      const retainedAfterRecovery = yield* fixture.fs.readDirectory(fixture.evidenceDirectory);
+      // The committed exact-target renewal keeps the original proof rather than claiming a new owner observation.
+      expect(retainedAfterRecovery).toEqual(retainedNames);
+      expect(yield* fixture.fs.readFileString(`${fixture.evidenceDirectory}/${retainedNames[0]}`)).toBe(retainedSource);
+    }).pipe(Effect.provide(services)),
 );
 
 it('validates creator capability schema and frozen-source hash discrimination without native setup', () => {

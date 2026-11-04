@@ -9,6 +9,13 @@ import {
 } from './application-composition-limits.ts';
 import { OntosComponentContractSchema, OntosDeploymentIdentitySchema, OntosModuleIdSchema } from './manifest.ts';
 
+import {
+  deriveModuleIntrinsicRequirements,
+  providesRequiredOperationContracts,
+  OntosModuleRequirementsSchema,
+  OntosOperationContractSchema,
+} from './module-dependency-contracts.ts';
+
 export const ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION = '2' as const;
 
 export {
@@ -150,7 +157,9 @@ const observedContractSchema = Schema.Struct({
   /** Module Federation boundary named by the declared components; absent when the contract declares none. */
   mfBoundaryId: Schema.optionalKey(OntosComponentContractSchema.fields.mfBoundaryId),
   moduleId: OntosModuleIdSchema,
+  operationContracts: Schema.optionalKey(Schema.Array(OntosOperationContractSchema)),
   publicContract: ApplicationCompositionModuleSchema.fields.publicContract,
+  requirements: Schema.optionalKey(OntosModuleRequirementsSchema),
   sha256,
 });
 const observedFederationSchema = Schema.Struct({
@@ -379,12 +388,41 @@ const assertObservedDeployment = Effect.fnUntraced(function* checkDeployment(
     !samePublicContract(contract.publicContract, module.publicContract) ||
     module.publicContract.id !== module.moduleId ||
     !sameUniqueStrings(module.allowedContributions, contract.contributionKeys) ||
+    !sameUniqueStrings(module.dependencies, deriveModuleIntrinsicRequirements(contract.requirements).dependencies) ||
+    !sameVersionClaims(
+      module.requiredCoreCapabilities,
+      deriveModuleIntrinsicRequirements(contract.requirements).requiredCoreCapabilities,
+      ({ id }) => id,
+    ) ||
     !matchesObservedFederation(module, contract)
   ) {
     return yield* new ApplicationCompositionValidationError({
       reason: `module ${module.moduleId} does not match its observed deployment contract`,
     });
   }
+  return yield* Effect.void;
+});
+
+const assertIntrinsicOperationCompatibility = Effect.fnUntraced(function* checkIntrinsicOperations(
+  module: ApplicationCompositionModule,
+  modules: readonly ApplicationCompositionModule[],
+  contracts: ApplicationCompositionCandidateEvidence['contracts'],
+) {
+  const declaration = contracts[module.deployment.appId];
+  yield* Effect.forEach(
+    declaration?.requirements?.intrinsic ?? [],
+    Effect.fnUntraced(function* checkIntrinsicRequirement(requirement) {
+      const providerModule = modules.find(({ moduleId }) => moduleId === requirement.moduleId);
+      const provider = providerModule === undefined ? undefined : contracts[providerModule.deployment.appId];
+      if (!providesRequiredOperationContracts(provider?.operationContracts, requirement.requiredOperations)) {
+        return yield* new ApplicationCompositionValidationError({
+          reason: `module ${module.moduleId} requires an unsupported operation contract from ${requirement.moduleId}`,
+        });
+      }
+      return yield* Effect.void;
+    }),
+    { concurrency: 1, discard: true },
+  );
   return yield* Effect.void;
 });
 
@@ -599,6 +637,7 @@ export const validateApplicationCompositionCandidate = Effect.fnUntraced(functio
       yield* assertDependenciesPresent(module, moduleIds);
       yield* assertShellCompatibility(module, composition.shell, shellCapabilities, shellSingletons);
       yield* assertObservedDeployment(module, observed.contracts[module.deployment.appId]);
+      yield* assertIntrinsicOperationCompatibility(module, composition.modules, observed.contracts);
       yield* assertObservedBackend(module, observed.backends[module.deployment.appId]);
       yield* claim(backendDestinations, module.backend.baseUrl, 'backend destination');
       if (federation.execution === 'browser' && manifestUrl !== undefined) {

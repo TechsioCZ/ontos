@@ -4,8 +4,8 @@ import { Effect, Layer, Redacted, Schema } from 'effect';
 import { HttpClientError, HttpClientRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
-import { getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';
-import { getReadServiceFactory } from '../../../../packages/core-runtime/src/reads/definition.ts';
+import { getActionServiceFactory } from '@app/core-runtime/testing/actions';
+import { getReadServiceFactory } from '@app/core-runtime/testing/reads';
 
 import type { PaymentTermDefinitionRequest } from '../../src/persistence/payment-term-persistence.ts';
 import {

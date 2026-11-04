@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -8,6 +8,8 @@ import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { checkDatabaseAccessBoundaries } from '../check-database-access-boundaries.mts';
+
+const BILLING_TABLE_SOURCE_PATH = 'verticals/billing/src/database/table.ts';
 
 it.live(
   'allows owner database factories and rejects Action, read, nested BFF, hidden Core database, and second-driver bypasses deterministically',
@@ -346,4 +348,146 @@ it.live(
         })),
       );
     }),
+);
+
+const DB_OWNERSHIP_CONSUMER = 'verticals/stock/src/owner-services.ts';
+const makeDatabaseOwnershipFixture = Effect.fn(function* databaseOwnershipFixture() {
+  const root = yield* Effect.acquireRelease(
+    Effect.promise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-owner-origins-'))),
+    (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+  );
+  const files = new Map([
+    ['verticals/stock/src/database/table.ts', 'export const table = {};\n'],
+    [BILLING_TABLE_SOURCE_PATH, 'export const table = {};\nexport interface BillingRow { readonly id: string }\n'],
+    ['verticals/billing/src/database/transaction.ts', 'export const businessTransaction = () => true;\n'],
+    ['verticals/billing/src/repositories/customer.ts', 'export const repository = () => true;\n'],
+    [
+      'verticals/billing/shared/contracts.ts',
+      "export { table } from '../src/database/table.ts';\nexport type { BillingRow } from '../src/database/table.ts';\n",
+    ],
+    [
+      'verticals/billing/package.json',
+      JSON.stringify({ exports: { './contracts': './shared/contracts.ts' }, name: '@app/accounting-contracts' }),
+    ],
+  ]);
+  for (const file of ['package.json', 'src/index.ts', 'src/db/scoped-routine.ts']) {
+    const relative = `packages/core-runtime/${file}`;
+    files.set(
+      relative,
+      yield* Effect.promise(() => readFile(path.resolve(import.meta.dirname, '../..', relative), 'utf-8')),
+    );
+  }
+  for (const [file, source] of files) {
+    const target = path.join(root, file);
+    yield* Effect.promise(() => mkdir(path.dirname(target), { recursive: true }));
+    yield* Effect.promise(() => writeFile(target, source));
+  }
+  return root;
+});
+
+for (const [form, source, origin] of [
+  [
+    'foreign database table',
+    "import { table } from '../../billing/src/database/table.ts';\n",
+    BILLING_TABLE_SOURCE_PATH,
+  ],
+  [
+    'foreign business transaction',
+    "import { businessTransaction } from '../../billing/src/database/transaction.ts';\n",
+    'verticals/billing/src/database/transaction.ts',
+  ],
+  [
+    'foreign repository',
+    "import { repository } from '../../billing/src/repositories/customer.ts';\n",
+    'verticals/billing/src/repositories/customer.ts',
+  ],
+  [
+    'renamed contracts barrel',
+    "import { table } from '@app/accounting-contracts/contracts';\n",
+    BILLING_TABLE_SOURCE_PATH,
+  ],
+  [
+    'type-only foreign table',
+    "import type { BillingRow } from '@app/accounting-contracts/contracts';\n",
+    BILLING_TABLE_SOURCE_PATH,
+  ],
+  [
+    'private Core routine implementation',
+    "import { defineScopedRoutine } from '../../../packages/core-runtime/src/db/scoped-routine.ts';\n",
+    'packages/core-runtime/src/db/scoped-routine.ts',
+  ],
+] as const) {
+  it.live(`rejects database ownership via ${form}`, () =>
+    Effect.gen(function* rejectsPrivateDatabaseOrigin() {
+      const root = yield* makeDatabaseOwnershipFixture();
+      yield* Effect.promise(() => writeFile(path.join(root, DB_OWNERSHIP_CONSUMER), source));
+      const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+      expect(
+        violations.some((violation) => violation.file === DB_OWNERSHIP_CONSUMER && violation.origin === origin),
+        form,
+      ).toBe(true);
+    }),
+  );
+}
+
+it.live('preserves own database services and the genuine approved Core routine public boundary', () =>
+  Effect.gen(function* acceptsOwnerDatabaseAndCoreRoutine() {
+    const root = yield* makeDatabaseOwnershipFixture();
+    yield* Effect.promise(() =>
+      writeFile(
+        path.join(root, DB_OWNERSHIP_CONSUMER),
+        "import { table } from './database/table.ts';\nimport { defineScopedRoutine } from '@app/core-runtime';\n",
+      ),
+    );
+    const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+    expect(violations.filter((violation) => violation.file === DB_OWNERSHIP_CONSUMER)).toEqual([]);
+  }),
+);
+
+for (const hiddenPrivateTable of [false, true]) {
+  it.live(`keeps wide public dependency traversal distinct from private origin ${hiddenPrivateTable}`, () =>
+    Effect.gen(function* wideDatabaseOwnershipGraph() {
+      const root = yield* makeDatabaseOwnershipFixture();
+      const declarations: string[] = [];
+      const directory = path.join(root, 'verticals/billing/shared/values');
+      yield* Effect.promise(() => mkdir(directory, { recursive: true }));
+      for (let index = 0; index < 135; index += 1) {
+        yield* Effect.promise(() =>
+          writeFile(path.join(directory, `value-${index}.ts`), `export const value${index} = ${index};\n`),
+        );
+        declarations.push(`export { value${index} } from './values/value-${index}.ts';`);
+      }
+      if (hiddenPrivateTable) {
+        declarations.push("export { table } from '../src/database/table.ts';");
+      }
+      yield* Effect.promise(() =>
+        writeFile(path.join(root, 'verticals/billing/shared/wide-contract.ts'), declarations.join('\n')),
+      );
+      yield* Effect.promise(() =>
+        writeFile(
+          path.join(root, DB_OWNERSHIP_CONSUMER),
+          `import { ${hiddenPrivateTable ? 'table' : 'value0'} } from '../../billing/shared/wide-contract.ts';\n`,
+        ),
+      );
+      const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+      const consumerViolations = violations.filter((violation) => violation.file === DB_OWNERSHIP_CONSUMER);
+      if (hiddenPrivateTable) {
+        expect(consumerViolations.some((violation) => violation.origin === BILLING_TABLE_SOURCE_PATH)).toBe(true);
+      } else {
+        expect(consumerViolations).toEqual([]);
+      }
+    }),
+  );
+}
+
+it.live('preserves actual operator tooling consuming Core public composition APIs', () =>
+  Effect.gen(function* operatorCompositionBoundary() {
+    const root = yield* makeDatabaseOwnershipFixture();
+    const file = 'scripts/active-application-composition.mts';
+    const source = yield* Effect.promise(() => readFile(path.resolve(import.meta.dirname, '../..', file), 'utf-8'));
+    yield* Effect.promise(() => mkdir(path.join(root, 'scripts'), { recursive: true }));
+    yield* Effect.promise(() => writeFile(path.join(root, file), source));
+    const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+    expect(violations.filter((violation) => violation.file === file)).toEqual([]);
+  }),
 );

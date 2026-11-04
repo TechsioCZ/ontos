@@ -23,6 +23,7 @@ import {
 } from '../services/commercial-fee-persistence.service.ts';
 import type { CommercialFeePersistence } from '../services/commercial-fee-persistence.service.ts';
 import { commercialFeeCatalogTargetAssessmentPortFromEnvironment } from '../integrations/commercial-fee-catalog-target-evidence.ts';
+import { requirePricingCatalogOperation } from '../integrations/pricing-operation-requirements.ts';
 import type { CommercialFeeCatalogTargetAssessmentPort } from '../integrations/commercial-fee-catalog-target-evidence.ts';
 import { currencySupportPersistenceForScope } from '../persistence/currency-support-persistence.ts';
 import type { CurrencySupportPersistence } from '../persistence/currency-support-persistence.ts';
@@ -282,7 +283,10 @@ export const defineCommercialFeeAction = defineAction(
       return {
         define: persistence.define,
         loadCurrencySupport: currencySupport.loadCurrent,
-        validateCatalogTarget: catalogTarget.validate,
+        validateCatalogTarget: (input) =>
+          requirePricingCatalogOperation('commerce.pricing.requirement.define-commercial-fee-catalog').pipe(
+            Effect.andThen(() => catalogTarget.validate(input)),
+          ),
       } satisfies DefineCommercialFeeActionServices;
     });
   },

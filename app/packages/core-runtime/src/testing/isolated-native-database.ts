@@ -1,5 +1,18 @@
 import { asc, eq, sql } from 'drizzle-orm';
-import { Config, Crypto, DateTime, Effect, Exit, Option, Redacted, Ref, Schema, Scope, Stream } from 'effect';
+import {
+  Config,
+  Crypto,
+  DateTime,
+  Effect,
+  Exit,
+  Option,
+  Redacted,
+  Ref,
+  Schema,
+  Scope,
+  Semaphore,
+  Stream,
+} from 'effect';
 import { ChildProcess } from 'effect/process';
 import type { PlatformError } from 'effect';
 
@@ -114,8 +127,17 @@ const readFingerprint = Effect.fn('IsolatedNativeDatabase.readFingerprint')(func
 });
 
 const schemaOnly = 'schema-only' as const;
+const browserCompositionPurpose = 'implementation-1296-browser-composition';
 const exactDeadlinePurpose = 'stabilization-1271-exact-obligation-deadline';
+const shellAuthPurpose = 'stabilization-1287-shell-auth';
+const assortmentAuthorizationPurpose = 'implementation-1290-assortment-authorization';
+const retainedPrivacyPurpose = 'stabilization-1258-privacy-drain';
 type IsolatedNativeDatabaseInput = (
+  | {
+      readonly compositionSnapshot?: never;
+      readonly mode: typeof schemaOnly;
+      readonly purpose: typeof browserCompositionPurpose;
+    }
   | {
       readonly compositionSnapshot: ActiveApplicationCompositionSnapshot;
       readonly mode: typeof schemaOnly;
@@ -130,6 +152,8 @@ type IsolatedNativeDatabaseInput = (
         | 'stabilization-1266-quantity-profile-admission'
         | 'stabilization-1230-preference-period'
         | 'stabilization-1267-party-gateway'
+        | typeof shellAuthPurpose
+        | typeof assortmentAuthorizationPurpose
         | 'stabilization-1268-address-plan'
         | 'stabilization-1261-retained-purpose-withdrawal'
         | 'stabilization-1247-set-component-current-closure'
@@ -162,13 +186,14 @@ type IsolatedNativeDatabaseInput = (
   | {
       readonly mode: 'empty';
       readonly purpose:
+        | 'stabilization-1287-core-operation-fence'
         | 'stabilization-1229-payment-entitlement'
         | 'stabilization-1234-outbox-clock'
         | 'stabilization-1235-inventory-release'
         | 'stabilization-1237-protection-intent'
         | 'stabilization-1260-privacy-legacy'
         | 'stabilization-1264-terminal-protection-health'
-        | 'stabilization-1258-privacy-drain'
+        | typeof retainedPrivacyPurpose
         | 'stabilization-1257-approval-fresh-proof'
         | 'stabilization-1274-media-ordering'
         | 'stabilization-1270-set-effective-revision'
@@ -184,6 +209,7 @@ type IsolatedNativeDatabaseInput = (
 const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
   input.mode === schemaOnly
     ? [
+        browserCompositionPurpose,
         'stabilization-1196-product-create',
         'stabilization-1229-payment-entitlement',
         'stabilization-1232-current-access',
@@ -194,6 +220,8 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
         'stabilization-1266-quantity-profile-admission',
         'stabilization-1230-preference-period',
         'stabilization-1267-party-gateway',
+        shellAuthPurpose,
+        assortmentAuthorizationPurpose,
         'stabilization-1268-address-plan',
         'stabilization-1261-retained-purpose-withdrawal',
         'stabilization-1247-set-component-current-closure',
@@ -225,13 +253,14 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
       ].includes(input.purpose)
     : input.mode === 'empty' &&
       [
+        'stabilization-1287-core-operation-fence',
         'stabilization-1229-payment-entitlement',
         'stabilization-1234-outbox-clock',
         'stabilization-1235-inventory-release',
         'stabilization-1237-protection-intent',
         'stabilization-1260-privacy-legacy',
         'stabilization-1264-terminal-protection-health',
-        'stabilization-1258-privacy-drain',
+        retainedPrivacyPurpose,
         'stabilization-1257-approval-fresh-proof',
         'stabilization-1274-media-ordering',
         'stabilization-1270-set-effective-revision',
@@ -241,6 +270,10 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
         exactDeadlinePurpose,
       ].includes(input.purpose);
 
+const supportsOwnedReplacement = (input: IsolatedNativeDatabaseInput): boolean =>
+  (input.mode === 'empty' && (input.purpose === exactDeadlinePurpose || input.purpose === retainedPrivacyPurpose)) ||
+  (input.mode === schemaOnly && input.purpose === shellAuthPurpose);
+
 /** A fresh schema-only database; it never drains, copies, or deletes the source database's data. */
 export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDatabase.make')(
   function* makeIsolatedNativeDatabaseFixture(input: IsolatedNativeDatabaseInput) {
@@ -248,7 +281,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       return yield* unavailable('Unsupported isolated database test purpose');
     }
     const snapshot =
-      input.mode === schemaOnly
+      input.mode === schemaOnly && input.purpose !== browserCompositionPurpose
         ? yield* validateActiveApplicationCompositionSnapshot(input.compositionSnapshot).pipe(
             Effect.mapError((cause) => unavailable('Invalid isolated test composition', cause)),
           )
@@ -443,9 +476,9 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
         .pipe(Effect.mapError((cause) => unavailable('Unable to initialize isolated trust configuration', cause)));
       yield* assertClonedSchema();
     }
-    const retainedOriginalEnabled = input.mode === 'empty' && input.purpose === 'stabilization-1258-privacy-drain';
-    const replacementEnabled =
-      input.mode === 'empty' && (input.purpose === exactDeadlinePurpose || retainedOriginalEnabled);
+    const retainedOriginalEnabled = input.mode === 'empty' && input.purpose === retainedPrivacyPurpose;
+    const assortmentRuntimeEnabled = input.mode === schemaOnly && input.purpose === assortmentAuthorizationPurpose;
+    const replacementEnabled = supportsOwnedReplacement(input);
     const retainedReplacementRevision = yield* Ref.make<string | null>(null);
     const replacementState = yield* Ref.make<'unused' | 'pending' | 'published' | 'failed'>('unused');
     const controllerClosed = yield* Ref.make(false);
@@ -474,8 +507,13 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
     let managedInitialRevision: string | undefined;
     let managedInitialObservedAt: number | undefined;
     let managedInitialValidUntil: number | undefined;
+    let latestObservationAt: number | undefined;
+    const observationRenewal = yield* Semaphore.make(1);
     const publishInitialComposition = Effect.fn('IsolatedNativeDatabase.publishInitialComposition')(
       function* publishInitialComposition(candidate: ActiveApplicationCompositionSnapshot) {
+        if (input.purpose === browserCompositionPurpose) {
+          return yield* unavailable('The browser fixture exclusively owns publication of its isolated composition');
+        }
         const validated = yield* validateActiveApplicationCompositionSnapshot(candidate).pipe(
           Effect.mapError((cause) => unavailable('Invalid isolated test composition', cause)),
         );
@@ -496,7 +534,9 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
           .pipe(Effect.mapError((cause) => unavailable('Unable to publish initial isolated composition', cause)));
         managedInitialRevision = validated.composition.revision;
         managedInitialObservedAt = DateTime.toEpochMillis(validated.observedAt);
+        latestObservationAt = managedInitialObservedAt;
         managedInitialValidUntil = DateTime.toEpochMillis(validated.validUntil);
+        return yield* Effect.void;
       },
     );
     if (snapshot !== undefined) {
@@ -647,6 +687,89 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
           .pipe(Effect.mapError((cause) => unavailable('Unable to control this isolated initial composition', cause)));
       },
     );
+    const renewObservation = Effect.fn('IsolatedNativeDatabase.renewObservation')(function* renewObservation(
+      candidate: ActiveApplicationCompositionSnapshot,
+    ) {
+      return yield* observationRenewal.withPermit(
+        Effect.gen(function* renewOwnedObservation() {
+          const previousObservedAt = latestObservationAt;
+          if (
+            retainedOriginalEnabled ||
+            nativeOwnedIdentity === undefined ||
+            previousObservedAt === undefined ||
+            (yield* Ref.get(controllerClosed))
+          ) {
+            return yield* unavailable('Observation renewal requires a live owned non-retained test controller');
+          }
+          const approved = yield* validateActiveApplicationCompositionSnapshot(candidate).pipe(
+            Effect.mapError((cause) => unavailable('Invalid isolated observation renewal', cause)),
+          );
+          const renewed = yield* runCompositionOperation(
+            Effect.fn('IsolatedNativeDatabase.publishOwnedObservation')(
+              function* publishOwnedObservation(transaction, revision) {
+                const [identity] = yield* transaction.execute<{ readonly owned: boolean }>(
+                  sql`select
+                current_database()=${ownedBoundary.database} and d.oid::text=${nativeOwnedIdentity.databaseOid}
+                and current_user=${ownedBoundary.adminUser} and session_user=${ownedBoundary.adminUser}
+                and pg_get_userbyid(d.datdba)=${ownedBoundary.adminUser}
+                and r.oid::text=${nativeOwnedIdentity.runtimeRoleOid} and not r.rolsuper and not r.rolbypassrls
+                and inet_server_addr()::text is not distinct from ${nativeOwnedIdentity.serverAddress}
+                and inet_server_port() is not distinct from ${nativeOwnedIdentity.serverPort} as owned
+                from pg_database d cross join pg_roles r
+                where d.datname=current_database() and r.rolname=${ownedBoundary.runtimeUser}`,
+                  'objects',
+                );
+                if (identity?.owned !== true) {
+                  return yield* unavailable('Observation renewal cannot target a foreign database, role or endpoint');
+                }
+                const [current] = yield* transaction
+                  .select({
+                    admission: applicationCompositionAuthority.durableWorkAdmission,
+                    phase: applicationCompositionAuthority.phase,
+                    revision: applicationCompositionAuthority.revision,
+                    validUntil: applicationCompositionAuthority.validUntil,
+                  })
+                  .from(applicationCompositionAuthority)
+                  .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+                if (
+                  (yield* Ref.get(controllerClosed)) ||
+                  current === undefined ||
+                  current.revision !== revision ||
+                  approved.composition.revision !== revision ||
+                  DateTime.toEpochMillis(approved.observedAt) <= previousObservedAt ||
+                  DateTime.toEpochMillis(approved.validUntil) <= current.validUntil.getTime()
+                ) {
+                  return yield* unavailable(
+                    'Observation renewal requires the exact owned original revision and strictly later observation times',
+                  );
+                }
+                yield* publishApplicationCompositionAuthority(transaction, approved);
+                const [after] = yield* transaction
+                  .select({
+                    admission: applicationCompositionAuthority.durableWorkAdmission,
+                    phase: applicationCompositionAuthority.phase,
+                    revision: applicationCompositionAuthority.revision,
+                    validUntil: applicationCompositionAuthority.validUntil,
+                  })
+                  .from(applicationCompositionAuthority)
+                  .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+                if (
+                  after?.revision !== revision ||
+                  after.phase !== current.phase ||
+                  after.admission !== current.admission ||
+                  after.validUntil.getTime() !== DateTime.toEpochMillis(approved.validUntil)
+                ) {
+                  return yield* unavailable('Observation renewal changed authority identity or admission state');
+                }
+                return approved;
+              },
+            ),
+          );
+          latestObservationAt = DateTime.toEpochMillis(renewed.observedAt);
+          return renewed;
+        }),
+      );
+    });
     const observeComposition = Effect.fn('IsolatedNativeDatabase.observeInitialComposition')(
       function* observeComposition(transaction: CoreTransaction, revision: string) {
         const [authority] = yield* transaction
@@ -871,12 +994,80 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
         Effect.onExit((exit) => (Exit.isFailure(exit) ? Ref.set(replacementState, 'failed') : Effect.void)),
       );
     });
+    /** #1290's disposable clone only; reproduces the exact SQL privileges needed by its real owner routines. */
+    const prepareAssortmentAuthorizationRuntime = Effect.fn(
+      'IsolatedNativeDatabase.prepareAssortmentAuthorizationRuntime',
+    )(function* prepareAssortmentAuthorizationRuntime() {
+      if (
+        !assortmentRuntimeEnabled ||
+        (yield* Ref.get(controllerClosed)) ||
+        nativeOwnedIdentity === undefined ||
+        !databaseName.startsWith(prefix) ||
+        databaseName === source.admin.database ||
+        databaseName === source.runtime.database ||
+        connections.admin.database !== databaseName ||
+        connections.runtime.database !== databaseName
+      ) {
+        return yield* unavailable('Assortment test privileges require this scope’s fresh #1290 schema-only clone');
+      }
+      // Prove faithful source schema/RLS/ACL cloning before this deliberately narrow, clone-local test setup.
+      yield* assertClonedSchema();
+      const roleIdentifier = sql.identifier(ownedBoundary.runtimeUser);
+      return yield* clone.executor
+        .transaction(
+          Effect.fn('IsolatedNativeDatabase.provisionAssortmentAuthorizationRuntime')(
+            function* provisionAssortmentAuthorizationRuntime(transaction) {
+              const [identity] = yield* transaction.execute<{ readonly owned: boolean }>(
+                sql`select
+              current_database()=${ownedBoundary.database} and current_user=${ownedBoundary.adminUser}
+              and d.oid::text=${nativeOwnedIdentity.databaseOid} and r.oid::text=${nativeOwnedIdentity.runtimeRoleOid}
+              and not r.rolsuper and not r.rolbypassrls
+              and inet_server_addr()::text is not distinct from ${nativeOwnedIdentity.serverAddress}
+              and inet_server_port() is not distinct from ${nativeOwnedIdentity.serverPort} as owned
+              from pg_database d cross join pg_roles r
+              where d.datname=current_database() and r.rolname=${ownedBoundary.runtimeUser}`,
+                'objects',
+              );
+              if (identity?.owned !== true) {
+                return yield* unavailable(
+                  'Assortment test privileges cannot target a foreign database, role or endpoint',
+                );
+              }
+              yield* transaction.execute(
+                sql`grant select,insert on table
+              assortment.assortment_stable_rules,
+              assortment.assortment_rule_revisions,
+              assortment.assortment_rule_retirement_facts,
+              assortment.assortment_applicability_bindings to ${roleIdentifier}`,
+                'objects',
+              );
+              yield* transaction.execute(
+                sql`grant select on table assortment.assortment_applicability_binding_end_facts to ${roleIdentifier}`,
+                'objects',
+              );
+              // PostgreSQL SELECT FOR UPDATE needs an UPDATE privilege; existing immutable triggers still prohibit owner-row mutation.
+              return yield* transaction
+                .execute(
+                  sql`grant update(stable_rule_id) on table assortment.assortment_stable_rules to ${roleIdentifier}`,
+                  'objects',
+                )
+                .pipe(Effect.asVoid);
+            },
+          ),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            unavailable('Unable to establish exact isolated Assortment test privileges', cause),
+          ),
+        );
+    });
     const composition = Object.freeze({
       closeAdmission: () => runCompositionOperation(closeApplicationCompositionDurableAdmission),
       drain: () => runCompositionOperation(drainApplicationCompositionAuthority),
       observe: () => runCompositionOperation(observeComposition),
       observeRetainedOriginal,
       publishReplacement,
+      renewObservation,
       seal: () => runCompositionOperation(sealApplicationCompositionAuthority),
     });
     // Only this scope's new database is reachable; no administrative executor escapes.
@@ -885,6 +1076,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       composition,
       connections: connections satisfies DatabaseConnectionPair,
       migrateCoreSchema,
+      prepareAssortmentAuthorizationRuntime,
       publishInitialComposition,
     };
   },

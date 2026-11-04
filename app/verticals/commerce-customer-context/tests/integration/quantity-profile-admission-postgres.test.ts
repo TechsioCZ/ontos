@@ -1,3 +1,5 @@
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +13,7 @@ import {
   ContextPermissionRelationshipMutation,
   ContextPermissionRelationshipMutationLive,
   PrincipalRefSchema,
+  OntosModuleDeploymentContractSchema,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
@@ -62,6 +65,10 @@ import {
 } from '../../src/integrations/profile-reactivation-eligibility.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import {
+  describePriceGroupTemporalOwner,
+  makePriceGroupTemporalComposition,
+} from '../support/price-group-temporal-protocol.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -73,10 +80,22 @@ const transport = () => ({
   targetModuleKey: 'commerce.customer-context',
 });
 const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixture')(function* makeFixture(
-  buildMarker = 'quantity-profile-admission-native',
+  buildMarker = ultramodernApiMarker.buildMarker,
   databaseTransportMode: 'DIRECT' | 'OWNER_LOOKUP_OUTAGE' = 'DIRECT',
 ) {
-  const snapshot = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
+  const base = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
+  const ownModule = base.composition.modules.find(({ deployment }) => deployment.appId === ultramodernApiMarker.appId);
+  assert.isOk(ownModule !== undefined);
+  const ownContract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+    ownModule.contractDocument,
+  );
+  const party = yield* describePriceGroupTemporalOwner('party-registry');
+  // Actual owner declarations and selected compiled identities; served Federation metadata is
+  // SOURCE/TEST-only. The controlled Party facts below do not prove provider transport or deployment.
+  const snapshot = yield* makePriceGroupTemporalComposition([
+    { contract: ownContract, marker: ownContract.deployment },
+    { contract: party.contract, marker: party.marker },
+  ]);
   const { isolated } = yield* makeQuantityProfileOwnedDatabase(snapshot);
   const databaseTransport =
     databaseTransportMode === 'OWNER_LOOKUP_OUTAGE'
@@ -103,9 +122,13 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
       additionalLegalEntity: 'same-tenant',
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: ['commerce-customer-context'],
+      applicationComposition: { load: Effect.succeed(snapshot) },
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
-      moduleKeys: ['commerce.customer-context'],
+      expectedDeployment: { ...ultramodernApiMarker, buildMarker },
+      // Party already belongs to the fixture namespace; this seeds its state without adding grants.
+      moduleKeys: ['commerce.customer-context', 'party.registry'],
+      ownerRegistration: commerceCustomerContextRegistration,
       runtimeConnectionString:
         databaseTransport?.connectionString ?? Redacted.make(isolated.connections.runtime.connectionString),
     }),
@@ -753,6 +776,8 @@ it.live(
         expect(after.outbox).toHaveLength(evidence.outbox.length);
       }),
     ).pipe(Effect.provide(nativeServices)),
+  // Native owner/source setup and disposal completed 30 assertions in 30.3s; retain the existing native case budget.
+  120_000,
 );
 
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -765,7 +790,7 @@ const QuantityReceiverReadySchema = Schema.Struct({
   port: Schema.Number,
   type: Schema.Literal('ready'),
 });
-const quantityHttpServices = NodeHttpServer.layerTest.pipe(Layer.provideMerge(nativeServices));
+const quantityHttpServices = nativeServices;
 const prepareQuantityReceiverArtifact = Effect.fn('QuantityProfileAdmissionTests.receiverArtifact')(
   function* prepareReceiver() {
     const artifact = fileURLToPath(
@@ -828,7 +853,7 @@ const startQuantityPublicReceiver = Effect.fn('QuantityProfileAdmissionTests.pub
   const snapshotDocument = yield* Schema.encodeEffect(
     Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
   )(owner.snapshot);
-  const source = yield* HttpServer.HttpServer;
+  const source = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
   yield* source.serve(Effect.succeed(HttpServerResponse.text(snapshotDocument, { contentType: 'application/json' })));
   const { address } = source;
   if (!Schema.is(Schema.Struct({ port: Schema.Number }))(address)) {

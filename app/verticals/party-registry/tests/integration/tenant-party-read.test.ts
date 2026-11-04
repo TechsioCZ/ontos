@@ -27,6 +27,7 @@ import { counterpartyReadRead } from '../../src/api/counterparty-read.read.ts';
 import { makeGatewayAssertionRedemption } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
 import { makePartyDatabase } from '../../src/db/client.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import { partyCompositionSnapshot } from './application-composition.setup.ts';
 
 it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
@@ -54,6 +55,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             adminConnectionString: Redacted.make(connections.admin.connectionString),
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: snapshot.composition.revision,
+            ownerRegistration: partyRegistryBackendRegistration,
             runtimeConnectionString: Redacted.make(partyConfiguration.connectionString),
           }),
           (resource) => resource.close().pipe(Effect.orDie),

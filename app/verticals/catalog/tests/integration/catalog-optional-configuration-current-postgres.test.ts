@@ -1,3 +1,4 @@
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
 import { generateKeyPairSync, sign } from 'node:crypto';
@@ -88,6 +89,7 @@ it.live(
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: composition.composition.revision,
           moduleKeys: ['commerce.catalog'],
+          ownerRegistration: catalogRegistration,
           runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
         }),
         (value) => value.close().pipe(Effect.orDie),

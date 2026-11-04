@@ -10,6 +10,7 @@ import { correctPaymentTermAction } from './src/actions/correct-payment-term.act
 import { createPaymentTermAction } from './src/actions/create-payment-term.action.ts';
 import { reconcilePaymentTermReferenceAction } from './src/actions/reconcile-payment-term-reference.action.ts';
 import { retirePaymentTermAction } from './src/actions/retire-payment-term.action.ts';
+import { currentPaymentTermsRead } from './src/api/current-payment-terms.read.ts';
 // </generated-module-registration-imports>
 
 export const paymentTermCatalogRegistration = defineVerticalRuntimeRegistration({
@@ -53,6 +54,11 @@ export const paymentTermCatalogRegistration = defineVerticalRuntimeRegistration(
   outboxWorkers: [
     // <generated-module-registration-workers>
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    currentPaymentTermsRead,
+    // </generated-module-registration-reads>
   ],
 });
 

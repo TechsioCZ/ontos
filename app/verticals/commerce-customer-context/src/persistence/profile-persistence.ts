@@ -1,3 +1,4 @@
+import { customerOwnerPermissionTarget } from '../permissions/authorization.ts';
 /* oxlint-disable effect-native/no-dependency-parameters effect-native/no-nullable-schema-field effect-native/no-string-timestamp-schema effect-native/no-unbranded-identifier-schema effect-native/no-duplicate-literal-vocabulary anti-slop/no-known-value-widening sonarjs/no-duplicate-string -- This adapter decodes nullable database wire rows and accepts optional owner-port composition inputs without exporting database capability; expires: 2027-03-31. */
 import {
   BusinessPermissionCodeSchema,
@@ -3539,12 +3540,11 @@ export const retailBindingAuthorizationMutationReconciliationForWorker = (
                           return mutation
                             .mutate({
                               operation: request.operation,
-                              permission: permissionResult.success,
                               principal: {
                                 principalId: request.principalRef.resourceId,
                                 tenantId: scope.tenantId,
                               },
-                              target,
+                              target: customerOwnerPermissionTarget({ permission: permissionResult.success, target }),
                             })
                             .pipe(
                               Effect.map(() => true),

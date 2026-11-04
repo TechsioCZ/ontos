@@ -1,10 +1,8 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import {
-  getActionBusinessPermissionTargetResolver,
-  getActionHandler,
-} from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionOwnerPermissionTargetResolver, getActionHandler } from '@app/core-runtime/testing/actions';
 import { changeRetailPaymentTermPreferenceAction } from '../../src/actions/change-retail-payment-term-preference.action.ts';
 import { ChangeRetailPaymentTermPreferencePayloadSchema } from '../../shared/actions/change-retail-payment-term-preference.ts';
 import type { CustomerPaymentTermsState } from '../../shared/domain/payment-term-contracts.ts';
@@ -89,21 +87,26 @@ it('accepts preference changes only and declares the exact retail profile permis
     }),
   ).toBe(false);
 
-  const resolvePermission = getActionBusinessPermissionTargetResolver(changeRetailPaymentTermPreferenceAction);
+  const resolvePermission = getActionOwnerPermissionTargetResolver(changeRetailPaymentTermPreferenceAction);
   expect(
     resolvePermission?.(payload, {
       ...scope,
       correlationId: 'retail-preference-permission',
     }),
-  ).toEqual({
-    permission: 'retail.settings.payment_term_preference.manage',
-    target: {
-      kind: 'retail_profile',
-      legalEntityId: '55555555-5555-4555-8555-555555555555',
-      profileId: profileRef.resourceId,
-      tenantId,
-    },
-  });
+  ).toEqual([
+    customerOwnerPermissionTarget(
+      {
+        permission: 'retail.settings.payment_term_preference.manage',
+        target: {
+          kind: 'retail_profile',
+          legalEntityId: '55555555-5555-4555-8555-555555555555',
+          profileId: profileRef.resourceId,
+          tenantId,
+        },
+      },
+      'action',
+    ),
+  ]);
 });
 
 it.effect('delegates entitlement validation atomically and records a changed preference', () =>

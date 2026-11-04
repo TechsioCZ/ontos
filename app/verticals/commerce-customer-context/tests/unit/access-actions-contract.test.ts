@@ -43,10 +43,10 @@ describe('Counterparty Commerce Access Actions', () => {
       resendCounterpartyAccessInvitationAction,
       revokeCounterpartyAccessInvitationAction,
     ]) {
-      expect(action.descriptor.businessPermission?.kind).toBe('business_permission');
+      expect(action.descriptor.ownerPermissions?.kind).toBe('owner_permission');
     }
-    expect(bootstrapCounterpartyAccessAdministratorAction.descriptor.businessPermission).toBe(undefined);
-    expect(claimCounterpartyAccessInvitationAction.descriptor.businessPermission).toBe(undefined);
+    expect(bootstrapCounterpartyAccessAdministratorAction.descriptor.ownerPermissions).toBe(undefined);
+    expect(claimCounterpartyAccessInvitationAction.descriptor.ownerPermissions).toBe(undefined);
   });
 
   it('accepts only a verified delivery reference and never a raw invitation secret', () => {

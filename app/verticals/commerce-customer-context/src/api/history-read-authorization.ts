@@ -1,4 +1,6 @@
-import type { BusinessPermissionCode, OperationalScope, ResolvedReadPermissionTarget } from '@app/core-runtime';
+import type { CustomerResolvedReadPermissionTarget } from '../permissions/authorization.ts';
+import { customerOwnerPermissionTarget } from '../permissions/authorization.ts';
+import type { BusinessPermissionCode, OperationalScope } from '@app/core-runtime';
 import type { CounterpartyRef } from '../../shared/domain/access-contract.ts';
 import type { CustomerHistorySubject, HistoricalRecordRef } from '../../shared/domain/record-visibility-contracts.ts';
 import type { CounterpartyPurchasingProfileRef } from '../../shared/resources/counterparty-purchasing-profile.ts';
@@ -22,8 +24,9 @@ const retailTarget = (
   input: RetailTargetInput,
   scope: OperationalScope,
   permission: BusinessPermissionCode,
-): ResolvedReadPermissionTarget => ({
-  businessPermission: {
+): CustomerResolvedReadPermissionTarget => ({
+  kind: 'owner_permission',
+  ownerPermission: customerOwnerPermissionTarget({
     permission,
     target: {
       kind: 'retail_profile',
@@ -31,16 +34,16 @@ const retailTarget = (
       profileId: input.profileRef.resourceId,
       tenantId: exactTenant(scope, [input.profileRef, ...(input.refs ?? [])]),
     },
-  },
-  kind: 'business_permission',
+  }),
 });
 
 const counterpartyTarget = (
   input: CounterpartyTargetInput,
   scope: OperationalScope,
   permission: BusinessPermissionCode,
-): ResolvedReadPermissionTarget => ({
-  businessPermission: {
+): CustomerResolvedReadPermissionTarget => ({
+  kind: 'owner_permission',
+  ownerPermission: customerOwnerPermissionTarget({
     permission,
     target: {
       counterpartyId: input.counterpartyRef.resourceId,
@@ -48,8 +51,7 @@ const counterpartyTarget = (
       legalEntityId: scope.legalEntityId ?? '',
       tenantId: exactTenant(scope, [input.counterpartyRef, input.profileRef, ...(input.refs ?? [])]),
     },
-  },
-  kind: 'business_permission',
+  }),
 });
 
 export const retailHistoryTarget = (input: RetailTargetInput, scope: OperationalScope) =>
@@ -73,7 +75,7 @@ export const subjectHistoryTarget = (
     readonly subject: CustomerHistorySubject;
   },
   scope: OperationalScope,
-): ResolvedReadPermissionTarget =>
+): CustomerResolvedReadPermissionTarget =>
   input.subject.kind === 'RETAIL_PROFILE'
     ? retailHistoryTarget(
         {
@@ -97,7 +99,7 @@ export const subjectRepeatTarget = (
     readonly subject: CustomerHistorySubject;
   },
   scope: OperationalScope,
-): ResolvedReadPermissionTarget =>
+): CustomerResolvedReadPermissionTarget =>
   input.subject.kind === 'RETAIL_PROFILE'
     ? retailRepeatTarget(
         {

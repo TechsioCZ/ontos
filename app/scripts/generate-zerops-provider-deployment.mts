@@ -327,11 +327,7 @@ export const generateZeropsProviderImports = (
       : `${source.slice(0, start)}${generated}${source.slice(stop + importsEnd.length)}`;
   });
 
-const migrationsBegin = '    // <generated-vertical-provider-migrations>';
-const migrationsEnd = '    // </generated-vertical-provider-migrations>';
-const migrationAnchor = "    yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');";
-
-/** Retains existing ordered migrations and adds new topology owners before the final grant refresh. */
+/** Migration discovery now reads the topology/config metadata inventory at runtime, without executing owner config. */
 export const generateZeropsProviderMigrations = (source: string, ownerPaths: readonly string[]) =>
   Effect.gen(function* generateProviderMigrations() {
     if (
@@ -340,31 +336,16 @@ export const generateZeropsProviderMigrations = (source: string, ownerPaths: rea
     ) {
       return yield* invalid('Invalid or duplicate topology migration owner');
     }
-    const start = source.indexOf(migrationsBegin);
-    const stop = source.indexOf(migrationsEnd);
-    if ((start === -1) !== (stop === -1) || (start !== -1 && stop < start)) {
-      return yield* invalid('Invalid generated provider migration markers');
+    if (
+      !source.includes('prepareApplicationMigrationPlan') ||
+      !source.includes('migrate(stream.directory, stream.configFile)')
+    ) {
+      return yield* invalid('Migrator must consume the topology-derived migration prerequisite closure');
     }
-    const retained = start === -1 ? source : source.slice(0, start) + source.slice(stop + migrationsEnd.length + 1);
-    const existing = new Set(
-      [...retained.matchAll(/migrate\('(?<owner>[^']+)', 'drizzle\.config\.ts'\)/gu)].map(
-        (match) => match.groups?.owner,
-      ),
-    );
-    const missing = ownerPaths.filter((owner) => !existing.has(owner));
-    if (missing.length === 0 && start === -1) {
-      return source;
-    }
-    const anchor = retained.lastIndexOf(migrationAnchor);
-    if (anchor === -1) {
-      return yield* invalid('Migrator final grant refresh is missing');
-    }
-    const calls = missing.map((owner) => `    yield* migrate('${owner}', 'drizzle.config.ts');`).join('\n');
-    const generated = `${migrationsBegin}\n${calls}\n${migrationsEnd}\n`;
-    return retained.slice(0, anchor) + generated + retained.slice(anchor);
+    return source;
   });
 
-/** Ships every topology migration owner in the assembled migrator artifact. */
+/** Ships topology metadata and every migration owner in the assembled migrator artifact. */
 export const generateZeropsMigratorInventory = (source: string, ownerPaths: readonly string[]) =>
   Effect.gen(function* generateMigratorInventory() {
     if (
@@ -380,7 +361,7 @@ export const generateZeropsMigratorInventory = (source: string, ownerPaths: read
       return yield* invalid('Missing migrator deployFiles inventory');
     }
     const inventory = new Set(source.slice(files, stop).split('\n'));
-    const missing = ownerPaths.filter((owner) => !inventory.has(`        - 'app/${owner}'`));
+    const missing = ['topology', ...ownerPaths].filter((owner) => !inventory.has(`        - 'app/${owner}'`));
     const added = missing.map((owner) => `        - 'app/${owner}'\n`).join('');
     return source.slice(0, stop) + added + source.slice(stop);
   });

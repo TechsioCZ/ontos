@@ -1,3 +1,5 @@
+import { inventoryOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
+import { inventoryRegistration } from '../../vertical.registration.ts';
 import { Reactivity } from 'effect/reactivity';
 import { PgClient } from '@effect/sql-pg';
 import { generateKeyPairSync, sign } from 'node:crypto';
@@ -9,7 +11,6 @@ import {
   loadDatabaseConnectionPair,
   makeBusinessPermissionRelationshipMutationLive,
   makeContextAccessLive,
-  toBusinessPermissionAccessKey,
   makeContextPermissionRelationshipMutationLive,
 } from '@app/core-runtime';
 import type { OwnerAuthorizationInput } from '@app/core-runtime';
@@ -94,6 +95,7 @@ it.live(
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: composition.composition.revision,
           moduleKeys: ['commerce.inventory'],
+          ownerRegistration: inventoryRegistration,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         }),
         (value) => value.close().pipe(Effect.orDie),
@@ -330,17 +332,19 @@ it.live(
               scope,
               targets: [
                 {
-                  kind: 'business_permission',
-                  permission: 'inventory.migration.manage',
-                  target: {
-                    kind: 'inventory_resource',
-                    resource: {
-                      moduleId: 'commerce.inventory',
-                      resourceId: positionId,
-                      resourceType: 'commerce.inventory.stock-position',
+                  kind: 'owner_permission',
+                  target: inventoryOwnerPermissionTarget({
+                    permission: 'inventory.migration.manage',
+                    target: {
+                      kind: 'inventory_resource',
+                      resource: {
+                        moduleId: 'commerce.inventory',
+                        resourceId: positionId,
+                        resourceType: 'commerce.inventory.stock-position',
+                      },
+                      tenantId,
                     },
-                    tenantId,
-                  },
+                  }),
                 },
               ],
             };
@@ -394,49 +398,55 @@ it.live(
                 targets: [{ kind: 'module', moduleId: 'commerce.inventory' }],
               }),
             ).toBe('unavailable');
-            const [target] = input.targets;
-            assert(
-              target !== undefined &&
-                target.kind === 'business_permission' &&
-                target.target.kind === 'inventory_resource',
-            );
-            expect(
-              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
-                ...input,
-                targets: [{ ...target, permission: 'inventory.stock.issue' }],
-              }),
-            ).toBe('denied');
-            expect(
-              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
-                ...input,
-                targets: [{ ...target, target: { ...target.target, tenantId: yield* nextId } }],
-              }),
-            ).toBe('denied');
-            expect(
-              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
-                ...input,
-                targets: [
-                  {
-                    ...target,
-                    target: {
-                      ...target.target,
-                      resource: { ...target.target.resource, resourceType: 'commerce.inventory.stock-item' },
+            const request = {
+              permission: 'inventory.migration.manage',
+              target: {
+                kind: 'inventory_resource' as const,
+                resource: {
+                  moduleId: 'commerce.inventory',
+                  resourceId: positionId,
+                  resourceType: 'commerce.inventory.stock-position',
+                },
+                tenantId,
+              },
+            };
+            for (const [requested, expected] of [
+              [{ ...request, permission: 'inventory.stock.issue' }, 'denied'],
+              [{ ...request, target: { ...request.target, tenantId: yield* nextId } }, 'denied'],
+              [
+                {
+                  ...request,
+                  target: {
+                    ...request.target,
+                    resource: {
+                      ...request.target.resource,
+                      resourceType: 'commerce.inventory.stock-item',
                     },
                   },
-                ],
-              }),
-            ).toBe('denied');
-            expect(
-              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
-                ...input,
-                targets: [
-                  {
-                    ...target,
-                    target: { ...target.target, resource: { ...target.target.resource, resourceId: yield* nextId } },
+                },
+                'denied',
+              ],
+              [
+                {
+                  ...request,
+                  target: {
+                    ...request.target,
+                    resource: {
+                      ...request.target.resource,
+                      resourceId: yield* nextId,
+                    },
                   },
-                ],
-              }),
-            ).toBe('unavailable');
+                },
+                'unavailable',
+              ],
+            ] as const) {
+              expect(
+                yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
+                  ...input,
+                  targets: [{ kind: 'owner_permission', target: inventoryOwnerPermissionTarget(requested) }],
+                }),
+              ).toBe(expected);
+            }
           }),
         )
         .pipe(Effect.provide(ownerRuntimeLayer));
@@ -456,9 +466,8 @@ it.live(
       const moduleTarget = { moduleId: 'commerce.inventory', permission: 'module.access' as const };
       yield* businessPermissions.mutate({
         operation: 'grant',
-        permission: 'inventory.migration.manage',
         principal,
-        target: businessTarget,
+        target: inventoryOwnerPermissionTarget({ permission: 'inventory.migration.manage', target: businessTarget }),
       });
       yield* contextPermissions.mutate({ operation: 'grant', principal, target: moduleTarget, tenantId });
       yield* Effect.addFinalizer(() =>
@@ -466,9 +475,11 @@ it.live(
           [
             businessPermissions.mutate({
               operation: 'revoke',
-              permission: 'inventory.migration.manage',
               principal,
-              target: businessTarget,
+              target: inventoryOwnerPermissionTarget({
+                permission: 'inventory.migration.manage',
+                target: businessTarget,
+              }),
             }),
             contextPermissions.mutate({ operation: 'revoke', principal, target: moduleTarget, tenantId }),
           ],
@@ -477,10 +488,13 @@ it.live(
       );
 
       const contextAccess = yield* makeContextAccessLive();
-      assert(contextAccess.businessPermissions !== undefined);
-      const businessTargetCheck = { permission: 'inventory.migration.manage' as const, target: businessTarget };
-      expect(yield* contextAccess.businessPermissions({ principal, targets: [businessTargetCheck] })).toEqual([
-        { decision: 'allowed', key: toBusinessPermissionAccessKey(businessTargetCheck) },
+      assert(contextAccess.ownerPermissions !== undefined);
+      const businessTargetCheck = inventoryOwnerPermissionTarget({
+        permission: 'inventory.migration.manage',
+        target: businessTarget,
+      });
+      expect(yield* contextAccess.ownerPermissions({ principal, targets: [{ target: businessTargetCheck }] })).toEqual([
+        { decision: 'allowed', key: businessTargetCheck.key },
       ]);
       const keyPair = yield* Effect.sync(() => generateKeyPairSync('ed25519'));
       const kid = 'inventory-source-retry';
@@ -662,7 +676,13 @@ it.live(
                 owningModuleKey: 'commerce.inventory',
                 scope,
                 targets: [
-                  { kind: 'business_permission', permission: 'inventory.migration.manage', target: businessTarget },
+                  {
+                    kind: 'owner_permission',
+                    target: inventoryOwnerPermissionTarget({
+                      permission: 'inventory.migration.manage',
+                      target: businessTarget,
+                    }),
+                  },
                 ],
               }),
             ).toBe('unavailable');

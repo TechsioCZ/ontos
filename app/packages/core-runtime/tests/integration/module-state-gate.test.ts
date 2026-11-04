@@ -16,6 +16,8 @@ import {
   tenants,
 } from '../../src/db/schema.ts';
 import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
+import { makeInstalledCatalogFixture } from '../support/installed-catalog.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { decideModuleStateAccess, makeModuleStateGate } from '../../src/modules/module-state-gate.ts';
 import { TenantModuleStateReadUnavailableError } from '../../src/modules/tenant-module-state-errors.ts';
@@ -262,6 +264,13 @@ const concurrentGateFixture = Effect.gen(function* concurrentGateFixtureEffect()
         persistTenantModuleStateChange(scoped, {
           actionInvocationId,
           authMethod: 'session',
+          catalog: makeInstalledCatalogFixture(
+            makeModuleContractFixture({
+              appId: 'gate-fixture',
+              moduleId: moduleKey,
+              supportedStates: ['inactive', 'active', 'read_only'],
+            }),
+          ),
           expectedState: 'active',
           moduleKey,
           newState: 'read_only',

@@ -1,3 +1,4 @@
+import { taxRegistration } from '../../vertical.registration.ts';
 import {
   ActionRuntime,
   ActiveApplicationCompositionService,
@@ -7,12 +8,11 @@ import {
   OperationalScopeResolver,
   TrustedPrincipalContextSchema,
   makeActionRuntimeLive,
-  toBusinessPermissionAccessKey,
-  toBusinessPermissionAccessObjectId,
 } from '@app/core-runtime';
 import type { ContextAccessService } from '@app/core-runtime';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Context, DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
@@ -25,8 +25,8 @@ import { makeTestDatabase } from '../../../../packages/core-runtime/tests/suppor
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import { openModuleStateGate } from '../../../../packages/core-runtime/tests/support/open-module-state-gate.ts';
 
-import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { createTaxRuleAction } from '../../src/actions/create-tax-rule.action.ts';
+import { publishedTaxComposition } from '../support/published-tax-composition.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
@@ -51,29 +51,25 @@ const spiceDbContextAccess = (
   grantedPermission = 'tax.rule.manage',
 ): ContextAccessService => {
   const granted = new Set(
-    grantedSellers.map((legalEntityId) =>
-      toBusinessPermissionAccessObjectId(grantedPermission, {
-        kind: 'tax_selling_legal_entity',
-        legalEntityId,
-        tenantId,
-      }),
+    grantedSellers.map(
+      (legalEntityId) =>
+        `ctx_${Buffer.from(JSON.stringify([grantedPermission, tenantId, legalEntityId, 'tax_selling_legal_entity']), 'utf-8').toString('base64url')}`,
     ),
   );
   return {
-    businessPermissions: ({ principal, targets }) =>
-      Effect.succeed(
-        targets.map((target) => ({
-          decision:
-            principal.principalId === principalId &&
-            granted.has(toBusinessPermissionAccessObjectId(target.permission, target.target))
-              ? ('allowed' as const)
-              : ('denied' as const),
-          key: toBusinessPermissionAccessKey(target),
-        })),
-      ),
     legalEntities: ({ legalEntityIds }) =>
       Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
     modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+    ownerPermissions: ({ principal, targets }) =>
+      Effect.succeed(
+        targets.map(({ target }) => ({
+          decision:
+            principal.principalId === principalId && granted.has(target.objectId)
+              ? ('allowed' as const)
+              : ('denied' as const),
+          key: target.key,
+        })),
+      ),
     resources: ({ resources }) =>
       Effect.succeed(resources.map((resource) => ({ decision: 'denied' as const, key: resource.resourceId }))),
     tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'denied' as const, key }))),
@@ -91,10 +87,7 @@ const makeProductionComposition = Effect.fn('TaxProductionRuntimeTest.make')(fun
   grantedSellers: readonly string[],
   grantedPermission = 'tax.rule.manage',
 ) {
-  const snapshot = yield* makeApplicationCompositionSnapshotFixture(
-    [ultramodernDeliveryUnit.appId],
-    ultramodernDeliveryUnit.buildMarker,
-  );
+  const { deployment, snapshot } = yield* publishedTaxComposition;
   const ownerStatements: string[] = [];
   const permissionDenials: string[] = [];
   let installed = { legalEntityId: '', tenantId: '' };
@@ -157,7 +150,7 @@ const makeProductionComposition = Effect.fn('TaxProductionRuntimeTest.make')(fun
     resolveInvocation: () => Effect.sync(() => invocation),
     transitionInvocationToRunning: () => Effect.sync(() => invocation),
   };
-  const actionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+  const actionRuntimeLive = makeActionRuntimeLive(deployment, taxRegistration).pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
@@ -208,23 +201,25 @@ const createTaxRule = (
     })
     .pipe(Effect.flip);
 
-it.effect(
-  'runs a TAX Action through the production runtime composition only with a seller-bound permission',
-  Effect.fn(function* taxActionThroughProductionComposition() {
-    const permitted = yield* makeProductionComposition([sellerA]);
-    const permittedFailure = yield* createTaxRule(permitted, sellerA);
-    // Authorization passed and the TAX handler reached its owner persistence; the scripted
-    // database then refuses owner SQL, which surfaces as a TAX domain failure, not an authz one.
-    expect(permitted.ownerStatements.length).toBeGreaterThan(0);
-    expect(permitted.permissionDenials).toEqual([]);
-    expect(Predicate.isTagged(permittedFailure, 'TaxGovernancePersistenceUnavailable')).toBe(true);
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))('TAX production runtime fixture', (suite) => {
+  suite.effect('runs a TAX Action through the production runtime composition only with a seller-bound permission', () =>
+    Effect.gen(function* taxActionThroughProductionComposition() {
+      yield* TestClock.setTime(Date.parse('2027-01-02T00:00:00.000Z'));
+      const permitted = yield* makeProductionComposition([sellerA]);
+      const permittedFailure = yield* createTaxRule(permitted, sellerA);
+      // Authorization passed and the TAX handler reached its owner persistence; the scripted
+      // database then refuses owner SQL, which surfaces as a TAX domain failure, not an authz one.
+      expect(permitted.ownerStatements.length).toBeGreaterThan(0);
+      expect(permitted.permissionDenials).toEqual([]);
+      expect(Predicate.isTagged(permittedFailure, 'TaxGovernancePersistenceUnavailable')).toBe(true);
 
-    const ungranted = yield* makeProductionComposition([]);
-    expect(Predicate.isTagged(yield* createTaxRule(ungranted, sellerA), 'ActionPermissionDenied')).toBe(true);
-    expect(ungranted.ownerStatements).toEqual([]);
+      const ungranted = yield* makeProductionComposition([]);
+      expect(Predicate.isTagged(yield* createTaxRule(ungranted, sellerA), 'ActionPermissionDenied')).toBe(true);
+      expect(ungranted.ownerStatements).toEqual([]);
 
-    const otherSeller = yield* makeProductionComposition([sellerA]);
-    expect(Predicate.isTagged(yield* createTaxRule(otherSeller, sellerB), 'ActionPermissionDenied')).toBe(true);
-    expect(otherSeller.ownerStatements).toEqual([]);
-  }),
-);
+      const otherSeller = yield* makeProductionComposition([sellerA]);
+      expect(Predicate.isTagged(yield* createTaxRule(otherSeller, sellerB), 'ActionPermissionDenied')).toBe(true);
+      expect(otherSeller.ownerStatements).toEqual([]);
+    }),
+  );
+});

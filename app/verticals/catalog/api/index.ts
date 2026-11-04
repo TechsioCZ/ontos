@@ -1,10 +1,11 @@
+import { catalogRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
   makeActionRuntimeLive,
 } from '@app/core-runtime';
@@ -316,10 +317,21 @@ const nativeCompositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(
 const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
   Layer.provide(nativeCompositionSourceLive),
 );
+const catalogReadRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
+  Layer.provide(catalogExternalCorrelationResolverLive),
+  Layer.provide(
+    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
+  ),
+  // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
+  Layer.provideMerge(nodeCryptoLayer),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(activeApplicationCompositionLive),
+);
+
 const catalogCartPopulationLive = cartOpenSelectionPopulationLive.pipe(
   Layer.provide(Layer.mergeAll(activeApplicationCompositionLive, nodeCryptoLayer)),
 );
-const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
   Layer.provide(catalogSourceActionPersistenceLive),
   Layer.provide(
     Layer.mergeAll(
@@ -332,15 +344,6 @@ const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe
       moduleEntrypointGatewayLive,
       operationalScopeResolverLive,
     ),
-  ),
-  // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
-  Layer.provideMerge(nodeCryptoLayer),
-  Layer.provide(DatabaseConfigLive),
-);
-const catalogReadRuntime = ReadRuntimeLive.pipe(
-  Layer.provide(catalogExternalCorrelationResolverLive),
-  Layer.provide(
-    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
   // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
   Layer.provideMerge(nodeCryptoLayer),

@@ -1,7 +1,8 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import type { OperationalScope } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
-import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
 import { mapTriggerPurchaseApprovalActionProblem } from '../../api/trigger-purchase-approval-action-problems.ts';
 import { TriggerPurchaseApprovalPayloadSchema } from '../../shared/actions/trigger-purchase-approval.ts';
 import { PurchaseApprovalSubmissionResultSchema } from '../../shared/domain/purchase-limit-approval-trigger.ts';
@@ -71,18 +72,23 @@ it('declares the governed idempotent Purchase submission contract', () => {
 });
 
 it('requires exact counterparty.purchase.submit authority bound to trusted Storefront scope', () => {
-  const resolvePermission = getActionBusinessPermissionTargetResolver(triggerPurchaseApprovalAction);
-  expect(resolvePermission?.(payload, scope)).toEqual({
-    permission: 'counterparty.purchase.submit',
-    target: {
-      counterpartyId: payload.counterpartyRef.resourceId,
-      kind: 'counterparty_storefront',
-      legalEntityId,
-      storefrontId,
-      tenantId,
-    },
-    trustedStorefrontId: storefrontId,
-  });
+  const resolvePermission = getActionOwnerPermissionTargetResolver(triggerPurchaseApprovalAction);
+  expect(resolvePermission?.(payload, scope)).toEqual([
+    customerOwnerPermissionTarget(
+      {
+        permission: 'counterparty.purchase.submit',
+        target: {
+          counterpartyId: payload.counterpartyRef.resourceId,
+          kind: 'counterparty_storefront',
+          legalEntityId,
+          storefrontId,
+          tenantId,
+        },
+        trustedStorefrontId: storefrontId,
+      },
+      'action',
+    ),
+  ]);
 
   const untrustedScope: OperationalScope = {
     authMethod: 'system',

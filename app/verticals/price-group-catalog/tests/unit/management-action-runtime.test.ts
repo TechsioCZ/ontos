@@ -23,7 +23,6 @@ import { trustVerifiedGatewayPrincipalContext } from '../../../../packages/core-
 import { buildApplicationCompositionCatalog } from '../../../../packages/core-runtime/src/modules/application-composition-catalog.ts';
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/permissions/owner-authorization-overlay.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { toBusinessPermissionAccessKey } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { makeModuleEntrypointGateway } from '../../../../packages/core-runtime/src/modules/module-entrypoint-gateway.ts';
 import type { ModuleEntrypointDescriptor } from '../../../../packages/core-runtime/src/modules/module-entrypoint.ts';
 import {
@@ -37,6 +36,7 @@ import {
   makeOutboxWorkerComposition,
 } from '../../../../packages/core-runtime/tests/support/outbox-worker-composition.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { priceGroupCatalogRegistration } from '../../vertical.registration.ts';
 import type { CreatePriceGroupDefinitionRevisionPayload } from '../../shared/actions/create-price-group-definition-revision.ts';
 import type { CreatePriceGroupPayload } from '../../shared/actions/create-price-group.ts';
 import type { RetirePriceGroupPayload } from '../../shared/actions/retire-price-group.ts';
@@ -360,18 +360,18 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   };
 
   const contextAccess: ContextAccessService = {
-    businessPermissions: (input) => {
+    legalEntities: ({ legalEntityIds }: { readonly legalEntityIds: readonly string[] }) =>
+      Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
+    modules: () => Effect.succeed([]),
+    ownerPermissions: (input) => {
       businessChecks.push(input);
       return Effect.succeed(
         input.targets.map((target) => ({
           decision: options.businessDecision ?? ('allowed' as const),
-          key: toBusinessPermissionAccessKey(target),
+          key: target.target.key,
         })),
       );
     },
-    legalEntities: ({ legalEntityIds }: { readonly legalEntityIds: readonly string[] }) =>
-      Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-    modules: () => Effect.succeed([]),
     resources: () => Effect.succeed([]),
     tenants: () => Effect.succeed([]),
   };
@@ -456,6 +456,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
       moduleStateGate,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+      ownerRegistration: priceGroupCatalogRegistration,
       resolveCompositionRevision: makeActionCompositionRevisionResolver(
         { load: Effect.succeed(approvedComposition) },
         ultramodernApiMarker,

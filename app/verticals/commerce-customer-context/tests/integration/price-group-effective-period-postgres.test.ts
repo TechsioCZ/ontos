@@ -1,3 +1,5 @@
+import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
+import { priceGroupOwnerPermissionTarget } from '@app/price-group-catalog/testing/server-owner-native';
 import { createRequire } from 'node:module';
 import {
   classifyPriceGroupReadDiagnostic,
@@ -85,6 +87,7 @@ import { executeRemoveCustomerPriceGroupWithAuthorization } from '../../src/api/
 import { executeRemoveCounterpartyPriceGroupWithAuthorization } from '../../src/api/remove-counterparty-price-group-action-client.ts';
 import { executeCustomerPriceGroupResolutionWithAuthorization } from '../../src/api/customer-price-group-resolution-client.ts';
 import { executeCustomerPriceGroupAssignmentReadWithAuthorization } from '../../src/api/customer-price-group-assignment-read-client.ts';
+import { CustomerPriceGroupAssignmentReadResponseSchema } from '../../shared/apis/customer-price-group-assignment-read.ts';
 import {
   AssignCustomerPriceGroupActionConflictProblemSchema,
   AssignCustomerPriceGroupActionIneligibleProblemSchema,
@@ -110,10 +113,17 @@ import type {
 } from '../../shared/domain/price-group-contracts.ts';
 import {
   CustomerPriceGroupAssignedAuditEvidenceSchema,
+  CustomerPriceGroupAssignmentSchema,
   CustomerPriceGroupResolutionSchema,
 } from '../../shared/domain/price-group-contracts.ts';
 
 const ChildDiagnosticStageSchema = Schema.Literals([
+  'BOOTSTRAP_OWNED_DATABASE',
+  'BOOTSTRAP_CONFIGURATION',
+  'BOOTSTRAP_MIGRATION',
+  'BOOTSTRAP_RUNTIME',
+  'BOOTSTRAP_OTHER',
+
   'C_SOCKET_CONNECTED',
   'C_BOOTSTRAP_VALID',
   'C_CCC_MIGRATION_BEGIN',
@@ -197,7 +207,21 @@ it.effect('forwards only exact fixed Price Group child diagnostic stages', () =>
     expect(Option.getOrUndefined(decodeChildDiagnosticStage('C_CATALOG_BOOTSTRAP_SEND_DONE'))).toBe(
       'C_CATALOG_BOOTSTRAP_SEND_DONE',
     );
+    for (const stage of [
+      'BOOTSTRAP_OWNED_DATABASE',
+      'BOOTSTRAP_CONFIGURATION',
+      'BOOTSTRAP_MIGRATION',
+      'BOOTSTRAP_RUNTIME',
+      'BOOTSTRAP_OTHER',
+    ]) {
+      expect(Option.getOrUndefined(decodeChildDiagnosticStage(stage))).toBe(stage);
+    }
     for (const line of [
+      'BOOTSTRAP_RUNTIME extra',
+      ' BOOTSTRAP_RUNTIME',
+      'BOOTSTRAP_RUNTIME\r',
+      'BOOTSTRAP_UNREVIEWED',
+      '{"stage":"BOOTSTRAP_RUNTIME"}',
       'C_PARTY_HTTP_READY extra',
       'C_CATALOG_SPAWNED:at_ms=123',
       ' C_PARTY_HTTP_READY',
@@ -1041,10 +1065,9 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
   const business = Context.get(businessContext, BusinessPermissionRelationshipMutation);
   const principal = { principalId: native.actor.principalId, tenantId: native.actor.tenantId };
   const grant = Effect.fn('TemporalNative.grantExactBusinessPermission')(function* grantExactBusinessPermission(
-    permission: Parameters<typeof business.mutate>[0]['permission'],
     target: Parameters<typeof business.mutate>[0]['target'],
   ) {
-    const input = { permission, principal, target };
+    const input = { principal, target };
     yield* business.mutate({ ...input, operation: 'grant' });
     yield* Effect.addFinalizer(() => Effect.orDie(business.mutate({ ...input, operation: 'revoke' })));
   });
@@ -1066,11 +1089,19 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
   expect(yield* Schema.decodeUnknownEffect(TemporalNativeFailure)(businessDenied)).toMatchObject({
     stage: 'CREATE_FORBIDDEN',
   });
-  yield* grant('pricing.price_group.create', {
-    kind: 'pricing_catalog',
-    pricingCatalogId: principal.tenantId,
-    tenantId: principal.tenantId,
-  });
+  yield* grant(
+    priceGroupOwnerPermissionTarget(
+      {
+        permission: 'pricing.price_group.create',
+        target: {
+          kind: 'pricing_catalog',
+          pricingCatalogId: principal.tenantId,
+          tenantId: principal.tenantId,
+        },
+      },
+      'read',
+    ),
+  );
   const createGroup = Effect.fn('TemporalNative.createRealCatalogGroup')(function* createRealCatalogGroup(
     type: 'CREATE_G1' | 'CREATE_G2' | 'CREATE_INCOMPATIBLE',
   ) {
@@ -1090,7 +1121,7 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
       'pricing.price_group.revision.create',
       'pricing.price_group.retire',
     ] as const) {
-      yield* grant(permission, target);
+      yield* grant(priceGroupOwnerPermissionTarget({ permission, target }, 'read'));
     }
     return result;
   });
@@ -1137,12 +1168,17 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
   );
   yield* resource(retail.profileRef);
   yield* resource(counterpartyProfile.profileRef);
-  yield* grant('retail.profile.read', {
-    kind: 'retail_profile',
-    legalEntityId: native.fixture.legalEntityId,
-    profileId: retail.profileRef.resourceId,
-    tenantId: principal.tenantId,
-  });
+  yield* grant(
+    customerOwnerPermissionTarget({
+      permission: 'retail.profile.read',
+      target: {
+        kind: 'retail_profile',
+        legalEntityId: native.fixture.legalEntityId,
+        profileId: retail.profileRef.resourceId,
+        tenantId: principal.tenantId,
+      },
+    }),
+  );
   const bindingDenied = yield* Effect.flip(
     executeCustomerPriceGroupResolutionWithAuthorization(
       {
@@ -1170,8 +1206,13 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
     legalEntityId: native.fixture.legalEntityId,
     tenantId: principal.tenantId,
   };
-  yield* grant('counterparty.profile.read', counterpartyTarget);
-  yield* grant('counterparty.settings.price_group.manage', counterpartyTarget);
+  yield* grant(customerOwnerPermissionTarget({ permission: 'counterparty.profile.read', target: counterpartyTarget }));
+  yield* grant(
+    customerOwnerPermissionTarget({
+      permission: 'counterparty.settings.price_group.manage',
+      target: counterpartyTarget,
+    }),
+  );
   // Real Core business/executor permission alone cannot replace the owner-local grant.
   const ownerDenied = yield* Effect.flip(
     executeAssignCounterpartyPriceGroupWithAuthorization(
@@ -1219,9 +1260,11 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
     }
     yield* business.mutate({
       operation: 'grant',
-      permission,
       principal,
-      target: { ...counterpartyTarget, counterpartyId: counterpartyRef.resourceId },
+      target: customerOwnerPermissionTarget({
+        permission,
+        target: { ...counterpartyTarget, counterpartyId: counterpartyRef.resourceId },
+      }),
     });
     const [active] = yield* native.fixture
       .prepareOwner(
@@ -1980,8 +2023,115 @@ const openAndFiniteScenario = Effect.fn('TemporalNative.openAndFinite')(function
     expect(evidence.requestedEffectiveFrom).toBe(start);
     expect(evidence).not.toHaveProperty('requestedEffectiveTo');
   }
+  // Renew deployment observation only after both finite business intervals have really ended.
+  // Keep the actual accepted assignment and public history bytes, without inventing an Order runtime.
+  const assignmentCodec = Schema.fromJsonString(CustomerPriceGroupAssignmentSchema);
+  const historyCodec = Schema.fromJsonString(CustomerPriceGroupAssignmentReadResponseSchema);
+  const retained = [];
+  for (const target of finite) {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    expect(DateTime.toEpochMillis(DateTime.makeUnsafe(now))).toBeGreaterThan(
+      DateTime.toEpochMillis(DateTime.makeUnsafe(finiteEnd)),
+    );
+    expect(
+      Schema.is(CustomerPriceGroupResolutionSchema.members[1])(
+        (yield* publicResolution(native, target.profile, now, target.authorizationSubject)).resolution,
+      ),
+    ).toBe(true);
+    const history = yield* executeCustomerPriceGroupAssignmentReadWithAuthorization(
+      { authorizationSubject: target.authorizationSubject, profile: target.profile },
+      yield* native.credential(),
+      yield* nextId,
+      { baseUrl: native.receiver.baseUrl, compositionRevision: native.snapshot.composition.revision },
+    );
+    const acceptedBytes = yield* Schema.encodeEffect(assignmentCodec)(target.assignment.assignment);
+    const historical = history.assignments.find(
+      (entry) => entry.assignmentRef.resourceId === target.assignment.assignment.assignmentRef.resourceId,
+    );
+    yield* requireCondition(historical !== undefined, 'finite-assignment-history-missing');
+    if (historical !== undefined) {
+      expect(yield* Schema.encodeEffect(assignmentCodec)(historical)).toBe(acceptedBytes);
+    }
+    retained.push({ acceptedBytes, historyBytes: yield* Schema.encodeEffect(historyCodec)(history), target });
+  }
+  const finiteAssignmentIds = new Set(finite.map((target) => target.assignment.assignment.assignmentRef.resourceId));
+  const originalAudits = (yield* native.fixture.evidence(native.coreEvidenceExecutor)).audits.filter(
+    (audit) =>
+      audit.outcome === 'succeeded' &&
+      Schema.is(CustomerPriceGroupAssignedAuditEvidenceSchema)(audit.evidenceJson) &&
+      finiteAssignmentIds.has(CustomerPriceGroupAssignedAuditEvidenceSchema.make(audit.evidenceJson).assignmentId),
+  );
+  expect(originalAudits).toHaveLength(finiteAssignmentIds.size);
+  const auditCodec = Schema.fromJsonString(CustomerPriceGroupAssignedAuditEvidenceSchema);
+  const originalAuditBytes: string[] = [];
+  for (const audit of originalAudits) {
+    originalAuditBytes.push(
+      yield* Schema.decodeUnknownEffect(CustomerPriceGroupAssignedAuditEvidenceSchema)(audit.evidenceJson).pipe(
+        Effect.flatMap(Schema.encodeEffect(auditCodec)),
+      ),
+    );
+  }
+  const observedAt = yield* DateTime.now;
+  const observationDuration =
+    DateTime.toEpochMillis(native.snapshot.validUntil) - DateTime.toEpochMillis(native.snapshot.observedAt);
+  const refreshed = yield* native.isolated.composition.renewObservation({
+    composition: native.snapshot.composition,
+    observedAt,
+    validUntil: DateTime.addDuration(observedAt, Duration.millis(observationDuration)),
+  });
+  expect(refreshed.composition).toEqual(native.snapshot.composition);
+  expect(refreshed.composition.revision).toBe(native.snapshot.composition.revision);
+  expect(DateTime.toEpochMillis(refreshed.observedAt)).toBeGreaterThan(
+    DateTime.toEpochMillis(DateTime.makeUnsafe(finiteEnd)),
+  );
+  expect(DateTime.toEpochMillis(refreshed.validUntil)).toBeGreaterThan(
+    DateTime.toEpochMillis(native.snapshot.validUntil),
+  );
+  expect(DateTime.toEpochMillis(refreshed.validUntil) - DateTime.toEpochMillis(refreshed.observedAt)).toBe(
+    observationDuration,
+  );
   expect((yield* native.receiver.invoke('stop')).type).toBe('STOPPED');
   expect(yield* native.receiver.child.exitCode).toBe(0);
+  const restart = yield* startReceiver(native.commerce, { ...native.bootstrap, composition: refreshed });
+  expect(restart.partyRuntimeBootstrap).toBe('existing');
+  const refreshedNative = { ...native, receiver: restart, snapshot: refreshed };
+  for (const { acceptedBytes, historyBytes, target } of retained) {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    expect(
+      Schema.is(CustomerPriceGroupResolutionSchema.members[1])(
+        (yield* publicResolution(refreshedNative, target.profile, now, target.authorizationSubject)).resolution,
+      ),
+    ).toBe(true);
+    const history = yield* executeCustomerPriceGroupAssignmentReadWithAuthorization(
+      { authorizationSubject: target.authorizationSubject, profile: target.profile },
+      yield* native.credential(),
+      yield* nextId,
+      { baseUrl: restart.baseUrl, compositionRevision: refreshed.composition.revision },
+    );
+    expect(yield* Schema.encodeEffect(historyCodec)(history)).toBe(historyBytes);
+    const historical = history.assignments.find(
+      (entry) => entry.assignmentRef.resourceId === target.assignment.assignment.assignmentRef.resourceId,
+    );
+    yield* requireCondition(historical !== undefined, 'refreshed-finite-assignment-history-missing');
+    if (historical !== undefined) {
+      expect(yield* Schema.encodeEffect(assignmentCodec)(historical)).toBe(acceptedBytes);
+    }
+  }
+  const retainedAudits = (yield* native.fixture.evidence(native.coreEvidenceExecutor)).audits.filter((audit) =>
+    originalAudits.some((original) => original.auditEventId === audit.auditEventId),
+  );
+  expect(retainedAudits).toEqual(originalAudits);
+  const retainedAuditBytes: string[] = [];
+  for (const audit of retainedAudits) {
+    retainedAuditBytes.push(
+      yield* Schema.decodeUnknownEffect(CustomerPriceGroupAssignedAuditEvidenceSchema)(audit.evidenceJson).pipe(
+        Effect.flatMap(Schema.encodeEffect(auditCodec)),
+      ),
+    );
+  }
+  expect(retainedAuditBytes).toEqual(originalAuditBytes);
+  expect((yield* restart.invoke('stop')).type).toBe('STOPPED');
+  expect(yield* restart.child.exitCode).toBe(0);
   return yield* Effect.void;
 });
 const cancellationScenario = Effect.fn('TemporalNative.cancellations')(function* cancellations() {
@@ -2141,12 +2291,20 @@ const catalogScopeScenario = Effect.fn('TemporalNative.catalogScope')(function* 
     yield* Schema.decodeUnknownEffect(AssignCustomerPriceGroupActionIneligibleProblemSchema)(incompatibleFailure),
   ).toMatchObject({ code: 'customer_price_group_catalog_rejected', status: 422 });
   const missingGroupRef = { ...subjects.first.identity.priceGroupRef, resourceId: yield* nextId };
-  yield* subjects.grant('pricing.price_group.read', {
-    kind: 'price_group',
-    priceGroupId: missingGroupRef.resourceId,
-    pricingCatalogId: native.actor.tenantId,
-    tenantId: native.actor.tenantId,
-  });
+  yield* subjects.grant(
+    priceGroupOwnerPermissionTarget(
+      {
+        permission: 'pricing.price_group.read',
+        target: {
+          kind: 'price_group',
+          priceGroupId: missingGroupRef.resourceId,
+          pricingCatalogId: native.actor.tenantId,
+          tenantId: native.actor.tenantId,
+        },
+      },
+      'read',
+    ),
+  );
   const beforeMissing = yield* nativeOwnerInventory(native);
   const missingGroup = yield* Effect.flip(assignRetail(missingGroupRef, futureAt));
   expect(
@@ -2190,12 +2348,17 @@ const catalogScopeScenario = Effect.fn('TemporalNative.catalogScope')(function* 
   expect(Schema.is(CustomerPriceGroupResolutionForbiddenProblemSchema)(deniedRead)).toBe(true);
   const absentProfile = { ...retail, resourceId: yield* nextId };
   yield* subjects.resource(absentProfile);
-  yield* subjects.grant('retail.profile.read', {
-    kind: 'retail_profile',
-    legalEntityId: native.fixture.legalEntityId,
-    profileId: absentProfile.resourceId,
-    tenantId: native.actor.tenantId,
-  });
+  yield* subjects.grant(
+    customerOwnerPermissionTarget({
+      permission: 'retail.profile.read',
+      target: {
+        kind: 'retail_profile',
+        legalEntityId: native.fixture.legalEntityId,
+        profileId: absentProfile.resourceId,
+        tenantId: native.actor.tenantId,
+      },
+    }),
+  );
   const absent = yield* Effect.flip(publicResolution(native, absentProfile, start, retailSubject));
   // The existing owner authorization overlay cannot establish authority over an absent profile;
   // it maps that lookup failure to unavailable before the generated Read handler is entered.
@@ -2300,12 +2463,17 @@ const catalogScopeScenario = Effect.fn('TemporalNative.catalogScope')(function* 
   );
   expect(siblingProfile.profileRef.resourceId).not.toBe(subjects.counterpartyProfile.profileRef.resourceId);
   yield* subjects.resource(siblingProfile.profileRef);
-  yield* subjects.grant('counterparty.settings.price_group.manage', {
-    counterpartyId: siblingCounterparty.counterpartyRef.resourceId,
-    kind: 'counterparty',
-    legalEntityId: native.fixture.legalEntityId,
-    tenantId: native.actor.tenantId,
-  });
+  yield* subjects.grant(
+    customerOwnerPermissionTarget({
+      permission: 'counterparty.settings.price_group.manage',
+      target: {
+        counterpartyId: siblingCounterparty.counterpartyRef.resourceId,
+        kind: 'counterparty',
+        legalEntityId: native.fixture.legalEntityId,
+        tenantId: native.actor.tenantId,
+      },
+    }),
+  );
   yield* subjects.grantCounterpartyOwner(
     'counterparty.settings.price_group.manage',
     siblingCounterparty.counterpartyRef,
@@ -2397,8 +2565,12 @@ const executorDeniedScenario = Effect.fn('TemporalNative.executorDenied')(functi
       tenantId: native.actor.tenantId,
     },
   };
-  yield* business.mutate({ ...grant, operation: 'grant' });
-  yield* Effect.addFinalizer(() => Effect.orDie(business.mutate({ ...grant, operation: 'revoke' })));
+  yield* business.mutate({ ...grant, operation: 'grant', target: priceGroupOwnerPermissionTarget(grant, 'read') });
+  yield* Effect.addFinalizer(() =>
+    Effect.orDie(
+      business.mutate({ ...grant, operation: 'revoke', target: priceGroupOwnerPermissionTarget(grant, 'read') }),
+    ),
+  );
   const denied = yield* Effect.flip(native.receiver.invoke('CREATE_G1'));
   expect(yield* Schema.decodeUnknownEffect(TemporalNativeFailure)(denied)).toMatchObject({
     stage: 'CREATE_FORBIDDEN',
@@ -2407,9 +2579,90 @@ const executorDeniedScenario = Effect.fn('TemporalNative.executorDenied')(functi
   expect(stopped.type).toBe('STOPPED');
 });
 
+const bootstrapByteBudgetScenario = Effect.fn('TemporalNative.bootstrapByteBudget')(
+  function* bootstrapByteBudgetScenario() {
+    const { native } = yield* TemporalCaseInfrastructure;
+    const { catalog } = yield* PreparedTemporalArtifacts;
+    yield* guardPriceGroupOwnedDatabase(native.owned.certificate);
+    yield* guardPriceGroupPreparedArtifact(catalog.prepared, 'price-group-catalog');
+    const encodedBootstrap = yield* Schema.encodeEffect(PriceGroupTemporalBootstrapSchema)(native.bootstrap);
+    const { legalEntityId: _selectedLegalEntity, ...tenantActor } = encodedBootstrap.actor;
+    const bootstrapLine = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))({
+      actor: tenantActor,
+      composition: encodedBootstrap.composition,
+      database: projectPriceGroupCatalogDatabaseCertificate(encodedBootstrap.database),
+      issuer: encodedBootstrap.issuer,
+      jwks: encodedBootstrap.jwks,
+      spiceDb: encodedBootstrap.spiceDb,
+      type: 'bootstrap',
+      version: 'ontos.price-group-current.fixture.v1',
+    });
+    const bootstrapByteLength = new TextEncoder().encode(`${bootstrapLine}\n`).byteLength;
+    yield* Effect.logInfo('Actual owned PriceGroup bootstrap byte count', { byteLength: bootstrapByteLength });
+    expect(bootstrapByteLength).toBeGreaterThan(131_072);
+    expect(bootstrapByteLength).toBeLessThan(262_144);
+    const readySchema = Schema.Struct({
+      buildMarker: Schema.Literal(catalog.marker.buildMarker),
+      compositionRevision: Schema.Literal(native.snapshot.composition.revision),
+      port: Schema.Int.check(Schema.isGreaterThan(0)),
+      type: Schema.Literal('BOOTED'),
+      version: Schema.Literal('ontos.price-group-current.fixture.v1'),
+    });
+    for (const wireByteLength of [262_144, 262_145]) {
+      yield* Effect.scoped(
+        Effect.gen(function* checkActualReceiverBoundary() {
+          const channel = yield* openPriceGroupTemporalChannel(readySchema);
+          const child = yield* ChildProcess.make(process.execPath, [catalog.artifact], {
+            cwd: catalog.directory,
+            env: {
+              ...priceGroupTemporalClosedEnvironment(native.bootstrap),
+              [priceGroupTemporalSocketEnvironment]: channel.socketPath,
+            },
+            extendEnv: true,
+            stderr: 'pipe',
+            stdin: 'ignore',
+            stdout: 'pipe',
+          });
+          yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
+          yield* Stream.runDrain(child.stdout).pipe(Effect.forkScoped);
+          // JSON whitespace preserves every actual authority, owner contract and credential byte.
+          // channel.send appends the one newline included in the receiver's cumulative byte budget.
+          const paddedLine = `${' '.repeat(wireByteLength - bootstrapByteLength)}${bootstrapLine}`;
+          expect(new TextEncoder().encode(`${paddedLine}\n`).byteLength).toBe(wireByteLength);
+          if (wireByteLength === 262_144) {
+            yield* channel.send(paddedLine);
+            const ready = yield* channel.next;
+            expect(ready.compositionRevision).toBe(native.snapshot.composition.revision);
+            expect(ready.buildMarker).toBe(catalog.marker.buildMarker);
+          } else {
+            yield* channel.send(paddedLine).pipe(Effect.ignore);
+            const result = yield* channel.next.pipe(Effect.exit);
+            expect(Exit.isFailure(result)).toBe(true);
+            expect(Number(yield* child.exitCode)).not.toBe(0);
+          }
+        }),
+      );
+    }
+  },
+);
+
 const temporalArtifactMemoMap = Layer.makeMemoMapUnsafe();
 it.layer(temporalArtifactsLayer, { excludeTestServices: true, memoMap: temporalArtifactMemoMap, timeout: 120_000 })(
   () => {
+    it.layer(temporalCaseLayer('current').pipe(Layer.provideMerge(temporalArtifactsLayer)), {
+      excludeTestServices: true,
+      memoMap: temporalArtifactMemoMap,
+      timeout: 120_000,
+    })((caseIt) => {
+      // The native runner's AbortSignal interrupts the Effect Scope and cleans up both real children.
+      // This is one 20-second case budget, distinct from the owned fixture's setup-hook budget.
+      caseIt.effect(
+        'accepts the exact actual Price Group bootstrap byte budget and rejects the next byte',
+        () => Effect.scoped(bootstrapByteBudgetScenario()),
+        20_000,
+      );
+    });
+
     it.layer(temporalCaseLayer('before').pipe(Layer.provideMerge(temporalArtifactsLayer)), {
       excludeTestServices: true,
       memoMap: temporalArtifactMemoMap,
@@ -2453,7 +2706,7 @@ it.layer(temporalArtifactsLayer, { excludeTestServices: true, memoMap: temporalA
       timeout: 120_000,
     })((caseIt) => {
       caseIt.effect(
-        'preserves open and finite Retail and Counterparty schedules through same-start replacement and exclusive expiry',
+        'preserves open and finite Retail and Counterparty schedules through same-start replacement, exclusive expiry and same-revision observation renewal',
         () => Effect.scoped(openAndFiniteScenario()),
         120_000,
       );

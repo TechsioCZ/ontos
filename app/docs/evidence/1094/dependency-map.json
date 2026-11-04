@@ -4627,5 +4627,365 @@
     },
     "requiredNextExecutionStep": "Synchronize the implementation branch/runtime to current main before business code; preserve new recovery/crypto/compiler fixes and rerun affected gates. Current executed tests apply to the retained census branch, not to the newer dependency cohort.",
     "issuerPrerequisite": "Still missing; Shell issuer, source provenance and affected adapter code are byte-unchanged at current main."
+  },
+  "implementationDeltas": [
+    {
+      "issue": 1284,
+      "source": "b6203518e8c93eb50e442deb3a881b928fc84546",
+      "deliveryPr": "https://github.com/TechsioCZ/ontos/pull/1345",
+      "state": "Implemented and independently reviewed; draft PR, not merged.",
+      "change": "Approved Catalog/CCC server adapters preserve the original actor through the existing bounded Shell relay. Workload authentication remains separate from receiving permissions.",
+      "evidenceLevel": "Executed native, registered-owner, public-provider and database evidence; qualifications in server-client-relay.md.",
+      "limits": "Invoice/Delivery mounted Reads retain their legitimate 403 result. No production enrollment or successful final postal business Read is claimed."
+    },
+    {
+      "issue": 1285,
+      "source": "6b32c593f702a98746279662b31d1b81911dcc93",
+      "currentMain": "72149af1c4308a0b2d748f07a23e0180405f9415",
+      "deliveryPr": "https://github.com/TechsioCZ/ontos/pull/1348",
+      "state": "Implemented and independently reviewed; draft PR, not merged.",
+      "change": "Eight native Market administration Actions use default Core assembly. Association uses public Storefront evidence. Retirement uses actual CCC assessment, reserve and recovery with durable owner admission and original-effect recovery. Four approved Market relay transports preserve P.",
+      "evidenceLevel": "Real canonical native Market, SQL and public receiving under documented Shell/Storefront/CCC fixture deployments; actual downstream Pricing regression and compiled local build.",
+      "history": "Historical UNIMPLEMENTED absence identities are preserved. Future Cart/Order providers remain absent/deferred. Installed CCC suspension blocks retirement under the same Composition.",
+      "limits": "Source, fixture and local build evidence do not establish production activation."
+    },
+    {
+      "issue": 1286,
+      "sourceIncludedIn": "b6203518e8c93eb50e442deb3a881b928fc84546",
+      "state": "Bounded owner-port acceptance implemented and independently reviewed.",
+      "change": "The actual Inventory consumer Action version1 requires qualified trusted Current Commerce context only for a new create intent, after original-effect lookup.",
+      "evidenceLevel": "Registered Action/default factory, owner SQL and worker with qualified provider/Core fixtures; see inventory-context-port.md.",
+      "limits": "No independent port version or public producer operation exists. Production producer remains deferred to #253/29 and #877/34; no production HTTP/E2E claim."
+    },
+    {
+      "issue": 1287,
+      "source": "1955e25d142921d2e3eea0acb2c2b14afa2f08b1",
+      "state": "In progress: schema/generator step2 complete; owner-declaration step3 in progress.",
+      "change": "Existing manifest, private registration and generators validate versioned intrinsic/conditional operation requirements and exact Action/Read version claims. Deployment format and provisional module publicContract remain separate.",
+      "evidenceLevel": "Focused Core20/20, generation25/25, official Core emission, strict lint, 53 rule fixtures and normal commit hooks. No full-issue or runtime-enforcement acceptance yet.",
+      "trustPrerequisite": "CCC→PriceGroup currently uses configured key Principal S instead of original P. Required source LE versus forbidden target LE needs a bounded projection decision. Human approval is pending on the independently reviewed proposal; no enrollment/projection implemented."
+    }
+  ],
+  "finalSourceReconciliation": {
+    "source": "373122971e9a6cc75ccd4b22fcc878623d7effca",
+    "integratedMain": "78573bef21445c3229672b24a3257c860c3309d0",
+    "ownerDeclarationInspectionCheckpoint": "cb99499d53347e0622646243f530864ffea9e389",
+    "observedAt": "2026-11-03",
+    "evidenceLevel": "SOURCE_INSPECTION; existing executed receipts below retain their own source checkpoints, not a new integrated test PASS.",
+    "historicalEvidence": "All original top-level inventories, counts, anchors, implementation deltas and baseline remain pinned historical evidence. This reconciliation supersedes their in-progress/current-source qualifications only; it is not a runtime registry.",
+    "sourceCensus": {
+      "businessOwnerCount": 16,
+      "originalOwnerIdentitiesUnchanged": 14,
+      "addedOwners": [
+        {
+          "package": "@app/commerce-cart",
+          "appId": "commerce-cart",
+          "moduleId": "commerce.cart",
+          "source": "app/verticals/commerce-cart/package.json"
+        },
+        {
+          "package": "@app/commerce-order",
+          "appId": "commerce-order",
+          "moduleId": "commerce.order",
+          "source": "app/verticals/commerce-order/package.json"
+        }
+      ],
+      "reviewedReleaseIntentSource": "app/topology/application-release-intent.json",
+      "reviewedReleaseIntentMemberCount": 13,
+      "reviewedReleaseIntentUnchangedFromBaseline": true,
+      "outsideReviewedReleaseIntent": [
+        "availability",
+        "commerce-cart",
+        "commerce-order"
+      ],
+      "limits": "Source owners and reviewed intent are separate from observed installed membership, Tenant state, deployment and operation availability; no activation is inferred."
+    },
+    "workerCensus": {
+      "registeredSourceHeaderCount": 35,
+      "ownerCount": 6,
+      "byOwner": {
+        "party.registry": 16,
+        "commerce.customer-context": 9,
+        "pricing.price-group-catalog": 1,
+        "commerce.inventory": 6,
+        "privacy.core": 2,
+        "commerce.order": 1
+      },
+      "addedWorker": {
+        "key": "commerce.order.finalize-order-work",
+        "owner": "commerce.order",
+        "producer": "commerce.order",
+        "topic": "commerce.order.finalization-work",
+        "source": "app/verticals/commerce-order/src/workers/finalize-order-work.worker.ts"
+      },
+      "crossOwnerSubscriptionsUnchanged": true,
+      "crossOwnerSubscriptionCount": 3,
+      "generatedHostSource": "app/scripts/outbox-worker-host.generated.mts",
+      "limits": "Generated host entries and source registrations do not prove deployed/running workers or installed owners. Host/dedicated remains separate from the business deployment target."
+    },
+    "dependencyDeclarations": {
+      "providedOperationClaims": 36,
+      "conditionalRequirements": 51,
+      "declaringOwners": 9,
+      "owners": [
+        {
+          "moduleId": "commerce.catalog",
+          "source": "app/verticals/catalog/vertical.manifest.ts",
+          "providedOperationClaims": 5,
+          "conditionalRequirements": 3,
+          "intrinsic": []
+        },
+        {
+          "moduleId": "commerce.customer-context",
+          "source": "app/verticals/commerce-customer-context/vertical.manifest.ts",
+          "providedOperationClaims": 10,
+          "conditionalRequirements": 17,
+          "intrinsic": []
+        },
+        {
+          "moduleId": "commerce.market-catalog",
+          "source": "app/verticals/commerce-market-catalog/vertical.manifest.ts",
+          "providedOperationClaims": 13,
+          "conditionalRequirements": 8,
+          "intrinsic": []
+        },
+        {
+          "moduleId": "party.registry",
+          "source": "app/verticals/party-registry/vertical.runtime-declaration.ts",
+          "providedOperationClaims": 3,
+          "conditionalRequirements": 1,
+          "intrinsic": []
+        },
+        {
+          "moduleId": "pricing.price-group-catalog",
+          "source": "app/verticals/price-group-catalog/vertical.manifest.ts",
+          "providedOperationClaims": 1,
+          "conditionalRequirements": 0,
+          "intrinsic": []
+        },
+        {
+          "moduleId": "commerce.storefront-registry",
+          "source": "app/verticals/storefront-registry/vertical.manifest.ts",
+          "providedOperationClaims": 1,
+          "conditionalRequirements": 0,
+          "intrinsic": []
+        },
+        {
+          "moduleId": "commerce.pricing",
+          "source": "app/verticals/pricing/vertical.manifest.ts",
+          "providedOperationClaims": 1,
+          "conditionalRequirements": 20,
+          "intrinsic": []
+        },
+        {
+          "moduleId": "payment.term-catalog",
+          "source": "app/verticals/payment-term-catalog/vertical.manifest.ts",
+          "providedOperationClaims": 1,
+          "conditionalRequirements": 2,
+          "intrinsic": []
+        },
+        {
+          "moduleId": "privacy.core",
+          "source": "app/verticals/privacy/vertical.manifest.ts",
+          "providedOperationClaims": 1,
+          "conditionalRequirements": 0,
+          "intrinsic": []
+        }
+      ],
+      "requiredCoreCapability": {
+        "id": "ontos.module-dependency-contracts",
+        "version": "1"
+      },
+      "compatibility": "Concrete public Action/Read operation versions, not serialized deployment format, build marker or business identity. Only intrinsic requirements form installation DAG edges; these nine declarations all have intrinsic:[].",
+      "deltaFromInitial1287Matrix": {
+        "localHistoricalReceipt": ".codex/plans/ontos-1094/evidence/1287-step3-owner-contract-matrix.json",
+        "previousConditionalRequirements": 47,
+        "additionalRequirements": 4,
+        "consumer": "commerce.customer-context",
+        "provider": "pricing.price-group-catalog",
+        "providerEntrypoint": "pricing.price-group-catalog.api.validate-price-group-compatibility",
+        "schemaVersion": "1",
+        "condition": "commerce.customer-context.condition.price-group-catalog-compatibility-required",
+        "keys": [
+          "commerce.customer-context.requirement.assign-customer-price-group-catalog",
+          "commerce.customer-context.requirement.assign-counterparty-price-group-catalog",
+          "commerce.customer-context.requirement.migrate-customer-price-group-catalog",
+          "commerce.customer-context.requirement.migrate-counterparty-price-group-catalog"
+        ],
+        "source": "app/verticals/commerce-customer-context/vertical.manifest.ts:619"
+      },
+      "branchMeaning": "Catalog PARTY and CCC Party-origin branches remain conditional; LEGAL_ENTITY and COMMERCE_ONLY do not gain a Party dependency. Complete zero PriceGroup assignments may yield NONE; incomplete, unavailable or multiple assignments may not. Market association/retirement and owner-issued proof/recovery paths retain their own Current/completeness and original-effect rules."
+    },
+    "approvedRelaySource": {
+      "state": "Existing bounded relay approvals implemented; earlier pending-approval/no-enrollment statements are historical.",
+      "source": "app/verticals/commerce-customer-context/api/price-group-catalog-gateway-credential.ts:49",
+      "issuerSource": "app/apps/shell-super-app/api/auth/gateway-relay-issuer.ts",
+      "change": "CCC PriceGroup credentials use issueRelayedGatewayContext with the verified CCC source assertion and admitted revision. The approved bounded scope projection and Market subject extensions preserve the acting Principal; receiving permission, owner facts and target checks remain independent.",
+      "executedEvidence": "Existing reviewed #1287 delivery and receiving receipts at113368c9; not an additional trust request, deployment or live-permission claim."
+    },
+    "additionalSourceDirections": [
+      {
+        "consumer": "commerce.cart",
+        "provider": "commerce.catalog",
+        "source": [
+          "app/verticals/commerce-cart/shared/domain/cart-draft.ts",
+          "app/verticals/commerce-cart/src/services/final-cart-candidate-owners.service.ts"
+        ],
+        "classification": "Public contract/schema or client source direction; not an intrinsic requirement or installed runtime/adoption claim."
+      },
+      {
+        "consumer": "commerce.cart",
+        "provider": "commerce.customer-context",
+        "source": [
+          "app/verticals/commerce-cart/shared/actions/finalize-cart-candidate.ts"
+        ],
+        "classification": "Public contract/schema or client source direction; not an intrinsic requirement or installed runtime/adoption claim."
+      },
+      {
+        "consumer": "commerce.cart",
+        "provider": "commerce.pricing",
+        "source": [
+          "app/verticals/commerce-cart/src/services/final-cart-candidate.service.ts"
+        ],
+        "classification": "Public contract/schema or client source direction; not an intrinsic requirement or installed runtime/adoption claim."
+      },
+      {
+        "consumer": "commerce.order",
+        "provider": "commerce.cart",
+        "source": [
+          "app/verticals/commerce-order/shared/domain/order-finalization-evidence.ts"
+        ],
+        "classification": "Public contract/schema or client source direction; not an intrinsic requirement or installed runtime/adoption claim."
+      },
+      {
+        "consumer": "commerce.order",
+        "provider": "commerce.pricing",
+        "source": [
+          "app/verticals/commerce-order/shared/domain/order-finalization-evidence.ts"
+        ],
+        "classification": "Public contract/schema or client source direction; not an intrinsic requirement or installed runtime/adoption claim."
+      },
+      {
+        "consumer": "commerce.order",
+        "provider": "commerce.customer-context",
+        "source": [
+          "app/verticals/commerce-order/shared/domain/order-finalization-evidence.ts"
+        ],
+        "classification": "Public contract/schema or client source direction; not an intrinsic requirement or installed runtime/adoption claim."
+      },
+      {
+        "consumer": "commerce.order",
+        "provider": "payment.term-catalog",
+        "source": [
+          "app/verticals/commerce-order/shared/domain/order-finalization-evidence.ts"
+        ],
+        "classification": "Public contract/schema or client source direction; not an intrinsic requirement or installed runtime/adoption claim."
+      },
+      {
+        "consumer": "commerce.order",
+        "provider": "commerce.tax",
+        "source": [
+          "app/verticals/commerce-order/shared/domain/order-finalization-evidence.ts"
+        ],
+        "classification": "Public contract/schema or client source direction; not an intrinsic requirement or installed runtime/adoption claim."
+      },
+      {
+        "consumer": "commerce.customer-context",
+        "provider": "commerce.cart",
+        "source": [
+          "app/verticals/commerce-customer-context/src/services/purchase-proposal-basis.service.ts",
+          "app/verticals/commerce-customer-context/src/services/order-approval-finalization.service.ts"
+        ],
+        "classification": "Public contract/schema or client source direction; not an intrinsic requirement or installed runtime/adoption claim."
+      },
+      {
+        "consumer": "commerce.customer-context",
+        "provider": "commerce.order",
+        "source": [
+          "app/verticals/commerce-customer-context/src/services/order-approval-finalization.service.ts"
+        ],
+        "classification": "Public contract/schema or client source direction; not an intrinsic requirement or installed runtime/adoption claim."
+      }
+    ],
+    "currentAssemblyQualifications": {
+      "catalogAndCustomerContext": "The historical mounted-browser-default descriptions are superseded for the bounded approved server transports by #1284/#1287 source and qualified receiving receipts; see server-client-relay.md. Configuration and independent receiving permissions remain necessary.",
+      "pricingSource": "app/verticals/pricing/api/index.ts:137",
+      "pricingAction": "productionActionRuntimeLive supplies current evaluation, ordinary publication and final-fence factories plus four owner credential layers. The current Pricing Read path explicitly supplies its evaluation/publication/final-fence layers; use the receiving/default-factory receipts from #1291 rather than the old blanket Read wiring qualification.",
+      "metadataCleanup": "Party and CCC declare @app/privacy package dependencies. Party retains its Privacy TS reference; CCC has no Privacy TS reference. The six previously identified unused design-token TS references are absent. These source facts do not create new metadata requirements.",
+      "inventory": "The accepted #1286 bounded port/default unavailable and deferred production-producer qualifications remain; no new public producer or #253/#877 activation is inferred."
+    },
+    "existingReviewedLocalDeliveries": [
+      {
+        "issue": 1287,
+        "source": "113368c9bfacbe572bc868218483b431285864d6",
+        "deliveryPr": "https://github.com/TechsioCZ/ontos/pull/1351",
+        "localReceipt": ".codex/plans/ontos-1094/1287-execution.json",
+        "qualification": "Versioned declarations and genuine candidate/activation/Action/Read/worker closure; native receiving and independent reviews."
+      },
+      {
+        "issue": 1288,
+        "source": "7ecb16347dd1fa3a1a786c9b1145436cb03300db",
+        "deliveryPr": "https://github.com/TechsioCZ/ontos/pull/1352",
+        "localReceipt": ".codex/plans/ontos-1094/1288-execution.json",
+        "qualification": "Dependency cleanup with owner emits, public-document equivalence and retained dormant contracts."
+      },
+      {
+        "issue": 1289,
+        "source": "19c355b3f50272c33e1092a420cbf533c957cfff",
+        "deliveryPr": "https://github.com/TechsioCZ/ontos/pull/1356",
+        "localReceipt": ".codex/plans/ontos-1094/1289-execution.json",
+        "qualification": "Boundary enforcement and valid/invalid controls; qualified isolated native source verification."
+      },
+      {
+        "issue": 1290,
+        "source": "da150f3b696443433d0c6a03cbae2fa2aab4968a",
+        "deliveryPr": "https://github.com/TechsioCZ/ontos/pull/1357",
+        "localReceipt": ".codex/plans/ontos-1094/1290-execution.json",
+        "qualification": "Assortment permission targets and real native permission/grant revocation."
+      },
+      {
+        "issue": 1291,
+        "source": "403b8243df2c87f01203b9822d09345f613f8869",
+        "deliveryPr": "https://github.com/TechsioCZ/ontos/pull/1358",
+        "localReceipt": ".codex/plans/ontos-1094/1291-execution.json",
+        "qualification": "Owner permission/default-factory closure and qualified native receiving evidence."
+      },
+      {
+        "issue": 1292,
+        "source": "360dd619a8fd30a4f86ed7a21a4a44b60d09e37e",
+        "deliveryPr": "https://github.com/TechsioCZ/ontos/pull/1366",
+        "localReceipt": ".codex/plans/ontos-1094/1292-execution.json",
+        "qualification": "Selective immutable releases, complete membership and baseline/target guards; local workflow and native proofs."
+      },
+      {
+        "issue": 1293,
+        "source": "9914b27b9c8070001efb205370f80e43c75e1cf8",
+        "deliveryPr": "https://github.com/TechsioCZ/ontos/pull/1365",
+        "localReceipt": ".codex/plans/ontos-1094/1293-execution.json",
+        "qualification": "Owner-scoped migration selection with retained global admission/drain/seal and durable legacy completion safeguards."
+      },
+      {
+        "issue": 1294,
+        "source": "f7d27388b92202c3152a21d76f321b3e90bc9a8b",
+        "deliveryPr": "https://github.com/TechsioCZ/ontos/pull/1370",
+        "localReceipt": ".codex/plans/ontos-1094/1294-execution.json",
+        "qualification": "MIN refresh with source-qualified native permission, CCC open/finite and workflow proofs; unchanged observation TTL/trust."
+      },
+      {
+        "issue": 1295,
+        "source": "03b9a198992a712be4fa6609d1b1b68c6ea7444e",
+        "deliveryPr": "https://github.com/TechsioCZ/ontos/pull/1374",
+        "localReceipt": ".codex/plans/ontos-1094/1295-execution.json",
+        "qualification": "Fair loading/cancellation/cache identity with controlled native proof; joint browser R2 remains #1297."
+      },
+      {
+        "issue": 1296,
+        "source": "cb99499d53347e0622646243f530864ffea9e389",
+        "deliveryPr": "https://github.com/TechsioCZ/ontos/pull/1376",
+        "localReceipt": ".codex/plans/ontos-1094/1296-execution.json",
+        "qualification": "Local render boundary, actual Chromium, native clone and final full quality at the recorded source."
+      }
+    ],
+    "remainingEvidence": "#1297 owns current integrated checks, both real supported staging targets and joint browser R2 acceptance. No staging/production deployment, current installation, activation, live grant or universal isolation claim follows from this source reconciliation or earlier local receipts."
   }
 }

@@ -2,8 +2,9 @@
 // @ontos-action-owner pricing.price-group-catalog
 // @ontos-action-slug create-price-group
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
+import { definePriceGroupActionPermissions } from '../permissions/authorization.ts';
 
 import {
   CreatePriceGroupPayloadSchema,
@@ -109,14 +110,6 @@ export const createPriceGroupAction = defineAction(
     actionKey: 'pricing.price-group-catalog.create-price-group',
     auditEvidenceSchema: CreatePriceGroupAuditEvidenceSchema,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<CreatePriceGroupPayload>((_payload, scope) => ({
-      permission: 'pricing.price_group.create',
-      target: {
-        kind: 'pricing_catalog',
-        pricingCatalogId: scope.tenantId,
-        tenantId: scope.tenantId,
-      },
-    })),
     domainErrorSchema: PriceGroupOwnerFailureSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
@@ -128,6 +121,14 @@ export const createPriceGroupAction = defineAction(
     }),
     idempotency: 'required',
     legalEntityScope: 'forbidden',
+    ownerPermissions: definePriceGroupActionPermissions<CreatePriceGroupPayload>((_payload, scope) => ({
+      permission: 'pricing.price_group.create',
+      target: {
+        kind: 'pricing_catalog',
+        pricingCatalogId: scope.tenantId,
+        tenantId: scope.tenantId,
+      },
+    })),
     owningModuleKey: 'pricing.price-group-catalog',
     payloadSchema: CreatePriceGroupPayloadSchema,
     policies: [],

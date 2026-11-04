@@ -11,10 +11,10 @@ import {
   ReadHandlerUnavailable,
   ReadPermissionDenied,
   ReadRuntime,
-  ReadRuntimeLive,
   TenantModuleStateServiceLive,
   TrustedPrincipalContextSchema,
   makeActionRuntimeLive,
+  makeReadRuntimeLive,
   parseDatabaseConfig,
   toContextPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
@@ -32,7 +32,6 @@ import {
   STAFF_AUTHENTICATION_NAMESPACE_ID,
   staffAuthenticationNamespaceRegistryLayer,
 } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Config, ConfigProvider, Context, Crypto, Data, Effect, Layer, Schema, pipe } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { Client } from 'pg';
@@ -42,6 +41,8 @@ import { declareSellerVatRegimeAction } from '../../src/actions/declare-seller-v
 import { finalizeOrderTaxAction } from '../../src/actions/finalize-order-tax.action.ts';
 import { finalOrderTaxRead } from '../../src/api/final-order-tax.read.ts';
 import { taxEvaluationRead } from '../../src/api/tax-evaluation.read.ts';
+import { taxRegistration } from '../../vertical.registration.ts';
+import { publishedTaxComposition } from '../support/published-tax-composition.ts';
 import { purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
 import { evaluationRequestInput } from '../unit/tax-evaluation-fixtures.ts';
 
@@ -49,6 +50,7 @@ const T = '2026-06-01T10:00:00.000Z';
 const MODULE = 'commerce.tax';
 const MessageSchema = Schema.Struct({ message: Schema.String });
 const LocalHostSchema = Schema.Literals(['localhost', '127.0.0.1']);
+const services = Layer.mergeAll(NodeCrypto.layer, NodeServices.layer);
 
 class HistoricalAccessFixtureError extends Data.TaggedError('HistoricalAccessFixtureError')<{
   readonly cause?: unknown;
@@ -140,8 +142,7 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
     query("SELECT pg_advisory_lock(hashtextextended('ontos.search-test-authority', 0))"),
     () => query("SELECT pg_advisory_unlock(hashtextextended('ontos.search-test-authority', 0))").pipe(Effect.orDie),
   );
-  const deployment = { appId: 'tax', buildMarker: `historical-access-${yield* nextUuid}` };
-  const snapshot = yield* makeApplicationCompositionSnapshotFixture([deployment.appId], deployment.buildMarker);
+  const { deployment, snapshot } = yield* publishedTaxComposition;
   const previousRows = yield* query('SELECT row_to_json(a) AS authority FROM core.application_composition_authority a');
   const previous = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ authority: AuthoritySchema })))(
     previousRows.rows,
@@ -289,17 +290,15 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
     Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
   );
   const dependencies = Layer.mergeAll(CorePersistenceLive, ContextAccessLive, gateway, resolver);
+  const compositionSource = Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) });
   const runtimes = Layer.mergeAll(
-    ReadRuntimeLive.pipe(Layer.provide(dependencies)),
-    makeActionRuntimeLive(deployment).pipe(
+    makeReadRuntimeLive(deployment, taxRegistration).pipe(
+      Layer.provide(dependencies),
+      Layer.provide(compositionSource),
+    ),
+    makeActionRuntimeLive(deployment, taxRegistration).pipe(
       Layer.provide(
-        Layer.mergeAll(
-          dependencies,
-          stateGate,
-          ActionPermissionLive,
-          ActionRepositoryLive,
-          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
-        ),
+        Layer.mergeAll(dependencies, stateGate, ActionPermissionLive, ActionRepositoryLive, compositionSource),
       ),
     ),
   ).pipe(
@@ -434,7 +433,7 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
   };
 });
 
-it.layer(NodeCrypto.layer, { excludeTestServices: true })('historical final Order Tax access', (suite) => {
+it.layer(services, { excludeTestServices: true })('historical final Order Tax access', (suite) => {
   suite.effect(
     'E29: real Core runtime preserves frozen final reads across inactive suspended and archived states',
     () =>

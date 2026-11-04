@@ -1,4 +1,4 @@
-import { ContextAccess, ReadPermissionDenied, toBusinessPermissionAccessKey } from '@app/core-runtime';
+import { ContextAccess, ReadPermissionDenied } from '@app/core-runtime';
 import type { ContextAccessService } from '@app/core-runtime';
 import { makePositionSetAuthorization } from '../../src/api/current-relevant-stock-position-set.read.ts';
 import { PricingPurchaseContextVerificationResponseSchema } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
@@ -223,15 +223,15 @@ describe('Inventory owner Position-set completeness', () => {
         tenantId: scope.tenantId,
       }));
       const access: ContextAccessService = {
-        businessPermissions: ({ targets }) =>
+        legalEntities: unusedPermissionChecks,
+        modules: unusedPermissionChecks,
+        ownerPermissions: ({ targets }) =>
           Effect.succeed(
             targets.map((target, index) => ({
               decision: index === 1 ? ('denied' as const) : ('allowed' as const),
-              key: toBusinessPermissionAccessKey(target),
+              key: target.target.key,
             })),
           ),
-        legalEntities: unusedPermissionChecks,
-        modules: unusedPermissionChecks,
         resources: unusedPermissionChecks,
         tenants: unusedPermissionChecks,
       };
@@ -244,7 +244,7 @@ describe('Inventory owner Position-set completeness', () => {
       const malformed = yield* makePositionSetAuthorization(scope).pipe(
         Effect.provideService(ContextAccess, {
           ...access,
-          businessPermissions: () => Effect.succeed([{ decision: 'allowed' as const, key: 'forged-key' }]),
+          ownerPermissions: () => Effect.succeed([{ decision: 'allowed' as const, key: 'forged-key' }]),
         }),
       );
       const malformedOutcome = yield* malformed(refs).pipe(

@@ -1,12 +1,10 @@
 import {
-  ActionAlreadyCommitted,
   ActionCoreErrorSchema,
   ActionPayloadValidationError,
   ActionTransportMetadataSchema,
   TrustedPrincipalContextSchema,
   readVerifiedGatewayCompositionRevision,
   ActionHandlerExecutionError,
-  ActionResultValidationError,
   makeActionAuthorizationPreflightPermit,
   ActionRuntime,
   ActionAuthorizationPreflight,
@@ -17,7 +15,7 @@ import {
   DatabaseConfigLive,
   GatewayAssertionRedemptionService,
   ReadRuntime,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import type {
@@ -28,22 +26,14 @@ import type {
   ReadRuntimeService,
   OperationalScopeResolverService,
 } from '@app/core-runtime';
-import {
-  MarketLifecycleResultSchema,
-  RetireMarketPayloadSchema,
-  MarketCommandRejected,
-} from '../shared/action-contracts.ts';
+import { RetireMarketPayloadSchema, MarketCommandRejected } from '../shared/action-contracts.ts';
 import type { RetireMarketPayload } from '../shared/action-contracts.ts';
-import { MarketRetirementSettlementPending } from '../shared/market-retirement-admission.ts';
-import type {
-  MarketRetirementAdmissionEvidence,
-  MarketRetirementEffectRecoveryResult,
-} from '../shared/market-retirement-admission.ts';
-import { retireMarketAction } from '../src/actions/retire-market.action.ts';
+import type { MarketRetirementAdmissionEvidence } from '../shared/market-retirement-admission.ts';
+import { retireMarketAction, RetireMarketDomainErrorSchema } from '../src/actions/retire-market.action.ts';
+import { MarketRetirementPostAttempt } from '../src/services/market-retirement-post-attempt.ts';
 import { manageMarketRetirementAdmissionAction } from '../src/actions/manage-market-retirement-admission.action.ts';
-import type { MarketRetirementImpactAssessmentUnavailable } from '../src/actions/market-retirement-impact-assessment-unavailable.ts';
-import { MarketRetirementImpactAssessmentRejected } from '../src/actions/market-retirement-impact-assessment-rejected.ts';
 import { MarketRetirementImpactAssessmentStale } from '../src/actions/market-retirement-impact-assessment-stale.ts';
+import type { MarketRetirementImpactAssessmentUnavailable } from '../src/actions/market-retirement-impact-assessment-unavailable.ts';
 import { marketRetirementEffectRecoveryRead } from '../src/api/market-retirement-effect-recovery.read.ts';
 import { MarketRetirementImpactAuthorityLive } from '../src/integrations/market-retirement-impact.ts';
 import { MarketRetirementImpactAuthorityFactory } from '../src/services/market-retirement-impact-authority.ts';
@@ -66,23 +56,12 @@ import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
-import {
-  Exit,
-  Option,
-  Ref,
-  Result,
-  Context,
-  Crypto,
-  Layer as GovernedReadLayer,
-  Logger,
-  References,
-  Schema,
-  Tracer,
-} from 'effect';
+import { Ref, Context, Crypto, Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 
 import { commerceMarketCatalogApi, commerceMarketCatalogOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
+import { commerceMarketCatalogRegistration } from '../vertical.registration.ts';
 import { ActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import { retirementUnavailable, retirementPreflightUnavailable } from './market-retirement-runtime.ts';
 import {
@@ -167,6 +146,9 @@ const nativeCompositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(
     ),
   ),
 );
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(nativeCompositionSourceLive),
+);
 type CommerceMarketCatalogActionRuntimeDependencyLayers =
   | typeof CorePersistenceLive
   | typeof ContextAccessLive
@@ -193,17 +175,24 @@ export const commerceMarketCatalogActionRuntimeDependenciesLive: Layer.Layer<
   moduleStateGateLive,
   moduleEntrypointGatewayLive,
   operationalScopeResolverLive,
-  ActiveApplicationCompositionConfigLive.pipe(Layer.provide(nativeCompositionSourceLive)),
+  activeApplicationCompositionLive,
 );
 const actionRuntimeDependenciesLive = commerceMarketCatalogActionRuntimeDependenciesLive.pipe(
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
 );
-const baseProductionActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
-  Layer.provide(actionRuntimeDependenciesLive),
-);
-const productionReadRuntimeLive = ReadRuntimeLive.pipe(
+const baseProductionActionRuntimeLive = makeActionRuntimeLive(
+  ultramodernDeliveryUnit,
+  commerceMarketCatalogRegistration,
+).pipe(Layer.provide(actionRuntimeDependenciesLive));
+const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
   Layer.provide(
-    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
+    Layer.mergeAll(
+      CorePersistenceLive,
+      ContextAccessLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+      activeApplicationCompositionLive,
+    ),
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
 );
@@ -230,12 +219,6 @@ interface RetirementInvocationState {
   readonly ownerFailure?: typeof retireMarketAction.descriptor.domainErrorSchema.Type | ActionCoreError;
   readonly prepared?: Effect.Success<(typeof PreparedMarketRetirementImpact.Service)['take']>;
 }
-const terminalRetirementErrors = Schema.Union([
-  MarketCommandRejected,
-  MarketRetirementImpactAssessmentRejected,
-  MarketRetirementImpactAssessmentStale,
-]);
-
 const captureRetirementFailure = (
   state: Ref.Ref<RetirementInvocationState>,
   ownerFailure: NonNullable<RetirementInvocationState['ownerFailure']>,
@@ -243,6 +226,30 @@ const captureRetirementFailure = (
   Ref.update(state, (current) => ({ ...current, ownerFailure })).pipe(
     Effect.andThen(Effect.fail(retirementPreflightUnavailable())),
   );
+
+const retirementFailureDecoder =
+  <Declared extends Schema.ConstraintDecoder<{ readonly _tag: string }>>(declared: Declared) =>
+  (cause: unknown): Effect.Effect<never, ActionCoreError | Declared['Type']> => {
+    if (Schema.is(ActionCoreErrorSchema)(cause)) {
+      return Effect.fail(cause);
+    }
+    return Schema.decodeUnknownEffect(declared)(cause).pipe(
+      Effect.mapError((decodeCause) =>
+        Object.defineProperty(
+          new ActionHandlerExecutionError({
+            code: 'action_handler_execution_failed',
+            reason: 'The owner retirement failure is not declared',
+          }),
+          'cause',
+          { value: { cause, decodeCause } },
+        ),
+      ),
+      Effect.flatMap((failure) => {
+        Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+        return Effect.fail(failure);
+      }),
+    );
+  };
 
 /** Native request binding: every collaborator comes from the real process Layer graph. */
 export const MarketRetirementActionRuntimeLive = Layer.effect(
@@ -404,53 +411,6 @@ export const MarketRetirementActionRuntimeLive = Layer.effect(
       };
       return source;
     });
-    const pendingAfterReceiptLoss = Effect.fn('MarketRetirement.pendingReceipt')(function* pendingAfterReceiptLoss<
-      Value,
-    >(value: Value, sourceActionInvocationId: string, cause: MarketRetirementImpactAssessmentUnavailable) {
-      const committedResult = yield* Schema.decodeUnknownEffect(MarketLifecycleResultSchema)(value).pipe(
-        Effect.mapError(retirementUnavailable),
-      );
-      const failure = new MarketRetirementSettlementPending({
-        code: 'market_retirement_settlement_unavailable',
-        committedResult,
-        reason: 'Market retirement committed; original settlement receipt could not be read',
-        sourceActionInvocationId,
-      });
-      Object.defineProperty(failure, 'cause', { value: cause });
-      return yield* failure;
-    });
-    const abortTerminal = Effect.fn('MarketRetirement.abortTerminal')(function* abortTerminal(
-      source: ActionAuthorizationPreflightInput,
-      payload: RetireMarketPayload,
-      receipt: MarketRetirementEffectRecoveryResult,
-      terminal: typeof terminalRetirementErrors.Type,
-    ) {
-      const aborted = receipt.outcome === 'ABORTED' ? receipt : yield* manage(source, payload, 'ABORT');
-      if (aborted.outcome === 'COMMITTED') {
-        return yield* new MarketRetirementSettlementPending({
-          code: 'market_retirement_settlement_unavailable',
-          committedResult: aborted.result,
-          reason: 'A concurrent Market retirement committed; original settlement must be recovered',
-          sourceActionInvocationId: source.actionInvocationId,
-        });
-      }
-      if (aborted.outcome !== 'ABORTED' || aborted.abortProof === undefined) {
-        return yield* retirementUnavailable();
-      }
-      const cleanup = yield* Effect.exit(authorityFor(source, aborted, payload).cleanupOriginal(aborted.abortProof));
-      return yield* Schema.decodeUnknownEffect(terminalRetirementErrors)({
-        _tag: terminal._tag,
-        code: terminal.code,
-        reason: terminal.reason,
-        retirementSettlement: {
-          pendingCleanup: Exit.isFailure(cleanup),
-          resolution: 'RECOVER_ORIGINAL_EFFECT',
-          retryCommand: false,
-          sourceActionInvocationId: source.actionInvocationId,
-          state: 'ABORTED',
-        },
-      }).pipe(Effect.mapError(retirementUnavailable), Effect.flatMap(Effect.fail));
-    });
     const runtime: ActionRuntimeService = {
       resolveActionCommit: base.resolveActionCommit,
       runAction: (input) => {
@@ -460,28 +420,8 @@ export const MarketRetirementActionRuntimeLive = Layer.effect(
         const declaredErrors = Schema.make<
           Schema.ConstraintDecoder<typeof input.registration.descriptor.domainErrorSchema.Type>
         >(input.registration.descriptor.domainErrorSchema.ast);
-        const declaredResult = Schema.make<
-          Schema.ConstraintDecoder<typeof input.registration.descriptor.resultSchema.Type>
-        >(input.registration.descriptor.resultSchema.ast);
-        const decodeFailure = (cause: unknown) => {
-          if (Schema.is(ActionCoreErrorSchema)(cause)) {
-            return Effect.fail(cause);
-          }
-          return Schema.decodeUnknownEffect(declaredErrors)(cause).pipe(
-            Effect.mapError((decodeCause) => {
-              const failure = new ActionHandlerExecutionError({
-                code: 'action_handler_execution_failed',
-                reason: 'The owner retirement failure is not declared',
-              });
-              Object.defineProperty(failure, 'cause', { value: { cause, decodeCause } });
-              return failure;
-            }),
-            Effect.flatMap((failure) => {
-              Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
-              return Effect.fail(failure);
-            }),
-          );
-        };
+        const decodeFailure = retirementFailureDecoder(declaredErrors);
+        const decodeRetirementFailure = retirementFailureDecoder(RetireMarketDomainErrorSchema);
         return Effect.scoped(
           Effect.gen(function* runRetirement() {
             const payload = yield* Schema.decodeUnknownEffect(RetireMarketPayloadSchema)(input.payload).pipe(
@@ -512,79 +452,22 @@ export const MarketRetirementActionRuntimeLive = Layer.effect(
             );
             const preparedContext = yield* Layer.build(PreparedMarketRetirementImpactLive(take));
             const preparedService = Context.get(preparedContext, PreparedMarketRetirementImpact);
-            const result = yield* Effect.result(
-              requestRuntime
-                .runAction(input)
-                .pipe(Effect.provideService(PreparedMarketRetirementImpact, preparedService)),
-            );
-            const snapshot = yield* Ref.get(state);
-            const source =
-              snapshot.admitted === undefined &&
-              Result.isFailure(result) &&
-              Schema.is(ActionAlreadyCommitted)(result.failure)
-                ? yield* resolveOriginalSource(input, result.failure.invocationId, payload)
-                : snapshot.admitted;
-            if (source === undefined || (snapshot.admission === undefined && snapshot.ownerFailure !== undefined)) {
-              if (snapshot.ownerFailure !== undefined) {
-                return yield* decodeFailure(snapshot.ownerFailure);
-              }
-              if (Result.isFailure(result)) {
-                return yield* Effect.fail(result.failure);
-              }
-              return result.success;
-            }
-            const receipt = yield* recover(source, payload).pipe(
-              Effect.catch((error) => {
-                if (Result.isFailure(result)) {
-                  return Effect.fail(error);
-                }
-                return pendingAfterReceiptLoss(result.success, source.actionInvocationId, error);
-              }),
-            );
-            if (receipt.outcome === 'COMMITTED') {
-              const finalized = yield* Effect.exit(
-                authorityFor(source, receipt, payload).commitRetirementImpact({
-                  actionInvocationId: source.actionInvocationId,
-                  assessment: receipt.assessment,
-                  compositionRevision: readVerifiedGatewayCompositionRevision(source.scope) ?? '',
-                  legalEntityId: source.scope.legalEntityId ?? '',
-                  reason: payload.reason,
-                }),
+            const settlement: typeof MarketRetirementPostAttempt.Service = {
+              abort: (source, retirement) => manage(source, retirement, 'ABORT'),
+              authorityFor,
+              decodeFailure: decodeRetirementFailure,
+              readState: Ref.get(state),
+              recover,
+              resolveOriginalSource: (invocationId, retirement) =>
+                resolveOriginalSource(input, invocationId, retirement),
+              unavailable: retirementUnavailable,
+            };
+            return yield* requestRuntime
+              .runAction(input)
+              .pipe(
+                Effect.provideService(PreparedMarketRetirementImpact, preparedService),
+                Effect.provideService(MarketRetirementPostAttempt, settlement),
               );
-              if (Exit.isFailure(finalized)) {
-                return yield* decodeFailure(
-                  new MarketRetirementSettlementPending({
-                    code: 'market_retirement_settlement_unavailable',
-                    committedResult: receipt.result,
-                    reason: 'Market retirement committed; original Customer Context finalization remains pending',
-                    sourceActionInvocationId: source.actionInvocationId,
-                  }),
-                );
-              }
-              return yield* Schema.decodeUnknownEffect(declaredResult)(receipt.result).pipe(
-                Effect.mapError((cause) => {
-                  const failure = new ActionResultValidationError({
-                    code: 'action_result_invalid',
-                    reason: 'Original committed Market result is unavailable',
-                  });
-                  Object.defineProperty(failure, 'cause', { value: cause });
-                  return failure;
-                }),
-              );
-            }
-            const terminal = Schema.decodeUnknownOption(terminalRetirementErrors)(
-              snapshot.ownerFailure ?? (Result.isFailure(result) ? result.failure : undefined),
-            );
-            if (Option.isNone(terminal)) {
-              if (snapshot.ownerFailure !== undefined) {
-                return yield* decodeFailure(snapshot.ownerFailure);
-              }
-              if (Result.isFailure(result)) {
-                return yield* Effect.fail(result.failure);
-              }
-              return yield* retirementUnavailable();
-            }
-            return yield* abortTerminal(source, payload, receipt, terminal.value);
           }),
         ).pipe(Effect.matchEffect({ onFailure: decodeFailure, onSuccess: Effect.succeed }));
       },
@@ -602,7 +485,7 @@ const nativeRetirementBindingsLive = Layer.effect(
     const dependencies = yield* Effect.context<Layer.Success<typeof actionRuntimeDependenciesLive>>();
     return {
       base,
-      coreFactory: makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+      coreFactory: makeActionRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
         Layer.provide(Layer.succeedContext(dependencies)),
       ),
       crypto,

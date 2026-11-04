@@ -1,6 +1,7 @@
+import { customerOwnerPermissionTarget } from '../permissions/authorization.ts';
+import type { CustomerPermissionTarget } from '../permissions/authorization.ts';
 import { defineScopedRoutine } from '@app/core-runtime';
 import type {
-  BusinessAccessTarget,
   ContextAccessService,
   OperationalScope,
   ScopedRoutineDefinition,
@@ -257,7 +258,7 @@ const invitationTarget = (
   legalEntityId: string,
   counterpartyId: string,
   scope: CounterpartyPermissionScope,
-): BusinessAccessTarget =>
+): CustomerPermissionTarget =>
   scope.kind === 'counterparty'
     ? { counterpartyId, kind: 'counterparty', legalEntityId, tenantId }
     : {
@@ -277,21 +278,24 @@ const requireInviterAuthority = (
     readonly scope: CounterpartyPermissionScope;
   },
 ): Effect.Effect<void, CounterpartyAccessDomainError> => {
-  const check = ownerScope.contextAccess.businessPermissions;
+  const check = ownerScope.contextAccess.ownerPermissions;
   if (check === undefined) {
     return Effect.fail(unavailable());
   }
   const target = {
+    legalEntityId: input.legalEntityId,
     principal: input.inviter,
     targets: [
       {
-        permission: accessManagementPermission,
-        target: invitationTarget(
-          input.counterpartyRef.tenantId,
-          input.legalEntityId,
-          input.counterpartyRef.resourceId,
-          input.scope,
-        ),
+        target: customerOwnerPermissionTarget({
+          permission: accessManagementPermission,
+          target: invitationTarget(
+            input.counterpartyRef.tenantId,
+            input.legalEntityId,
+            input.counterpartyRef.resourceId,
+            input.scope,
+          ),
+        }),
       },
     ],
   };
@@ -352,7 +356,7 @@ interface ProofLifecycleOwnerScope {
 }
 
 interface ClaimAuthorityOwnerScope {
-  readonly contextAccess: Pick<ContextAccessService, 'businessPermissions'>;
+  readonly contextAccess: Pick<ContextAccessService, 'ownerPermissions'>;
   readonly crypto: Crypto.Crypto;
   readonly currentOwnerAccess?: CurrentOwnerAccessDecisionReader | undefined;
   readonly transaction: InvitationClaimScopedRoutineInvoker;
@@ -653,7 +657,7 @@ const claimAuthorityForOwnerScope = (
 
 export const counterpartyInvitationClaimServicesForTransaction = (
   transaction: InvitationClaimScopedRoutineInvoker,
-  contextAccess: Pick<ContextAccessService, 'businessPermissions'>,
+  contextAccess: Pick<ContextAccessService, 'ownerPermissions'>,
   crypto: Crypto.Crypto,
   delivery: { readonly stage: ProofLifecycleOwnerScope['stageDelivery'] },
   currentOwnerAccess?: CurrentOwnerAccessDecisionReader,

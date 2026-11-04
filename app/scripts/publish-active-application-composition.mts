@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from 'node:crypto';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
 import {
@@ -20,6 +21,23 @@ import { Command, Flag } from 'effect/cli';
 import { ChildProcess } from 'effect/process';
 import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
 import { parse as parseYaml } from 'yaml';
+import { Reactivity } from 'effect/reactivity';
+import {
+  ApplicationReleaseIntentSchema,
+  ApplicationReleaseSelectionSchema,
+  readReviewedApplicationReleaseIntent,
+} from './application-release-intent.mts';
+import type { ApplicationReleaseIntent, ApplicationReleaseSelection } from './application-release-intent.mts';
+import { ApplicationMigrationRequirementsSchema } from './application-migration-plan.mts';
+import { OpsShellLive } from './ops/ops-shell.mts';
+import {
+  prepareApplicationMigrationPlan,
+  readApplicationMigrationRequirements,
+} from './application-migration-runtime.mts';
+import {
+  applicationMigrationPublicationMode,
+  materializeApplicationMigrationProvider,
+} from './application-migration-publication.mts';
 
 import {
   configureRuntimeCompositionSource,
@@ -29,10 +47,15 @@ import {
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
   ApplicationCompositionSchema,
+  ApplicationCompositionModuleSchema,
+  canonicalizeApplicationComposition,
+  buildApplicationCompositionCatalog,
   ApplicationCompositionArtifactReferenceSchema,
   ONTOS_MODULE_CONTRACT_PATH,
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   OntosDeploymentAppIdSchema,
+  OntosDeploymentIdentitySchema,
+  OntosModuleDeploymentContractSchema,
   OntosShellRuntimeContractSchema,
   validateActiveApplicationCompositionSnapshot,
 } from '../packages/core-runtime/src/index.ts';
@@ -41,15 +64,21 @@ import {
   ARTIFACT_FETCH_TIMEOUT,
   ActiveApplicationCompositionPublicationError,
   assertNoConflictingPublication,
+  applicationCompositionRevision,
   decodeActiveApplicationCompositionSnapshot,
   deriveActiveApplicationCompositionSnapshot,
+  deriveApplicationComposition,
   encodeActiveApplicationCompositionSnapshot,
 } from './active-application-composition.mts';
-import type { ActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/index.ts';
+import type {
+  ApplicationComposition,
+  ActiveApplicationCompositionSnapshot,
+} from '../packages/core-runtime/src/index.ts';
 import {
   ApplicationCompositionBackendSchema,
   ONTOS_APPLICATION_COMPOSITION_MAX_MODULES,
 } from '../packages/core-runtime/src/modules/application-composition.ts';
+import { ONTOS_APPLICATION_COMPOSITION_MAX_BYTES } from '../packages/core-runtime/src/modules/application-composition-limits.ts';
 import {
   quiesceInitialCompositionCutover,
   verifyInitialCompositionCutover,
@@ -69,12 +98,21 @@ import {
   verifyInitialApplicationCompositionPublicationEnvironment,
   withApplicationCompositionPublicationLock,
 } from './application-composition-authority-publication.mts';
-import type { ObservedArtifact, ObservedModuleDeployment } from './active-application-composition.mts';
+import type {
+  ApplicationCompositionPinnedArtifacts,
+  ObservedArtifact,
+  ObservedModuleDeployment,
+} from './active-application-composition.mts';
 import { OUTBOX_WORKER_HOST, OutboxWorkerModeSchema, dedicatedOutboxWorkerSetup } from './outbox-worker-delivery.mjs';
 import type { OutboxWorkerMode } from './outbox-worker-delivery.mjs';
 import { ZeropsApiError } from './zerops-public-api-error.mts';
 import { ZeropsPublicApi, ZeropsPublicApiLive } from './zerops-public-api.mts';
 
+const CANDIDATE_FILE_FLAG = 'candidate-file';
+const EXPECTED_COMPOSITION_FILE_FLAG = 'expected-composition-file';
+const RELEASE_INTENT_FILE_FLAG = 'intent-file';
+const DEFAULT_RELEASE_INTENT_FILE = 'topology/application-release-intent.json';
+const RELEASE_SELECTION_FILE_FLAG = 'selection-file';
 const SHELL_APP_ID = 'shell-super-app';
 const SHELL_ZEROPS_SETUP = 'shellsuperapp';
 const MF_MANIFEST_PATH = '/mf-manifest.json';
@@ -312,11 +350,31 @@ export const readPublishedSnapshot = Effect.gen(function* readPublishedSnapshot(
 });
 
 /** Caller holds the publication lock through using these exact approved release pins. */
-export const readCurrentApprovedApplicationCompositionSnapshot = Effect.gen(
-  function* readCurrentApprovedApplicationCompositionSnapshot() {
+const readApprovedApplicationComposition = Effect.fn('ActiveApplicationComposition.readApproved')(
+  function* readApprovedApplicationComposition(allowAbsent: boolean) {
     const stored = yield* readPublishedSnapshot;
     if (Option.isNone(stored)) {
-      return yield* providerFailure('a published Application Composition is required')();
+      if (!allowAbsent) {
+        return yield* providerFailure('a published Application Composition is required')();
+      }
+      const database = yield* CoreDatabase;
+      const [table] = yield* database.executor.execute<{ readonly installed: boolean }>(
+        sql`select to_regclass('core.application_composition_authority') is not null as installed`,
+        'objects',
+      );
+      if (table === undefined) {
+        return yield* providerFailure('native authority presence could not be established')();
+      }
+      if (table.installed) {
+        const [authority] = yield* database.executor
+          .select({ revision: applicationCompositionAuthority.revision })
+          .from(applicationCompositionAuthority)
+          .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+        if (authority !== undefined) {
+          return yield* providerFailure('an absent provider pointer conflicts with existing native authority')();
+        }
+      }
+      return Option.none<ActiveApplicationCompositionSnapshot>();
     }
     const snapshot = yield* decodeActiveApplicationCompositionSnapshot(stored.value);
     const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot);
@@ -334,8 +392,18 @@ export const readCurrentApprovedApplicationCompositionSnapshot = Effect.gen(
         'the published release requires the current active and unexpired database authority',
       )();
     }
-    return approved;
+    return Option.some(approved);
   },
+);
+
+/** Strict approved-release readers never interpret absence as an approved release. */
+export const readCurrentApprovedApplicationCompositionSnapshot = readApprovedApplicationComposition(false).pipe(
+  Effect.flatMap(
+    Option.match({
+      onNone: () => Effect.fail(providerFailure('a published Application Composition is required')()),
+      onSome: Effect.succeed,
+    }),
+  ),
 );
 
 /** Caller holds the publication lock through this check and the native ingress write. */
@@ -429,6 +497,88 @@ export const assertRetainedReleaseArtifactPaths = (snapshot: ActiveApplicationCo
     );
   });
 
+/** Capture provider and native absence together while holding the existing publication lock. */
+export const captureApprovedApplicationCompositionSnapshot = Effect.fn('ActiveApplicationComposition.captureApproved')(
+  function* captureApprovedApplicationComposition(
+    options: { readonly allowAbsent?: boolean; readonly baselineOnly?: boolean } = {},
+  ) {
+    return yield* withApplicationCompositionPublicationLock(
+      readApprovedApplicationComposition(options.allowAbsent === true).pipe(
+        Effect.tap((captured) =>
+          Option.isSome(captured) && options.baselineOnly !== true
+            ? assertRetainedReleaseArtifactPaths(captured.value)
+            : Effect.void,
+        ),
+      ),
+    );
+  },
+);
+
+const PublicationBaselineSchema = Schema.Struct({
+  retainedModuleAppIds: Schema.Array(OntosDeploymentAppIdSchema).check(
+    Schema.isMaxLength(ONTOS_APPLICATION_COMPOSITION_MAX_MODULES),
+    Schema.makeFilter((ids) => (new Set(ids).size === ids.length ? undefined : 'retained module slots must be unique')),
+  ),
+  revision: Schema.toEncoded(Schema.OptionFromNullOr(ApplicationCompositionSchema.fields.revision)),
+  shellMode: Schema.Literals(['fresh', 'retained']),
+}).check(
+  Schema.makeFilter((baseline) =>
+    baseline.revision !== null || (baseline.retainedModuleAppIds.length === 0 && baseline.shellMode === 'fresh')
+      ? undefined
+      : 'captured absence cannot retain module or Shell artifacts',
+  ),
+);
+type PublicationBaseline = typeof PublicationBaselineSchema.Type;
+
+const requireProviderBaseline = Effect.fn('ActiveApplicationComposition.requireProviderBaseline')(
+  function* requireProviderBaselineEffect(
+    current: Option.Option<string>,
+    target: ActiveApplicationCompositionSnapshot,
+    baseline: PublicationBaseline,
+  ) {
+    if (Option.isNone(current)) {
+      return baseline.revision === null
+        ? yield* Effect.void
+        : yield* providerFailure('the captured provider baseline is missing')();
+    }
+    const previous = yield* decodeActiveApplicationCompositionSnapshot(current.value);
+    if (applicationCompositionRevision(previous.composition) !== previous.composition.revision) {
+      return yield* providerFailure('the current provider revision does not identify its canonical content')();
+    }
+    // Existing assertNoConflictingPublication already checks monotonic observation/freshness.
+    if (
+      canonicalizeApplicationComposition(previous.composition) ===
+      canonicalizeApplicationComposition(target.composition)
+    ) {
+      return yield* Effect.void;
+    }
+    if (previous.composition.revision !== baseline.revision) {
+      return yield* providerFailure('the provider no longer identifies the captured baseline or exact target')();
+    }
+    for (const moduleAppId of baseline.retainedModuleAppIds) {
+      const original = previous.composition.modules.find(({ deployment }) => deployment.appId === moduleAppId);
+      const retained = target.composition.modules.find(({ deployment }) => deployment.appId === moduleAppId);
+      if (
+        original === undefined ||
+        retained === undefined ||
+        !Schema.toEquivalence(ApplicationCompositionModuleSchema)(original, retained)
+      ) {
+        return yield* providerFailure('retained module pins no longer match the captured provider baseline')();
+      }
+    }
+    if (
+      baseline.shellMode === 'retained' &&
+      !Schema.toEquivalence(ApplicationCompositionSchema.fields.shell)(
+        previous.composition.shell,
+        target.composition.shell,
+      )
+    ) {
+      return yield* providerFailure('retained Shell pins no longer match the captured provider baseline')();
+    }
+    return yield* Effect.void;
+  },
+);
+
 export const publishSnapshot = Effect.fn('ActiveApplicationComposition.publishSnapshot')(function* publishSnapshot<
   InitialFailure,
   InitialRequirements,
@@ -436,7 +586,7 @@ export const publishSnapshot = Effect.fn('ActiveApplicationComposition.publishSn
   input: ActiveApplicationCompositionSnapshot,
   snapshotFile: Option.Option<string>,
   verifyInitialCutover: Effect.Effect<void, InitialFailure, InitialRequirements>,
-  retainedShellRevision?: string,
+  baseline?: PublicationBaseline,
 ) {
   const snapshot = yield* validateActiveApplicationCompositionSnapshot(input).pipe(
     Effect.mapError(
@@ -447,29 +597,29 @@ export const publishSnapshot = Effect.fn('ActiveApplicationComposition.publishSn
         }),
     ),
   );
+  if (baseline !== undefined) {
+    yield* Schema.decodeUnknownEffect(PublicationBaselineSchema, { onExcessProperty: 'error' })(baseline);
+    if (
+      baseline.retainedModuleAppIds.some(
+        (id) => !snapshot.composition.modules.some(({ deployment }) => deployment.appId === id),
+      )
+    ) {
+      return yield* providerFailure('retained baseline slots must belong to the complete target')();
+    }
+  }
   yield* assertRetainedReleaseArtifactPaths(snapshot);
   const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
+  const precondition =
+    baseline === undefined
+      ? undefined
+      : { baselineRevision: baseline.revision, targetRevision: snapshot.composition.revision };
   yield* publishApplicationCompositionAuthoritySnapshot(
     snapshot,
     Effect.gen(function* publishProviderPointer() {
       const current = yield* readPublishedSnapshot;
       yield* assertNoConflictingPublication(current, snapshot);
-      if (retainedShellRevision !== undefined) {
-        if (Option.isNone(current)) {
-          return yield* providerFailure('retained Shell pins require their current approved release')();
-        }
-        const previous = yield* decodeActiveApplicationCompositionSnapshot(current.value).pipe(
-          Effect.flatMap(validateActiveApplicationCompositionSnapshot),
-        );
-        if (
-          previous.composition.revision !== retainedShellRevision ||
-          !Schema.toEquivalence(ApplicationCompositionSchema.fields.shell)(
-            previous.composition.shell,
-            snapshot.composition.shell,
-          )
-        ) {
-          return yield* providerFailure('retained Shell pins no longer match their current approved release')();
-        }
+      if (baseline !== undefined) {
+        yield* requireProviderBaseline(current, snapshot, baseline);
       }
       const [client, url] = yield* Effect.all([publicationClient, publicationUrl]);
       const result = yield* client
@@ -524,6 +674,7 @@ export const publishSnapshot = Effect.fn('ActiveApplicationComposition.publishSn
       return snapshot;
     }),
     verifyInitialCutover,
+    precondition,
   );
   if (Option.isSome(snapshotFile)) {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -539,25 +690,174 @@ export const publishSnapshot = Effect.fn('ActiveApplicationComposition.publishSn
 
 /** A reviewed publisher input selects artifacts; placement never installs a module implicitly. */
 export const ApplicationCompositionPublicationCandidateSchema = Schema.Struct({
+  baseline: PublicationBaselineSchema,
   modules: Schema.Array(
     Schema.Struct({
       appId: OntosDeploymentAppIdSchema,
       backend: ApplicationCompositionBackendSchema,
-      contractUrl: ApplicationCompositionArtifactReferenceSchema.fields.url,
-      federationManifestUrl: Schema.optionalKey(ApplicationCompositionArtifactReferenceSchema.fields.url),
-    }),
-  ).check(Schema.isMaxLength(ONTOS_APPLICATION_COMPOSITION_MAX_MODULES)),
-  retainedShellRevision: Schema.optionalKey(ApplicationCompositionSchema.fields.revision),
+      contract: ApplicationCompositionArtifactReferenceSchema,
+      deployment: OntosDeploymentIdentitySchema,
+      federationManifest: Schema.optionalKey(ApplicationCompositionArtifactReferenceSchema),
+    }).check(
+      Schema.makeFilter((module) =>
+        module.appId === module.deployment.appId ? undefined : 'candidate appId must match its exact deployment',
+      ),
+    ),
+  ).check(
+    Schema.isMaxLength(ONTOS_APPLICATION_COMPOSITION_MAX_MODULES),
+    Schema.makeFilter((modules) =>
+      new Set(modules.map(({ appId }) => appId)).size === modules.length
+        ? undefined
+        : 'candidate deployment slots must be unique',
+    ),
+  ),
   shell: Schema.Struct({
     deployment: OntosShellRuntimeContractSchema.fields.deployment,
     federationManifest: ApplicationCompositionArtifactReferenceSchema,
     runtimeContract: ApplicationCompositionArtifactReferenceSchema,
   }),
-});
+}).check(
+  Schema.makeFilter((candidate) =>
+    candidate.baseline.retainedModuleAppIds.every((id) => candidate.modules.some((module) => module.appId === id))
+      ? undefined
+      : 'retained baseline slots must belong to complete candidate membership',
+  ),
+);
 type PublicationCandidate = typeof ApplicationCompositionPublicationCandidateSchema.Type;
 
-const readPublicationCandidate = (file: string) =>
-  Effect.gen(function* readCandidateFile() {
+const samePublicationIds = (expected: readonly string[], actual: readonly string[]) =>
+  expected.length === actual.length && expected.every((id, index) => id === actual[index]);
+
+const requireExpectedReleasePartition = Effect.fn('ActiveApplicationComposition.expectedPartition')(
+  function* requireExpectedPartition(input: {
+    readonly candidate: PublicationCandidate;
+    readonly intent: ApplicationReleaseIntent;
+    readonly selection: ApplicationReleaseSelection;
+  }) {
+    const { candidate, intent, selection } = input;
+    const desired = intent.modules.map(({ appId }) => appId);
+    const complete = selection.complete.map(({ id }) => id);
+    const partition = [...selection.fresh, ...selection.retained].map(({ id }) => id);
+    const removed = selection.removed.map(({ appId }) => appId);
+    const slots = new Set(desired);
+    if (
+      slots.size !== desired.length ||
+      slots.has(SHELL_APP_ID) ||
+      !samePublicationIds(desired, complete) ||
+      !samePublicationIds(
+        desired,
+        candidate.modules.map(({ appId }) => appId),
+      ) ||
+      partition.length !== desired.length ||
+      new Set(partition).size !== desired.length ||
+      partition.some((id) => !slots.has(id)) ||
+      new Set(removed).size !== removed.length ||
+      removed.some((id) => slots.has(id)) ||
+      selection.shell.unit.id !== SHELL_APP_ID ||
+      !samePublicationIds(
+        selection.retained.map(({ id }) => id),
+        candidate.baseline.retainedModuleAppIds,
+      ) ||
+      selection.shell.mode !== candidate.baseline.shellMode
+    ) {
+      return yield* new ActiveApplicationCompositionPublicationError({
+        message: 'expected composition must bind the exact reviewed membership and release partition',
+        reason: 'invalid_observation',
+      });
+    }
+    return desired;
+  },
+);
+
+/** Planning identity only: full semantic validation and exact reviewed artifact/selection binding. */
+export const validateExpectedApplicationComposition = Effect.fn('ActiveApplicationComposition.validateExpected')(
+  function* validateExpected(input: {
+    readonly candidate: PublicationCandidate;
+    readonly composition: ApplicationComposition;
+    readonly intent: ApplicationReleaseIntent;
+    readonly selection: ApplicationReleaseSelection;
+  }) {
+    const candidate = yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema, {
+      onExcessProperty: 'error',
+    })(input.candidate);
+    const composition = yield* Schema.decodeUnknownEffect(ApplicationCompositionSchema, { onExcessProperty: 'error' })(
+      input.composition,
+    );
+    const intent = yield* Schema.decodeUnknownEffect(ApplicationReleaseIntentSchema, { onExcessProperty: 'error' })(
+      input.intent,
+    );
+    const selection = yield* Schema.decodeUnknownEffect(ApplicationReleaseSelectionSchema, {
+      onExcessProperty: 'error',
+    })(input.selection);
+    yield* buildApplicationCompositionCatalog(composition);
+    const desired = yield* requireExpectedReleasePartition({ candidate, intent, selection });
+    if (
+      (intent.migrationRequirements === undefined) !== (selection.migrationRequirements === undefined) ||
+      (intent.migrationRequirements !== undefined &&
+        selection.migrationRequirements !== undefined &&
+        !Schema.toEquivalence(ApplicationMigrationRequirementsSchema)(
+          intent.migrationRequirements,
+          selection.migrationRequirements,
+        ))
+    ) {
+      return yield* new ActiveApplicationCompositionPublicationError({
+        message: 'release selection changes the independently reviewed migration requirements',
+        reason: 'invalid_observation',
+      });
+    }
+    const byApp = new Map(composition.modules.map((module) => [module.deployment.appId, module]));
+    if (byApp.size !== desired.length || desired.some((id) => !byApp.has(id))) {
+      return yield* new ActiveApplicationCompositionPublicationError({
+        message: 'expected composition differs from complete reviewed membership',
+        reason: 'invalid_observation',
+      });
+    }
+    const sameArtifact = Schema.toEquivalence(ApplicationCompositionArtifactReferenceSchema);
+    const sameDeployment = Schema.toEquivalence(OntosDeploymentIdentitySchema);
+    const sameBackend = Schema.toEquivalence(ApplicationCompositionBackendSchema);
+    for (const expected of candidate.modules) {
+      const module = byApp.get(expected.appId);
+      if (
+        module === undefined ||
+        !sameDeployment(expected.deployment, module.deployment) ||
+        !sameArtifact(expected.contract, module.contract) ||
+        !sameBackend(expected.backend, module.backend) ||
+        (module.federation.execution === 'browser'
+          ? expected.federationManifest === undefined ||
+            !sameArtifact(expected.federationManifest, module.federation.manifest)
+          : expected.federationManifest !== undefined)
+      ) {
+        return yield* new ActiveApplicationCompositionPublicationError({
+          message: 'expected composition differs from exact candidate module pins or backend',
+          reason: 'invalid_observation',
+        });
+      }
+    }
+    if (
+      !sameDeployment(candidate.shell.deployment, composition.shell.deployment) ||
+      !sameArtifact(candidate.shell.runtimeContract, composition.shell.runtimeContract) ||
+      !sameArtifact(candidate.shell.federationManifest, composition.shell.federationManifest)
+    ) {
+      return yield* new ActiveApplicationCompositionPublicationError({
+        message: 'expected composition differs from exact candidate Shell pins',
+        reason: 'invalid_observation',
+      });
+    }
+    return composition;
+  },
+  Effect.mapError((cause) =>
+    Schema.is(ActiveApplicationCompositionPublicationError)(cause)
+      ? cause
+      : new ActiveApplicationCompositionPublicationError({
+          cause,
+          message: 'expected composition failed complete semantic validation',
+          reason: 'invalid_observation',
+        }),
+  ),
+);
+
+const readPublicationDocument = (file: string, maximumBytes: number) =>
+  Effect.gen(function* readPublicationDocumentFile() {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const canonical = yield* fileSystem.realPath(path.resolve(file));
@@ -568,7 +868,7 @@ const readPublicationCandidate = (file: string) =>
       });
     }
     const bytes = yield* fileSystem.readFile(canonical);
-    if (bytes.byteLength > 1024 * 1024) {
+    if (bytes.byteLength > maximumBytes) {
       return yield* new ActiveApplicationCompositionPublicationError({
         message: 'the candidate exceeds its byte budget',
         reason: 'invalid_observation',
@@ -582,41 +882,181 @@ const readPublicationCandidate = (file: string) =>
         }),
       try: () => new TextDecoder('utf-8', { fatal: true }).decode(bytes),
     });
-    return yield* Schema.decodeEffect(Schema.fromJsonString(ApplicationCompositionPublicationCandidateSchema), {
-      onExcessProperty: 'error',
-    })(text);
+    return text;
   });
+
+const readPublicationCandidate = (file: string) =>
+  readPublicationDocument(file, 1024 * 1024).pipe(
+    Effect.flatMap(
+      Schema.decodeEffect(Schema.fromJsonString(ApplicationCompositionPublicationCandidateSchema), {
+        onExcessProperty: 'error',
+      }),
+    ),
+  );
+
+export const readExpectedPublication = Effect.fn('ActiveApplicationComposition.readExpected')(
+  function* readExpected(input: {
+    readonly candidateFile: string;
+    readonly expectedCompositionFile: string;
+    readonly intent: ApplicationReleaseIntent;
+    readonly selectionFile: string;
+  }) {
+    const candidate = yield* readPublicationCandidate(input.candidateFile);
+    const composition = yield* readPublicationDocument(
+      input.expectedCompositionFile,
+      ONTOS_APPLICATION_COMPOSITION_MAX_BYTES,
+    ).pipe(
+      Effect.flatMap(
+        Schema.decodeEffect(Schema.fromJsonString(ApplicationCompositionSchema), { onExcessProperty: 'error' }),
+      ),
+    );
+    const selection = yield* readPublicationDocument(input.selectionFile, 1024 * 1024).pipe(
+      Effect.flatMap(
+        Schema.decodeEffect(Schema.fromJsonString(ApplicationReleaseSelectionSchema), { onExcessProperty: 'error' }),
+      ),
+    );
+    return {
+      candidate,
+      composition: yield* validateExpectedApplicationComposition({
+        candidate,
+        composition,
+        intent: input.intent,
+        selection,
+      }),
+    };
+  },
+);
+
+const fetchPinnedCandidateArtifact = Effect.fn('ActiveApplicationComposition.fetchPinnedArtifact')(
+  function* fetchPinnedArtifact(appId: string, expected: typeof ApplicationCompositionArtifactReferenceSchema.Type) {
+    const artifact = yield* fetchArtifact(appId, expected.url);
+    if (createHash('sha256').update(artifact.bytes).digest('hex') !== expected.sha256) {
+      return yield* new ActiveApplicationCompositionPublicationError({
+        message:
+          appId === SHELL_APP_ID
+            ? 'observed Shell artifacts differ from the exact approved candidate deployment or digests'
+            : 'observed module artifact digest differs from the exact approved candidate pin',
+        reason: 'invalid_observation',
+      });
+    }
+    return artifact;
+  },
+);
+
+const fetchCandidatePinnedArtifacts = Effect.fn('ActiveApplicationComposition.fetchCandidatePins')(
+  function* fetchCandidatePinnedArtifacts(environment: string, candidate: PublicationCandidate) {
+    const [modules, runtimeContract, federationManifest] = yield* Effect.all(
+      [
+        Effect.forEach(
+          candidate.modules,
+          (module) =>
+            Effect.gen(function* observeCandidateModule() {
+              const contract = yield* fetchPinnedCandidateArtifact(module.appId, module.contract);
+              const document = yield* Effect.try({
+                catch: (cause) =>
+                  new ActiveApplicationCompositionPublicationError({
+                    cause,
+                    message: 'the pinned module contract is not valid UTF-8',
+                    reason: 'invalid_observation',
+                  }),
+                try: () => new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(contract.bytes),
+              }).pipe(
+                Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))),
+                Effect.mapError(
+                  (cause) =>
+                    new ActiveApplicationCompositionPublicationError({
+                      cause,
+                      message: 'the pinned module contract failed validation',
+                      reason: 'invalid_observation',
+                    }),
+                ),
+              );
+              if (
+                document.deployment.appId !== module.deployment.appId ||
+                document.deployment.buildMarker !== module.deployment.buildMarker
+              ) {
+                return yield* new ActiveApplicationCompositionPublicationError({
+                  message: 'observed module deployment differs from the exact approved candidate deployment',
+                  reason: 'invalid_observation',
+                });
+              }
+              const observedManifest =
+                module.federationManifest === undefined
+                  ? undefined
+                  : yield* fetchPinnedCandidateArtifact(module.appId, module.federationManifest);
+              const common = { appId: module.appId, backend: module.backend, contract };
+              return observedManifest === undefined ? common : { ...common, federationManifest: observedManifest };
+            }),
+          { concurrency: 4 },
+        ),
+        fetchArtifact(SHELL_APP_ID, candidate.shell.runtimeContract.url),
+        fetchArtifact(SHELL_APP_ID, candidate.shell.federationManifest.url),
+      ],
+      { concurrency: 3 },
+    );
+    const artifacts: ApplicationCompositionPinnedArtifacts = {
+      environment,
+      modules,
+      shell: { federationManifest, runtimeContract },
+    };
+    return artifacts;
+  },
+);
+
+const observePinnedCandidateBackends = (artifacts: ApplicationCompositionPinnedArtifacts) =>
+  Effect.forEach(
+    artifacts.modules,
+    (module) =>
+      observeApplicationCompositionBackend({
+        appId: module.appId,
+        backend: module.backend,
+        contract: module.contract,
+      }).pipe(Effect.map((backend) => ({ ...module, backend }))),
+    { concurrency: 4 },
+  );
+
+/** Prepare only content identity: public pinned bytes and declared backends are not deployment approval. */
+export const prepareCandidate = Effect.fn('ActiveApplicationComposition.prepareCandidate')(function* prepareCandidate(
+  environment: string,
+  input: {
+    readonly candidate: PublicationCandidate;
+    readonly intent: ApplicationReleaseIntent;
+    readonly selection: ApplicationReleaseSelection;
+  },
+  options: { readonly observeBackends?: boolean } = {},
+) {
+  const candidate = yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema, {
+    onExcessProperty: 'error',
+  })(input.candidate);
+  const pinned = yield* fetchCandidatePinnedArtifacts(environment, candidate);
+  const artifacts =
+    options.observeBackends === true ? { ...pinned, modules: yield* observePinnedCandidateBackends(pinned) } : pinned;
+  const composition = yield* deriveApplicationComposition(artifacts);
+  return yield* validateExpectedApplicationComposition({ ...input, candidate, composition });
+});
 
 /** Full installation observation. Runtime availability never filters this approved inventory. */
 export const observeCandidate = Effect.fn('ActiveApplicationComposition.observeCandidate')(function* observeCandidate(
   environment: string,
-  candidate: PublicationCandidate,
+  input: PublicationCandidate,
+  expectedComposition?: ApplicationComposition,
 ) {
-  const [modules, runtimeContract, federationManifest, observedAt] = yield* Effect.all(
-    [
-      Effect.forEach(
-        candidate.modules,
-        (module) =>
-          Effect.gen(function* observeCandidateModule() {
-            const contract = yield* fetchArtifact(module.appId, module.contractUrl);
-            const backend = yield* observeApplicationCompositionBackend({
-              appId: module.appId,
-              backend: module.backend,
-              contract,
-            });
-            const common: ObservedModuleDeployment = { appId: module.appId, backend, contract };
-            return module.federationManifestUrl === undefined
-              ? common
-              : { ...common, federationManifest: yield* fetchArtifact(module.appId, module.federationManifestUrl) };
-          }),
-        { concurrency: 4 },
-      ),
-      fetchArtifact(SHELL_APP_ID, candidate.shell.runtimeContract.url),
-      fetchArtifact(SHELL_APP_ID, candidate.shell.federationManifest.url),
-      DateTime.now,
-    ],
-    { concurrency: 3 },
+  const candidate = yield* Schema.decodeUnknownEffect(ApplicationCompositionPublicationCandidateSchema, {
+    onExcessProperty: 'error',
+  })(input).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ActiveApplicationCompositionPublicationError({
+          cause,
+          message: 'the exact publication candidate failed validation',
+          reason: 'invalid_observation',
+        }),
+    ),
   );
+  const pinned = yield* fetchCandidatePinnedArtifacts(environment, candidate);
+  const modules = yield* observePinnedCandidateBackends(pinned);
+  const { federationManifest, runtimeContract } = pinned.shell;
+  const observedAt = yield* DateTime.now;
   const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
     environment,
     modules,
@@ -624,6 +1064,12 @@ export const observeCandidate = Effect.fn('ActiveApplicationComposition.observeC
     shell: { federationManifest, runtimeContract },
     validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
   });
+  if (expectedComposition !== undefined && snapshot.composition.revision !== expectedComposition.revision) {
+    return yield* new ActiveApplicationCompositionPublicationError({
+      message: 'actual observed composition differs from the expected migration target',
+      reason: 'conflicting_revision',
+    });
+  }
   const observedShell = snapshot.composition.shell;
   if (
     observedShell.deployment.appId !== candidate.shell.deployment.appId ||
@@ -670,77 +1116,155 @@ const quiesceInitialCutoverCommand = Command.make(
     receiptFile: Flag.String('receipt-file'),
   },
   quiesceInitialCompositionCutover,
-);
+).pipe(Command.provide(() => ZeropsPublicApiLive));
 
 const verifyInitialCutoverCommand = Command.make(
   'verify-initial-cutover',
   { environment: Flag.String('environment') },
   ({ environment }) => verifyInitialApplicationCompositionPublicationEnvironment(configuredInitialCutover(environment)),
-).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
+).pipe(Command.provide(() => Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ZeropsPublicApiLive)));
+
+interface MigrationProviderDeployment {
+  readonly projectId: string;
+  readonly providerCopyPath: string;
+  readonly serviceId: string;
+  readonly versionName: string;
+}
+const deployMigrationProvider = Effect.fn('ApplicationCompositionPublication.deployMigrationProvider')(
+  function* deployMigrationProviderEffect(input: MigrationProviderDeployment) {
+    const path = yield* Path.Path;
+    const process = yield* ChildProcess.make(
+      'zcli',
+      [
+        'push',
+        '--working-dir',
+        '.',
+        '--zerops-yaml-path',
+        input.providerCopyPath,
+        '--workspace-state',
+        'clean',
+        '--deploy-git-folder',
+        '--project-id',
+        input.projectId,
+        '--service-id',
+        input.serviceId,
+        '--setup',
+        'migrator',
+        '--version-name',
+        input.versionName,
+      ],
+      { cwd: path.resolve(import.meta.dirname, '../..'), stderr: 'inherit', stdout: 'inherit' },
+    );
+    const exitCode = yield* process.exitCode;
+    if (exitCode !== 0) {
+      return yield* providerFailure('The native verified migrator deployment failed')();
+    }
+    return yield* Effect.void;
+  },
+);
 
 const migrateCommand = Command.make(
   'migrate',
   {
+    candidateFile: Flag.String(CANDIDATE_FILE_FLAG).pipe(Flag.optional),
     environment: Flag.String('environment'),
+    expectedCompositionFile: Flag.String(EXPECTED_COMPOSITION_FILE_FLAG).pipe(Flag.optional),
+    intentFile: Flag.String(RELEASE_INTENT_FILE_FLAG).pipe(Flag.withDefault(DEFAULT_RELEASE_INTENT_FILE)),
     projectId: Flag.String('project-id'),
+    selectionFile: Flag.String(RELEASE_SELECTION_FILE_FLAG).pipe(Flag.optional),
     serviceId: Flag.String('service-id'),
     versionName: Flag.String('version-name'),
     zeropsYamlPath: Flag.String('zerops-yaml-path'),
   },
-  ({ environment, projectId, serviceId, versionName, zeropsYamlPath }) =>
-    Effect.gen(function* migrateUnderNativePublicationLock() {
-      const path = yield* Path.Path;
-      const api = yield* ZeropsPublicApi;
-      const deployment = Effect.acquireUseRelease(
-        Effect.void,
-        () =>
-          Effect.scoped(
-            Effect.gen(function* runVerifiedRemoteMigrator() {
-              const process = yield* ChildProcess.make(
-                'zcli',
-                [
-                  'push',
-                  '--working-dir',
-                  '.',
-                  '--zerops-yaml-path',
-                  path.resolve(zeropsYamlPath),
-                  '--workspace-state',
-                  'clean',
-                  '--deploy-git-folder',
-                  '--project-id',
-                  projectId,
-                  '--service-id',
-                  serviceId,
-                  '--setup',
-                  'migrator',
-                  '--version-name',
-                  versionName,
-                ],
-                { cwd: path.resolve(import.meta.dirname, '../..'), stderr: 'inherit', stdout: 'inherit' },
-              );
-              const exitCode = yield* process.exitCode;
-              if (exitCode !== 0) {
-                return yield* providerFailure('The native verified migrator deployment failed')();
-              }
-              return yield* Effect.void;
-            }),
-          ),
-        () =>
-          api.stopService(serviceId).pipe(
+  ({
+    candidateFile,
+    environment,
+    expectedCompositionFile,
+    intentFile,
+    projectId,
+    selectionFile,
+    serviceId,
+    versionName,
+    zeropsYamlPath,
+  }) =>
+    Effect.scoped(
+      Effect.gen(function* migrateUnderNativePublicationLock() {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const appDirectory = path.resolve(import.meta.dirname, '..');
+        const reviewedIntentFile = path.relative(appDirectory, path.resolve(appDirectory, intentFile));
+        const intent = yield* readReviewedApplicationReleaseIntent(reviewedIntentFile);
+        const requirements = yield* readApplicationMigrationRequirements(path.join(appDirectory, reviewedIntentFile));
+        const prepared = yield* prepareApplicationMigrationPlan(requirements);
+        const mode = applicationMigrationPublicationMode(prepared.plan);
+        if (mode === 'none') {
+          return yield* Effect.logInfo('Reviewed release requires no migration or owner verification');
+        }
+        if (Option.isNone(candidateFile) || Option.isNone(expectedCompositionFile) || Option.isNone(selectionFile)) {
+          return yield* new ActiveApplicationCompositionPublicationError({
+            message:
+              'nonempty migration or verification requires candidate-file, selection-file and expected-composition-file',
+            reason: 'invalid_observation',
+          });
+        }
+        const expected = yield* readExpectedPublication({
+          candidateFile: candidateFile.value,
+          expectedCompositionFile: expectedCompositionFile.value,
+          intent,
+          selectionFile: selectionFile.value,
+        });
+        const precondition = {
+          baselineRevision: expected.candidate.baseline.revision,
+          targetRevision: expected.composition.revision,
+        };
+        const providerSource = yield* fileSystem.readFileString(path.resolve(zeropsYamlPath));
+        const providerCopy = yield* materializeApplicationMigrationProvider(providerSource, {
+          intentFile: reviewedIntentFile,
+          verifyOnly: mode === 'verify-only',
+        });
+        const temporaryDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: 'ontos-migration-publication-',
+        });
+        const providerCopyPath = path.join(temporaryDirectory, 'zerops.yaml');
+        yield* fileSystem.writeFileString(providerCopyPath, providerCopy);
+        const deployment = Effect.gen(function* deployAndStopMigrator() {
+          const api = yield* ZeropsPublicApi;
+          const stop = api.stopService(serviceId).pipe(
             Effect.mapError((failure) =>
               providerFailure(
                 `The native migrator could not be independently verified as stopped: ${failure.message}`,
               )(),
             ),
             Effect.orDie,
+          );
+          return yield* Effect.acquireUseRelease(
+            Effect.void,
+            () => deployMigrationProvider({ projectId, providerCopyPath, serviceId, versionName }),
+            () => stop,
+          );
+        });
+        if (mode === 'verify-only') {
+          return yield* Layer.build(
+            Layer.effectDiscard(withApplicationCompositionPublicationLock(deployment, precondition)).pipe(
+              Layer.provide(Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ZeropsPublicApiLive)),
+            ),
+          ).pipe(Effect.asVoid);
+        }
+        return yield* Layer.build(
+          Layer.effectDiscard(
+            runApplicationCompositionMigration(deployment, configuredInitialCutover(environment), precondition),
+          ).pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                ApplicationCompositionAuthorityAdminDatabaseLive,
+                ApplicationCompositionLegacyOwnersLive,
+                ZeropsPublicApiLive,
+              ),
+            ),
           ),
-      );
-      yield* runApplicationCompositionMigration(deployment, configuredInitialCutover(environment));
-    }),
-).pipe(
-  Command.provide(() =>
-    Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ApplicationCompositionLegacyOwnersLive),
-  ),
+        ).pipe(Effect.asVoid);
+      }),
+    ),
 );
 
 const resumeDurableWorkCommand = Command.make(
@@ -752,93 +1276,148 @@ const resumeDurableWorkCommand = Command.make(
 const captureApprovedSnapshotCommand = Command.make(
   'capture-approved-snapshot',
   {
+    allowAbsent: Flag.Boolean('allow-absent'),
+    baselineOnly: Flag.Boolean('baseline-only'),
     environment: Flag.Literals('environment', DeploymentEnvironmentSchema.literals),
     snapshotFile: Flag.String('snapshot-file'),
   },
-  ({ environment, snapshotFile }) =>
-    withApplicationCompositionPublicationLock(
-      Effect.gen(function* captureApprovedSnapshot() {
-        const approved = yield* readCurrentApprovedApplicationCompositionSnapshot;
-        yield* assertRetainedReleaseArtifactPaths(approved);
-        const fileSystem = yield* FileSystem.FileSystem;
-        const encoded = yield* encodeActiveApplicationCompositionSnapshot(approved);
-        yield* fileSystem.writeFileString(snapshotFile, encoded);
-        yield* Effect.logInfo('Captured the exact approved release before migration', {
+  ({ allowAbsent, baselineOnly, environment, snapshotFile }) =>
+    Effect.gen(function* captureApprovedSnapshot() {
+      const captured = yield* captureApprovedApplicationCompositionSnapshot({ allowAbsent, baselineOnly });
+      const fileSystem = yield* FileSystem.FileSystem;
+      if (Option.isNone(captured)) {
+        yield* fileSystem.writeFileString(snapshotFile, 'null\n');
+        return yield* Effect.logInfo('Captured actual absence of provider pointer and native authority', {
           environment,
-          revision: approved.composition.revision,
         });
-      }),
-    ),
+      }
+      const encoded = yield* encodeActiveApplicationCompositionSnapshot(captured.value);
+      yield* fileSystem.writeFileString(snapshotFile, encoded);
+      return yield* Effect.logInfo('Captured the exact approved release before migration', {
+        environment,
+        revision: captured.value.composition.revision,
+      });
+    }),
 ).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
+
+const prepareCommand = Command.make(
+  'prepare',
+  {
+    candidateFile: Flag.String(CANDIDATE_FILE_FLAG),
+    environment: Flag.String('environment'),
+    expectedCompositionFile: Flag.String(EXPECTED_COMPOSITION_FILE_FLAG),
+    intentFile: Flag.String(RELEASE_INTENT_FILE_FLAG).pipe(Flag.withDefault(DEFAULT_RELEASE_INTENT_FILE)),
+    observeBackends: Flag.Boolean('observe-backends'),
+    selectionFile: Flag.String(RELEASE_SELECTION_FILE_FLAG),
+  },
+  ({ candidateFile, environment, expectedCompositionFile, intentFile, observeBackends, selectionFile }) =>
+    Effect.gen(function* prepareExpectedComposition() {
+      const intent = yield* readReviewedApplicationReleaseIntent(intentFile);
+      const candidate = yield* readPublicationCandidate(candidateFile);
+      const selection = yield* readPublicationDocument(selectionFile, 1024 * 1024).pipe(
+        Effect.flatMap(
+          Schema.decodeEffect(Schema.fromJsonString(ApplicationReleaseSelectionSchema), { onExcessProperty: 'error' }),
+        ),
+      );
+      const composition = yield* prepareCandidate(environment, { candidate, intent, selection }, { observeBackends });
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.writeFileString(expectedCompositionFile, canonicalizeApplicationComposition(composition));
+      return yield* Effect.logInfo('Prepared expected content identity; deployment observation is still required', {
+        revision: composition.revision,
+      });
+    }),
+);
 
 const publishCommand = Command.make(
   'publish',
   {
-    candidateFile: Flag.String('candidate-file'),
+    candidateFile: Flag.String(CANDIDATE_FILE_FLAG),
     environment: Flag.String('environment'),
+    expectedCompositionFile: Flag.String(EXPECTED_COMPOSITION_FILE_FLAG),
+    intentFile: Flag.String(RELEASE_INTENT_FILE_FLAG).pipe(Flag.withDefault(DEFAULT_RELEASE_INTENT_FILE)),
+    selectionFile: Flag.String(RELEASE_SELECTION_FILE_FLAG),
     snapshotFile: Flag.String('snapshot-file').pipe(Flag.optional),
   },
-  ({ candidateFile, environment, snapshotFile }) =>
-    readPublicationCandidate(candidateFile).pipe(
-      Effect.flatMap((candidate) =>
-        observeCandidate(environment, candidate).pipe(
-          Effect.flatMap((snapshot) =>
-            publishSnapshot(
-              snapshot,
-              snapshotFile,
-              configuredInitialCutover(environment),
-              candidate.retainedShellRevision,
-            ),
-          ),
-        ),
-      ),
-    ),
-).pipe(
-  Command.provide(() =>
-    Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ApplicationCompositionLegacyOwnersLive),
-  ),
-);
-
-const refreshCommand = Command.make(
-  'refresh',
-  {
-    environment: Flag.String('environment'),
-  },
-  ({ environment }) =>
-    Effect.gen(function* refreshComposition() {
-      const current = yield* readPublishedSnapshot;
-      if (Option.isNone(current)) {
-        return yield* new ActiveApplicationCompositionPublicationError({
-          message: 'composition storage has no approved release to refresh',
-          reason: 'invalid_observation',
-        });
-      }
-      const approved = yield* decodeActiveApplicationCompositionSnapshot(current.value);
-      const candidate: PublicationCandidate = {
-        modules: approved.composition.modules.map((module) => {
-          const common = { appId: module.deployment.appId, backend: module.backend, contractUrl: module.contract.url };
-          return module.federation.execution === 'browser'
-            ? { ...common, federationManifestUrl: module.federation.manifest.url }
-            : common;
-        }),
-        shell: {
-          deployment: approved.composition.shell.deployment,
-          federationManifest: approved.composition.shell.federationManifest,
-          runtimeContract: approved.composition.shell.runtimeContract,
-        },
-      };
-      const snapshot = yield* observeCandidate(environment, candidate);
-      if (snapshot.composition.revision !== approved.composition.revision) {
-        return yield* new ActiveApplicationCompositionPublicationError({
-          message: 'refresh observed different release artifacts; an explicit promotion is required',
-          reason: 'conflicting_revision',
-        });
-      }
-      return yield* publishSnapshot(snapshot, Option.none(), configuredInitialCutover(environment));
+  ({ candidateFile, environment, expectedCompositionFile, intentFile, selectionFile, snapshotFile }) =>
+    Effect.gen(function* publishExpectedCandidate() {
+      const intent = yield* readReviewedApplicationReleaseIntent(intentFile);
+      const expected = yield* readExpectedPublication({
+        candidateFile,
+        expectedCompositionFile,
+        intent,
+        selectionFile,
+      });
+      const snapshot = yield* observeCandidate(environment, expected.candidate, expected.composition);
+      return yield* publishSnapshot(
+        snapshot,
+        snapshotFile,
+        configuredInitialCutover(environment),
+        expected.candidate.baseline,
+      );
     }),
 ).pipe(
   Command.provide(() =>
-    Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ApplicationCompositionLegacyOwnersLive),
+    Layer.mergeAll(
+      ApplicationCompositionAuthorityAdminDatabaseLive,
+      ApplicationCompositionLegacyOwnersLive,
+      ZeropsPublicApiLive,
+    ),
+  ),
+);
+
+export const refreshApplicationComposition = Effect.fn('ActiveApplicationComposition.refresh')(
+  function* refreshComposition(environment: string) {
+    const current = yield* readPublishedSnapshot;
+    if (Option.isNone(current)) {
+      return yield* new ActiveApplicationCompositionPublicationError({
+        message: 'composition storage has no approved release to refresh',
+        reason: 'invalid_observation',
+      });
+    }
+    const approved = yield* decodeActiveApplicationCompositionSnapshot(current.value);
+    const candidate: PublicationCandidate = {
+      baseline: {
+        retainedModuleAppIds: approved.composition.modules.map(({ deployment }) => deployment.appId),
+        revision: approved.composition.revision,
+        shellMode: 'retained',
+      },
+      modules: approved.composition.modules.map((module) => {
+        const common = {
+          appId: module.deployment.appId,
+          backend: module.backend,
+          contract: module.contract,
+          deployment: module.deployment,
+        };
+        return module.federation.execution === 'browser'
+          ? { ...common, federationManifest: module.federation.manifest }
+          : common;
+      }),
+      shell: {
+        deployment: approved.composition.shell.deployment,
+        federationManifest: approved.composition.shell.federationManifest,
+        runtimeContract: approved.composition.shell.runtimeContract,
+      },
+    };
+    const snapshot = yield* observeCandidate(environment, candidate, approved.composition);
+    if (snapshot.composition.revision !== approved.composition.revision) {
+      return yield* new ActiveApplicationCompositionPublicationError({
+        message: 'refresh observed different release artifacts; an explicit promotion is required',
+        reason: 'conflicting_revision',
+      });
+    }
+    return yield* publishSnapshot(snapshot, Option.none(), configuredInitialCutover(environment), candidate.baseline);
+  },
+);
+
+const refreshCommand = Command.make('refresh', { environment: Flag.String('environment') }, ({ environment }) =>
+  refreshApplicationComposition(environment),
+).pipe(
+  Command.provide(() =>
+    Layer.mergeAll(
+      ApplicationCompositionAuthorityAdminDatabaseLive,
+      ApplicationCompositionLegacyOwnersLive,
+      ZeropsPublicApiLive,
+    ),
   ),
 );
 
@@ -852,7 +1431,7 @@ const configureSourceCommand = Command.make('configure-source', {}, () =>
     yield* configureRuntimeCompositionSource({ projectId, readToken, url });
     return yield* Effect.logInfo('Configured the stable native composition source');
   }),
-);
+).pipe(Command.provide(() => ZeropsPublicApiLive));
 
 const ensurePublicAccessCommand = Command.make('ensure-public-access', { setup: Flag.String('setup') }, ({ setup }) =>
   Effect.gen(function* ensurePublicAccess() {
@@ -869,7 +1448,7 @@ const ensurePublicAccessCommand = Command.make('ensure-public-access', { setup: 
     }
     return yield* Effect.logInfo(`Enabled the public Zerops subdomain of ${setup}`);
   }),
-);
+).pipe(Command.provide(() => ZeropsPublicApiLive));
 
 /**
  * Stops a setup's stage service when it runs. A stage that never provisioned the service, deleted it, or whose
@@ -894,7 +1473,7 @@ const stopServiceCommand = Command.make('stop-service', { setup: Flag.String('se
     yield* api.stopService(serviceId);
     return yield* Effect.logInfo(`Stopped ${setup}`);
   }),
-);
+).pipe(Command.provide(() => ZeropsPublicApiLive));
 
 const definedWorkerSetups = (zeropsYamlText: string, workerSetupNames: ReadonlySet<string>) =>
   Schema.decodeUnknownEffect(ZeropsYamlSchema)(parseYaml(zeropsYamlText)).pipe(
@@ -958,7 +1537,57 @@ const workerModeDriftCommand = Command.make('worker-mode-drift', {}, () =>
     }
     return yield* writeGitHubOutput(`drift=${drift}`);
   }),
+).pipe(Command.provide(() => ZeropsPublicApiLive));
+
+const stageBackendOriginUnavailable = providerFailure(
+  'The registered native Node backend origin could not be established',
 );
+
+/** Read only the registered service's automatic public origin; this neither provisions nor activates ingress. */
+export const stageBackendUrl = Effect.fn('ActiveApplicationComposition.stageBackendUrl')(
+  function* discoverStageBackendUrl(setup: string) {
+    const serviceId = yield* stageServiceId(setup);
+    const projectId = yield* Config.String('ZEROPS_PROJECT_ID');
+    if (projectId.trim() === '') {
+      return yield* stageBackendOriginUnavailable();
+    }
+    const api = yield* ZeropsPublicApi;
+    const service = yield* api.serviceStack(serviceId);
+    if (!/^[a-z\d](?:[a-z\d-]*[a-z\d])?$/u.test(service.name)) {
+      return yield* stageBackendOriginUnavailable();
+    }
+    const environment = yield* api.projectEnvFile(projectId);
+    const automatic = environment.get(`${service.name}_zeropsSubdomain`)?.trim();
+    if (automatic === undefined || !/^(?:https:\/\/)?[a-z\d.-]+\/?$/iu.test(automatic)) {
+      return yield* stageBackendOriginUnavailable();
+    }
+    const url = yield* Effect.try({
+      catch: stageBackendOriginUnavailable,
+      try: () => new URL(automatic.includes('://') ? automatic : `https://${automatic}`),
+    });
+    const nativeSuffix = '.zerops.app';
+    const labels = url.hostname.slice(0, -nativeSuffix.length).split('.');
+    if (
+      url.protocol !== 'https:' ||
+      url.username !== '' ||
+      url.password !== '' ||
+      url.port !== '' ||
+      url.search !== '' ||
+      url.hash !== '' ||
+      url.pathname !== '/' ||
+      !url.hostname.endsWith(nativeSuffix) ||
+      labels.some((label) => label === 'localhost' || !/^[a-z\d](?:[a-z\d-]*[a-z\d])?$/u.test(label))
+    ) {
+      return yield* stageBackendOriginUnavailable();
+    }
+    return `${url.origin}/`;
+  },
+  Effect.mapError(stageBackendOriginUnavailable),
+);
+
+const stageBackendUrlCommand = Command.make('stage-backend-url', { setup: Flag.String('setup') }, ({ setup }) =>
+  stageBackendUrl(setup).pipe(Effect.flatMap(Console.log)),
+).pipe(Command.provide(() => ZeropsPublicApiLive));
 
 /** The one service-ID lookup the deploy scripts use, so shell and TypeScript never map setups differently. */
 const stageServiceIdCommand = Command.make('stage-service-id', { setup: Flag.String('setup') }, ({ setup }) =>
@@ -1052,9 +1681,14 @@ export const deriveBuiltSnapshot = Effect.fn('ActiveApplicationComposition.deriv
   });
 });
 
-const proveBuildCommand = Command.make('prove-build', {}, () =>
-  Effect.gen(function* proveBuild() {
-    const snapshot = yield* deriveBuiltSnapshot(yield* DateTime.now);
+export const proveBuiltSnapshot = Effect.fn('ActiveApplicationComposition.proveBuiltSnapshot')(
+  function* proveBuiltSnapshotEffect({
+    snapshot,
+    snapshotOutput,
+  }: {
+    readonly snapshot: ActiveApplicationCompositionSnapshot;
+    readonly snapshotOutput?: string;
+  }) {
     const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
     const decoded = yield* decodeActiveApplicationCompositionSnapshot(encoded);
     if (decoded.composition.revision !== snapshot.composition.revision) {
@@ -1063,16 +1697,33 @@ const proveBuildCommand = Command.make('prove-build', {}, () =>
         reason: 'invalid_observation',
       });
     }
+    if (snapshotOutput !== undefined) {
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.writeFileString(snapshotOutput, encoded);
+    }
     return yield* Effect.logInfo('Built artifacts form an active Application Composition snapshot consumers decode', {
       modules: decoded.composition.modules.map(({ federation, moduleId }) => `${moduleId} (${federation.execution})`),
       revision: decoded.composition.revision,
     });
-  }),
+  },
+);
+
+const proveBuildCommand = Command.make(
+  'prove-build',
+  { snapshotOutput: Flag.String('snapshot-output').pipe(Flag.optional) },
+  ({ snapshotOutput }) =>
+    Effect.gen(function* proveBuild() {
+      const snapshot = yield* deriveBuiltSnapshot(yield* DateTime.now);
+      yield* proveBuiltSnapshot(
+        Option.isSome(snapshotOutput) ? { snapshot, snapshotOutput: snapshotOutput.value } : { snapshot },
+      );
+    }),
 );
 
 const cli = Command.make('publish-active-application-composition').pipe(
   Command.withSubcommands([
     captureApprovedSnapshotCommand,
+    prepareCommand,
     publishCommand,
     refreshCommand,
     configureSourceCommand,
@@ -1083,6 +1734,7 @@ const cli = Command.make('publish-active-application-composition').pipe(
     ensurePublicAccessCommand,
     proveBuildCommand,
     stageServiceIdCommand,
+    stageBackendUrlCommand,
     stopServiceCommand,
     workerModeDriftCommand,
   ]),
@@ -1094,10 +1746,11 @@ if (import.meta.main) {
   NodeRuntime.runMain(
     Layer.build(
       Layer.effectDiscard(main).pipe(
-        Layer.provide(ZeropsPublicApiLive),
+        Layer.provide(OpsShellLive),
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,
+            Reactivity.layer,
             FetchHttpClient.layer,
             Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' }),
           ),

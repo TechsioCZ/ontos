@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { sql } from 'drizzle-orm';
-import { ConfigProvider, Effect, Layer } from 'effect';
-import { FetchHttpClient } from 'effect/http';
+import { Effect } from 'effect';
+import type { Layer } from 'effect';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import type { JWK, KeyObject } from 'jose';
 
@@ -12,9 +12,10 @@ import {
   GATEWAY_ASSERTION_TTL_SECONDS,
 } from '../../../../packages/shared-contracts/src/gateway-context.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
-import { enrollmentApplicationCompositionSnapshot } from './enrollment-application-composition.ts';
-
-const compositionSourceUrl = 'https://composition.enrollment-acceptance.test/active';
+import {
+  enrollmentApplicationCompositionSnapshot,
+  enrollmentApplicationCompositionVerificationLayer,
+} from './enrollment-application-composition.ts';
 
 /**
  * A portal gateway issuer for acceptance suites: an Ed25519 key pair, the verification material the
@@ -40,23 +41,15 @@ export const makeAcceptanceGatewayIssuer = Effect.fnUntraced(function* makeAccep
   const pair = yield* Effect.promise(async () => await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
   const exported = yield* Effect.promise(async () => await exportJWK(pair.publicKey));
   const publicJwk: JWK = { ...exported, alg: 'EdDSA', kid: keyId, use: 'sig' };
-  const configuration = ConfigProvider.fromUnknown({
-    ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: compositionSourceUrl,
-    ONTOS_GATEWAY_ISSUER: issuer,
-    ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
-  });
   return {
     issuer,
     keyId,
     privateKey: pair.privateKey,
     publicJwk,
-    verificationLive: Layer.mergeAll(
-      ConfigProvider.layer(configuration),
-      Layer.succeed(FetchHttpClient.Fetch, async (input, init) => {
-        const request = new Request(input, init);
-        return request.url === compositionSourceUrl ? Response.json(snapshot) : await fetch(request);
-      }),
-    ),
+    verificationLive: enrollmentApplicationCompositionVerificationLayer(snapshot, {
+      ONTOS_GATEWAY_ISSUER: issuer,
+      ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+    }),
   } satisfies AcceptanceGatewayIssuer;
 });
 

@@ -1,16 +1,16 @@
 /// <reference types="node" />
 
-import { Effect, Exit, Redacted, Schema } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+import { Command, Flag } from 'effect/cli';
+import { Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 
-import { loadDatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';
+import { loadSelectedDatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';
 import type { DatabaseConfigValue } from '../../packages/core-runtime/src/db/config.ts';
 import { DATABASE_IDENTITIES } from '../../packages/core-runtime/src/db/database-identities.ts';
 import type { DatabaseIdentity } from '../../packages/core-runtime/src/db/database-identities.ts';
 import type { RuntimeRoleBootstrapError } from './database-login-roles.mts';
 import { bootstrapFailure, bootstrapRuntimeRoles, connectAdmin } from './runtime-role-bootstrap.mts';
-
-const RUNTIME_ROLES = DATABASE_IDENTITIES.map(({ role }) => role);
 
 const readRuntimePassword = (
   identity: DatabaseIdentity,
@@ -33,22 +33,48 @@ const readRuntimePassword = (
     ),
   );
 
-const main = Effect.gen(function* mainEffect() {
-  const connections = yield* loadDatabaseIdentityConnections().pipe(
-    Effect.mapError((failure) => bootstrapFailure(failure.reason)),
+const runBootstrap = (identities: readonly string[]) =>
+  Effect.gen(function* mainEffect() {
+    const connections = yield* loadSelectedDatabaseIdentityConnections({ identityIds: identities }).pipe(
+      Effect.mapError((failure) => bootstrapFailure(failure.reason)),
+    );
+    const passwords = new Map<string, Redacted.Redacted>();
+    const selected = DATABASE_IDENTITIES.filter(({ id }) => identities.includes(id));
+    for (const identity of selected) {
+      const connection = connections.runtime.get(identity.id);
+      if (connection === undefined) {
+        return yield* bootstrapFailure(`Missing selected PostgreSQL identity ${identity.id}`);
+      }
+      passwords.set(identity.role, yield* readRuntimePassword(identity, connection));
+    }
+    const client = yield* connectAdmin(Redacted.make(connections.admin.connectionString));
+    yield* bootstrapRuntimeRoles(client, {
+      database: connections.admin.database,
+      identities: selected.map(({ id }) => id),
+      passwords,
+    });
+    return yield* Effect.sync(() =>
+      console.log(`Verified least-privilege PostgreSQL roles ${selected.map(({ role }) => role).join(', ')}`),
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.tapError((failure) => Effect.logError(failure.reason)),
   );
-  const passwords = new Map<string, Redacted.Redacted>();
-  for (const identity of DATABASE_IDENTITIES) {
-    passwords.set(identity.role, yield* readRuntimePassword(identity, connections.runtime[identity.id]));
-  }
-  const client = yield* connectAdmin(Redacted.make(connections.admin.connectionString));
-  yield* bootstrapRuntimeRoles(client, connections.admin.database, passwords);
-  yield* Effect.sync(() => console.log(`Verified least-privilege PostgreSQL roles ${RUNTIME_ROLES.join(', ')}`));
-}).pipe(
-  Effect.scoped,
-  Effect.provide(Reactivity.layer),
-  Effect.tapError((failure) => Effect.logError(failure.reason)),
-);
 
-const exit = await Effect.runPromiseExit(main);
+const cli = Command.make(
+  'bootstrap-runtime-role',
+  {
+    identities: Flag.String('identities').pipe(Flag.optional),
+  },
+  ({ identities }) =>
+    runBootstrap(
+      Option.match(identities, {
+        onNone: () => DATABASE_IDENTITIES.map(({ id }) => id),
+        onSome: (selection) => selection.split(','),
+      }),
+    ),
+);
+const exit = await Effect.runPromiseExit(
+  Command.run({ version: '1.0.0' })(cli).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
+);
 process.exitCode = Exit.isFailure(exit) ? 1 : 0;

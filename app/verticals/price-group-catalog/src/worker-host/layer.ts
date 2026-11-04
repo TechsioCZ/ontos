@@ -4,10 +4,17 @@ import type { OutboxRuntime } from '@app/core-runtime';
 import {
   OutboxWorkerInfrastructureLive,
   OutboxWorkerTenantScopeLive,
-  ResourceContainmentRelationshipMutationLive,
+  makeResourceContainmentRelationshipMutationLive,
+  ResourceContainmentRelationshipMutation,
 } from '@app/core-runtime/outbox/worker';
-import type { OutboxWorkerTenantScope, ResourceContainmentRelationshipMutation } from '@app/core-runtime/outbox/worker';
+import type { OutboxWorkerTenantScope } from '@app/core-runtime/outbox/worker';
 import { Layer } from 'effect';
+import { preparePriceGroupContainment } from '../permissions/containment-preparation.ts';
+
+const priceGroupResourceContainmentRelationshipMutationLive = Layer.effect(
+  ResourceContainmentRelationshipMutation,
+  makeResourceContainmentRelationshipMutationLive(preparePriceGroupContainment),
+);
 
 export { CorePersistenceLive as outboxWorkerCorePersistenceLive } from '@app/core-runtime/outbox/worker';
 export { DatabaseConfigLive as outboxWorkerDatabaseConfigLive } from '@app/core-runtime/outbox/worker';
@@ -25,5 +32,5 @@ export const outboxWorkerLayer: Layer.Layer<
 > = Layer.mergeAll(
   OutboxWorkerInfrastructureLive,
   OutboxWorkerTenantScopeLive,
-  ResourceContainmentRelationshipMutationLive,
+  priceGroupResourceContainmentRelationshipMutationLive,
 );

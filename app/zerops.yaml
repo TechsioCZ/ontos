@@ -45,6 +45,7 @@ zerops:
         - 'app/verticals/projects'
         - 'app/verticals/commerce-order'
         - 'app/verticals/commerce-cart'
+        - 'app/topology'
     deploy:
       temporaryShutdown: false
       readinessCheck:

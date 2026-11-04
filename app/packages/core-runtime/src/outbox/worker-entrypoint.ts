@@ -1,11 +1,47 @@
 /** Focused server-only entrypoint used to bundle the combined Outbox Worker host and its MicroVertical entries. */
-export { ActiveApplicationCompositionConfigLive } from '../modules/active-application-composition.ts';
+export { defineAction, defineActionOwnerPermissions, defineActionResourcePermission } from '../actions/definition.ts';
+export { ActionPermissionCheckError } from '../actions/errors.ts';
+export { commitActionThenReject } from '../actions/context.ts';
+export { defineMicroverticalPolicy, denyPolicy } from '../actions/policy.ts';
+export {
+  isTrustedSystemPrincipalContext,
+  isVerifiedGatewayPrincipalContext,
+  readVerifiedGatewayCompositionRevision,
+  readVerifiedGatewayScopeAssertion,
+} from '../auth/system-principal-context-provenance.ts';
+export {
+  defineRead,
+  defineReadConditionalPermission,
+  defineReadOwnerPermission,
+  defineReadResourcePermission,
+} from '../reads/definition.ts';
+export { OperationContextUnavailable } from '../operations/operation-context-unavailable.ts';
+export { defineVerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
+export { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '../modules/module-dependency-contracts.ts';
+export {
+  ShellNavigationContributionSchema,
+  ShellPageContributionSchema,
+  ShellPublicComponentContributionSchema,
+  ShellReportContributionSchema,
+  ShellSearchContributionSchema,
+} from '../modules/shell-contribution.ts';
+export { requireModuleOperation } from '../modules/module-operation-requirement.ts';
+export {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+  validateActiveApplicationCompositionSnapshot,
+} from '../modules/active-application-composition.ts';
 export { ApplicationCompositionSchema } from '../modules/application-composition.ts';
-export { OntosModuleIdSchema } from '../modules/manifest.ts';
+export { defineOntosModuleManifest, OntosModuleIdSchema } from '../modules/manifest.ts';
 export { defineTenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
 export { defineScopedRoutine } from '../db/scoped-routine.ts';
-export { findPostgresFailure } from '../database/postgres-failure.ts';
-export { BusinessPermissionCodeSchema, defineBusinessPermissionCatalog } from '../permissions/business-permission.ts';
+export { findPostgresFailure, isPostgresUniqueViolation } from '../database/postgres-failure.ts';
+export { DatabaseTransactionFailure, decodeDatabaseDriverFailure } from '../database/driver-failure.ts';
+export {
+  BusinessPermissionCodeSchema,
+  defineBusinessPermission,
+  defineBusinessPermissionCatalog,
+} from '../permissions/business-permission.ts';
 export { AuthorizationMutationReconciliationUnavailable } from '../permissions/authorization-reconciler.ts';
 export {
   AuthorizationMutationSagaError,
@@ -19,11 +55,18 @@ export {
 export {
   ContextAccess,
   ContextAccessLive,
-  toBusinessPermissionAccessKey,
-  toBusinessPermissionAccessObjectId,
+  createOwnerPermissionAccessTarget,
+  isOwnerPermissionAccessTargetMetadataValid,
+  isOwnerPermissionAccessTargetValid,
 } from '../permissions/context-access.ts';
 export { PrincipalEligibility, PrincipalRefSchema } from '../permissions/principal-ref.ts';
-export { ReadHandlerNotFound, ReadHandlerUnavailable } from '../reads/errors.ts';
+export {
+  ReadHandlerNotFound,
+  ReadHandlerUnavailable,
+  ReadPermissionDenied,
+  ReadPermissionUnavailable,
+  ReadPolicyDenied,
+} from '../reads/errors.ts';
 export {
   gatewayScopedTenantLegalEntityRlsPolicies,
   gatewayScopedTenantRlsPolicies,
@@ -53,7 +96,6 @@ export { defineOutboxWorkerCompletion, OutboxWorkerCompletionPublicationError } 
 export {
   ResourceContainmentMutationUnavailable,
   ResourceContainmentRelationshipMutation,
-  ResourceContainmentRelationshipMutationLive,
   createResourceContainmentRelationshipMutationClient,
   makeResourceContainmentRelationshipMutation,
   makeResourceContainmentRelationshipMutationLive,
@@ -109,3 +151,6 @@ export type {
   CoreSearchWorkerSnapshotService,
   CoreSearchWorkerSnapshotView,
 } from '../search/worker-snapshot.ts';
+
+export type { OwnerPermissionAccessTarget, OwnerPermissionContract } from '../permissions/context-access.ts';
+export type { ResourceContainmentPreparation } from '../permissions/resource-containment-mutation.ts';

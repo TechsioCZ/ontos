@@ -26,6 +26,7 @@ import type { OperationalScope } from '../operations/context.ts';
 import type { ActionRepositoryService } from '../actions/repository.ts';
 import { makeActionRepository } from '../actions/repository.ts';
 import { ActionRuntime, makeActionRuntime } from '../actions/runtime.ts';
+import type { ActionRuntimeOptions } from '../actions/runtime.ts';
 import { TargetModuleKeySchema } from '../actions/string-schemas.ts';
 import {
   AuthenticationNamespaceIdSchema,
@@ -57,6 +58,10 @@ import {
 } from '../install/action-authorization-provisioning.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import { makeModuleStateGate } from '../modules/module-state-gate.ts';
+import type { ActiveApplicationCompositionServiceContract } from '../modules/active-application-composition.ts';
+import { OntosDeploymentIdentitySchema } from '../modules/manifest.ts';
+import { extractVerticalRuntimeSafeDescriptors } from '../modules/runtime-registration.ts';
+import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
 import { makeTenantModuleStateService, TenantModuleStateSchema } from '../modules/tenant-module-state-service.ts';
 import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../operations/context.ts';
 import { loadSpiceDbConfig } from '../permissions/config.ts';
@@ -77,6 +82,7 @@ import {
 } from '../permissions/owner-authorization-overlay.ts';
 import { newSpiceDbGrpcClient } from '../permissions/spicedb-grpc-rpc.ts';
 import { ReadRuntime, makeReadRuntime } from '../reads/runtime.ts';
+import type { ReadRuntimeOptions } from '../reads/runtime.ts';
 
 interface FixturePermissionEnvironment {
   SPICEDB_CA_CERT?: string;
@@ -123,6 +129,21 @@ const fixtureConfigurationFields = {
   authenticationNamespaceId: AuthenticationNamespaceIdSchema,
   authenticationSubjectTypes: Schema.optionalKey(Schema.Array(BindingSubjectTypeSchema).check(Schema.isMinLength(1))),
   compositionRevision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
+  /** Read-only executor probes; these keys never participate in grant construction. */
+  executorProbeActionKeys: Schema.optionalKey(
+    Schema.Array(
+      ActionKeySchema.check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(200),
+        Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
+      ),
+    ).check(
+      Schema.isMaxLength(128),
+      Schema.makeFilter((keys) =>
+        new Set(keys).size === keys.length ? undefined : 'Executor probe keys must be unique',
+      ),
+    ),
+  ),
   managerAuthenticationMethod: Schema.optionalKey(FixtureAuthenticationMethodSchema),
   managerIdentityAdmin: Schema.optionalKey(Schema.Boolean),
   managerProviderSubjectId: Schema.optionalKey(ProviderSubjectIdSchema),
@@ -161,7 +182,15 @@ const LiveOperationFixtureConfigurationSchema = Schema.Struct({
   runtimeConnectionString: Schema.Redacted(Schema.String),
 }).check(validReaderActionSelection);
 
-export type LiveOperationFixtureConfiguration = typeof LiveOperationFixtureConfigurationSchema.Encoded;
+/** In-process runtime references only. Never included in the serializable creator/attachment handoff. */
+interface LiveOperationFixtureRuntimeBindings {
+  readonly applicationComposition?: ActiveApplicationCompositionServiceContract;
+  readonly expectedDeployment?: typeof OntosDeploymentIdentitySchema.Type;
+  readonly ownerRegistration?: VerticalRuntimeRegistration;
+}
+
+export type LiveOperationFixtureConfiguration = typeof LiveOperationFixtureConfigurationSchema.Encoded &
+  LiveOperationFixtureRuntimeBindings;
 
 /** Exact grants for a real service created through the fixture's public identity owner. */
 export interface ExistingServiceFixtureGrant {
@@ -197,6 +226,35 @@ class LiveOperationFixtureError extends Data.TaggedError('LiveOperationFixtureEr
 
 const fixtureFailure = (reason: string, cause?: unknown): LiveOperationFixtureError =>
   new LiveOperationFixtureError({ cause, reason });
+
+const validateFixtureRuntimeBindings = Effect.fn('LiveOperations.validateRuntimeBindings')(
+  function* validateRuntimeBindings(input: LiveOperationFixtureRuntimeBindings) {
+    const { applicationComposition, expectedDeployment, ownerRegistration } = input;
+    if (
+      (applicationComposition !== undefined || expectedDeployment !== undefined) &&
+      (applicationComposition === undefined || expectedDeployment === undefined || ownerRegistration === undefined)
+    ) {
+      return yield* fixtureFailure(
+        'Authoritative fixture runtime requires Composition, deployment and owner registration',
+      );
+    }
+    const bindings: LiveOperationFixtureRuntimeBindings = {};
+    if (ownerRegistration !== undefined) {
+      yield* Effect.try({
+        catch: (cause) => fixtureFailure('Fixture runtime requires a genuine owner registration', cause),
+        try: () => extractVerticalRuntimeSafeDescriptors(ownerRegistration),
+      });
+      Object.assign(bindings, { ownerRegistration });
+    }
+    if (applicationComposition !== undefined && expectedDeployment !== undefined) {
+      yield* Schema.decodeUnknownEffect(OntosDeploymentIdentitySchema)(expectedDeployment).pipe(
+        Effect.mapError((cause) => fixtureFailure('Invalid fixture receiving deployment identity', cause)),
+      );
+      Object.assign(bindings, { applicationComposition, expectedDeployment });
+    }
+    return Object.freeze(bindings);
+  },
+);
 
 const attemptFixturePromise = <Value>(
   reason: string,
@@ -832,7 +890,7 @@ type FixtureConfiguredModuleStateSetter = (
   ...request: [moduleKey: string, state: 'active' | 'suspended']
 ) => Effect.Effect<FixtureConfiguredModuleState, LiveOperationFixtureError>;
 
-const invalidFixtureModuleStateMutation = (cause?: unknown) =>
+const invalidConfiguredFixtureModuleState = (cause?: unknown) =>
   fixtureFailure('Invalid configured fixture module state mutation', cause);
 
 const makeFixtureConfiguredModuleStateSetter = (
@@ -845,9 +903,9 @@ const makeFixtureConfiguredModuleStateSetter = (
     const [moduleKey, state] = yield* Schema.decodeUnknownEffect(
       Schema.Tuple([ServiceFixtureModuleKeySchema, TenantModuleStateSchema]),
       { onExcessProperty: 'error' },
-    )(request).pipe(Effect.mapError(invalidFixtureModuleStateMutation));
+    )(request).pipe(Effect.mapError(invalidConfiguredFixtureModuleState));
     if (!moduleKeys.has(moduleKey) || (state !== 'active' && state !== 'suspended')) {
-      return yield* invalidFixtureModuleStateMutation();
+      return yield* invalidConfiguredFixtureModuleState();
     }
     return yield* Effect.scoped(
       Effect.gen(function* mutateFixtureModuleState() {
@@ -1105,6 +1163,7 @@ const grantExistingFixtureService = Effect.fn('LiveOperations.grantExistingServi
 const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(function* makeLiveOperationRuntime(input: {
   readonly closeResources: Effect.Effect<void, LiveOperationFixtureError>;
   readonly executor: FixtureExecutor;
+  readonly runtimeBindings: LiveOperationFixtureRuntimeBindings;
   readonly runtimeHandoff: LiveOperationFixtureRuntimeHandoff;
   readonly setConfiguredModuleState?: FixtureConfiguredModuleStateSetter;
   readonly spice: FixtureSpiceClient;
@@ -1114,6 +1173,16 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
   const { configuration, denied, legalEntityId, legalEntityOnly, manager, reader, secondaryLegalEntityId, tenantId } =
     runtimeHandoff;
   const crypto = yield* Crypto.Crypto;
+  const executorProbeActors = new Set([
+    manager.principalId,
+    reader.principalId,
+    denied.principalId,
+    legalEntityOnly.principalId,
+  ]);
+  const executorProbeKeys = new Set<string>([
+    ...(configuration.actionKeys ?? []),
+    ...(configuration.executorProbeActionKeys ?? []),
+  ]);
   const setConfiguredModuleState: FixtureConfiguredModuleStateSetter =
     input.setConfiguredModuleState ??
     (() => Effect.fail(fixtureFailure('Configured module state mutation requires the fixture creator')));
@@ -1204,21 +1273,38 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
         makeOperationalScopeRepository(readDatabase),
         contextAccess,
       );
+      let actionOptions: ActionRuntimeOptions = {
+        contextAccess,
+        moduleEntrypointGateway: actionModuleEntrypointGateway,
+        moduleStateGate: actionModuleStateGate,
+        ownerAuthorizationOverlay: Option.getOrElse(ownerAuthorization, () => failClosedOwnerAuthorizationOverlay),
+      };
+      let readOptions: ReadRuntimeOptions = {
+        ownerAuthorizationOverlay: Option.getOrElse(ownerAuthorization, () => failClosedOwnerAuthorizationOverlay),
+      };
+      const { applicationComposition, expectedDeployment, ownerRegistration } = input.runtimeBindings;
+      if (ownerRegistration !== undefined) {
+        actionOptions = { ...actionOptions, ownerRegistration };
+        readOptions = { ...readOptions, ownerRegistration };
+      }
+      if (applicationComposition !== undefined && expectedDeployment !== undefined) {
+        // Core owns the actual revision resolver, authority lock and receiving checks in this mode.
+        actionOptions = { ...actionOptions, applicationComposition, expectedDeployment };
+        readOptions = { ...readOptions, applicationComposition, expectedDeployment };
+      } else {
+        // Preserve the existing controlled authorization/commit-fault boundary for local fixture mode.
+        actionOptions = {
+          ...actionOptions,
+          lockCompositionAuthority: () => Effect.succeed([]),
+          resolveCompositionRevision: () => Effect.succeed(configuration.compositionRevision),
+        };
+      }
       const baseActionRuntime = makeActionRuntime(
         actionDatabase,
         makeFaultActionRepository(faultState, crypto),
         actionPermission,
         actionScopeResolver,
-        {
-          contextAccess,
-          // This fixture owns authorization and commit-fault acceptance. Release publication
-          // is exercised separately against its own disposable composition authority.
-          lockCompositionAuthority: () => Effect.succeed([]),
-          moduleEntrypointGateway: actionModuleEntrypointGateway,
-          moduleStateGate: actionModuleStateGate,
-          ownerAuthorizationOverlay: Option.getOrElse(ownerAuthorization, () => failClosedOwnerAuthorizationOverlay),
-          resolveCompositionRevision: () => Effect.succeed(configuration.compositionRevision),
-        },
+        actionOptions,
       );
       const runAction: (typeof ActionRuntime)['Service']['runAction'] = Effect.fn('LiveOperations.runAction')(
         function* runActionEffect(actionInput) {
@@ -1247,9 +1333,13 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
         },
       );
       const actionRuntime = { ...baseActionRuntime, runAction };
-      const readRuntime = makeReadRuntime(readDatabase, readModuleEntrypointGateway, readScopeResolver, contextAccess, {
-        ownerAuthorizationOverlay: Option.getOrElse(ownerAuthorization, () => failClosedOwnerAuthorizationOverlay),
-      });
+      const readRuntime = makeReadRuntime(
+        readDatabase,
+        readModuleEntrypointGateway,
+        readScopeResolver,
+        contextAccess,
+        readOptions,
+      );
       return Context.empty().pipe(
         Context.add(ActionRuntime, actionRuntime),
         Context.add(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
@@ -1276,6 +1366,24 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
   }
   return {
     runtimeHandoff,
+    /** Read-only normal fully-consistent executor check for this fixture's known actors and declared probe keys. */
+    verifyActionExecutor: Effect.fn('LiveOperations.verifyActionExecutor')(function* verifyActionExecutor(probe: {
+      readonly actionKey: string;
+      readonly expected: 'allowed' | 'denied';
+      readonly principalId: string;
+    }) {
+      if (!executorProbeActors.has(probe.principalId) || !executorProbeKeys.has(probe.actionKey)) {
+        return yield* fixtureFailure('Executor verification requires a fixture-owned actor and declared action key');
+      }
+      return yield* verifyFixturePermission(
+        spice,
+        probe.principalId,
+        'action',
+        toSpiceDbActionObjectId(probe.actionKey),
+        'execute',
+        probe.expected === 'allowed',
+      );
+    }),
     // Mutate only the accessor tuple this fixture seeded for its exact primary-LE manager.
     changeManagerModuleAccess: Effect.fn('LiveOperations.changeManagerModuleAccess')(
       function* changeManagerModuleAccess(moduleKey: string, operation: 'grant' | 'revoke') {
@@ -1359,6 +1467,7 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
 
 const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperationFixture')(
   function* makeLiveOperationFixtureEffect(input: LiveOperationFixtureConfiguration) {
+    const runtimeBindings = yield* validateFixtureRuntimeBindings(input);
     const { configuration, namespaces } = yield* Schema.decodeEffect(LiveOperationFixtureConfigurationSchema)(
       input,
     ).pipe(
@@ -1486,6 +1595,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
     return yield* makeLiveOperationRuntime({
       closeResources,
       executor,
+      runtimeBindings,
       runtimeHandoff,
       setConfiguredModuleState: makeFixtureConfiguredModuleStateSetter(adminDatabaseConfiguration, {
         moduleKeys: new Set(configuration.moduleKeys ?? [fixturePartyModule]),
@@ -1592,11 +1702,14 @@ const verifyRuntimeFixtureState = Effect.fn('LiveOperations.verifyRuntimeState')
 
 /** Attach to parent-created identities. No administrative configuration, seeding or namespace provisioning. */
 export const makeLiveOperationFixtureRuntime = Effect.fn('LiveOperations.attachRuntime')(
-  function* makeLiveOperationFixtureRuntime(input: {
-    readonly configuration: typeof RuntimeFixtureConfigurationSchema.Encoded;
-    readonly handoff: typeof LiveOperationFixtureRuntimeHandoffSchema.Encoded;
-    readonly runtimeConnectionString: Redacted.Redacted;
-  }) {
+  function* makeLiveOperationFixtureRuntime(
+    input: LiveOperationFixtureRuntimeBindings & {
+      readonly configuration: typeof RuntimeFixtureConfigurationSchema.Encoded;
+      readonly handoff: typeof LiveOperationFixtureRuntimeHandoffSchema.Encoded;
+      readonly runtimeConnectionString: Redacted.Redacted;
+    },
+  ) {
+    const runtimeBindings = yield* validateFixtureRuntimeBindings(input);
     const runtimeHandoff = yield* Schema.decodeUnknownEffect(LiveOperationFixtureRuntimeHandoffSchema, {
       onExcessProperty: 'error',
     })(input.handoff).pipe(Effect.mapError((cause) => fixtureFailure(INVALID_FIXTURE_CONFIGURATION, cause)));
@@ -1659,7 +1772,14 @@ export const makeLiveOperationFixtureRuntime = Effect.fn('LiveOperations.attachR
     const spice = newSpiceDbGrpcClient(spiceDb);
     yield* Effect.addFinalizer(() => Effect.sync(spice.close.bind(spice))).pipe(Scope.provide(databaseScope));
     const closeResources = Scope.close(databaseScope, Exit.void);
-    return yield* makeLiveOperationRuntime({ closeResources, executor, runtimeHandoff, spice, spiceDb });
+    return yield* makeLiveOperationRuntime({
+      closeResources,
+      executor,
+      runtimeBindings,
+      runtimeHandoff,
+      spice,
+      spiceDb,
+    });
   },
 );
 

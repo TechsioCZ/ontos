@@ -1,3 +1,10 @@
+import {
+  historicalOwnerTarget,
+  historicalPermissionKey as toBusinessPermissionAccessKey,
+  historicalPermissionObjectId as toBusinessPermissionAccessObjectId,
+} from '../support/historical-owner-targets.ts';
+import { remainingPermissionBaselines } from './owner-permission-baseline.ts';
+import { ownerPermissionTarget } from '../support/owner-permission-target.ts';
 import { v1 } from '@authzed/authzed-node';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -6,10 +13,6 @@ import { spiceDbPermissionClientError } from '../../src/permissions/client.ts';
 import type { SpiceDbPermissionClient } from '../../src/permissions/client.ts';
 import {
   makeContextAccess,
-  toAssortmentPermissionAccessKey,
-  toAssortmentPermissionAccessObjectId,
-  toBusinessPermissionAccessKey,
-  toBusinessPermissionAccessObjectId,
   toContextPermissionAccessKey,
   toContextPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
@@ -19,6 +22,10 @@ import {
 import { LEGAL_ENTITY_PERMISSION_KEYS, TENANT_PERMISSION_KEYS } from '../../src/permissions/context-permissions.ts';
 import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
 
+interface BaselineCurrentState {
+  decision: 'allowed' | 'denied' | 'unavailable';
+}
+
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const principalId = '30000000-0000-4000-8000-000000000001';
@@ -26,17 +33,6 @@ const pricingCatalogId = '50000000-0000-4000-8000-000000000001';
 const priceGroupId = '60000000-0000-4000-8000-000000000001';
 const otherPriceGroupId = '60000000-0000-4000-8000-000000000002';
 const inventoryResourceId = '70000000-0000-4000-8000-000000000001';
-
-const assortmentEndTarget = {
-  binding: {
-    moduleId: 'commerce.assortment',
-    resourceId: 'binding-1',
-    resourceType: 'commerce.assortment.applicability-binding',
-  },
-  kind: 'assortment_binding' as const,
-  mode: 'end' as const,
-  permission: 'assortment.binding.end' as const,
-};
 
 const responseFor = (
   request: v1.CheckBulkPermissionsRequest,
@@ -64,12 +60,23 @@ const makeClient = (handle: SpiceDbPermissionClient['checkBulkPermissions']): Sp
 
 const requireBusinessPermissions = (
   access: ReturnType<typeof makeContextAccess>,
-): NonNullable<ReturnType<typeof makeContextAccess>['businessPermissions']> => {
-  const check = access.businessPermissions;
+  selectedLegalEntityId: string = legalEntityId,
+) => {
+  const check = access.ownerPermissions;
   if (check === undefined) {
-    throw new Error('Expected business permission access');
+    throw new Error('Expected owner permission access');
   }
-  return check;
+  return (input: {
+    readonly legalEntityId?: string;
+    readonly principal: { readonly principalId: string; readonly tenantId: string };
+    readonly targets: readonly { readonly permission: string; readonly target: object }[];
+    readonly trustedStorefrontId?: string;
+  }) =>
+    check({
+      ...input,
+      legalEntityId: input.legalEntityId ?? selectedLegalEntityId,
+      targets: input.targets.map(({ permission, target }) => ({ target: historicalOwnerTarget(permission, target) })),
+    });
 };
 
 const requireContextPermissions = (
@@ -82,12 +89,12 @@ const requireContextPermissions = (
   return check;
 };
 
-const requireAssortmentPermissions = (
+const requireOwnerPermissions = (
   access: ReturnType<typeof makeContextAccess>,
-): NonNullable<ReturnType<typeof makeContextAccess>['assortmentPermissions']> => {
-  const check = access.assortmentPermissions;
+): NonNullable<ReturnType<typeof makeContextAccess>['ownerPermissions']> => {
+  const check = access.ownerPermissions;
   if (check === undefined) {
-    throw new Error('Expected Assortment permission access');
+    throw new Error('Expected owner permission access');
   }
   return check;
 };
@@ -128,10 +135,10 @@ it.effect('uses one fully consistent batch and correlates allowed and denied mod
   }),
 );
 
-it.effect('scopes Assortment keys and object IDs by trusted tenant and Legal Entity', () =>
-  Effect.gen(function* scopesAssortmentTargets() {
+it.effect('checks exact owner targets only in their trusted tenant and Legal Entity scope', () =>
+  Effect.gen(function* checksOwnerScope() {
     const requests: v1.CheckBulkPermissionsRequest[] = [];
-    const service = makeContextAccess(
+    const access = makeContextAccess(
       makeClient((request) =>
         Effect.sync(() => {
           requests.push(request);
@@ -139,243 +146,41 @@ it.effect('scopes Assortment keys and object IDs by trusted tenant and Legal Ent
         }),
       ),
     );
-    const result = yield* requireAssortmentPermissions(service)({
-      legalEntityId,
-      principal: { principalId, tenantId },
-      targets: [{ target: assortmentEndTarget }],
-    });
-    const otherKey = toAssortmentPermissionAccessKey(
-      '10000000-0000-4000-8000-000000000009',
-      legalEntityId,
-      assortmentEndTarget,
-    );
-    const objectId = toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, assortmentEndTarget);
-    expect(result).toEqual([
-      { decision: 'allowed', key: toAssortmentPermissionAccessKey(tenantId, legalEntityId, assortmentEndTarget) },
+    const target = ownerPermissionTarget({ legalEntityId, tenantId });
+    const check = requireOwnerPermissions(access);
+    expect(yield* check({ legalEntityId, principal: { principalId, tenantId }, targets: [{ target }] })).toEqual([
+      { decision: 'allowed', key: target.key },
     ]);
-    expect(result?.[0]?.key).not.toBe(otherKey);
-    expect(requests[0]?.items[0]?.permission).toBe('use');
+    expect(requests[0]?.items[0]?.resource?.objectId).toBe(target.objectId);
     expect(requests[0]?.items[0]?.resource?.objectType).toBe('business_permission');
-    expect(requests[0]?.items[0]?.resource?.objectId).toBe(objectId);
-    expect(requests[0]?.items[0]?.resource?.objectId).not.toContain('binding-1');
-  }),
-);
-
-it('uses tenant scope for Rule lineage and requires Legal Entity scope for binding lineage', () => {
-  const ruleTarget = {
-    effect: 'ALLOW' as const,
-    kind: 'assortment_rule' as const,
-    mode: 'create' as const,
-    permission: 'assortment.rule.create' as const,
-    purpose: 'PURCHASE' as const,
-    selector: { kind: 'ALL' as const },
-    stableCode: 'rule-1',
-  };
-  expect(toAssortmentPermissionAccessKey(tenantId, undefined, ruleTarget)).toBeDefined();
-  expect(toAssortmentPermissionAccessObjectId(tenantId, undefined, ruleTarget)).toBeDefined();
-  expect(toAssortmentPermissionAccessKey(tenantId, undefined, assortmentEndTarget)).toBeUndefined();
-  expect(toAssortmentPermissionAccessObjectId(tenantId, undefined, assortmentEndTarget)).toBeUndefined();
-});
-
-it.effect('derives configuration scope from the exact canonical resource type and rejects unknown types', () =>
-  Effect.gen(function* derivesConfigurationScope() {
-    const requests: v1.CheckBulkPermissionsRequest[] = [];
-    const service = makeContextAccess(
-      makeClient((request) =>
-        Effect.sync(() => {
-          requests.push(request);
-          return responseFor(
-            request,
-            request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-          );
-        }),
-      ),
-    );
-    const stableRuleTarget = {
-      kind: 'assortment_configuration' as const,
-      permission: 'assortment.configuration.read' as const,
-      resource: {
-        moduleId: 'commerce.assortment',
-        resourceId: 'stable-rule-1',
-        resourceType: 'commerce.assortment.stable-rule',
-      },
-    };
-    const ruleRevisionTarget = {
-      ...stableRuleTarget,
-      resource: {
-        ...stableRuleTarget.resource,
-        resourceId: 'rule-revision-1',
-        resourceType: 'commerce.assortment.rule-revision',
-      },
-    };
-    const bindingTarget = {
-      ...stableRuleTarget,
-      resource: {
-        ...stableRuleTarget.resource,
-        resourceId: 'binding-1',
-        resourceType: 'commerce.assortment.applicability-binding',
-      },
-    };
-    const boundaryTarget = {
-      ...stableRuleTarget,
-      resource: {
-        ...stableRuleTarget.resource,
-        resourceId: 'boundary-1',
-        resourceType: 'commerce.assortment.closed-assortment-boundary',
-      },
-    };
-    const unknownTarget = {
-      ...stableRuleTarget,
-      resource: { ...stableRuleTarget.resource, resourceType: 'commerce.assortment.configuration' },
-    };
-
-    expect(toAssortmentPermissionAccessKey(tenantId, undefined, stableRuleTarget)).toBeDefined();
-    expect(toAssortmentPermissionAccessKey(tenantId, undefined, ruleRevisionTarget)).toBeDefined();
-    expect(toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, stableRuleTarget)).toBe(
-      toAssortmentPermissionAccessObjectId(tenantId, undefined, stableRuleTarget),
-    );
-    expect(toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, ruleRevisionTarget)).toBe(
-      toAssortmentPermissionAccessObjectId(tenantId, undefined, ruleRevisionTarget),
-    );
-    expect(toAssortmentPermissionAccessKey(tenantId, undefined, bindingTarget)).toBeUndefined();
-    expect(toAssortmentPermissionAccessObjectId(tenantId, undefined, bindingTarget)).toBeUndefined();
-    expect(toAssortmentPermissionAccessKey(tenantId, legalEntityId, bindingTarget)).toBeDefined();
-    expect(toAssortmentPermissionAccessKey(tenantId, undefined, boundaryTarget)).toBeUndefined();
-    expect(toAssortmentPermissionAccessObjectId(tenantId, undefined, boundaryTarget)).toBeUndefined();
-    expect(toAssortmentPermissionAccessKey(tenantId, legalEntityId, boundaryTarget)).toBeDefined();
-    expect(toAssortmentPermissionAccessKey(tenantId, legalEntityId, unknownTarget)).toBeUndefined();
-    expect(toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, unknownTarget)).toBeUndefined();
-
-    const tenantResults = yield* requireAssortmentPermissions(service)({
-      principal: { principalId, tenantId },
-      targets: [{ target: stableRuleTarget }, { target: ruleRevisionTarget }],
-    });
-    expect(tenantResults.map(({ decision }) => decision)).toEqual(['allowed', 'allowed']);
-    const legalEntityResults = yield* requireAssortmentPermissions(service)({
-      legalEntityId,
-      principal: { principalId, tenantId },
-      targets: [{ target: bindingTarget }, { target: boundaryTarget }],
-    });
-    expect(legalEntityResults.map(({ decision }) => decision)).toEqual(['allowed', 'allowed']);
-    const unavailableResults = yield* requireAssortmentPermissions(service)({
-      principal: { principalId, tenantId },
-      targets: [{ target: bindingTarget }, { target: boundaryTarget }, { target: unknownTarget }],
-    });
-    expect(unavailableResults).toEqual([
-      { decision: 'unavailable', key: 'assortment.configuration.read:assortment_configuration' },
-      { decision: 'unavailable', key: 'assortment.configuration.read:assortment_configuration' },
-      { decision: 'unavailable', key: 'assortment.configuration.read:assortment_configuration' },
+    expect(requests[0]?.items[0]?.permission).toBe('use');
+    expect(requests[0]?.items[0]?.subject?.object?.objectId).toBe(principalId);
+    for (const principalScope of [
+      { legalEntityId, principal: { principalId, tenantId: 'other-tenant' } },
+      { legalEntityId: 'other-entity', principal: { principalId, tenantId } },
+      { principal: { principalId, tenantId } },
+    ]) {
+      expect(yield* check({ ...principalScope, targets: [{ target }] })).toEqual([
+        { decision: 'unavailable', key: target.key },
+      ]);
+    }
+    expect(requests).toHaveLength(1);
+    const tenantTarget = ownerPermissionTarget({ tenantId }, 'tenant-owned');
+    expect(yield* check({ principal: { principalId, tenantId }, targets: [{ target: tenantTarget }] })).toEqual([
+      { decision: 'allowed', key: tenantTarget.key },
     ]);
-    expect(requests).toHaveLength(2);
-  }),
-);
-
-it.effect('keeps complete Admission Set digest semantics exact and distinguishes storefront trust', () =>
-  Effect.gen(function* checksAdmissionSetAndStorefront() {
-    const requests: v1.CheckBulkPermissionsRequest[] = [];
-    const service = makeContextAccess(
-      makeClient((request) =>
-        Effect.sync(() => {
-          requests.push(request);
-          return responseFor(
-            request,
-            request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-          );
-        }),
-      ),
-    );
-    const target = {
-      admissionSet: {
-        collectionRevision: {
-          moduleId: 'catalog.core',
-          resourceId: 'collection-revision-1',
-          resourceType: 'catalog.collection-revision',
-        },
-        contentHash: 'a'.repeat(64),
-        entries: [],
-        memberCount: 0,
-        setKind: 'EMPTY' as const,
-      },
-      commercialScope: {
-        channel: { moduleId: 'commerce.channel', resourceId: 'web', resourceType: 'commerce.channel' },
-      },
-      effectiveFrom: '2026-09-22T00:00:00.000Z',
-      kind: 'assortment_boundary' as const,
-      mode: 'create' as const,
-      permission: 'assortment.boundary.create' as const,
-      purpose: 'PURCHASE' as const,
-      subject: {
-        kind: 'COUNTERPARTY' as const,
-        ref: { moduleId: 'party.registry', resourceId: 'counterparty-1', resourceType: 'party.registry.counterparty' },
-      },
-    } as const;
-    const result = yield* requireAssortmentPermissions(service)({
-      legalEntityId,
-      principal: { principalId, tenantId },
-      targets: [{ target }],
+    const storefrontTarget = ownerPermissionTarget({ legalEntityId, tenantId }, 'storefront-owned', {
+      requiredStorefrontId: 'storefront-a',
     });
-    expect(result?.[0]?.decision).toBe('allowed');
-    const sameMeaning = toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, target);
-    const changedMeaning = toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, {
-      ...target,
-      admissionSet: {
-        contentHash: 'a'.repeat(64),
-        entries: [
-          {
-            kind: 'PRODUCT',
-            target: { moduleId: 'commerce.catalog', resourceId: 'product-a', resourceType: 'commerce.catalog.product' },
-          },
-        ],
-        memberCount: 1,
-        setKind: 'ENTRIES',
-      },
-    });
-    const categoryMeaning = toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, {
-      ...target,
-      admissionSet: {
-        contentHash: 'a'.repeat(64),
-        entries: [
-          {
-            kind: 'CATEGORY',
-            target: {
-              moduleId: 'commerce.catalog',
-              resourceId: 'category-c',
-              resourceType: 'commerce.catalog.product-category',
-            },
-          },
-        ],
-        memberCount: 1,
-        setKind: 'ENTRIES',
-      },
-    });
-    const allMeaning = toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, {
-      ...target,
-      admissionSet: { contentHash: 'a'.repeat(64), entries: [{ kind: 'ALL' }], memberCount: 1, setKind: 'ENTRIES' },
-    });
-    const otherProductMeaning = toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, {
-      ...target,
-      admissionSet: {
-        contentHash: 'a'.repeat(64),
-        entries: [
-          {
-            kind: 'PRODUCT',
-            target: { moduleId: 'commerce.catalog', resourceId: 'product-b', resourceType: 'commerce.catalog.product' },
-          },
-        ],
-        memberCount: 1,
-        setKind: 'ENTRIES',
-      },
-    });
-    expect(sameMeaning).toBeDefined();
-    expect(sameMeaning).not.toBe(changedMeaning);
-    expect(new Set([sameMeaning, changedMeaning, categoryMeaning, allMeaning, otherProductMeaning]).size).toBe(5);
     expect(
-      toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, {
-        ...target,
-        admissionSet: { contentHash: 'a'.repeat(64), entries: [], memberCount: 1, setKind: 'ENTRIES' },
+      yield* check({
+        legalEntityId,
+        principal: { principalId, tenantId },
+        targets: [{ target: storefrontTarget }],
+        trustedStorefrontId: 'storefront-b',
       }),
-    ).toBeUndefined();
-    expect(requests[0]?.items[0]?.resource?.objectId).not.toContain('a'.repeat(64));
+    ).toEqual([{ decision: 'unavailable', key: storefrontTarget.key }]);
+    expect(requests).toHaveLength(2);
   }),
 );
 
@@ -1032,5 +837,115 @@ it.effect('keeps Tenant resource assignment grants exact and independent of Lega
       ? Effect.die(new Error('Expected tenant resource adapter'))
       : access.tenantResources({ permission: 'assign', principalId, resources: targets, tenantId });
     expect(decisions.map(({ decision }) => decision)).toEqual(['allowed', 'denied']);
+  }),
+);
+
+it.effect('freezes every remaining family identity and independent Current outcomes without broad scope', () =>
+  Effect.gen(function* remainingFamilyGrantBaselines() {
+    for (const row of remainingPermissionBaselines) {
+      const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(row.permission);
+      expect(toBusinessPermissionAccessObjectId(permission, row.target)).toBe(row.objectId);
+      expect(toBusinessPermissionAccessKey({ permission, target: row.target })).toBe(row.key);
+      const requests: v1.CheckBulkPermissionsRequest[] = [];
+      const current: BaselineCurrentState = { decision: 'allowed' };
+      const access = makeContextAccess(
+        makeClient((request) =>
+          Effect.sync(() => {
+            requests.push(request);
+            return responseFor(
+              request,
+              request.items.map((item) => {
+                if (item.subject?.object?.objectId !== principalId || current.decision === 'denied') {
+                  return v1.CheckPermissionResponse_Permissionship.NO_PERMISSION;
+                }
+                if (current.decision === 'unavailable') {
+                  return v1.CheckPermissionResponse_Permissionship.UNSPECIFIED;
+                }
+                return v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION;
+              }),
+            );
+          }),
+        ),
+      );
+      const check = requireBusinessPermissions(access);
+      const input = {
+        legalEntityId: 'legalEntityId' in row.target ? row.target.legalEntityId : legalEntityId,
+        principal: { principalId, tenantId: row.target.tenantId },
+        targets: [{ permission, target: row.target }],
+        trustedStorefrontId: 'storefront-a',
+      };
+      expect(yield* check(input)).toEqual([{ decision: 'allowed', key: row.key }]);
+      expect(requests[0]?.items[0]?.resource).toEqual({ objectId: row.objectId, objectType: 'business_permission' });
+      expect(requests[0]?.items[0]?.subject?.object).toEqual({ objectId: principalId, objectType: 'principal' });
+      expect(
+        yield* check({
+          ...input,
+          principal: { ...input.principal, principalId: '30000000-0000-4000-8000-000000000002' },
+        }),
+      ).toEqual([{ decision: 'denied', key: row.key }]);
+      expect(requests[1]?.items[0]?.subject?.object?.objectId).toBe('30000000-0000-4000-8000-000000000002');
+      current.decision = 'denied';
+      expect(yield* check(input)).toEqual([{ decision: 'denied', key: row.key }]);
+      current.decision = 'unavailable';
+      expect(yield* check(input)).toEqual([{ decision: 'unavailable', key: row.key }]);
+      const checked = requests.length;
+      expect(
+        yield* check({ ...input, principal: { principalId, tenantId: '00000000-0000-4000-8000-000000000099' } }),
+      ).toEqual([{ decision: 'unavailable', key: row.key }]);
+      const unknown = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('undeclared.permission');
+      expect(yield* check({ ...input, targets: [{ permission: unknown, target: row.target }] })).toEqual([
+        { decision: 'unavailable', key: row.unknownKey },
+      ]);
+      expect(requests).toHaveLength(checked);
+    }
+  }),
+);
+
+it('keeps the existing 1024-byte grant identity limit without truncation', () => {
+  const [row] = remainingPermissionBaselines;
+  const permission = Schema.decodeSync(BusinessPermissionCodeSchema)(row.permission);
+  expect(toBusinessPermissionAccessObjectId(permission, { ...row.target, profileId: 'x'.repeat(644) })?.length).toBe(
+    1024,
+  );
+  expect(toBusinessPermissionAccessObjectId(permission, { ...row.target, profileId: 'x'.repeat(645) })).toBeUndefined();
+});
+
+it.effect('freezes exact-first Counterparty inheritance order and repeated-target deduplication', () =>
+  Effect.gen(function* freezesInheritedGrantOrder() {
+    const { 2: row } = remainingPermissionBaselines;
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(row.permission);
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = makeContextAccess(
+      makeClient((request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return responseFor(
+            request,
+            request.items.map(() => v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
+          );
+        }),
+      ),
+    );
+    expect(
+      yield* requireBusinessPermissions(
+        access,
+        row.target.legalEntityId,
+      )({
+        principal: { principalId, tenantId: row.target.tenantId },
+        targets: [
+          { permission, target: row.target },
+          { permission, target: row.target },
+        ],
+        trustedStorefrontId: row.target.storefrontId,
+      }),
+    ).toEqual([
+      { decision: 'denied', key: row.key },
+      { decision: 'denied', key: row.key },
+    ]);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.items.map((item) => item.resource?.objectId)).toEqual([
+      row.objectId,
+      remainingPermissionBaselines[1].objectId,
+    ]);
   }),
 );

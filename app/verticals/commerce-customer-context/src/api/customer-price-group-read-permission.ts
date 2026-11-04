@@ -1,3 +1,5 @@
+import { commerceCustomerContextAuthorizationContract } from '../../shared/permissions/authorization-contract.ts';
+import { customerOwnerPermissionTarget } from '../permissions/authorization.ts';
 import { defineReadConditionalPermission } from '@app/core-runtime';
 import type {
   CommerceCustomerProfileTarget,
@@ -25,10 +27,11 @@ export const customerPriceGroupReadPermission = defineReadConditionalPermission<
 >({
   branches: {
     COUNTERPARTY: {
-      requiredKinds: ['business_permission', 'resource_read'],
+      requiredKinds: ['owner_permission', 'resource_read'],
       resolve: (input, selected, scope) => [
         {
-          businessPermission: {
+          kind: 'owner_permission',
+          ownerPermission: customerOwnerPermissionTarget({
             permission: 'counterparty.profile.read',
             target: {
               counterpartyId: selected.counterpartyRef.resourceId,
@@ -36,17 +39,17 @@ export const customerPriceGroupReadPermission = defineReadConditionalPermission<
               legalEntityId: scope.legalEntityId ?? '',
               tenantId: scope.tenantId,
             },
-          },
-          kind: 'business_permission',
+          }),
         },
         profileResourceRead(input),
       ],
     },
     RETAIL: {
-      requiredKinds: ['business_permission', 'resource_read'],
+      requiredKinds: ['owner_permission', 'resource_read'],
       resolve: (input, _selected, scope) => [
         {
-          businessPermission: {
+          kind: 'owner_permission',
+          ownerPermission: customerOwnerPermissionTarget({
             permission: 'retail.profile.read',
             target: {
               kind: 'retail_profile',
@@ -54,13 +57,13 @@ export const customerPriceGroupReadPermission = defineReadConditionalPermission<
               profileId: input.profile.resourceId,
               tenantId: scope.tenantId,
             },
-          },
-          kind: 'business_permission',
+          }),
         },
         profileResourceRead(input),
       ],
     },
   },
+  ownerContract: commerceCustomerContextAuthorizationContract,
   permissionKey: 'module.access',
   select: (input) => input.authorizationSubject,
 });

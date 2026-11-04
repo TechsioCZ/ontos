@@ -5,6 +5,10 @@ import type { PlatformError } from 'effect';
 import { SqlError, UnknownError } from 'effect/sql/SqlError';
 import { expect, it } from 'effect-rstest';
 
+import { bindingSubjectRead, resolveExternalSubjectRead } from '../../src/auth/external-identity/read.ts';
+import { ExternalIdentityAdmission } from '../../src/auth/external-identity/resolve.ts';
+import { makeReadRuntime } from '../../src/reads/runtime.ts';
+import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -986,7 +990,85 @@ const preventIdentifierReuseTransfer = Effect.gen(function* identifierReuseInteg
   expect(distinctPrincipalIds.size).toBe(3);
 });
 
+const runCoreIdentitySubjectReads = Effect.gen(function* governedCoreIdentitySubjectReads() {
+  const { admin, database, tenantId } = yield* makeTenantFixture('governed-subject-reads');
+  const scope = yield* makeScope(tenantId);
+  const subject = yield* makeSubject();
+  yield* admin.insert(principals).values({
+    displayName: 'Core identity subject Read actor',
+    kind: 'system',
+    principalId: scope.principalId,
+    status: 'active',
+    tenantId,
+  });
+  yield* Effect.addFinalizer(() =>
+    admin.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)).pipe(Effect.orDie),
+  );
+  const prepared = yield* makeRunPrepare(database, scope, subject, tenantId)(yield* nextUuid);
+  const invocationId = yield* nextUuid;
+  const activated = yield* database.transaction((transaction) =>
+    installOperationalScope(transaction, scope).pipe(
+      Effect.flatMap((scopedTransaction) =>
+        externalIdentityRepositoryFromTransaction(scopedTransaction, { registry }).activate({
+          authBindingId: prepared.authBindingId,
+          expectedRevision: 1,
+          invocationId,
+          tenantId,
+        }),
+      ),
+    ),
+  );
+  const runtime = makeReadRuntime(
+    { executor: database },
+    openModuleEntrypointGateway,
+    testOperationalScopeResolver,
+    actionContextAccess,
+  );
+  const principal = systemActionPrincipal(tenantId, scope.principalId);
+  const loadedSubject = yield* runtime.runRead({
+    audience,
+    input: { authBindingId: activated.authBindingId, authenticationNamespaceId: namespaceId },
+    principal,
+    registration: bindingSubjectRead,
+    transport: { correlationId: scope.correlationId },
+  });
+  expect(loadedSubject).toEqual(subject);
+  const admission = yield* makeBoundAdmission(
+    subject,
+    tenantId,
+    activated.authBindingId,
+    activated.principalId,
+    activated.bindingRevision,
+  );
+  const resolved = yield* runtime
+    .runRead({
+      audience,
+      input: subject,
+      principal,
+      registration: resolveExternalSubjectRead,
+      transport: { correlationId: scope.correlationId },
+    })
+    .pipe(
+      Effect.provideService(ExternalIdentityAdmission, admission),
+      Effect.provideService(AuthenticationNamespaceRegistry, registry),
+    );
+  expect(resolved).toEqual({
+    authBindingId: activated.authBindingId,
+    authenticationNamespaceId: namespaceId,
+    bindingRevision: activated.bindingRevision,
+    bindingStatus: 'active',
+    outcome: 'RESOLVED',
+    principalId: activated.principalId,
+    tenantId,
+  });
+  expect(yield* admin.select().from(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId))).toHaveLength(2);
+});
+
 it.layer(NodeCrypto.layer, { excludeTestServices: true })('external identity runtime', (suite) => {
+  suite.effect(
+    'runs both genuine Core identity subject Reads with trusted admission and durable evidence',
+    () => runCoreIdentitySubjectReads,
+  );
   suite.effect(
     'converges concurrent neutral reservations and protects the complete binding lifecycle',
     () => convergeNeutralReservationLifecycle,
