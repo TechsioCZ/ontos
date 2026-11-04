@@ -121,19 +121,18 @@ const selectCollectionEffect = <Result, Item>(
  * The owner must rebuild ALL response metadata from retained items: no candidate totals, hidden match
  * evidence, or candidate cursors. This adapter does not paginate, overfetch, or claim completeness.
  * Current owner-state/evidence revalidation still belongs in the owner's Read finish step.
+ * The runtime validates the result against `resultSchema` before `select`, so the adapter does not decode it again.
  */
 export const defineReadSearchCollectionAuthorization = <ResultSchema extends Schema.ConstraintDecoder<unknown>, Item>(
   adapter: SearchCollectionAdapter<ResultSchema['Type'], Item> & {
     readonly resultSchema: ResultSchema;
   },
 ): ReadSearchCollectionResultAuthorization => {
-  const { items, resource, resultSchema, withItems } = adapter;
+  const { items, resource, withItems } = adapter;
   const snapshot = Object.freeze({ items, resource, withItems });
-  return new SearchCollectionDeclaration((candidate, scope) =>
-    Schema.decodeUnknownEffect(Schema.toType(resultSchema))(candidate).pipe(
-      Effect.mapError(invalidAdapter),
-      Effect.flatMap((result) => selectCollectionEffect(snapshot, result, scope)),
-    ),
+  // SAFETY: authorizeReadSearchCollection is reached only with the value ReadRuntime decoded against resultSchema just before select runs.
+  return new SearchCollectionDeclaration((validated, scope) =>
+    selectCollectionEffect(snapshot, validated as ResultSchema['Type'], scope),
   );
 };
 

@@ -131,7 +131,6 @@ import {
   ShellCompositionSchema,
   ShellDocumentContextSchema,
   ShellResourceResponseSchema,
-  ShellSearchResponseSchema,
   SignInResponseSchema,
   SupportImpersonationResponseSchema,
   SwitchLegalEntityResponseSchema,
@@ -1715,6 +1714,7 @@ const shellSearchReadProblem = (error: ReadCoreError) =>
       )
     : shellListReadProblem(error);
 
+/** The governed search read already validated its response against ShellSearchResponseSchema, so it is returned as is. */
 export const shellSearchHandler = (request: RequestWithHeaders, payload: ShellSearchPayload) =>
   Effect.gen(function* searchHandler() {
     const session = yield* requireShellSession(request.headers);
@@ -1733,7 +1733,7 @@ export const shellSearchHandler = (request: RequestWithHeaders, payload: ShellSe
         Effect.provideService(CapturedShellCompositionCatalog, catalog),
         Effect.catch((error) => pipe(error, shellSearchReadProblem, failShellProblem)),
       );
-    return yield* decodeResponse(ShellSearchResponseSchema, response, shellInternalProblem);
+    return response;
   }).pipe(
     recoverUnexpectedDefect(request, 'Unexpected Shell search defect', () => failShellProblem(shellInternalProblem())),
   );
