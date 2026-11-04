@@ -157,10 +157,15 @@ const submitFinanceCommand = Effect.fn('Finance.browserSubmit')(function* submit
 
 const fetchRecords = (request: RecordsRequest) => executeRecords(request, 'finance-billing.records');
 
-/** The ledger snapshot (invoices and KPI indicators) per customer filter; the Shell preloads it before reveal. */
+/**
+ * The ledger snapshot (invoices and KPI indicators) per customer filter; the Shell preloads it before reveal.
+ * A failed refresh must not keep presenting the last-good rows as the current answer: a denied read clears them
+ * (and write access) instead of leaving stale data on screen, and a transient failure shows its retry state.
+ */
 const financeRecords = definePageData({
   key: recordsRequestKey,
   load: fetchRecords,
+  retainStale: false,
   runtime: financeBrowserRuntime,
 });
 
@@ -177,6 +182,11 @@ const loadFeedbackOf = (snapshot: RecordsSnapshot): Feedback => {
   }
   return snapshot.state === 'failed' ? financeFailureFeedback(snapshot.error) : 'ready';
 };
+const feedbackOf = (actionFeedback: Feedback, snapshot: RecordsSnapshot): Feedback =>
+  actionFeedback === 'ready' ? loadFeedbackOf(snapshot) : actionFeedback;
+const busyFeedback = (feedback: Feedback): boolean => feedback === 'loading' || feedback === 'saving';
+const canWriteOf = (request: Option.Option<RecordsRequest>, snapshot: RecordsResponse | undefined): boolean =>
+  Option.isSome(request) && snapshot?.canWrite === true;
 
 /** TanStack history numbers its entries in `history.state`; only the index is read here. */
 const TanstackHistoryStateSchema = Schema.Struct({ __TSR_index: Schema.Int });
@@ -276,6 +286,59 @@ const fetchDocument = (documentId: string) =>
     Effect.map((response) => Option.fromUndefinedOr(response.document)),
   );
 
+export type FinanceInvoiceDetailState =
+  | { readonly invoice: Invoice; readonly state: 'ready' }
+  | { readonly state: 'forbidden' | 'loading' | 'unavailable' };
+
+/**
+ * State of an explicit invoice deep link (`?resourceId=`). The requested identity is never dropped: the exact
+ * invoice from the authorized ledger, or why it cannot be shown. A loaded ledger without the ID (removed, another
+ * company, or outside the current customer filter) is unavailable, so the page never falls back to the list or to a
+ * different invoice. An invoice the ledger still holds stays ready, so a denied command on the open detail does not
+ * blank it; a denied or failed ledger read (no ready ledger) is reported instead of reading as an empty ledger.
+ */
+export const financeInvoiceDetailState = ({
+  feedback,
+  invoices,
+  resourceId,
+}: {
+  readonly feedback: Feedback;
+  readonly invoices?: readonly Invoice[] | undefined;
+  readonly resourceId?: string | undefined;
+}): FinanceInvoiceDetailState | undefined => {
+  if (resourceId === undefined) {
+    return undefined;
+  }
+  const invoice = invoices?.find((record) => record.ref.resourceId === resourceId);
+  if (invoice !== undefined) {
+    return { invoice, state: 'ready' };
+  }
+  if (feedback === 'forbidden') {
+    return { state: 'forbidden' };
+  }
+  return feedback === 'loading' ? { state: 'loading' } : { state: 'unavailable' };
+};
+
+/**
+ * Keeps the last ready detail for the same request while a background refresh clears the rows, so an open invoice
+ * (and any local edit state) is not unmounted for a loader flash. A failed or denied read drops it: a retry starts
+ * from an honest ledger, never from a record the current authorization no longer confirms.
+ */
+const useRetainedInvoice = (
+  detail: FinanceInvoiceDetailState | undefined,
+  detailKey: string,
+): FinanceInvoiceDetailState | undefined => {
+  const [retained, setRetained] = useState<{ readonly invoice: Invoice; readonly key: string } | null>(null);
+  if (detail?.state === 'ready' && retained?.invoice !== detail.invoice) {
+    setRetained({ invoice: detail.invoice, key: detailKey });
+  } else if ((detail?.state === 'forbidden' || detail?.state === 'unavailable') && retained !== null) {
+    setRetained(null);
+  }
+  return detail?.state === 'loading' && retained?.key === detailKey
+    ? { invoice: retained.invoice, state: 'ready' }
+    : detail;
+};
+
 /**
  * Invoice list and detail state. The ledger comes from the page-data store (ready on first paint when the Shell
  * prepared the page); commands refresh it after they succeed and keep the current rows visible meanwhile.
@@ -309,19 +372,27 @@ export const useFinanceRecords = () => {
     Option.isSome(request) ? readyRecords(financeRecords.snapshot(request.value)) : undefined;
   /** Outcome of the user's own reload or command; 'ready' defers to the ledger's load state. */
   const [actionFeedback, setActionFeedback] = useState<Feedback>('ready');
-  const feedback = actionFeedback === 'ready' ? loadFeedbackOf(recordsSnapshot) : actionFeedback;
+  const feedback = feedbackOf(actionFeedback, recordsSnapshot);
   const [voidTarget, setVoidTarget] = useState<Invoice>();
   /** Confirming numbers the invoice and locks it, so every entry point asks first. */
   const [confirmTarget, setConfirmTarget] = useState<Invoice>();
   /** True while the open detail is a history entry this page pushed, so closing it can step back instead. */
   const detailPushed = useRef(false);
-  const selected = snapshot?.state.invoices.find((record) => record.ref.resourceId === requestedId);
-  const busy = feedback === 'loading' || feedback === 'saving';
-  const canWrite = Option.isSome(request) && snapshot?.canWrite === true;
+  const requestKey = Option.match(request, { onNone: () => 'invalid', onSome: recordsRequestKey });
+  const detailKey = `${requestKey}:${requestedId ?? ''}`;
+  const currentInvoiceDetail = financeInvoiceDetailState({
+    feedback,
+    invoices: snapshot?.state.invoices,
+    resourceId: requestedId,
+  });
+  const invoiceDetail = useRetainedInvoice(currentInvoiceDetail, detailKey);
+  const selected = invoiceDetail?.state === 'ready' ? invoiceDetail.invoice : undefined;
+  const busy = busyFeedback(feedback);
+  const canWrite = canWriteOf(request, snapshot);
   const references = useFinanceReferences();
   const objects = useRentalObjects();
 
-  /** Never fails: a failed reload keeps the rows on screen. */
+  /** Never fails; a failed reload reports through the ledger snapshot instead of rejecting. */
   const load = (): Effect.Effect<void> =>
     Option.isSome(request) ? financeRecords.refresh(request.value) : Effect.void;
 
@@ -361,13 +432,14 @@ export const useFinanceRecords = () => {
     );
   };
 
-  // A cold mount (the page was not prepared) starts the load; a prepared page finds it ready and keeps it.
+  // A cold mount (the page was not prepared) starts the load; a prepared page finds it ready and keeps it. The
+  // snapshot state is a dependency so an expired entry that turned pending starts its revalidation again.
   useEffect(() => {
     const current = searchInvalid ? Option.none() : customerInvoiceRequest(partyId, counterpartyId, tenantId);
-    if (Option.isSome(current)) {
+    if (Option.isSome(current) && recordsSnapshot.state !== 'failed') {
       financeRecords.ensure(current.value);
     }
-  }, [counterpartyId, partyId, searchInvalid, tenantId]);
+  }, [counterpartyId, partyId, recordsSnapshot.state, searchInvalid, tenantId]);
 
   /** Retry after a failed load; the outcome shows through the ledger's own state. */
   const reload = () => {
@@ -475,6 +547,8 @@ export const useFinanceRecords = () => {
     /** The URL must name an invoice or a document, never both. */
     detailConflict,
     documentId: requestedDocumentId,
+    /** An explicit `?resourceId=` target: the exact invoice, or the honest reason it cannot be shown. */
+    invoiceDetail,
 
     /** Asks before confirming; `confirmPending` runs the command once the user agrees. */
     confirmInvoice: (invoice: Invoice) => setConfirmTarget(invoice),
