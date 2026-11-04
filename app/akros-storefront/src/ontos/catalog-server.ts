@@ -129,14 +129,17 @@ const cachedProducts = cache((key: string): Promise<ProductPage> =>
   productPages.get(key, loadProducts(key)),
 );
 
-/** One bounded product read without the category tree. `fresh` reads OntOS now (carts, quotes, orders). */
+/**
+ * One bounded product read without the category tree. Nonblank search queries read OntOS now, bypassing both
+ * React's render memoization and the ten-second product cache. `fresh` does the same for carts/quotes/orders.
+ */
 export async function readProducts(
   query: CatalogQuery,
   fields: CatalogFields,
   fresh = false,
 ): Promise<ProductPage> {
   const key = productKey(await marketIdOf(), query, fields);
-  return fresh ? await loadProducts(key)() : await cachedProducts(key);
+  return fresh || Boolean(query.q?.trim()) ? await loadProducts(key)() : await cachedProducts(key);
 }
 
 /** Fresh full records of the cart's products, each carrying only the cart's variants (cart quote). */

@@ -9,6 +9,8 @@ import type {
   CatalogProduct,
   CatalogProductSummary,
   CatalogProductVariant,
+  CatalogSearchMatch,
+  CatalogSearchVariantOffer,
 } from "@/ontos/catalog-types";
 import {
   matchesProductVariantSearch,
@@ -114,36 +116,59 @@ export function matchSearchVariants(product: CatalogProduct, query: string): Sea
   return { matching: productMatches ? [] : matchingVariants, only };
 }
 
+type SearchHitMatch = SearchVariantMatch | CatalogSearchMatch;
+type SearchPresentationVariant = CatalogProductVariant | CatalogSearchVariantOffer;
+const matchCount = (match: SearchHitMatch): number =>
+  "matching" in match
+    ? match.matching.length
+    : match.kind === "single"
+      ? 1
+      : match.kind === "multiple"
+        ? match.count
+        : 0;
+const singleVariant = (match: SearchHitMatch): SearchPresentationVariant | undefined =>
+  "matching" in match
+    ? match.matching.length === 1
+      ? match.matching[0]
+      : undefined
+    : match.kind === "single"
+      ? match.variant
+      : undefined;
+const onlyVariant = (match: SearchHitMatch): SearchPresentationVariant | undefined =>
+  "matching" in match
+    ? match.only
+    : match.kind === "product" || match.kind === "unattributed"
+      ? match.onlyVariant
+      : undefined;
+
 /**
- * Detail path of one search hit. One matching variant opens exactly that variant (`?variantIds=`), several open
- * the variant table filtered by the query. Without a variant read (`match` absent) a variant group falls back to
- * the query filter.
+ * One verified match opens exactly that variant; several open the query-filtered table. Known product and
+ * unattributed matches open base detail. The absent-evidence filter fallback is only for legacy callers;
+ * server search rejects missing compact evidence before building presentation.
  */
 export function searchHitPath(
   slug: string,
   query: string,
   hasVariants: boolean,
-  match?: SearchVariantMatch,
+  match?: SearchHitMatch,
 ): string {
   const filtered = `/produkt/${slug}?${new URLSearchParams({ variant: query.trim() })}#product-variants`;
   if (!match) return hasVariants ? filtered : `/produkt/${slug}`;
-  if (match.matching.length === 1) return buildVariantSelectionHref(slug, [match.matching[0].id]);
-  return match.matching.length > 1 ? filtered : `/produkt/${slug}`;
+  const variant = singleVariant(match);
+  if (variant) return buildVariantSelectionHref(slug, [variant.id]);
+  return matchCount(match) > 1 ? filtered : `/produkt/${slug}`;
 }
 
-/** One listing card as a header suggestion; `match` (from a full read) routes it to its exact variant. */
+/** One card plus owner evidence; a true only-variant fallback changes header presentation, not routing. */
 export function toRemoteSuggestion(
   product: CatalogProduct,
   query = "",
-  match?: SearchVariantMatch,
+  match?: SearchHitMatch,
 ): RemoteSearchSuggestion {
   const hasVariants = product.variantSummary.count > 0;
-  const variant =
-    match?.matching.length === 1
-      ? match.matching[0]
-      : match?.matching.length
-        ? undefined
-        : match?.only;
+  const variant = match
+    ? (singleVariant(match) ?? (matchCount(match) === 0 ? onlyVariant(match) : undefined))
+    : undefined;
   const priceUnavailableReason = variant
     ? variant.priceUnavailableReason
     : product.priceUnavailableReason;
@@ -171,28 +196,30 @@ export function toSearchGridItem(
   summary: CatalogProductSummary,
   query: string,
   dictionary: Dictionary,
-  match?: SearchVariantMatch,
+  match?: SearchHitMatch,
 ): ProductGridItem {
   if (!summary.hasVariants) return summary;
   const detailHref = searchHitPath(summary.slug, query, true, match);
-  if (!match || match.matching.length === 0) return { ...summary, detailHref };
-  if (match.matching.length > 1)
+  if (!match || matchCount(match) === 0) return { ...summary, detailHref };
+  if (matchCount(match) > 1)
     return {
       ...summary,
       detailHref,
-      searchMatchLabel: dictionary.search.matchingVariants(match.matching.length),
+      searchMatchLabel: dictionary.search.matchingVariants(matchCount(match)),
     };
-  const [variant] = match.matching;
+  const variant = singleVariant(match)!;
   const { priceUnavailableReason: _productReason, ...rest } = summary;
   void _productReason;
   return {
     ...rest,
     imageSrc: variant.imageSrc ?? summary.imageSrc,
     priceMinor: variant.priceMinor,
-    originalPriceMinor: variant.originalPriceMinor,
-    priceExcludingVatMinor: variant.priceTiers.find(
-      (tier) => tier.priceMinor === variant.priceMinor,
-    )?.priceExcludingVatMinor,
+    originalPriceMinor: "originalPriceMinor" in variant ? variant.originalPriceMinor : undefined,
+    priceExcludingVatMinor:
+      "priceTiers" in variant
+        ? variant.priceTiers.find((tier) => tier.priceMinor === variant.priceMinor)
+            ?.priceExcludingVatMinor
+        : variant.priceExcludingVatMinor,
     ...(variant.priceUnavailableReason
       ? { priceUnavailableReason: variant.priceUnavailableReason }
       : {}),

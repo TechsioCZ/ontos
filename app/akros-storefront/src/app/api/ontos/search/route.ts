@@ -1,13 +1,18 @@
 import "server-only";
 import { guard, jsonBody, problem, requestDictionary } from "@/ontos/http";
 import { getCatalogPage } from "@/ontos/catalog-server";
+import { SEARCH_QUERY_MIN_LENGTH, searchQueryText } from "@/ontos/search-query";
 import {
   matchCategories,
   placeholdersLast,
   toRemoteSuggestion,
   type RemoteSearchResponse,
 } from "@/ontos/search-suggestions";
-import { readSearchVariantMatches, SUGGESTION_VARIANT_GROUPS } from "@/ontos/search-variants";
+import { readSearchVariantMatches } from "@/ontos/search-variants";
+
+/** Every search POST and its owner fetches are request-time reads, never framework-cached answers. */
+export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 const noStore = { "cache-control": "no-store" };
 export async function POST(request: Request) {
@@ -15,15 +20,15 @@ export async function POST(request: Request) {
   try {
     guard(request, t);
     const { q } = (await jsonBody(request, t)) as { q?: unknown };
-    const term = typeof q === "string" ? q.trim().slice(0, 200) : "";
-    if (term.length < 2)
+    const term = searchQueryText(q);
+    if (term.length < SEARCH_QUERY_MIN_LENGTH)
       return Response.json({ items: [], total: 0, categories: [] } satisfies RemoteSearchResponse, {
         headers: noStore,
       });
     const listing = await getCatalogPage({ q: term, page: 1, pageSize: 6 });
-    // Exact SKU / variant hits open that variant: the page's variant groups are read in full and matched.
+    // Every card carries validated owner attribution plus at most one market-priced presentation offer.
     const products = placeholdersLast(listing.products);
-    const matches = await readSearchVariantMatches(products, term, SUGGESTION_VARIANT_GROUPS);
+    const matches = await readSearchVariantMatches(products, term);
     const items = products.map((product) =>
       toRemoteSuggestion(product, term, matches.get(product.id)),
     );

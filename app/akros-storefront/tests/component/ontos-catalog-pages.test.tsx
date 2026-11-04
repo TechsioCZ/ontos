@@ -7,6 +7,11 @@ import SearchPage from "@/app/vyhledavani/page";
 import { CartProvider } from "@/features/cart/cart-provider";
 import { getCatalogPage, getCategoryListing, type CatalogPage } from "@/ontos/catalog-server";
 import type { ProductPage } from "@/ontos/catalog-projection";
+import type {
+  CatalogProduct,
+  CatalogProductVariant,
+  CatalogSearchVariantOffer,
+} from "@/ontos/catalog-types";
 import { asCard, fixtureCatalog, fixtureCategoryProducts } from "../support/catalog-fixture";
 
 vi.mock("@/ontos/catalog-server", async () => {
@@ -49,6 +54,28 @@ const ownerPage = (total: number): CatalogPage => ({
   total,
   page: 2,
   pageSize: 24,
+});
+
+/** Projected singleton facts from the existing fixture, not a full variant or a recomputed price. */
+const searchOffer = (
+  product: CatalogProduct,
+  variant: CatalogProductVariant,
+): CatalogSearchVariantOffer => ({
+  id: variant.id,
+  sku: variant.sku,
+  label: variant.label,
+  imageSrc: variant.imageSrc,
+  currency: product.currency,
+  priceMinor: variant.priceMinor,
+  priceExcludingVatMinor: variant.priceTiers.find((tier) => tier.priceMinor === variant.priceMinor)
+    ?.priceExcludingVatMinor,
+  priceUnavailableReason: variant.priceUnavailableReason,
+  stockCount: variant.stockCount,
+  availabilityUnknown: variant.availabilityUnknown,
+  minimumQuantity: variant.minimumQuantity,
+  packageQuantity: variant.packageQuantity,
+  quantityStep: variant.quantityStep,
+  unit: variant.unit,
 });
 
 /** A category listing page as `getCategoryListing` returns it (no model: the page takes it from getCatalog). */
@@ -118,7 +145,25 @@ describe("OntOS category and search pages", () => {
     ).toBeDefined();
   });
   it("searches through OntOS and skips the read for an empty query", async () => {
-    vi.mocked(getCatalogPage).mockResolvedValue(ownerPage(100));
+    vi.mocked(getCatalogPage).mockResolvedValue({
+      ...ownerPage(100),
+      products: fixtureCategoryProducts("srouby")
+        .slice(0, 3)
+        .map((product) => ({
+          ...asCard(product),
+          searchMatch: {
+            kind: "product",
+            ...(product.variantSummary.count === 1
+              ? {
+                  onlyVariant: searchOffer(
+                    product,
+                    product.detail.variants.find((item) => item.priceMinor > 0)!,
+                  ),
+                }
+              : {}),
+          },
+        })),
+    });
     render(
       <CartProvider storage={null}>
         {await SearchPage({ searchParams: Promise.resolve({ q: " šroub ", page: "2" }) })}
@@ -136,13 +181,13 @@ describe("OntOS category and search pages", () => {
     )!;
     const shared = fixtureCatalog.getProductBySlug("dvojniply-typ-310-mat-1-4404")!;
     const variant = exact.detail.variants.find((item) => item.id === "item-9025")!;
-    for (const [query, product] of [
-      ["10197200040300", exact],
-      ["3dn31028000000025", shared],
+    for (const [query, product, searchMatch] of [
+      ["10197200040300", exact, { kind: "single", variant: searchOffer(exact, variant) }],
+      ["3dn31028000000025", shared, { kind: "multiple", count: 2 }],
     ] as const) {
       vi.mocked(getCatalogPage).mockResolvedValueOnce({
         ...ownerPage(1),
-        products: [asCard(product)],
+        products: [{ ...asCard(product), searchMatch }],
         page: 1,
       });
       render(

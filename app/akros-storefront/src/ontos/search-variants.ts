@@ -1,44 +1,21 @@
 import "server-only";
-import type { CatalogProduct } from "@/ontos/catalog-types";
-import { readProducts } from "./catalog-server";
-import { matchSearchVariants, type SearchVariantMatch } from "./search-suggestions";
-
-/** Merchandise returns at most two `full` products per read unless `variantIds` narrows the variants. */
-const FULL_PAGE_LIMIT = 2;
+import type { CatalogProduct, CatalogSearchMatch } from "@/ontos/catalog-types";
+import { CatalogSearchMatchError } from "./catalog-projection";
 
 /**
- * At most this many variant groups of one search page are read in full (stage runs on one CPU); later hits keep
- * the query filter link, which opens the same variant table pre-filtered.
- */
-const SEARCH_PAGE_VARIANT_GROUPS = 8;
-export const SUGGESTION_VARIANT_GROUPS = 2;
-
-/**
- * Exact variant hits of one search page. OntOS search answers with listing cards (no variant records), so the
- * variant groups of the page are read in full (two per owner read, in parallel, sharing the ten-second product
- * cache) and matched against the query. A failed read only drops that routing: those hits keep the query filter.
+ * Complete owner attribution and singleton presentation for every hit of this search page. The catalog
+ * projection validates the compact contract; routing never hydrates full groups, samples hits or re-matches
+ * owner titles locally. A missing contract is an explicit outage, not an invented variant/filter link.
  */
 export async function readSearchVariantMatches(
   products: readonly CatalogProduct[],
   query: string,
-  maxGroups: number = SEARCH_PAGE_VARIANT_GROUPS,
-): Promise<Map<string, SearchVariantMatch>> {
-  const groupIds = [
-    ...new Set(products.filter((product) => product.variantSummary.count > 0).map(({ id }) => id)),
-  ].slice(0, maxGroups);
-  const chunks: string[][] = [];
-  for (let start = 0; start < groupIds.length; start += FULL_PAGE_LIMIT)
-    chunks.push(groupIds.slice(start, start + FULL_PAGE_LIMIT));
-  const pages = await Promise.all(
-    chunks.map((productIds) =>
-      readProducts({ productIds, pageSize: productIds.length }, "full").then(
-        (page) => page.products,
-        () => [],
-      ),
-    ),
-  );
-  const matches = new Map<string, SearchVariantMatch>();
-  for (const product of pages.flat())
-    if (groupIds.includes(product.id)) matches.set(product.id, matchSearchVariants(product, query));
+): Promise<Map<string, CatalogSearchMatch>> {
+  const matches = new Map<string, CatalogSearchMatch>();
+  if (!query.trim()) return matches;
+  for (const product of products) {
+    if (product.searchMatch === undefined) throw new CatalogSearchMatchError();
+    matches.set(product.id, product.searchMatch);
+  }
   return matches;
 }

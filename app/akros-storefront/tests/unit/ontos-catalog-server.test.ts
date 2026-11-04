@@ -151,7 +151,8 @@ describe("OntOS catalog server reads", () => {
     },
     {
       name: "product listing",
-      read: async () => (await server.getCatalogPage({ q: "p1", pageSize: 24 })).products[0],
+      read: async () =>
+        (await server.getCatalogPage({ categorySlug: "srouby", pageSize: 24 })).products[0],
     },
     {
       name: "category first page",

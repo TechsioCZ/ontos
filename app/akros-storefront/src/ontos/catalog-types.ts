@@ -44,6 +44,33 @@ export interface CatalogProductVariant {
   isNew: boolean;
 }
 
+/** One owner-verified search leaf, already priced in the response market; presentation only, not a quote. */
+export type CatalogSearchVariantOffer = Pick<
+  CatalogProductVariant,
+  | "id"
+  | "sku"
+  | "label"
+  | "imageSrc"
+  | "priceMinor"
+  | "priceUnavailableReason"
+  | "stockCount"
+  | "availabilityUnknown"
+  | "minimumQuantity"
+  | "packageQuantity"
+  | "quantityStep"
+  | "unit"
+> & {
+  currency: StoreCurrency;
+  /** Owner-selected net display amount after market conversion and tier deduplication. */
+  priceExcludingVatMinor?: number;
+};
+
+/** Complete owner attribution for one search hit; never a sampled array of variant records. */
+export type CatalogSearchMatch =
+  | { kind: "single"; variant: CatalogSearchVariantOffer }
+  | { kind: "multiple"; count: number }
+  | { kind: "product" | "unattributed"; onlyVariant?: CatalogSearchVariantOffer };
+
 export interface CatalogPriceTier {
   minimumQuantity: number;
   priceMinor: number;
@@ -106,6 +133,8 @@ export interface CatalogProduct {
   isSale: boolean;
   isNew: boolean;
   variantSummary: CatalogVariantSummary;
+  /** Present on nonblank owner search responses; absent on unrelated catalog reads. */
+  searchMatch?: CatalogSearchMatch;
   /** Variant records, parameters and paragraphs are filled only by product detail (`fields: "full"`) reads. */
   detail: CatalogProductDetail;
 }

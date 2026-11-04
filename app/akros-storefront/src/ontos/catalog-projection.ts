@@ -19,10 +19,12 @@ import type {
   CatalogProductVariant,
   CatalogPurchaseProduct,
   CatalogPurchaseVariant,
+  CatalogSearchMatch,
+  CatalogSearchVariantOffer,
 } from "@/ontos/catalog-types";
 
 /** The market a storefront catalog read was answered for. */
-interface CatalogMarket {
+export interface CatalogMarket {
   marketId: string;
   marketCode: string;
   currency: StoreCurrency;
@@ -152,6 +154,138 @@ const dedupeTiers = (tiers: CatalogPriceTier[]): CatalogPriceTier[] =>
     (a, b) => a.minimumQuantity - b.minimumQuantity,
   );
 
+/** A broken search contract must become an outage, never a guessed identity or market price. */
+export class CatalogSearchMatchError extends Error {
+  readonly code = "catalog_search_match_malformed";
+  constructor() {
+    super("OntOS search match evidence is missing or malformed");
+    this.name = "CatalogSearchMatchError";
+  }
+}
+const invalidSearchMatch = (): never => {
+  throw new CatalogSearchMatchError();
+};
+const searchRecord = (value: unknown, keys: readonly string[]): Raw => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return invalidSearchMatch();
+  const raw = value as Raw;
+  if (Object.keys(raw).some((key) => !keys.includes(key))) return invalidSearchMatch();
+  return raw;
+};
+const searchText = (value: unknown): string =>
+  typeof value === "string" ? value : invalidSearchMatch();
+const searchNumber = (value: unknown): number => number(value) ?? invalidSearchMatch();
+const searchMinor = (value: unknown): number => {
+  const minor = searchNumber(value);
+  return Number.isSafeInteger(minor) && minor >= 0 ? minor : invalidSearchMatch();
+};
+
+/** Project only the approved singleton fields, with the same presentation rules as full variants. */
+const searchOfferOf = (
+  value: unknown,
+  product: Raw,
+  money: MoneyFormat,
+): CatalogSearchVariantOffer => {
+  const raw = searchRecord(value, [
+    "id",
+    "name",
+    "sku",
+    "currency",
+    "grossPriceMinor",
+    "priceMinor",
+    "displayPriceExcludingVatMinor",
+    "availability",
+    "stockOnHand",
+    "unit",
+    "sourceUnit",
+    "minimumQuantity",
+    "packageQuantity",
+    "imageSrc",
+  ]);
+  const id = searchText(raw.id);
+  if (!id.trim() || !isStoreCurrency(raw.currency) || raw.currency !== money.currency)
+    return invalidSearchMatch();
+  const label = searchText(raw.name);
+  const sku = searchText(raw.sku);
+  const gross = searchMinor(raw.grossPriceMinor);
+  const net = searchMinor(raw.priceMinor);
+  const displayNet =
+    raw.displayPriceExcludingVatMinor === undefined
+      ? undefined
+      : searchMinor(raw.displayPriceExcludingVatMinor);
+  const availability = searchText(raw.availability);
+  if (!["IN_STOCK", "LOW_STOCK", "OUT_OF_STOCK", "UNKNOWN"].includes(availability))
+    return invalidSearchMatch();
+  const stock = searchNumber(raw.stockOnHand);
+  const minimum = raw.minimumQuantity === undefined ? 1 : searchNumber(raw.minimumQuantity);
+  const packageQuantity =
+    raw.packageQuantity === undefined ? undefined : searchNumber(raw.packageQuantity);
+  const ownerUnit = searchText(raw.unit);
+  const unit = raw.sourceUnit === undefined ? ownerUnit : searchText(raw.sourceUnit);
+  const image = raw.imageSrc === undefined ? undefined : searchText(raw.imageSrc);
+  const priceIssue = priceUnavailableReason(gross, net, raw.currency, money);
+  const availabilityUnknown = isAvailabilityUnknown(availability, product.stockTracked);
+  return {
+    id,
+    sku,
+    label,
+    currency: raw.currency,
+    unit,
+    priceMinor: priceIssue ? 0 : gross,
+    ...(!priceIssue && displayNet !== undefined ? { priceExcludingVatMinor: displayNet } : {}),
+    ...(priceIssue ? { priceUnavailableReason: priceIssue } : {}),
+    stockCount: availabilityUnknown ? 0 : stockOf(stock, availability),
+    ...(availabilityUnknown ? { availabilityUnknown: true } : {}),
+    ...purchaseConstraints(minimum, packageQuantity),
+    packageQuantity,
+    imageSrc: productMediaPath(text(product.id), image ?? "") ?? safeImage(image),
+  };
+};
+
+const searchMatchOf = (
+  value: unknown,
+  product: Raw,
+  money: MoneyFormat,
+  count: number,
+): CatalogSearchMatch => {
+  const raw = searchRecord(value, ["kind", "variant", "count", "onlyVariant"]);
+  if (!Number.isSafeInteger(count) || count < 0) return invalidSearchMatch();
+  switch (raw.kind) {
+    case "single":
+      if (count < 1 || raw.count !== undefined || raw.onlyVariant !== undefined)
+        return invalidSearchMatch();
+      return { kind: "single", variant: searchOfferOf(raw.variant, product, money) };
+    case "multiple": {
+      const matching = searchNumber(raw.count);
+      if (
+        !Number.isSafeInteger(matching) ||
+        matching < 2 ||
+        matching > count ||
+        raw.variant !== undefined ||
+        raw.onlyVariant !== undefined
+      )
+        return invalidSearchMatch();
+      return { kind: "multiple", count: matching };
+    }
+    case "product":
+    case "unattributed":
+      if (
+        raw.variant !== undefined ||
+        raw.count !== undefined ||
+        (raw.onlyVariant !== undefined && count !== 1) ||
+        (count === 1 && raw.onlyVariant === undefined)
+      )
+        return invalidSearchMatch();
+      return {
+        kind: raw.kind,
+        ...(raw.onlyVariant === undefined
+          ? {}
+          : { onlyVariant: searchOfferOf(raw.onlyVariant, product, money) }),
+      };
+    default:
+      return invalidSearchMatch();
+  }
+};
+
 /** One owner product read (`includeCategories: false`): one page of products plus the catalog revision. */
 export interface ProductPage {
   /** merchandise `storefrontCatalog.market` (absent only for reads without a market). */
@@ -252,6 +386,15 @@ export function projectProducts(body: Raw): ProductPage {
     // Products created in OntOS (not imported) carry no minimumQuantity; the owner then sells from 1 unit.
     const minimum = number(p.minimumQuantity) ?? 1;
     const variantSummary = variantSummaryOf(p.variantSummary);
+    if (
+      p.searchMatch !== undefined &&
+      ((body.market !== undefined && !market) || market?.configured === false)
+    )
+      invalidSearchMatch();
+    const searchMatch =
+      p.searchMatch === undefined
+        ? undefined
+        : searchMatchOf(p.searchMatch, p, money, variantSummary.count);
     // A variant group is sold per variant: its card price is the owner's lowest sellable variant price.
     const isGroup = variantSummary.count > 0;
     const groupGross = variantSummary.minGrossPriceMinor ?? undefined;
@@ -315,6 +458,7 @@ export function projectProducts(body: Raw): ProductPage {
           ? variantSummary.stockOnHand
           : stockOf(p.stockOnHand, p.availability),
       variantSummary,
+      ...(searchMatch === undefined ? {} : { searchMatch }),
       imageSrc: primaryImage,
       imageAlt: text(p.imageAlt, text(p.name)),
       secondaryImageSrc: gallery.find((src) => src !== primaryImage),

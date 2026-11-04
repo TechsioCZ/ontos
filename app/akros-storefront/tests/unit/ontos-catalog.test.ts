@@ -5,10 +5,17 @@ import {
   projectProducts,
   purchaseProductOf,
   purchaseVariantOf,
+  CatalogSearchMatchError,
 } from "@/ontos/catalog-projection";
 import raw from "@/catalog-import/generated/catalog.generated.json";
 import { createCatalog } from "@/ontos/catalog-model";
 import { createCheckoutDraft, getCheckoutTotals } from "@/features/checkout/checkout-state";
+import { cs } from "@/i18n/cs";
+import {
+  matchSearchVariants,
+  toRemoteSuggestion,
+  toSearchGridItem,
+} from "@/ontos/search-suggestions";
 /** One owner response projected the way catalog-server merges products and navigation. */
 const project = (body: Record<string, unknown>) => {
   const page = projectProducts(body);
@@ -441,5 +448,344 @@ describe("OntOS source-of-truth boundary", () => {
     const before = JSON.stringify(template);
     project({ products: [live()] });
     expect(JSON.stringify(template)).toBe(before);
+  });
+});
+
+describe("compact owner search evidence", () => {
+  // Synthetic owner offer: these are supplied facts, never reconstructed from a group/card price.
+  const offer = () => ({
+    id: "item-6692",
+    name: "Varianta z vlastníka",
+    sku: "10799700035016",
+    currency: "CZK",
+    grossPriceMinor: 254,
+    priceMinor: 210,
+    displayPriceExcludingVatMinor: 207,
+    availability: "IN_STOCK",
+    stockOnHand: 13.5,
+    unit: "ks",
+    minimumQuantity: 2,
+    packageQuantity: 10,
+    imageSrc: "media:0b6b0c7e-1f2a-4c3d-8e9f-a0b1c2d3e4f5",
+  });
+  const card = () => ({
+    ...live(),
+    currency: "CZK",
+    minimumQuantity: 200,
+    packageQuantity: 100,
+    variantRecords: undefined,
+    variantSummary: { count: 47, minGrossPriceMinor: 121, stockOnHand: 500, units: ["ks"] },
+  });
+  const summary = (product: ReturnType<typeof projectProducts>["products"][number]) =>
+    createCatalog(
+      { products: [product], homepageFeaturedProductIds: [] },
+      { categories: [] },
+    ).toProductSummary(product);
+
+  it.each(["CZK", "EUR", "PLN"])(
+    "preserves full-leaf header/grid presentation in %s without full records",
+    (currency) => {
+      const leaf = { ...offer(), currency };
+      const product = { ...card(), currency };
+      const market = { marketId: "owner-market", currency, configured: true };
+      const full = projectProducts({
+        market,
+        products: [
+          {
+            ...product,
+            variantRecords: [
+              {
+                ...leaf,
+                active: true,
+                priceTiers: [{ minimumQuantity: 2, priceMinor: 254, priceExcludingVatMinor: 207 }],
+              },
+            ],
+          },
+        ],
+      }).products[0];
+      const compact = projectProducts({
+        market,
+        products: [
+          {
+            ...product,
+            searchMatch: { kind: "single", variant: leaf },
+          },
+        ],
+      }).products[0];
+      const legacyMatch = matchSearchVariants(full, leaf.sku);
+      expect(toRemoteSuggestion(compact, leaf.sku, compact.searchMatch)).toEqual(
+        toRemoteSuggestion(full, leaf.sku, legacyMatch),
+      );
+      expect(toSearchGridItem(summary(compact), leaf.sku, cs, compact.searchMatch)).toEqual(
+        toSearchGridItem(summary(full), leaf.sku, cs, legacyMatch),
+      );
+      expect(compact.searchMatch).toMatchObject({
+        kind: "single",
+        variant: {
+          id: leaf.id,
+          label: leaf.name,
+          sku: leaf.sku,
+          currency,
+          priceMinor: 254,
+          priceExcludingVatMinor: 207,
+          stockCount: 13.5,
+          minimumQuantity: 10,
+          packageQuantity: 10,
+          quantityStep: 10,
+          imageSrc: `/obrazky/${encodeURIComponent(product.id)}/0b6b0c7e-1f2a-4c3d-8e9f-a0b1c2d3e4f5`,
+        },
+      });
+      expect(compact.detail.variants).toEqual([]);
+      expect(compact.searchMatch).not.toHaveProperty("variant.priceTiers");
+      expect(compact.searchMatch).not.toHaveProperty("variant.parameters");
+    },
+  );
+
+  it("uses the owner post-dedup display-net scalar, including absence, without recomputing VAT", () => {
+    for (const display of [0, 67, undefined]) {
+      const product = projectProducts({
+        products: [
+          {
+            ...card(),
+            searchMatch: {
+              kind: "single",
+              variant: { ...offer(), displayPriceExcludingVatMinor: display },
+            },
+          },
+        ],
+      }).products[0];
+      expect(
+        toSearchGridItem(summary(product), "leaf", cs, product.searchMatch).priceExcludingVatMinor,
+      ).toBe(display);
+    }
+  });
+
+  it.each([
+    { availability: "UNKNOWN", stockOnHand: 500, stockCount: 0, status: "unknown" },
+    { availability: "OUT_OF_STOCK", stockOnHand: 500, stockCount: 0, status: "out-of-stock" },
+    { availability: "LOW_STOCK", stockOnHand: 5, stockCount: 5, status: "limited-stock" },
+    { availability: "IN_STOCK", stockOnHand: -1, stockCount: 0, status: "out-of-stock" },
+    { availability: "IN_STOCK", stockOnHand: 11.5, stockCount: 11.5, status: "in-stock" },
+  ])(
+    "retains stock semantics for $availability / $stockOnHand",
+    ({ availability, stockOnHand, stockCount, status }) => {
+      const product = projectProducts({
+        products: [
+          {
+            ...card(),
+            searchMatch: {
+              kind: "single",
+              variant: { ...offer(), availability, stockOnHand },
+            },
+          },
+        ],
+      }).products[0];
+      expect(
+        toSearchGridItem(summary(product), "leaf", cs, product.searchMatch).stock,
+      ).toMatchObject({
+        kind: "quantity",
+        stockCount,
+        status,
+        minimumQuantity: 10,
+        quantityStep: 10,
+      });
+    },
+  );
+
+  it("retains untracked stock, zero-price, source-unit precedence and unpackaged minimum rules", () => {
+    const product = projectProducts({
+      products: [
+        {
+          ...card(),
+          stockTracked: false,
+          searchMatch: {
+            kind: "single",
+            variant: {
+              ...offer(),
+              grossPriceMinor: 0,
+              priceMinor: 0,
+              minimumQuantity: undefined,
+              packageQuantity: undefined,
+              sourceUnit: "m",
+            },
+          },
+        },
+      ],
+    }).products[0];
+    const suggestion = toRemoteSuggestion(product, "leaf", product.searchMatch);
+    const grid = toSearchGridItem(summary(product), "leaf", cs, product.searchMatch);
+    expect(suggestion).toMatchObject({
+      priceMinor: 0,
+      priceUnavailableReason: "zero-price",
+      variantLabel: offer().name,
+    });
+    expect(grid).toMatchObject({
+      priceMinor: 0,
+      priceUnavailableReason: "zero-price",
+      stock: {
+        kind: "quantity",
+        status: "unknown",
+        stockCount: 0,
+        minimumQuantity: 1,
+        quantityStep: 1,
+        unit: "m",
+      },
+    });
+    expect(grid.priceExcludingVatMinor).toBeUndefined();
+    expect(grid.stock).not.toHaveProperty("packageQuantity", 100);
+  });
+
+  it.each(["https://evil.example/x.jpg", "http://www.akros.cz/data/x.jpg", "//evil.example/x"])(
+    "retains the safe parent image fallback for %s",
+    (imageSrc) => {
+      const product = projectProducts({
+        products: [
+          {
+            ...card(),
+            imageSrc: "/storefront/parent.jpg",
+            searchMatch: {
+              kind: "single",
+              variant: { ...offer(), imageSrc },
+            },
+          },
+        ],
+      }).products[0];
+      expect(toRemoteSuggestion(product, "leaf", product.searchMatch).imageSrc).toBe(
+        "/storefront/parent.jpg",
+      );
+    },
+  );
+
+  it.each(["product", "unattributed"])(
+    "uses a true onlyVariant for header presentation only (%s)",
+    (kind) => {
+      const product = projectProducts({
+        products: [
+          {
+            ...card(),
+            variantSummary: { ...card().variantSummary, count: 1 },
+            searchMatch: { kind, onlyVariant: offer() },
+          },
+        ],
+      }).products[0];
+      expect(toRemoteSuggestion(product, "query", product.searchMatch)).toMatchObject({
+        variantSku: offer().sku,
+        variantLabel: offer().name,
+        priceMinor: 254,
+        path: `/produkt/${product.slug}`,
+      });
+      const grid = toSearchGridItem(summary(product), "query", cs, product.searchMatch);
+      expect(grid).toMatchObject({ priceMinor: 121, detailHref: `/produkt/${product.slug}` });
+      expect(grid.variantId).toBeUndefined();
+      expect(grid.searchMatchLabel).toBeUndefined();
+    },
+  );
+
+  it("preserves complete multi-match counts and known-zero unattributed routing", () => {
+    for (const match of [
+      { kind: "multiple", count: 47 },
+      { kind: "unattributed" },
+      { kind: "product" },
+    ]) {
+      const product = projectProducts({ products: [{ ...card(), searchMatch: match }] })
+        .products[0];
+      const grid = toSearchGridItem(summary(product), "query", cs, product.searchMatch);
+      expect(grid.detailHref).toBe(
+        match.kind === "multiple"
+          ? `/produkt/${product.slug}?variant=query#product-variants`
+          : `/produkt/${product.slug}`,
+      );
+      expect(grid.searchMatchLabel).toBe(
+        match.kind === "multiple" ? cs.search.matchingVariants(47) : undefined,
+      );
+      expect(grid.variantId).toBeUndefined();
+    }
+  });
+
+  it("does not truncate unrelated full-detail variant arrays or grant purchase authority", () => {
+    const variants = Array.from({ length: 47 }, (_, index) => ({
+      ...offer(),
+      id: `fixture-leaf-${index}`,
+      active: true,
+    }));
+    const product = projectProducts({ products: [{ ...card(), variantRecords: variants }] })
+      .products[0];
+    expect(product.detail.variants.map(({ id }) => id)).toEqual(variants.map(({ id }) => id));
+    expect(purchaseProductOf(product)).not.toHaveProperty("searchMatch");
+  });
+
+  const malformed: [string, () => unknown][] = [
+    ["unknown kind", () => ({ kind: "group" })],
+    ["array", () => []],
+    ["null", () => null],
+    ["missing singleton", () => ({ kind: "single" })],
+    ["singleton array", () => ({ kind: "single", variant: [offer()] })],
+    ["empty identity", () => ({ kind: "single", variant: { ...offer(), id: "" } })],
+    ["wrong currency", () => ({ kind: "single", variant: { ...offer(), currency: "EUR" } })],
+    ["unsupported currency", () => ({ kind: "single", variant: { ...offer(), currency: "USD" } })],
+    ["missing net", () => ({ kind: "single", variant: { ...offer(), priceMinor: undefined } })],
+    ["negative gross", () => ({ kind: "single", variant: { ...offer(), grossPriceMinor: -1 } })],
+    ["fractional money", () => ({ kind: "single", variant: { ...offer(), priceMinor: 1.5 } })],
+    [
+      "invalid display net",
+      () => ({ kind: "single", variant: { ...offer(), displayPriceExcludingVatMinor: NaN } }),
+    ],
+    ["unknown stock", () => ({ kind: "single", variant: { ...offer(), stockOnHand: Infinity } })],
+    [
+      "invalid availability",
+      () => ({ kind: "single", variant: { ...offer(), availability: "YES" } }),
+    ],
+    ["invalid minimum", () => ({ kind: "single", variant: { ...offer(), minimumQuantity: "2" } })],
+    ["invalid optional unit", () => ({ kind: "single", variant: { ...offer(), sourceUnit: 3 } })],
+    ["raw tiers", () => ({ kind: "single", variant: { ...offer(), priceTiers: [] } })],
+    ["multiple singleton", () => ({ kind: "multiple", count: 1 })],
+    ["fractional count", () => ({ kind: "multiple", count: 2.5 })],
+    ["overcount", () => ({ kind: "multiple", count: 48 })],
+    ["arbitrary onlyVariant", () => ({ kind: "product", onlyVariant: offer() })],
+    ["mixed branches", () => ({ kind: "multiple", count: 2, variant: offer() })],
+  ];
+  it.each(malformed)("rejects malformed evidence: %s", (_name, makeMatch) => {
+    expect(() => projectProducts({ products: [{ ...card(), searchMatch: makeMatch() }] })).toThrow(
+      CatalogSearchMatchError,
+    );
+  });
+  it("rejects malformed/unconfigured market evidence rather than falling back to CZK", () => {
+    for (const market of [
+      { marketId: "m", currency: "USD" },
+      { marketId: "m", currency: "CZK", configured: false },
+    ])
+      expect(() =>
+        projectProducts({
+          market,
+          products: [{ ...card(), searchMatch: { kind: "single", variant: offer() } }],
+        }),
+      ).toThrow(CatalogSearchMatchError);
+  });
+  it("requires the only-variant offer for a one-variant product-level hit instead of dropping its presentation", () => {
+    expect(() =>
+      projectProducts({
+        products: [
+          {
+            ...card(),
+            variantSummary: { ...card().variantSummary, count: 1 },
+            searchMatch: { kind: "product" },
+          },
+        ],
+      }),
+    ).toThrow(CatalogSearchMatchError);
+  });
+  it("never shows a compare-at price on a single-variant card, even when the product card carries one", () => {
+    // The owner search offer has no compare-at field, so one variant never inherits the product-level price.
+    const product = projectProducts({
+      products: [{ ...card(), searchMatch: { kind: "single", variant: offer() } }],
+    }).products[0];
+    const grid = toSearchGridItem(
+      { ...summary(product), originalPriceMinor: 330 },
+      "leaf",
+      cs,
+      product.searchMatch,
+    );
+    expect(grid).toMatchObject({ variantId: offer().id, priceMinor: 254 });
+    expect(grid.originalPriceMinor).toBeUndefined();
   });
 });
