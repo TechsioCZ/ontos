@@ -6,12 +6,14 @@ import { Effect, FileSystem, Layer, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
 import { OntosDeploymentAppIdSchema } from '../packages/core-runtime/src/modules/manifest.ts';
+import { ApplicationMigrationRequirementsSchema } from './application-migration-plan.mts';
 import { OpsShellLive, runCommand } from './ops/ops-shell.mts';
 
 const SHELL_APP_ID = 'shell-super-app';
 
 /** A reviewed publication instruction. Runtime membership belongs only to the resulting composition. */
 export const ApplicationReleaseIntentSchema = Schema.Struct({
+  migrationRequirements: Schema.optionalKey(ApplicationMigrationRequirementsSchema),
   modules: Schema.Array(Schema.Struct({ appId: OntosDeploymentAppIdSchema })).check(Schema.isMaxLength(256)),
 });
 export type ApplicationReleaseIntent = typeof ApplicationReleaseIntentSchema.Type;

@@ -18,6 +18,8 @@ import { Command, Flag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { parse as parseYaml } from 'yaml';
 
+import { ApplicationMigrationPlanSchema } from './application-migration-plan.mts';
+import type { ApplicationMigrationPlan } from './application-migration-plan.mts';
 import type { ProtectedEntrypointInventory } from './authorization/protected-entrypoint-inventory.mts';
 import type { AuthorizationRolloutContract } from './authorization/rollout-contract.mts';
 import { validateAuthorizationRolloutContract } from './authorization/rollout-contract.mts';
@@ -179,6 +181,8 @@ export interface DeploymentImpactPlan {
     readonly headRevision?: string;
     readonly mode: 'diff' | 'full';
   };
+  /** Observed owner work is independent of the artifact build selection. */
+  readonly migrationPlan?: ApplicationMigrationPlan;
   readonly phases: readonly DeploymentPhase[];
   readonly schemaVersion: 1;
   readonly units: {
@@ -204,6 +208,8 @@ export interface PlanDeploymentImpactOptions {
   readonly baseRevision?: string;
   readonly changedPaths?: readonly string[];
   readonly headRevision?: string;
+  /** Supplied by native migration planning; source-path impact alone is only a conservative trigger. */
+  readonly migrationPlan?: ApplicationMigrationPlan;
   /** Dedicated per-owner worker services or the one Outbox Worker host. Defaults to `dedicated`. */
   readonly outboxWorkerMode?: OutboxWorkerMode;
   /**
@@ -372,6 +378,7 @@ const DeploymentImpactPlanSchema = Schema.Struct({
     headRevision: Schema.optional(Schema.String),
     mode: Schema.Literals(['diff', 'full']),
   }),
+  migrationPlan: Schema.optionalKey(ApplicationMigrationPlanSchema),
   phases: Schema.Array(DeploymentPhaseSchema),
   schemaVersion: Schema.Literal(1),
   units: Schema.Struct({
@@ -1421,6 +1428,12 @@ const planStoppedWorkers = (
 
 export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) =>
   Effect.gen(function* planDeploymentImpactEffect() {
+    const migrationPlan =
+      options.migrationPlan === undefined
+        ? undefined
+        : yield* Schema.decodeUnknownEffect(ApplicationMigrationPlanSchema, { onExcessProperty: 'error' })(
+            options.migrationPlan,
+          );
     const authorization =
       options.authorizationPromotion === undefined
         ? undefined
@@ -1473,12 +1486,15 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
       rootDirectory,
     );
 
-    const { impacted, migrator, spicedb } = deriveDeploymentImpact(
-      changedPaths,
-      fullDeploy,
-      ownership.owners ?? [],
-      orderedUnits,
-    );
+    const {
+      impacted,
+      migrator: migrationTrigger,
+      spicedb,
+    } = deriveDeploymentImpact(changedPaths, fullDeploy, ownership.owners ?? [], orderedUnits);
+    const migrator =
+      migrationPlan === undefined
+        ? migrationTrigger
+        : migrationPlan.owners.some((owner) => owner.verify || (owner.migrate && owner.pendingMigrations.length > 0));
 
     const selectedUnits = orderedUnits.filter((unit) => impacted.has(unit.id));
     const outboxWorkerMode = options.outboxWorkerMode ?? 'dedicated';
@@ -1526,7 +1542,8 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
         workers: phases.filter((phase) => phase.kind === 'worker').map((phase) => phase.id),
       },
     };
-    return authorization === undefined ? plan : { ...plan, authorization };
+    const observedPlan = migrationPlan === undefined ? plan : { ...plan, migrationPlan };
+    return authorization === undefined ? observedPlan : { ...observedPlan, authorization };
   });
 
 const loadAuthorizationPromotionGate = (

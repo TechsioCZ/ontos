@@ -179,19 +179,17 @@ it.effect('pins the build toolchain from .mise.toml and packageManager and ships
 );
 
 const migratorFixture =
-  "    yield* migrate('verticals/ledger', 'drizzle.config.ts');\n    yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');\n    yield* runAppScript('scripts/verify-application-db-schema.mts');\n";
-it.effect('adds new topology migrations once before grants and schema verification', () =>
+  'const before = yield* prepareApplicationMigrationPlan(requirements);\nfor (const stream of before.streams) { yield* migrate(stream.directory, stream.configFile); }\n';
+it.effect('uses topology discovery without adding unconditional owner initialization', () =>
   Effect.gen(function* migrationOwnerGeneration() {
     const owners = [ledgerPath, projectsPath];
-    const generated = yield* generateZeropsProviderMigrations(migratorFixture, owners);
-    expect(generated.indexOf("migrate('verticals/projects'")).toBeLessThan(
-      generated.indexOf("runAppScript('scripts/postgres/bootstrap-runtime-role"),
+    expect(yield* generateZeropsProviderMigrations(migratorFixture, owners)).toBe(migratorFixture);
+    expect(yield* generateZeropsProviderMigrations(migratorFixture, owners)).not.toContain(
+      "migrate('verticals/projects'",
     );
-    expect(generated.match(/migrate\('verticals\/ledger'/gu)).toHaveLength(1);
-    expect(yield* generateZeropsProviderMigrations(generated, owners)).toBe(generated);
   }),
 );
-it.effect('retains existing migration order and rejects invalid or duplicate owners', () =>
+it.effect('preserves closure execution and rejects invalid or duplicate topology owners', () =>
   Effect.gen(function* invalidMigrationOwners() {
     expect(yield* generateZeropsProviderMigrations(migratorFixture, [ledgerPath])).toBe(migratorFixture);
     const invalidOwner = yield* generateZeropsProviderMigrations(migratorFixture, ['../escape']).pipe(Effect.flip);
@@ -200,6 +198,9 @@ it.effect('retains existing migration order and rejects invalid or duplicate own
       Effect.flip,
     );
     expect(duplicateOwner.reason).toBe(invalidMigrationOwner);
+    expect(
+      (yield* generateZeropsProviderMigrations('unconditional migrations', [ledgerPath]).pipe(Effect.flip)).reason,
+    ).toBe('Migrator must consume the topology-derived migration prerequisite closure');
   }),
 );
 
@@ -209,9 +210,10 @@ it.effect('ships missing migration owners without changing other deployment file
       "zerops:\n  - setup: 'migrator'\n    build:\n      deployFiles:\n        - 'app/packages'\n        - 'app/verticals/ledger'\n    deploy:\n      temporaryShutdown: false\n";
     const generated = yield* generateZeropsMigratorInventory(source, [ledgerPath, projectsPath]);
     expect(generated).toContain(
-      "        - 'app/packages'\n        - 'app/verticals/ledger'\n        - 'app/verticals/projects'\n    deploy:",
+      "        - 'app/packages'\n        - 'app/verticals/ledger'\n        - 'app/topology'\n        - 'app/verticals/projects'\n    deploy:",
     );
     expect(yield* generateZeropsMigratorInventory(generated, [ledgerPath, projectsPath])).toBe(generated);
+    expect(generated.match(/- 'app\/topology'/gu)).toHaveLength(1);
     expect((yield* Effect.flip(generateZeropsMigratorInventory(source, ['../outside']))).reason).toBe(
       invalidMigrationOwner,
     );

@@ -5,6 +5,7 @@ import { loadDotEnvProvider } from '../environment/dotenv-provider.ts';
 import { APP_ENV_PATH } from '../environment/workspace-environment.ts';
 import { DatabaseConfigError } from './config-error.ts';
 import {
+  DATABASE_IDENTITIES,
   PARTY_REGISTRY_REQUEST_IDENTITY,
   PARTY_REGISTRY_WORKER_IDENTITY,
   SHARED_RUNTIME_IDENTITY,
@@ -15,6 +16,8 @@ import type { DatabaseIdentity, DatabaseIdentityId, DatabaseUrlKey } from './dat
 export { DatabaseConfigError } from './config-error.ts';
 
 export const ROOT_ENV_PATH = APP_ENV_PATH;
+
+const distinctDatabaseUsersReason = 'Administrative and runtime PostgreSQL identities must be distinct';
 
 const requiredDatabaseUrlSchema = Schema.Trim.pipe(Schema.check(Schema.isMinLength(1)));
 const invalidDatabaseUrlReason = (configKey: string): string =>
@@ -91,6 +94,15 @@ export interface DatabaseIdentityConnections {
 export interface LoadDatabaseIdentityConnectionsOptions {
   readonly environment?: DatabaseEnvironment;
   readonly envPath?: string;
+}
+
+export interface SelectedDatabaseIdentityConnections {
+  readonly admin: DatabaseConfigValue;
+  readonly runtime: ReadonlyMap<DatabaseIdentityId, DatabaseConfigValue>;
+}
+
+export interface LoadSelectedDatabaseIdentityConnectionsOptions extends LoadDatabaseIdentityConnectionsOptions {
+  readonly identityIds: readonly string[];
 }
 
 const configFailure = (reason: string, cause?: unknown): DatabaseConfigError =>
@@ -180,7 +192,7 @@ const parseDatabaseConnectionPairWith = Effect.fn('Config.readDatabaseConnection
       admin.user === runtime.user ||
       runtime.user === 'postgres'
     ) {
-      return yield* configFailure('Administrative and runtime PostgreSQL identities must be distinct');
+      return yield* configFailure(distinctDatabaseUsersReason);
     }
 
     return Object.freeze({ admin, runtime });
@@ -217,11 +229,24 @@ const parseDatabaseIdentityConnectionsWith = Effect.fn('Config.readDatabaseIdent
     });
     const users = [admin.user, ...Object.values(runtime).map(({ user }) => user)];
     if (users.includes('postgres', 1) || new Set(users).size !== users.length) {
-      return yield* configFailure('Administrative and runtime PostgreSQL identities must be distinct');
+      return yield* configFailure(distinctDatabaseUsersReason);
     }
     return Object.freeze({ admin, runtime });
   },
 );
+
+/** Resolve only canonical checked-in identities, before reading any connection configuration. */
+export const selectDatabaseIdentities = Effect.fn('Config.selectDatabaseIdentities')(function* selectIdentities(
+  identityIds: readonly string[],
+) {
+  if (identityIds.length === 0 || new Set(identityIds).size !== identityIds.length) {
+    return yield* configFailure('PostgreSQL identity selection must be nonempty and contain no duplicates');
+  }
+  if (identityIds.some((id) => !DATABASE_IDENTITIES.some((identity) => identity.id === id))) {
+    return yield* configFailure('PostgreSQL identity selection contains an unknown identity');
+  }
+  return DATABASE_IDENTITIES.filter(({ id }) => identityIds.includes(id));
+});
 
 export const parseDatabaseConfig = (
   environment: DatabaseEnvironment,
@@ -303,3 +328,39 @@ export const makeDatabaseConfigLive = (identity: DatabaseIdentity): Layer.Layer<
   Layer.effect(DatabaseConfig, loadDatabaseConfig({ identity }));
 
 export const DatabaseConfigLive = makeDatabaseConfigLive(SHARED_RUNTIME_IDENTITY);
+
+const parseSelectedIdentityConnectionsWith = Effect.fn('Config.readSelectedDatabaseIdentityConnections')(
+  function* readSelectedConnections(provider: ConfigProvider.ConfigProvider, identities: readonly DatabaseIdentity[]) {
+    const admin = yield* readAdminDatabaseUrl(provider, true);
+    const connections = yield* Effect.forEach(
+      identities,
+      (identity) =>
+        readIdentityConnection(provider, admin, identity).pipe(
+          Effect.map((connection) => [identity.id, connection] as const),
+        ),
+      { concurrency: 1 },
+    );
+    const runtime = new Map(connections);
+    const users = [admin.user, ...[...runtime.values()].map(({ user }) => user)];
+    if (users.includes('postgres', 1) || new Set(users).size !== users.length) {
+      return yield* configFailure(distinctDatabaseUsersReason);
+    }
+    return Object.freeze({ admin, runtime });
+  },
+);
+
+/** Strict admin/identity validation without reading any excluded runtime credential. */
+export const loadSelectedDatabaseIdentityConnections = (
+  options: LoadSelectedDatabaseIdentityConnectionsOptions,
+): Effect.Effect<SelectedDatabaseIdentityConnections, DatabaseConfigError> =>
+  selectDatabaseIdentities(options.identityIds).pipe(
+    Effect.flatMap((identities) =>
+      loadWithProvider((provider) => parseSelectedIdentityConnectionsWith(provider, identities), options),
+    ),
+  );
+
+/** Read-only catalog observation needs only the strictly parsed administrative connection. */
+export const loadAdministrativeDatabaseConnection = (
+  options: LoadDatabaseIdentityConnectionsOptions = {},
+): Effect.Effect<DatabaseConfigValue, DatabaseConfigError> =>
+  loadWithProvider((provider) => readAdminDatabaseUrl(provider, true), options);

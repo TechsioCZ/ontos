@@ -7,6 +7,8 @@ import {
   loadDatabaseConfig,
   loadDatabaseConnectionPair,
   loadDatabaseIdentityConnections,
+  loadAdministrativeDatabaseConnection,
+  loadSelectedDatabaseIdentityConnections,
   parseDatabaseConfig,
   parseDatabaseConnectionPair,
 } from '../../src/db/config.ts';
@@ -250,5 +252,152 @@ it.effect('rejects identity connections that share, swap or redirect their login
       'PARTY_REGISTRY_DATABASE_URL must not override its user, server or database with parameters',
     );
     expect(adminOverride).toBe('DATABASE_ADMIN_URL must not override its user, server or database with parameters');
+  }),
+);
+
+it.effect('loads only selected canonical identity URLs and leaves excluded identities absent', () =>
+  Effect.gen(function* selectedConnections() {
+    const selected = yield* loadSelectedDatabaseIdentityConnections({
+      environment: {
+        DATABASE_ADMIN_URL: identityEnvironment.DATABASE_ADMIN_URL,
+        DATABASE_URL: identityEnvironment.DATABASE_URL,
+        PARTY_REGISTRY_DATABASE_URL: 'unrelated malformed URL',
+      },
+      envPath: missingEnvPath,
+      identityIds: ['shared_runtime'],
+    });
+    expect([...selected.runtime.keys()]).toEqual(['shared_runtime']);
+    expect(selected.runtime.get('shared_runtime')?.user).toBe('ontos_runtime');
+    expect(selected.runtime.has('party_registry_request')).toBe(false);
+    const party = yield* loadSelectedDatabaseIdentityConnections({
+      environment: {
+        DATABASE_ADMIN_URL: identityEnvironment.DATABASE_ADMIN_URL,
+        PARTY_REGISTRY_DATABASE_URL: identityEnvironment.PARTY_REGISTRY_DATABASE_URL,
+        PARTY_REGISTRY_WORKER_DATABASE_URL: identityEnvironment.PARTY_REGISTRY_WORKER_DATABASE_URL,
+      },
+      envPath: missingEnvPath,
+      identityIds: ['party_registry_worker', 'party_registry_request'],
+    });
+    expect([...party.runtime.keys()]).toEqual(['party_registry_request', 'party_registry_worker']);
+    expect(party.runtime.has('shared_runtime')).toBe(false);
+  }),
+);
+
+it.effect('rejects empty, duplicate and unknown selected identities before configuration loading', () =>
+  Effect.gen(function* invalidSelection() {
+    for (const identityIds of [[], ['shared_runtime', 'shared_runtime'], ['unknown'], ['']]) {
+      const failure = yield* loadSelectedDatabaseIdentityConnections({
+        environment: {},
+        envPath: missingEnvPath,
+        identityIds,
+      }).pipe(Effect.flip);
+      expect(failure.reason).toContain('identity selection');
+      expect(failure.reason).not.toContain('DATABASE_ADMIN_URL is required');
+    }
+  }),
+);
+
+it.effect('preserves strict role, override, target and admin separation checks for selected identities', () =>
+  Effect.gen(function* selectedIdentitySecurity() {
+    const cases: readonly { readonly environment: DatabaseEnvironment; readonly reason: string }[] = [
+      {
+        environment: { ...identityEnvironment, PARTY_REGISTRY_DATABASE_URL: identityEnvironment.DATABASE_URL },
+        reason: 'must connect as the party_registry_runtime role',
+      },
+      {
+        environment: {
+          ...identityEnvironment,
+          PARTY_REGISTRY_DATABASE_URL: 'postgresql://party_registry_runtime:party@localhost:5433/other',
+        },
+        reason: 'must target the DATABASE_ADMIN_URL server and database',
+      },
+      {
+        environment: {
+          ...identityEnvironment,
+          PARTY_REGISTRY_DATABASE_URL: 'postgresql://party_registry_runtime:party@elsewhere:5433/ontos',
+        },
+        reason: 'must target the DATABASE_ADMIN_URL server and database',
+      },
+      {
+        environment: {
+          ...identityEnvironment,
+          PARTY_REGISTRY_DATABASE_URL: 'postgresql://party_registry_runtime:party@localhost:5434/ontos',
+        },
+        reason: 'must target the DATABASE_ADMIN_URL server and database',
+      },
+      {
+        environment: { ...identityEnvironment, DATABASE_ADMIN_URL: identityEnvironment.PARTY_REGISTRY_DATABASE_URL },
+        reason: 'Administrative and runtime PostgreSQL identities must be distinct',
+      },
+      {
+        environment: {
+          ...identityEnvironment,
+          DATABASE_ADMIN_URL: `${identityEnvironment.DATABASE_ADMIN_URL}?user=other`,
+        },
+        reason: 'must not override its user, server or database with parameters',
+      },
+    ];
+    for (const parameter of ['user', 'host', 'hostaddr', 'port', 'db', 'database', 'dbname', 'USER']) {
+      const failure = yield* loadSelectedDatabaseIdentityConnections({
+        environment: {
+          ...identityEnvironment,
+          PARTY_REGISTRY_DATABASE_URL: `${identityEnvironment.PARTY_REGISTRY_DATABASE_URL}?${parameter}=other`,
+        },
+        envPath: missingEnvPath,
+        identityIds: ['party_registry_request'],
+      }).pipe(Effect.flip);
+      expect(failure.reason).toBe(
+        'PARTY_REGISTRY_DATABASE_URL must not override its user, server or database with parameters',
+      );
+    }
+    for (const { environment, reason } of cases) {
+      const failure = yield* loadSelectedDatabaseIdentityConnections({
+        environment,
+        envPath: missingEnvPath,
+        identityIds: ['party_registry_request'],
+      }).pipe(Effect.flip);
+      expect(failure.reason).toContain(reason);
+    }
+    const all = yield* loadSelectedDatabaseIdentityConnections({
+      environment: identityEnvironment,
+      envPath: missingEnvPath,
+      identityIds: ['shared_runtime', 'shell_gateway_issuer', 'party_registry_request', 'party_registry_worker'],
+    });
+    const previous = yield* loadDatabaseIdentityConnections({
+      environment: identityEnvironment,
+      envPath: missingEnvPath,
+    });
+    for (const [id, connection] of all.runtime) {
+      expect(connection).toEqual(previous.runtime[id]);
+    }
+  }),
+);
+
+it.effect('admin-only observation does not require or parse unrelated runtime credentials', () =>
+  Effect.gen(function* administrativeObservation() {
+    const connection = yield* loadAdministrativeDatabaseConnection({
+      environment: {
+        DATABASE_ADMIN_URL: identityEnvironment.DATABASE_ADMIN_URL,
+        DATABASE_URL: 'unrelated invalid URL',
+      },
+      envPath: missingEnvPath,
+    });
+    expect(connection.user).toBe('ontos_admin');
+    expect(connection.database).toBe('ontos');
+  }),
+);
+
+it.effect('admin-only observation rejects missing, malformed and identity-overriding administrative URLs', () =>
+  Effect.gen(function* invalidAdministrativeObservation() {
+    for (const environment of [
+      {},
+      { DATABASE_ADMIN_URL: 'invalid' },
+      { DATABASE_ADMIN_URL: `${identityEnvironment.DATABASE_ADMIN_URL}?host=elsewhere` },
+    ]) {
+      const failure = yield* loadAdministrativeDatabaseConnection({ environment, envPath: missingEnvPath }).pipe(
+        Effect.flip,
+      );
+      expect(failure.reason).toContain('DATABASE_ADMIN_URL');
+    }
   }),
 );

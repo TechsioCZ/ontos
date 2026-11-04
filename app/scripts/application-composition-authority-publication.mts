@@ -197,6 +197,9 @@ const withVerifiedLegacyTransition = Effect.fn('ApplicationCompositionAuthority.
             // includes COMMIT, not just the transaction callback's return.
             Effect.ensuring(Fiber.interrupt(core)),
           ),
+        ).pipe(
+          // An owner may fail before invoking the callback; settle the waiting Core transaction too.
+          Effect.ensuring(Fiber.interrupt(core)),
         );
       }),
     );
