@@ -93,6 +93,40 @@ const repA = Schema.decodeUnknownSync(CrmViewerSchema)({
 });
 
 describe('CRM sales report (C05)', () => {
+  for (const { day, instant, previousDay } of [
+    { day: '2026-11-01', instant: '2026-11-01T00:30:00+01:00', previousDay: '2026-10-31' },
+    { day: '2026-07-01', instant: '2026-07-01T00:30:00+02:00', previousDay: '2026-06-30' },
+  ]) {
+    it(`uses the Prague day for period filters, month buckets and CSV at ${instant}`, () => {
+      const values = { amount: '1.00', clientId: 'x', currency: 'CZK', pairing: 'paired' } as const;
+      const state = base([
+        order({ ...values, orderedAt: instant }),
+        order({ ...values, orderedAt: day }),
+        order({ ...values, receivedAt: instant }),
+        order({ ...values, orderedAt: previousDay }),
+        order({ orderedAt: instant, pairing: 'unpaired' }),
+      ]);
+      const report = buildSalesReport(state, {
+        period: Schema.decodeSync(ReportPeriodSchema)({ from: day, to: day }),
+      });
+      expect(report.count).toBe(3);
+      expect(report.byMonth.map((group) => [group.key, group.count])).toEqual([[day.slice(0, 7), 3]]);
+      expect(report.totals).toEqual([{ amount: '3.00', count: 3, currency: 'CZK' }]);
+      expect(report.excluded).toEqual([{ count: 1, reason: 'unpaired' }]);
+      expect(report.rowsWithReceivedDate).toBe(1);
+      expect(
+        ordersCsv(report)
+          .split('\r\n')
+          .slice(1)
+          .map((line) => line.split(';')[0]),
+      ).toEqual([day, day, day]);
+      expect(buildSalesReport(state).byMonth.map((group) => [group.key, group.count])).toEqual([
+        [previousDay.slice(0, 7), 1],
+        [day.slice(0, 7), 3],
+      ]);
+    });
+  }
+
   it('C05-01: three paired orders of X count, the unpaired one is reported aside', () => {
     const state = base([
       order({ amount: '1000.00', clientId: 'x', currency: 'CZK', orderedAt: '2026-08-03', pairing: 'paired' }),
