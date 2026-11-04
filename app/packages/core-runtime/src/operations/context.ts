@@ -1,5 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
+import type { Exit } from 'effect';
 import { Context, Crypto, Effect, Layer, Option } from 'effect';
 
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
@@ -23,7 +24,7 @@ import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import { auditEvents, legalEntities, principalAuthBindings, principals, tenants } from '../db/schema.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
-import type { ContextAccessService } from '../permissions/context-access.ts';
+import type { ContextAccessResult, ContextAccessService } from '../permissions/context-access.ts';
 import { ContextAccess } from '../permissions/context-access.ts';
 import type { OperationContextError } from './errors.ts';
 import {
@@ -389,11 +390,27 @@ const validateSupportImpersonation = Effect.fn('OperationalScopeResolver.validat
   },
 );
 
+/**
+ * The Legal Entity access check reads no persisted state, so it may start beside the persisted load. The
+ * caller holds its outcome and reads it only in {@link validateLegalEntity}, after the persisted Legal Entity
+ * gate: a denial from persisted state keeps its precedence, and a remote failure is never observed earlier.
+ */
+const startLegalEntityAccess = (contextAccess: LegalEntityScopeAccess, principal: TrustedPrincipalContext) =>
+  principal.legalEntityId === undefined
+    ? Effect.undefined
+    : contextAccess
+        .legalEntities({
+          legalEntityIds: [principal.legalEntityId],
+          principalId: principal.principalId,
+          tenantId: principal.tenantId,
+        })
+        .pipe(Effect.map(([decision]) => decision));
+
 const validateLegalEntity = Effect.fn('OperationalScopeResolver.validateLegalEntity')(
   function* validateLegalEntityEffect(
-    contextAccess: LegalEntityScopeAccess,
     principal: TrustedPrincipalContext,
     persisted: PersistedScopeRecord,
+    legalEntityAccess: Exit.Exit<ContextAccessResult | undefined>,
   ) {
     if (principal.legalEntityId === undefined) {
       return yield* Effect.void;
@@ -405,11 +422,7 @@ const validateLegalEntity = Effect.fn('OperationalScopeResolver.validateLegalEnt
       });
     }
 
-    const [decision] = yield* contextAccess.legalEntities({
-      legalEntityIds: [principal.legalEntityId],
-      principalId: principal.principalId,
-      tenantId: principal.tenantId,
-    });
+    const decision = yield* legalEntityAccess;
     if (decision?.decision === 'denied') {
       return yield* new OperationContextDenied({
         code: 'operation_context_denied',
@@ -541,8 +554,12 @@ export const makeOperationalScopeResolver = Effect.fnUntraced(function* makeOper
     const externalAdmission = yield* prepareExternalAdmission(input);
 
     // P must complete before C so provider HTTP never shares the Core load's transaction.
-    // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Admission ordering is the security contract.
-    const persisted = yield* repository.load(principal);
+    // The Legal Entity access check needs no persisted state, so it runs beside C and is consumed only after
+    // the persisted gates pass (see startLegalEntityAccess).
+    const [persisted, legalEntityAccess] = yield* Effect.all(
+      [repository.load(principal), Effect.exit(startLegalEntityAccess(contextAccess, principal))],
+      { concurrency: 2 },
+    );
     const supportRecovery = isTrustedSupportRecoveryPrincipalContext(principal);
     const persistedFailure = validatePersistedPrincipal(principal, persisted, supportRecovery);
     if (persistedFailure !== undefined) {
@@ -579,7 +596,7 @@ export const makeOperationalScopeResolver = Effect.fnUntraced(function* makeOper
     }
 
     yield* validateSupportImpersonation(contextAccess, principal, persisted);
-    yield* validateLegalEntity(contextAccess, principal, persisted);
+    yield* validateLegalEntity(principal, persisted, legalEntityAccess);
     return preserveSystemPrincipalContextTrust(
       principal,
       Object.freeze(
